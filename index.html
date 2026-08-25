@@ -7,7 +7,7 @@
 <title>NHKチンチロ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <style>
 :root{
   --sumi:#101520;
@@ -21,7 +21,7 @@
   --kincha:#DFAB4C;
   --asagi:#6E9FA3;
   --muted:#7F89A1;
-  --font-display:"Dela Gothic One","Hiragino Sans","Yu Gothic",sans-serif;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
   --font-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
 }
 *{box-sizing:border-box}
@@ -46,7 +46,7 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 /* ---- 見出し ---- */
 .masthead{display:flex;flex-direction:column;gap:7px;border-bottom:1px solid var(--line);padding-bottom:11px}
 .mast-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.logo{font-family:var(--font-display);font-size:21px;letter-spacing:.05em;margin:0}
+.logo{font-family:var(--font-display);font-weight:800;font-size:23px;letter-spacing:.08em;margin:0}
 .logo .dot{color:var(--shu-lit);letter-spacing:.02em}
 .tools{display:flex;gap:6px}
 .tool{background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);
@@ -74,7 +74,8 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .role{font-size:11px;letter-spacing:.22em;padding:3px 10px;border-radius:99px;
   border:1px solid var(--line);color:var(--muted)}
 .role.oya{color:var(--kincha);border-color:rgba(223,171,76,.45)}
-.who{font-family:var(--font-display);font-size:25px;line-height:1.25;text-wrap:balance}
+.who{font-family:var(--font-display);font-weight:800;font-size:27px;line-height:1.3;
+  letter-spacing:.04em;text-wrap:balance}
 .oyaref{font-size:12px;color:var(--muted);letter-spacing:.06em}
 .oyaref b{font-weight:700}
 .oyaref b.win{color:var(--kincha)} .oyaref b.lose{color:var(--shu-lit)} .oyaref b.normal{color:var(--kinari)}
@@ -107,16 +108,21 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .die .pip.one::after{width:23px;height:23px;background:var(--shu);
   box-shadow:inset 0 2px 4px rgba(0,0,0,.4)}
 @keyframes tumble{
-  0%{transform:translateY(0) rotate(0)}
-  22%{transform:translateY(-26px) rotate(150deg)}
-  48%{transform:translateY(6px) rotate(280deg)}
-  70%{transform:translateY(-11px) rotate(400deg)}
-  88%{transform:translateY(3px) rotate(520deg)}
-  100%{transform:translateY(0) rotate(540deg)}
+  0%  {transform:translateY(0)     rotate(0)}
+  8%  {transform:translateY(-36px) rotate(200deg)}
+  17% {transform:translateY(4px)   rotate(430deg)}
+  26% {transform:translateY(-26px) rotate(650deg)}
+  36% {transform:translateY(3px)   rotate(860deg)}
+  46% {transform:translateY(-17px) rotate(1040deg)}
+  56% {transform:translateY(2px)   rotate(1190deg)}
+  67% {transform:translateY(-10px) rotate(1300deg)}
+  78% {transform:translateY(1px)   rotate(1380deg)}
+  88% {transform:translateY(-4px)  rotate(1425deg)}
+  100%{transform:translateY(0)     rotate(1440deg)}
 }
-.die.rolling{animation:tumble .66s cubic-bezier(.36,.06,.28,1)}
-.die.rolling:nth-child(2){animation-delay:.05s}
-.die.rolling:nth-child(3){animation-delay:.1s}
+.die.rolling{animation:tumble 2.4s cubic-bezier(.22,.61,.3,1)}
+.die.rolling:nth-child(2){animation-delay:.07s}
+.die.rolling:nth-child(3){animation-delay:.14s}
 .bowl.passed .dice{opacity:.22;filter:grayscale(1)}
 .dice.idle .die{opacity:.58}
 @media (prefers-reduced-motion:reduce){.die.rolling{animation:none}}
@@ -127,7 +133,8 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 
 .hand{text-align:center;display:flex;flex-direction:column;gap:4px;align-items:center;
   min-height:72px;justify-content:center}
-.hand .nm{font-family:var(--font-display);font-size:36px;line-height:1.1;letter-spacing:.03em;text-wrap:balance}
+.hand .nm{font-family:var(--font-display);font-weight:800;font-size:38px;line-height:1.2;
+  letter-spacing:.06em;text-wrap:balance}
 .hand .nm.win{color:var(--kincha);text-shadow:0 0 28px rgba(223,171,76,.35)}
 .hand .nm.lose{color:var(--shu-lit)}
 .hand .nm.none,.hand .nm.pass{color:var(--muted)}
@@ -136,30 +143,30 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 /* ---- ボタン ---- */
 .act{display:flex;flex-direction:column;gap:9px}
 #quit,#quit2{order:9}
-.btn{border:0;border-radius:12px;padding:15px 20px;font-size:16px;font-weight:700;
-  letter-spacing:.08em;transition:transform .12s ease}
+.btn{border:0;border-radius:12px;padding:16px 20px;font-size:17px;font-weight:500;
+  letter-spacing:.09em;line-height:1.45;transition:transform .12s ease}
 .btn:active{transform:translateY(2px)}
 .btn:disabled{opacity:.4;cursor:default;transform:none}
-.btn-main{background:linear-gradient(178deg,#D13B22,#A82815);color:#fff;
-  font-family:var(--font-display);font-size:19px;
-  text-shadow:0 1px 2px rgba(70,12,4,.55);
-  box-shadow:0 5px 0 #77190C,0 12px 22px rgba(168,40,21,.3)}
-.btn-main:active{box-shadow:0 3px 0 #77190C,0 8px 15px rgba(168,40,21,.26)}
+.btn-main{background:linear-gradient(178deg,#C4351E,#94210F);color:#fff;
+  font-size:18px;font-weight:700;letter-spacing:.09em;
+  box-shadow:0 5px 0 #6B1508,0 12px 22px rgba(148,33,15,.32)}
+.btn-main:active{box-shadow:0 3px 0 #6B1508,0 8px 15px rgba(148,33,15,.28)}
 .btn-ghost:disabled{opacity:.5}
 .btn-ghost{background:var(--sumi-hi);border:1px solid var(--line)}
-.btn-pass{background:var(--sumi-hi);border:1px dashed var(--line);color:var(--muted);font-size:14px;padding:12px}
+.btn-pass{background:var(--sumi-hi);border:1px dashed var(--line);color:var(--kinari-dim);
+  font-size:15px;padding:13px}
 .btn-quiet{background:none;border:0;color:var(--muted);font-size:12px;letter-spacing:.1em;padding:6px}
 .btn-quiet:hover{color:var(--kinari-dim)}
 
 /* ---- パネル ---- */
 .panel{background:var(--sumi-hi);border:1px solid var(--line);border-radius:14px;padding:16px}
 .panel + .panel{margin-top:14px}
-.panel h2{font-family:var(--font-display);font-size:14px;letter-spacing:.14em;margin:0 0 12px;
-  color:var(--kinari-dim);font-weight:400}
+.panel h2{font-family:var(--font-display);font-weight:600;font-size:15px;letter-spacing:.16em;
+  margin:0 0 12px;color:var(--kinari-dim)}
 .oyahand{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
   padding-bottom:12px;margin-bottom:4px;border-bottom:1px solid var(--line)}
 .oyahand .l{font-size:12px;letter-spacing:.16em;color:var(--kincha)}
-.oyahand .r{font-family:var(--font-display);font-size:20px}
+.oyahand .r{font-family:var(--font-display);font-weight:800;font-size:21px;letter-spacing:.04em}
 .r.win{color:var(--kincha)} .r.lose{color:var(--shu-lit)} .r.normal{color:var(--kinari)}
 .row{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:baseline;
   padding:9px 0;border-bottom:1px dashed rgba(40,50,74,.8)}
@@ -200,7 +207,7 @@ input::placeholder{color:#4E576D}
 .frow{display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:baseline;padding:11px 0;
   border-bottom:1px dashed rgba(40,50,74,.8)}
 .frow:last-child{border-bottom:0}
-.frow .rk{font-family:var(--font-display);font-size:15px;color:var(--muted)}
+.frow .rk{font-family:var(--font-display);font-weight:600;font-size:16px;color:var(--muted)}
 .frow.top .rk,.frow.top .nm{color:var(--kincha)}
 .frow .pt{font-weight:700;font-variant-numeric:tabular-nums}
 .frow .st{grid-column:2/4;font-size:11px;color:var(--muted);letter-spacing:.04em;margin-top:2px}
@@ -243,8 +250,8 @@ input::placeholder{color:#4E576D}
     <button class="btn btn-ghost" id="add-player" type="button">＋ 人を増やす</button>
     <div class="field">
       <label for="rounds">何局やる</label>
-      <input type="number" id="rounds" min="1" max="999" step="1" value="5" inputmode="numeric">
-      <span class="unit">局（あとから「マムシ」で延長できます）</span>
+      <input type="number" id="rounds" min="1" max="999" step="1" value="3" inputmode="numeric">
+      <span class="unit">局（親が一周して 1 局 ・ あとから「マムシ」で延長できます）</span>
     </div>
     <div class="field">
       <label for="base">基準値</label>
@@ -259,10 +266,11 @@ input::placeholder{color:#4E576D}
         <div><dt>ゾロ目</dt><dd> ・ 同じ目が三つ ・ 三倍取り ・ 数の大きい方が強い</dd></div>
         <div><dt>シゴロ</dt><dd> ・ 四五六 ・ 二倍取り</dd></div>
         <div><dt>出目</dt><dd> ・ 二つ揃いの残り一つが目 ・ 六が最強、一が最弱</dd></div>
-        <div class="bad"><dt>ヒフミ</dt><dd> ・ 一二三 ・ 勝った相手の取り分がさらに二倍</dd></div>
+        <div class="bad"><dt>ヒフミ</dt><dd> ・ 一二三 ・ 出た時点で確定し振り直せない ・ 勝った相手の取り分がさらに二倍</dd></div>
         <div class="bad"><dt>目なし</dt><dd> ・ 役のないまま次へ渡した ・ 一倍</dd></div>
         <div><dt>パス</dt><dd> ・ 子は振らずに降りられる ・ 親の取り分をそのまま払う</dd></div>
         <div><dt>振り直し</dt><dd> ・ 役が出ても三回まで振り直せる ・ 決めたら次の人へ渡す</dd></div>
+        <div><dt>一局</dt><dd> ・ 親が一周する（人数分の親番）まで</dd></div>
         <div><dt>移動点</dt><dd> ・ 基準値 × 立場（親 1.5 / 子 1.0）× 勝者の倍率 × 敗者の罰則</dd></div>
       </div>
     </div>
@@ -360,6 +368,7 @@ var PIPS = {1:[5],2:[1,9],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9]};
 var STORE = "nhk-chinchiro-v1";
 var PREF = "nhk-chinchiro-pref";
 var MAX_THROWS = 3;
+var ROLL_MS = 2400;      // 丼で転がっている時間
 
 var $ = function(id){ return document.getElementById(id); };
 var S = null, busy = false, muted = false, backTo = "scr-game";
@@ -381,7 +390,7 @@ function classify(d){
     if(a === 1) return mk("pinzoro", "ピンゾロ", "一の三つ揃い ・ 五倍取り", 100, 5, 1, "win");
     return mk("zoro", KANJI[a] + "のゾロ目", "三つ揃い ・ 三倍取り", 90 + a, 3, 1, "win");
   }
-  if(a === 1 && b === 2 && c === 3) return mk("hifumi", "ヒフミ", "一二三 ・ 相手の取り分が二倍", 20, 1, 2, "lose");
+  if(a === 1 && b === 2 && c === 3) return mk("hifumi", "ヒフミ", "振り直しなし ・ 相手の取り分が二倍", 20, 1, 2, "lose");
   if(a === 4 && b === 5 && c === 6) return mk("shigoro", "シゴロ", "四五六 ・ 二倍取り", 80, 2, 1, "win");
   if(a === b) return deme(c);
   if(b === c) return deme(a);
@@ -436,7 +445,13 @@ function clack(at, gain){
   src.start(x.currentTime + at);
 }
 function sndRoll(){
-  for(var i = 0; i < 11; i++) clack(0.03 + i * 0.062 + Math.random() * 0.028, 0.13 + Math.random() * 0.1);
+  if(muted) return;
+  var t = 0.02, gap = 0.055;
+  for(var i = 0; i < 30 && t < ROLL_MS / 1000 - 0.15; i++){
+    clack(t + Math.random() * 0.02, 0.05 + 0.11 * (1 - t / 2.6));
+    t += gap;
+    gap = Math.min(0.26, gap * 1.16);
+  }
 }
 function sndHand(h){
   if(!h){ tone(0, 240, 0.12, 0.06, "sine"); return; }
@@ -463,7 +478,7 @@ function buzz(pattern){
 function newGame(names, rounds, base){
   return {
     players: names.map(function(n){ return {name:n, score:0}; }),
-    totalRounds: rounds, base: base, round: 1, parent: 0,
+    totalRounds: rounds, base: base, round: 1, parent: 0, turnInLap: 0,
     order: [], cursor: 0, hands: [], passed: [],
     dice: [1,1,1], throws: 0, pending: null, settle: null,
     history: [], phase: "roll"
@@ -488,6 +503,10 @@ function doRoll(){
   S.throws++;
   S.dice = [d6(), d6(), d6()];
   S.pending = classify(S.dice);
+  if(S.pending && S.pending.id === "hifumi"){   // 一二三は出た瞬間に確定、振り直しなし
+    S.hands[current()] = S.pending;
+    S.phase = "result";
+  }
   sndRoll();
   animateRoll(function(){
     busy = false;
@@ -503,28 +522,29 @@ function doPass(){
   if(cur === S.parent) return;
   S.passed[cur] = true;
   S.hands[cur] = null;
-  S.phase = "result";
   tone(0, 300, 0.16, 0.07, "sine"); tone(0.08, 220, 0.24, 0.06, "sine");
   buzz([25]);
-  arm(400);
-  render(); save();
+  handOff();
 }
 
 function confirmHand(){
   if(busy || S.phase !== "roll" || S.throws === 0) return;
   var h = S.pending || menashi();
   S.hands[current()] = h;
-  S.phase = "result";
   if(!S.pending) sndHand(h);
-  arm(400);
-  render(); save();
+  handOff();
 }
 
-function advance(){
+/* 次の人へ。全員終わっていれば精算へ */
+function handOff(){
   if(busy) return;
   S.cursor++;
-  if(S.cursor >= S.order.length){ doSettle(); render(); save(); return; }
-  S.dice = [1,1,1]; S.throws = 0; S.pending = null; S.phase = "roll";
+  if(S.cursor >= S.order.length){
+    doSettle();
+  } else {
+    S.dice = [1,1,1]; S.throws = 0; S.pending = null; S.phase = "roll";
+  }
+  arm(400);
   render(); save();
 }
 
@@ -551,7 +571,7 @@ function doSettle(){
 
   S.players.forEach(function(p, i){ p.score += deltas[i]; });
   S.history.push({
-    round: S.round, parent: S.parent,
+    round: S.round, lap: S.turnInLap, parent: S.parent,
     hands: S.hands.map(function(h){ return h ? {id:h.id, label:h.label, kind:h.kind} : null; }),
     passed: S.passed.map(function(p){ return !!p; }),
     deltas: deltas
@@ -560,19 +580,27 @@ function doSettle(){
   S.phase = "settle";
 }
 
+/* 親が一周して 1 局。まだ一周していなければ次の親へ回すだけ */
 function nextRound(){
-  if(S.round >= S.totalRounds){ S.phase = "over"; render(); save(); return; }
-  S.parent = (S.parent + 1) % S.players.length;
-  S.round++;
+  var n = S.players.length;
+  if(S.turnInLap + 1 >= n && S.round >= S.totalRounds){
+    S.phase = "over"; render(); save(); return;
+  }
+  stepParent();
   startRound();
   render(); save();
+}
+function stepParent(){
+  var n = S.players.length;
+  S.parent = (S.parent + 1) % n;
+  S.turnInLap++;
+  if(S.turnInLap >= n){ S.turnInLap = 0; S.round++; }
 }
 
 function mamushi(){
   var add = clampInt($("extra").value, 1, 999, 3);
   S.totalRounds += add;
-  S.parent = (S.parent + 1) % S.players.length;
-  S.round++;
+  stepParent();
   startRound();
   [392, 523, 622].forEach(function(f, i){ tone(i * 0.06, f, 0.3, 0.1, "sawtooth"); });
   buzz([20, 30, 20]);
@@ -615,13 +643,19 @@ function animateRoll(done){
     void dice[i].offsetWidth;
     dice[i].classList.add("rolling");
   }
-  var spin = setInterval(function(){ paintDice([d6(), d6(), d6()], false); }, 70);
-  setTimeout(function(){
-    clearInterval(spin);
-    paintDice(S.dice, false);
-    for(var j = 0; j < 3; j++) dice[j].classList.remove("rolling");
-    done();
-  }, 760);
+  var t = 0, gap = 55;
+  (function spin(){
+    if(t >= ROLL_MS - 140){
+      paintDice(S.dice, false);
+      for(var j = 0; j < 3; j++) dice[j].classList.remove("rolling");
+      done();
+      return;
+    }
+    paintDice([d6(), d6(), d6()], false);
+    t += gap;
+    gap = Math.min(280, gap * 1.16);   // 転がりが落ち着くにつれ目の変わりも遅くなる
+    setTimeout(spin, gap);
+  })();
 }
 
 function scoreChips(host){
@@ -659,7 +693,8 @@ function render(){
   }
   $("t-log").hidden = (S.history.length === 0 || S.phase === "over");
   $("ba").innerHTML = "第 <b>" + S.round + "</b> 局 / 全 " + S.totalRounds + " 局 ・ 親 <b>" +
-    esc(S.players[S.parent].name) + "</b> ・ 基準 <b>" + S.base + "</b>";
+    esc(S.players[S.parent].name) + "</b>（" + (S.turnInLap + 1) + " / " + S.players.length +
+    " 人目）・ 基準 <b>" + S.base + "</b>";
 
   if(S.phase === "over"){ show("scr-over"); renderFinal(); renderLog($("log-list2")); return; }
   if(S.phase === "log"){ show("scr-log"); renderLog($("log-list")); return; }
@@ -684,14 +719,9 @@ function render(){
 
   var hand = $("hand"), roll = $("roll"), pass = $("pass"), adv = $("advance");
   if(S.phase === "result"){
-    if(S.passed[cur]){
-      hand.innerHTML = '<div class="nm pass">パス</div><div class="sub">' +
-        esc(S.players[S.parent].name) + " に " + payout(ph, NOHAND, true) + " 点 払う</div>";
-    } else {
-      var h = S.hands[cur];
-      hand.innerHTML = '<div class="nm ' + h.kind + '">' + esc(h.label) + "</div>" +
-                       '<div class="sub">' + esc(h.sub) + "</div>";
-    }
+    var h = S.hands[cur];
+    hand.innerHTML = '<div class="nm ' + h.kind + '">' + esc(h.label) + "</div>" +
+                     '<div class="sub">' + esc(h.sub) + "</div>";
     roll.hidden = true; pass.hidden = true;
     adv.hidden = false;
     adv.disabled = Date.now() < armAt;
@@ -713,18 +743,18 @@ function render(){
     roll.hidden = false;
     roll.disabled = left <= 0;
     roll.textContent = left <= 0 ? "もう振れない"
-      : (S.throws === 0 ? "振る" : "振り直す ── あと " + left + " 回");
+      : (S.throws === 0 ? "振る" : "振り直す（あと " + left + " 回）");
     roll.className = "btn " + (!decided && left > 0 ? "btn-main" : "btn-ghost");
     roll.style.order = "1";
     adv.hidden = S.throws === 0;
     adv.disabled = Date.now() < armAt;
-    adv.textContent = "この目で決める";
+    adv.textContent = "これで決める";
     adv.className = "btn " + (decided ? "btn-main" : "btn-ghost");
     adv.style.order = "2";
     pass.style.order = "3";
     if(!isOya && S.throws === 0 && ph){
       pass.hidden = false;
-      pass.textContent = "パスする ── " + payout(ph, NOHAND, true) + " 点 払って降りる";
+      pass.textContent = "パスする（" + payout(ph, NOHAND, true) + " 点 払う）";
     } else {
       pass.hidden = true;
     }
@@ -751,7 +781,10 @@ function renderSettle(){
   host.textContent = "";
   host.appendChild(frag);
   $("settle-note").textContent = "基準 " + S.base + " 点 ・ 親の勝ちは 1.5 倍 ・ ヒフミを出すと相手の取り分が二倍";
-  $("next-round").textContent = S.round >= S.totalRounds ? "成績を見る" : "次の局へ";
+  $("next-round").disabled = Date.now() < armAt;
+  var lastOfLap = (S.turnInLap + 1 >= S.players.length);
+  $("next-round").textContent = (lastOfLap && S.round >= S.totalRounds) ? "成績を見る"
+    : lastOfLap ? "第 " + (S.round + 1) + " 局へ" : "次の親へ";
 }
 
 function renderLog(host){
@@ -768,7 +801,8 @@ function renderLog(host){
         esc(p.name) + " " + esc(what) + " <b>" + (d > 0 ? "+" + d : d) + "</b></span>";
     }).join("");
     e.innerHTML =
-      '<div class="log-head"><span class="lr">第 ' + h.round + " 局</span>" +
+      '<div class="log-head"><span class="lr">第 ' + h.round + " 局" +
+      (h.lap != null ? " ・ " + (h.lap + 1) + " 人目" : "") + "</span>" +
       '<span class="lo">親 ' + esc(S.players[h.parent].name) + " ・ " +
       esc(h.hands[h.parent] ? h.hands[h.parent].label : "―") + "</span></div>" +
       '<div class="log-body">' + tags + "</div>";
@@ -825,7 +859,8 @@ function renderFinal(){
   });
   $("final").textContent = "";
   $("final").appendChild(frag);
-  $("ba").innerHTML = "全 <b>" + S.history.length + "</b> 局 ・ 打ち止め";
+  var np = S.players.length, laps = Math.floor(S.history.length / np), rest = S.history.length % np;
+  $("ba").innerHTML = "全 <b>" + laps + "</b> 局" + (rest ? " と " + rest + " 親番" : "") + " ・ 打ち止め";
 }
 
 function esc(s){
@@ -867,6 +902,7 @@ function load(){
     var s = JSON.parse(localStorage.getItem(STORE));
     if(s && s.players && s.players.length >= 2 && s.history){
       if(!s.base) s.base = 2;
+      if(s.turnInLap == null) s.turnInLap = 0;
       return s;
     }
   }catch(e){}
@@ -886,14 +922,14 @@ $("start").addEventListener("click", function(){
     names.push(v);
   });
   if(names.length < 2) return;
-  S = newGame(names, clampInt($("rounds").value, 1, 999, 5), evenInt($("base").value, 2));
+  S = newGame(names, clampInt($("rounds").value, 1, 999, 3), evenInt($("base").value, 2));
   startRound();
   render(); save();
 });
 $("roll").addEventListener("click", doRoll);
 $("pass").addEventListener("click", doPass);
 $("advance").addEventListener("click", function(){
-  if(S.phase === "roll") confirmHand(); else advance();
+  if(S.phase === "roll") confirmHand(); else handOff();   // 足止めは一二三のときだけ
 });
 $("next-round").addEventListener("click", nextRound);
 $("mamushi").addEventListener("click", mamushi);
