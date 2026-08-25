@@ -35,6 +35,23 @@ function check(label, cond, extra){
   check("対局画面に入る", await page.isVisible("#scr-game"));
 
   const scores = () => page.$$eval("#scores .pt", els => els.map(e => parseInt(e.textContent, 10)));
+  const order = sel => page.$eval(sel, e => getComputedStyle(e).order);
+  const disabled = sel => page.$eval(sel, e => e.disabled);
+  // WCAG コントラスト比（ボタンの文字色 vs 背景グラデーションの各端）
+  const contrast = sel => page.$eval(sel, e => {
+    const cs = getComputedStyle(e);
+    const lum = rgb => {
+      const [r, g, b] = rgb.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const parse = str => (str.match(/\d+/g) || []).slice(0, 3).map(Number);
+    const fg = lum(parse(cs.color));
+    const stops = (cs.backgroundImage.match(/rgba?\([^)]+\)/g) || [cs.backgroundColor]);
+    return stops.map(st => {
+      const bg = lum(parse(st));
+      return +(((Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05)).toFixed(2));
+    });
+  });
   const vis = s => page.isVisible(s);
   const txt = s => page.textContent(s);
 
@@ -42,16 +59,38 @@ function check(label, cond, extra){
   check("0回振った状態では確定できない", !(await vis("#advance")));
 
   // --- 親の番：3回まで振り直せることを確認 ---
+  const pips = () => page.$$eval("#dice .pip", els => els.length);
+  check("振る前のサイコロは目を伏せている", await pips() === 0);
+  check("振るボタンは最上段", await order("#roll") === "1");
+  const con = await contrast("#roll");
+  check("赤ボタンの文字が 4.5:1 以上", con.every(c => c >= 4.5), JSON.stringify(con));
+
   for(let i = 1; i <= 3; i++){
     await page.click("#roll");
-    await page.waitForTimeout(950);
+    if(i === 1){
+      // 振り終わった直後は確定ボタンが少しの間だけ受け付けない（連打の誤爆防止）
+      await page.waitForTimeout(830);
+      check("振り終わった直後は確定できない", await disabled("#advance"));
+      await page.waitForTimeout(500);
+      check("少し待てば確定できる", !(await disabled("#advance")));
+    } else {
+      await page.waitForTimeout(1250);
+    }
     check("振った後は確定ボタンが出る（" + i + "回目）", await vis("#advance"));
     check("残り回数の表示", (await txt("#tries")).includes(String(3 - i) + " 回"));
-    if(i < 3) check("まだ振り直せる（" + i + "回目）", await vis("#roll"));
+    check("振ったら目が出る（" + i + "回目）", await pips() > 0);
+    check("振るボタンは動かない（" + i + "回目）", await order("#roll") === "1");
+    check("確定ボタンは常にその下（" + i + "回目）", await order("#advance") === "2");
+    if(i < 3) check("まだ振り直せる（" + i + "回目）", !(await disabled("#roll")));
   }
-  check("3回振ったら振るボタンは消える", !(await vis("#roll")));
+  check("3回振っても振るボタンは残る", await vis("#roll"));
+  check("3回振ったら押せなくなる", await disabled("#roll"));
+  check("振り切った表示", (await txt("#roll")).includes("もう振れない"));
   await page.click("#advance");                          // この目で決める
   check("確定後は役が出る", (await txt("#hand")).length > 0);
+  check("確定直後は渡すボタンも受け付けない", await disabled("#advance"));
+  await page.waitForTimeout(450);
+  check("少し待てば渡せる", !(await disabled("#advance")));
   await page.click("#advance");                          // 次の人へ渡す
 
   // --- 子の番：パスできる ---
@@ -64,7 +103,7 @@ function check(label, cond, extra){
 
   // --- 3人目：1回で確定 ---
   await page.click("#roll");
-  await page.waitForTimeout(950);
+  await page.waitForTimeout(1250);
   await page.click("#advance");
   await page.click("#advance");
 
@@ -91,7 +130,7 @@ function check(label, cond, extra){
 
   for(let p = 0; p < 3; p++){
     await page.click("#roll");
-    await page.waitForTimeout(950);
+    await page.waitForTimeout(1250);
     await page.click("#advance");
     await page.click("#advance");
   }
