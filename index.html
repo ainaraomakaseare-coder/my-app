@@ -87,7 +87,7 @@ button{font-family:inherit;color:inherit;cursor:pointer}
   display:grid;place-items:center;
 }
 .bowl-in{
-  width:100%;height:100%;border-radius:50%;
+  position:relative;width:100%;height:100%;border-radius:50%;
   background:
     radial-gradient(circle at 50% 32%, rgba(223,171,76,.24), transparent 58%),
     radial-gradient(circle at 50% 116%, var(--sumi-sink), #1B2333 74%);
@@ -95,8 +95,9 @@ button{font-family:inherit;color:inherit;cursor:pointer}
     inset 0 0 0 1px rgba(0,0,0,.5);
   display:grid;place-items:center;
 }
-.dice{display:flex;gap:11px}
+.dice{position:absolute;inset:0}
 .die{
+  position:absolute;left:50%;top:50%;margin:-28px 0 0 -28px;will-change:transform;
   width:56px;height:56px;border-radius:13px;display:grid;
   grid-template:repeat(3,1fr)/repeat(3,1fr);padding:8px;gap:1px;
   background:linear-gradient(158deg,#FAF4E6 8%,#DED3BB 92%);
@@ -107,22 +108,15 @@ button{font-family:inherit;color:inherit;cursor:pointer}
   background:#161C29;box-shadow:inset 0 1px 1px rgba(0,0,0,.5)}
 .die .pip.one::after{width:23px;height:23px;background:var(--shu);
   box-shadow:inset 0 2px 4px rgba(0,0,0,.4)}
-@keyframes tumble{
-  0%  {transform:translateY(0)     rotate(0)}
-  8%  {transform:translateY(-36px) rotate(200deg)}
-  17% {transform:translateY(4px)   rotate(430deg)}
-  26% {transform:translateY(-26px) rotate(650deg)}
-  36% {transform:translateY(3px)   rotate(860deg)}
-  46% {transform:translateY(-17px) rotate(1040deg)}
-  56% {transform:translateY(2px)   rotate(1190deg)}
-  67% {transform:translateY(-10px) rotate(1300deg)}
-  78% {transform:translateY(1px)   rotate(1380deg)}
-  88% {transform:translateY(-4px)  rotate(1425deg)}
-  100%{transform:translateY(0)     rotate(1440deg)}
+@keyframes bowlshake{
+  0%  {transform:translate(0,0) rotate(0)}
+  18% {transform:translate(-4px,3px) rotate(-.6deg)}
+  42% {transform:translate(3px,-4px) rotate(.5deg)}
+  66% {transform:translate(-2px,2px) rotate(-.3deg)}
+  85% {transform:translate(1px,-1px) rotate(.15deg)}
+  100%{transform:translate(0,0) rotate(0)}
 }
-.die.rolling{animation:tumble 2.4s cubic-bezier(.22,.61,.3,1)}
-.die.rolling:nth-child(2){animation-delay:.07s}
-.die.rolling:nth-child(3){animation-delay:.14s}
+.bowl.shaking{animation:bowlshake .42s cubic-bezier(.3,.8,.4,1)}
 .bowl.passed .dice{opacity:.22;filter:grayscale(1)}
 .dice.idle .die{opacity:.58}
 @media (prefers-reduced-motion:reduce){.die.rolling{animation:none}}
@@ -368,10 +362,15 @@ var PIPS = {1:[5],2:[1,9],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9]};
 var STORE = "nhk-chinchiro-v1";
 var PREF = "nhk-chinchiro-pref";
 var MAX_THROWS = 3;
-var ROLL_MS = 2400;      // 丼で転がっている時間
+var ROLL_MS = 2400;                  // 丼で転がっている時間
+var SETTLE = [1860, 2130, 2400];     // いっせいに転がり、最後だけ順に落ち着く
+var DIE = 56;                        // 粒の一辺
+var PULL = 8.2e-5;                   // 丼の窪みが中心へ引く強さ
+var DRAG = 0.0016;                   // 転がりの減衰
+var BOUNCE = 0.52;                   // 壁での跳ね返り
 
 var $ = function(id){ return document.getElementById(id); };
-var S = null, busy = false, muted = false, backTo = "scr-game";
+var S = null, busy = false, muted = false, backTo = "scr-game", scattered = false;
 
 /* 画面が切り替わった直後は、連打が次のボタンに乗らないよう少しだけ受け付けない */
 var armAt = 0, armTimer = null;
@@ -432,26 +431,30 @@ function tone(at, freq, dur, gain, type){
   o.connect(g); g.connect(x.destination);
   o.start(t0); o.stop(t0 + dur + 0.03);
 }
-function clack(at, gain){
+function clack(at, gain, freq){
   var x = audio(); if(!x) return;
   var len = Math.floor(x.sampleRate * 0.06);
   var buf = x.createBuffer(1, len, x.sampleRate), d = buf.getChannelData(0), i;
   for(i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
   var src = x.createBufferSource(); src.buffer = buf;
   var bp = x.createBiquadFilter(); bp.type = "bandpass";
-  bp.frequency.value = 1500 + Math.random() * 1400; bp.Q.value = 1.6;
+  bp.frequency.value = freq || (1500 + Math.random() * 1400); bp.Q.value = freq ? 3.2 : 1.6;
   var g = x.createGain(); g.gain.value = gain;
   src.connect(bp); bp.connect(g); g.connect(x.destination);
   src.start(x.currentTime + at);
 }
-function sndRoll(){
+function sndRoll(){        // 投げ入れる前、手の中で鳴る
   if(muted) return;
-  var t = 0.02, gap = 0.055;
-  for(var i = 0; i < 30 && t < ROLL_MS / 1000 - 0.15; i++){
-    clack(t + Math.random() * 0.02, 0.05 + 0.11 * (1 - t / 2.6));
-    t += gap;
-    gap = Math.min(0.26, gap * 1.16);
-  }
+  clack(0, 0.17, 2300); clack(0.045, 0.15, 2700); clack(0.088, 0.12, 1950);
+}
+function sndBounce(imp){   // 丼の壁に当たった
+  if(muted) return;
+  clack(0, Math.min(0.30, 0.05 + imp * 0.34), 850 + Math.random() * 1600);
+}
+function sndLand(k){       // 一粒が落ち着いた
+  if(muted) return;
+  clack(0, 0.24, 600 + k * 150);
+  tone(0.01, 148 + k * 30, 0.1, 0.05, "sine");
 }
 function sndHand(h){
   if(!h){ tone(0, 240, 0.12, 0.06, "sine"); return; }
@@ -507,6 +510,10 @@ function doRoll(){
     S.hands[current()] = S.pending;
     S.phase = "result";
   }
+  // 転がっている間は手を出せない
+  $("roll").disabled = $("advance").disabled = $("pass").disabled = true;
+  $("hand").innerHTML = '<div class="sub">丼の中で転がっている</div>';
+  renderTries();
   sndRoll();
   animateRoll(function(){
     busy = false;
@@ -634,28 +641,147 @@ function paintDice(faces, blank){
   $("dice").classList.toggle("idle", !!blank);
   for(i = 0; i < 3; i++) renderDie(dice[i], blank ? 0 : faces[i]);
 }
+/* 三粒いっせいに投げ入れ、丼の中で跳ね回らせる。
+   壁で跳ね、窪みに引かれ、擦れて止まる。最後は左から順に落ち着く。 */
+function layoutRow(){
+  var dice = $("dice").children, i;
+  for(i = 0; i < 3; i++){
+    dice[i].classList.remove("rest");
+    dice[i].style.transform = "translate(" + ((i - 1) * 67) + "px,0px) rotate(0deg)";
+  }
+  scattered = false;
+}
+
 function animateRoll(done){
   var dice = $("dice").children, i;
   var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if(reduce){ paintDice(S.dice, false); done(); return; }
+  if(reduce){ paintDice(S.dice, false); layoutRow(); done(); return; }
+
+  $("dice").classList.remove("idle");
+  scattered = true;
+
+  var R = Math.max(38, $("dice").clientWidth / 2 - DIE / 2 - 4);
+  var bowl = $("bowl");
+  bowl.classList.remove("shaking"); void bowl.offsetWidth; bowl.classList.add("shaking");
+  setTimeout(function(){ bowl.classList.remove("shaking"); }, 440);
+  buzz([16, 30, 16]);
+
+  var P = [];
   for(i = 0; i < 3; i++){
-    dice[i].classList.remove("rolling");
-    void dice[i].offsetWidth;
-    dice[i].classList.add("rolling");
+    dice[i].classList.remove("rest");
+    P.push({
+      x: (Math.random() - 0.5) * R * 0.8,
+      y: -R * (0.5 + Math.random() * 0.3),
+      vx: (Math.random() - 0.5) * 1.25,
+      vy: 0.52 + Math.random() * 0.4,
+      a: Math.random() * 360,
+      w: (Math.random() < 0.5 ? -1 : 1) * (0.7 + Math.random() * 0.5),
+      face: d6(), shown: 0, flip: 0, pop: 0, settled: false
+    });
   }
-  var t = 0, gap = 55;
-  (function spin(){
-    if(t >= ROLL_MS - 140){
-      paintDice(S.dice, false);
-      for(var j = 0; j < 3; j++) dice[j].classList.remove("rolling");
-      done();
-      return;
+
+  function draw(k){
+    var p = P[k], sx = 1, sy = 1;
+    if(p.pop > 0){
+      var u = 1 - p.pop / 300;
+      var e = Math.exp(-5.5 * u) * Math.cos(11 * u);
+      sx = 1 + 0.15 * e; sy = 1 - 0.15 * e;
     }
-    paintDice([d6(), d6(), d6()], false);
-    t += gap;
-    gap = Math.min(280, gap * 1.16);   // 転がりが落ち着くにつれ目の変わりも遅くなる
-    setTimeout(spin, gap);
-  })();
+    dice[k].style.transform = "translate(" + p.x.toFixed(1) + "px," + p.y.toFixed(1) +
+      "px) rotate(" + p.a.toFixed(1) + "deg) scale(" + sx.toFixed(3) + "," + sy.toFixed(3) + ")";
+    if(p.shown !== p.face){ renderDie(dice[k], p.face); p.shown = p.face; }
+  }
+
+  var NEED = DIE * 0.96;                       // 止まった粒同士の最短距離
+
+  function clear(k, x, y){                     // その場所が空いているか
+    for(var j = 0; j < 3; j++){
+      if(j === k || !P[j].settled) continue;
+      var dx = x - P[j].x, dy = y - P[j].y;
+      if(Math.sqrt(dx * dx + dy * dy) < NEED) return false;
+    }
+    return true;
+  }
+
+  function place(k){                           // 先に止まった粒を避けて据える
+    var p = P[k], it, j, q, dx, dy, d, r, moved;
+    for(it = 0; it < 14; it++){
+      moved = false;
+      for(j = 0; j < 3; j++){
+        if(j === k || !P[j].settled) continue;
+        q = P[j]; dx = p.x - q.x; dy = p.y - q.y;
+        d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        if(d < NEED){ p.x = q.x + dx / d * NEED; p.y = q.y + dy / d * NEED; moved = true; }
+      }
+      r = Math.sqrt(p.x * p.x + p.y * p.y);
+      if(r > R){ p.x = p.x / r * R; p.y = p.y / r * R; moved = true; }
+      if(!moved) return;
+    }
+    // 押し合いが収まらなければ、丼の縁に沿ってずらして空きを探す
+    var rad = Math.min(R, Math.sqrt(p.x * p.x + p.y * p.y)) || R * 0.6;
+    var base = Math.atan2(p.y, p.x);
+    for(var st = 1; st <= 72; st++){
+      for(var sg = -1; sg <= 1; sg += 2){
+        var th = base + sg * st * Math.PI / 36;
+        var nx = Math.cos(th) * rad, ny = Math.sin(th) * rad;
+        if(clear(k, nx, ny)){ p.x = nx; p.y = ny; return; }
+      }
+    }
+  }
+
+  function rest(k){
+    var p = P[k];
+    p.settled = true; p.vx = p.vy = 0;
+    p.face = S.dice[k];
+    place(k);
+    p.a = Math.round(p.a / 90) * 90 + (Math.random() - 0.5) * 18;
+    p.pop = 300;
+    dice[k].classList.add("rest");
+    sndLand(k);
+    draw(k);
+  }
+
+  var last = performance.now(), start = last, left = 3, lastClack = 0;
+  (function step(now){
+    var dt = Math.min(34, now - last), t = now - start, k, p, alive = false;
+    last = now;
+    var pull = PULL * Math.max(0, 1 - t / (SETTLE[2] * 1.7));    // 窪みの引きは弱まりつつ最後まで残る
+    var damp = Math.exp(-DRAG * dt);
+
+    for(k = 0; k < 3; k++){
+      p = P[k];
+      if(!p.settled){
+        if(t >= SETTLE[k]){ rest(k); if(--left === 0) done(); }
+        else {
+          p.vx = (p.vx - pull * p.x * dt) * damp;
+          p.vy = (p.vy - pull * p.y * dt) * damp;
+          p.x += p.vx * dt; p.y += p.vy * dt;
+
+          var r = Math.sqrt(p.x * p.x + p.y * p.y);
+          if(r > R){
+            var nx = p.x / r, ny = p.y / r, dot = p.vx * nx + p.vy * ny;
+            if(dot > 0){
+              p.vx -= (1 + BOUNCE) * dot * nx;
+              p.vy -= (1 + BOUNCE) * dot * ny;
+              p.w = -p.w * 0.75 + (Math.random() - 0.5) * 0.6;
+              p.face = d6();
+              if(dot > 0.07 && now - lastClack > 40){ lastClack = now; sndBounce(dot); }
+            }
+            p.x = nx * R; p.y = ny * R;
+          }
+
+          var sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+          p.a += p.w * sp * 640 * dt / 1000;
+          p.flip -= dt;
+          if(p.flip <= 0){ p.face = d6(); p.flip = 50 + 340 * (1 - Math.min(1, sp / 0.7)); }
+          draw(k);
+          alive = true;
+        }
+      }
+      if(p.pop > 0){ p.pop = Math.max(0, p.pop - dt); draw(k); alive = true; }
+    }
+    if(alive || left > 0) requestAnimationFrame(step);
+  })(last);
 }
 
 function scoreChips(host){
@@ -711,11 +837,12 @@ function render(){
     "親 " + esc(S.players[S.parent].name) + " は <b class=\"" + ph.kind + "\">" + esc(ph.label) + "</b>";
 
   $("bowl").classList.toggle("passed", S.phase === "result" && !!S.passed[cur]);
-  paintDice(S.dice, S.phase === "roll" && S.throws === 0);
+  if(!busy){
+    paintDice(S.dice, S.phase === "roll" && S.throws === 0);
+    if(S.throws === 0 || !scattered) layoutRow();
+  }
 
-  var tries = "", i;
-  for(i = 1; i <= MAX_THROWS; i++) tries += '<i class="' + (i <= S.throws ? "used" : "") + '"></i>';
-  $("tries").innerHTML = tries + "<span>" + (MAX_THROWS - S.throws) + " 回 のこり</span>";
+  renderTries();
 
   var hand = $("hand"), roll = $("roll"), pass = $("pass"), adv = $("advance");
   if(S.phase === "result"){
@@ -754,11 +881,18 @@ function render(){
     pass.style.order = "3";
     if(!isOya && S.throws === 0 && ph){
       pass.hidden = false;
+      pass.disabled = false;
       pass.textContent = "パスする（" + payout(ph, NOHAND, true) + " 点 払う）";
     } else {
       pass.hidden = true;
     }
   }
+}
+
+function renderTries(){
+  var t = "", i;
+  for(i = 1; i <= MAX_THROWS; i++) t += '<i class="' + (i <= S.throws ? "used" : "") + '"></i>';
+  $("tries").innerHTML = t + "<span>" + (MAX_THROWS - S.throws) + " 回 のこり</span>";
 }
 
 function renderSettle(){
@@ -971,6 +1105,7 @@ if(S){
 }
 render();
 paintDice(S ? S.dice : [1,1,1], !S || (S.phase === "roll" && S.throws === 0));
+layoutRow();
 })();
 </script>
 <!-- ARTIFACT:BODY-END -->

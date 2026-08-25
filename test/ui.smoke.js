@@ -198,19 +198,47 @@ function check(label, cond, extra){
   check("再開後も第2局", (await txt("#ba")).includes("第 2 局"));
   check("再開後も点が残る", JSON.stringify(await scores("#scores")) === "[30,-12,-18]");
 
-  /* ───────── 転がる時間 ───────── */
+  /* ───────── 丼の中の転がり（演出を止めない窓で測る） ───────── */
   const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const p2 = await ctx2.newPage();
+  await ctx2.addInitScript(() => { try{ localStorage.setItem("nhk-chinchiro-pref", "1"); }catch(e){} });
   await p2.goto(URL);
   const i2 = await p2.$$("#names input");
   await i2[0].fill("A"); await i2[1].fill("B");
   await p2.click("#start");
+
+  const R = await p2.$eval("#dice", e => e.clientWidth / 2 - 28 - 4);
+  const read = () => p2.$$eval("#dice .die", els => els.map(e => {
+    const v = (e.style.transform.match(/-?[\d.]+/g) || []).map(Number);
+    return { x: v[0], y: v[1], rest: e.classList.contains("rest") };
+  }));
+
   const t0 = Date.now();
   await p2.click("#roll");
-  await p2.waitForFunction(() => !document.getElementById("advance").hidden, null, { timeout: 8000 });
-  const dur = Date.now() - t0;
-  check("丼で 2 秒以上転がる", dur >= 2000, dur + "ms");
-  check("転がりは 3.5 秒以内に収まる", dur <= 3500, dur + "ms");
+  check("転がっている間は振れない", await p2.$eval("#roll", e => e.disabled));
+
+  let outside = 0, firstRest = {}, moved = new Set();
+  while(Date.now() - t0 < 2900){
+    const st = await read();
+    const el = Date.now() - t0;
+    st.forEach((d, i) => {
+      if(Math.hypot(d.x, d.y) > R + 1.5) outside++;
+      if(d.rest && firstRest[i] === undefined) firstRest[i] = el;
+      if(Math.abs(d.y) > 3) moved.add(i);           // 横一列（y=0）から動いた
+    });
+  }
+  const fin = await read();
+  check("粒は丼からはみ出さない", outside === 0, outside + " 回はみ出し / R=" + R.toFixed(0));
+  check("三粒とも丼の中で動く", moved.size === 3, [...moved].join(","));
+  check("いっせいに投げて最後は左から順に止まる",
+        firstRest[0] <= firstRest[1] && firstRest[1] <= firstRest[2], JSON.stringify(firstRest));
+  check("止まるのは終盤に固まっている", firstRest[0] >= 1500, JSON.stringify(firstRest));
+  check("止まった粒は重ならない", (() => {
+    for(let i = 0; i < 3; i++) for(let j = i + 1; j < 3; j++)
+      if(Math.hypot(fin[i].x - fin[j].x, fin[i].y - fin[j].y) < 50) return false;
+    return true;
+  })(), JSON.stringify(fin.map(d => [Math.round(d.x), Math.round(d.y)])));
+  check("転がりは 3.5 秒以内に収まる", firstRest[2] <= 3500, JSON.stringify(firstRest));
   await ctx2.close();
 
   check("JS エラーなし", errors.length === 0, errors.join(" | "));
