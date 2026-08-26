@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ドラマ検定</title>
+<meta name="description" content="好きなドラマを入れると、その作品の問題が10問出ます。あなたのマニア度を測ります。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ink:#0C1017;
+  --ink-hi:#151B26;
+  --ink-sink:#070A0F;
+  --line:#252E3E;
+  --line-lit:#36425A;
+  --paper:#ECE6DA;
+  --paper-dim:#9AA0AC;
+  --muted:#6E7789;
+  --lamp:#E8B44C;
+  --onair:#E0392C;
+  --onair-lit:#FF5B4A;
+  --cool:#6FA8B5;
+  --good:#5FBE8A;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
+  --font-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--ink);
+  background-image:
+    radial-gradient(ellipse 70% 45% at 50% -6%, rgba(232,180,76,.12), transparent 70%),
+    radial-gradient(ellipse 55% 38% at 50% 106%, rgba(111,168,181,.06), transparent 70%);
+  background-attachment:fixed;
+  color:var(--paper);
+  font-family:var(--font-body);
+  line-height:1.65;
+  -webkit-text-size-adjust:100%;
+}
+button,input{font-family:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--lamp);outline-offset:3px;border-radius:5px}
+[hidden]{display:none !important}
+.wrap{max-width:520px;margin:0 auto;padding:20px 18px 48px;display:flex;flex-direction:column;gap:20px;min-height:100dvh}
+
+/* ---- 見出し ---- */
+.masthead{display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.mast-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.logo{font-family:var(--font-display);font-weight:800;font-size:24px;letter-spacing:.1em;margin:0}
+.logo .on{color:var(--onair-lit)}
+.tagline{font-size:12px;color:var(--muted);letter-spacing:.08em}
+
+/* ---- 共通パーツ ---- */
+.card{background:var(--ink-hi);border:1px solid var(--line);border-radius:12px;padding:16px}
+.btn{
+  display:block;width:100%;padding:13px 16px;border-radius:10px;font-size:15px;font-weight:700;
+  letter-spacing:.06em;border:1px solid var(--line-lit);background:var(--ink-hi);color:var(--paper);
+  transition:background .12s, border-color .12s;
+}
+.btn:hover:not(:disabled){background:#1D2534;border-color:var(--lamp)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.primary{background:var(--lamp);color:#1A1206;border-color:var(--lamp)}
+.btn.primary:hover:not(:disabled){background:#F3C463;border-color:#F3C463}
+.btn.ghost{background:none;font-weight:500;font-size:13px;padding:9px 14px;color:var(--paper-dim)}
+.lead{font-size:14px;color:var(--paper-dim);margin:0}
+.note{font-size:12px;color:var(--muted);line-height:1.7}
+.err{color:var(--onair-lit);font-size:13px;line-height:1.7}
+
+/* ---- 入口 ---- */
+.search{display:flex;gap:8px}
+.search input{
+  flex:1;min-width:0;padding:13px 14px;border-radius:10px;background:var(--ink-sink);
+  border:1px solid var(--line-lit);font-size:16px;
+}
+.search input::placeholder{color:var(--muted)}
+.search button{flex:0 0 auto;padding:0 18px;border-radius:10px;border:1px solid var(--lamp);
+  background:var(--lamp);color:#1A1206;font-weight:700;font-size:14px}
+.search button:disabled{opacity:.4;cursor:default}
+.examples{display:flex;flex-wrap:wrap;gap:6px}
+.ex{background:none;border:1px solid var(--line);border-radius:99px;color:var(--paper-dim);
+  font-size:12px;padding:5px 11px;line-height:1.5}
+.ex:hover{border-color:var(--lamp);color:var(--paper)}
+
+/* ---- 候補 ---- */
+.hits{display:flex;flex-direction:column;gap:8px}
+.hit{display:flex;gap:12px;align-items:center;text-align:left;width:100%;padding:11px 12px;
+  border-radius:10px;background:var(--ink-hi);border:1px solid var(--line);color:inherit}
+.hit:hover{border-color:var(--lamp);background:#1D2534}
+.hit img{flex:0 0 auto;width:44px;height:60px;object-fit:cover;border-radius:5px;background:var(--ink-sink)}
+.hit .ph{flex:0 0 auto;width:44px;height:60px;border-radius:5px;background:var(--ink-sink);
+  display:grid;place-items:center;color:var(--muted);font-size:19px}
+.hit .t{font-weight:700;font-size:15px;line-height:1.45}
+.hit .d{font-size:12px;color:var(--muted);line-height:1.5;margin-top:2px}
+
+/* ---- 出題 ---- */
+.progress{display:flex;gap:3px}
+.progress i{flex:1;height:4px;border-radius:2px;background:var(--line)}
+.progress i.done{background:var(--lamp)}
+.progress i.miss{background:var(--onair)}
+.progress i.now{background:var(--paper-dim)}
+.qhead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);letter-spacing:.08em}
+.lv{padding:3px 9px;border-radius:99px;border:1px solid var(--line);letter-spacing:.14em;font-size:11px}
+.lv.l1{color:var(--cool);border-color:rgba(111,168,181,.45)}
+.lv.l2{color:var(--lamp);border-color:rgba(232,180,76,.45)}
+.lv.l3{color:var(--onair-lit);border-color:rgba(224,57,44,.5)}
+.qtext{font-family:var(--font-display);font-weight:600;font-size:20px;line-height:1.6;
+  letter-spacing:.02em;margin:0;text-wrap:pretty}
+.choices{display:flex;flex-direction:column;gap:9px}
+.ch{text-align:left;width:100%;padding:13px 15px;border-radius:10px;background:var(--ink-hi);
+  border:1px solid var(--line);font-size:15px;line-height:1.5;transition:border-color .12s,background .12s}
+.ch:hover:not(:disabled){border-color:var(--line-lit);background:#1D2534}
+.ch:disabled{cursor:default}
+.ch.right{border-color:var(--good);background:rgba(95,190,138,.13);color:#DFF3E8}
+.ch.wrong{border-color:var(--onair);background:rgba(224,57,44,.13);color:#F6DAD6}
+.ch .mk{font-weight:700;margin-right:9px;color:var(--muted)}
+.ch.right .mk{color:var(--good)} .ch.wrong .mk{color:var(--onair-lit)}
+.verdict{display:flex;flex-direction:column;gap:7px}
+.verdict .v{font-family:var(--font-display);font-weight:800;font-size:17px;letter-spacing:.06em}
+.verdict .v.o{color:var(--good)} .verdict .v.x{color:var(--onair-lit)}
+
+/* ---- 結果 ---- */
+.scorebox{text-align:center;display:flex;flex-direction:column;gap:9px;padding:22px 16px}
+.rank{font-family:var(--font-display);font-weight:800;font-size:35px;letter-spacing:.08em;
+  line-height:1.25;color:var(--lamp)}
+.pct{font-size:13px;color:var(--muted);letter-spacing:.1em;font-variant-numeric:tabular-nums}
+.pct b{color:var(--paper);font-size:20px;font-weight:700}
+.blurb{font-size:14px;color:var(--paper-dim);line-height:1.75;margin:0}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:78px 1fr 42px;align-items:center;gap:10px;font-size:12px}
+.bar .nm{color:var(--paper-dim);letter-spacing:.06em}
+.bar .tr{height:7px;border-radius:4px;background:var(--line);overflow:hidden}
+.bar .fl{height:100%;border-radius:4px;background:var(--lamp)}
+.bar .vl{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.review{display:flex;flex-direction:column;gap:9px}
+.rv{border-left:2px solid var(--line);padding:2px 0 2px 11px;font-size:13px;line-height:1.7}
+.rv.o{border-color:var(--good)} .rv.x{border-color:var(--onair)}
+.rv .q{color:var(--paper-dim)}
+.rv .a{font-weight:700}
+.rv.o .a{color:var(--good)} .rv.x .a{color:var(--onair-lit)}
+.src{font-size:12px;color:var(--muted)}
+.src a{color:var(--cool)}
+
+/* ---- 読み込み ---- */
+.loading{display:flex;flex-direction:column;gap:12px;align-items:center;padding:26px 12px;text-align:center}
+.spin{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);
+  border-top-color:var(--lamp);animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.found{display:flex;flex-wrap:wrap;gap:5px;justify-content:center}
+.tag{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.tag.has{color:var(--lamp);border-color:rgba(232,180,76,.4)}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="mast-top">
+    <h1 class="logo">ドラマ検定<span class="on">●</span></h1>
+    <button class="btn ghost" id="restart" hidden style="width:auto">最初から</button>
+  </div>
+  <p class="tagline">好きなドラマの、どれだけ細部を覚えていますか</p>
+</header>
+
+<!-- 入口 -->
+<section id="scr-home" class="card" style="display:flex;flex-direction:column;gap:14px">
+  <p class="lead">作品名を入れると、日本語版 Wikipedia の記事から10問つくります。</p>
+  <div class="search">
+    <input id="q" type="search" placeholder="例：あまちゃん" autocomplete="off" enterkeyhint="search">
+    <button id="go">検索</button>
+  </div>
+  <div class="examples" id="examples"></div>
+  <p class="note" id="home-note"></p>
+</section>
+
+<!-- 候補 -->
+<section id="scr-hits" hidden style="display:flex;flex-direction:column;gap:12px">
+  <p class="lead" id="hits-lead"></p>
+  <div class="hits" id="hits"></div>
+  <button class="btn ghost" id="back-home">検索しなおす</button>
+</section>
+
+<!-- 読み込み -->
+<section id="scr-load" hidden>
+  <div class="card loading">
+    <div class="spin"></div>
+    <p class="lead" id="load-msg">記事を読んでいます…</p>
+    <div class="found" id="found"></div>
+  </div>
+</section>
+
+<!-- 出題 -->
+<section id="scr-quiz" hidden style="display:flex;flex-direction:column;gap:16px">
+  <div class="progress" id="progress"></div>
+  <div class="qhead">
+    <span id="qcount"></span>
+    <span class="lv" id="qlv"></span>
+  </div>
+  <p class="qtext" id="qtext"></p>
+  <div class="choices" id="choices"></div>
+  <div class="card verdict" id="verdict" hidden>
+    <span class="v" id="vmark"></span>
+    <span class="note" id="vnote"></span>
+  </div>
+  <button class="btn primary" id="next" hidden>次の問題</button>
+</section>
+
+<!-- 結果 -->
+<section id="scr-done" hidden style="display:flex;flex-direction:column;gap:16px">
+  <div class="card scorebox">
+    <div class="rank" id="rank"></div>
+    <div class="pct"><b id="score"></b> / <span id="full"></span> 点　正解 <span id="hits-n"></span>/10</div>
+    <p class="blurb" id="blurb"></p>
+  </div>
+  <div class="card bars" id="bars"></div>
+  <div class="card review" id="review"></div>
+  <p class="src" id="src"></p>
+  <button class="btn primary" id="again">同じドラマでもう一度</button>
+  <button class="btn" id="other">別のドラマで挑む</button>
+</section>
+
+</div>
+<script>
+(function(){
+"use strict";
+
+/* ============================ PURE-BEGIN ============================
+   この下の閉じ目印までは DOM にも通信にも触れない。
+   test/quiz.test.js が この範囲を切り出して node 上で直接動かす。
+   ==================================================================== */
+
+/* 主要な放送局。局を当てる問題のダミーに使う */
+var STATIONS = ["NHK","フジテレビ","TBS","日本テレビ","テレビ朝日","テレビ東京","WOWOW","Netflix"];
+
+/* 人物のダミー。年代で分けてあるのは、対象作と年代がずれた人を選んで
+   「実はその人も出ていた」という誤判定を起こしにくくするため */
+var ACTORS = {
+  "1990":["織田裕二","鈴木保奈美","唐沢寿明","江口洋介","常盤貴子","中山美穂","浅野温子","山口智子","豊川悦司","松嶋菜々子","反町隆史","財前直見"],
+  "2000":["木村拓哉","竹内結子","山下智久","上戸彩","篠原涼子","阿部寛","天海祐希","堤真一","仲間由紀恵","玉木宏","長瀬智也","小雪"],
+  "2010":["堺雅人","綾野剛","石原さとみ","有村架純","長澤まさみ","菅田将暉","吉高由里子","松坂桃李","高橋一生","満島ひかり","新垣結衣","星野源"],
+  "2020":["目黒蓮","川口春奈","横浜流星","上白石萌音","松村北斗","今田美桜","神木隆之介","杉咲花","中村倫也","岡田将生","広瀬すず","賀来賢人"]
+};
+var WRITERS = ["野木亜紀子","坂元裕二","宮藤官九郎","三谷幸喜","大石静","岡田惠和","遊川和彦","古沢良太","森下佳子","中園ミホ","井上由美子","金子茂樹","橋部敦子","浜田秀哉","黒岩勉"];
+var DIRECTORS = ["土井裕泰","堤幸彦","福田雄一","塚原あゆ子","新井順子","水田伸生","平川雄一朗","若松節朗","石井康晴","金子文紀","佐藤東弥","田中亮"];
+var COMPOSERS = ["菅野よう子","服部隆之","千住明","佐藤直紀","得田真裕","澤野弘之","林ゆうき","末廣健一郎","川井憲次","羽岡佳"];
+
+/* ---- 乱数（種つき）。テストで結果を固定できるようにする ---- */
+function rng(seed){
+  var s = seed >>> 0 || 1;
+  return function(){ s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+function pick(arr, rnd){ return arr[Math.floor(rnd() * arr.length)]; }
+function shuffle(arr, rnd){
+  var a = arr.slice();
+  for(var i = a.length - 1; i > 0; i--){
+    var j = Math.floor(rnd() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+
+/* ---- 文字列の掃除 ---- */
+/* 脚注 [1] や全角空白、改行を落として一行にする */
+function cleanText(s){
+  if(!s) return "";
+  return String(s)
+    .replace(/\[\s*(\d+|注\s*\d*|要出典|脚注\s*\d*)\s*\]/g, "")
+    .replace(/[ 　]/g, " ")
+    .replace(/\s*\n\s*/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+/* infobox の一欄には複数人が入る。区切りで割って、肩書きや補足を落とす。
+   <br> は読み取り側で改行にしてあるので、区切りとして先に割る。
+   cleanText は改行を空白に潰すので、割ってから一つずつ通す。          */
+function splitNames(s){
+  if(!s) return [];
+  return String(s)
+    .split(/[、，,／/・･\n]/)
+    .map(function(x){
+      return cleanText(x)
+        .replace(/[（(].*?[)）]/g, "")            /* （第1話）などの補足 */
+        .replace(/^\s*[-–—‐]\s*/, "")
+        .replace(/\s*(ほか|他|など)\s*$/, "")
+        .trim();
+    })
+    .filter(function(x){ return x.length >= 2 && x.length <= 24; });
+}
+
+/* ---- 数字の読み取り ---- */
+function toHalf(s){
+  return String(s).replace(/[０-９．]/g, function(c){
+    return c === "．" ? "." : String.fromCharCode(c.charCodeAt(0) - 0xFEE0);
+  });
+}
+/* 「全11話」「11回」「11」から 11 を取る */
+function readCount(s){
+  var m = toHalf(cleanText(s)).match(/(\d{1,3})\s*(?:話|回|エピソード)?/);
+  return m ? parseInt(m[1], 10) : null;
+}
+/* 「2016年10月11日 - 12月20日」から開始日を取る */
+function readDate(s){
+  var t = toHalf(cleanText(s));
+  var m = t.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  if(m) return { y:+m[1], m:+m[2], d:+m[3] };
+  m = t.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
+  if(m) return { y:+m[1], m:+m[2], d:null };
+  m = t.match(/(\d{4})/);
+  return m ? { y:+m[1], m:null, d:null } : null;
+}
+function dateLabel(o){
+  if(!o) return "";
+  if(o.m == null) return o.y + "年";
+  if(o.d == null) return o.y + "年" + o.m + "月";
+  return o.y + "年" + o.m + "月" + o.d + "日";
+}
+/* 「10.2%」「10.2％」から 10.2 を取る */
+function readRating(s){
+  var m = toHalf(cleanText(s)).match(/(\d{1,2}(?:\.\d)?)\s*[%％]/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+/* ---- infobox の生データを作品の形に整える ---- */
+/* info は {ラベル: 生テキスト} の入れ物。表記ゆれを吸収してひとつに寄せる */
+function fromInfobox(info){
+  function get(){
+    for(var i = 0; i < arguments.length; i++){
+      var k = arguments[i];
+      if(info[k] && cleanText(info[k])) return info[k];
+    }
+    return "";
+  }
+  var period = get("放送期間","放送期間・回数","放送日","公開期間","配信期間","放送");
+  var start = readDate(period) || readDate(get("放送開始","初回放送"));
+  var station = splitNames(get("放送局","制作局","放送チャンネル","配信"))[0] || "";
+  /* 「TBS系」「NHK総合」など後ろの飾りを落として主要局名に寄せる */
+  for(var i = 0; i < STATIONS.length; i++){
+    if(station.indexOf(STATIONS[i]) === 0){ station = STATIONS[i]; break; }
+  }
+  return {
+    station: station,
+    start: start,
+    count: readCount(get("回数","話数","各話数","全話数")),
+    genre: splitNames(get("ジャンル","番組のジャンル")),
+    writers: splitNames(get("脚本","脚本家","原案・脚本")),
+    directors: splitNames(get("演出","監督","演出・監督")),
+    cast: splitNames(get("出演者","出演","主演")),
+    composers: splitNames(get("音楽","劇伴")),
+    theme: splitNames(get("主題歌","オープニング","エンディング","テーマ曲")),
+    origin: splitNames(get("原作","原案")),
+    producers: splitNames(get("プロデューサー","制作","製作","チーフプロデューサー"))
+  };
+}
+
+/* ---- 各話表を整える ---- */
+/* rows は [{no,date,subtitle,rating}] の粗い配列。欠けは落とす */
+function tidyEpisodes(rows){
+  var out = [], seen = {};
+  for(var i = 0; i < rows.length; i++){
+    var r = rows[i];
+    var no = r.no == null ? null : readCount(r.no);
+    if(no == null || no < 1 || no > 200 || seen[no]) continue;
+    seen[no] = 1;
+    out.push({
+      no: no,
+      date: readDate(r.date),
+      subtitle: cleanText(r.subtitle).replace(/^[「『]|[」』]$/g, ""),
+      rating: readRating(r.rating)
+    });
+  }
+  out.sort(function(a, b){ return a.no - b.no; });
+  return out;
+}
+
+/* ---- 作品としてまとめる ---- */
+function makeWork(title, url, info, epRows){
+  var w = fromInfobox(info);
+  w.title = title;
+  w.url = url;
+  w.episodes = tidyEpisodes(epRows || []);
+  if(w.count == null && w.episodes.length >= 3) w.count = w.episodes.length;
+  /* 年代の帯。ダミー人物を対象作から離すのに使う */
+  var y = w.start ? w.start.y : null;
+  w.era = y == null ? null : y < 2000 ? "1990" : y < 2010 ? "2000" : y < 2020 ? "2010" : "2020";
+  return w;
+}
+
+/* 対象作と年代の離れた人物プールを返す */
+function farActors(era){
+  var keys = Object.keys(ACTORS);
+  if(!era) return keys.reduce(function(a, k){ return a.concat(ACTORS[k]); }, []);
+  var far = keys.filter(function(k){ return Math.abs(+k - +era) >= 20; });
+  if(!far.length) far = keys.filter(function(k){ return k !== era; });
+  return far.reduce(function(a, k){ return a.concat(ACTORS[k]); }, []);
+}
+
+/* 正解と重ならないダミーを n 個そろえる。足りなければ null */
+function distract(pool, exclude, n, rnd){
+  var bad = {};
+  (exclude || []).forEach(function(x){ if(x) bad[String(x)] = 1; });
+  var ok = pool.filter(function(x){ return x != null && !bad[String(x)]; });
+  /* 重複を落とす */
+  var uniq = [], seen = {};
+  ok.forEach(function(x){ if(!seen[String(x)]){ seen[String(x)] = 1; uniq.push(x); } });
+  if(uniq.length < n) return null;
+  return shuffle(uniq, rnd).slice(0, n);
+}
+
+/* 正解1つとダミー3つを混ぜて四択にする */
+function makeChoices(answer, wrongs, rnd){
+  var all = shuffle([answer].concat(wrongs), rnd);
+  return { choices: all.map(String), answer: all.indexOf(answer) };
+}
+
+/* 数値のダミー。正解の前後から散らす */
+function numberWrongs(correct, spread, n, rnd, min){
+  var cand = [];
+  for(var d = 1; d <= spread; d++){
+    if(min == null || correct - d >= min) cand.push(correct - d);
+    cand.push(correct + d);
+  }
+  return distract(cand, [correct], n, rnd);
+}
+
+/* ============ 出題テンプレ ============
+   それぞれ作品から1問つくる。材料が足りなければ null を返し、黙って見送る。
+   level 1=易(基本情報) 2=中(制作陣・キャスト) 3=難(各話・数字)          */
+var TEMPLATES = [
+
+/* ---- 易 ---- */
+{ id:"station", level:1, make:function(w, rnd){
+  if(!w.station) return null;
+  var wrongs = distract(STATIONS, [w.station], 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(w.station, wrongs, rnd);
+  return { text:"『" + w.title + "』を放送したのは？", choices:c.choices, answer:c.answer,
+           why:"放送局は " + w.station + "。" };
+}},
+
+{ id:"year", level:1, make:function(w, rnd){
+  if(!w.start) return null;
+  var wrongs = numberWrongs(w.start.y, 5, 3, rnd, 1950);
+  if(!wrongs) return null;
+  var c = makeChoices(w.start.y + "年", wrongs.map(function(y){ return y + "年"; }), rnd);
+  return { text:"『" + w.title + "』の放送が始まったのは何年？", choices:c.choices, answer:c.answer,
+           why:"放送開始は " + dateLabel(w.start) + "。" };
+}},
+
+{ id:"count", level:1, make:function(w, rnd){
+  if(!w.count || w.count < 2) return null;
+  var wrongs = numberWrongs(w.count, 5, 3, rnd, 1);
+  if(!wrongs) return null;
+  var c = makeChoices(w.count + "話", wrongs.map(function(n){ return n + "話"; }), rnd);
+  return { text:"『" + w.title + "』は全何話？", choices:c.choices, answer:c.answer,
+           why:"全 " + w.count + " 話。" };
+}},
+
+{ id:"cast1", level:1, group:"cast", make:function(w, rnd){
+  if(!w.cast.length) return null;
+  var right = w.cast[0];
+  var wrongs = distract(farActors(w.era), w.cast, 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(right, wrongs, rnd);
+  return { text:"『" + w.title + "』に出演していたのは？", choices:c.choices, answer:c.answer,
+           why:right + " が出演。" };
+}},
+
+/* ---- 中 ---- */
+{ id:"writer", level:2, make:function(w, rnd){
+  if(!w.writers.length) return null;
+  var right = w.writers[0];
+  var wrongs = distract(WRITERS, w.writers, 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(right, wrongs, rnd);
+  return { text:"『" + w.title + "』の脚本を書いたのは？", choices:c.choices, answer:c.answer,
+           why:"脚本は " + w.writers.join("、") + "。" };
+}},
+
+{ id:"director", level:2, make:function(w, rnd){
+  if(!w.directors.length) return null;
+  var right = w.directors[0];
+  var wrongs = distract(DIRECTORS, w.directors, 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(right, wrongs, rnd);
+  return { text:"『" + w.title + "』の演出を手がけたのは？", choices:c.choices, answer:c.answer,
+           why:"演出は " + w.directors.slice(0, 3).join("、") + "。" };
+}},
+
+{ id:"music", level:2, make:function(w, rnd){
+  if(!w.composers.length) return null;
+  var right = w.composers[0];
+  var wrongs = distract(COMPOSERS, w.composers, 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(right, wrongs, rnd);
+  return { text:"『" + w.title + "』の音楽を担当したのは？", choices:c.choices, answer:c.answer,
+           why:"音楽は " + w.composers.join("、") + "。" };
+}},
+
+{ id:"notcast", level:2, make:function(w, rnd){
+  if(w.cast.length < 4) return null;
+  var right = pick(farActors(w.era).filter(function(a){ return w.cast.indexOf(a) < 0; }), rnd);
+  if(!right) return null;
+  var wrongs = distract(w.cast, [right], 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(right, wrongs, rnd);
+  return { text:"次のうち『" + w.title + "』に出演していないのは？", choices:c.choices, answer:c.answer,
+           why:right + " は出演者に挙がっていない。" };
+}},
+
+{ id:"cast2", level:2, group:"cast", make:function(w, rnd){
+  if(w.cast.length < 5) return null;
+  var right = w.cast[Math.min(4, w.cast.length - 1)];
+  var wrongs = distract(farActors(w.era), w.cast, 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(right, wrongs, rnd);
+  return { text:"『" + w.title + "』の出演者に名を連ねているのは？", choices:c.choices, answer:c.answer,
+           why:right + " が出演。" };
+}},
+
+/* ---- 難 ---- */
+{ id:"subtitle", level:3, make:function(w, rnd){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  if(subs.length < 4) return null;
+  var target = pick(subs, rnd);
+  var wrongs = distract(subs.map(function(e){ return e.subtitle; }), [target.subtitle], 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(target.subtitle, wrongs, rnd);
+  return { text:"『" + w.title + "』第" + target.no + "話のサブタイトルは？", choices:c.choices, answer:c.answer,
+           why:"第" + target.no + "話は「" + target.subtitle + "」。" };
+}},
+
+{ id:"whichep", level:3, make:function(w, rnd){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  if(subs.length < 4) return null;
+  var target = pick(subs, rnd);
+  var wrongs = distract(subs.map(function(e){ return e.no; }), [target.no], 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices("第" + target.no + "話", wrongs.map(function(n){ return "第" + n + "話"; }), rnd);
+  return { text:"「" + target.subtitle + "」は『" + w.title + "』の第何話？", choices:c.choices, answer:c.answer,
+           why:"「" + target.subtitle + "」は第" + target.no + "話。" };
+}},
+
+{ id:"firstrating", level:3, make:function(w, rnd){
+  var e = w.episodes[0];
+  if(!e || e.rating == null) return null;
+  var cand = [];
+  for(var d = 1; d <= 8; d++){
+    if(e.rating - d >= 1) cand.push(Math.round((e.rating - d) * 10) / 10);
+    cand.push(Math.round((e.rating + d) * 10) / 10);
+  }
+  var wrongs = distract(cand, [e.rating], 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(e.rating + "%", wrongs.map(function(r){ return r + "%"; }), rnd);
+  return { text:"『" + w.title + "』第" + e.no + "話の視聴率は？", choices:c.choices, answer:c.answer,
+           why:"第" + e.no + "話は " + e.rating + "%。" };
+}},
+
+{ id:"toprating", level:3, make:function(w, rnd){
+  var rated = w.episodes.filter(function(e){ return e.rating != null; });
+  if(rated.length < 4) return null;
+  var top = rated.reduce(function(a, b){ return b.rating > a.rating ? b : a; });
+  var wrongs = distract(rated.map(function(e){ return e.no; }), [top.no], 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices("第" + top.no + "話", wrongs.map(function(n){ return "第" + n + "話"; }), rnd);
+  return { text:"『" + w.title + "』で最も視聴率が高かったのは？", choices:c.choices, answer:c.answer,
+           why:"第" + top.no + "話の " + top.rating + "% が最高。" };
+}},
+
+{ id:"airdate", level:3, make:function(w, rnd){
+  var e = w.episodes.filter(function(x){ return x.date && x.date.d != null; })[0];
+  if(!e) return null;
+  var base = new Date(e.date.y, e.date.m - 1, e.date.d);
+  var cand = [];
+  [-21, -14, -7, 7, 14, 21].forEach(function(off){
+    var d = new Date(base.getTime() + off * 86400000);
+    cand.push(dateLabel({ y:d.getFullYear(), m:d.getMonth() + 1, d:d.getDate() }));
+  });
+  var right = dateLabel(e.date);
+  var wrongs = distract(cand, [right], 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(right, wrongs, rnd);
+  return { text:"『" + w.title + "』第" + e.no + "話が放送されたのは？", choices:c.choices, answer:c.answer,
+           why:"第" + e.no + "話は " + right + " の放送。" };
+}},
+
+{ id:"origin", level:2, make:function(w, rnd){
+  if(!w.origin.length) return null;
+  var right = w.origin[0];
+  var pool = ["東野圭吾","池井戸潤","湊かなえ","宮部みゆき","三浦しをん","有川浩","伊坂幸太郎","恩田陸","朝井リョウ","海野つなみ"];
+  var wrongs = distract(pool, w.origin, 3, rnd);
+  if(!wrongs) return null;
+  var c = makeChoices(right, wrongs, rnd);
+  return { text:"『" + w.title + "』の原作に名があるのは？", choices:c.choices, answer:c.answer,
+           why:"原作は " + w.origin.join("、") + "。" };
+}}
+];
+
+/* ---- 10問を組む ----
+   易3・中4・難3 を狙い、足りない層は他から埋める。
+   同じ材料の問題が並ばないよう、テンプレは1回ずつしか使わない。   */
+var WANT = { 1:3, 2:4, 3:3 };
+var TOTAL = 10;
+
+function buildQuiz(w, seed){
+  var rnd = rng(seed || 1);
+  var byLevel = { 1:[], 2:[], 3:[] };
+  var usedGroup = {};
+  shuffle(TEMPLATES, rnd).forEach(function(t){
+    /* 同じ材料を問う設問が並ぶと繰り返しに見えるので、系統ごとに1問まで */
+    if(t.group && usedGroup[t.group]) return;
+    var q = t.make(w, rnd);
+    if(!q) return;
+    if(t.group) usedGroup[t.group] = 1;
+    q.id = t.id; q.level = t.level; byLevel[t.level].push(q);
+  });
+  var out = [];
+  [1, 2, 3].forEach(function(lv){ out = out.concat(byLevel[lv].splice(0, WANT[lv])); });
+  var rest = shuffle(byLevel[1].concat(byLevel[2], byLevel[3]), rnd);
+  while(out.length < TOTAL && rest.length) out.push(rest.shift());
+  out.sort(function(a, b){ return a.level - b.level; });
+  return out.slice(0, TOTAL);
+}
+
+/* ---- 採点 ---- */
+/* 難しい問題ほど重い。満点は実際に出した問題の重みの合計 */
+function grade(quiz, answers){
+  var got = 0, full = 0, hits = 0;
+  var per = { 1:{ got:0, full:0 }, 2:{ got:0, full:0 }, 3:{ got:0, full:0 } };
+  quiz.forEach(function(q, i){
+    var w = q.level;
+    full += w; per[q.level].full += w;
+    if(answers[i] === q.answer){ got += w; hits++; per[q.level].got += w; }
+  });
+  return { score:got, full:full, hits:hits, ratio:full ? got / full : 0, per:per };
+}
+
+var RANKS = [
+  { at:1.00, name:"制作陣",     blurb:"全問正解。もうあなたが次の話を書いてください。" },
+  { at:0.85, name:"ガチ勢",     blurb:"各話のサブタイトルまで身体に入っている。相当です。" },
+  { at:0.70, name:"リアタイ勢", blurb:"毎週きちんと追っていた人の点数。制作陣まで見えています。" },
+  { at:0.50, name:"見てた人",   blurb:"筋はちゃんと覚えている。細部はもう一周すると化けます。" },
+  { at:0.30, name:"うろ覚え",   blurb:"話題になっていたのは知っている、くらいの手ざわり。" },
+  { at:0.00, name:"にわか",     blurb:"ここからです。まず初回だけでも観直してみませんか。" }
+];
+function rankOf(ratio){
+  for(var i = 0; i < RANKS.length; i++) if(ratio >= RANKS[i].at) return RANKS[i];
+  return RANKS[RANKS.length - 1];
+}
+
+/* ============================= PURE-END ============================= */
+
+/* ---- 取得（ここから先は通信と DOM） ---- */
+var API = "https://ja.wikipedia.org/w/api.php";
+function api(params){
+  var u = new URL(API);
+  params.format = "json";
+  params.origin = "*";          /* CORS を許すための Wikipedia の作法 */
+  params.formatversion = "2";
+  Object.keys(params).forEach(function(k){ u.searchParams.set(k, params[k]); });
+  return fetch(u, { redirect:"follow" }).then(function(r){
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  });
+}
+
+/* 作品名で候補を引く。説明文でドラマらしいものを上に寄せる */
+function search(q){
+  return api({
+    action:"query", generator:"search", gsrsearch:q, gsrlimit:"14",
+    prop:"pageimages|description", piprop:"thumbnail", pithumbsize:"120"
+  }).then(function(j){
+    var pages = (j.query && j.query.pages) || [];
+    var hits = pages.map(function(p){
+      return { title:p.title, desc:p.description || "", thumb:p.thumbnail && p.thumbnail.source,
+               index:p.index || 99 };
+    });
+    function looksDrama(h){
+      return /ドラマ|テレビ番組|連続テレビ小説|大河ドラマ|テレビシリーズ|TVシリーズ/i.test(h.desc + " " + h.title);
+    }
+    hits.sort(function(a, b){
+      var d = (looksDrama(b) ? 1 : 0) - (looksDrama(a) ? 1 : 0);
+      return d !== 0 ? d : a.index - b.index;
+    });
+    return hits;
+  });
+}
+
+/* 記事の本文 HTML を取る。infobox と各話表がここに全部入っている */
+function fetchArticle(title){
+  return api({ action:"parse", page:title, prop:"text", redirects:"1" }).then(function(j){
+    if(j.error) throw new Error(j.error.info || "記事を読めません");
+    return { title:j.parse.title, html:j.parse.text };
+  });
+}
+
+/* ---- HTML から材料を抜く ---- */
+/* infobox の各行を {ラベル:テキスト} に。表記ゆれは fromInfobox が吸収する */
+function readInfobox(root){
+  var info = {};
+  var boxes = root.querySelectorAll("table.infobox, table.infobox_v2, table.infobox_v3");
+  for(var b = 0; b < boxes.length; b++){
+    var rows = boxes[b].querySelectorAll("tr");
+    for(var i = 0; i < rows.length; i++){
+      var th = rows[i].querySelector("th"), td = rows[i].querySelector("td");
+      if(!th || !td) continue;
+      var key = cleanText(th.textContent);
+      if(!key || info[key]) continue;
+      /* <br> と <li> を区切りとして残したいので、いったん改行に置き換える */
+      var clone = td.cloneNode(true);
+      clone.querySelectorAll("br").forEach(function(el){ el.replaceWith("\n"); });
+      clone.querySelectorAll("li").forEach(function(el){ el.append("\n"); });
+      clone.querySelectorAll("sup, style, .reference").forEach(function(el){ el.remove(); });
+      info[key] = clone.textContent;
+    }
+  }
+  return info;
+}
+
+/* 各話表を探して行を拾う。列の並びは記事ごとに違うので見出しで当てる */
+function readEpisodes(root){
+  var tables = root.querySelectorAll("table.wikitable");
+  var best = [];
+  for(var t = 0; t < tables.length; t++){
+    var rows = tables[t].querySelectorAll("tr");
+    if(rows.length < 3) continue;
+    var heads = rows[0].querySelectorAll("th, td");
+    var col = { no:-1, date:-1, subtitle:-1, rating:-1 };
+    for(var h = 0; h < heads.length; h++){
+      var label = cleanText(heads[h].textContent);
+      if(col.no < 0 && /^(話数?|各話|回|話)$/.test(label)) col.no = h;
+      else if(col.date < 0 && /放送日|配信日|放送年月日|日付/.test(label)) col.date = h;
+      else if(col.subtitle < 0 && /サブタイトル|副題|タイトル|題名/.test(label)) col.subtitle = h;
+      else if(col.rating < 0 && /視聴率/.test(label)) col.rating = h;
+    }
+    /* 話数の列と、サブタイトルか視聴率のどちらかが要る */
+    if(col.no < 0 || (col.subtitle < 0 && col.rating < 0)) continue;
+    var got = [];
+    for(var r = 1; r < rows.length; r++){
+      var cells = rows[r].querySelectorAll("th, td");
+      if(!cells.length) continue;
+      function cell(i){ return i >= 0 && cells[i] ? cleanText(cells[i].textContent) : ""; }
+      got.push({ no:cell(col.no), date:cell(col.date), subtitle:cell(col.subtitle), rating:cell(col.rating) });
+    }
+    if(got.length > best.length) best = got;
+  }
+  return best;
+}
+
+function parseArticle(title, html){
+  var doc = new DOMParser().parseFromString(html, "text/html");
+  var url = "https://ja.wikipedia.org/wiki/" + encodeURIComponent(title.replace(/ /g, "_"));
+  return makeWork(title, url, readInfobox(doc.body), readEpisodes(doc.body));
+}
+
+/* ---- 画面 ---- */
+var $ = function(id){ return document.getElementById(id); };
+var SCREENS = ["home","hits","load","quiz","done"];
+function show(name){
+  SCREENS.forEach(function(s){ $("scr-" + s).hidden = (s !== name); });
+  $("restart").hidden = (name === "home");
+  window.scrollTo(0, 0);
+}
+
+var EXAMPLES = ["あまちゃん","逃げるは恥だが役に立つ","半沢直樹","カルテット","silent","鎌倉殿の13人","白い巨塔","アンナチュラル"];
+var state = { work:null, quiz:null, at:0, answers:[], locked:false };
+
+/* ---- 入口 ---- */
+EXAMPLES.forEach(function(name){
+  var b = document.createElement("button");
+  b.className = "ex"; b.textContent = name;
+  b.onclick = function(){ $("q").value = name; runSearch(); };
+  $("examples").append(b);
+});
+
+function runSearch(){
+  var q = $("q").value.trim();
+  if(!q) return;
+  $("go").disabled = true;
+  $("home-note").textContent = "";
+  search(q).then(function(hits){
+    if(!hits.length){
+      $("home-note").innerHTML = '<span class="err">「' + esc(q) + '」で記事が見つかりませんでした。正式な題名で試してください。</span>';
+      return;
+    }
+    showHits(q, hits);
+  }).catch(function(e){
+    $("home-note").innerHTML = '<span class="err">検索できませんでした（' + esc(e.message) + '）。'
+      + 'この画面をローカルのファイルとして開いている場合、通信が遮られていることがあります。</span>';
+  }).then(function(){ $("go").disabled = false; });
+}
+$("go").onclick = runSearch;
+$("q").addEventListener("keydown", function(e){ if(e.key === "Enter") runSearch(); });
+
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){
+  return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]; }); }
+
+/* ---- 候補 ---- */
+function showHits(q, hits){
+  $("hits-lead").textContent = "「" + q + "」の候補です。挑む作品を選んでください。";
+  var box = $("hits"); box.textContent = "";
+  hits.forEach(function(h){
+    var b = document.createElement("button");
+    b.className = "hit";
+    var img = h.thumb
+      ? '<img src="' + esc(h.thumb) + '" alt="" loading="lazy">'
+      : '<span class="ph">▶</span>';
+    b.innerHTML = img + '<span><span class="t">' + esc(h.title) + '</span>'
+      + (h.desc ? '<span class="d">' + esc(h.desc) + '</span>' : '') + '</span>';
+    b.onclick = function(){ load(h.title); };
+    box.append(b);
+  });
+  show("hits");
+}
+$("back-home").onclick = function(){ show("home"); };
+$("restart").onclick = function(){ show("home"); };
+
+/* ---- 読み込みと生成 ---- */
+function load(title){
+  show("load");
+  $("load-msg").textContent = "「" + title + "」の記事を読んでいます…";
+  $("found").textContent = "";
+  fetchArticle(title).then(function(a){
+    var w = parseArticle(a.title, a.html);
+    state.work = w;
+    reportFound(w);
+    var quiz = buildQuiz(w, Date.now() & 0x7fffffff);
+    if(quiz.length < 4){
+      $("load-msg").innerHTML = '<span class="err">「' + esc(a.title) + '」の記事からは問題を4問も作れませんでした。'
+        + '出演者や放送局が表にまとまっている作品だと出題できます。</span>';
+      var back = document.createElement("button");
+      back.className = "btn ghost"; back.textContent = "別の作品を選ぶ";
+      back.onclick = function(){ show("hits"); };
+      $("found").append(back);
+      return;
+    }
+    state.quiz = quiz; state.at = 0; state.answers = [];
+    askQuestion();
+  }).catch(function(e){
+    $("load-msg").innerHTML = '<span class="err">記事を読めませんでした（' + esc(e.message) + '）。</span>';
+  });
+}
+
+/* 何が取れたかを見せる。取れなかった材料が分かると原因を追いやすい */
+function reportFound(w){
+  var items = [
+    ["放送局", !!w.station], ["放送年", !!w.start], ["話数", w.count != null],
+    ["出演者", w.cast.length > 0], ["脚本", w.writers.length > 0], ["演出", w.directors.length > 0],
+    ["音楽", w.composers.length > 0], ["原作", w.origin.length > 0],
+    ["各話", w.episodes.length > 0],
+    ["視聴率", w.episodes.some(function(e){ return e.rating != null; })]
+  ];
+  var box = $("found"); box.textContent = "";
+  items.forEach(function(p){
+    var s = document.createElement("span");
+    s.className = "tag" + (p[1] ? " has" : "");
+    s.textContent = (p[1] ? "✓ " : "− ") + p[0];
+    box.append(s);
+  });
+}
+
+/* ---- 出題 ---- */
+function askQuestion(){
+  var q = state.quiz[state.at];
+  state.locked = false;
+  show("quiz");
+  paintProgress();
+  $("qcount").textContent = "第 " + (state.at + 1) + " 問 / " + state.quiz.length;
+  var lv = $("qlv");
+  lv.className = "lv l" + q.level;
+  lv.textContent = q.level === 1 ? "基本" : q.level === 2 ? "制作" : "各話";
+  $("qtext").textContent = q.text;
+  var box = $("choices"); box.textContent = "";
+  q.choices.forEach(function(c, i){
+    var b = document.createElement("button");
+    b.className = "ch";
+    b.innerHTML = '<span class="mk">' + "ABCD"[i] + '</span>' + esc(c);
+    b.onclick = function(){ answer(i); };
+    box.append(b);
+  });
+  $("verdict").hidden = true;
+  $("next").hidden = true;
+}
+
+function paintProgress(){
+  var box = $("progress"); box.textContent = "";
+  for(var i = 0; i < state.quiz.length; i++){
+    var el = document.createElement("i");
+    if(i < state.answers.length) el.className = state.answers[i] === state.quiz[i].answer ? "done" : "miss";
+    else if(i === state.at) el.className = "now";
+    box.append(el);
+  }
+}
+
+function answer(chosen){
+  if(state.locked) return;
+  state.locked = true;
+  var q = state.quiz[state.at];
+  state.answers.push(chosen);
+  var right = chosen === q.answer;
+  var btns = $("choices").children;
+  for(var i = 0; i < btns.length; i++){
+    btns[i].disabled = true;
+    if(i === q.answer) btns[i].classList.add("right");
+    else if(i === chosen) btns[i].classList.add("wrong");
+  }
+  $("vmark").className = "v " + (right ? "o" : "x");
+  $("vmark").textContent = right ? "正解" : "不正解";
+  $("vnote").textContent = q.why;
+  $("verdict").hidden = false;
+  paintProgress();
+  var last = state.at === state.quiz.length - 1;
+  $("next").textContent = last ? "結果を見る" : "次の問題";
+  $("next").hidden = false;
+}
+
+$("next").onclick = function(){
+  if(state.at < state.quiz.length - 1){ state.at++; askQuestion(); }
+  else finish();
+};
+
+/* ---- 結果 ---- */
+function finish(){
+  var g = grade(state.quiz, state.answers);
+  var r = rankOf(g.ratio);
+  $("rank").textContent = r.name;
+  $("score").textContent = g.score;
+  $("full").textContent = g.full;
+  $("hits-n").textContent = g.hits;
+  $("blurb").textContent = r.blurb;
+
+  var names = { 1:"基本情報", 2:"制作・出演", 3:"各話・数字" };
+  var bars = $("bars"); bars.textContent = "";
+  [1, 2, 3].forEach(function(lv){
+    var p = g.per[lv];
+    if(!p.full) return;
+    var pct = Math.round(p.got / p.full * 100);
+    var row = document.createElement("div");
+    row.className = "bar";
+    row.innerHTML = '<span class="nm">' + names[lv] + '</span>'
+      + '<span class="tr"><span class="fl" style="width:' + pct + '%"></span></span>'
+      + '<span class="vl">' + pct + '%</span>';
+    bars.append(row);
+  });
+
+  var rv = $("review"); rv.textContent = "";
+  state.quiz.forEach(function(q, i){
+    var ok = state.answers[i] === q.answer;
+    var d = document.createElement("div");
+    d.className = "rv " + (ok ? "o" : "x");
+    d.innerHTML = '<span class="a">' + (ok ? "○" : "×") + '</span> '
+      + '<span class="q">' + esc(q.text) + '</span><br>' + esc(q.why);
+    rv.append(d);
+  });
+
+  $("src").innerHTML = '出典：<a href="' + esc(state.work.url) + '" target="_blank" rel="noopener">'
+    + esc(state.work.title) + ' - Wikipedia</a>（CC BY-SA）';
+  show("done");
+}
+
+$("again").onclick = function(){
+  state.quiz = buildQuiz(state.work, Date.now() & 0x7fffffff);
+  state.at = 0; state.answers = [];
+  askQuestion();
+};
+$("other").onclick = function(){ show("home"); };
+
+/* テストから触れるように、純粋な部分だけ外に出す */
+window.__quiz = {
+  cleanText:cleanText, splitNames:splitNames, readCount:readCount, readDate:readDate,
+  readRating:readRating, fromInfobox:fromInfobox, tidyEpisodes:tidyEpisodes, makeWork:makeWork,
+  buildQuiz:buildQuiz, grade:grade, rankOf:rankOf,
+  readInfobox:readInfobox, readEpisodes:readEpisodes, parseArticle:parseArticle
+};
+
+show("home");
+})();
+</script>
+</body>
+</html>

@@ -81,3 +81,11 @@ open index.html
 node test/rules.test.js      # 役の判定と点の計算
 node test/ui.smoke.js        # 実ブラウザでの画面の流れ（要 playwright）
 ```
+
+---
+
+## ほかのアプリ
+
+このリポジトリには、もう1つ HTML1枚のアプリが入っています。
+
+- **[ドラマ検定](drama/)** — 好きなドラマを入れると、日本語版 Wikipedia からその作品の問題を10問つくって、マニア度を測ります。
