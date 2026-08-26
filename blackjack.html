@@ -191,6 +191,52 @@ input::placeholder{color:#4E576D}
 .verdict .big.draw{color:var(--muted);text-shadow:none}
 .verdict .why{font-size:12px;color:var(--kinari-dim);letter-spacing:.04em}
 
+/* ---- 決着の演出 ---- */
+.seat-box .hand-row{perspective:660px}
+@keyframes flipin{
+  from{opacity:0;transform:rotateY(-84deg) translateY(7px)}
+  55% {opacity:1}
+  to  {opacity:1;transform:none}
+}
+@keyframes pop{
+  from{opacity:0;transform:scale(.72)}
+  62% {transform:scale(1.15)}
+  to  {opacity:1;transform:none}
+}
+@keyframes popshake{
+  0%  {opacity:0;transform:scale(.72)}
+  50% {opacity:1;transform:scale(1.18)}
+  66% {transform:translateX(-5px)}
+  78% {transform:translateX(4px)}
+  89% {transform:translateX(-2px)}
+  100%{opacity:1;transform:none}
+}
+@keyframes rise{
+  from{opacity:0;transform:translateY(16px);letter-spacing:.3em;text-shadow:none}
+  to  {opacity:1;transform:none;letter-spacing:.05em}
+}
+@keyframes lit{
+  from{border-color:var(--line);box-shadow:none}
+  to  {border-color:var(--kincha);
+       box-shadow:inset 0 0 0 1px rgba(223,171,76,.22), 0 0 34px rgba(223,171,76,.14)}
+}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+
+.celebrate .reveal{animation:flipin .44s cubic-bezier(.2,.85,.3,1) both}
+.celebrate .reveal-lb{animation:fadein .44s ease both}
+.celebrate .sum{animation:pop .40s cubic-bezier(.2,.9,.3,1) both}
+.celebrate .sum.over{animation:popshake .62s cubic-bezier(.2,.9,.3,1) both}
+.celebrate .seat-box.win{animation:lit .8s ease both;animation-delay:.98s}
+.celebrate .big{animation:rise .72s cubic-bezier(.2,.8,.3,1) both;animation-delay:.98s}
+.celebrate .why{animation:fadein .6s ease both;animation-delay:1.24s}
+.celebrate .panel,.celebrate > .act{animation:fadein .5s ease both;animation-delay:1.3s}
+#v-dust{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:40}
+@media (prefers-reduced-motion:reduce){
+  .celebrate .reveal,.celebrate .reveal-lb,.celebrate .sum,.celebrate .sum.over,
+  .celebrate .seat-box.win,.celebrate .big,.celebrate .why,
+  .celebrate .panel,.celebrate > .act{animation:none}
+}
+
 /* ---- ルール ---- */
 .rules{font-size:13px;line-height:1.9;color:var(--kinari-dim)}
 .rules h3{font-family:var(--font-display);font-size:14px;letter-spacing:.14em;color:var(--kincha);
@@ -364,6 +410,7 @@ input::placeholder{color:#4E576D}
 
   <!-- 結果 -->
   <section id="scr-result" hidden>
+    <canvas id="v-dust" aria-hidden="true"></canvas>
     <div class="verdict">
       <div class="big" id="v-big"></div>
       <div class="why" id="v-why"></div>
@@ -508,6 +555,7 @@ var overlay = null;      /* "rules" のときルール画面をかぶせる */
 var setupColor = "RED";
 var sel = [];            /* 手札選択の途中 ・ 選んだ順の札 id */
 var pickIdx = null;      /* 指名やトレードで選んでいる位置 */
+var celebrate = false;   /* 結果画面を演出付きで出すか */
 
 function shuffle(a){
   for(var i = a.length - 1; i > 0; i--){
@@ -635,6 +683,7 @@ function showdown(){
   else S.record.win[S.result.winner]++;
   S.phase = "result";
   S.holder = null;
+  celebrate = true;               /* 決着した直後の一度だけ演出する */
 }
 
 /* p から見て中身が確実に分かっている、相手の手札の位置 */
@@ -869,12 +918,80 @@ function renderSwap(){
   $("w-body").className = "swap anim";
 }
 
+/* ---- 金粉 ----
+   勝ちが決まったあと、上から金の粉が舞い落ちて消える。 */
+var dustRaf = null, dustAt = null;
+function stopDust(){
+  if(dustAt){ clearTimeout(dustAt); dustAt = null; }
+  if(dustRaf){ cancelAnimationFrame(dustRaf); dustRaf = null; }
+  var cv = $("v-dust");
+  if(cv && cv.getContext) cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+}
+function goldDust(){
+  dustAt = null;
+  var cv = $("v-dust");
+  if(!cv || !cv.getContext) return;
+  if($("scr-result").hidden) return;
+  try{
+    if(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  }catch(e){}
+
+  var w = cv.clientWidth, h = cv.clientHeight;
+  if(!w || !h) return;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = w * dpr; cv.height = h * dpr;
+  var g = cv.getContext("2d");
+  g.scale(dpr, dpr);
+
+  var bits = [];
+  for(var i = 0; i < 90; i++){
+    bits.push({
+      x: Math.random() * w,
+      y: -10 - Math.random() * h * 0.55,      /* 画面のすぐ上から湧かせる */
+      vy: 150 + Math.random() * 230,          /* 一秒あたりの落ちる距離 */
+      sway: 10 + Math.random() * 26,          /* 横に揺れる幅 */
+      phase: Math.random() * Math.PI * 2,
+      len: 2.4 + Math.random() * 5.2,
+      rot: Math.random() * Math.PI,
+      spin: (Math.random() - 0.5) * 5
+    });
+  }
+
+  var LIFE = 2600, FADE = 800, t0 = null;
+  function frame(now){
+    if(t0 === null) t0 = now;
+    var t = now - t0;
+    g.clearRect(0, 0, w, h);
+    if(t > LIFE){ dustRaf = null; return; }
+    var fade = (t < LIFE - FADE) ? 1 : (LIFE - t) / FADE;
+    for(var i = 0; i < bits.length; i++){
+      var b = bits[i];
+      var y = b.y + b.vy * t / 1000;
+      if(y < -20 || y > h + 20) continue;
+      g.save();
+      g.translate(b.x + Math.sin(b.phase + t / 430) * b.sway, y);
+      g.rotate(b.rot + b.spin * t / 1000);
+      g.globalAlpha = 0.9 * fade;
+      g.fillStyle = "#DFAB4C";
+      g.fillRect(-b.len / 2, -b.len / 5, b.len, b.len / 2.5);
+      g.restore();
+    }
+    dustRaf = requestAnimationFrame(frame);
+  }
+  dustRaf = requestAnimationFrame(frame);
+}
+
 function renderResult(){
   var v = S.result;
+  var party = celebrate; celebrate = false;   /* 演出は決着直後の一度だけ */
   $("v-big").textContent = (v.winner === -1) ? "引き分け" : (S.names[v.winner] + " の勝ち");
   $("v-big").className = "big" + (v.winner === -1 ? " draw" : "");
   $("v-why").textContent = whyText(v);
-  fill($("v-board"), [0, 1].map(function(p){ return seatBox(p, v); }));
+  fill($("v-board"), [0, 1].map(function(p){ return seatBox(p, v, party); }));
+  $("scr-result").classList.toggle("celebrate", party);
+  stopDust();
+  /* 引き分けに金粉は似合わないので、勝ちが決まったときだけ舞わせる */
+  if(party && v.winner !== -1) dustAt = setTimeout(goldDust, 1000);
   var r = S.record;
   fill($("v-record"), [
     kvNode(S.names[0] + "（" + (S.colors[0] === "RED" ? "赤" : "黒") + "）", r.win[0] + " 勝"),
@@ -889,7 +1006,7 @@ function whyText(v){
   if(v.type === "cards")  return "合計が同じため、大きい札から順に比べて決着";
   return "四枚の数字がすべて同じため";
 }
-function seatBox(p, v){
+function seatBox(p, v, party){
   var box = document.createElement("div");
   box.className = "seat-box" + (v.winner === p ? " win" : "");
   var head = document.createElement("div"); head.className = "head";
@@ -905,6 +1022,17 @@ function seatBox(p, v){
   var row = document.createElement("div"); row.className = "hand-row";
   fill(row, handSlots(p));
   box.appendChild(head); box.appendChild(row);
+  if(party){
+    /* 手前の席から一枚ずつめくり、四枚めくり終えたところで合計を出す */
+    var base = p * 460;
+    Array.prototype.forEach.call(row.querySelectorAll(".slot"), function(slot, i){
+      var d = (base + i * 95) + "ms";
+      var card = slot.querySelector(".card"), lb = slot.querySelector(".lb");
+      card.classList.add("reveal"); card.style.animationDelay = d;
+      if(lb){ lb.classList.add("reveal-lb"); lb.style.animationDelay = d; }
+    });
+    sum.style.animationDelay = (base + 400) + "ms";
+  }
   return box;
 }
 function kvNode(k, v){
@@ -917,7 +1045,7 @@ function kvNode(k, v){
 
 /* ========== 操作 ========== */
 function on(id, fn){ $(id).addEventListener("click", fn); }
-function openRules(){ overlay = "rules"; render(); }
+function openRules(){ stopDust(); overlay = "rules"; render(); }
 
 on("t-rules", openRules);
 on("b-rules", openRules);
@@ -953,12 +1081,13 @@ on("b-check", function(){ declare("check"); render(); });
 on("b-trade", function(){ declare("trade"); render(); });
 on("b-give", function(){ givePick(); render(); });
 on("b-swap-next", function(){ applySwap(); render(); });
-on("b-again", function(){ newRound(); render(); });
+on("b-again", function(){ stopDust(); newRound(); render(); });
 on("b-end", function(){ quit(); });
 on("t-quit", function(){
   if(window.confirm("この対局をやめて、最初に戻りますか。")) quit();
 });
 function quit(){
+  stopDust();
   clearSave(); saved = null; S = null; sel = []; pickIdx = null;
   view = "title"; overlay = null; render();
 }

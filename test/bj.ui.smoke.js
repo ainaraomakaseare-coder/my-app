@@ -178,6 +178,24 @@ const at = n => 2 * (n - 1);          /* その数字の一枚目（♦ / ♣）
         s3.record.win[0] + s3.record.win[1] + s3.record.draw === 1);
   check("交換は最大二回に収まる", s3.tradeNo <= 2);
 
+  /* ---- 決着の演出 ---- */
+  const hasClass = (sel, cls) => page.evaluate(([s, c]) =>
+    document.querySelector(s).classList.contains(c), [sel, cls]);
+  check("決着した直後は演出が付く", await hasClass("#scr-result", "celebrate"));
+  check("八枚とも順にめくれる", await count("#v-board .card.reveal") === 8);
+  check("札のラベルも一緒に出る", await count("#v-board .lb.reveal-lb") === 8);
+  check("めくる間は席ごとにずれていく",
+        await page.locator("#v-board .card.reveal").evaluateAll(
+          els => els.map(e => parseInt(e.style.animationDelay, 10))
+        ).then(d => d.join(",")) === "0,95,190,285,460,555,650,745");
+  check("金粉の受け皿が結果画面にある", await count("#scr-result > #v-dust") === 1);
+  check("演出中でも合計はすぐ読める",
+        (await page.locator("#v-board .sum").allTextContents()).every(t => /\d/.test(t)));
+  await tap("#t-rules");
+  await tap("#b-rules-close");
+  check("ルールを見て戻っても演出はやり直さない", !(await hasClass("#scr-result", "celebrate")));
+  check("戻っても八枚は出たまま", await count("#v-board .card") === 8);
+
   /* ---- 再戦 ---- */
   await tap("#b-again");
   check("再戦は受け渡しから", await vis("#scr-guard"));
