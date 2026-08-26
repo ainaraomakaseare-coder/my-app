@@ -42,7 +42,7 @@
 
 ## リポジトリ
 
-未登録。DAY6 の片付けで `day04-blackjack` として載せる。
+`my-app` の `claude/blackjack-game-dev-1wvcdm` ブランチに `blackjack.html` として入っている（チンチロと同居）。DAY6 の片付けで `day04-blackjack` に分ける。
 
 ## DAY RESULT
 

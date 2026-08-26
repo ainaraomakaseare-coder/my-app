@@ -39,7 +39,7 @@
 
 ## リポジトリ
 
-未登録。DAY6 の片付けで `day05-dramaou` として載せる。
+`my-app` の `claude/drama-quiz-app-7kzkkq` ブランチに `drama/` として入っている（チンチロと同居）。DAY6 の片付けで `day05-dramaou` に分ける。
 
 ## DAY RESULT
 
