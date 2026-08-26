@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12131a">
+<title>人狼 - みんなのスマホで</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2312131a'/%3E%3Ccircle cx='16' cy='13' r='6' fill='%23eceef5'/%3E%3Cpath d='M9 26c1.5-4 4-6 7-6s5.5 2 7 6z' fill='%23b8442f'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ 参加者の画面（QRから開かれる） ============ -->
+<main id="playerView" hidden>
+  <div class="wrap narrow">
+    <div id="roleCard" class="rolecard">
+      <div class="rolecard-cover" id="roleCover">
+        <p class="rolecard-name" id="coverName"></p>
+        <p class="rolecard-hint">まわりに見られていないか確認してから</p>
+        <button class="btn btn-primary btn-lg" id="revealBtn">タップして役職を見る</button>
+      </div>
+      <div class="rolecard-body" id="roleBody" hidden>
+        <p class="rolecard-for" id="roleFor"></p>
+        <p class="rolecard-role" id="roleName"></p>
+        <p class="rolecard-team" id="roleTeam"></p>
+        <p class="rolecard-desc" id="roleDesc"></p>
+        <div id="roleMates" class="mates" hidden>
+          <p class="mates-title">仲間の人狼</p>
+          <ul id="matesList"></ul>
+        </div>
+        <button class="btn btn-ghost" id="hideBtn">隠す</button>
+      </div>
+    </div>
+    <p class="note" id="playerNote"></p>
+  </div>
+</main>
+
+<!-- ============ 結果の画面（占い・霊媒のQRから開かれる） ============ -->
+<main id="resultView" hidden>
+  <div class="wrap narrow">
+    <div class="rolecard">
+      <div class="rolecard-cover" id="resCover">
+        <p class="rolecard-name" id="resCoverTitle"></p>
+        <p class="rolecard-hint">まわりに見られていないか確認してから</p>
+        <button class="btn btn-primary btn-lg" id="resRevealBtn">タップして結果を見る</button>
+      </div>
+      <div class="rolecard-body" id="resBody" hidden>
+        <p class="rolecard-for" id="resKind"></p>
+        <p class="rolecard-role" id="resTarget"></p>
+        <p class="verdict" id="resVerdict"></p>
+        <button class="btn btn-ghost" id="resHideBtn">隠す</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============ 親機（GM卓） ============ -->
+<main id="gmView" hidden>
+
+  <!-- 設定 -->
+  <section id="scSetup" class="screen">
+    <div class="wrap">
+      <header class="hd">
+        <h1>人狼</h1>
+        <p class="sub">1台のスマホを回すのをやめる。役職は各自の端末へ。</p>
+      </header>
+
+      <div class="panel">
+        <h2>1. 参加者</h2>
+        <p class="help">名前を1行に1人ずつ。空欄のままなら「プレイヤー1」のように自動で付きます。</p>
+        <textarea id="namesInput" rows="6" placeholder="たなか&#10;さとう&#10;すずき&#10;やまだ&#10;いとう"></textarea>
+        <div class="row">
+          <button class="btn btn-ghost btn-sm" id="addRowBtn">人数を数える</button>
+          <span class="count" id="playerCount">0人</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>2. 役職の構成</h2>
+        <p class="help">人数に合わせて増減してください。合計が参加人数と一致すると次に進めます。</p>
+        <div id="roleRows" class="rolerows"></div>
+        <div class="totals">
+          <span>役職の合計 <b id="roleTotal">0</b></span>
+          <span>参加者 <b id="roleNeed">0</b></span>
+        </div>
+        <p class="warn" id="setupWarn" hidden></p>
+        <button class="btn btn-ghost btn-sm" id="autoBtn">人数からおすすめを入れる</button>
+      </div>
+
+      <div class="panel">
+        <h2>3. ルール</h2>
+        <label class="check"><input type="checkbox" id="optFirstNight"> 初日の夜は襲撃なし</label>
+        <label class="check"><input type="checkbox" id="optNoSameGuard" checked> 騎士の連続ガードを禁止する</label>
+      </div>
+
+      <button class="btn btn-primary btn-lg btn-block" id="startBtn" disabled>役職を配る</button>
+      <p class="note">配り終わるまで、この端末は参加者に見せないでください。</p>
+    </div>
+  </section>
+
+  <!-- 役職配布 -->
+  <section id="scDistribute" class="screen">
+    <div class="wrap narrow">
+      <header class="hd">
+        <h1>役職を配る</h1>
+        <p class="sub"><b id="distProgress"></b></p>
+      </header>
+      <div class="panel center">
+        <p class="distname" id="distName"></p>
+        <p class="help">この人のスマホのカメラでQRを読み取ってください。</p>
+        <div class="qrbox" id="distQr"></div>
+        <p class="help small" id="distUrlNote">カメラが使えないときは、下のリンクを本人に送ってください。</p>
+        <button class="btn btn-ghost btn-sm" id="copyLinkBtn">リンクをコピー</button>
+      </div>
+      <div class="row">
+        <button class="btn btn-ghost" id="distPrevBtn">戻る</button>
+        <button class="btn btn-primary" id="distNextBtn">読み取った → 次の人</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 夜 -->
+  <section id="scNight" class="screen">
+    <div class="wrap narrow">
+      <header class="hd">
+        <h1 id="nightTitle">夜</h1>
+        <p class="sub" id="nightStepLabel"></p>
+      </header>
+      <div class="panel">
+        <p class="prompt" id="nightPrompt"></p>
+        <div class="targets" id="nightTargets"></div>
+      </div>
+      <div class="qrpanel" id="nightQrPanel" hidden>
+        <p class="prompt" id="nightQrPrompt"></p>
+        <div class="qrbox" id="nightQr"></div>
+        <button class="btn btn-primary btn-block" id="nightQrDoneBtn">読み取った → 次へ</button>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="nightSkipBtn" hidden>この役職はいない / 飛ばす</button>
+    </div>
+  </section>
+
+  <!-- 朝 -->
+  <section id="scDawn" class="screen">
+    <div class="wrap narrow">
+      <header class="hd"><h1 id="dawnTitle">朝になりました</h1></header>
+      <div class="panel center">
+        <p class="bigmsg" id="dawnMsg"></p>
+      </div>
+      <div class="panel">
+        <h2>生存者</h2>
+        <ul class="alivelist" id="dawnAlive"></ul>
+      </div>
+      <button class="btn btn-primary btn-lg btn-block" id="dawnNextBtn">議論へ</button>
+    </div>
+  </section>
+
+  <!-- 議論 -->
+  <section id="scDay" class="screen">
+    <div class="wrap narrow">
+      <header class="hd">
+        <h1>議論</h1>
+        <p class="sub" id="dayCount"></p>
+      </header>
+      <div class="panel center">
+        <p class="timer" id="timer">03:00</p>
+        <div class="row">
+          <button class="btn btn-ghost btn-sm" id="timerMinus">-1分</button>
+          <button class="btn btn-primary" id="timerBtn">開始</button>
+          <button class="btn btn-ghost btn-sm" id="timerPlus">+1分</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>生存者</h2>
+        <ul class="alivelist" id="dayAlive"></ul>
+      </div>
+      <button class="btn btn-primary btn-lg btn-block" id="dayVoteBtn">投票へ</button>
+    </div>
+  </section>
+
+  <!-- 投票 -->
+  <section id="scVote" class="screen">
+    <div class="wrap narrow">
+      <header class="hd">
+        <h1>投票</h1>
+        <p class="sub" id="voteSub">処刑する人を選んでください</p>
+      </header>
+      <div class="panel">
+        <div class="targets" id="voteTargets"></div>
+      </div>
+      <button class="btn btn-ghost btn-sm btn-block" id="voteNoneBtn">同票だった（処刑なし）</button>
+    </div>
+  </section>
+
+  <!-- 処刑結果 -->
+  <section id="scExec" class="screen">
+    <div class="wrap narrow">
+      <header class="hd"><h1>処刑</h1></header>
+      <div class="panel center">
+        <p class="bigmsg" id="execMsg"></p>
+      </div>
+      <button class="btn btn-primary btn-lg btn-block" id="execNextBtn">夜へ</button>
+    </div>
+  </section>
+
+  <!-- 決着 -->
+  <section id="scResult" class="screen">
+    <div class="wrap narrow">
+      <header class="hd"><h1 id="winTitle"></h1></header>
+      <div class="panel center"><p class="bigmsg" id="winMsg"></p></div>
+      <div class="panel">
+        <h2>全員の役職</h2>
+        <ul class="revealed" id="revealList"></ul>
+      </div>
+      <button class="btn btn-primary btn-lg btn-block" id="againBtn">もう一度あそぶ</button>
+    </div>
+  </section>
+
+  <button class="reset" id="resetBtn" hidden>最初から</button>
+</main>
+
+<script src="qr.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
