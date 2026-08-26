@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/timelog.js mark start", "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/timelog.js mark prompt", "timeout": 10 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/timelog.js mark stop", "timeout": 10 }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": ["Bash(node .claude/hooks/timelog.js report:*)"]
+  }
+}

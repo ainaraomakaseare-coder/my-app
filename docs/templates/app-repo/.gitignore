@@ -1,0 +1,3 @@
+# 時間の記録。生データは端末に置いたままにして、集計だけを
+# 管理リポジトリ 30days-30apps の docs/logs/dayNN.md に書き写す。
+.claude/time/

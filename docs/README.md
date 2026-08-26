@@ -12,13 +12,16 @@ AIアプリ開発初心者が、30日間で30個のアプリを作るチャレ�
 | `docs/handoff.md` | 引き継ぎ資料。企画の全体像・各DAYのテーマ・記録のとり方 |
 | `docs/progress.md` | 30日のロードマップ、アプリとリポジトリの対応表、時間と費用の累計 |
 | `docs/logs/` | 日次ログ。`TEMPLATE.md` をコピーして `dayNN.md` を作る |
-| `docs/templates/` | 新しいアプリのリポジトリに置くファイルの雛形 |
+| `docs/templates/app-repo/` | 新しいアプリのリポジトリに丸ごとコピーする雛形。`CLAUDE.md` と、時間を自動記録する `.claude/` |
 
 ## 1日の流れ
 
 1. アプリ用のリポジトリを新しく作る（`dayNN-アプリ名`）
-2. `docs/templates/app-repo-CLAUDE.md` を、そのリポジトリの `CLAUDE.md` として置く
+2. `docs/templates/app-repo/` の中身をそのリポジトリの直下にコピーする
 3. **このリポジトリ**の `docs/logs/TEMPLATE.md` をコピーして `dayNN.md` を作り、開始時刻を書いてから開発に入る
-4. 開発が終わったら `dayNN.md` を埋め、`docs/progress.md` の表と累計を更新する
+4. 開発が終わったら、アプリ側で `node .claude/hooks/timelog.js report` を実行し、出た数字を `dayNN.md` に書き写して `docs/progress.md` を更新する
+
+2 でコピーする `.claude/` が、セッション開始・送信・応答完了の時刻を自動で記録します。これを
+入れ忘れると、その日の時間は測れません。
 
 ログとコードが別リポジトリになるので、開発中は両方を開いた状態で作業します。
