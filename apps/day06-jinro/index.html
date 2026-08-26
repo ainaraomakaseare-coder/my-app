@@ -15,9 +15,11 @@
   <div class="wrap narrow">
     <div id="roleCard" class="rolecard">
       <div class="rolecard-cover" id="roleCover">
+        <p class="rolecard-whose">この名前で合っていますか？</p>
         <p class="rolecard-name" id="coverName"></p>
-        <p class="rolecard-hint">まわりに見られていないか確認してから</p>
+        <p class="rolecard-hint">合っていたら、まわりに見られていないか確認してから</p>
         <button class="btn btn-primary btn-lg" id="revealBtn">タップして役職を見る</button>
+        <button class="btn btn-ghost btn-sm" id="recodeBtn" hidden>ちがう人の名前が出ている</button>
       </div>
       <div class="rolecard-body" id="roleBody" hidden>
         <p class="rolecard-for" id="roleFor"></p>
@@ -32,6 +34,23 @@
       </div>
     </div>
     <p class="note" id="playerNote"></p>
+  </div>
+</main>
+
+<!-- ============ 参加者の画面（部屋のリンクから開かれる／番号を入れる） ============ -->
+<main id="joinView" hidden>
+  <div class="wrap narrow">
+    <div class="rolecard">
+      <div class="rolecard-cover">
+        <p class="rolecard-name">番号を入れてください</p>
+        <p class="rolecard-hint">進行役から聞いた4桁の番号です</p>
+        <input class="codeinput" id="codeInput" type="text" inputmode="numeric"
+               autocomplete="off" maxlength="4" placeholder="0000">
+        <button class="btn btn-primary btn-lg" id="codeBtn">役職を見る</button>
+        <p class="warn" id="codeWarn" hidden></p>
+      </div>
+    </div>
+    <p class="note">入れた番号はこの端末が覚えます。閉じてもまた自分の役職を見られます。</p>
   </div>
 </main>
 
@@ -98,6 +117,32 @@
     </div>
   </section>
 
+  <!-- 部屋ができた（まとめて配る） -->
+  <section id="scRoom" class="screen">
+    <div class="wrap narrow">
+      <header class="hd">
+        <h1>部屋ができました</h1>
+        <p class="sub">全員にこのQR（またはリンク）を渡してから、番号を読み上げてください。</p>
+      </header>
+
+      <div class="panel center">
+        <p class="help">まず全員に、同じこのQRを読んでもらいます。順番待ちは要りません。</p>
+        <div class="qrbox" id="roomQr"></div>
+        <p class="help small" id="roomTooLong" hidden></p>
+        <button class="btn btn-ghost btn-sm" id="roomCopyBtn">リンクをコピー</button>
+      </div>
+
+      <div class="panel">
+        <h2>読み上げる番号</h2>
+        <p class="help">それぞれの人に、自分の番号だけを伝えてください。</p>
+        <ul class="codelist" id="roomCodes"></ul>
+      </div>
+
+      <button class="btn btn-primary btn-lg btn-block" id="roomDoneBtn">全員に伝えた → 夜へ</button>
+      <button class="btn btn-ghost btn-sm btn-block" id="roomSwitchBtn">1人ずつQRで配る方式にする</button>
+    </div>
+  </section>
+
   <!-- 役職配布 -->
   <section id="scDistribute" class="screen">
     <div class="wrap narrow">
@@ -116,6 +161,7 @@
         <button class="btn btn-ghost" id="distPrevBtn">戻る</button>
         <button class="btn btn-primary" id="distNextBtn">読み取った → 次の人</button>
       </div>
+      <button class="btn btn-ghost btn-sm btn-block" id="distRoomBtn">まとめて配る方式にもどる</button>
     </div>
   </section>
 

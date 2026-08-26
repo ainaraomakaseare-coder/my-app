@@ -28,7 +28,8 @@ html, body {
 .wrap {
   max-width: 640px;
   margin: 0 auto;
-  padding: 20px 16px calc(40px + env(safe-area-inset-bottom));
+  /* 右下に浮いている「最初から」に最後のボタンが隠れないよう、下を広めに空ける */
+  padding: 20px 16px calc(76px + env(safe-area-inset-bottom));
 }
 .wrap.narrow { max-width: 460px; }
 
@@ -325,3 +326,45 @@ body.is-player .wrap { width: 100%; }
   .targets { grid-template-columns: 1fr 1fr; }
   .rolecard-role { font-size: 34px; }
 }
+
+/* ---- 部屋の番号 ---- */
+.codelist { list-style: none; margin: 0; padding: 0; }
+.codeitem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.codeitem:last-child { border-bottom: 0; }
+.codeitem-name { font-size: 16px; }
+.codeitem-code {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-hi);
+}
+
+.codeinput {
+  width: 100%;
+  max-width: 240px;
+  margin: 0 auto 18px;
+  display: block;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 12px;
+  font-family: inherit;
+  font-size: 38px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: .3em;
+  text-indent: .3em;
+  font-variant-numeric: tabular-nums;
+}
+.codeinput:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.codeinput::placeholder { color: var(--line); letter-spacing: .3em; }
+.rolecard-whose { font-size: 13px; color: var(--muted); margin: 0 0 2px; }

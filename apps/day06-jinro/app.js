@@ -31,6 +31,100 @@
   function packPayload(obj) { return b64urlEncode(JSON.stringify(obj)); }
   function unpackPayload(str) { return JSON.parse(b64urlDecode(str)); }
 
+  // ---------- 4桁の番号で、自分の役職だけを開く仕掛け ----------
+  // 部屋のリンクには全員ぶんの役職が入っているが、それぞれ自分の番号でしか開けない。
+  // 友達同士で遊ぶ前提の簡単な仕掛けで、強い暗号ではない。
+  // 本気で他人の役職を見ようとする人がいる場面には向かない。
+  var MAGIC = 'JN';
+
+  function fnv1a(str) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return h >>> 0;
+  }
+
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6d2b79f5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function xorBytes(bytes, salt, code) {
+    var rnd = mulberry32(fnv1a(salt + ':' + code));
+    var out = new Array(bytes.length);
+    for (var i = 0; i < bytes.length; i++) out[i] = bytes[i] ^ (Math.floor(rnd() * 256) & 0xff);
+    return out;
+  }
+
+  function strToBytes(str) {
+    var u = unescape(encodeURIComponent(str)), a = [];
+    for (var i = 0; i < u.length; i++) a.push(u.charCodeAt(i));
+    return a;
+  }
+  function bytesToStr(arr) {
+    var s = '';
+    for (var i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+    return decodeURIComponent(escape(s));
+  }
+  function bytesToB64url(arr) {
+    var s = '';
+    for (var i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function b64urlToBytes(str) {
+    var s = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    var bin = atob(s), a = [];
+    for (var i = 0; i < bin.length; i++) a.push(bin.charCodeAt(i));
+    return a;
+  }
+
+  /* その人の役職を、その人の番号でしか開けない形にする */
+  function sealRole(player, players, salt) {
+    var text = MAGIC + ROLE_ORDER.indexOf(player.role);
+    if (player.role === 'wolf') {
+      var mates = players.filter(function (o) { return o.role === 'wolf' && o.id !== player.id; })
+        .map(function (o) { return o.id; });
+      if (mates.length) text += ',' + mates.join('.');
+    }
+    return bytesToB64url(xorBytes(strToBytes(text), salt, player.code));
+  }
+
+  /* 番号で開いてみる。合わなければ null */
+  function openRole(entry, salt, code) {
+    var text;
+    try { text = bytesToStr(xorBytes(b64urlToBytes(entry), salt, code)); }
+    catch (e) { return null; }
+    if (text.slice(0, MAGIC.length) !== MAGIC) return null;
+    var parts = text.slice(MAGIC.length).split(',');
+    var roleIndex = parseInt(parts[0], 10);
+    if (!(roleIndex >= 0 && roleIndex < ROLE_ORDER.length)) return null;
+    var mates = parts[1] ? parts[1].split('.').map(function (x) { return parseInt(x, 10); }) : [];
+    return { role: ROLE_ORDER[roleIndex], mates: mates };
+  }
+
+  function pad4(n) { return ('000' + n).slice(-4); }
+
+  /* 重ならない4桁の番号をつくる */
+  function makeCodes(count) {
+    var used = {}, codes = [];
+    while (codes.length < count) {
+      var c = pad4(Math.floor(Math.random() * 10000));
+      if (used[c]) continue;
+      used[c] = true;
+      codes.push(c);
+    }
+    return codes;
+  }
+
   function baseUrl() {
     return location.origin + location.pathname;
   }
@@ -43,13 +137,15 @@
     if (text != null) e.textContent = text;
     return e;
   }
+  /* QRを描く。データが長すぎて入らないときは false を返す。 */
   function showQr(container, text) {
     container.innerHTML = '';
     try {
       var modules = QR.encode(text);
       container.innerHTML = QR.toSvg(modules, { dark: '#12131a', light: '#ffffff' });
+      return true;
     } catch (e) {
-      container.appendChild(el('p', 'warn', 'QRコードを作れませんでした：' + e.message));
+      return false;
     }
   }
 
@@ -60,39 +156,126 @@
     var data;
     try { data = unpackPayload(payload); }
     catch (e) { return renderBroken('役職のデータを読み取れませんでした。親機からもう一度QRを表示してもらってください。'); }
+    if (!ROLES[data.r]) return renderBroken('知らない役職が入っていました。');
+    showPlayerCard(data.n, data.r, data.f || []);
+  }
 
-    var role = ROLES[data.r];
-    if (!role) return renderBroken('知らない役職が入っていました。');
+  /* 役職カードを表示する。番号で開いたときもQRで開いたときもここを通る。
+     onReenter を渡すと「ちがう人の名前が出ている」で番号の入力に戻れる。 */
+  function showPlayerCard(name, roleKey, mateNames, onReenter) {
+    var role = ROLES[roleKey];
 
     $('gmView').hidden = true;
+    $('joinView').hidden = true;
     $('playerView').hidden = false;
     document.body.classList.add('is-player');
 
-    $('coverName').textContent = data.n;
-    $('roleFor').textContent = data.n + ' さんの役職';
+    $('coverName').textContent = name;
+    $('roleFor').textContent = name + ' さんの役職';
     $('roleName').textContent = role.name;
     $('roleName').className = 'rolecard-role team-' + role.team;
     $('roleTeam').textContent = role.team === 'wolf' ? '人狼陣営' : '村人陣営';
     $('roleTeam').className = 'rolecard-team team-' + role.team;
     $('roleDesc').textContent = role.desc;
 
-    if (data.f && data.f.length) {
+    if (mateNames && mateNames.length) {
       $('roleMates').hidden = false;
       var list = $('matesList');
       list.innerHTML = '';
-      data.f.forEach(function (m) { list.appendChild(el('li', null, m)); });
+      mateNames.forEach(function (m) { list.appendChild(el('li', null, m)); });
+    } else {
+      $('roleMates').hidden = true;
     }
 
-    $('playerNote').textContent = 'この画面は自分だけで見てください。閉じても、同じQR（またはリンク）からまた開けます。';
+    $('playerNote').textContent = 'この画面は自分だけで見てください。閉じても、同じリンクからまた開けます。';
 
-    $('revealBtn').addEventListener('click', function () {
+    var recode = $('recodeBtn');
+    recode.hidden = !onReenter;
+    if (onReenter) recode.onclick = onReenter;
+
+    // 別の番号で開き直したときのために、毎回ふせた状態から始める
+    $('roleCover').hidden = false;
+    $('roleBody').hidden = true;
+
+    $('revealBtn').onclick = function () {
       $('roleCover').hidden = true;
       $('roleBody').hidden = false;
-    });
-    $('hideBtn').addEventListener('click', function () {
+    };
+    $('hideBtn').onclick = function () {
       $('roleBody').hidden = true;
       $('roleCover').hidden = false;
+    };
+  }
+
+  /* 部屋のリンクを開いたとき：番号を入れてもらう */
+  function renderRoomJoin(payload) {
+    var data;
+    try { data = unpackPayload(payload); }
+    catch (e) { return renderBroken('部屋のデータを読み取れませんでした。進行役にリンクをもう一度もらってください。'); }
+    if (!data || !data.e || !data.n || data.e.length !== data.n.length) {
+      return renderBroken('部屋のデータが壊れています。');
+    }
+
+    $('gmView').hidden = true;
+    $('joinView').hidden = false;
+    document.body.classList.add('is-player');
+
+    var input = $('codeInput');
+    var warn = $('codeWarn');
+    var storeKey = 'jinro.mycode.' + data.s;
+
+    function backToCode() {
+      try { localStorage.removeItem(storeKey); } catch (e4) { /* 消せなくても続行 */ }
+      $('playerView').hidden = true;
+      $('joinView').hidden = false;
+      input.value = '';
+      warn.hidden = true;
+      input.focus();
+    }
+
+    function tryCode(code) {
+      for (var i = 0; i < data.e.length; i++) {
+        var opened = openRole(data.e[i], data.s, code);
+        if (opened) {
+          try { localStorage.setItem(storeKey, code); } catch (e2) { /* 保存できなくても続行 */ }
+          var mateNames = opened.mates.map(function (id) { return data.n[id]; })
+            .filter(function (x) { return !!x; });
+          showPlayerCard(data.n[i], opened.role, mateNames, backToCode);
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function submit() {
+      var code = (input.value || '').replace(/[^0-9]/g, '');
+      if (code.length !== 4) {
+        warn.hidden = false;
+        warn.textContent = '4桁の数字を入れてください。';
+        return;
+      }
+      if (!tryCode(code)) {
+        warn.hidden = false;
+        warn.textContent = 'その番号の人が見つかりません。進行役に番号を確認してください。';
+        input.value = '';
+        input.focus();
+      }
+    }
+
+    $('codeBtn').onclick = submit;
+    input.addEventListener('input', function () {
+      warn.hidden = true;
+      input.value = input.value.replace(/[^0-9]/g, '').slice(0, 4);
+      if (input.value.length === 4) submit();
     });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') submit();
+    });
+
+    // 一度入れた番号は覚えておく。閉じてもまた自分の役職を見られる。
+    var saved = null;
+    try { saved = localStorage.getItem(storeKey); } catch (e3) { saved = null; }
+    if (saved) tryCode(saved);
   }
 
   function renderResultView(payload) {
@@ -255,14 +438,16 @@
     });
     shuffle(pool);
 
+    var codes = makeCodes(names.length);
     var players = names.map(function (name, i) {
-      return { id: i, name: name, role: pool[i], alive: true };
+      return { id: i, name: name, role: pool[i], alive: true, code: codes[i] };
     });
 
     game = {
       players: players,
+      salt: pad4(Math.floor(Math.random() * 10000)) + pad4(Math.floor(Math.random() * 10000)),
       day: 1,
-      phase: 'distribute',
+      phase: 'room',
       distIndex: 0,
       opts: {
         firstNightPeace: $('optFirstNight').checked,
@@ -275,7 +460,7 @@
       winner: null
     };
     save();
-    renderDistribute();
+    renderRoom();
   }
 
   function shuffle(a) {
@@ -299,14 +484,54 @@
     return baseUrl() + '#p=' + packPayload(payload);
   }
 
+  function roomLink() {
+    return baseUrl() + '#room=' + packPayload({
+      v: 1,
+      s: game.salt,
+      n: game.players.map(function (p) { return p.name; }),
+      e: game.players.map(function (p) { return sealRole(p, game.players, game.salt); })
+    });
+  }
+
+  function renderRoom() {
+    game.phase = 'room';
+    save();
+    showScreen('scRoom');
+
+    var link = roomLink();
+    var tooLong = $('roomTooLong');
+    var fits = showQr($('roomQr'), link);
+    $('roomQr').hidden = !fits;
+    tooLong.hidden = fits;
+    if (!fits) {
+      tooLong.textContent = '参加者が多い（または名前が長い）ため、QRに収まりませんでした。'
+        + '下の「リンクをコピー」でLINEなどに送ってください。';
+    }
+
+    var ul = $('roomCodes');
+    ul.innerHTML = '';
+    game.players.forEach(function (p) {
+      var li = el('li', 'codeitem');
+      li.appendChild(el('span', 'codeitem-name', p.name));
+      li.appendChild(el('span', 'codeitem-code', p.code));
+      ul.appendChild(li);
+    });
+
+    $('roomCopyBtn').onclick = function () { copyText(link, $('roomCopyBtn')); };
+  }
+
   function renderDistribute() {
+    game.phase = 'distribute';
     showScreen('scDistribute');
     var i = game.distIndex;
     var p = game.players[i];
     $('distProgress').textContent = (i + 1) + '人目 / ' + game.players.length + '人';
     $('distName').textContent = p.name + ' さん';
     var link = playerLink(p);
-    showQr($('distQr'), link);
+    if (!showQr($('distQr'), link)) {
+      $('distQr').innerHTML = '';
+      $('distQr').appendChild(el('p', 'warn', '名前が長すぎてQRに入りません。下のリンクを送ってください。'));
+    }
     $('distPrevBtn').disabled = (i === 0);
     $('distNextBtn').textContent = (i === game.players.length - 1) ? '全員配り終わった → 夜へ' : '読み取った → 次の人';
 
@@ -593,6 +818,7 @@
   function resume(saved) {
     game = saved;
     switch (game.phase) {
+      case 'room':       return renderRoom();
       case 'distribute': return renderDistribute();
       case 'night':      return renderNight();
       case 'dawn':       return renderDawn();
@@ -617,6 +843,13 @@
       refreshSetup();
     });
     $('startBtn').addEventListener('click', startGame);
+
+    $('roomDoneBtn').addEventListener('click', beginNight);
+    $('roomSwitchBtn').addEventListener('click', function () {
+      game.distIndex = 0;
+      renderDistribute();
+    });
+    $('distRoomBtn').addEventListener('click', renderRoom);
 
     $('distPrevBtn').addEventListener('click', function () {
       if (game.distIndex > 0) { game.distIndex--; renderDistribute(); }
@@ -648,6 +881,7 @@
 
   function boot() {
     var hash = location.hash || '';
+    if (hash.indexOf('#room=') === 0) return renderRoomJoin(hash.slice(6));
     if (hash.indexOf('#p=') === 0) return renderPlayerView(hash.slice(3));
     if (hash.indexOf('#r=') === 0) return renderResultView(hash.slice(3));
     initGm();

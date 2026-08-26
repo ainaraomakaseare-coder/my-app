@@ -87,10 +87,74 @@ async function launch() {
   check('開始できる', !(await gm.isDisabled('#startBtn')));
 
   await gm.click('#startBtn');
-  await gm.waitForSelector('#scDistribute.active');
+  await gm.waitForSelector('#scRoom.active');
   const state = await gm.evaluate(() => JSON.parse(localStorage.getItem('jinro.game.v1')));
   check('5人に配られる', state.players.length === 5);
-  check('QRが出る', (await gm.locator('#distQr svg').count()) === 1);
+
+  // ---- まとめて配る（部屋のリンク＋4桁の番号）----
+  check('共有QRが1つ出る', (await gm.locator('#roomQr svg').count()) === 1);
+  const codeRows = await gm.locator('#roomCodes .codeitem').count();
+  check('番号が全員ぶん並ぶ', codeRows === 5, '実際=' + codeRows);
+  const roomNames = await gm.locator('#roomCodes .codeitem-name').allTextContents();
+  const roomCodes = await gm.locator('#roomCodes .codeitem-code').allTextContents();
+  check('番号は4桁の数字', roomCodes.every(c => /^\d{4}$/.test(c)), roomCodes.join(','));
+  check('番号が重複しない', new Set(roomCodes).size === 5, roomCodes.join(','));
+
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE.replace(/\/$/, '') });
+  await gm.click('#roomCopyBtn');
+  const roomLink = await gm.evaluate(() => navigator.clipboard.readText());
+  check('部屋のリンクをコピーできる', roomLink.indexOf('#room=') > 0);
+
+  // 全員が自分の番号で自分の役職だけを開ける
+  const JP = { villager:'村人', wolf:'人狼', seer:'占い師', knight:'騎士', medium:'霊媒師', madman:'狂人' };
+  for (let i = 0; i < roomNames.length; i++) {
+    const c = await browser.newContext();
+    const pg = await c.newPage();
+    await pg.goto(roomLink);
+    await pg.fill('#codeInput', roomCodes[i]);
+    await pg.waitForSelector('#playerView:not([hidden])', { timeout: 3000 });
+    const shownName = await pg.textContent('#coverName');
+    await pg.click('#revealBtn');
+    const shownRole = await pg.textContent('#roleName');
+    const want = state.players.find(p => p.name === roomNames[i]).role;
+    check('★ ' + roomNames[i] + ' が番号 ' + roomCodes[i] + ' で自分の役職を開ける',
+      shownName === roomNames[i] && shownRole === JP[want], shownName + '/' + shownRole);
+    await c.close();
+  }
+
+  // まちがった番号は断られる
+  {
+    const c = await browser.newContext();
+    const pg = await c.newPage();
+    await pg.goto(roomLink);
+    let wrong = '9999';
+    while (roomCodes.indexOf(wrong) >= 0) wrong = String(Number(wrong) - 1);
+    await pg.fill('#codeInput', wrong);
+    await pg.waitForTimeout(300);
+    check('★ 登録されていない番号は断られる',
+      (await pg.textContent('#codeWarn')).includes('見つかりません'));
+    check('まちがった番号では役職が出ない', !(await pg.isVisible('#playerView')));
+    await c.close();
+  }
+
+  // 名前がちがえば入れ直せる
+  {
+    const c = await browser.newContext();
+    const pg = await c.newPage();
+    await pg.goto(roomLink);
+    await pg.fill('#codeInput', roomCodes[0]);
+    await pg.waitForSelector('#playerView:not([hidden])', { timeout: 3000 });
+    check('★ 役職より先に名前の確認が出る', await pg.isVisible('#coverName'));
+    check('名前がちがうとき用のボタンが出る', await pg.isVisible('#recodeBtn'));
+    await pg.click('#recodeBtn');
+    check('番号の入力に戻れる', await pg.isVisible('#joinView'));
+    await c.close();
+  }
+
+  // ---- 1人ずつ配る方式にも切り替えられる ----
+  await gm.click('#roomSwitchBtn');
+  await gm.waitForSelector('#scDistribute.active');
+  check('1人ずつ配る方式に切り替わる', (await gm.locator('#distQr svg').count()) === 1);
 
   // 参加者それぞれの端末
   const link = p => {
