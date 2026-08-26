@@ -231,8 +231,68 @@ button{cursor:pointer}
    test/quiz.test.js が この範囲を切り出して node 上で直接動かす。
    ==================================================================== */
 
-/* 主要な放送局。局を当てる問題のダミーに使う */
-var STATIONS = ["NHK","フジテレビ","TBS","日本テレビ","テレビ朝日","テレビ東京","WOWOW","Netflix"];
+/* 選択肢に出す主要局。ここに寄せられない局では、局を当てる問題を出さない */
+var STATIONS = ["NHK","日本テレビ","TBS","フジテレビ","テレビ朝日","テレビ東京","WOWOW","Netflix"];
+
+/* 表記ゆれを正式名に寄せる。長い綴りを先に置き、上から順に当てる。
+   ここに無い綴りは空を返す。見知らぬ局を正解にしてしまわないため。   */
+var STATION_ALIAS = [
+  ["NHK総合","NHK"],["NHK BS","NHK"],["NHKBS","NHK"],["NHK教育","NHK"],["NHK Eテレ","NHK"],["NHK","NHK"],
+  ["日本テレビ","日本テレビ"],["日テレ","日本テレビ"],
+  ["TBSテレビ","TBS"],["東京放送","TBS"],["TBS","TBS"],
+  ["フジテレビジョン","フジテレビ"],["フジテレビ","フジテレビ"],
+  ["テレビ朝日","テレビ朝日"],["テレビ東京","テレビ東京"],
+  ["毎日放送","毎日放送"],["MBS","毎日放送"],["朝日放送","朝日放送"],["ABCテレビ","朝日放送"],
+  ["関西テレビ","関西テレビ"],["カンテレ","関西テレビ"],
+  ["讀賣テレビ","読売テレビ"],["読売テレビ","読売テレビ"],
+  ["テレビ大阪","テレビ大阪"],["東海テレビ","東海テレビ"],["中京テレビ","中京テレビ"],
+  ["WOWOW","WOWOW"],["Netflix","Netflix"],["Amazon","Amazon Prime Video"],["Hulu","Hulu"],
+  ["ABEMA","ABEMA"],["U-NEXT","U-NEXT"],["Disney","Disney+"]
+];
+function normStation(raw){
+  var s = cleanText(raw);
+  if(!s) return "";
+  for(var i = 0; i < STATION_ALIAS.length; i++){
+    if(s.indexOf(STATION_ALIAS[i][0]) >= 0) return STATION_ALIAS[i][1];
+  }
+  return "";
+}
+
+/* 記事には原作漫画やアニメ、海外リメイクの infobox も並ぶ。
+   実写ドラマの箱を選び違えると、別作品の放送局や出演者を掴んでしまう。 */
+var LIVE_KEYS  = ["出演者","演出","主演","プロデューサー","放送局","放送期間","放送時間"];
+var ANIME_KEYS = ["アニメーション制作","シリーズ構成","キャラクターデザイン","声の出演","総作画監督","音響監督","作画監督","アニメーション"];
+var BOOK_KEYS  = ["作者","掲載誌","出版社","巻数","レーベル","発表期間","判型","作画"];
+var SCORE_KEYS = ["放送局","放送期間","放送時間","回数","話数","演出","出演者","脚本","主題歌","プロデューサー","制作","音楽","原作","ジャンル"];
+
+function countKeys(box, keys){
+  var c = 0;
+  keys.forEach(function(k){ if(box[k] && cleanText(box[k])) c++; });
+  return c;
+}
+function boxKind(box){
+  var live = countKeys(box, LIVE_KEYS);
+  var anime = countKeys(box, ANIME_KEYS);
+  var book = countKeys(box, BOOK_KEYS);
+  if(anime > 0 && anime >= live) return "anime";
+  if(book > 0 && book >= live) return "book";
+  return live > 0 ? "live" : "other";
+}
+/* 箱を1つだけ選ぶ。またいで値を拾うと、フジ版の出演者に韓国版の放送局が
+   混ざるような取り違えが起きるので、混ぜないことを最優先にする。      */
+function pickInfobox(boxes){
+  if(!boxes || !boxes.length) return {};
+  var live = boxes.filter(function(b){ return boxKind(b) === "live"; });
+  var pool = live.length ? live : boxes;
+  var best = pool[0], bestScore = -1;
+  pool.forEach(function(b){
+    var score = countKeys(b, SCORE_KEYS);
+    /* 日本の局に寄せられる箱を優先する。海外版の箱を掴まないため */
+    if(normStation(b["放送局"] || b["制作局"] || b["放送チャンネル"] || "")) score += 3;
+    if(score > bestScore){ bestScore = score; best = b; }   /* 同点なら先に出てくる箱 */
+  });
+  return best;
+}
 
 /* 人物のダミー。年代で分けてあるのは、対象作と年代がずれた人を選んで
    「実はその人も出ていた」という誤判定を起こしにくくするため */
@@ -288,6 +348,26 @@ function splitNames(s){
     .filter(function(x){ return x.length >= 2 && x.length <= 24; });
 }
 
+/* infobox の人物欄には「2013年版」「半沢直樹II」「エピソードゼロ」のような
+   区切りの見出しが人名と同じ並びで入る。人名として扱えないものを落とす。  */
+function looksLikeName(s){
+  if(!s || s.length < 2 || s.length > 14) return false;
+  if(/\d/.test(s)) return false;                                  /* 2013年版、第2期 */
+  if(/[IVXivx]{2,}$/.test(s)) return false;                       /* 半沢直樹II */
+  if(/(年版|年度|シーズン|シリーズ|エピソード|パート|続編|前編|後編|特別編|総集編|劇場版|スペシャル|ゼロ)/.test(s)) return false;
+  if(/[「」『』（）()【】]/.test(s)) return false;
+  if(/^(ほか|他|など|不明|未定|なし|同上)$/.test(s)) return false;
+  return true;
+}
+/* 人物欄はこちらで読む。ジャンルや主題歌には使わない */
+function personNames(s){
+  var out = [], seen = {};
+  splitNames(s).forEach(function(n){
+    if(looksLikeName(n) && !seen[n]){ seen[n] = 1; out.push(n); }
+  });
+  return out;
+}
+
 /* ---- 数字の読み取り ---- */
 function toHalf(s){
   return String(s).replace(/[０-９．]/g, function(c){
@@ -333,23 +413,20 @@ function fromInfobox(info){
   }
   var period = get("放送期間","放送期間・回数","放送日","公開期間","配信期間","放送");
   var start = readDate(period) || readDate(get("放送開始","初回放送"));
-  var station = splitNames(get("放送局","制作局","放送チャンネル","配信"))[0] || "";
-  /* 「TBS系」「NHK総合」など後ろの飾りを落として主要局名に寄せる */
-  for(var i = 0; i < STATIONS.length; i++){
-    if(station.indexOf(STATIONS[i]) === 0){ station = STATIONS[i]; break; }
-  }
+  /* 「TBS系列」「NHK総合テレビジョン」などの飾りごと名寄せする */
+  var station = normStation(get("放送局","制作局","放送チャンネル","配信","ネットワーク"));
   return {
     station: station,
     start: start,
     count: readCount(get("回数","話数","各話数","全話数")),
     genre: splitNames(get("ジャンル","番組のジャンル")),
-    writers: splitNames(get("脚本","脚本家","原案・脚本")),
-    directors: splitNames(get("演出","監督","演出・監督")),
-    cast: splitNames(get("出演者","出演","主演")),
-    composers: splitNames(get("音楽","劇伴")),
+    writers: personNames(get("脚本","脚本家","原案・脚本")),
+    directors: personNames(get("演出","監督","演出・監督")),
+    cast: personNames(get("出演者","出演","主演")),
+    composers: personNames(get("音楽","劇伴")),
     theme: splitNames(get("主題歌","オープニング","エンディング","テーマ曲")),
-    origin: splitNames(get("原作","原案")),
-    producers: splitNames(get("プロデューサー","制作","製作","チーフプロデューサー"))
+    origin: personNames(get("原作","原案")),
+    producers: personNames(get("プロデューサー","制作","製作","チーフプロデューサー"))
   };
 }
 
@@ -365,7 +442,7 @@ function tidyEpisodes(rows){
     out.push({
       no: no,
       date: readDate(r.date),
-      subtitle: cleanText(r.subtitle).replace(/^[「『]|[」』]$/g, ""),
+      subtitle: cleanText(r.subtitle).replace(/^「(.*)」$/, "$1").replace(/^『(.*)』$/, "$1"),
       rating: readRating(r.rating)
     });
   }
@@ -374,11 +451,23 @@ function tidyEpisodes(rows){
 }
 
 /* ---- 作品としてまとめる ---- */
-function makeWork(title, url, info, epRows){
+function makeWork(title, url, info, epRows, chars){
   var w = fromInfobox(info);
   w.title = title;
   w.url = url;
+  /* 「半沢直樹II」のような続編の見出しが人物欄に並ぶことがある。
+     ただし主人公の役名が作品名と同じ作品は多いので、
+     作品名を含んで、なお長いものだけを落とす。                */
+  var core = String(title).replace(/[（(].*?[)）]/g, "").trim();
+  function isSeriesLabel(n){ return core.length >= 2 && n.length > core.length && n.indexOf(core) >= 0; }
+  ["writers","directors","cast","composers","origin","producers"].forEach(function(k){
+    w[k] = w[k].filter(function(n){ return !isSeriesLabel(n); });
+  });
   w.episodes = tidyEpisodes(epRows || []);
+  /* 役名と俳優の組。役名が作品名と紛れている行は落とす */
+  w.characters = (chars || []).filter(function(c){
+    return c && c.role && c.actor && c.role !== c.actor && !isSeriesLabel(c.role);
+  });
   if(w.count == null && w.episodes.length >= 3) w.count = w.episodes.length;
   /* 年代の帯。ダミー人物を対象作から離すのに使う */
   var y = w.start ? w.start.y : null;
@@ -424,202 +513,221 @@ function numberWrongs(correct, spread, n, rnd, min){
 }
 
 /* ============ 出題テンプレ ============
-   それぞれ作品から1問つくる。材料が足りなければ null を返し、黙って見送る。
-   level 1=易(基本情報) 2=中(制作陣・キャスト) 3=難(各話・数字)          */
+   ドラマの中身を問うものを content、放送局や年といった外側の事実を
+   fact とする。10問はできる限り content で埋め、足りないぶんだけ
+   fact で補う。make は問題の配列を返す（材料が無ければ空）。
+   level 1=易 2=中 3=難                                            */
+
+/* 選択肢に使える俳優の一覧。同じ作品の中から採ると、
+   「誰が出ていたか」ではなく「誰が何を演じたか」を問える。 */
+/* サブタイトルを本文に埋め込む。すでに鉤括弧で始まる題は重ねない */
+function quote(s){ return /^[「『]/.test(s) ? s : "「" + s + "」"; }
+
+function actorPool(w){
+  var a = w.characters.map(function(c){ return c.actor; }).concat(w.cast);
+  var out = [], seen = {};
+  a.forEach(function(x){ if(x && !seen[x]){ seen[x] = 1; out.push(x); } });
+  return out;
+}
+
 var TEMPLATES = [
 
-/* ---- 易 ---- */
-{ id:"station", level:1, make:function(w, rnd){
-  if(!w.station) return null;
-  var wrongs = distract(STATIONS, [w.station], 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(w.station, wrongs, rnd);
-  return { text:"『" + w.title + "』を放送したのは？", choices:c.choices, answer:c.answer,
-           why:"放送局は " + w.station + "。" };
+/* ---- 役名と俳優（中身の中心） ---- */
+{ id:"role2actor", tier:"content", make:function(w, rnd){
+  if(w.characters.length < 4) return [];
+  var pool = actorPool(w);
+  return shuffle(w.characters, rnd).slice(0, 4).map(function(pr, i){
+    var wrongs = distract(pool, [pr.actor], 3, rnd)
+              || distract(farActors(w.era), [pr.actor], 3, rnd);
+    if(!wrongs) return null;
+    var c = makeChoices(pr.actor, wrongs, rnd);
+    return { text:"『" + w.title + "』で " + pr.role + " を演じたのは？",
+             choices:c.choices, answer:c.answer, level:i < 2 ? 1 : 2,
+             why:pr.role + " を演じたのは " + pr.actor + "。" };
+  }).filter(Boolean);
 }},
 
-{ id:"year", level:1, make:function(w, rnd){
-  if(!w.start) return null;
-  var wrongs = numberWrongs(w.start.y, 5, 3, rnd, 1950);
-  if(!wrongs) return null;
-  var c = makeChoices(w.start.y + "年", wrongs.map(function(y){ return y + "年"; }), rnd);
-  return { text:"『" + w.title + "』の放送が始まったのは何年？", choices:c.choices, answer:c.answer,
-           why:"放送開始は " + dateLabel(w.start) + "。" };
+{ id:"actor2role", tier:"content", make:function(w, rnd){
+  if(w.characters.length < 4) return [];
+  var roles = w.characters.map(function(c){ return c.role; });
+  return shuffle(w.characters, rnd).slice(0, 3).map(function(pr, i){
+    var wrongs = distract(roles, [pr.role], 3, rnd);
+    if(!wrongs) return null;
+    var c = makeChoices(pr.role, wrongs, rnd);
+    return { text:"『" + w.title + "』で " + pr.actor + " が演じたのは？",
+             choices:c.choices, answer:c.answer, level:i < 2 ? 2 : 3,
+             why:pr.actor + " が演じたのは " + pr.role + "。" };
+  }).filter(Boolean);
 }},
 
-{ id:"count", level:1, make:function(w, rnd){
-  if(!w.count || w.count < 2) return null;
+{ id:"notrole", tier:"content", make:function(w, rnd){
+  /* 登場人物のうち3人と、別の年代の俳優1人を混ぜる */
+  if(w.characters.length < 4) return [];
+  var pool = actorPool(w);
+  var outsider = pick(farActors(w.era).filter(function(a){ return pool.indexOf(a) < 0; }), rnd);
+  if(!outsider) return [];
+  var wrongs = distract(pool, [outsider], 3, rnd);
+  if(!wrongs) return [];
+  var c = makeChoices(outsider, wrongs, rnd);
+  return [{ text:"次のうち『" + w.title + "』に出ていないのは？",
+            choices:c.choices, answer:c.answer, level:2,
+            why:outsider + " は出演者に挙がっていない。" }];
+}},
+
+{ id:"cast", tier:"content", group:"cast", make:function(w, rnd){
+  var pool = actorPool(w);
+  if(!pool.length) return [];
+  var right = pool[0];
+  var wrongs = distract(farActors(w.era), pool, 3, rnd);
+  if(!wrongs) return [];
+  var c = makeChoices(right, wrongs, rnd);
+  return [{ text:"『" + w.title + "』に出演していたのは？",
+            choices:c.choices, answer:c.answer, level:1,
+            why:right + " が出演。" }];
+}},
+
+/* ---- サブタイトル ---- */
+{ id:"sub_first", tier:"content", make:function(w, rnd){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  if(subs.length < 4) return [];
+  var out = [];
+  [["第1話", subs[0]], ["最終話", subs[subs.length - 1]]].forEach(function(pair){
+    var t = pair[1];
+    var wrongs = distract(subs.map(function(e){ return e.subtitle; }), [t.subtitle], 3, rnd);
+    if(!wrongs) return;
+    var c = makeChoices(t.subtitle, wrongs, rnd);
+    out.push({ text:"『" + w.title + "』" + pair[0] + "のサブタイトルは？",
+               choices:c.choices, answer:c.answer, level:2,
+               why:pair[0] + "（第" + t.no + "話）は" + quote(t.subtitle) + "。" });
+  });
+  return out;
+}},
+
+{ id:"sub_mid", tier:"content", make:function(w, rnd){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  if(subs.length < 5) return [];
+  var mid = subs.slice(1, -1);
+  return shuffle(mid, rnd).slice(0, 3).map(function(t){
+    var wrongs = distract(subs.map(function(e){ return e.subtitle; }), [t.subtitle], 3, rnd);
+    if(!wrongs) return null;
+    var c = makeChoices(t.subtitle, wrongs, rnd);
+    return { text:"『" + w.title + "』第" + t.no + "話のサブタイトルは？",
+             choices:c.choices, answer:c.answer, level:3,
+             why:"第" + t.no + "話は" + quote(t.subtitle) + "。" };
+  }).filter(Boolean);
+}},
+
+{ id:"whichep", tier:"content", make:function(w, rnd){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  if(subs.length < 4) return [];
+  return shuffle(subs, rnd).slice(0, 2).map(function(t){
+    var wrongs = distract(subs.map(function(e){ return e.no; }), [t.no], 3, rnd);
+    if(!wrongs) return null;
+    var c = makeChoices("第" + t.no + "話", wrongs.map(function(n){ return "第" + n + "話"; }), rnd);
+    return { text:quote(t.subtitle) + "は『" + w.title + "』の第何話？",
+             choices:c.choices, answer:c.answer, level:3,
+             why:quote(t.subtitle) + "は第" + t.no + "話。" };
+  }).filter(Boolean);
+}},
+
+/* ---- ここから下は、中身の問題が足りないときだけ使う ---- */
+{ id:"count", tier:"fact", make:function(w, rnd){
+  if(!w.count || w.count < 2) return [];
   var wrongs = numberWrongs(w.count, 5, 3, rnd, 1);
-  if(!wrongs) return null;
+  if(!wrongs) return [];
   var c = makeChoices(w.count + "話", wrongs.map(function(n){ return n + "話"; }), rnd);
-  return { text:"『" + w.title + "』は全何話？", choices:c.choices, answer:c.answer,
-           why:"全 " + w.count + " 話。" };
+  return [{ text:"『" + w.title + "』は全何話？", choices:c.choices, answer:c.answer,
+            level:1, why:"全 " + w.count + " 話。" }];
 }},
 
-{ id:"cast1", level:1, group:"cast", make:function(w, rnd){
-  if(!w.cast.length) return null;
-  var right = w.cast[0];
-  var wrongs = distract(farActors(w.era), w.cast, 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(right, wrongs, rnd);
-  return { text:"『" + w.title + "』に出演していたのは？", choices:c.choices, answer:c.answer,
-           why:right + " が出演。" };
+{ id:"station", tier:"fact", make:function(w, rnd){
+  /* 名寄せできなかった局や地方局では出さない。選択肢が不揃いになり、
+     正解も怪しくなるため                                          */
+  if(!w.station || STATIONS.indexOf(w.station) < 0) return [];
+  var wrongs = distract(STATIONS, [w.station], 3, rnd);
+  if(!wrongs) return [];
+  var c = makeChoices(w.station, wrongs, rnd);
+  return [{ text:"『" + w.title + "』を放送したのは？", choices:c.choices, answer:c.answer,
+            level:1, why:"放送局は " + w.station + "。" }];
 }},
 
-/* ---- 中 ---- */
-{ id:"writer", level:2, make:function(w, rnd){
-  if(!w.writers.length) return null;
-  var right = w.writers[0];
-  var wrongs = distract(WRITERS, w.writers, 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(right, wrongs, rnd);
-  return { text:"『" + w.title + "』の脚本を書いたのは？", choices:c.choices, answer:c.answer,
-           why:"脚本は " + w.writers.join("、") + "。" };
+{ id:"year", tier:"fact", make:function(w, rnd){
+  if(!w.start) return [];
+  var wrongs = numberWrongs(w.start.y, 5, 3, rnd, 1950);
+  if(!wrongs) return [];
+  var c = makeChoices(w.start.y + "年", wrongs.map(function(y){ return y + "年"; }), rnd);
+  return [{ text:"『" + w.title + "』の放送が始まったのは何年？", choices:c.choices, answer:c.answer,
+            level:1, why:"放送開始は " + dateLabel(w.start) + "。" }];
 }},
 
-{ id:"director", level:2, make:function(w, rnd){
-  if(!w.directors.length) return null;
-  var right = w.directors[0];
-  var wrongs = distract(DIRECTORS, w.directors, 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(right, wrongs, rnd);
-  return { text:"『" + w.title + "』の演出を手がけたのは？", choices:c.choices, answer:c.answer,
-           why:"演出は " + w.directors.slice(0, 3).join("、") + "。" };
-}},
-
-{ id:"music", level:2, make:function(w, rnd){
-  if(!w.composers.length) return null;
-  var right = w.composers[0];
-  var wrongs = distract(COMPOSERS, w.composers, 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(right, wrongs, rnd);
-  return { text:"『" + w.title + "』の音楽を担当したのは？", choices:c.choices, answer:c.answer,
-           why:"音楽は " + w.composers.join("、") + "。" };
-}},
-
-{ id:"notcast", level:2, make:function(w, rnd){
-  if(w.cast.length < 4) return null;
-  var right = pick(farActors(w.era).filter(function(a){ return w.cast.indexOf(a) < 0; }), rnd);
-  if(!right) return null;
-  var wrongs = distract(w.cast, [right], 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(right, wrongs, rnd);
-  return { text:"次のうち『" + w.title + "』に出演していないのは？", choices:c.choices, answer:c.answer,
-           why:right + " は出演者に挙がっていない。" };
-}},
-
-{ id:"cast2", level:2, group:"cast", make:function(w, rnd){
-  if(w.cast.length < 5) return null;
-  var right = w.cast[Math.min(4, w.cast.length - 1)];
-  var wrongs = distract(farActors(w.era), w.cast, 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(right, wrongs, rnd);
-  return { text:"『" + w.title + "』の出演者に名を連ねているのは？", choices:c.choices, answer:c.answer,
-           why:right + " が出演。" };
-}},
-
-/* ---- 難 ---- */
-{ id:"subtitle", level:3, make:function(w, rnd){
-  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
-  if(subs.length < 4) return null;
-  var target = pick(subs, rnd);
-  var wrongs = distract(subs.map(function(e){ return e.subtitle; }), [target.subtitle], 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(target.subtitle, wrongs, rnd);
-  return { text:"『" + w.title + "』第" + target.no + "話のサブタイトルは？", choices:c.choices, answer:c.answer,
-           why:"第" + target.no + "話は「" + target.subtitle + "」。" };
-}},
-
-{ id:"whichep", level:3, make:function(w, rnd){
-  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
-  if(subs.length < 4) return null;
-  var target = pick(subs, rnd);
-  var wrongs = distract(subs.map(function(e){ return e.no; }), [target.no], 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices("第" + target.no + "話", wrongs.map(function(n){ return "第" + n + "話"; }), rnd);
-  return { text:"「" + target.subtitle + "」は『" + w.title + "』の第何話？", choices:c.choices, answer:c.answer,
-           why:"「" + target.subtitle + "」は第" + target.no + "話。" };
-}},
-
-{ id:"firstrating", level:3, make:function(w, rnd){
-  var e = w.episodes[0];
-  if(!e || e.rating == null) return null;
-  var cand = [];
-  for(var d = 1; d <= 8; d++){
-    if(e.rating - d >= 1) cand.push(Math.round((e.rating - d) * 10) / 10);
-    cand.push(Math.round((e.rating + d) * 10) / 10);
-  }
-  var wrongs = distract(cand, [e.rating], 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(e.rating + "%", wrongs.map(function(r){ return r + "%"; }), rnd);
-  return { text:"『" + w.title + "』第" + e.no + "話の視聴率は？", choices:c.choices, answer:c.answer,
-           why:"第" + e.no + "話は " + e.rating + "%。" };
-}},
-
-{ id:"toprating", level:3, make:function(w, rnd){
+{ id:"toprating", tier:"fact", make:function(w, rnd){
   var rated = w.episodes.filter(function(e){ return e.rating != null; });
-  if(rated.length < 4) return null;
+  if(rated.length < 4) return [];
   var top = rated.reduce(function(a, b){ return b.rating > a.rating ? b : a; });
   var wrongs = distract(rated.map(function(e){ return e.no; }), [top.no], 3, rnd);
-  if(!wrongs) return null;
+  if(!wrongs) return [];
   var c = makeChoices("第" + top.no + "話", wrongs.map(function(n){ return "第" + n + "話"; }), rnd);
-  return { text:"『" + w.title + "』で最も視聴率が高かったのは？", choices:c.choices, answer:c.answer,
-           why:"第" + top.no + "話の " + top.rating + "% が最高。" };
+  return [{ text:"『" + w.title + "』で最も視聴率が高かったのは？", choices:c.choices, answer:c.answer,
+            level:3, why:"第" + top.no + "話の " + top.rating + "% が最高。" }];
 }},
 
-{ id:"airdate", level:3, make:function(w, rnd){
+{ id:"airdate", tier:"fact", make:function(w, rnd){
   var e = w.episodes.filter(function(x){ return x.date && x.date.d != null; })[0];
-  if(!e) return null;
-  var base = new Date(e.date.y, e.date.m - 1, e.date.d);
-  var cand = [];
+  if(!e) return [];
+  var base = new Date(e.date.y, e.date.m - 1, e.date.d), cand = [];
   [-21, -14, -7, 7, 14, 21].forEach(function(off){
     var d = new Date(base.getTime() + off * 86400000);
     cand.push(dateLabel({ y:d.getFullYear(), m:d.getMonth() + 1, d:d.getDate() }));
   });
   var right = dateLabel(e.date);
   var wrongs = distract(cand, [right], 3, rnd);
-  if(!wrongs) return null;
+  if(!wrongs) return [];
   var c = makeChoices(right, wrongs, rnd);
-  return { text:"『" + w.title + "』第" + e.no + "話が放送されたのは？", choices:c.choices, answer:c.answer,
-           why:"第" + e.no + "話は " + right + " の放送。" };
-}},
-
-{ id:"origin", level:2, make:function(w, rnd){
-  if(!w.origin.length) return null;
-  var right = w.origin[0];
-  var pool = ["東野圭吾","池井戸潤","湊かなえ","宮部みゆき","三浦しをん","有川浩","伊坂幸太郎","恩田陸","朝井リョウ","海野つなみ"];
-  var wrongs = distract(pool, w.origin, 3, rnd);
-  if(!wrongs) return null;
-  var c = makeChoices(right, wrongs, rnd);
-  return { text:"『" + w.title + "』の原作に名があるのは？", choices:c.choices, answer:c.answer,
-           why:"原作は " + w.origin.join("、") + "。" };
+  return [{ text:"『" + w.title + "』第" + e.no + "話が放送されたのは？", choices:c.choices, answer:c.answer,
+            level:3, why:"第" + e.no + "話は " + right + " の放送。" }];
 }}
 ];
 
 /* ---- 10問を組む ----
-   易3・中4・難3 を狙い、足りない層は他から埋める。
-   同じ材料の問題が並ばないよう、テンプレは1回ずつしか使わない。   */
+   まず中身の問題だけで 易3・中4・難3 を狙い、埋まらない層を
+   中身の余りで、それでも足りなければ事実の問題で補う。      */
 var WANT = { 1:3, 2:4, 3:3 };
 var TOTAL = 10;
 
 function buildQuiz(w, seed){
   var rnd = rng(seed || 1);
-  var byLevel = { 1:[], 2:[], 3:[] };
-  var usedGroup = {};
+  var content = [], fact = [], usedGroup = {};
   shuffle(TEMPLATES, rnd).forEach(function(t){
     /* 同じ材料を問う設問が並ぶと繰り返しに見えるので、系統ごとに1問まで */
     if(t.group && usedGroup[t.group]) return;
-    var q = t.make(w, rnd);
-    if(!q) return;
+    var made = t.make(w, rnd) || [];
+    if(!made.length) return;
     if(t.group) usedGroup[t.group] = 1;
-    q.id = t.id; q.level = t.level; byLevel[t.level].push(q);
+    made.forEach(function(q, i){
+      q.id = t.id + (made.length > 1 ? "#" + (i + 1) : "");
+      q.tier = t.tier;
+      (t.tier === "content" ? content : fact).push(q);
+    });
   });
-  var out = [];
-  [1, 2, 3].forEach(function(lv){ out = out.concat(byLevel[lv].splice(0, WANT[lv])); });
-  var rest = shuffle(byLevel[1].concat(byLevel[2], byLevel[3]), rnd);
-  while(out.length < TOTAL && rest.length) out.push(rest.shift());
-  out.sort(function(a, b){ return a.level - b.level; });
-  return out.slice(0, TOTAL);
+
+  function take(pool, lv, n){
+    var out = [];
+    for(var i = 0; i < pool.length && out.length < n; i++){
+      if(pool[i].level === lv) out.push(pool.splice(i--, 1)[0]);
+    }
+    return out;
+  }
+  var quiz = [];
+  [1, 2, 3].forEach(function(lv){
+    var got = take(content, lv, WANT[lv]);
+    if(got.length < WANT[lv]) got = got.concat(take(fact, lv, WANT[lv] - got.length));
+    quiz = quiz.concat(got);
+  });
+  /* 層が埋まらなかったぶんは、中身を優先して数を合わせる */
+  var rest = shuffle(content, rnd).concat(shuffle(fact, rnd));
+  while(quiz.length < TOTAL && rest.length) quiz.push(rest.shift());
+  quiz.sort(function(a, b){ return a.level - b.level; });
+  return quiz.slice(0, TOTAL);
 }
 
 /* ---- 採点 ---- */
@@ -697,9 +805,10 @@ function fetchArticle(title){
 /* ---- HTML から材料を抜く ---- */
 /* infobox の各行を {ラベル:テキスト} に。表記ゆれは fromInfobox が吸収する */
 function readInfobox(root){
-  var info = {};
+  var out = [];
   var boxes = root.querySelectorAll("table.infobox, table.infobox_v2, table.infobox_v3");
   for(var b = 0; b < boxes.length; b++){
+    var info = {};
     var rows = boxes[b].querySelectorAll("tr");
     for(var i = 0; i < rows.length; i++){
       var th = rows[i].querySelector("th"), td = rows[i].querySelector("td");
@@ -713,44 +822,147 @@ function readInfobox(root){
       clone.querySelectorAll("sup, style, .reference").forEach(function(el){ el.remove(); });
       info[key] = clone.textContent;
     }
+    out.push(info);
   }
-  return info;
+  return out;
 }
 
-/* 各話表を探して行を拾う。列の並びは記事ごとに違うので見出しで当てる */
-function readEpisodes(root){
-  var tables = root.querySelectorAll("table.wikitable");
-  var best = [];
-  for(var t = 0; t < tables.length; t++){
-    var rows = tables[t].querySelectorAll("tr");
-    if(rows.length < 3) continue;
-    var heads = rows[0].querySelectorAll("th, td");
-    var col = { no:-1, date:-1, subtitle:-1, rating:-1 };
-    for(var h = 0; h < heads.length; h++){
-      var label = cleanText(heads[h].textContent);
-      if(col.no < 0 && /^(話数?|各話|回|話)$/.test(label)) col.no = h;
-      else if(col.date < 0 && /放送日|配信日|放送年月日|日付/.test(label)) col.date = h;
-      else if(col.subtitle < 0 && /サブタイトル|副題|タイトル|題名/.test(label)) col.subtitle = h;
-      else if(col.rating < 0 && /視聴率/.test(label)) col.rating = h;
+/* rowspan / colspan のある表を、行×列の升目に展開する。
+   演出や脚本が複数話にまたがる表では、素直に td を数えると列がずれ、
+   サブタイトルのつもりで演出や視聴率を読んでしまう。            */
+function tableGrid(table){
+  var grid = [], rows = table.rows;
+  for(var r = 0; r < rows.length; r++){
+    if(!grid[r]) grid[r] = [];
+    var cells = rows[r].cells, c = 0;
+    for(var i = 0; i < cells.length; i++){
+      while(grid[r][c] !== undefined) c++;         /* 上から伸びてきた升を avoid */
+      var cell = cells[i];
+      var rs = Math.max(1, parseInt(cell.getAttribute("rowspan") || "1", 10) || 1);
+      var cs = Math.max(1, parseInt(cell.getAttribute("colspan") || "1", 10) || 1);
+      var text = cleanText(cell.textContent);
+      for(var dr = 0; dr < rs; dr++){
+        for(var dc = 0; dc < cs; dc++){
+          if(!grid[r + dr]) grid[r + dr] = [];
+          grid[r + dr][c + dc] = text;
+        }
+      }
+      c += cs;
     }
-    /* 話数の列と、サブタイトルか視聴率のどちらかが要る */
+  }
+  return grid;
+}
+
+/* 見出しの行から、どの列が何かを当てる */
+function matchColumns(head){
+  var col = { no:-1, date:-1, subtitle:-1, rating:-1 };
+  for(var h = 0; h < head.length; h++){
+    var label = cleanText(head[h] || "");
+    if(col.no < 0 && /^(話数?|各話|回|話|放送回|回数)$/.test(label)) col.no = h;
+    else if(col.date < 0 && /放送日|配信日|放送年月日|日付/.test(label)) col.date = h;
+    else if(col.subtitle < 0 && /サブタイトル|副題|話タイトル|各話タイトル|題名|^タイトル$/.test(label)) col.subtitle = h;
+    else if(col.rating < 0 && /視聴率/.test(label)) col.rating = h;
+  }
+  return col;
+}
+
+/* 表ひとつから各話を読む。見出しは先頭3行のどれかにある */
+function readEpisodeTable(table){
+  var grid = tableGrid(table);
+  if(grid.length < 3) return [];
+  for(var h = 0; h < Math.min(3, grid.length); h++){
+    var col = matchColumns(grid[h]);
     if(col.no < 0 || (col.subtitle < 0 && col.rating < 0)) continue;
     var got = [];
-    for(var r = 1; r < rows.length; r++){
-      var cells = rows[r].querySelectorAll("th, td");
-      if(!cells.length) continue;
-      function cell(i){ return i >= 0 && cells[i] ? cleanText(cells[i].textContent) : ""; }
-      got.push({ no:cell(col.no), date:cell(col.date), subtitle:cell(col.subtitle), rating:cell(col.rating) });
+    for(var r = h + 1; r < grid.length; r++){
+      var row = grid[r] || [];
+      function at(i){ return i >= 0 && row[i] != null ? row[i] : ""; }
+      got.push({ no:at(col.no), date:at(col.date), subtitle:at(col.subtitle), rating:at(col.rating) });
     }
-    if(got.length > best.length) best = got;
+    /* サブタイトルのつもりの列に数字ばかり並ぶなら、掴み違えているので捨てる */
+    if(col.subtitle >= 0){
+      var vals = got.map(function(g){ return g.subtitle; }).filter(function(v){ return v; });
+      var numeric = vals.filter(function(v){ return /^[\d.,%％\s-]+$/.test(toHalf(v)); }).length;
+      if(vals.length && numeric * 2 > vals.length){
+        got.forEach(function(g){ g.subtitle = ""; });
+      }
+    }
+    return got;
   }
-  return best;
+  return [];
+}
+
+/* 記事の中の各話表を探す */
+function readEpisodes(root, expect){
+  var tables = root.querySelectorAll("table.wikitable");
+  var found = [];
+  for(var t = 0; t < tables.length; t++){
+    var got = readEpisodeTable(tables[t]);
+    if(got.length) found.push(got);
+  }
+  if(!found.length) return [];
+  /* 話数が分かっているなら、行数がそれに一番近い表を採る。
+     アニメ版や海外版の話数表を掴まないための決め手になる。   */
+  if(expect){
+    return found.reduce(function(a, b){
+      return Math.abs(b.length - expect) < Math.abs(a.length - expect) ? b : a;
+    });
+  }
+  var big = found.filter(function(g){ return g.length >= 4; });
+  return big.length ? big[0] : found[0];
+}
+
+/* 登場人物の節から「役名」と「演じた俳優」の組を拾う。
+   ja.wikipedia では
+       ; 役名（よみ）
+       : 演 - 俳優名
+   という書き方が最も広く、「演 -」が役と俳優を結ぶ確かな目印になる。
+   箇条書きしか無い記事のために、infobox の出演者を手がかりに
+   「役名 - 俳優名」のどちら側が俳優かを決める道も用意する。      */
+function readCharacters(root, castHint){
+  var pairs = [], seen = {};
+  function add(role, actor){
+    role = cleanText(role).replace(/[（(].*?[)）]/g, "").replace(/[「」『』]/g, "").trim();
+    actor = personNames(actor)[0] || "";
+    if(!role || !actor || role === actor) return;
+    if(role.length < 2 || role.length > 20 || /\d/.test(role)) return;
+    if(seen[role] || seen[actor]) return;          /* 一人二役は選択肢が濁るので採らない */
+    seen[role] = seen[actor] = 1;
+    pairs.push({ role:role, actor:actor });
+  }
+  var ACT = /^演\s*[-‐−–—―:：]\s*(.+)$/;
+  var dts = root.querySelectorAll("dt");
+  for(var i = 0; i < dts.length; i++){
+    var n = dts[i].nextElementSibling;
+    while(n && n.tagName === "DD"){
+      var m = cleanText(n.textContent).match(ACT);
+      if(m){ add(dts[i].textContent, m[1]); break; }
+      n = n.nextElementSibling;
+    }
+  }
+  if(pairs.length >= 4) return pairs;
+
+  var hint = {};
+  (castHint || []).forEach(function(a){ hint[a] = 1; });
+  var lis = root.querySelectorAll("li");
+  for(var j = 0; j < lis.length; j++){
+    var t = cleanText(lis[j].textContent);
+    var m2 = t.match(/^(.{2,20}?)\s*[-‐−–—―]\s*(.{2,20}?)(?:[（(]|$)/);
+    if(!m2) continue;
+    if(hint[m2[2]]) add(m2[1], m2[2]);
+    else if(hint[m2[1]]) add(m2[2], m2[1]);
+  }
+  return pairs;
 }
 
 function parseArticle(title, html){
   var doc = new DOMParser().parseFromString(html, "text/html");
   var url = "https://ja.wikipedia.org/wiki/" + encodeURIComponent(title.replace(/ /g, "_"));
-  return makeWork(title, url, readInfobox(doc.body), readEpisodes(doc.body));
+  var info = pickInfobox(readInfobox(doc.body));
+  var base = fromInfobox(info);
+  return makeWork(title, url, info,
+                  readEpisodes(doc.body, base.count),
+                  readCharacters(doc.body, base.cast));
 }
 
 /* ---- 画面 ---- */
@@ -843,11 +1055,15 @@ function load(title){
 
 /* 何が取れたかを見せる。取れなかった材料が分かると原因を追いやすい */
 function reportFound(w){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
   var items = [
-    ["放送局", !!w.station], ["放送年", !!w.start], ["話数", w.count != null],
-    ["出演者", w.cast.length > 0], ["脚本", w.writers.length > 0], ["演出", w.directors.length > 0],
-    ["音楽", w.composers.length > 0], ["原作", w.origin.length > 0],
-    ["各話", w.episodes.length > 0],
+    ["登場人物" + (w.characters.length ? "：" + w.characters.length + "人" : ""), w.characters.length >= 4],
+    ["サブタイトル" + (subs.length ? "：" + subs.length + "話" : ""), subs.length >= 4],
+    ["出演者" + (w.cast.length ? "：" + w.cast.length + "人" : ""), w.cast.length > 0],
+    ["各話" + (w.episodes.length ? "：" + w.episodes.length + "話" : ""), w.episodes.length > 0],
+    ["放送局" + (w.station ? "：" + w.station : ""), !!w.station],
+    ["放送年" + (w.start ? "：" + w.start.y : ""), !!w.start],
+    ["話数" + (w.count != null ? "：" + w.count : ""), w.count != null],
     ["視聴率", w.episodes.some(function(e){ return e.rating != null; })]
   ];
   var box = $("found"); box.textContent = "";
@@ -970,6 +1186,8 @@ window.__quiz = {
   cleanText:cleanText, splitNames:splitNames, readCount:readCount, readDate:readDate,
   readRating:readRating, fromInfobox:fromInfobox, tidyEpisodes:tidyEpisodes, makeWork:makeWork,
   buildQuiz:buildQuiz, grade:grade, rankOf:rankOf,
+  normStation:normStation, boxKind:boxKind, pickInfobox:pickInfobox,
+  looksLikeName:looksLikeName, personNames:personNames, readCharacters:readCharacters,
   readInfobox:readInfobox, readEpisodes:readEpisodes, parseArticle:parseArticle
 };
 

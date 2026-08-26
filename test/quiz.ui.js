@@ -42,6 +42,13 @@ const ARTICLE_HTML = `
   <tr><th>放送期間</th><td>2013年4月1日 - 9月28日</td></tr>
   <tr><th>回数</th><td>全156回</td></tr>
 </table>
+<h2>登場人物</h2>
+<dl><dt>天野アキ（あまの あき）</dt><dd>演 - 能年玲奈</dd><dd>本作の主人公。</dd></dl>
+<dl><dt>天野春子（あまの はるこ）</dt><dd>演 - 小泉今日子</dd><dd>アキの母。</dd></dl>
+<dl><dt>天野夏（あまの なつ）</dt><dd>演 - 宮本信子</dd><dd>アキの祖母。海女。</dd></dl>
+<dl><dt>大向大吉（おおむかい だいきち）</dt><dd>演 - 杉本哲太</dd><dd>北三陸鉄道の駅長。</dd></dl>
+<dl><dt>足立ヒロシ（あだち ひろし）</dt><dd>演 - 小池徹平</dd><dd>アキの同級生。</dd></dl>
+<dl><dt>安部小百合（あべ さゆり）</dt><dd>演 - 片桐はいり</dd><dd>喫茶リアスの店主。</dd></dl>
 <h2>各話</h2>
 <table class="wikitable">
   <tr><th>話数</th><th>放送日</th><th>サブタイトル</th><th>視聴率</th></tr>
@@ -109,12 +116,9 @@ const SEARCH_JSON = {
   eq("検索と記事取得の2回だけ通信する", asked, ["query", "parse"]);
 
   /* ---- パーサを直接あてる ---- */
-  const parsed = await page.evaluate(h => {
-    const doc = new DOMParser().parseFromString(h, "text/html");
-    const info = window.__quiz.readInfobox(doc.body);
-    const eps = window.__quiz.readEpisodes(doc.body);
-    return { info, work: window.__quiz.makeWork("あまちゃん", "u", info, eps) };
-  }, ARTICLE_HTML);
+  const parsed = await page.evaluate(h => ({
+    work: window.__quiz.parseArticle("あまちゃん", h)
+  }), ARTICLE_HTML);
 
   eq("放送局を主要局名に寄せる", parsed.work.station, "NHK");
   eq("脚注を落として脚本を読む", parsed.work.writers, ["宮藤官九郎"]);
@@ -123,6 +127,9 @@ const SEARCH_JSON = {
   eq("放送開始日", parsed.work.start, { y: 2013, m: 4, d: 1 });
   eq("回数は infobox の値を優先", parsed.work.count, 156);
   eq("各話を拾う", parsed.work.episodes.length, 15);
+  eq("登場人物を拾う", parsed.work.characters.length, 6);
+  eq("役名と俳優の組", [parsed.work.characters[0].role, parsed.work.characters[0].actor],
+     ["天野アキ", "能年玲奈"]);
   eq("先頭の各話", [parsed.work.episodes[0].no, parsed.work.episodes[0].subtitle,
                     parsed.work.episodes[0].rating],
      [1, "おら、この海が好きだ！", 19.3]);
@@ -130,11 +137,12 @@ const SEARCH_JSON = {
 
   /* ---- 10問を通しで解く ---- */
   eq("進捗の目盛りは10", await page.locator("#progress i").count(), 10);
-  const seen = [];
+  const seen = [], lvs = [];
   for(let i = 0; i < 10; i++){
     await page.waitForSelector("#choices .ch");
     const text = (await page.textContent("#qtext")).trim();
     seen.push(text);
+    lvs.push((await page.textContent("#qlv")).trim());
     check("第" + (i + 1) + "問に設問がある", text.length > 4, text);
     eq("第" + (i + 1) + "問の選択肢は4つ", await page.locator("#choices .ch").count(), 4);
     check("第" + (i + 1) + "問は答える前は判定を出さない", await page.isHidden("#verdict"));
@@ -148,6 +156,11 @@ const SEARCH_JSON = {
     await page.click("#next");
   }
   check("設問が重複しない", new Set(seen).size === 10, seen.join(" / "));
+  check("スタッフを問う設問は出ない",
+        !seen.some(t => /脚本|演出|音楽|原作|プロデューサー/.test(t)), seen.join(" / "));
+  check("役名かサブタイトルを問う設問が中心",
+        seen.filter(t => /演じたのは|サブタイトル|第何話|出演/.test(t)).length >= 8,
+        seen.join(" / "));
 
   /* ---- 結果 ---- */
   await page.waitForSelector("#scr-done:not([hidden])");
@@ -155,7 +168,9 @@ const SEARCH_JSON = {
   check("称号が出る", rank.length > 0, rank);
   const score = +(await page.textContent("#score"));
   const full = +(await page.textContent("#full"));
-  check("満点は出題の重みの合計", full === 3 * 1 + 4 * 2 + 3 * 3, full);
+  const weight = { "基本":1, "制作":2, "各話":3 };
+  const wantFull = lvs.reduce((a, l) => a + (weight[l] || 0), 0);
+  check("満点は出題の重みの合計", full === wantFull, full + " / 期待 " + wantFull + "  " + lvs.join(","));
   check("得点は満点以下", score <= full, score + "/" + full);
   eq("振り返りは10件", await page.locator("#review .rv").count(), 10);
   eq("層ごとの内訳は3本", await page.locator("#bars .bar").count(), 3);
@@ -189,6 +204,95 @@ const SEARCH_JSON = {
                              null, { timeout: 10000 });
   check("問題を作れないときは理由を出す", true);
   check("そこから戻る道がある", await page.locator("#found button").count() > 0);
+
+  /* ---- 今日つぶした取り違えを、記事の形で固定する ---- */
+  const REG = await page.evaluate(() => {
+    const P = window.__quiz;
+
+    /* 半沢直樹。演出が rowspan でまたがり、サブタイトル列は無い */
+    const hanzawa = `<div><table class="infobox">
+      <tr><th>脚本</th><td>2013年版<br>八津弘幸<br>半沢直樹II<br>丑尾健太郎</td></tr>
+      <tr><th>出演者</th><td>堺雅人、上戸彩、及川光博、片岡愛之助</td></tr>
+      <tr><th>放送局</th><td>TBS系列</td></tr>
+      <tr><th>放送期間</th><td>2013年7月7日 - 9月22日</td></tr>
+      <tr><th>回数</th><td>全10話</td></tr></table>
+      <table class="wikitable">
+      <tr><th>話</th><th>放送日</th><th>演出</th><th>視聴率</th></tr>
+      <tr><td>第1話</td><td>2013年7月7日</td><td rowspan="5">福澤克雄</td><td>19.4%</td></tr>
+      <tr><td>第2話</td><td>2013年7月14日</td><td>21.8%</td></tr>
+      <tr><td>第3話</td><td>2013年7月21日</td><td>22.9%</td></tr>
+      <tr><td>第4話</td><td>2013年7月28日</td><td>27.6%</td></tr>
+      <tr><td>第5話</td><td>2013年8月4日</td><td>29.0%</td></tr>
+      <tr><td>第6話</td><td>2013年8月18日</td><td rowspan="5">棚澤孝義</td><td>29.0%</td></tr>
+      <tr><td>第7話</td><td>2013年8月25日</td><td>30.0%</td></tr>
+      <tr><td>第8話</td><td>2013年9月1日</td><td>32.9%</td></tr>
+      <tr><td>第9話</td><td>2013年9月15日</td><td>35.9%</td></tr>
+      <tr><td>第10話</td><td>2013年9月22日</td><td>42.2%</td></tr></table></div>`;
+
+    /* プロポーズ大作戦。フジ版に「放送局」行が無く、韓国版に有る */
+    const propose = `<div><table class="infobox">
+      <tr><th>脚本</th><td>金子ありさ</td></tr>
+      <tr><th>出演者</th><td>山下智久、長澤まさみ、榮倉奈々、藤木直人</td></tr>
+      <tr><th>放送チャンネル</th><td>フジテレビ系列</td></tr>
+      <tr><th>放送期間</th><td>2007年4月16日 - 6月25日</td></tr>
+      <tr><th>回数</th><td>全11話</td></tr></table>
+      <table class="infobox">
+      <tr><th>放送局</th><td>テレビ朝鮮</td></tr>
+      <tr><th>出演者</th><td>ユ・スンホ、パク・ウンビン</td></tr>
+      <tr><th>放送期間</th><td>2012年2月20日 - 4月10日</td></tr></table></div>`;
+
+    /* 花より男子。漫画・アニメ(テレビ朝日)・ドラマ(TBS)・韓国版が同居 */
+    const ep = (n, label) => Array.from({length:n}, (_, i) =>
+      `<tr><td>第${i+1}話</td><td>2005年10月${i+1}日</td><td>${label}${i+1}</td></tr>`).join("");
+    const hanadan = `<div><table class="infobox">
+      <tr><th>作者</th><td>神尾葉子</td></tr><tr><th>出版社</th><td>集英社</td></tr>
+      <tr><th>掲載誌</th><td>マーガレット</td></tr><tr><th>巻数</th><td>全37巻</td></tr></table>
+      <table class="infobox">
+      <tr><th>アニメーション制作</th><td>東映動画</td></tr>
+      <tr><th>シリーズ構成</th><td>富田祐弘</td></tr>
+      <tr><th>キャラクターデザイン</th><td>山室直儀</td></tr>
+      <tr><th>放送局</th><td>テレビ朝日</td></tr>
+      <tr><th>放送期間</th><td>1996年9月8日 - 1997年8月31日</td></tr>
+      <tr><th>話数</th><td>全51話</td></tr></table>
+      <table class="infobox">
+      <tr><th>脚本</th><td>サタケミキオ</td></tr><tr><th>演出</th><td>石井康晴</td></tr>
+      <tr><th>出演者</th><td>井上真央、松本潤、小栗旬、松田翔太、阿部力</td></tr>
+      <tr><th>放送局</th><td>TBS系列</td></tr>
+      <tr><th>放送期間</th><td>2005年10月21日 - 12月16日</td></tr>
+      <tr><th>回数</th><td>全9話</td></tr></table>
+      <table class="wikitable"><tr><th>話数</th><th>放送日</th><th>サブタイトル</th></tr>${ep(51,"アニメ第")}</table>
+      <table class="wikitable"><tr><th>話数</th><th>放送日</th><th>サブタイトル</th></tr>${ep(9,"ドラマ第")}</table></div>`;
+
+    return {
+      hanzawa: P.parseArticle("半沢直樹", hanzawa),
+      propose: P.parseArticle("プロポーズ大作戦", propose),
+      hanadan: P.parseArticle("花より男子", hanadan)
+    };
+  });
+
+  /* 半沢直樹 */
+  eq("rowspan があっても視聴率の列を取り違えない",
+     REG.hanzawa.episodes.slice(0, 3).map(e => e.rating), [19.4, 21.8, 22.9]);
+  check("サブタイトル列が無ければ空のままにする",
+        REG.hanzawa.episodes.every(e => !e.subtitle),
+        JSON.stringify(REG.hanzawa.episodes.map(e => e.subtitle)));
+  eq("版の見出しを脚本家として拾わない", REG.hanzawa.writers, ["八津弘幸", "丑尾健太郎"]);
+  eq("主人公の役名が作品名と同じでも残す",
+     REG.hanzawa.station, "TBS");
+
+  /* プロポーズ大作戦 */
+  eq("箱をまたいで放送局を拾わない", REG.propose.station, "フジテレビ");
+  eq("フジ版の出演者を保つ", REG.propose.cast[0], "山下智久");
+  eq("韓国版の出演者を混ぜない", REG.propose.cast.indexOf("ユ・スンホ"), -1);
+
+  /* 花より男子 */
+  eq("漫画とアニメを避けてドラマの放送局を取る", REG.hanadan.station, "TBS");
+  eq("ドラマの出演者を取る", REG.hanadan.cast[0], "井上真央");
+  eq("ドラマの話数を取る", REG.hanadan.count, 9);
+  eq("アニメ51話ではなくドラマ9話の表を取る", REG.hanadan.episodes.length, 9);
+  check("アニメ側のサブタイトルを掴まない",
+        REG.hanadan.episodes.every(e => e.subtitle.indexOf("アニメ") < 0),
+        JSON.stringify(REG.hanadan.episodes.map(e => e.subtitle)));
 
   await browser.close();
   server.close();
