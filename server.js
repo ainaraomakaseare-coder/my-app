@@ -26,6 +26,8 @@ const MAX_UPLOAD = 300 * 1024 * 1024; // 300MB
 
 store.ensure();
 
+const TEXT = { 'Content-Type': 'text/plain; charset=utf-8' };  // 日本語が化けないように
+
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -75,7 +77,11 @@ function safeMediaPath(name) {
 
 function serveMedia(req, res, name) {
   const full = safeMediaPath(name);
-  if (!full || !fs.existsSync(full)) { res.writeHead(404); res.end('not found'); return; }
+  if (!full || !fs.existsSync(full)) {
+    res.writeHead(404, TEXT);
+    res.end('そのファイルはありません。');
+    return;
+  }
 
   const stat = fs.statSync(full);
   const type = MIME[path.extname(full).toLowerCase()] || 'application/octet-stream';
@@ -308,7 +314,7 @@ const app = http.createServer(async (req, res) => {
 
     const file = url.pathname === '/' ? 'index.html' : path.basename(url.pathname);
     const full = path.join(__dirname, 'public', file);
-    if (!fs.existsSync(full)) { res.writeHead(404); res.end('not found'); return; }
+    if (!fs.existsSync(full)) { res.writeHead(404, TEXT); res.end('そのページはありません。'); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(full).toLowerCase()] || 'text/plain' });
     fs.createReadStream(full).pipe(res);
   } catch (err) {
@@ -321,8 +327,16 @@ const app = http.createServer(async (req, res) => {
 /* ---------------- メディア専用サーバー ---------------- */
 const mediaServer = http.createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${MEDIA_PORT}`);
-  if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }
-  if (!url.pathname.startsWith('/media/')) { res.writeHead(404); res.end('このサーバーはメディアしか配りません。'); return; }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, TEXT);
+    res.end('このサーバーは読み取り専用です。');
+    return;
+  }
+  if (!url.pathname.startsWith('/media/')) {
+    res.writeHead(404, TEXT);
+    res.end('このサーバーはメディアしか配りません。トンネルが繋がっている証拠なので、この表示で正常です。');
+    return;
+  }
   serveMedia(req, res, url.pathname.slice('/media/'.length));
 });
 
