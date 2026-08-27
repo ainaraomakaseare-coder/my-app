@@ -1,0 +1,12 @@
+{
+  "name": "sns-post-desk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SNS投稿を一元管理し、Instagram へは API で実際に投稿するローカルアプリ",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/app.test.js"
+  },
+  "engines": { "node": ">=18" }
+}

@@ -1,0 +1,10 @@
+# 秘密情報 — 絶対にコミットしない
+.env
+.env.local
+
+# 投稿データとメディアの実体（個人データ）
+data/
+!data/.gitkeep
+
+node_modules/
+.DS_Store
