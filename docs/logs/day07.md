@@ -79,7 +79,8 @@
 
 1. **GitHub のリポジトリを AI 側から作れなかった。** `create_repository` が
    `403 Resource not accessible by integration`。連携中の GitHub App にリポジトリ作成権限が無い。
-   時間を空けて再試行しても同じ。**人間が画面から作るしかない**。
+   時間を空けて再試行しても同じ。**人間が画面から作るしかなかった**。
+   （最終的に本人が作成 → AI 側で remote を繋いで push し、解決）
 2. **`timelog.js mark` を手で叩くと固まる。** フックは Claude Code が stdin に JSON を流す前提で
    `readStdin()` を呼んでおり、手動実行だと入力待ちのまま止まる（2分でタイムアウト）。
 3. **コンテナの時計が UTC だった。** そのまま記録すると JST 8/27 朝が「8/26」として保存され日付が1日ずれる。
@@ -102,7 +103,8 @@
 
 ## 解決方法
 
-1. → 未解決。ユーザーに GitHub の画面で作ってもらう。コード自体は手元にコミット済み。
+1. → 本人に GitHub の画面で作ってもらい、`git remote add` して push。
+   作れないのは「作成」だけで、既にあるリポジトリへの push は問題なくできた。
 2. → `node .claude/hooks/timelog.js mark start < /dev/null` と stdin を塞いで実行。
 3. → `TZ=Asia/Tokyo` を付けて実行。
 4. → リセット後に再開。作業内容は失われなかった。
@@ -168,8 +170,9 @@
 
 ## リポジトリ
 
-`day07-soccer-attendance`。**GitHub 上の作成は権限エラーで未完了**。コミット2本は手元にあり、
-リポジトリが用意でき次第 push する。
+[`day07-soccer-attendance`](https://github.com/ainaraomakaseare-coder/day07-soccer-attendance) の `main`。
+コミット4本を push 済み。`.env` / `config.local.js` / `dist/` が上がっていないことを、
+push 後に GitHub 側の実体を検査して確認した。
 
 ## DAY RESULT
 
@@ -187,5 +190,6 @@ AI：正確な計測不可
 ・利用上限に2回。作業30分に対し完了まで10時間以上
 ・時間の自動計測が動いておらず、出た数字が両方とも実態と違った
 ・.gitignore の書き漏れで、接続情報が上がる寸前だった
+・AIにリポジトリを作る権限が無く、そこだけ人間の手作業になった
 あと23 apps
 ```
