@@ -158,8 +158,10 @@ const SEARCH_JSON = {
   check("設問が重複しない", new Set(seen).size === 10, seen.join(" / "));
   check("スタッフを問う設問は出ない",
         !seen.some(t => /脚本|演出|音楽|原作|プロデューサー/.test(t)), seen.join(" / "));
-  check("役名かサブタイトルを問う設問が中心",
-        seen.filter(t => /演じたのは|サブタイトル|第何話|出演/.test(t)).length >= 8,
+  /* 外側の事実（放送局・放送年・話数）ではなく、中身を問う設問が中心であること。
+     DAY10 で地の文からの出題が増えたので、その言い回しもここに含める。 */
+  check("中身を問う設問が中心",
+        seen.filter(t => /演じたのは|サブタイトル|第何話|出演|説明されるのは|にあたるのは|あらすじの一節/.test(t)).length >= 8,
         seen.join(" / "));
 
   /* ---- 結果 ---- */
@@ -360,10 +362,20 @@ const SEARCH_JSON = {
       await sp.click("#next");
     }
     const joined = texts.join(" / ");
-    check("説明文から役名を当てる設問が出る", /と説明されるのは/.test(joined), joined);
-    check("あらすじの空欄補充が出る", /あらすじの一節/.test(joined), joined);
-    check("人物の関係を問う設問が出る", /にあたるのは/.test(joined), joined);
     check("外部リンクの文からは出題しない", !/公式サイト/.test(joined), joined);
+
+    /* どの種類が画面に並ぶかは種しだいなので、ここは種を固定して確かめる。
+       実際に出た1回ぶんだけを見ると、種によって通ったり落ちたりする。 */
+    const kinds = await sp.evaluate(a => {
+      const Q = window.__quiz, w = Q.parseArticle("あまちゃん", a), got = {};
+      for(let s = 1; s <= 20; s++){
+        Q.buildQuiz(w, s * 7919).forEach(q => { got[String(q.id).split("#")[0]] = 1; });
+      }
+      return Object.keys(got);
+    }, STORY);
+    check("説明文から役名を当てる設問を作る", kinds.indexOf("chardesc") >= 0, kinds.join(","));
+    check("人物の関係を問う設問を作る", kinds.indexOf("relation") >= 0, kinds.join(","));
+    check("あらすじの空欄補充を作る", kinds.indexOf("cloze") >= 0, kinds.join(","));
 
     await sp.waitForSelector("#scr-done:not([hidden])");
     eq("問題を作るために外部のAPIを呼ばない", outside, []);
