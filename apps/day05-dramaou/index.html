@@ -151,32 +151,6 @@ button{cursor:pointer}
 @keyframes sp{to{transform:rotate(360deg)}}
 .found{display:flex;flex-wrap:wrap;gap:5px;justify-content:center}
 .tag{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
-
-/* ---- AI出題の設定 ---- */
-.aiset{border:1px solid var(--line);border-radius:10px;padding:12px 13px;
-  display:flex;flex-direction:column;gap:12px;background:rgba(255,255,255,.015)}
-.sw{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:center;cursor:pointer}
-/* 2行にまたがるが、見出しの行に合わせて上に置く。中央に置くと説明文と揃って見える */
-.sw input{grid-row:1 / span 2;align-self:start;margin-top:4px;
-  width:17px;height:17px;accent-color:var(--lamp);cursor:pointer}
-.sw-t{font-size:14px;font-weight:500}
-.sw-d{font-size:12px;color:var(--muted);line-height:1.6}
-#ai-conf{display:flex;flex-direction:column;gap:11px;
-  border-top:1px solid var(--line);padding-top:12px}
-.field{display:flex;flex-direction:column;gap:5px}
-.field label{font-size:12px;color:var(--paper-dim);letter-spacing:.04em}
-.field input,.field select{
-  background:var(--ink-sink);border:1px solid var(--line-lit);border-radius:8px;
-  padding:9px 11px;font-size:14px;color:var(--paper);width:100%}
-.field input:focus,.field select:focus{outline:2px solid var(--lamp);outline-offset:1px}
-.lnk{background:none;border:0;padding:0;color:var(--cool);font-size:12px;
-  text-decoration:underline;cursor:pointer}
-.note b{color:var(--lamp);font-weight:700;font-variant-numeric:tabular-nums}
-
-/* AIが作った問題だと分かる印 */
-.lv.ai{color:var(--cool);border-color:rgba(111,168,181,.45)}
-.rv .sc{display:block;margin-top:4px;font-size:11px;color:var(--muted);
-  border-left:2px solid var(--line-lit);padding-left:8px}
 .tag.has{color:var(--lamp);border-color:rgba(232,180,76,.4)}
 @media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
 </style>
@@ -194,35 +168,12 @@ button{cursor:pointer}
 
 <!-- 入口 -->
 <section id="scr-home" class="card" style="display:flex;flex-direction:column;gap:14px">
-  <p class="lead" id="home-lead">作品名を入れると、日本語版 Wikipedia の記事から10問つくります。</p>
+  <p class="lead">作品名を入れると、日本語版 Wikipedia の記事から10問つくります。</p>
   <div class="search">
     <input id="q" type="search" placeholder="例：あまちゃん" autocomplete="off" enterkeyhint="search">
     <button id="go">検索</button>
   </div>
   <div class="examples" id="examples"></div>
-
-  <div class="aiset">
-    <label class="sw">
-      <input type="checkbox" id="ai-on">
-      <span class="sw-t">AIに問題を作らせる</span>
-      <span class="sw-d">記事の文章を読ませて、物語の中身を問う問題を作ります</span>
-    </label>
-    <div id="ai-conf" hidden>
-      <div class="field">
-        <label for="ai-key">Anthropic の APIキー</label>
-        <input id="ai-key" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
-      </div>
-      <div class="field">
-        <label for="ai-model">モデル</label>
-        <select id="ai-model"></select>
-      </div>
-      <p class="note">
-        鍵はこの端末の中だけに保存し、Anthropic 以外には送りません。1回の出題でおよそ
-        <b id="ai-est">—</b> かかり、あなたの鍵に課金されます。実際にかかった額は出題のあとに出します。
-        <button type="button" class="lnk" id="ai-forget">この端末から鍵を消す</button>
-      </p>
-    </div>
-  </div>
 
   <p class="note" id="home-note" hidden></p>
 </section>
@@ -239,7 +190,6 @@ button{cursor:pointer}
   <div class="card loading">
     <div class="spin"></div>
     <p class="lead" id="load-msg">記事を読んでいます…</p>
-    <p class="note" id="load-sub" hidden></p>
     <div class="found" id="found"></div>
   </div>
 </section>
@@ -270,7 +220,6 @@ button{cursor:pointer}
   <div class="card bars" id="bars"></div>
   <div class="card review" id="review"></div>
   <p class="src" id="src"></p>
-  <p class="note" id="ai-spent" hidden></p>
   <button class="btn primary" id="again">同じドラマでもう一度</button>
   <button class="btn" id="other">別のドラマで挑む</button>
 </section>
@@ -505,7 +454,7 @@ function tidyEpisodes(rows){
 }
 
 /* ---- 作品としてまとめる ---- */
-function makeWork(title, url, info, epRows, chars){
+function makeWork(title, url, info, epRows, chars, prose){
   var w = fromInfobox(info);
   w.title = title;
   w.url = url;
@@ -522,6 +471,8 @@ function makeWork(title, url, info, epRows, chars){
   w.characters = (chars || []).filter(function(c){
     return c && c.role && c.actor && c.role !== c.actor && !isSeriesLabel(c.role);
   });
+  /* あらすじなどの地の文。表からは取れない「物語の中で何が起きたか」の材料 */
+  w.prose = String(prose || "");
   if(w.count == null && w.episodes.length >= 3) w.count = w.episodes.length;
   /* 年代の帯。ダミー人物を対象作から離すのに使う */
   var y = w.start ? w.start.y : null;
@@ -584,7 +535,156 @@ function actorPool(w){
   return out;
 }
 
+/* ---- 地の文を出題に使うための部品 ----
+   表や箱書きからは「誰が何を演じたか」までしか問えない。
+   物語の中で何が起きたかは、あらすじや人物の説明文にしか書いていない。 */
+
+/* クイズに使える節だけ拾う。受賞や外部リンクは物語の材料にならない */
+var PROSE_WANT = /あらすじ|概要|物語|ストーリー|登場人物|人物|キャスト|各話|エピソード/;
+var PROSE_SKIP = /受賞|関連|外部リンク|脚注|出典|参考文献|放送局|ネット局|主題歌|商品|書誌|備考|スタッフ/;
+
+/* 節の配列を、上限文字数まで詰める。節の途中では切らない。
+   文の途中で切れた材料から作った設問は壊れるので、入り切らない節は丸ごと落とす。 */
+function packProse(sections, limit){
+  var want = [], rest = [];
+  (sections || []).forEach(function(s){
+    if(!s || !s.text) return;
+    if(PROSE_SKIP.test(s.head || "")) return;
+    (PROSE_WANT.test(s.head || "") ? want : rest).push(s);
+  });
+  var out = [], used = 0;
+  want.concat(rest).forEach(function(s){
+    var piece = (s.head ? "## " + s.head + "\n" : "") + s.text;
+    if(used + piece.length > limit) return;
+    out.push(piece); used += piece.length;
+  });
+  return out.join("\n\n");
+}
+
+/* 地の文を文に割る。短すぎる文は設問にならず、長すぎる文は読ませるのが苦しい */
+function sentencesOf(text){
+  var out = [];
+  String(text || "").split("\n").forEach(function(line){
+    if(/^##/.test(line)) return;                    /* packProse が付ける節見出し */
+    line.split("。").forEach(function(t){
+      t = cleanText(t);
+      if(t.length >= 12 && t.length <= 64) out.push(t + "。");
+    });
+  });
+  return out;
+}
+
+/* 役名の呼び名を並べる。記事は「天野アキ」を本文で「アキ」と書くので、
+   フルネームだけで探すと地の文に一度も当たらない。
+   ただし他の人物と紛れる呼び名は使わない。伏せたときに誰だか決まらなくなる。 */
+function nameForms(role, all){
+  var cand = [role];
+  var sp = String(role).split(/[\s・=＝]/).filter(function(x){ return x.length >= 2; });
+  if(sp.length > 1) cand = cand.concat(sp);
+  else {
+    if(role.length >= 4){ cand.push(role.slice(0, 2)); cand.push(role.slice(-2)); }
+    if(role.length >= 5){ cand.push(role.slice(0, 3)); cand.push(role.slice(-3)); }
+  }
+  var uniq = [], seen = {};
+  cand.forEach(function(c){
+    if(!c || c.length < 2 || seen[c]) return;
+    seen[c] = 1;
+    /* その呼び名を含む役名が、対象の一人だけであること */
+    if((all || []).filter(function(r){ return r.indexOf(c) >= 0; }).length === 1) uniq.push(c);
+  });
+  return uniq;
+}
+
+/* 文の中の呼び名を伏せる。同じ呼び名が何度出ても全部伏せないと答えが漏れる */
+var BLANK = "〇〇〇";
+function blankOut(sentence, forms){
+  var out = String(sentence);
+  /* 長い呼び名から先に伏せる。「アキ」を先に伏せると「天野アキ」が壊れる */
+  (forms || []).slice().sort(function(a, b){ return b.length - a.length; })
+    .forEach(function(f){ out = out.split(f).join(BLANK); });
+  return out.replace(new RegExp("(" + BLANK + ")+", "g"), BLANK);
+}
+
+/* 人物の説明文によくある関係の言い回し */
+var REL = /(.{2,12}?)の(母|父|祖母|祖父|兄|姉|弟|妹|息子|娘|妻|夫|恋人|婚約者|同級生|幼なじみ|親友|上司|部下|秘書|担任|主治医)(?:[。、\s]|$)/;
+
 var TEMPLATES = [
+
+/* ---- 地の文から作る（表からは問えない、物語の中身） ---- */
+
+/* 人物の説明文から役名を当てる。表を眺めただけでは答えられない */
+{ id:"chardesc", tier:"content", group:"story", make:function(w, rnd){
+  if(w.characters.length < 4) return [];
+  var roles = w.characters.map(function(c){ return c.role; });
+  var pool = w.characters.filter(function(c){
+    if(!c.desc || c.desc.length < 10 || c.desc.length > 70) return false;
+    /* 説明文に本人の役名や俳優名が入っていたら、答えが書いてある */
+    if(c.desc.indexOf(c.actor) >= 0) return false;
+    return nameForms(c.role, roles).every(function(f){ return c.desc.indexOf(f) < 0; });
+  });
+  return shuffle(pool, rnd).slice(0, 3).map(function(c, i){
+    var wrongs = distract(roles, [c.role], 3, rnd);
+    if(!wrongs) return null;
+    var ch = makeChoices(c.role, wrongs, rnd);
+    return { text:"『" + w.title + "』で「" + c.desc + "」と説明されるのは？",
+             choices:ch.choices, answer:ch.answer, level:i === 0 ? 2 : 3,
+             why:c.role + "（演 " + c.actor + "）の説明。" };
+  }).filter(Boolean);
+}},
+
+/* 人物どうしの関係を問う。「アキの母は誰か」は表には無い */
+{ id:"relation", tier:"content", group:"story", make:function(w, rnd){
+  if(w.characters.length < 4) return [];
+  var roles = w.characters.map(function(c){ return c.role; });
+  var made = [];
+  shuffle(w.characters, rnd).forEach(function(c){
+    if(made.length >= 2 || !c.desc) return;
+    var m = c.desc.match(REL);
+    if(!m) return;
+    /* 「◯◯の母」の◯◯が、この作品の別の人物として実在すること */
+    var who = null;
+    roles.forEach(function(r){
+      if(r === c.role) return;
+      if(r === m[1] || nameForms(r, roles).indexOf(m[1]) >= 0) who = r;
+    });
+    if(!who) return;
+    var wrongs = distract(roles, [c.role, who], 3, rnd);
+    if(!wrongs) return;
+    var ch = makeChoices(c.role, wrongs, rnd);
+    made.push({ text:"『" + w.title + "』で " + who + " の" + m[2] + "にあたるのは？",
+                choices:ch.choices, answer:ch.answer, level:made.length === 0 ? 2 : 3,
+                why:c.role + "（演 " + c.actor + "）が " + who + " の" + m[2] + "。" });
+  });
+  return made;
+}},
+
+/* あらすじの一節を伏せて当てさせる。どれも記事に書いてある本物の文なので、
+   うろ覚えでは引っかかる。観ていないと埋まらない。 */
+{ id:"cloze", tier:"content", group:"plot", make:function(w, rnd){
+  var roles = w.characters.map(function(c){ return c.role; });
+  if(roles.length < 4) return [];
+  var forms = {};
+  roles.forEach(function(r){ forms[r] = nameForms(r, roles); });
+  var made = [];
+  shuffle(sentencesOf(w.prose), rnd).forEach(function(sn){
+    if(made.length >= 3) return;
+    /* 文に出てくる人物がちょうど一人のときだけ使う。
+       二人以上いると、伏せた先が一意に決まらない */
+    var hit = roles.filter(function(r){
+      return forms[r].some(function(f){ return sn.indexOf(f) >= 0; });
+    });
+    if(hit.length !== 1) return;
+    var blanked = blankOut(sn, forms[hit[0]]);
+    if(blanked.indexOf(BLANK) < 0) return;
+    var wrongs = distract(roles, [hit[0]], 3, rnd);
+    if(!wrongs) return;
+    var ch = makeChoices(hit[0], wrongs, rnd);
+    made.push({ text:"あらすじの一節です。" + BLANK + " に入るのは？「" + blanked + "」",
+                choices:ch.choices, answer:ch.answer, level:made.length === 0 ? 2 : 3,
+                why:"正しくは「" + sn + "」。" });
+  });
+  return made;
+}},
 
 /* ---- 役名と俳優（中身の中心） ---- */
 { id:"role2actor", tier:"content", group:"yaku", make:function(w, rnd){
@@ -746,10 +846,8 @@ var TEMPLATES = [
    まず中身の問題だけで 易3・中4・難3 を狙い、埋まらない層を
    中身の余りで、それでも足りなければ事実の問題で補う。      */
 var WANT = { 1:3, 2:4, 3:3 };
-/* AIに何問頼むか。検査で落ちるぶんを見越して、出す数より少し多めに頼む */
-var AI_WANT = 8;
-/* AIに送る文章の上限。日本語は概ね1文字1トークンなので、そのまま費用に効く */
-var PROSE_LIMIT = 12000;
+/* 記事から拾う地の文の上限。長い記事で処理が重くならないようにするための枠 */
+var PROSE_LIMIT = 20000;
 var TOTAL = 10;
 
 /* 同じテンプレから何問まで採るか。同じ言い回しが並ぶと問題数の水増しに見える */
@@ -767,6 +865,9 @@ function buildQuiz(w, seed){
       q.id = t.id + (made.length > 1 ? "#" + (i + 1) : "");
       q.tier = t.tier;
     });
+    /* テンプレの取りこぼしはここで止める。落ちた設問は捨てる */
+    made = made.filter(function(q){ return checkMade(q, w).length === 0; });
+    if(!made.length) return;
     /* まずは同じ言い回し・同じ材料が並ばない範囲だけ採る */
     var g = t.group || t.id;
     var room = PER_GROUP - (perGroup[g] || 0);
@@ -834,124 +935,16 @@ function rankOf(ratio){
 }
 
 
-/* ================= AI出題 =================
-   テンプレは表や箱書きに載っている事実しか問えない。あらすじや人物関係の
-   ような文章の中身を問うには、記事の文章をAIに読ませて作らせるほうが向く。
-   ただしAIの出力はそのまま出さない。下の checkAi を通し、落ちたものは捨てる。
-   検査の基準は .claude/skills/quiz-design と同じ。分けると必ず食い違う。 */
+/* ================= 出題の検査 =================
+   .claude/skills/quiz-design の「出題を出す前の4つの検査」をコードにしたもの。
+   テンプレの取りこぼしは必ず出るので、組み上げた設問は全部ここを通す。
+   落ちた設問は直さずに捨てる。数は他のテンプレで埋まる。 */
 
-/* モデルごとの1Mトークンあたりの単価（ドル）。
-   出典 https://platform.claude.com/docs/en/pricing
-   値は変わるので、変わったらこの表だけ直す。 */
-var MODELS = [
-  { id:"claude-opus-5",    name:"Opus 5",    note:"いちばん賢い", tin:5, tout:25 },
-  { id:"claude-sonnet-5",  name:"Sonnet 5",  note:"中間",         tin:2, tout:10 },
-  { id:"claude-haiku-4-5", name:"Haiku 4.5", note:"いちばん安い", tin:1, tout:5  }
-];
-function modelById(id){
-  for(var i = 0; i < MODELS.length; i++) if(MODELS[i].id === id) return MODELS[i];
-  return MODELS[0];
-}
-/* 実際にかかった額。usage は API の返り値のもの */
-function costOf(usage, id){
-  var m = modelById(id);
-  var i = (usage && usage.input_tokens) || 0, o = (usage && usage.output_tokens) || 0;
-  return (i * m.tin + o * m.tout) / 1000000;
-}
-/* 日本語は概ね1文字1トークン前後。送る前の概算に使う */
-function guessCost(chars, id){
-  var m = modelById(id);
-  return (chars * m.tin + 3000 * m.tout) / 1000000;
-}
-
-/* クイズに使える節だけ拾う。全文を送ると費用がそのまま記事の長さに比例する */
-var PROSE_WANT = /あらすじ|概要|物語|ストーリー|登場人物|人物|キャスト|各話|エピソード/;
-var PROSE_SKIP = /受賞|関連|外部リンク|脚注|出典|参考文献|放送局|ネット局|主題歌|商品|書誌|備考|スタッフ/;
-
-/* 節の配列を、上限文字数まで詰める。節の途中では切らない。
-   文の途中で切れた材料から作った設問は壊れるので、入り切らない節は丸ごと落とす。 */
-function packProse(sections, limit){
-  var want = [], rest = [];
-  (sections || []).forEach(function(s){
-    if(!s || !s.text) return;
-    if(PROSE_SKIP.test(s.head || "")) return;
-    (PROSE_WANT.test(s.head || "") ? want : rest).push(s);
-  });
-  var out = [], used = 0;
-  want.concat(rest).forEach(function(s){
-    var piece = (s.head ? "## " + s.head + "\n" : "") + s.text;
-    if(used + piece.length > limit) return;
-    out.push(piece); used += piece.length;
-  });
-  return out.join("\n\n");
-}
-
-var AI_SCHEMA = {
-  type:"object",
-  properties:{
-    questions:{
-      type:"array",
-      items:{
-        type:"object",
-        properties:{
-          text:{ type:"string" },
-          choices:{ type:"array", items:{ type:"string" } },
-          answer:{ type:"string" },
-          level:{ type:"integer" },
-          why:{ type:"string" },
-          source:{ type:"string" }
-        },
-        required:["text","choices","answer","level","why","source"],
-        additionalProperties:false
-      }
-    }
-  },
-  required:["questions"],
-  additionalProperties:false
-};
-
-/* AIへの指示。なぜそうしてほしいかまで書くと、守られ方が変わる */
-function buildAiPrompt(work, prose, n){
-  return [
-    "あなたはテレビドラマの4択クイズを作る出題者です。",
-    "下の記事の抜粋だけを根拠に、『" + work.title + "』についての問題を" + n + "問作ってください。",
-    "",
-    "■ 何を問うか",
-    "放送局・放送年・話数のような、記事の外側から分かる事実は問わないでください。",
-    "それらは別の仕組みで出題済みです。あなたに作ってほしいのは、",
-    "実際に本編を観ていないと出てこないこと ——「物語の中で何が起きたか」",
-    "「誰と誰がどういう関係か」「その人物が何をしたか」です。",
-    "",
-    "■ 選択肢の作り方",
-    "クイズの質は、間違いの選択肢で決まります。作品を知らない人が消去法だけで",
-    "正解にたどり着けてしまう問題は、4択の顔をした1択です。",
-    "・ダミーは、同じ記事に実際に出てくる別の人物・別の出来事から取ってください。",
-    "  作品の外から持ってきた作り物は、文体が浮いて一目で分かります。",
-    "・正解とダミーは長さと粒度を揃えてください。ひとつだけ長い選択肢は、それだけで答えになります。",
-    "・問題文の中に答えを書かないでください。",
-    "・答えが2つ成り立つ問題は作らないでください。記事の中で一意に決まることだけ問います。",
-    "",
-    "■ 難しさ",
-    "level は 1=やさしい（主要人物や大筋を知っていれば分かる）、",
-    "2=ふつう（通して観ていれば分かる）、3=難しい（細部まで覚えていないと出てこない）。",
-    "3に寄せすぎず、1と2も混ぜてください。",
-    "",
-    "■ 添える文",
-    "why には、解答後に見せる一行の解説を書いてください。",
-    "source には、その問題の根拠にした抜粋中の記述を短く引用してください。",
-    "根拠を書けない問題は作らないでください。記事に書いていないことは問わない、という意味です。",
-    "",
-    "■ 記事の抜粋",
-    prose
-  ].join("\n");
-}
-
-/* AIが返した設問1つを検査する。壊れている理由の配列を返す。空なら合格。
-   Schema は形しか保証しないので、中身はここで見る。 */
-function checkAi(q, work){
+/* 壊れている理由の配列を返す。空なら合格。answer は choices の添字。 */
+function checkMade(q, work){
   var bad = [];
   if(!q || typeof q !== "object") return ["設問の形が違う"];
-  if(typeof q.text !== "string" || q.text.trim().length < 4) bad.push("問題文が短すぎる");
+  if(typeof q.text !== "string" || q.text.trim().length < 6) bad.push("問題文が短すぎる");
   if(!Array.isArray(q.choices)) return bad.concat("choices が配列でない");
   if(q.choices.length !== 4) bad.push("選択肢が4つでない");
   if(q.choices.some(function(c){ return typeof c !== "string" || !c.trim(); })) bad.push("空の選択肢がある");
@@ -960,64 +953,30 @@ function checkAi(q, work){
   q.choices.forEach(function(c){ if(seen[c]) dup = true; seen[c] = 1; });
   if(dup) bad.push("選択肢が重複している");
 
-  if(typeof q.answer !== "string") bad.push("answer が文字列でない");
-  else if(q.choices.indexOf(q.answer) < 0) bad.push("answer が choices の中に無い");
+  var ans = q.choices[q.answer];
+  if(typeof q.answer !== "number" || ans == null) bad.push("answer が選択肢を指していない");
 
-  /* 答えの漏れ。1文字の一致は偶然が多いので2文字から見る */
-  if(typeof q.answer === "string" && q.answer.length >= 2 &&
-     typeof q.text === "string" && q.text.indexOf(q.answer) >= 0) bad.push("問題文に答えが含まれている");
+  /* 答えが問題文に漏れていないか。1文字の一致は偶然が多いので2文字から見る */
+  if(typeof ans === "string" && ans.length >= 2 &&
+     typeof q.text === "string" && q.text.indexOf(ans) >= 0) bad.push("問題文に答えが含まれている");
 
   /* 正解だけ長さが浮いていないか。
      比率だけで見ると「海女」対「喫茶店の店主」のような、日本語では普通の
      組み合わせまで落ちてしまう。字数の差も一緒に見て、両方あてはまる時だけ弾く。 */
-  if(typeof q.answer === "string" && q.choices.indexOf(q.answer) >= 0){
-    var others = q.choices.filter(function(c){ return c !== q.answer; });
+  if(typeof ans === "string"){
+    var others = q.choices.filter(function(c, i){ return i !== q.answer; });
     if(others.length){
-      var avg = others.reduce(function(s, c){ return s + c.length; }, 0) / others.length;
-      var off = Math.abs(q.answer.length - avg);
-      var ratio = q.answer.length > avg * 1.8 || q.answer.length * 1.8 < avg;
-      if(avg > 0 && ratio && off >= 4) bad.push("正解だけ長さが浮いている");
+      var avg = others.reduce(function(a, c){ return a + c.length; }, 0) / others.length;
+      var ratio = ans.length > avg * 1.8 || ans.length * 1.8 < avg;
+      if(avg > 0 && ratio && Math.abs(ans.length - avg) >= 4) bad.push("正解だけ長さが浮いている");
     }
   }
 
-  if([1,2,3].indexOf(q.level) < 0) bad.push("level が 1〜3 でない");
-  if(typeof q.source !== "string" || !q.source.trim()) bad.push("根拠が空");
-
-  /* 作品名を答えさせる問題は、題名を入れた時点で分かっている */
-  if(work && work.title && q.answer === work.title) bad.push("作品名そのものが答えになっている");
+  if([1, 2, 3].indexOf(q.level) < 0) bad.push("level が 1〜3 でない");
+  /* 作品名そのものが答えになる設問は、題名を入れた時点で解けている */
+  if(work && work.title && ans === work.title) bad.push("作品名そのものが答えになっている");
 
   return bad;
-}
-
-/* 検査を通ったものだけ、アプリの内部の形（answer は添字）に直して返す。
-   落ちた設問は直さずに捨てる。数はテンプレ出題で埋める。 */
-function adoptAi(list, work){
-  var ok = [], ng = [];
-  (list || []).forEach(function(q, i){
-    var bad = checkAi(q, work);
-    if(bad.length){ ng.push({ index:i, reasons:bad }); return; }
-    ok.push({
-      id:"ai#" + (ok.length + 1), tier:"ai", level:q.level,
-      text:q.text, choices:q.choices.slice(), answer:q.choices.indexOf(q.answer),
-      why:q.why, source:q.source
-    });
-  });
-  return { ok:ok, ng:ng };
-}
-
-/* AI出題を先に置き、足りないぶんをテンプレ出題で埋めて total 問にする。
-   AIが1問も通らなくても、テンプレだけで成立する。 */
-function mergeQuiz(ai, tpl, total){
-  var n = total || TOTAL;
-  var out = (ai || []).slice(0, n);
-  var used = {};
-  out.forEach(function(q){ used[q.text] = 1; });
-  (tpl || []).forEach(function(q){
-    if(out.length >= n || used[q.text]) return;
-    used[q.text] = 1; out.push(q);
-  });
-  out.sort(function(a, b){ return a.level - b.level; });
-  return out;
 }
 
 /* 難しさの呼び名。level は 1=易 2=中 3=難 なので、中身ではなく難しさで呼ぶ。
@@ -1189,24 +1148,28 @@ function readEpisodes(root, expect){
    「役名 - 俳優名」のどちら側が俳優かを決める道も用意する。      */
 function readCharacters(root, castHint){
   var pairs = [], seen = {};
-  function add(role, actor){
+  function add(role, actor, desc){
     role = cleanText(role).replace(/[（(].*?[)）]/g, "").replace(/[「」『』]/g, "").trim();
     actor = personNames(actor)[0] || "";
     if(!role || !actor || role === actor) return;
     if(role.length < 2 || role.length > 20 || /\d/.test(role)) return;
     if(seen[role] || seen[actor]) return;          /* 一人二役は選択肢が濁るので採らない */
     seen[role] = seen[actor] = 1;
-    pairs.push({ role:role, actor:actor });
+    /* 説明文は出題の材料になる。「アキの母。」の一行が、そのまま関係を問う設問になる */
+    pairs.push({ role:role, actor:actor, desc:cleanText(desc || "") });
   }
   var ACT = /^演\s*[-‐−–—―:：]\s*(.+)$/;
   var dts = root.querySelectorAll("dt");
   for(var i = 0; i < dts.length; i++){
-    var n = dts[i].nextElementSibling;
+    var n = dts[i].nextElementSibling, hit = null, desc = [];
     while(n && n.tagName === "DD"){
-      var m = cleanText(n.textContent).match(ACT);
-      if(m){ add(dts[i].textContent, m[1]); break; }
+      var line = cleanText(n.textContent);
+      var m = line.match(ACT);
+      if(m && !hit) hit = m[1];
+      else if(hit) desc.push(line);          /* 演者の行より後ろが人物の説明 */
       n = n.nextElementSibling;
     }
+    if(hit) add(dts[i].textContent, hit, desc.join(" "));
   }
   if(pairs.length >= 4) return pairs;
 
@@ -1230,7 +1193,8 @@ function parseArticle(title, html){
   var base = fromInfobox(info);
   return makeWork(title, url, info,
                   readEpisodes(doc.body, base.count),
-                  readCharacters(doc.body, base.cast));
+                  readCharacters(doc.body, base.cast),
+                  packProse(readProse(doc.body), PROSE_LIMIT));
 }
 
 /* ---- 記事の文章を節ごとに取る ----
@@ -1267,58 +1231,6 @@ function readProse(root){
   return out;
 }
 
-/* ---- Claude に問題を作らせる ----
-   公式SDKはビルドの要る npm パッケージなので、1枚のHTMLでは素の fetch で呼ぶ。
-   そのぶん、ブラウザから直接呼ぶためのヘッダは自分で正しく付ける。 */
-var CLAUDE_API = "https://api.anthropic.com/v1/messages";
-function askClaude(key, model, prompt){
-  return fetch(CLAUDE_API, {
-    method:"POST",
-    headers:{
-      "content-type":"application/json",
-      "x-api-key":key,
-      "anthropic-version":"2023-06-01",
-      /* これが無いとブラウザからは CORS で弾かれる。
-         名前のとおり、鍵がブラウザに載ることを承知したうえで付けるもの。 */
-      "anthropic-dangerous-direct-browser-access":"true"
-    },
-    body:JSON.stringify({
-      model:model,
-      max_tokens:16000,
-      /* 待つのは人なので、既定の high より一段軽くして待ち時間を詰める */
-      output_config:{ effort:"medium", format:{ type:"json_schema", schema:AI_SCHEMA } },
-      messages:[{ role:"user", content:prompt }]
-    })
-  }).then(function(r){
-    return r.json().then(function(j){
-      if(!r.ok){
-        var m = (j && j.error && j.error.message) || ("HTTP " + r.status);
-        if(r.status === 401) m = "APIキーが違うようです";
-        if(r.status === 429) m = "呼び出しの上限に当たりました。少し待ってからもう一度";
-        throw new Error(m);
-      }
-      return j;
-    });
-  }).then(function(j){
-    if(j.stop_reason === "refusal") throw new Error("この作品ではAIが出題を断りました");
-    var block = (j.content || []).filter(function(b){ return b.type === "text"; })[0];
-    if(!block) throw new Error("AIの返事に本文がありませんでした");
-    var data;
-    /* 構造化出力なので JSON のはずだが、念のため */
-    try { data = JSON.parse(block.text); }
-    catch(e){ throw new Error("AIの返事を読み取れませんでした"); }
-    return { questions:(data && data.questions) || [], usage:j.usage || {}, model:j.model || "" };
-  });
-}
-
-/* ---- APIキーの保管 ----
-   端末の中だけ。リポジトリにも通信先にも出さない。 */
-var KEY_STORE = "dramaou.key", MODEL_STORE = "dramaou.model";
-function loadKey(){ try { return localStorage.getItem(KEY_STORE) || ""; } catch(e){ return ""; } }
-function saveKey(v){ try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch(e){} }
-function loadModel(){ try { return localStorage.getItem(MODEL_STORE) || MODELS[0].id; } catch(e){ return MODELS[0].id; } }
-function saveModel(v){ try { localStorage.setItem(MODEL_STORE, v); } catch(e){} }
-
 /* ---- 画面 ---- */
 var $ = function(id){ return document.getElementById(id); };
 var SCREENS = ["home","hits","load","quiz","done"];
@@ -1329,8 +1241,7 @@ function show(name){
 }
 
 var EXAMPLES = ["あまちゃん","逃げるは恥だが役に立つ","半沢直樹","カルテット","silent","鎌倉殿の13人","白い巨塔","アンナチュラル"];
-var state = { work:null, quiz:null, at:0, answers:[], locked:false,
-              prose:"", aiPool:null, aiNote:"", spent:0 };
+var state = { work:null, quiz:null, at:0, answers:[], locked:false };
 
 /* ---- 入口 ---- */
 EXAMPLES.forEach(function(name){
@@ -1339,43 +1250,6 @@ EXAMPLES.forEach(function(name){
   b.onclick = function(){ $("q").value = name; runSearch(); };
   $("examples").append(b);
 });
-
-/* ---- AI出題の設定 ----
-   鍵はこの端末の localStorage にだけ置く。リポジトリにも、Anthropic 以外にも出さない。 */
-(function initAi(){
-  var sel = $("ai-model");
-  MODELS.forEach(function(m){
-    var o = document.createElement("option");
-    o.value = m.id; o.textContent = m.name + "（" + m.note + "）";
-    sel.append(o);
-  });
-  sel.value = loadModel();
-  $("ai-key").value = loadKey();
-
-  /* 概算。実額は出題のあとに usage から出す */
-  function est(){
-    $("ai-est").textContent = "$" + guessCost(9000, sel.value).toFixed(3);
-  }
-  function sync(){
-    var on = $("ai-on").checked;
-    $("ai-conf").hidden = !on;
-    /* 何から問題が作られるのかを、入口の一行で正直に出す */
-    $("home-lead").textContent = on
-      ? "作品名を入れると、日本語版 Wikipedia の記事を AI に読ませて10問つくります。"
-      : "作品名を入れると、日本語版 Wikipedia の記事から10問つくります。";
-    est();
-  }
-
-  /* 鍵が入っているなら、前回も使っていたとみなして最初から入にしておく */
-  $("ai-on").checked = !!loadKey();
-  $("ai-on").onchange = sync;
-  sel.onchange = function(){ saveModel(sel.value); est(); };
-  $("ai-key").oninput = function(){ saveKey($("ai-key").value.trim()); };
-  $("ai-forget").onclick = function(){
-    saveKey(""); $("ai-key").value = ""; $("ai-on").checked = false; sync();
-  };
-  sync();
-})();
 
 function runSearch(){
   var q = $("q").value.trim();
@@ -1441,67 +1315,23 @@ function startQuiz(quiz){
 function load(title){
   show("load");
   $("load-msg").textContent = "「" + title + "」の記事を読んでいます…";
-  $("load-sub").hidden = true;
   $("found").textContent = "";
-  state.spent = 0; state.aiPool = null; state.aiNote = "";
 
   fetchArticle(title).then(function(a){
-    var doc = new DOMParser().parseFromString(a.html, "text/html");
     var w = parseArticle(a.title, a.html);
     state.work = w;
-    var prose = packProse(readProse(doc.body), PROSE_LIMIT);
-    state.prose = prose;
-    reportFound(w, prose);
-
-    var tpl = buildQuiz(w, Date.now() & 0x7fffffff);
-
-    /* AIを使わないなら、ここまでで出題は決まる */
-    if(!$("ai-on").checked){
-      if(tpl.length < 4) return tooFew(a.title);
-      return startQuiz(tpl);
-    }
-    if(!loadKey()){
-      state.aiNote = "APIキーが入っていないので、表から作った問題だけにしました。";
-      if(tpl.length < 4) return tooFew(a.title);
-      return startQuiz(tpl);
-    }
-    if(prose.length < 200){
-      state.aiNote = "記事に読ませられる文章が足りなかったので、表から作った問題だけにしました。";
-      if(tpl.length < 4) return tooFew(a.title);
-      return startQuiz(tpl);
-    }
-
-    $("load-msg").textContent = "AIが『" + a.title + "』を読んで問題を作っています…";
-    /* 十数秒かかることがある。黙って止まって見えないように、何を待っているか出す */
-    $("load-sub").textContent = "記事を " + Math.round(prose.length / 100) / 10
-      + "千字ぶん読ませています。十数秒かかることがあります。";
-    $("load-sub").hidden = false;
-    var model = $("ai-model").value;
-    return askClaude(loadKey(), model, buildAiPrompt(w, prose, AI_WANT))
-      .then(function(res){
-        state.spent = costOf(res.usage, model);
-        var got = adoptAi(res.questions, w);
-        state.aiPool = got.ok;
-        /* 検査に落ちたぶんは黙って捨てる。数はテンプレ出題で埋まる */
-        if(got.ng.length) state.aiNote = "AIが作った " + (got.ok.length + got.ng.length)
-          + " 問のうち " + got.ng.length + " 問は、検査に通らなかったので使いませんでした。";
-        var quiz = mergeQuiz(got.ok, tpl, TOTAL);
-        if(quiz.length < 4) return tooFew(a.title);
-        startQuiz(quiz);
-      })
-      .catch(function(e){
-        /* AIが使えなくても、テンプレ出題だけで成立させる */
-        state.aiNote = "AIに問題を作らせられませんでした（" + e.message + "）。表から作った問題だけにしています。";
-        if(tpl.length < 4) return tooFew(a.title);
-        startQuiz(tpl);
-      });
+    reportFound(w);
+    var quiz = buildQuiz(w, Date.now() & 0x7fffffff);
+    if(quiz.length < 4) return tooFew(a.title);
+    startQuiz(quiz);
   }).catch(function(e){
     $("load-msg").innerHTML = '<span class="err">記事を読めませんでした（' + esc(e.message) + '）。</span>';
   });
 }
 
 /* 何が取れたかを見せる。取れなかった材料が分かると原因を追いやすい */
-function reportFound(w, prose){
+function reportFound(w){
+  var prose = w.prose;
   var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
   var items = [
     ["文章" + (prose ? "：" + Math.round(prose.length / 100) / 10 + "千字" : ""), (prose || "").length >= 200],
@@ -1531,8 +1361,8 @@ function askQuestion(){
   paintProgress();
   $("qcount").textContent = "第 " + (state.at + 1) + " 問 / " + state.quiz.length;
   var lv = $("qlv");
-  lv.className = "lv l" + q.level + (q.tier === "ai" ? " ai" : "");
-  lv.textContent = LEVEL_NAME[q.level] + (q.tier === "ai" ? "・AI作" : "");
+  lv.className = "lv l" + q.level;
+  lv.textContent = LEVEL_NAME[q.level];
   $("qtext").textContent = q.text;
   var box = $("choices"); box.textContent = "";
   q.choices.forEach(function(c, i){
@@ -1613,32 +1443,18 @@ function finish(){
     var d = document.createElement("div");
     d.className = "rv " + (ok ? "o" : "x");
     d.innerHTML = '<span class="a">' + (ok ? "○" : "×") + '</span> '
-      + '<span class="q">' + esc(q.text) + '</span><br>' + esc(q.why)
-      /* AIが作った問題は、根拠にした記述を一緒に見せる */
-      + (q.source ? '<span class="sc">記事より：' + esc(q.source) + '</span>' : '');
+      + '<span class="q">' + esc(q.text) + '</span><br>' + esc(q.why);
     rv.append(d);
   });
 
   $("src").innerHTML = '出典：<a href="' + esc(state.work.url) + '" target="_blank" rel="noopener">'
     + esc(state.work.title) + ' - Wikipedia</a>（CC BY-SA）';
-  /* 自分の鍵で払っているなら、いくらかかったかは見えているべき。
-     ドルのまま出す。換算レートを勝手に決めない（docs/CLAUDE.md の決めごと） */
-  var lines = [];
-  if(state.spent) lines.push("この出題にかかった額：$" + state.spent.toFixed(4));
-  if(state.aiNote) lines.push(state.aiNote);
-  $("ai-spent").textContent = lines.join(" / ");
-  $("ai-spent").hidden = !lines.length;
-
   show("done");
 }
 
 $("again").onclick = function(){
-  var seed = Date.now() & 0x7fffffff;
-  var tpl = buildQuiz(state.work, seed);
-  /* AIには聞き直さない。同じ作品でもう一度のたびに課金されては困る。
-     一度作らせた問題を並べ替えて使い回す */
-  var ai = state.aiPool && state.aiPool.length ? shuffle(state.aiPool.slice(), rng(seed)) : [];
-  startQuiz(ai.length ? mergeQuiz(ai, tpl, TOTAL) : tpl);
+  /* 記事は取り直さない。材料は state.work に残っているので、種だけ変える */
+  startQuiz(buildQuiz(state.work, Date.now() & 0x7fffffff));
 };
 $("other").onclick = function(){ show("home"); };
 
@@ -1650,9 +1466,8 @@ window.__quiz = {
   normStation:normStation, boxKind:boxKind, pickInfobox:pickInfobox,
   looksLikeName:looksLikeName, personNames:personNames, readCharacters:readCharacters,
   readInfobox:readInfobox, readEpisodes:readEpisodes, parseArticle:parseArticle,
-  packProse:packProse, buildAiPrompt:buildAiPrompt, checkAi:checkAi, adoptAi:adoptAi,
-  mergeQuiz:mergeQuiz, costOf:costOf, guessCost:guessCost, modelById:modelById,
-  readProse:readProse, MODELS:MODELS, AI_SCHEMA:AI_SCHEMA, LEVEL_NAME:LEVEL_NAME
+  packProse:packProse, readProse:readProse, checkMade:checkMade, LEVEL_NAME:LEVEL_NAME,
+  sentencesOf:sentencesOf, nameForms:nameForms, blankOut:blankOut
 };
 
 show("home");

@@ -28,24 +28,28 @@ export function checkQuestion(q, opts = {}) {
   if (q.choices.some(c => typeof c !== "string" || !c.trim())) bad.push("空の選択肢がある");
   if (new Set(q.choices).size !== q.choices.length) bad.push("選択肢が重複している");
 
-  /* 検査1: 正解が選択肢の中に文字列として在ること。
-     添字で持たせたり、表記ゆれがあると ここで落ちる */
-  if (typeof q.answer !== "string") bad.push("answer が文字列でない");
+  /* 検査1: 正解が一意に決まること。
+     answer は文字列（選択肢そのもの）でも、添字でも受ける。
+     実装によってどちらもあるので、ここで吸収して以降は文字列で扱う。 */
+  const answer = typeof q.answer === "number" ? q.choices[q.answer] : q.answer;
+  if (typeof q.answer === "number") {
+    if (answer == null) bad.push("answer の添字が選択肢の外を指している");
+  } else if (typeof q.answer !== "string") bad.push("answer が文字列でも添字でもない");
   else if (!q.choices.includes(q.answer)) bad.push("answer が choices の中に無い");
 
   /* 検査4: 答えが問題文に漏れていないか */
-  if (typeof q.answer === "string" && q.answer.length >= 2 &&
-      typeof q.text === "string" && q.text.includes(q.answer)) {
+  if (typeof answer === "string" && answer.length >= 2 &&
+      typeof q.text === "string" && q.text.includes(answer)) {
     bad.push("問題文に答えが含まれている");
   }
 
   /* 検査2の残り: 正解だけ長さが浮いていないか */
-  if (typeof q.answer === "string" && q.choices.includes(q.answer) && q.choices.length > 1) {
-    const others = q.choices.filter(c => c !== q.answer);
+  if (typeof answer === "string" && q.choices.includes(answer) && q.choices.length > 1) {
+    const others = q.choices.filter(c => c !== answer);
     const avg = others.reduce((s, c) => s + c.length, 0) / others.length;
-    const ratioOff = q.answer.length > avg * LEN_RATIO || q.answer.length * LEN_RATIO < avg;
-    if (avg > 0 && ratioOff && Math.abs(q.answer.length - avg) >= LEN_GAP) {
-      bad.push(`正解だけ長さが浮いている（正解${q.answer.length}字 / 他の平均${avg.toFixed(1)}字）`);
+    const ratioOff = answer.length > avg * LEN_RATIO || answer.length * LEN_RATIO < avg;
+    if (avg > 0 && ratioOff && Math.abs(answer.length - avg) >= LEN_GAP) {
+      bad.push(`正解だけ長さが浮いている（正解${answer.length}字 / 他の平均${avg.toFixed(1)}字）`);
     }
   }
 

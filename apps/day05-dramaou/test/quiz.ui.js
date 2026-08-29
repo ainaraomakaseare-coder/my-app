@@ -294,150 +294,89 @@ const SEARCH_JSON = {
         REG.hanadan.episodes.every(e => e.subtitle.indexOf("アニメ") < 0),
         JSON.stringify(REG.hanadan.episodes.map(e => e.subtitle)));
 
-  /* ==================== AI出題 ====================
-     Anthropic への通信も差し替える。鍵は使わないので、ネットにも財布にも触らない。 */
+  /* ==================== 地の文からの出題 ====================
+     あらすじと人物の説明文から、物語の中身を問う問題が出るか。
+     あわせて、外へ余計な通信をしていないことも見る。 */
   {
-    const ai = await browser.newContext();
-    const ap = await ai.newPage();
-    /* 鍵は端末の中にだけ置く、という作りをそのまま試す */
-    await ap.addInitScript(() => {
-      localStorage.setItem("dramaou.key", "sk-ant-test-key");
-      localStorage.setItem("dramaou.model", "claude-haiku-4-5");
-    });
+    const st = await browser.newContext();
+    const sp = await st.newPage();
 
-    const PROSE = `<div class="mw-parser-output">
+    const STORY = `<div class="mw-parser-output">
       <table class="infobox">
-        <tr><th>出演者</th><td>能年玲奈、小泉今日子、宮本信子、杉本哲太</td></tr>
+        <tr><th>出演者</th><td>能年玲奈、小泉今日子、宮本信子、杉本哲太、小池徹平、片桐はいり</td></tr>
         <tr><th>放送局</th><td>NHK総合テレビジョン</td></tr>
         <tr><th>放送期間</th><td>2013年4月1日 - 9月28日</td></tr>
         <tr><th>回数</th><td>全156回</td></tr></table>
       <h2>あらすじ</h2>
-      <p>${"東京で育ったアキは、夏休みに母の故郷である北三陸を訪れる。".repeat(8)}</p>
+      <p>東京で内気に育ったアキは、母に連れられて母の故郷である北三陸へやってくる。
+      大吉は北三陸鉄道の駅長として、地元を盛り上げようと奔走する。
+      小百合は喫茶リアスを切り盛りしながら、若者たちを見守っている。
+      ヒロシは無口な同級生で、やがて自分の道を選びとっていく。</p>
       <h2>登場人物</h2>
-      <dl><dt>天野アキ</dt><dd>演 - 能年玲奈</dd><dd>${"本作の主人公。北三陸で海女を目指す。".repeat(6)}</dd></dl>
-      <h2>外部リンク</h2>
-      <p>${"公式サイトはこちら。".repeat(20)}</p>
+      <dl><dt>天野アキ</dt><dd>演 - 能年玲奈</dd><dd>本作の主人公。東京育ちの内気な女子高生で、北三陸で海女を目指す。</dd></dl>
+      <dl><dt>天野春子</dt><dd>演 - 小泉今日子</dd><dd>アキの母。かつて上京しアイドルを目指した過去がある。</dd></dl>
+      <dl><dt>天野夏</dt><dd>演 - 宮本信子</dd><dd>北三陸で長年働く現役の海女。</dd></dl>
+      <dl><dt>大向大吉</dt><dd>演 - 杉本哲太</dd><dd>北三陸鉄道の駅長。地元の観光振興に奔走する。</dd></dl>
+      <dl><dt>足立ヒロシ</dt><dd>演 - 小池徹平</dd><dd>アキの同級生。無口だが実直な高校生。</dd></dl>
+      <dl><dt>安部小百合</dt><dd>演 - 片桐はいり</dd><dd>喫茶リアスの店主。若者たちを見守る。</dd></dl>
+      <h2>外部リンク</h2><p>公式サイトはこちら。番組の公式ページへ移動します。</p>
       </div>`;
 
-    let aiCalls = 0, aiReq = null;
-    await ap.route("**://ja.wikipedia.org/w/api.php**", route => {
+    /* Wikipedia 以外の宛先に出ていないことを見張る */
+    const outside = [];
+    await sp.route("**/*", route => {
+      const u = route.request().url();
+      /* 書体の読み込みは DAY5 からある。ここで見張りたいのは、
+         問題を作るために外部のAPIを呼んでいないかどうか。 */
+      const ok = /^https?:\/\/127\.0\.0\.1/.test(u) || /ja\.wikipedia\.org/.test(u)
+              || /fonts\.(googleapis|gstatic)\.com/.test(u);
+      if(!ok) outside.push(u);
+      route.continue();
+    });
+    await sp.route("**://ja.wikipedia.org/w/api.php**", route => {
       const action = new URL(route.request().url()).searchParams.get("action");
       const body = action === "parse"
-        ? { parse: { title: "あまちゃん", pageid: 1, text: PROSE } }
+        ? { parse: { title: "あまちゃん", pageid: 1, text: STORY } }
         : SEARCH_JSON;
       route.fulfill({ status: 200,
         headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
         body: JSON.stringify(body) });
     });
-    await ap.route("**://api.anthropic.com/**", route => {
-      aiCalls++;
-      aiReq = { headers: route.request().headers(),
-                body: JSON.parse(route.request().postData() || "{}") };
-      /* 2問は素直、1問は answer が選択肢に無い壊れた設問 */
-      const questions = [
-        { text:"アキが北三陸で目指したものは？", choices:["海女","駅長","歌手","漁師"],
-          answer:"海女", level:1, why:"アキは海女を目指す。", source:"北三陸で海女を目指す" },
-        { text:"アキが最初に北三陸を訪れたのはいつ？", choices:["夏休み","春休み","冬休み","連休"],
-          answer:"夏休み", level:2, why:"夏休みに母の故郷を訪れる。", source:"夏休みに母の故郷である北三陸を訪れる" },
-        { text:"壊れている設問", choices:["あ","い","う","え"],
-          answer:"存在しない選択肢", level:2, why:"", source:"根拠" }
-      ];
-      route.fulfill({ status: 200,
-        headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
-        body: JSON.stringify({
-          content:[{ type:"text", text: JSON.stringify({ questions }) }],
-          usage:{ input_tokens: 4000, output_tokens: 1000 },
-          model:"claude-haiku-4-5", stop_reason:"end_turn" }) });
-    });
-    ap.on("pageerror", e => check("AI経路で例外が出ない", false, String(e)));
+    sp.on("pageerror", e => check("地の文の出題で例外が出ない", false, String(e)));
 
-    await ap.goto(base);
-    check("鍵が入っていればAI出題が最初から入になる", await ap.isChecked("#ai-on"));
-    check("鍵は伏せ字で扱う", (await ap.getAttribute("#ai-key", "type")) === "password");
-    check("概算の額を先に出す", (await ap.textContent("#ai-est")).indexOf("$") === 0);
+    await sp.goto(base);
+    await sp.fill("#q", "あまちゃん");
+    await sp.click("#go");
+    await sp.waitForSelector("#scr-hits:not([hidden])");
+    await sp.locator("#hits .hit").first().click();
+    await sp.waitForSelector("#scr-quiz:not([hidden])", { timeout: 10000 });
 
-    await ap.fill("#q", "あまちゃん");
-    await ap.click("#go");
-    await ap.waitForSelector("#scr-hits:not([hidden])");
-    await ap.locator("#hits .hit").first().click();
-    await ap.waitForSelector("#scr-quiz:not([hidden])", { timeout: 15000 });
-
-    eq("AIは1回だけ呼ぶ", aiCalls, 1);
-    eq("ブラウザ直呼びのヘッダを付ける",
-       aiReq.headers["anthropic-dangerous-direct-browser-access"], "true");
-    eq("APIのバージョンを送る", aiReq.headers["anthropic-version"], "2023-06-01");
-    eq("鍵を x-api-key で送る", aiReq.headers["x-api-key"], "sk-ant-test-key");
-    eq("選んだモデルで呼ぶ", aiReq.body.model, "claude-haiku-4-5");
-    eq("構造化出力で受け取る", aiReq.body.output_config.format.type, "json_schema");
-    check("記事のあらすじを渡す",
-          aiReq.body.messages[0].content.indexOf("北三陸を訪れる") >= 0);
-    check("登場人物の説明も渡す",
-          aiReq.body.messages[0].content.indexOf("海女を目指す") >= 0);
-    check("外部リンクは渡さない",
-          aiReq.body.messages[0].content.indexOf("公式サイト") < 0);
-    check("鍵を Anthropic 以外に送らない",
-          !aiReq.body.messages[0].content.includes("sk-ant-"));
-
-    /* 出題数は記事の材料で変わるので、進捗の目盛りの数だけ通す */
-    const aiSeen = [], texts = [];
-    const n = await ap.locator("#progress i").count();
+    const texts = [];
+    const n = await sp.locator("#progress i").count();
     for(let i = 0; i < n; i++){
-      await ap.waitForSelector("#choices .ch:not([disabled])");
-      texts.push((await ap.textContent("#qtext")).trim());
-      if((await ap.textContent("#qlv")).indexOf("AI作") >= 0) aiSeen.push(texts[texts.length - 1]);
-      await ap.locator("#choices .ch").first().click();
-      await ap.click("#next");
+      await sp.waitForSelector("#choices .ch:not([disabled])");
+      texts.push((await sp.textContent("#qtext")).trim());
+      await sp.locator("#choices .ch").first().click();
+      await sp.click("#next");
     }
-    eq("検査を通ったAI出題だけが混ざる", aiSeen.length, 2);
-    check("壊れた設問は出さない", texts.indexOf("壊れている設問") < 0, texts.join(" / "));
-    check("テンプレ出題も混ざる", texts.length > aiSeen.length, texts.join(" / "));
+    const joined = texts.join(" / ");
+    check("説明文から役名を当てる設問が出る", /と説明されるのは/.test(joined), joined);
+    check("あらすじの空欄補充が出る", /あらすじの一節/.test(joined), joined);
+    check("人物の関係を問う設問が出る", /にあたるのは/.test(joined), joined);
+    check("外部リンクの文からは出題しない", !/公式サイト/.test(joined), joined);
 
-    await ap.waitForSelector("#scr-done:not([hidden])");
-    const spent = await ap.textContent("#ai-spent");
-    /* 入力4000×$1 + 出力1000×$5 = $0.009 */
-    check("かかった額を実績で出す", spent.indexOf("$0.0090") >= 0, spent);
-    check("検査で落とした数を隠さない", spent.indexOf("1 問") >= 0, spent);
-    check("AI出題には根拠を添える", (await ap.locator("#review .sc").count()) >= 2);
+    await sp.waitForSelector("#scr-done:not([hidden])");
+    eq("問題を作るために外部のAPIを呼ばない", outside, []);
+    check("APIキーを入れる欄は無い", (await sp.locator("#ai-key").count()) === 0);
+    check("費用の表示も無い", !/\$/.test(await sp.textContent("#scr-done")));
 
-    /* もう一度：同じ作品で遊び直しても、二重に課金しない */
-    await ap.click("#again");
-    await ap.waitForSelector("#scr-quiz:not([hidden])");
-    eq("もう一度でAIを呼び直さない", aiCalls, 1);
+    /* もう一度：記事を取り直さない */
+    await sp.click("#again");
+    await sp.waitForSelector("#scr-quiz:not([hidden])");
+    check("もう一度で第1問に戻る", (await sp.textContent("#qcount")).indexOf("第 1 問") >= 0);
+    eq("もう一度でも外部のAPIを呼ばない", outside, []);
 
-    /* ---- AIが使えないとき ---- */
-    await ap.click("#restart");
-    await ap.unroute("**://api.anthropic.com/**");
-    await ap.route("**://api.anthropic.com/**", route => {
-      aiCalls++;
-      route.fulfill({ status: 401,
-        headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
-        body: JSON.stringify({ error: { message: "invalid x-api-key" } }) });
-    });
-    await ap.fill("#q", "あまちゃん");
-    await ap.click("#go");
-    await ap.waitForSelector("#scr-hits:not([hidden])");
-    await ap.locator("#hits .hit").first().click();
-    await ap.waitForSelector("#scr-quiz:not([hidden])", { timeout: 15000 });
-    const n2 = await ap.locator("#progress i").count();
-    check("AIが失敗してもテンプレ出題で成立する", n2 >= 4, String(n2));
-    for(let i = 0; i < n2; i++){
-      await ap.waitForSelector("#choices .ch:not([disabled])");
-      await ap.locator("#choices .ch").first().click();
-      await ap.click("#next");
-    }
-    await ap.waitForSelector("#scr-done:not([hidden])");
-    check("なぜAIを使えなかったかを伝える",
-          (await ap.textContent("#ai-spent")).indexOf("APIキーが違う") >= 0,
-          await ap.textContent("#ai-spent"));
-
-    /* ---- 鍵を消す ---- */
-    await ap.click("#restart");
-    await ap.click("#ai-forget");
-    eq("鍵を消したら端末から消える",
-       await ap.evaluate(() => localStorage.getItem("dramaou.key")), null);
-    check("鍵を消したらAI出題も切れる", !(await ap.isChecked("#ai-on")));
-
-    await ai.close();
+    await st.close();
   }
 
   await browser.close();

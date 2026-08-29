@@ -322,96 +322,108 @@ eq("3割はうろ覚え", box.rankOf(0.3).name, "うろ覚え");
 eq("0点はにわか", box.rankOf(0).name, "にわか");
 ok("称号にはひとこと添える", box.rankOf(0.6).blurb.length > 5);
 
-/* ---- AI出題の検査 ----
-   .claude/skills/quiz-design の「4つの検査」がそのまま効いているか。
-   AIは指示を守るがゼロではないので、ここが最後の砦になる。 */
-function q(over){
-  var base = { text:"物語の終盤でアキが選んだ道は？",
-               choices:["海女を続ける","東京へ戻る","駅長になる","喫茶店を継ぐ"],
-               answer:"海女を続ける", level:2, why:"アキは北三陸に残る。", source:"アキは海女として生きることを選ぶ" };
+/* ---- 組み上げた設問の検査 ----
+   .claude/skills/quiz-design の4検査。テンプレの取りこぼしをここで止める。 */
+function mk(over){
+  var base = { text:"『あまちゃん』で 天野アキ を演じたのは？",
+               choices:["能年玲奈","小泉今日子","宮本信子","杉本哲太"], answer:0, level:2 };
   Object.keys(over || {}).forEach(function(k){ base[k] = over[k]; });
   return base;
 }
-eq("素直な設問は通る", box.checkAi(q()), []);
-ok("選択肢が3つだと落ちる", box.checkAi(q({choices:["あ","い","う"]})).length > 0);
+eq("素直な設問は通る", box.checkMade(mk()), []);
+ok("選択肢が3つだと落ちる", box.checkMade(mk({choices:["あ","い","う"]})).length > 0);
 ok("選択肢が重複すると落ちる",
-   box.checkAi(q({choices:["海女を続ける","海女を続ける","駅長になる","喫茶店を継ぐ"]})).length > 0);
-ok("answer が選択肢に無いと落ちる", box.checkAi(q({answer:"漁師になる"})).length > 0);
+   box.checkMade(mk({choices:["能年玲奈","能年玲奈","宮本信子","杉本哲太"]})).length > 0);
+ok("answer が選択肢を指していないと落ちる", box.checkMade(mk({answer:9})).length > 0);
 ok("問題文に答えが入っていると落ちる",
-   box.checkAi(q({text:"海女を続けるという選択をしたのは誰の話？"})).length > 0);
-eq("短い正解と長いダミーが混ざるくらいは通す（海女 対 喫茶店の店主）",
-   box.checkAi(q({choices:["海女","駅長","アイドル","喫茶店の店主"], answer:"海女"})), []);
+   box.checkMade(mk({text:"能年玲奈 が演じたのは天野アキ、では誰？"})).length > 0);
 ok("正解だけ長いと落ちる",
-   box.checkAi(q({choices:["海女として北三陸に残る道を選んだ","東京","駅長","喫茶店"],
-                  answer:"海女として北三陸に残る道を選んだ"})).length > 0);
-ok("level が範囲外だと落ちる", box.checkAi(q({level:5})).length > 0);
-ok("根拠が空だと落ちる", box.checkAi(q({source:"  "})).length > 0);
+   box.checkMade(mk({choices:["北三陸で海女を目指す女子高生","東京","駅長","店主"], answer:0})).length > 0);
+eq("短い正解と長いダミーが混ざるくらいは通す（海女 対 喫茶店の店主）",
+   box.checkMade(mk({choices:["海女","駅長","アイドル","喫茶店の店主"], answer:0})), []);
+ok("level が範囲外だと落ちる", box.checkMade(mk({level:5})).length > 0);
 ok("作品名そのものが答えだと落ちる",
-   box.checkAi(q({choices:["あまちゃん","い","う","え"], answer:"あまちゃん"}), {title:"あまちゃん"}).length > 0);
+   box.checkMade(mk({choices:["あまちゃん","い","う","え"], answer:0}), {title:"あまちゃん"}).length > 0);
 
-var got = box.adoptAi([q(), q({level:9}), q({text:"第2の問い"})], null);
-eq("通ったものだけ採る", got.ok.length, 2);
-eq("落ちたものは理由付きで残る", got.ng.length, 1);
-eq("answer を添字に直す", got.ok[0].answer, 0);
-eq("AI作の印をつける", got.ok[0].tier, "ai");
-ok("根拠を持ち越す", got.ok[0].source.length > 0);
-eq("空でも落ちない", box.adoptAi(null, null).ok, []);
+/* ---- 地の文を文に割る ---- */
+eq("句点で割る", box.sentencesOf("アキは北三陸へやってくる。祖母の夏は現役の海女として働いている。").length, 2);
+eq("短すぎる文は落とす", box.sentencesOf("そうだ。").length, 0);
+eq("節見出しは材料にしない", box.sentencesOf("## あらすじ").length, 0);
+eq("空でも落ちない", box.sentencesOf(null), []);
 
-/* ---- AI出題とテンプレ出題を混ぜる ---- */
-var tplQ = [{text:"T1",level:1},{text:"T2",level:2},{text:"T3",level:3}];
-eq("AIを先に、足りないぶんをテンプレで埋める",
-   box.mergeQuiz([{text:"A1",level:1}], tplQ, 3).map(function(x){ return x.text; }),
-   ["A1","T1","T2"]);
-eq("AIが0問でもテンプレだけで成立する",
-   box.mergeQuiz([], tplQ, 3).length, 3);
-eq("同じ問題文は重ねない",
-   box.mergeQuiz([{text:"T2",level:1}], tplQ, 3).map(function(x){ return x.text; }),
-   ["T2","T1","T3"]);
-eq("欲しい数を超えない", box.mergeQuiz([{text:"A1",level:1}], tplQ, 2).length, 2);
+/* ---- 呼び名の揺れ ----
+   記事は「天野アキ」を本文で「アキ」と書く。フルネームだけでは一度も当たらない。 */
+var ROLES = ["天野アキ", "天野春子", "大向大吉", "足立ヒロシ"];
+ok("短い呼び名を拾う", box.nameForms("天野アキ", ROLES).indexOf("アキ") >= 0);
+ok("他の人物と紛れる姓は使わない", box.nameForms("天野アキ", ROLES).indexOf("天野") < 0,
+   JSON.stringify(box.nameForms("天野アキ", ROLES)));
+ok("紛れない姓は使う", box.nameForms("大向大吉", ROLES).indexOf("大向") >= 0);
+eq("2文字未満は拾わない",
+   box.nameForms("天野アキ", ROLES).filter(function(f){ return f.length < 2; }), []);
 
-/* ---- 送る文章を絞る ---- */
-var SEC = [
-  { head:"あらすじ", text:"あ".repeat(50) },
-  { head:"外部リンク", text:"い".repeat(50) },
-  { head:"受賞", text:"う".repeat(50) },
-  { head:"登場人物", text:"え".repeat(50) },
-  { head:"備考", text:"お".repeat(50) }
+/* ---- 伏せ字 ---- */
+eq("呼び名を伏せる", box.blankOut("アキは海に潜る。", ["アキ"]), "〇〇〇は海に潜る。");
+eq("同じ呼び名は全部伏せる（1つでも残ると答えが漏れる）",
+   box.blankOut("アキはアキらしく生きる。", ["アキ"]), "〇〇〇は〇〇〇らしく生きる。");
+eq("長い呼び名から先に伏せる",
+   box.blankOut("天野アキが来た。", ["アキ", "天野アキ"]), "〇〇〇が来た。");
+
+/* ---- 地の文から作る出題 ---- */
+var CHARS2 = [
+  { role:"天野アキ",   actor:"能年玲奈",   desc:"本作の主人公。東京育ちの内気な女子高生で、北三陸で海女を目指す。" },
+  { role:"天野春子",   actor:"小泉今日子", desc:"アキの母。かつて上京しアイドルを目指した過去がある。" },
+  { role:"大向大吉",   actor:"杉本哲太",   desc:"北三陸鉄道の駅長。地元の観光振興に奔走する。" },
+  { role:"足立ヒロシ", actor:"小池徹平",   desc:"アキの同級生。無口だが実直な高校生。" },
+  { role:"安部小百合", actor:"片桐はいり", desc:"喫茶リアスの店主。若者たちを見守る。" }
 ];
-var packed = box.packProse(SEC, 10000);
-ok("あらすじは入る", packed.indexOf("あ") >= 0);
-ok("登場人物は入る", packed.indexOf("え") >= 0);
-ok("外部リンクは入らない", packed.indexOf("い") < 0);
-ok("受賞は入らない", packed.indexOf("う") < 0);
-ok("備考は入らない", packed.indexOf("お") < 0);
-ok("上限を超えない", box.packProse(SEC, 60).length <= 60);
-ok("入り切らない節は丸ごと落とす（途中で切らない）",
-   box.packProse([{head:"あらすじ", text:"あ".repeat(100)}], 50) === "");
-eq("空でも落ちない", box.packProse(null, 100), "");
+var PROSE = "東京で内気に育ったアキは、母に連れられて北三陸へやってくる。"
+          + "大吉は北三陸鉄道の駅長として、地元を盛り上げようと奔走する。"
+          + "小百合は喫茶リアスを切り盛りしながら、若者たちを見守っている。";
+var STORY = box.makeWork("あまちゃん", "u", INFO, MANY, CHARS2, PROSE);
+eq("地の文を持つ", STORY.prose, PROSE);
 
-/* ---- 費用 ---- */
-eq("入力と出力に別の単価をあてる",
-   box.costOf({ input_tokens:1000000, output_tokens:0 }, "claude-opus-5"), 5);
-eq("出力の単価", box.costOf({ input_tokens:0, output_tokens:1000000 }, "claude-opus-5"), 25);
-ok("安いモデルは安い",
-   box.costOf({input_tokens:1e6,output_tokens:1e6}, "claude-haiku-4-5")
-   < box.costOf({input_tokens:1e6,output_tokens:1e6}, "claude-opus-5"));
-eq("usage が無くても0", box.costOf(null, "claude-opus-5"), 0);
-eq("知らないモデルは先頭の単価に寄せる", box.modelById("なにこれ").id, "claude-opus-5");
-ok("既定は最も賢いモデル", box.MODELS[0].id === "claude-opus-5");
+function madeBy(id, w, seed){
+  var out = [];
+  box.TEMPLATES.forEach(function(t){
+    if(t.id === id) out = t.make(w, box.rng(seed || 1)) || [];
+  });
+  return out;
+}
+var byDesc = madeBy("chardesc", STORY, 3);
+ok("説明文から役名を当てる設問を作る", byDesc.length > 0);
+ok("説明文の設問はどれも検査を通る",
+   byDesc.every(function(q){ return box.checkMade(q, STORY).length === 0; }));
+ok("説明文に本人の呼び名が入っている人物は出題しない",
+   byDesc.every(function(q){
+     var ans = q.choices[q.answer];
+     return box.nameForms(ans, CHARS2.map(function(c){ return c.role; }))
+              .every(function(f){ return q.text.indexOf(f) < 0; });
+   }), JSON.stringify(byDesc.map(function(q){ return q.text; })));
 
-/* ---- AIへの指示 ---- */
-var prompt = box.buildAiPrompt({ title:"あまちゃん" }, "本文本文", 8);
-ok("作品名を渡す", prompt.indexOf("あまちゃん") >= 0);
-ok("問数を渡す", prompt.indexOf("8問") >= 0);
-ok("記事の抜粋を渡す", prompt.indexOf("本文本文") >= 0);
-ok("外側の事実は問うなと伝える", prompt.indexOf("放送局") >= 0);
-ok("根拠を書けと伝える", prompt.indexOf("source") >= 0);
+var byRel = madeBy("relation", STORY, 3);
+ok("人物の関係を問う設問を作る", byRel.length > 0, JSON.stringify(byRel.map(function(q){ return q.text; })));
+ok("関係の設問はどれも検査を通る",
+   byRel.every(function(q){ return box.checkMade(q, STORY).length === 0; }));
 
-/* ---- 返り値の形の約束 ---- */
-ok("根拠を必須にする", box.AI_SCHEMA.properties.questions.items.required.indexOf("source") >= 0);
-ok("余計な鍵を許さない", box.AI_SCHEMA.properties.questions.items.additionalProperties === false);
-eq("answer は文字列で受ける",
-   box.AI_SCHEMA.properties.questions.items.properties.answer.type, "string");
+var byCloze = madeBy("cloze", STORY, 3);
+ok("あらすじの空欄補充を作る", byCloze.length > 0);
+ok("空欄補充はどれも検査を通る",
+   byCloze.every(function(q){ return box.checkMade(q, STORY).length === 0; }));
+ok("空欄補充の問題文に伏せ字がある",
+   byCloze.every(function(q){ return q.text.indexOf("〇〇〇") >= 0; }));
+ok("空欄補充の問題文に答えが残っていない",
+   byCloze.every(function(q){ return q.text.indexOf(q.choices[q.answer]) < 0; }),
+   JSON.stringify(byCloze.map(function(q){ return q.text + " / " + q.choices[q.answer]; })));
+
+/* 人物が2人以上出てくる文は使わない。伏せた先が一意に決まらないため */
+var TWO = box.makeWork("あまちゃん", "u", INFO, MANY, CHARS2,
+  "アキは大吉に連れられて北三陸鉄道の駅へ向かった。");
+eq("人物が二人出てくる文からは作らない", madeBy("cloze", TWO, 3).length, 0);
+
+/* 地の文が無ければ、地の文の出題は見送る（数はテンプレ出題で埋まる） */
+var NOPROSE = box.makeWork("あまちゃん", "u", INFO, MANY, CHARS2, "");
+eq("地の文が無ければ空欄補充は作らない", madeBy("cloze", NOPROSE, 3).length, 0);
+ok("地の文が無くても説明文の設問は作れる", madeBy("chardesc", NOPROSE, 3).length > 0);
 
 /* ---- 難しさの呼び名 ---- */
 eq("1はやさしい", box.LEVEL_NAME[1], "やさしい");
