@@ -153,6 +153,44 @@ button{cursor:pointer}
 .tag{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
 .tag.has{color:var(--lamp);border-color:rgba(232,180,76,.4)}
 @media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
+
+/* Slackを思わせるワークスペースUI。ブランドを複製せず、情報階層を参考にする。 */
+:root{
+  --ink:#F8F8FA;--ink-hi:#FFF;--ink-sink:#F4F4F6;--line:#E3E3E7;--line-lit:#C8C7CC;
+  --paper:#1D1C1D;--paper-dim:#454245;--muted:#6F6B6F;--lamp:#611F69;
+  --onair:#E01E5A;--onair-lit:#E01E5A;--cool:#1264A3;--good:#007A5A;
+  --font-display:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic",sans-serif;
+  --font-body:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic",sans-serif
+}
+body{min-height:100dvh;background:#F8F8FA;background-image:none;color:var(--paper);line-height:1.55}
+body::before{content:"ドラマ王　　⌕  クイズを検索";position:fixed;z-index:15;left:260px;right:0;top:0;height:52px;display:flex;align-items:center;justify-content:center;background:#4A154B;color:#F7EEF7;box-shadow:0 1px rgba(0,0,0,.18);font-size:13px;font-weight:700}
+.wrap{max-width:none;margin:0;min-height:100dvh;padding:88px 56px 64px 316px;display:flex;align-items:center;gap:22px}
+.wrap>section{width:min(760px,100%)}
+.masthead{position:fixed;z-index:20;inset:0 auto 0 0;width:260px;padding:24px 18px;background:#3F0E40;border:0;color:#fff;box-shadow:inset -1px 0 rgba(0,0,0,.2);gap:16px}
+.masthead::before{content:"DR";display:grid;place-items:center;width:42px;height:42px;border-radius:11px;background:#36C5F0;color:#3F0E40;font-size:15px;font-weight:900;box-shadow:inset 0 0 0 3px rgba(255,255,255,.32)}
+.masthead::after{content:"チャンネル\A\A  #  クイズを探す\A  #  17作品の問題集\A  #  今日のスコア\A\Aダイレクトメッセージ\A\A  ●  クイズマスター";white-space:pre;display:block;padding:10px 8px;color:rgba(255,255,255,.74);font-size:13px;line-height:2.1;border-top:1px solid rgba(255,255,255,.16)}
+.mast-top{align-items:center;justify-content:flex-start}.logo{font-family:var(--font-body);font-size:20px;letter-spacing:0;font-weight:800}.logo .on{color:#2EB67D;font-size:14px;margin-left:5px}.tagline{margin:0;color:rgba(255,255,255,.68);font-size:12px;line-height:1.6;letter-spacing:0}
+#restart{position:absolute;left:18px;right:18px;bottom:22px;width:auto!important;color:#fff;border-color:rgba(255,255,255,.26);background:rgba(255,255,255,.08)}
+.card{background:#fff;border:1px solid #E3E3E7;border-radius:14px;padding:24px;box-shadow:0 1px 1px rgba(29,28,29,.04),0 8px 28px rgba(29,28,29,.08)}
+#scr-home{gap:18px!important}#scr-home::before{content:"クイズを始める";display:block;font-size:24px;line-height:1.25;font-weight:800;letter-spacing:-.02em}
+.lead{font-size:15px;color:#454245}.note{font-size:12px;color:#6F6B6F}.err{color:#C00F47}
+.search{gap:10px}.search input{min-height:48px;padding:12px 15px;background:#fff;border:1px solid #868486;color:#1D1C1D;border-radius:8px;box-shadow:inset 0 1px 2px rgba(0,0,0,.05)}
+.search input:focus{border-color:#1264A3;box-shadow:0 0 0 3px rgba(18,100,163,.18);outline:0}.search input::placeholder{color:#868486}
+.search button,.btn.primary{background:#611F69;border-color:#611F69;color:#fff;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,.12);letter-spacing:0}.search button:hover:not(:disabled),.btn.primary:hover:not(:disabled){background:#4A154B;border-color:#4A154B}
+.examples{gap:8px;padding-top:2px}.ex{background:#F8F8FA;border:1px solid #D8D7DA;color:#454245;border-radius:8px;font-size:12px;font-weight:600;padding:7px 11px;transition:.14s}.ex::before{content:"#";color:#868486;margin-right:5px}.ex:hover{background:#F2EAF3;border-color:#A86BB0;color:#4A154B;transform:translateY(-1px)}
+.btn{background:#fff;color:#1D1C1D;border-color:#C8C7CC;border-radius:8px;letter-spacing:0}.btn:hover:not(:disabled){background:#F8F8FA;border-color:#868486}.btn.ghost{color:#454245}
+.hit{background:#fff;border-color:#E3E3E7;border-radius:12px;padding:14px;box-shadow:0 2px 8px rgba(29,28,29,.05)}.hit:hover{background:#F8F8FA;border-color:#A86BB0}.hit img,.hit .ph{border-radius:8px;background:#F1EEF1}.hit .d{color:#6F6B6F}
+#scr-quiz{background:#fff;border:1px solid #E3E3E7;border-radius:14px;padding:26px;box-shadow:0 1px 1px rgba(29,28,29,.04),0 8px 28px rgba(29,28,29,.08)}
+.progress{gap:5px}.progress i{height:5px;background:#E8E8EB}.progress i.done{background:#611F69}.progress i.miss{background:#E01E5A}.progress i.now{background:#36C5F0}
+.qhead{color:#6F6B6F;letter-spacing:0}.lv{border-color:#D8D7DA;background:#F8F8FA;letter-spacing:.04em;font-weight:700}.lv.l1{color:#007A5A;border-color:#9DD8C8}.lv.l2{color:#9B5D00;border-color:#EBC98B}.lv.l3{color:#C00F47;border-color:#F2A8C2}
+.qtext{font-family:var(--font-body);font-size:22px;line-height:1.5;letter-spacing:-.01em;color:#1D1C1D}.choices{gap:10px}
+.ch{padding:14px 16px;background:#fff;border:1px solid #C8C7CC;border-radius:9px;color:#1D1C1D;box-shadow:0 1px 2px rgba(0,0,0,.03);transition:.14s}.ch:hover:not(:disabled){background:#F8F4F8;border-color:#611F69;transform:translateX(3px)}
+.ch .mk{display:inline-grid;place-items:center;width:25px;height:25px;border-radius:6px;background:#F1EEF1;color:#611F69;margin-right:10px}.ch.right{border-color:#007A5A;background:#ECF8F4;color:#0B4C3A}.ch.wrong{border-color:#E01E5A;background:#FFF0F5;color:#7A1236}
+.verdict{box-shadow:none;border-left:4px solid #611F69}.verdict .v{font-family:var(--font-body)}
+.scorebox{background:#4A154B;color:#fff;border:0;box-shadow:0 10px 30px rgba(74,21,75,.2)}.rank{font-family:var(--font-body);color:#fff;font-size:34px;letter-spacing:0}.pct{color:rgba(255,255,255,.72)}.pct b{color:#fff}.blurb{color:rgba(255,255,255,.82)}
+.bar .nm{color:#454245}.bar .tr{background:#ECEAEC}.bar .fl{background:#611F69}.bar .vl{color:#6F6B6F}.rv{border-color:#D8D7DA}.rv .q{color:#454245}.src{color:#6F6B6F}.src a{color:#1264A3}
+.spin{border-color:#E3E3E7;border-top-color:#611F69}.tag{border-color:#D8D7DA;color:#6F6B6F}.tag.has{color:#007A5A;border-color:#82CCB8;background:#ECF8F4}
+@media(max-width:780px){body::before{display:none}.wrap{padding:0 14px 40px;gap:16px;align-items:stretch}.wrap>section{width:100%}.masthead{position:relative;inset:auto;width:calc(100% + 28px);margin:0 -14px;padding:15px 18px;background:#4A154B;min-height:116px;border-radius:0;box-shadow:0 2px 8px rgba(0,0,0,.16)}.masthead::before{position:absolute;right:18px;top:16px;width:36px;height:36px}.masthead::after{display:none}.tagline{max-width:74%}#restart{left:auto;right:18px;bottom:15px}.card,#scr-quiz{padding:19px;border-radius:12px}#scr-home::before{font-size:21px}.search{flex-direction:column}.search button{min-height:46px}.qtext{font-size:19px}.ch{padding:13px 12px}}
 </style>
 </head>
 <body>
