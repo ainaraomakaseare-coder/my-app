@@ -32,6 +32,8 @@ DAY10完了後、Claude Codeで引き継ぎ資料を更新している途中に�
 - **白い巨塔（2003年版）**：舞台は浪速大学で正しい（[フジテレビ第1話あらすじ](https://www.fujitv.co.jp/b_hp/shiroikyoto/backnumber/503000008-1.html)）
 - **HERO**：久利生公平は高校中退で、最終学歴は中卒（[映画「HERO」特集](https://ure.pia.co.jp/articles/-/40949?page=2)）。従来の正答「大学を出ていない」も誤りではないが、曖昧さを減らすため「高校を中退している」へ具体化した
 
+再開後、ユーザー指定の「LIAR GAME」と「プロポーズ大作戦」を各2問追加し、作り置きは17作品・34問になりました。LIAR GAMEは[フジテレビ第1話あらすじ](https://www.fujitv.co.jp/b_hp/liargame/backnumber/707000003-1.html)、プロポーズ大作戦は[フジテレビ第9話あらすじ](https://www.fujitv.co.jp/b_hp/propose/backnumber/207000002-9.html)と[放送回一覧](https://www.fujitv.co.jp/b_hp/propose/backnumber/list.html)で設定を確認しました。
+
 ## 使用モデル
 
 | モデル | 作業内容 |

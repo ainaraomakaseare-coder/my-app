@@ -434,8 +434,8 @@ BAKED_TITLES.forEach(function(t){
   box.BAKED[t].forEach(function(b){ BAKED_ALL.push({ title:t, b:b }); });
 });
 
-ok("15作品ぶんある", BAKED_TITLES.length >= 15, String(BAKED_TITLES.length));
-ok("30問以上ある", BAKED_ALL.length >= 30, String(BAKED_ALL.length));
+ok("17作品ぶんある", BAKED_TITLES.length >= 17, String(BAKED_TITLES.length));
+ok("34問以上ある", BAKED_ALL.length >= 34, String(BAKED_ALL.length));
 
 /* 作り置きは記事から作れないものに限る。記事から作れるものを重ねても意味がない */
 ok("記事の表から作れる問いを重ねていない",
@@ -525,6 +525,7 @@ eq("作り置きは用意した数だけ出る", one.length, box.BAKED["半沢�
 ok("そのままの題名で引ける", !!box.bakedFor("半沢直樹"));
 ok("括弧の但し書きが付いても引ける", !!box.bakedFor("HERO (テレビドラマ)"));
 ok("全角括弧でも引ける", !!box.bakedFor("カルテット（テレビドラマ）"));
+ok("空白を含む題名でも引ける", !!box.bakedFor("LIAR GAME (テレビドラマ)"));
 ok("副題が続いても引ける", !!box.bakedFor("ドクターX 〜外科医・大門未知子〜"));
 eq("作り置きの無い作品では引かない", box.bakedFor("知らないドラマ"), null);
 eq("題名が無くても落ちない", box.bakedFor(null), null);

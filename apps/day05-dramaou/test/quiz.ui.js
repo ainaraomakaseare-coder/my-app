@@ -425,7 +425,7 @@ const SEARCH_JSON = {
       [...document.querySelectorAll("#examples .ex")].map(b => b.textContent.trim()));
     const titles = await sp.evaluate(() => Object.keys(window.__quiz.BAKED));
     eq("入口の例は作り置きのある作品そのもの", ex, titles);
-    check("作り置きは15作品ある", titles.length >= 15, String(titles.length));
+    check("作り置きは17作品ある", titles.length >= 17, String(titles.length));
 
     await st.close();
   }
