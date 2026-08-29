@@ -300,5 +300,98 @@ eq("3割はうろ覚え", box.rankOf(0.3).name, "うろ覚え");
 eq("0点はにわか", box.rankOf(0).name, "にわか");
 ok("称号にはひとこと添える", box.rankOf(0.6).blurb.length > 5);
 
+/* ---- AI出題の検査 ----
+   .claude/skills/quiz-design の「4つの検査」がそのまま効いているか。
+   AIは指示を守るがゼロではないので、ここが最後の砦になる。 */
+function q(over){
+  var base = { text:"物語の終盤でアキが選んだ道は？",
+               choices:["海女を続ける","東京へ戻る","駅長になる","喫茶店を継ぐ"],
+               answer:"海女を続ける", level:2, why:"アキは北三陸に残る。", source:"アキは海女として生きることを選ぶ" };
+  Object.keys(over || {}).forEach(function(k){ base[k] = over[k]; });
+  return base;
+}
+eq("素直な設問は通る", box.checkAi(q()), []);
+ok("選択肢が3つだと落ちる", box.checkAi(q({choices:["あ","い","う"]})).length > 0);
+ok("選択肢が重複すると落ちる",
+   box.checkAi(q({choices:["海女を続ける","海女を続ける","駅長になる","喫茶店を継ぐ"]})).length > 0);
+ok("answer が選択肢に無いと落ちる", box.checkAi(q({answer:"漁師になる"})).length > 0);
+ok("問題文に答えが入っていると落ちる",
+   box.checkAi(q({text:"海女を続けるという選択をしたのは誰の話？"})).length > 0);
+ok("正解だけ長いと落ちる",
+   box.checkAi(q({choices:["海女として北三陸に残る道を選んだ","東京","駅長","喫茶店"],
+                  answer:"海女として北三陸に残る道を選んだ"})).length > 0);
+ok("level が範囲外だと落ちる", box.checkAi(q({level:5})).length > 0);
+ok("根拠が空だと落ちる", box.checkAi(q({source:"  "})).length > 0);
+ok("作品名そのものが答えだと落ちる",
+   box.checkAi(q({choices:["あまちゃん","い","う","え"], answer:"あまちゃん"}), {title:"あまちゃん"}).length > 0);
+
+var got = box.adoptAi([q(), q({level:9}), q({text:"第2の問い"})], null);
+eq("通ったものだけ採る", got.ok.length, 2);
+eq("落ちたものは理由付きで残る", got.ng.length, 1);
+eq("answer を添字に直す", got.ok[0].answer, 0);
+eq("AI作の印をつける", got.ok[0].tier, "ai");
+ok("根拠を持ち越す", got.ok[0].source.length > 0);
+eq("空でも落ちない", box.adoptAi(null, null).ok, []);
+
+/* ---- AI出題とテンプレ出題を混ぜる ---- */
+var tplQ = [{text:"T1",level:1},{text:"T2",level:2},{text:"T3",level:3}];
+eq("AIを先に、足りないぶんをテンプレで埋める",
+   box.mergeQuiz([{text:"A1",level:1}], tplQ, 3).map(function(x){ return x.text; }),
+   ["A1","T1","T2"]);
+eq("AIが0問でもテンプレだけで成立する",
+   box.mergeQuiz([], tplQ, 3).length, 3);
+eq("同じ問題文は重ねない",
+   box.mergeQuiz([{text:"T2",level:1}], tplQ, 3).map(function(x){ return x.text; }),
+   ["T2","T1","T3"]);
+eq("欲しい数を超えない", box.mergeQuiz([{text:"A1",level:1}], tplQ, 2).length, 2);
+
+/* ---- 送る文章を絞る ---- */
+var SEC = [
+  { head:"あらすじ", text:"あ".repeat(50) },
+  { head:"外部リンク", text:"い".repeat(50) },
+  { head:"受賞", text:"う".repeat(50) },
+  { head:"登場人物", text:"え".repeat(50) },
+  { head:"備考", text:"お".repeat(50) }
+];
+var packed = box.packProse(SEC, 10000);
+ok("あらすじは入る", packed.indexOf("あ") >= 0);
+ok("登場人物は入る", packed.indexOf("え") >= 0);
+ok("外部リンクは入らない", packed.indexOf("い") < 0);
+ok("受賞は入らない", packed.indexOf("う") < 0);
+ok("備考は入らない", packed.indexOf("お") < 0);
+ok("上限を超えない", box.packProse(SEC, 60).length <= 60);
+ok("入り切らない節は丸ごと落とす（途中で切らない）",
+   box.packProse([{head:"あらすじ", text:"あ".repeat(100)}], 50) === "");
+eq("空でも落ちない", box.packProse(null, 100), "");
+
+/* ---- 費用 ---- */
+eq("入力と出力に別の単価をあてる",
+   box.costOf({ input_tokens:1000000, output_tokens:0 }, "claude-opus-5"), 5);
+eq("出力の単価", box.costOf({ input_tokens:0, output_tokens:1000000 }, "claude-opus-5"), 25);
+ok("安いモデルは安い",
+   box.costOf({input_tokens:1e6,output_tokens:1e6}, "claude-haiku-4-5")
+   < box.costOf({input_tokens:1e6,output_tokens:1e6}, "claude-opus-5"));
+eq("usage が無くても0", box.costOf(null, "claude-opus-5"), 0);
+eq("知らないモデルは先頭の単価に寄せる", box.modelById("なにこれ").id, "claude-opus-5");
+ok("既定は最も賢いモデル", box.MODELS[0].id === "claude-opus-5");
+
+/* ---- AIへの指示 ---- */
+var prompt = box.buildAiPrompt({ title:"あまちゃん" }, "本文本文", 8);
+ok("作品名を渡す", prompt.indexOf("あまちゃん") >= 0);
+ok("問数を渡す", prompt.indexOf("8問") >= 0);
+ok("記事の抜粋を渡す", prompt.indexOf("本文本文") >= 0);
+ok("外側の事実は問うなと伝える", prompt.indexOf("放送局") >= 0);
+ok("根拠を書けと伝える", prompt.indexOf("source") >= 0);
+
+/* ---- 返り値の形の約束 ---- */
+ok("根拠を必須にする", box.AI_SCHEMA.properties.questions.items.required.indexOf("source") >= 0);
+ok("余計な鍵を許さない", box.AI_SCHEMA.properties.questions.items.additionalProperties === false);
+eq("answer は文字列で受ける",
+   box.AI_SCHEMA.properties.questions.items.properties.answer.type, "string");
+
+/* ---- 難しさの呼び名 ---- */
+eq("1はやさしい", box.LEVEL_NAME[1], "やさしい");
+eq("3は難しい", box.LEVEL_NAME[3], "難しい");
+
 console.log((fail ? "FAIL" : "PASS") + "  " + pass + " 件通過" + (fail ? " / " + fail + " 件失敗" : ""));
 process.exit(fail ? 1 : 0);
