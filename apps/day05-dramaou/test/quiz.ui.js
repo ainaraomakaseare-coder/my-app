@@ -3,7 +3,14 @@
  * Wikipedia への通信は差し替えるので、ネットにつながっていなくても走る。
  * 実行: node test/quiz.ui.js [index.html]
  */
-const { chromium } = require("/opt/node22/lib/node_modules/playwright");
+let playwright;
+try {
+  playwright = require("playwright");
+} catch (_error) {
+  // Claude Code の従来環境では Playwright がこの場所に入っている。
+  playwright = require("/opt/node22/lib/node_modules/playwright");
+}
+const { chromium } = playwright;
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -76,7 +83,8 @@ const SEARCH_JSON = {
   await new Promise(r => server.listen(0, "127.0.0.1", r));
   const base = "http://127.0.0.1:" + server.address().port + "/";
 
-  const browser = await chromium.launch();
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+  const browser = await chromium.launch(executablePath ? { executablePath } : {});
   const page = await browser.newPage();
   const asked = [];
 
