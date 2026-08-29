@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ドラマ検定</title>
 <meta name="description" content="好きなドラマを入れると、その作品の問題が10問出ます。あなたのマニア度を測ります。">
+<!-- Worker公開後に、そのURLをcontentへ設定する。空なら従来方式だけで動く。 -->
+<meta name="drama-ai-endpoint" content="">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
@@ -512,6 +514,7 @@ function makeWork(title, url, info, epRows, chars, prose){
   });
   /* あらすじなどの地の文。表からは取れない「物語の中で何が起きたか」の材料 */
   w.prose = String(prose || "");
+  w.aiQuestions = [];
   if(w.count == null && w.episodes.length >= 3) w.count = w.episodes.length;
   /* 年代の帯。ダミー人物を対象作から離すのに使う */
   var y = w.start ? w.start.y : null;
@@ -4457,8 +4460,8 @@ var TEMPLATES = [
 /* ---- 作り置き ----
    記事の表からは作れない問題。あるものだけ混ぜ、残りは記事から作る。 */
 { id:"baked", tier:"content", group:"baked", make:function(w, rnd){
-  var list = bakedFor(w.title);
-  if(!list) return [];
+  var list = (bakedFor(w.title) || []).concat(w.aiQuestions || []);
+  if(!list.length) return [];
   return shuffle(list.slice(), rnd).map(function(b){
     /* 正解の位置は毎回混ぜる。並べた順のままだと数問で気づかれる */
     var c = makeChoices(b[1], b[2].slice(), rnd);
@@ -5193,11 +5196,55 @@ function load(title){
     var w = parseArticle(a.title, a.html);
     state.work = w;
     reportFound(w);
-    var quiz = buildQuiz(w, Date.now() & 0x7fffffff);
-    if(quiz.length < 4) return tooFew(a.title);
-    startQuiz(quiz);
+    return fetchAiQuestions(w).then(function(ai){
+      w.aiQuestions = ai;
+      var quiz = buildQuiz(w, Date.now() & 0x7fffffff);
+      if(quiz.length < 4) return tooFew(a.title);
+      startQuiz(quiz);
+    });
   }).catch(function(e){
     $("load-msg").innerHTML = '<span class="err">記事を読めませんでした（' + esc(e.message) + '）。</span>';
+  });
+}
+
+/* AIは秘密鍵を持つWorker経由でだけ呼ぶ。Workerが未設定・失敗・時間切れでも
+   従来の作り置き＋記事ベース出題へ戻り、ゲーム自体は止めない。 */
+function fetchAiQuestions(w){
+  var meta = document.querySelector('meta[name="drama-ai-endpoint"]');
+  var endpoint = meta && meta.content.trim();
+  if(!endpoint) return Promise.resolve([]);
+  $("load-msg").textContent = "「" + w.title + "」の良問をAIが選んでいます…";
+  var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  var timer = ctrl ? setTimeout(function(){ ctrl.abort(); }, 12000) : null;
+  var payload = {
+    title:w.title,
+    prose:String(w.prose || "").slice(0, 14000),
+    characters:(w.characters || []).slice(0, 60).map(function(c){
+      return { role:c.role, actor:c.actor, desc:String(c.desc || "").slice(0, 180) };
+    }),
+    episodes:(w.episodes || []).slice(0, 30).map(function(e){
+      return { no:e.no, subtitle:e.subtitle || "" };
+    })
+  };
+  return fetch(endpoint, {
+    method:"POST",
+    headers:{ "content-type":"application/json" },
+    body:JSON.stringify(payload),
+    signal:ctrl ? ctrl.signal : undefined
+  }).then(function(r){
+    if(!r.ok) throw new Error("AI " + r.status);
+    return r.json();
+  }).then(function(j){
+    return (j.questions || []).map(function(q){
+      return [q.text, q.answer, q.wrongs, q.level, q.why];
+    }).filter(function(q){
+      return typeof q[0] === "string" && typeof q[1] === "string"
+        && Array.isArray(q[2]) && q[2].length === 3
+        && q[3] >= 1 && q[3] <= 3;
+    }).slice(0, 10);
+  }).catch(function(){ return []; }).then(function(qs){
+    if(timer) clearTimeout(timer);
+    return qs;
   });
 }
 
