@@ -7,8 +7,11 @@
 /* 選択肢の数。4択以外にするなら呼ぶ側で差し替える */
 const WANT_CHOICES = 4;
 /* 正解だけが極端に長い／短いのを弾く閾値。
-   正解の長さが他の平均の何倍まで許すか。1.8 は「明らかに浮いている」の手前 */
+   正解の長さが他の平均の何倍まで許すか。1.8 は「明らかに浮いている」の手前。
+   比率だけだと「海女」対「喫茶店の店主」のような日本語では普通の組み合わせも
+   落ちるので、字数の差 LEN_GAP も一緒に超えたときだけ弾く。 */
 const LEN_RATIO = 1.8;
+const LEN_GAP = 4;
 
 /* 設問ひとつを検査して、壊れている理由の配列を返す。空なら合格。 */
 export function checkQuestion(q, opts = {}) {
@@ -40,7 +43,8 @@ export function checkQuestion(q, opts = {}) {
   if (typeof q.answer === "string" && q.choices.includes(q.answer) && q.choices.length > 1) {
     const others = q.choices.filter(c => c !== q.answer);
     const avg = others.reduce((s, c) => s + c.length, 0) / others.length;
-    if (avg > 0 && (q.answer.length > avg * LEN_RATIO || q.answer.length * LEN_RATIO < avg)) {
+    const ratioOff = q.answer.length > avg * LEN_RATIO || q.answer.length * LEN_RATIO < avg;
+    if (avg > 0 && ratioOff && Math.abs(q.answer.length - avg) >= LEN_GAP) {
       bad.push(`正解だけ長さが浮いている（正解${q.answer.length}字 / 他の平均${avg.toFixed(1)}字）`);
     }
   }

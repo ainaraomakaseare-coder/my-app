@@ -226,6 +226,28 @@ for(var seed = 1; seed <= 40; seed++){
   });
 }
 
+/* ---- 同じ言い回しを並べない ----
+   同じテンプレから何問も採ると、問題数の水増しに見える。
+   .claude/skills/quiz-design が禁じている壊れ方なので、種を変えて固定する。 */
+for(var seed = 1; seed <= 40; seed++){
+  var rep = box.buildQuiz(FULL, seed * 104729);
+  var byTpl = {}, byGrp = {};
+  rep.forEach(function(q){
+    var t = String(q.id).split("#")[0];
+    byTpl[t] = (byTpl[t] || 0) + 1;
+    var g = { role2actor:"yaku", actor2role:"yaku", notrole:"cast", cast:"cast",
+              sub_first:"sub", sub_mid:"sub", whichep:"sub" }[t] || t;
+    byGrp[g] = (byGrp[g] || 0) + 1;
+  });
+  var worstT = Math.max.apply(null, Object.keys(byTpl).map(function(k){ return byTpl[k]; }));
+  var worstG = Math.max.apply(null, Object.keys(byGrp).map(function(k){ return byGrp[k]; }));
+  /* 上限そのものは PER_TEMPLATE=2 / PER_GROUP=4 だが、層が埋まらないときは
+     控えから足すので、そのぶんだけ超えることがある。
+     ここで固定したいのは「同じ言い回しが4問も並ばない」こと。 */
+  ok("種" + seed + ": 同じテンプレは3問まで", worstT <= 3, JSON.stringify(byTpl));
+  ok("種" + seed + ": 同じ材料の系統は5問まで", worstG <= 5, JSON.stringify(byGrp));
+}
+
 /* 同じ種なら同じ問題 */
 eq("種が同じなら同じ出題",
    box.buildQuiz(FULL, 777).map(function(q){ return q.text + "/" + q.answer; }),
@@ -317,6 +339,8 @@ ok("選択肢が重複すると落ちる",
 ok("answer が選択肢に無いと落ちる", box.checkAi(q({answer:"漁師になる"})).length > 0);
 ok("問題文に答えが入っていると落ちる",
    box.checkAi(q({text:"海女を続けるという選択をしたのは誰の話？"})).length > 0);
+eq("短い正解と長いダミーが混ざるくらいは通す（海女 対 喫茶店の店主）",
+   box.checkAi(q({choices:["海女","駅長","アイドル","喫茶店の店主"], answer:"海女"})), []);
 ok("正解だけ長いと落ちる",
    box.checkAi(q({choices:["海女として北三陸に残る道を選んだ","東京","駅長","喫茶店"],
                   answer:"海女として北三陸に残る道を選んだ"})).length > 0);

@@ -130,8 +130,10 @@ button{cursor:pointer}
 .bars{display:flex;flex-direction:column;gap:10px}
 .bar{display:grid;grid-template-columns:78px 1fr 42px;align-items:center;gap:10px;font-size:12px}
 .bar .nm{color:var(--paper-dim);letter-spacing:.06em}
-.bar .tr{height:7px;border-radius:4px;background:var(--line);overflow:hidden}
-.bar .fl{height:100%;border-radius:4px;background:var(--lamp)}
+.bar .tr{display:block;height:7px;border-radius:4px;background:var(--line);overflow:hidden}
+/* inline のままでは height が効かず、伸びない帯になる */
+.bar .fl{display:block;height:100%;border-radius:4px;background:var(--lamp);
+  transition:width .5s cubic-bezier(.2,.7,.3,1)}
 .bar .vl{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
 .review{display:flex;flex-direction:column;gap:9px}
 .rv{border-left:2px solid var(--line);padding:2px 0 2px 11px;font-size:13px;line-height:1.7}
@@ -154,7 +156,9 @@ button{cursor:pointer}
 .aiset{border:1px solid var(--line);border-radius:10px;padding:12px 13px;
   display:flex;flex-direction:column;gap:12px;background:rgba(255,255,255,.015)}
 .sw{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:center;cursor:pointer}
-.sw input{grid-row:1 / span 2;width:17px;height:17px;accent-color:var(--lamp);cursor:pointer}
+/* 2行にまたがるが、見出しの行に合わせて上に置く。中央に置くと説明文と揃って見える */
+.sw input{grid-row:1 / span 2;align-self:start;margin-top:4px;
+  width:17px;height:17px;accent-color:var(--lamp);cursor:pointer}
 .sw-t{font-size:14px;font-weight:500}
 .sw-d{font-size:12px;color:var(--muted);line-height:1.6}
 #ai-conf{display:flex;flex-direction:column;gap:11px;
@@ -582,7 +586,7 @@ function actorPool(w){
 var TEMPLATES = [
 
 /* ---- 役名と俳優（中身の中心） ---- */
-{ id:"role2actor", tier:"content", make:function(w, rnd){
+{ id:"role2actor", tier:"content", group:"yaku", make:function(w, rnd){
   if(w.characters.length < 4) return [];
   var pool = actorPool(w);
   return shuffle(w.characters, rnd).slice(0, 4).map(function(pr, i){
@@ -596,7 +600,7 @@ var TEMPLATES = [
   }).filter(Boolean);
 }},
 
-{ id:"actor2role", tier:"content", make:function(w, rnd){
+{ id:"actor2role", tier:"content", group:"yaku", make:function(w, rnd){
   if(w.characters.length < 4) return [];
   var roles = w.characters.map(function(c){ return c.role; });
   return shuffle(w.characters, rnd).slice(0, 3).map(function(pr, i){
@@ -609,7 +613,7 @@ var TEMPLATES = [
   }).filter(Boolean);
 }},
 
-{ id:"notrole", tier:"content", make:function(w, rnd){
+{ id:"notrole", tier:"content", group:"cast", make:function(w, rnd){
   /* 登場人物のうち3人と、別の年代の俳優1人を混ぜる */
   if(w.characters.length < 4) return [];
   var pool = actorPool(w);
@@ -636,7 +640,7 @@ var TEMPLATES = [
 }},
 
 /* ---- サブタイトル ---- */
-{ id:"sub_first", tier:"content", make:function(w, rnd){
+{ id:"sub_first", tier:"content", group:"sub", make:function(w, rnd){
   var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
   if(subs.length < 4) return [];
   var out = [];
@@ -652,7 +656,7 @@ var TEMPLATES = [
   return out;
 }},
 
-{ id:"sub_mid", tier:"content", make:function(w, rnd){
+{ id:"sub_mid", tier:"content", group:"sub", make:function(w, rnd){
   var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
   if(subs.length < 5) return [];
   var mid = subs.slice(1, -1);
@@ -666,7 +670,7 @@ var TEMPLATES = [
   }).filter(Boolean);
 }},
 
-{ id:"whichep", tier:"content", make:function(w, rnd){
+{ id:"whichep", tier:"content", group:"sub", make:function(w, rnd){
   var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
   if(subs.length < 4) return [];
   return shuffle(subs, rnd).slice(0, 2).map(function(t){
@@ -747,20 +751,30 @@ var AI_WANT = 8;
 var PROSE_LIMIT = 12000;
 var TOTAL = 10;
 
+/* 同じテンプレから何問まで採るか。同じ言い回しが並ぶと問題数の水増しに見える */
+var PER_TEMPLATE = 2;
+/* 同じ材料の系統から何問まで採るか。役名も出演者も「人物の表」という同じ材料 */
+var PER_GROUP = 4;
+
 function buildQuiz(w, seed){
   var rnd = rng(seed || 1);
-  var content = [], fact = [], usedGroup = {};
+  var content = [], fact = [], spareC = [], spareF = [], perGroup = {};
   shuffle(TEMPLATES, rnd).forEach(function(t){
-    /* 同じ材料を問う設問が並ぶと繰り返しに見えるので、系統ごとに1問まで */
-    if(t.group && usedGroup[t.group]) return;
     var made = t.make(w, rnd) || [];
     if(!made.length) return;
-    if(t.group) usedGroup[t.group] = 1;
     made.forEach(function(q, i){
       q.id = t.id + (made.length > 1 ? "#" + (i + 1) : "");
       q.tier = t.tier;
-      (t.tier === "content" ? content : fact).push(q);
     });
+    /* まずは同じ言い回し・同じ材料が並ばない範囲だけ採る */
+    var g = t.group || t.id;
+    var room = PER_GROUP - (perGroup[g] || 0);
+    var take = Math.min(PER_TEMPLATE, room, made.length);
+    if(take < 0) take = 0;
+    perGroup[g] = (perGroup[g] || 0) + take;
+    made.slice(0, take).forEach(function(q){ (t.tier === "content" ? content : fact).push(q); });
+    /* 溢れたぶんは控えに回す。材料の薄い作品では、繰り返してでも数を揃えるほうがいい */
+    made.slice(take).forEach(function(q){ (t.tier === "content" ? spareC : spareF).push(q); });
   });
 
   function take(pool, lv, n){
@@ -772,12 +786,21 @@ function buildQuiz(w, seed){
   }
   var quiz = [];
   [1, 2, 3].forEach(function(lv){
+    /* 中身の問題で埋まらない層は、外側の事実より先に「中身の控え」で埋める。
+       控えは同じ言い回しが重なるが、それでも事実問題より中身のほうが面白い。 */
     var got = take(content, lv, WANT[lv]);
+    if(got.length < WANT[lv]) got = got.concat(take(spareC, lv, WANT[lv] - got.length));
     if(got.length < WANT[lv]) got = got.concat(take(fact, lv, WANT[lv] - got.length));
     quiz = quiz.concat(got);
   });
-  /* 層が埋まらなかったぶんは、中身を優先して数を合わせる */
-  var rest = shuffle(content, rnd).concat(shuffle(fact, rnd));
+  /* 層が埋まらなかったぶんを足して数を合わせる。優先順は
+     中身 → 中身の控え → 外側の事実 → 事実の控え。
+     控えは同じ言い回しが重なるので最後だが、問題が少ないほうが困る。
+     材料の足りている作品では控えまで手が伸びない。 */
+  var rest = shuffle(content, rnd)
+    .concat(shuffle(spareC, rnd))
+    .concat(shuffle(fact, rnd))
+    .concat(shuffle(spareF, rnd));
   while(quiz.length < TOTAL && rest.length) quiz.push(rest.shift());
   quiz.sort(function(a, b){ return a.level - b.level; });
   return quiz.slice(0, TOTAL);
@@ -943,12 +966,16 @@ function checkAi(q, work){
   if(typeof q.answer === "string" && q.answer.length >= 2 &&
      typeof q.text === "string" && q.text.indexOf(q.answer) >= 0) bad.push("問題文に答えが含まれている");
 
-  /* 正解だけ長さが浮いていないか。1.8倍は「明らかに浮いている」の手前 */
+  /* 正解だけ長さが浮いていないか。
+     比率だけで見ると「海女」対「喫茶店の店主」のような、日本語では普通の
+     組み合わせまで落ちてしまう。字数の差も一緒に見て、両方あてはまる時だけ弾く。 */
   if(typeof q.answer === "string" && q.choices.indexOf(q.answer) >= 0){
     var others = q.choices.filter(function(c){ return c !== q.answer; });
     if(others.length){
       var avg = others.reduce(function(s, c){ return s + c.length; }, 0) / others.length;
-      if(avg > 0 && (q.answer.length > avg * 1.8 || q.answer.length * 1.8 < avg)) bad.push("正解だけ長さが浮いている");
+      var off = Math.abs(q.answer.length - avg);
+      var ratio = q.answer.length > avg * 1.8 || q.answer.length * 1.8 < avg;
+      if(avg > 0 && ratio && off >= 4) bad.push("正解だけ長さが浮いている");
     }
   }
 
