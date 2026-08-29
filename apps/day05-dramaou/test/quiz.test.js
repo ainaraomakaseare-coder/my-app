@@ -425,6 +425,110 @@ var NOPROSE = box.makeWork("あまちゃん", "u", INFO, MANY, CHARS2, "");
 eq("地の文が無ければ空欄補充は作らない", madeBy("cloze", NOPROSE, 3).length, 0);
 ok("地の文が無くても説明文の設問は作れる", madeBy("chardesc", NOPROSE, 3).length > 0);
 
+/* ---- 作り置きの設問 ----
+   手で書いたものなので、機械で検査できることは全部ここで見る。
+   記事から作る設問と同じ検査を通す。基準を分けると必ず食い違う。 */
+var BAKED_TITLES = Object.keys(box.BAKED);
+var BAKED_ALL = [];
+BAKED_TITLES.forEach(function(t){
+  box.BAKED[t].forEach(function(b){ BAKED_ALL.push({ title:t, b:b }); });
+});
+
+ok("15作品ぶんある", BAKED_TITLES.length >= 15, String(BAKED_TITLES.length));
+ok("30問以上ある", BAKED_ALL.length >= 30, String(BAKED_ALL.length));
+
+/* 作り置きは記事から作れないものに限る。記事から作れるものを重ねても意味がない */
+ok("記事の表から作れる問いを重ねていない",
+   BAKED_ALL.every(function(x){ return !/を演じたのは|が演じたのは|放送局|第何話|サブタイトル|視聴率/.test(x.b[0]); }),
+   BAKED_ALL.filter(function(x){ return /を演じたのは|放送局/.test(x.b[0]); })
+            .map(function(x){ return x.b[0]; }).join(" / "));
+
+var badBaked = [];
+BAKED_ALL.forEach(function(x){
+  var b = x.b, why = [];
+  if(typeof b[0] !== "string" || b[0].length < 8) why.push("問題文が短い");
+  if(typeof b[1] !== "string" || !b[1]) why.push("正解が無い");
+  if(!Array.isArray(b[2]) || b[2].length !== 3) why.push("ダミーが3つでない");
+  if([1,2,3].indexOf(b[3]) < 0) why.push("難しさが1〜3でない");
+  if(typeof b[4] !== "string" || b[4].length < 4) why.push("解説が無い");
+  if(why.length) badBaked.push(x.title + " / " + b[0] + " → " + why.join("・"));
+});
+eq("作り置きの形が揃っている", badBaked, []);
+
+/* 実際に組み立てて、記事から作る設問と同じ検査を通す */
+var madeBaked = [], ngBaked = [];
+BAKED_TITLES.forEach(function(t){
+  var w = box.makeWork(t, "u", {}, [], [], "");
+  var out = [];
+  box.TEMPLATES.forEach(function(tpl){
+    if(tpl.id === "baked") out = tpl.make(w, box.rng(4649)) || [];
+  });
+  out.forEach(function(q){
+    madeBaked.push(q);
+    var bad = box.checkMade(q, w);
+    if(bad.length) ngBaked.push(t + " / " + q.text + " → " + bad.join("・"));
+  });
+});
+eq("作り置きは全問が検査を通る", ngBaked, []);
+eq("作り置きは全問が組み上がる", madeBaked.length, BAKED_ALL.length);
+
+/* 選択肢の中身 */
+var dupChoice = [], sameAsAns = [];
+BAKED_ALL.forEach(function(x){
+  var all = [x.b[1]].concat(x.b[2]);
+  var seen = {};
+  all.forEach(function(c){ if(seen[c]) dupChoice.push(x.b[0] + " → " + c); seen[c] = 1; });
+  if(x.b[2].indexOf(x.b[1]) >= 0) sameAsAns.push(x.b[0]);
+});
+eq("選択肢が重複していない", dupChoice, []);
+eq("ダミーに正解が混ざっていない", sameAsAns, []);
+
+/* 問題文の重複。同じ問いが二度出ると水増しに見える */
+var seenText = {}, dupText = [];
+BAKED_ALL.forEach(function(x){
+  if(seenText[x.b[0]]) dupText.push(x.b[0]);
+  seenText[x.b[0]] = 1;
+});
+eq("同じ問題文が二度出てこない", dupText, []);
+
+/* 1作品あたりの数。作り置きだけで10問を埋めない（残りは記事から作る） */
+var tooMany = BAKED_TITLES.filter(function(t){ return box.BAKED[t].length > 3; });
+eq("1作品につき3問まで（残りは記事から作る）", tooMany, []);
+
+/* 正解の位置は毎回混ぜる。並べた順のままだと数問で気づかれる */
+var posA = [], posB = [];
+["半沢直樹", "あまちゃん"].forEach(function(t){
+  var w = box.makeWork(t, "u", {}, [], [], "");
+  box.TEMPLATES.forEach(function(tpl){
+    if(tpl.id !== "baked") return;
+    (tpl.make(w, box.rng(1)) || []).forEach(function(q){ posA.push(q.answer); });
+    (tpl.make(w, box.rng(98765)) || []).forEach(function(q){ posB.push(q.answer); });
+  });
+});
+ok("種が変われば正解の位置も変わる",
+   JSON.stringify(posA) !== JSON.stringify(posB), JSON.stringify(posA) + " / " + JSON.stringify(posB));
+
+/* 作り置きは、記事の材料が豊富でも必ず出す。
+   手で作った、記事からは作れない問題が競り負けるのでは置いた意味がない。 */
+var RICH = box.makeWork("半沢直樹", "u", INFO, MANY, CHARS, "");
+var bakedShown = 0, runs = 0;
+for(var bs = 1; bs <= 30; bs++){
+  var qz = box.buildQuiz(RICH, bs * 7919);
+  runs++;
+  if(qz.some(function(q){ return String(q.id).indexOf("baked") === 0; })) bakedShown++;
+}
+eq("材料の豊富な作品でも、作り置きは毎回出る", bakedShown, runs);
+var one = box.buildQuiz(RICH, 12345).filter(function(q){ return String(q.id).indexOf("baked") === 0; });
+eq("作り置きは用意した数だけ出る", one.length, box.BAKED["半沢直樹"].length);
+
+/* ---- 記事の題名から作り置きを引く ---- */
+ok("そのままの題名で引ける", !!box.bakedFor("半沢直樹"));
+ok("括弧の但し書きが付いても引ける", !!box.bakedFor("HERO (テレビドラマ)"));
+ok("全角括弧でも引ける", !!box.bakedFor("カルテット（テレビドラマ）"));
+ok("副題が続いても引ける", !!box.bakedFor("ドクターX 〜外科医・大門未知子〜"));
+eq("作り置きの無い作品では引かない", box.bakedFor("知らないドラマ"), null);
+eq("題名が無くても落ちない", box.bakedFor(null), null);
+
 /* ---- 難しさの呼び名 ---- */
 eq("1はやさしい", box.LEVEL_NAME[1], "やさしい");
 eq("3は難しい", box.LEVEL_NAME[3], "難しい");

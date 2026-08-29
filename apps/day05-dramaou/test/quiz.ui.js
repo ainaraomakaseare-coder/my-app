@@ -158,10 +158,11 @@ const SEARCH_JSON = {
   check("設問が重複しない", new Set(seen).size === 10, seen.join(" / "));
   check("スタッフを問う設問は出ない",
         !seen.some(t => /脚本|演出|音楽|原作|プロデューサー/.test(t)), seen.join(" / "));
-  /* 外側の事実（放送局・放送年・話数）ではなく、中身を問う設問が中心であること。
-     DAY10 で地の文からの出題が増えたので、その言い回しもここに含める。 */
-  check("中身を問う設問が中心",
-        seen.filter(t => /演じたのは|サブタイトル|第何話|出演|説明されるのは|にあたるのは|あらすじの一節/.test(t)).length >= 8,
+  /* 狙いは「外側の事実に偏らないこと」。
+     中身を問う言い回しを数える形にすると、出題の種類が増えるたびに
+     この正規表現を足すことになる。数えるのは外側の事実のほうにする。 */
+  check("外側の事実を問う設問は2問まで",
+        seen.filter(t => /放送したのは|放送が始まった|全何話|視聴率|放送日/.test(t)).length <= 2,
         seen.join(" / "));
 
   /* ---- 結果 ---- */
@@ -387,6 +388,36 @@ const SEARCH_JSON = {
     await sp.waitForSelector("#scr-quiz:not([hidden])");
     check("もう一度で第1問に戻る", (await sp.textContent("#qcount")).indexOf("第 1 問") >= 0);
     eq("もう一度でも外部のAPIを呼ばない", outside, []);
+
+
+    /* ---- 作り置き ----
+       記事から作った問題と混ざって画面に出るか。
+       材料の乏しい記事でも、作り置きのある作品なら中身を問う問題が出る。 */
+    const kinds2 = await sp.evaluate(a => {
+      const Q = window.__quiz, w = Q.parseArticle("半沢直樹", a), got = {};
+      for(let s = 1; s <= 20; s++){
+        Q.buildQuiz(w, s * 7919).forEach(q => { got[String(q.id).split("#")[0]] = 1; });
+      }
+      return Object.keys(got);
+    }, STORY.replace("あまちゃん", "半沢直樹"));
+    check("作り置きのある作品では作り置きが混ざる", kinds2.indexOf("baked") >= 0, kinds2.join(","));
+
+    const noBake = await sp.evaluate(a => {
+      const Q = window.__quiz, w = Q.parseArticle("作り置きの無いドラマ", a), got = {};
+      for(let s = 1; s <= 10; s++){
+        Q.buildQuiz(w, s * 7919).forEach(q => { got[String(q.id).split("#")[0]] = 1; });
+      }
+      return Object.keys(got);
+    }, STORY);
+    check("作り置きの無い作品では出さない", noBake.indexOf("baked") < 0, noBake.join(","));
+    check("それでも記事から10問つくれる", noBake.length >= 3, noBake.join(","));
+
+    /* 入口の例は作り置きのある作品と一致していること（手で二重管理しない） */
+    const ex = await sp.evaluate(() =>
+      [...document.querySelectorAll("#examples .ex")].map(b => b.textContent.trim()));
+    const titles = await sp.evaluate(() => Object.keys(window.__quiz.BAKED));
+    eq("入口の例は作り置きのある作品そのもの", ex, titles);
+    check("作り置きは15作品ある", titles.length >= 15, String(titles.length));
 
     await st.close();
   }
