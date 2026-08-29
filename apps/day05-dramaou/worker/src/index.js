@@ -98,6 +98,12 @@ export default {
     const hit = await cache.match(key);
     if (hit) return new Response(hit.body, { status: hit.status, headers: { ...Object.fromEntries(hit.headers), ...headers } });
 
+    /* ログインのない公開アプリなので、キャッシュミス時だけ接続元単位で抑える。
+       同じ作品のキャッシュヒットは課金を生まないため制限対象にしない。 */
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+
     const upstream = await fetch(OPENAI_URL, {
       method: "POST",
       headers: { "authorization": `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -108,7 +114,10 @@ export default {
         text: { format: { type: "json_schema", name: "drama_quiz", strict: true, schema: schema() } },
       }),
     });
-    if (!upstream.ok) return json({ error: "upstream_error" }, 502, headers);
+    if (!upstream.ok) {
+      console.error(JSON.stringify({ event: "openai_error", status: upstream.status }));
+      return json({ error: "upstream_error" }, 502, headers);
+    }
     const response = await upstream.json();
     let parsed;
     try { parsed = JSON.parse(outputText(response)); }
