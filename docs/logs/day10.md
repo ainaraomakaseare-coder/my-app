@@ -34,6 +34,8 @@ DAY10完了後、Claude Codeで引き継ぎ資料を更新している途中に�
 
 再開後、ユーザー指定の「LIAR GAME」と「プロポーズ大作戦」を各2問追加し、作り置きは17作品・34問になりました。LIAR GAMEは[フジテレビ第1話あらすじ](https://www.fujitv.co.jp/b_hp/liargame/backnumber/707000003-1.html)、プロポーズ大作戦は[フジテレビ第9話あらすじ](https://www.fujitv.co.jp/b_hp/propose/backnumber/207000002-9.html)と[放送回一覧](https://www.fujitv.co.jp/b_hp/propose/backnumber/list.html)で設定を確認しました。
 
+その後、17作品すべてについてAIで問題候補を作り、Wikipediaの記事と番組公式資料を使って1作品20問へ拡張しました。現在の作り置きは合計340問です。候補収集では人物説明を誤読した不自然な空欄問題も生成されたため、問題数だけで採用せず、設定・人物・出来事・各話へ分散させて選別しました。確認状況は `docs/drama-question-bank.md` に残します。
+
 ## 使用モデル
 
 | モデル | 作業内容 |

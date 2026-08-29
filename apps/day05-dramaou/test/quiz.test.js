@@ -276,7 +276,10 @@ var NOSUB = box.makeWork("半沢直樹", "u",
 var sq = box.buildQuiz(NOSUB, 9);
 ok("サブタイトルが無くても出題できる", sq.length >= 5, sq.length);
 ok("空のサブタイトルを問題にしない",
-   sq.every(function(q){ return !/サブタイトル/.test(q.text) && !/^「」/.test(q.text); }),
+   sq.every(function(q){
+     return String(q.id).indexOf("baked") === 0 ||
+            (!/サブタイトル/.test(q.text) && !/^「」/.test(q.text));
+   }),
    sq.map(function(q){ return q.text; }).join(" / "));
 ok("役名の問題は出る",
    sq.some(function(q){ return /演じたのは？$/.test(q.text); }));
@@ -434,14 +437,16 @@ BAKED_TITLES.forEach(function(t){
   box.BAKED[t].forEach(function(b){ BAKED_ALL.push({ title:t, b:b }); });
 });
 
-ok("17作品ぶんある", BAKED_TITLES.length >= 17, String(BAKED_TITLES.length));
-ok("34問以上ある", BAKED_ALL.length >= 34, String(BAKED_ALL.length));
+eq("17作品ぶんある", BAKED_TITLES.length, 17);
+eq("340問ある", BAKED_ALL.length, 340);
 
-/* 作り置きは記事から作れないものに限る。記事から作れるものを重ねても意味がない */
-ok("記事の表から作れる問いを重ねていない",
-   BAKED_ALL.every(function(x){ return !/を演じたのは|が演じたのは|放送局|第何話|サブタイトル|視聴率/.test(x.b[0]); }),
-   BAKED_ALL.filter(function(x){ return /を演じたのは|放送局/.test(x.b[0]); })
-            .map(function(x){ return x.b[0]; }).join(" / "));
+/* 20問を同じ種類だけで水増ししない。設定・人物・各話を混ぜる */
+ok("作り置きに設定や物語の問題がある",
+   BAKED_ALL.some(function(x){ return !/を演じたのは|が演じたのは|サブタイトル|第何話/.test(x.b[0]); }));
+ok("作り置きに人物の問題がある",
+   BAKED_ALL.some(function(x){ return /を演じたのは|が演じたのは|にあたるのは/.test(x.b[0]); }));
+ok("作り置きに各話の問題がある",
+   BAKED_ALL.some(function(x){ return /サブタイトル|第何話/.test(x.b[0]); }));
 
 var badBaked = [];
 BAKED_ALL.forEach(function(x){
@@ -491,9 +496,9 @@ BAKED_ALL.forEach(function(x){
 });
 eq("同じ問題文が二度出てこない", dupText, []);
 
-/* 1作品あたりの数。作り置きだけで10問を埋めない（残りは記事から作る） */
-var tooMany = BAKED_TITLES.filter(function(t){ return box.BAKED[t].length > 3; });
-eq("1作品につき3問まで（残りは記事から作る）", tooMany, []);
+/* 17作品すべて、AI作成問題を20問ずつ持つ */
+var wrongCount = BAKED_TITLES.filter(function(t){ return box.BAKED[t].length !== 20; });
+eq("1作品につき20問", wrongCount, []);
 
 /* 正解の位置は毎回混ぜる。並べた順のままだと数問で気づかれる */
 var posA = [], posB = [];
@@ -519,7 +524,7 @@ for(var bs = 1; bs <= 30; bs++){
 }
 eq("材料の豊富な作品でも、作り置きは毎回出る", bakedShown, runs);
 var one = box.buildQuiz(RICH, 12345).filter(function(q){ return String(q.id).indexOf("baked") === 0; });
-eq("作り置きは用意した数だけ出る", one.length, box.BAKED["半沢直樹"].length);
+ok("20問の作り置きから実際の10問以内を選ぶ", one.length >= 2 && one.length <= 10, one.length);
 
 /* ---- 記事の題名から作り置きを引く ---- */
 ok("そのままの題名で引ける", !!box.bakedFor("半沢直樹"));
