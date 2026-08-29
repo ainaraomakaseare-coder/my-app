@@ -194,7 +194,7 @@ button{cursor:pointer}
 
 <!-- 入口 -->
 <section id="scr-home" class="card" style="display:flex;flex-direction:column;gap:14px">
-  <p class="lead">作品名を入れると、日本語版 Wikipedia の記事から10問つくります。</p>
+  <p class="lead" id="home-lead">作品名を入れると、日本語版 Wikipedia の記事から10問つくります。</p>
   <div class="search">
     <input id="q" type="search" placeholder="例：あまちゃん" autocomplete="off" enterkeyhint="search">
     <button id="go">検索</button>
@@ -224,7 +224,7 @@ button{cursor:pointer}
     </div>
   </div>
 
-  <p class="note" id="home-note"></p>
+  <p class="note" id="home-note" hidden></p>
 </section>
 
 <!-- 候補 -->
@@ -239,6 +239,7 @@ button{cursor:pointer}
   <div class="card loading">
     <div class="spin"></div>
     <p class="lead" id="load-msg">記事を読んでいます…</p>
+    <p class="note" id="load-sub" hidden></p>
     <div class="found" id="found"></div>
   </div>
 </section>
@@ -1355,7 +1356,15 @@ EXAMPLES.forEach(function(name){
   function est(){
     $("ai-est").textContent = "$" + guessCost(9000, sel.value).toFixed(3);
   }
-  function sync(){ $("ai-conf").hidden = !$("ai-on").checked; est(); }
+  function sync(){
+    var on = $("ai-on").checked;
+    $("ai-conf").hidden = !on;
+    /* 何から問題が作られるのかを、入口の一行で正直に出す */
+    $("home-lead").textContent = on
+      ? "作品名を入れると、日本語版 Wikipedia の記事を AI に読ませて10問つくります。"
+      : "作品名を入れると、日本語版 Wikipedia の記事から10問つくります。";
+    est();
+  }
 
   /* 鍵が入っているなら、前回も使っていたとみなして最初から入にしておく */
   $("ai-on").checked = !!loadKey();
@@ -1372,16 +1381,18 @@ function runSearch(){
   var q = $("q").value.trim();
   if(!q) return;
   $("go").disabled = true;
-  $("home-note").textContent = "";
+  $("home-note").textContent = ""; $("home-note").hidden = true;
   search(q).then(function(hits){
     if(!hits.length){
       $("home-note").innerHTML = '<span class="err">「' + esc(q) + '」で記事が見つかりませんでした。正式な題名で試してください。</span>';
+      $("home-note").hidden = false;
       return;
     }
     showHits(q, hits);
   }).catch(function(e){
     $("home-note").innerHTML = '<span class="err">検索できませんでした（' + esc(e.message) + '）。'
       + 'この画面をローカルのファイルとして開いている場合、通信が遮られていることがあります。</span>';
+    $("home-note").hidden = false;
   }).then(function(){ $("go").disabled = false; });
 }
 $("go").onclick = runSearch;
@@ -1430,6 +1441,7 @@ function startQuiz(quiz){
 function load(title){
   show("load");
   $("load-msg").textContent = "「" + title + "」の記事を読んでいます…";
+  $("load-sub").hidden = true;
   $("found").textContent = "";
   state.spent = 0; state.aiPool = null; state.aiNote = "";
 
@@ -1460,6 +1472,10 @@ function load(title){
     }
 
     $("load-msg").textContent = "AIが『" + a.title + "』を読んで問題を作っています…";
+    /* 十数秒かかることがある。黙って止まって見えないように、何を待っているか出す */
+    $("load-sub").textContent = "記事を " + Math.round(prose.length / 100) / 10
+      + "千字ぶん読ませています。十数秒かかることがあります。";
+    $("load-sub").hidden = false;
     var model = $("ai-model").value;
     return askClaude(loadKey(), model, buildAiPrompt(w, prose, AI_WANT))
       .then(function(res){
