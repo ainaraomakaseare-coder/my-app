@@ -4710,6 +4710,9 @@ var TOTAL = 10;
 var PER_TEMPLATE = 2;
 /* 同じ材料の系統から何問まで採るか。役名も出演者も「人物の表」という同じ材料 */
 var PER_GROUP = 4;
+/* 手で確認した作り置き問題は、10問中の半分まで使う。
+   残り半分は記事から作り、毎回の変化も残す。 */
+var BAKED_PER_QUIZ = 5;
 
 function buildQuiz(w, seed){
   var rnd = rng(seed || 1);
@@ -4727,7 +4730,10 @@ function buildQuiz(w, seed){
     /* まずは同じ言い回し・同じ材料が並ばない範囲だけ採る */
     var g = t.group || t.id;
     var room = PER_GROUP - (perGroup[g] || 0);
-    var take = Math.min(PER_TEMPLATE, room, made.length);
+    /* 作り置きだけは通常テンプレの2問制限とは別枠で最大5問採る */
+    var take = t.id === "baked"
+      ? Math.min(BAKED_PER_QUIZ, made.length)
+      : Math.min(PER_TEMPLATE, room, made.length);
     if(take < 0) take = 0;
     perGroup[g] = (perGroup[g] || 0) + take;
     /* 作り置きは手で作った、記事からは作れない問題。テンプレ同士の
@@ -4735,7 +4741,10 @@ function buildQuiz(w, seed){
     var pool = t.id === "baked" ? baked : (t.tier === "content" ? content : fact);
     made.slice(0, take).forEach(function(q){ pool.push(q); });
     /* 溢れたぶんは控えに回す。材料の薄い作品では、繰り返してでも数を揃えるほうがいい */
-    made.slice(take).forEach(function(q){ (t.tier === "content" ? spareC : spareF).push(q); });
+    /* 作り置きの6問目以降を控えへ回すと、後段で上限を超えてしまうので採用しない */
+    if(t.id !== "baked"){
+      made.slice(take).forEach(function(q){ (t.tier === "content" ? spareC : spareF).push(q); });
+    }
   });
 
   function take(pool, lv, n){

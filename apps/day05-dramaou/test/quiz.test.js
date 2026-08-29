@@ -239,12 +239,14 @@ for(var seed = 1; seed <= 40; seed++){
               sub_first:"sub", sub_mid:"sub", whichep:"sub" }[t] || t;
     byGrp[g] = (byGrp[g] || 0) + 1;
   });
-  var worstT = Math.max.apply(null, Object.keys(byTpl).map(function(k){ return byTpl[k]; }));
+  var ordinaryTpl = Object.keys(byTpl).filter(function(k){ return k !== "baked"; });
+  var worstT = Math.max.apply(null, ordinaryTpl.map(function(k){ return byTpl[k]; }));
   var worstG = Math.max.apply(null, Object.keys(byGrp).map(function(k){ return byGrp[k]; }));
   /* 上限そのものは PER_TEMPLATE=2 / PER_GROUP=4 だが、層が埋まらないときは
      控えから足すので、そのぶんだけ超えることがある。
      ここで固定したいのは「同じ言い回しが4問も並ばない」こと。 */
-  ok("種" + seed + ": 同じテンプレは3問まで", worstT <= 3, JSON.stringify(byTpl));
+  ok("種" + seed + ": 自動生成の同じテンプレは3問まで", worstT <= 3, JSON.stringify(byTpl));
+  ok("種" + seed + ": 作り置きは5問まで", (byTpl.baked || 0) <= 5, JSON.stringify(byTpl));
   ok("種" + seed + ": 同じ材料の系統は5問まで", worstG <= 5, JSON.stringify(byGrp));
 }
 
@@ -523,8 +525,13 @@ for(var bs = 1; bs <= 30; bs++){
   if(qz.some(function(q){ return String(q.id).indexOf("baked") === 0; })) bakedShown++;
 }
 eq("材料の豊富な作品でも、作り置きは毎回出る", bakedShown, runs);
-var one = box.buildQuiz(RICH, 12345).filter(function(q){ return String(q.id).indexOf("baked") === 0; });
-ok("20問の作り置きから実際の10問以内を選ぶ", one.length >= 2 && one.length <= 10, one.length);
+var bakedCounts = [];
+for(var bc = 1; bc <= 30; bc++){
+  bakedCounts.push(box.buildQuiz(RICH, bc * 12345).filter(function(q){
+    return String(q.id).indexOf("baked") === 0;
+  }).length);
+}
+ok("作り置きは1回につき最大5問", bakedCounts.every(function(n){ return n <= 5; }), bakedCounts);
 
 /* ---- 記事の題名から作り置きを引く ---- */
 ok("そのままの題名で引ける", !!box.bakedFor("半沢直樹"));
