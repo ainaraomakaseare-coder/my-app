@@ -533,6 +533,22 @@ for(var bc = 1; bc <= 30; bc++){
 }
 ok("作り置きは1回につき最大5問", bakedCounts.every(function(n){ return n <= 5; }), bakedCounts);
 
+/* AIが検査済み10問を返したときは、旧テンプレを混ぜずAI問題だけにする。
+   これを混ぜると、APIを導入しても視聴率・サブタイトル問題が残ってしまう。 */
+var AI_WORK = box.makeWork("プロポーズ大作戦", "u", INFO, MANY, CHARS, "");
+AI_WORK.aiQuestions = box.BAKED["プロポーズ大作戦"].slice(0, 10);
+var aiOnly = box.quizForWork(AI_WORK, 4649);
+eq("AIが10問そろえば10問出す", aiOnly.length, 10);
+ok("AI成功時は旧テンプレを混ぜない",
+   aiOnly.every(function(q){ return String(q.id).indexOf("ai#") === 0; }),
+   aiOnly.map(function(q){ return q.id; }));
+
+AI_WORK.aiQuestions = AI_WORK.aiQuestions.slice(0, 9);
+var aiShort = box.quizForWork(AI_WORK, 4649);
+ok("AIが10問に足りなければ従来方式へ戻る",
+   aiShort.every(function(q){ return String(q.id).indexOf("ai#") !== 0; }),
+   aiShort.map(function(q){ return q.id; }));
+
 /* ---- 記事の題名から作り置きを引く ---- */
 ok("そのままの題名で引ける", !!box.bakedFor("半沢直樹"));
 ok("括弧の但し書きが付いても引ける", !!box.bakedFor("HERO (テレビドラマ)"));

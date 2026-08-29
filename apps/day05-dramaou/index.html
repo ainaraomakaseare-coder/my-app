@@ -4460,7 +4460,7 @@ var TEMPLATES = [
 /* ---- 作り置き ----
    記事の表からは作れない問題。あるものだけ混ぜ、残りは記事から作る。 */
 { id:"baked", tier:"content", group:"baked", make:function(w, rnd){
-  var list = (bakedFor(w.title) || []).concat(w.aiQuestions || []);
+  var list = bakedFor(w.title) || [];
   if(!list.length) return [];
   return shuffle(list.slice(), rnd).map(function(b){
     /* 正解の位置は毎回混ぜる。並べた順のままだと数問で気づかれる */
@@ -4779,6 +4779,25 @@ function buildQuiz(w, seed){
   while(quiz.length < TOTAL && rest.length) quiz.push(rest.shift());
   quiz.sort(function(a, b){ return a.level - b.level; });
   return quiz.slice(0, TOTAL);
+}
+
+/* AIが10問すべてを検査に通せた場合は、その10問だけを使う。
+   AI問題と従来テンプレを混ぜると、品質を上げる目的なのに視聴率や
+   サブタイトル暗記が残るため。1問でも壊れていれば従来方式へ戻す。 */
+function buildAiQuiz(w, seed){
+  var rnd = rng(seed || 1);
+  var made = (w.aiQuestions || []).map(function(b, i){
+    var c = makeChoices(b[1], b[2].slice(), rnd);
+    return { id:"ai#" + (i + 1), tier:"content", text:b[0], choices:c.choices,
+             answer:c.answer, level:b[3], why:b[4] };
+  }).filter(function(q){ return checkMade(q, w).length === 0; });
+  if(made.length < TOTAL) return [];
+  return shuffle(made, rnd).slice(0, TOTAL).sort(function(a, b){ return a.level - b.level; });
+}
+
+function quizForWork(w, seed){
+  var ai = buildAiQuiz(w, seed);
+  return ai.length === TOTAL ? ai : buildQuiz(w, seed);
 }
 
 /* ---- 採点 ---- */
@@ -5198,7 +5217,7 @@ function load(title){
     reportFound(w);
     return fetchAiQuestions(w).then(function(ai){
       w.aiQuestions = ai;
-      var quiz = buildQuiz(w, Date.now() & 0x7fffffff);
+      var quiz = quizForWork(w, Date.now() & 0x7fffffff);
       if(quiz.length < 4) return tooFew(a.title);
       startQuiz(quiz);
     });
@@ -5373,7 +5392,7 @@ function finish(){
 
 $("again").onclick = function(){
   /* 記事は取り直さない。材料は state.work に残っているので、種だけ変える */
-  startQuiz(buildQuiz(state.work, Date.now() & 0x7fffffff));
+  startQuiz(quizForWork(state.work, Date.now() & 0x7fffffff));
 };
 $("other").onclick = function(){ show("home"); };
 
@@ -5381,7 +5400,8 @@ $("other").onclick = function(){ show("home"); };
 window.__quiz = {
   cleanText:cleanText, splitNames:splitNames, readCount:readCount, readDate:readDate,
   readRating:readRating, fromInfobox:fromInfobox, tidyEpisodes:tidyEpisodes, makeWork:makeWork,
-  buildQuiz:buildQuiz, grade:grade, rankOf:rankOf,
+  buildQuiz:buildQuiz, buildAiQuiz:buildAiQuiz, quizForWork:quizForWork,
+  grade:grade, rankOf:rankOf,
   normStation:normStation, boxKind:boxKind, pickInfobox:pickInfobox,
   looksLikeName:looksLikeName, personNames:personNames, readCharacters:readCharacters,
   readInfobox:readInfobox, readEpisodes:readEpisodes, parseArticle:parseArticle,
