@@ -317,7 +317,7 @@ async function loadConn() {
       if (net !== 'instagram') {
         const b = document.createElement('button');
         b.textContent = s.connected ? '接続し直す' : '接続する';
-        b.onclick = () => { location.href = '/api/connect?network=' + net; };
+        b.onclick = () => { location.href = '/api/connect/' + net; };
         actions.appendChild(b);
       }
       if (s.connected) {
@@ -325,7 +325,7 @@ async function loadConn() {
         d.textContent = '解除';
         d.onclick = async () => {
           if (!confirm(NET_LABEL[net] + ' の連携を解除します。よろしいですか？')) return;
-          await api('/api/connect?network=' + net, { method: 'DELETE' });
+          await api('/api/connect/' + net, { method: 'DELETE' });
           loadConn();
         };
         actions.appendChild(d);
@@ -342,7 +342,7 @@ $('igSave').onclick = async () => {
   const btn = $('igSave');
   btn.disabled = true;
   try {
-    const out = await api('/api/connect?network=instagram', {
+    const out = await api('/api/connect/instagram', {
       method: 'POST', body: { token: $('igToken').value },
     });
     $('igToken').value = '';
