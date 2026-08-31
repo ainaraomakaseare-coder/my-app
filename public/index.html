@@ -86,6 +86,8 @@
       <div id="conn" class="muted">確認中…</div>
       <details style="margin-top:12px">
         <summary>Instagram のトークンを登録する</summary>
+        <label for="igLabel">呼び名（自分が見分けるため。例：企画用 / アフィリ用）</label>
+        <input type="text" id="igLabel" placeholder="企画用">
         <label for="igToken">Meta の管理画面「Generate token」で発行した文字列</label>
         <input type="password" id="igToken" autocomplete="off">
         <div class="row" style="margin-top:8px">
@@ -129,15 +131,13 @@
       <input type="datetime-local" id="when">
       <div class="muted">指定した日本時間で処理します。PCを閉じていても、クラウド側が毎分見張っています。</div>
 
-      <label>投稿先</label>
-      <div class="targets">
-        <label><input type="checkbox" value="instagram" checked> Instagram</label>
-        <label><input type="checkbox" value="youtube"> YouTube</label>
-        <label><input type="checkbox" value="x"> X</label>
-        <label><input type="checkbox" value="tiktok"> TikTok</label>
+      <label>投稿先（繋いだアカウントから選ぶ）</label>
+      <div class="targets" id="targets">
+        <span class="muted">連携設定でアカウントを繋ぐと、ここに出ます</span>
       </div>
       <div class="muted" style="margin-top:6px">
-        YouTube と TikTok は、審査前のため<strong>非公開の状態でアップロード</strong>されます。公開はアプリ側で1タップ。
+        同じSNSでも、アカウントごとに出し分けられます。
+        YouTube と TikTok は、審査前のため<strong>非公開の状態でアップロード</strong>されます。
       </div>
 
       <div class="row" style="margin-top:16px">
@@ -278,15 +278,17 @@ function collect(status) {
     media_path: uploaded && uploaded.path,
     media_kind: uploaded && uploaded.kind,
     media_bytes: uploaded && uploaded.bytes,
-    targets: [...document.querySelectorAll('.targets input:checked')].map((c) => c.value),
+    targets: [...document.querySelectorAll('#targets input:checked')].map((c) => c.value),
   };
 }
 
 async function save(status) {
   $('formErr').textContent = '';
 
-  const wantsMedia = [...document.querySelectorAll('.targets input:checked')]
-    .some((c) => ['instagram', 'youtube', 'tiktok'].includes(c.value));
+  const chosen = [...document.querySelectorAll('#targets input:checked')].map((c) => c.value);
+  const wantsMedia = chosen
+    .map((id) => accounts.find((a) => a.id === id))
+    .some((a) => a && ['instagram', 'youtube', 'tiktok'].includes(a.network));
   if (status === 'scheduled' && wantsMedia && !uploaded && $('file').files[0]) {
     $('formErr').textContent =
       'アップロードがまだ終わっていません。「✅ 保存しました」が出てから押してください。';
@@ -309,53 +311,99 @@ $('draftBtn').onclick = () => save('draft');
 const NET_NOTE = {
   instagram: '公開投稿までできます',
   youtube: '審査前のため、非公開でアップロードされます',
-  x: '投稿1件あたり約2.3円かかります',
+  x: '投稿1件あたり約2.3円（リンク付きは約30円）',
   tiktok: '審査前のため、自分のみ表示で投稿されます',
 };
 
+let accounts = [];   // 繋がっているアカウント
+
+const accountLabel = (a) =>
+  a ? `${NET_LABEL[a.network]}（${a.label || a.account_name || '名前なし'}）` : '不明なアカウント';
+
 async function loadConn() {
   try {
-    const st = await api('/api/connect');
-    $('conn').innerHTML = '';
-    for (const net of ['instagram', 'youtube', 'x', 'tiktok']) {
-      const s = st[net] || { connected: false };
-      const row = document.createElement('div');
-      row.className = 'row';
-      row.style.cssText = 'justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)';
-
-      const warn = s.expiringSoon
-        ? ` <span class="badge b-failed">期限まであとわずか（${jst(s.expiresAt)}）</span>` : '';
-
-      row.innerHTML = `
-        <div>
-          <strong>${NET_LABEL[net]}</strong>
-          <span class="badge ${s.connected ? 'b-success' : ''}">${s.connected ? '接続済み' : '未接続'}</span>
-          ${warn}
-          <div class="muted">${s.account ? s.account + '　' : ''}${NET_NOTE[net]}</div>
-        </div>
-        <div class="row"></div>`;
-
-      const actions = row.querySelector('.row');
-      if (net !== 'instagram') {
-        const b = document.createElement('button');
-        b.textContent = s.connected ? '接続し直す' : '接続する';
-        b.onclick = () => { location.href = '/api/connect/' + net; };
-        actions.appendChild(b);
-      }
-      if (s.connected) {
-        const d = document.createElement('button');
-        d.textContent = '解除';
-        d.onclick = async () => {
-          if (!confirm(NET_LABEL[net] + ' の連携を解除します。よろしいですか？')) return;
-          await api('/api/connect/' + net, { method: 'DELETE' });
-          loadConn();
-        };
-        actions.appendChild(d);
-      }
-      $('conn').appendChild(row);
-    }
+    const out = await api('/api/connect');
+    accounts = out.accounts || [];
+    renderConn();
+    renderTargets();
   } catch (e) {
     $('conn').innerHTML = `<span class="err">${e.message}</span>`;
+  }
+}
+
+function renderConn() {
+  $('conn').innerHTML = '';
+
+  for (const a of accounts) {
+    const soon = a.expires_at &&
+      new Date(a.expires_at).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000;
+
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.cssText = 'justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)';
+    row.innerHTML = `
+      <div>
+        <strong>${accountLabel(a)}</strong>
+        <span class="badge b-success">接続済み</span>
+        ${soon ? `<span class="badge b-failed">期限まであとわずか（${jst(a.expires_at)}）</span>` : ''}
+        <div class="muted">${a.account_name || ''}　${NET_NOTE[a.network]}</div>
+      </div>
+      <div class="row"></div>`;
+
+    const actions = row.querySelector('.row');
+
+    const ren = document.createElement('button');
+    ren.textContent = '呼び名を変える';
+    ren.onclick = async () => {
+      const label = prompt('このアカウントの呼び名', a.label || a.account_name || '');
+      if (label === null) return;
+      await api(`/api/connect?id=${a.id}`, { method: 'PATCH', body: { label } });
+      loadConn();
+    };
+    actions.appendChild(ren);
+
+    const del = document.createElement('button');
+    del.textContent = '解除';
+    del.onclick = async () => {
+      if (!confirm(accountLabel(a) + ' の連携を解除します。よろしいですか？')) return;
+      await api(`/api/connect?id=${a.id}`, { method: 'DELETE' });
+      loadConn();
+    };
+    actions.appendChild(del);
+
+    $('conn').appendChild(row);
+  }
+
+  // 新しく繋ぐボタン（同じSNSに何個でも足せる）
+  const add = document.createElement('div');
+  add.className = 'row';
+  add.style.cssText = 'padding-top:12px;border-top:1px solid var(--line);margin-top:8px';
+  add.innerHTML = '<span class="muted" style="width:100%">アカウントを追加する</span>';
+  for (const net of ['youtube', 'x', 'tiktok']) {
+    const b = document.createElement('button');
+    b.textContent = NET_LABEL[net] + ' を繋ぐ';
+    b.onclick = () => { location.href = '/api/connect/' + net; };
+    add.appendChild(b);
+  }
+  const note = document.createElement('span');
+  note.className = 'muted';
+  note.textContent = 'Instagram は下の欄からトークンを登録してください';
+  add.appendChild(note);
+  $('conn').appendChild(add);
+}
+
+/** 投稿先の選択肢を、繋いだアカウントから作る。 */
+function renderTargets() {
+  const box = $('targets');
+  if (!accounts.length) {
+    box.innerHTML = '<span class="muted">連携設定でアカウントを繋ぐと、ここに出ます</span>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const a of accounts) {
+    const l = document.createElement('label');
+    l.innerHTML = `<input type="checkbox" value="${a.id}"> ${accountLabel(a)}`;
+    box.appendChild(l);
   }
 }
 
@@ -365,9 +413,9 @@ $('igSave').onclick = async () => {
   btn.disabled = true;
   try {
     const out = await api('/api/connect/instagram', {
-      method: 'POST', body: { token: $('igToken').value },
+      method: 'POST', body: { token: $('igToken').value, label: $('igLabel').value },
     });
-    $('igToken').value = '';
+    $('igToken').value = ''; $('igLabel').value = '';
     alert('接続できました：' + (out.account || 'Instagram'));
     loadConn();
   } catch (e) {
@@ -388,7 +436,8 @@ function showConnectResult() {
 // --------------------------------------------------------------- 一覧
 async function loadPosts() {
   try {
-    const { posts } = await api('/api/posts');
+    const { posts, accounts: fresh } = await api('/api/posts');
+    if (fresh) accounts = fresh;
     $('list').innerHTML = posts.length ? '' : '<p class="muted">まだ投稿がありません。</p>';
     for (const p of posts) $('list').appendChild(render(p));
   } catch (e) {
@@ -401,15 +450,19 @@ function render(p) {
   el.className = 'post';
 
   const targets = (p.post_targets || []).sort((a, b) => a.network.localeCompare(b.network));
+  const nameOfTarget = (t) => {
+    const a = accounts.find((x) => x.id === t.account_id);
+    return a ? accountLabel(a) : NET_LABEL[t.network] || t.network;
+  };
   const badges = targets.map((t) =>
-    `<span class="badge b-${t.status}">${NET_LABEL[t.network]}：${ST_LABEL[t.status] || t.status}</span>`
+    `<span class="badge b-${t.status}">${nameOfTarget(t)}：${ST_LABEL[t.status] || t.status}</span>`
   ).join(' ');
 
   const errors = targets.filter((t) => t.last_error)
-    .map((t) => `<div class="err">${NET_LABEL[t.network]}：${escapeHtml(t.last_error)}</div>`).join('');
+    .map((t) => `<div class="err">${nameOfTarget(t)}：${escapeHtml(t.last_error)}</div>`).join('');
 
   const links = targets.filter((t) => t.permalink)
-    .map((t) => `<a href="${t.permalink}" target="_blank" rel="noopener">${NET_LABEL[t.network]}で見る</a>`).join(' ・ ');
+    .map((t) => `<a href="${t.permalink}" target="_blank" rel="noopener">${nameOfTarget(t)}で見る</a>`).join(' ・ ');
 
   const history = (p.post_events || [])
     .sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 12)

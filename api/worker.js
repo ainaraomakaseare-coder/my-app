@@ -121,11 +121,19 @@ async function runOne(target) {
 
     if (!handler) throw new Error(`${target.network} は未対応です`);
 
+    // どのアカウントへ出すか。連携を解除されていれば、ここで止まる。
+    const account = target.account_id ? await db.getAccount(target.account_id) : null;
+    if (!account) {
+      const e = new Error('この投稿先のアカウント連携が見つかりません。');
+      e.hint = '連携設定でアカウントを繋ぎ直してから、再実行してください。';
+      throw e;
+    }
+
     // 各SNSのモジュールは3種類の返事のどれかを返す。
     //   { done: true, ... }  投稿できた
     //   { wait: true, ... }  まだ途中。次の分に続きをやる
     //   throw                失敗
-    const out = await handler.step({ post, target, db });
+    const out = await handler.step({ post, target, account, db });
 
     if (out && out.wait) {
       await continueLater(target, out);

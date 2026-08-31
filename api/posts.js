@@ -13,6 +13,9 @@ const db = require('../lib/db');
 
 const NETWORKS = ['instagram', 'youtube', 'x', 'tiktok'];
 
+// 画面から来るのは「SNS名」ではなく「連携アカウントのid」。
+// 同じSNSに企画用とアフィリエイト用を繋げるようにしたため。
+
 // 各SNSの文字数上限
 const LIMITS = { ig_caption: 2200, yt_title: 100, yt_description: 5000, x_text: 280, tt_caption: 2200 };
 
@@ -39,20 +42,26 @@ module.exports = async function handler(req, res) {
 
 async function list() {
   // 投稿と、SNSごとの状態と、履歴をまとめて1回で取る
-  const posts = await db.rest('posts', {
-    query: {
-      select: '*,post_targets(*),post_events(at,network,event,detail)',
-      order: 'created_at.desc',
-      limit: 100,
-    },
-  });
-  return { posts: posts || [], now: new Date().toISOString() };
+  const [posts, accounts] = await Promise.all([
+    db.rest('posts', {
+      query: {
+        select: '*,post_targets(*),post_events(at,network,event,detail)',
+        order: 'created_at.desc',
+        limit: 100,
+      },
+    }),
+    db.listAccounts(),
+  ]);
+  return { posts: posts || [], accounts, now: new Date().toISOString() };
 }
 
 async function save(req, id) {
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
 
-  const targets = Array.isArray(body.targets) ? body.targets.filter((t) => NETWORKS.includes(t)) : [];
+  // 実在する連携アカウントだけを投稿先として受け付ける
+  const accounts = await db.listAccounts();
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const targets = (Array.isArray(body.targets) ? body.targets : []).filter((id) => byId.has(id));
   const scheduledAt = jstToUtc(body.scheduled_at_jst);
   const wantsSchedule = body.status === 'scheduled';
 
@@ -60,10 +69,12 @@ async function save(req, id) {
     throw bad('「投稿予約」にするには予定日時が必要です。');
   }
   if (wantsSchedule && targets.length === 0) {
-    throw bad('投稿先のSNSを1つ以上選んでください。');
+    throw bad('投稿先のアカウントを1つ以上選んでください。');
   }
-  if (wantsSchedule && targets.includes('instagram') && !body.media_path) {
-    throw bad('Instagram には画像か動画が必要です。');
+  const needsMedia = targets.some((id) =>
+    ['instagram', 'youtube', 'tiktok'].includes(byId.get(id).network));
+  if (wantsSchedule && needsMedia && !body.media_path) {
+    throw bad('Instagram・YouTube・TikTok には画像か動画が必要です。');
   }
   for (const [key, max] of Object.entries(LIMITS)) {
     if (body[key] && String(body[key]).length > max) {
@@ -95,10 +106,11 @@ async function save(req, id) {
     post = Array.isArray(created) ? created[0] : created;
   }
 
-  await syncTargets(post.id, targets);
+  await syncTargets(post.id, targets, byId);
+  const names = targets.map((t) => nameOf(byId.get(t))).join(' / ');
   await db.logEvent(
     post.id, null, id ? 'updated' : 'created',
-    wantsSchedule ? `${formatJst(scheduledAt)} に ${targets.join(' / ')} へ投稿予定` : '下書きとして保存'
+    wantsSchedule ? `${formatJst(scheduledAt)} に ${names} へ投稿予定` : '下書きとして保存'
   );
 
   return { post };
@@ -110,19 +122,32 @@ async function save(req, id) {
  * ★ すでに成功している行は絶対に触らない。
  *   触ると、再実行したときに同じSNSへ二重投稿してしまう。
  */
-async function syncTargets(postId, targets) {
+async function syncTargets(postId, targets, byId) {
   const existing = (await db.rest('post_targets', { query: { select: '*', post_id: `eq.${postId}` } })) || [];
 
-  for (const network of targets) {
-    if (!existing.some((t) => t.network === network)) {
-      await db.insert('post_targets', { post_id: postId, network, status: 'queued' });
+  for (const accountId of targets) {
+    if (!existing.some((t) => t.account_id === accountId)) {
+      await db.insert('post_targets', {
+        post_id: postId,
+        account_id: accountId,
+        network: byId.get(accountId).network,
+        status: 'queued',
+      });
     }
   }
   for (const row of existing) {
-    if (!targets.includes(row.network) && row.status !== 'success') {
+    if (!targets.includes(row.account_id) && row.status !== 'success') {
       await db.deleteById('post_targets', row.id);
     }
   }
+}
+
+/** 画面やログに出す、アカウントの呼び名。 */
+function nameOf(a) {
+  if (!a) return '不明なアカウント';
+  const net = { instagram: 'Instagram', youtube: 'YouTube', x: 'X', tiktok: 'TikTok' }[a.network] || a.network;
+  const who = a.label || a.account_name;
+  return who ? `${net}（${who}）` : net;
 }
 
 async function act(id, action) {

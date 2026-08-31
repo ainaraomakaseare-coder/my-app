@@ -113,17 +113,24 @@ function fakeDb(state) {
     },
     async signedUrl() { return 'https://example.test/signed'; },
     async download() { return Buffer.alloc(10); },
-    async getToken() { return { access_token: 'dummy' }; },
-    async saveToken() {},
+    async getAccount(id) {
+      return (state.accounts || []).find((a) => a.id === id) || null;
+    },
+    async listAccounts() { return state.accounts || []; },
+    async updateAccount() {},
   };
 }
 
 function setup() {
   return {
     post: { id: 'p1', media_path: 'a.mp4', media_kind: 'video', ig_caption: 'あ', body_common: 'あ' },
+    accounts: [
+      { id: 'a-ig', network: 'instagram', label: '企画用',      access_token: 'dummy' },
+      { id: 'a-x',  network: 'x',         label: 'アフィリ用',  access_token: 'dummy' },
+    ],
     targets: [
-      { id: 't-ig', post_id: 'p1', network: 'instagram', status: 'queued', attempt: 0, external_id: null, stage: null },
-      { id: 't-x',  post_id: 'p1', network: 'x',         status: 'queued', attempt: 0, external_id: null, stage: null },
+      { id: 't-ig', post_id: 'p1', account_id: 'a-ig', network: 'instagram', status: 'queued', attempt: 0, external_id: null, stage: null },
+      { id: 't-x',  post_id: 'p1', account_id: 'a-x',  network: 'x',         status: 'queued', attempt: 0, external_id: null, stage: null },
     ],
     events: [],
   };
@@ -269,6 +276,33 @@ const WANT = 'https://abc.supabase.co/rest/v1/rpc/claim_due_targets';
     }
     assert.strictEqual(state.targets[0].attempt, 0, '待っただけで失敗回数が増えてはいけない');
     assert.strictEqual(state.targets[0].external_id, 'c1', '途中経過が残っているべき');
+  });
+
+  await testAsync('★ 連携の切れたアカウント宛ての行は、理由を残して止まる', async () => {
+    const state = setup();
+    state.targets = [state.targets[0]];
+    state.accounts = [];                     // 連携を解除した状態
+    const worker = loadWorker(state, {});
+    await worker({ ...CRON, query: {} }, fakeRes());
+    assert.ok(/アカウント連携が見つかりません/.test(state.targets[0].last_error));
+  });
+
+  await testAsync('★ 同じSNSの別アカウントは、別々の投稿先として扱われる', async () => {
+    const state = setup();
+    state.accounts.push({ id: 'a-ig2', network: 'instagram', label: 'アフィリ用', access_token: 'dummy' });
+    state.targets.push({
+      id: 't-ig2', post_id: 'p1', account_id: 'a-ig2', network: 'instagram',
+      status: 'queued', attempt: 0, external_id: null, stage: null,
+    });
+
+    const seen = [];
+    const worker = loadWorker(state, {
+      instagram: async ({ account }) => { seen.push(account.label); return { done: true, externalId: 'x1' }; },
+    });
+    await worker({ ...CRON, query: {} }, fakeRes());
+
+    assert.deepStrictEqual(seen.sort(), ['アフィリ用', '企画用'],
+      '同じInstagramでも、2つのアカウントそれぞれに送られるべき');
   });
 
   await testAsync('失敗の理由と次の一手が、履歴に日本語で残る', async () => {
