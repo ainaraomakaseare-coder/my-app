@@ -3,626 +3,340 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>投稿卓 — SNS投稿管理</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161B24'/%3E%3Crect x='7' y='8' width='18' height='3' rx='1.5' fill='%235B8DEF'/%3E%3Crect x='7' y='14.5' width='18' height='3' rx='1.5' fill='%23D6337F'/%3E%3Crect x='7' y='21' width='11' height='3' rx='1.5' fill='%233FB27F'/%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<title>投稿卓 NEO</title>
 <style>
-:root{
-  --bg:#0E1117; --panel:#161B24; --panel-hi:#1D2430; --line:#2A3240;
-  --ink:#E6EAF0; --ink-dim:#8D97A8; --ink-faint:#5C6678;
-  --accent:#5B8DEF; --ok:#3FB27F; --warn:#E0A030; --bad:#E05A55;
-  --ig:#D6337F; --x:#B8BFC9; --tt:#3ED6D6; --yt:#E0453C;
-  --font:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);line-height:1.6;font-size:14px}
-button,input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
-button{cursor:pointer}
-[hidden]{display:none !important}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
-a{color:var(--accent)}
-
-.top{position:sticky;top:0;z-index:20;background:rgba(14,17,23,.92);backdrop-filter:blur(8px);
-  border-bottom:1px solid var(--line);padding:11px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.brand{font-weight:700;font-size:17px;letter-spacing:.06em;margin:0}
-.brand span{color:var(--ink-faint);font-weight:400;font-size:12px;letter-spacing:.14em;margin-left:9px}
-.top-right{margin-left:auto;display:flex;align-items:center;gap:9px}
-
-.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:99px;
-  padding:4px 11px;font-size:12px;color:var(--ink-dim);background:var(--panel)}
-.badge .dot{width:7px;height:7px;border-radius:99px;background:var(--ink-faint);flex:0 0 auto}
-.badge.ok{color:var(--ok);border-color:rgba(63,178,127,.4)} .badge.ok .dot{background:var(--ok)}
-.badge.bad{color:var(--bad);border-color:rgba(224,90,85,.4)} .badge.bad .dot{background:var(--bad)}
-.badge.warn{color:var(--warn);border-color:rgba(224,160,48,.4)} .badge.warn .dot{background:var(--warn)}
-
-.btn{background:var(--panel-hi);border:1px solid var(--line);border-radius:8px;padding:7px 13px;
-  color:var(--ink);transition:.12s;white-space:nowrap}
-.btn:hover{background:#252E3C;border-color:#3A455A}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#08111F;font-weight:700}
-.btn.primary:hover{background:#6E9CF5}
-.btn.ghost{background:none}
-.btn.danger{color:var(--bad)}
-.btn:disabled{opacity:.42;cursor:not-allowed}
-.btn.sm{padding:4px 9px;font-size:12px;border-radius:6px}
-
-.layout{max-width:1180px;margin:0 auto;padding:18px;display:grid;gap:18px;grid-template-columns:minmax(0,380px) minmax(0,1fr);align-items:start}
-@media(max-width:900px){.layout{grid-template-columns:1fr}}
-
-.card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:16px}
-.card h2{margin:0 0 13px;font-size:13px;letter-spacing:.14em;color:var(--ink-dim);font-weight:700}
-.field{margin-bottom:13px}
-.field label{display:block;font-size:12px;color:var(--ink-dim);margin-bottom:5px}
-textarea,input[type=text],input[type=datetime-local],input[type=url]{
-  width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px;color:var(--ink)}
-textarea{min-height:132px;resize:vertical;line-height:1.65}
-input::placeholder,textarea::placeholder{color:var(--ink-faint)}
-
-.counts{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
-.count{font-size:11px;color:var(--ink-faint);border:1px solid var(--line);border-radius:5px;padding:1px 6px;
-  font-variant-numeric:tabular-nums}
-.count.over{color:var(--bad);border-color:rgba(224,90,85,.45)}
-
-.nets{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.net{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;
-  background:var(--bg);cursor:pointer;user-select:none}
-.net input{accent-color:var(--accent);margin:0}
-.net .mark{width:8px;height:8px;border-radius:2px;flex:0 0 auto}
-.net.on{border-color:#3B4759;background:var(--panel-hi)}
-.net[data-net=instagram] .mark{background:var(--ig)} .net[data-net=x] .mark{background:var(--x)}
-.net[data-net=tiktok] .mark{background:var(--tt)} .net[data-net=youtube] .mark{background:var(--yt)}
-.net small{color:var(--ink-faint);font-size:10px;margin-left:auto}
-
-.drop{border:1px dashed #38425A;border-radius:9px;padding:15px;text-align:center;color:var(--ink-faint);
-  font-size:12px;background:var(--bg);cursor:pointer}
-.drop:hover,.drop.over{border-color:var(--accent);color:var(--ink-dim)}
-.thumb{display:flex;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--line);
-  border-radius:9px;padding:8px;margin-top:8px}
-.thumb img,.thumb video{width:54px;height:54px;object-fit:cover;border-radius:6px;background:#000;flex:0 0 auto}
-.thumb .meta{min-width:0;flex:1}
-.thumb .meta b{display:block;font-weight:500;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.thumb .meta span{font-size:11px;color:var(--ink-faint)}
-
-.row{display:flex;gap:8px;align-items:center}
-.row.end{justify-content:flex-end}
-.switch{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-dim);cursor:pointer}
-.switch input{accent-color:var(--accent)}
-.hint{font-size:11px;color:var(--ink-faint);margin-top:5px;line-height:1.55}
-
-.tabs{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}
-.tab{background:none;border:1px solid var(--line);border-radius:99px;padding:5px 12px;font-size:12px;color:var(--ink-dim)}
-.tab.on{background:var(--panel-hi);color:var(--ink);border-color:#3B4759}
-.tab b{color:var(--ink-faint);font-weight:400;margin-left:5px;font-variant-numeric:tabular-nums}
-
-.posts{display:flex;flex-direction:column;gap:10px}
-.post{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:13px;display:flex;gap:12px}
-.post.is-editing{border-color:var(--accent)}
-.post .pv{width:62px;height:62px;border-radius:7px;object-fit:cover;background:#000;flex:0 0 auto}
-.post .pv.none{display:flex;align-items:center;justify-content:center;color:var(--ink-faint);font-size:10px;
-  border:1px dashed var(--line);background:none}
-.post .main{min-width:0;flex:1;display:flex;flex-direction:column;gap:7px}
-.post .head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.chip{font-size:10px;letter-spacing:.08em;border-radius:4px;padding:2px 6px;border:1px solid var(--line);color:var(--ink-dim)}
-.chip.instagram{color:var(--ig);border-color:rgba(214,51,127,.4)}
-.chip.x{color:var(--x);border-color:#3B4759}
-.chip.tiktok{color:var(--tt);border-color:rgba(62,214,214,.35)}
-.chip.youtube{color:var(--yt);border-color:rgba(224,69,60,.4)}
-.st{font-size:10px;letter-spacing:.1em;padding:2px 7px;border-radius:99px;font-weight:700}
-.st.draft{background:#232B38;color:var(--ink-dim)}
-.st.scheduled{background:rgba(91,141,239,.15);color:var(--accent)}
-.st.posted{background:rgba(63,178,127,.15);color:var(--ok)}
-.st.failed{background:rgba(224,90,85,.15);color:var(--bad)}
-.post .body{white-space:pre-wrap;word-break:break-word;font-size:13px;color:#CFD6E2;
-  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.post .when{font-size:11px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
-.post .acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
-.post .prog{font-size:11px;color:var(--accent);display:flex;align-items:center;gap:6px}
-.post .prog.error{color:var(--bad)} .post .prog.done{color:var(--ok)}
-.spin{width:10px;height:10px;border:2px solid rgba(91,141,239,.3);border-top-color:var(--accent);
-  border-radius:99px;animation:spin .7s linear infinite;flex:0 0 auto}
-@keyframes spin{to{transform:rotate(360deg)}}
-.hist{font-size:11px;color:var(--ink-faint);border-top:1px solid var(--line);padding-top:7px;margin-top:3px}
-.hist div{font-variant-numeric:tabular-nums}
-.empty{text-align:center;color:var(--ink-faint);padding:40px 12px;font-size:13px}
-
-dialog{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:14px;
-  padding:20px;max-width:540px;width:calc(100% - 32px)}
-dialog::backdrop{background:rgba(6,9,14,.72)}
-dialog h2{margin:0 0 4px;font-size:16px}
-.steps{counter-reset:s;list-style:none;padding:0;margin:11px 0 0;font-size:12.5px;color:var(--ink-dim)}
-.steps li{counter-increment:s;position:relative;padding-left:26px;margin-bottom:7px;line-height:1.6}
-.steps li::before{content:counter(s);position:absolute;left:0;top:1px;width:18px;height:18px;border-radius:99px;
-  background:var(--panel-hi);border:1px solid var(--line);color:var(--ink-dim);font-size:10px;
-  display:flex;align-items:center;justify-content:center}
-code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11.5px;
-  font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
-.sep{height:1px;background:var(--line);margin:16px 0}
-
-.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:60;
-  background:var(--panel-hi);border:1px solid var(--line);border-radius:10px;padding:11px 15px;
-  max-width:min(560px,calc(100% - 30px));box-shadow:0 10px 34px rgba(0,0,0,.5);font-size:13px}
-.toast.bad{border-color:rgba(224,90,85,.5)}
-.toast.ok{border-color:rgba(63,178,127,.5)}
-.toast b{display:block;margin-bottom:2px}
-.toast p{margin:0;font-size:12px;color:var(--ink-dim)}
+  :root{
+    --bg:#faf9f7; --card:#fff; --ink:#1c1a17; --muted:#6b6560; --line:#e5e1db;
+    --accent:#2f6f4e; --warn:#a8541f; --bad:#a3342a; --ok:#2f6f4e;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#161513; --card:#1f1e1b; --ink:#eeeae4; --muted:#a09a92; --line:#33312d;
+           --accent:#7fc09a; --warn:#d99a5e; --bad:#e08279; --ok:#7fc09a; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.7 "Hiragino Kaku Gothic ProN","Yu Gothic",system-ui,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:16px}
+  h1{font-size:20px;margin:0}
+  h2{font-size:16px;margin:0 0 12px}
+  header{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);
+         margin-bottom:20px;flex-wrap:wrap}
+  .sub{color:var(--muted);font-size:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+  label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+  input[type=text],input[type=password],input[type=datetime-local],textarea,select{
+    width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;
+    background:var(--bg);color:var(--ink);font:inherit}
+  textarea{min-height:74px;resize:vertical}
+  button{font:inherit;padding:9px 16px;border-radius:8px;border:1px solid var(--line);
+         background:var(--card);color:var(--ink);cursor:pointer}
+  button.primary{background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
+  button:disabled{opacity:.5;cursor:default}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .targets{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .targets label{display:flex;align-items:center;gap:6px;margin:0;padding:8px 12px;
+                 border:1px solid var(--line);border-radius:999px;color:var(--ink);font-size:14px;cursor:pointer}
+  .targets input{margin:0}
+  .badge{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;border:1px solid var(--line)}
+  .b-success{color:var(--ok);border-color:currentColor}
+  .b-failed{color:var(--bad);border-color:currentColor}
+  .b-processing,.b-queued{color:var(--warn);border-color:currentColor}
+  .post{border-top:1px solid var(--line);padding:14px 0}
+  .post:first-of-type{border-top:none}
+  .muted{color:var(--muted);font-size:13px}
+  .err{color:var(--bad);font-size:13px;white-space:pre-wrap}
+  .notice{background:var(--card);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;
+          font-size:13px;margin-bottom:12px}
+  details summary{cursor:pointer;font-size:13px;color:var(--muted)}
+  .hist{font-size:12px;color:var(--muted);margin:2px 0}
+  .hide{display:none}
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<header class="top">
-  <h1 class="brand">投稿卓<span>SNS POST DESK</span></h1>
-  <div class="top-right">
-    <span class="badge" id="igBadge"><i class="dot"></i><span id="igText">未接続</span></span>
-    <button class="btn sm" id="openSetup">連携設定</button>
-  </div>
-</header>
-
-<div class="layout">
-
-  <!-- ============ 作成フォーム ============ -->
-  <form class="card" id="form" autocomplete="off">
-    <h2 id="formTitle">新しい投稿</h2>
-
-    <div class="field">
-      <label for="body">本文</label>
-      <textarea id="body" placeholder="今日の投稿内容を書く…"></textarea>
-      <div class="counts" id="counts"></div>
+  <!-- ================= ログイン ================= -->
+  <section id="login" class="hide">
+    <header><h1>投稿卓 NEO</h1></header>
+    <div class="card">
+      <p class="muted">この画面はインターネット上にあります。合言葉を知っている人だけが投稿できます。</p>
+      <label for="pw">合言葉</label>
+      <input type="password" id="pw" autocomplete="current-password">
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="loginBtn">入る</button>
+        <span class="err" id="loginErr"></span>
+      </div>
     </div>
+  </section>
 
-    <div class="field">
-      <label>投稿先</label>
-      <div class="nets" id="nets"></div>
-    </div>
+  <!-- ================= 本体 ================= -->
+  <section id="app" class="hide">
+    <header>
+      <h1>投稿卓 NEO</h1>
+      <span class="sub" id="clock"></span>
+      <span style="flex:1"></span>
+      <button id="logoutBtn">出る</button>
+    </header>
 
-    <div class="field">
-      <label>画像・動画</label>
-      <div class="drop" id="drop">クリックして選ぶ／ここにドラッグ<br>JPEG・PNG・MP4・MOV</div>
-      <input type="file" id="file" accept=".jpg,.jpeg,.png,.mp4,.mov" hidden>
-      <div id="thumb"></div>
-    </div>
+    <!-- 投稿を作る -->
+    <div class="card">
+      <h2>投稿を作る</h2>
 
-    <div class="field">
-      <label for="when">投稿予定日時</label>
+      <label for="title">管理用タイトル（自分が見分けるため。SNSには出ません）</label>
+      <input type="text" id="title" placeholder="DAY11 の告知">
+
+      <label for="file">動画 / 画像</label>
+      <input type="file" id="file" accept="video/mp4,video/quicktime,image/jpeg,image/png">
+      <div class="muted" id="fileInfo">MP4 / MOV / JPEG / PNG、50MBまで（Supabase 無料プランの上限）</div>
+
+      <label for="common">共通本文</label>
+      <textarea id="common" placeholder="ここに書いた文は、下の各SNS欄が空のときに使われます"></textarea>
+
+      <details style="margin-top:14px">
+        <summary>SNSごとに文を変える（開く）</summary>
+        <label for="ig">Instagram 本文（2,200文字まで）</label>
+        <textarea id="ig"></textarea>
+        <label for="ytt">YouTube タイトル（100文字まで）</label>
+        <input type="text" id="ytt">
+        <label for="ytd">YouTube 説明文</label>
+        <textarea id="ytd"></textarea>
+        <label for="xt">X 本文（280文字まで）</label>
+        <textarea id="xt"></textarea>
+        <label for="tt">TikTok 本文</label>
+        <textarea id="tt"></textarea>
+      </details>
+
+      <label for="when">投稿予定日時（日本時間）</label>
       <input type="datetime-local" id="when">
-      <label class="switch" style="margin-top:8px">
-        <input type="checkbox" id="autoPost">
-        時刻が来たら Instagram へ自動投稿する
-      </label>
-      <p class="hint" id="autoHint">自動投稿はこのアプリを起動している間だけ働きます。PCを閉じている時刻は投稿されません。</p>
+      <div class="muted">指定した日本時間で処理します。PCを閉じていても、クラウド側が毎分見張っています。</div>
+
+      <label>投稿先</label>
+      <div class="targets">
+        <label><input type="checkbox" value="instagram" checked> Instagram</label>
+        <label><input type="checkbox" value="youtube"> YouTube</label>
+        <label><input type="checkbox" value="x"> X</label>
+        <label><input type="checkbox" value="tiktok"> TikTok</label>
+      </div>
+      <div class="muted" style="margin-top:6px">
+        YouTube と TikTok は、審査前のため<strong>非公開の状態でアップロード</strong>されます。公開はアプリ側で1タップ。
+      </div>
+
+      <div class="row" style="margin-top:16px">
+        <button class="primary" id="scheduleBtn">この日時に予約する</button>
+        <button id="draftBtn">下書きで保存</button>
+        <span class="err" id="formErr"></span>
+      </div>
+      <div class="muted" id="progress"></div>
     </div>
 
-    <div class="row end">
-      <button type="button" class="btn ghost" id="reset">やめる</button>
-      <button type="button" class="btn" id="saveDraft">下書き保存</button>
-      <button type="submit" class="btn primary" id="saveSchedule">予定に入れる</button>
+    <!-- 一覧 -->
+    <div class="card">
+      <h2>投稿一覧</h2>
+      <div id="list" class="muted">読み込み中…</div>
     </div>
-  </form>
-
-  <!-- ============ 一覧 ============ -->
-  <section>
-    <div class="tabs" id="tabs"></div>
-    <div class="posts" id="posts"></div>
   </section>
 </div>
 
-<!-- ============ 連携設定 ============ -->
-<dialog id="setup">
-  <h2>Instagram 連携</h2>
-  <p class="hint">ここで入れた情報は <code>.env</code> に保存され、あなたのPCの外には出ません。画面にも先頭6文字しか表示しません。</p>
-
-  <div class="sep"></div>
-
-  <div class="field">
-    <label for="publicUrl">① メディアの公開URL（Cloudflare トンネル）</label>
-    <input type="url" id="publicUrl" placeholder="https://xxxx-yyyy.trycloudflare.com">
-    <p class="hint">別のターミナルで <code id="tunnelCmd">cloudflared tunnel --url http://localhost:3001</code> を実行し、表示された https URL を貼ってください。<br>
-    Instagram はファイルを直接受け取らず、この公開URLを見に来て取得します。</p>
-    <div class="row end" style="margin-top:7px">
-      <button class="btn sm" id="testUrl">URLを確認</button>
-      <button class="btn sm primary" id="saveUrl">保存</button>
-    </div>
-  </div>
-
-  <div class="sep"></div>
-
-  <div class="field">
-    <label for="token">② アクセストークン</label>
-    <input type="text" id="token" placeholder="IGAA... を貼り付け">
-    <p class="hint">貼ると、1時間で切れる短期トークンを<b>60日もつ長期トークン</b>へ自動で交換します（これが OAuth の実際の通信です）。</p>
-    <div class="row end" style="margin-top:7px">
-      <button class="btn sm" id="refreshToken">期限を延長</button>
-      <button class="btn sm primary" id="saveToken">登録して接続テスト</button>
-    </div>
-    <p class="hint" id="tokenState"></p>
-  </div>
-
-  <div class="sep"></div>
-
-  <details>
-    <summary style="cursor:pointer;color:var(--ink-dim);font-size:12px">トークンの取り方（Meta の管理画面）</summary>
-    <ol class="steps">
-      <li>Instagram アプリで アカウントを<b>プロアカウント（クリエイター）</b>に変更する</li>
-      <li><a href="https://developers.facebook.com/" target="_blank" rel="noopener">Meta for Developers</a> に登録し、アプリを新規作成（ユースケースは「Instagram」）</li>
-      <li>アプリ内の <b>Instagram → API setup with Instagram login</b> を開く</li>
-      <li>手順1で自分の Instagram アカウントを接続する</li>
-      <li>手順2の権限に <code>instagram_business_basic</code> と <code>instagram_business_content_publish</code> があることを確認</li>
-      <li>手順3の <b>Generate token</b> でトークンを発行し、上の欄に貼る</li>
-      <li>アプリ設定 → ベーシック の <b>Instagram App Secret</b> を <code>.env</code> の <code>IG_APP_SECRET</code> に書く</li>
-    </ol>
-  </details>
-
-  <div class="row end" style="margin-top:16px">
-    <button class="btn" id="closeSetup">閉じる</button>
-  </div>
-</dialog>
-
 <script>
-const NETWORKS = [
-  { id:'instagram', name:'Instagram', limit:2200, api:true  },
-  { id:'x',         name:'X',         limit:280,  api:false },
-  { id:'tiktok',    name:'TikTok',    limit:2200, api:false },
-  { id:'youtube',   name:'YouTube',   limit:5000, api:false },
-];
-const STATUS_LABEL = { draft:'下書き', scheduled:'投稿予定', posted:'投稿済み', failed:'失敗' };
-const TABS = [['all','すべて'],['draft','下書き'],['scheduled','投稿予定'],['posted','投稿済み'],['failed','失敗']];
-
-let state = { posts:[], settings:{}, scheduler:{} };
-let editing = null;       // 編集中の投稿ID
-let media = null;         // フォームに添付中のメディア
-let tab = 'all';
-const watching = new Set(); // 進捗を見張っている投稿ID
+'use strict';
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-/* ---------- 通信 ---------- */
-async function api(path, options = {}) {
-  const res = await fetch(path, options);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error(data.error || '通信に失敗しました。');
-    err.hint = data.hint;
-    throw err;
-  }
-  return data;
-}
-
-function toast(title, detail, kind = '') {
-  document.querySelectorAll('.toast').forEach((t) => t.remove());
-  const el = document.createElement('div');
-  el.className = 'toast ' + kind;
-  el.innerHTML = '<b>' + esc(title) + '</b>' + (detail ? '<p>' + esc(detail) + '</p>' : '');
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), kind === 'bad' ? 12000 : 5000);
-}
-const fail = (err) => toast(err.message, err.hint || '', 'bad');
-
-/* ---------- 表示 ---------- */
-const fmt = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-};
-const toLocalInput = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+const NET_LABEL = { instagram:'Instagram', youtube:'YouTube', x:'X', tiktok:'TikTok' };
+const ST_LABEL = {
+  draft:'下書き', scheduled:'投稿予約', processing:'処理中',
+  done:'投稿成功', partial:'一部成功', failed:'投稿失敗',
+  queued:'待機', success:'成功',
 };
 
-function renderNets() {
-  $('nets').innerHTML = NETWORKS.map((n) => `
-    <label class="net" data-net="${n.id}">
-      <input type="checkbox" value="${n.id}">
-      <i class="mark"></i>${n.name}
-      <small>${n.api ? 'API連携' : '管理のみ'}</small>
-    </label>`).join('');
-  $('nets').addEventListener('change', () => { syncNetStyles(); renderCounts(); });
-}
-const chosenNets = () => [...$('nets').querySelectorAll('input:checked')].map((i) => i.value);
-function syncNetStyles() {
-  $('nets').querySelectorAll('.net').forEach((el) => {
-    el.classList.toggle('on', el.querySelector('input').checked);
+let uploaded = null; // { path, kind, bytes }
+
+/** 日本時間で表示する。ブラウザの地域設定に関係なく必ずJST。 */
+function jst(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('ja-JP', {
+    timeZone:'Asia/Tokyo', year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit',
   });
 }
-function renderCounts() {
-  const len = [...$('body').value].length;
-  const nets = chosenNets();
-  const show = nets.length ? NETWORKS.filter((n) => nets.includes(n.id)) : NETWORKS;
-  $('counts').innerHTML = show.map((n) =>
-    `<span class="count ${len > n.limit ? 'over' : ''}">${n.name} ${len}/${n.limit}</span>`).join('');
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type':'application/json' },
+    ...options,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = new Error(json.error || `通信に失敗しました（${res.status}）`);
+    e.hint = json.hint;
+    throw e;
+  }
+  return json;
 }
 
-function renderTabs() {
-  const count = (id) => id === 'all' ? state.posts.length : state.posts.filter((p) => p.status === id).length;
-  $('tabs').innerHTML = TABS.map(([id, label]) =>
-    `<button class="tab ${tab === id ? 'on' : ''}" data-tab="${id}">${label}<b>${count(id)}</b></button>`).join('');
+// --------------------------------------------------------------- ログイン
+async function boot() {
+  const { loggedIn } = await api('/api/login');
+  $('login').classList.toggle('hide', loggedIn);
+  $('app').classList.toggle('hide', !loggedIn);
+  if (loggedIn) { tickClock(); loadPosts(); }
 }
 
-function mediaTag(post, cls) {
-  if (!post.media) return `<div class="${cls} none">なし</div>`;
-  const src = '/media/' + encodeURIComponent(post.media.file);
-  return post.media.kind === 'video'
-    ? `<video class="${cls}" src="${src}" muted preload="metadata"></video>`
-    : `<img class="${cls}" src="${src}" alt="">`;
+$('loginBtn').onclick = async () => {
+  $('loginErr').textContent = '';
+  try {
+    await api('/api/login', { method:'POST', body:{ password: $('pw').value } });
+    $('pw').value = '';
+    boot();
+  } catch (e) { $('loginErr').textContent = e.message; }
+};
+$('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('loginBtn').click(); });
+
+$('logoutBtn').onclick = async () => { await api('/api/login', { method:'DELETE' }); boot(); };
+
+function tickClock() {
+  const show = () => { $('clock').textContent = '日本時間 ' + jst(new Date().toISOString()); };
+  show(); setInterval(show, 30000);
 }
 
-function renderPosts() {
-  const list = state.posts.filter((p) => tab === 'all' || p.status === tab);
-  if (!list.length) {
-    $('posts').innerHTML = '<div class="empty">まだ投稿がありません。左のフォームから作ってください。</div>';
+// --------------------------------------------------------------- アップロード
+$('file').onchange = async () => {
+  const file = $('file').files[0];
+  uploaded = null;
+  if (!file) { $('fileInfo').textContent = ''; return; }
+
+  const mb = (file.size / 1024 / 1024).toFixed(1);
+  if (file.size > 50 * 1024 * 1024) {
+    $('fileInfo').innerHTML = `<span class="err">${mb}MB は大きすぎます。50MB以下にしてください。</span>`;
     return;
   }
-  $('posts').innerHTML = list.map((p) => {
-    const prog = p._progress;
-    const igResult = p.results && p.results.instagram;
-    const canPublish = p.targets.includes('instagram') && p.media;
-    const last = (p.history || []).slice(-1)[0];
-    return `
-    <article class="post ${editing === p.id ? 'is-editing' : ''}">
-      ${mediaTag(p, 'pv')}
-      <div class="main">
-        <div class="head">
-          <span class="st ${p.status}">${STATUS_LABEL[p.status]}</span>
-          ${p.targets.map((t) => `<span class="chip ${t}">${NETWORKS.find((n) => n.id === t).name}</span>`).join('')}
-          ${p.autoPost && p.status === 'scheduled' ? '<span class="chip">自動</span>' : ''}
-        </div>
-        <div class="body">${esc(p.body) || '<span style="color:var(--ink-faint)">（本文なし）</span>'}</div>
-        <div class="when">
-          ${p.scheduledAt ? '予定 ' + fmt(p.scheduledAt) : '日時未設定'}
-          ${p.postedAt ? ' ・ 投稿 ' + fmt(p.postedAt) : ''}
-          ${igResult && igResult.permalink ? ' ・ <a href="' + igResult.permalink + '" target="_blank" rel="noopener">投稿を見る</a>' : ''}
-        </div>
-        ${prog ? `<div class="prog ${prog.state}">${prog.state === 'running' ? '<i class="spin"></i>' : ''}${esc(prog.message)}</div>` : ''}
-        <div class="acts">
-          <button class="btn sm" data-act="edit" data-id="${p.id}">編集</button>
-          <button class="btn sm" data-act="copy" data-id="${p.id}">本文をコピー</button>
-          ${canPublish ? `<button class="btn sm primary" data-act="publish" data-id="${p.id}"
-              ${prog && prog.state === 'running' ? 'disabled' : ''}>Instagramへ今すぐ投稿</button>` : ''}
-          ${p.status !== 'posted' ? `<button class="btn sm" data-act="done" data-id="${p.id}">投稿済みにする</button>` : ''}
-          <button class="btn sm danger" data-act="delete" data-id="${p.id}">削除</button>
-        </div>
-        ${last ? `<div class="hist"><div>${fmt(last.at)} ${esc(last.event)} ${esc(last.detail).slice(0,120)}</div></div>` : ''}
-      </div>
-    </article>`;
-  }).join('');
-}
+  $('fileInfo').textContent = `${file.name}（${mb}MB）をアップロード中…`;
 
-function render() { renderTabs(); renderPosts(); renderIgBadge(); }
-
-function renderIgBadge() {
-  const s = state.settings || {};
-  const badge = $('igBadge');
-  if (!s.hasToken) { badge.className = 'badge'; $('igText').textContent = '未接続'; return; }
-  if (state.igAccount) {
-    badge.className = 'badge ok';
-    $('igText').textContent = '@' + state.igAccount.username;
-  } else {
-    badge.className = 'badge warn';
-    $('igText').textContent = 'トークン登録済み';
-  }
-}
-
-/* ---------- フォーム ---------- */
-function fillForm(post) {
-  editing = post ? post.id : null;
-  $('formTitle').textContent = post ? '投稿を編集' : '新しい投稿';
-  $('body').value = post ? post.body : '';
-  $('when').value = post ? toLocalInput(post.scheduledAt) : '';
-  $('autoPost').checked = post ? Boolean(post.autoPost) : false;
-  media = post ? post.media : null;
-  $('nets').querySelectorAll('input').forEach((i) => {
-    i.checked = post ? post.targets.includes(i.value) : i.value === 'instagram';
-  });
-  syncNetStyles(); renderCounts(); renderThumb();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-function renderThumb() {
-  if (!media) { $('thumb').innerHTML = ''; return; }
-  const src = '/media/' + encodeURIComponent(media.file);
-  const kb = Math.round(media.size / 1024);
-  const size = kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb + ' KB';
-  $('thumb').innerHTML = `
-    <div class="thumb">
-      ${media.kind === 'video' ? `<video src="${src}" muted preload="metadata"></video>` : `<img src="${src}" alt="">`}
-      <div class="meta"><b>${esc(media.originalName)}</b><span>${media.kind === 'video' ? '動画' : '画像'} ・ ${size}</span></div>
-      <button type="button" class="btn sm ghost" id="dropMedia">外す</button>
-    </div>`;
-  $('dropMedia').onclick = () => { media = null; renderThumb(); };
-}
-
-async function upload(file) {
-  if (!file) return;
-  $('drop').textContent = 'アップロード中…';
   try {
-    const res = await api('/api/media?name=' + encodeURIComponent(file.name), { method:'POST', body:file });
-    media = res.media;
-    renderThumb();
-  } catch (err) { fail(err); }
-  $('drop').innerHTML = 'クリックして選ぶ／ここにドラッグ<br>JPEG・PNG・MP4・MOV';
+    // ① サーバーから「置いていい許可証」をもらう
+    const permit = await api('/api/upload-url', {
+      method:'POST', body:{ contentType:file.type, size:file.size },
+    });
+    // ② 動画そのものは Supabase へ直接送る（Vercel は 4.5MB までしか通せないため）
+    const put = await fetch(permit.uploadUrl, {
+      method:'PUT', body:file,
+      headers:{ 'Content-Type':file.type, 'x-upsert':'true' },
+    });
+    if (!put.ok) throw new Error('アップロードに失敗しました（' + put.status + '）');
+
+    uploaded = { path:permit.path, kind:permit.kind, bytes:file.size };
+    $('fileInfo').innerHTML = `✅ ${file.name}（${mb}MB）を保存しました`;
+  } catch (e) {
+    $('fileInfo').innerHTML = `<span class="err">${e.message}${e.hint ? '\n' + e.hint : ''}</span>`;
+  }
+};
+
+// --------------------------------------------------------------- 保存
+function collect(status) {
+  return {
+    status,
+    title: $('title').value,
+    body_common: $('common').value,
+    ig_caption: $('ig').value || $('common').value,
+    yt_title: $('ytt').value || $('title').value,
+    yt_description: $('ytd').value || $('common').value,
+    x_text: $('xt').value || $('common').value,
+    tt_caption: $('tt').value || $('common').value,
+    scheduled_at_jst: $('when').value,
+    media_path: uploaded && uploaded.path,
+    media_kind: uploaded && uploaded.kind,
+    media_bytes: uploaded && uploaded.bytes,
+    targets: [...document.querySelectorAll('.targets input:checked')].map((c) => c.value),
+  };
 }
 
 async function save(status) {
-  const when = $('when').value;
-  if (status === 'scheduled' && !when) {
-    toast('予定に入れるには日時が必要です', '日時を入れるか、下書き保存にしてください。', 'bad');
-    return;
-  }
-  const payload = {
-    id: editing || undefined,
-    body: $('body').value,
-    targets: chosenNets(),
-    scheduledAt: when ? new Date(when).toISOString() : null,
-    status,
-    autoPost: $('autoPost').checked,
-    media,
-  };
+  $('formErr').textContent = '';
   try {
-    await api('/api/posts', {
-      method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload),
-    });
-    fillForm(null);
-    await load();
-    toast(status === 'scheduled' ? '予定に入れました' : '下書きに保存しました', '', 'ok');
-  } catch (err) { fail(err); }
+    await api('/api/posts', { method:'POST', body: collect(status) });
+    ['title','common','ig','ytt','ytd','xt','tt','when'].forEach((id) => { $(id).value = ''; });
+    $('file').value = ''; uploaded = null; $('fileInfo').textContent = '';
+    loadPosts();
+  } catch (e) {
+    $('formErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
+  }
+}
+$('scheduleBtn').onclick = () => save('scheduled');
+$('draftBtn').onclick = () => save('draft');
+
+// --------------------------------------------------------------- 一覧
+async function loadPosts() {
+  try {
+    const { posts } = await api('/api/posts');
+    $('list').innerHTML = posts.length ? '' : '<p class="muted">まだ投稿がありません。</p>';
+    for (const p of posts) $('list').appendChild(render(p));
+  } catch (e) {
+    $('list').innerHTML = `<p class="err">${e.message}</p>`;
+  }
 }
 
-/* ---------- 投稿と進捗 ---------- */
-async function publish(id) {
-  watchProgress(id);
-  try {
-    const res = await api('/api/publish/' + id, { method:'POST' });
-    await load();
-    toast('Instagram に投稿しました', res.result.permalink || '', 'ok');
-  } catch (err) {
-    await load();
-    fail(err);
-  } finally { watching.delete(id); }
+function render(p) {
+  const el = document.createElement('div');
+  el.className = 'post';
+
+  const targets = (p.post_targets || []).sort((a, b) => a.network.localeCompare(b.network));
+  const badges = targets.map((t) =>
+    `<span class="badge b-${t.status}">${NET_LABEL[t.network]}：${ST_LABEL[t.status] || t.status}</span>`
+  ).join(' ');
+
+  const errors = targets.filter((t) => t.last_error)
+    .map((t) => `<div class="err">${NET_LABEL[t.network]}：${escapeHtml(t.last_error)}</div>`).join('');
+
+  const links = targets.filter((t) => t.permalink)
+    .map((t) => `<a href="${t.permalink}" target="_blank" rel="noopener">${NET_LABEL[t.network]}で見る</a>`).join(' ・ ');
+
+  const history = (p.post_events || [])
+    .sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 12)
+    .map((e) => `<div class="hist">${jst(e.at)}　${e.network ? NET_LABEL[e.network] + '　' : ''}${escapeHtml(e.detail || e.event)}</div>`)
+    .join('');
+
+  const canRetry = targets.some((t) => t.status === 'failed');
+
+  el.innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <strong>${escapeHtml(p.title || '(無題)')}</strong>
+      <span class="badge b-${p.status}">${ST_LABEL[p.status] || p.status}</span>
+    </div>
+    <div class="muted">予定：${jst(p.scheduled_at)}</div>
+    <div style="margin:6px 0">${badges || '<span class="muted">投稿先なし</span>'}</div>
+    ${links ? `<div class="muted">${links}</div>` : ''}
+    ${errors}
+    <div class="row" style="margin-top:8px">
+      ${canRetry ? '<button data-act="retry">失敗したSNSだけ再実行</button>' : ''}
+      ${p.status === 'draft' ? '' : '<button data-act="run-now">今すぐ投稿</button>'}
+      <button data-act="delete">削除</button>
+    </div>
+    ${history ? `<details style="margin-top:8px"><summary>履歴</summary>${history}</details>` : ''}
+  `;
+
+  el.querySelectorAll('button[data-act]').forEach((b) => {
+    b.onclick = async () => {
+      const act = b.dataset.act;
+      if (act === 'delete' && !confirm('この投稿を削除します。よろしいですか？')) return;
+      b.disabled = true;
+      try {
+        if (act === 'delete') await api(`/api/posts?id=${p.id}`, { method:'DELETE' });
+        else await api(`/api/posts?id=${p.id}&action=${act}`, { method:'POST' });
+      } catch (e) { alert(e.message); }
+      loadPosts();
+    };
+  });
+  return el;
 }
 
-/** 投稿中は1.5秒ごとに「今どこまで進んだか」を聞きに行く。 */
-function watchProgress(id) {
-  if (watching.has(id)) return;
-  watching.add(id);
-  const tick = async () => {
-    if (!watching.has(id)) return;
-    try {
-      const res = await api('/api/progress/' + id);
-      const post = state.posts.find((p) => p.id === id);
-      if (post && res.progress) { post._progress = res.progress; renderPosts(); }
-    } catch (_) {}
-    if (watching.has(id)) setTimeout(tick, 1500);
-  };
-  tick();
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 }
 
-/* ---------- 読み込み ---------- */
-async function load() {
-  const progressCache = new Map(state.posts.map((p) => [p.id, p._progress]));
-  const next = await api('/api/state');
-  next.posts.forEach((p) => { p._progress = progressCache.get(p.id); });
-  state = { ...state, ...next };
-  $('publicUrl').value = state.settings.publicBaseUrl || '';
-  $('tunnelCmd').textContent = `cloudflared tunnel --url http://localhost:${state.settings.mediaPort}`;
-  $('tokenState').textContent = state.settings.hasToken
-    ? `登録済み ${state.settings.tokenPreview}` +
-      (state.settings.tokenExpiresAt ? ` ・ 期限 ${fmt(state.settings.tokenExpiresAt)}` : '')
-    : 'まだ登録されていません。';
-  render();
-}
+// 処理中のものがあるときだけ、こまめに見に行く
+setInterval(() => { if (!$('app').classList.contains('hide')) loadPosts(); }, 30000);
 
-async function checkIg(quiet = true) {
-  if (!state.settings.hasToken) return;
-  try {
-    const res = await api('/api/ig/status');
-    state.igAccount = res.account;
-    if (!quiet) toast('つながりました', '@' + res.account.username + '（' + res.account.account_type + '）', 'ok');
-  } catch (err) {
-    state.igAccount = null;
-    if (!quiet) fail(err);
-  }
-  renderIgBadge();
-}
-
-/* ---------- 配線 ---------- */
-renderNets();
-fillForm(null);
-
-$('body').addEventListener('input', renderCounts);
-$('reset').onclick = () => fillForm(null);
-$('saveDraft').onclick = () => save('draft');
-$('form').addEventListener('submit', (e) => { e.preventDefault(); save('scheduled'); });
-
-$('drop').onclick = () => $('file').click();
-$('file').onchange = (e) => upload(e.target.files[0]);
-['dragover','dragenter'].forEach((t) => $('drop').addEventListener(t, (e) => {
-  e.preventDefault(); $('drop').classList.add('over');
-}));
-['dragleave','drop'].forEach((t) => $('drop').addEventListener(t, () => $('drop').classList.remove('over')));
-$('drop').addEventListener('drop', (e) => { e.preventDefault(); upload(e.dataTransfer.files[0]); });
-
-$('tabs').addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-tab]');
-  if (!btn) return;
-  tab = btn.dataset.tab; render();
-});
-
-$('posts').addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-act]');
-  if (!btn) return;
-  const { act, id } = btn.dataset;
-  const post = state.posts.find((p) => p.id === id);
-  if (act === 'edit') return fillForm(post);
-  if (act === 'copy') {
-    await navigator.clipboard.writeText(post.body);
-    return toast('本文をコピーしました', 'X・TikTok・YouTube はここから貼り付けてください。', 'ok');
-  }
-  if (act === 'publish') {
-    if (!confirm('Instagram に本当に投稿します。よろしいですか？')) return;
-    return publish(id);
-  }
-  if (act === 'done') {
-    await api('/api/posts', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ ...post, status:'posted' }) });
-    return load();
-  }
-  if (act === 'delete') {
-    if (!confirm('この投稿を削除します。元に戻せません。')) return;
-    await api('/api/posts/' + id, { method:'DELETE' });
-    if (editing === id) fillForm(null);
-    return load();
-  }
-});
-
-$('openSetup').onclick = () => $('setup').showModal();
-$('closeSetup').onclick = () => $('setup').close();
-
-$('saveUrl').onclick = async () => {
-  try {
-    await api('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ publicBaseUrl: $('publicUrl').value }) });
-    await load();
-    toast('公開URLを保存しました', '', 'ok');
-  } catch (err) { fail(err); }
-};
-
-$('testUrl').onclick = async () => {
-  const url = $('publicUrl').value.trim().replace(/\/+$/, '');
-  const withMedia = state.posts.find((p) => p.media);
-  if (!url) return toast('URLを入れてください', '', 'bad');
-  if (!withMedia) return toast('確認用のメディアがありません', '先に画像か動画を1つ添付した投稿を作ってください。', 'bad');
-  window.open(url + '/media/' + encodeURIComponent(withMedia.media.file), '_blank');
-  toast('新しいタブで開きました', 'そこに画像・動画が表示されれば、Instagram からも取得できます。');
-};
-
-$('saveToken').onclick = async () => {
-  const token = $('token').value.trim();
-  if (!token) return toast('トークンを貼ってください', '', 'bad');
-  try {
-    const res = await api('/api/ig/token', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ token }) });
-    $('token').value = '';
-    await load();
-    state.igAccount = res.account;
-    renderIgBadge();
-    toast('つながりました', '@' + res.account.username +
-      (res.exchanged ? ' ・ 60日もつ長期トークンに交換しました' : ' ・ 長期交換はできませんでしたが通信は成功しています'), 'ok');
-  } catch (err) { fail(err); }
-};
-
-$('refreshToken').onclick = async () => {
-  try {
-    const res = await api('/api/ig/refresh', { method:'POST' });
-    await load();
-    toast('期限を延ばしました', '新しい期限 ' + fmt(res.expiresAt), 'ok');
-  } catch (err) { fail(err); }
-};
-
-load().then(() => checkIg(true));
-setInterval(() => load().catch(() => {}), 20000);  // 予約投稿の結果を拾うため定期的に読み直す
+boot();
 </script>
 </body>
 </html>
