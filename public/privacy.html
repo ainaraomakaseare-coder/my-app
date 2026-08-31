@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー — 投稿卓 NEO</title>
+<style>
+  :root{ --bg:#faf9f7; --card:#fff; --ink:#1c1a17; --muted:#6b6560; --line:#e5e1db; }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#161513; --card:#1f1e1b; --ink:#eeeae4; --muted:#a09a92; --line:#33312d; }
+  }
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.9 "Hiragino Kaku Gothic ProN","Yu Gothic",system-ui,sans-serif}
+  .wrap{max-width:720px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:22px;margin:0 0 4px}
+  h2{font-size:16px;margin:32px 0 8px;padding-top:16px;border-top:1px solid var(--line)}
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:8px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--card)}
+  .muted{color:var(--muted);font-size:13px}
+  a{color:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>プライバシーポリシー</h1>
+  <p class="muted">投稿卓 NEO（以下「本ツール」）／最終更新：2026年8月31日</p>
+
+  <h2>1. 前提</h2>
+  <p>本ツールは、開発者本人が自分のSNSアカウントへ投稿するために使う<strong>個人用のツール</strong>です。
+  開発者以外の利用者はおらず、他人の個人情報を集めることはありません。</p>
+
+  <h2>2. 取り扱う情報</h2>
+  <table>
+    <tr><th>種類</th><th>用途</th><th>保存場所</th></tr>
+    <tr>
+      <td>SNSのアクセストークン／リフレッシュトークン</td>
+      <td>本人のアカウントへ投稿するため</td>
+      <td>Supabase（データベース）</td>
+    </tr>
+    <tr>
+      <td>アカウントの表示名（例：@ユーザー名、チャンネル名）</td>
+      <td>画面でどのアカウントか見分けるため</td>
+      <td>Supabase（データベース）</td>
+    </tr>
+    <tr>
+      <td>投稿する文章・画像・動画</td>
+      <td>指定時刻にSNSへ投稿するため</td>
+      <td>Supabase（データベースとストレージ）</td>
+    </tr>
+    <tr>
+      <td>投稿の成否と履歴</td>
+      <td>失敗したときに原因を確認し、再実行するため</td>
+      <td>Supabase（データベース）</td>
+    </tr>
+  </table>
+
+  <h2>3. 第三者への提供</h2>
+  <p>取り扱う情報を、第三者へ販売・提供・共有することはありません。
+  広告配信や行動分析のための外部サービスも利用していません。</p>
+  <p>投稿の実行にあたっては、投稿内容とメディアを、投稿先として選ばれたSNSの公式APIにのみ送信します。</p>
+
+  <h2>4. 保管と保護</h2>
+  <ul>
+    <li>トークンはデータベースに保存し、行レベルセキュリティ（RLS）で外部からの読み取りを遮断しています</li>
+    <li>画面に表示するトークンは先頭6文字のみで、全体をブラウザへ送信することはありません</li>
+    <li>ログにトークンを出力しません</li>
+    <li>動画・画像は非公開の保管領域に置き、投稿時に必要な場合のみ、2時間で失効する一時URLを発行します</li>
+    <li>ツール自体の利用には合言葉によるログインを必須としています</li>
+  </ul>
+
+  <h2>5. 削除</h2>
+  <p>連携は、本ツールの「連携設定」からいつでも解除できます。解除するとトークンは削除されます。</p>
+  <p>各SNS側からアクセスを取り消すこともできます（例：Instagram → 設定 → アプリとウェブサイト、
+  Googleアカウント → セキュリティ → サードパーティ製アプリ、TikTok → 設定 → セキュリティ）。</p>
+  <p>投稿と履歴は、本ツールの画面から個別に削除できます。</p>
+
+  <h2>6. 連絡先</h2>
+  <p>本ポリシーに関する問い合わせは、ソースコードを公開している
+  <a href="https://github.com/ainaraomakaseare-coder/my-app">GitHubリポジトリ</a>までお願いします。</p>
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:40px 0">
+
+  <h2 style="border:none;padding-top:0">Summary in English</h2>
+  <p>This is a personal tool used by its developer to publish their own content to their own social
+  media accounts. It stores the developer's own access tokens, post text, and media in Supabase,
+  and sends them only to the official APIs of the networks selected for each post. No data is sold,
+  shared with third parties, or used for advertising or analytics. Connections can be revoked at any
+  time from the tool's settings screen or from the network's own app permissions page, which deletes
+  the stored tokens.</p>
+
+  <p class="muted" style="margin-top:40px"><a href="/">← 投稿卓 NEO へ戻る</a>　・　<a href="/terms.html">利用規約</a></p>
+</div>
+</body>
+</html>
