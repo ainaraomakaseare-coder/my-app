@@ -48,9 +48,20 @@ module.exports = async function handler(req, res) {
     (req.headers.authorization || '').replace(/^Bearer\s+/i, '') ||
     (req.query && req.query.key);
 
-  if (!expected || !safeEqual(String(given || ''), expected)) {
-    // 何が違うかを教えない。総当たりの手がかりを与えないため。
-    return res.status(401).json({ error: 'unauthorized' });
+  // 「鍵が設定されていない」と「鍵が違う」は、原因も直し方もまるで別。
+  // 前者はこちらの設定漏れなので、はっきり言ってよい（秘密は含まれない）。
+  if (!expected) {
+    return res.status(500).json({
+      error: 'サーバーに CRON_SECRET が設定されていません。',
+      hint: 'Vercel の Settings → Environment Variables に CRON_SECRET を追加し、Production にも適用してから再デプロイしてください。環境変数は次のデプロイから効きます。',
+    });
+  }
+  if (!safeEqual(String(given || ''), expected)) {
+    // 鍵が違う場合は、何がどう違うかを一切教えない。総当たりの手がかりになるため。
+    return res.status(401).json({
+      error: 'unauthorized',
+      hint: 'x-cron-key の値が CRON_SECRET と一致していません。',
+    });
   }
 
   const startedAt = Date.now();
