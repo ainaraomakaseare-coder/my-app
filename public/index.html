@@ -335,8 +335,19 @@ function renderConn() {
   $('conn').innerHTML = '';
 
   for (const a of accounts) {
-    const soon = a.expires_at &&
-      new Date(a.expires_at).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000;
+    // 引換券を持っている連携は、入場券が1時間で切れても自動で取り直せる。
+    // ここを区別しないと「あと1時間で切れる」と誤解させてしまう。
+    let expiry;
+    if (a.auto_refresh) {
+      expiry = '<span class="badge">自動更新</span>';
+    } else if (a.expires_at) {
+      const soon = new Date(a.expires_at).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000;
+      expiry = soon
+        ? `<span class="badge b-failed">期限が近い（${jst(a.expires_at)}）</span>`
+        : `<span class="badge">${jst(a.expires_at)} まで有効</span>`;
+    } else {
+      expiry = '<span class="badge b-processing">有効期限が不明（短期トークンなら1時間）</span>';
+    }
 
     const row = document.createElement('div');
     row.className = 'row';
@@ -345,7 +356,7 @@ function renderConn() {
       <div>
         <strong>${accountLabel(a)}</strong>
         <span class="badge b-success">接続済み</span>
-        ${soon ? `<span class="badge b-failed">期限まであとわずか（${jst(a.expires_at)}）</span>` : ''}
+        ${expiry}
         <div class="muted">${a.account_name || ''}　${NET_NOTE[a.network]}</div>
       </div>
       <div class="row"></div>`;
