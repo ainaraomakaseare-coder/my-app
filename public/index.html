@@ -219,10 +219,17 @@ function tickClock() {
 }
 
 // --------------------------------------------------------------- アップロード
+/** アップロード中はボタンを止める。押せてしまうと「まだ場所が無い」まま予約されてしまう。 */
+function setBusy(busy) {
+  $('scheduleBtn').disabled = busy;
+  $('draftBtn').disabled = busy;
+  $('scheduleBtn').textContent = busy ? 'アップロード中…' : 'この日時に予約する';
+}
+
 $('file').onchange = async () => {
   const file = $('file').files[0];
   uploaded = null;
-  if (!file) { $('fileInfo').textContent = ''; return; }
+  if (!file) { $('fileInfo').textContent = ''; setBusy(false); return; }
 
   const mb = (file.size / 1024 / 1024).toFixed(1);
   if (file.size > 50 * 1024 * 1024) {
@@ -230,6 +237,8 @@ $('file').onchange = async () => {
     return;
   }
   $('fileInfo').textContent = `${file.name}（${mb}MB）をアップロード中…`;
+  $('formErr').textContent = '';   // 前回の失敗の文言を残さない
+  setBusy(true);
 
   try {
     // ① サーバーから「置いていい許可証」をもらう
@@ -251,6 +260,7 @@ $('file').onchange = async () => {
   } catch (e) {
     $('fileInfo').innerHTML = `<span class="err">${e.message}${e.hint ? '\n' + e.hint : ''}</span>`;
   }
+  setBusy(false);
 };
 
 // --------------------------------------------------------------- 保存
@@ -274,6 +284,15 @@ function collect(status) {
 
 async function save(status) {
   $('formErr').textContent = '';
+
+  const wantsMedia = [...document.querySelectorAll('.targets input:checked')]
+    .some((c) => ['instagram', 'youtube', 'tiktok'].includes(c.value));
+  if (status === 'scheduled' && wantsMedia && !uploaded && $('file').files[0]) {
+    $('formErr').textContent =
+      'アップロードがまだ終わっていません。「✅ 保存しました」が出てから押してください。';
+    return;
+  }
+
   try {
     await api('/api/posts', { method:'POST', body: collect(status) });
     ['title','common','ig','ytt','ytd','xt','tt','when'].forEach((id) => { $(id).value = ''; });
