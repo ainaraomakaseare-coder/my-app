@@ -155,7 +155,48 @@ function fakeRes() {
 const CRON = { headers: { 'x-cron-key': 'unit-test-cron-key' } };
 process.env.CRON_SECRET = 'unit-test-cron-key';
 
+// ---------------------------------------------------------------------------
+console.log('\nSUPABASE_URL の貼り間違いを吸収する');
+
+/** fetch を差し替えて、実際に組み立てられたURLを覗く。 */
+async function urlUsedFor(value) {
+  process.env.SUPABASE_URL = value;
+  process.env.SUPABASE_SERVICE_KEY = 'dummy-service-key';
+  delete require.cache[require.resolve('../lib/db.js')];
+  const db = require('../lib/db.js');
+
+  let seen = null;
+  const real = global.fetch;
+  global.fetch = async (url) => {
+    seen = String(url);
+    return { ok: true, status: 200, async text() { return '[]'; } };
+  };
+  try { await db.rpc('claim_due_targets', {}); } finally { global.fetch = real; }
+  return seen;
+}
+
+const WANT = 'https://abc.supabase.co/rest/v1/rpc/claim_due_targets';
+
 (async () => {
+  for (const [name, value] of [
+    ['そのまま', 'https://abc.supabase.co'],
+    ['末尾スラッシュ', 'https://abc.supabase.co/'],
+    ['REST のURLを貼った場合', 'https://abc.supabase.co/rest/v1'],
+    ['前後に空白と改行', ' \n https://abc.supabase.co/rest/v1/ \n '],
+    ['Storage のURLを貼った場合', 'https://abc.supabase.co/storage/v1'],
+  ]) {
+    await testAsync(name, async () => {
+      assert.strictEqual(await urlUsedFor(value), WANT);
+    });
+  }
+
+  await testAsync('URLの形をしていなければ、直し方まで伝えて断る', async () => {
+    process.env.SUPABASE_URL = 'abc.supabase.co';   // https:// が無い
+    delete require.cache[require.resolve('../lib/db.js')];
+    const db = require('../lib/db.js');
+    await assert.rejects(() => db.rpc('claim_due_targets', {}), (e) => /URL の形/.test(e.message));
+  });
+
   await testAsync('鍵が違う呼び出しは 401 で断る', async () => {
     const state = setup();
     const worker = loadWorker(state, {});
