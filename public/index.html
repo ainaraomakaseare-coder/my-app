@@ -106,7 +106,7 @@
 
       <label for="file">動画 / 画像</label>
       <input type="file" id="file" accept="video/mp4,video/quicktime,image/jpeg,image/png">
-      <div class="muted" id="fileInfo">MP4 / MOV / JPEG / PNG、50MBまで（Supabase 無料プランの上限）</div>
+      <div class="muted" id="fileInfo">MP4 / MOV / JPEG / PNG、50MBまで（Supabase 無料プランの上限）。<strong>Instagram に画像を出す場合は JPEG のみ</strong>（PNG は受け付けられません）</div>
 
       <label for="common">共通本文</label>
       <textarea id="common" placeholder="ここに書いた文は、下の各SNS欄が空のときに使われます"></textarea>
@@ -244,7 +244,10 @@ $('file').onchange = async () => {
     if (!put.ok) throw new Error('アップロードに失敗しました（' + put.status + '）');
 
     uploaded = { path:permit.path, kind:permit.kind, bytes:file.size };
-    $('fileInfo').innerHTML = `✅ ${file.name}（${mb}MB）を保存しました`;
+    const png = /\.png$/i.test(file.name);
+    $('fileInfo').innerHTML = `✅ ${file.name}（${mb}MB）を保存しました` +
+      (png ? '<br><span class="err">⚠️ PNG です。Instagram は PNG を受け付けません。'
+           + 'Instagram に出すなら JPEG に変換してください。</span>' : '');
   } catch (e) {
     $('fileInfo').innerHTML = `<span class="err">${e.message}${e.hint ? '\n' + e.hint : ''}</span>`;
   }
