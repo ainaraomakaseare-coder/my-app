@@ -162,11 +162,13 @@ async function fail(target, err, label) {
     last_error: (message + hint).slice(0, 2000),
     next_attempt_at: givingUp ? null : new Date(Date.now() + wait * 60_000).toISOString(),
   });
+  // ★ 「次の一手」は再試行のときこそ要る。ここで落とすと、
+  //   利用者は何を直せば直るのか分からないまま3回失敗を待つことになる。
   await db.logEvent(
     target.post_id,
     target.network,
     givingUp ? 'failed' : 'retrying',
-    givingUp ? message + hint : `${message}（${wait}分後にもう一度試します）`
+    givingUp ? message + hint : `${message}${hint}（${wait}分後にもう一度試します）`
   );
 
   return { ...label, result: givingUp ? 'failed' : 'will-retry', error: message };
