@@ -78,6 +78,25 @@
       <button id="logoutBtn">出る</button>
     </header>
 
+    <div id="connectedMsg" class="notice hide"></div>
+
+    <!-- 連携設定 -->
+    <div class="card">
+      <h2>連携設定</h2>
+      <div id="conn" class="muted">確認中…</div>
+      <details style="margin-top:12px">
+        <summary>Instagram のトークンを登録する</summary>
+        <label for="igToken">Meta の管理画面「Generate token」で発行した文字列</label>
+        <input type="password" id="igToken" autocomplete="off">
+        <div class="row" style="margin-top:8px">
+          <button id="igSave">登録して接続テスト</button>
+          <span class="err" id="igErr"></span>
+        </div>
+        <div class="muted">1時間で切れる短期トークンを、60日もつ長期トークンへ自動で交換します。
+        画面に返すのは先頭6文字だけで、全体は一度もブラウザに送りません。</div>
+      </details>
+    </div>
+
     <!-- 投稿を作る -->
     <div class="card">
       <h2>投稿を作る</h2>
@@ -179,7 +198,7 @@ async function boot() {
   const { loggedIn } = await api('/api/login');
   $('login').classList.toggle('hide', loggedIn);
   $('app').classList.toggle('hide', !loggedIn);
-  if (loggedIn) { tickClock(); loadPosts(); }
+  if (loggedIn) { tickClock(); showConnectResult(); loadConn(); loadPosts(); }
 }
 
 $('loginBtn').onclick = async () => {
@@ -263,6 +282,86 @@ async function save(status) {
 }
 $('scheduleBtn').onclick = () => save('scheduled');
 $('draftBtn').onclick = () => save('draft');
+
+// --------------------------------------------------------------- 連携設定
+const NET_NOTE = {
+  instagram: '公開投稿までできます',
+  youtube: '審査前のため、非公開でアップロードされます',
+  x: '投稿1件あたり約2.3円かかります',
+  tiktok: '審査前のため、自分のみ表示で投稿されます',
+};
+
+async function loadConn() {
+  try {
+    const st = await api('/api/connect');
+    $('conn').innerHTML = '';
+    for (const net of ['instagram', 'youtube', 'x', 'tiktok']) {
+      const s = st[net] || { connected: false };
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.cssText = 'justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)';
+
+      const warn = s.expiringSoon
+        ? ` <span class="badge b-failed">期限まであとわずか（${jst(s.expiresAt)}）</span>` : '';
+
+      row.innerHTML = `
+        <div>
+          <strong>${NET_LABEL[net]}</strong>
+          <span class="badge ${s.connected ? 'b-success' : ''}">${s.connected ? '接続済み' : '未接続'}</span>
+          ${warn}
+          <div class="muted">${s.account ? s.account + '　' : ''}${NET_NOTE[net]}</div>
+        </div>
+        <div class="row"></div>`;
+
+      const actions = row.querySelector('.row');
+      if (net !== 'instagram') {
+        const b = document.createElement('button');
+        b.textContent = s.connected ? '接続し直す' : '接続する';
+        b.onclick = () => { location.href = '/api/connect?network=' + net; };
+        actions.appendChild(b);
+      }
+      if (s.connected) {
+        const d = document.createElement('button');
+        d.textContent = '解除';
+        d.onclick = async () => {
+          if (!confirm(NET_LABEL[net] + ' の連携を解除します。よろしいですか？')) return;
+          await api('/api/connect?network=' + net, { method: 'DELETE' });
+          loadConn();
+        };
+        actions.appendChild(d);
+      }
+      $('conn').appendChild(row);
+    }
+  } catch (e) {
+    $('conn').innerHTML = `<span class="err">${e.message}</span>`;
+  }
+}
+
+$('igSave').onclick = async () => {
+  $('igErr').textContent = '';
+  const btn = $('igSave');
+  btn.disabled = true;
+  try {
+    const out = await api('/api/connect?network=instagram', {
+      method: 'POST', body: { token: $('igToken').value },
+    });
+    $('igToken').value = '';
+    alert('接続できました：' + (out.account || 'Instagram'));
+    loadConn();
+  } catch (e) {
+    $('igErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
+  }
+  btn.disabled = false;
+};
+
+/** 連携から戻ってきたときの結果表示。URLに残った文字はすぐ消す。 */
+function showConnectResult() {
+  const msg = new URLSearchParams(location.search).get('connected');
+  if (!msg) return;
+  $('connectedMsg').textContent = msg;
+  $('connectedMsg').classList.remove('hide');
+  history.replaceState(null, '', location.pathname);
+}
 
 // --------------------------------------------------------------- 一覧
 async function loadPosts() {
