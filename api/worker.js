@@ -57,10 +57,27 @@ module.exports = async function handler(req, res) {
     });
   }
   if (!safeEqual(String(given || ''), expected)) {
-    // 鍵が違う場合は、何がどう違うかを一切教えない。総当たりの手がかりになるため。
+    // 中身は明かさない。ただし「届いているか」「長さが違うか」だけは返す。
+    // これが無いと、値の打ち間違いなのか、そもそもヘッダーが付いていないのか、
+    // 全角文字が混ざって別物になっているのかを、外から一切切り分けられない。
+    const got = String(given || '');
     return res.status(401).json({
       error: 'unauthorized',
       hint: 'x-cron-key の値が CRON_SECRET と一致していません。',
+      診断: {
+        鍵が届いているか: got.length > 0,
+        届いた鍵の文字数: got.length,
+        期待している文字数: expected.length,
+        届いた鍵に半角英数字以外が含まれるか: /[^\x21-\x7e]/.test(got),
+        ヒント:
+          got.length === 0
+            ? 'ヘッダー x-cron-key が付いていません。Cron の headers を確認してください。'
+            : /[^\x21-\x7e]/.test(got)
+            ? '全角文字や空白が混ざっています。HTTPヘッダーは半角英数字だけにしてください。'
+            : got.length !== expected.length
+            ? '文字数が違います。どちらかが途中で切れているか、余分な文字が付いています。'
+            : '文字数は同じで中身が違います。両方を同じ場所からコピーし直してください。',
+      },
     });
   }
 
