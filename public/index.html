@@ -43,6 +43,22 @@
   .b-processing,.b-queued{color:var(--warn);border-color:currentColor}
   .post{border-top:1px solid var(--line);padding:14px 0}
   .post:first-of-type{border-top:none}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .tabs button{padding:8px 14px;border-radius:999px;border:1px solid var(--line);
+    background:var(--card);cursor:pointer;font-size:14px}
+  .tabs button.on{background:#111;color:#fff;border-color:#111;font-weight:600}
+  .genbox{border:1px solid var(--line);border-radius:10px;padding:14px;background:#FBF7EF;color:#0D0903}
+  .genbox .kicker{font-size:13px}
+  .genbox .gtitle{font-size:19px;font-weight:700;border-bottom:3px solid #B73029;
+    display:inline-block;padding-bottom:2px;margin:2px 0 10px}
+  .grows{border-collapse:collapse;width:100%}
+  .grows td{padding:5px 0;vertical-align:baseline}
+  .grows td.num{width:1%;white-space:nowrap;padding-right:8px;color:#555}
+  .grows td.ans{width:1%;white-space:nowrap;padding-left:12px}
+  .grows td.ans span{border:1px solid #B73029;color:#B73029;border-radius:3px;padding:1px 9px}
+  .findings{margin:6px 0 10px;padding-left:20px;font-size:13px}
+  .findings li.bad{color:var(--bad)}
+  .findings li.warn{color:var(--muted)}
   .muted{color:var(--muted);font-size:13px}
   .err{color:var(--bad);font-size:13px;white-space:pre-wrap}
   .notice{background:var(--card);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;
@@ -78,6 +94,7 @@
       <button id="logoutBtn">出る</button>
     </header>
 
+    <div class="tabs hide" id="groupTabs"></div>
     <div id="connectedMsg" class="notice hide"></div>
 
     <!-- 連携設定 -->
@@ -97,6 +114,30 @@
         <div class="muted">1時間で切れる短期トークンを、60日もつ長期トークンへ自動で交換します。
         画面に返すのは先頭6文字だけで、全体は一度もブラウザに送りません。</div>
       </details>
+    </div>
+
+    <!-- 投稿文をつくる -->
+    <div class="card">
+      <h2>投稿文をつくる</h2>
+      <div class="muted">ネタを入れると、動画の6行と各SNSの本文をまとめて作ります。
+        できたものは点検にかけてから出すので、直したほうがよい点があれば一緒に出ます。</div>
+
+      <label for="genTopic">ネタ</label>
+      <input type="text" id="genTopic" placeholder="引き止められたときの受け答え">
+
+      <div class="row" style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" id="genAffi"> 案件リンクを含む（PR表記が必須になります）
+        </label>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="genBtn">作る</button>
+        <span class="muted" id="genState"></span>
+        <span class="err" id="genErr"></span>
+      </div>
+
+      <div id="genResult" class="hide" style="margin-top:14px"></div>
     </div>
 
     <!-- 投稿を作る -->
@@ -126,6 +167,13 @@
         <label for="tt">TikTok 本文</label>
         <textarea id="tt"></textarea>
       </details>
+
+      <div class="row" style="margin-top:12px">
+        <label style="display:flex;align-items:center;gap:6px;margin:0">
+          <input type="checkbox" id="affiFlag"> この投稿は案件リンクを含む
+        </label>
+      </div>
+      <div class="muted">入れると、A8.net の掲載対象外（X など）へは出せなくなります。</div>
 
       <label for="when">投稿予定日時（日本時間）</label>
       <input type="datetime-local" id="when">
@@ -168,6 +216,8 @@ const ST_LABEL = {
 };
 
 let uploaded = null; // { path, kind, bytes }
+let groups = [];        // 運用アカウント（運用ライン）
+let currentGroup = null; // いま選んでいる運用アカウントの id
 
 /** 日本時間で表示する。ブラウザの地域設定に関係なく必ずJST。 */
 function jst(iso) {
@@ -275,6 +325,8 @@ function collect(status) {
     x_text: $('xt').value || $('common').value,
     tt_caption: $('tt').value || $('common').value,
     scheduled_at_jst: $('when').value,
+    group_id: currentGroup,
+    has_affiliate_link: $('affiFlag').checked,
     media_path: uploaded && uploaded.path,
     media_kind: uploaded && uploaded.kind,
     media_bytes: uploaded && uploaded.bytes,
@@ -320,6 +372,37 @@ let accounts = [];   // 繋がっているアカウント
 const accountLabel = (a) =>
   a ? `${NET_LABEL[a.network]}（${a.label || a.account_name || '名前なし'}）` : '不明なアカウント';
 
+/**
+ * いま選んでいる運用アカウントの連携先だけを返す。
+ * 混ざる事故はDB側でも止めているが、そもそも選べないようにしておく。
+ */
+function visibleAccounts() {
+  if (!currentGroup) return accounts;
+  return accounts.filter((a) => !a.group_id || a.group_id === currentGroup);
+}
+
+function renderGroupTabs() {
+  const box = $('groupTabs');
+  box.classList.toggle('hide', groups.length < 2);
+  if (groups.length < 2) { currentGroup = groups.length ? groups[0].id : null; return; }
+  if (!groups.some((g) => g.id === currentGroup)) currentGroup = groups[0].id;
+
+  box.innerHTML = '';
+  for (const g of groups) {
+    const b = document.createElement('button');
+    b.textContent = g.label;
+    b.className = g.id === currentGroup ? 'on' : '';
+    b.onclick = () => {
+      currentGroup = g.id;
+      renderGroupTabs();
+      renderConn();
+      renderTargets();
+      loadPosts();
+    };
+    box.appendChild(b);
+  }
+}
+
 async function loadConn() {
   try {
     const out = await api('/api/connect');
@@ -334,7 +417,7 @@ async function loadConn() {
 function renderConn() {
   $('conn').innerHTML = '';
 
-  for (const a of accounts) {
+  for (const a of visibleAccounts()) {
     // 引換券を持っている連携は、入場券が1時間で切れても自動で取り直せる。
     // ここを区別しないと「あと1時間で切れる」と誤解させてしまう。
     let expiry;
@@ -406,12 +489,13 @@ function renderConn() {
 /** 投稿先の選択肢を、繋いだアカウントから作る。 */
 function renderTargets() {
   const box = $('targets');
-  if (!accounts.length) {
+  const list = visibleAccounts();
+  if (!list.length) {
     box.innerHTML = '<span class="muted">連携設定でアカウントを繋ぐと、ここに出ます</span>';
     return;
   }
   box.innerHTML = '';
-  for (const a of accounts) {
+  for (const a of list) {
     const l = document.createElement('label');
     l.innerHTML = `<input type="checkbox" value="${a.id}"> ${accountLabel(a)}`;
     box.appendChild(l);
@@ -444,13 +528,100 @@ function showConnectResult() {
   history.replaceState(null, '', location.pathname);
 }
 
+// --------------------------------------------------------------- 投稿文をつくる
+let generated = null;
+
+$('genBtn').onclick = async () => {
+  $('genErr').textContent = '';
+  $('genResult').classList.add('hide');
+  const title = $('genTopic').value.trim();
+  if (!title) { $('genErr').textContent = 'ネタを入れてください。'; return; }
+
+  $('genBtn').disabled = true;
+  $('genState').textContent = '書いています…（20秒ほどかかります）';
+  try {
+    generated = await api('/api/generate', {
+      method: 'POST',
+      body: {
+        title,
+        has_affiliate_link: $('genAffi').checked,
+        group_id: currentGroup,
+      },
+    });
+    renderGenerated(generated);
+  } catch (e) {
+    $('genErr').textContent = e.message;
+  }
+  $('genBtn').disabled = false;
+  $('genState').textContent = '';
+};
+
+/**
+ * 出来たものを、動画に近い見た目で出す。
+ * 指摘は隠さない。直すかどうかを決めるのは人間なので。
+ */
+function renderGenerated(out) {
+  const box = $('genResult');
+  box.classList.remove('hide');
+  const d = out.draft;
+  if (!d) {
+    box.innerHTML = '<p class="err">作れませんでした。もう一度お試しください。</p>';
+    return;
+  }
+
+  const rows = (d.rows || []).map((r, i) =>
+    `<tr><td class="num">${i + 1}、</td><td>${escapeHtml(r.question)}</td>` +
+    `<td class="ans"><span>${escapeHtml(r.answer)}</span></td></tr>`).join('');
+
+  const errors = (out.findings || []).filter((f) => f.severity === 'error');
+  const warns  = (out.findings || []).filter((f) => f.severity === 'warning');
+  const li = (fs, cls) => fs.map((f) =>
+    `<li class="${cls}">${escapeHtml(f.message)}` +
+    (f.excerpt ? ` <span class="muted">（${escapeHtml(f.excerpt)}）</span>` : '') + '</li>').join('');
+
+  box.innerHTML =
+    '<div class="genbox">' +
+      `<div class="kicker">${escapeHtml(d.kicker || '')}</div>` +
+      `<div class="gtitle">${escapeHtml(d.title || '')}</div>` +
+      `<table class="grows">${rows}</table>` +
+    '</div>' +
+    (errors.length
+      ? `<p class="err" style="margin-top:12px">直したほうがよい点（${errors.length}）</p>` +
+        `<ul class="findings">${li(errors, 'bad')}</ul>`
+      : '<p class="muted" style="margin-top:12px">点検で引っかかった点はありません。</p>') +
+    (warns.length
+      ? `<p class="muted">見ておく点（${warns.length}）</p><ul class="findings">${li(warns, 'warn')}</ul>`
+      : '') +
+    `<div class="muted">${escapeHtml(out.profile || '')}の規則で見ました。` +
+      (out.attempts > 1 ? `${out.attempts}回書き直しています。` : '') + '</div>' +
+    '<div class="row" style="margin-top:12px">' +
+      '<button class="primary" id="genApply">この内容を下のフォームに入れる</button>' +
+    '</div>';
+
+  $('genApply').onclick = () => applyGenerated(d);
+}
+
+/** 下の「投稿を作る」に流し込む。動画そのものはここでは作らないので、手で添える。 */
+function applyGenerated(d) {
+  $('title').value = d.title || '';
+  $('ig').value = d.igCaption || '';
+  $('tt').value = d.ttCaption || '';
+  $('xt').value = d.xText || '';
+  $('ytt').value = d.title || '';
+  $('ytd').value = d.igCaption || '';
+  $('affiFlag').checked = !!d.hasAffiliateLink;
+  $('title').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 // --------------------------------------------------------------- 一覧
 async function loadPosts() {
   try {
-    const { posts, accounts: fresh } = await api('/api/posts');
+    const { posts, accounts: fresh, groups: gs } = await api('/api/posts');
     if (fresh) accounts = fresh;
-    $('list').innerHTML = posts.length ? '' : '<p class="muted">まだ投稿がありません。</p>';
-    for (const p of posts) $('list').appendChild(render(p));
+    if (gs) { groups = gs; renderGroupTabs(); renderTargets(); }
+    const shown = currentGroup ? posts.filter((p) => !p.group_id || p.group_id === currentGroup) : posts;
+    $('list').innerHTML = shown.length ? '' : '<p class="muted">まだ投稿がありません。</p>';
+    for (const p of shown) $('list').appendChild(render(p));
   } catch (e) {
     $('list').innerHTML = `<p class="err">${e.message}</p>`;
   }
