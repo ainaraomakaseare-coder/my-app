@@ -4720,6 +4720,10 @@ var BAKED_PER_QUIZ = 5;
 function buildQuiz(w, seed){
   var rnd = rng(seed || 1);
   var content = [], fact = [], spareC = [], spareF = [], baked = [], perGroup = {};
+  /* 別のテンプレが同じ問題文を作ることがある（sub_first の第1話と、
+     sub_mid が引いた第1話など）。同じ問いが二度出ると水増しに見えるので、
+     採る時点で落とす。先に採ったほうを残す。 */
+  var seenText = {};
   shuffle(TEMPLATES, rnd).forEach(function(t){
     var made = t.make(w, rnd) || [];
     if(!made.length) return;
@@ -4728,7 +4732,12 @@ function buildQuiz(w, seed){
       q.tier = t.tier;
     });
     /* テンプレの取りこぼしはここで止める。落ちた設問は捨てる */
-    made = made.filter(function(q){ return checkMade(q, w).length === 0; });
+    made = made.filter(function(q){
+      if(checkMade(q, w).length) return false;
+      if(seenText[q.text]) return false;
+      seenText[q.text] = 1;
+      return true;
+    });
     if(!made.length) return;
     /* まずは同じ言い回し・同じ材料が並ばない範囲だけ採る */
     var g = t.group || t.id;

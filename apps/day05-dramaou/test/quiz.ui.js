@@ -337,10 +337,12 @@ const SEARCH_JSON = {
     const outside = [];
     await sp.route("**/*", route => {
       const u = route.request().url();
-      /* 書体の読み込みは DAY5 からある。ここで見張りたいのは、
-         問題を作るために外部のAPIを呼んでいないかどうか。 */
+      /* 書体の読み込みは DAY5 からある。問題生成のための外部呼び出しは、
+         Wikipedia と、鍵を隠すための Worker だけであること。
+         ブラウザから OpenAI などへ直接出ていたら、それは鍵が漏れる作り。 */
       const ok = /^https?:\/\/127\.0\.0\.1/.test(u) || /ja\.wikipedia\.org/.test(u)
-              || /fonts\.(googleapis|gstatic)\.com/.test(u);
+              || /fonts\.(googleapis|gstatic)\.com/.test(u)
+              || /workers\.dev/.test(u);
       if(!ok) outside.push(u);
       route.continue();
     });
@@ -387,7 +389,11 @@ const SEARCH_JSON = {
     check("あらすじの空欄補充を作る", kinds.indexOf("cloze") >= 0, kinds.join(","));
 
     await sp.waitForSelector("#scr-done:not([hidden])");
-    eq("問題を作るために外部のAPIを呼ばない", outside, []);
+    eq("Wikipedia と Worker 以外へは出ない", outside, []);
+    /* 鍵は Worker の secret にだけ置く。ブラウザに載ってはいけない */
+    const pageSrc = await sp.content();
+    check("ページに APIキーらしき文字列を埋め込まない",
+          !/sk-[A-Za-z0-9_-]{20,}/.test(pageSrc));
     check("APIキーを入れる欄は無い", (await sp.locator("#ai-key").count()) === 0);
     check("費用の表示も無い", !/\$/.test(await sp.textContent("#scr-done")));
 
@@ -395,7 +401,7 @@ const SEARCH_JSON = {
     await sp.click("#again");
     await sp.waitForSelector("#scr-quiz:not([hidden])");
     check("もう一度で第1問に戻る", (await sp.textContent("#qcount")).indexOf("第 1 問") >= 0);
-    eq("もう一度でも外部のAPIを呼ばない", outside, []);
+    eq("もう一度でも Wikipedia と Worker 以外へは出ない", outside, []);
 
 
     /* ---- 作り置き ----

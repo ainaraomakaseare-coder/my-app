@@ -549,6 +549,17 @@ ok("AIが10問に足りなければ従来方式へ戻る",
    aiShort.every(function(q){ return String(q.id).indexOf("ai#") !== 0; }),
    aiShort.map(function(q){ return q.id; }));
 
+/* 別のテンプレが同じ問題文を作ることがある（第1話のサブタイトル など）。
+   同じ問いが二度並ぶと水増しに見えるので、種を変えて固定する。 */
+var dupSeeds = [];
+for(var ds = 1; ds <= 60; ds++){
+  var dq = box.buildQuiz(FULL, ds * 7919);
+  var mark = {}, dup = false;
+  dq.forEach(function(q){ if(mark[q.text]) dup = true; mark[q.text] = 1; });
+  if(dup) dupSeeds.push(ds);
+}
+eq("同じ問題文が一つのクイズに二度出ない", dupSeeds, []);
+
 /* ---- 記事の題名から作り置きを引く ---- */
 ok("そのままの題名で引ける", !!box.bakedFor("半沢直樹"));
 ok("括弧の但し書きが付いても引ける", !!box.bakedFor("HERO (テレビドラマ)"));
