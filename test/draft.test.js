@@ -206,6 +206,20 @@ const personal = draft({
     assert.strictEqual(scope.checkTarget({ group_id: 'g_affi' }, dead).code, 'cross-account');
   });
 
+  await check('複数の投稿先をまとめて見る（api/posts.js の呼び方）', () => {
+    const issues = scope.checkTargets({ group_id: 'g_affi' }, [affi, kikaku]);
+    assert.strictEqual(issues.length, 1);
+    assert.strictEqual(issues[0].accountId, 'a2');
+  });
+
+  await check('全部そろっていれば指摘なし', () => {
+    assert.deepStrictEqual(scope.checkTargets({ group_id: 'g_affi' }, [affi, xAffi]), []);
+  });
+
+  await check('投稿先が空でも落ちない', () => {
+    assert.deepStrictEqual(scope.checkTargets({ group_id: 'g_affi' }, []), []);
+  });
+
   // ---- 生成 → 点検 → 作り直し ----------------------------------------------
 
   const clean = {

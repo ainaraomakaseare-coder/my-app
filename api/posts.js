@@ -10,6 +10,7 @@
 
 const auth = require('../lib/auth');
 const db = require('../lib/db');
+const scope = require('../lib/account-scope');
 
 const NETWORKS = ['instagram', 'youtube', 'x', 'tiktok'];
 
@@ -42,7 +43,7 @@ module.exports = async function handler(req, res) {
 
 async function list() {
   // 投稿と、SNSごとの状態と、履歴をまとめて1回で取る
-  const [posts, accounts] = await Promise.all([
+  const [posts, accounts, groups] = await Promise.all([
     db.rest('posts', {
       query: {
         select: '*,post_targets(*),post_events(at,network,event,detail)',
@@ -51,8 +52,9 @@ async function list() {
       },
     }),
     db.listAccounts(),
+    db.listGroups(),
   ]);
-  return { posts: posts || [], accounts, now: new Date().toISOString() };
+  return { posts: posts || [], accounts, groups, now: new Date().toISOString() };
 }
 
 async function save(req, id) {
@@ -63,6 +65,15 @@ async function save(req, id) {
   const byId = new Map(accounts.map((a) => [a.id, a]));
   const targets = (Array.isArray(body.targets) ? body.targets : []).filter((id) => byId.has(id));
   const scheduledAt = jstToUtc(body.scheduled_at_jst);
+
+  // ★ 運用アカウントをまたぐ投稿先と、A8.net の掲載対象外への案件投稿は、
+  //   ここで断る。DB側にも同じ引き金があるが、先に日本語で返したい。
+  const choice = {
+    group_id: body.group_id || null,
+    hasAffiliateLink: !!body.has_affiliate_link,
+  };
+  const issues = scope.checkTargets(choice, targets.map((t) => byId.get(t)));
+  if (issues.length) throw bad(issues[0].message);
   const wantsSchedule = body.status === 'scheduled';
 
   if (wantsSchedule && !scheduledAt) {
@@ -94,6 +105,8 @@ async function save(req, id) {
     media_kind: body.media_kind || null,
     media_bytes: body.media_bytes || null,
     scheduled_at: scheduledAt,
+    group_id: choice.group_id,
+    has_affiliate_link: choice.hasAffiliateLink,
     status: wantsSchedule ? 'scheduled' : 'draft',
     updated_at: new Date().toISOString(),
   };
@@ -220,3 +233,4 @@ function bad(message) {
 }
 
 module.exports.jstToUtc = jstToUtc;
+module.exports.nameOf = nameOf;
