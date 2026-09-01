@@ -6,7 +6,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/app.test.js && node test/cloud.test.js"
+    "test": "node test/app.test.js && node test/cloud.test.js && node test/draft.test.js"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }
