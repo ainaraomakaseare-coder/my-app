@@ -190,6 +190,44 @@ const post = (over) => Object.assign({
     assert.ok(at('schema_v4_handoff.sql') < at('schema_v5_per_network.sql'), 'v4 と v5 の順が逆');
   });
 
+  // ---------------------------------------------------------------- まとめて仕込む
+  await check('ネタは20本そろっていて、重複が無い', () => {
+    const t = require('../public/topics.json').topics;
+    assert.strictEqual(t.length, 20);
+    assert.strictEqual(new Set(t.map((x) => x.title)).size, 20, '同じネタが混じっている');
+    assert.strictEqual(new Set(t.map((x) => x.id)).size, 20);
+    for (const x of t) {
+      assert.ok(x.title && x.title.trim(), 'タイトルが空');
+      assert.ok(['calm', 'plain', 'alert'].includes(x.tone), x.id + ' の tone が変');
+    }
+  });
+
+  // ★ 予定日時の足し算。画面の bulkWhen と同じ式をここでも通す。
+  //   ブラウザの地域設定で1日ずれるのを避けるため UTC の上で数える。
+  await check('n本目の予定日時が、日をまたいでも正しく出る', () => {
+    const bulkWhen = (startDate, time, index, every) => {
+      const [y, m, d] = startDate.split('-').map(Number);
+      const at = new Date(Date.UTC(y, m - 1, d));
+      at.setUTCDate(at.getUTCDate() + index * every);
+      return at.toISOString().slice(0, 10) + 'T' + time;
+    };
+    assert.strictEqual(bulkWhen('2026-09-03', '21:00', 0, 1), '2026-09-03T21:00');
+    assert.strictEqual(bulkWhen('2026-09-03', '21:00', 19, 1), '2026-09-22T21:00');
+    // 月をまたぐ
+    assert.strictEqual(bulkWhen('2026-09-28', '21:00', 5, 1), '2026-10-03T21:00');
+    // 2日おき
+    assert.strictEqual(bulkWhen('2026-09-03', '21:00', 3, 2), '2026-09-09T21:00');
+    // うるう年
+    assert.strictEqual(bulkWhen('2028-02-28', '21:00', 1, 1), '2028-02-29T21:00');
+  });
+
+  // ★ 21時ちょうどの予約が、UTC の12時として保存されること。
+  await check('21時の予約は、UTCの12時として保存される', () => {
+    delete require.cache[require.resolve('../api/posts.js')];
+    const posts = require('../api/posts.js');
+    assert.strictEqual(posts.jstToUtc('2026-09-03T21:00'), '2026-09-03T12:00:00.000Z');
+  });
+
   // ---------------------------------------------------------------- 保存の入り口
   const fakeRes = () => ({
     code: null, body: null,
@@ -245,7 +283,8 @@ const post = (over) => Object.assign({
     const res = fakeRes();
     await handler({
       method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
-      body: body({ status: 'scheduled', scheduled_at_jst: '2026-09-10T20:00', group_id: 'g3' }),
+      body: body({ status: 'scheduled', scheduled_at_jst: '2026-09-10T20:00', group_id: 'g3',
+                   targets: ['instagram'] }),
     }, res);
     assert.strictEqual(res.code, 400);
     assert.ok(/即公開/.test(res.body.error), res.body.error);
@@ -264,17 +303,31 @@ const post = (over) => Object.assign({
     assert.deepStrictEqual(targets, [['instagram', 'queued'], ['tiktok', 'queued']]);
   });
 
-  await check('同じ運用アカウントでも、X を足した予約は断る', async () => {
-    const { handler } = loadPosts(stateAffi);
+  // ★ 「Instagram は21時に出す、X は画像を手で出す」は正しい組み合わせ。
+  //   混ざっているだけで断ると、その運用ができなくなる。
+  await check('X が混ざっていても予約でき、X だけ手渡しになる', async () => {
+    const { handler, wrote } = loadPosts(stateAffi);
     const res = fakeRes();
     await handler({
       method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
       body: body({ status: 'scheduled', scheduled_at_jst: '2026-09-10T20:00',
                    targets: ['instagram', 'x'] }),
     }, res);
+    assert.strictEqual(res.code, 200, JSON.stringify(res.body));
+    const targets = wrote.filter((w) => w[0] === 'post_targets').map((w) => [w[2].network, w[2].status]);
+    assert.deepStrictEqual(targets, [['instagram', 'queued'], ['x', 'manual']]);
+  });
+
+  // ★ 全部が手渡しなら、予約しても何も出ない。それは断る。
+  await check('手渡しだけの予約は断る', async () => {
+    const { handler } = loadPosts(stateAffi);
+    const res = fakeRes();
+    await handler({
+      method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
+      body: body({ status: 'scheduled', scheduled_at_jst: '2026-09-10T20:00', targets: ['x'] }),
+    }, res);
     assert.strictEqual(res.code, 400);
-    assert.ok(/X（アフィリ用）/.test(res.body.error), res.body.error);
-    assert.ok(!/Instagram/.test(res.body.error), 'Instagram まで断っている');
+    assert.ok(/即公開/.test(res.body.error), res.body.error);
   });
 
   await check('下書きとしてなら保存でき、Instagram の行は手渡しで作られる', async () => {

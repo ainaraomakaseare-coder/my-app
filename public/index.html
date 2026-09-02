@@ -228,6 +228,49 @@
       <div class="muted" id="progress"></div>
     </div>
 
+    <!-- まとめて仕込む -->
+    <div class="card">
+      <h2>まとめて仕込む</h2>
+      <div class="muted">ネタを並べておくと、1本ずつ「文案 → 動画 → 予約」まで通しで作ります。
+        20本入れておけば、20日ぶんが一度に仕込めます。
+        <strong>動画はこのブラウザの中で作るので、終わるまでこの画面を開いたままにしてください。</strong>
+        1本あたり40秒ほど、20本で15分前後かかります。</div>
+
+      <label for="bulkTopics">ネタ（1行に1つ）</label>
+      <textarea id="bulkTopics" style="min-height:180px" placeholder="読み込み中…"></textarea>
+
+      <div class="row" style="margin-top:12px;align-items:flex-end">
+        <div style="flex:1;min-width:180px">
+          <label for="bulkStart">1本目の日付</label>
+          <input type="date" id="bulkStart">
+        </div>
+        <div style="flex:1;min-width:120px">
+          <label for="bulkTime">毎日の時刻</label>
+          <input type="time" id="bulkTime" value="21:00">
+        </div>
+        <div style="flex:1;min-width:120px">
+          <label for="bulkEvery">何日おき</label>
+          <input type="number" id="bulkEvery" value="1" min="1" max="14">
+        </div>
+      </div>
+
+      <label>投稿先</label>
+      <div class="targets" id="bulkTargets"></div>
+
+      <label style="margin-top:12px">
+        <input type="checkbox" id="bulkAffi"> この束は案件リンクを含む（PR表記を入れます）
+      </label>
+
+      <div class="row" style="margin-top:12px">
+        <button id="bulkRun" class="primary">仕込む</button>
+        <button id="bulkStop" class="hide">中止</button>
+        <span class="muted" id="bulkState"></span>
+        <span class="err" id="bulkErr"></span>
+      </div>
+
+      <div id="bulkLog" style="margin-top:12px"></div>
+    </div>
+
     <!-- 受け渡し -->
     <div class="card">
       <h2>受け渡し（投稿手前まで）</h2>
@@ -291,7 +334,9 @@ async function boot() {
   const { loggedIn } = await api('/api/login');
   $('login').classList.toggle('hide', loggedIn);
   $('app').classList.toggle('hide', !loggedIn);
-  if (loggedIn) { tickClock(); showConnectResult(); loadGroups(); loadConn(); loadPosts(); }
+  if (loggedIn) {
+    tickClock(); showConnectResult(); loadGroups(); loadConn(); loadPosts(); loadTopics();
+  }
 }
 
 $('loginBtn').onclick = async () => {
@@ -756,9 +801,13 @@ function renderConn() {
   $('conn').appendChild(add);
 }
 
-/** 投稿先の選択肢を、繋いだアカウントから作る。 */
+/** 投稿先の選択肢を、繋いだアカウントから作る。単発の欄と束の欄の両方。 */
 function renderTargets() {
-  const box = $('targets');
+  for (const id of ['targets', 'bulkTargets']) fillTargets($(id));
+}
+
+function fillTargets(box) {
+  if (!box) return;
   const list = visibleAccounts();
   if (!list.length) {
     box.innerHTML = '<span class="muted">連携設定でアカウントを繋ぐと、ここに出ます</span>';
@@ -902,39 +951,50 @@ async function drawPreview(d) {
  * （このアプリが元々そうしているのと同じ経路）。
  * 実時間で1回再生しながら録るので16.8秒かかる。
  */
+/**
+ * 動画を作って置き場へ送る。単発でも束でも同じ道を通す。
+ *
+ * ★ 動画はブラウザの中で作る。サーバーには ffmpeg が無く、
+ *   Vercel は1リクエスト4.5MBまでしか受け取れないため。
+ *   置き場へは許可証をもらってブラウザから直接送る。
+ */
+async function renderAndUpload(draft, onProgress) {
+  await Reel.ensureFont();
+  const { blob, ext, mime } = await Reel.record(draft, onProgress);
+
+  if (ext !== 'mp4') {
+    throw new Error('このブラウザは mp4 で書き出せません（' + ext + ' になりました）。'
+      + 'Chrome か Edge でお試しください。');
+  }
+  const type = 'video/mp4';
+
+  const permit = await api('/api/upload-url', {
+    method: 'POST', body: { contentType: type, size: blob.size },
+  });
+  const put = await fetch(permit.uploadUrl, {
+    method: 'PUT', body: blob, headers: { 'Content-Type': type, 'x-upsert': 'true' },
+  });
+  if (!put.ok) throw new Error('アップロードに失敗しました（' + put.status + '）');
+
+  return { path: permit.path, kind: permit.kind, bytes: blob.size, mime };
+}
+
 async function makeVideo(d) {
   const btn = $('genMake');
   $('genMakeErr').textContent = '';
   btn.disabled = true;
   try {
-    await Reel.ensureFont();
     $('genMakeState').textContent = '動画を作っています… 0%';
-    const { blob, ext, mime } = await Reel.record(d, (r) => {
+    const up = await renderAndUpload(d, (r) => {
       $('genMakeState').textContent = '動画を作っています… ' + Math.round(r * 100) + '%';
     });
-
-    const type = ext === 'mp4' ? 'video/mp4' : 'video/webm';
-    if (ext !== 'mp4') {
-      throw new Error('このブラウザは mp4 で書き出せません（' + ext + ' になりました）。'
-        + 'Chrome か Edge でお試しください。');
-    }
-
-    $('genMakeState').textContent = 'アップロード中…';
-    const permit = await api('/api/upload-url', {
-      method: 'POST', body: { contentType: type, size: blob.size },
-    });
-    const put = await fetch(permit.uploadUrl, {
-      method: 'PUT', body: blob, headers: { 'Content-Type': type, 'x-upsert': 'true' },
-    });
-    if (!put.ok) throw new Error('アップロードに失敗しました（' + put.status + '）');
-
-    uploaded = { path: permit.path, kind: permit.kind, bytes: blob.size };
+    uploaded = { path: up.path, kind: up.kind, bytes: up.bytes };
     applyGenerated(d);
-    const mb = (blob.size / 1024 / 1024).toFixed(1);
+    const mb = (up.bytes / 1024 / 1024).toFixed(1);
     // H.264 で録れたかどうかは形式名で分かる。そうでないと SNS 側に弾かれることがある。
-    const h264 = mime.indexOf('avc1') >= 0;
+    const h264 = up.mime.indexOf('avc1') >= 0;
     $('fileInfo').innerHTML = `✅ 動画を作って添えました（${mb}MB・16.8秒）`
-      + (h264 ? '' : '<br><span class="err">⚠️ H.264 で録れていません（' + mime + '）。'
+      + (h264 ? '' : '<br><span class="err">⚠️ H.264 で録れていません（' + up.mime + '）。'
         + 'SNS 側で受け付けられない場合があります。Chrome か Edge でお試しください。</span>');
     $('genMakeState').textContent = '';
   } catch (e) {
@@ -1165,6 +1225,161 @@ function safeFileName(title) {
   const s = String(title || '').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40).replace(/^_+|_+$/g, '');
   return s || 'post';
 }
+
+// --------------------------------------------------------------- まとめて仕込む
+/**
+ * ネタを並べて、1本ずつ「文案 → 動画 → 予約」まで通す。
+ *
+ * ★ 動画はブラウザの中で実時間（16.8秒）で録る。だから束にしても速くならず、
+ *   20本で15分ほどかかる。画面を閉じると止まる。
+ *   それでも一度やれば20日ぶんが仕込めるので、毎日触らずに済む。
+ *
+ * ★ 点検に引っかかったものは予約しない。
+ *   嘘の混じった文章が時間になって勝手に出てしまうのが、いちばんまずい。
+ *   下書きとして残し、指摘を添えて人に回す。
+ */
+let bulkAbort = false;
+
+async function loadTopics() {
+  try {
+    const res = await fetch('/topics.json');
+    const json = await res.json();
+    const lines = (json.topics || []).map((t) => t.title).join('\n');
+    if (lines && !$('bulkTopics').value) $('bulkTopics').value = lines;
+    $('bulkTopics').placeholder = 'ネタを1行に1つ';
+  } catch (_) {
+    $('bulkTopics').placeholder = 'ネタを1行に1つ';
+  }
+  // 既定は今日から。日本時間で数える。
+  if (!$('bulkStart').value) {
+    $('bulkStart').value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  }
+}
+
+/**
+ * n本目の予定日時。「2026-09-03T21:00」の形で返す。
+ *
+ * ★ 日付の足し算は UTC の上でやる。ブラウザの地域設定で
+ *   1日ずれるのを避けるため。時刻は文字列のまま渡し、
+ *   サーバーが日本時間として解釈する（jstToUtc）。
+ */
+function bulkWhen(startDate, time, index, every) {
+  const [y, m, d] = startDate.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  at.setUTCDate(at.getUTCDate() + index * every);
+  return at.toISOString().slice(0, 10) + 'T' + time;
+}
+
+function bulkRow(n, total, topic) {
+  const el = document.createElement('div');
+  el.style.cssText = 'padding:6px 0;border-top:1px solid var(--line);font-size:13px';
+  el.innerHTML = `<strong>${n}/${total}</strong> ${escapeHtml(topic)}
+    <span class="muted" data-state>…</span>
+    <div data-note></div>`;
+  $('bulkLog').appendChild(el);
+  return {
+    say(text, cls) {
+      const t = el.querySelector('[data-state]');
+      t.textContent = ' — ' + text;
+      t.className = cls || 'muted';
+    },
+    note(html) { el.querySelector('[data-note]').innerHTML = html; },
+  };
+}
+
+$('bulkRun').onclick = async () => {
+  $('bulkErr').textContent = '';
+  $('bulkLog').innerHTML = '';
+
+  const topics = $('bulkTopics').value.split('\n').map((t) => t.trim()).filter(Boolean);
+  const targets = [...document.querySelectorAll('#bulkTargets input:checked')].map((c) => c.value);
+  const start = $('bulkStart').value;
+  const time = $('bulkTime').value;
+  const every = Math.max(1, parseInt($('bulkEvery').value, 10) || 1);
+  const affi = $('bulkAffi').checked;
+
+  if (!topics.length) { $('bulkErr').textContent = 'ネタを1つ以上入れてください。'; return; }
+  if (!start || !time) { $('bulkErr').textContent = '日付と時刻を入れてください。'; return; }
+  if (!targets.length) { $('bulkErr').textContent = '投稿先を1つ以上選んでください。'; return; }
+
+  bulkAbort = false;
+  $('bulkRun').disabled = true;
+  $('bulkStop').classList.remove('hide');
+
+  let done = 0, held = 0, failed = 0;
+
+  for (let i = 0; i < topics.length; i++) {
+    if (bulkAbort) break;
+    const when = bulkWhen(start, time, i, every);
+    const row = bulkRow(i + 1, topics.length, topics[i]);
+    $('bulkState').textContent = `${i + 1} / ${topics.length} 本目`;
+
+    try {
+      row.say('文案を書いています…');
+      const out = await api('/api/generate', {
+        method: 'POST',
+        body: { title: topics[i], group_id: currentGroup, has_affiliate_link: affi },
+      });
+      if (!out.draft) throw new Error('文案が作れませんでした。');
+
+      if (out.findings && out.findings.length) {
+        row.note('<ul class="findings">' + out.findings.map((f) =>
+          `<li class="${f.severity === 'error' ? 'bad' : 'warn'}">[${escapeHtml(f.field)}] ${escapeHtml(f.message)}</li>`
+        ).join('') + '</ul>');
+      }
+
+      row.say('動画を作っています… 0%');
+      const up = await renderAndUpload(out.draft, (r) => {
+        row.say('動画を作っています… ' + Math.round(r * 100) + '%');
+      });
+
+      // ★ 点検に通らなかったものは予約しない。下書きで止めて人に回す。
+      const ok = out.ok !== false;
+      row.say(ok ? '保存しています…' : '下書きとして保存しています…');
+
+      const d = out.draft;
+      await api('/api/posts', {
+        method: 'POST',
+        body: {
+          status: ok ? 'scheduled' : 'draft',
+          title: d.title,
+          body_common: '',
+          ig_caption: d.igCaption,
+          yt_title: d.title,
+          yt_description: d.igCaption,
+          x_text: d.xText,
+          tt_caption: d.ttCaption,
+          scheduled_at_jst: ok ? when : '',
+          group_id: currentGroup,
+          has_affiliate_link: affi,
+          draft: d,
+          media_path: up.path,
+          media_kind: up.kind,
+          media_bytes: up.bytes,
+          targets,
+        },
+      });
+
+      if (ok) { done++; row.say('✅ ' + when.replace('T', ' ') + ' に予約', 'muted'); }
+      else { held++; row.say('⚠️ 点検に引っかかったので下書きにしました（要確認）', 'err'); }
+    } catch (e) {
+      failed++;
+      row.say('✗ ' + e.message + (e.hint ? '｜' + e.hint : ''), 'err');
+    }
+  }
+
+  $('bulkRun').disabled = false;
+  $('bulkStop').classList.add('hide');
+  $('bulkState').textContent =
+    `おわり — 予約 ${done} 本` + (held ? ` / 要確認 ${held} 本` : '') +
+    (failed ? ` / 失敗 ${failed} 本` : '') + (bulkAbort ? '（中止しました）' : '');
+  loadPosts();
+};
+
+$('bulkStop').onclick = () => {
+  bulkAbort = true;
+  $('bulkState').textContent = 'この1本が終わったら止めます…';
+};
 
 // --------------------------------------------------------------- 一覧
 async function loadPosts() {
