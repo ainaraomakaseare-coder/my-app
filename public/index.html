@@ -26,14 +26,22 @@
   .side{position:sticky;top:16px;display:flex;flex-direction:column;gap:2px}
   .side .grp{font-size:11px;color:var(--muted);margin:16px 0 4px;letter-spacing:.06em}
   .side .grp:first-child{margin-top:0}
+  /* 長い運用アカウント名は折り返す。# と数字は1行目にそろえる。 */
   .side button{text-align:left;border:none;background:none;padding:8px 10px;border-radius:8px;
-    font:inherit;font-size:14px;color:var(--ink);cursor:pointer;
-    display:flex;align-items:center;gap:8px;width:100%}
+    font:inherit;font-size:14px;color:var(--ink);cursor:pointer;line-height:1.45;
+    display:flex;align-items:flex-start;gap:6px;width:100%}
   .side button:hover{background:var(--card)}
   .side button[aria-current="page"]{background:#111;color:#fff;font-weight:600}
-  .side .n{margin-left:auto;font-size:11px;background:var(--warn);color:#fff;
+  .side .n{margin-left:auto;flex:none;font-size:11px;background:var(--warn);color:#fff;
     border-radius:999px;padding:1px 7px;min-width:20px;text-align:center}
   .side button[aria-current="page"] .n{background:#fff;color:#111}
+  .side .ch::before{content:'#';color:var(--muted);font-weight:400;flex:none}
+  .side .ch{flex-wrap:nowrap}
+  .side .ch .t{min-width:0}
+  .side button[aria-current="page"].ch::before{color:#fff}
+  .side .sep{height:1px;background:var(--line);margin:14px 0 8px}
+  .side button.quiet{color:var(--muted);font-size:13px}
+  #viewTabs{margin-bottom:14px}
   @media (max-width:760px){
     .shell{grid-template-columns:1fr}
     .side{position:static;flex-direction:row;overflow-x:auto;gap:6px;
@@ -125,23 +133,25 @@
       <button id="logoutBtn">出る</button>
     </header>
 
-    <div class="tabs hide" id="groupTabs"></div>
     <div id="connectedMsg" class="notice hide"></div>
 
     <div class="shell">
+      <!-- 左は運用アカウント（＝チャンネル）。中の機能は上のタブで切り替える。 -->
       <nav class="side" id="side">
-        <div class="grp">つくる</div>
-        <button data-view="bulk">まとめて仕込む</button>
-        <button data-view="one">1本だけつくる</button>
-        <div class="grp">出す</div>
-        <button data-view="handoff">受け渡し</button>
-        <button data-view="list">投稿一覧</button>
-        <div class="grp">設定</div>
-        <button data-view="groups">運用アカウント</button>
-        <button data-view="conn">連携設定</button>
+        <div class="grp">運用アカウント</div>
+        <div id="channels" class="muted" style="padding:8px 10px">確認中…</div>
+        <div class="sep"></div>
+        <button data-view="groups" class="quiet">運用アカウントの管理</button>
       </nav>
 
       <div class="main">
+        <div class="tabs" id="viewTabs">
+          <button data-view="list">投稿一覧</button>
+          <button data-view="bulk">まとめて仕込む</button>
+          <button data-view="one">1本だけつくる</button>
+          <button data-view="handoff">受け渡し</button>
+          <button data-view="conn">連携設定</button>
+        </div>
 
       <div class="view hide" id="v-bulk">
     <!-- まとめて仕込む -->
@@ -387,7 +397,8 @@ async function boot() {
   $('login').classList.toggle('hide', loggedIn);
   $('app').classList.toggle('hide', !loggedIn);
   if (loggedIn) {
-    showView(firstView());
+    // 運用アカウントを読むまでチャンネルは決まらないので、機能だけ先に出す。
+    showView(restore());
     tickClock(); showConnectResult(); loadGroups(); loadConn(); loadPosts(); loadTopics();
   }
 }
@@ -524,27 +535,6 @@ function visibleAccounts() {
   return accounts.filter((a) => !a.group_id || a.group_id === currentGroup);
 }
 
-function renderGroupTabs() {
-  const box = $('groupTabs');
-  box.classList.toggle('hide', groups.length < 2);
-  if (groups.length < 2) { currentGroup = groups.length ? groups[0].id : null; return; }
-  if (!groups.some((g) => g.id === currentGroup)) currentGroup = groups[0].id;
-
-  box.innerHTML = '';
-  for (const g of groups) {
-    const b = document.createElement('button');
-    b.textContent = g.label;
-    b.className = g.id === currentGroup ? 'on' : '';
-    b.onclick = () => {
-      currentGroup = g.id;
-      renderGroupTabs();
-      renderConn();
-      renderTargets();
-      loadPosts();
-    };
-    box.appendChild(b);
-  }
-}
 
 // --------------------------------------------------------------- 運用アカウント
 
@@ -567,7 +557,11 @@ async function loadGroups() {
     fillProfileSelect($('gProfile'));
     if (!$('gAuto').children.length) fillAutoNetworks($('gAuto'), []);
     renderGroups();
-    renderGroupTabs();
+    renderChannels();
+    // ★ ここまで来て初めて、URL に書かれたチャンネル名を id に引き当てられる。
+    //   起動時点では運用アカウントを知らないので、読み終えてから当てにいく。
+    applyHash();
+    writeHash(false);
     renderConn();
     renderTargets();
   } catch (e) {
@@ -1448,46 +1442,137 @@ $('bulkStop').onclick = () => {
 
 // --------------------------------------------------------------- 画面の切り替え
 /**
- * Slack のように、左で選んで右に出す。
+ * Slack と同じ形。左が運用アカウント（チャンネル）、上がその中の機能。
+ *
+ * ★ ひろやの企画と、転職の案件は、別々の運用。
+ *   点検の型も投稿先も違うので、混ぜて並べると事故のもとになる。
+ *   まず「どちらの運用にいるか」を選ぶ形にする。
  *
  * ★ 別ページ（別のHTML）にはしない。
  *   ログイン・API呼び出し・いま選んでいる運用アカウントを、
  *   ページごとに持ち直すことになるため。1枚のまま出し分ける。
  *
- * ★ URL に残す（#bulk など）。
- *   戻るボタンが効き、開きっぱなしのタブを閉じても同じ場所に戻れる。
- *   別ページにしたときの利点は、こうすればだいたい手に入る。
+ * ★ URL は「#運用アカウント名/機能」。
+ *   直接開けて、戻るボタンも効く。名前が変わっていたら先頭の運用に落とす。
  */
-const VIEWS = ['bulk', 'one', 'handoff', 'list', 'groups', 'conn'];
-const VIEW_KEY = 'td_view';
+const VIEWS = ['list', 'bulk', 'one', 'handoff', 'conn', 'groups'];
+
+/** 運用アカウントごとに切り替わらない画面。チャンネルの外側にある。 */
+const GLOBAL_VIEWS = ['groups'];
+
+let currentView = 'list';
 
 function showView(name, push) {
-  const view = VIEWS.includes(name) ? name : 'list';
-  for (const v of VIEWS) $('v-' + v).classList.toggle('hide', v !== view);
-  for (const b of document.querySelectorAll('#side button')) {
-    if (b.dataset.view === view) b.setAttribute('aria-current', 'page');
+  currentView = VIEWS.includes(name) ? name : 'list';
+  for (const v of VIEWS) $('v-' + v).classList.toggle('hide', v !== currentView);
+
+  // 運用アカウントの管理だけは、どのチャンネルにも属さない。上のタブを隠す。
+  $('viewTabs').classList.toggle('hide', GLOBAL_VIEWS.includes(currentView));
+
+  for (const b of document.querySelectorAll('#viewTabs button, #side button[data-view]')) {
+    b.classList.toggle('on', b.dataset.view === currentView);
+    if (b.dataset.view === currentView) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   }
-  try { localStorage.setItem(VIEW_KEY, view); } catch (_) { /* 使えなくても困らない */ }
-
-  // ★ 人が選んだときだけ履歴に積む。戻るボタンで前の画面へ戻れるようにするため。
-  //   起動時や、戻ってきたときに積むと履歴が二重になる。
-  if (location.hash.slice(1) !== view) {
-    if (push) history.pushState(null, '', '#' + view);
-    else history.replaceState(null, '', '#' + view);
-  }
+  try { localStorage.setItem(VIEW_KEY, currentView); } catch (_) { /* 使えなくても困らない */ }
+  writeHash(push);
   window.scrollTo({ top: 0 });
 }
 
-for (const b of document.querySelectorAll('#side button')) {
+/**
+ * チャンネルを選ぶ。中で見ていた機能はそのまま持ち越す。
+ *
+ * ★ view を渡せるようにしてある。
+ *   運用アカウントの管理（チャンネルの外）からチャンネルへ移るとき、
+ *   持ち越す先が無いので投稿一覧に落とす。ただし URL が機能まで指していたら
+ *   そちらが優先。ここを一律で投稿一覧にすると、
+ *   「#転職のホンネ/受け渡し」を開いても投稿一覧が出てしまう。
+ */
+function selectGroup(id, push, view) {
+  currentGroup = id;
+  const next = view || currentView;
+  currentView = GLOBAL_VIEWS.includes(next) ? 'list' : next;
+  renderChannels();
+  showView(currentView, push);
+  renderConn();
+  renderTargets();
+  loadPosts();
+}
+
+function groupLabel(id) {
+  const g = groups.find((x) => x.id === id);
+  return g ? g.label : '';
+}
+
+function writeHash(push) {
+  const label = groupLabel(currentGroup);
+  const want = '#' + (label ? encodeURIComponent(label) + '/' : '') + currentView;
+  if (location.hash === want) return;
+  if (push) history.pushState(null, '', want);
+  else history.replaceState(null, '', want);
+}
+
+/** URL から「どのチャンネルの、どの機能か」を読む。 */
+function readHash() {
+  const raw = decodeURIComponent(location.hash.slice(1));
+  const at = raw.lastIndexOf('/');
+  const view = at < 0 ? raw : raw.slice(at + 1);
+  const label = at < 0 ? '' : raw.slice(0, at);
+  const g = groups.find((x) => x.label === label);
+  return { view: VIEWS.includes(view) ? view : null, groupId: g ? g.id : null };
+}
+
+function applyHash() {
+  const { view, groupId } = readHash();
+  if (groupId && groupId !== currentGroup) { selectGroup(groupId, false, view); return; }
+  if (view && view !== currentView) showView(view, false);
+}
+window.addEventListener('hashchange', applyHash);
+
+/**
+ * 左のチャンネル一覧。
+ * 運用アカウントがまだ無いときは、作るところへ案内する。
+ */
+function renderChannels() {
+  const box = $('channels');
+  box.innerHTML = '';
+  box.className = '';
+  box.style.padding = '';
+
+  if (!groups.length) {
+    box.className = 'muted';
+    box.style.padding = '8px 10px';
+    box.textContent = 'まだありません。下の「運用アカウントの管理」から作ってください。';
+    currentGroup = null;
+    return;
+  }
+  if (!groups.some((g) => g.id === currentGroup)) currentGroup = groups[0].id;
+
+  for (const g of groups) {
+    const b = document.createElement('button');
+    b.className = 'ch';
+    const t = document.createElement('span');
+    t.className = 't';
+    t.textContent = g.label;
+    b.appendChild(t);
+    b.dataset.group = g.id;
+    if (g.id === currentGroup) b.setAttribute('aria-current', 'page');
+    b.onclick = () => selectGroup(g.id, true);
+    box.appendChild(b);
+  }
+}
+
+for (const b of document.querySelectorAll('#viewTabs button, #side button[data-view]')) {
   b.onclick = () => showView(b.dataset.view, true);
 }
-window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
 
 /** 最初にどこを出すか。URL → 前回の続き → 投稿一覧。 */
-function firstView() {
-  const fromHash = location.hash.slice(1);
-  if (VIEWS.includes(fromHash)) return fromHash;
+const VIEW_KEY = 'td_view';
+
+function restore() {
+  const { view, groupId } = readHash();
+  if (groupId) currentGroup = groupId;
+  if (view) return view;
   try {
     const saved = localStorage.getItem(VIEW_KEY);
     if (VIEWS.includes(saved)) return saved;
@@ -1495,9 +1580,9 @@ function firstView() {
   return 'list';
 }
 
-/** 左の数字。手が要るものの数を出す。 */
-function setBadge(view, n) {
-  const b = document.querySelector(`#side button[data-view="${view}"]`);
+/** 左のチャンネルに出す数字。手が要るものの数。 */
+function setChannelBadge(groupId, n) {
+  const b = document.querySelector(`#channels button[data-group="${groupId}"]`);
   if (!b) return;
   let tag = b.querySelector('.n');
   if (!n) { if (tag) tag.remove(); return; }
@@ -1510,14 +1595,20 @@ async function loadPosts() {
   try {
     const { posts, accounts: fresh, groups: gs } = await api('/api/posts');
     if (fresh) accounts = fresh;
-    if (gs) { groups = gs; renderGroupTabs(); renderTargets(); renderGroups(); }
+    if (gs) { groups = gs; renderChannels(); renderTargets(); renderGroups(); }
     renderHandoff(posts);
     const shown = currentGroup ? posts.filter((p) => !p.group_id || p.group_id === currentGroup) : posts;
 
-    // 手が要るものだけ数える。受け渡し待ちの下書きと、失敗した投稿。
-    setBadge('handoff', shown.filter((p) => p.status === 'draft' &&
-      (p.handoff || []).some((h) => h.mode === 'hand' && h.status !== 'handed')).length);
-    setBadge('list', shown.filter((p) => p.status === 'failed' || p.status === 'partial').length);
+    // 手が要るものを、チャンネルごとに数える。
+    // 受け渡し待ちの下書きと、失敗した投稿。見ていない運用の分も出したいので
+    // shown ではなく posts 全部から数える。
+    for (const g of groups) {
+      const mine = posts.filter((p) => p.group_id === g.id);
+      setChannelBadge(g.id,
+        mine.filter((p) => p.status === 'failed' || p.status === 'partial').length +
+        mine.filter((p) => p.status === 'draft' &&
+          (p.handoff || []).some((h) => h.mode === 'hand' && h.status !== 'handed')).length);
+    }
     $('list').innerHTML = shown.length ? '' : '<p class="muted">まだ投稿がありません。</p>';
     for (const p of shown) $('list').appendChild(render(p));
   } catch (e) {
