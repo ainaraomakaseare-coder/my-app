@@ -15,10 +15,17 @@ async function check(name, fn) {
   catch (err) { results.push(['NG', name + ' → ' + err.message]); }
 }
 
-const G_AFFI = { id: 'g1', label: '転職キュレーション', validation_profile: 'curator', auto_publish: false };
-const G_HIRO = { id: 'g2', label: 'ひろや', validation_profile: 'personal', auto_publish: true };
+// 案件側。Instagram は自動投稿してよい。X は課金され、A8の掲載対象外なので手渡し。
+const G_AFFI = { id: 'g1', label: '転職キュレーション', validation_profile: 'curator',
+                 auto_publish_networks: ['instagram'] };
+// 何も許していない運用ライン（作った直後の状態）
+const G_STOP = { id: 'g3', label: '止める', validation_profile: 'curator',
+                 auto_publish_networks: [] };
+const G_HIRO = { id: 'g2', label: 'ひろや', validation_profile: 'personal',
+                 auto_publish_networks: ['instagram', 'x'] };
 
-const acct = (network, id) => ({ id: id || network, network, label: 'アフィリ用', group_id: 'g1' });
+const acct = (network, id, group) =>
+  ({ id: id || network, network, label: 'アフィリ用', group_id: group || 'g1' });
 
 const post = (over) => Object.assign({
   id: 'p1',
@@ -43,16 +50,22 @@ const post = (over) => Object.assign({
     assert.ok(!handoff.isPublishing('youtube'));
   });
 
-  // ★ ここが本丸。案件側では公開系を順番待ちに入れない。
-  await check('自動投稿しない運用アカウントでは、Instagram と X は手渡しになる', () => {
-    assert.strictEqual(handoff.statusForTarget(G_AFFI, 'instagram'), 'manual');
+  // ★ ここが本丸。許していないSNSは順番待ちに入れない。
+  await check('何も許していない運用アカウントでは、Instagram と X は手渡しになる', () => {
+    assert.strictEqual(handoff.statusForTarget(G_STOP, 'instagram'), 'manual');
+    assert.strictEqual(handoff.statusForTarget(G_STOP, 'x'), 'manual');
+  });
+
+  // ★ Instagram だけ許す、が言えることが今回の要点。
+  await check('Instagram だけ許した運用アカウントでは、X は手渡しのまま', () => {
+    assert.strictEqual(handoff.statusForTarget(G_AFFI, 'instagram'), 'queued');
     assert.strictEqual(handoff.statusForTarget(G_AFFI, 'x'), 'manual');
   });
 
-  await check('自動投稿しない設定でも、TikTok と YouTube は順番待ちに入る', () => {
+  await check('何も許していなくても、TikTok と YouTube は順番待ちに入る', () => {
     // この2つは下書き・非公開までしか進まないので、送ってよい。
-    assert.strictEqual(handoff.statusForTarget(G_AFFI, 'tiktok'), 'queued');
-    assert.strictEqual(handoff.statusForTarget(G_AFFI, 'youtube'), 'queued');
+    assert.strictEqual(handoff.statusForTarget(G_STOP, 'tiktok'), 'queued');
+    assert.strictEqual(handoff.statusForTarget(G_STOP, 'youtube'), 'queued');
   });
 
   await check('いままでどおりの運用アカウントは、全部そのまま順番待ちに入る', () => {
@@ -64,22 +77,24 @@ const post = (over) => Object.assign({
   // ★ 列を足した直後や、旧データを壊さないための既定。
   await check('運用アカウントが分からないときは、いままでどおり通す', () => {
     assert.strictEqual(handoff.statusForTarget(null, 'instagram'), 'queued');
-    assert.strictEqual(handoff.statusForTarget({ id: 'g3' }, 'instagram'), 'queued');
-    assert.ok(handoff.autoPublishes(null));
-    assert.ok(handoff.autoPublishes({}));
-    assert.ok(!handoff.autoPublishes(G_AFFI));
+    assert.strictEqual(handoff.statusForTarget({ id: 'g9' }, 'instagram'), 'queued');
+    assert.ok(handoff.autoPublishesTo(null, 'x'));
+    assert.ok(handoff.autoPublishesTo({}, 'x'));
+    assert.ok(handoff.autoPublishesTo(G_AFFI, 'instagram'));
+    assert.ok(!handoff.autoPublishesTo(G_AFFI, 'x'));
   });
 
   await check('予約できない投稿先だけを挙げる', () => {
     const chosen = [acct('instagram'), acct('tiktok'), acct('x')];
-    assert.deepStrictEqual(
-      handoff.manualOnly(G_AFFI, chosen).map((a) => a.network), ['instagram', 'x']);
+    assert.deepStrictEqual(handoff.manualOnly(G_STOP, chosen).map((a) => a.network),
+                           ['instagram', 'x']);
+    assert.deepStrictEqual(handoff.manualOnly(G_AFFI, chosen).map((a) => a.network), ['x']);
     assert.deepStrictEqual(handoff.manualOnly(G_HIRO, chosen), []);
   });
 
   // ---------------------------------------------------------------- 手順
-  await check('案件側の Instagram は「手渡し」で、動画と本文を渡す', () => {
-    const [h] = handoff.planFor(post(), [acct('instagram')], G_AFFI, []);
+  await check('許していない Instagram は「手渡し」で、動画と本文を渡す', () => {
+    const [h] = handoff.planFor(post(), [acct('instagram')], G_STOP, []);
     assert.strictEqual(h.mode, 'hand');
     assert.deepStrictEqual(h.needs.map((n) => n.key), ['video', 'igCaption']);
     assert.ok(h.needs.every((n) => n.ready));
@@ -97,14 +112,21 @@ const post = (over) => Object.assign({
     assert.ok(/下書き/.test(h.stops));
   });
 
-  await check('自動投稿する運用アカウントでは、Instagram は手渡しではないと分かる', () => {
-    const [h] = handoff.planFor(post(), [acct('instagram')], G_HIRO, []);
+  await check('許した Instagram は手渡しではないと分かる', () => {
+    const [h] = handoff.planFor(post(), [acct('instagram')], G_AFFI, []);
     assert.strictEqual(h.mode, 'api-publish');
+  });
+
+  // ★ 同じ運用アカウントの中で、Instagram と X の扱いが分かれること。
+  await check('同じ運用アカウントでも、X は手渡しのまま出る', () => {
+    const plan = handoff.planFor(post(), [acct('instagram'), acct('x')], G_AFFI, []);
+    assert.deepStrictEqual(plan.map((h) => [h.network, h.mode]),
+                           [['instagram', 'api-publish'], ['x', 'hand']]);
   });
 
   // ★ 素材が足りないまま「渡せます」と出すと、空のファイルを掴ませてしまう。
   await check('動画が無ければ、動画のボタンは押せないと分かる', () => {
-    const [h] = handoff.planFor(post({ media_path: null }), [acct('instagram')], G_AFFI, []);
+    const [h] = handoff.planFor(post({ media_path: null }), [acct('instagram')], G_STOP, []);
     assert.ok(!h.ready);
     assert.deepStrictEqual(h.missing, ['動画を保存']);
   });
@@ -122,7 +144,7 @@ const post = (over) => Object.assign({
 
   await check('いまの状態をそのまま持ってくる', () => {
     const [h] = handoff.planFor(
-      post(), [acct('instagram', 'a9')], G_AFFI,
+      post(), [acct('instagram', 'a9')], G_STOP,
       [{ account_id: 'a9', status: 'handed' }]);
     assert.strictEqual(h.status, 'handed');
   });
@@ -134,7 +156,7 @@ const post = (over) => Object.assign({
   // ---------------------------------------------------------------- 取り決めの一致
   // ★ SQL 側（schema_v4_handoff.sql）と同じ値でなければ、片方だけ緩む。
   await check('公開系SNSの一覧が、SQL の publishing_networks() と一致する', () => {
-    const sql = require('fs').readFileSync(__dirname + '/../supabase/schema_v4_handoff.sql', 'utf8');
+    const sql = require('fs').readFileSync(__dirname + '/../supabase/schema_v5_per_network.sql', 'utf8');
     const m = sql.match(/select array\[([^\]]+)\]\s*\$\$/);
     assert.ok(m, 'publishing_networks() が見つからない');
     const inSql = m[1].split(',').map((s) => s.trim().replace(/'/g, ''));
@@ -194,20 +216,51 @@ const post = (over) => Object.assign({
     media_path: '2026/09/a.mp4', media_kind: 'video',
   }, over || {});
 
+  // 何も許していない運用ライン（g3）に属する連携先で試す
   const state = {
-    accounts: [acct('instagram'), acct('tiktok')],
-    groups: [G_AFFI, G_HIRO],
+    accounts: [acct('instagram', null, 'g3'), acct('tiktok', null, 'g3'), acct('x', null, 'g3')],
+    groups: [G_STOP, G_HIRO],
+  };
+  const stateAffi = {
+    accounts: [acct('instagram'), acct('tiktok'), acct('x')],
+    groups: [G_AFFI],
   };
 
-  await check('案件側では、Instagram を含む予約投稿を断る', async () => {
+  await check('許していないときは、Instagram を含む予約投稿を断る', async () => {
     const { handler } = loadPosts(state);
+    const res = fakeRes();
+    await handler({
+      method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
+      body: body({ status: 'scheduled', scheduled_at_jst: '2026-09-10T20:00', group_id: 'g3' }),
+    }, res);
+    assert.strictEqual(res.code, 400);
+    assert.ok(/即公開/.test(res.body.error), res.body.error);
+  });
+
+  // ★ 今回の要点。Instagram は通り、X だけが断られる。
+  await check('Instagram を許した運用アカウントでは、Instagram の予約は通る', async () => {
+    const { handler, wrote } = loadPosts(stateAffi);
     const res = fakeRes();
     await handler({
       method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
       body: body({ status: 'scheduled', scheduled_at_jst: '2026-09-10T20:00' }),
     }, res);
+    assert.strictEqual(res.code, 200, JSON.stringify(res.body));
+    const targets = wrote.filter((w) => w[0] === 'post_targets').map((w) => [w[2].network, w[2].status]);
+    assert.deepStrictEqual(targets, [['instagram', 'queued'], ['tiktok', 'queued']]);
+  });
+
+  await check('同じ運用アカウントでも、X を足した予約は断る', async () => {
+    const { handler } = loadPosts(stateAffi);
+    const res = fakeRes();
+    await handler({
+      method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
+      body: body({ status: 'scheduled', scheduled_at_jst: '2026-09-10T20:00',
+                   targets: ['instagram', 'x'] }),
+    }, res);
     assert.strictEqual(res.code, 400);
-    assert.ok(/即公開/.test(res.body.error), res.body.error);
+    assert.ok(/X（アフィリ用）/.test(res.body.error), res.body.error);
+    assert.ok(!/Instagram/.test(res.body.error), 'Instagram まで断っている');
   });
 
   await check('下書きとしてなら保存でき、Instagram の行は手渡しで作られる', async () => {
@@ -215,7 +268,7 @@ const post = (over) => Object.assign({
     const res = fakeRes();
     await handler({
       method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
-      body: body({ status: 'draft' }),
+      body: body({ status: 'draft', group_id: 'g3' }),
     }, res);
     assert.strictEqual(res.code, 200);
     const targets = wrote.filter((w) => w[0] === 'post_targets').map((w) => [w[2].network, w[2].status]);
@@ -244,7 +297,7 @@ const post = (over) => Object.assign({
     const draft = { kicker: 'k', title: 't', rows: [] };
     await handler({
       method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
-      body: body({ status: 'draft', draft }),
+      body: body({ status: 'draft', draft, group_id: 'g3' }),
     }, res);
     const row = wrote.find((w) => w[0] === 'posts');
     assert.deepStrictEqual(row[2].draft, draft);

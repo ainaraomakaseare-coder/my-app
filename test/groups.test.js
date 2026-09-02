@@ -91,29 +91,54 @@ function load(modPath, db, stubs) {
   });
 
   // -------------------------------------------------------------- 追加
-  // ★ 新しい運用ラインは「自動投稿しない」側から始める。
+  // ★ 新しい運用ラインは「どこにも自動投稿しない」側から始める。
   //   逆にしておくと、作った直後に Instagram へ本当に公開されうる。
-  await check('追加したものは、既定では自動投稿しない', async () => {
+  await check('追加したものは、既定ではどこにも自動投稿しない', async () => {
     const db = fakeDb({});
     const g = load('../lib/groups.js', db);
     await g.create({ label: '転職キュレーション', validation_profile: 'curator' });
     assert.deepStrictEqual(db._state.wrote, [
-      ['insert', { label: '転職キュレーション', validation_profile: 'curator', auto_publish: false }],
+      ['insert', { label: '転職キュレーション', validation_profile: 'curator', auto_publish_networks: [] }],
     ]);
   });
 
-  await check('自動投稿すると明示したときだけ true になる', async () => {
+  // ★ Instagram だけ許す、が言えることが要点。
+  await check('Instagram だけ許すことができる', async () => {
     const db = fakeDb({});
     const g = load('../lib/groups.js', db);
-    await g.create({ label: 'ひろや', validation_profile: 'personal', auto_publish: true });
-    assert.strictEqual(db._state.wrote[0][1].auto_publish, true);
+    await g.create({ label: 'A', auto_publish_networks: ['instagram'] });
+    assert.deepStrictEqual(db._state.wrote[0][1].auto_publish_networks, ['instagram']);
   });
 
-  await check('自動投稿の設定だけを切り替えられる', async () => {
+  await check('自動投稿するSNSだけを切り替えられる', async () => {
     const db = fakeDb({ groups: [{ id: G1, label: 'A', validation_profile: 'curator' }] });
     const g = load('../lib/groups.js', db);
-    await g.update(G1, { auto_publish: true });
-    assert.deepStrictEqual(db._state.wrote, [['update', G1, { auto_publish: true }]]);
+    await g.update(G1, { auto_publish_networks: ['instagram'] });
+    assert.deepStrictEqual(db._state.wrote, [['update', G1, { auto_publish_networks: ['instagram'] }]]);
+  });
+
+  // ★ 打ち間違いを黙って捨てると、許可したつもりの状態に気づけない。
+  await check('知らないSNS名は断る', async () => {
+    const db = fakeDb({});
+    const g = load('../lib/groups.js', db);
+    await assert.rejects(() => g.create({ label: 'A', auto_publish_networks: ['instgram'] }),
+                         /使えません/);
+  });
+
+  // ★ TikTok と YouTube は、指定してもしなくても下書き止まり。
+  //   指定できると「指定しなければ止まる」と誤解させる。
+  await check('TikTok と YouTube は自動投稿の指定に使えない', async () => {
+    const db = fakeDb({});
+    const g = load('../lib/groups.js', db);
+    await assert.rejects(() => g.create({ label: 'A', auto_publish_networks: ['tiktok'] }),
+                         /使えません/);
+  });
+
+  await check('同じSNSを重ねて指定しても1つにまとまる', async () => {
+    const db = fakeDb({});
+    const g = load('../lib/groups.js', db);
+    await g.create({ label: 'A', auto_publish_networks: ['x', 'x', 'instagram'] });
+    assert.deepStrictEqual(db._state.wrote[0][1].auto_publish_networks, ['x', 'instagram']);
   });
 
   await check('同じ名前は作らせない', async () => {

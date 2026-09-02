@@ -117,12 +117,11 @@
         <label for="gProfile">点検の型</label>
         <select id="gProfile"></select>
         <div class="muted" id="gProfileNote" style="margin-top:6px"></div>
-        <label style="margin-top:12px">
-          <input type="checkbox" id="gAuto"> 自動で投稿する
-        </label>
-        <div class="muted">入れないと、Instagram と X へは API を出しません（素材を手元に渡す形になります）。
-          この2つは API に下書きが無く、送った瞬間に公開されるためです。
-          TikTok と YouTube は、どちらの設定でも下書き・非公開までしか進みません。</div>
+        <label>自動で投稿してよいSNS</label>
+        <div class="targets" id="gAuto"></div>
+        <div class="muted">入れなかったSNSへは API を出さず、素材を手元にお渡しします。
+          ここに出るのは Instagram と X だけです。この2つは API に下書きが無く、送った瞬間に公開されるためです。
+          TikTok と YouTube は、どの設定でも下書き・非公開までしか進みません。</div>
         <div class="row" style="margin-top:10px">
           <button id="gAdd" class="primary">追加する</button>
           <span class="err" id="gErr"></span>
@@ -468,6 +467,7 @@ async function loadGroups() {
     groups = out.groups || [];
     profiles = out.profiles || [];
     fillProfileSelect($('gProfile'));
+    if (!$('gAuto').children.length) fillAutoNetworks($('gAuto'), []);
     renderGroups();
     renderGroupTabs();
     renderConn();
@@ -493,6 +493,35 @@ function showProfileNote() {
   $('gProfileNote').textContent = PROFILE_NOTE[$('gProfile').value] || '';
 }
 
+/**
+ * 「自動投稿してよいSNS」の選択欄を作る。
+ *
+ * ★ 出すのは Instagram と X だけ。TikTok と YouTube は、
+ *   許可のあるなしに関わらず下書き・非公開までしか進まないので、
+ *   選ばせると「選ばなければ止まる」と誤解させてしまう。
+ */
+const AUTO_NETWORKS = ['instagram', 'x'];
+
+function fillAutoNetworks(box, chosen, onChange) {
+  box.innerHTML = '';
+  for (const net of AUTO_NETWORKS) {
+    const l = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = net;
+    cb.checked = (chosen || []).includes(net);
+    if (onChange) {
+      cb.onchange = () => onChange(checkedAutoNetworks(box), () => { cb.checked = !cb.checked; });
+    }
+    l.appendChild(cb);
+    l.appendChild(document.createTextNode(' ' + (NET_LABEL[net] || net)));
+    box.appendChild(l);
+  }
+}
+
+const checkedAutoNetworks = (box) =>
+  [...box.querySelectorAll('input:checked')].map((c) => c.value);
+
 function profileLabel(id) {
   const p = profiles.find((x) => x.id === id);
   return p ? p.label : id;
@@ -512,41 +541,43 @@ function renderGroups() {
     const row = document.createElement('div');
     row.className = 'row';
     row.style.cssText = 'justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)';
-    // 自動投稿するかどうかは、この画面でいちばん結果の重い設定なので目立たせる。
-    const auto = g.auto_publish === true;
+    // 自動投稿はこの画面でいちばん結果の重い設定なので、いまの状態をそのまま出す。
+    const auto = Array.isArray(g.auto_publish_networks) ? g.auto_publish_networks : [];
+    const autoBadge = auto.length
+      ? `<span class="badge b-failed">${auto.map((n) => NET_LABEL[n] || n).join('・')}へ自動投稿</span>`
+      : '<span class="badge b-success">投稿手前で止める</span>';
+
     row.innerHTML = `
       <div>
         <strong>${escapeHtml(g.label)}</strong>
         <span class="badge">${escapeHtml(profileLabel(g.validation_profile))}</span>
-        <span class="badge ${auto ? 'b-failed' : 'b-success'}">${auto ? '自動で投稿する' : '投稿手前で止める'}</span>
+        ${autoBadge}
         <div class="muted">連携先 ${used} 件　${escapeHtml(PROFILE_NOTE[g.validation_profile] || '')}</div>
       </div>
       <div class="row"></div>`;
     const actions = row.querySelector('.row');
 
-    const autoBox = document.createElement('label');
-    autoBox.style.cssText = 'margin:0;display:flex;align-items:center;gap:6px';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = auto;
-    cb.onchange = async () => {
-      if (cb.checked &&
-          !confirm(`「${g.label}」を自動投稿に変えます。\n` +
-                   'Instagram と X は、時間が来ると本当に公開されます。よろしいですか？')) {
-        cb.checked = false;
+    const autoBox = document.createElement('div');
+    autoBox.className = 'targets';
+    autoBox.style.margin = '0';
+    fillAutoNetworks(autoBox, auto, async (chosen, revert) => {
+      const added = chosen.filter((n) => !auto.includes(n));
+      if (added.length &&
+          !confirm(`「${g.label}」の ${added.map((n) => NET_LABEL[n] || n).join('・')} を自動投稿にします。\n` +
+                   '時間が来ると本当に公開されます。よろしいですか？')) {
+        revert();
         return;
       }
       try {
-        await api(`/api/groups?id=${g.id}`, { method:'PATCH', body:{ auto_publish: cb.checked } });
+        await api(`/api/groups?id=${g.id}`, { method:'PATCH', body:{ auto_publish_networks: chosen } });
       } catch (e) {
         alert(e.message + (e.hint ? '\n' + e.hint : ''));
-        cb.checked = auto;
+        revert();
+        return;
       }
       loadGroups();
       loadPosts();
-    };
-    autoBox.appendChild(cb);
-    autoBox.appendChild(document.createTextNode('自動投稿'));
+    });
     actions.appendChild(autoBox);
 
     const ren = document.createElement('button');
@@ -600,11 +631,11 @@ $('gAdd').onclick = async () => {
       body: {
         label: $('gLabel').value,
         validation_profile: $('gProfile').value,
-        auto_publish: $('gAuto').checked,
+        auto_publish_networks: checkedAutoNetworks($('gAuto')),
       },
     });
     $('gLabel').value = '';
-    $('gAuto').checked = false;
+    fillAutoNetworks($('gAuto'), []);
     await loadGroups();
   } catch (e) {
     $('gErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
@@ -939,7 +970,7 @@ function applyGenerated(d) {
 const MODE_BADGE = {
   api: '<span class="badge">下書きまで送れます</span>',
   hand: '<span class="badge b-processing">手渡し</span>',
-  'api-publish': '<span class="badge b-failed">この運用アカウントは自動投稿します</span>',
+  'api-publish': '<span class="badge b-failed">自動で投稿します（下書きで止まりません）</span>',
 };
 
 function renderHandoff(posts) {
