@@ -104,6 +104,26 @@
     <div class="tabs hide" id="groupTabs"></div>
     <div id="connectedMsg" class="notice hide"></div>
 
+    <!-- 運用アカウント -->
+    <div class="card">
+      <h2>運用アカウント</h2>
+      <div class="muted">投稿の系統を分ける単位です。ここを分けておくと、企画用と案件用が混ざりません。
+        連携先も投稿もどれか1つに属し、またいだ投稿先はDB側でも止めています。</div>
+      <div id="groupList" class="muted" style="margin-top:10px">確認中…</div>
+      <details style="margin-top:12px">
+        <summary>運用アカウントを追加する</summary>
+        <label for="gLabel">名前（例：転職キュレーション）</label>
+        <input type="text" id="gLabel" placeholder="転職キュレーション" maxlength="40">
+        <label for="gProfile">点検の型</label>
+        <select id="gProfile"></select>
+        <div class="muted" id="gProfileNote" style="margin-top:6px"></div>
+        <div class="row" style="margin-top:10px">
+          <button id="gAdd" class="primary">追加する</button>
+          <span class="err" id="gErr"></span>
+        </div>
+      </details>
+    </div>
+
     <!-- 連携設定 -->
     <div class="card">
       <h2>連携設定</h2>
@@ -256,7 +276,7 @@ async function boot() {
   const { loggedIn } = await api('/api/login');
   $('login').classList.toggle('hide', loggedIn);
   $('app').classList.toggle('hide', !loggedIn);
-  if (loggedIn) { tickClock(); showConnectResult(); loadConn(); loadPosts(); }
+  if (loggedIn) { tickClock(); showConnectResult(); loadGroups(); loadConn(); loadPosts(); }
 }
 
 $('loginBtn').onclick = async () => {
@@ -411,6 +431,136 @@ function renderGroupTabs() {
   }
 }
 
+// --------------------------------------------------------------- 運用アカウント
+
+/**
+ * 点検の型の説明。
+ * どちらを選ぶかで、投稿文の見張り方が変わる。ここを間違えると
+ * 「使ってみました」が素通りするので、画面にも理由まで出しておく。
+ */
+const PROFILE_NOTE = {
+  curator: '口コミを集めて紹介する立場。実体験が無いので、一人称の体験談と出どころの無い数字を止めます。',
+  personal: '本人の実践記録。一人称で書くのが正しいので、体験の表現はそのまま通します。',
+};
+let profiles = [];
+
+async function loadGroups() {
+  try {
+    const out = await api('/api/groups');
+    groups = out.groups || [];
+    profiles = out.profiles || [];
+    fillProfileSelect($('gProfile'));
+    renderGroups();
+    renderGroupTabs();
+    renderConn();
+    renderTargets();
+  } catch (e) {
+    $('groupList').innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function fillProfileSelect(sel, value) {
+  sel.innerHTML = '';
+  for (const p of profiles) {
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = p.label;
+    sel.appendChild(o);
+  }
+  if (value) sel.value = value;
+  if (sel === $('gProfile')) showProfileNote();
+}
+
+function showProfileNote() {
+  $('gProfileNote').textContent = PROFILE_NOTE[$('gProfile').value] || '';
+}
+
+function profileLabel(id) {
+  const p = profiles.find((x) => x.id === id);
+  return p ? p.label : id;
+}
+
+function renderGroups() {
+  const box = $('groupList');
+  box.innerHTML = '';
+  if (!groups.length) {
+    box.innerHTML = '<span class="muted">まだありません。下の「運用アカウントを追加する」から作ってください。</span>';
+    return;
+  }
+
+  for (const g of groups) {
+    const used = accounts.filter((a) => a.group_id === g.id).length;
+
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.cssText = 'justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)';
+    row.innerHTML = `
+      <div>
+        <strong>${escapeHtml(g.label)}</strong>
+        <span class="badge">${escapeHtml(profileLabel(g.validation_profile))}</span>
+        <div class="muted">連携先 ${used} 件　${escapeHtml(PROFILE_NOTE[g.validation_profile] || '')}</div>
+      </div>
+      <div class="row"></div>`;
+    const actions = row.querySelector('.row');
+
+    const ren = document.createElement('button');
+    ren.textContent = '名前を変える';
+    ren.onclick = async () => {
+      const label = prompt('この運用アカウントの名前', g.label);
+      if (label === null) return;
+      try { await api(`/api/groups?id=${g.id}`, { method:'PATCH', body:{ label } }); }
+      catch (e) { alert(e.message + (e.hint ? '\n' + e.hint : '')); }
+      loadGroups();
+    };
+    actions.appendChild(ren);
+
+    const sel = document.createElement('select');
+    sel.style.width = 'auto';
+    fillProfileSelect(sel, g.validation_profile);
+    sel.onchange = async () => {
+      try {
+        await api(`/api/groups?id=${g.id}`, { method:'PATCH', body:{ validation_profile: sel.value } });
+      } catch (e) {
+        alert(e.message);
+        sel.value = g.validation_profile;
+      }
+      loadGroups();
+    };
+    actions.appendChild(sel);
+
+    const del = document.createElement('button');
+    del.textContent = '消す';
+    del.onclick = async () => {
+      if (!confirm(`運用アカウント「${g.label}」を消します。よろしいですか？`)) return;
+      try { await api(`/api/groups?id=${g.id}`, { method:'DELETE' }); }
+      catch (e) { alert(e.message + (e.hint ? '\n' + e.hint : '')); }
+      loadGroups();
+    };
+    actions.appendChild(del);
+
+    box.appendChild(row);
+  }
+}
+
+$('gProfile').onchange = showProfileNote;
+
+$('gAdd').onclick = async () => {
+  $('gErr').textContent = '';
+  const btn = $('gAdd');
+  btn.disabled = true;
+  try {
+    await api('/api/groups', {
+      method: 'POST',
+      body: { label: $('gLabel').value, validation_profile: $('gProfile').value },
+    });
+    $('gLabel').value = '';
+    await loadGroups();
+  } catch (e) {
+    $('gErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
+  }
+  btn.disabled = false;
+};
+
 async function loadConn() {
   try {
     const out = await api('/api/connect');
@@ -440,6 +590,12 @@ function renderConn() {
       expiry = '<span class="badge b-processing">有効期限が不明（短期トークンなら1時間）</span>';
     }
 
+    // ★ 所属が空の連携先は、DB側の見張りが素通りする（片方が未設定なら止めない）。
+    //   一番危ない状態なので、赤で目立たせて選ばせる。
+    const belong = a.group_id
+      ? ''
+      : '<span class="badge b-failed">運用アカウント未設定</span>';
+
     const row = document.createElement('div');
     row.className = 'row';
     row.style.cssText = 'justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)';
@@ -448,11 +604,32 @@ function renderConn() {
         <strong>${accountLabel(a)}</strong>
         <span class="badge b-success">接続済み</span>
         ${expiry}
+        ${belong}
         <div class="muted">${a.account_name || ''}　${NET_NOTE[a.network]}</div>
       </div>
       <div class="row"></div>`;
 
     const actions = row.querySelector('.row');
+
+    if (groups.length) {
+      const gsel = document.createElement('select');
+      gsel.style.width = 'auto';
+      gsel.innerHTML = '<option value="">（運用アカウント未設定）</option>' +
+        groups.map((g) => `<option value="${g.id}">${escapeHtml(g.label)}</option>`).join('');
+      gsel.value = a.group_id || '';
+      gsel.onchange = async () => {
+        try {
+          await api(`/api/connect?id=${a.id}`, { method:'PATCH', body:{ group_id: gsel.value || null } });
+        } catch (e) {
+          alert(e.message + (e.hint ? '\n' + e.hint : ''));
+          gsel.value = a.group_id || '';
+          return;
+        }
+        loadConn();
+        loadGroups();
+      };
+      actions.appendChild(gsel);
+    }
 
     const ren = document.createElement('button');
     ren.textContent = '呼び名を変える';
@@ -484,7 +661,10 @@ function renderConn() {
   for (const net of ['youtube', 'x', 'tiktok']) {
     const b = document.createElement('button');
     b.textContent = NET_LABEL[net] + ' を繋ぐ';
-    b.onclick = () => { location.href = '/api/connect/' + net; };
+    // ★ 繋いだ先が宙に浮かないよう、いま見ている運用アカウントを一緒に渡す。
+    b.onclick = () => {
+      location.href = '/api/connect/' + net + (currentGroup ? '?group=' + currentGroup : '');
+    };
     add.appendChild(b);
   }
   const note = document.createElement('span');
@@ -516,11 +696,13 @@ $('igSave').onclick = async () => {
   btn.disabled = true;
   try {
     const out = await api('/api/connect/instagram', {
-      method: 'POST', body: { token: $('igToken').value, label: $('igLabel').value },
+      method: 'POST',
+      body: { token: $('igToken').value, label: $('igLabel').value, group_id: currentGroup },
     });
     $('igToken').value = ''; $('igLabel').value = '';
     alert('接続できました：' + (out.account || 'Instagram'));
     loadConn();
+    loadGroups();
   } catch (e) {
     $('igErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
   }
@@ -695,7 +877,7 @@ async function loadPosts() {
   try {
     const { posts, accounts: fresh, groups: gs } = await api('/api/posts');
     if (fresh) accounts = fresh;
-    if (gs) { groups = gs; renderGroupTabs(); renderTargets(); }
+    if (gs) { groups = gs; renderGroupTabs(); renderTargets(); renderGroups(); }
     const shown = currentGroup ? posts.filter((p) => !p.group_id || p.group_id === currentGroup) : posts;
     $('list').innerHTML = shown.length ? '' : '<p class="muted">まだ投稿がありません。</p>';
     for (const p of shown) $('list').appendChild(render(p));
