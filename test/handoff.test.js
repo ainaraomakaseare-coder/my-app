@@ -176,6 +176,20 @@ const post = (over) => Object.assign({
     }
   });
 
+  // ★ まとめた1本が古いままだと、貼った人だけ違うものが入る。
+  await check('supabase/setup_all.sql が、個別のファイルと同じ中身になっている', () => {
+    const fs = require('fs');
+    const dir = __dirname + '/../supabase/';
+    const all = fs.readFileSync(dir + 'setup_all.sql', 'utf8');
+    for (const f of ['schema.sql', 'schema_v2_accounts.sql', 'schema_v3_groups.sql',
+                     'schema_v4_handoff.sql', 'schema_v5_per_network.sql']) {
+      assert.ok(all.includes(fs.readFileSync(dir + f, 'utf8')), f + ' が古い');
+    }
+    // つなぐ順番も見る。順番が狂うと引き継ぎが効かない。
+    const at = (f) => all.indexOf('## ' + f);
+    assert.ok(at('schema_v4_handoff.sql') < at('schema_v5_per_network.sql'), 'v4 と v5 の順が逆');
+  });
+
   // ---------------------------------------------------------------- 保存の入り口
   const fakeRes = () => ({
     code: null, body: null,
