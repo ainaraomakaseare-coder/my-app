@@ -97,12 +97,17 @@ async function save(req, id) {
   const group = groups.find((g) => g.id === choice.group_id) || null;
   const wantsSchedule = body.status === 'scheduled';
 
+  // ★ 手渡しにしかできない投稿先が混ざっていても、予約そのものは断らない。
+  //   Instagram は21時に出す、X は画像を手で出す、という組み合わせは正しい。
+  //   断るのは「予約しても何も出ない」ときだけ。
+  //   混ざった投稿先は syncTargets が manual で作るので、受け渡しに回る。
   if (wantsSchedule) {
-    const manual = handoff.manualOnly(group, targets.map((t) => byId.get(t)));
-    if (manual.length) {
+    const chosen = targets.map((t) => byId.get(t));
+    const manual = handoff.manualOnly(group, chosen);
+    if (manual.length === chosen.length) {
       throw bad(
         `${manual.map((a) => nameOf(a)).join(' / ')} は API で出すと即公開になります。` +
-        'この運用アカウントは自動投稿しない設定なので、下書きとして保存し、受け渡しから進めてください。'
+        'この運用アカウントでは自動投稿を許可していないので、下書きとして保存し、受け渡しから進めてください。'
       );
     }
   }
