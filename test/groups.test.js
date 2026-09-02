@@ -38,6 +38,17 @@ function fakeDb(state) {
     accountGroupConflict: async () => s.conflict,
     updateAccount: async (id, patch) => { s.wrote.push(['account', id, patch]); return Object.assign({ id }, patch); },
     upsertAccount: async (row) => { s.wrote.push(['upsert', row]); return Object.assign({ id: A1 }, row); },
+    // 本物と同じ順で探す。IDが先、無いときだけ名前（ただしIDの入っていない行に限る）。
+    findAccountByIdentity: async ({ network, external_id, account_name }) => {
+      const same = (a) => a.network === network;
+      if (external_id) {
+        const hit = s.accounts.find((a) => same(a) && a.external_id === external_id);
+        if (hit) return hit;
+      }
+      if (!account_name) return null;
+      return s.accounts.find(
+        (a) => same(a) && a.account_name === account_name && !a.external_id) || null;
+    },
     _state: s,
   };
 }
@@ -315,6 +326,112 @@ function load(modPath, db, stubs) {
     const { res } = await back(db, G1);
     const cookies = [].concat(res.getHeader('Set-Cookie') || []);
     assert.ok(cookies.some((c) => /^td_group=;/.test(c) && /Max-Age=0/.test(c)), '捨てていない');
+  });
+
+  // -------------------------------------------------- 別チャンネルのものを奪わない
+  //
+  // ★ ここが「TikTok を繋いだら AI 側が繋ぎ直された」の中身。
+  //   表示名で見分けていたころは、TikTok の表示名が取れないと 'TikTok' に落ちるので、
+  //   2つ目のアカウントを繋いだ瞬間に1つ目（別チャンネルのもの）を上書きしていた。
+  const fakeTiktok = (openId, displayName) => ({
+    authUrl: () => 'https://www.tiktok.com/fake',
+    exchangeCode: async () => ({
+      open_id: openId, access_token: 'a', refresh_token: 'r', expires_in: 86400,
+    }),
+    _displayName: displayName,
+  });
+
+  /** TikTok の帰り道を1回通す。表示名を取りに行くところは fetch ごと差し替える。 */
+  async function tiktokBack(db, tk, cookie) {
+    const realFetch = global.fetch;
+    global.fetch = async () => ({
+      json: async () => (tk._displayName
+        ? { data: { user: { open_id: tk.open_id_from_api || null, display_name: tk._displayName } } }
+        : { data: {} }),
+    });
+    try {
+      const connect = load('../lib/connect.js', db, { '../lib/tiktok.js': tk });
+      const res = fakeRes();
+      const r = req({ query: { network: 'tiktok', code: 'abc' } });
+      if (cookie) r.headers.cookie += '; td_group=' + cookie;
+      await connect(r, res);
+      return { res, wrote: db._state.wrote };
+    } finally {
+      global.fetch = realFetch;
+    }
+  }
+
+  await check('表示名が取れなくても、IDが違えば別の連携先として増やす', async () => {
+    // すでに「ひろや」に TikTok がある。表示名は取れず 'TikTok' で入っている。
+    const db = fakeDb({
+      groups: [{ id: G1, label: 'ひろや' }, { id: G2, label: '転職のホンネ' }],
+      accounts: [{ id: A1, network: 'tiktok', account_name: 'TikTok', label: 'TikTok',
+                   group_id: G1, external_id: 'open-ai-side' }],
+    });
+    // 転職側のアカウントを繋ぐ。表示名はやはり取れないので 'TikTok'。
+    const { wrote } = await tiktokBack(db, fakeTiktok('open-tenshoku', null), G2);
+    assert.strictEqual(wrote.length, 1);
+    assert.strictEqual(wrote[0][0], 'upsert');
+    assert.strictEqual(wrote[0][1].id, null, '別のアカウントなのに既存の行を書き換えている');
+    assert.strictEqual(wrote[0][1].external_id, 'open-tenshoku');
+    assert.strictEqual(wrote[0][1].group_id, G2);
+  });
+
+  await check('同じアカウントを別のチャンネルに繋ごうとしたら断る', async () => {
+    // ★ 名前にわざと「｜」を入れてある。用件と直し方を1本の文字列に
+    //   区切り文字で詰めていたころは、ここで切れて意味不明になっていた。
+    const db = fakeDb({
+      groups: [{ id: G1, label: 'ひろや｜AI初心者30日30アプリ' }, { id: G2, label: '転職のホンネ' }],
+      accounts: [{ id: A1, network: 'tiktok', account_name: '@hiroya', label: '企画用',
+                   group_id: G1, external_id: 'open-ai-side' }],
+    });
+    // ブラウザが AI 側のアカウントでログインしたまま、転職側で繋ごうとした。
+    const { res, wrote } = await tiktokBack(db, fakeTiktok('open-ai-side', '@hiroya'), G2);
+    assert.strictEqual(wrote.length, 0, '奪ってしまっている');
+
+    const q = new URLSearchParams(res.location.slice(res.location.indexOf('?') + 1));
+    assert.strictEqual(q.get('ng'), '1', '断りなのに成功と同じ見た目で返している');
+    assert.ok(q.get('connected').includes('ひろや｜AI初心者30日30アプリ'),
+      'どこに繋がっているかを、名前のまま言えていない');
+    assert.ok(q.get('connected').includes('転職のホンネ'), 'どこへ入れようとしたか言っていない');
+    // 直し方は別の値。ここに「ログインし直す」が無いと、本人は次の一手が分からない。
+    assert.ok(/ログイン/.test(q.get('hint') || ''), '直し方が届いていない');
+  });
+
+  await check('同じチャンネルで繋ぎ直すのは、そのまま上書きする', async () => {
+    const db = fakeDb({
+      groups: [{ id: G1, label: 'ひろや' }, { id: G2, label: '転職のホンネ' }],
+      accounts: [{ id: A1, network: 'tiktok', account_name: '@hiroya', label: '企画用',
+                   group_id: G1, external_id: 'open-ai-side' }],
+    });
+    const { wrote } = await tiktokBack(db, fakeTiktok('open-ai-side', '@hiroya'), G1);
+    assert.strictEqual(wrote[0][1].id, A1, '同じ行に書いていない');
+    // 本人が付けた呼び名を、繋ぎ直しで消さない。
+    assert.ok(!('label' in wrote[0][1]), '呼び名を上書きしている');
+  });
+
+  await check('IDを持っていない古い行は、名前で拾って ID を入れる', async () => {
+    const db = fakeDb({
+      groups: [{ id: G1, label: 'ひろや' }],
+      accounts: [{ id: A1, network: 'tiktok', account_name: '@hiroya', label: '',
+                   group_id: G1, external_id: null }],
+    });
+    const { wrote } = await tiktokBack(db, fakeTiktok('open-ai-side', '@hiroya'), G1);
+    assert.strictEqual(wrote[0][1].id, A1, '古い行を拾えず二重に増やしている');
+    assert.strictEqual(wrote[0][1].external_id, 'open-ai-side', 'IDを入れていない');
+  });
+
+  await check('所属の決まっていない行は、断らずに引き取る', async () => {
+    // 所属が空の連携先は DB側の見張りが素通りする一番危ない状態。
+    // ここで断ると、その状態から抜け出せなくなる。
+    const db = fakeDb({
+      groups: [{ id: G1, label: 'ひろや' }, { id: G2, label: '転職のホンネ' }],
+      accounts: [{ id: A1, network: 'tiktok', account_name: '@x', label: '',
+                   group_id: null, external_id: 'open-x' }],
+    });
+    const { wrote } = await tiktokBack(db, fakeTiktok('open-x', '@x'), G2);
+    assert.strictEqual(wrote[0][1].id, A1);
+    assert.strictEqual(wrote[0][1].group_id, G2);
   });
 
   await check('所属を変えられる', async () => {

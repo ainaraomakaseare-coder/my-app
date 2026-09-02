@@ -96,7 +96,8 @@
   .muted{color:var(--muted);font-size:13px}
   .err{color:var(--bad);font-size:13px;white-space:pre-wrap}
   .notice{background:var(--card);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;
-          font-size:13px;margin-bottom:12px}
+          font-size:13px;margin-bottom:12px;white-space:pre-wrap}
+  .notice.ng{border-color:var(--bad);color:var(--bad)}
   details summary{cursor:pointer;font-size:13px;color:var(--muted)}
   .hist{font-size:12px;color:var(--muted);margin:2px 0}
   .hide{display:none}
@@ -912,7 +913,14 @@ function renderConn() {
   }
   const note = document.createElement('span');
   note.className = 'muted';
-  note.textContent = 'Instagram は下の欄からトークンを登録してください';
+  note.style.width = '100%';
+  // ★ 「繋ぐ」を押した先で、どのアカウントに繋がるかは
+  //   このブラウザのログイン状態で決まる。ここが取り違えの元。
+  note.textContent =
+    'Instagram は下の欄からトークンを登録してください。\n' +
+    '※ YouTube・X・TikTok は、いまこのブラウザでログイン中のアカウントに繋がります。' +
+    '別のアカウントを繋ぐときは、先にそのSNSでログインし直すか、シークレットウィンドウで開いてください。';
+  note.style.whiteSpace = 'pre-wrap';
   add.appendChild(note);
   $('conn').appendChild(add);
 }
@@ -958,9 +966,13 @@ $('igSave').onclick = async () => {
 
 /** 連携から戻ってきたときの結果表示。URLに残った文字はすぐ消す。 */
 function showConnectResult() {
-  const msg = new URLSearchParams(location.search).get('connected');
+  const q = new URLSearchParams(location.search);
+  const msg = q.get('connected');
   if (!msg) return;
-  $('connectedMsg').textContent = msg;
+  // 直し方は別の値で届く。読ませたいのはそちらなので、行を空けて続ける。
+  const hint = q.get('hint');
+  $('connectedMsg').textContent = msg + (hint ? '\n\n' + hint : '');
+  $('connectedMsg').classList.toggle('ng', q.get('ng') === '1');
   $('connectedMsg').classList.remove('hide');
   history.replaceState(null, '', location.pathname);
 }
