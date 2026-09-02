@@ -91,13 +91,29 @@ function load(modPath, db, stubs) {
   });
 
   // -------------------------------------------------------------- 追加
-  await check('追加すると、名前と点検の型が書き込まれる', async () => {
+  // ★ 新しい運用ラインは「自動投稿しない」側から始める。
+  //   逆にしておくと、作った直後に Instagram へ本当に公開されうる。
+  await check('追加したものは、既定では自動投稿しない', async () => {
     const db = fakeDb({});
     const g = load('../lib/groups.js', db);
     await g.create({ label: '転職キュレーション', validation_profile: 'curator' });
     assert.deepStrictEqual(db._state.wrote, [
-      ['insert', { label: '転職キュレーション', validation_profile: 'curator' }],
+      ['insert', { label: '転職キュレーション', validation_profile: 'curator', auto_publish: false }],
     ]);
+  });
+
+  await check('自動投稿すると明示したときだけ true になる', async () => {
+    const db = fakeDb({});
+    const g = load('../lib/groups.js', db);
+    await g.create({ label: 'ひろや', validation_profile: 'personal', auto_publish: true });
+    assert.strictEqual(db._state.wrote[0][1].auto_publish, true);
+  });
+
+  await check('自動投稿の設定だけを切り替えられる', async () => {
+    const db = fakeDb({ groups: [{ id: G1, label: 'A', validation_profile: 'curator' }] });
+    const g = load('../lib/groups.js', db);
+    await g.update(G1, { auto_publish: true });
+    assert.deepStrictEqual(db._state.wrote, [['update', G1, { auto_publish: true }]]);
   });
 
   await check('同じ名前は作らせない', async () => {

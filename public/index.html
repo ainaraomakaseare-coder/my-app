@@ -117,6 +117,12 @@
         <label for="gProfile">点検の型</label>
         <select id="gProfile"></select>
         <div class="muted" id="gProfileNote" style="margin-top:6px"></div>
+        <label style="margin-top:12px">
+          <input type="checkbox" id="gAuto"> 自動で投稿する
+        </label>
+        <div class="muted">入れないと、Instagram と X へは API を出しません（素材を手元に渡す形になります）。
+          この2つは API に下書きが無く、送った瞬間に公開されるためです。
+          TikTok と YouTube は、どちらの設定でも下書き・非公開までしか進みません。</div>
         <div class="row" style="margin-top:10px">
           <button id="gAdd" class="primary">追加する</button>
           <span class="err" id="gErr"></span>
@@ -223,6 +229,15 @@
       <div class="muted" id="progress"></div>
     </div>
 
+    <!-- 受け渡し -->
+    <div class="card">
+      <h2>受け渡し（投稿手前まで）</h2>
+      <div class="muted">下書きを、それぞれのSNSで「あとは押すだけ」の状態まで進めます。
+        TikTok と YouTube は下書き・非公開のまま送れます。
+        Instagram と X は API に下書きが無く、送ると即公開になるので、素材を手元にお渡しします。</div>
+      <div id="handoff" class="muted" style="margin-top:12px">読み込み中…</div>
+    </div>
+
     <!-- 一覧 -->
     <div class="card">
       <h2>投稿一覧</h2>
@@ -241,6 +256,7 @@ const ST_LABEL = {
   draft:'下書き', scheduled:'投稿予約', processing:'処理中',
   done:'投稿成功', partial:'一部成功', failed:'投稿失敗',
   queued:'待機', success:'成功',
+  manual:'手渡し待ち', handed:'受け取り済み', skipped:'見送り',
 };
 
 let uploaded = null; // { path, kind, bytes }
@@ -355,6 +371,8 @@ function collect(status) {
     scheduled_at_jst: $('when').value,
     group_id: currentGroup,
     has_affiliate_link: $('affiFlag').checked,
+    // ★ 文案そのものを残す。これが無いと X 用の画像2枚を作り直せない。
+    draft: appliedDraft,
     media_path: uploaded && uploaded.path,
     media_kind: uploaded && uploaded.kind,
     media_bytes: uploaded && uploaded.bytes,
@@ -378,7 +396,7 @@ async function save(status) {
   try {
     await api('/api/posts', { method:'POST', body: collect(status) });
     ['title','common','ig','ytt','ytd','xt','tt','when'].forEach((id) => { $(id).value = ''; });
-    $('file').value = ''; uploaded = null; $('fileInfo').textContent = '';
+    $('file').value = ''; uploaded = null; appliedDraft = null; $('fileInfo').textContent = '';
     loadPosts();
   } catch (e) {
     $('formErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
@@ -494,14 +512,42 @@ function renderGroups() {
     const row = document.createElement('div');
     row.className = 'row';
     row.style.cssText = 'justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)';
+    // 自動投稿するかどうかは、この画面でいちばん結果の重い設定なので目立たせる。
+    const auto = g.auto_publish === true;
     row.innerHTML = `
       <div>
         <strong>${escapeHtml(g.label)}</strong>
         <span class="badge">${escapeHtml(profileLabel(g.validation_profile))}</span>
+        <span class="badge ${auto ? 'b-failed' : 'b-success'}">${auto ? '自動で投稿する' : '投稿手前で止める'}</span>
         <div class="muted">連携先 ${used} 件　${escapeHtml(PROFILE_NOTE[g.validation_profile] || '')}</div>
       </div>
       <div class="row"></div>`;
     const actions = row.querySelector('.row');
+
+    const autoBox = document.createElement('label');
+    autoBox.style.cssText = 'margin:0;display:flex;align-items:center;gap:6px';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = auto;
+    cb.onchange = async () => {
+      if (cb.checked &&
+          !confirm(`「${g.label}」を自動投稿に変えます。\n` +
+                   'Instagram と X は、時間が来ると本当に公開されます。よろしいですか？')) {
+        cb.checked = false;
+        return;
+      }
+      try {
+        await api(`/api/groups?id=${g.id}`, { method:'PATCH', body:{ auto_publish: cb.checked } });
+      } catch (e) {
+        alert(e.message + (e.hint ? '\n' + e.hint : ''));
+        cb.checked = auto;
+      }
+      loadGroups();
+      loadPosts();
+    };
+    autoBox.appendChild(cb);
+    autoBox.appendChild(document.createTextNode('自動投稿'));
+    actions.appendChild(autoBox);
 
     const ren = document.createElement('button');
     ren.textContent = '名前を変える';
@@ -551,9 +597,14 @@ $('gAdd').onclick = async () => {
   try {
     await api('/api/groups', {
       method: 'POST',
-      body: { label: $('gLabel').value, validation_profile: $('gProfile').value },
+      body: {
+        label: $('gLabel').value,
+        validation_profile: $('gProfile').value,
+        auto_publish: $('gAuto').checked,
+      },
     });
     $('gLabel').value = '';
+    $('gAuto').checked = false;
     await loadGroups();
   } catch (e) {
     $('gErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
@@ -720,6 +771,7 @@ function showConnectResult() {
 
 // --------------------------------------------------------------- 投稿文をつくる
 let generated = null;
+let appliedDraft = null;   // 「投稿を作る」に流し込んだ文案。保存時に一緒に残す。
 
 $('genBtn').onclick = async () => {
   $('genErr').textContent = '';
@@ -869,7 +921,217 @@ function applyGenerated(d) {
   $('ytt').value = d.title || '';
   $('ytd').value = d.igCaption || '';
   $('affiFlag').checked = !!d.hasAffiliateLink;
+  appliedDraft = d;
   $('title').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// --------------------------------------------------------------- 受け渡し
+/**
+ * 下書きを「あとは押すだけ」まで進める。
+ *
+ * ★ どこまで自動でやれるかは、SNSごとに決まっている。
+ *   TikTok は下書きの受信箱があり、YouTube は非公開で上げられる。
+ *   Instagram と X には下書きが無く、APIを呼んだ瞬間に公開される。
+ *   だからこの2つは「素材を渡すところまで」が上限になる。
+ *   その判断はサーバー（lib/handoff.js）が組み立てて渡してくる。
+ *   ここに同じ表を持つと必ずずれるので、持たない。
+ */
+const MODE_BADGE = {
+  api: '<span class="badge">下書きまで送れます</span>',
+  hand: '<span class="badge b-processing">手渡し</span>',
+  'api-publish': '<span class="badge b-failed">この運用アカウントは自動投稿します</span>',
+};
+
+function renderHandoff(posts) {
+  const box = $('handoff');
+  box.innerHTML = '';
+
+  const drafts = posts.filter((p) =>
+    p.status === 'draft' && (!currentGroup || !p.group_id || p.group_id === currentGroup));
+
+  if (!drafts.length) {
+    box.innerHTML = '<span class="muted">受け渡し待ちの下書きはありません。' +
+      '上の「投稿文をつくる」から作ると、ここに出ます。</span>';
+    return;
+  }
+
+  for (const p of drafts) box.appendChild(handoffCard(p));
+}
+
+function handoffCard(p) {
+  const el = document.createElement('div');
+  el.className = 'post';
+
+  const plan = p.handoff || [];
+  const head = document.createElement('div');
+  head.innerHTML = `<strong>${escapeHtml(p.title || '（名前なし）')}</strong>
+    <span class="badge">${p.media_path ? '動画あり' : '動画なし'}</span>
+    ${p.has_affiliate_link ? '<span class="badge b-processing">案件リンクあり</span>' : ''}`;
+  el.appendChild(head);
+
+  if (!plan.length) {
+    const none = document.createElement('div');
+    none.className = 'muted';
+    none.textContent = '投稿先が選ばれていません。「投稿を作る」で選び直してください。';
+    el.appendChild(none);
+    return el;
+  }
+
+  // API で下書きまで送れる投稿先は、まとめて1回で送る（ワーカーが順に処理する）
+  const sendable = plan.filter((h) => h.mode === 'api');
+  if (sendable.length) {
+    const bar = document.createElement('div');
+    bar.className = 'row';
+    bar.style.marginTop = '8px';
+    const b = document.createElement('button');
+    b.className = 'primary';
+    // 「アフィリ用 へ」だけでは何のSNSか分からない。SNS名から出す。
+    b.textContent = sendable.map((h) => `${NET_LABEL[h.network] || h.network}（${h.name}）`)
+      .join(' / ') + ' へ下書きで送る';
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api(`/api/posts?id=${p.id}&action=run-now`, { method: 'POST' });
+        alert('送信を始めました。届くまで1〜2分かかります。一覧で状態を確認できます。');
+      } catch (e) { alert(e.message); }
+      b.disabled = false;
+      loadPosts();
+    };
+    bar.appendChild(b);
+    el.appendChild(bar);
+  }
+
+  for (const h of plan) el.appendChild(handoffRow(p, h));
+  return el;
+}
+
+function handoffRow(p, h) {
+  const row = document.createElement('div');
+  row.style.cssText = 'padding:8px 0;border-top:1px solid var(--line);margin-top:8px';
+  row.innerHTML = `
+    <div><strong>${escapeHtml(NET_LABEL[h.network] || h.network)}（${escapeHtml(h.name)}）</strong>
+      ${MODE_BADGE[h.mode] || ''}
+      ${h.status ? `<span class="badge b-${h.status}">${ST_LABEL[h.status] || h.status}</span>` : ''}</div>
+    <div class="muted">${escapeHtml(h.stops)}</div>
+    <div class="row" style="margin-top:6px"></div>`;
+  const actions = row.querySelector('.row');
+
+  for (const need of h.needs) {
+    const b = document.createElement('button');
+    b.textContent = need.label;
+    if (!need.ready) {
+      b.disabled = true;
+      b.title = 'まだ用意できていません';
+    }
+    b.onclick = () => takeAsset(p, need.key, b);
+    actions.appendChild(b);
+  }
+
+  // 手渡しの投稿先だけ、受け取ったかどうかを記録できる
+  if (h.mode === 'hand' && h.status) {
+    const done = document.createElement('button');
+    const handed = h.status === 'handed';
+    done.textContent = handed ? '受け取りを取り消す' : '受け取った';
+    done.onclick = async () => {
+      done.disabled = true;
+      try {
+        await api(`/api/posts?id=${p.id}&action=${handed ? 'unhand' : 'handed'}&account=${h.accountId}`,
+                  { method: 'POST' });
+      } catch (e) { alert(e.message); }
+      loadPosts();
+    };
+    actions.appendChild(done);
+  }
+
+  if (h.note) {
+    const n = document.createElement('div');
+    n.className = 'muted';
+    n.style.marginTop = '4px';
+    n.textContent = h.note;
+    row.appendChild(n);
+  }
+  return row;
+}
+
+/** 素材を1つ受け取る。本文は写し、動画と画像はファイルにして落とす。 */
+async function takeAsset(p, key, btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  try {
+    if (key === 'igCaption') await copyText(p.ig_caption);
+    else if (key === 'ttCaption') await copyText(p.tt_caption);
+    else if (key === 'xText') await copyText(p.x_text);
+    else if (key === 'video') await downloadVideo(p);
+    else if (key === 'posterBefore') await downloadPoster(p, false);
+    else if (key === 'posterAfter') await downloadPoster(p, true);
+    btn.textContent = '✓ ' + label;
+    setTimeout(() => { btn.textContent = label; }, 2000);
+  } catch (e) {
+    alert(e.message);
+  }
+  btn.disabled = false;
+}
+
+async function copyText(text) {
+  const s = (text || '').trim();
+  if (!s) throw new Error('本文が空です。');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(s);
+    return;
+  }
+  // 安全な接続でないと clipboard が使えない。そのときは選べる形で出す。
+  window.prompt('この本文をコピーしてください', s);
+}
+
+/**
+ * 置き場から動画を取ってきて、手元に保存する。
+ *
+ * ★ バケットは非公開のままにしておきたいので、
+ *   2時間だけ有効なURLをその都度もらう。
+ */
+async function downloadVideo(p) {
+  const { url, filename } = await api(`/api/media-url?id=${p.id}`);
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('取得できませんでした');
+    saveBlob(await res.blob(), filename);
+  } catch (_) {
+    // 取りに行けないときは、開いて保存してもらう
+    window.open(url, '_blank');
+  }
+}
+
+/**
+ * X 用の画像。filled=false が空欄、true が答え入り。
+ *
+ * ★ 動画と同じ描画（reel.js）を使うので、見た目がずれない。
+ *   6行は投稿に残した文案から取る。
+ */
+async function downloadPoster(p, filled) {
+  const d = p.draft;
+  if (!d || !Array.isArray(d.rows) || !d.rows.length) {
+    throw new Error('この投稿には文案が残っていないので、画像を作れません。作り直してください。');
+  }
+  await Reel.ensureFont();
+  const canvas = Reel.poster(d, filled);
+  const blob = await new Promise((ok) => canvas.toBlob(ok, 'image/png'));
+  saveBlob(blob, safeFileName(p.title) + (filled ? '_答え' : '_空欄') + '.png');
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+function safeFileName(title) {
+  const s = String(title || '').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40).replace(/^_+|_+$/g, '');
+  return s || 'post';
 }
 
 // --------------------------------------------------------------- 一覧
@@ -878,11 +1140,13 @@ async function loadPosts() {
     const { posts, accounts: fresh, groups: gs } = await api('/api/posts');
     if (fresh) accounts = fresh;
     if (gs) { groups = gs; renderGroupTabs(); renderTargets(); renderGroups(); }
+    renderHandoff(posts);
     const shown = currentGroup ? posts.filter((p) => !p.group_id || p.group_id === currentGroup) : posts;
     $('list').innerHTML = shown.length ? '' : '<p class="muted">まだ投稿がありません。</p>';
     for (const p of shown) $('list').appendChild(render(p));
   } catch (e) {
     $('list').innerHTML = `<p class="err">${e.message}</p>`;
+    $('handoff').innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
   }
 }
 

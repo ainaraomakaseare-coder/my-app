@@ -11,6 +11,7 @@
 const auth = require('../lib/auth');
 const db = require('../lib/db');
 const scope = require('../lib/account-scope');
+const handoff = require('../lib/handoff');
 
 const NETWORKS = ['instagram', 'youtube', 'x', 'tiktok'];
 
@@ -28,7 +29,8 @@ module.exports = async function handler(req, res) {
     const action = req.query && req.query.action;
 
     if (req.method === 'GET')    return res.status(200).json(await list());
-    if (req.method === 'POST' && action) return res.status(200).json(await act(id, action));
+    if (req.method === 'POST' && action)
+      return res.status(200).json(await act(id, action, req.query && req.query.account));
     if (req.method === 'POST')   return res.status(200).json(await save(req, null));
     if (req.method === 'PATCH')  return res.status(200).json(await save(req, id));
     if (req.method === 'DELETE') return res.status(200).json(await remove(id));
@@ -54,6 +56,19 @@ async function list() {
     db.listAccounts(),
     db.listGroups(),
   ]);
+  // ★ 受け渡しの手順は、SNSごとの事情（下書きで止まるか、即公開か）で決まる。
+  //   画面側にも同じ表を置くと必ずずれるので、ここで組み立てて渡す。
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const groupById = new Map((groups || []).map((g) => [g.id, g]));
+
+  for (const p of posts || []) {
+    const targets = p.post_targets || [];
+    const chosen = targets.map((t) => byId.get(t.account_id)).filter(Boolean);
+    // 動画に描く6行は draft の中にある。素材が作れるかの判定に要る。
+    const full = Object.assign({}, p, p.draft || {});
+    p.handoff = handoff.planFor(full, chosen, groupById.get(p.group_id) || null, targets);
+  }
+
   return { posts: posts || [], accounts, groups, now: new Date().toISOString() };
 }
 
@@ -74,7 +89,23 @@ async function save(req, id) {
   };
   const issues = scope.checkTargets(choice, targets.map((t) => byId.get(t)));
   if (issues.length) throw bad(issues[0].message);
+
+  // ★ 自動投稿しない運用アカウントでは、公開まで行ってしまうSNSを予約できない。
+  //   Instagram と X の API には「下書き」が無く、呼んだ瞬間に公開されるため。
+  //   これらは受け渡し（素材を手元に渡す）でしか進められない。
+  const groups = await db.listGroups();
+  const group = groups.find((g) => g.id === choice.group_id) || null;
   const wantsSchedule = body.status === 'scheduled';
+
+  if (wantsSchedule) {
+    const manual = handoff.manualOnly(group, targets.map((t) => byId.get(t)));
+    if (manual.length) {
+      throw bad(
+        `${manual.map((a) => nameOf(a)).join(' / ')} は API で出すと即公開になります。` +
+        'この運用アカウントは自動投稿しない設定なので、下書きとして保存し、受け渡しから進めてください。'
+      );
+    }
+  }
 
   if (wantsSchedule && !scheduledAt) {
     throw bad('「投稿予約」にするには予定日時が必要です。');
@@ -101,6 +132,7 @@ async function save(req, id) {
     yt_description: body.yt_description || '',
     x_text: body.x_text || '',
     tt_caption: body.tt_caption || '',
+    draft: body.draft || null,
     media_path: body.media_path || null,
     media_kind: body.media_kind || null,
     media_bytes: body.media_bytes || null,
@@ -119,7 +151,7 @@ async function save(req, id) {
     post = Array.isArray(created) ? created[0] : created;
   }
 
-  await syncTargets(post.id, targets, byId);
+  await syncTargets(post.id, targets, byId, group);
   const names = targets.map((t) => nameOf(byId.get(t))).join(' / ');
   await db.logEvent(
     post.id, null, id ? 'updated' : 'created',
@@ -135,16 +167,19 @@ async function save(req, id) {
  * ★ すでに成功している行は絶対に触らない。
  *   触ると、再実行したときに同じSNSへ二重投稿してしまう。
  */
-async function syncTargets(postId, targets, byId) {
+async function syncTargets(postId, targets, byId, group) {
   const existing = (await db.rest('post_targets', { query: { select: '*', post_id: `eq.${postId}` } })) || [];
 
   for (const accountId of targets) {
     if (!existing.some((t) => t.account_id === accountId)) {
+      const network = byId.get(accountId).network;
       await db.insert('post_targets', {
         post_id: postId,
         account_id: accountId,
-        network: byId.get(accountId).network,
-        status: 'queued',
+        network,
+        // 手渡しにしかできない投稿先は、最初から順番待ちに入れない。
+        // 入れてしまうと、時間が来たときに公開されてしまう。
+        status: handoff.statusForTarget(group, network),
       });
     }
   }
@@ -163,7 +198,7 @@ function nameOf(a) {
   return who ? `${net}（${who}）` : net;
 }
 
-async function act(id, action) {
+async function act(id, action, accountId) {
   if (!id) throw bad('投稿が指定されていません。');
 
   if (action === 'retry') {
@@ -183,6 +218,33 @@ async function act(id, action) {
     await db.updateById('posts', id, { scheduled_at: new Date().toISOString(), status: 'scheduled' });
     await db.logEvent(id, null, 'run-now', '今すぐ投稿するよう予定を変更しました');
     return { ok: true };
+  }
+
+  // 素材を受け取った、という記録。ここから先は本人がアプリで投稿する。
+  if (action === 'handed') {
+    if (!accountId) throw bad('どの投稿先か指定されていません。');
+    const rows = await db.rest('post_targets', {
+      method: 'PATCH',
+      query: { post_id: `eq.${id}`, account_id: `eq.${accountId}`, status: `eq.${handoff.MANUAL}` },
+      body: { status: handoff.HANDED, posted_at: null },
+      prefer: 'return=representation',
+    });
+    if (!rows || !rows.length) throw bad('受け渡し待ちの投稿先が見つかりません。');
+    await db.logEvent(id, rows[0].network, 'handed', '素材を受け取りました（公開はアプリから）');
+    return { handed: rows[0].network };
+  }
+
+  // 受け取り済みを取り消す。渡し直したいときのため。
+  if (action === 'unhand') {
+    if (!accountId) throw bad('どの投稿先か指定されていません。');
+    const rows = await db.rest('post_targets', {
+      method: 'PATCH',
+      query: { post_id: `eq.${id}`, account_id: `eq.${accountId}`, status: `eq.${handoff.HANDED}` },
+      body: { status: handoff.MANUAL },
+      prefer: 'return=representation',
+    });
+    if (!rows || !rows.length) throw bad('受け取り済みの投稿先が見つかりません。');
+    return { reset: rows[0].network };
   }
 
   throw bad('知らない操作です。');
