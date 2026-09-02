@@ -24,6 +24,7 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({
         groups: await groups.list(),
         profiles: groups.profileChoices(),
+        features: groups.featureChoices(),
       });
     }
     if (req.method === 'POST')   return res.status(200).json(await groups.create(body));

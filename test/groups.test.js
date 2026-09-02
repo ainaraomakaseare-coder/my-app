@@ -98,7 +98,8 @@ function load(modPath, db, stubs) {
     const g = load('../lib/groups.js', db);
     await g.create({ label: '転職キュレーション', validation_profile: 'curator' });
     assert.deepStrictEqual(db._state.wrote, [
-      ['insert', { label: '転職キュレーション', validation_profile: 'curator', auto_publish_networks: [] }],
+      ['insert', { label: '転職キュレーション', validation_profile: 'curator',
+                   auto_publish_networks: [], features: [] }],
     ]);
   });
 
@@ -132,6 +133,31 @@ function load(modPath, db, stubs) {
     const g = load('../lib/groups.js', db);
     await assert.rejects(() => g.create({ label: 'A', auto_publish_networks: ['tiktok'] }),
                          /使えません/);
+  });
+
+  // ★ 使う機能はチャンネルごと。消さずに切り替えるので、あとから足せる。
+  await check('使う機能を指定できる', async () => {
+    const db = fakeDb({});
+    const g = load('../lib/groups.js', db);
+    await g.create({ label: '転職のホンネ', features: ['writes', 'videos'] });
+    assert.deepStrictEqual(db._state.wrote[0][1].features, ['writes', 'videos']);
+  });
+
+  await check('使う機能だけを切り替えられる', async () => {
+    const db = fakeDb({ groups: [{ id: G1, label: 'A', validation_profile: 'curator' }] });
+    const g = load('../lib/groups.js', db);
+    await g.update(G1, { features: ['writes'] });
+    assert.deepStrictEqual(db._state.wrote, [['update', G1, { features: ['writes'] }]]);
+  });
+
+  await check('知らない機能の名前は断る', async () => {
+    const db = fakeDb({});
+    const g = load('../lib/groups.js', db);
+    await assert.rejects(() => g.create({ label: 'A', features: ['video'] }), /使えません/);
+  });
+
+  await check('画面に出す機能は writes と videos の2つ', () => {
+    assert.deepStrictEqual(groups0.featureChoices().map((f) => f.id), ['writes', 'videos']);
   });
 
   await check('同じSNSを重ねて指定しても1つにまとまる', async () => {

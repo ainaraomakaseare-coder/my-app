@@ -182,7 +182,8 @@ const post = (over) => Object.assign({
     const dir = __dirname + '/../supabase/';
     const all = fs.readFileSync(dir + 'setup_all.sql', 'utf8');
     for (const f of ['schema.sql', 'schema_v2_accounts.sql', 'schema_v3_groups.sql',
-                     'schema_v4_handoff.sql', 'schema_v5_per_network.sql']) {
+                     'schema_v4_handoff.sql', 'schema_v5_per_network.sql',
+                     'schema_v6_features.sql']) {
       assert.ok(all.includes(fs.readFileSync(dir + f, 'utf8')), f + ' が古い');
     }
     // つなぐ順番も見る。順番が狂うと引き継ぎが効かない。
