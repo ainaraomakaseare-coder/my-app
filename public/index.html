@@ -140,6 +140,7 @@
       <nav class="side" id="side">
         <div class="grp">運用アカウント</div>
         <div id="channels" class="muted" style="padding:8px 10px">確認中…</div>
+        <button id="addChannel" class="quiet">＋ 運用アカウントを追加</button>
         <div class="sep"></div>
         <button data-view="groups" class="quiet">運用アカウントの管理</button>
       </nav>
@@ -157,7 +158,7 @@
     <!-- まとめて仕込む -->
     <div class="card">
       <h2>まとめて仕込む</h2>
-      <div class="muted">ネタを並べておくと、1本ずつ「文案 → 動画 → 予約」まで通しで作ります。
+      <div class="muted" id="bulkLead">ネタを並べておくと、1本ずつ「文案 → 動画 → 予約」まで通しで作ります。
         20本入れておけば、20日ぶんが一度に仕込めます。
         <strong>動画はこのブラウザの中で作るので、終わるまでこの画面を開いたままにしてください。</strong>
         1本あたり40秒ほど、20本で15分前後かかります。</div>
@@ -199,7 +200,8 @@
       </div>
 
       <div class="view hide" id="v-one">
-    <!-- 投稿文をつくる -->
+    <!-- 投稿文をつくる（文案を自動で書かないチャンネルでは隠す） -->
+    <div id="v-gen">
     <div class="card">
       <h2>投稿文をつくる</h2>
       <div class="muted">ネタを入れると、動画の6行と各SNSの本文をまとめて作ります。
@@ -221,6 +223,7 @@
       </div>
 
       <div id="genResult" class="hide" style="margin-top:14px"></div>
+    </div>
     </div>
     <!-- 投稿を作る -->
     <div class="card">
@@ -312,7 +315,11 @@
         <label for="gProfile">点検の型</label>
         <select id="gProfile"></select>
         <div class="muted" id="gProfileNote" style="margin-top:6px"></div>
-        <label>自動で投稿してよいSNS</label>
+        <label>使う機能</label>
+        <div class="targets" id="gFeat"></div>
+        <div class="muted" id="gFeatNote"></div>
+
+        <label style="margin-top:12px">自動で投稿してよいSNS</label>
         <div class="targets" id="gAuto"></div>
         <div class="muted">入れなかったSNSへは API を出さず、素材を手元にお渡しします。
           ここに出るのは Instagram と X だけです。この2つは API に下書きが無く、送った瞬間に公開されるためです。
@@ -554,13 +561,16 @@ async function loadGroups() {
     const out = await api('/api/groups');
     groups = out.groups || [];
     profiles = out.profiles || [];
+    features = out.features || [];
     fillProfileSelect($('gProfile'));
     if (!$('gAuto').children.length) fillAutoNetworks($('gAuto'), []);
+    if (!$('gFeat').children.length) fillFeatures($('gFeat'), []);
     renderGroups();
     renderChannels();
     // ★ ここまで来て初めて、URL に書かれたチャンネル名を id に引き当てられる。
     //   起動時点では運用アカウントを知らないので、読み終えてから当てにいく。
     applyHash();
+    renderViewTabs();
     writeHash(false);
     renderConn();
     renderTargets();
@@ -614,6 +624,45 @@ function fillAutoNetworks(box, chosen, onChange) {
 const checkedAutoNetworks = (box) =>
   [...box.querySelectorAll('input:checked')].map((c) => c.value);
 
+/**
+ * 「使う機能」のチェック欄。
+ *
+ * ★ 消すのではなく切り替えにしている。
+ *   AI初心者側はいま自分で書いているが、将来は書かせたいとのことなので、
+ *   機能を削ってしまうと戻せない。チェックを入れれば出る形にする。
+ */
+let features = [];
+
+function fillFeatures(box, chosen, onChange) {
+  if (!box) return;
+  box.innerHTML = '';
+  for (const f of features) {
+    const l = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = f.id;
+    cb.checked = (chosen || []).includes(f.id);
+    cb.title = f.note;
+    if (onChange) {
+      cb.onchange = () => onChange(checkedAutoNetworks(box), () => { cb.checked = !cb.checked; });
+    }
+    l.appendChild(cb);
+    l.appendChild(document.createTextNode(' ' + f.label));
+    box.appendChild(l);
+  }
+  if ($('gFeatNote') && box === $('gFeat')) {
+    $('gFeatNote').textContent = features.map((f) => f.label + '…' + f.note).join('　');
+  }
+}
+
+const featureLabel = (id) => (features.find((f) => f.id === id) || {}).label || id;
+
+/** いま見ているチャンネルが、その機能を使うか。 */
+function groupUses(name) {
+  const g = groups.find((x) => x.id === currentGroup);
+  return !!(g && Array.isArray(g.features) && g.features.includes(name));
+}
+
 function profileLabel(id) {
   const p = profiles.find((x) => x.id === id);
   return p ? p.label : id;
@@ -644,6 +693,7 @@ function renderGroups() {
         <strong>${escapeHtml(g.label)}</strong>
         <span class="badge">${escapeHtml(profileLabel(g.validation_profile))}</span>
         ${autoBadge}
+        ${(g.features || []).map((f) => `<span class="badge">${escapeHtml(featureLabel(f))}</span>`).join('')}
         <div class="muted">連携先 ${used} 件　${escapeHtml(PROFILE_NOTE[g.validation_profile] || '')}</div>
       </div>
       <div class="row"></div>`;
@@ -671,6 +721,23 @@ function renderGroups() {
       loadPosts();
     });
     actions.appendChild(autoBox);
+
+    // 使う機能。消さずに切り替えるので、あとから足せる。
+    const featBox = document.createElement('div');
+    featBox.className = 'targets';
+    featBox.style.margin = '0';
+    fillFeatures(featBox, g.features || [], async (chosen, revert) => {
+      try {
+        await api(`/api/groups?id=${g.id}`, { method:'PATCH', body:{ features: chosen } });
+      } catch (e) {
+        alert(e.message + (e.hint ? '\n' + e.hint : ''));
+        revert();
+        return;
+      }
+      loadGroups();
+      renderViewTabs();
+    });
+    actions.appendChild(featBox);
 
     const ren = document.createElement('button');
     ren.textContent = '名前を変える';
@@ -724,10 +791,12 @@ $('gAdd').onclick = async () => {
         label: $('gLabel').value,
         validation_profile: $('gProfile').value,
         auto_publish_networks: checkedAutoNetworks($('gAuto')),
+        features: checkedAutoNetworks($('gFeat')),
       },
     });
     $('gLabel').value = '';
     fillAutoNetworks($('gAuto'), []);
+    fillFeatures($('gFeat'), []);
     await loadGroups();
   } catch (e) {
     $('gErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
@@ -1386,10 +1455,15 @@ $('bulkRun').onclick = async () => {
         ).join('') + '</ul>');
       }
 
-      row.say('動画を作っています… 0%');
-      const up = await renderAndUpload(out.draft, (r) => {
-        row.say('動画を作っています… ' + Math.round(r * 100) + '%');
-      });
+      // ★ 動画を使わないチャンネルでは、ここを飛ばして文だけ予約する。
+      //   1本あたり17秒かかるので、要らないなら省くほうが早い。
+      let up = null;
+      if (groupUses('videos')) {
+        row.say('動画を作っています… 0%');
+        up = await renderAndUpload(out.draft, (r) => {
+          row.say('動画を作っています… ' + Math.round(r * 100) + '%');
+        });
+      }
 
       // ★ 点検に通らなかったものは予約しない。下書きで止めて人に回す。
       const ok = out.ok !== false;
@@ -1411,9 +1485,9 @@ $('bulkRun').onclick = async () => {
           group_id: currentGroup,
           has_affiliate_link: affi,
           draft: d,
-          media_path: up.path,
-          media_kind: up.kind,
-          media_bytes: up.bytes,
+          media_path: up && up.path,
+          media_kind: up && up.kind,
+          media_bytes: up && up.bytes,
           targets,
         },
       });
@@ -1462,6 +1536,41 @@ const GLOBAL_VIEWS = ['groups'];
 
 let currentView = 'list';
 
+/**
+ * 上のタブを、そのチャンネルが使う機能に合わせて出し入れする。
+ *
+ * ★ 「まとめて仕込む」は文案づくりが要る（ネタから20本書くため）。
+ *   動画は無くてもよく、その場合は文だけ予約する。
+ */
+function renderViewTabs() {
+  const uses = { bulk: groupUses('writes') };
+  for (const b of document.querySelectorAll('#viewTabs button')) {
+    const v = b.dataset.view;
+    b.classList.toggle('hide', v in uses && !uses[v]);
+  }
+  // 文案を書かないチャンネルでは、生成の欄を隠して名前も変える。
+  const writes = groupUses('writes');
+  $('v-gen').classList.toggle('hide', !writes);
+  const one = document.querySelector('#viewTabs button[data-view="one"]');
+  if (one) one.textContent = writes ? '1本だけつくる' : '投稿を作る';
+  // 動画を作らないチャンネルでは、動画のボタンを隠す。
+  const mk = $('genMake');
+  if (mk) mk.classList.toggle('hide', !groupUses('videos'));
+
+  // 束の説明も、動画を作るかどうかで変える。かかる時間がまるで違うため。
+  const lead = $('bulkLead');
+  if (lead) {
+    lead.textContent = groupUses('videos')
+      ? 'ネタを並べておくと、1本ずつ「文案 → 動画 → 予約」まで通しで作ります。'
+        + '20本入れておけば、20日ぶんが一度に仕込めます。'
+        + '動画はこのブラウザの中で作るので、終わるまでこの画面を開いたままにしてください。'
+        + '1本あたり40秒ほど、20本で15分前後かかります。'
+      : 'ネタを並べておくと、1本ずつ「文案 → 予約」まで通しで作ります。'
+        + 'この運用アカウントは動画を作らない設定なので、本文だけを予約します。'
+        + '1本あたり20秒ほどです。';
+  }
+}
+
 function showView(name, push) {
   currentView = VIEWS.includes(name) ? name : 'list';
   for (const v of VIEWS) $('v-' + v).classList.toggle('hide', v !== currentView);
@@ -1493,6 +1602,10 @@ function selectGroup(id, push, view) {
   const next = view || currentView;
   currentView = GLOBAL_VIEWS.includes(next) ? 'list' : next;
   renderChannels();
+  renderViewTabs();
+  // 使わない機能の画面にいたまま移ってきたら、投稿一覧へ落とす。
+  const tab = document.querySelector(`#viewTabs button[data-view="${currentView}"]`);
+  if (tab && tab.classList.contains('hide')) currentView = 'list';
   showView(currentView, push);
   renderConn();
   renderTargets();
@@ -1565,6 +1678,14 @@ function renderChannels() {
 for (const b of document.querySelectorAll('#viewTabs button, #side button[data-view]')) {
   b.onclick = () => showView(b.dataset.view, true);
 }
+
+// ＋ は管理画面へ連れていって、そのまま入力欄を開く。
+$('addChannel').onclick = () => {
+  showView('groups', true);
+  const box = document.querySelector('#v-groups details');
+  if (box) { box.open = true; box.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  $('gLabel').focus();
+};
 
 /** 最初にどこを出すか。URL → 前回の続き → 投稿一覧。 */
 const VIEW_KEY = 'td_view';
