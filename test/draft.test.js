@@ -327,12 +327,33 @@ const personal = draft({
 
   // ---- リクエストの組み立て ------------------------------------------------
 
-  await check('構造化出力の形で投げている', () => {
-    const p = gen.buildParams(topic, null);
+  await check('Claude には構造化出力の形で投げている', () => {
+    const p = gen.buildParams(topic, null, 'anthropic');
     assert.strictEqual(p.model, 'claude-opus-5');
     assert.strictEqual(p.output_config.format.type, 'json_schema');
     assert.strictEqual(p.output_config.format.schema.properties.rows.minItems, 6);
     assert.strictEqual(p.system[0].cache_control.type, 'ephemeral');
+  });
+
+  await check('OpenAI にも同じ中身を、あちらの形で投げている', () => {
+    const p = gen.buildParams(topic, null, 'openai');
+    assert.strictEqual(p.response_format.type, 'json_schema');
+    assert.strictEqual(p.response_format.json_schema.strict, true);
+    assert.strictEqual(p.messages[0].role, 'system');
+    assert.ok(p.messages[0].content.includes('キュレーター'), '前置きが入っていない');
+    assert.strictEqual(p.messages[1].content, gen.buildUserMessage(topic, null));
+  });
+
+  // ★ strict モードは minItems を受け付けない。残すと 400 で弾かれる。
+  //   行数は draft-rules の row-count が見るので、縛りが消えるわけではない。
+  await check('OpenAI 向けでは、通らない語を落としている', () => {
+    const p = gen.buildParams(topic, null, 'openai');
+    const rows = p.response_format.json_schema.schema.properties.rows;
+    assert.ok(!('minItems' in rows) && !('maxItems' in rows), 'minItems が残っている');
+    assert.strictEqual(rows.items.additionalProperties, false, '入れ子の縛りまで落ちている');
+    assert.deepStrictEqual(rows.items.required, ['question', 'answer']);
+    // 元のスキーマは触っていない
+    assert.strictEqual(gen.SCHEMA.properties.rows.minItems, 6);
   });
 
   await check('案件つきのときは X に載せないよう伝える', () => {

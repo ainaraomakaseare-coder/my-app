@@ -9,6 +9,9 @@
  * ★ 点検の規則は運用アカウントごとに変わる。
  *   account_groups.validation_profile を見て切り替える。
  *   転職側では一人称が嘘になるが、ひろや側は本人の記録なので正しい。
+ *
+ * ★ 書かせる相手（Claude / OpenAI）は lib/llm.js が決める。
+ *   ANTHROPIC_API_KEY か OPENAI_API_KEY の、設定してあるほうを使う。
  */
 
 const auth = require('../lib/auth');
@@ -60,6 +63,9 @@ module.exports = async function handler(req, res) {
       profile: rules.profileFor(profileId).label,
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    // 鍵の設定漏れやモデル名の間違いは、利用者が直せる。
+    // 500 で潰さず、直し方（hint）ごと返す。
+    const status = err.userError ? 400 : 500;
+    return res.status(status).json({ error: err.message, hint: err.hint });
   }
 };

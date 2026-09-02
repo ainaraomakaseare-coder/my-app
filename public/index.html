@@ -823,7 +823,8 @@ $('genBtn').onclick = async () => {
     });
     renderGenerated(generated);
   } catch (e) {
-    $('genErr').textContent = e.message;
+    // 鍵の設定漏れは直し方まで出さないと動けない。
+    $('genErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
   }
   $('genBtn').disabled = false;
   $('genState').textContent = '';
