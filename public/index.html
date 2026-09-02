@@ -16,7 +16,31 @@
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
        font:15px/1.7 "Hiragino Kaku Gothic ProN","Yu Gothic",system-ui,sans-serif}
-  .wrap{max-width:760px;margin:0 auto;padding:16px}
+  .wrap{max-width:1060px;margin:0 auto;padding:16px}
+  #login .card{max-width:420px;margin:48px auto}
+
+  /* Slack のように、左で切り替えて右に中身を出す。
+     1ページに全部並べると探せなくなるため。 */
+  .shell{display:grid;grid-template-columns:190px 1fr;gap:22px;align-items:start}
+  .main{min-width:0;max-width:760px}
+  .side{position:sticky;top:16px;display:flex;flex-direction:column;gap:2px}
+  .side .grp{font-size:11px;color:var(--muted);margin:16px 0 4px;letter-spacing:.06em}
+  .side .grp:first-child{margin-top:0}
+  .side button{text-align:left;border:none;background:none;padding:8px 10px;border-radius:8px;
+    font:inherit;font-size:14px;color:var(--ink);cursor:pointer;
+    display:flex;align-items:center;gap:8px;width:100%}
+  .side button:hover{background:var(--card)}
+  .side button[aria-current="page"]{background:#111;color:#fff;font-weight:600}
+  .side .n{margin-left:auto;font-size:11px;background:var(--warn);color:#fff;
+    border-radius:999px;padding:1px 7px;min-width:20px;text-align:center}
+  .side button[aria-current="page"] .n{background:#fff;color:#111}
+  @media (max-width:760px){
+    .shell{grid-template-columns:1fr}
+    .side{position:static;flex-direction:row;overflow-x:auto;gap:6px;
+      padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:14px}
+    .side .grp{display:none}
+    .side button{white-space:nowrap;width:auto;border:1px solid var(--line);background:var(--card)}
+  }
   h1{font-size:20px;margin:0}
   h2{font-size:16px;margin:0 0 12px}
   header{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);
@@ -104,50 +128,67 @@
     <div class="tabs hide" id="groupTabs"></div>
     <div id="connectedMsg" class="notice hide"></div>
 
-    <!-- 運用アカウント -->
-    <div class="card">
-      <h2>運用アカウント</h2>
-      <div class="muted">投稿の系統を分ける単位です。ここを分けておくと、企画用と案件用が混ざりません。
-        連携先も投稿もどれか1つに属し、またいだ投稿先はDB側でも止めています。</div>
-      <div id="groupList" class="muted" style="margin-top:10px">確認中…</div>
-      <details style="margin-top:12px">
-        <summary>運用アカウントを追加する</summary>
-        <label for="gLabel">名前（例：転職キュレーション）</label>
-        <input type="text" id="gLabel" placeholder="転職キュレーション" maxlength="40">
-        <label for="gProfile">点検の型</label>
-        <select id="gProfile"></select>
-        <div class="muted" id="gProfileNote" style="margin-top:6px"></div>
-        <label>自動で投稿してよいSNS</label>
-        <div class="targets" id="gAuto"></div>
-        <div class="muted">入れなかったSNSへは API を出さず、素材を手元にお渡しします。
-          ここに出るのは Instagram と X だけです。この2つは API に下書きが無く、送った瞬間に公開されるためです。
-          TikTok と YouTube は、どの設定でも下書き・非公開までしか進みません。</div>
-        <div class="row" style="margin-top:10px">
-          <button id="gAdd" class="primary">追加する</button>
-          <span class="err" id="gErr"></span>
-        </div>
-      </details>
-    </div>
+    <div class="shell">
+      <nav class="side" id="side">
+        <div class="grp">つくる</div>
+        <button data-view="bulk">まとめて仕込む</button>
+        <button data-view="one">1本だけつくる</button>
+        <div class="grp">出す</div>
+        <button data-view="handoff">受け渡し</button>
+        <button data-view="list">投稿一覧</button>
+        <div class="grp">設定</div>
+        <button data-view="groups">運用アカウント</button>
+        <button data-view="conn">連携設定</button>
+      </nav>
 
-    <!-- 連携設定 -->
-    <div class="card">
-      <h2>連携設定</h2>
-      <div id="conn" class="muted">確認中…</div>
-      <details style="margin-top:12px">
-        <summary>Instagram のトークンを登録する</summary>
-        <label for="igLabel">呼び名（自分が見分けるため。例：企画用 / アフィリ用）</label>
-        <input type="text" id="igLabel" placeholder="企画用">
-        <label for="igToken">Meta の管理画面「Generate token」で発行した文字列</label>
-        <input type="password" id="igToken" autocomplete="off">
-        <div class="row" style="margin-top:8px">
-          <button id="igSave">登録して接続テスト</button>
-          <span class="err" id="igErr"></span>
-        </div>
-        <div class="muted">1時間で切れる短期トークンを、60日もつ長期トークンへ自動で交換します。
-        画面に返すのは先頭6文字だけで、全体は一度もブラウザに送りません。</div>
-      </details>
-    </div>
+      <div class="main">
 
+      <div class="view hide" id="v-bulk">
+    <!-- まとめて仕込む -->
+    <div class="card">
+      <h2>まとめて仕込む</h2>
+      <div class="muted">ネタを並べておくと、1本ずつ「文案 → 動画 → 予約」まで通しで作ります。
+        20本入れておけば、20日ぶんが一度に仕込めます。
+        <strong>動画はこのブラウザの中で作るので、終わるまでこの画面を開いたままにしてください。</strong>
+        1本あたり40秒ほど、20本で15分前後かかります。</div>
+
+      <label for="bulkTopics">ネタ（1行に1つ）</label>
+      <textarea id="bulkTopics" style="min-height:180px" placeholder="読み込み中…"></textarea>
+
+      <div class="row" style="margin-top:12px;align-items:flex-end">
+        <div style="flex:1;min-width:180px">
+          <label for="bulkStart">1本目の日付</label>
+          <input type="date" id="bulkStart">
+        </div>
+        <div style="flex:1;min-width:120px">
+          <label for="bulkTime">毎日の時刻</label>
+          <input type="time" id="bulkTime" value="21:00">
+        </div>
+        <div style="flex:1;min-width:120px">
+          <label for="bulkEvery">何日おき</label>
+          <input type="number" id="bulkEvery" value="1" min="1" max="14">
+        </div>
+      </div>
+
+      <label>投稿先</label>
+      <div class="targets" id="bulkTargets"></div>
+
+      <label style="margin-top:12px">
+        <input type="checkbox" id="bulkAffi"> この束は案件リンクを含む（PR表記を入れます）
+      </label>
+
+      <div class="row" style="margin-top:12px">
+        <button id="bulkRun" class="primary">仕込む</button>
+        <button id="bulkStop" class="hide">中止</button>
+        <span class="muted" id="bulkState"></span>
+        <span class="err" id="bulkErr"></span>
+      </div>
+
+      <div id="bulkLog" style="margin-top:12px"></div>
+    </div>
+      </div>
+
+      <div class="view hide" id="v-one">
     <!-- 投稿文をつくる -->
     <div class="card">
       <h2>投稿文をつくる</h2>
@@ -171,7 +212,6 @@
 
       <div id="genResult" class="hide" style="margin-top:14px"></div>
     </div>
-
     <!-- 投稿を作る -->
     <div class="card">
       <h2>投稿を作る</h2>
@@ -227,50 +267,9 @@
       </div>
       <div class="muted" id="progress"></div>
     </div>
-
-    <!-- まとめて仕込む -->
-    <div class="card">
-      <h2>まとめて仕込む</h2>
-      <div class="muted">ネタを並べておくと、1本ずつ「文案 → 動画 → 予約」まで通しで作ります。
-        20本入れておけば、20日ぶんが一度に仕込めます。
-        <strong>動画はこのブラウザの中で作るので、終わるまでこの画面を開いたままにしてください。</strong>
-        1本あたり40秒ほど、20本で15分前後かかります。</div>
-
-      <label for="bulkTopics">ネタ（1行に1つ）</label>
-      <textarea id="bulkTopics" style="min-height:180px" placeholder="読み込み中…"></textarea>
-
-      <div class="row" style="margin-top:12px;align-items:flex-end">
-        <div style="flex:1;min-width:180px">
-          <label for="bulkStart">1本目の日付</label>
-          <input type="date" id="bulkStart">
-        </div>
-        <div style="flex:1;min-width:120px">
-          <label for="bulkTime">毎日の時刻</label>
-          <input type="time" id="bulkTime" value="21:00">
-        </div>
-        <div style="flex:1;min-width:120px">
-          <label for="bulkEvery">何日おき</label>
-          <input type="number" id="bulkEvery" value="1" min="1" max="14">
-        </div>
       </div>
 
-      <label>投稿先</label>
-      <div class="targets" id="bulkTargets"></div>
-
-      <label style="margin-top:12px">
-        <input type="checkbox" id="bulkAffi"> この束は案件リンクを含む（PR表記を入れます）
-      </label>
-
-      <div class="row" style="margin-top:12px">
-        <button id="bulkRun" class="primary">仕込む</button>
-        <button id="bulkStop" class="hide">中止</button>
-        <span class="muted" id="bulkState"></span>
-        <span class="err" id="bulkErr"></span>
-      </div>
-
-      <div id="bulkLog" style="margin-top:12px"></div>
-    </div>
-
+      <div class="view hide" id="v-handoff">
     <!-- 受け渡し -->
     <div class="card">
       <h2>受け渡し（投稿手前まで）</h2>
@@ -279,11 +278,64 @@
         Instagram と X は API に下書きが無く、送ると即公開になるので、素材を手元にお渡しします。</div>
       <div id="handoff" class="muted" style="margin-top:12px">読み込み中…</div>
     </div>
+      </div>
 
+      <div class="view hide" id="v-list">
     <!-- 一覧 -->
     <div class="card">
       <h2>投稿一覧</h2>
       <div id="list" class="muted">読み込み中…</div>
+    </div>
+      </div>
+
+      <div class="view hide" id="v-groups">
+    <!-- 運用アカウント -->
+    <div class="card">
+      <h2>運用アカウント</h2>
+      <div class="muted">投稿の系統を分ける単位です。ここを分けておくと、企画用と案件用が混ざりません。
+        連携先も投稿もどれか1つに属し、またいだ投稿先はDB側でも止めています。</div>
+      <div id="groupList" class="muted" style="margin-top:10px">確認中…</div>
+      <details style="margin-top:12px">
+        <summary>運用アカウントを追加する</summary>
+        <label for="gLabel">名前（例：転職キュレーション）</label>
+        <input type="text" id="gLabel" placeholder="転職キュレーション" maxlength="40">
+        <label for="gProfile">点検の型</label>
+        <select id="gProfile"></select>
+        <div class="muted" id="gProfileNote" style="margin-top:6px"></div>
+        <label>自動で投稿してよいSNS</label>
+        <div class="targets" id="gAuto"></div>
+        <div class="muted">入れなかったSNSへは API を出さず、素材を手元にお渡しします。
+          ここに出るのは Instagram と X だけです。この2つは API に下書きが無く、送った瞬間に公開されるためです。
+          TikTok と YouTube は、どの設定でも下書き・非公開までしか進みません。</div>
+        <div class="row" style="margin-top:10px">
+          <button id="gAdd" class="primary">追加する</button>
+          <span class="err" id="gErr"></span>
+        </div>
+      </details>
+    </div>
+      </div>
+
+      <div class="view hide" id="v-conn">
+    <!-- 連携設定 -->
+    <div class="card">
+      <h2>連携設定</h2>
+      <div id="conn" class="muted">確認中…</div>
+      <details style="margin-top:12px">
+        <summary>Instagram のトークンを登録する</summary>
+        <label for="igLabel">呼び名（自分が見分けるため。例：企画用 / アフィリ用）</label>
+        <input type="text" id="igLabel" placeholder="企画用">
+        <label for="igToken">Meta の管理画面「Generate token」で発行した文字列</label>
+        <input type="password" id="igToken" autocomplete="off">
+        <div class="row" style="margin-top:8px">
+          <button id="igSave">登録して接続テスト</button>
+          <span class="err" id="igErr"></span>
+        </div>
+        <div class="muted">1時間で切れる短期トークンを、60日もつ長期トークンへ自動で交換します。
+        画面に返すのは先頭6文字だけで、全体は一度もブラウザに送りません。</div>
+      </details>
+    </div>
+      </div>
+      </div>
     </div>
   </section>
 </div>
@@ -335,6 +387,7 @@ async function boot() {
   $('login').classList.toggle('hide', loggedIn);
   $('app').classList.toggle('hide', !loggedIn);
   if (loggedIn) {
+    showView(firstView());
     tickClock(); showConnectResult(); loadGroups(); loadConn(); loadPosts(); loadTopics();
   }
 }
@@ -1014,6 +1067,8 @@ function applyGenerated(d) {
   $('ytd').value = d.igCaption || '';
   $('affiFlag').checked = !!d.hasAffiliateLink;
   appliedDraft = d;
+  // ここへ来るのは「1本だけつくる」の画面にいるときだけなので、画面は動かさない。
+  // 動画づくりの17秒のあいだに他の画面へ移った人を、引き戻してしまうため。
   $('title').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -1239,6 +1294,14 @@ function safeFileName(title) {
  *   下書きとして残し、指摘を添えて人に回す。
  */
 let bulkAbort = false;
+let bulkRunning = false;
+
+// ★ 途中で閉じると、動画づくりが止まって中途半端に残る。
+window.addEventListener('beforeunload', (e) => {
+  if (!bulkRunning) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
 
 async function loadTopics() {
   try {
@@ -1303,6 +1366,7 @@ $('bulkRun').onclick = async () => {
   if (!targets.length) { $('bulkErr').textContent = '投稿先を1つ以上選んでください。'; return; }
 
   bulkAbort = false;
+  bulkRunning = true;
   $('bulkRun').disabled = true;
   $('bulkStop').classList.remove('hide');
 
@@ -1368,6 +1432,7 @@ $('bulkRun').onclick = async () => {
     }
   }
 
+  bulkRunning = false;
   $('bulkRun').disabled = false;
   $('bulkStop').classList.add('hide');
   $('bulkState').textContent =
@@ -1381,6 +1446,65 @@ $('bulkStop').onclick = () => {
   $('bulkState').textContent = 'この1本が終わったら止めます…';
 };
 
+// --------------------------------------------------------------- 画面の切り替え
+/**
+ * Slack のように、左で選んで右に出す。
+ *
+ * ★ 別ページ（別のHTML）にはしない。
+ *   ログイン・API呼び出し・いま選んでいる運用アカウントを、
+ *   ページごとに持ち直すことになるため。1枚のまま出し分ける。
+ *
+ * ★ URL に残す（#bulk など）。
+ *   戻るボタンが効き、開きっぱなしのタブを閉じても同じ場所に戻れる。
+ *   別ページにしたときの利点は、こうすればだいたい手に入る。
+ */
+const VIEWS = ['bulk', 'one', 'handoff', 'list', 'groups', 'conn'];
+const VIEW_KEY = 'td_view';
+
+function showView(name, push) {
+  const view = VIEWS.includes(name) ? name : 'list';
+  for (const v of VIEWS) $('v-' + v).classList.toggle('hide', v !== view);
+  for (const b of document.querySelectorAll('#side button')) {
+    if (b.dataset.view === view) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
+  try { localStorage.setItem(VIEW_KEY, view); } catch (_) { /* 使えなくても困らない */ }
+
+  // ★ 人が選んだときだけ履歴に積む。戻るボタンで前の画面へ戻れるようにするため。
+  //   起動時や、戻ってきたときに積むと履歴が二重になる。
+  if (location.hash.slice(1) !== view) {
+    if (push) history.pushState(null, '', '#' + view);
+    else history.replaceState(null, '', '#' + view);
+  }
+  window.scrollTo({ top: 0 });
+}
+
+for (const b of document.querySelectorAll('#side button')) {
+  b.onclick = () => showView(b.dataset.view, true);
+}
+window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
+
+/** 最初にどこを出すか。URL → 前回の続き → 投稿一覧。 */
+function firstView() {
+  const fromHash = location.hash.slice(1);
+  if (VIEWS.includes(fromHash)) return fromHash;
+  try {
+    const saved = localStorage.getItem(VIEW_KEY);
+    if (VIEWS.includes(saved)) return saved;
+  } catch (_) { /* 読めなくても既定でよい */ }
+  return 'list';
+}
+
+/** 左の数字。手が要るものの数を出す。 */
+function setBadge(view, n) {
+  const b = document.querySelector(`#side button[data-view="${view}"]`);
+  if (!b) return;
+  let tag = b.querySelector('.n');
+  if (!n) { if (tag) tag.remove(); return; }
+  if (!tag) { tag = document.createElement('span'); tag.className = 'n'; b.appendChild(tag); }
+  tag.textContent = n;
+}
+
 // --------------------------------------------------------------- 一覧
 async function loadPosts() {
   try {
@@ -1389,6 +1513,11 @@ async function loadPosts() {
     if (gs) { groups = gs; renderGroupTabs(); renderTargets(); renderGroups(); }
     renderHandoff(posts);
     const shown = currentGroup ? posts.filter((p) => !p.group_id || p.group_id === currentGroup) : posts;
+
+    // 手が要るものだけ数える。受け渡し待ちの下書きと、失敗した投稿。
+    setBadge('handoff', shown.filter((p) => p.status === 'draft' &&
+      (p.handoff || []).some((h) => h.mode === 'hand' && h.status !== 'handed')).length);
+    setBadge('list', shown.filter((p) => p.status === 'failed' || p.status === 'partial').length);
     $('list').innerHTML = shown.length ? '' : '<p class="muted">まだ投稿がありません。</p>';
     for (const p of shown) $('list').appendChild(render(p));
   } catch (e) {
