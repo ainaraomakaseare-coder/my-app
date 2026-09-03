@@ -73,6 +73,86 @@
     fps: 30,
   };
 
+  /**
+   * 墨を置いてよい右端。実物の右余白44pxから。
+   *
+   * ★ 文字が長いときは、はみ出させずに縮めて収める。
+   *   台本を書くモデルには「15字以内」と頼んであるが、実際には守られない。
+   *   守られなかったときに切れて読めなくなるより、小さくても全部見えるほうがよい。
+   *   （見切れると穴埋めの答えが読めず、動画の意味がなくなる）
+   */
+  const RIGHT = W - 44;
+
+  /**
+   * これ以上は縮めない。
+   * ★ 底を作らないと、極端に長い台本で豆粒になる。
+   *   ここに当たるほど長いものは、文字の大きさではなく中身の問題なので、
+   *   点検（lib/draft-rules.js）が error として止める。
+   */
+  const MIN_SCALE = 0.55;
+
+  /**
+   * タイトルの下の赤い線は、文字の右端より3px長く引く（実物どおり）。
+   * ★ タイトルを右端ぴったりに縮めると、この線だけがはみ出す。
+   *   線のぶんを見込んで、タイトルはその手前で止める。
+   */
+  const RULE_OVERHANG = 3;
+
+  /** 大きさと字間を、同じ割合でまとめて縮める。 */
+  const scaled = (s, k) => (k === 1 ? s : Object.assign({}, s, { size: s.size * k, track: s.track * k }));
+
+  /** x から置いたとき、墨の右端が right に収まる倍率。 */
+  function fitScale(ctx, text, spec, x, right) {
+    if (!text) return 1;
+    const rightAt = (k) => {
+      const sp = scaled(spec, k);
+      ctx.font = font(sp);
+      return x + inkSpan(ctx, text, sp).width;
+    };
+    if (rightAt(1) <= right) return 1;
+
+    let lo = MIN_SCALE, hi = 1;
+    for (let i = 0; i < 14; i++) {
+      const mid = (lo + hi) / 2;
+      if (rightAt(mid) <= right) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+
+  /** 問い＋答えの枠を置いたときの、枠の右端。 */
+  function rowRight(ctx, row, k) {
+    const q = scaled(SPEC.row, k), a = scaled(SPEC.answer, k);
+    ctx.font = font(q);
+    const qw = inkSpan(ctx, row.question || '', q).width;
+    ctx.font = font(a);
+    const aw = inkSpan(ctx, row.answer || '', a).width;
+    return SPEC.row.qX + qw + SPEC.box.gap + aw + SPEC.box.padX * 2;
+  }
+
+  /** その行を丸ごと右端に収める倍率。問いと答えは同じだけ縮める。 */
+  function rowScale(ctx, row) {
+    if (rowRight(ctx, row, 1) <= RIGHT) return 1;
+    let lo = MIN_SCALE, hi = 1;
+    for (let i = 0; i < 14; i++) {
+      const mid = (lo + hi) / 2;
+      if (rowRight(ctx, row, mid) <= RIGHT) lo = mid; else hi = mid;
+    }
+    return lo;
+  }
+
+  /**
+   * 6行ぜんぶに使う、ひとつの倍率。いちばん長い行に合わせる。
+   *
+   * ★ 行ごとに変えると、大きい行と小さい行が混ざって不格好になる。
+   *   実物は6行とも同じ大きさで、そこが読みやすさを作っている。
+   *   長い行が1本あれば全体が小さくなるが、そろっているほうがまだ読める。
+   */
+  function rowsScale(ctx, rows) {
+    let k = 1;
+    for (const row of rows || []) k = Math.min(k, rowScale(ctx, row));
+    return k;
+  }
+
   const font = (s) => `${weights[s.role]} ${s.size}px ${FAMILY}`;
 
   /** 字間を入れて並べたときの、墨が乗る範囲。 */
@@ -135,24 +215,34 @@
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, W, H);
 
-    const k = SPEC.kicker, t = SPEC.title;
-    drawTracked(ctx, k.x, baselineForTop(ctx, draft.kicker || '', k, k.inkTop), draft.kicker || '', k, INK);
+    const kicker = draft.kicker || '', title = draft.title || '';
+    const k = scaled(SPEC.kicker, fitScale(ctx, kicker, SPEC.kicker, SPEC.kicker.x, RIGHT));
+    const t = scaled(SPEC.title,
+      fitScale(ctx, title, SPEC.title, SPEC.title.x, RIGHT - RULE_OVERHANG));
+
+    drawTracked(ctx, k.x, baselineForTop(ctx, kicker, k, k.inkTop), kicker, k, INK);
 
     const right = drawTracked(
-      ctx, t.x, baselineForTop(ctx, draft.title || '', t, t.inkTop), draft.title || '', t, INK);
+      ctx, t.x, baselineForTop(ctx, title, t, t.inkTop), title, t, INK);
     ctx.fillStyle = RED;
-    ctx.fillRect(t.x - 1, SPEC.rule.y, Math.round(right) + 3 - (t.x - 1), SPEC.rule.h);
+    ctx.fillRect(t.x - 1, SPEC.rule.y,
+      Math.round(right) + RULE_OVERHANG - (t.x - 1), SPEC.rule.h);
 
     const boxes = [];
+    // ★ 6行そろえて縮める。番号は縮めない（列がガタつくと読みにくい）。
+    const rk = rowsScale(ctx, draft.rows);
+    const q = scaled(SPEC.row, rk), ans = scaled(SPEC.answer, rk);
+
     (draft.rows || []).forEach((row, i) => {
       const cy = SPEC.tops[i] + SPEC.box.h / 2;
-      const base = baselineForCenter(ctx, row.question, SPEC.row, cy);
+      const base = baselineForCenter(ctx, row.question, q, cy);
 
-      drawTracked(ctx, SPEC.row.numX, base, (i + 1) + '、', { ...SPEC.row, track: 0 }, INK);
-      const qEnd = drawTracked(ctx, SPEC.row.qX, base, row.question, SPEC.row, INK);
+      drawTracked(ctx, SPEC.row.numX, baselineForCenter(ctx, '1', SPEC.row, cy),
+        (i + 1) + '、', { ...SPEC.row, track: 0 }, INK);
+      const qEnd = drawTracked(ctx, SPEC.row.qX, base, row.question, q, INK);
 
-      ctx.font = font(SPEC.answer);
-      const aw = inkSpan(ctx, row.answer, SPEC.answer).width;
+      ctx.font = font(ans);
+      const aw = inkSpan(ctx, row.answer, ans).width;
       const bx = Math.round(qEnd) + SPEC.box.gap;
       const bw = Math.round(aw) + SPEC.box.padX * 2;
       const by = Math.round(cy - SPEC.box.h / 2);
@@ -163,8 +253,8 @@
       ctx.stroke();
 
       // 答えは実物では行の中心より 2px 上に乗る（実測）
-      const abase = baselineForCenter(ctx, row.answer, SPEC.answer, cy - 2);
-      boxes.push({ bx, bw, base: abase, answer: row.answer, aw });
+      const abase = baselineForCenter(ctx, row.answer, ans, cy - 2);
+      boxes.push({ bx, bw, base: abase, answer: row.answer, aw, spec: ans });
     });
     return boxes;
   }
@@ -172,9 +262,11 @@
   /** 答えは枠の中央に置く。右寄せではない。 */
   function drawAnswer(ctx, box, nChars) {
     if (nChars <= 0) return;
-    ctx.font = font(SPEC.answer);
+    // ★ 縮めた行は、答えも同じだけ縮める。下地で測った枠と食い違わせない。
+    const s = box.spec || SPEC.answer;
+    ctx.font = font(s);
     drawTracked(ctx, box.bx + (box.bw - box.aw) / 2, box.base,
-      box.answer.slice(0, nChars), SPEC.answer, RED);
+      box.answer.slice(0, nChars), s, RED);
   }
 
   /** t 秒時点の絵を描く。 */
@@ -257,6 +349,7 @@
     });
   }
 
-  window.Reel = { SPEC, W, H, drawBase, drawAt, poster, record, pickMime, newCanvas,
+  window.Reel = { SPEC, W, H, RIGHT, MIN_SCALE, drawBase, drawAt, poster, record, pickMime,
+                  newCanvas, rowScale, rowsScale, fitScale,
                   ensureFont, fontSource: () => fontSource };
 })();

@@ -32,6 +32,7 @@ const reel09 = {
   igCaption: '5番がいちばん刺さる…。第二新卒の口コミを集めた結果です。他にもあったらコメントで教えてください',
   ttCaption: '5番がいちばん刺さる…。第二新卒の口コミを集めた結果です',
   xText: '「転職活動がバレにくい進め方」6つ、答え合わせ。3番が意外と知られてないと思う。',
+  hashtags: ['#転職活動', '#第二新卒', '#転職したい', '#退職', '#社会人3年目', '#キャリア'],
   tone: 'calm',
   hasAffiliateLink: false,
 };
@@ -128,6 +129,91 @@ const personal = draft({
   });
 
   // ---- 画面に収まるか ------------------------------------------------------
+
+  // ------------------------------------------------------- 縮めて収める境目
+  //
+  // ★ reel.js は長い行を 0.55倍まで縮めて収める。
+  //   その範囲なら「小さくなるが全部見える」ので warning、
+  //   超えると本当に切れるので error。ここが reel.js の MIN_SCALE と連動している。
+  await check('27字ぶんまでは warning（縮めれば入る）', () => {
+    const rows = reel09.rows.slice();
+    rows[0] = { question: 'あ'.repeat(21), answer: 'いいいいい' };   // 26字ぶん
+    const f = rules.findingsOf(draft({ rows }), 'row-too-wide');
+    assert.strictEqual(f.length, 1);
+    assert.strictEqual(f[0].severity, 'warning');
+    assert.ok(/小さくして収めます/.test(f[0].message));
+  });
+
+  await check('27字ぶんを超えると error（縮めても入らない）', () => {
+    const rows = reel09.rows.slice();
+    rows[0] = { question: 'あ'.repeat(25), answer: 'いいいい' };     // 29字ぶん
+    const f = rules.findingsOf(draft({ rows }), 'row-too-wide');
+    assert.strictEqual(f.length, 1);
+    assert.strictEqual(f[0].severity, 'error');
+    assert.ok(rules.hasBlocking(rules.validateDraft(draft({ rows }))), '止めていない');
+  });
+
+  await check('タイトルも同じ境目で分かれる', () => {
+    const warn = rules.findingsOf(draft({ title: 'あ'.repeat(20) }), 'title-too-wide');
+    assert.strictEqual(warn[0].severity, 'warning');
+    const err = rules.findingsOf(draft({ title: 'あ'.repeat(30) }), 'title-too-wide');
+    assert.strictEqual(err[0].severity, 'error');
+  });
+
+  await check('縮める境目は reel.js の MIN_SCALE から出している', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    const m = reel.match(/MIN_SCALE\s*=\s*([0-9.]+)/);
+    assert.ok(m, 'reel.js に MIN_SCALE が無い');
+    assert.strictEqual(Number(m[1]), rules.MIN_SCALE,
+      '点検と描画で縮む量が食い違っている（点検を通ったのに切れる）');
+  });
+
+  // ------------------------------------------------------------ ハッシュタグ
+  await check('# の付け忘れを直し、重複と空を落とす', () => {
+    assert.deepStrictEqual(
+      rules.normalizeHashtags(['転職', '#転職', ' #第二新卒 ', '', null, '＃退職']),
+      ['#転職', '#第二新卒', '#退職']);
+  });
+
+  await check('キャプションの後ろに、行を空けて足す', () => {
+    const out = rules.captionWithTags('口コミを集めました', ['#転職', '#第二新卒'], 'instagram');
+    assert.strictEqual(out, '口コミを集めました\n\n#転職 #第二新卒');
+  });
+
+  // ★ X は多いと読まれない。ここだけ2個で切る。
+  await check('X だけは2個までにする', () => {
+    const out = rules.captionWithTags('答え合わせ', ['#a', '#b', '#c', '#d'], 'x');
+    assert.strictEqual(out, '答え合わせ\n\n#a #b');
+  });
+
+  await check('ハッシュタグが少ないと warning（止めはしない）', () => {
+    const f = rules.findingsOf(draft({ hashtags: ['#転職'] }), 'too-few-hashtags');
+    assert.strictEqual(f.length, 1);
+    assert.strictEqual(f[0].severity, 'warning');
+    assert.ok(!rules.hasBlocking(rules.validateDraft(draft({ hashtags: ['#転職'] }))),
+      'ハッシュタグ不足で止めてしまっている');
+  });
+
+  // ★ #PR はハッシュタグ側に入れるのが実務。本文だけ見ていると、
+  //   正しく付けてあるのに弾いてしまう。
+  await check('PR表記はハッシュタグに入っていても通る', () => {
+    const d = draft({ hasAffiliateLink: true, hashtags: ['#PR', '#転職', '#第二新卒'] });
+    assert.deepStrictEqual(rules.findingsOf(d, 'missing-pr-label'), []);
+  });
+
+  await check('PR表記がどこにも無ければ、案件つきは止まる', () => {
+    const d = draft({ hasAffiliateLink: true, hashtags: ['#転職', '#第二新卒', '#退職'] });
+    const f = rules.findingsOf(d, 'missing-pr-label');
+    assert.strictEqual(f.length, 2, 'Instagram と TikTok の両方で言うべき');
+    assert.ok(rules.hasBlocking(rules.validateDraft(d)));
+  });
+
+  await check('ハッシュタグは出させる形の必須に入っている', () => {
+    const gen = require('../lib/draft-generate');
+    assert.ok(gen.SCHEMA.required.includes('hashtags'), '必須になっていない');
+    assert.ok(gen.SCHEMA.properties.hashtags, '欄が無い');
+  });
 
   await check('問い＋答えが15字ぶんを超えると warning', () => {
     const rows = reel09.rows.slice();
