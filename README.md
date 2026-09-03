@@ -229,12 +229,32 @@ select net.http_post(
   body    := '{}'::jsonb,
   timeout_milliseconds := 50000
 );
--- 少し待ってから
-select status_code, content from net._http_response order by created desc limit 1;
 ```
+
+少し待ってから、**分析の返事だけを絞って**見ます。
+
+```sql
+select status_code, content, created
+  from net._http_response
+ where content like '%takenOn%'          -- ★ 分析の返事だけ
+ order by created desc limit 1;
+```
+
+**★ `limit 1` だけで見ないでください。** 毎分の worker が動いているので、
+ふつうは worker の返事（`{"checkedAt":…,"requeued":0,"processed":[]}`）が
+先頭に来ます。分析の返事には `takenOn` が入っているので、そこで絞ります。
 
 `content` に、アカウントごとに何が取れたかが日本語で入っています。
 取れなかったものは理由も入るので、権限の不足はここで分かります。
+
+何も出てこないときは、次のどれかです。
+
+| 症状 | 原因 |
+|---|---|
+| `takenOn` の行が無い | まだ叩けていない。`net._http_response` を絞らずに見て、404 が無いか確かめる |
+| 404 | `/api/insights` がまだデプロイされていない |
+| 401 | `x-cron-key` が `CRON_SECRET` と違う |
+| relation … does not exist | `setup_all.sql`（v8 入り）をまだ流していない |
 
 ### 4. コールバックURL
 

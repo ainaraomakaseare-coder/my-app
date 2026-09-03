@@ -151,6 +151,7 @@
           <button data-view="list">投稿一覧</button>
           <button data-view="bulk">まとめて仕込む</button>
           <button data-view="one">1本だけつくる</button>
+          <button data-view="grow">のび</button>
           <button data-view="handoff">受け渡し</button>
           <button data-view="conn">連携設定</button>
         </div>
@@ -280,6 +281,30 @@
         <span class="err" id="formErr"></span>
       </div>
       <div class="muted" id="progress"></div>
+    </div>
+      </div>
+
+      <div class="view hide" id="v-grow">
+    <!-- のび（分析） -->
+    <div class="card">
+      <h2>気づいたこと</h2>
+      <div class="muted">数字から言えることだけを、根拠の数字つきで出します。
+        まだ本数が足りずに言い切れないことは「言えません」とそのまま出します。</div>
+      <div id="growObs" class="muted" style="margin-top:12px">読み込み中…</div>
+    </div>
+    <div class="card">
+      <h2>アカウントごとの数字</h2>
+      <div id="growAccounts" class="muted">読み込み中…</div>
+    </div>
+    <div class="card">
+      <h2>投稿ごとの数字</h2>
+      <div id="growPosts" class="muted">読み込み中…</div>
+    </div>
+    <div class="card hide" id="growTiktokCard">
+      <h2>TikTok の動画</h2>
+      <div class="muted">TikTok は下書きから手で公開するため、アプリのどの投稿かは分かりません。
+        TikTok 側の一覧として出しています。</div>
+      <div id="growTiktok" style="margin-top:10px"></div>
     </div>
       </div>
 
@@ -925,6 +950,294 @@ function renderConn() {
   $('conn').appendChild(add);
 }
 
+// --------------------------------------------------------------- のび（分析）
+/**
+ * GET /api/insights を読んで描くだけの画面。
+ * 集計や「これが効いた」という判断は lib/advice.js（サーバー側）でやっている。
+ * ここで数字をこねて新しい主張を作らないこと（CLAUDE.md の「嘘を書かない」に触れる）。
+ */
+
+const num = (v) => (typeof v === 'number' && isFinite(v)) ? v : null;
+const jpNum = (v) => num(v) === null ? '—' : Number(v).toLocaleString('ja-JP');
+
+/** サーバー側 lib/advice.js の daysBetween と同じ考え方（JSTの暦日で数える）。 */
+function daysBetween(a, b) {
+  const t = (s) => new Date(s + 'T00:00:00+09:00').getTime();
+  return Math.round((t(b) - t(a)) / 86400000);
+}
+
+async function loadGrow() {
+  const obs = $('growObs');
+  const accBox = $('growAccounts');
+  const postBox = $('growPosts');
+  try {
+    const out = await api('/api/insights' + (currentGroup ? ('?group=' + currentGroup) : ''));
+    renderGrowObservations(obs, out.observations || []);
+    renderGrowAccounts(accBox, out.accounts || []);
+    renderGrowPosts(postBox, out.posts || []);
+    renderGrowTiktok(out.tiktokVideos || []);
+  } catch (e) {
+    const msg = `<span class="err">${escapeHtml(e.message)}${e.hint ? '\n' + escapeHtml(e.hint) : ''}</span>`;
+    obs.className = ''; obs.innerHTML = msg;
+    accBox.className = ''; accBox.innerHTML = '';
+    postBox.className = ''; postBox.innerHTML = '';
+    $('growTiktokCard').classList.add('hide');
+  }
+}
+
+/**
+ * 気づいたこと。confidence で枠の色を変える。
+ * ★ blocked＝直せば取れるもの（赤枠）、sure＝確かなこと（通常の枠）、
+ *   weak＝まだ言えないこと（グレー）。この3段しか無いので、決め打ちで色を選ぶ。
+ */
+const OBS_BORDER = { blocked: 'var(--bad)', sure: 'var(--line)', weak: 'var(--muted)' };
+
+function renderGrowObservations(box, list) {
+  box.className = '';
+  box.innerHTML = '';
+  if (!list.length) {
+    box.className = 'muted';
+    box.textContent = 'まだ気づいたことはありません。';
+    return;
+  }
+  for (const o of list) {
+    const el = document.createElement('div');
+    // ★ .notice を土台にして、枠の色だけ confidence で塗り替える。新しい色は増やさない。
+    el.className = 'notice' + (o.confidence === 'weak' ? ' muted' : '');
+    el.style.cssText = `border-color:${OBS_BORDER[o.confidence] || 'var(--line)'};margin-bottom:10px`;
+    const numbers = (o.numbers && o.numbers.length)
+      ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:12px">`
+        + o.numbers.map((n) => `<li>${escapeHtml(n)}</li>`).join('') + `</ul>`
+      : '';
+    el.innerHTML = `<strong>${escapeHtml(o.headline || '')}</strong>`
+      + (o.detail ? `<div style="margin-top:4px">${escapeHtml(o.detail)}</div>` : '')
+      + numbers;
+    box.appendChild(el);
+  }
+}
+
+/** 直近7日（無ければ取れる範囲）のフォロワー増減。1日ぶんしか無ければ null。 */
+function growWeekDiff(days) {
+  const valid = (days || []).filter((d) => d.ok !== false && num(d.followers) !== null);
+  if (valid.length < 2) return null;
+  const end = valid[valid.length - 1];
+  const start = valid[Math.max(0, valid.length - 1 - 7)];
+  if (start === end) return null;
+  return { diff: end.followers - start.followers, span: daysBetween(start.taken_on, end.taken_on) || 1 };
+}
+
+/**
+ * フォロワー数の折れ線を自分で描く（ライブラリ不使用）。
+ * ★ ok:false の日や数字が無い日は、線をつながず飛ばす。0として描くと暴落したように見える。
+ * ★ 点（データが揃っている日）が1つ以下のときは、線ではなく断り書きを出す。
+ */
+function growSparkline(days) {
+  const list = days || [];
+  const ys = list.map((d) => (d.ok !== false ? num(d.followers) : null));
+  const validCount = ys.filter((y) => y !== null).length;
+  if (validCount <= 1) return '<div class="muted">まだ1日ぶんです</div>';
+
+  const w = 320, h = 60, pad = 4;
+  const known = ys.filter((y) => y !== null);
+  const minY = Math.min(...known), maxY = Math.max(...known);
+  const span = maxY - minY || 1;
+  const n = ys.length;
+  const x = (i) => n <= 1 ? pad : pad + (i * (w - pad * 2)) / (n - 1);
+  const y = (v) => h - pad - ((v - minY) / span) * (h - pad * 2);
+
+  // 繋がる区間（欠けていない連続した日）ごとに分けて線を引く
+  const segs = [];
+  let cur = [];
+  ys.forEach((v, i) => {
+    if (v === null) { if (cur.length) segs.push(cur); cur = []; return; }
+    cur.push([x(i), y(v)]);
+  });
+  if (cur.length) segs.push(cur);
+
+  const parts = segs.map((seg) => seg.length >= 2
+    ? `<polyline points="${seg.map(([px, py]) => px.toFixed(1) + ',' + py.toFixed(1)).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2"/>`
+    : ''
+  ).join('');
+
+  // ★ 測った日に点を打つ。線だけだと、どこが実測でどこが補間かが分からない。
+  const dots = ys.map((v, i) => (v === null ? ''
+    : `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.5" fill="var(--accent)"/>`)).join('');
+
+  // ★ 取れなかった日は、点も線も置かず、薄い縦線でそこに何か在ったことだけ示す。
+  //   0 として描くと暴落したように見え、何も描かないと欠けたことに気づけない。
+  const gaps = ys.map((v, i) => (v !== null ? ''
+    : `<line x1="${x(i).toFixed(1)}" y1="0" x2="${x(i).toFixed(1)}" y2="${h}"
+             stroke="var(--line)" stroke-width="1" stroke-dasharray="2 2"/>`)).join('');
+
+  const missing = ys.filter((v) => v === null).length;
+  const note = missing
+    ? `<div class="muted" style="font-size:12px">点線の日（${missing}日）は数字を取れていません。` +
+      `そこで線を切っています（0として描くと、減ったように見えてしまうため）</div>`
+    : '';
+
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="60" preserveAspectRatio="none"
+    style="display:block">${gaps}${parts}${dots}</svg>${note}`;
+}
+
+function renderGrowAccounts(box, accounts) {
+  box.className = '';
+  box.innerHTML = '';
+  if (!accounts.length) {
+    box.className = 'muted';
+    box.textContent = 'この運用アカウントには、まだ連携がありません。';
+    return;
+  }
+  for (const a of accounts) box.appendChild(growAccountRow(a));
+}
+
+function growAccountRow(a) {
+  const row = document.createElement('div');
+  row.style.cssText = 'padding:10px 0;border-top:1px solid var(--line)';
+
+  const latest = a.latest;
+  const noDays = !(a.days && a.days.length);
+  const followersBadge = latest && num(latest.followers) !== null
+    ? `<span class="badge">フォロワー ${jpNum(latest.followers)}人</span>` : '';
+  const brokenBadge = latest && latest.ok === false
+    ? '<span class="badge b-failed">数字が取れていません</span>' : '';
+
+  const wd = growWeekDiff(a.days);
+  const diffText = wd
+    ? `${wd.span}日で ${wd.diff >= 0 ? '+' : ''}${jpNum(wd.diff)}人`
+    : 'まだ増減は分かりません';
+
+  row.innerHTML = `
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <strong>${accountLabel(a)}</strong>
+        <span class="muted">${escapeHtml(a.account_name || '')}</span>
+      </div>
+      <div class="row">
+        ${followersBadge}
+        <span class="badge">${diffText}</span>
+        ${brokenBadge}
+      </div>
+    </div>
+    <div style="margin-top:8px">
+      ${noDays
+        ? '<span class="muted">まだ数字がありません。毎晩1回ためています。</span>'
+        : growSparkline(a.days)}
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button data-act="probe">接続テスト</button>
+    </div>
+    <pre class="muted hide" style="white-space:pre-wrap;word-break:break-all;margin-top:8px"></pre>
+  `;
+
+  const btn = row.querySelector('button[data-act="probe"]');
+  const pre = row.querySelector('pre');
+  btn.onclick = async () => {
+    btn.disabled = true;
+    pre.classList.remove('hide');
+    pre.textContent = '確認中…';
+    try {
+      // ★ 中身は整形しない。何が返ってきたか（raw / error / hint）をそのまま見せるための機能なので、
+      //   ここで良さそうな項目だけ抜き出すと、隠したのと同じことになる。
+      const out = await api('/api/insights?probe=' + encodeURIComponent(a.id));
+      pre.textContent = JSON.stringify(out, null, 2);
+    } catch (e) {
+      pre.textContent = (e.message || '') + (e.hint ? '\n' + e.hint : '');
+    }
+    btn.disabled = false;
+  };
+
+  return row;
+}
+
+function renderGrowPosts(box, posts) {
+  box.className = '';
+  box.innerHTML = '';
+  if (!posts.length) {
+    box.className = 'muted';
+    box.textContent = 'まだ数字がありません。毎晩1回ためています。';
+    return;
+  }
+
+  // 再生数が多い順。再生数が無ければ末尾へ（postFindings と同じ考え方だが、順位づけは
+  // ここでは行わない。並べ替えるだけで、伸びた/伸びなかったの判断は observations 側の仕事）。
+  const sorted = posts.slice().sort((a, b) => {
+    const va = a.metrics && num(a.metrics.views) !== null ? a.metrics.views : -1;
+    const vb = b.metrics && num(b.metrics.views) !== null ? b.metrics.views : -1;
+    return vb - va;
+  });
+
+  const wrap = document.createElement('div');
+  wrap.style.overflowX = 'auto';
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px';
+  table.innerHTML = '<thead><tr style="text-align:left;color:var(--muted)">'
+    + '<th style="padding:6px 8px 6px 0">投稿</th>'
+    + '<th style="padding:6px 8px">SNS</th>'
+    + '<th style="padding:6px 8px">再生</th>'
+    + '<th style="padding:6px 8px">いいね</th>'
+    + '<th style="padding:6px 8px">投稿日</th>'
+    + '</tr></thead>';
+  const tbody = document.createElement('tbody');
+  for (const p of sorted) {
+    const tr = document.createElement('tr');
+    tr.style.borderTop = '1px solid var(--line)';
+    const title = p.permalink
+      ? `<a href="${p.permalink}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>`
+      : escapeHtml(p.title);
+    const m = p.metrics;
+    // 数字が無い投稿は、再生・いいねの2列をまとめて「まだ数字がありません」にする。
+    const metricsCells = m
+      ? `<td style="padding:6px 8px">${jpNum(m.views)}</td><td style="padding:6px 8px">${jpNum(m.likes)}</td>`
+      : `<td style="padding:6px 8px" colspan="2"><span class="muted">まだ数字がありません</span></td>`;
+    tr.innerHTML = `
+      <td style="padding:6px 8px 6px 0">${title}</td>
+      <td style="padding:6px 8px">${NET_LABEL[p.network] || p.network}</td>
+      ${metricsCells}
+      <td style="padding:6px 8px">${jst(p.postedAt)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  box.appendChild(wrap);
+}
+
+function renderGrowTiktok(videos) {
+  const card = $('growTiktokCard');
+  const box = $('growTiktok');
+  if (!videos.length) { card.classList.add('hide'); return; }
+  card.classList.remove('hide');
+  box.innerHTML = '';
+
+  const wrap = document.createElement('div');
+  wrap.style.overflowX = 'auto';
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px';
+  table.innerHTML = '<thead><tr style="text-align:left;color:var(--muted)">'
+    + '<th style="padding:6px 8px 6px 0">アカウント</th>'
+    + '<th style="padding:6px 8px">動画</th>'
+    + '<th style="padding:6px 8px">再生</th>'
+    + '<th style="padding:6px 8px">いいね</th>'
+    + '<th style="padding:6px 8px">投稿日</th>'
+    + '</tr></thead>';
+  const tbody = document.createElement('tbody');
+  for (const v of videos) {
+    const tr = document.createElement('tr');
+    tr.style.borderTop = '1px solid var(--line)';
+    tr.innerHTML = `
+      <td style="padding:6px 8px 6px 0">${escapeHtml(v.account || '')}</td>
+      <td style="padding:6px 8px">${escapeHtml(v.title || v.video_id || '（題名なし）')}</td>
+      <td style="padding:6px 8px">${jpNum(v.views)}</td>
+      <td style="padding:6px 8px">${jpNum(v.likes)}</td>
+      <td style="padding:6px 8px">${jst(v.posted_at)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  box.appendChild(wrap);
+}
+
 /** 投稿先の選択肢を、繋いだアカウントから作る。単発の欄と束の欄の両方。 */
 function renderTargets() {
   for (const id of ['targets', 'bulkTargets']) fillTargets($(id));
@@ -1550,7 +1863,7 @@ $('bulkStop').onclick = () => {
  * ★ URL は「#運用アカウント名/機能」。
  *   直接開けて、戻るボタンも効く。名前が変わっていたら先頭の運用に落とす。
  */
-const VIEWS = ['list', 'bulk', 'one', 'handoff', 'conn', 'groups'];
+const VIEWS = ['list', 'bulk', 'one', 'grow', 'handoff', 'conn', 'groups'];
 
 /** 運用アカウントごとに切り替わらない画面。チャンネルの外側にある。 */
 const GLOBAL_VIEWS = ['groups'];
@@ -1595,6 +1908,13 @@ function renderViewTabs() {
 function showView(name, push) {
   currentView = VIEWS.includes(name) ? name : 'list';
   for (const v of VIEWS) $('v-' + v).classList.toggle('hide', v !== currentView);
+
+  // ★ 「のび」はチャンネルを切り替えても呼ばれる（selectGroup がここへ戻ってくる）。
+  //   だからここ1箇所で読み直せば、タブ切り替えとチャンネル切り替えの両方をまかなえる。
+  // ★ チャンネルが決まる前には読みに行かない。
+  //   currentGroup が未確定のまま呼ぶと、一瞬だけ全チャンネルの数字が見える。
+  //   このアプリは「混ぜない」ことを土台にしているので、一瞬でも見せない。
+  if (currentView === 'grow' && currentGroup) loadGrow();
 
   // 運用アカウントの管理だけは、どのチャンネルにも属さない。上のタブを隠す。
   $('viewTabs').classList.toggle('hide', GLOBAL_VIEWS.includes(currentView));
