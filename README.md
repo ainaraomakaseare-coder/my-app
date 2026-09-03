@@ -191,6 +191,71 @@ select status_code, content from net._http_response order by created desc limit 
 
 `200` なら成功。`401` は鍵違い、`404` はデプロイされているブランチ違い。
 
+### 3-2. 毎晩の数字の取り込みを立てる
+
+分析用です。フォロワー数や再生数を1日1回書き留めます。
+
+```sql
+select cron.schedule(
+  'toukoutaku-neo-insights', '30 14 * * *',      -- 日本時間 23:30（UTC 14:30）
+  $$
+  select net.http_post(
+    url     := 'https://〇〇.vercel.app/api/insights',
+    headers := jsonb_build_object('Content-Type','application/json','x-cron-key','＜CRON_SECRET＞'),
+    body    := '{}'::jsonb,
+    timeout_milliseconds := 50000
+  );
+  $$
+);
+```
+
+**★ cron の時刻は UTC です。** 日本時間の 23:30 は UTC の 14:30。
+ここを間違えると、取り込みの時刻が9時間ずれます（動きはするので気づきにくい）。
+
+**★ 23時台にしているのは、その日のぶんを取り切るためです。**
+21時に投稿したものが、その日のうちにどれだけ伸びたかが残ります。
+
+**★ どのSNSのAPIも「いまの値」しか返しません。** 履歴はくれないので、
+毎日こちらで書き留めないと、あとから伸びは分かりません。
+**始めた日より前のことは、永久に分かりません。** 早く立てるほど得です。
+
+何度流しても壊れません（同じ日に2回動いても、行は増えず後の値で上書きされます）。
+手で今すぐ1回動かしたいときは：
+
+```sql
+select net.http_post(
+  url     := 'https://〇〇.vercel.app/api/insights',
+  headers := jsonb_build_object('Content-Type','application/json','x-cron-key','＜CRON_SECRET＞'),
+  body    := '{}'::jsonb,
+  timeout_milliseconds := 50000
+);
+```
+
+少し待ってから、**分析の返事だけを絞って**見ます。
+
+```sql
+select status_code, content, created
+  from net._http_response
+ where content like '%takenOn%'          -- ★ 分析の返事だけ
+ order by created desc limit 1;
+```
+
+**★ `limit 1` だけで見ないでください。** 毎分の worker が動いているので、
+ふつうは worker の返事（`{"checkedAt":…,"requeued":0,"processed":[]}`）が
+先頭に来ます。分析の返事には `takenOn` が入っているので、そこで絞ります。
+
+`content` に、アカウントごとに何が取れたかが日本語で入っています。
+取れなかったものは理由も入るので、権限の不足はここで分かります。
+
+何も出てこないときは、次のどれかです。
+
+| 症状 | 原因 |
+|---|---|
+| `takenOn` の行が無い | まだ叩けていない。`net._http_response` を絞らずに見て、404 が無いか確かめる |
+| 404 | `/api/insights` がまだデプロイされていない |
+| 401 | `x-cron-key` が `CRON_SECRET` と違う |
+| relation … does not exist | `setup_all.sql`（v8 入り）をまだ流していない |
+
 ### 4. コールバックURL
 
 各SNSの開発者画面に登録します。**クエリを付けない形**にしてあります
