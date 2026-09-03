@@ -130,6 +130,59 @@ const personal = draft({
 
   // ---- 画面に収まるか ------------------------------------------------------
 
+  // --------------------------------------------- 断りが落ちていたら、足す
+  //
+  // ★ 頼み方を強めてもモデルは書き落とす。落ちたぶんが下書きで止まると、
+  //   毎日1本を20日続ける運用がそこで途切れる。
+  const gen = require('../lib/draft-generate');
+
+  await check('断りが無ければ、末尾に一文足す', () => {
+    const d = { igCaption: '5番がいちばん刺さる', ttCaption: '5番がいちばん刺さる' };
+    const added = gen.ensureSourcing(d, rules.CURATOR);
+    assert.strictEqual(added.length, 2, 'Instagram と TikTok の両方に足すべき');
+    assert.ok(rules.hasSourcing(d.igCaption), d.igCaption);
+    assert.ok(rules.hasSourcing(d.ttCaption));
+  });
+
+  await check('足したことは黙っていない（画面に出す）', () => {
+    const d = { igCaption: 'なにか' };
+    const added = gen.ensureSourcing(d, rules.CURATOR);
+    assert.strictEqual(added[0].rule, 'sourcing-added');
+    assert.ok(/足しました/.test(added[0].message));
+    assert.strictEqual(added[0].severity, 'warning', '足したのに止めてしまっている');
+  });
+
+  await check('もともと断りがあれば、触らない', () => {
+    const d = { igCaption: '第二新卒の口コミを集めた結果です' };
+    const before = d.igCaption;
+    assert.deepStrictEqual(gen.ensureSourcing(d, rules.CURATOR), []);
+    assert.strictEqual(d.igCaption, before);
+  });
+
+  await check('句点が無ければ足してから続ける', () => {
+    const d = { igCaption: 'コメントで教えてください' };
+    gen.ensureSourcing(d, rules.CURATOR);
+    assert.ok(/ください。ネットで/.test(d.igCaption), d.igCaption);
+    const d2 = { igCaption: 'コメントで教えて…' };
+    gen.ensureSourcing(d2, rules.CURATOR);
+    assert.ok(/…ネットで/.test(d2.igCaption), d2.igCaption);
+  });
+
+  // ★ ひろや側は本人の実践記録なので、断りは要らない。勝手に足さない。
+  await check('ひろや側には足さない', () => {
+    const d = { igCaption: '12日目。音声入力アプリを作った' };
+    const before = d.igCaption;
+    assert.deepStrictEqual(gen.ensureSourcing(d, rules.PERSONAL), []);
+    assert.strictEqual(d.igCaption, before);
+  });
+
+  await check('足したあとは、検査に引っかからない', () => {
+    const d = draft({ igCaption: '5番がいちばん刺さる', ttCaption: '5番がいちばん刺さる' });
+    gen.ensureSourcing(d, rules.CURATOR);
+    assert.deepStrictEqual(rules.findingsOf(d, 'missing-sourcing'), []);
+    assert.ok(!rules.hasBlocking(rules.validateDraft(d)), 'まだ止まっている');
+  });
+
   // ------------------------------------------------------- 縮めて収める境目
   //
   // ★ reel.js は長い行を 0.55倍まで縮めて収める。
