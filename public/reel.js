@@ -84,12 +84,24 @@
   const RIGHT = W - 44;
 
   /**
-   * これ以上は縮めない。
-   * ★ 底を作らないと、極端に長い台本で豆粒になる。
-   *   ここに当たるほど長いものは、文字の大きさではなく中身の問題なので、
-   *   点検（lib/draft-rules.js）が error として止める。
+   * 縮みの下限は2段ある。
+   *
+   * ★ READABLE … ここまでなら読める、という線。0.75倍＝32pxが24px。
+   *   点検（lib/draft-rules.js）はこの線を基準に、
+   *   これより縮めないと入らない台本を error として止める。
+   *   つまり「小さくて読めない動画」は、そもそも公開まで進まない。
+   *
+   * ★ HARD … 切るよりはマシ、という最後の線。
+   *   点検を通り抜けた台本や、下書きとして作った動画まで
+   *   READABLE で頭打ちにすると、右が切れて読めなくなる。
+   *   切るくらいなら小さくする。「全部表示されないと意味がない」ため。
+   *
+   * ★ 0.55 を READABLE にしていたのが間違いだった。
+   *   32px が 18px になり、しかも6行そろえて縮めるので、
+   *   長い行が1本あるだけで全部が小さくなっていた。
    */
-  const MIN_SCALE = 0.55;
+  const READABLE_SCALE = 0.75;
+  const HARD_MIN_SCALE = 0.45;
 
   /**
    * タイトルの下の赤い線は、文字の右端より3px長く引く（実物どおり）。
@@ -111,7 +123,7 @@
     };
     if (rightAt(1) <= right) return 1;
 
-    let lo = MIN_SCALE, hi = 1;
+    let lo = HARD_MIN_SCALE, hi = 1;
     for (let i = 0; i < 14; i++) {
       const mid = (lo + hi) / 2;
       if (rightAt(mid) <= right) lo = mid; else hi = mid;
@@ -132,7 +144,7 @@
   /** その行を丸ごと右端に収める倍率。問いと答えは同じだけ縮める。 */
   function rowScale(ctx, row) {
     if (rowRight(ctx, row, 1) <= RIGHT) return 1;
-    let lo = MIN_SCALE, hi = 1;
+    let lo = HARD_MIN_SCALE, hi = 1;
     for (let i = 0; i < 14; i++) {
       const mid = (lo + hi) / 2;
       if (rowRight(ctx, row, mid) <= RIGHT) lo = mid; else hi = mid;
@@ -349,7 +361,8 @@
     });
   }
 
-  window.Reel = { SPEC, W, H, RIGHT, MIN_SCALE, drawBase, drawAt, poster, record, pickMime,
+  window.Reel = { SPEC, W, H, RIGHT, READABLE_SCALE, HARD_MIN_SCALE,
+                  drawBase, drawAt, poster, record, pickMime,
                   newCanvas, rowScale, rowsScale, fitScale,
                   ensureFont, fontSource: () => fontSource };
 })();

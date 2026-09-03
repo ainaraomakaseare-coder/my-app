@@ -183,43 +183,99 @@ const personal = draft({
     assert.ok(!rules.hasBlocking(rules.validateDraft(d)), 'まだ止まっている');
   });
 
+  // ----------------------------------------- 穴埋めとして成り立っているか
+  //
+  // ★ ここが「赤字と黒字が2回繰り返している」の正体だった。
+  //   答えが問いの中に既に入っていると、同じ語が黒と赤で2回出る。
+  //   直す前は、この形が「指摘なし」で素通りしていた。
+  await check('答えが問いの中にもう出ていたら止める', () => {
+    const rows = reel09.rows.slice();
+    rows[0] = { question: '職場で話す人ほど広まる', answer: '広まる' };
+    const f = rules.findingsOf(draft({ rows }), 'answer-in-question');
+    assert.strictEqual(f.length, 1);
+    assert.strictEqual(f[0].severity, 'error');
+    assert.ok(/2回/.test(f[0].message), 'なぜ駄目かを言っていない');
+    assert.ok(rules.hasBlocking(rules.validateDraft(draft({ rows }))), '止めていない');
+  });
+
+  await check('実物の6行は、重複として引っかからない', () => {
+    assert.deepStrictEqual(rules.findingsOf(reel09, 'answer-in-question'), []);
+  });
+
+  // ★ 問いが言い切りだと、答えが付け足しに見えて穴埋めにならない。
+  await check('問いが言い切りで終わっていたら止める', () => {
+    const rows = reel09.rows.slice();
+    rows[0] = { question: '同僚に相談すると。', answer: '伝わる' };
+    const f = rules.findingsOf(draft({ rows }), 'question-not-open');
+    assert.strictEqual(f[0].severity, 'error');
+    assert.ok(/答えに続く形/.test(f[0].message), '直し方を言っていない');
+  });
+
+  await check('「〜ほど」「〜すると」で切ってあれば通る', () => {
+    assert.deepStrictEqual(rules.findingsOf(reel09, 'question-not-open'), []);
+  });
+
+  await check('問いが長ければ知らせる（止めはしない）', () => {
+    const rows = reel09.rows.slice();
+    rows[0] = { question: 'いちばん確実で安全なのは', answer: '黙る' };
+    const f = rules.findingsOf(draft({ rows }), 'question-too-wide');
+    assert.strictEqual(f[0].severity, 'warning');
+  });
+
+  // ★ 縮む下限を上げたので、止める長さも連動して下がる。
+  //   0.55 倍は 32px が 18px になり、スマホでは読めなかった。
+  await check('縮む下限は 0.75。20字ぶんを超えたら止める', () => {
+    assert.strictEqual(rules.MIN_SCALE, 0.75);
+    assert.strictEqual(rules.MAX_ROW_FIT, 20);
+
+    const rows = reel09.rows.slice();
+    rows[0] = { question: 'あ'.repeat(14), answer: 'いいいいい' };     // 19字 → 縮めて収まる
+    assert.strictEqual(rules.findingsOf(draft({ rows }), 'row-too-wide')[0].severity, 'warning');
+
+    rows[0] = { question: 'あ'.repeat(18), answer: 'いいいい' };       // 22字 → 収まらない
+    assert.strictEqual(rules.findingsOf(draft({ rows }), 'row-too-wide')[0].severity, 'error');
+  });
+
+  await check('書き直しは3回まで（点検を厳しくしたぶん、諦めさせない）', () => {
+    assert.strictEqual(require('../lib/draft-generate').MAX_ATTEMPTS, 3);
+  });
+
   // ------------------------------------------------------- 縮めて収める境目
   //
   // ★ reel.js は長い行を 0.55倍まで縮めて収める。
   //   その範囲なら「小さくなるが全部見える」ので warning、
   //   超えると本当に切れるので error。ここが reel.js の MIN_SCALE と連動している。
-  await check('27字ぶんまでは warning（縮めれば入る）', () => {
+  await check('少しだけ超えたぶんは warning（縮めれば入る）', () => {
     const rows = reel09.rows.slice();
-    rows[0] = { question: 'あ'.repeat(21), answer: 'いいいいい' };   // 26字ぶん
+    rows[0] = { question: 'あ'.repeat(14), answer: 'いいいいい' };   // 19字ぶん
     const f = rules.findingsOf(draft({ rows }), 'row-too-wide');
     assert.strictEqual(f.length, 1);
     assert.strictEqual(f[0].severity, 'warning');
     assert.ok(/小さくして収めます/.test(f[0].message));
   });
 
-  await check('27字ぶんを超えると error（縮めても入らない）', () => {
-    const rows = reel09.rows.slice();
-    rows[0] = { question: 'あ'.repeat(25), answer: 'いいいい' };     // 29字ぶん
-    const f = rules.findingsOf(draft({ rows }), 'row-too-wide');
-    assert.strictEqual(f.length, 1);
-    assert.strictEqual(f[0].severity, 'error');
-    assert.ok(rules.hasBlocking(rules.validateDraft(draft({ rows }))), '止めていない');
-  });
-
   await check('タイトルも同じ境目で分かれる', () => {
-    const warn = rules.findingsOf(draft({ title: 'あ'.repeat(20) }), 'title-too-wide');
+    const warn = rules.findingsOf(draft({ title: 'あ'.repeat(16) }), 'title-too-wide');
     assert.strictEqual(warn[0].severity, 'warning');
-    const err = rules.findingsOf(draft({ title: 'あ'.repeat(30) }), 'title-too-wide');
+    const err = rules.findingsOf(draft({ title: 'あ'.repeat(24) }), 'title-too-wide');
     assert.strictEqual(err[0].severity, 'error');
   });
 
   await check('縮める境目は reel.js の MIN_SCALE から出している', () => {
     const fs = require('fs');
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
-    const m = reel.match(/MIN_SCALE\s*=\s*([0-9.]+)/);
-    assert.ok(m, 'reel.js に MIN_SCALE が無い');
+    const m = reel.match(/READABLE_SCALE\s*=\s*([0-9.]+)/);
+    assert.ok(m, 'reel.js に READABLE_SCALE が無い');
     assert.strictEqual(Number(m[1]), rules.MIN_SCALE,
-      '点検と描画で縮む量が食い違っている（点検を通ったのに切れる）');
+      '点検と描画で「読める大きさ」の線が食い違っている');
+
+    // ★ 描画側はもっと下まで縮める余地を持っていること。
+    //   READABLE で頭打ちにすると、そこを超える台本は右が切れる。
+    //   切るくらいなら小さくする（全部表示されないと意味がないため）。
+    const hard = reel.match(/HARD_MIN_SCALE\s*=\s*([0-9.]+)/);
+    assert.ok(hard, 'reel.js に HARD_MIN_SCALE が無い');
+    assert.ok(Number(hard[1]) < rules.MIN_SCALE,
+      '最後の逃げ道が無い。長い台本で右が切れる');
   });
 
   // ------------------------------------------------------------ ハッシュタグ
@@ -445,7 +501,9 @@ const personal = draft({
   });
 
   await check('warning だけなら作り直さない', async () => {
-    const wide = Object.assign({}, clean, { title: '引き止められたときのすごく上手な返し方' });
+    // ★ 15字ぶん。タイトルの上限14を1つだけ超える＝縮めて収まる長さ。
+    //   ここを長くしすぎると error になって、この試験の意味が変わる。
+    const wide = Object.assign({}, clean, { title: '引き止められたときの上手な返し方' });
     const s = stub([wide]);
     const r = await gen.generateDraft(topic, { generate: s.generate });
     assert.strictEqual(s.seen.length, 1);

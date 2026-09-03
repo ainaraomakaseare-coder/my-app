@@ -195,22 +195,37 @@ select status_code, content from net._http_response order by created desc limit 
 
 分析用です。フォロワー数や再生数を1日1回書き留めます。
 
+**★ 鍵を手で貼らないでください。** すでに動いている worker の設定から、
+宛先だけ差し替えて作ります。手で貼ると、置き換え忘れに気づけません
+（毎晩 401 で静かに失敗し、数日後に「溜まっていない」と気づくことになります）。
+
 ```sql
 select cron.schedule(
   'toukoutaku-neo-insights', '30 14 * * *',      -- 日本時間 23:30（UTC 14:30）
-  $$
-  select net.http_post(
-    url     := 'https://〇〇.vercel.app/api/insights',
-    headers := jsonb_build_object('Content-Type','application/json','x-cron-key','＜CRON_SECRET＞'),
-    body    := '{}'::jsonb,
-    timeout_milliseconds := 50000
-  );
-  $$
-);
+  regexp_replace(
+    replace(command, '/api/worker', '/api/insights'),
+    'timeout_milliseconds\s*:=\s*\d+', 'timeout_milliseconds := 50000'
+  )
+)
+from cron.job
+where jobname = 'toukoutaku-neo-worker';
 ```
 
+立ったか確認します。**鍵を画面に出さずに確かめられます。**
+
+```sql
+select jobname, schedule, active,
+       command like '%/api/insights%'  as 宛先が分析になっている,
+       command like '%50000%'          as 待ち時間が50秒,
+       command like '%<%'              as プレースホルダが残っている
+  from cron.job
+ where jobname like 'toukoutaku-neo-%';
+```
+
+`toukoutaku-neo-insights` の行で、**いちばん右が false** なら正しく入っています。
+
 **★ cron の時刻は UTC です。** 日本時間の 23:30 は UTC の 14:30。
-ここを間違えると、取り込みの時刻が9時間ずれます（動きはするので気づきにくい）。
+ここを間違えると9時間ずれます（動きはするので気づきにくい）。
 
 **★ 23時台にしているのは、その日のぶんを取り切るためです。**
 21時に投稿したものが、その日のうちにどれだけ伸びたかが残ります。
@@ -219,42 +234,65 @@ select cron.schedule(
 毎日こちらで書き留めないと、あとから伸びは分かりません。
 **始めた日より前のことは、永久に分かりません。** 早く立てるほど得です。
 
-何度流しても壊れません（同じ日に2回動いても、行は増えず後の値で上書きされます）。
-手で今すぐ1回動かしたいときは：
+#### 手で1回動かす（待たずに確かめたいとき）
+
+登録した cron を**一時的に毎分にして、戻す**のがいちばん確実です。
+鍵に触らないので、間違えようがありません。
 
 ```sql
-select net.http_post(
-  url     := 'https://〇〇.vercel.app/api/insights',
-  headers := jsonb_build_object('Content-Type','application/json','x-cron-key','＜CRON_SECRET＞'),
-  body    := '{}'::jsonb,
-  timeout_milliseconds := 50000
-);
+-- 毎分にする
+select cron.schedule('toukoutaku-neo-insights', '* * * * *', command)
+  from cron.job where jobname = 'toukoutaku-neo-insights';
 ```
 
-少し待ってから、**分析の返事だけを絞って**見ます。
+1〜2分待って、下の「結果の見方」で中身を確認したら、**必ず戻してください。**
 
 ```sql
-select status_code, content, created
+-- 23:30 に戻す
+select cron.schedule('toukoutaku-neo-insights', '30 14 * * *', command)
+  from cron.job where jobname = 'toukoutaku-neo-insights';
+```
+
+戻し忘れても壊れませんが（同じ日は1行のまま上書き）、
+SNS の API を無駄に叩き続けることになります。
+
+#### 結果の見方
+
+```sql
+select id, status_code, content, created
   from net._http_response
- where content like '%takenOn%'          -- ★ 分析の返事だけ
- order by created desc limit 1;
+ where content not like '%checkedAt%'     -- 毎分の worker を除く
+ order by created desc
+ limit 5;
 ```
 
 **★ `limit 1` だけで見ないでください。** 毎分の worker が動いているので、
-ふつうは worker の返事（`{"checkedAt":…,"requeued":0,"processed":[]}`）が
-先頭に来ます。分析の返事には `takenOn` が入っているので、そこで絞ります。
+ふつうは worker の返事が先頭に来ます。
 
-`content` に、アカウントごとに何が取れたかが日本語で入っています。
-取れなかったものは理由も入るので、権限の不足はここで分かります。
+| status_code | 意味 | 対応 |
+|---|---|---|
+| 200（`takenOn` が入る） | 成功 | 下の SQL で中身を開く |
+| 401 | 鍵が違う | プレースホルダの置き換え忘れ。上の確認SQLを見る |
+| 404 | まだデプロイされていない | Vercel の Deployments で Ready を待つ |
+| 何も出ない | まだ届いていない | 10秒待ってもう一度 |
+| `relation ... does not exist` | `setup_all.sql`（v8）が未実行 | 先に SQL を流す |
 
-何も出てこないときは、次のどれかです。
+中身は JSON なので、読める形に開きます（`＜id＞` は上で出た `id`）。
 
-| 症状 | 原因 |
-|---|---|
-| `takenOn` の行が無い | まだ叩けていない。`net._http_response` を絞らずに見て、404 が無いか確かめる |
-| 404 | `/api/insights` がまだデプロイされていない |
-| 401 | `x-cron-key` が `CRON_SECRET` と違う |
-| relation … does not exist | `setup_all.sql`（v8 入り）をまだ流していない |
+```sql
+select
+  d->>'network'                  as sns,
+  d->>'label'                    as 名前,
+  (d->>'ok')::boolean            as 取れたか,
+  d->'metrics'->>'followers'     as フォロワー,
+  d->'metrics'->>'views'         as 再生,
+  d->'metrics'->>'likes'         as いいね,
+  d->'metrics'->>'posts'         as 投稿数,
+  coalesce(d->>'error', d->>'postsSkipped', d->>'videosSkipped') as 理由
+from net._http_response r,
+     lateral jsonb_array_elements((r.content::jsonb)->'done') d
+where r.id = ＜id＞;
+```
 
 ### 4. コールバックURL
 
