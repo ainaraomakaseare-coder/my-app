@@ -59,6 +59,15 @@ module.exports = async function handler(req, res) {
       ok: result.ok,
       attempts: result.attempts,
       draft: result.draft,
+      // ★ 実際に投稿する本文は、ここで組み立てて返す。
+      //   ハッシュタグの付け方（X だけ2個まで、など）を画面側にも書くと、
+      //   いつか片方だけ直されて、点検した文と投稿する文がずれる。
+      posts: result.draft ? {
+        igCaption: rules.captionWithTags(result.draft.igCaption, result.draft.hashtags, 'instagram'),
+        ttCaption: rules.captionWithTags(result.draft.ttCaption, result.draft.hashtags, 'tiktok'),
+        xText:     rules.captionWithTags(result.draft.xText,     result.draft.hashtags, 'x'),
+        ytDescription: rules.captionWithTags(result.draft.igCaption, result.draft.hashtags, 'youtube'),
+      } : null,
       findings: result.findings,
       profile: rules.profileFor(profileId).label,
     });

@@ -1015,6 +1015,9 @@ function renderGenerated(out) {
   const box = $('genResult');
   box.classList.remove('hide');
   const d = out.draft;
+  // ★ 投稿する本文（ハッシュタグ入り）はサーバーが組み立てたものを使う。
+  //   ここで組み立て直すと、点検した文と投稿する文がずれる。
+  if (d) d.posts = out.posts || null;
   if (!d) {
     box.innerHTML = '<p class="err">作れませんでした。もう一度お試しください。</p>';
     return;
@@ -1134,12 +1137,13 @@ async function makeVideo(d) {
 
 /** 下の「投稿を作る」に流し込む。 */
 function applyGenerated(d) {
+  const p = d.posts || {};
   $('title').value = d.title || '';
-  $('ig').value = d.igCaption || '';
-  $('tt').value = d.ttCaption || '';
-  $('xt').value = d.xText || '';
+  $('ig').value = p.igCaption || d.igCaption || '';
+  $('tt').value = p.ttCaption || d.ttCaption || '';
+  $('xt').value = p.xText || d.xText || '';
   $('ytt').value = d.title || '';
-  $('ytd').value = d.igCaption || '';
+  $('ytd').value = p.ytDescription || d.igCaption || '';
   $('affiFlag').checked = !!d.hasAffiliateLink;
   appliedDraft = d;
   // ここへ来るのは「1本だけつくる」の画面にいるときだけなので、画面は動かさない。
@@ -1482,17 +1486,22 @@ $('bulkRun').onclick = async () => {
       row.say(ok ? '保存しています…' : '下書きとして保存しています…');
 
       const d = out.draft;
+      // ★ 投稿する本文（ハッシュタグ入り）はサーバーが組み立てたもの。
+      const post = out.posts || {
+        igCaption: d.igCaption, ttCaption: d.ttCaption,
+        xText: d.xText, ytDescription: d.igCaption,
+      };
       await api('/api/posts', {
         method: 'POST',
         body: {
           status: ok ? 'scheduled' : 'draft',
           title: d.title,
           body_common: '',
-          ig_caption: d.igCaption,
+          ig_caption: post.igCaption,
           yt_title: d.title,
-          yt_description: d.igCaption,
-          x_text: d.xText,
-          tt_caption: d.ttCaption,
+          yt_description: post.ytDescription,
+          x_text: post.xText,
+          tt_caption: post.ttCaption,
           scheduled_at_jst: ok ? when : '',
           group_id: currentGroup,
           has_affiliate_link: affi,
