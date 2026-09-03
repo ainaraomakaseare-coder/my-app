@@ -23,10 +23,23 @@
   // ★ 端末のフォント任せにすると、見る人の環境で太さが変わってしまう。
   //   Webフォントを読み込んで固定する。届かないときだけ端末のフォントに落とし、
   //   その場合は太さの刻みが粗いので重みを振り直す（下の WEIGHTS）。
+  //
+  // ★ 「黒字の漢字が細い」の正体。
+  //   端末のフォント（Hiragino / Yu Gothic / Meiryo 等）は、太さの刻みが
+  //   Regular と Bold の2つしか無いことが多い。350〜550くらいまでは
+  //   ぜんぶ同じ「Regular」に丸められ、600に達して初めて「Bold」になる
+  //   ————これを実際に描いて画素で数えて確認した（350〜550は同じ濃さ、
+  //   600からだけ濃さが4割増える）。
+  //   黒字（body）は 400、赤字（answer）は 600 だったので、
+  //   赤字だけが太字の側に入り、黒字は「太くしたつもり」のまま
+  //   細いRegularに丸められていた。だから赤字は太いのに黒字だけ細い、
+  //   という見え方になっていた。
+  //   黒字も 600 に載せることで、Webフォントが読めない環境でも
+  //   確実に太字として描く。
   const FAMILY = '"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif';
   const WEIGHTS = {
-    web:      { body: 350, answer: 500 },   // 実測に一致する値
-    fallback: { body: 400, answer: 600 },   // 端末のフォントは Regular/Bold しか無いことが多い
+    web:      { body: 500, answer: 600 },   // 実測 350/500 より一段太く。Webフォントは指定どおり細かく効く
+    fallback: { body: 600, answer: 700 },   // 600未満は Regular に丸められる端末が多いので、600以上に揃える
   };
   let weights = WEIGHTS.fallback;
   let fontSource = '端末のフォント';
@@ -37,8 +50,8 @@
       if (!document.fonts || !document.fonts.load) throw new Error('no font api');
       await Promise.race([
         Promise.all([
-          document.fonts.load('350 40px "Noto Sans JP"', '転職'),
-          document.fonts.load('500 31px "Noto Sans JP"', '広まる'),
+          document.fonts.load('500 40px "Noto Sans JP"', '転職'),   // body の実際の太さ
+          document.fonts.load('600 31px "Noto Sans JP"', '広まる'),   // answer の実際の太さ
         ]),
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000)),
       ]);

@@ -183,6 +183,60 @@ const personal = draft({
     assert.ok(!rules.hasBlocking(rules.validateDraft(d)), 'まだ止まっている');
   });
 
+  // ------------------------------------------------------- 本文が空にならないか
+  //
+  // ★ 実際に起きた不具合の再現。投稿された本文が「#toukoutakuneo」という
+  //   ハッシュタグ1語だけになっていた。原因は igCaption が空のまま検査を
+  //   素通りしていたこと（`text && ...` は空文字が falsy なので、
+  //   「無ければ見ない」がそのまま「合格」になっていた）。
+  await check('igCaption が空だと止める（ハッシュタグだけの投稿になる不具合の再現）', () => {
+    const d = draft({ igCaption: '' });
+    const f = rules.findingsOf(d, 'empty-caption');
+    assert.strictEqual(f.length, 1);
+    assert.strictEqual(f[0].severity, 'error');
+    assert.ok(/本文が空です/.test(f[0].message));
+    assert.ok(rules.hasBlocking(rules.validateDraft(d)), '止めていない（この不具合の核心）');
+  });
+
+  await check('igCaption が短すぎても止める（実質ハッシュタグしか無い状態）', () => {
+    const d = draft({ igCaption: 'いいね' });   // 3字。ハッシュタグと大差ない
+    const f = rules.findingsOf(d, 'empty-caption');
+    assert.strictEqual(f.length, 1);
+    assert.ok(/短すぎます/.test(f[0].message));
+  });
+
+  await check('空白だけの本文も、空として扱う', () => {
+    const d = draft({ ttCaption: '　　\n　' });
+    assert.strictEqual(rules.findingsOf(d, 'empty-caption').length, 1);
+  });
+
+  await check('ttCaption・xText も同じように見る', () => {
+    assert.strictEqual(rules.findingsOf(draft({ ttCaption: '' }), 'empty-caption').length, 1);
+    assert.strictEqual(rules.findingsOf(draft({ xText: '' }), 'empty-caption').length, 1);
+  });
+
+  await check('中身のある本文なら、何も言わない', () => {
+    assert.deepStrictEqual(rules.findingsOf(reel09, 'empty-caption'), []);
+  });
+
+  // ★ 「本文が空」でも「ハッシュタグ側は正常」なら、そのまま投稿される本文が
+  //   ハッシュタグだけになる、という組み合わせを確かめる（実際に起きた形）。
+  await check('本文が空でハッシュタグだけあると、投稿される本文がハッシュタグのみになる（だから止める）', () => {
+    const empty = '';
+    const posted = rules.captionWithTags(empty, ['#toukoutakuneo'], 'instagram');
+    assert.strictEqual(posted, '#toukoutakuneo', 'これが実際に起きていた見え方');
+    // ↑ この形そのものを許してしまうのが不具合なので、生成の検査側で止める。
+    assert.ok(rules.hasBlocking(rules.validateDraft(draft({ igCaption: empty }))));
+  });
+
+  await check('ensureSourcing は空文字には足さない（空欄チェックに任せる）', () => {
+    const gen = require('../lib/draft-generate');
+    const d = { igCaption: '' };
+    const added = gen.ensureSourcing(d, rules.CURATOR);
+    assert.deepStrictEqual(added, []);
+    assert.strictEqual(d.igCaption, '', '空欄に断りだけ足しても中身のある本文にはならない');
+  });
+
   // ----------------------------------------- 穴埋めとして成り立っているか
   //
   // ★ ここが「赤字と黒字が2回繰り返している」の正体だった。
@@ -259,6 +313,28 @@ const personal = draft({
     assert.strictEqual(warn[0].severity, 'warning');
     const err = rules.findingsOf(draft({ title: 'あ'.repeat(24) }), 'title-too-wide');
     assert.strictEqual(err[0].severity, 'error');
+  });
+
+  // ★ 「黒字の漢字が細い」の実測結果を、コードとして固定する。
+  //   端末のフォントは太さ600未満だとぜんぶ同じRegularに丸められる
+  //   （350〜550を実際に描いて画素で数え、濃さが変わらないことを確認済み）。
+  //   黒字（body）を600未満に戻すと、この不具合がそのまま再発する。
+  await check('黒字（body）は端末フォントでも太字になる600以上にしてある', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    const fb = reel.match(/fallback:\s*\{\s*body:\s*([0-9]+)/);
+    assert.ok(fb, 'reel.js に fallback.body が無い');
+    assert.ok(Number(fb[1]) >= 600,
+      `fallback.body が ${fb[1]} 。600未満だと端末フォントで細いRegularに丸められる`);
+  });
+
+  await check('赤字（answer）は黒字より太いままにしてある（見分けの階層）', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    const web = reel.match(/web:\s*\{\s*body:\s*([0-9]+),\s*answer:\s*([0-9]+)/);
+    const fb = reel.match(/fallback:\s*\{\s*body:\s*([0-9]+),\s*answer:\s*([0-9]+)/);
+    assert.ok(Number(web[2]) > Number(web[1]), 'Webフォントで赤字が黒字より太くない');
+    assert.ok(Number(fb[2]) > Number(fb[1]), '端末フォントで赤字が黒字より太くない');
   });
 
   await check('縮める境目は reel.js の MIN_SCALE から出している', () => {
@@ -456,6 +532,26 @@ const personal = draft({
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.attempts, 1);
     assert.strictEqual(s.seen.length, 1);
+  });
+
+  // ★ この不具合の、生成ループを通した再現。1回目に空の本文が返ってきても、
+  //   下書きのまま止まらず、指摘を添えて書き直しをかけることを確かめる。
+  await check('本文が空で返ってきたら作り直し、次の依頼にその指摘を渡す', async () => {
+    const empty = Object.assign({}, clean, { igCaption: '' });
+    const s = stub([empty, clean]);
+    const r = await gen.generateDraft(topic, { generate: s.generate });
+    assert.strictEqual(r.ok, true, '書き直し後も通らないままになっている');
+    assert.strictEqual(r.attempts, 2);
+    assert.strictEqual(s.seen[1].previous.findings.some((f) => f.rule === 'empty-caption'), true,
+      '空だったことを次の依頼に伝えていない');
+  });
+
+  await check('空のまま3回続けば、下書きとして止まる（消えて無くなりはしない）', async () => {
+    const empty = Object.assign({}, clean, { igCaption: '' });
+    const s = stub([empty, empty, empty]);
+    const r = await gen.generateDraft(topic, { generate: s.generate });
+    assert.strictEqual(r.ok, false);
+    assert.ok(r.findings.some((f) => f.rule === 'empty-caption'), '理由が指摘に残っていない');
   });
 
   await check('呼び出し側が決める値を差し込む', async () => {
