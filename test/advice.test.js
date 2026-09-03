@@ -147,12 +147,46 @@ const posts = (scores) => scores.map((s, i) => ({ title: `ネタ${i + 1}`, views
     assert.ok(/毎晩/.test(out[0].detail), '待てばよいことを伝えていない');
   });
 
-  await check('つながっているのに項目が欠けるときは、権限を疑うよう伝える', () => {
+  // ★ 原因を決めつけると、直しようのない指示になる。
+  //   YouTube は権限があっても「登録者数を非公開」なら返ってこない。
+  //   それを「権限が足りません」と言うと、直しに行っても直らない。
+  await check('YouTube の欠けは、非公開設定を先に疑う', () => {
     const out = advice.collectionFindings([
-      account({ latest: { ok: true, followers: null, views: null, taken_on: '2026-09-03' } })]);
+      account({ network: 'youtube',
+                latest: { ok: true, followers: null, views: null, taken_on: '2026-09-03' } })]);
     const f = out.find((x) => /返ってきません/.test(x.headline));
     assert.ok(f, '欠けを指摘していない');
+    assert.ok(/非公開/.test(f.detail), 'YouTube に権限の話をしている: ' + f.detail);
+    assert.ok(!/権限/.test(f.detail), 'ありえない原因を挙げている');
+  });
+
+  await check('Instagram の欠けは、権限とアカウント種別を疑う', () => {
+    const out = advice.collectionFindings([
+      account({ network: 'instagram',
+                latest: { ok: true, followers: null, taken_on: '2026-09-03' } })]);
+    const f = out.find((x) => /返ってきません/.test(x.headline));
     assert.ok(/権限/.test(f.detail));
+    assert.ok(/プロアカウント/.test(f.detail));
+  });
+
+  await check('TikTok の欠けは、繋ぎ直しが要ることまで言う', () => {
+    const out = advice.collectionFindings([
+      account({ network: 'tiktok',
+                latest: { ok: true, followers: null, taken_on: '2026-09-03' } })]);
+    const f = out.find((x) => /返ってきません/.test(x.headline));
+    assert.ok(/user\.info\.stats/.test(f.detail));
+    assert.ok(/繋ぎ直/.test(f.detail), '古い引換券のままでは効かないことを言っていない');
+  });
+
+  // ★ こちらの推測より、SNS が実際に言った理由のほうが確か。
+  await check('SNS側が理由を言っているなら、それをそのまま見せる', () => {
+    const out = advice.collectionFindings([
+      account({ network: 'instagram',
+                latest: { ok: true, followers: null, taken_on: '2026-09-03',
+                          error: 'Instagram が followers_count を返しませんでした：権限がありません' } })]);
+    const f = out.find((x) => /返ってきません/.test(x.headline));
+    assert.ok(f.numbers.some((n) => /SNS側の返事/.test(n) && /followers_count/.test(n)),
+      'SNS の原文を見せていない');
   });
 
   // ------------------------------------------------------- 止まっているもの
