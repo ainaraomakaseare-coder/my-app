@@ -383,7 +383,11 @@
   </section>
 </div>
 
-<script src="/reel.js"></script>
+<!-- ★ reel.js を直したら ?v= を上げること。
+     上げないと、動画まわりの直しがブラウザのキャッシュに阻まれて
+     反映されないことがある（index.html 自体は毎回取り直されるが、
+     reel.js は据え置きだと前のまま使われ続ける）。 -->
+<script src="/reel.js?v=3"></script>
 <script>
 'use strict';
 

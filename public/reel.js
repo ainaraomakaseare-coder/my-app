@@ -330,6 +330,57 @@
     return '';
   }
 
+  let warmed = false;
+
+  /**
+   * ★ frame_rate_check_failed の残り1件。
+   *   コマの間隔を手動にしても、そのページで最初に MediaRecorder を
+   *   動かした回だけ、決まって11コマ目のあたりで数百ms〜1秒ほど詰まる
+   *   （実測：同じページで2回録ると、1回目だけ詰まり、2回目は綺麗に
+   *   30fpsになる）。ブラウザ側の動画エンコーダの初期化コストらしく、
+   *   ページごとに一度だけ発生する。16.8秒中に一度でも大きな詰まりが
+   *   混じると、そこだけコマが薄くなって平均フレームレートが
+   *   30から大きくずれ、TikTok の検査に引っかかる。
+   *
+   *   本番の録画を始める前に、捨てる小さな録画を1回済ませておき、
+   *   この詰まりをそちらで吸収する。本番の16.8秒には影響しない。
+   */
+  function warmupEncoder(mime) {
+    return new Promise((resolve) => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 16; c.height = 16;
+        c.getContext('2d').fillRect(0, 0, 16, 16);
+        const stream = c.captureStream(0);
+        const track = stream.getVideoTracks()[0];
+        if (!track || typeof track.requestFrame !== 'function') return resolve();
+
+        const rec = new MediaRecorder(stream, { mimeType: mime });
+        const finish = () => resolve();
+        rec.onstop = finish;
+        rec.onerror = finish;
+        rec.start();
+        track.requestFrame();
+
+        let n = 0;
+        const tick = () => {
+          n += 1;
+          track.requestFrame();
+          if (n >= 20) { rec.stop(); return; }
+          setTimeout(tick, 33);
+        };
+        setTimeout(tick, 33);
+      } catch (e) { resolve(); }
+    });
+  }
+
+  /** ページで一度だけ温める。すでに温まっていれば何もしない。 */
+  function ensureWarm(mime) {
+    if (warmed) return Promise.resolve();
+    warmed = true;
+    return warmupEncoder(mime);
+  }
+
   /**
    * 実時間で1回再生しながら録る。16.8秒かかる。
    * onProgress(0..1) で進み具合を返す。
@@ -347,6 +398,10 @@
    *   自分で決める。setTimeout を「開始時刻＋n×コマ間隔」で毎回
    *   計算し直す（前のコマからの相対時間にしない）ことで、
    *   イベントループの遅れが積み重ならないようにしてある。
+   *
+   *   それでもページで最初の録画だけは詰まりが残ったので、
+   *   本番の録画の前に ensureWarm() で1回だけ温めている
+   *   （詳しくは warmupEncoder のコメント）。
    */
   function record(draft, onProgress) {
     return new Promise((resolve, reject) => {
@@ -354,6 +409,11 @@
       const mime = pickMime();
       if (!mime) return reject(new Error('このブラウザは動画の書き出しに対応していません。'));
 
+      ensureWarm(mime).then(() => startRecording(mime, draft, onProgress, resolve, reject)).catch(reject);
+    });
+  }
+
+  function startRecording(mime, draft, onProgress, resolve, reject) {
       const base = newCanvas();
       const boxes = drawBase(base.getContext('2d'), draft);
 
@@ -406,7 +466,6 @@
           schedule(n + 1);
         }, delay);
       })(1);
-    });
   }
 
   window.Reel = { SPEC, W, H, RIGHT, READABLE_SCALE, HARD_MIN_SCALE,
