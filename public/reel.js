@@ -424,7 +424,31 @@
    *   下げても画質への影響は小さいはず。ただし本物のH.264エンコーダが
    *   この検証環境に無いため、詰まりが実際に減るかどうかは確認できて
    *   いない。
+   *
+   * ★★★ それでも直っていなかった（実機の別の失敗ファイルで判明）。
+   *   今度の実物は2コマしか無く、1コマ目（空欄）が35秒も引き伸ばされて、
+   *   最後にいきなり2コマ目（全部埋まった状態）が出て終わっていた。
+   *   16.8秒のはずの録画スケジュールが、丸ごと1回の巨大な詰まりに
+   *   飲み込まれていたことになる。ここまで長い詰まりは、GCやエンコードの
+   *   一時的な重さでは説明しにくい。タブを裏に回した（別タブに切り替えた・
+   *   画面をロックした・PCがスリープした等）ときにブラウザが setTimeout を
+   *   極端に間引く現象と辻褄が合う。
+   *
+   *   ただしこれもこの検証環境（Playwright操作下のヘッドレスブラウザ）
+   *   では再現できなかった（visibilitychange 自体が発火しない）ため、
+   *   確証は無い。原因の特定より先に、「詰まりを検知したら、そのまま
+   *   壊れた動画を作り続けずに、その場で止めて分かる形でエラーにする」
+   *   ことを優先した。
+   *
+   *   ★ しきい値は3秒とゆるめにしてある。前々回見つかった「1〜1.6秒の
+   *   詰まりが4回」のケースは、TikTokの検査には弾かれたが、中身自体は
+   *   6問ぶん全部映っていてInstagramには通っていた。ここで細かく反応
+   *   すると、Instagramには通るはずの動画まで止めてしまう。今回のような
+   *   「ほぼ空欄のまま終わる」致命的な詰まり（35秒）だけを狙って止める。
+   *   1コマぶんの間隔が STALL_MS を超えて遅れたら、録画を中断して
+   *   エラーを返す。
    */
+  const STALL_MS = 3000;
   function record(draft, onProgress) {
     return new Promise((resolve, reject) => {
       if (!window.MediaRecorder) return reject(new Error('このブラウザは動画の書き出しに対応していません。'));
@@ -473,9 +497,24 @@
       pushFrame();   // 最初のコマ（t=0）を必ず1枚押し出す
 
       (function schedule(n) {
-        const delay = Math.max(0, t0 + n * stepMs - performance.now());
+        const wantFire = t0 + n * stepMs;
+        const delay = Math.max(0, wantFire - performance.now());
         setTimeout(() => {
           if (stopped) return;
+
+          // ★ ブラウザの主スレッドが長く止まっていたら、そのまま録画を
+          //   続けても壊れた動画にしかならない。ここで打ち切る。
+          const lateBy = performance.now() - wantFire;
+          if (lateBy > STALL_MS) {
+            stopped = true;
+            rec.stop();
+            reject(new Error(
+              '録画中にブラウザの処理が' + Math.round(lateBy / 1000) + '秒ほど止まったため、'
+              + '動画が正しく作れませんでした。タブを表示したまま（他のタブに切り替えたり、'
+              + '画面をスリープさせたりせず）、もう一度お試しください。'));
+            return;
+          }
+
           const t = (performance.now() - t0) / 1000;
           if (t >= SPEC.duration) {
             drawAt(ctx, base, boxes, SPEC.duration);
