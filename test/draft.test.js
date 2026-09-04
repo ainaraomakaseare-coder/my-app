@@ -328,6 +328,46 @@ const personal = draft({
       `fallback.body が ${fb[1]} 。600未満だと端末フォントで細いRegularに丸められる`);
   });
 
+  // ------------------------------------------------ TikTok のコマ間隔（frame_rate_check_failed）
+  //
+  // ★ 実際に起きた不具合。TikTok が「TikTok 側で動画の処理に失敗しました。
+  //   次の一手：frame_rate_check_failed」を返していた。
+  //
+  //   実際に16.8秒フルで録って、mp4の中身（moof/trun の sample_duration）を
+  //   直接読んで確かめた。原因は requestAnimationFrame（実測：約60Hz）で
+  //   captureStream(30) を駆動していたこと。指定した30fpsとズレていて、
+  //   ブラウザが間引くときに同じ時刻のコマが2枚できることがあった
+  //   （ffmpegが「non monotonically increasing dts: 84 >= 84」と警告）。
+  //
+  //   captureStream(0)（手動モード）にして、setTimeout で自分がコマの
+  //   間隔を管理するように直した。直したあとは、473〜480コマの大半が
+  //   33.3ms前後にきれいに揃うことを確認した（重複は解消）。
+  //   ※ エンコード処理自体がJSの実行を一瞬止めることによる単発の飛びは
+  //     timeslice を変えても残ったため、ブラウザ内部の処理と判断し、
+  //     完全には消せていない。TikTok側の判定が完全に通るとは言い切れない。
+  await check('コマの間隔は自分で管理する（requestAnimationFrame に任せない）', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    const record = reel.slice(reel.indexOf('function record('), reel.indexOf('function record(') + 3000);
+    assert.ok(/captureStream\(0\)/.test(record),
+      '手動モード（captureStream(0)）になっていない');
+    assert.ok(/requestFrame/.test(record),
+      'requestFrame でコマを押し出していない');
+    assert.ok(!/requestAnimationFrame/.test(record),
+      'requestAnimationFrame に戻っている（60Hzとのズレが再発する）');
+  });
+
+  await check('コマの間隔は t0 からの絶対時刻で計算する（遅れを積み上げない）', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    const record = reel.slice(reel.indexOf('function record('), reel.indexOf('function record(') + 3000);
+    // ★ setTimeout(fn, 前回間隔) のように「前回からの相対時間」で刻むと、
+    //   1回1回の遅れがそのまま積み重なる。t0 + n*刻み から逆算する形に
+    //   なっているかを見る。
+    assert.ok(/t0\s*\+\s*n\s*\*\s*stepMs/.test(record),
+      '絶対時刻から逆算する形になっていない（遅れが積み重なる）');
+  });
+
   await check('赤字（answer）は黒字より太いままにしてある（見分けの階層）', () => {
     const fs = require('fs');
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
