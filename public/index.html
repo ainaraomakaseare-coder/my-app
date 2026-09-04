@@ -2121,6 +2121,7 @@ function render(p) {
     <div class="row" style="margin-top:8px">
       ${canRetry ? '<button data-act="retry">失敗したSNSだけ再実行</button>' : ''}
       ${p.status === 'draft' ? '' : '<button data-act="run-now">今すぐ投稿</button>'}
+      <button data-act="video">動画をダウンロード</button>
       <button data-act="delete">削除</button>
     </div>
     ${history ? `<details style="margin-top:8px"><summary>履歴</summary>${history}</details>` : ''}
@@ -2133,9 +2134,10 @@ function render(p) {
       b.disabled = true;
       try {
         if (act === 'delete') await api(`/api/posts?id=${p.id}`, { method:'DELETE' });
+        else if (act === 'video') await downloadVideo(p);
         else await api(`/api/posts?id=${p.id}&action=${act}`, { method:'POST' });
       } catch (e) { alert(e.message); }
-      loadPosts();
+      if (act !== 'video') loadPosts(); else b.disabled = false;
     };
   });
   return el;
