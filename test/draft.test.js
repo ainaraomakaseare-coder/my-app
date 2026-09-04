@@ -368,6 +368,22 @@ const personal = draft({
       '絶対時刻から逆算する形になっていない（遅れが積み重なる）');
   });
 
+  // ★ コマ間隔を手動にしても、ページで最初の録画だけ11コマ目あたりで
+  //   詰まることが実測で分かった（同じページで2回録ると、1回目だけ詰まり
+  //   2回目は綺麗に30fpsになる＝ブラウザ側エンコーダの初期化コストらしい）。
+  //   本番の録画の前に、捨てる小さな録画で一度温めておくことで、
+  //   本番の16.8秒からその詰まりを追い出している。
+  await check('本番の録画の前に、エンコーダを一度温めている', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    assert.ok(/function\s+warmupEncoder/.test(reel), 'warmupEncoder が無い');
+    assert.ok(/function\s+ensureWarm/.test(reel), 'ensureWarm が無い');
+    const start = reel.indexOf('function record(');
+    const record = reel.slice(start, start + 500);
+    assert.ok(/ensureWarm\(/.test(record),
+      '本番の録画が ensureWarm を経由していない（詰まりが本番に残る）');
+  });
+
   await check('赤字（answer）は黒字より太いままにしてある（見分けの階層）', () => {
     const fs = require('fs');
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
