@@ -186,6 +186,7 @@ YouTube 登録者数が非公開            → ok:true, followers:null（エラ
 | 8 | テストの日付づくりが UTC で1日ずれた | 本体は日本時間で数えているので、テスト側を合わせた |
 | 9 | **cron の鍵をプレースホルダのまま登録した** | 下記に詳述 |
 | 10 | **確認用SQLが、失敗を隠す形だった** | 下記に詳述 |
+| 11 | **TikTok の frame_rate_check_failed** | 下記に詳述 |
 
 ### 1. TikTok を繋ぐと AI 側が繋ぎ直された
 
@@ -255,6 +256,28 @@ from cron.job where jobname = 'toukoutaku-neo-worker';
 `where content like '%takenOn%'` で絞っていたため、**401 のときに何も出てこなかった**。
 「まだ届いていない」のか「弾かれた」のかが区別できない。
 worker を除外する形（`content not like '%checkedAt%'`）に直した。
+
+### 11. TikTok の frame_rate_check_failed
+
+「TikTok 側で動画の処理に失敗しました。次の一手：frame_rate_check_failed」。
+
+16.8秒フルで実際に動画を録り、mp4の中身（moof/trun の sample_duration）を
+直接読んで確かめた。原因は `requestAnimationFrame`（実測：約60Hz、16.7ms間隔）で
+`captureStream(30)` を駆動していたこと。指定した30fpsとズレていて、
+ブラウザが間引くときに同じ時刻のコマが2枚できることがあった
+（ffmpegが「non monotonically increasing dts: 84 >= 84」と警告）。
+コマ間隔が均一でない動画は、TikTok の取り込み時の検査で弾かれる。
+
+→ `captureStream(0)`（手動モード）にして、`setTimeout` で自分がコマの
+間隔を管理するように直した。t0 + n×刻み から毎回逆算する形にして、
+1回ごとの遅れが積み重ならないようにしてある。
+
+**直した後の実測**：473〜480コマの大半が33.3ms前後にきれいに揃った
+（重複タイムスタンプは解消）。ただし単発の大きな飛び（850〜1050ms）が
+1回だけ残った。timeslice を変えても変化しなかったため、動画のエンコード
+処理自体がJSの実行を一瞬止めることによるものと判断し、ブラウザ内部の
+挙動として受け入れた。**この不具合が完全に直ったとまでは言い切れない。**
+実際に TikTok に投稿して確かめてもらう必要がある。
 
 ### テストが見つけたもの
 

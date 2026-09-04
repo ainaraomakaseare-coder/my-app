@@ -333,6 +333,20 @@
   /**
    * 実時間で1回再生しながら録る。16.8秒かかる。
    * onProgress(0..1) で進み具合を返す。
+   *
+   * ★ TikTok の frame_rate_check_failed 対策。
+   *   以前は captureStream(30) を requestAnimationFrame で駆動していた。
+   *   ところが rAF は画面の描画周期（実測：約60Hz＝16.7ms間隔）で呼ばれ、
+   *   captureStream に渡した「30fps」とはズレている。この差をブラウザが
+   *   内部で間引くときの詰め方が不揃いで、実際に録ってみると同じ時刻の
+   *   コマが2枚できることがあった（ffmpeg で「non monotonically
+   *   increasing dts: 84 >= 84」として検出）。コマ間隔が均一でない動画は、
+   *   TikTok の取り込み時の検査で弾かれる。
+   *
+   *   captureStream(0)（手動モード）にして、コマを渡すタイミングを
+   *   自分で決める。setTimeout を「開始時刻＋n×コマ間隔」で毎回
+   *   計算し直す（前のコマからの相対時間にしない）ことで、
+   *   イベントループの遅れが積み重ならないようにしてある。
    */
   function record(draft, onProgress) {
     return new Promise((resolve, reject) => {
@@ -347,7 +361,16 @@
       const ctx = out.getContext('2d');
       drawAt(ctx, base, boxes, 0);
 
-      const stream = out.captureStream(SPEC.fps);
+      // ★ 手動モードに対応していないブラウザ（Firefox・Safari等）は、
+      //   前どおり自動キャプチャに戻す。動かなくなるよりはまし。
+      //   このアプリは元から「Chrome か Edge で」と案内しているので、
+      //   そちらでは常に手動モードが使われる。
+      const manualStream = out.captureStream(0);
+      const track = manualStream.getVideoTracks()[0];
+      const manual = typeof track.requestFrame === 'function';
+      const stream = manual ? manualStream : out.captureStream(SPEC.fps);
+      const pushFrame = manual ? () => track.requestFrame() : () => {};
+
       const chunks = [];
       const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 2500000 });
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -357,20 +380,32 @@
         resolve({ blob, mime, ext: mime.indexOf('mp4') >= 0 ? 'mp4' : 'webm' });
       };
 
+      const stepMs = 1000 / SPEC.fps;
       const t0 = performance.now();
+      let stopped = false;
+
       rec.start();
-      (function tick() {
-        const t = (performance.now() - t0) / 1000;
-        if (t >= SPEC.duration) {
-          drawAt(ctx, base, boxes, SPEC.duration);
-          setTimeout(() => rec.stop(), 120);   // 最後のコマを取りこぼさない
-          if (onProgress) onProgress(1);
-          return;
-        }
-        drawAt(ctx, base, boxes, t);
-        if (onProgress) onProgress(t / SPEC.duration);
-        requestAnimationFrame(tick);
-      })();
+      pushFrame();   // 最初のコマ（t=0）を必ず1枚押し出す
+
+      (function schedule(n) {
+        const delay = Math.max(0, t0 + n * stepMs - performance.now());
+        setTimeout(() => {
+          if (stopped) return;
+          const t = (performance.now() - t0) / 1000;
+          if (t >= SPEC.duration) {
+            drawAt(ctx, base, boxes, SPEC.duration);
+            pushFrame();
+            stopped = true;
+            setTimeout(() => rec.stop(), 120);   // 最後のコマを取りこぼさない
+            if (onProgress) onProgress(1);
+            return;
+          }
+          drawAt(ctx, base, boxes, t);
+          pushFrame();
+          if (onProgress) onProgress(t / SPEC.duration);
+          schedule(n + 1);
+        }, delay);
+      })(1);
     });
   }
 
