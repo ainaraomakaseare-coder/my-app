@@ -362,10 +362,30 @@ const personal = draft({
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
     const record = reel.slice(reel.indexOf('function record('), reel.indexOf('function record(') + 3000);
     // ★ setTimeout(fn, 前回間隔) のように「前回からの相対時間」で刻むと、
-    //   1回1回の遅れがそのまま積み重なる。t0 + n*刻み から逆算する形に
-    //   なっているかを見る。
-    assert.ok(/t0\s*\+\s*n\s*\*\s*stepMs/.test(record),
+    //   1回1回の遅れがそのまま積み重なる。t0 + 押し出した枚数*刻み から
+    //   逆算する形になっているかを見る。
+    assert.ok(/t0\s*\+\s*\w+\s*\*\s*stepMs/.test(record),
       '絶対時刻から逆算する形になっていない（遅れが積み重なる）');
+  });
+
+  // ★ 実機で送ってもらった本物の失敗動画を調べたら、16.8秒の録画中に
+  //   1〜1.6秒の詰まりが4回もあり（動画全体の36%）、手元の検証環境
+  //   （H.264のエンコーダが無くVP9で代用されていた）では1回しか
+  //   再現できていなかった不具合が見つかった。
+  //
+  //   「詰まった分をあとでまとめて押し出す」も試したが、実測で
+  //   効かないと分かった（requestFrame() を間を空けずに何度呼んでも、
+  //   ブラウザは1枚のコマにまとめてしまう）ので取り下げ済み。
+  //   一度失われた実時間ぶんのコマは水増しできないため、エンコードの
+  //   負荷そのものを下げる方向（ビットレートを下げる）で対策している。
+  await check('動画のビットレートを下げて、エンコードの負荷を減らしている', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    const record = reel.slice(reel.indexOf('function record('), reel.indexOf('function record(') + 3500);
+    const m = record.match(/videoBitsPerSecond:\s*([0-9]+)/);
+    assert.ok(m, 'videoBitsPerSecond が見当たらない');
+    assert.ok(Number(m[1]) <= 1500000,
+      'ビットレートが下がっていない（詰まりを減らす狙いが反映されていない）');
   });
 
   // ★ コマ間隔を手動にしても、ページで最初の録画だけ11コマ目あたりで

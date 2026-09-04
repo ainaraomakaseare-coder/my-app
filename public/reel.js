@@ -402,6 +402,28 @@
    *   それでもページで最初の録画だけは詰まりが残ったので、
    *   本番の録画の前に ensureWarm() で1回だけ温めている
    *   （詳しくは warmupEncoder のコメント）。
+   *
+   * ★ それでも直っていなかった（実機の本物のファイルで判明）。
+   *   利用者から実際に失敗した mp4 を送ってもらい、中身
+   *   （moof/trun の sample_duration）を直接読んで確かめたところ、
+   *   16.8秒の録画中に1〜1.6秒の詰まりが4回もあり、動画全体の
+   *   実に36%が詰まりで占められていた。手元の検証環境（H.264の
+   *   エンコーダが無く、実際にはVP9で代用されていた）では最初の
+   *   1回しか詰まりが再現できていなかった。本物のH.264での録画は、
+   *   ソフトウェアでのエンコード負荷が高いぶん、録画の最中に何度も
+   *   主スレッドが止まるらしい。
+   *
+   *   ★★ 「詰まった分をあとでまとめて押し出す」は試したが、効かない
+   *   ことが実測で分かったので取り下げた。requestFrame() を間を空けずに
+   *   何度も呼んでも、ブラウザは1枚のコマにまとめてしまう（41回連続で
+   *   呼んでも、記録されるのは1コマだけだった）。つまり一度失われた
+   *   実時間ぶんのコマは、あとから水増しする手段が無い。
+   *   詰まりそのものを起きにくくするしかないので、エンコードの負荷を
+   *   下げる方向（videoBitsPerSecond を下げる）で対策している。
+   *   この動画はほぼ静止画＋文字で動きが少ないので、ビットレートを
+   *   下げても画質への影響は小さいはず。ただし本物のH.264エンコーダが
+   *   この検証環境に無いため、詰まりが実際に減るかどうかは確認できて
+   *   いない。
    */
   function record(draft, onProgress) {
     return new Promise((resolve, reject) => {
@@ -432,7 +454,10 @@
       const pushFrame = manual ? () => track.requestFrame() : () => {};
 
       const chunks = [];
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 2500000 });
+      // ★ 2.5Mbps → 1.2Mbps。ほぼ静止画＋文字で動きが少ない内容なので
+      //   画質への影響は小さいはず。エンコードの負荷を下げて、
+      //   録画中の詰まり（主スレッドが止まる現象）を起きにくくする狙い。
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 1200000 });
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
       rec.onerror = (e) => reject(e.error || new Error('録画に失敗しました。'));
       rec.onstop = () => {
