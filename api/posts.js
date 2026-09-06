@@ -67,6 +67,8 @@ async function list() {
     // 動画に描く6行は draft の中にある。素材が作れるかの判定に要る。
     const full = Object.assign({}, p, p.draft || {});
     p.handoff = handoff.planFor(full, chosen, groupById.get(p.group_id) || null, targets);
+    // 送ったあとに人の手が残るもの（TikTok の本文など）。投稿カードに出す。
+    p.after_send = handoff.afterSend(p.handoff);
   }
 
   return { posts: posts || [], accounts, groups, now: new Date().toISOString() };

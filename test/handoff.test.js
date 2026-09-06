@@ -374,6 +374,58 @@ const post = (over) => Object.assign({
     assert.deepStrictEqual(row[2].draft, draft);
   });
 
+  // -------------------------------------------------------------------------
+  // 送ったあとに残る作業（TikTok の本文）
+  //
+  // TikTok は下書き方式では本文を一緒に送れない。送信成功で終わりにすると、
+  // TikTok が入れた既定の文言（アプリ名）のまま公開されてしまう。
+  // -------------------------------------------------------------------------
+
+  await check('TikTok は送信成功のあとも、本文を貼る作業が残る', async () => {
+    const plan = handoff.planFor(post(), [acct('tiktok')], G_AFFI,
+      [{ account_id: 'tiktok', status: 'success' }]);
+    const rest = handoff.afterSend(plan);
+    assert.strictEqual(rest.length, 1);
+    assert.strictEqual(rest[0].network, 'tiktok');
+    assert.deepStrictEqual(rest[0].needs.map((n) => n.key), ['ttCaption']);
+    assert.ok(rest[0].needs[0].ready, '本文があるならコピーできる状態であるべき');
+  });
+
+  await check('YouTube はタイトルも説明文も一緒に送るので、残る作業はない', async () => {
+    const plan = handoff.planFor(post(), [acct('youtube')], G_AFFI,
+      [{ account_id: 'youtube', status: 'success' }]);
+    assert.deepStrictEqual(handoff.afterSend(plan), []);
+  });
+
+  await check('まだ送っていない TikTok は、残る作業として出さない', async () => {
+    for (const status of ['queued', 'processing', 'failed', null]) {
+      const plan = handoff.planFor(post(), [acct('tiktok')], G_AFFI,
+        [{ account_id: 'tiktok', status }]);
+      assert.deepStrictEqual(handoff.afterSend(plan), [],
+        `status=${status} で出てはいけない`);
+    }
+  });
+
+  await check('本文が空なら、コピーできない印を付けて出す', async () => {
+    const plan = handoff.planFor(post({ tt_caption: '   ' }), [acct('tiktok')], G_AFFI,
+      [{ account_id: 'tiktok', status: 'success' }]);
+    const rest = handoff.afterSend(plan);
+    assert.strictEqual(rest.length, 1, '空でも作業自体は残るので出す');
+    assert.ok(!rest[0].needs[0].ready);
+  });
+
+  await check('手渡しのSNS（Instagram・X）は afterSend の対象外', async () => {
+    // 手渡しは「送信成功」という状態にならない。混ざると二重に案内してしまう。
+    const plan = handoff.planFor(post(), [acct('instagram'), acct('x')], G_STOP,
+      [{ account_id: 'instagram', status: 'success' }, { account_id: 'x', status: 'success' }]);
+    assert.deepStrictEqual(handoff.afterSend(plan), []);
+  });
+
+  await check('引数が無くても落ちない', async () => {
+    assert.deepStrictEqual(handoff.afterSend(null), []);
+    assert.deepStrictEqual(handoff.afterSend([null, undefined]), []);
+  });
+
   const bad = results.filter((r) => r[0] === 'NG');
   for (const [mark, name] of results) console.log(`  ${mark === 'ok' ? '✓' : '✗'} ${name}`);
   console.log(`\n  ${results.length - bad.length} / ${results.length} 件成功`);
