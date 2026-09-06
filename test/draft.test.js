@@ -388,6 +388,25 @@ const personal = draft({
       'ビットレートが下がっていない（詰まりを減らす狙いが反映されていない）');
   });
 
+  // ★ 利用者から送ってもらった2件目の失敗ファイルは、16.8秒のはずの
+  //   録画がまるごと1回・35秒の詰まりに飲み込まれ、コマが2枚（空欄が
+  //   35秒→いきなり全部埋まって終了）しか無かった。これでは中身自体が
+  //   壊れており、Instagramに投稿してもTikTokに投稿しても意味が無い。
+  //   詰まりの根本原因（タブのバックグラウンド化・PCのスリープ等、
+  //   この検証環境では再現できない）を直せない以上、せめて「壊れた動画を
+  //   検知したら、その場で止めてエラーにする」形になっているかを見る。
+  await check('録画中に大きく詰まったら、壊れた動画のまま進まずに中断する', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    const start = reel.indexOf('function record(');
+    const record = reel.slice(start, start + 3500);
+    assert.ok(/STALL_MS/.test(record), 'STALL_MS によるしきい値判定が無い');
+    assert.ok(/lateBy\s*>\s*STALL_MS/.test(record) || />\s*STALL_MS/.test(record),
+      '遅れの大きさをしきい値と比べていない');
+    assert.ok(/reject\(/.test(record.slice(record.indexOf('STALL_MS'))),
+      '詰まりを検知しても reject していない（壊れた動画のまま進んでしまう）');
+  });
+
   // ★ コマ間隔を手動にしても、ページで最初の録画だけ11コマ目あたりで
   //   詰まることが実測で分かった（同じページで2回録ると、1回目だけ詰まり
   //   2回目は綺麗に30fpsになる＝ブラウザ側エンコーダの初期化コストらしい）。

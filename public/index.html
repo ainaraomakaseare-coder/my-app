@@ -2109,6 +2109,10 @@ function render(p) {
 
   const canRetry = targets.some((t) => t.status === 'failed');
 
+  // ★ 送信が終わっても人の手が残る投稿先（TikTok の本文など）。
+  //   どれが残るかの判断は lib/handoff.js が持っていて、ここは並べるだけ。
+  const after = p.after_send || [];
+
   el.innerHTML = `
     <div class="row" style="justify-content:space-between">
       <strong>${escapeHtml(p.title || '(無題)')}</strong>
@@ -2118,6 +2122,15 @@ function render(p) {
     <div style="margin:6px 0">${badges || '<span class="muted">投稿先なし</span>'}</div>
     ${links ? `<div class="muted">${links}</div>` : ''}
     ${errors}
+    ${after.map((row) => `
+      <div class="notice" style="margin-top:8px">
+        <strong>${escapeHtml(row.name)}</strong>：${escapeHtml(row.note || '')}
+        <div class="row" style="margin-top:6px">
+          ${row.needs.map((n) => n.ready
+            ? `<button data-after="${escapeHtml(n.key)}">${escapeHtml(n.label)}</button>`
+            : `<span class="err">${escapeHtml(n.label)}（本文が空です）</span>`).join('')}
+        </div>
+      </div>`).join('')}
     <div class="row" style="margin-top:8px">
       ${canRetry ? '<button data-act="retry">失敗したSNSだけ再実行</button>' : ''}
       ${p.status === 'draft' ? '' : '<button data-act="run-now">今すぐ投稿</button>'}
@@ -2126,6 +2139,17 @@ function render(p) {
     </div>
     ${history ? `<details style="margin-top:8px"><summary>履歴</summary>${history}</details>` : ''}
   `;
+
+  el.querySelectorAll('button[data-after]').forEach((b) => {
+    b.onclick = async () => {
+      const d = p.draft || {};
+      const text = { ttCaption: p.tt_caption || d.ttCaption,
+                     igCaption: p.ig_caption || d.igCaption,
+                     xText: p.x_text || d.xText }[b.dataset.after];
+      try { await copyText(text); b.textContent = 'コピーしました'; }
+      catch (e) { alert(e.message); }
+    };
+  });
 
   el.querySelectorAll('button[data-act]').forEach((b) => {
     b.onclick = async () => {
