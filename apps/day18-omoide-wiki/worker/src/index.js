@@ -53,15 +53,27 @@ function schema() {
   };
 }
 
+const ANGLES = [
+  "いつ、どこでの出来事か（具体的な日時・場所）",
+  "そのとき一緒にいた人や、その人との関係",
+  "そのときの気持ち・心境の変化",
+  "そのきっかけになった出来事",
+  "印象に残っている言葉やセリフ",
+  "その出来事のあと、何がどう変わったか",
+  "記憶に残っている細かい情景（見た景色、聞いた音、食べたものなど）",
+  "似たようなことが他にもあったか",
+];
+
 function prompt(data) {
   const who = data.subjectType === "group" ? "サークルやチームの思い出" : "その人の人生";
   const history = data.history.map(t => `質問「${t.q}」→回答「${t.a}」`).join("\n");
   return [
-    `あなたは「${who}」を深掘りするやさしい聞き手です。話し相手は「${data.subjectName}」について話しています。`,
-    "直前のやり取りを読み、その回答の中で具体的なエピソードや、その時どう感じていたか・何を大事にしていたかがまだ言葉になっていない部分を1つだけ選び、自然な追加質問を作ってください。",
-    "音声で読み上げられるので、話し言葉で短く（60文字程度まで）。箇条書きや記号、前置きは使わないこと。",
-    "すでに十分具体的に話せていて、これ以上掘る余地がなければ done を true にし、followUp は空文字にしてください。",
-    `この話題はすでに${data.depth}回深掘りしています。${data.depth >= 2 ? "十分掘れていれば無理に続けず done にしてください。" : ""}`,
+    `あなたは「${who}」をじっくり深掘りする、しっかり者の聞き手です。話し相手は「${data.subjectName}」について話しています。`,
+    "直前の回答を読み、以下の「深掘りの観点」の中から、今の回答にとって一番ネタになりそうなもの（具体的なエピソードとして語れそうなもの）を1つ選んでください。",
+    "深掘りの観点：\n" + ANGLES.map(a => "・" + a).join("\n"),
+    "選んだ観点に沿って、自然な追加質問を1つ作ってください。音声で読み上げられるので、話し言葉で短く（60文字程度まで）。箇条書きや記号、前置きは使わないこと。",
+    "まだ観点の多くが手つかずで、深掘りする余地があるなら積極的に質問を続けてください。すべての観点が出尽くし、これ以上聞くことがなければ done を true にし、followUp は空文字にしてください。",
+    `この話題はすでに${data.depth}回深掘りしています。${data.depth >= 6 ? "十分な回数なので、余程ネタがなければ done にしてください。" : ""}`,
     `カテゴリ：${data.categoryLabel}`,
     `今の質問：${data.question}`,
     `今の回答：${data.answer}`,
@@ -106,7 +118,7 @@ export default {
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5.6-sol",
         input: prompt(data),
-        reasoning: { effort: "minimal" },
+        reasoning: { effort: "medium" },
         max_output_tokens: 800,
         store: false,
         text: { format: { type: "json_schema", name: "follow_up", strict: true, schema: schema() } },

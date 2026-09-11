@@ -276,7 +276,9 @@
     return queue;
   }
 
-  var MAX_AI_DEPTH = 3;
+  // 「お金がかかってもいいのでしっかり深掘ってほしい」という要望を受け、
+  // 1話題あたりの上限を引き上げている（Worker側もそれに合わせて質問の質を上げている）
+  var MAX_AI_DEPTH = 6;
 
   // ---------- 旅行・イベント単位でエピソードをまとめる ----------
 
@@ -567,6 +569,22 @@
     try { localStorage.setItem(VOICE_PREF_KEY, on ? 'on' : 'off'); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
 
+  var AI_DEEPEN_PREF_KEY = 'omoide-wiki:aiDeepenPref';
+
+  // Workerを公開した人は「費用がかかってもしっかり深掘りしてほしい」という前提のはずなので、
+  // トグルが見える状態（＝Worker設定済み）なら初回からONにしておく
+  function loadAiDeepenPref() {
+    try {
+      var v = localStorage.getItem(AI_DEEPEN_PREF_KEY);
+      return v === null ? true : v === 'on';
+    } catch (e) {
+      return true;
+    }
+  }
+  function saveAiDeepenPref(on) {
+    try { localStorage.setItem(AI_DEEPEN_PREF_KEY, on ? 'on' : 'off'); } catch (e) { /* 保存できなくても致命的ではない */ }
+  }
+
   function supportsRecognition() {
     return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   }
@@ -716,9 +734,9 @@
 
     var aiEndpoint = getAiEndpoint();
     $('#aiDeepenBlock').hidden = !aiEndpoint;
-    $('#aiDeepenToggle').checked = false;
+    $('#aiDeepenToggle').checked = aiEndpoint ? loadAiDeepenPref() : false;
     $('#aiDeepenStatus').textContent = aiEndpoint
-      ? 'オンにすると、回答ごとにAIが次の質問を考えます（数秒かかることがあります）'
+      ? '回答ごとにAIが次の質問を考えます（数秒かかることがあります・少額のAPI利用料が発生します）'
       : '';
 
     showScreen('interview');
@@ -1077,6 +1095,7 @@
     bindMicButton('interview', $('#qMicBtn'));
     bindMicButton('episode', $('#epMicBtn'));
     $('#voiceModeToggle').addEventListener('change', function (e) { saveVoicePref(e.target.checked); });
+    $('#aiDeepenToggle').addEventListener('change', function (e) { saveAiDeepenPref(e.target.checked); });
 
     $('#tileInterview').addEventListener('click', startInterview);
     $('#tileEpisode').addEventListener('click', openEpisodeForm);

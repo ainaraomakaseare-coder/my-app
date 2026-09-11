@@ -197,7 +197,7 @@ const TINY_PNG = Buffer.from(
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
   check('AIエンドポイント設定時はAI深掘りトグルが表示される', !(await page.isHidden('#aiDeepenBlock')));
-  await page.check('#aiDeepenToggle');
+  check('AI深掘りはWorker設定済みなら初回からONになっている', await page.isChecked('#aiDeepenToggle'));
 
   await page.fill('#qAnswer', '最初の回答です');
   await page.click('#btnSaveQ');
@@ -205,19 +205,18 @@ const TINY_PNG = Buffer.from(
   await page.waitForFunction(() => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問1') !== -1);
   check('1回目のAI追い質問が次の質問として表示される', true);
 
-  await page.fill('#qAnswer', '深掘り回答1');
-  await page.click('#btnSaveQ');
-  await page.waitForFunction(() => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問2') !== -1);
+  // MAX_AI_DEPTH(6)に達するまで追い質問が続くことを確認する（2回目〜6回目）
+  for (let depth = 2; depth <= 6; depth++) {
+    await page.fill('#qAnswer', '深掘り回答' + (depth - 1));
+    await page.click('#btnSaveQ');
+    await page.waitForFunction((d) => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問' + d) !== -1, depth);
+  }
+  check('depth6までは追い質問が続く', (await page.textContent('#qCategory')).indexOf('AIの深掘り') !== -1);
 
-  await page.fill('#qAnswer', '深掘り回答2');
-  await page.click('#btnSaveQ');
-  await page.waitForFunction(() => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問3') !== -1);
-  check('depth3までは追い質問が続く', (await page.textContent('#qCategory')).indexOf('AIの深掘り') !== -1);
-
-  await page.fill('#qAnswer', '深掘り回答3');
+  await page.fill('#qAnswer', '深掘り回答6');
   await page.click('#btnSaveQ');
   await page.waitForFunction(() => (document.getElementById('qCategory').textContent || '').indexOf('AIの深掘り') === -1);
-  check('クライアント側の上限（depth3）でAI呼び出しが頭打ちになる', aiCallCount === 3, 'aiCallCount=' + aiCallCount);
+  check('クライアント側の上限（depth6）でAI呼び出しが頭打ちになる', aiCallCount === 6, 'aiCallCount=' + aiCallCount);
 
   await page.click('[data-screen="interview"] .back');
   await page.waitForSelector('[data-screen=dash].active');
