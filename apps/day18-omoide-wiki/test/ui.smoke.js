@@ -99,10 +99,14 @@ const TINY_PNG = Buffer.from(
   check('最初の質問は生い立ち・経歴カテゴリから始まる', (await page.textContent('#qCategory')).indexOf('生い立ち・経歴') !== -1);
   const firstQuestion = await page.textContent('#qText');
   await page.fill('#qAnswer', '几帳面で、誰にでも敬語で話す人でした');
+  await page.setInputFiles('#qPhotos', [tmpPhoto]);
+  await page.waitForFunction(() => document.querySelectorAll('#qPhotoPreview img').length === 1);
+  check('インタビューの回答にも写真を添えられる', true);
   await page.click('#btnSaveQ');
   await page.waitForFunction(() => document.getElementById('qText').textContent.length > 0);
   const secondQuestion = await page.textContent('#qText');
   check('次の質問に進む', secondQuestion !== firstQuestion);
+  check('次の質問では写真プレビューがリセットされる', await page.locator('#qPhotoPreview img').count() === 0);
 
   // ---- 前の質問に戻る：直前の回答を取り消して答え直せる ----
   check('1問答えた後は「前の質問に戻る」が押せる', !(await page.isDisabled('#btnPrevQ')));
@@ -128,6 +132,20 @@ const TINY_PNG = Buffer.from(
   await page.click('[data-screen="interview"] .back');
   await page.waitForSelector('[data-screen=dash].active');
   check('回答がダッシュボードの記録に反映される', (await page.textContent('#entryList')).indexOf('几帳面で') !== -1);
+
+  // ---- 質問をとばすと、答えていなくても二度と出てこない ----
+  await page.click('#tileInterview');
+  await page.waitForSelector('[data-screen=interview].active');
+  const skipQuestion = await page.textContent('#qText');
+  await page.click('#btnSkipQ');
+  await page.waitForFunction((q) => document.getElementById('qText').textContent !== q, skipQuestion);
+  await page.click('[data-screen="interview"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#tileInterview');
+  await page.waitForSelector('[data-screen=interview].active');
+  check('とばした質問は、インタビューを開き直しても二度と出てこない', (await page.textContent('#qText')) !== skipQuestion);
+  await page.click('[data-screen="interview"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
 
   // ---- エピソード追加（写真つき） ----
   await page.click('#tileEpisode');

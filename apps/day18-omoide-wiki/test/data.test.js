@@ -73,6 +73,11 @@ eq('質問キューの件数はカテゴリ合計と一致',
    W.buildInterviewQueue('person').length,
    W.CATEGORY_ORDER.reduce(function (sum, c) { return sum + W.QUESTIONS.person[c].length; }, 0));
 
+/* ---- skippedKeys: 明示的にとばした質問は、答えていなくても二度と出さない ---- */
+var wikiSkipped = W.newWiki('person', 'テスト5', '');
+wikiSkipped.skippedKeys.push(W.QUESTIONS.person.history[0].key);
+eq('スキップした質問はキューから除かれる（答えていなくても）', W.buildInterviewQueue('person', wikiSkipped).length, totalQuestions - 1);
+
 /* ---- tripParticipants: 旅行・イベントの「だれがいたか」を重複なく集める ---- */
 var tripEpisodes = [
   W.newEpisode({ body: 'A', author: '鈴木', participants: ['田中', '佐藤'], trip: '沖縄旅行' }),

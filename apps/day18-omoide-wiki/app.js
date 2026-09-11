@@ -38,6 +38,7 @@
       skills: [],
       episodes: [],
       contributors: [],
+      skippedKeys: [],
       createdAt: t,
       updatedAt: t
     };
@@ -51,12 +52,13 @@
     });
     if (!Array.isArray(w.infobox)) w.infobox = [];
     if (!Array.isArray(w.contributors)) w.contributors = [];
+    if (!Array.isArray(w.skippedKeys)) w.skippedKeys = [];
     return w;
   }
 
-  function newEntry(text, author, prompt, questionKey) {
+  function newEntry(text, author, prompt, questionKey, photos) {
     var t = nowIso();
-    return { id: uid('e'), text: (text || '').trim(), author: (author || '').trim(), prompt: prompt || '', questionKey: questionKey || '', createdAt: t, updatedAt: t };
+    return { id: uid('e'), text: (text || '').trim(), author: (author || '').trim(), prompt: prompt || '', questionKey: questionKey || '', photos: photos || [], createdAt: t, updatedAt: t };
   }
 
   function newEpisode(data) {
@@ -142,6 +144,7 @@
       skills: mergeEntryArrays(existing.skills, incoming.skills),
       episodes: mergeEntryArrays(existing.episodes, incoming.episodes),
       contributors: Array.from(new Set((existing.contributors || []).concat(incoming.contributors || []))),
+      skippedKeys: Array.from(new Set((existing.skippedKeys || []).concat(incoming.skippedKeys || []))),
       createdAt: existing.createdAt || incoming.createdAt || nowIso(),
       updatedAt: nowIso()
     };
@@ -207,6 +210,10 @@
         { key: 'college-circle', text: '大学・専門学校でサークルや部活、ゼミなどはありましたか？そこでの仲良かった人や楽しかった出来事を教えてください' },
         { key: 'part-time-job', text: 'アルバイト先で仲良くなった人や、印象に残っている出来事はありますか？' },
         { key: 'first-job', text: '初めての仕事、社会に出たころのこと。覚えている出来事があればぜひ！' },
+        { key: 'marriage', text: '結婚した思い出はありますか？時期や、馴れ初めのエピソードも聞かせてください' },
+        { key: 'children', text: 'お子さんやご家族が増えた思い出はありますか？そのときの気持ちも聞かせてください' },
+        { key: 'moving', text: '引っ越しをした思い出はありますか？いつ、どこからどこへ、そのきっかけも聞かせてください' },
+        { key: 'retirement', text: '仕事に区切りをつけた（退職した）ときのことを覚えていますか？そのときの気持ちも聞かせてください' },
         { key: 'turning-point', text: 'これまでの人生で、一番大きな転機・決断だったと思う出来事は何ですか？' }
       ],
       personality: [
@@ -237,7 +244,7 @@
         { key: 'episode-most-memorable', text: '一番思い出に残っている出来事を教えてください' },
         { key: 'episode-typical', text: 'その人らしいと感じたエピソードはありますか？' },
         { key: 'episode-laugh-cry', text: '一緒に笑った・泣いた出来事はありますか？' },
-        { key: 'episode-trip', text: '旅行や特別な日の思い出はありますか？' },
+        { key: 'episode-trip', text: '印象に残っている旅行はありますか？どこに行って、誰と、何をしたか教えてください' },
         { key: 'episode-last-message', text: 'もし最後に一言伝えるとしたら、何を伝えたいですか？' }
       ]
     },
@@ -271,7 +278,7 @@
       episodes: [
         { key: 'group-episode-memorable', text: '一番の思い出に残っている出来事を教えてください' },
         { key: 'group-episode-legend', text: '伝説になっているエピソードはありますか？' },
-        { key: 'group-episode-trip', text: '合宿や旅行での出来事を教えてください' },
+        { key: 'group-episode-trip', text: '合宿や旅行はどこに行きましたか？そのときの出来事も教えてください' },
         { key: 'group-episode-laugh-cry', text: '一番笑った・一番泣いた瞬間はいつでしたか？' },
         { key: 'group-episode-message', text: '後輩や仲間に伝えたいことはありますか？' }
       ]
@@ -284,9 +291,12 @@
   // （言い回しを変えても同じ質問として認識するため）、questionKeyが無い古い記録（key導入前に
   // 保存されたもの）は本文の一致で補う。これにより、一度答えた固定質問がインタビューを
   // 開き直しても、言い回しを調整したあとでも繰り返されない。
+  // 「この質問はとばす」で明示的にスキップされた質問（skippedKeys）も除く。答えていなくても、
+  // 「もう聞かないでほしい」という意思表示として永続的に扱う。
   function buildInterviewQueue(type, wiki) {
     var bank = QUESTIONS[type] || QUESTIONS.person;
     var queue = [];
+    var skipped = (wiki && wiki.skippedKeys) || [];
     CATEGORY_ORDER.forEach(function (cat) {
       var items = wiki && wiki[cat] ? wiki[cat] : [];
       var askedKeys = items.map(function (e) { return e.questionKey; }).filter(Boolean);
@@ -294,6 +304,7 @@
       (bank[cat] || []).forEach(function (q) {
         if (askedKeys.indexOf(q.key) !== -1) return;
         if (askedTexts.indexOf(q.text) !== -1) return;
+        if (skipped.indexOf(q.key) !== -1) return;
         queue.push({ category: cat, question: q.text, key: q.key, depth: 0 });
       });
     });
@@ -407,6 +418,7 @@
   var interviewHistory = []; // 「前の質問に戻る」用。各ステップで {index, category, entryId, text} を積む
   var pendingEpisodePhotos = [];
   var pendingCoverPhoto = null;
+  var pendingInterviewPhotos = [];
   var entryTab = 'all';
   var micControllers = {};
 
@@ -564,6 +576,9 @@
         }
       } else {
         bodyHtml = (r.item.prompt ? '<b>' + escapeHtml(r.item.prompt) + '</b><br>' : '') + escapeHtml(r.item.text);
+        if (r.item.photos && r.item.photos.length) {
+          thumbsHtml = '<div class="thumbs">' + r.item.photos.slice(0, 4).map(function (p) { return '<img src="' + p + '">'; }).join('') + '</div>';
+        }
       }
       el.innerHTML =
         '<div class="body">' + bodyHtml + '</div>' + thumbsHtml +
@@ -935,6 +950,9 @@
     $('#qCategory').textContent = L[q.category] + (q.dynamic ? '・AIの深掘り' : '') + '（' + (interviewIndex + 1) + ' / ' + interviewQueue.length + '）';
     $('#qText').textContent = q.question;
     $('#qAnswer').value = prefillText || '';
+    $('#qPhotos').value = '';
+    pendingInterviewPhotos = [];
+    refreshInterviewPhotoPreview();
     setInterviewBusy(false, '');
 
     var ctrl = setMicController('interview', $('#qAnswer'), $('#qMicBtn'), $('#qMicStatus'), function () {
@@ -1013,6 +1031,12 @@
     var author = $('#ivAuthor').value.trim();
 
     if (skip || !text) {
+      // 明示的に「とばす」を押した固定質問は、二度と聞かないよう永続的に記憶する
+      // （答えていなくても「もう聞かないでほしい」という意思表示として扱う）
+      if (skip && q.key && w.skippedKeys.indexOf(q.key) === -1) {
+        w.skippedKeys.push(q.key);
+        persist();
+      }
       interviewHistory.push({ index: interviewIndex, category: q.category, entryId: null, text: text });
       advanceInterview();
       return;
@@ -1020,10 +1044,10 @@
 
     var savedEntry;
     if (q.category === 'episodes') {
-      savedEntry = newEpisode({ body: text, author: author, prompt: q.question, questionKey: q.key });
+      savedEntry = newEpisode({ body: text, author: author, prompt: q.question, questionKey: q.key, photos: pendingInterviewPhotos.slice() });
       w.episodes.push(savedEntry);
     } else {
-      savedEntry = newEntry(text, author, q.question, q.key);
+      savedEntry = newEntry(text, author, q.question, q.key, pendingInterviewPhotos.slice());
       w[q.category].push(savedEntry);
     }
     interviewHistory.push({ index: interviewIndex, category: q.category, entryId: savedEntry.id, text: text });
@@ -1089,6 +1113,13 @@
     renderPhotoPreview('#epPhotoPreview', pendingEpisodePhotos, function (i) {
       pendingEpisodePhotos.splice(i, 1);
       refreshEpisodePhotoPreview();
+    });
+  }
+
+  function refreshInterviewPhotoPreview() {
+    renderPhotoPreview('#qPhotoPreview', pendingInterviewPhotos, function (i) {
+      pendingInterviewPhotos.splice(i, 1);
+      refreshInterviewPhotoPreview();
     });
   }
 
@@ -1254,8 +1285,11 @@
   function rawEntryListHtml(items) {
     if (!items.length) return '<p class="wp-empty">まだ記録がありません。</p>';
     return '<ul class="wp-list">' + items.map(function (it) {
+      var photosHtml = it.photos && it.photos.length
+        ? '<div class="thumbs">' + it.photos.slice(0, 4).map(function (p) { return '<img src="' + p + '">'; }).join('') + '</div>'
+        : '';
       return '<li>' + (it.prompt ? '<div class="q">' + escapeHtml(it.prompt) + '</div>' : '') +
-        escapeHtml(it.text) + (it.author ? '<div class="who">' + escapeHtml(it.author) + 'より</div>' : '') + '</li>';
+        escapeHtml(it.text) + photosHtml + (it.author ? '<div class="who">' + escapeHtml(it.author) + 'より</div>' : '') + '</li>';
     }).join('') + '</ul>';
   }
 
@@ -1440,6 +1474,13 @@
       Promise.all(files.map(function (f) { return fileToCompressedDataURL(f, 1280, 0.72); })).then(function (urls) {
         pendingEpisodePhotos = pendingEpisodePhotos.concat(urls);
         refreshEpisodePhotoPreview();
+      });
+    });
+    $('#qPhotos').addEventListener('change', function (e) {
+      var files = Array.prototype.slice.call(e.target.files);
+      Promise.all(files.map(function (f) { return fileToCompressedDataURL(f, 1280, 0.72); })).then(function (urls) {
+        pendingInterviewPhotos = pendingInterviewPhotos.concat(urls);
+        refreshInterviewPhotoPreview();
       });
     });
     $('#btnSaveEpisode').addEventListener('click', saveEpisode);
