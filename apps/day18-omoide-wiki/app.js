@@ -741,6 +741,66 @@
     });
   }
 
+  // 一問一答の生の回答を、AIにWikipedia記事のような自然な文章へ書き直してもらう。
+  // 質問への追い質問より処理が重いので、タイムアウトを長めに取っている。
+  function fetchAiCompose(payload) {
+    var endpoint = getAiEndpoint();
+    if (!endpoint) return Promise.resolve(null);
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 25000) : null;
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (res) {
+      if (timer) clearTimeout(timer);
+      return res.ok ? res.json() : null;
+    }).catch(function () {
+      if (timer) clearTimeout(timer);
+      return null;
+    }).then(function (data) {
+      return (data && typeof data.overview === 'string') ? data : null;
+    });
+  }
+
+  function composeWikiWithAi(w) {
+    var endpoint = getAiEndpoint();
+    if (!endpoint) {
+      alert('AIでまとめるには、先にWorkerを公開してください（worker/README.md を参照）。');
+      return;
+    }
+    var btn = $('#btnCompose');
+    btn.disabled = true;
+    var originalLabel = btn.textContent;
+    btn.textContent = 'AIがまとめています…';
+    $('#composeNote').textContent = '';
+
+    var sections = {};
+    ['history', 'personality', 'favorites', 'skills'].forEach(function (cat) {
+      sections[cat] = (w[cat] || []).map(function (e) { return { prompt: e.prompt, text: e.text }; });
+    });
+
+    fetchAiCompose({
+      action: 'compose',
+      subjectName: w.title || (w.type === 'group' ? 'このサークル・チーム' : 'この人'),
+      subjectType: w.type,
+      overview: w.overview || '',
+      sections: sections
+    }).then(function (result) {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+      if (!result) {
+        alert('うまくまとめられませんでした。しばらくしてからもう一度お試しください。');
+        return;
+      }
+      w.composed = result;
+      w.composedAt = nowIso();
+      persist();
+      renderWikiPage(w);
+    });
+  }
+
   function setInterviewBusy(busy, msg) {
     $('#btnSaveQ').disabled = busy;
     $('#btnSkipQ').disabled = busy;
@@ -1039,6 +1099,33 @@
       '<div class="wp-card-meta"><span>' + escapeHtml(ep.period || '') + more + '</span><span>' + escapeHtml(ep.author || '') + '</span></div></div></div>';
   }
 
+  function formatDateTimeJa(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return (d.getMonth() + 1) + '月' + d.getDate() + '日' + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+  }
+
+  function rawEntryListHtml(items) {
+    if (!items.length) return '<p class="wp-empty">まだ記録がありません。</p>';
+    return '<ul class="wp-list">' + items.map(function (it) {
+      return '<li>' + (it.prompt ? '<div class="q">' + escapeHtml(it.prompt) + '</div>' : '') +
+        escapeHtml(it.text) + (it.author ? '<div class="who">' + escapeHtml(it.author) + 'より</div>' : '') + '</li>';
+    }).join('') + '</ul>';
+  }
+
+  // AIでまとめた文章があればそれを本文にし、元の一問一答は<details>で折りたたんで残す。
+  // まとめていなければ、これまでどおり一問一答をそのまま並べる。
+  function sectionBodyHtml(w, cat) {
+    var items = w[cat] || [];
+    var composedText = w.composed && w.composed[cat];
+    if (composedText) {
+      return '<p>' + escapeHtml(composedText) + '</p>' +
+        (items.length ? '<details class="wp-raw-toggle"><summary>元の回答を見る（' + items.length + '件）</summary>' + rawEntryListHtml(items) + '</details>' : '');
+    }
+    return rawEntryListHtml(items);
+  }
+
   function renderWikiPage(w) {
     var L = LABELS[w.type];
     var page = $('#wikiPage');
@@ -1055,19 +1142,11 @@
       tocItems.map(function (t) { return '<li><a href="#' + t[0] + '">' + escapeHtml(t[1]) + '</a></li>'; }).join('') +
       '</ol></nav>';
 
-    html += '<section id="sec-overview"><h2>概要</h2><p>' + (w.overview ? escapeHtml(w.overview) : autoOverview(w)) + '</p></section>';
+    var overviewText = (w.composed && w.composed.overview) ? w.composed.overview : (w.overview || '');
+    html += '<section id="sec-overview"><h2>概要</h2><p>' + (overviewText ? escapeHtml(overviewText) : autoOverview(w)) + '</p></section>';
 
     CATEGORY_ORDER.filter(function (c) { return c !== 'episodes'; }).forEach(function (cat) {
-      html += '<section id="sec-' + cat + '"><h2>' + L[cat] + '</h2>';
-      if (!w[cat].length) {
-        html += '<p class="wp-empty">まだ記録がありません。</p>';
-      } else {
-        html += '<ul class="wp-list">' + w[cat].map(function (it) {
-          return '<li>' + (it.prompt ? '<div class="q">' + escapeHtml(it.prompt) + '</div>' : '') +
-            escapeHtml(it.text) + (it.author ? '<div class="who">' + escapeHtml(it.author) + 'より</div>' : '') + '</li>';
-        }).join('') + '</ul>';
-      }
-      html += '</section>';
+      html += '<section id="sec-' + cat + '"><h2>' + L[cat] + '</h2>' + sectionBodyHtml(w, cat) + '</section>';
     });
 
     html += '<section id="sec-episodes"><h2>' + L.episodes + '・アルバム</h2>';
@@ -1109,6 +1188,13 @@
       categoryTags.map(function (t) { return '<span class="tag">' + escapeHtml(t) + '</span>'; }).join('') + '</div>';
 
     page.innerHTML = html;
+
+    var note = $('#composeNote');
+    if (note) {
+      note.textContent = w.composed
+        ? ('✨ ' + formatDateTimeJa(w.composedAt) + 'にAIがまとめた文章です。各項目の「元の回答を見る」からいつでも元のやり取りを確認できます。')
+        : '';
+    }
   }
 
   function autoOverview(w) {
@@ -1190,7 +1276,11 @@
     $('#tileInterview').addEventListener('click', startInterview);
     $('#tileEpisode').addEventListener('click', openEpisodeForm);
     $('#tileProfile').addEventListener('click', openProfileForm);
-    $('#tileView').addEventListener('click', function () { renderWikiPage(currentWiki()); showScreen('view'); });
+    $('#tileView').addEventListener('click', function () {
+      renderWikiPage(currentWiki());
+      $('#btnCompose').hidden = !getAiEndpoint();
+      showScreen('view');
+    });
 
     $('#btnSkipQ').addEventListener('click', function () { saveInterviewAnswer(true); });
     $('#btnSaveQ').addEventListener('click', function () { saveInterviewAnswer(false); });
@@ -1220,6 +1310,7 @@
     $('#btnExportWiki').addEventListener('click', exportCurrentWiki);
     $('#btnDeleteWiki').addEventListener('click', deleteCurrentWiki);
     $('#btnPrint').addEventListener('click', function () { window.print(); });
+    $('#btnCompose').addEventListener('click', function () { composeWikiWithAi(currentWiki()); });
 
     $all('.back').forEach(function (b) {
       b.addEventListener('click', function () {

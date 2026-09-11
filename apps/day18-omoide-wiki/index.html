@@ -250,8 +250,12 @@
   <section class="screen" data-screen="view">
     <div class="view-toolbar no-print">
       <button class="btn text back" data-back="dash">← 戻る</button>
-      <button class="btn ghost" id="btnPrint">🖨️ 印刷 / PDFで保存</button>
+      <div class="view-toolbar-actions">
+        <button class="btn ghost" id="btnCompose" hidden>✨ AIでまとめる</button>
+        <button class="btn ghost" id="btnPrint">🖨️ 印刷 / PDFで保存</button>
+      </div>
     </div>
+    <p class="view-compose-note no-print" id="composeNote"></p>
     <div class="wiki-page" id="wikiPage"></div>
   </section>
 

@@ -187,9 +187,20 @@ const TINY_PNG = Buffer.from(
     req.on('data', c => { body += c; });
     req.on('end', () => {
       aiCallCount++;
+      let parsed = {};
+      try { parsed = JSON.parse(body); } catch (e) { /* noop */ }
       setTimeout(() => {
         res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
-        res.end(JSON.stringify({ done: false, followUp: 'AIの追い質問' + aiCallCount }));
+        if (parsed.action === 'compose') {
+          res.end(JSON.stringify({
+            overview: 'AIがまとめた概要です。',
+            history: 'AIがまとめた生い立ち・経歴の文章です。',
+            personality: 'AIがまとめた人物像の文章です。',
+            favorites: '', skills: ''
+          }));
+        } else {
+          res.end(JSON.stringify({ done: false, followUp: 'AIの追い質問' + aiCallCount }));
+        }
       }, 150);
     });
   });
@@ -258,6 +269,20 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnDeleteWiki');
   await page.waitForSelector('[data-screen=home].active');
   await page.click('.wiki-card:has-text("やまだ たろう")');
+  await page.waitForSelector('[data-screen=dash].active');
+
+  // ---- AIでまとめる ----
+  await page.click('#tileView');
+  await page.waitForSelector('[data-screen=view].active');
+  check('AIエンドポイント設定時は「AIでまとめる」ボタンが表示される', !(await page.isHidden('#btnCompose')));
+  await page.click('#btnCompose');
+  await page.waitForFunction(() => (document.getElementById('composeNote').textContent || '').indexOf('AIがまとめた') !== -1);
+  check('AIがまとめた概要が概要欄に反映される', (await page.textContent('#sec-overview')).indexOf('AIがまとめた概要です') !== -1);
+  check('AIがまとめた生い立ちの文章が反映される', (await page.textContent('#sec-history')).indexOf('AIがまとめた生い立ち・経歴の文章です') !== -1);
+  check('まとめられなかった項目（好きなもの）は元の一問一答のまま', (await page.textContent('#sec-favorites')).indexOf('まとめた') === -1);
+  check('元の回答を見る、で生データを確認できる', await page.locator('#sec-history .wp-raw-toggle summary').count() > 0);
+
+  await page.click('[data-screen="view"] .back');
   await page.waitForSelector('[data-screen=dash].active');
 
   aiServer.close();

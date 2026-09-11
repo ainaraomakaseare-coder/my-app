@@ -175,9 +175,11 @@ input[type=file] { color: var(--muted); font-size: 13px; }
 
 /* ---- 完成ページ（本物のWikipediaの配色・書体・構成に寄せている） ---- */
 .view-toolbar {
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
   max-width: 900px; margin: 0 auto; padding: 16px 18px;
 }
+.view-toolbar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.view-compose-note { max-width: 900px; margin: -4px auto 10px; padding: 0 18px; font-size: 12.5px; color: var(--muted); }
 .wiki-page {
   max-width: 900px; margin: 0 auto 60px; background: var(--wp-bg); color: var(--wp-text);
   border: 1px solid var(--wp-line); border-radius: 2px;
@@ -212,6 +214,10 @@ input[type=file] { color: var(--muted); font-size: 13px; }
 .wp-list li { margin-bottom: 10px; }
 .wp-list .who { font-size: 12px; color: var(--wp-muted); }
 .wp-list .q { font-size: 12px; font-weight: 700; color: var(--wp-muted); margin-bottom: 2px; }
+
+.wp-raw-toggle { margin: 8px 0 0; font-size: 12.5px; }
+.wp-raw-toggle summary { color: var(--wp-link); cursor: pointer; }
+.wp-raw-toggle .wp-list { margin-top: 10px; padding-left: 1.4em; }
 
 .wp-infobox { border: 1px solid var(--wp-line); font-size: 13px; background: var(--wp-bg); }
 .wp-infobox-title { font-weight: 700; font-size: 16px; text-align: center; padding: 10px 10px 8px; border-bottom: 1px solid var(--wp-line); }
