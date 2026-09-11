@@ -87,6 +87,14 @@ var wikiSkipped = W.newWiki('person', 'テスト5', '');
 wikiSkipped.skippedKeys.push(W.QUESTIONS.person.history[0].key);
 eq('スキップした質問はキューから除かれる（答えていなくても）', W.buildInterviewQueue('person', wikiSkipped).length, totalQuestions - 1);
 
+/* ---- askedQuestionTexts: 記録が増えても「すでに聞いた質問」をAIに正確に伝えるため ---- */
+var askedWiki = W.newWiki('person', 'テスト8', '');
+askedWiki.history.push(W.newEntry('回答A', '', '質問1'));
+askedWiki.history.push(W.newEntry('回答B', '', '質問2'));
+askedWiki.history.push(W.newEntry('回答C', '', '質問1')); // 同じ質問文は重複させない
+eq('質問文を重複なく、聞いた順に返す', W.askedQuestionTexts(askedWiki, 'history'), ['質問1', '質問2']);
+eq('記録が無いカテゴリは空配列', W.askedQuestionTexts(askedWiki, 'skills'), []);
+
 /* ---- tripParticipants: 旅行・イベントの「だれがいたか」を重複なく集める ---- */
 var tripEpisodes = [
   W.newEpisode({ body: 'A', author: '鈴木', participants: ['田中', '佐藤'], trip: '沖縄旅行' }),

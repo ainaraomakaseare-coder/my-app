@@ -467,7 +467,8 @@
     LABELS: LABELS,
     QUESTIONS: QUESTIONS,
     CATEGORY_ORDER: CATEGORY_ORDER,
-    buildInterviewQueue: buildInterviewQueue
+    buildInterviewQueue: buildInterviewQueue,
+    askedQuestionTexts: askedQuestionTexts
   };
 
   root.OmoideWiki = Core;
@@ -954,6 +955,30 @@
     return parts.join('\n\n').slice(0, 3000);
   }
 
+  // そのカテゴリで、これまでに聞いた質問文の一覧（重複なし）。
+  // buildWikiDigestは直近5件の「回答内容」しか渡せないため、記録が増えるほど
+  // AIが同じ質問を再生成してしまう問題があった。質問文自体は短いので、
+  // こちらは件数を絞らずできるだけ多く渡し、「何を聞いたか」を正確に伝える。
+  var ASKED_QUESTIONS_BUDGET = 4000;
+  function askedQuestionTexts(w, cat) {
+    var seen = {};
+    var list = [];
+    (w[cat] || []).forEach(function (e) {
+      var q = (e.prompt || '').trim();
+      if (!q || seen[q]) return;
+      seen[q] = true;
+      list.push(q);
+    });
+    var budget = ASKED_QUESTIONS_BUDGET;
+    var kept = [];
+    for (var i = 0; i < list.length; i++) {
+      if (budget - list[i].length < 0) break;
+      budget -= list[i].length;
+      kept.push(list[i]);
+    }
+    return kept;
+  }
+
   function pickGrowthCategory(w) {
     var best = CATEGORY_ORDER[0], bestCount = Infinity;
     CATEGORY_ORDER.forEach(function (cat) {
@@ -975,7 +1000,8 @@
       answer: digest || '（まだ記録がありません。まずは基本的なことから聞いてください）',
       history: [],
       depth: 0,
-      profile: infoboxToText(w.infobox)
+      profile: infoboxToText(w.infobox),
+      askedQuestions: askedQuestionTexts(w, cat)
     }).then(function (result) {
       if (result && !result.done && result.followUp) {
         interviewQueue.push({ category: cat, question: result.followUp, depth: 0, dynamic: true, grown: true });
@@ -1144,7 +1170,8 @@
       answer: text,
       history: aiThreadHistory.slice(0, -1),
       depth: q.depth,
-      profile: infoboxToText(w.infobox)
+      profile: infoboxToText(w.infobox),
+      askedQuestions: askedQuestionTexts(w, q.category)
     }).then(function (result) {
       if (result && !result.done && result.followUp) {
         interviewQueue.splice(interviewIndex + 1, 0, {

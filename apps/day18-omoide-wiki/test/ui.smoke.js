@@ -248,6 +248,7 @@ const TINY_PNG = Buffer.from(
 
   // ---- AI深掘り（フェイクのWorkerを立てて模擬する） ----
   let aiCallCount = 0;
+  let lastAiPayload = null;
   const aiServer = http.createServer((req, res) => {
     const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
     if (req.method === 'OPTIONS') { res.writeHead(204, corsHeaders); return res.end(); }
@@ -257,6 +258,7 @@ const TINY_PNG = Buffer.from(
       aiCallCount++;
       let parsed = {};
       try { parsed = JSON.parse(body); } catch (e) { /* noop */ }
+      if (parsed.action !== 'compose') lastAiPayload = parsed;
       setTimeout(() => {
         res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
         if (parsed.action === 'compose') {
@@ -289,6 +291,8 @@ const TINY_PNG = Buffer.from(
   check('AI呼び出し中はボタンが無効化される', await page.isDisabled('#btnSaveQ'));
   await page.waitForFunction(() => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問1') !== -1);
   check('1回目のAI追い質問が次の質問として表示される', true);
+  check('AIへのリクエストに、同じカテゴリで既に答えた質問の一覧が含まれる（同じ質問の再生成を防ぐため）',
+    Array.isArray(lastAiPayload.askedQuestions) && lastAiPayload.askedQuestions.length >= 1);
 
   // MAX_AI_DEPTH(6)に達するまで追い質問が続くことを確認する（2回目〜6回目）
   for (let depth = 2; depth <= 6; depth++) {

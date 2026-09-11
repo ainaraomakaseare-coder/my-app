@@ -39,7 +39,11 @@ function validInput(x) {
     && typeof x.answer === "string" && x.answer.length >= 1 && x.answer.length <= 4000
     && Array.isArray(x.history) && x.history.length <= MAX_HISTORY && x.history.every(validTurn)
     && Number.isInteger(x.depth) && x.depth >= 0 && x.depth <= 10
-    && (x.profile === undefined || (typeof x.profile === "string" && x.profile.length <= 1000));
+    && (x.profile === undefined || (typeof x.profile === "string" && x.profile.length <= 1000))
+    && (x.askedQuestions === undefined || (
+      Array.isArray(x.askedQuestions) && x.askedQuestions.length <= 200
+      && x.askedQuestions.every(q => typeof q === "string" && q.length <= 300)
+    ));
 }
 
 function schema() {
@@ -87,6 +91,10 @@ function prompt(data) {
     `今の質問：${data.question}`,
     `今の回答：${data.answer}`,
     history ? `これまでのやり取り：\n${history}` : "",
+    (data.askedQuestions && data.askedQuestions.length)
+      ? "【重要】このカテゴリではすでに以下の質問を聞いています。同じ内容・ほぼ同じ聞き方の質問は絶対に繰り返さないでください（記録が増えて見返せなくなり、同じことを何度も聞かれたと本人を困らせてしまいます）。ここに出てくる話題から自然に派生する、まだ聞けていない新しい角度の質問であれば問題ありません：\n"
+        + data.askedQuestions.map(q => "・" + q).join("\n")
+      : "",
   ].filter(Boolean).join("\n");
 }
 
