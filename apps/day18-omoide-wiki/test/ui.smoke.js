@@ -1,0 +1,173 @@
+/*
+ * 実ブラウザでの画面の流れを確認する（作成→インタビュー→エピソード追加→
+ * 基本情報編集→完成ページ表示→書き出し→読み込みで合体→削除）。
+ * 実行: node test/ui.smoke.js   （要 playwright）
+ */
+const path = require('path');
+const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const { chromium } = require('playwright');
+
+const ROOT = path.join(__dirname, '..');
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+
+let pass = 0, fail = 0;
+function check(name, cond, extra) {
+  if (cond) { pass++; }
+  else { console.log('  NG  ' + name + (extra ? '  -> ' + extra : '')); fail++; }
+}
+
+function startServer() {
+  return new Promise(resolve => {
+    const server = http.createServer((req, res) => {
+      const rel = decodeURIComponent(req.url.split('?')[0].split('#')[0]);
+      const file = path.join(ROOT, rel === '/' ? 'index.html' : rel);
+      if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+        res.writeHead(404); return res.end('not found');
+      }
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'text/plain' });
+      res.end(fs.readFileSync(file));
+    });
+    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+  });
+}
+
+async function launch() {
+  try { return await chromium.launch(); }
+  catch (e) {
+    const fallback = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+    if (fs.existsSync(fallback)) return chromium.launch({ executablePath: fallback });
+    throw e;
+  }
+}
+
+// 1x1のPNG（アップロード動作の確認用）
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64'
+);
+
+(async () => {
+  const { server, port } = await startServer();
+  const BASE = `http://127.0.0.1:${port}/`;
+  const browser = await launch();
+
+  const tmpPhoto = path.join(os.tmpdir(), 'omoide-wiki-test.png');
+  fs.writeFileSync(tmpPhoto, TINY_PNG);
+
+  const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('dialog', d => d.accept());
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(BASE);
+
+  // ---- 一覧が空の状態 ----
+  check('最初は「まだ何もありません」', (await page.textContent('#wikiList')).indexOf('まだ何もありません') !== -1);
+
+  // ---- 新規作成 ----
+  await page.click('#btnNewWiki');
+  await page.check('input[name=newType][value=person]');
+  await page.fill('#newTitle', 'やまだ たろう');
+  await page.fill('#newSubtitle', 'いつも笑っていた父');
+  await page.click('#btnCreateWiki');
+  await page.waitForSelector('[data-screen=dash].active');
+  check('作成後はダッシュボードにタイトルが出る', (await page.textContent('#dashTitle')) === 'やまだ たろう');
+
+  // ---- インタビュー：1問だけ答えて戻る ----
+  await page.click('#tileInterview');
+  await page.waitForSelector('[data-screen=interview].active');
+  check('マイクボタンが表示される（対応の有無はブラウザ依存）', await page.locator('#qMicBtn').count() === 1);
+  const firstQuestion = await page.textContent('#qText');
+  await page.fill('#qAnswer', '几帳面で、誰にでも敬語で話す人でした');
+  await page.click('#btnSaveQ');
+  await page.waitForFunction(() => document.getElementById('qText').textContent.length > 0);
+  const secondQuestion = await page.textContent('#qText');
+  check('次の質問に進む', secondQuestion !== firstQuestion);
+  await page.click('[data-screen="interview"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
+  check('回答がダッシュボードの記録に反映される', (await page.textContent('#entryList')).indexOf('几帳面で') !== -1);
+
+  // ---- エピソード追加（写真つき） ----
+  await page.click('#tileEpisode');
+  await page.waitForSelector('[data-screen=episode].active');
+  await page.fill('#epTitle', '雨の遠足で全員ずぶ濡れになった話');
+  await page.fill('#epBody', 'バスが来なくて、みんなで歌いながら歩いた');
+  await page.fill('#epAuthor', '花子');
+  await page.fill('#epPeriod', '2019年秋');
+  await page.setInputFiles('#epPhotos', [tmpPhoto, tmpPhoto]);
+  await page.waitForFunction(() => document.querySelectorAll('#epPhotoPreview img').length === 2);
+  await page.click('#epPhotoPreview .rm button');
+  await page.waitForFunction(() => document.querySelectorAll('#epPhotoPreview img').length === 1);
+  check('写真の削除ボタンでプレビューが1枚に減る（arguments.callee 回帰確認）', true);
+  await page.click('#btnSaveEpisode');
+  await page.waitForSelector('[data-screen=dash].active');
+  check('エピソードが記録に増える', (await page.textContent('#entryList')).indexOf('雨の遠足') !== -1);
+  check('サムネイルが表示される', await page.locator('#entryList .thumbs img').count() > 0);
+
+  // ---- 基本情報編集 ----
+  await page.click('#tileProfile');
+  await page.waitForSelector('[data-screen=profile].active');
+  await page.fill('#pfInfobox', '生年月日: 1955年3月3日\n出身: 京都府');
+  await page.fill('#pfOverview', '誰にでも優しく、家族思いだった父。');
+  await page.click('#btnSaveProfile');
+  await page.waitForSelector('[data-screen=dash].active');
+
+  // ---- 完成ページ ----
+  await page.click('#tileView');
+  await page.waitForSelector('[data-screen=view].active');
+  check('完成ページに名前が出る', (await page.textContent('#wikiPage h1')) === 'やまだ たろう');
+  check('概要文が反映される', (await page.textContent('.wp-main')).indexOf('家族思い') !== -1);
+  check('プロフィール表に出身が出る', (await page.textContent('.wp-infobox')).indexOf('京都府') !== -1);
+  check('エピソードのアルバムに写真が出る', await page.locator('.wp-card img').count() > 0);
+  check('年表にエピソードが出る', (await page.textContent('.wp-timeline')).indexOf('雨の遠足') !== -1);
+
+  // ---- 書き出し ----
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('[data-screen="view"] .back').then(() => page.click('#btnExportWiki'))
+  ]);
+  const exportPath = await download.path();
+  const exported = JSON.parse(fs.readFileSync(exportPath, 'utf8'));
+  check('書き出しJSONにschemaがある', exported.schema === 'omoide-wiki');
+  check('書き出しJSONにWikiが1件入る', exported.wikis.length === 1);
+  const wikiId = exported.wikis[0].id;
+
+  // ---- 別の人が書いた分を読み込んで合体する ----
+  const mergedPayload = JSON.parse(JSON.stringify(exported));
+  mergedPayload.wikis[0].episodes.push({
+    id: 'ep_from_another_device', title: '合宿での出来事', body: 'カラオケで熱唱していた',
+    photos: [], author: '鈴木', period: '2020年', tags: [], prompt: '', createdAt: '2020-01-01T00:00:00.000Z', updatedAt: '2020-01-01T00:00:00.000Z'
+  });
+  const importPath = path.join(os.tmpdir(), 'omoide-wiki-import.json');
+  fs.writeFileSync(importPath, JSON.stringify(mergedPayload));
+  await page.click('[data-screen="dash"] .back');
+  await page.waitForSelector('[data-screen=home].active');
+  await page.setInputFiles('#fileImport', importPath);
+  await page.waitForFunction(() => (document.getElementById('homeStatus').textContent || '').indexOf('読み込み完了') !== -1);
+  check('合体件数が表示される', (await page.textContent('#homeStatus')).indexOf('合体 1件') !== -1);
+
+  await page.click(`.wiki-card:has-text("やまだ たろう")`);
+  await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#tileView');
+  check('合体後、相手のエピソードも見える', (await page.textContent('.wp-main')).indexOf('カラオケ') !== -1);
+  check('自分のエピソードも失われていない', (await page.textContent('.wp-main')).indexOf('雨の遠足') !== -1);
+
+  // ---- 削除 ----
+  await page.click('[data-screen="view"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#btnDeleteWiki');
+  await page.waitForSelector('[data-screen=home].active');
+  check('削除すると一覧から消える', (await page.textContent('#wikiList')).indexOf('やまだ たろう') === -1);
+
+  check('JSのエラーが発生していない', errors.length === 0, errors.join(' / '));
+
+  await browser.close();
+  server.close();
+  fs.unlinkSync(tmpPhoto);
+  fs.unlinkSync(importPath);
+
+  console.log('\n' + pass + ' 件 通過 / ' + fail + ' 件 失敗');
+  process.exit(fail ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(1); });

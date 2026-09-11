@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>おもいでWiki</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23151821'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='%23e8c98a'%3E憶%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ============ 一覧画面 ============ -->
+  <section class="screen active" data-screen="home">
+    <div class="wrap">
+      <header class="hd">
+        <h1>おもいでWiki</h1>
+        <p class="lead">1人の人生も、サークルやチームの思い出も。質問に答えたり、みんながエピソードを持ち寄ったりして、その人・その場所の「Wikipedia」を育てていくアプリです。</p>
+      </header>
+
+      <div id="wikiList" class="wiki-list"></div>
+
+      <div class="home-actions">
+        <button class="btn primary" id="btnNewWiki">＋ 新しく作る</button>
+        <button class="btn ghost" id="btnImport">JSONを読み込んで合体する</button>
+        <input type="file" id="fileImport" accept="application/json" hidden multiple>
+      </div>
+
+      <p class="hint" id="homeStatus"></p>
+
+      <p class="hint">
+        サーバーは使っていません。すべてこの端末のブラウザの中だけに保存されます。<br>
+        誰かと一緒にまとめたいときは、書き出したJSONファイルを送り合って「読み込んで合体する」で1つにできます。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 新規作成 ============ -->
+  <section class="screen" data-screen="new">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="home">← 戻る</button>
+        <h1>新しく作る</h1>
+      </header>
+
+      <div class="field">
+        <label>何についてのWikiですか？</label>
+        <div class="choice-row">
+          <label class="choice"><input type="radio" name="newType" value="person" checked><span>ひとりの人生</span></label>
+          <label class="choice"><input type="radio" name="newType" value="group"><span>サークル・チームの思い出</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="newTitle">名前 / サークル名</label>
+        <input type="text" id="newTitle" placeholder="例：山田太郎　／　テニスサークルOASIS">
+      </div>
+
+      <div class="field">
+        <label for="newSubtitle">一言（あとから変更できます）</label>
+        <input type="text" id="newSubtitle" placeholder="例：いつも笑っていた父　／　2019〜2023年 3期生">
+      </div>
+
+      <button class="btn primary wide" id="btnCreateWiki">作る</button>
+    </div>
+  </section>
+
+  <!-- ============ ダッシュボード（編集ホーム） ============ -->
+  <section class="screen" data-screen="dash">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="home">← 一覧へ</button>
+        <h1 id="dashTitle"></h1>
+        <p class="lead" id="dashSubtitle"></p>
+      </header>
+
+      <div class="dash-grid">
+        <button class="tile" id="tileInterview">
+          <span class="tile-emoji">🎙️</span>
+          <span class="tile-title">質問で深掘りする</span>
+          <span class="tile-desc">音声でも文字でも。人柄・好きなもの・特技・エピソードを少しずつ聞き出します。</span>
+        </button>
+        <button class="tile" id="tileEpisode">
+          <span class="tile-emoji">📷</span>
+          <span class="tile-title">エピソードを追加する</span>
+          <span class="tile-desc">写真つきの思い出を1本、誰でも書き足せます。</span>
+        </button>
+        <button class="tile" id="tileProfile">
+          <span class="tile-emoji">📝</span>
+          <span class="tile-title">基本情報を編集する</span>
+          <span class="tile-desc">名前・写真・プロフィール表・概要文。</span>
+        </button>
+        <button class="tile" id="tileView">
+          <span class="tile-emoji">📖</span>
+          <span class="tile-title">完成ページを見る</span>
+          <span class="tile-desc">Wikipedia風にまとめて表示・印刷。</span>
+        </button>
+      </div>
+
+      <div class="dash-section">
+        <h2>集まった記録</h2>
+        <div class="entry-tabs" id="entryTabs"></div>
+        <div id="entryList" class="entry-list"></div>
+      </div>
+
+      <div class="dash-footer">
+        <button class="btn ghost" id="btnExportWiki">このWikiをJSONで書き出す</button>
+        <button class="btn danger-ghost" id="btnDeleteWiki">このWikiを削除する</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ インタビュー ============ -->
+  <section class="screen" data-screen="interview">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="dash">← やめる</button>
+        <div class="progress"><div class="progress-bar" id="interviewProgress"></div></div>
+      </header>
+
+      <div class="field">
+        <label for="ivAuthor">答えている人の名前（任意・記録に残ります）</label>
+        <input type="text" id="ivAuthor" placeholder="例：本人 ／ 長女・花子">
+      </div>
+
+      <div class="voice-toggle">
+        <label class="switch">
+          <input type="checkbox" id="voiceModeToggle">
+          <span>音声で会話する（質問を読み上げ→話して答える）</span>
+        </label>
+        <p class="voice-support" id="voiceSupportNote"></p>
+      </div>
+
+      <div class="interview-card">
+        <p class="q-cat" id="qCategory"></p>
+        <p class="q-text" id="qText"></p>
+
+        <div class="answer-box">
+          <textarea id="qAnswer" rows="5" placeholder="ここに答えを書く（またはマイクで話す）"></textarea>
+          <button class="mic-btn" id="qMicBtn" title="音声入力">🎤</button>
+        </div>
+        <p class="mic-status" id="qMicStatus"></p>
+
+        <div class="interview-actions">
+          <button class="btn text" id="btnSkipQ">この質問はとばす</button>
+          <button class="btn primary" id="btnSaveQ">記録して次へ</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ エピソード追加 ============ -->
+  <section class="screen" data-screen="episode">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="dash">← 戻る</button>
+        <h1>エピソードを追加</h1>
+      </header>
+
+      <div class="field">
+        <label for="epTitle">タイトル</label>
+        <input type="text" id="epTitle" placeholder="例：雨の日の合宿で全員ずぶ濡れになった話">
+      </div>
+
+      <div class="field">
+        <label for="epBody">話してください</label>
+        <div class="answer-box">
+          <textarea id="epBody" rows="6" placeholder="そのときのこと、自由に書いてください（マイクでも話せます）"></textarea>
+          <button class="mic-btn" id="epMicBtn" title="音声入力">🎤</button>
+        </div>
+        <p class="mic-status" id="epMicStatus"></p>
+      </div>
+
+      <div class="field">
+        <label for="epPhotos">写真（複数選べます）</label>
+        <input type="file" id="epPhotos" accept="image/*" multiple>
+        <div id="epPhotoPreview" class="photo-preview"></div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="epPeriod">いつ頃（自由形式）</label>
+          <input type="text" id="epPeriod" placeholder="例：2021年春 ／ 高校時代">
+        </div>
+        <div class="field">
+          <label for="epAuthor">書いた人の名前</label>
+          <input type="text" id="epAuthor" placeholder="例：鈴木">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="epTags">タグ（カンマ区切り・任意）</label>
+        <input type="text" id="epTags" placeholder="例：旅行, 合宿, 笑える話">
+      </div>
+
+      <button class="btn primary wide" id="btnSaveEpisode">追加する</button>
+    </div>
+  </section>
+
+  <!-- ============ 基本情報編集 ============ -->
+  <section class="screen" data-screen="profile">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="dash">← 戻る</button>
+        <h1>基本情報</h1>
+      </header>
+
+      <div class="field">
+        <label for="pfTitle">名前 / サークル名</label>
+        <input type="text" id="pfTitle">
+      </div>
+      <div class="field">
+        <label for="pfSubtitle">一言</label>
+        <input type="text" id="pfSubtitle">
+      </div>
+      <div class="field">
+        <label for="pfCover">表紙の写真</label>
+        <input type="file" id="pfCover" accept="image/*">
+        <div id="pfCoverPreview" class="photo-preview"></div>
+      </div>
+      <div class="field">
+        <label for="pfInfobox">プロフィール表（1行に「ラベル: 内容」）</label>
+        <textarea id="pfInfobox" rows="6" placeholder="生年月日: 1960年4月1日&#10;出身: 大阪府&#10;所属: 〇〇株式会社"></textarea>
+      </div>
+      <div class="field">
+        <label for="pfOverview">概要文</label>
+        <textarea id="pfOverview" rows="5" placeholder="どんな人・どんな場所だったか、短くまとめて紹介する文章"></textarea>
+      </div>
+
+      <button class="btn primary wide" id="btnSaveProfile">保存する</button>
+    </div>
+  </section>
+
+  <!-- ============ 完成ページ（Wikipedia風） ============ -->
+  <section class="screen" data-screen="view">
+    <div class="view-toolbar no-print">
+      <button class="btn text back" data-back="dash">← 戻る</button>
+      <button class="btn ghost" id="btnPrint">🖨️ 印刷 / PDFで保存</button>
+    </div>
+    <div class="wiki-page" id="wikiPage"></div>
+  </section>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
