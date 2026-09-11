@@ -139,6 +139,22 @@
     return (rows || []).map(function (r) { return r.label + ': ' + r.value; }).join('\n');
   }
 
+  // プロフィール表（infobox）は別画面で手入力する任意項目のため、埋めていない人も多い。
+  // 年代に応じた話題提案（AIの追い質問）に使うため、インタビューで答えた生年月日・血液型も
+  // あわせて渡す（infoboxへの転記をユーザーに強いらないようにするため）。
+  var PROFILE_HISTORY_KEYS = ['birth-date', 'blood-type'];
+  function buildProfileContext(w) {
+    var parts = [];
+    var infoboxText = infoboxToText(w.infobox);
+    if (infoboxText) parts.push(infoboxText);
+    (w.history || []).forEach(function (e) {
+      if (PROFILE_HISTORY_KEYS.indexOf(e.questionKey) !== -1 && e.text) {
+        parts.push((e.prompt || e.questionKey) + ': ' + e.text);
+      }
+    });
+    return parts.join('\n');
+  }
+
   function parseTags(text) {
     return (text || '')
       .split(/[,、]/)
@@ -238,6 +254,8 @@
       history: [
         { key: 'birth-place', text: 'まずは基本から聞かせてください！生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば嬉しいです）' },
         { key: 'birth-story', text: '生まれたときのエピソードで、家族から聞いている面白い話はありますか？' },
+        { key: 'birth-date', text: '生年月日を教えてください（西暦・元号どちらでも大丈夫です）' },
+        { key: 'blood-type', text: '血液型は何ですか？分かれば教えてください' },
         { key: 'kindergarten', text: '幼稚園・保育園はどこに通っていましたか？当時どんな子どもだったか、ぜひ聞かせてください！' },
         { key: 'elementary-school', text: '小学校はどこですか？小学校時代の一番の思い出、教えてください！' },
         { key: 'elementary-friends', text: '小学校で仲良かった友達や、忘れられない先生はいましたか？' },
@@ -468,6 +486,7 @@
     findOrCreateTrip: findOrCreateTrip,
     parseInfoboxText: parseInfoboxText,
     infoboxToText: infoboxToText,
+    buildProfileContext: buildProfileContext,
     parseTags: parseTags,
     mergeEntryArrays: mergeEntryArrays,
     mergeWiki: mergeWiki,
@@ -924,13 +943,17 @@
     ['history', 'personality', 'favorites', 'skills'].forEach(function (cat) {
       sections[cat] = (w[cat] || []).map(function (e) { return { prompt: e.prompt, text: e.text }; });
     });
+    var episodes = (w.episodes || [])
+      .filter(function (ep) { return ep.body; })
+      .map(function (ep) { return { id: ep.id, title: ep.title, body: ep.body }; });
 
     fetchAiCompose({
       action: 'compose',
       subjectName: w.title || (w.type === 'group' ? 'このサークル・チーム' : 'この人'),
       subjectType: w.type,
       overview: w.overview || '',
-      sections: sections
+      sections: sections,
+      episodes: episodes
     }).then(function (result) {
       btn.disabled = false;
       btn.textContent = originalLabel;
@@ -940,6 +963,10 @@
       }
       w.composed = result.data;
       w.composedAt = nowIso();
+      (result.data.episodes || []).forEach(function (item) {
+        var ep = w.episodes.filter(function (e) { return e.id === item.id; })[0];
+        if (ep && item.text) ep.composedBody = item.text;
+      });
       persist();
       renderWikiPage(w);
     });
@@ -1015,7 +1042,7 @@
       answer: digest || '（まだ記録がありません。まずは基本的なことから聞いてください）',
       history: [],
       depth: 0,
-      profile: infoboxToText(w.infobox),
+      profile: buildProfileContext(w),
       askedQuestions: askedQuestionTexts(w, cat)
     }).then(function (result) {
       if (result && !result.done && result.followUp) {
@@ -1185,7 +1212,7 @@
       answer: text,
       history: aiThreadHistory.slice(0, -1),
       depth: q.depth,
-      profile: infoboxToText(w.infobox),
+      profile: buildProfileContext(w),
       askedQuestions: askedQuestionTexts(w, q.category)
     }).then(function (result) {
       if (result && !result.done && result.followUp) {
@@ -1341,9 +1368,13 @@
     var title = ep.title || ep.prompt || '（無題）';
     var img = ep.photos && ep.photos[0] ? '<img src="' + ep.photos[0] + '">' : '';
     var more = ep.photos && ep.photos.length > 1 ? '（他' + (ep.photos.length - 1) + '枚）' : '';
+    var bodyHtml = '<p class="wp-card-text">' + escapeHtml(ep.composedBody || ep.body) + '</p>' +
+      (ep.composedBody
+        ? '<details class="wp-raw-toggle"><summary>元の文章を見る</summary><p class="wp-card-text">' + escapeHtml(ep.body) + '</p></details>'
+        : '');
     return '<div class="wp-card">' + img +
       '<div class="wp-card-body"><div class="wp-card-title">' + escapeHtml(title) + '</div>' +
-      '<p class="wp-card-text">' + escapeHtml(ep.body) + '</p>' +
+      bodyHtml +
       '<div class="wp-card-meta"><span>' + escapeHtml(ep.period || '') + more + '</span><span>' + escapeHtml(ep.author || '') + '</span></div></div></div>';
   }
 
@@ -1432,13 +1463,26 @@
     }).join('') + '</ul>';
   }
 
+  // AIでまとめた文章のうち、「・」で始まる行が複数あれば箇条書き（年譜など）として、
+  // それ以外は通常の文章として表示する。
+  function composedTextHtml(text) {
+    var lines = text.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+    var isBulleted = lines.length > 1 && lines.every(function (l) { return /^[・\-]/.test(l); });
+    if (isBulleted) {
+      return '<ul class="wp-compose-list">' + lines.map(function (l) {
+        return '<li>' + escapeHtml(l.replace(/^[・\-]\s*/, '')) + '</li>';
+      }).join('') + '</ul>';
+    }
+    return '<p>' + escapeHtml(text) + '</p>';
+  }
+
   // AIでまとめた文章があればそれを本文にし、元の一問一答は<details>で折りたたんで残す。
   // まとめていなければ、これまでどおり一問一答をそのまま並べる。
   function sectionBodyHtml(w, cat) {
     var items = w[cat] || [];
     var composedText = w.composed && w.composed[cat];
     if (composedText) {
-      return '<p>' + escapeHtml(composedText) + '</p>' +
+      return composedTextHtml(composedText) +
         (items.length ? '<details class="wp-raw-toggle"><summary>元の回答を見る（' + items.length + '件）</summary>' + rawEntryListHtml(items) + '</details>' : '');
     }
     return rawEntryListHtml(items);

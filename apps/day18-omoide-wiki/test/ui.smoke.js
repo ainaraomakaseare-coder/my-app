@@ -286,9 +286,10 @@ const TINY_PNG = Buffer.from(
         if (parsed.action === 'compose') {
           res.end(JSON.stringify({
             overview: 'AIがまとめた概要です。',
-            history: 'AIがまとめた生い立ち・経歴の文章です。',
+            history: '・1955年3月3日、京都府で生まれる\n・雨の遠足で全員ずぶ濡れになった',
             personality: 'AIがまとめた人物像の文章です。',
-            favorites: '', skills: ''
+            favorites: '', skills: '',
+            episodes: (parsed.episodes || []).map(ep => ({ id: ep.id, text: 'AIが整えた文章：' + ep.body }))
           }));
         } else {
           res.end(JSON.stringify({ done: false, followUp: 'AIの追い質問' + aiCallCount }));
@@ -372,9 +373,12 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnCompose');
   await page.waitForFunction(() => (document.getElementById('composeNote').textContent || '').indexOf('AIがまとめた') !== -1);
   check('AIがまとめた概要が概要欄に反映される', (await page.textContent('#sec-overview')).indexOf('AIがまとめた概要です') !== -1);
-  check('AIがまとめた生い立ちの文章が反映される', (await page.textContent('#sec-history')).indexOf('AIがまとめた生い立ち・経歴の文章です') !== -1);
+  check('生い立ちが箇条書き（年譜）で反映される', await page.locator('#sec-history .wp-compose-list li').count() === 2);
+  check('箇条書きの各行に元の内容が入る', (await page.textContent('#sec-history')).indexOf('雨の遠足で全員ずぶ濡れになった') !== -1);
   check('まとめられなかった項目（好きなもの）は元の一問一答のまま', (await page.textContent('#sec-favorites')).indexOf('まとめた') === -1);
   check('元の回答を見る、で生データを確認できる', await page.locator('#sec-history .wp-raw-toggle summary').count() > 0);
+  check('エピソードもAIで整えた文章に置き換わる', (await page.textContent('#sec-episodes')).indexOf('AIが整えた文章：') !== -1);
+  check('エピソードにも元の文章を見る、の切り替えがある', await page.locator('#sec-episodes .wp-raw-toggle summary').count() > 0);
 
   await page.click('[data-screen="view"] .back');
   await page.waitForSelector('[data-screen=dash].active');

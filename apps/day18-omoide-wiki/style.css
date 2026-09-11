@@ -216,6 +216,9 @@ input[type=file] { color: var(--muted); font-size: 13px; }
 .wp-list .who { font-size: 12px; color: var(--wp-muted); }
 .wp-list .q { font-size: 12px; font-weight: 700; color: var(--wp-muted); margin-bottom: 2px; }
 
+.wp-compose-list { margin: 0 0 10px; padding-left: 1.4em; }
+.wp-compose-list li { margin-bottom: 6px; }
+
 .wp-raw-toggle { margin: 8px 0 0; font-size: 12.5px; }
 .wp-raw-toggle summary { color: var(--wp-link); cursor: pointer; }
 .wp-raw-toggle .wp-list { margin-top: 10px; padding-left: 1.4em; }

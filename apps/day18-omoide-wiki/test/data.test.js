@@ -79,6 +79,15 @@ eq('parseInfoboxText: ラベルと値を分ける',
 eq('infoboxToText: 元に戻せる',
    W.infoboxToText([{ label: 'A', value: '1' }, { label: 'B', value: '2' }]), 'A: 1\nB: 2');
 
+/* ---- buildProfileContext: 年代の話題提案のため、infoboxが未入力でも生年月日・血液型を拾う ---- */
+var profileWiki = W.newWiki('person', 'テスト9', '');
+eq('infobox・生年月日どちらも無ければ空文字', W.buildProfileContext(profileWiki), '');
+profileWiki.history.push(W.newEntry('1995年12月5日', '本人', '生年月日を教えてください', 'birth-date'));
+eq('インタビューで答えた生年月日を拾う', W.buildProfileContext(profileWiki), '生年月日を教えてください: 1995年12月5日');
+profileWiki.infobox = [{ label: '出身', value: '神奈川県' }];
+eq('infoboxと生年月日の両方があれば両方含める',
+   W.buildProfileContext(profileWiki), '出身: 神奈川県\n生年月日を教えてください: 1995年12月5日');
+
 /* ---- タグ ---- */
 eq('parseTags: 全角カンマ・半角カンマ・空白の混在', W.parseTags('旅行, 合宿、 笑える話 ,'), ['旅行', '合宿', '笑える話']);
 

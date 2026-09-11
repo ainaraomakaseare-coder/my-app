@@ -105,6 +105,12 @@ function validComposeItem(it) {
     && (it.prompt === undefined || it.prompt === null || (typeof it.prompt === "string" && it.prompt.length <= 300));
 }
 
+function validComposeEpisode(it) {
+  return it && typeof it.id === "string" && it.id.length >= 1 && it.id.length <= 50
+    && typeof it.title === "string" && it.title.length <= 200
+    && typeof it.body === "string" && it.body.length >= 1 && it.body.length <= 4000;
+}
+
 // 「質問100個でもいい」という要望があるため、件数の上限は厚めに取っている。
 function validComposeInput(x) {
   if (!x || typeof x.subjectName !== "string" || x.subjectName.length < 1 || x.subjectName.length > 100) return false;
@@ -116,6 +122,9 @@ function validComposeInput(x) {
     if (arr === undefined) continue;
     if (!Array.isArray(arr) || arr.length > 150 || !arr.every(validComposeItem)) return false;
   }
+  if (x.episodes !== undefined) {
+    if (!Array.isArray(x.episodes) || x.episodes.length > 150 || !x.episodes.every(validComposeEpisode)) return false;
+  }
   return true;
 }
 
@@ -123,13 +132,25 @@ function composeSchema() {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["overview", "history", "personality", "favorites", "skills"],
+    required: ["overview", "history", "personality", "favorites", "skills", "episodes"],
     properties: {
       overview: { type: "string", maxLength: 800 },
-      history: { type: "string", maxLength: 3000 },
+      history: { type: "string", maxLength: 4000 },
       personality: { type: "string", maxLength: 2000 },
       favorites: { type: "string", maxLength: 2000 },
       skills: { type: "string", maxLength: 2000 },
+      episodes: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "text"],
+          properties: {
+            id: { type: "string", maxLength: 50 },
+            text: { type: "string", maxLength: 4000 },
+          },
+        },
+      },
     },
   };
 }
@@ -153,15 +174,26 @@ function composePrompt(data) {
     }
     return `【${COMPOSE_LABELS[cat]}】\n` + lines.join("\n");
   }).join("\n\n");
+  const episodes = data.episodes || [];
+  const episodesText = episodes.length ? episodes.map(ep => {
+    const line = `[id: ${ep.id}]${ep.title ? " タイトル: " + ep.title : ""}\n本文: ${ep.body}`;
+    if (budget - line.length < 0) return null;
+    budget -= line.length;
+    return line;
+  }).filter(Boolean).join("\n\n") : "";
   return [
     `あなたはWikipedia編集者です。以下は「${data.subjectName}」という${who}についての、聞き取り調査の生の回答（一問一答）です。`,
     "これを、実際のWikipedia記事のような、自然につながった文章に書き直してください。",
     "【厳守】回答に書かれていない事実を創作しないこと。話し言葉の言い回しは整えてよいが、内容を勝手に膨らませたり誇張したりしないこと。地名・年・固有名詞は原文どおりに保つこと。",
     "一人称（「私は」など）ではなく、三人称のWikipedia記事の文体（「〜である」「〜という」）に整えること。",
-    "各項目は2〜6文程度の自然な文章にまとめること。関連する回答同士は1つの流れにつなげてよい。記録が無い項目は空文字（\"\"）にすること。",
-    "overviewは、全体を読んで100〜200字程度で要約すること。",
+    "history（生い立ち・経歴）だけは特別な形式にすること：年代順の箇条書きにし、各行を「・」で始めること。分かる範囲で時期（西暦・年齢・「高校1年」など）を行の先頭に含めること。結婚・引っ越し・転職・留学など、人生の節目となる出来事はそれぞれ独立した1行に分け、複数の出来事を1つの文に圧縮しないこと（例：「結婚後は○○に住んだのち、△△へ転居した」のようにまとめず、結婚は結婚の行、転居は転居の行として分ける）。",
+    "personality・favorites・skillsは、それぞれ2〜6文程度の自然な文章にまとめること（箇条書きにしないこと）。関連する回答同士は1つの流れにつなげてよい。記録が無い項目は空文字（\"\"）にすること。",
+    "overviewは、全体を読んで100〜200字程度で要約すること（箇条書きにせず、文章で）。",
     data.overview ? `本人が書いた概要（参考。書き直してよい）：${data.overview}` : "",
     sectionsText,
+    episodesText
+      ? "【エピソード】以下は音声入力による書き起こしを含むため、「まあ」「えーっと」などのフィラーや、言い直し・不自然な区切りが残っていることがあります。事実や言い回しのニュアンスは変えずに、読みやすい自然な文章に整えてください（こちらは一人称のままでよく、Wikipedia文体への変換は不要です）。episodesには、渡された各エピソードについてidと整えた本文（text）を1件ずつ返してください。\n" + episodesText
+      : "",
   ].filter(Boolean).join("\n");
 }
 
