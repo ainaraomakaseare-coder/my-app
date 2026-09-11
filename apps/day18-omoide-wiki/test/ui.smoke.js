@@ -104,6 +104,17 @@ const TINY_PNG = Buffer.from(
   const secondQuestion = await page.textContent('#qText');
   check('次の質問に進む', secondQuestion !== firstQuestion);
 
+  // ---- 前の質問に戻る：直前の回答を取り消して答え直せる ----
+  check('1問答えた後は「前の質問に戻る」が押せる', !(await page.isDisabled('#btnPrevQ')));
+  await page.click('#btnPrevQ');
+  await page.waitForFunction((q) => document.getElementById('qText').textContent === q, firstQuestion);
+  check('前の質問に戻ると質問文も戻る', (await page.textContent('#qText')) === firstQuestion);
+  check('前の質問に戻ると回答欄に直前の回答が戻る', (await page.inputValue('#qAnswer')) === '几帳面で、誰にでも敬語で話す人でした');
+  check('最初の質問まで戻ると「前の質問に戻る」は押せない', await page.isDisabled('#btnPrevQ'));
+  await page.click('#btnSaveQ');
+  await page.waitForFunction((q) => document.getElementById('qText').textContent === q, secondQuestion);
+  check('戻ってから保存し直すと元通り次の質問に進む', (await page.textContent('#qText')) === secondQuestion);
+
   // 音声をオフにして戻り、次にインタビューを開いたときもオフのままであること（毎回オンに戻らない）
   await page.uncheck('#voiceModeToggle');
   await page.click('[data-screen="interview"] .back');

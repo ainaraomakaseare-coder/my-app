@@ -1,15 +1,15 @@
 /* おもいでWiki。書く負担を減らすため、フォームは短く・マイクをすぐ押せる位置に置く。 */
 :root {
-  --bg: #12131a;
-  --panel: #1b1d29;
-  --panel-2: #232636;
-  --line: #2f3244;
-  --text: #edeef5;
-  --muted: #8d92ab;
+  --bg: #f6f5fb;
+  --panel: #ffffff;
+  --panel-2: #eeeef7;
+  --line: #dfe0ec;
+  --text: #1f2130;
+  --muted: #6b6e84;
   --accent: #5b4fd6;
-  --accent-hi: #7267e6;
-  --gold: #e8c98a;
-  --danger: #e0526b;
+  --accent-hi: #4a3fc4;
+  --gold: #a9761f;
+  --danger: #c93a52;
   /* 完成ページは実際のWikipediaの配色・書体に合わせている */
   --wp-bg: #fff;
   --wp-text: #202122;

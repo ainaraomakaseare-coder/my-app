@@ -189,38 +189,41 @@
   var QUESTIONS = {
     person: {
       history: [
-        '生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば教えてください）',
-        '生まれたときのエピソードで、家族から聞いている話はありますか？',
-        '幼稚園・保育園はどこに通っていましたか？どんな子どもでしたか？',
-        '小学校はどこですか？小学校時代の一番の思い出を教えてください',
-        '小学校で仲の良かった友達や、印象に残っている先生はいましたか？',
-        '中学校はどこですか？中学時代、一番打ち込んでいたことは何ですか？',
-        '高校はどこですか？高校時代に忘れられない出来事はありますか？',
-        '高校で仲の良かった友達や、当時よく一緒にいた人は誰ですか？その人たちとの思い出があれば教えてください',
-        '大学・専門学校、または最初の就職先はどこですか？そこを選んだ理由も教えてください',
-        'そこに入って一番良かったことと、一番つらかった・悲しかったことをそれぞれ教えてください',
-        '大学・専門学校でサークルや部活、ゼミなどはありましたか？そこで仲の良かった人や出来事を教えてください',
+        'まずは基本から聞かせてください！生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば嬉しいです）',
+        '生まれたときのエピソードで、家族から聞いている面白い話はありますか？',
+        '幼稚園・保育園はどこに通っていましたか？当時どんな子どもだったか、ぜひ聞かせてください！',
+        '小学校はどこですか？小学校時代の一番の思い出、教えてください！',
+        '小学校で仲良かった友達や、忘れられない先生はいましたか？',
+        '中学校はどこですか？当時、一番夢中になっていたことは何ですか？',
+        '高校はどこですか？高校時代の忘れられない出来事、聞かせてください！',
+        '高校で仲良かった友達や、当時よく一緒にいた人は誰でしたか？その人たちとの楽しい思い出があれば教えてください',
+        '大学・専門学校、または最初の就職先はどこですか？そこを選んだ理由もぜひ聞かせてください',
+        'そこに入って一番良かったこと、そして一番つらかった・悲しかったこと、それぞれ聞かせてください',
+        '大学・専門学校でサークルや部活、ゼミなどはありましたか？そこでの仲良かった人や楽しかった出来事を教えてください',
         'アルバイト先で仲良くなった人や、印象に残っている出来事はありますか？',
-        '初めての仕事、社会に出たころのことで覚えている出来事はありますか？',
+        '初めての仕事、社会に出たころのこと。覚えている出来事があればぜひ！',
         'これまでの人生で、一番大きな転機・決断だったと思う出来事は何ですか？'
       ],
       personality: [
-        'その性格が一番はっきり出た、具体的な出来事を一つ教えてください',
-        '「らしいな」と周りが思わず笑った・驚いた瞬間はありますか？そのときの状況も教えてください',
-        'これまでで一番意外だった行動は何でしたか？何があってそうなったか教えてください',
+        '自分の性格をひとことで言うと、どんな感じだと思いますか？そう思うきっかけになった具体的な出来事も、あわせて聞かせてください！',
+        '「らしいな」と周りが思わず笑った・驚いた瞬間はありますか？そのときの状況も聞かせてください',
+        'これまでで一番意外だった行動は何でしたか？何があってそうなったか、ぜひ教えてください',
         '誰かが困っているのを見て、実際にどう動いたか。覚えている場面を一つ教えてください',
-        'その考え方を曲げなかった、具体的な出来事はありますか？'
+        '「これだけは譲れない」という信念や考え方はありますか？それを貫いた具体的な出来事も教えてください'
       ],
       favorites: [
-        '一番好きな食べ物と、それを好きになったきっかけの出来事を教えてください',
+        '一番好きな食べ物は何ですか？それを好きになったきっかけの出来事も聞かせてください',
         '一番好きな曲を1つ挙げるとしたら何ですか？好きになったきっかけや、聴くと思い出す出来事を教えてください',
-        '心に残っている映画・本と、それに出会ったときの状況を教えてください',
-        'その場所が好きになった、具体的なきっかけや思い出はありますか？',
+        '心に残っている映画・本はありますか？それに出会ったときの状況も聞かせてください',
+        '一番好きな場所はどこですか？そこが好きになった具体的なきっかけや思い出も聞かせてください',
         '休日に実際にあった、印象に残っている一日を一つ教えてください（どこで何をしたか）',
-        'そのこだわりが表れた、具体的な出来事はありますか？'
+        '「ここだけは譲れない」というこだわりはありますか？それが表れた具体的な出来事も教えてください',
+        '今ハマっている趣味や、時間を忘れて没頭できることは何ですか？始めたきっかけも聞かせてください！'
       ],
       skills: [
-        'その特技を発揮して、周りが驚いた・助かった具体的な場面を教えてください',
+        '得意なこと・自信のあることは何ですか？一番の武器だと思うものをぜひ教えてください！',
+        '今までで一番のめり込んだ趣味や特技は何ですか？始めたきっかけもぜひ聞かせてください',
+        '得意なことを発揮して、周りが驚いた・助かった具体的な場面はありますか？',
         '実際に頼られて力を発揮した出来事を一つ教えてください',
         '若いころ打ち込んでいた、具体的な出来事（大会・発表・挫折など）はありますか？',
         '誰かに実際に教えたときの、印象に残っている場面はありますか？'
@@ -244,7 +247,7 @@
         '今の姿になるまでで、一番大きく変わったと思う出来事は何ですか？'
       ],
       personality: [
-        'その雰囲気が一番出ていた、具体的な場面を一つ教えてください',
+        'このサークル・チームらしい雰囲気が一番出ていたと思う、具体的な場面を一つ教えてください',
         '外から見た印象と違うと感じた、具体的な出来事はありますか？',
         '新入りが最初に驚いた、実際にあった出来事はありますか？',
         '揉めごとが起きたときの、実際の出来事とその収まり方を教えてください'
@@ -253,12 +256,12 @@
         'みんなが好きだった場所・店での、印象に残っている出来事はありますか？',
         '定番の遊び・恒例行事で、実際にあった出来事を一つ教えてください',
         'よく歌っていた歌にまつわる、具体的な思い出はありますか？',
-        'その合言葉やあだ名が生まれた、きっかけの出来事を教えてください'
+        '合言葉やあだ名はありましたか？生まれたきっかけの出来事も教えてください'
       ],
       skills: [
-        'その得意なことを発揮して、周りが驚いた具体的な出来事を教えてください',
+        'みんなが得意としていたことを発揮して、周りが驚いた具体的な出来事を教えてください',
         '大会や本番で実力を発揮した、そのときの出来事を教えてください',
-        'その技やコツが後輩に伝わった、具体的な場面はありますか？'
+        '得意なことのコツが後輩に伝わった、具体的な場面はありますか？'
       ],
       episodes: [
         '一番の思い出に残っている出来事を教えてください',
@@ -375,6 +378,7 @@
   var lastBreakCheckpoint = 0;
   var BREAK_EVERY = 15;
   var aiThreadHistory = [];
+  var interviewHistory = []; // 「前の質問に戻る」用。各ステップで {index, category, entryId, text} を積む
   var pendingEpisodePhotos = [];
   var pendingCoverPhoto = null;
   var entryTab = 'all';
@@ -817,6 +821,7 @@
   function setInterviewBusy(busy, msg) {
     $('#btnSaveQ').disabled = busy;
     $('#btnSkipQ').disabled = busy;
+    $('#btnPrevQ').disabled = busy || interviewHistory.length === 0;
     $('#qMicStatus').textContent = msg || '';
   }
 
@@ -875,6 +880,7 @@
     sessionAnswered = 0;
     lastBreakCheckpoint = 0;
     aiThreadHistory = [];
+    interviewHistory = [];
     $('#ivAuthor').value = '';
     $('#voiceModeToggle').checked = loadVoicePref();
     var note = $('#voiceSupportNote');
@@ -893,7 +899,7 @@
     advanceInterview();
   }
 
-  function renderInterviewQuestion() {
+  function renderInterviewQuestion(prefillText) {
     var w = currentWiki();
     var L = LABELS[w.type];
     var q = interviewQueue[interviewIndex];
@@ -901,7 +907,7 @@
     $('#interviewProgress').style.width = Math.min(100, Math.round((interviewIndex / interviewQueue.length) * 100)) + '%';
     $('#qCategory').textContent = L[q.category] + (q.dynamic ? '・AIの深掘り' : '') + '（' + (interviewIndex + 1) + ' / ' + interviewQueue.length + '）';
     $('#qText').textContent = q.question;
-    $('#qAnswer').value = '';
+    $('#qAnswer').value = prefillText || '';
     setInterviewBusy(false, '');
 
     var ctrl = setMicController('interview', $('#qAnswer'), $('#qMicBtn'), $('#qMicStatus'), function () {
@@ -910,6 +916,28 @@
     if ($('#voiceModeToggle').checked) {
       speak(q.question, function () { ctrl.start(); });
     }
+  }
+
+  // 直前の質問に戻る。すでに保存されていた回答があれば取り消し（削除）、
+  // テキストボックスに戻して書き直せるようにする。「戻る」＝取り消して答え直す、という設計。
+  function goToPreviousQuestion() {
+    if (!interviewHistory.length) return;
+    stopAllMics();
+    window.speechSynthesis && window.speechSynthesis.cancel();
+    var last = interviewHistory.pop();
+    var w = currentWiki();
+    if (last.entryId) {
+      var arr = w[last.category] || [];
+      for (var i = 0; i < arr.length; i++) {
+        if (arr[i].id === last.entryId) { arr.splice(i, 1); break; }
+      }
+      sessionAnswered = Math.max(0, sessionAnswered - 1);
+      w.updatedAt = nowIso();
+      persist();
+    }
+    if (aiThreadHistory.length) aiThreadHistory.pop();
+    interviewIndex = last.index;
+    renderInterviewQuestion(last.text);
   }
 
   function advanceInterview() {
@@ -958,15 +986,20 @@
     var author = $('#ivAuthor').value.trim();
 
     if (skip || !text) {
+      interviewHistory.push({ index: interviewIndex, category: q.category, entryId: null, text: text });
       advanceInterview();
       return;
     }
 
+    var savedEntry;
     if (q.category === 'episodes') {
-      w.episodes.push(newEpisode({ body: text, author: author, prompt: q.question }));
+      savedEntry = newEpisode({ body: text, author: author, prompt: q.question });
+      w.episodes.push(savedEntry);
     } else {
-      w[q.category].push(newEntry(text, author, q.question));
+      savedEntry = newEntry(text, author, q.question);
+      w[q.category].push(savedEntry);
     }
+    interviewHistory.push({ index: interviewIndex, category: q.category, entryId: savedEntry.id, text: text });
     addContributor(w, author);
     w.updatedAt = nowIso();
     persist();
@@ -1312,6 +1345,7 @@
       showScreen('view');
     });
 
+    $('#btnPrevQ').addEventListener('click', goToPreviousQuestion);
     $('#btnSkipQ').addEventListener('click', function () { saveInterviewAnswer(true); });
     $('#btnSaveQ').addEventListener('click', function () { saveInterviewAnswer(false); });
 
