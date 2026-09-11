@@ -553,15 +553,22 @@
   function $(sel) { return document.querySelector(sel); }
   function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
 
+  // 1件のWikiの読み込み（normalizeWiki）が予期せず失敗しても、他のWikiまで
+  // 巻き込んで消えてしまわないよう、Wikiごとに個別にtry/catchする。
+  // （以前はここで1つでも例外が出ると、保存されている全Wikiが見えなくなっていた）
   function loadStore() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return emptyStore();
       var parsed = JSON.parse(raw);
       if (!parsed || !parsed.wikis) return emptyStore();
-      Object.keys(parsed.wikis).forEach(function (k) { normalizeWiki(parsed.wikis[k]); });
+      Object.keys(parsed.wikis).forEach(function (k) {
+        try { normalizeWiki(parsed.wikis[k]); }
+        catch (e) { console.error('Wikiの読み込みに失敗しました（id: ' + k + '）。このWikiだけ復旧できませんでした。', e); }
+      });
       return parsed;
     } catch (e) {
+      console.error('保存データの読み込みに失敗しました。', e);
       return emptyStore();
     }
   }
