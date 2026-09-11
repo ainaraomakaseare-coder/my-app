@@ -286,6 +286,7 @@
         <h1>旅行・イベントでまとめる</h1>
         <p class="lead">エピソードに「旅行・イベント名」をつけると、ここで自動的にまとまります。だれがいて、どんな出来事があったかをふり返れます。</p>
       </header>
+      <div id="tripsOnThisDay"></div>
       <div id="tripsList" class="wiki-list"></div>
     </div>
   </section>
@@ -296,7 +297,27 @@
       <header class="hd">
         <button class="btn text back" data-back="trips">← 一覧へ</button>
         <h1 id="tripDetailTitle"></h1>
-        <button class="btn text" id="btnRenameTrip">✏️ 名前・時期を変更</button>
+        <button class="btn text" id="btnRenameTrip">✏️ 名前・日付を変更</button>
+
+        <div id="tripEditForm" hidden>
+          <div class="field">
+            <label for="tripEditName">旅行・イベント名</label>
+            <input type="text" id="tripEditName">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="tripEditStart">開始日</label>
+              <input type="date" id="tripEditStart">
+            </div>
+            <div class="field">
+              <label for="tripEditEnd">終了日（任意）</label>
+              <input type="date" id="tripEditEnd">
+            </div>
+          </div>
+          <button class="btn primary" id="btnSaveTripEdit">保存する</button>
+          <button class="btn text" id="btnCancelTripEdit">キャンセル</button>
+        </div>
+
         <p class="lead" id="tripDetailPeriod"></p>
         <p class="lead" id="tripDetailParticipants"></p>
         <button class="btn primary" id="btnAddTripEpisode">＋ このイベントにエピソードを追加</button>

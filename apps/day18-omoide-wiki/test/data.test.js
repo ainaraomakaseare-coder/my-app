@@ -202,6 +202,39 @@ eq('西暦が無ければnull', W.tripYear('高校時代'), null);
 eq('年代ラベルに丸める', W.tripEraLabel('2023年8月'), '2020年代');
 eq('西暦が無ければ時期不明', W.tripEraLabel(''), '時期不明');
 
+/* ---- 開始日・終了日（startDate/endDate）：カレンダー要素として使う構造化された日付 ---- */
+eq('formatDateJa: input type=date の値を日本語表記にする', W.formatDateJa('2023-08-05'), '2023年8月5日');
+eq('formatDateJa: 不正な値は空文字', W.formatDateJa(''), '');
+
+eq('tripDateLabel: 開始日のみなら1つの日付', W.tripDateLabel({ startDate: '2023-08-05', endDate: '', period: '' }), '2023年8月5日');
+eq('tripDateLabel: 開始日と終了日があれば範囲表記', W.tripDateLabel({ startDate: '2023-08-05', endDate: '2023-08-10', period: '' }), '2023年8月5日〜2023年8月10日');
+eq('tripDateLabel: 開始日が無ければperiodにフォールバック', W.tripDateLabel({ startDate: '', endDate: '', period: '2023年夏' }), '2023年夏');
+eq('tripDateLabel: どちらも無ければ空文字', W.tripDateLabel({ startDate: '', endDate: '', period: '' }), '');
+
+eq('tripSortYear: 開始日があればその年', W.tripSortYear({ startDate: '2023-08-05', period: '2010年ごろ' }), 2023);
+eq('tripSortYear: 開始日が無ければperiodから推測', W.tripSortYear({ startDate: '', period: '2010年ごろ' }), 2010);
+eq('yearToEraLabel: 年代ラベルに丸める', W.yearToEraLabel(2023), '2020年代');
+eq('yearToEraLabel: 年が無ければ時期不明', W.yearToEraLabel(null), '時期不明');
+
+/* ---- 「今日は何の日」：過去の旅行から、今日と同じ月日（年は問わない）のものを探す ---- */
+ok('単日の旅行が、その月日と一致すれば含まれる', W.dateRangeIncludesMonthDay('2019-08-05', '', '08-05'));
+ok('単日の旅行が、違う月日なら含まれない', !W.dateRangeIncludesMonthDay('2019-08-05', '', '08-06'));
+ok('複数日の旅行の範囲内なら含まれる', W.dateRangeIncludesMonthDay('2019-08-05', '2019-08-10', '08-07'));
+ok('複数日の旅行の範囲外なら含まれない', !W.dateRangeIncludesMonthDay('2019-08-05', '2019-08-10', '08-11'));
+ok('年をまたぐ範囲（12/28〜1/3）でも年末側が含まれる', W.dateRangeIncludesMonthDay('2019-12-28', '2020-01-03', '12-30'));
+ok('年をまたぐ範囲（12/28〜1/3）でも年始側が含まれる', W.dateRangeIncludesMonthDay('2019-12-28', '2020-01-03', '01-02'));
+ok('開始日が無ければ含まれない', !W.dateRangeIncludesMonthDay('', '', '08-05'));
+
+var onThisDayWiki = W.newWiki('person', 'テスト10', '');
+onThisDayWiki.trips = [
+  W.newTrip('毎年恒例の花火大会'),
+  W.newTrip('別の旅行')
+];
+onThisDayWiki.trips[0].startDate = '2018-08-05';
+onThisDayWiki.trips[1].startDate = '2020-01-01';
+eq('今日と同じ月日の旅行だけが返る', W.onThisDayTrips(onThisDayWiki, '08-05').map(function (t) { return t.title; }), ['毎年恒例の花火大会']);
+eq('一致する旅行が無ければ空配列', W.onThisDayTrips(onThisDayWiki, '03-03'), []);
+
 var epA1 = W.newEpisode({ title: '1日目', body: '出発', tripId: okinawaId });
 var epA2 = W.newEpisode({ title: '2日目', body: '海', tripId: okinawaId });
 var epB1 = W.newEpisode({ title: '合宿1', body: '練習', tripId: gasshukuId });

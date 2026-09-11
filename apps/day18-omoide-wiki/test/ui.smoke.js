@@ -183,16 +183,59 @@ const TINY_PNG = Buffer.from(
   check('詳細画面にだれがいたかが出る', (await page.textContent('#tripDetailParticipants')).indexOf('三郎') !== -1);
   check('詳細画面にエピソードが出る', (await page.textContent('#tripDetailEpisodes')).indexOf('雨の遠足') !== -1);
 
-  // ---- 旅行の名前・時期を変更すると、一覧・詳細の両方に反映される（Tripが実体だから） ----
-  promptQueue = ['2019年秋の遠足', '2023年1月'];
+  // ---- 旅行の名前・開始日・終了日を編集フォームで変更すると、一覧・詳細の両方に反映される ----
   await page.click('#btnRenameTrip');
+  await page.waitForSelector('#tripEditForm:not([hidden])');
+  check('編集フォームに現在の名前が入っている', (await page.inputValue('#tripEditName')) === '秋の遠足');
+
+  // キャンセルすると何も変わらない
+  await page.fill('#tripEditName', 'キャンセルされるはずの名前');
+  await page.click('#btnCancelTripEdit');
+  await page.waitForFunction(() => document.getElementById('tripEditForm').hidden === true);
+  check('キャンセルすると変更されない', (await page.textContent('#tripDetailTitle')) === '秋の遠足');
+
+  await page.click('#btnRenameTrip');
+  await page.waitForSelector('#tripEditForm:not([hidden])');
+  await page.fill('#tripEditName', '2019年秋の遠足');
+  await page.fill('#tripEditStart', '2023-01-15');
+  await page.fill('#tripEditEnd', '2023-01-17');
+  await page.click('#btnSaveTripEdit');
   await page.waitForFunction(() => document.getElementById('tripDetailTitle').textContent === '2019年秋の遠足');
   check('名前を変更すると詳細画面のタイトルが変わる', (await page.textContent('#tripDetailTitle')) === '2019年秋の遠足');
-  check('時期を変更すると詳細画面にも反映される', (await page.textContent('#tripDetailPeriod')).indexOf('2023年1月') !== -1);
+  check('開始日・終了日が範囲表記で詳細画面に反映される', (await page.textContent('#tripDetailPeriod')).indexOf('2023年1月15日〜2023年1月17日') !== -1);
   await page.click('[data-screen="tripDetail"] .back');
   await page.waitForSelector('[data-screen=trips].active');
   check('名前を変更すると一覧にも反映される', (await page.textContent('#tripsList')).indexOf('2019年秋の遠足') !== -1);
-  check('時期を変更すると年代の見出しも変わる', (await page.textContent('#tripsList')).indexOf('2020年代') !== -1);
+  check('開始日を変更すると年代の見出しも変わる', (await page.textContent('#tripsList')).indexOf('2020年代') !== -1);
+
+  // ---- 「今日は何の日」：開始日が今日と同じ月日の旅行があると一覧の上に出る ----
+  const todayIso = await page.evaluate(() => new Date().toISOString().slice(0, 10));
+  await page.click('[data-screen="trips"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#tileEpisode');
+  await page.waitForSelector('[data-screen=episode].active');
+  await page.fill('#epTitle', '毎年恒例の花火大会');
+  await page.fill('#epBody', '今年も綺麗だった');
+  await page.fill('#epTrip', '毎年恒例の花火大会');
+  await page.click('#btnSaveEpisode');
+  await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#tileTrips');
+  await page.waitForSelector('[data-screen=trips].active');
+  check('開始日を設定する前は「今日は何の日」に出ない', (await page.textContent('#tripsOnThisDay')).indexOf('今日は何の日') === -1);
+  await page.click('.wiki-card:has-text("毎年恒例の花火大会")');
+  await page.waitForSelector('[data-screen=tripDetail].active');
+  await page.click('#btnRenameTrip');
+  await page.waitForSelector('#tripEditForm:not([hidden])');
+  await page.fill('#tripEditStart', todayIso);
+  await page.click('#btnSaveTripEdit');
+  await page.click('[data-screen="tripDetail"] .back');
+  await page.waitForSelector('[data-screen=trips].active');
+  check('開始日を今日と同じ月日に変更すると「今日は何の日」に出る', (await page.textContent('#tripsOnThisDay')).indexOf('毎年恒例の花火大会') !== -1);
+  await page.click('#tripsOnThisDay li');
+  await page.waitForSelector('[data-screen=tripDetail].active');
+  check('「今日は何の日」の項目をクリックすると詳細画面に飛ぶ', (await page.textContent('#tripDetailTitle')) === '毎年恒例の花火大会');
+  await page.click('[data-screen="tripDetail"] .back');
+  await page.waitForSelector('[data-screen=trips].active');
 
   // ---- 旅行の詳細画面から直接エピソードを追加すると、旅行名が引き継がれ、保存後もその旅行に戻る ----
   await page.click('.wiki-card:has-text("2019年秋の遠足")');

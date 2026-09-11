@@ -50,7 +50,7 @@
   // 同じ旅行のはずが別グループに分かれてしまう問題があったため、idを持つ実体にした。
   function newTrip(title, period) {
     var t = nowIso();
-    return { id: uid('t'), title: (title || '').trim(), period: (period || '').trim(), createdAt: t, updatedAt: t };
+    return { id: uid('t'), title: (title || '').trim(), period: (period || '').trim(), startDate: '', endDate: '', createdAt: t, updatedAt: t };
   }
 
   // 旅行名の文字列から、既存の旅行（完全一致）を探す。無ければ新しく作ってwiki.tripsに足す。
@@ -97,6 +97,11 @@
         ep.tripId = findOrCreateTrip(w, ep.trip);
       }
       delete ep.trip;
+    });
+    // 開始日・終了日（startDate/endDate）追加前に作られた旅行にも欄を補う
+    w.trips.forEach(function (tr) {
+      if (tr.startDate === undefined) tr.startDate = '';
+      if (tr.endDate === undefined) tr.endDate = '';
     });
     return w;
   }
@@ -440,14 +445,18 @@
         trip: tr.title,
         tripId: tr.id,
         period: tr.period || '',
+        startDate: tr.startDate || '',
+        endDate: tr.endDate || '',
         episodes: eps,
         sortKey: eps.length ? newestOf(eps) : (tr.updatedAt || tr.createdAt || '')
       };
     }).sort(function (a, b) { return b.sortKey.localeCompare(a.sortKey); });
 
-    var groups = named.map(function (g) { return { trip: g.trip, tripId: g.tripId, period: g.period, episodes: g.episodes }; });
+    var groups = named.map(function (g) {
+      return { trip: g.trip, tripId: g.tripId, period: g.period, startDate: g.startDate, endDate: g.endDate, episodes: g.episodes, sortKey: g.sortKey };
+    });
     if (byTripId['']) {
-      groups.push({ trip: '', tripId: '', period: '', episodes: byTripId[''].slice().sort(byNewest) });
+      groups.push({ trip: '', tripId: '', period: '', startDate: '', endDate: '', episodes: byTripId[''].slice().sort(byNewest), sortKey: '' });
     }
     return groups;
   }
@@ -462,6 +471,67 @@
   function tripEraLabel(period) {
     var year = tripYear(period);
     return year ? (Math.floor(year / 10) * 10) + '年代' : '時期不明';
+  }
+
+  // "2023-08-10" のような日付入力(input type=date)の値を「2023年8月10日」に整形する
+  function formatDateJa(isoDate) {
+    var parts = (isoDate || '').split('-');
+    if (parts.length !== 3) return '';
+    return Number(parts[0]) + '年' + Number(parts[1]) + '月' + Number(parts[2]) + '日';
+  }
+
+  // 旅行グループ（groupEpisodesByTripの返り値の1件）の表示用の日付文字列。
+  // 開始日・終了日が入力されていればそちらを優先し、無ければ自由記述のperiodにフォールバックする。
+  function tripDateLabel(g) {
+    if (g.startDate) {
+      var start = formatDateJa(g.startDate);
+      if (g.endDate && g.endDate !== g.startDate) return start + '〜' + formatDateJa(g.endDate);
+      return start;
+    }
+    return g.period || '';
+  }
+
+  // 年代でのまとめ表示に使う西暦。開始日があればその年を優先し、無ければperiodの自由記述から推測する。
+  function tripSortYear(g) {
+    if (g.startDate) {
+      var y = Number(g.startDate.slice(0, 4));
+      if (y) return y;
+    }
+    return tripYear(g.period);
+  }
+
+  function yearToEraLabel(year) {
+    return year ? (Math.floor(year / 10) * 10) + '年代' : '時期不明';
+  }
+
+  function monthDayOf(isoDate) {
+    return isoDate ? isoDate.slice(5, 10) : ''; // "MM-DD"
+  }
+
+  // 旅行の期間（startDate〜endDate、endDateが無ければ単日）が、指定した月日（年は問わない）に
+  // 重なっているか。年をまたぐ期間（例：12/28〜1/3）にも対応する。
+  function dateRangeIncludesMonthDay(startDate, endDate, monthDay) {
+    if (!startDate) return false;
+    var start = monthDayOf(startDate);
+    var end = endDate ? monthDayOf(endDate) : start;
+    if (start <= end) return monthDay >= start && monthDay <= end;
+    return monthDay >= start || monthDay <= end;
+  }
+
+  // 今日の月日を"MM-DD"で返す。端末のローカルタイムゾーンで判定する（UTC基準のnowIso()だと
+  // 日本時間の日付とずれることがあるため、Dateのローカルgetter（getMonth/getDate）を使う）。
+  function todayMonthDay() {
+    var d = new Date();
+    var mm = d.getMonth() + 1;
+    var dd = d.getDate();
+    return (mm < 10 ? '0' + mm : '' + mm) + '-' + (dd < 10 ? '0' + dd : '' + dd);
+  }
+
+  // 「今日は何の日」：過去の旅行の中から、今日と同じ月日（年は問わない）に重なるものを探す
+  function onThisDayTrips(wiki, monthDay) {
+    return (wiki.trips || []).filter(function (tr) {
+      return dateRangeIncludesMonthDay(tr.startDate, tr.endDate, monthDay);
+    });
   }
 
   // 「だれがいたか」を、エピソードの「書いた人」＋「その場にいた人」から重複なく集める
@@ -521,6 +591,12 @@
     tripTitle: tripTitle,
     tripYear: tripYear,
     tripEraLabel: tripEraLabel,
+    formatDateJa: formatDateJa,
+    tripDateLabel: tripDateLabel,
+    tripSortYear: tripSortYear,
+    yearToEraLabel: yearToEraLabel,
+    dateRangeIncludesMonthDay: dateRangeIncludesMonthDay,
+    onThisDayTrips: onThisDayTrips,
     LABELS: LABELS,
     QUESTIONS: QUESTIONS,
     CATEGORY_ORDER: CATEGORY_ORDER,
@@ -1412,8 +1488,24 @@
 
   var currentTripKey = null;
 
+  // 「今日は何の日」：今日と同じ月日の旅行が過去にあれば、一覧の上に出す
+  function renderOnThisDay(w) {
+    var el = $('#tripsOnThisDay');
+    var trips = onThisDayTrips(w, todayMonthDay());
+    if (!trips.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="on-this-day"><b>📅 今日は何の日</b><ul>' +
+      trips.map(function (tr) {
+        var year = tr.startDate ? tr.startDate.slice(0, 4) : '';
+        return '<li data-trip-id="' + tr.id + '">' + (year ? year + '年 ' : '') + escapeHtml(tr.title) + '</li>';
+      }).join('') + '</ul></div>';
+    $all('#tripsOnThisDay [data-trip-id]').forEach(function (li) {
+      li.addEventListener('click', function () { openTripDetail(li.dataset.tripId); });
+    });
+  }
+
   function renderTripsList() {
     var w = currentWiki();
+    renderOnThisDay(w);
     var listEl = $('#tripsList');
     var groups = groupEpisodesByTrip(w).filter(function (g) { return g.trip; });
     if (!groups.length) {
@@ -1425,7 +1517,7 @@
     var eraOrder = [];
     var byEra = {};
     groups.forEach(function (g) {
-      var era = tripEraLabel(g.period);
+      var era = yearToEraLabel(tripSortYear(g));
       if (!byEra[era]) { byEra[era] = []; eraOrder.push(era); }
       byEra[era].push(g);
     });
@@ -1433,6 +1525,15 @@
       if (a === '時期不明') return 1;
       if (b === '時期不明') return -1;
       return parseInt(b, 10) - parseInt(a, 10);
+    });
+    // 各年代の中では、開始日が分かっているものを新しい順に（分からないものは元の並び順のまま）
+    eraOrder.forEach(function (era) {
+      byEra[era].sort(function (a, b) {
+        if (a.startDate && b.startDate) return b.startDate.localeCompare(a.startDate);
+        if (a.startDate) return -1;
+        if (b.startDate) return 1;
+        return 0;
+      });
     });
 
     listEl.innerHTML = '';
@@ -1449,7 +1550,8 @@
         }
         var participants = tripParticipants(g.episodes);
         var subParts = [];
-        if (g.period) subParts.push(g.period);
+        var dateLabel = tripDateLabel(g);
+        if (dateLabel) subParts.push(dateLabel);
         subParts.push(participants.length ? participants.join('、') : '参加者は未記録');
         var card = document.createElement('button');
         card.className = 'wiki-card';
@@ -1477,30 +1579,47 @@
     var group = groupEpisodesByTrip(w).filter(function (g) { return g.tripId === tripId; })[0];
     if (!group) { renderTripsList(); showScreen('trips'); return; }
     $('#tripDetailTitle').textContent = group.trip;
-    $('#tripDetailPeriod').textContent = group.period ? ('時期：' + group.period) : '';
+    var dateLabel = tripDateLabel(group);
+    $('#tripDetailPeriod').textContent = dateLabel ? ('時期：' + dateLabel) : '';
     var participants = tripParticipants(group.episodes);
     $('#tripDetailParticipants').textContent = participants.length
       ? ('だれがいたか：' + participants.join('、'))
       : '「その場にいた人」はまだ記録されていません';
     var sorted = group.episodes.slice().sort(function (a, b) { return (a.createdAt || '').localeCompare(b.createdAt || ''); });
     $('#tripDetailEpisodes').innerHTML = sorted.map(episodeCardHtml).join('');
+    closeTripEditForm();
   }
 
-  // 旅行の名前・時期はTripという1つの実体で持っているため、ここで直せば紐づく全エピソードに反映される
-  function renameCurrentTrip() {
+  // 旅行の名前・開始日・終了日はTripという1つの実体で持っているため、ここで直せば紐づく全エピソードに反映される。
+  // カレンダー要素として使えるよう、日付はprompt()ではなくinput type=dateで入力する。
+  function openTripEditForm() {
     var w = currentWiki();
     var trip = w.trips.filter(function (t) { return t.id === currentTripKey; })[0];
     if (!trip) return;
-    var name = prompt('旅行・イベント名を入力してください', trip.title);
-    if (name === null) return;
-    name = name.trim();
-    if (!name) return;
-    var period = prompt('時期を入力してください（例：2023年8月・任意、年代別のまとめ表示に使います）', trip.period || '');
-    if (period === null) return;
-    period = period.trim();
-    if (name === trip.title && period === (trip.period || '')) return;
+    $('#tripEditName').value = trip.title;
+    $('#tripEditStart').value = trip.startDate || '';
+    $('#tripEditEnd').value = trip.endDate || '';
+    $('#tripEditForm').hidden = false;
+    $('#btnRenameTrip').hidden = true;
+  }
+
+  function closeTripEditForm() {
+    $('#tripEditForm').hidden = true;
+    $('#btnRenameTrip').hidden = false;
+  }
+
+  function saveTripEdit() {
+    var w = currentWiki();
+    var trip = w.trips.filter(function (t) { return t.id === currentTripKey; })[0];
+    if (!trip) return;
+    var name = $('#tripEditName').value.trim();
+    if (!name) { alert('旅行・イベント名を入力してください'); return; }
+    var start = $('#tripEditStart').value;
+    var end = $('#tripEditEnd').value;
+    if (start && end && end < start) { alert('終了日は開始日より後の日付にしてください'); return; }
     trip.title = name;
-    trip.period = period;
+    trip.startDate = start;
+    trip.endDate = end;
     trip.updatedAt = nowIso();
     persist();
     renderTripDetail(currentTripKey);
@@ -1708,7 +1827,9 @@
       renderTripsList();
       showScreen('trips');
     });
-    $('#btnRenameTrip').addEventListener('click', renameCurrentTrip);
+    $('#btnRenameTrip').addEventListener('click', openTripEditForm);
+    $('#btnSaveTripEdit').addEventListener('click', saveTripEdit);
+    $('#btnCancelTripEdit').addEventListener('click', closeTripEditForm);
     $('#btnAddTripEpisode').addEventListener('click', function () { openEpisodeForm(currentTripKey); });
 
     $('#btnPrevQ').addEventListener('click', goToPreviousQuestion);
