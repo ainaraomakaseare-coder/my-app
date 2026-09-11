@@ -196,7 +196,11 @@
         '小学校で仲の良かった友達や、印象に残っている先生はいましたか？',
         '中学校はどこですか？中学時代、一番打ち込んでいたことは何ですか？',
         '高校はどこですか？高校時代に忘れられない出来事はありますか？',
+        '高校で仲の良かった友達や、当時よく一緒にいた人は誰ですか？その人たちとの思い出があれば教えてください',
         '大学・専門学校、または最初の就職先はどこですか？そこを選んだ理由も教えてください',
+        'そこに入って一番良かったことと、一番つらかった・悲しかったことをそれぞれ教えてください',
+        '大学・専門学校でサークルや部活、ゼミなどはありましたか？そこで仲の良かった人や出来事を教えてください',
+        'アルバイト先で仲良くなった人や、印象に残っている出来事はありますか？',
         '初めての仕事、社会に出たころのことで覚えている出来事はありますか？',
         'これまでの人生で、一番大きな転機・決断だったと思う出来事は何ですか？'
       ],
@@ -209,7 +213,8 @@
       ],
       favorites: [
         '一番好きな食べ物と、それを好きになったきっかけの出来事を教えてください',
-        '心に残っている音楽・映画・本と、それに出会ったときの状況を教えてください',
+        '一番好きな曲を1つ挙げるとしたら何ですか？好きになったきっかけや、聴くと思い出す出来事を教えてください',
+        '心に残っている映画・本と、それに出会ったときの状況を教えてください',
         'その場所が好きになった、具体的なきっかけや思い出はありますか？',
         '休日に実際にあった、印象に残っている一日を一つ教えてください（どこで何をしたか）',
         'そのこだわりが表れた、具体的な出来事はありますか？'
@@ -267,11 +272,17 @@
 
   var CATEGORY_ORDER = ['history', 'personality', 'favorites', 'skills', 'episodes'];
 
-  function buildInterviewQueue(type) {
+  // wiki を渡すと、そのカテゴリで既に答えた質問（prompt が一致するもの）を除く。
+  // これにより、一度答えた固定質問がインタビューを開き直すたびに繰り返されない。
+  function buildInterviewQueue(type, wiki) {
     var bank = QUESTIONS[type] || QUESTIONS.person;
     var queue = [];
     CATEGORY_ORDER.forEach(function (cat) {
-      (bank[cat] || []).forEach(function (q) { queue.push({ category: cat, question: q, depth: 0 }); });
+      var asked = wiki && wiki[cat] ? wiki[cat].map(function (e) { return e.prompt; }) : [];
+      (bank[cat] || []).forEach(function (q) {
+        if (asked.indexOf(q) !== -1) return;
+        queue.push({ category: cat, question: q, depth: 0 });
+      });
     });
     return queue;
   }
@@ -592,7 +603,11 @@
     return !!window.speechSynthesis;
   }
 
-  function createMicController(textareaEl, btnEl, statusEl) {
+  // 「〜でした、次」のように話し終わりに言うと、ボタンを押さなくても次へ進める。
+  // お年寄りなど、画面の操作より声だけで完結させたい人のための仕組み。
+  var NEXT_COMMAND_RE = /(次へ|次の質問|つぎ|次)\s*[。、,.]?\s*$/;
+
+  function createMicController(textareaEl, btnEl, statusEl, onNext) {
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       btnEl.disabled = true;
@@ -613,11 +628,23 @@
         if (res.isFinal) finalChunk += res[0].transcript;
         else interimChunk += res[0].transcript;
       }
+      var triggered = false;
+      if (finalChunk && onNext) {
+        var m = finalChunk.match(NEXT_COMMAND_RE);
+        if (m) {
+          finalChunk = finalChunk.slice(0, m.index).trim();
+          triggered = true;
+        }
+      }
       if (finalChunk) {
         baseText = (baseText ? baseText + '\n' : '') + finalChunk;
         textareaEl.value = baseText;
       }
-      statusEl.textContent = on ? ('聞き取り中… ' + interimChunk) : '';
+      statusEl.textContent = on ? ('聞き取り中… ' + interimChunk) : (triggered ? '「次」と聞こえたので次へ進みます…' : '');
+      if (triggered) {
+        // recog.onresult の実行中に recog.stop() を呼ぶと不安定になることがあるため、一呼吸おく
+        setTimeout(function () { onNext(); }, 0);
+      }
     };
     recog.onerror = function (e) {
       statusEl.textContent = e.error === 'not-allowed' ? 'マイクの使用が許可されていません。' : '音声入力でエラーが発生しました（' + e.error + '）。';
@@ -662,9 +689,9 @@
     });
   }
 
-  function setMicController(key, textareaEl, btnEl, statusEl) {
+  function setMicController(key, textareaEl, btnEl, statusEl, onNext) {
     if (micControllers[key]) micControllers[key].stop();
-    var ctrl = createMicController(textareaEl, btnEl, statusEl);
+    var ctrl = createMicController(textareaEl, btnEl, statusEl, onNext);
     micControllers[key] = ctrl;
     return ctrl;
   }
@@ -720,10 +747,58 @@
     $('#qMicStatus').textContent = msg || '';
   }
 
+  // 既に答えた固定質問を飛ばした結果、その場で聞くことが無くなったら、
+  // ヒアリングマスターのようにAIへ「ここまでの内容を踏まえて、まだ聞けていない
+  // 話を引き出す質問」を考えてもらい、インタビューを終わらせずに育て続ける。
+  function buildWikiDigest(w) {
+    var L = LABELS[w.type];
+    var parts = [];
+    if (w.overview) parts.push('概要: ' + w.overview);
+    CATEGORY_ORDER.forEach(function (cat) {
+      var items = (w[cat] || []).slice(-5);
+      if (!items.length) return;
+      parts.push(L[cat] + ':\n' + items.map(function (e) {
+        var text = e.text || e.body || '';
+        return '・' + (e.prompt ? '[' + e.prompt + '] ' : '') + text.slice(0, 200);
+      }).join('\n'));
+    });
+    return parts.join('\n\n').slice(0, 3000);
+  }
+
+  function pickGrowthCategory(w) {
+    var best = CATEGORY_ORDER[0], bestCount = Infinity;
+    CATEGORY_ORDER.forEach(function (cat) {
+      var n = (w[cat] || []).length;
+      if (n < bestCount) { bestCount = n; best = cat; }
+    });
+    return best;
+  }
+
+  function growQueueWithAi(w) {
+    var cat = pickGrowthCategory(w);
+    var L = LABELS[w.type];
+    var digest = buildWikiDigest(w);
+    return fetchAiFollowUp({
+      subjectName: w.title || (w.type === 'group' ? 'このサークル・チーム' : 'この人'),
+      subjectType: w.type,
+      categoryLabel: L[cat],
+      question: '（決まった質問には答え終えました。ヒアリングマスターとして、ここまでの内容全体を踏まえ、まだ聞けていない具体的な話を引き出す質問を1つ考えてください。年代や時期を絞って深く聞くのも歓迎します）',
+      answer: digest || '（まだ記録がありません。まずは基本的なことから聞いてください）',
+      history: [],
+      depth: 0
+    }).then(function (result) {
+      if (result && !result.done && result.followUp) {
+        interviewQueue.push({ category: cat, question: result.followUp, depth: 0, dynamic: true, grown: true });
+        return true;
+      }
+      return false;
+    });
+  }
+
   function startInterview() {
     var w = currentWiki();
-    interviewQueue = buildInterviewQueue(w.type);
-    interviewIndex = 0;
+    interviewQueue = buildInterviewQueue(w.type, w);
+    interviewIndex = -1;
     aiThreadHistory = [];
     $('#ivAuthor').value = '';
     $('#voiceModeToggle').checked = loadVoicePref();
@@ -740,7 +815,7 @@
       : '';
 
     showScreen('interview');
-    renderInterviewQuestion();
+    advanceInterview();
   }
 
   function renderInterviewQuestion() {
@@ -754,7 +829,9 @@
     $('#qAnswer').value = '';
     setInterviewBusy(false, '');
 
-    var ctrl = setMicController('interview', $('#qAnswer'), $('#qMicBtn'), $('#qMicStatus'));
+    var ctrl = setMicController('interview', $('#qAnswer'), $('#qMicBtn'), $('#qMicStatus'), function () {
+      if (!$('#btnSaveQ').disabled) saveInterviewAnswer(false);
+    });
     if ($('#voiceModeToggle').checked) {
       speak(q.question, function () { ctrl.start(); });
     }
@@ -762,13 +839,26 @@
 
   function advanceInterview() {
     interviewIndex++;
-    if (interviewIndex >= interviewQueue.length) {
-      window.speechSynthesis && window.speechSynthesis.cancel();
-      alert('質問は以上です。またいつでも「質問で深掘りする」から続きができます。');
-      openDash(currentWikiId);
+    if (interviewIndex < interviewQueue.length) {
+      renderInterviewQuestion();
       return;
     }
-    renderInterviewQuestion();
+    // 決まった質問を使い切った。AIで深掘りがオンならヒアリングマスターとして質問を育て続ける
+    if ($('#aiDeepenToggle').checked && getAiEndpoint()) {
+      setInterviewBusy(true, 'AIが次に聞くことを考えています…');
+      growQueueWithAi(currentWiki()).then(function (grew) {
+        if (grew) { renderInterviewQuestion(); }
+        else { finishInterview(); }
+      });
+      return;
+    }
+    finishInterview();
+  }
+
+  function finishInterview() {
+    window.speechSynthesis && window.speechSynthesis.cancel();
+    alert('決まっている質問には答え終えました。またいつでも「質問で深掘りする」から続きができます。');
+    openDash(currentWikiId);
   }
 
   function saveInterviewAnswer(skip) {

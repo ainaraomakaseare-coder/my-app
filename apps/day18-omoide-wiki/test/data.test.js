@@ -25,6 +25,19 @@ ok('person用のhistory質問がある', W.QUESTIONS.person.history.length > 0);
 ok('group用のhistory質問がある', W.QUESTIONS.group.history.length > 0);
 eq('新規Wikiにhistory配列がある', W.newWiki('person', 'テスト', '').history, []);
 
+/* ---- buildInterviewQueue: 既に答えた固定質問は繰り返さない ---- */
+var freshQueue = W.buildInterviewQueue('person');
+var totalQuestions = freshQueue.length;
+var wikiWithAnswers = W.newWiki('person', 'テスト2', '');
+var firstQ = W.QUESTIONS.person.history[0];
+var secondQ = W.QUESTIONS.person.favorites[0];
+wikiWithAnswers.history.push(W.newEntry('東京都出身です', '本人', firstQ));
+wikiWithAnswers.favorites.push(W.newEntry('カレーが好きです', '本人', secondQ));
+var filteredQueue = W.buildInterviewQueue('person', wikiWithAnswers);
+eq('既に答えた分だけ質問数が減る', filteredQueue.length, totalQuestions - 2);
+ok('既に答えた質問はキューに残らない', !filteredQueue.some(function (q) { return q.question === firstQ || q.question === secondQ; }));
+eq('wikiを渡さない場合は今まで通り全問出る（後方互換）', W.buildInterviewQueue('person').length, totalQuestions);
+
 /* ---- normalizeWiki（古いバージョンのWikiを読み込んだときの後方互換） ---- */
 var oldWiki = { id: 'w_old', type: 'person', title: '古いWiki', episodes: [] };
 delete oldWiki.history;

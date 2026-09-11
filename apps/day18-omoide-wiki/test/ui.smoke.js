@@ -62,6 +62,11 @@ const TINY_PNG = Buffer.from(
   page.on('dialog', d => d.accept());
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(BASE);
+  // index.html には本番用のWorker URLが書かれているため、AI深掘りを検証する節より前では
+  // 空にしておく（テストを本番のWorkerに依存させない・実際のAPI呼び出しを避けるため）
+  await page.evaluate(() => {
+    document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', '');
+  });
 
   // ---- 一覧が空の状態 ----
   check('最初は「まだ何もありません」', (await page.textContent('#wikiList')).indexOf('まだ何もありません') !== -1);
@@ -97,6 +102,7 @@ const TINY_PNG = Buffer.from(
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
   check('一度オフにすると、次に開いたときもオフのまま覚えている', !(await page.isChecked('#voiceModeToggle')));
+  check('既に答えた質問はインタビューを開き直しても出てこない', (await page.textContent('#qText')) !== firstQuestion);
   await page.check('#voiceModeToggle');
   await page.click('[data-screen="interview"] .back');
   await page.waitForSelector('[data-screen=dash].active');
@@ -220,6 +226,40 @@ const TINY_PNG = Buffer.from(
 
   await page.click('[data-screen="interview"] .back');
   await page.waitForSelector('[data-screen=dash].active');
+
+  // ---- 固定質問を全部使い切った状態から、AIが自分で次の話題を考えて続ける（育てるモード） ----
+  await page.evaluate(() => {
+    const W = window.OmoideWiki;
+    const w = W.newWiki('person', 'すぐ育つ人', '');
+    ['history', 'personality', 'favorites', 'skills', 'episodes'].forEach((cat) => {
+      (W.QUESTIONS.person[cat] || []).forEach((q) => {
+        if (cat === 'episodes') w.episodes.push(W.newEpisode({ body: 'テスト回答', prompt: q }));
+        else w[cat].push(W.newEntry('テスト回答', '', q));
+      });
+    });
+    // 既存のWiki（やまだ たろう）を消さないよう、上書きではなく追加する
+    const store = JSON.parse(localStorage.getItem(W.STORAGE_KEY) || '{"wikis":{},"currentId":null}');
+    store.wikis[w.id] = w;
+    localStorage.setItem(W.STORAGE_KEY, JSON.stringify(store));
+  });
+  await page.reload();
+  await page.evaluate((url) => {
+    document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', url);
+  }, `http://127.0.0.1:${aiPort}/`);
+  aiCallCount = 0;
+  await page.click('.wiki-card:has-text("すぐ育つ人")');
+  await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#tileInterview');
+  await page.waitForSelector('[data-screen=interview].active');
+  await page.waitForFunction(() => (document.getElementById('qCategory').textContent || '').indexOf('AIの深掘り') !== -1);
+  check('固定質問を使い切ると、AIが自分で次の話題を考えて続く（育てるモード）', aiCallCount >= 1);
+  await page.click('[data-screen="interview"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#btnDeleteWiki');
+  await page.waitForSelector('[data-screen=home].active');
+  await page.click('.wiki-card:has-text("やまだ たろう")');
+  await page.waitForSelector('[data-screen=dash].active');
+
   aiServer.close();
 
   // ---- 削除（AI深掘りの後片付けを終えて dash 画面にいる状態から） ----
