@@ -371,6 +371,9 @@
   var currentWikiId = null;
   var interviewQueue = [];
   var interviewIndex = 0;
+  var sessionAnswered = 0;
+  var lastBreakCheckpoint = 0;
+  var BREAK_EVERY = 5;
   var aiThreadHistory = [];
   var pendingEpisodePhotos = [];
   var pendingCoverPhoto = null;
@@ -743,9 +746,11 @@
 
   // 一問一答の生の回答を、AIにWikipedia記事のような自然な文章へ書き直してもらう。
   // 質問への追い質問より処理が重いので、タイムアウトを長めに取っている。
+  // 成否だけでなく理由も返す（{ ok:true, data } または { ok:false, reason }）。
+  // 「うまくいきませんでした」しか分からないと原因を切り分けられないため。
   function fetchAiCompose(payload) {
     var endpoint = getAiEndpoint();
-    if (!endpoint) return Promise.resolve(null);
+    if (!endpoint) return Promise.resolve({ ok: false, reason: 'Workerが設定されていません' });
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 25000) : null;
     return fetch(endpoint, {
@@ -755,12 +760,20 @@
       signal: ctrl ? ctrl.signal : undefined
     }).then(function (res) {
       if (timer) clearTimeout(timer);
-      return res.ok ? res.json() : null;
-    }).catch(function () {
+      if (res.status === 429) return { ok: false, reason: 'レート制限（1分あたりの上限）を超えました。1分ほど待ってからもう一度お試しください' };
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          return { ok: false, reason: 'サーバーエラー（' + res.status + (body && body.error ? '：' + body.error : '') + '）' };
+        });
+      }
+      return res.json().then(function (data) {
+        return (data && typeof data.overview === 'string')
+          ? { ok: true, data: data }
+          : { ok: false, reason: 'AIの応答を正しく読み取れませんでした' };
+      });
+    }).catch(function (e) {
       if (timer) clearTimeout(timer);
-      return null;
-    }).then(function (data) {
-      return (data && typeof data.overview === 'string') ? data : null;
+      return { ok: false, reason: (e && e.name === 'AbortError') ? '時間切れ（応答に時間がかかりすぎました）' : '通信エラー（' + (e && e.message ? e.message : '不明') + '）' };
     });
   }
 
@@ -790,11 +803,11 @@
     }).then(function (result) {
       btn.disabled = false;
       btn.textContent = originalLabel;
-      if (!result) {
-        alert('うまくまとめられませんでした。しばらくしてからもう一度お試しください。');
+      if (!result.ok) {
+        alert('うまくまとめられませんでした。\n\n理由：' + result.reason);
         return;
       }
-      w.composed = result;
+      w.composed = result.data;
       w.composedAt = nowIso();
       persist();
       renderWikiPage(w);
@@ -859,6 +872,8 @@
     var w = currentWiki();
     interviewQueue = buildInterviewQueue(w.type, w);
     interviewIndex = -1;
+    sessionAnswered = 0;
+    lastBreakCheckpoint = 0;
     aiThreadHistory = [];
     $('#ivAuthor').value = '';
     $('#voiceModeToggle').checked = loadVoicePref();
@@ -898,6 +913,20 @@
   }
 
   function advanceInterview() {
+    // 何問か答えるごとに、続けるかどうかを聞く（お年寄りなど、長く話すと疲れる人のための一区切り）
+    if (sessionAnswered > 0 && sessionAnswered !== lastBreakCheckpoint && sessionAnswered % BREAK_EVERY === 0) {
+      lastBreakCheckpoint = sessionAnswered;
+      window.speechSynthesis && window.speechSynthesis.cancel();
+      var keepGoing = confirm(
+        'ここまでで' + sessionAnswered + '問お答えいただきました。少し休憩しますか？\n\n' +
+        '「OK」で続ける／「キャンセル」で今日はここまでにする（答えた内容はもう保存されているので、続きはまた今度できます）'
+      );
+      if (!keepGoing) {
+        finishInterview('今日はここまでにしましょう。お疲れさまでした。続きはまた今度、「質問で深掘りする」から始められます。');
+        return;
+      }
+    }
+
     interviewIndex++;
     if (interviewIndex < interviewQueue.length) {
       renderInterviewQuestion();
@@ -915,9 +944,9 @@
     finishInterview();
   }
 
-  function finishInterview() {
+  function finishInterview(message) {
     window.speechSynthesis && window.speechSynthesis.cancel();
-    alert('決まっている質問には答え終えました。またいつでも「質問で深掘りする」から続きができます。');
+    alert(message || '決まっている質問には答え終えました。またいつでも「質問で深掘りする」から続きができます。');
     openDash(currentWikiId);
   }
 
@@ -941,6 +970,7 @@
     addContributor(w, author);
     w.updatedAt = nowIso();
     persist();
+    sessionAnswered++;
 
     aiThreadHistory.push({ q: q.question, a: text });
     if (aiThreadHistory.length > 4) aiThreadHistory = aiThreadHistory.slice(-4);

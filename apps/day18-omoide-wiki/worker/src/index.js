@@ -69,10 +69,10 @@ function prompt(data) {
   const who = data.subjectType === "group" ? "サークルやチームの思い出" : "その人の人生";
   const history = data.history.map(t => `質問「${t.q}」→回答「${t.a}」`).join("\n");
   return [
-    `あなたは「${who}」をじっくり深掘りする、しっかり者の聞き手です。話し相手は「${data.subjectName}」について話しています。`,
+    `あなたは「${who}」を聞き出す、話し上手な友人です。話し相手は「${data.subjectName}」について話しています。`,
     "直前の回答を読み、以下の「深掘りの観点」の中から、今の回答にとって一番ネタになりそうなもの（具体的なエピソードとして語れそうなもの）を1つ選んでください。",
     "深掘りの観点：\n" + ANGLES.map(a => "・" + a).join("\n"),
-    "選んだ観点に沿って、自然な追加質問を1つ作ってください。音声で読み上げられるので、話し言葉で短く（60文字程度まで）。箇条書きや記号、前置きは使わないこと。",
+    "選んだ観点に沿って、追加質問を1つ作ってください。ただし、いきなり質問文だけを出すのではなく、直前の回答を受けた短い相づちや感想（「それは大変でしたね」「いいですね」「へえ、〇〇だったんですね」など）を一言添えてから、自然に質問へつなげてください。友人と雑談しているような、温かく自然な話し言葉にすること（80文字程度まで）。「〜について教えてください」のような機械的な言い回しは避け、普段の会話で聞くような聞き方にすること。箇条書きや記号は使わないこと。",
     "まだ観点の多くが手つかずで、深掘りする余地があるなら積極的に質問を続けてください。すべての観点が出尽くし、これ以上聞くことがなければ done を true にし、followUp は空文字にしてください。",
     `この話題はすでに${data.depth}回深掘りしています。${data.depth >= 6 ? "十分な回数なので、余程ネタがなければ done にしてください。" : ""}`,
     `カテゴリ：${data.categoryLabel}`,
@@ -85,10 +85,11 @@ function prompt(data) {
 const COMPOSE_CATS = ["history", "personality", "favorites", "skills"];
 
 function validComposeItem(it) {
-  return it && typeof it.text === "string" && it.text.length <= 2000
+  return it && typeof it.text === "string" && it.text.length <= 4000
     && (it.prompt === undefined || it.prompt === null || (typeof it.prompt === "string" && it.prompt.length <= 300));
 }
 
+// 「質問100個でもいい」という要望があるため、件数の上限は厚めに取っている。
 function validComposeInput(x) {
   if (!x || typeof x.subjectName !== "string" || x.subjectName.length < 1 || x.subjectName.length > 100) return false;
   if (x.subjectType !== "person" && x.subjectType !== "group") return false;
@@ -97,7 +98,7 @@ function validComposeInput(x) {
   for (const cat of COMPOSE_CATS) {
     const arr = x.sections[cat];
     if (arr === undefined) continue;
-    if (!Array.isArray(arr) || arr.length > 30 || !arr.every(validComposeItem)) return false;
+    if (!Array.isArray(arr) || arr.length > 150 || !arr.every(validComposeItem)) return false;
   }
   return true;
 }
@@ -119,12 +120,22 @@ function composeSchema() {
 
 const COMPOSE_LABELS = { history: "生い立ち・経歴", personality: "人物像・性格", favorites: "好きなもの", skills: "特技" };
 
+const COMPOSE_INPUT_BUDGET = 24000; // 費用が青天井にならないよう、モデルへ渡す総文字数に上限を設ける
+
 function composePrompt(data) {
   const who = data.subjectType === "group" ? "サークルやチームの記録" : "人物の記録";
+  let budget = COMPOSE_INPUT_BUDGET;
   const sectionsText = COMPOSE_CATS.map(cat => {
     const items = data.sections[cat] || [];
     if (!items.length) return `【${COMPOSE_LABELS[cat]}】(記録なし)`;
-    return `【${COMPOSE_LABELS[cat]}】\n` + items.map(it => `・${it.prompt ? "[" + it.prompt + "] " : ""}${it.text}`).join("\n");
+    const lines = [];
+    for (const it of items) {
+      const line = `・${it.prompt ? "[" + it.prompt + "] " : ""}${it.text}`;
+      if (budget - line.length < 0) { lines.push("・（文字数の都合でこれ以降は省略）"); break; }
+      budget -= line.length;
+      lines.push(line);
+    }
+    return `【${COMPOSE_LABELS[cat]}】\n` + lines.join("\n");
   }).join("\n\n");
   return [
     `あなたはWikipedia編集者です。以下は「${data.subjectName}」という${who}についての、聞き取り調査の生の回答（一問一答）です。`,
