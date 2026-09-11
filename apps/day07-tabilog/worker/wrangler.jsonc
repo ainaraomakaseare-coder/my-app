@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tabilog-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-12",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tabilog-db",
+      "database_id": "REPLACE_WITH_YOUR_DATABASE_ID"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS_BUCKET",
+      "bucket_name": "tabilog-photos"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "WRITE_RATE_LIMITER",
+      "namespace_id": "51019",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
