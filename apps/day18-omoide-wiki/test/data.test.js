@@ -58,6 +58,12 @@ wikiLegacyBirthPlace.history.push(W.newEntry(
 ));
 eq('言い回しを変える前に答えた既知の旧文言も、答え済みとして扱う', W.buildInterviewQueue('person', wikiLegacyBirthPlace).length, totalQuestions - 1);
 
+var wikiLegacyKindergarten = W.newWiki('person', 'テスト4c', '');
+wikiLegacyKindergarten.history.push(W.newEntry(
+  '初音ヶ丘幼稚園です', '本人', '幼稚園・保育園はどこに通っていましたか？どんな子どもでしたか？'
+));
+eq('幼稚園の質問も、言い回しを変える前の旧文言で答え済み扱いになる', W.buildInterviewQueue('person', wikiLegacyKindergarten).length, totalQuestions - 1);
+
 /* ---- normalizeWiki（古いバージョンのWikiを読み込んだときの後方互換） ---- */
 var oldWiki = { id: 'w_old', type: 'person', title: '古いWiki', episodes: [] };
 delete oldWiki.history;

@@ -332,8 +332,23 @@
   // 二度と聞かないようにするため。新しく追加するときは、書き換える直前の文言をそのまま追加する）。
   var LEGACY_QUESTION_TEXT = {
     'birth-place': ['生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば教えてください）'],
+    'birth-story': ['生まれたときのエピソードで、家族から聞いている話はありますか？'],
+    'kindergarten': ['幼稚園・保育園はどこに通っていましたか？どんな子どもでしたか？'],
+    'elementary-school': ['小学校はどこですか？小学校時代の一番の思い出を教えてください'],
+    'elementary-friends': ['小学校で仲の良かった友達や、印象に残っている先生はいましたか？'],
+    'junior-high': ['中学校はどこですか？中学時代、一番打ち込んでいたことは何ですか？'],
+    'high-school': ['高校はどこですか？高校時代に忘れられない出来事はありますか？'],
+    'high-school-friends': ['高校で仲の良かった友達や、当時よく一緒にいた人は誰ですか？その人たちとの思い出があれば教えてください'],
+    'college-or-job': ['大学・専門学校、または最初の就職先はどこですか？そこを選んだ理由も教えてください'],
+    'college-good-bad': ['そこに入って一番良かったことと、一番つらかった・悲しかったことをそれぞれ教えてください'],
+    'college-circle': ['大学・専門学校でサークルや部活、ゼミなどはありましたか？そこで仲の良かった人や出来事を教えてください'],
+    'first-job': ['初めての仕事、社会に出たころのことで覚えている出来事はありますか？'],
     'personality-summary': ['その性格が一番はっきり出た、具体的な出来事を一つ教えてください'],
+    'personality-surprise-laugh': ['「らしいな」と周りが思わず笑った・驚いた瞬間はありますか？そのときの状況も教えてください'],
+    'personality-unexpected-action': ['これまでで一番意外だった行動は何でしたか？何があってそうなったか教えてください'],
     'personality-belief': ['その考え方を曲げなかった、具体的な出来事はありますか？'],
+    'favorite-food': ['一番好きな食べ物と、それを好きになったきっかけの出来事を教えてください'],
+    'favorite-movie-book': ['心に残っている映画・本と、それに出会ったときの状況を教えてください'],
     'favorite-place': ['その場所が好きになった、具体的なきっかけや思い出はありますか？'],
     'favorite-commitment': ['そのこだわりが表れた、具体的な出来事はありますか？'],
     'skill-hobby-start': ['その趣味・特技を始めたきっかけや、のめり込んだ出来事があれば聞かせてください'],
@@ -1246,12 +1261,19 @@
     });
   }
 
-  function openEpisodeForm() {
+  // 旅行の詳細画面から「＋ このイベントにエピソードを追加」で開いたときは、そのTripを覚えておき、
+  // 保存後もダッシュボードではなく同じ旅行の詳細画面に戻る（旅行の中のエピソード、という
+  // 階層を、保存後の遷移でも一貫させるため）。
+  var episodeFormReturnTripId = null;
+
+  function openEpisodeForm(prefillTripId) {
     resetEpisodeForm();
     var w = currentWiki();
     $('#epTripList').innerHTML = w.trips.map(function (tr) {
       return '<option value="' + escapeHtml(tr.title) + '">';
     }).join('');
+    episodeFormReturnTripId = prefillTripId || null;
+    if (prefillTripId) $('#epTrip').value = tripTitle(w, prefillTripId);
     setMicController('episode', $('#epBody'), $('#epMicBtn'), $('#epMicStatus'));
     showScreen('episode');
   }
@@ -1273,6 +1295,7 @@
     w.updatedAt = nowIso();
     persist();
     stopAllMics();
+    if (episodeFormReturnTripId) { openTripDetail(episodeFormReturnTripId); return; }
     openDash(w.id);
   }
 
@@ -1569,7 +1592,7 @@
     $('#aiDeepenToggle').addEventListener('change', function (e) { saveAiDeepenPref(e.target.checked); });
 
     $('#tileInterview').addEventListener('click', startInterview);
-    $('#tileEpisode').addEventListener('click', openEpisodeForm);
+    $('#tileEpisode').addEventListener('click', function () { openEpisodeForm(); });
     $('#tileProfile').addEventListener('click', openProfileForm);
     $('#tileView').addEventListener('click', function () {
       renderWikiPage(currentWiki());
@@ -1581,6 +1604,7 @@
       showScreen('trips');
     });
     $('#btnRenameTrip').addEventListener('click', renameCurrentTrip);
+    $('#btnAddTripEpisode').addEventListener('click', function () { openEpisodeForm(currentTripKey); });
 
     $('#btnPrevQ').addEventListener('click', goToPreviousQuestion);
     $('#btnSkipQ').addEventListener('click', function () { saveInterviewAnswer(true); });
@@ -1601,6 +1625,12 @@
       });
     });
     $('#btnSaveEpisode').addEventListener('click', saveEpisode);
+    $('#btnEpisodeBack').addEventListener('click', function () {
+      stopAllMics();
+      if (episodeFormReturnTripId) { openTripDetail(episodeFormReturnTripId); return; }
+      showScreen('dash');
+      renderDash();
+    });
 
     $('#pfCover').addEventListener('change', function (e) {
       var f = e.target.files[0];

@@ -192,7 +192,29 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('[data-screen=trips].active');
   check('名前を変更すると一覧にも反映される', (await page.textContent('#tripsList')).indexOf('2019年秋の遠足') !== -1);
 
+  // ---- 旅行の詳細画面から直接エピソードを追加すると、旅行名が引き継がれ、保存後もその旅行に戻る ----
+  await page.click('.wiki-card:has-text("2019年秋の遠足")');
+  await page.waitForSelector('[data-screen=tripDetail].active');
+  await page.click('#btnAddTripEpisode');
+  await page.waitForSelector('[data-screen=episode].active');
+  check('旅行の詳細から追加すると、旅行名が引き継がれている', (await page.inputValue('#epTrip')) === '2019年秋の遠足');
+  await page.fill('#epTitle', '2日目の朝ごはん');
+  await page.fill('#epBody', 'みんなでパン屋に行った');
+  await page.click('#btnSaveEpisode');
+  await page.waitForSelector('[data-screen=tripDetail].active');
+  check('保存後はダッシュボードではなく、同じ旅行の詳細画面に戻る', (await page.textContent('#tripDetailTitle')) === '2019年秋の遠足');
+  check('追加したエピソードが同じ旅行の中に増える', (await page.textContent('#tripDetailEpisodes')).indexOf('2日目の朝ごはん') !== -1);
+
+  // ダッシュボードの「エピソードを追加する」から開いたときは、旅行名は引き継がれない（誤って
+  // 直前の旅行に紐づかないように、正しくリセットされることを確認する）
+  await page.click('[data-screen="tripDetail"] .back');
+  await page.waitForSelector('[data-screen=trips].active');
   await page.click('[data-screen="trips"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#tileEpisode');
+  await page.waitForSelector('[data-screen=episode].active');
+  check('ダッシュボードから開くと旅行名は空のまま', (await page.inputValue('#epTrip')) === '');
+  await page.click('#btnEpisodeBack');
   await page.waitForSelector('[data-screen=dash].active');
 
   // ---- 基本情報編集 ----
