@@ -187,7 +187,9 @@ export default {
         body: JSON.stringify({
           model: env.OPENAI_MODEL || "gpt-5.6-sol",
           input: composePrompt(data),
-          reasoning: { effort: "medium" },
+          // まとめ直しは「書き直し」寄りの作業なので、深掘り質問ほどの推論は要らない。
+          // 記録が増えるほど時間がかかりやすいため、速さを優先している。
+          reasoning: { effort: "low" },
           max_output_tokens: 3000,
           store: false,
           text: { format: { type: "json_schema", name: "compose", strict: true, schema: composeSchema() } },

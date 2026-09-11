@@ -752,7 +752,7 @@
     var endpoint = getAiEndpoint();
     if (!endpoint) return Promise.resolve({ ok: false, reason: 'Workerが設定されていません' });
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 25000) : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 60000) : null;
     return fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
