@@ -326,6 +326,24 @@
 
   var CATEGORY_ORDER = ['history', 'personality', 'favorites', 'skills', 'episodes'];
 
+  // questionKey導入より前に、言い回しを変更したことがある質問の「旧文言」。
+  // 該当キーの質問に、旧文言のままの回答（questionKeyを持たない）が残っている場合、
+  // 新しい文言と一致しなくても「答え済み」として扱う（過去に実際に答えてもらった質問を
+  // 二度と聞かないようにするため。新しく追加するときは、書き換える直前の文言をそのまま追加する）。
+  var LEGACY_QUESTION_TEXT = {
+    'birth-place': ['生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば教えてください）'],
+    'personality-summary': ['その性格が一番はっきり出た、具体的な出来事を一つ教えてください'],
+    'personality-belief': ['その考え方を曲げなかった、具体的な出来事はありますか？'],
+    'favorite-place': ['その場所が好きになった、具体的なきっかけや思い出はありますか？'],
+    'favorite-commitment': ['そのこだわりが表れた、具体的な出来事はありますか？'],
+    'skill-hobby-start': ['その趣味・特技を始めたきっかけや、のめり込んだ出来事があれば聞かせてください'],
+    'skill-surprised-others': ['その特技を発揮して、周りが驚いた・助かった具体的な場面を教えてください'],
+    'group-atmosphere': ['その雰囲気が一番出ていた、具体的な場面を一つ教えてください'],
+    'group-catchphrase': ['その合言葉やあだ名が生まれた、きっかけの出来事を教えてください'],
+    'group-skill-surprise': ['その得意なことを発揮して、周りが驚いた具体的な出来事を教えてください'],
+    'group-skill-taught-juniors': ['その技やコツが後輩に伝わった、具体的な場面はありますか？']
+  };
+
   // wiki を渡すと、そのカテゴリで既に答えた質問を除く。判定はまず questionKey の一致で行い
   // （言い回しを変えても同じ質問として認識するため）、questionKeyが無い古い記録（key導入前に
   // 保存されたもの）は本文の一致で補う。これにより、一度答えた固定質問がインタビューを
@@ -344,6 +362,8 @@
         if (askedKeys.indexOf(q.key) !== -1) return;
         if (askedTexts.indexOf(q.text) !== -1) return;
         if (skipped.indexOf(q.key) !== -1) return;
+        var legacyTexts = LEGACY_QUESTION_TEXT[q.key];
+        if (legacyTexts && legacyTexts.some(function (t) { return askedTexts.indexOf(t) !== -1; })) return;
         queue.push({ category: cat, question: q.text, key: q.key, depth: 0 });
       });
     });

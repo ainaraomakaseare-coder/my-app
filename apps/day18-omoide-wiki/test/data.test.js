@@ -49,6 +49,15 @@ var wikiKeyOnly = W.newWiki('person', 'テスト4', '');
 wikiKeyOnly.history.push(W.newEntry('東京都です', '本人', '（昔の言い回しの質問文）', W.QUESTIONS.person.history[0].key));
 eq('questionKeyが一致すれば、質問文が変わっても重複しない', W.buildInterviewQueue('person', wikiKeyOnly).length, totalQuestions - 1);
 
+var wikiLegacyBirthPlace = W.newWiki('person', 'テスト4b', '');
+// questionKey導入より前の、実際に使われていた旧文言そのままの回答（questionKeyは無い）
+wikiLegacyBirthPlace.history.push(W.newEntry(
+  '神奈川県横浜市',
+  '本人',
+  '生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば教えてください）'
+));
+eq('言い回しを変える前に答えた既知の旧文言も、答え済みとして扱う', W.buildInterviewQueue('person', wikiLegacyBirthPlace).length, totalQuestions - 1);
+
 /* ---- normalizeWiki（古いバージョンのWikiを読み込んだときの後方互換） ---- */
 var oldWiki = { id: 'w_old', type: 'person', title: '古いWiki', episodes: [] };
 delete oldWiki.history;
