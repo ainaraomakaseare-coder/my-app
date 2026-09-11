@@ -61,11 +61,16 @@ const TINY_PNG = Buffer.from(
   const errors = [];
   let dismissNextConfirm = false;
   let lastDismissedMessage = '';
+  let nextPromptValue = null;
   page.on('dialog', d => {
     if (dismissNextConfirm && d.type() === 'confirm') {
       dismissNextConfirm = false;
       lastDismissedMessage = d.message();
       d.dismiss();
+    } else if (d.type() === 'prompt' && nextPromptValue !== null) {
+      const v = nextPromptValue;
+      nextPromptValue = null;
+      d.accept(v);
     } else {
       d.accept();
     }
@@ -177,8 +182,16 @@ const TINY_PNG = Buffer.from(
   check('詳細画面にタイトルが出る', (await page.textContent('#tripDetailTitle')) === '秋の遠足');
   check('詳細画面にだれがいたかが出る', (await page.textContent('#tripDetailParticipants')).indexOf('三郎') !== -1);
   check('詳細画面にエピソードが出る', (await page.textContent('#tripDetailEpisodes')).indexOf('雨の遠足') !== -1);
+
+  // ---- 旅行の名前を変更すると、一覧・詳細の両方に反映される（Tripが実体だから） ----
+  nextPromptValue = '2019年秋の遠足';
+  await page.click('#btnRenameTrip');
+  await page.waitForFunction(() => document.getElementById('tripDetailTitle').textContent === '2019年秋の遠足');
+  check('名前を変更すると詳細画面のタイトルが変わる', (await page.textContent('#tripDetailTitle')) === '2019年秋の遠足');
   await page.click('[data-screen="tripDetail"] .back');
   await page.waitForSelector('[data-screen=trips].active');
+  check('名前を変更すると一覧にも反映される', (await page.textContent('#tripsList')).indexOf('2019年秋の遠足') !== -1);
+
   await page.click('[data-screen="trips"] .back');
   await page.waitForSelector('[data-screen=dash].active');
 
@@ -198,7 +211,7 @@ const TINY_PNG = Buffer.from(
   check('プロフィール表に出身が出る', (await page.textContent('.wp-infobox')).indexOf('京都府') !== -1);
   check('エピソードのアルバムに写真が出る', await page.locator('.wp-card img').count() > 0);
   check('年表にエピソードが出る', (await page.textContent('.wp-timeline')).indexOf('雨の遠足') !== -1);
-  check('旅行名の見出しでアルバムがまとまる', (await page.textContent('.wp-trip-title')) === '秋の遠足');
+  check('旅行名の見出しでアルバムがまとまる', (await page.textContent('.wp-trip-title')) === '2019年秋の遠足');
   check('目次に生い立ち・経歴が出る', (await page.textContent('.wp-toc')).indexOf('生い立ち・経歴') !== -1);
   check('人物像・性格の回答に、答えた質問文がラベルとして表示される', (await page.textContent('.wp-main')).indexOf('几帳面で') !== -1 && (await page.locator('.wp-list .q').count()) > 0);
 

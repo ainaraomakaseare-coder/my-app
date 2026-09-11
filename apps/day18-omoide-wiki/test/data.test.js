@@ -147,24 +147,48 @@ var threw = false;
 try { W.parseImportPayload(JSON.stringify({ foo: 'bar' })); } catch (e) { threw = true; }
 ok('関係ないJSONはエラーになる', threw);
 
-/* ---- groupEpisodesByTrip ---- */
-var epA1 = W.newEpisode({ title: '1日目', body: '出発', trip: '沖縄旅行' });
-var epA2 = W.newEpisode({ title: '2日目', body: '海', trip: '沖縄旅行' });
-var epB1 = W.newEpisode({ title: '合宿1', body: '練習', trip: '夏合宿' });
-var epC1 = W.newEpisode({ title: '普段の話', body: '雑談' }); // trip未設定
+/* ---- 旅行（Trip）はエピソードの親エンティティ：findOrCreateTrip / groupEpisodesByTrip ---- */
+var tripWiki = W.newWiki('person', 'テスト6', '');
+var okinawaId = W.findOrCreateTrip(tripWiki, '沖縄旅行');
+var gasshukuId = W.findOrCreateTrip(tripWiki, '夏合宿');
+eq('同じ旅行名でfindOrCreateTripを呼ぶと同じidが返る（重複作成しない）', W.findOrCreateTrip(tripWiki, '沖縄旅行'), okinawaId);
+eq('空文字を渡すと旅行は作らず空文字を返す', W.findOrCreateTrip(tripWiki, '  '), '');
+eq('作った旅行の数だけwiki.tripsに増える', tripWiki.trips.length, 2);
+
+var epA1 = W.newEpisode({ title: '1日目', body: '出発', tripId: okinawaId });
+var epA2 = W.newEpisode({ title: '2日目', body: '海', tripId: okinawaId });
+var epB1 = W.newEpisode({ title: '合宿1', body: '練習', tripId: gasshukuId });
+var epC1 = W.newEpisode({ title: '普段の話', body: '雑談' }); // 旅行未設定
 epA1.createdAt = epA1.updatedAt = '2024-01-01T00:00:00Z';
 epA2.createdAt = epA2.updatedAt = '2024-01-02T00:00:00Z';
 epB1.createdAt = epB1.updatedAt = '2024-03-01T00:00:00Z';
 epC1.createdAt = epC1.updatedAt = '2024-02-01T00:00:00Z';
+tripWiki.episodes = [epA1, epB1, epC1, epA2];
 
-var groupedFlat = W.groupEpisodesByTrip([epC1]);
-eq('旅行名が1件もなければグループは1つ・trip空文字', groupedFlat, [{ trip: '', episodes: [epC1] }]);
-
-var grouped = W.groupEpisodesByTrip([epA1, epB1, epC1, epA2]);
+var grouped = W.groupEpisodesByTrip(tripWiki);
 eq('旅行ごとに分かれる（グループ数）', grouped.length, 3);
 eq('直近の更新がある旅行が先に来る（夏合宿が最新）', grouped[0].trip, '夏合宿');
 eq('旅行名なしは最後にまとまる', grouped[grouped.length - 1].trip, '');
 eq('同じ旅行の中では新しい順', grouped[1].episodes.map(function (e) { return e.id; }), [epA2.id, epA1.id]);
+
+var emptyTripWiki = W.newWiki('person', 'テスト7', '');
+W.findOrCreateTrip(emptyTripWiki, '来月の旅行（まだエピソード無し）');
+eq('エピソードが1件も無い旅行も一覧に含まれる', W.groupEpisodesByTrip(emptyTripWiki).length, 1);
+
+/* ---- normalizeWiki: 旧形式（episode.tripが自由記述文字列）を旅行エンティティに変換する ---- */
+var legacyWiki = {
+  id: 'w_legacy', type: 'person', title: '古いWiki',
+  episodes: [
+    { id: 'e1', body: 'A', trip: '沖縄旅行', createdAt: '2024-01-01T00:00:00Z' },
+    { id: 'e2', body: 'B', trip: '沖縄旅行', createdAt: '2024-01-02T00:00:00Z' },
+    { id: 'e3', body: 'C', createdAt: '2024-01-03T00:00:00Z' }
+  ]
+};
+var migrated = W.normalizeWiki(legacyWiki);
+eq('同じ旅行名の文字列は1つの旅行エンティティにまとまる', migrated.trips.length, 1);
+ok('旅行名からtripIdへ変換される', migrated.episodes[0].tripId === migrated.trips[0].id && migrated.episodes[1].tripId === migrated.trips[0].id);
+eq('旅行名が無いエピソードのtripIdは空文字', migrated.episodes[2].tripId, '');
+ok('古いtripフィールドは削除される', migrated.episodes.every(function (e) { return !('trip' in e); }));
 
 console.log('\n' + pass + ' 件 通過 / ' + fail + ' 件 失敗');
 process.exit(fail ? 1 : 0);

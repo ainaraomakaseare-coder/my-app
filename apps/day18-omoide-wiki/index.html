@@ -202,7 +202,8 @@
 
       <div class="field">
         <label for="epTrip">旅行・イベント名（任意）</label>
-        <input type="text" id="epTrip" placeholder="例：2023年 沖縄旅行">
+        <input type="text" id="epTrip" list="epTripList" placeholder="例：2023年 沖縄旅行">
+        <datalist id="epTripList"></datalist>
       </div>
 
       <div class="field">
@@ -295,6 +296,7 @@
       <header class="hd">
         <button class="btn text back" data-back="trips">← 一覧へ</button>
         <h1 id="tripDetailTitle"></h1>
+        <button class="btn text" id="btnRenameTrip">✏️ 名前を変更</button>
         <p class="lead" id="tripDetailParticipants"></p>
       </header>
       <div id="tripDetailEpisodes" class="wp-album"></div>

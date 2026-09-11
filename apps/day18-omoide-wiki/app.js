@@ -37,11 +37,38 @@
       favorites: [],
       skills: [],
       episodes: [],
+      trips: [],
       contributors: [],
       skippedKeys: [],
       createdAt: t,
       updatedAt: t
     };
+  }
+
+  // 旅行・イベントは、エピソードが所属する親エンティティ（1つの旅行に複数のエピソードがぶら下がる）。
+  // 自由記述の文字列でエピソードをゆるく束ねる方式だと、表記ゆれ（全角/半角・末尾の年など）で
+  // 同じ旅行のはずが別グループに分かれてしまう問題があったため、idを持つ実体にした。
+  function newTrip(title) {
+    var t = nowIso();
+    return { id: uid('t'), title: (title || '').trim(), createdAt: t, updatedAt: t };
+  }
+
+  // 旅行名の文字列から、既存の旅行（完全一致）を探す。無ければ新しく作ってwiki.tripsに足す。
+  // 空文字なら「どの旅行にも属さない」ことを表す空文字のtripIdを返す。
+  function findOrCreateTrip(wiki, title) {
+    var name = (title || '').trim();
+    if (!name) return '';
+    var found = wiki.trips.filter(function (tr) { return tr.title === name; })[0];
+    if (found) return found.id;
+    var tr = newTrip(name);
+    wiki.trips.push(tr);
+    return tr.id;
+  }
+
+  function tripTitle(wiki, tripId) {
+    if (!tripId) return '';
+    var tr = wiki.trips.filter(function (t) { return t.id === tripId; })[0];
+    return tr ? tr.title : '';
   }
 
   // 古いバージョンで作られたWiki（historyカテゴリ追加前など）を読み込んだときに
@@ -53,6 +80,16 @@
     if (!Array.isArray(w.infobox)) w.infobox = [];
     if (!Array.isArray(w.contributors)) w.contributors = [];
     if (!Array.isArray(w.skippedKeys)) w.skippedKeys = [];
+    if (!Array.isArray(w.trips)) w.trips = [];
+    // 旧バージョン（旅行を自由記述の文字列で持っていた）のエピソードを、
+    // 旅行エンティティ＋tripId参照の形に変換する
+    w.episodes.forEach(function (ep) {
+      if (ep.tripId === undefined) ep.tripId = '';
+      if (typeof ep.trip === 'string' && ep.trip.trim() && !ep.tripId) {
+        ep.tripId = findOrCreateTrip(w, ep.trip);
+      }
+      delete ep.trip;
+    });
     return w;
   }
 
@@ -71,7 +108,7 @@
       author: (data.author || '').trim(),
       participants: data.participants || [],
       period: (data.period || '').trim(),
-      trip: (data.trip || '').trim(),
+      tripId: data.tripId || '',
       tags: data.tags || [],
       prompt: data.prompt || '',
       questionKey: data.questionKey || '',
@@ -143,6 +180,7 @@
       favorites: mergeEntryArrays(existing.favorites, incoming.favorites),
       skills: mergeEntryArrays(existing.skills, incoming.skills),
       episodes: mergeEntryArrays(existing.episodes, incoming.episodes),
+      trips: mergeEntryArrays(existing.trips, incoming.trips),
       contributors: Array.from(new Set((existing.contributors || []).concat(incoming.contributors || []))),
       skippedKeys: Array.from(new Set((existing.skippedKeys || []).concat(incoming.skippedKeys || []))),
       createdAt: existing.createdAt || incoming.createdAt || nowIso(),
@@ -156,11 +194,12 @@
     var addedCount = 0, mergedCount = 0;
     (importedWikis || []).forEach(function (w) {
       if (!w || !w.id) return;
+      normalizeWiki(w); // 古い形式（旅行が自由記述の文字列など）のデータでも安全にマージできるようにする
       if (next.wikis[w.id]) {
         next.wikis[w.id] = mergeWiki(next.wikis[w.id], w);
         mergedCount++;
       } else {
-        next.wikis[w.id] = normalizeWiki(w);
+        next.wikis[w.id] = w;
         addedCount++;
       }
     });
@@ -317,13 +356,16 @@
 
   // ---------- 旅行・イベント単位でエピソードをまとめる ----------
 
-  function groupEpisodesByTrip(episodes) {
-    var order = [];
-    var byTrip = {};
+  // wiki（trips配列とepisodes配列を持つ）を渡すと、旅行・イベントごとにエピソードをまとめる。
+  // エピソードが1件も無い旅行（作ったばかりのもの）も、ここに含めて返す。
+  function groupEpisodesByTrip(wiki) {
+    var episodes = wiki.episodes || [];
+    var trips = wiki.trips || [];
+    var byTripId = {};
     episodes.forEach(function (ep) {
-      var key = ep.trip || '';
-      if (!byTrip[key]) { byTrip[key] = []; order.push(key); }
-      byTrip[key].push(ep);
+      var key = ep.tripId || '';
+      if (!byTripId[key]) byTripId[key] = [];
+      byTripId[key].push(ep);
     });
 
     function newestOf(list) {
@@ -331,14 +373,19 @@
     }
     function byNewest(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); }
 
-    var namedKeys = order.filter(function (k) { return k; })
-      .sort(function (a, b) { return newestOf(byTrip[b]).localeCompare(newestOf(byTrip[a])); });
+    var named = trips.map(function (tr) {
+      var eps = (byTripId[tr.id] || []).slice().sort(byNewest);
+      return {
+        trip: tr.title,
+        tripId: tr.id,
+        episodes: eps,
+        sortKey: eps.length ? newestOf(eps) : (tr.updatedAt || tr.createdAt || '')
+      };
+    }).sort(function (a, b) { return b.sortKey.localeCompare(a.sortKey); });
 
-    var groups = namedKeys.map(function (k) {
-      return { trip: k, episodes: byTrip[k].slice().sort(byNewest) };
-    });
-    if (byTrip['']) {
-      groups.push({ trip: '', episodes: byTrip[''].slice().sort(byNewest) });
+    var groups = named.map(function (g) { return { trip: g.trip, tripId: g.tripId, episodes: g.episodes }; });
+    if (byTripId['']) {
+      groups.push({ trip: '', tripId: '', episodes: byTripId[''].slice().sort(byNewest) });
     }
     return groups;
   }
@@ -382,6 +429,8 @@
     normalizeWiki: normalizeWiki,
     newEntry: newEntry,
     newEpisode: newEpisode,
+    newTrip: newTrip,
+    findOrCreateTrip: findOrCreateTrip,
     parseInfoboxText: parseInfoboxText,
     infoboxToText: infoboxToText,
     parseTags: parseTags,
@@ -394,6 +443,7 @@
     estimateBytes: estimateBytes,
     groupEpisodesByTrip: groupEpisodesByTrip,
     tripParticipants: tripParticipants,
+    tripTitle: tripTitle,
     LABELS: LABELS,
     QUESTIONS: QUESTIONS,
     CATEGORY_ORDER: CATEGORY_ORDER,
@@ -583,7 +633,7 @@
       el.innerHTML =
         '<div class="body">' + bodyHtml + '</div>' + thumbsHtml +
         '<div class="foot"><span>' + escapeHtml(L[r.cat]) + (r.item.author ? '・' + escapeHtml(r.item.author) : '') +
-          (r.item.trip ? '・' + escapeHtml(r.item.trip) : '') +
+          (r.item.tripId ? '・' + escapeHtml(tripTitle(w, r.item.tripId)) : '') +
           (r.item.period ? '・' + escapeHtml(r.item.period) : '') + '</span><button data-cat="' + r.cat + '" data-id="' + r.item.id + '">削除</button></div>';
       el.querySelector('button').addEventListener('click', function () {
         if (!confirm('この記録を削除しますか？')) return;
@@ -1151,6 +1201,10 @@
 
   function openEpisodeForm() {
     resetEpisodeForm();
+    var w = currentWiki();
+    $('#epTripList').innerHTML = w.trips.map(function (tr) {
+      return '<option value="' + escapeHtml(tr.title) + '">';
+    }).join('');
     setMicController('episode', $('#epBody'), $('#epMicBtn'), $('#epMicStatus'));
     showScreen('episode');
   }
@@ -1163,7 +1217,7 @@
     var author = $('#epAuthor').value.trim();
     var ep = newEpisode({
       title: title, body: body, photos: pendingEpisodePhotos.slice(),
-      author: author, period: $('#epPeriod').value.trim(), trip: $('#epTrip').value.trim(),
+      author: author, period: $('#epPeriod').value.trim(), tripId: findOrCreateTrip(w, $('#epTrip').value.trim()),
       participants: parseTags($('#epParticipants').value),
       tags: parseTags($('#epTags').value)
     });
@@ -1230,7 +1284,7 @@
   function renderTripsList() {
     var w = currentWiki();
     var listEl = $('#tripsList');
-    var groups = groupEpisodesByTrip(w.episodes).filter(function (g) { return g.trip; });
+    var groups = groupEpisodesByTrip(w).filter(function (g) { return g.trip; });
     if (!groups.length) {
       listEl.innerHTML = '<div class="empty">まだ「旅行・イベント名」をつけたエピソードがありません。「エピソードを追加する」で旅行・イベント名を入力すると、ここにまとまります。</div>';
       return;
@@ -1251,20 +1305,20 @@
           '<span class="sub">' + escapeHtml(participants.length ? participants.join('、') : '参加者は未記録') + '</span>' +
           '<span class="tag">エピソード' + g.episodes.length + '件</span>' +
         '</span>';
-      card.addEventListener('click', function () { openTripDetail(g.trip); });
+      card.addEventListener('click', function () { openTripDetail(g.tripId); });
       listEl.appendChild(card);
     });
   }
 
-  function openTripDetail(tripKey) {
-    currentTripKey = tripKey;
-    renderTripDetail(tripKey);
+  function openTripDetail(tripId) {
+    currentTripKey = tripId;
+    renderTripDetail(tripId);
     showScreen('tripDetail');
   }
 
-  function renderTripDetail(tripKey) {
+  function renderTripDetail(tripId) {
     var w = currentWiki();
-    var group = groupEpisodesByTrip(w.episodes).filter(function (g) { return g.trip === tripKey; })[0];
+    var group = groupEpisodesByTrip(w).filter(function (g) { return g.tripId === tripId; })[0];
     if (!group) { renderTripsList(); showScreen('trips'); return; }
     $('#tripDetailTitle').textContent = group.trip;
     var participants = tripParticipants(group.episodes);
@@ -1273,6 +1327,21 @@
       : '「その場にいた人」はまだ記録されていません';
     var sorted = group.episodes.slice().sort(function (a, b) { return (a.createdAt || '').localeCompare(b.createdAt || ''); });
     $('#tripDetailEpisodes').innerHTML = sorted.map(episodeCardHtml).join('');
+  }
+
+  // 旅行の名前はTripという1つの実体で持っているため、ここで直せば紐づく全エピソードに反映される
+  function renameCurrentTrip() {
+    var w = currentWiki();
+    var trip = w.trips.filter(function (t) { return t.id === currentTripKey; })[0];
+    if (!trip) return;
+    var name = prompt('旅行・イベント名を入力してください', trip.title);
+    if (name === null) return;
+    name = name.trim();
+    if (!name || name === trip.title) return;
+    trip.title = name;
+    trip.updatedAt = nowIso();
+    persist();
+    renderTripDetail(currentTripKey);
   }
 
   function formatDateTimeJa(iso) {
@@ -1332,7 +1401,7 @@
     if (!w.episodes.length) {
       html += '<p class="wp-empty">まだエピソードがありません。</p>';
     } else {
-      var groups = groupEpisodesByTrip(w.episodes);
+      var groups = groupEpisodesByTrip(w);
       if (groups.length === 1 && !groups[0].trip) {
         html += '<div class="wp-album">' + groups[0].episodes.map(episodeCardHtml).join('') + '</div>';
       } else {
@@ -1362,7 +1431,7 @@
     html += '<div class="contrib"><b>寄稿してくれた人</b>' + (w.contributors.length ? escapeHtml(w.contributors.join('、')) : 'まだいません') + '</div>';
     html += '</div></div>';
 
-    var categoryTags = [L.kind].concat(groupEpisodesByTrip(w.episodes).map(function (g) { return g.trip; }).filter(Boolean));
+    var categoryTags = [L.kind].concat(groupEpisodesByTrip(w).map(function (g) { return g.trip; }).filter(Boolean));
     html += '<div class="wp-categories"><b>カテゴリ：</b>' +
       categoryTags.map(function (t) { return '<span class="tag">' + escapeHtml(t) + '</span>'; }).join('') + '</div>';
 
@@ -1464,6 +1533,7 @@
       renderTripsList();
       showScreen('trips');
     });
+    $('#btnRenameTrip').addEventListener('click', renameCurrentTrip);
 
     $('#btnPrevQ').addEventListener('click', goToPreviousQuestion);
     $('#btnSkipQ').addEventListener('click', function () { saveInterviewAnswer(true); });
