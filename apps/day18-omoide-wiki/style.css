@@ -207,7 +207,9 @@ input[type=file] { color: var(--muted); font-size: 13px; }
 .wp-side .contrib { margin-top: 18px; font-family: -apple-system, "Hiragino Sans", sans-serif; font-size: 12.5px; color: var(--paper-muted); }
 .wp-side .contrib b { display: block; color: var(--paper-text); font-size: 13px; margin-bottom: 4px; }
 
-.wp-album { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 14px; }
+.wp-trip-title { font-size: 14.5px; color: var(--paper-muted); font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 16px 0 10px; font-weight: 700; }
+.wp-trip-title:first-of-type { margin-top: 0; }
+.wp-album { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 14px; margin-bottom: 18px; }
 .wp-card { border: 1px solid var(--paper-line); border-radius: 10px; overflow: hidden; background: #fff; }
 .wp-card img { width: 100%; height: 120px; object-fit: cover; display: block; }
 .wp-card .wp-card-body { padding: 10px 12px; font-family: -apple-system, "Hiragino Sans", sans-serif; }

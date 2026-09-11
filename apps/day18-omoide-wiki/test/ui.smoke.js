@@ -79,6 +79,7 @@ const TINY_PNG = Buffer.from(
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
   check('マイクボタンが表示される（対応の有無はブラウザ依存）', await page.locator('#qMicBtn').count() === 1);
+  check('AIエンドポイント未設定時はAI深掘りトグルが隠れている', await page.isHidden('#aiDeepenBlock'));
   const firstQuestion = await page.textContent('#qText');
   await page.fill('#qAnswer', '几帳面で、誰にでも敬語で話す人でした');
   await page.click('#btnSaveQ');
@@ -96,6 +97,7 @@ const TINY_PNG = Buffer.from(
   await page.fill('#epBody', 'バスが来なくて、みんなで歌いながら歩いた');
   await page.fill('#epAuthor', '花子');
   await page.fill('#epPeriod', '2019年秋');
+  await page.fill('#epTrip', '秋の遠足');
   await page.setInputFiles('#epPhotos', [tmpPhoto, tmpPhoto]);
   await page.waitForFunction(() => document.querySelectorAll('#epPhotoPreview img').length === 2);
   await page.click('#epPhotoPreview .rm button');
@@ -105,6 +107,7 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('[data-screen=dash].active');
   check('エピソードが記録に増える', (await page.textContent('#entryList')).indexOf('雨の遠足') !== -1);
   check('サムネイルが表示される', await page.locator('#entryList .thumbs img').count() > 0);
+  check('旅行名がダッシュボードの記録に表示される', (await page.textContent('#entryList')).indexOf('秋の遠足') !== -1);
 
   // ---- 基本情報編集 ----
   await page.click('#tileProfile');
@@ -122,6 +125,7 @@ const TINY_PNG = Buffer.from(
   check('プロフィール表に出身が出る', (await page.textContent('.wp-infobox')).indexOf('京都府') !== -1);
   check('エピソードのアルバムに写真が出る', await page.locator('.wp-card img').count() > 0);
   check('年表にエピソードが出る', (await page.textContent('.wp-timeline')).indexOf('雨の遠足') !== -1);
+  check('旅行名の見出しでアルバムがまとまる', (await page.textContent('.wp-trip-title')) === '秋の遠足');
 
   // ---- 書き出し ----
   const [download] = await Promise.all([
@@ -154,9 +158,58 @@ const TINY_PNG = Buffer.from(
   check('合体後、相手のエピソードも見える', (await page.textContent('.wp-main')).indexOf('カラオケ') !== -1);
   check('自分のエピソードも失われていない', (await page.textContent('.wp-main')).indexOf('雨の遠足') !== -1);
 
-  // ---- 削除 ----
+  // ---- AI深掘り（フェイクのWorkerを立てて模擬する） ----
+  let aiCallCount = 0;
+  const aiServer = http.createServer((req, res) => {
+    const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, corsHeaders); return res.end(); }
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      aiCallCount++;
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({ done: false, followUp: 'AIの追い質問' + aiCallCount }));
+      }, 150);
+    });
+  });
+  const aiPort = await new Promise(resolve => aiServer.listen(0, '127.0.0.1', () => resolve(aiServer.address().port)));
+  await page.evaluate((url) => {
+    document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', url);
+  }, `http://127.0.0.1:${aiPort}/`);
+
   await page.click('[data-screen="view"] .back');
   await page.waitForSelector('[data-screen=dash].active');
+  await page.click('#tileInterview');
+  await page.waitForSelector('[data-screen=interview].active');
+  check('AIエンドポイント設定時はAI深掘りトグルが表示される', !(await page.isHidden('#aiDeepenBlock')));
+  await page.check('#aiDeepenToggle');
+
+  await page.fill('#qAnswer', '最初の回答です');
+  await page.click('#btnSaveQ');
+  check('AI呼び出し中はボタンが無効化される', await page.isDisabled('#btnSaveQ'));
+  await page.waitForFunction(() => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問1') !== -1);
+  check('1回目のAI追い質問が次の質問として表示される', true);
+
+  await page.fill('#qAnswer', '深掘り回答1');
+  await page.click('#btnSaveQ');
+  await page.waitForFunction(() => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問2') !== -1);
+
+  await page.fill('#qAnswer', '深掘り回答2');
+  await page.click('#btnSaveQ');
+  await page.waitForFunction(() => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問3') !== -1);
+  check('depth3までは追い質問が続く', (await page.textContent('#qCategory')).indexOf('AIの深掘り') !== -1);
+
+  await page.fill('#qAnswer', '深掘り回答3');
+  await page.click('#btnSaveQ');
+  await page.waitForFunction(() => (document.getElementById('qCategory').textContent || '').indexOf('AIの深掘り') === -1);
+  check('クライアント側の上限（depth3）でAI呼び出しが頭打ちになる', aiCallCount === 3, 'aiCallCount=' + aiCallCount);
+
+  await page.click('[data-screen="interview"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
+  aiServer.close();
+
+  // ---- 削除（AI深掘りの後片付けを終えて dash 画面にいる状態から） ----
   await page.click('#btnDeleteWiki');
   await page.waitForSelector('[data-screen=home].active');
   check('削除すると一覧から消える', (await page.textContent('#wikiList')).indexOf('やまだ たろう') === -1);

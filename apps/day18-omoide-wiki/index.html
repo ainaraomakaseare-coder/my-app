@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>おもいでWiki</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23151821'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='%23e8c98a'%3E憶%3C/text%3E%3C/svg%3E">
+<!-- Worker公開後に、そのURLをcontentへ設定する。空なら通常の固定質問インタビューだけで動く。 -->
+<meta name="omoide-ai-endpoint" content="">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -131,6 +133,14 @@
         <p class="voice-support" id="voiceSupportNote"></p>
       </div>
 
+      <div class="voice-toggle" id="aiDeepenBlock" hidden>
+        <label class="switch">
+          <input type="checkbox" id="aiDeepenToggle">
+          <span>AIで深掘りする（回答に応じて追加の質問をします・少額のAPI利用料が発生します）</span>
+        </label>
+        <p class="voice-support" id="aiDeepenStatus"></p>
+      </div>
+
       <div class="interview-card">
         <p class="q-cat" id="qCategory"></p>
         <p class="q-text" id="qText"></p>
@@ -175,6 +185,11 @@
         <label for="epPhotos">写真（複数選べます）</label>
         <input type="file" id="epPhotos" accept="image/*" multiple>
         <div id="epPhotoPreview" class="photo-preview"></div>
+      </div>
+
+      <div class="field">
+        <label for="epTrip">旅行・イベント名（任意）</label>
+        <input type="text" id="epTrip" placeholder="例：2023年 沖縄旅行">
       </div>
 
       <div class="field-row">

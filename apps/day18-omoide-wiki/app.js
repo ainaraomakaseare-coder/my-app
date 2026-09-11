@@ -56,6 +56,7 @@
       photos: data.photos || [],
       author: (data.author || '').trim(),
       period: (data.period || '').trim(),
+      trip: (data.trip || '').trim(),
       tags: data.tags || [],
       prompt: data.prompt || '',
       createdAt: t,
@@ -236,9 +237,39 @@
     var bank = QUESTIONS[type] || QUESTIONS.person;
     var queue = [];
     CATEGORY_ORDER.forEach(function (cat) {
-      (bank[cat] || []).forEach(function (q) { queue.push({ category: cat, question: q }); });
+      (bank[cat] || []).forEach(function (q) { queue.push({ category: cat, question: q, depth: 0 }); });
     });
     return queue;
+  }
+
+  var MAX_AI_DEPTH = 3;
+
+  // ---------- 旅行・イベント単位でエピソードをまとめる ----------
+
+  function groupEpisodesByTrip(episodes) {
+    var order = [];
+    var byTrip = {};
+    episodes.forEach(function (ep) {
+      var key = ep.trip || '';
+      if (!byTrip[key]) { byTrip[key] = []; order.push(key); }
+      byTrip[key].push(ep);
+    });
+
+    function newestOf(list) {
+      return list.reduce(function (m, e) { return (e.createdAt || '') > m ? e.createdAt : m; }, '');
+    }
+    function byNewest(a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); }
+
+    var namedKeys = order.filter(function (k) { return k; })
+      .sort(function (a, b) { return newestOf(byTrip[b]).localeCompare(newestOf(byTrip[a])); });
+
+    var groups = namedKeys.map(function (k) {
+      return { trip: k, episodes: byTrip[k].slice().sort(byNewest) };
+    });
+    if (byTrip['']) {
+      groups.push({ trip: '', episodes: byTrip[''].slice().sort(byNewest) });
+    }
+    return groups;
   }
 
   // ---------- 容量の目安 ----------
@@ -274,6 +305,7 @@
     exportPayload: exportPayload,
     addContributor: addContributor,
     estimateBytes: estimateBytes,
+    groupEpisodesByTrip: groupEpisodesByTrip,
     LABELS: LABELS,
     QUESTIONS: QUESTIONS,
     CATEGORY_ORDER: CATEGORY_ORDER,
@@ -291,6 +323,7 @@
   var currentWikiId = null;
   var interviewQueue = [];
   var interviewIndex = 0;
+  var aiThreadHistory = [];
   var pendingEpisodePhotos = [];
   var pendingCoverPhoto = null;
   var entryTab = 'all';
@@ -453,6 +486,7 @@
       el.innerHTML =
         '<div class="body">' + bodyHtml + '</div>' + thumbsHtml +
         '<div class="foot"><span>' + escapeHtml(L[r.cat]) + (r.item.author ? '・' + escapeHtml(r.item.author) : '') +
+          (r.item.trip ? '・' + escapeHtml(r.item.trip) : '') +
           (r.item.period ? '・' + escapeHtml(r.item.period) : '') + '</span><button data-cat="' + r.cat + '" data-id="' + r.item.id + '">削除</button></div>';
       el.querySelector('button').addEventListener('click', function () {
         if (!confirm('この記録を削除しますか？')) return;
@@ -580,16 +614,61 @@
 
   // ---------- インタビュー ----------
 
+  function getAiEndpoint() {
+    var meta = document.querySelector('meta[name="omoide-ai-endpoint"]');
+    var url = meta && meta.content.trim();
+    return url || '';
+  }
+
+  // 回答内容を読んで、追加の深掘り質問を1つだけ作ってもらう。
+  // Worker未設定・通信失敗・12秒以内に応答なしのいずれでも null を返し、
+  // インタビュー自体は止めずに次の固定質問へ進める。
+  function fetchAiFollowUp(payload) {
+    var endpoint = getAiEndpoint();
+    if (!endpoint) return Promise.resolve(null);
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 12000) : null;
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (res) {
+      if (timer) clearTimeout(timer);
+      return res.ok ? res.json() : null;
+    }).catch(function () {
+      if (timer) clearTimeout(timer);
+      return null;
+    }).then(function (data) {
+      return (data && typeof data.followUp === 'string') ? data : null;
+    });
+  }
+
+  function setInterviewBusy(busy, msg) {
+    $('#btnSaveQ').disabled = busy;
+    $('#btnSkipQ').disabled = busy;
+    $('#qMicStatus').textContent = msg || '';
+  }
+
   function startInterview() {
     var w = currentWiki();
     interviewQueue = buildInterviewQueue(w.type);
     interviewIndex = 0;
+    aiThreadHistory = [];
     $('#ivAuthor').value = '';
     $('#voiceModeToggle').checked = false;
     var note = $('#voiceSupportNote');
     note.textContent = supportsRecognition()
       ? (supportsSynthesis() ? '' : '※ このブラウザは質問の読み上げに対応していません（音声入力はできます）')
       : '※ このブラウザは音声入力・読み上げに対応していないようです。文字で入力してください。';
+
+    var aiEndpoint = getAiEndpoint();
+    $('#aiDeepenBlock').hidden = !aiEndpoint;
+    $('#aiDeepenToggle').checked = false;
+    $('#aiDeepenStatus').textContent = aiEndpoint
+      ? 'オンにすると、回答ごとにAIが次の質問を考えます（数秒かかることがあります）'
+      : '';
+
     showScreen('interview');
     renderInterviewQuestion();
   }
@@ -598,11 +677,12 @@
     var w = currentWiki();
     var L = LABELS[w.type];
     var q = interviewQueue[interviewIndex];
-    $('#interviewProgress').style.width = Math.round((interviewIndex / interviewQueue.length) * 100) + '%';
-    $('#qCategory').textContent = L[q.category] + '（' + (interviewIndex + 1) + ' / ' + interviewQueue.length + '）';
+    if (q.depth === 0) aiThreadHistory = [];
+    $('#interviewProgress').style.width = Math.min(100, Math.round((interviewIndex / interviewQueue.length) * 100)) + '%';
+    $('#qCategory').textContent = L[q.category] + (q.dynamic ? '・AIの深掘り' : '') + '（' + (interviewIndex + 1) + ' / ' + interviewQueue.length + '）';
     $('#qText').textContent = q.question;
     $('#qAnswer').value = '';
-    $('#qMicStatus').textContent = '';
+    setInterviewBusy(false, '');
 
     var ctrl = setMicController('interview', $('#qAnswer'), $('#qMicBtn'), $('#qMicStatus'));
     if ($('#voiceModeToggle').checked) {
@@ -610,22 +690,7 @@
     }
   }
 
-  function saveInterviewAnswer(skip) {
-    stopAllMics();
-    var w = currentWiki();
-    var q = interviewQueue[interviewIndex];
-    var text = $('#qAnswer').value.trim();
-    if (!skip && text) {
-      var author = $('#ivAuthor').value.trim();
-      if (q.category === 'episodes') {
-        w.episodes.push(newEpisode({ body: text, author: author, prompt: q.question }));
-      } else {
-        w[q.category].push(newEntry(text, author, q.question));
-      }
-      addContributor(w, author);
-      w.updatedAt = nowIso();
-      persist();
-    }
+  function advanceInterview() {
     interviewIndex++;
     if (interviewIndex >= interviewQueue.length) {
       window.speechSynthesis && window.speechSynthesis.cancel();
@@ -634,6 +699,55 @@
       return;
     }
     renderInterviewQuestion();
+  }
+
+  function saveInterviewAnswer(skip) {
+    stopAllMics();
+    var w = currentWiki();
+    var q = interviewQueue[interviewIndex];
+    var text = $('#qAnswer').value.trim();
+    var author = $('#ivAuthor').value.trim();
+
+    if (skip || !text) {
+      advanceInterview();
+      return;
+    }
+
+    if (q.category === 'episodes') {
+      w.episodes.push(newEpisode({ body: text, author: author, prompt: q.question }));
+    } else {
+      w[q.category].push(newEntry(text, author, q.question));
+    }
+    addContributor(w, author);
+    w.updatedAt = nowIso();
+    persist();
+
+    aiThreadHistory.push({ q: q.question, a: text });
+    if (aiThreadHistory.length > 4) aiThreadHistory = aiThreadHistory.slice(-4);
+
+    var wantsAi = $('#aiDeepenToggle').checked && getAiEndpoint() && q.depth < MAX_AI_DEPTH;
+    if (!wantsAi) {
+      advanceInterview();
+      return;
+    }
+
+    setInterviewBusy(true, 'AIが次の質問を考えています…');
+    fetchAiFollowUp({
+      subjectName: w.title || (w.type === 'group' ? 'このサークル・チーム' : 'この人'),
+      subjectType: w.type,
+      categoryLabel: LABELS[w.type][q.category],
+      question: q.question,
+      answer: text,
+      history: aiThreadHistory.slice(0, -1),
+      depth: q.depth
+    }).then(function (result) {
+      if (result && !result.done && result.followUp) {
+        interviewQueue.splice(interviewIndex + 1, 0, {
+          category: q.category, question: result.followUp, depth: q.depth + 1, dynamic: true
+        });
+      }
+      advanceInterview();
+    });
   }
 
   // ---------- エピソード追加 ----------
@@ -671,6 +785,7 @@
     $('#epTitle').value = '';
     $('#epBody').value = '';
     $('#epPeriod').value = '';
+    $('#epTrip').value = '';
     $('#epAuthor').value = '';
     $('#epTags').value = '';
     $('#epPhotos').value = '';
@@ -705,7 +820,8 @@
     var author = $('#epAuthor').value.trim();
     var ep = newEpisode({
       title: title, body: body, photos: pendingEpisodePhotos.slice(),
-      author: author, period: $('#epPeriod').value.trim(), tags: parseTags($('#epTags').value)
+      author: author, period: $('#epPeriod').value.trim(), trip: $('#epTrip').value.trim(),
+      tags: parseTags($('#epTags').value)
     });
     w.episodes.push(ep);
     addContributor(w, author);
@@ -753,6 +869,16 @@
     });
   }
 
+  function episodeCardHtml(ep) {
+    var title = ep.title || ep.prompt || '（無題）';
+    var img = ep.photos && ep.photos[0] ? '<img src="' + ep.photos[0] + '">' : '';
+    var more = ep.photos && ep.photos.length > 1 ? '（他' + (ep.photos.length - 1) + '枚）' : '';
+    return '<div class="wp-card">' + img +
+      '<div class="wp-card-body"><div class="wp-card-title">' + escapeHtml(title) + '</div>' +
+      '<p class="wp-card-text">' + escapeHtml(ep.body) + '</p>' +
+      '<div class="wp-card-meta"><span>' + escapeHtml(ep.period || '') + more + '</span><span>' + escapeHtml(ep.author || '') + '</span></div></div></div>';
+  }
+
   function renderWikiPage(w) {
     var L = LABELS[w.type];
     var page = $('#wikiPage');
@@ -781,16 +907,16 @@
     if (!w.episodes.length) {
       html += '<p class="wp-empty">まだエピソードがありません。</p>';
     } else {
-      var byNew = w.episodes.slice().sort(function (a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
-      html += '<div class="wp-album">' + byNew.map(function (ep) {
-        var title = ep.title || ep.prompt || '（無題）';
-        var img = ep.photos && ep.photos[0] ? '<img src="' + ep.photos[0] + '">' : '';
-        var more = ep.photos && ep.photos.length > 1 ? '（他' + (ep.photos.length - 1) + '枚）' : '';
-        return '<div class="wp-card">' + img +
-          '<div class="wp-card-body"><div class="wp-card-title">' + escapeHtml(title) + '</div>' +
-          '<p class="wp-card-text">' + escapeHtml(ep.body) + '</p>' +
-          '<div class="wp-card-meta"><span>' + escapeHtml(ep.period || '') + more + '</span><span>' + escapeHtml(ep.author || '') + '</span></div></div></div>';
-      }).join('') + '</div>';
+      var groups = groupEpisodesByTrip(w.episodes);
+      if (groups.length === 1 && !groups[0].trip) {
+        html += '<div class="wp-album">' + groups[0].episodes.map(episodeCardHtml).join('') + '</div>';
+      } else {
+        html += groups.map(function (g) {
+          var heading = g.trip ? escapeHtml(g.trip) : 'その他のエピソード';
+          return '<h3 class="wp-trip-title">' + heading + '</h3><div class="wp-album">' +
+            g.episodes.map(episodeCardHtml).join('') + '</div>';
+        }).join('');
+      }
 
       html += '<h2 style="margin-top:22px">年表（記録した順）</h2><ul class="wp-timeline">' +
         w.episodes.slice().sort(function (a, b) { return (a.createdAt || '').localeCompare(b.createdAt || ''); }).map(function (ep) {
