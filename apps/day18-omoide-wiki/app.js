@@ -515,6 +515,22 @@
 
   // ---------- 音声（音声入力・読み上げ） ----------
 
+  var VOICE_PREF_KEY = 'omoide-wiki:voicePref';
+
+  // 一度「音声で会話する」をオンにしたら、次にインタビューを開いたときも
+  // 覚えておく（毎回オンにし直す手間をなくす）。初回は音声を主役にしたいのでON。
+  function loadVoicePref() {
+    try {
+      var v = localStorage.getItem(VOICE_PREF_KEY);
+      return v === null ? true : v === 'on';
+    } catch (e) {
+      return true;
+    }
+  }
+  function saveVoicePref(on) {
+    try { localStorage.setItem(VOICE_PREF_KEY, on ? 'on' : 'off'); } catch (e) { /* 保存できなくても致命的ではない */ }
+  }
+
   function supportsRecognition() {
     return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   }
@@ -656,7 +672,7 @@
     interviewIndex = 0;
     aiThreadHistory = [];
     $('#ivAuthor').value = '';
-    $('#voiceModeToggle').checked = false;
+    $('#voiceModeToggle').checked = loadVoicePref();
     var note = $('#voiceSupportNote');
     note.textContent = supportsRecognition()
       ? (supportsSynthesis() ? '' : '※ このブラウザは質問の読み上げに対応していません（音声入力はできます）')
@@ -1009,6 +1025,7 @@
 
     bindMicButton('interview', $('#qMicBtn'));
     bindMicButton('episode', $('#epMicBtn'));
+    $('#voiceModeToggle').addEventListener('change', function (e) { saveVoicePref(e.target.checked); });
 
     $('#tileInterview').addEventListener('click', startInterview);
     $('#tileEpisode').addEventListener('click', openEpisodeForm);

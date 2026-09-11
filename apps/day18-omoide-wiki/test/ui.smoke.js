@@ -80,12 +80,23 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('[data-screen=interview].active');
   check('マイクボタンが表示される（対応の有無はブラウザ依存）', await page.locator('#qMicBtn').count() === 1);
   check('AIエンドポイント未設定時はAI深掘りトグルが隠れている', await page.isHidden('#aiDeepenBlock'));
+  check('音声で会話するは初回からONになっている', await page.isChecked('#voiceModeToggle'));
   const firstQuestion = await page.textContent('#qText');
   await page.fill('#qAnswer', '几帳面で、誰にでも敬語で話す人でした');
   await page.click('#btnSaveQ');
   await page.waitForFunction(() => document.getElementById('qText').textContent.length > 0);
   const secondQuestion = await page.textContent('#qText');
   check('次の質問に進む', secondQuestion !== firstQuestion);
+
+  // 音声をオフにして戻り、次にインタビューを開いたときもオフのままであること（毎回オンに戻らない）
+  await page.uncheck('#voiceModeToggle');
+  await page.click('[data-screen="interview"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
+  check('回答がダッシュボードの記録に反映される', (await page.textContent('#entryList')).indexOf('几帳面で') !== -1);
+  await page.click('#tileInterview');
+  await page.waitForSelector('[data-screen=interview].active');
+  check('一度オフにすると、次に開いたときもオフのまま覚えている', !(await page.isChecked('#voiceModeToggle')));
+  await page.check('#voiceModeToggle');
   await page.click('[data-screen="interview"] .back');
   await page.waitForSelector('[data-screen=dash].active');
   check('回答がダッシュボードの記録に反映される', (await page.textContent('#entryList')).indexOf('几帳面で') !== -1);
