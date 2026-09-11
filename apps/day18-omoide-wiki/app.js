@@ -176,24 +176,24 @@
   var QUESTIONS = {
     person: {
       personality: [
-        'まわりの人から、どんな性格だとよく言われますか？',
-        'その人らしいなと感じる、口ぐせや仕草はありますか？',
-        '人には見せない一面や、意外な一面はありますか？',
-        '困っている人を見たとき、どんなふうに動く人でしたか？',
-        '譲れないもの・大事にしている考え方はありますか？'
+        'その性格が一番はっきり出た、具体的な出来事を一つ教えてください',
+        '「らしいな」と周りが思わず笑った・驚いた瞬間はありますか？そのときの状況も教えてください',
+        'これまでで一番意外だった行動は何でしたか？何があってそうなったか教えてください',
+        '誰かが困っているのを見て、実際にどう動いたか。覚えている場面を一つ教えてください',
+        'その考え方を曲げなかった、具体的な出来事はありますか？'
       ],
       favorites: [
-        '好きな食べ物・飲み物は？ きっかけがあれば教えてください',
-        '好きな音楽・映画・本はありますか？',
-        '好きな場所、落ち着く場所はどこですか？',
-        '休みの日は何をして過ごすことが多いですか？',
-        '「これだけは譲れない」というこだわりはありますか？'
+        '一番好きな食べ物と、それを好きになったきっかけの出来事を教えてください',
+        '心に残っている音楽・映画・本と、それに出会ったときの状況を教えてください',
+        'その場所が好きになった、具体的なきっかけや思い出はありますか？',
+        '休日に実際にあった、印象に残っている一日を一つ教えてください（どこで何をしたか）',
+        'そのこだわりが表れた、具体的な出来事はありますか？'
       ],
       skills: [
-        '特技や得意なことは何ですか？',
-        '仕事や趣味で、まわりから頼られることは？',
-        '若いころに打ち込んでいたことはありますか？',
-        '誰かに教えるとしたら、何を教えたいですか？'
+        'その特技を発揮して、周りが驚いた・助かった具体的な場面を教えてください',
+        '実際に頼られて力を発揮した出来事を一つ教えてください',
+        '若いころ打ち込んでいた、具体的な出来事（大会・発表・挫折など）はありますか？',
+        '誰かに実際に教えたときの、印象に残っている場面はありますか？'
       ],
       episodes: [
         '一番思い出に残っている出来事を教えてください',
@@ -205,21 +205,21 @@
     },
     group: {
       personality: [
-        'ひとことで言うと、どんな雰囲気の集まりでしたか？',
-        '外から見た印象と、入ってからの印象は違いましたか？',
-        '新入りが最初に驚くことは何でしたか？',
-        '揉めごとが起きたとき、どんなふうに収まっていましたか？'
+        'その雰囲気が一番出ていた、具体的な場面を一つ教えてください',
+        '外から見た印象と違うと感じた、具体的な出来事はありますか？',
+        '新入りが最初に驚いた、実際にあった出来事はありますか？',
+        '揉めごとが起きたときの、実際の出来事とその収まり方を教えてください'
       ],
       favorites: [
-        'みんなが好きだった場所・行きつけの店はありますか？',
-        '定番の遊び・恒例行事はありましたか？',
-        'よく歌っていた歌、流れていた曲はありますか？',
-        '名物になっていた合言葉やあだ名はありますか？'
+        'みんなが好きだった場所・店での、印象に残っている出来事はありますか？',
+        '定番の遊び・恒例行事で、実際にあった出来事を一つ教えてください',
+        'よく歌っていた歌にまつわる、具体的な思い出はありますか？',
+        'その合言葉やあだ名が生まれた、きっかけの出来事を教えてください'
       ],
       skills: [
-        'このサークル・チームが得意だったことは？',
-        '大会や本番で発揮した実力を教えてください',
-        '後輩に受け継がれた技やコツはありますか？'
+        'その得意なことを発揮して、周りが驚いた具体的な出来事を教えてください',
+        '大会や本番で実力を発揮した、そのときの出来事を教えてください',
+        'その技やコツが後輩に伝わった、具体的な場面はありますか？'
       ],
       episodes: [
         '一番の思い出に残っている出来事を教えてください',
@@ -899,16 +899,22 @@
     var L = LABELS[w.type];
     var page = $('#wikiPage');
     var html = '';
-    if (w.coverPhoto) html += '<img class="wp-cover" src="' + w.coverPhoto + '">';
     html += '<div class="wp-head"><p class="kind">' + L.kind + '</p><h1>' + escapeHtml(w.title || '（名前未設定）') + '</h1>' +
       (w.subtitle ? '<p class="sub">' + escapeHtml(w.subtitle) + '</p>' : '') + '</div>';
 
     html += '<div class="wp-body"><div class="wp-main">';
 
-    html += '<section><h2>概要</h2><p>' + (w.overview ? escapeHtml(w.overview) : autoOverview(w)) + '</p></section>';
+    var tocItems = [['sec-overview', '概要']]
+      .concat(CATEGORY_ORDER.filter(function (c) { return c !== 'episodes'; }).map(function (c) { return ['sec-' + c, L[c]]; }))
+      .concat([['sec-episodes', L.episodes + '・アルバム']]);
+    html += '<nav class="wp-toc"><div class="wp-toc-title">目次</div><ol>' +
+      tocItems.map(function (t) { return '<li><a href="#' + t[0] + '">' + escapeHtml(t[1]) + '</a></li>'; }).join('') +
+      '</ol></nav>';
+
+    html += '<section id="sec-overview"><h2>概要</h2><p>' + (w.overview ? escapeHtml(w.overview) : autoOverview(w)) + '</p></section>';
 
     CATEGORY_ORDER.filter(function (c) { return c !== 'episodes'; }).forEach(function (cat) {
-      html += '<section><h2>' + L[cat] + '</h2>';
+      html += '<section id="sec-' + cat + '"><h2>' + L[cat] + '</h2>';
       if (!w[cat].length) {
         html += '<p class="wp-empty">まだ記録がありません。</p>';
       } else {
@@ -919,7 +925,7 @@
       html += '</section>';
     });
 
-    html += '<section><h2>' + L.episodes + '・アルバム</h2>';
+    html += '<section id="sec-episodes"><h2>' + L.episodes + '・アルバム</h2>';
     if (!w.episodes.length) {
       html += '<p class="wp-empty">まだエピソードがありません。</p>';
     } else {
@@ -943,11 +949,19 @@
     html += '</section>';
 
     html += '</div><div class="wp-side">';
-    html += '<div class="wp-infobox">' + (w.infobox.length ? w.infobox.map(function (r) {
+    html += '<div class="wp-infobox">';
+    html += '<div class="wp-infobox-title">' + escapeHtml(w.title || '（名前未設定）') + '</div>';
+    if (w.coverPhoto) html += '<img class="wp-infobox-photo" src="' + w.coverPhoto + '">';
+    html += w.infobox.length ? w.infobox.map(function (r) {
       return '<div class="row"><div class="k">' + escapeHtml(r.label) + '</div><div class="v">' + escapeHtml(r.value) + '</div></div>';
-    }).join('') : '<div class="row"><div class="v wp-empty">プロフィール表は未入力です</div></div>') + '</div>';
+    }).join('') : '<div class="row"><div class="v wp-empty">プロフィール表は未入力です</div></div>';
+    html += '</div>';
     html += '<div class="contrib"><b>寄稿してくれた人</b>' + (w.contributors.length ? escapeHtml(w.contributors.join('、')) : 'まだいません') + '</div>';
     html += '</div></div>';
+
+    var categoryTags = [L.kind].concat(groupEpisodesByTrip(w.episodes).map(function (g) { return g.trip; }).filter(Boolean));
+    html += '<div class="wp-categories"><b>カテゴリ：</b>' +
+      categoryTags.map(function (t) { return '<span class="tag">' + escapeHtml(t) + '</span>'; }).join('') + '</div>';
 
     page.innerHTML = html;
   }
