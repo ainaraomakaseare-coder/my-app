@@ -197,19 +197,25 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnRenameTrip');
   await page.waitForSelector('#tripEditForm:not([hidden])');
   await page.fill('#tripEditName', '2019年秋の遠足');
-  await page.fill('#tripEditStart', '2023-01-15');
-  await page.fill('#tripEditEnd', '2023-01-17');
+  await page.fill('#tripEditStart', '2023-01-15T09:00');
+  await page.fill('#tripEditEnd', '2023-01-17T17:00');
+  await page.fill('#tripEditLodging', '加賀屋（石川県和倉温泉）');
   await page.click('#btnSaveTripEdit');
   await page.waitForFunction(() => document.getElementById('tripDetailTitle').textContent === '2019年秋の遠足');
   check('名前を変更すると詳細画面のタイトルが変わる', (await page.textContent('#tripDetailTitle')) === '2019年秋の遠足');
-  check('開始日・終了日が範囲表記で詳細画面に反映される', (await page.textContent('#tripDetailPeriod')).indexOf('2023年1月15日〜2023年1月17日') !== -1);
+  check('開始日時・終了日時が範囲表記で詳細画面に反映される', (await page.textContent('#tripDetailPeriod')).indexOf('2023年1月15日 09:00〜2023年1月17日 17:00') !== -1);
+  check('宿泊先が詳細画面に反映される', (await page.textContent('#tripDetailLodging')).indexOf('加賀屋') !== -1);
   await page.click('[data-screen="tripDetail"] .back');
   await page.waitForSelector('[data-screen=trips].active');
   check('名前を変更すると一覧にも反映される', (await page.textContent('#tripsList')).indexOf('2019年秋の遠足') !== -1);
-  check('開始日を変更すると年代の見出しも変わる', (await page.textContent('#tripsList')).indexOf('2020年代') !== -1);
+  check('開始日時を変更すると年代の見出しも変わる', (await page.textContent('#tripsList')).indexOf('2020年代') !== -1);
 
-  // ---- 「今日は何の日」：開始日が今日と同じ月日の旅行があると一覧の上に出る ----
-  const todayIso = await page.evaluate(() => new Date().toISOString().slice(0, 10));
+  // ---- 「今日は何の日」：開始日時が今日と同じ月日の旅行があると一覧の上に出る ----
+  const todayIso = await page.evaluate(() => {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  });
   await page.click('[data-screen="trips"] .back');
   await page.waitForSelector('[data-screen=dash].active');
   await page.click('#tileEpisode');

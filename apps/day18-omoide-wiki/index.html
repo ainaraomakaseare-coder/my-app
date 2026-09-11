@@ -297,7 +297,7 @@
       <header class="hd">
         <button class="btn text back" data-back="trips">← 一覧へ</button>
         <h1 id="tripDetailTitle"></h1>
-        <button class="btn text" id="btnRenameTrip">✏️ 名前・日付を変更</button>
+        <button class="btn text" id="btnRenameTrip">✏️ 名前・日時・宿泊先を変更</button>
 
         <div id="tripEditForm" hidden>
           <div class="field">
@@ -306,19 +306,24 @@
           </div>
           <div class="field-row">
             <div class="field">
-              <label for="tripEditStart">開始日</label>
-              <input type="date" id="tripEditStart">
+              <label for="tripEditStart">開始日時</label>
+              <input type="datetime-local" id="tripEditStart">
             </div>
             <div class="field">
-              <label for="tripEditEnd">終了日（任意）</label>
-              <input type="date" id="tripEditEnd">
+              <label for="tripEditEnd">終了日時（任意）</label>
+              <input type="datetime-local" id="tripEditEnd">
             </div>
+          </div>
+          <div class="field">
+            <label for="tripEditLodging">宿泊先（任意）</label>
+            <input type="text" id="tripEditLodging" placeholder="例：加賀屋（石川県和倉温泉）">
           </div>
           <button class="btn primary" id="btnSaveTripEdit">保存する</button>
           <button class="btn text" id="btnCancelTripEdit">キャンセル</button>
         </div>
 
         <p class="lead" id="tripDetailPeriod"></p>
+        <p class="lead" id="tripDetailLodging"></p>
         <p class="lead" id="tripDetailParticipants"></p>
         <button class="btn primary" id="btnAddTripEpisode">＋ このイベントにエピソードを追加</button>
       </header>

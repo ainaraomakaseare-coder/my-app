@@ -205,11 +205,16 @@ eq('西暦が無ければ時期不明', W.tripEraLabel(''), '時期不明');
 /* ---- 開始日・終了日（startDate/endDate）：カレンダー要素として使う構造化された日付 ---- */
 eq('formatDateJa: input type=date の値を日本語表記にする', W.formatDateJa('2023-08-05'), '2023年8月5日');
 eq('formatDateJa: 不正な値は空文字', W.formatDateJa(''), '');
+eq('formatDateJa: input type=datetime-local の値は時刻もつける', W.formatDateJa('2023-08-05T14:00'), '2023年8月5日 14:00');
 
 eq('tripDateLabel: 開始日のみなら1つの日付', W.tripDateLabel({ startDate: '2023-08-05', endDate: '', period: '' }), '2023年8月5日');
 eq('tripDateLabel: 開始日と終了日があれば範囲表記', W.tripDateLabel({ startDate: '2023-08-05', endDate: '2023-08-10', period: '' }), '2023年8月5日〜2023年8月10日');
 eq('tripDateLabel: 開始日が無ければperiodにフォールバック', W.tripDateLabel({ startDate: '', endDate: '', period: '2023年夏' }), '2023年夏');
 eq('tripDateLabel: どちらも無ければ空文字', W.tripDateLabel({ startDate: '', endDate: '', period: '' }), '');
+eq('tripDateLabel: 同じ日の時間帯（結婚式など）は日付を繰り返さず時刻だけつなげる',
+   W.tripDateLabel({ startDate: '2023-08-05T14:00', endDate: '2023-08-05T18:00', period: '' }), '2023年8月5日 14:00〜18:00');
+eq('tripDateLabel: 日をまたぐ日時は両方フルで表示',
+   W.tripDateLabel({ startDate: '2023-08-05T14:00', endDate: '2023-08-06T10:00', period: '' }), '2023年8月5日 14:00〜2023年8月6日 10:00');
 
 eq('tripSortYear: 開始日があればその年', W.tripSortYear({ startDate: '2023-08-05', period: '2010年ごろ' }), 2023);
 eq('tripSortYear: 開始日が無ければperiodから推測', W.tripSortYear({ startDate: '', period: '2010年ごろ' }), 2010);
