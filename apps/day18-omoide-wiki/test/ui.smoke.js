@@ -61,16 +61,14 @@ const TINY_PNG = Buffer.from(
   const errors = [];
   let dismissNextConfirm = false;
   let lastDismissedMessage = '';
-  let nextPromptValue = null;
+  let promptQueue = [];
   page.on('dialog', d => {
     if (dismissNextConfirm && d.type() === 'confirm') {
       dismissNextConfirm = false;
       lastDismissedMessage = d.message();
       d.dismiss();
-    } else if (d.type() === 'prompt' && nextPromptValue !== null) {
-      const v = nextPromptValue;
-      nextPromptValue = null;
-      d.accept(v);
+    } else if (d.type() === 'prompt' && promptQueue.length) {
+      d.accept(promptQueue.shift());
     } else {
       d.accept();
     }
@@ -177,20 +175,24 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('[data-screen=trips].active');
   check('旅行名がまとめ画面の一覧に出る', (await page.textContent('#tripsList')).indexOf('秋の遠足') !== -1);
   check('参加者（書いた人＋その場にいた人）が一覧に出る', (await page.textContent('#tripsList')).indexOf('花子') !== -1 && (await page.textContent('#tripsList')).indexOf('次郎') !== -1);
+  check('エピソードの「いつ頃」から旅行の時期が自動で補われ、年代の見出しが出る', (await page.textContent('#tripsList')).indexOf('2010年代') !== -1);
   await page.click('.wiki-card:has-text("秋の遠足")');
   await page.waitForSelector('[data-screen=tripDetail].active');
   check('詳細画面にタイトルが出る', (await page.textContent('#tripDetailTitle')) === '秋の遠足');
+  check('詳細画面に時期が出る', (await page.textContent('#tripDetailPeriod')).indexOf('2019年秋') !== -1);
   check('詳細画面にだれがいたかが出る', (await page.textContent('#tripDetailParticipants')).indexOf('三郎') !== -1);
   check('詳細画面にエピソードが出る', (await page.textContent('#tripDetailEpisodes')).indexOf('雨の遠足') !== -1);
 
-  // ---- 旅行の名前を変更すると、一覧・詳細の両方に反映される（Tripが実体だから） ----
-  nextPromptValue = '2019年秋の遠足';
+  // ---- 旅行の名前・時期を変更すると、一覧・詳細の両方に反映される（Tripが実体だから） ----
+  promptQueue = ['2019年秋の遠足', '2023年1月'];
   await page.click('#btnRenameTrip');
   await page.waitForFunction(() => document.getElementById('tripDetailTitle').textContent === '2019年秋の遠足');
   check('名前を変更すると詳細画面のタイトルが変わる', (await page.textContent('#tripDetailTitle')) === '2019年秋の遠足');
+  check('時期を変更すると詳細画面にも反映される', (await page.textContent('#tripDetailPeriod')).indexOf('2023年1月') !== -1);
   await page.click('[data-screen="tripDetail"] .back');
   await page.waitForSelector('[data-screen=trips].active');
   check('名前を変更すると一覧にも反映される', (await page.textContent('#tripsList')).indexOf('2019年秋の遠足') !== -1);
+  check('時期を変更すると年代の見出しも変わる', (await page.textContent('#tripsList')).indexOf('2020年代') !== -1);
 
   // ---- 旅行の詳細画面から直接エピソードを追加すると、旅行名が引き継がれ、保存後もその旅行に戻る ----
   await page.click('.wiki-card:has-text("2019年秋の遠足")');

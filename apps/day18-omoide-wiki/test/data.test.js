@@ -187,6 +187,21 @@ eq('同じ旅行名でfindOrCreateTripを呼ぶと同じidが返る（重複作�
 eq('空文字を渡すと旅行は作らず空文字を返す', W.findOrCreateTrip(tripWiki, '  '), '');
 eq('作った旅行の数だけwiki.tripsに増える', tripWiki.trips.length, 2);
 
+/* ---- 旅行の時期（period）：エピソードの「いつ頃」から自動で補われ、年代でまとめられる ---- */
+var periodWiki = W.newWiki('person', 'テスト6b', '');
+var kyotoId = W.findOrCreateTrip(periodWiki, '京都旅行', '2023年8月');
+eq('新規作成時にperiodが設定される', periodWiki.trips[0].period, '2023年8月');
+W.findOrCreateTrip(periodWiki, '京都旅行', '2024年1月');
+eq('既にperiodがある旅行には上書きしない', periodWiki.trips[0].period, '2023年8月');
+var noPeriodId = W.findOrCreateTrip(periodWiki, '日帰り旅行');
+W.findOrCreateTrip(periodWiki, '日帰り旅行', '2020年春');
+eq('periodが未設定だった旅行には後から補われる', periodWiki.trips[1].period, '2020年春');
+
+eq('periodから西暦4桁を取り出す', W.tripYear('2023年8月'), 2023);
+eq('西暦が無ければnull', W.tripYear('高校時代'), null);
+eq('年代ラベルに丸める', W.tripEraLabel('2023年8月'), '2020年代');
+eq('西暦が無ければ時期不明', W.tripEraLabel(''), '時期不明');
+
 var epA1 = W.newEpisode({ title: '1日目', body: '出発', tripId: okinawaId });
 var epA2 = W.newEpisode({ title: '2日目', body: '海', tripId: okinawaId });
 var epB1 = W.newEpisode({ title: '合宿1', body: '練習', tripId: gasshukuId });
