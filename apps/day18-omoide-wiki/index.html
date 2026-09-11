@@ -97,6 +97,11 @@
           <span class="tile-title">完成ページを見る</span>
           <span class="tile-desc">Wikipedia風にまとめて表示・印刷。</span>
         </button>
+        <button class="tile wide" id="tileTrips">
+          <span class="tile-emoji">🧳</span>
+          <span class="tile-title">旅行・イベントでまとめる</span>
+          <span class="tile-desc">「旅行・イベント名」をつけたエピソードを、だれがいて何があったかごとにふり返れます。</span>
+        </button>
       </div>
 
       <div class="dash-section">
@@ -194,6 +199,11 @@
         <input type="text" id="epTrip" placeholder="例：2023年 沖縄旅行">
       </div>
 
+      <div class="field">
+        <label for="epParticipants">その場にいた人（カンマ区切り・任意）</label>
+        <input type="text" id="epParticipants" placeholder="例：鈴木, 田中, 佐藤">
+      </div>
+
       <div class="field-row">
         <div class="field">
           <label for="epPeriod">いつ頃（自由形式）</label>
@@ -259,6 +269,30 @@
     </div>
     <p class="view-compose-note no-print" id="composeNote"></p>
     <div class="wiki-page" id="wikiPage"></div>
+  </section>
+
+  <!-- ============ 旅行・イベントでまとめる（一覧） ============ -->
+  <section class="screen" data-screen="trips">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="dash">← 戻る</button>
+        <h1>旅行・イベントでまとめる</h1>
+        <p class="lead">エピソードに「旅行・イベント名」をつけると、ここで自動的にまとまります。だれがいて、どんな出来事があったかをふり返れます。</p>
+      </header>
+      <div id="tripsList" class="wiki-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ 旅行・イベントでまとめる（詳細） ============ -->
+  <section class="screen" data-screen="tripDetail">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="trips">← 一覧へ</button>
+        <h1 id="tripDetailTitle"></h1>
+        <p class="lead" id="tripDetailParticipants"></p>
+      </header>
+      <div id="tripDetailEpisodes" class="wp-album"></div>
+    </div>
   </section>
 
 </div>

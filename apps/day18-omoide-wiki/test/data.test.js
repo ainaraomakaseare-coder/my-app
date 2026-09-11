@@ -31,12 +31,23 @@ var totalQuestions = freshQueue.length;
 var wikiWithAnswers = W.newWiki('person', 'テスト2', '');
 var firstQ = W.QUESTIONS.person.history[0];
 var secondQ = W.QUESTIONS.person.favorites[0];
-wikiWithAnswers.history.push(W.newEntry('東京都出身です', '本人', firstQ));
-wikiWithAnswers.favorites.push(W.newEntry('カレーが好きです', '本人', secondQ));
+wikiWithAnswers.history.push(W.newEntry('東京都出身です', '本人', firstQ.text, firstQ.key));
+wikiWithAnswers.favorites.push(W.newEntry('カレーが好きです', '本人', secondQ.text, secondQ.key));
 var filteredQueue = W.buildInterviewQueue('person', wikiWithAnswers);
 eq('既に答えた分だけ質問数が減る', filteredQueue.length, totalQuestions - 2);
-ok('既に答えた質問はキューに残らない', !filteredQueue.some(function (q) { return q.question === firstQ || q.question === secondQ; }));
+ok('既に答えた質問はキューに残らない', !filteredQueue.some(function (q) { return q.question === firstQ.text || q.question === secondQ.text; }));
 eq('wikiを渡さない場合は今まで通り全問出る（後方互換）', W.buildInterviewQueue('person').length, totalQuestions);
+
+/* ---- 質問の言い回しを変えても、既に答えた質問は繰り返し聞かれない ---- */
+var wikiLegacyText = W.newWiki('person', 'テスト3', '');
+// questionKeyが無い古い形式の記録（key導入前に保存されたもの）でも、本文が一致すれば弾かれる
+wikiLegacyText.history.push(W.newEntry('東京都です', '本人', W.QUESTIONS.person.history[0].text));
+eq('questionKeyが無くても本文一致で重複を防ぐ（後方互換）', W.buildInterviewQueue('person', wikiLegacyText).length, totalQuestions - 1);
+
+var wikiKeyOnly = W.newWiki('person', 'テスト4', '');
+// 質問の言い回しを変えた後でも、questionKeyさえ一致すれば重複しない（本文は昔のまま保存されている想定）
+wikiKeyOnly.history.push(W.newEntry('東京都です', '本人', '（昔の言い回しの質問文）', W.QUESTIONS.person.history[0].key));
+eq('questionKeyが一致すれば、質問文が変わっても重複しない', W.buildInterviewQueue('person', wikiKeyOnly).length, totalQuestions - 1);
 
 /* ---- normalizeWiki（古いバージョンのWikiを読み込んだときの後方互換） ---- */
 var oldWiki = { id: 'w_old', type: 'person', title: '古いWiki', episodes: [] };
@@ -61,6 +72,15 @@ ok('person の質問数と group の質問数はどちらも0でない', W.build
 eq('質問キューの件数はカテゴリ合計と一致',
    W.buildInterviewQueue('person').length,
    W.CATEGORY_ORDER.reduce(function (sum, c) { return sum + W.QUESTIONS.person[c].length; }, 0));
+
+/* ---- tripParticipants: 旅行・イベントの「だれがいたか」を重複なく集める ---- */
+var tripEpisodes = [
+  W.newEpisode({ body: 'A', author: '鈴木', participants: ['田中', '佐藤'], trip: '沖縄旅行' }),
+  W.newEpisode({ body: 'B', author: '田中', participants: ['鈴木'], trip: '沖縄旅行' })
+];
+eq('書いた人・その場にいた人を重複なく順番通りに集める',
+   W.tripParticipants(tripEpisodes), ['鈴木', '田中', '佐藤']);
+eq('エピソードが無ければ空配列', W.tripParticipants([]), []);
 
 /* ---- mergeEntryArrays ---- */
 var a = [{ id: '1', text: 'A', createdAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z' }];

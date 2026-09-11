@@ -137,6 +137,7 @@ const TINY_PNG = Buffer.from(
   await page.fill('#epAuthor', '花子');
   await page.fill('#epPeriod', '2019年秋');
   await page.fill('#epTrip', '秋の遠足');
+  await page.fill('#epParticipants', '次郎, 三郎');
   await page.setInputFiles('#epPhotos', [tmpPhoto, tmpPhoto]);
   await page.waitForFunction(() => document.querySelectorAll('#epPhotoPreview img').length === 2);
   await page.click('#epPhotoPreview .rm button');
@@ -147,6 +148,21 @@ const TINY_PNG = Buffer.from(
   check('エピソードが記録に増える', (await page.textContent('#entryList')).indexOf('雨の遠足') !== -1);
   check('サムネイルが表示される', await page.locator('#entryList .thumbs img').count() > 0);
   check('旅行名がダッシュボードの記録に表示される', (await page.textContent('#entryList')).indexOf('秋の遠足') !== -1);
+
+  // ---- 旅行・イベントでまとめる ----
+  await page.click('#tileTrips');
+  await page.waitForSelector('[data-screen=trips].active');
+  check('旅行名がまとめ画面の一覧に出る', (await page.textContent('#tripsList')).indexOf('秋の遠足') !== -1);
+  check('参加者（書いた人＋その場にいた人）が一覧に出る', (await page.textContent('#tripsList')).indexOf('花子') !== -1 && (await page.textContent('#tripsList')).indexOf('次郎') !== -1);
+  await page.click('.wiki-card:has-text("秋の遠足")');
+  await page.waitForSelector('[data-screen=tripDetail].active');
+  check('詳細画面にタイトルが出る', (await page.textContent('#tripDetailTitle')) === '秋の遠足');
+  check('詳細画面にだれがいたかが出る', (await page.textContent('#tripDetailParticipants')).indexOf('三郎') !== -1);
+  check('詳細画面にエピソードが出る', (await page.textContent('#tripDetailEpisodes')).indexOf('雨の遠足') !== -1);
+  await page.click('[data-screen="tripDetail"] .back');
+  await page.waitForSelector('[data-screen=trips].active');
+  await page.click('[data-screen="trips"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
 
   // ---- 基本情報編集 ----
   await page.click('#tileProfile');
@@ -265,8 +281,8 @@ const TINY_PNG = Buffer.from(
     const w = W.newWiki('person', 'すぐ育つ人', '');
     ['history', 'personality', 'favorites', 'skills', 'episodes'].forEach((cat) => {
       (W.QUESTIONS.person[cat] || []).forEach((q) => {
-        if (cat === 'episodes') w.episodes.push(W.newEpisode({ body: 'テスト回答', prompt: q }));
-        else w[cat].push(W.newEntry('テスト回答', '', q));
+        if (cat === 'episodes') w.episodes.push(W.newEpisode({ body: 'テスト回答', prompt: q.text, questionKey: q.key }));
+        else w[cat].push(W.newEntry('テスト回答', '', q.text, q.key));
       });
     });
     // 既存のWiki（やまだ たろう）を消さないよう、上書きではなく追加する

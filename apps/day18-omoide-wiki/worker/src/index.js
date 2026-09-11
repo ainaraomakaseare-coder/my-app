@@ -38,7 +38,8 @@ function validInput(x) {
     && typeof x.question === "string" && x.question.length >= 1 && x.question.length <= 300
     && typeof x.answer === "string" && x.answer.length >= 1 && x.answer.length <= 4000
     && Array.isArray(x.history) && x.history.length <= MAX_HISTORY && x.history.every(validTurn)
-    && Number.isInteger(x.depth) && x.depth >= 0 && x.depth <= 10;
+    && Number.isInteger(x.depth) && x.depth >= 0 && x.depth <= 10
+    && (x.profile === undefined || (typeof x.profile === "string" && x.profile.length <= 1000));
 }
 
 function schema() {
@@ -64,6 +65,7 @@ const ANGLES = [
   "記憶に残っている細かい情景（見た景色、聞いた音、食べたものなど）",
   "似たようなことが他の時期にもあったか",
   "その人の趣味・特技・夢中になっていることについて、まだ聞けていない話（始めたきっかけ、のめり込んだ出来事、それを通じて出会った人など）",
+  "生まれ年・結成年などから分かる時代に、日本で流行っていた具体的なテレビ番組・音楽・芸能人・グループなどを挙げて、好きだったか尋ねる（年代がプロフィール表や会話から推測できる場合のみ）",
 ];
 
 function prompt(data) {
@@ -79,6 +81,7 @@ function prompt(data) {
     "深掘りを続けるかどうかは、直前の回答の分量・具体性で判断してください。回答がごく短い・情報が薄い（相槌程度、数文字〜十数文字など）場合は、無理に深掘りせず done を true にしてください。反対に、回答が具体的でエピソードや感情が豊富に語られている場合は、まだ聞ける観点が残っていれば done を false にして積極的に深掘りを続けてください。",
     `今の回答の文字数：${len}文字（${len < 15 ? "かなり短いので、無理に深掘りしないほうがよい" : len < 40 ? "やや短め" : "十分な分量があるので、深掘りの余地を積極的に探ってよい"}）`,
     `この話題はすでに${data.depth}回深掘りしています。${data.depth >= 6 ? "十分な回数なので、余程ネタがなければ done にしてください。" : ""}`,
+    data.profile ? `プロフィール表：\n${data.profile}\n（生年月日や結成年などがここに書かれていれば、その時代に日本で流行っていた具体的な番組・音楽・芸能人を挙げて「〇〇はお好きでしたか？」のように尋ねると喜ばれます。年代が分からない・自信が持てない場合は、無理に使わず他の観点にしてください。不確かな年代で古すぎる／新しすぎるものを挙げるのは避けること）` : "",
     `カテゴリ：${data.categoryLabel}`,
     `今の質問：${data.question}`,
     `今の回答：${data.answer}`,

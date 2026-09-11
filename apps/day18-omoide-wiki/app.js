@@ -54,9 +54,9 @@
     return w;
   }
 
-  function newEntry(text, author, prompt) {
+  function newEntry(text, author, prompt, questionKey) {
     var t = nowIso();
-    return { id: uid('e'), text: (text || '').trim(), author: (author || '').trim(), prompt: prompt || '', createdAt: t, updatedAt: t };
+    return { id: uid('e'), text: (text || '').trim(), author: (author || '').trim(), prompt: prompt || '', questionKey: questionKey || '', createdAt: t, updatedAt: t };
   }
 
   function newEpisode(data) {
@@ -67,10 +67,12 @@
       body: (data.body || '').trim(),
       photos: data.photos || [],
       author: (data.author || '').trim(),
+      participants: data.participants || [],
       period: (data.period || '').trim(),
       trip: (data.trip || '').trim(),
       tags: data.tags || [],
       prompt: data.prompt || '',
+      questionKey: data.questionKey || '',
       createdAt: t,
       updatedAt: t
     };
@@ -186,105 +188,113 @@
     group: { history: '沿革', personality: '雰囲気・カラー', favorites: '好きだったもの・定番', skills: '得意だったこと', episodes: '思い出エピソード', kind: 'サークル・チーム' }
   };
 
+  // 質問は {key, text} の形。key は言い回しを変えても不変にしておき、
+  // 「一度答えた質問はもう聞かない」判定を文言の一致ではなくkeyの一致で行うため
+  // （言い回しを調整するたびに既に答えた質問が再度出てきてしまうのを防ぐ）。
   var QUESTIONS = {
     person: {
       history: [
-        'まずは基本から聞かせてください！生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば嬉しいです）',
-        '生まれたときのエピソードで、家族から聞いている面白い話はありますか？',
-        '幼稚園・保育園はどこに通っていましたか？当時どんな子どもだったか、ぜひ聞かせてください！',
-        '小学校はどこですか？小学校時代の一番の思い出、教えてください！',
-        '小学校で仲良かった友達や、忘れられない先生はいましたか？',
-        '中学校はどこですか？当時、一番夢中になっていたことは何ですか？',
-        '高校はどこですか？高校時代の忘れられない出来事、聞かせてください！',
-        '高校で仲良かった友達や、当時よく一緒にいた人は誰でしたか？その人たちとの楽しい思い出があれば教えてください',
-        '大学・専門学校、または最初の就職先はどこですか？そこを選んだ理由もぜひ聞かせてください',
-        'そこに入って一番良かったこと、そして一番つらかった・悲しかったこと、それぞれ聞かせてください',
-        '大学・専門学校でサークルや部活、ゼミなどはありましたか？そこでの仲良かった人や楽しかった出来事を教えてください',
-        'アルバイト先で仲良くなった人や、印象に残っている出来事はありますか？',
-        '初めての仕事、社会に出たころのこと。覚えている出来事があればぜひ！',
-        'これまでの人生で、一番大きな転機・決断だったと思う出来事は何ですか？'
+        { key: 'birth-place', text: 'まずは基本から聞かせてください！生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば嬉しいです）' },
+        { key: 'birth-story', text: '生まれたときのエピソードで、家族から聞いている面白い話はありますか？' },
+        { key: 'kindergarten', text: '幼稚園・保育園はどこに通っていましたか？当時どんな子どもだったか、ぜひ聞かせてください！' },
+        { key: 'elementary-school', text: '小学校はどこですか？小学校時代の一番の思い出、教えてください！' },
+        { key: 'elementary-friends', text: '小学校で仲良かった友達や、忘れられない先生はいましたか？' },
+        { key: 'junior-high', text: '中学校はどこですか？当時、一番夢中になっていたことは何ですか？' },
+        { key: 'high-school', text: '高校はどこですか？高校時代の忘れられない出来事、聞かせてください！' },
+        { key: 'high-school-friends', text: '高校で仲良かった友達や、当時よく一緒にいた人は誰でしたか？その人たちとの楽しい思い出があれば教えてください' },
+        { key: 'college-or-job', text: '大学・専門学校、または最初の就職先はどこですか？そこを選んだ理由もぜひ聞かせてください' },
+        { key: 'college-good-bad', text: 'そこに入って一番良かったこと、そして一番つらかった・悲しかったこと、それぞれ聞かせてください' },
+        { key: 'college-circle', text: '大学・専門学校でサークルや部活、ゼミなどはありましたか？そこでの仲良かった人や楽しかった出来事を教えてください' },
+        { key: 'part-time-job', text: 'アルバイト先で仲良くなった人や、印象に残っている出来事はありますか？' },
+        { key: 'first-job', text: '初めての仕事、社会に出たころのこと。覚えている出来事があればぜひ！' },
+        { key: 'turning-point', text: 'これまでの人生で、一番大きな転機・決断だったと思う出来事は何ですか？' }
       ],
       personality: [
-        '自分の性格をひとことで言うと、どんな感じだと思いますか？そう思うきっかけになった具体的な出来事も、あわせて聞かせてください！',
-        '「らしいな」と周りが思わず笑った・驚いた瞬間はありますか？そのときの状況も聞かせてください',
-        'これまでで一番意外だった行動は何でしたか？何があってそうなったか、ぜひ教えてください',
-        '誰かが困っているのを見て、実際にどう動いたか。覚えている場面を一つ教えてください',
-        '「これだけは譲れない」という信念や考え方はありますか？それを貫いた具体的な出来事も教えてください'
+        { key: 'personality-summary', text: '自分の性格をひとことで言うと、どんな感じだと思いますか？そう思うきっかけになった具体的な出来事も、あわせて聞かせてください！' },
+        { key: 'personality-surprise-laugh', text: '「らしいな」と周りが思わず笑った・驚いた瞬間はありますか？そのときの状況も聞かせてください' },
+        { key: 'personality-unexpected-action', text: 'これまでで一番意外だった行動は何でしたか？何があってそうなったか、ぜひ教えてください' },
+        { key: 'personality-helped-someone', text: '誰かが困っているのを見て、実際にどう動いたか。覚えている場面を一つ教えてください' },
+        { key: 'personality-belief', text: '「これだけは譲れない」という信念や考え方はありますか？それを貫いた具体的な出来事も教えてください' }
       ],
       favorites: [
-        '一番好きな食べ物は何ですか？それを好きになったきっかけの出来事も聞かせてください',
-        '一番好きな曲を1つ挙げるとしたら何ですか？好きになったきっかけや、聴くと思い出す出来事を教えてください',
-        '心に残っている映画・本はありますか？それに出会ったときの状況も聞かせてください',
-        '一番好きな場所はどこですか？そこが好きになった具体的なきっかけや思い出も聞かせてください',
-        '休日に実際にあった、印象に残っている一日を一つ教えてください（どこで何をしたか）',
-        '「ここだけは譲れない」というこだわりはありますか？それが表れた具体的な出来事も教えてください',
-        '今ハマっている趣味や、時間を忘れて没頭できることは何ですか？始めたきっかけも聞かせてください！'
+        { key: 'favorite-food', text: '一番好きな食べ物は何ですか？それを好きになったきっかけの出来事も聞かせてください' },
+        { key: 'favorite-song', text: '一番好きな曲を1つ挙げるとしたら何ですか？好きになったきっかけや、聴くと思い出す出来事を教えてください' },
+        { key: 'favorite-movie-book', text: '心に残っている映画・本はありますか？それに出会ったときの状況も聞かせてください' },
+        { key: 'favorite-place', text: '一番好きな場所はどこですか？そこが好きになった具体的なきっかけや思い出も聞かせてください' },
+        { key: 'favorite-holiday', text: '休日に実際にあった、印象に残っている一日を一つ教えてください（どこで何をしたか）' },
+        { key: 'favorite-commitment', text: '「ここだけは譲れない」というこだわりはありますか？それが表れた具体的な出来事も教えてください' },
+        { key: 'favorite-hobby', text: '今ハマっている趣味や、時間を忘れて没頭できることは何ですか？始めたきっかけも聞かせてください！' }
       ],
       skills: [
-        '得意なこと・自信のあることは何ですか？一番の武器だと思うものをぜひ教えてください！',
-        '今までで一番のめり込んだ趣味や特技は何ですか？始めたきっかけもぜひ聞かせてください',
-        '得意なことを発揮して、周りが驚いた・助かった具体的な場面はありますか？',
-        '実際に頼られて力を発揮した出来事を一つ教えてください',
-        '若いころ打ち込んでいた、具体的な出来事（大会・発表・挫折など）はありますか？',
-        '誰かに実際に教えたときの、印象に残っている場面はありますか？'
+        { key: 'skill-best', text: '得意なこと・自信のあることは何ですか？一番の武器だと思うものをぜひ教えてください！' },
+        { key: 'skill-hobby-start', text: '今までで一番のめり込んだ趣味や特技は何ですか？始めたきっかけもぜひ聞かせてください' },
+        { key: 'skill-surprised-others', text: '得意なことを発揮して、周りが驚いた・助かった具体的な場面はありますか？' },
+        { key: 'skill-relied-on', text: '実際に頼られて力を発揮した出来事を一つ教えてください' },
+        { key: 'skill-youth-devotion', text: '若いころ打ち込んでいた、具体的な出来事（大会・発表・挫折など）はありますか？' },
+        { key: 'skill-taught-someone', text: '誰かに実際に教えたときの、印象に残っている場面はありますか？' }
       ],
       episodes: [
-        '一番思い出に残っている出来事を教えてください',
-        'その人らしいと感じたエピソードはありますか？',
-        '一緒に笑った・泣いた出来事はありますか？',
-        '旅行や特別な日の思い出はありますか？',
-        'もし最後に一言伝えるとしたら、何を伝えたいですか？'
+        { key: 'episode-most-memorable', text: '一番思い出に残っている出来事を教えてください' },
+        { key: 'episode-typical', text: 'その人らしいと感じたエピソードはありますか？' },
+        { key: 'episode-laugh-cry', text: '一緒に笑った・泣いた出来事はありますか？' },
+        { key: 'episode-trip', text: '旅行や特別な日の思い出はありますか？' },
+        { key: 'episode-last-message', text: 'もし最後に一言伝えるとしたら、何を伝えたいですか？' }
       ]
     },
     group: {
       history: [
-        'いつ、どうやって結成されましたか？きっかけを教えてください',
-        '名前の由来はありますか？',
-        '最初の頃はどんな活動をしていましたか？',
-        '活動場所や活動内容は、時期によってどう変わっていきましたか？',
-        '一番人数が多かった・少なかった時期はいつですか？そのころの様子は？',
-        '存続にかかわるような、大きな転機はありましたか？',
-        '今の姿になるまでで、一番大きく変わったと思う出来事は何ですか？'
+        { key: 'group-founding', text: 'いつ、どうやって結成されましたか？きっかけを教えてください' },
+        { key: 'group-name-origin', text: '名前の由来はありますか？' },
+        { key: 'group-early-activity', text: '最初の頃はどんな活動をしていましたか？' },
+        { key: 'group-activity-change', text: '活動場所や活動内容は、時期によってどう変わっていきましたか？' },
+        { key: 'group-member-count', text: '一番人数が多かった・少なかった時期はいつですか？そのころの様子は？' },
+        { key: 'group-turning-point', text: '存続にかかわるような、大きな転機はありましたか？' },
+        { key: 'group-biggest-change', text: '今の姿になるまでで、一番大きく変わったと思う出来事は何ですか？' }
       ],
       personality: [
-        'このサークル・チームらしい雰囲気が一番出ていたと思う、具体的な場面を一つ教えてください',
-        '外から見た印象と違うと感じた、具体的な出来事はありますか？',
-        '新入りが最初に驚いた、実際にあった出来事はありますか？',
-        '揉めごとが起きたときの、実際の出来事とその収まり方を教えてください'
+        { key: 'group-atmosphere', text: 'このサークル・チームらしい雰囲気が一番出ていたと思う、具体的な場面を一つ教えてください' },
+        { key: 'group-outside-impression', text: '外から見た印象と違うと感じた、具体的な出来事はありますか？' },
+        { key: 'group-newcomer-surprise', text: '新入りが最初に驚いた、実際にあった出来事はありますか？' },
+        { key: 'group-conflict', text: '揉めごとが起きたときの、実際の出来事とその収まり方を教えてください' }
       ],
       favorites: [
-        'みんなが好きだった場所・店での、印象に残っている出来事はありますか？',
-        '定番の遊び・恒例行事で、実際にあった出来事を一つ教えてください',
-        'よく歌っていた歌にまつわる、具体的な思い出はありますか？',
-        '合言葉やあだ名はありましたか？生まれたきっかけの出来事も教えてください'
+        { key: 'group-favorite-place', text: 'みんなが好きだった場所・店での、印象に残っている出来事はありますか？' },
+        { key: 'group-tradition', text: '定番の遊び・恒例行事で、実際にあった出来事を一つ教えてください' },
+        { key: 'group-song-memory', text: 'よく歌っていた歌にまつわる、具体的な思い出はありますか？' },
+        { key: 'group-catchphrase', text: '合言葉やあだ名はありましたか？生まれたきっかけの出来事も教えてください' }
       ],
       skills: [
-        'みんなが得意としていたことを発揮して、周りが驚いた具体的な出来事を教えてください',
-        '大会や本番で実力を発揮した、そのときの出来事を教えてください',
-        '得意なことのコツが後輩に伝わった、具体的な場面はありますか？'
+        { key: 'group-skill-surprise', text: 'みんなが得意としていたことを発揮して、周りが驚いた具体的な出来事を教えてください' },
+        { key: 'group-skill-competition', text: '大会や本番で実力を発揮した、そのときの出来事を教えてください' },
+        { key: 'group-skill-taught-juniors', text: '得意なことのコツが後輩に伝わった、具体的な場面はありますか？' }
       ],
       episodes: [
-        '一番の思い出に残っている出来事を教えてください',
-        '伝説になっているエピソードはありますか？',
-        '合宿や旅行での出来事を教えてください',
-        '一番笑った・一番泣いた瞬間はいつでしたか？',
-        '後輩や仲間に伝えたいことはありますか？'
+        { key: 'group-episode-memorable', text: '一番の思い出に残っている出来事を教えてください' },
+        { key: 'group-episode-legend', text: '伝説になっているエピソードはありますか？' },
+        { key: 'group-episode-trip', text: '合宿や旅行での出来事を教えてください' },
+        { key: 'group-episode-laugh-cry', text: '一番笑った・一番泣いた瞬間はいつでしたか？' },
+        { key: 'group-episode-message', text: '後輩や仲間に伝えたいことはありますか？' }
       ]
     }
   };
 
   var CATEGORY_ORDER = ['history', 'personality', 'favorites', 'skills', 'episodes'];
 
-  // wiki を渡すと、そのカテゴリで既に答えた質問（prompt が一致するもの）を除く。
-  // これにより、一度答えた固定質問がインタビューを開き直すたびに繰り返されない。
+  // wiki を渡すと、そのカテゴリで既に答えた質問を除く。判定はまず questionKey の一致で行い
+  // （言い回しを変えても同じ質問として認識するため）、questionKeyが無い古い記録（key導入前に
+  // 保存されたもの）は本文の一致で補う。これにより、一度答えた固定質問がインタビューを
+  // 開き直しても、言い回しを調整したあとでも繰り返されない。
   function buildInterviewQueue(type, wiki) {
     var bank = QUESTIONS[type] || QUESTIONS.person;
     var queue = [];
     CATEGORY_ORDER.forEach(function (cat) {
-      var asked = wiki && wiki[cat] ? wiki[cat].map(function (e) { return e.prompt; }) : [];
+      var items = wiki && wiki[cat] ? wiki[cat] : [];
+      var askedKeys = items.map(function (e) { return e.questionKey; }).filter(Boolean);
+      var askedTexts = items.map(function (e) { return e.prompt; }).filter(Boolean);
       (bank[cat] || []).forEach(function (q) {
-        if (asked.indexOf(q) !== -1) return;
-        queue.push({ category: cat, question: q, depth: 0 });
+        if (askedKeys.indexOf(q.key) !== -1) return;
+        if (askedTexts.indexOf(q.text) !== -1) return;
+        queue.push({ category: cat, question: q.text, key: q.key, depth: 0 });
       });
     });
     return queue;
@@ -322,6 +332,21 @@
     return groups;
   }
 
+  // 「だれがいたか」を、エピソードの「書いた人」＋「その場にいた人」から重複なく集める
+  function tripParticipants(episodes) {
+    var seen = {};
+    var names = [];
+    (episodes || []).forEach(function (ep) {
+      [ep.author].concat(ep.participants || []).forEach(function (n) {
+        n = (n || '').trim();
+        if (!n || seen[n]) return;
+        seen[n] = true;
+        names.push(n);
+      });
+    });
+    return names;
+  }
+
   // ---------- 容量の目安 ----------
 
   function estimateBytes(store) {
@@ -357,6 +382,7 @@
     addContributor: addContributor,
     estimateBytes: estimateBytes,
     groupEpisodesByTrip: groupEpisodesByTrip,
+    tripParticipants: tripParticipants,
     LABELS: LABELS,
     QUESTIONS: QUESTIONS,
     CATEGORY_ORDER: CATEGORY_ORDER,
@@ -863,7 +889,8 @@
       question: '（決まった質問には答え終えました。ヒアリングマスターとして、ここまでの内容全体を踏まえ、まだ聞けていない具体的な話を引き出す質問を1つ考えてください。年代や時期を絞って深く聞くのも歓迎します）',
       answer: digest || '（まだ記録がありません。まずは基本的なことから聞いてください）',
       history: [],
-      depth: 0
+      depth: 0,
+      profile: infoboxToText(w.infobox)
     }).then(function (result) {
       if (result && !result.done && result.followUp) {
         interviewQueue.push({ category: cat, question: result.followUp, depth: 0, dynamic: true, grown: true });
@@ -993,10 +1020,10 @@
 
     var savedEntry;
     if (q.category === 'episodes') {
-      savedEntry = newEpisode({ body: text, author: author, prompt: q.question });
+      savedEntry = newEpisode({ body: text, author: author, prompt: q.question, questionKey: q.key });
       w.episodes.push(savedEntry);
     } else {
-      savedEntry = newEntry(text, author, q.question);
+      savedEntry = newEntry(text, author, q.question, q.key);
       w[q.category].push(savedEntry);
     }
     interviewHistory.push({ index: interviewIndex, category: q.category, entryId: savedEntry.id, text: text });
@@ -1022,7 +1049,8 @@
       question: q.question,
       answer: text,
       history: aiThreadHistory.slice(0, -1),
-      depth: q.depth
+      depth: q.depth,
+      profile: infoboxToText(w.infobox)
     }).then(function (result) {
       if (result && !result.done && result.followUp) {
         interviewQueue.splice(interviewIndex + 1, 0, {
@@ -1069,6 +1097,7 @@
     $('#epBody').value = '';
     $('#epPeriod').value = '';
     $('#epTrip').value = '';
+    $('#epParticipants').value = '';
     $('#epAuthor').value = '';
     $('#epTags').value = '';
     $('#epPhotos').value = '';
@@ -1104,6 +1133,7 @@
     var ep = newEpisode({
       title: title, body: body, photos: pendingEpisodePhotos.slice(),
       author: author, period: $('#epPeriod').value.trim(), trip: $('#epTrip').value.trim(),
+      participants: parseTags($('#epParticipants').value),
       tags: parseTags($('#epTags').value)
     });
     w.episodes.push(ep);
@@ -1160,6 +1190,58 @@
       '<div class="wp-card-body"><div class="wp-card-title">' + escapeHtml(title) + '</div>' +
       '<p class="wp-card-text">' + escapeHtml(ep.body) + '</p>' +
       '<div class="wp-card-meta"><span>' + escapeHtml(ep.period || '') + more + '</span><span>' + escapeHtml(ep.author || '') + '</span></div></div></div>';
+  }
+
+  // ---------- 旅行・イベントでまとめる画面 ----------
+
+  var currentTripKey = null;
+
+  function renderTripsList() {
+    var w = currentWiki();
+    var listEl = $('#tripsList');
+    var groups = groupEpisodesByTrip(w.episodes).filter(function (g) { return g.trip; });
+    if (!groups.length) {
+      listEl.innerHTML = '<div class="empty">まだ「旅行・イベント名」をつけたエピソードがありません。「エピソードを追加する」で旅行・イベント名を入力すると、ここにまとまります。</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    groups.forEach(function (g) {
+      var thumb = '';
+      for (var i = 0; i < g.episodes.length; i++) {
+        if (g.episodes[i].photos && g.episodes[i].photos[0]) { thumb = g.episodes[i].photos[0]; break; }
+      }
+      var participants = tripParticipants(g.episodes);
+      var card = document.createElement('button');
+      card.className = 'wiki-card';
+      card.innerHTML =
+        '<span class="thumb" ' + (thumb ? 'style="background-image:url(' + thumb + ')"' : '') + '>' + (thumb ? '' : '🧳') + '</span>' +
+        '<span class="meta">' +
+          '<span class="name">' + escapeHtml(g.trip) + '</span>' +
+          '<span class="sub">' + escapeHtml(participants.length ? participants.join('、') : '参加者は未記録') + '</span>' +
+          '<span class="tag">エピソード' + g.episodes.length + '件</span>' +
+        '</span>';
+      card.addEventListener('click', function () { openTripDetail(g.trip); });
+      listEl.appendChild(card);
+    });
+  }
+
+  function openTripDetail(tripKey) {
+    currentTripKey = tripKey;
+    renderTripDetail(tripKey);
+    showScreen('tripDetail');
+  }
+
+  function renderTripDetail(tripKey) {
+    var w = currentWiki();
+    var group = groupEpisodesByTrip(w.episodes).filter(function (g) { return g.trip === tripKey; })[0];
+    if (!group) { renderTripsList(); showScreen('trips'); return; }
+    $('#tripDetailTitle').textContent = group.trip;
+    var participants = tripParticipants(group.episodes);
+    $('#tripDetailParticipants').textContent = participants.length
+      ? ('だれがいたか：' + participants.join('、'))
+      : '「その場にいた人」はまだ記録されていません';
+    var sorted = group.episodes.slice().sort(function (a, b) { return (a.createdAt || '').localeCompare(b.createdAt || ''); });
+    $('#tripDetailEpisodes').innerHTML = sorted.map(episodeCardHtml).join('');
   }
 
   function formatDateTimeJa(iso) {
@@ -1344,6 +1426,10 @@
       $('#btnCompose').hidden = !getAiEndpoint();
       showScreen('view');
     });
+    $('#tileTrips').addEventListener('click', function () {
+      renderTripsList();
+      showScreen('trips');
+    });
 
     $('#btnPrevQ').addEventListener('click', goToPreviousQuestion);
     $('#btnSkipQ').addEventListener('click', function () { saveInterviewAnswer(true); });
@@ -1383,6 +1469,7 @@
         showScreen(b.dataset.back);
         if (b.dataset.back === 'home') renderHome();
         if (b.dataset.back === 'dash') renderDash();
+        if (b.dataset.back === 'trips') renderTripsList();
       });
     });
 
