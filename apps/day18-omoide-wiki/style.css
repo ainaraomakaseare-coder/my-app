@@ -211,6 +211,7 @@ input[type=file] { color: var(--muted); font-size: 13px; }
 .wp-list { margin: 0; padding-left: 1.4em; }
 .wp-list li { margin-bottom: 10px; }
 .wp-list .who { font-size: 12px; color: var(--wp-muted); }
+.wp-list .q { font-size: 12px; font-weight: 700; color: var(--wp-muted); margin-bottom: 2px; }
 
 .wp-infobox { border: 1px solid var(--wp-line); font-size: 13px; background: var(--wp-bg); }
 .wp-infobox-title { font-weight: 700; font-size: 16px; text-align: center; padding: 10px 10px 8px; border-bottom: 1px solid var(--wp-line); }

@@ -81,6 +81,7 @@ const TINY_PNG = Buffer.from(
   check('マイクボタンが表示される（対応の有無はブラウザ依存）', await page.locator('#qMicBtn').count() === 1);
   check('AIエンドポイント未設定時はAI深掘りトグルが隠れている', await page.isHidden('#aiDeepenBlock'));
   check('音声で会話するは初回からONになっている', await page.isChecked('#voiceModeToggle'));
+  check('最初の質問は生い立ち・経歴カテゴリから始まる', (await page.textContent('#qCategory')).indexOf('生い立ち・経歴') !== -1);
   const firstQuestion = await page.textContent('#qText');
   await page.fill('#qAnswer', '几帳面で、誰にでも敬語で話す人でした');
   await page.click('#btnSaveQ');
@@ -137,6 +138,8 @@ const TINY_PNG = Buffer.from(
   check('エピソードのアルバムに写真が出る', await page.locator('.wp-card img').count() > 0);
   check('年表にエピソードが出る', (await page.textContent('.wp-timeline')).indexOf('雨の遠足') !== -1);
   check('旅行名の見出しでアルバムがまとまる', (await page.textContent('.wp-trip-title')) === '秋の遠足');
+  check('目次に生い立ち・経歴が出る', (await page.textContent('.wp-toc')).indexOf('生い立ち・経歴') !== -1);
+  check('人物像・性格の回答に、答えた質問文がラベルとして表示される', (await page.textContent('.wp-main')).indexOf('几帳面で') !== -1 && (await page.locator('.wp-list .q').count()) > 0);
 
   // ---- 書き出し ----
   const [download] = await Promise.all([

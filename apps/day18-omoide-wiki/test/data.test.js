@@ -19,6 +19,20 @@ function ok(label, cond) { eq(label, !!cond, true); }
 ok('uid は prefix で始まる', W.uid('w').indexOf('w_') === 0);
 ok('uid は毎回ちがう', W.uid('e') !== W.uid('e'));
 
+/* ---- 生い立ち・経歴（history）カテゴリ ---- */
+ok('CATEGORY_ORDER に history が含まれる', W.CATEGORY_ORDER.indexOf('history') !== -1);
+ok('person用のhistory質問がある', W.QUESTIONS.person.history.length > 0);
+ok('group用のhistory質問がある', W.QUESTIONS.group.history.length > 0);
+eq('新規Wikiにhistory配列がある', W.newWiki('person', 'テスト', '').history, []);
+
+/* ---- normalizeWiki（古いバージョンのWikiを読み込んだときの後方互換） ---- */
+var oldWiki = { id: 'w_old', type: 'person', title: '古いWiki', episodes: [] };
+delete oldWiki.history;
+var normalized = W.normalizeWiki(oldWiki);
+ok('historyが無いWikiを読み込んでも空配列が補われる', Array.isArray(normalized.history) && normalized.history.length === 0);
+ok('infoboxが無くても空配列が補われる', Array.isArray(normalized.infobox));
+ok('contributorsが無くても空配列が補われる', Array.isArray(normalized.contributors));
+
 /* ---- infobox の変換 ---- */
 eq('parseInfoboxText: ラベルと値を分ける',
    W.parseInfoboxText('生年月日: 1960年4月1日\n出身：大阪府\n\n所属:'),

@@ -32,6 +32,7 @@
       coverPhoto: null,
       infobox: [],
       overview: '',
+      history: [],
       personality: [],
       favorites: [],
       skills: [],
@@ -40,6 +41,17 @@
       createdAt: t,
       updatedAt: t
     };
+  }
+
+  // 古いバージョンで作られたWiki（historyカテゴリ追加前など）を読み込んだときに
+  // 配列が欠けていて落ちないよう、その場で埋める
+  function normalizeWiki(w) {
+    CATEGORY_ORDER.forEach(function (cat) {
+      if (!Array.isArray(w[cat])) w[cat] = [];
+    });
+    if (!Array.isArray(w.infobox)) w.infobox = [];
+    if (!Array.isArray(w.contributors)) w.contributors = [];
+    return w;
   }
 
   function newEntry(text, author, prompt) {
@@ -122,6 +134,7 @@
       coverPhoto: existing.coverPhoto || incoming.coverPhoto || null,
       infobox: existing.infobox && existing.infobox.length ? existing.infobox : (incoming.infobox || []),
       overview: existing.overview || incoming.overview || '',
+      history: mergeEntryArrays(existing.history, incoming.history),
       personality: mergeEntryArrays(existing.personality, incoming.personality),
       favorites: mergeEntryArrays(existing.favorites, incoming.favorites),
       skills: mergeEntryArrays(existing.skills, incoming.skills),
@@ -142,7 +155,7 @@
         next.wikis[w.id] = mergeWiki(next.wikis[w.id], w);
         mergedCount++;
       } else {
-        next.wikis[w.id] = w;
+        next.wikis[w.id] = normalizeWiki(w);
         addedCount++;
       }
     });
@@ -169,12 +182,24 @@
   // ---------- ラベル・質問バンク ----------
 
   var LABELS = {
-    person: { personality: '人物像・性格', favorites: '好きなもの', skills: '特技', episodes: 'エピソード', kind: '人物' },
-    group: { personality: '雰囲気・カラー', favorites: '好きだったもの・定番', skills: '得意だったこと', episodes: '思い出エピソード', kind: 'サークル・チーム' }
+    person: { history: '生い立ち・経歴', personality: '人物像・性格', favorites: '好きなもの', skills: '特技', episodes: 'エピソード', kind: '人物' },
+    group: { history: '沿革', personality: '雰囲気・カラー', favorites: '好きだったもの・定番', skills: '得意だったこと', episodes: '思い出エピソード', kind: 'サークル・チーム' }
   };
 
   var QUESTIONS = {
     person: {
+      history: [
+        '生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば教えてください）',
+        '生まれたときのエピソードで、家族から聞いている話はありますか？',
+        '幼稚園・保育園はどこに通っていましたか？どんな子どもでしたか？',
+        '小学校はどこですか？小学校時代の一番の思い出を教えてください',
+        '小学校で仲の良かった友達や、印象に残っている先生はいましたか？',
+        '中学校はどこですか？中学時代、一番打ち込んでいたことは何ですか？',
+        '高校はどこですか？高校時代に忘れられない出来事はありますか？',
+        '大学・専門学校、または最初の就職先はどこですか？そこを選んだ理由も教えてください',
+        '初めての仕事、社会に出たころのことで覚えている出来事はありますか？',
+        'これまでの人生で、一番大きな転機・決断だったと思う出来事は何ですか？'
+      ],
       personality: [
         'その性格が一番はっきり出た、具体的な出来事を一つ教えてください',
         '「らしいな」と周りが思わず笑った・驚いた瞬間はありますか？そのときの状況も教えてください',
@@ -204,6 +229,15 @@
       ]
     },
     group: {
+      history: [
+        'いつ、どうやって結成されましたか？きっかけを教えてください',
+        '名前の由来はありますか？',
+        '最初の頃はどんな活動をしていましたか？',
+        '活動場所や活動内容は、時期によってどう変わっていきましたか？',
+        '一番人数が多かった・少なかった時期はいつですか？そのころの様子は？',
+        '存続にかかわるような、大きな転機はありましたか？',
+        '今の姿になるまでで、一番大きく変わったと思う出来事は何ですか？'
+      ],
       personality: [
         'その雰囲気が一番出ていた、具体的な場面を一つ教えてください',
         '外から見た印象と違うと感じた、具体的な出来事はありますか？',
@@ -231,7 +265,7 @@
     }
   };
 
-  var CATEGORY_ORDER = ['personality', 'favorites', 'skills', 'episodes'];
+  var CATEGORY_ORDER = ['history', 'personality', 'favorites', 'skills', 'episodes'];
 
   function buildInterviewQueue(type) {
     var bank = QUESTIONS[type] || QUESTIONS.person;
@@ -293,6 +327,7 @@
     nowIso: nowIso,
     emptyStore: emptyStore,
     newWiki: newWiki,
+    normalizeWiki: normalizeWiki,
     newEntry: newEntry,
     newEpisode: newEpisode,
     parseInfoboxText: parseInfoboxText,
@@ -338,6 +373,7 @@
       if (!raw) return emptyStore();
       var parsed = JSON.parse(raw);
       if (!parsed || !parsed.wikis) return emptyStore();
+      Object.keys(parsed.wikis).forEach(function (k) { normalizeWiki(parsed.wikis[k]); });
       return parsed;
     } catch (e) {
       return emptyStore();
@@ -377,7 +413,7 @@
     wikis.forEach(function (w) {
       var card = document.createElement('button');
       card.className = 'wiki-card';
-      var count = w.personality.length + w.favorites.length + w.skills.length + w.episodes.length;
+      var count = countAll(w);
       var thumb = w.coverPhoto ? 'style="background-image:url(' + w.coverPhoto + ')"' : '';
       card.innerHTML =
         '<span class="thumb" ' + thumb + '>' + (w.coverPhoto ? '' : (w.type === 'group' ? '🎪' : '🧑')) + '</span>' +
@@ -451,7 +487,7 @@
   }
 
   function countAll(w) {
-    return w.personality.length + w.favorites.length + w.skills.length + w.episodes.length;
+    return CATEGORY_ORDER.reduce(function (sum, cat) { return sum + (w[cat] ? w[cat].length : 0); }, 0);
   }
 
   function renderEntryList(w) {
@@ -919,7 +955,8 @@
         html += '<p class="wp-empty">まだ記録がありません。</p>';
       } else {
         html += '<ul class="wp-list">' + w[cat].map(function (it) {
-          return '<li>' + escapeHtml(it.text) + (it.author ? '<div class="who">' + escapeHtml(it.author) + 'より</div>' : '') + '</li>';
+          return '<li>' + (it.prompt ? '<div class="q">' + escapeHtml(it.prompt) + '</div>' : '') +
+            escapeHtml(it.text) + (it.author ? '<div class="who">' + escapeHtml(it.author) + 'より</div>' : '') + '</li>';
         }).join('') + '</ul>';
       }
       html += '</section>';
