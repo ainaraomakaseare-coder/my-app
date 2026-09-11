@@ -373,7 +373,7 @@
   var interviewIndex = 0;
   var sessionAnswered = 0;
   var lastBreakCheckpoint = 0;
-  var BREAK_EVERY = 5;
+  var BREAK_EVERY = 15;
   var aiThreadHistory = [];
   var pendingEpisodePhotos = [];
   var pendingCoverPhoto = null;

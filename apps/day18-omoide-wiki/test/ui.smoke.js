@@ -297,7 +297,7 @@ const TINY_PNG = Buffer.from(
 
   aiServer.close();
 
-  // ---- 5問ごとの休憩確認（お年寄りなど、長く話すと疲れる人向け） ----
+  // ---- 15問ごとの休憩確認（お年寄りなど、長く話すと疲れる人向け） ----
   await page.click('[data-screen="dash"] .back');
   await page.waitForSelector('[data-screen=home].active');
   await page.click('#btnNewWiki');
@@ -305,19 +305,19 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnCreateWiki');
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 14; i++) {
     await page.fill('#qAnswer', 'テスト回答' + i);
     await page.click('#btnSaveQ');
     await page.waitForFunction(() => !document.getElementById('btnSaveQ').disabled);
   }
   dismissNextConfirm = true;
-  await page.fill('#qAnswer', 'テスト回答4');
+  await page.fill('#qAnswer', 'テスト回答14');
   await page.click('#btnSaveQ');
   await page.waitForSelector('[data-screen=dash].active');
-  check('5問ごとに休憩を確認するダイアログが出る', lastDismissedMessage.indexOf('休憩') !== -1);
+  check('15問ごとに休憩を確認するダイアログが出る', lastDismissedMessage.indexOf('休憩') !== -1);
   check('休憩で「今日はここまで」を選ぶとダッシュボードに戻る（＝インタビューが終わる）', await page.locator('[data-screen=dash].active').count() === 1);
   const savedCount = ((await page.textContent('#entryList')).match(/テスト回答/g) || []).length;
-  check('休憩を挟んでも5問ぶんきちんと保存されている', savedCount === 5, 'savedCount=' + savedCount);
+  check('休憩を挟んでも15問ぶんきちんと保存されている', savedCount === 15, 'savedCount=' + savedCount);
   await page.click('#btnDeleteWiki');
   await page.waitForSelector('[data-screen=home].active');
   await page.click('.wiki-card:has-text("やまだ たろう")');
