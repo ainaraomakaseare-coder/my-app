@@ -38,6 +38,8 @@
       skills: [],
       episodes: [],
       trips: [],
+      stops: [],
+      stopDetails: [],
       contributors: [],
       skippedKeys: [],
       createdAt: t,
@@ -79,6 +81,83 @@
     return tr ? tr.title : '';
   }
 
+  // 「過ごした一日」＝旅行の中の時系列の記録。モデルコース（お手本の予定）ではなく、
+  // 実際に過ごした行程をあとから記録するためのもの。
+  // 大項目（Stop）＝日付・時間・種類だけを持つ、タイムラインの1コマ（「14:00 到着」など）。
+  function newStop(data) {
+    var t = nowIso();
+    return {
+      id: uid('st'),
+      tripId: data.tripId || '',
+      date: (data.date || '').trim(),
+      time: (data.time || '').trim(),
+      timeLabel: (data.timeLabel || '').trim(),
+      type: (data.type || '').trim(),
+      createdAt: t,
+      updatedAt: t
+    };
+  }
+
+  // 小項目（StopDetail）＝1つのStopの中で、誰か1人（またはグループ）が実際に体験した内容。
+  // 別行動した場合は、同じStopに複数のStopDetailをぶら下げればよい。
+  function newStopDetail(data) {
+    var t = nowIso();
+    return {
+      id: uid('sd'),
+      stopId: data.stopId || '',
+      author: (data.author || '').trim(),
+      episode: (data.episode || '').trim(),
+      comment: (data.comment || '').trim(),
+      photos: data.photos || [],
+      pricePerPerson: data.pricePerPerson || '',
+      priceBreakdown: data.priceBreakdown || [],
+      waitTime: (data.waitTime || '').trim(),
+      mapUrl: (data.mapUrl || '').trim(),
+      shopUrl: (data.shopUrl || '').trim(),
+      ratings: data.ratings || [],
+      createdAt: t,
+      updatedAt: t
+    };
+  }
+
+  // その時系列（Stop）に属するエピソード（StopDetail）を、日付・時刻の順に並べて返す
+  function stopsForTrip(wiki, tripId) {
+    return (wiki.stops || []).filter(function (s) { return s.tripId === tripId; })
+      .slice()
+      .sort(function (a, b) {
+        var ak = (a.date || '') + 'T' + (a.time || '');
+        var bk = (b.date || '') + 'T' + (b.time || '');
+        return ak.localeCompare(bk);
+      });
+  }
+
+  function detailsForStop(wiki, stopId) {
+    return (wiki.stopDetails || []).filter(function (d) { return d.stopId === stopId; })
+      .slice()
+      .sort(function (a, b) { return (a.createdAt || '').localeCompare(b.createdAt || ''); });
+  }
+
+  // 小項目（StopDetail）に、誰か1人の評価（1〜5）を付ける・上書きする。
+  // 「評価はそれぞれの人ができるように」という要望のため、同じ名前の人が
+  // もう一度評価すると、新しい評価で上書きする（連打で無限に増えないように）。
+  function rateStopDetail(detail, author, score) {
+    var name = (author || '').trim();
+    var s = Number(score);
+    if (!name || !s || s < 1 || s > 5) return detail;
+    var existing = detail.ratings.filter(function (r) { return r.author === name; })[0];
+    if (existing) { existing.score = s; }
+    else { detail.ratings.push({ author: name, score: s }); }
+    detail.updatedAt = nowIso();
+    return detail;
+  }
+
+  function averageRating(detail) {
+    var ratings = (detail && detail.ratings) || [];
+    if (!ratings.length) return null;
+    var sum = ratings.reduce(function (s, r) { return s + r.score; }, 0);
+    return Math.round((sum / ratings.length) * 10) / 10;
+  }
+
   // 古いバージョンで作られたWiki（historyカテゴリ追加前など）を読み込んだときに
   // 配列が欠けていて落ちないよう、その場で埋める
   function normalizeWiki(w) {
@@ -89,6 +168,12 @@
     if (!Array.isArray(w.contributors)) w.contributors = [];
     if (!Array.isArray(w.skippedKeys)) w.skippedKeys = [];
     if (!Array.isArray(w.trips)) w.trips = [];
+    if (!Array.isArray(w.stops)) w.stops = [];
+    if (!Array.isArray(w.stopDetails)) w.stopDetails = [];
+    w.stopDetails.forEach(function (d) {
+      if (!Array.isArray(d.ratings)) d.ratings = [];
+      if (!Array.isArray(d.priceBreakdown)) d.priceBreakdown = [];
+    });
     // 旧バージョン（旅行を自由記述の文字列で持っていた）のエピソードを、
     // 旅行エンティティ＋tripId参照の形に変換する
     w.episodes.forEach(function (ep) {
@@ -211,6 +296,8 @@
       skills: mergeEntryArrays(existing.skills, incoming.skills),
       episodes: mergeEntryArrays(existing.episodes, incoming.episodes),
       trips: mergeEntryArrays(existing.trips, incoming.trips),
+      stops: mergeEntryArrays(existing.stops, incoming.stops),
+      stopDetails: mergeEntryArrays(existing.stopDetails, incoming.stopDetails),
       contributors: Array.from(new Set((existing.contributors || []).concat(incoming.contributors || []))),
       skippedKeys: Array.from(new Set((existing.skippedKeys || []).concat(incoming.skippedKeys || []))),
       createdAt: existing.createdAt || incoming.createdAt || nowIso(),
@@ -589,6 +676,12 @@
     newEntry: newEntry,
     newEpisode: newEpisode,
     newTrip: newTrip,
+    newStop: newStop,
+    newStopDetail: newStopDetail,
+    stopsForTrip: stopsForTrip,
+    detailsForStop: detailsForStop,
+    rateStopDetail: rateStopDetail,
+    averageRating: averageRating,
     findOrCreateTrip: findOrCreateTrip,
     parseInfoboxText: parseInfoboxText,
     infoboxToText: infoboxToText,
@@ -1604,6 +1697,9 @@
     var sorted = group.episodes.slice().sort(function (a, b) { return (a.createdAt || '').localeCompare(b.createdAt || ''); });
     $('#tripDetailEpisodes').innerHTML = sorted.map(episodeCardHtml).join('');
     closeTripEditForm();
+    renderStopsTimeline(tripId);
+    closeStopForm();
+    closeStopDetailForm();
   }
 
   // 旅行の名前・開始日時・終了日時・宿泊先はTripという1つの実体で持っているため、
@@ -1642,6 +1738,201 @@
     trip.updatedAt = nowIso();
     persist();
     renderTripDetail(currentTripKey);
+  }
+
+  // ---------- 過ごした一日（Stop＝大項目／StopDetail＝小項目） ----------
+  // モデルコースではなく実際に過ごした記録。大項目（日時・タイミング・種類）の下に、
+  // 小項目（誰が・何をしたか）を複数ぶら下げられるので、別行動した時間帯も
+  // 同じ大項目の中に記録を分けて残せる。
+
+  var pendingStopDetailPhotos = [];
+  var pendingDetailStopId = null;
+
+  function avatarInitial(name) {
+    var s = (name || '').trim();
+    return s ? s.charAt(0) : '?';
+  }
+
+  function avatarColor(name) {
+    var s = String(name || '?');
+    var hash = 0;
+    for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    return 'hsl(' + (hash % 360) + ', 55%, 45%)';
+  }
+
+  function stopHeaderLabel(stop) {
+    var when = formatDateJa(stop.date + (stop.time ? ('T' + stop.time) : ''));
+    return when || '日時未記入';
+  }
+
+  function stopDetailHtml(detail) {
+    var photosHtml = detail.photos && detail.photos.length
+      ? '<div class="thumbs">' + detail.photos.slice(0, 4).map(function (p) { return '<img src="' + p + '">'; }).join('') + '</div>'
+      : '';
+    var metaBits = [];
+    if (detail.pricePerPerson !== '' && detail.pricePerPerson != null) metaBits.push('<span class="stop-pill">💴 一人 ' + escapeHtml(String(detail.pricePerPerson)) + '円</span>');
+    if (detail.waitTime) metaBits.push('<span class="stop-pill">⏱ 待ち ' + escapeHtml(detail.waitTime) + '</span>');
+    if (detail.mapUrl) metaBits.push('<a class="stop-pill stop-link" href="' + escapeHtml(detail.mapUrl) + '" target="_blank" rel="noopener">🗺 地図</a>');
+    if (detail.shopUrl) metaBits.push('<a class="stop-pill stop-link" href="' + escapeHtml(detail.shopUrl) + '" target="_blank" rel="noopener">🔗 お店のHP</a>');
+    var breakdownHtml = detail.priceBreakdown && detail.priceBreakdown.length
+      ? '<details class="stop-breakdown"><summary>明細を見る</summary><ul>' +
+        detail.priceBreakdown.map(function (b) { return '<li>' + escapeHtml(b.label || '') + '：' + escapeHtml(String(b.amount != null ? b.amount : '')) + '円</li>'; }).join('') +
+        '</ul></details>'
+      : '';
+    var avg = averageRating(detail);
+    var ratingCount = (detail.ratings || []).length;
+    var avgHtml = avg != null ? ('★' + avg + '（' + ratingCount + '件）') : 'まだ評価がありません';
+    return '<div class="stop-detail">' +
+      '<div class="stop-detail-avatar" style="background:' + avatarColor(detail.author) + '">' + escapeHtml(avatarInitial(detail.author)) + '</div>' +
+      '<div class="stop-detail-body">' +
+      '<div class="stop-detail-header"><span class="stop-detail-author">' + escapeHtml(detail.author || '名前未記入') + '</span></div>' +
+      (detail.episode ? '<p class="stop-detail-text">' + escapeHtml(detail.episode) + '</p>' : '') +
+      (detail.comment ? '<p class="stop-detail-comment">「' + escapeHtml(detail.comment) + '」</p>' : '') +
+      photosHtml +
+      (metaBits.length ? '<div class="stop-detail-meta">' + metaBits.join('') + '</div>' : '') +
+      breakdownHtml +
+      '<div class="stop-rating">' +
+      '<span class="stop-rating-avg">' + avgHtml + '</span>' +
+      '<form class="stop-rate-form" data-detail-id="' + detail.id + '">' +
+      '<input type="text" class="rate-name" placeholder="お名前" required>' +
+      '<select class="rate-score">' +
+      [5, 4, 3, 2, 1].map(function (n) { return '<option value="' + n + '">★' + n + '</option>'; }).join('') +
+      '</select>' +
+      '<button type="submit" class="btn text small">評価する</button>' +
+      '</form>' +
+      '</div>' +
+      '</div>' +
+      '</div>';
+  }
+
+  function stopCardHtml(w, stop) {
+    var details = detailsForStop(w, stop.id);
+    return '<div class="stop-card">' +
+      '<div class="stop-card-head">' +
+      '<span class="stop-pill stop-time-pill">' + escapeHtml(stopHeaderLabel(stop)) + '</span>' +
+      (stop.timeLabel ? '<span class="stop-pill">' + escapeHtml(stop.timeLabel) + '</span>' : '') +
+      (stop.type ? '<span class="stop-pill stop-type-pill">' + escapeHtml(stop.type) + '</span>' : '') +
+      '</div>' +
+      '<div class="stop-detail-list">' +
+      (details.length ? details.map(stopDetailHtml).join('') : '<p class="stop-empty">まだ記録がありません。</p>') +
+      '</div>' +
+      '<button class="btn text small add-detail-btn" data-stop-id="' + stop.id + '">＋ 記録を追加（別行動もOK）</button>' +
+      '</div>';
+  }
+
+  function renderStopsTimeline(tripId) {
+    var w = currentWiki();
+    var stops = stopsForTrip(w, tripId);
+    $('#stopsTimeline').innerHTML = stops.length
+      ? stops.map(function (s) { return stopCardHtml(w, s); }).join('')
+      : '<p class="stop-empty">まだ予定が記録されていません。「＋ 予定を追加」から始めましょう。</p>';
+  }
+
+  function openStopForm() {
+    $('#stopDate').value = '';
+    $('#stopTime').value = '';
+    $('#stopTimeLabel').value = '';
+    $('#stopType').value = '';
+    $('#stopFormWrap').hidden = false;
+  }
+
+  function closeStopForm() {
+    $('#stopFormWrap').hidden = true;
+  }
+
+  function saveStop() {
+    var w = currentWiki();
+    var date = $('#stopDate').value;
+    if (!date) { alert('日付を入力してください'); return; }
+    var stop = newStop({
+      tripId: currentTripKey,
+      date: date,
+      time: $('#stopTime').value,
+      timeLabel: $('#stopTimeLabel').value,
+      type: $('#stopType').value
+    });
+    w.stops.push(stop);
+    w.updatedAt = nowIso();
+    persist();
+    closeStopForm();
+    renderStopsTimeline(currentTripKey);
+  }
+
+  function refreshStopDetailPhotoPreview() {
+    renderPhotoPreview('#sdPhotoPreview', pendingStopDetailPhotos, function (i) {
+      pendingStopDetailPhotos.splice(i, 1);
+      refreshStopDetailPhotoPreview();
+    });
+  }
+
+  function openStopDetailForm(stopId) {
+    pendingDetailStopId = stopId;
+    var w = currentWiki();
+    var stop = w.stops.filter(function (s) { return s.id === stopId; })[0];
+    $('#stopDetailFormTarget').textContent = stop ? ('「' + stopHeaderLabel(stop) + (stop.timeLabel ? '　' + stop.timeLabel : '') + '」への記録') : '';
+    $('#sdAuthor').value = '';
+    $('#sdEpisode').value = '';
+    $('#sdComment').value = '';
+    $('#sdPhotos').value = '';
+    $('#sdPrice').value = '';
+    $('#sdWait').value = '';
+    $('#sdMapUrl').value = '';
+    $('#sdShopUrl').value = '';
+    $('#sdBreakdownRows').innerHTML = '';
+    pendingStopDetailPhotos = [];
+    refreshStopDetailPhotoPreview();
+    $('#stopDetailFormWrap').hidden = false;
+    $('#stopDetailFormWrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function closeStopDetailForm() {
+    pendingDetailStopId = null;
+    $('#stopDetailFormWrap').hidden = true;
+  }
+
+  function addBreakdownRow() {
+    var row = document.createElement('div');
+    row.className = 'field-row breakdown-row';
+    row.innerHTML = '<div class="field"><input type="text" class="bd-label" placeholder="例：入場料"></div>' +
+      '<div class="field"><input type="number" class="bd-amount" min="0" placeholder="円"></div>' +
+      '<button type="button" class="btn text small bd-remove">×</button>';
+    row.querySelector('.bd-remove').addEventListener('click', function () { row.remove(); });
+    $('#sdBreakdownRows').appendChild(row);
+  }
+
+  function collectBreakdownRows() {
+    return $all('#sdBreakdownRows .breakdown-row').map(function (row) {
+      var label = row.querySelector('.bd-label').value.trim();
+      var amountRaw = row.querySelector('.bd-amount').value;
+      return { label: label, amount: amountRaw === '' ? '' : Number(amountRaw) };
+    }).filter(function (b) { return b.label || b.amount !== ''; });
+  }
+
+  function saveStopDetail() {
+    if (!pendingDetailStopId) return;
+    var w = currentWiki();
+    var author = $('#sdAuthor').value.trim();
+    var episode = $('#sdEpisode').value.trim();
+    if (!author) { alert('記録した人の名前を入力してください'); return; }
+    var priceRaw = $('#sdPrice').value;
+    var detail = newStopDetail({
+      stopId: pendingDetailStopId,
+      author: author,
+      episode: episode,
+      comment: $('#sdComment').value.trim(),
+      photos: pendingStopDetailPhotos.slice(),
+      pricePerPerson: priceRaw === '' ? '' : Number(priceRaw),
+      priceBreakdown: collectBreakdownRows(),
+      waitTime: $('#sdWait').value.trim(),
+      mapUrl: $('#sdMapUrl').value.trim(),
+      shopUrl: $('#sdShopUrl').value.trim()
+    });
+    w.stopDetails.push(detail);
+    addContributor(w, author);
+    w.updatedAt = nowIso();
+    persist();
+    closeStopDetailForm();
+    renderStopsTimeline(currentTripKey);
   }
 
   function formatDateTimeJa(iso) {
@@ -1850,6 +2141,38 @@
     $('#btnSaveTripEdit').addEventListener('click', saveTripEdit);
     $('#btnCancelTripEdit').addEventListener('click', closeTripEditForm);
     $('#btnAddTripEpisode').addEventListener('click', function () { openEpisodeForm(currentTripKey); });
+
+    $('#btnAddStop').addEventListener('click', openStopForm);
+    $('#btnSaveStop').addEventListener('click', saveStop);
+    $('#btnCancelStop').addEventListener('click', closeStopForm);
+    $('#btnAddBreakdownRow').addEventListener('click', addBreakdownRow);
+    $('#btnSaveStopDetail').addEventListener('click', saveStopDetail);
+    $('#btnCancelStopDetail').addEventListener('click', closeStopDetailForm);
+    $('#sdPhotos').addEventListener('change', function (e) {
+      var files = Array.prototype.slice.call(e.target.files);
+      Promise.all(files.map(function (f) { return fileToCompressedDataURL(f, 1280, 0.72); })).then(function (urls) {
+        pendingStopDetailPhotos = pendingStopDetailPhotos.concat(urls);
+        refreshStopDetailPhotoPreview();
+      });
+    });
+    $('#stopsTimeline').addEventListener('click', function (e) {
+      var btn = e.target.closest('.add-detail-btn');
+      if (btn) openStopDetailForm(btn.dataset.stopId);
+    });
+    $('#stopsTimeline').addEventListener('submit', function (e) {
+      var form = e.target.closest('.stop-rate-form');
+      if (!form) return;
+      e.preventDefault();
+      var w = currentWiki();
+      var detail = w.stopDetails.filter(function (d) { return d.id === form.dataset.detailId; })[0];
+      if (!detail) return;
+      var name = form.querySelector('.rate-name').value.trim();
+      var score = Number(form.querySelector('.rate-score').value);
+      if (!name) { alert('お名前を入力してください'); return; }
+      rateStopDetail(detail, name, score);
+      persist();
+      renderStopsTimeline(currentTripKey);
+    });
 
     $('#btnPrevQ').addEventListener('click', goToPreviousQuestion);
     $('#btnSkipQ').addEventListener('click', function () { saveInterviewAnswer(true); });

@@ -275,5 +275,41 @@ ok('旅行名からtripIdへ変換される', migrated.episodes[0].tripId === mi
 eq('旅行名が無いエピソードのtripIdは空文字', migrated.episodes[2].tripId, '');
 ok('古いtripフィールドは削除される', migrated.episodes.every(function (e) { return !('trip' in e); }));
 
+/* ---- 過ごした一日：Stop（大項目）・StopDetail（小項目）・評価 ---- */
+var itineraryWiki = W.newWiki('person', 'テスト11', '');
+var itineraryTripId = W.findOrCreateTrip(itineraryWiki, '沖縄旅行');
+var stopA = W.newStop({ tripId: itineraryTripId, date: '2023-08-05', time: '09:00', timeLabel: '集合', type: '移動' });
+var stopB = W.newStop({ tripId: itineraryTripId, date: '2023-08-05', time: '12:00', timeLabel: '到着', type: '食事' });
+itineraryWiki.stops.push(stopB, stopA); // わざと逆順に入れる
+
+eq('stopsForTrip: 日付・時刻の順に並び替わる', W.stopsForTrip(itineraryWiki, itineraryTripId).map(function (s) { return s.id; }), [stopA.id, stopB.id]);
+eq('stopsForTrip: 他の旅行のStopは含まれない', W.stopsForTrip(itineraryWiki, 'other-trip'), []);
+
+// 別行動：同じStop（昼食）に、2人ぶんのStopDetail（小項目）がぶら下がる
+var detail1 = W.newStopDetail({ stopId: stopB.id, author: '太郎', episode: 'ラーメンを食べた', pricePerPerson: 1200 });
+var detail2 = W.newStopDetail({ stopId: stopB.id, author: '花子', episode: '寿司を食べた', pricePerPerson: 3000 });
+itineraryWiki.stopDetails.push(detail1, detail2);
+eq('detailsForStop: 別行動した2人ぶんの小項目が両方取れる', W.detailsForStop(itineraryWiki, stopB.id).map(function (d) { return d.author; }), ['太郎', '花子']);
+eq('detailsForStop: 別のStopの小項目は含まれない', W.detailsForStop(itineraryWiki, stopA.id), []);
+
+// 評価：それぞれの人が個別に評価できる。同じ人が評価し直すと上書きされる
+eq('評価が無ければ平均はnull', W.averageRating(detail1), null);
+W.rateStopDetail(detail1, '太郎', 5);
+W.rateStopDetail(detail1, '花子', 3);
+eq('複数人の評価が別々に積み上がる', detail1.ratings.length, 2);
+eq('平均評価が計算される', W.averageRating(detail1), 4);
+W.rateStopDetail(detail1, '太郎', 4); // 太郎が評価し直す
+eq('同じ人が再評価すると上書きされ、件数は増えない', detail1.ratings.length, 2);
+eq('上書き後の評価が反映される', detail1.ratings.filter(function (r) { return r.author === '太郎'; })[0].score, 4);
+eq('不正な点数（範囲外）は無視される', W.rateStopDetail(detail1, '次郎', 6).ratings.length, 2);
+eq('名前が無い評価は無視される', W.rateStopDetail(detail1, '', 5).ratings.length, 2);
+
+/* ---- normalizeWiki: stops/stopDetails/ratings/priceBreakdownを補う（旧バージョン互換） ---- */
+var legacyItinerary = { id: 'w_legacy2', type: 'person', title: '古いWiki2', episodes: [], stopDetails: [{ id: 'sd1', stopId: 's1' }] };
+var migratedItinerary = W.normalizeWiki(legacyItinerary);
+ok('stopsが無ければ空配列で補われる', Array.isArray(migratedItinerary.stops));
+ok('ratingsが無い小項目にも空配列が補われる', Array.isArray(migratedItinerary.stopDetails[0].ratings));
+ok('priceBreakdownが無い小項目にも空配列が補われる', Array.isArray(migratedItinerary.stopDetails[0].priceBreakdown));
+
 console.log('\n' + pass + ' 件 通過 / ' + fail + ' 件 失敗');
 process.exit(fail ? 1 : 0);

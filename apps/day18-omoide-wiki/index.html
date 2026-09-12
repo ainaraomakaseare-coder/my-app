@@ -327,6 +327,106 @@
         <p class="lead" id="tripDetailParticipants"></p>
         <button class="btn primary" id="btnAddTripEpisode">＋ このイベントにエピソードを追加</button>
       </header>
+
+      <section class="stops-section">
+        <div class="stops-head">
+          <h2>過ごした一日</h2>
+          <p class="lead small">モデルコース（お手本の予定表）ではなく、実際に過ごした記録です。同じ時間帯に別行動した場合は、1つの予定の中に記録を分けて残せます。</p>
+          <button class="btn text" id="btnAddStop">＋ 予定を追加</button>
+        </div>
+
+        <div id="stopFormWrap" class="stop-form" hidden>
+          <div class="field-row">
+            <div class="field">
+              <label for="stopDate">日付</label>
+              <input type="date" id="stopDate">
+            </div>
+            <div class="field">
+              <label for="stopTime">時刻</label>
+              <input type="time" id="stopTime">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="stopTimeLabel">タイミング（任意）</label>
+              <input type="text" id="stopTimeLabel" list="stopTimeLabelList" placeholder="例：集合、到着">
+              <datalist id="stopTimeLabelList">
+                <option value="集合"></option>
+                <option value="到着"></option>
+                <option value="出発"></option>
+                <option value="解散"></option>
+                <option value="チェックイン"></option>
+                <option value="チェックアウト"></option>
+              </datalist>
+            </div>
+            <div class="field">
+              <label for="stopType">種類（任意）</label>
+              <input type="text" id="stopType" list="stopTypeList" placeholder="例：移動、食事">
+              <datalist id="stopTypeList">
+                <option value="移動"></option>
+                <option value="食事"></option>
+                <option value="観光"></option>
+                <option value="宿泊"></option>
+                <option value="買い物"></option>
+              </datalist>
+            </div>
+          </div>
+          <button class="btn primary" id="btnSaveStop">追加する</button>
+          <button class="btn text" id="btnCancelStop">キャンセル</button>
+        </div>
+
+        <div id="stopsTimeline"></div>
+
+        <div id="stopDetailFormWrap" class="stop-form" hidden>
+          <p class="lead small" id="stopDetailFormTarget"></p>
+          <div class="field">
+            <label for="sdAuthor">記録した人</label>
+            <input type="text" id="sdAuthor" placeholder="お名前">
+          </div>
+          <div class="field">
+            <label for="sdEpisode">エピソード</label>
+            <textarea id="sdEpisode" rows="3" placeholder="そこで何があったか"></textarea>
+          </div>
+          <div class="field">
+            <label for="sdComment">一言（任意）</label>
+            <input type="text" id="sdComment" placeholder="例：また行きたい！">
+          </div>
+          <div class="field">
+            <label for="sdPhotos">写真（任意）</label>
+            <input type="file" id="sdPhotos" accept="image/*" multiple>
+            <div id="sdPhotoPreview" class="photo-preview"></div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="sdPrice">一人あたりの値段（任意・円）</label>
+              <input type="number" id="sdPrice" min="0" placeholder="例：1200">
+            </div>
+            <div class="field">
+              <label for="sdWait">待ち時間（任意）</label>
+              <input type="text" id="sdWait" placeholder="例：20分">
+            </div>
+          </div>
+          <div class="field">
+            <label>値段の明細（任意）</label>
+            <div id="sdBreakdownRows"></div>
+            <button type="button" class="btn text small" id="btnAddBreakdownRow">＋ 明細を追加</button>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="sdMapUrl">地図のURL（任意）</label>
+              <input type="url" id="sdMapUrl" placeholder="https://maps...">
+            </div>
+            <div class="field">
+              <label for="sdShopUrl">お店のHP（任意）</label>
+              <input type="url" id="sdShopUrl" placeholder="https://...">
+            </div>
+          </div>
+          <button class="btn primary" id="btnSaveStopDetail">この記録を追加する</button>
+          <button class="btn text" id="btnCancelStopDetail">キャンセル</button>
+        </div>
+      </section>
+
+      <h2 class="wp-section-title">エピソード</h2>
       <div id="tripDetailEpisodes" class="wp-album"></div>
     </div>
   </section>

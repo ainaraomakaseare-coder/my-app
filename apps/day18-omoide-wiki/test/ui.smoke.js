@@ -256,6 +256,62 @@ const TINY_PNG = Buffer.from(
   check('保存後はダッシュボードではなく、同じ旅行の詳細画面に戻る', (await page.textContent('#tripDetailTitle')) === '2019年秋の遠足');
   check('追加したエピソードが同じ旅行の中に増える', (await page.textContent('#tripDetailEpisodes')).indexOf('2日目の朝ごはん') !== -1);
 
+  // ---- 過ごした一日（Stop＝大項目／StopDetail＝小項目）：別行動した人の記録を同じ予定の中に分けて残せる ----
+  check('過ごした一日：最初は「まだ予定が記録されていません」', (await page.textContent('#stopsTimeline')).indexOf('まだ予定が記録されていません') !== -1);
+  await page.click('#btnAddStop');
+  await page.waitForSelector('#stopFormWrap:not([hidden])');
+  await page.fill('#stopDate', '2019-10-05');
+  await page.fill('#stopTime', '12:00');
+  await page.fill('#stopTimeLabel', '到着');
+  await page.fill('#stopType', '食事');
+  await page.click('#btnSaveStop');
+  await page.waitForFunction(() => document.getElementById('stopFormWrap').hidden === true);
+  check('予定を追加すると一覧に日時が出る', (await page.textContent('#stopsTimeline')).indexOf('2019年10月5日 12:00') !== -1);
+  check('タイミングと種類のラベルが出る', (await page.textContent('#stopsTimeline')).indexOf('到着') !== -1 && (await page.textContent('#stopsTimeline')).indexOf('食事') !== -1);
+
+  await page.click('.add-detail-btn');
+  await page.waitForSelector('#stopDetailFormWrap:not([hidden])');
+  await page.fill('#sdAuthor', '太郎');
+  await page.fill('#sdEpisode', 'ラーメンを食べた');
+  await page.fill('#sdComment', 'また来たい');
+  await page.setInputFiles('#sdPhotos', [tmpPhoto]);
+  await page.waitForFunction(() => document.querySelectorAll('#sdPhotoPreview img').length === 1);
+  await page.fill('#sdPrice', '1200');
+  await page.click('#btnAddBreakdownRow');
+  await page.fill('.breakdown-row .bd-label', 'ラーメン');
+  await page.fill('.breakdown-row .bd-amount', '900');
+  await page.fill('#sdWait', '15分');
+  await page.fill('#sdMapUrl', 'https://maps.example.com/a');
+  await page.fill('#sdShopUrl', 'https://shop.example.com/a');
+  await page.click('#btnSaveStopDetail');
+  await page.waitForFunction(() => document.getElementById('stopDetailFormWrap').hidden === true);
+  check('記録を追加すると小項目として表示される', (await page.textContent('#stopsTimeline')).indexOf('ラーメンを食べた') !== -1);
+  check('一言も表示される', (await page.textContent('#stopsTimeline')).indexOf('また来たい') !== -1);
+  check('一人あたりの値段が表示される', (await page.textContent('#stopsTimeline')).indexOf('1200円') !== -1);
+  check('待ち時間が表示される', (await page.textContent('#stopsTimeline')).indexOf('15分') !== -1);
+  check('地図・お店のリンクが表示される', await page.locator('.stop-link').count() === 2);
+  check('写真のサムネイルが表示される', await page.locator('.stop-detail-body .thumbs img').count() === 1);
+  check('値段の明細は折りたたまれている', (await page.textContent('#stopsTimeline')).indexOf('明細を見る') !== -1);
+
+  await page.click('.add-detail-btn');
+  await page.waitForSelector('#stopDetailFormWrap:not([hidden])');
+  check('別の記録を追加するとき、前の入力内容は残っていない', (await page.inputValue('#sdAuthor')) === '');
+  await page.fill('#sdAuthor', '花子');
+  await page.fill('#sdEpisode', '寿司を食べた');
+  await page.click('#btnSaveStopDetail');
+  await page.waitForFunction(() => document.getElementById('stopDetailFormWrap').hidden === true);
+  check('別行動でも同じ予定の中に2人ぶんの記録が両方残る',
+    (await page.textContent('#stopsTimeline')).indexOf('ラーメンを食べた') !== -1 && (await page.textContent('#stopsTimeline')).indexOf('寿司を食べた') !== -1);
+
+  // ---- 評価：それぞれの人が名前を入れて評価できる（アカウント機能ではなく、名前入力方式） ----
+  check('評価する前は「まだ評価がありません」', (await page.textContent('#stopsTimeline')).indexOf('まだ評価がありません') !== -1);
+  const firstRateForm = page.locator('.stop-rate-form').first();
+  await firstRateForm.locator('.rate-name').fill('鈴木');
+  await firstRateForm.locator('.rate-score').selectOption('5');
+  await firstRateForm.locator('button[type=submit]').click();
+  await page.waitForFunction(() => (document.querySelector('.stop-rating-avg') || {}).textContent.indexOf('★5') !== -1);
+  check('評価するとその場で平均・件数が表示される', (await page.textContent('.stop-rating-avg')).indexOf('★5（1件）') !== -1);
+
   // ダッシュボードの「エピソードを追加する」から開いたときは、旅行名は引き継がれない（誤って
   // 直前の旅行に紐づかないように、正しくリセットされることを確認する）
   await page.click('[data-screen="tripDetail"] .back');
