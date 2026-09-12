@@ -176,6 +176,16 @@
         </div>
 
         <div class="field">
+          <label for="entVideo">動画（1本あたり最大50MB）</label>
+          <input type="file" id="entVideo" accept="video/*" multiple hidden>
+          <div class="photo-picker" id="entVideoPicker">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="11" height="10" rx="1.6"/><path d="M13.5 8.2l4-2.4v8.4l-4-2.4z"/></svg>
+            <span>動画を追加する</span>
+          </div>
+          <div class="video-preview" id="entVideoPreview"></div>
+        </div>
+
+        <div class="field">
           <label for="entEpisode">エピソード</label>
           <textarea id="entEpisode" rows="3" placeholder="どんなことがあった？"></textarea>
         </div>
@@ -183,6 +193,11 @@
         <div class="field">
           <label for="entComment">ひとこと</label>
           <input type="text" id="entComment" placeholder="例：最高だった！">
+        </div>
+
+        <div class="field">
+          <label for="entDetail">詳細（任意）</label>
+          <textarea id="entDetail" rows="4" placeholder="持ち物・注意点・裏話など、もっと書きたいことがあれば"></textarea>
         </div>
 
         <div class="field">

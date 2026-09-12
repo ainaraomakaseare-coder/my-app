@@ -272,6 +272,8 @@
     entryBlockId: null,       // 記録を追加する先の大項目
     formPhotoIds: [],         // 既存（サーバー上）の写真id
     pendingPhotos: [],        // 新規に選んだ、まだアップロードしていない {blob, url}
+    formVideoIds: [],         // 既存（サーバー上）の動画id
+    pendingVideos: [],        // 新規に選んだ、まだアップロードしていない {blob, name, size}
     formCostItems: []         // {label, amount}
   };
 
@@ -479,6 +481,12 @@
         }).join('') + '</div>'
       : '';
 
+    var videosHtml = (entry.videoIds || []).length
+      ? '<div class="entry-videos">' + entry.videoIds.map(function (id) {
+          return '<video src="' + escapeHtml(photoUrl(id)) + '" controls></video>';
+        }).join('') + '</div>'
+      : '';
+
     var costItems = entry.costItems || [];
     var costHtml = costItems.length
       ? '<div class="cost-lines">' +
@@ -497,8 +505,10 @@
     card.innerHTML =
       '<div class="entry-author">記録：' + escapeHtml(entry.author || '匿名') + '</div>' +
       photosHtml +
+      videosHtml +
       (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
       (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
+      (entry.detail ? '<div class="entry-detail">' + escapeHtml(entry.detail) + '</div>' : '') +
       costHtml +
       (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '');
 
@@ -581,11 +591,14 @@
     state.editingEntryId = entry ? entry.id : null;
     state.formPhotoIds = entry ? (entry.photoIds || []).slice() : [];
     state.pendingPhotos = [];
+    state.formVideoIds = entry ? (entry.videoIds || []).slice() : [];
+    state.pendingVideos = [];
     state.formCostItems = entry ? (entry.costItems || []).map(function (it) { return { label: it.label, amount: it.amount }; }) : [];
 
     $('#entFormTitle').textContent = entry ? '記録を編集' : '記録を追加';
     $('#entEpisode').value = entry ? entry.episode : '';
     $('#entComment').value = entry ? entry.comment : '';
+    $('#entDetail').value = entry ? entry.detail : '';
     $('#entWaitTime').value = entry ? entry.waitTime : '';
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
@@ -594,6 +607,7 @@
     $('#btnDeleteEntry').hidden = !entry;
 
     renderPhotoPreview();
+    renderVideoPreview();
     renderCostItems();
     showScreen('entryForm');
   }
@@ -620,6 +634,35 @@
         renderPhotoPreview();
       });
       el.appendChild(ph);
+    });
+  }
+
+  function formatMB(bytes) {
+    return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+  }
+
+  function renderVideoPreview() {
+    var el = $('#entVideoPreview');
+    el.innerHTML = '';
+    state.formVideoIds.forEach(function (id, idx) {
+      var chip = document.createElement('div');
+      chip.className = 'video-chip';
+      chip.innerHTML = '<span class="name">' + escapeHtml(id) + '</span><button type="button">×</button>';
+      chip.querySelector('button').addEventListener('click', function () {
+        state.formVideoIds.splice(idx, 1);
+        renderVideoPreview();
+      });
+      el.appendChild(chip);
+    });
+    state.pendingVideos.forEach(function (v, idx) {
+      var chip = document.createElement('div');
+      chip.className = 'video-chip';
+      chip.innerHTML = '<span class="name">' + escapeHtml(v.name) + '</span><span class="size">' + formatMB(v.size) + '</span><button type="button">×</button>';
+      chip.querySelector('button').addEventListener('click', function () {
+        state.pendingVideos.splice(idx, 1);
+        renderVideoPreview();
+      });
+      el.appendChild(chip);
     });
   }
 
@@ -662,6 +705,7 @@
     var payload = {
       episode: $('#entEpisode').value.trim(),
       comment: $('#entComment').value.trim(),
+      detail: $('#entDetail').value.trim(),
       costItems: state.formCostItems.filter(function (it) { return it.label.trim() || it.amount; })
         .map(function (it) { return { label: it.label.trim() || '費用', amount: it.amount || 0 }; }),
       waitTime: $('#entWaitTime').value.trim(),
@@ -670,9 +714,14 @@
       author: author
     };
 
-    Promise.all(state.pendingPhotos.map(function (p) { return uploadPhotoBlob(p.blob); }))
-      .then(function (uploaded) {
+    Promise.all([
+      Promise.all(state.pendingPhotos.map(function (p) { return uploadPhotoBlob(p.blob); })),
+      Promise.all(state.pendingVideos.map(function (v) { return uploadPhotoBlob(v.blob); }))
+    ])
+      .then(function (results) {
+        var uploaded = results[0], uploadedVideos = results[1];
         payload.photoIds = state.formPhotoIds.concat(uploaded.map(function (u) { return u.id; }));
+        payload.videoIds = state.formVideoIds.concat(uploadedVideos.map(function (u) { return u.id; }));
         var req = state.editingEntryId
           ? api('/entries/' + encodeURIComponent(state.editingEntryId), 'PATCH', payload)
           : api('/blocks/' + encodeURIComponent(state.entryBlockId) + '/entries', 'POST', payload);
@@ -727,6 +776,19 @@
         blobs.forEach(function (blob) { state.pendingPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
         renderPhotoPreview();
       });
+      e.target.value = '';
+    });
+
+    var MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+    $('#entVideoPicker').addEventListener('click', function () { $('#entVideo').click(); });
+    $('#entVideo').addEventListener('change', function (e) {
+      var files = Array.prototype.slice.call(e.target.files || []);
+      var tooBig = files.filter(function (f) { return f.size > MAX_VIDEO_BYTES; });
+      files.filter(function (f) { return f.size <= MAX_VIDEO_BYTES; }).forEach(function (f) {
+        state.pendingVideos.push({ blob: f, name: f.name, size: f.size });
+      });
+      renderVideoPreview();
+      if (tooBig.length) alert('50MBを超える動画は追加できませんでした：' + tooBig.map(function (f) { return f.name; }).join('、'));
       e.target.value = '';
     });
 

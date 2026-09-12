@@ -185,6 +185,7 @@ const TINY_PNG = Buffer.from(
 
   await page.fill('#entEpisode', '守礼門の前で写真。暑いけど景色は最高。');
   await page.fill('#entComment', '最高だった');
+  await page.fill('#entDetail', '朝早く行くと空いていて写真が撮りやすい。');
   await page.click('#btnAddCostItem');
   const rows = page.locator('.cost-item-row');
   await rows.nth(0).locator('input[type="text"]').fill('入場料');
@@ -194,6 +195,11 @@ const TINY_PNG = Buffer.from(
   fs.writeFileSync(tmpPhoto, TINY_PNG);
   await page.setInputFiles('#entPhoto', tmpPhoto);
   await page.waitForSelector('.photo-preview .ph img');
+  const tmpVideo = path.join(require('os').tmpdir(), 'tabilog-test.mp4');
+  fs.writeFileSync(tmpVideo, Buffer.from('fake video bytes'));
+  await page.setInputFiles('#entVideo', tmpVideo);
+  await page.waitForSelector('.video-chip');
+  check('動画のプレビューにファイル名が出る', (await page.textContent('.video-chip .name')) === 'tabilog-test.mp4');
   await page.click('#btnSaveEntry');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
 
@@ -201,6 +207,8 @@ const TINY_PNG = Buffer.from(
   check('見出しが表示される', (await page.textContent('.block-label')) === '首里城公園に到着');
   check('小項目（記録）が1件表示される', (await page.$$('.entry-card')).length === 1);
   check('エピソードが表示される', (await page.textContent('.entry-episode')) === '守礼門の前で写真。暑いけど景色は最高。');
+  check('詳細が表示される', (await page.textContent('.entry-detail')) === '朝早く行くと空いていて写真が撮りやすい。');
+  check('動画が表示される', (await page.$$('.entry-videos video')).length === 1);
   check('費用の合計が表示される', (await page.textContent('.cost-line.total')).includes('¥600'));
 
   // ---- 別行動：同じ大項目にもう1つ記録を追加 ----
@@ -217,7 +225,7 @@ const TINY_PNG = Buffer.from(
   check('別行動の記録が2件になる', (await page.$$('.entry-card')).length === 2);
 
   // ---- 編集 ----
-  await page.click('.entry-card >> nth=0');
+  await page.click('.entry-card >> nth=0 >> .entry-author');
   await page.waitForSelector('.screen[data-screen="entryForm"].active');
   check('編集画面のタイトルになる', (await page.textContent('#entFormTitle')) === '記録を編集');
   check('削除ボタンが出る', await page.isVisible('#btnDeleteEntry'));
@@ -227,7 +235,7 @@ const TINY_PNG = Buffer.from(
   check('編集した一言が反映される', (await page.textContent('.entry-card >> nth=0 >> .entry-comment')).includes('書き直した一言'));
 
   // ---- 削除 ----
-  await page.click('.entry-card >> nth=0');
+  await page.click('.entry-card >> nth=0 >> .entry-author');
   await page.waitForSelector('.screen[data-screen="entryForm"].active');
   await page.click('#btnDeleteEntry');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');

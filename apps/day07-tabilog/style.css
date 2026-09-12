@@ -139,6 +139,7 @@ a:hover { text-decoration: underline; }
 .entry-photos:has(.entry-photo ~ .entry-photo) .entry-photo { width: calc(50% - 3px); height: 90px; }
 .entry-episode { font-size: 12.5px; line-height: 1.6; }
 .entry-comment { font-size: 12px; color: var(--accent); margin-top: 6px; font-style: italic; }
+.entry-detail { font-size: 12px; color: var(--ink-muted); margin-top: 8px; white-space: pre-line; line-height: 1.6; }
 .cost-lines { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
 .cost-line { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-muted); margin-top: 3px; }
 .cost-line:first-child { margin-top: 0; }
@@ -177,11 +178,20 @@ a:hover { text-decoration: underline; }
   color: white; border: 2px solid var(--card); font-size: 12px; line-height: 1; padding: 0;
 }
 
+.video-preview { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.video-chip { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+.video-chip .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-chip .size { color: var(--ink-soft); font-size: 11px; flex-shrink: 0; }
+.video-chip button { flex-shrink: 0; background: none; border: none; color: var(--danger); font-size: 14px; padding: 0; }
+
+.entry-videos { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.entry-videos video { width: 100%; border-radius: 8px; background: #000; }
+
 .cost-items { display: flex; flex-direction: column; gap: 8px; }
 .cost-item-row { display: flex; gap: 8px; align-items: center; }
-.cost-item-row input[type="text"] { flex: 2; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
-.cost-item-row input[type="number"] { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
-.cost-item-row button { background: none; border: none; color: var(--ink-soft); font-size: 16px; width: 24px; }
+.cost-item-row input[type="text"] { flex: 1.6; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
+.cost-item-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 9px 8px; }
+.cost-item-row button { flex: 0 0 auto; background: none; border: none; color: var(--ink-soft); font-size: 16px; width: 22px; padding: 0; }
 .cost-total { font-size: 12.5px; font-weight: 700; margin-top: 8px; }
 
 .sheet-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }

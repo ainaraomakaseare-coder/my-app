@@ -30,12 +30,18 @@ CREATE TABLE IF NOT EXISTS blocks (
 
 -- 小項目：その予定のときの、一人ひとり（またはサブグループ）の記録。
 -- 別行動した場合は、同じblock_idのentryを複数作ることで表現する。
-CREATE TABLE IF NOT EXISTS entries (
+-- v3で detail（詳細）・video_ids（動画）を追加したため、entriesだけ作り直す
+-- （試作段階のため、テーブルごと作り直す方式。tripsやblocksは対象外）。
+DROP TABLE IF EXISTS entries;
+
+CREATE TABLE entries (
   id TEXT PRIMARY KEY,
   block_id TEXT NOT NULL,
   episode TEXT NOT NULL DEFAULT '',
   comment TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
   photo_ids TEXT NOT NULL DEFAULT '[]',
+  video_ids TEXT NOT NULL DEFAULT '[]',
   cost_items TEXT NOT NULL DEFAULT '[]',
   wait_time TEXT NOT NULL DEFAULT '',
   map_url TEXT NOT NULL DEFAULT '',

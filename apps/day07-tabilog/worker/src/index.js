@@ -265,6 +265,7 @@ function validEntryInput(x) {
   if (!x || typeof x !== "object") return false;
   if (!optStr(x.episode, 4000)) return false;
   if (!optStr(x.comment, 300)) return false;
+  if (!optStr(x.detail, 4000)) return false;
   if (!validCostItems(x.costItems)) return false;
   if (!optStr(x.waitTime, 50)) return false;
   if (!optUrl(x.mapUrl, 500)) return false;
@@ -273,6 +274,10 @@ function validEntryInput(x) {
   if (x.photoIds !== undefined) {
     if (!Array.isArray(x.photoIds) || x.photoIds.length > 20) return false;
     if (!x.photoIds.every((p) => typeof p === "string" && p.length <= 80)) return false;
+  }
+  if (x.videoIds !== undefined) {
+    if (!Array.isArray(x.videoIds) || x.videoIds.length > 10) return false;
+    if (!x.videoIds.every((p) => typeof p === "string" && p.length <= 80)) return false;
   }
   return true;
 }
@@ -283,7 +288,9 @@ function rowToEntry(row) {
     blockId: row.block_id,
     episode: row.episode,
     comment: row.comment,
+    detail: row.detail,
     photoIds: JSON.parse(row.photo_ids || "[]"),
+    videoIds: JSON.parse(row.video_ids || "[]"),
     costItems: JSON.parse(row.cost_items || "[]"),
     waitTime: row.wait_time,
     mapUrl: row.map_url,
@@ -310,7 +317,9 @@ async function createEntry(blockId, request, env, headers) {
     block_id: blockId,
     episode: (data.episode || "").trim(),
     comment: (data.comment || "").trim(),
+    detail: (data.detail || "").trim(),
     photo_ids: JSON.stringify(data.photoIds || []),
+    video_ids: JSON.stringify(data.videoIds || []),
     cost_items: JSON.stringify(data.costItems || []),
     wait_time: (data.waitTime || "").trim(),
     map_url: data.mapUrl || "",
@@ -320,12 +329,12 @@ async function createEntry(blockId, request, env, headers) {
     updated_at: t,
   };
   await env.DB.prepare(
-    `INSERT INTO entries (id, block_id, episode, comment, photo_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   )
     .bind(
-      row.id, row.block_id, row.episode, row.comment, row.photo_ids, row.cost_items,
-      row.wait_time, row.map_url, row.shop_url, row.author, row.created_at, row.updated_at
+      row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
+      row.cost_items, row.wait_time, row.map_url, row.shop_url, row.author, row.created_at, row.updated_at
     )
     .run();
   return json(rowToEntry(row), 201, headers);
@@ -345,10 +354,11 @@ async function updateEntry(id, request, env, headers) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   await env.DB.prepare(
-    `UPDATE entries SET episode=?, comment=?, photo_ids=?, cost_items=?, wait_time=?, map_url=?, shop_url=?, author=?, updated_at=? WHERE id=?`
+    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, map_url=?, shop_url=?, author=?, updated_at=? WHERE id=?`
   )
     .bind(
-      (merged.episode || "").trim(), (merged.comment || "").trim(), JSON.stringify(merged.photoIds || []),
+      (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
+      JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
       JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(),
       merged.mapUrl || "", merged.shopUrl || "", (merged.author || "").trim(), t, id
     )
@@ -362,20 +372,27 @@ async function deleteEntry(id, env, headers) {
   return json({ ok: true }, 200, headers);
 }
 
-/* ---------- photos (R2) ---------- */
+/* ---------- photos / videos (R2) ---------- */
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // 圧縮後を想定した上限。無料枠(R2 10GB)を長く保つため。
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 動画は圧縮しないので大きめの上限にしている。
+
+const IMAGE_EXT = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" };
+const VIDEO_EXT = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm" };
 
 async function uploadPhoto(request, env, headers) {
   const contentType = request.headers.get("content-type") || "image/jpeg";
-  if (!/^image\/(jpeg|png|webp)$/.test(contentType)) {
+  const isImage = Object.prototype.hasOwnProperty.call(IMAGE_EXT, contentType);
+  const isVideo = Object.prototype.hasOwnProperty.call(VIDEO_EXT, contentType);
+  if (!isImage && !isVideo) {
     return json({ error: "unsupported_type" }, 415, headers);
   }
   const buf = await request.arrayBuffer();
-  if (buf.byteLength === 0 || buf.byteLength > MAX_PHOTO_BYTES) {
+  const maxBytes = isVideo ? MAX_VIDEO_BYTES : MAX_PHOTO_BYTES;
+  if (buf.byteLength === 0 || buf.byteLength > maxBytes) {
     return json({ error: "invalid_size" }, 413, headers);
   }
-  const id = uid("photo") + (contentType === "image/png" ? ".png" : contentType === "image/webp" ? ".webp" : ".jpg");
+  const id = uid("photo") + (isVideo ? VIDEO_EXT[contentType] : IMAGE_EXT[contentType]);
   await env.PHOTOS_BUCKET.put(id, buf, { httpMetadata: { contentType } });
   return json({ id, url: `/photos/${id}` }, 201, headers);
 }
