@@ -134,6 +134,36 @@ function fakeJwt(payload) {
 
   check('ページ内エラーが発生していない', errors.length === 0, errors.join(' / '));
 
+  // ---- Appleでサインイン（別ページで、Apple Client IDだけ設定した状態を検証） ----
+  const applePage = await ctx.newPage();
+  const appleErrors = [];
+  applePage.on('pageerror', (e) => appleErrors.push(e.message));
+  await applePage.addInitScript(() => {
+    window.AppleID = {
+      auth: {
+        init: (opts) => { window.__appleInitOpts = opts; },
+        signIn: () => Promise.resolve({
+          authorization: { id_token: 'x.' + btoa('{}') + '.y' },
+          user: { name: { firstName: 'アップル', lastName: '花子' }, email: 'apple-hanako@example.com' }
+        })
+      }
+    };
+  });
+  await applePage.route('**/', async (route) => {
+    const res = await route.fetch();
+    let body = await res.text();
+    body = body
+      .replace('<meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">', '<meta name="tabilog-api-endpoint" content="/api">')
+      .replace('<meta name="tabilog-apple-client-id" content="">', '<meta name="tabilog-apple-client-id" content="com.hiroyaapps.tabilog.web">');
+    await route.fulfill({ response: res, body, headers: { ...res.headers(), 'content-type': 'text/html; charset=utf-8' } });
+  });
+  await applePage.goto(BASE);
+  check('Apple Client ID設定時はAppleボタンが表示される', await applePage.isVisible('#appleSignInButton'));
+  await applePage.click('#appleSignInButton');
+  await applePage.waitForSelector('.screen[data-screen="home"].active');
+  check('Appleログイン後は氏名が表示される', (await applePage.textContent('#accountName')) === 'アップル 花子');
+  check('Appleログイン側でエラーが発生していない', appleErrors.length === 0, appleErrors.join(' / '));
+
   await browser.close();
   server.close();
 

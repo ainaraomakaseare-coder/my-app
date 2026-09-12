@@ -188,6 +188,10 @@
     var meta = document.querySelector('meta[name="tabilog-google-client-id"]');
     return meta ? meta.getAttribute('content').trim() : '';
   })();
+  var APPLE_CLIENT_ID = (function () {
+    var meta = document.querySelector('meta[name="tabilog-apple-client-id"]');
+    return meta ? meta.getAttribute('content').trim() : '';
+  })();
   var MY_TRIPS_KEY = 'tabilog:my-trips';
   var CURRENT_USER_KEY = 'tabilog:user';
 
@@ -221,10 +225,12 @@
   function saveCurrentUser(u) { localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(u)); }
   function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); }
 
+  function loginEnabled() { return !!(GOOGLE_CLIENT_ID || APPLE_CLIENT_ID); }
+
   function renderAccountRow() {
     var row = $('#accountRow');
     var user = loadCurrentUser();
-    if (!GOOGLE_CLIENT_ID || !user) { row.hidden = true; return; }
+    if (!loginEnabled() || !user) { row.hidden = true; return; }
     row.hidden = false;
     $('#accountName').textContent = user.name || user.email || '';
   }
@@ -842,27 +848,64 @@
 
   // ログインが必要かどうかを判断し、必要ならログイン画面を、不要ならいつも通りホーム/旅行画面を出す
   function authGate() {
-    if (!GOOGLE_CLIENT_ID || loadCurrentUser()) {
+    if (!loginEnabled() || loadCurrentUser()) {
       renderAccountRow();
       enterApp();
       return;
     }
     showScreen('login');
     $('#loginStatus').textContent = '';
-    if (!window.google || !window.google.accounts) {
-      $('#loginStatus').textContent = 'Googleログインの読み込みに失敗しました。時間をおいて再読み込みしてください。';
-      return;
+
+    if (GOOGLE_CLIENT_ID) {
+      if (!window.google || !window.google.accounts) {
+        $('#loginStatus').textContent = 'Googleログインの読み込みに失敗しました。時間をおいて再読み込みしてください。';
+      } else {
+        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
+        google.accounts.id.renderButton($('#googleSignInButton'), { theme: 'outline', size: 'large', width: 280 });
+      }
     }
-    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
-    google.accounts.id.renderButton($('#googleSignInButton'), { theme: 'outline', size: 'large', width: 280 });
+
+    if (APPLE_CLIENT_ID) {
+      var appleBtn = $('#appleSignInButton');
+      appleBtn.hidden = false;
+      appleBtn.onclick = handleAppleSignIn;
+    }
   }
 
-  function handleCredentialResponse(response) {
+  function handleGoogleCredential(response) {
     var payload = decodeJwtPayload(response.credential);
     if (!payload) { $('#loginStatus').textContent = 'ログインに失敗しました。もう一度お試しください。'; return; }
-    saveCurrentUser({ name: payload.name, email: payload.email, picture: payload.picture });
+    saveCurrentUser({ name: payload.name, email: payload.email, picture: payload.picture, provider: 'google' });
     renderAccountRow();
     enterApp();
+  }
+
+  function handleAppleSignIn() {
+    if (!window.AppleID || !window.AppleID.auth) {
+      $('#loginStatus').textContent = 'Appleログインの読み込みに失敗しました。時間をおいて再読み込みしてください。';
+      return;
+    }
+    AppleID.auth.init({
+      clientId: APPLE_CLIENT_ID,
+      scope: 'name email',
+      redirectURI: location.origin + location.pathname,
+      usePopup: true
+    });
+    AppleID.auth.signIn().then(function (res) {
+      // Appleは初回ログインのときだけ res.user に氏名・メールを返す。2回目以降はid_tokenからメールだけ分かる。
+      var payload = decodeJwtPayload(res.authorization.id_token) || {};
+      var name = (res.user && res.user.name) ? [res.user.name.firstName, res.user.name.lastName].filter(Boolean).join(' ') : '';
+      var existing = loadCurrentUser();
+      saveCurrentUser({
+        name: name || (existing && existing.provider === 'apple' ? existing.name : '') || '',
+        email: (res.user && res.user.email) || payload.email || '',
+        provider: 'apple'
+      });
+      renderAccountRow();
+      enterApp();
+    }).catch(function () {
+      $('#loginStatus').textContent = 'Appleログインに失敗、またはキャンセルされました。';
+    });
   }
 
   // ログインの確認が済んだあと、実際にホーム/共有された旅行を表示する

@@ -32,6 +32,10 @@ jobs:
         working-directory: apps/day07-tabilog-ios
         run: npx cap sync ios
 
+      - name: アイコン・スプラッシュ画像を生成する（resources/icon.png・splash.pngから）
+        working-directory: apps/day07-tabilog-ios
+        run: npx capacitor-assets generate --ios
+
       - name: App Store ConnectのAPIキーをファイルに書き出す
         working-directory: apps/day07-tabilog-ios
         run: |

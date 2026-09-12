@@ -29,6 +29,10 @@ open index.html
 - **写真**：選んだ時点で自動的に縮小・圧縮してからサーバーへアップロードします（長辺1280px・JPEG品質72%程度）
 - **動画**：1本あたり最大50MBまで（圧縮はしません）。写真と同じ「＋ 写真を追加する」の下に、動画専用の追加ボタンがあります
 
+## プライバシーポリシー
+
+`privacy.html` にプライバシーポリシーを用意しています。公開後は `https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html` で見られ、App Store Connectへの申請時にこのURLを入力します。
+
 ## iOSアプリ化について
 
 このWeb版をそのままiOSアプリの器に包み、App Store（TestFlight）に送る仕組みを `apps/day07-tabilog-ios/` に用意しています。手順・必要な費用（Apple Developer Program 年間99ドルが必須）は `apps/day07-tabilog-ios/README.md` を参照してください。
@@ -58,6 +62,25 @@ Googleアカウントでのログインを追加できます。**設定しなく
 
 費用は無料です（Google Cloudのプロジェクト作成・OAuthクライアントID発行自体に料金はかかりません）。
 
+## Appleでサインインについて（任意設定・App Store公開時はほぼ必須）
+
+Appleの審査ルール（App Store Review Guideline 4.8）上、**Googleログインなど他社のログイン手段を提供する場合は、Appleでのサインインも選択肢として用意する必要があります。** 家族内だけの利用（TestFlightの内部テストのみ）であれば無くても進められますが、App Storeで一般公開するなら実質必須です。
+
+設定しなくても、今までどおりリンク共有・Googleログインだけで使えます（`index.html` の `tabilog-apple-client-id` メタタグが空のままなら、Appleログインのボタン自体が表示されません）。こちらもGoogleログインと同様、サーバー側で検証しない簡易的な仕組みです。
+
+### 設定手順（Apple Developer Program登録後に行う）
+
+1. https://developer.apple.com/account/resources/identifiers/list/serviceId を開く
+2. 「+」で新しい**Services ID**を作成（例：識別子 `com.hiroyaapps.tabilog.web`。iOSアプリ本体のBundle ID `com.hiroyaapps.tabilog` とは別物）
+3. 作成したServices IDの設定画面で「Sign in with Apple」を有効化し、「Configure」から以下を登録
+   - Primary App ID：iOSアプリ本体のBundle IDを選択
+   - Domains and Subdomains：`ainaraomakaseare-coder.github.io`
+   - Return URLs：`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/`
+4. ドメインの所有確認のため、この画面で「Download」できるドメイン確認用ファイルを、このリポジトリのルート直下 `.well-known/apple-developer-domain-association.txt` として保存する（GitHub Pagesで公開されているドメインのルートに置く必要があるため）
+5. 発行されたServices ID（`com.hiroyaapps.tabilog.web`）を、`index.html` の `tabilog-apple-client-id` メタタグの `content` に設定する
+
+費用は無料です（Apple Developer Programの年会費に含まれており、追加の費用は発生しません）。
+
 ## サーバーについて
 
 写真やデータの保存にはCloudflare WorkerとD1（データベース）・R2（写真の保存）を使います。公開手順・費用の目安（無料枠に収める方針）は `worker/README.md` を参照してください。**サーバーを公開して `index.html` の `tabilog-api-endpoint` メタタグにURLを設定するまでは、旅行の保存はできません**（トップ画面にその旨の案内が出ます）。
@@ -73,5 +96,5 @@ Googleアカウントでのログインを追加できます。**設定しなく
 ```
 node test/data.test.js    # 日付計算・並べ替え・費用の合計（大項目・小項目・旅行全体）など
 node test/ui.smoke.js     # 実ブラウザでの画面の流れ（フェイクのAPIで模擬。要 playwright）
-node test/auth.smoke.js   # Googleログインの画面の流れ（Google側はダミーに差し替えて検証。要 playwright）
+node test/auth.smoke.js   # Google/Appleログインの画面の流れ（どちらもダミーに差し替えて検証。要 playwright）
 ```

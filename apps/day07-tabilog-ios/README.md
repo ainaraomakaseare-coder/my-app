@@ -4,6 +4,8 @@
 
 見た目・データはすべてWeb版（`apps/day07-tabilog/`）と共通です。このフォルダには「Web版をアプリとして包むための設定」だけが入っていて、`ios/` というネイティブのXcodeプロジェクトは**リポジトリには入れず、ビルドのたびにCI上で作り直します**（中身が大きい・環境依存のファイルのため）。
 
+アプリアイコン・起動画面（スプラッシュ）は `resources/icon.png`（1024×1024）・`resources/splash.png`（2732×2732）として用意済みです。ビルド時に `@capacitor/assets` が自動的に各サイズへ書き出します（差し替えたい場合はこの2枚を上書きしてください）。
+
 ## 費用（必ず発生するもの）
 
 - **Apple Developer Program：年間99ドル（約1万5千円）**。App Storeで配布する以上、これは避けられません
@@ -40,8 +42,12 @@ https://developer.apple.com/account の「Membership」ページに表示され�
 1. https://appstoreconnect.apple.com/apps → 「+」→「新規App」
 2. プラットフォーム：iOS
 3. 名前：たびログ（他の人が使っていなければそのまま使えます。使われていたら別名にする必要があります）
-4. Bundle ID：`com.hiroyaapps.tabilog`（`capacitor.config.json` と同じ値にする。事前に developer.apple.com の「Identifiers」からこのBundle IDを登録しておく必要があります）
+4. Bundle ID：`com.hiroyaapps.tabilog`（`capacitor.config.json` と同じ値にする。事前に developer.apple.com の「Identifiers」からこのBundle IDを登録しておく必要があります。この登録画面で「Sign in with Apple」にもチェックを入れておいてください）
 5. SKU：何でもよい（例：`tabilog001`）
+
+説明文・キーワード・データ収集の申告内容などの下書きは `app-store-listing.md` にまとめてあります。コピーして使ってください。プライバシーポリシーのURLは `../day07-tabilog/privacy.html`（公開後は `https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`）です。
+
+Appleでサインインを有効にする手順（Googleログインを提供する場合はほぼ必須）は `../day07-tabilog/README.md` の「Appleでサインインについて」を参照してください。
 
 ### 5. GitHubにシークレットを登録する
 
