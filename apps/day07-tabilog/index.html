@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>たびログ</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235B4FE0'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
+<!-- Worker公開後に、そのURLをcontentへ設定する。空のままだとサーバーに保存できず案内だけが出る。 -->
+<meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ============ 旅行一覧 ============ -->
+  <section class="screen active" data-screen="home">
+    <div class="wrap">
+      <header class="hd">
+        <h1>たびログ</h1>
+        <p class="lead">家族と過ごした、あの旅の記録。</p>
+      </header>
+
+      <p class="notice" id="apiNotice" hidden></p>
+
+      <div id="tripList" class="trip-list"></div>
+
+      <div class="home-actions">
+        <button class="btn primary" id="btnNewTrip">＋ 新しい旅を記録する</button>
+      </div>
+
+      <div class="field open-link">
+        <label for="openTripId">招待リンクのIDを直接開く</label>
+        <div class="row">
+          <input type="text" id="openTripId" placeholder="trip_xxxxxxxx">
+          <button class="btn ghost" id="btnOpenTripId">開く</button>
+        </div>
+      </div>
+
+      <p class="hint">旅行はサーバー（データベース）に保存されます。共有リンクを知っている人は誰でも見たり書き足したりできます。</p>
+    </div>
+  </section>
+
+  <!-- ============ 新しい旅を作る ============ -->
+  <section class="screen" data-screen="newTrip">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="home">← 戻る</button>
+        <h1>新しい旅を記録する</h1>
+      </header>
+
+      <div class="field">
+        <label for="ntTitle">旅のタイトル</label>
+        <input type="text" id="ntTitle" placeholder="例：沖縄 家族旅行">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="ntStart">出発日</label>
+          <input type="date" id="ntStart">
+        </div>
+        <div class="field">
+          <label for="ntEnd">帰着日</label>
+          <input type="date" id="ntEnd">
+        </div>
+      </div>
+      <div class="field">
+        <label for="ntCompanions">だれと行った？（読点区切り）</label>
+        <input type="text" id="ntCompanions" placeholder="例：父、母、妹">
+      </div>
+
+      <p class="hint" id="newTripStatus"></p>
+      <button class="btn primary wide" id="btnCreateTrip">この旅を作る</button>
+    </div>
+  </section>
+
+  <!-- ============ 旅の詳細（日ごとのきろく） ============ -->
+  <section class="screen" data-screen="tripDetail">
+    <div class="wrap">
+      <header class="trip-cover" id="tripCover">
+        <button class="icon-btn back-btn" data-back="home" aria-label="戻る">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M12.5 4.5L7 10l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="icon-btn share-btn" id="btnShareTrip" aria-label="共有">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="15.5" cy="4.5" r="2.3"/><circle cx="4.5" cy="10" r="2.3"/><circle cx="15.5" cy="15.5" r="2.3"/><path d="M6.5 8.8l7-3.3"/><path d="M6.5 11.2l7 3.3"/></svg>
+        </button>
+        <div class="trip-cover-text">
+          <div class="trip-title" id="tripTitle"></div>
+          <div class="trip-dates" id="tripDates"></div>
+        </div>
+      </header>
+
+      <div class="companions-row">
+        <div class="companions-names" id="tripCompanions"></div>
+        <button class="chip-btn" id="btnInvite">
+          <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>
+          メンバーを招待
+        </button>
+      </div>
+
+      <div class="stats-row" id="tripStats"></div>
+
+      <div class="day-tabs" id="dayTabs"></div>
+
+      <div class="section-label">
+        <div class="section-title" id="dayTitle"></div>
+      </div>
+
+      <div class="timeline" id="timeline"></div>
+
+      <p class="hint" id="tripDetailStatus"></p>
+    </div>
+  </section>
+
+  <!-- ============ 予定（大項目）の追加・編集 ============ -->
+  <section class="screen" data-screen="blockForm">
+    <div class="wrap narrow">
+      <div class="sheet">
+        <div class="sheet-head">
+          <div class="sheet-title" id="blkFormTitle">予定を追加</div>
+          <button class="icon-btn close-btn" data-back="tripDetail" aria-label="閉じる">
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+          </button>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="blkDate">日付</label>
+            <input type="date" id="blkDate">
+          </div>
+          <div class="field">
+            <label for="blkTime">時間</label>
+            <input type="time" id="blkTime">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="blkLabel">見出し</label>
+          <input type="text" id="blkLabel" placeholder="例：那覇空港に集合／首里城公園に到着">
+        </div>
+
+        <div class="field">
+          <label>種類</label>
+          <div class="cat-chips" id="blkCategoryChips"></div>
+        </div>
+
+        <p class="hint" id="blkFormStatus"></p>
+        <div class="sheet-actions">
+          <button class="btn danger ghost" id="btnDeleteBlock" hidden>この予定を削除</button>
+          <button class="btn primary wide" id="btnSaveBlock">保存する</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 記録（小項目）の追加・編集 ============ -->
+  <section class="screen" data-screen="entryForm">
+    <div class="wrap narrow">
+      <div class="sheet">
+        <div class="sheet-head">
+          <div class="sheet-title" id="entFormTitle">記録を追加</div>
+          <button class="icon-btn close-btn" data-back="tripDetail" aria-label="閉じる">
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+          </button>
+        </div>
+
+        <div class="field">
+          <label for="entPhoto">写真</label>
+          <input type="file" id="entPhoto" accept="image/*" multiple hidden>
+          <div class="photo-picker" id="entPhotoPicker">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h1.3l.7-1.2c.2-.3.5-.5.9-.5h4.2c.4 0 .7.2.9.5l.7 1.2H15a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="10" cy="10.5" r="3.2"/></svg>
+            <span>写真を追加する</span>
+          </div>
+          <div class="photo-preview" id="entPhotoPreview"></div>
+        </div>
+
+        <div class="field">
+          <label for="entEpisode">エピソード</label>
+          <textarea id="entEpisode" rows="3" placeholder="どんなことがあった？"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="entComment">ひとこと</label>
+          <input type="text" id="entComment" placeholder="例：最高だった！">
+        </div>
+
+        <div class="field">
+          <label>費用の明細</label>
+          <div class="cost-items" id="entCostItems"></div>
+          <button type="button" class="btn ghost small" id="btnAddCostItem">＋ 明細を追加</button>
+          <div class="cost-total" id="entCostTotal"></div>
+        </div>
+
+        <div class="field">
+          <label for="entWaitTime">待ち時間</label>
+          <input type="text" id="entWaitTime" placeholder="例：20分待ち">
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="entMapUrl">地図のURL（任意）</label>
+            <input type="url" id="entMapUrl" placeholder="https://maps.google.com/...">
+          </div>
+          <div class="field">
+            <label for="entShopUrl">お店・施設のHP（任意）</label>
+            <input type="url" id="entShopUrl" placeholder="https://...">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="entAuthor">記録した人</label>
+          <input type="text" id="entAuthor" placeholder="例：わたし">
+        </div>
+
+        <p class="hint" id="entFormStatus"></p>
+        <div class="sheet-actions">
+          <button class="btn danger ghost" id="btnDeleteEntry" hidden>この記録を削除</button>
+          <button class="btn primary wide" id="btnSaveEntry">保存する</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
