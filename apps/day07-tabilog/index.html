@@ -7,21 +7,41 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235B4FE0'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
 <!-- Worker公開後に、そのURLをcontentへ設定する。空のままだとサーバーに保存できず案内だけが出る。 -->
 <meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">
+<!-- Google Cloud ConsoleでOAuthクライアントIDを発行後、ここに設定する。空のままならログイン機能自体が無効になり、今まで通りリンク共有だけで使える。 -->
+<meta name="tabilog-google-client-id" content="">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="style.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 <div class="app" id="app">
 
+  <!-- ============ ログイン（Google Client ID未設定なら使われない） ============ -->
+  <section class="screen" data-screen="login">
+    <div class="wrap narrow login-wrap">
+      <div class="hd" style="text-align:center">
+        <h1>たびログ</h1>
+        <p class="lead">Googleアカウントでログインしてください</p>
+      </div>
+      <div id="googleSignInButton" class="google-signin-slot"></div>
+      <p class="hint" id="loginStatus"></p>
+    </div>
+  </section>
+
   <!-- ============ 旅行一覧 ============ -->
-  <section class="screen active" data-screen="home">
+  <section class="screen" data-screen="home">
     <div class="wrap">
       <header class="hd">
         <h1>たびログ</h1>
         <p class="lead">家族と過ごした、あの旅の記録。</p>
       </header>
+
+      <div class="account-row" id="accountRow" hidden>
+        <span id="accountName"></span>
+        <button class="btn text" id="btnLogout">ログアウト</button>
+      </div>
 
       <p class="notice" id="apiNotice" hidden></p>
 

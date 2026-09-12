@@ -184,7 +184,12 @@
     var v = meta ? meta.getAttribute('content').trim() : '';
     return v.replace(/\/$/, '');
   })();
+  var GOOGLE_CLIENT_ID = (function () {
+    var meta = document.querySelector('meta[name="tabilog-google-client-id"]');
+    return meta ? meta.getAttribute('content').trim() : '';
+  })();
   var MY_TRIPS_KEY = 'tabilog:my-trips';
+  var CURRENT_USER_KEY = 'tabilog:user';
 
   function $(sel, root2) { return (root2 || document).querySelector(sel); }
   function $all(sel, root2) { return Array.prototype.slice.call((root2 || document).querySelectorAll(sel)); }
@@ -198,6 +203,30 @@
   function showScreen(name) {
     $all('.screen').forEach(function (s) { s.classList.toggle('active', s.dataset.screen === name); });
     window.scrollTo(0, 0);
+  }
+
+  // ---------- Googleログイン ----------
+  // クライアント側だけで完結する簡易的な仕組み（サーバー側でのトークン検証はしていない）。
+  // 家族・少人数での利用を想定しており、「誰が記録したか」を自動で埋めるための本人確認として使う。
+  function decodeJwtPayload(token) {
+    try {
+      var base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(decodeURIComponent(escape(atob(base64))));
+    } catch (e) { return null; }
+  }
+
+  function loadCurrentUser() {
+    try { return JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null'); } catch (e) { return null; }
+  }
+  function saveCurrentUser(u) { localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(u)); }
+  function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); }
+
+  function renderAccountRow() {
+    var row = $('#accountRow');
+    var user = loadCurrentUser();
+    if (!GOOGLE_CLIENT_ID || !user) { row.hidden = true; return; }
+    row.hidden = false;
+    $('#accountName').textContent = user.name || user.email || '';
   }
 
   function loadMyTrips() {
@@ -602,7 +631,8 @@
     $('#entWaitTime').value = entry ? entry.waitTime : '';
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
-    $('#entAuthor').value = entry ? entry.author : '';
+    var loggedInUser = loadCurrentUser();
+    $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
     $('#btnDeleteEntry').hidden = !entry;
 
@@ -800,7 +830,43 @@
       });
     });
 
+    $('#btnLogout').addEventListener('click', function () {
+      clearCurrentUser();
+      history.pushState(null, '', location.pathname);
+      authGate();
+    });
+
     apiNoticeCheck();
+    authGate();
+  }
+
+  // ログインが必要かどうかを判断し、必要ならログイン画面を、不要ならいつも通りホーム/旅行画面を出す
+  function authGate() {
+    if (!GOOGLE_CLIENT_ID || loadCurrentUser()) {
+      renderAccountRow();
+      enterApp();
+      return;
+    }
+    showScreen('login');
+    $('#loginStatus').textContent = '';
+    if (!window.google || !window.google.accounts) {
+      $('#loginStatus').textContent = 'Googleログインの読み込みに失敗しました。時間をおいて再読み込みしてください。';
+      return;
+    }
+    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
+    google.accounts.id.renderButton($('#googleSignInButton'), { theme: 'outline', size: 'large', width: 280 });
+  }
+
+  function handleCredentialResponse(response) {
+    var payload = decodeJwtPayload(response.credential);
+    if (!payload) { $('#loginStatus').textContent = 'ログインに失敗しました。もう一度お試しください。'; return; }
+    saveCurrentUser({ name: payload.name, email: payload.email, picture: payload.picture });
+    renderAccountRow();
+    enterApp();
+  }
+
+  // ログインの確認が済んだあと、実際にホーム/共有された旅行を表示する
+  function enterApp() {
     var tripId = Core.getTripIdFromSearch(location.search);
     if (tripId) openTrip(tripId);
     else { showScreen('home'); renderHome(); }
