@@ -102,5 +102,24 @@ idx = T.upsertTripIndexEntry(idx, { id: 't1', title: 'A(更新)' });
 eq('upsertTripIndexEntry: 既存分は先頭へ移動し重複しない', idx.map(function (t) { return t.id; }), ['t1', 't2']);
 eq('upsertTripIndexEntry: 更新後の内容になる', idx[0].title, 'A(更新)');
 
+/* ---- 評価（ratingSummary / myRatingScore / sortMyLogItems） ---- */
+eq('ratingSummary: 平均と件数を出す', T.ratingSummary([{ score: 4 }, { score: 2 }]), { avg: 3, count: 2 });
+eq('ratingSummary: 評価が無ければ0件', T.ratingSummary([]), { avg: 0, count: 0 });
+eq('ratingSummary: ratings自体が無くても0件', T.ratingSummary(undefined), { avg: 0, count: 0 });
+
+var ratings = [{ raterEmail: 'a@example.com', score: 5 }, { raterEmail: 'B@Example.com', score: 3 }];
+eq('myRatingScore: メールアドレスで自分の評価を取り出す', T.myRatingScore(ratings, 'a@example.com'), 5);
+eq('myRatingScore: 大文字小文字を区別しない', T.myRatingScore(ratings, 'b@example.com'), 3);
+eq('myRatingScore: 自分の評価が無ければ0', T.myRatingScore(ratings, 'c@example.com'), 0);
+eq('myRatingScore: メールアドレスが無ければ0', T.myRatingScore(ratings, ''), 0);
+
+var myLogItems = [
+  { entryId: '1', score: 3, ratedAt: '2024-08-10T10:00:00Z' },
+  { entryId: '2', score: 5, ratedAt: '2024-08-09T10:00:00Z' },
+  { entryId: '3', score: 5, ratedAt: '2024-08-12T10:00:00Z' }
+];
+eq('sortMyLogItems: 評価が高い順（同点なら新しい順）', T.sortMyLogItems(myLogItems, 'score').map(function (i) { return i.entryId; }), ['3', '2', '1']);
+eq('sortMyLogItems: 新しい順', T.sortMyLogItems(myLogItems, 'date').map(function (i) { return i.entryId; }), ['3', '1', '2']);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

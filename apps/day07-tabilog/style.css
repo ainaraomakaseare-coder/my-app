@@ -46,6 +46,7 @@ a:hover { text-decoration: underline; }
 .hd .lead { color: var(--ink-muted); font-size: 13px; margin: 4px 0 0; }
 
 .login-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80dvh; text-align: center; }
+.login-wrap > .hd:first-child { align-self: stretch; text-align: left; padding-bottom: 0; }
 .google-signin-slot { margin-top: 22px; }
 .apple-signin-btn {
   display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px;
@@ -53,7 +54,9 @@ a:hover { text-decoration: underline; }
   width: 280px;
 }
 
-.account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0 0; font-size: 12.5px; color: var(--ink-muted); }
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0 0; font-size: 12.5px; color: var(--ink-muted); flex-wrap: wrap; }
+.account-row .btn.text { white-space: nowrap; flex-shrink: 0; }
+.account-row span { min-width: 0; }
 
 .notice {
   background: var(--accent-soft-bg); border: 1px solid #DCD8F7; color: var(--accent-deep);
@@ -205,6 +208,37 @@ a:hover { text-decoration: underline; }
 .cost-total { font-size: 12.5px; font-weight: 700; margin-top: 8px; }
 
 .sheet-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+
+/* ---------- 評価（★） ---------- */
+.entry-rating { font-size: 12.5px; font-weight: 700; color: #D9A441; margin-bottom: 6px; }
+.entry-rating .count { font-weight: 500; color: var(--ink-soft); margin-left: 2px; }
+
+.rating-widget { display: flex; align-items: center; }
+.stars { display: flex; gap: 4px; }
+.star-btn {
+  font-size: 26px; line-height: 1; color: var(--border); background: none; border: none; padding: 2px;
+}
+.star-btn.on { color: #D9A441; }
+
+/* ---------- マイログ ---------- */
+.mylog-tabs { display: flex; gap: 6px; padding: 12px 0 4px; overflow-x: auto; }
+.mylog-tab { padding: 7px 13px; border-radius: 8px; color: var(--ink-muted); font-size: 12px; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
+.mylog-tab.on { background: var(--accent); color: white; font-weight: 700; }
+
+.mylog-sort { display: flex; gap: 8px; padding: 8px 0 4px; }
+.sort-btn { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-muted); font-size: 11.5px; background: var(--card); }
+.sort-btn.on { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+
+.mylog-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.mylog-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+}
+.mylog-photo { width: 48px; height: 48px; border-radius: 8px; background-color: var(--border-soft); background-size: cover; background-position: center; flex-shrink: 0; }
+.mylog-info { flex: 1; min-width: 0; }
+.mylog-label { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mylog-trip { font-size: 11px; color: var(--ink-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mylog-score { font-size: 13.5px; font-weight: 700; color: #D9A441; flex-shrink: 0; }
 
 @media (max-width: 400px) {
   .field-row { flex-direction: column; }

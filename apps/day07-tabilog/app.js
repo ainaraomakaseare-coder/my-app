@@ -149,6 +149,35 @@
     return out.slice(0, 50);
   }
 
+  // entryが持つ評価（{raterEmail, raterName, score}の配列）から、平均と件数を出す
+  function ratingSummary(ratings) {
+    var list = (ratings || []).filter(function (r) { return typeof r.score === 'number' && r.score > 0; });
+    if (!list.length) return { avg: 0, count: 0 };
+    var sum = list.reduce(function (s, r) { return s + r.score; }, 0);
+    return { avg: sum / list.length, count: list.length };
+  }
+
+  // 評価の一覧から、指定したメールアドレス本人の評価だけを取り出す（無ければ0）
+  function myRatingScore(ratings, email) {
+    if (!email) return 0;
+    var mine = (ratings || []).filter(function (r) { return (r.raterEmail || '').toLowerCase() === email.toLowerCase(); })[0];
+    return mine ? mine.score : 0;
+  }
+
+  // マイログの並べ替え。sortKeyは'score'（評価が高い順、同点なら新しい順）か'date'（新しい順）
+  function sortMyLogItems(items, sortKey) {
+    var out = (items || []).slice();
+    if (sortKey === 'score') {
+      out.sort(function (a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        return (b.ratedAt || '').localeCompare(a.ratedAt || '');
+      });
+    } else {
+      out.sort(function (a, b) { return (b.ratedAt || '').localeCompare(a.ratedAt || ''); });
+    }
+    return out;
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
     categoryLabel: categoryLabel,
@@ -169,7 +198,10 @@
     parseTags: parseTags,
     getTripIdFromSearch: getTripIdFromSearch,
     buildShareUrl: buildShareUrl,
-    upsertTripIndexEntry: upsertTripIndexEntry
+    upsertTripIndexEntry: upsertTripIndexEntry,
+    ratingSummary: ratingSummary,
+    myRatingScore: myRatingScore,
+    sortMyLogItems: sortMyLogItems
   };
 
   root.TabiLog = Core;
@@ -229,10 +261,27 @@
 
   function renderAccountRow() {
     var row = $('#accountRow');
+    var promptRow = $('#loginPromptRow');
     var user = loadCurrentUser();
-    if (!loginEnabled() || !user) { row.hidden = true; return; }
-    row.hidden = false;
-    $('#accountName').textContent = user.name || user.email || '';
+    if (!loginEnabled()) { row.hidden = true; promptRow.hidden = true; return; }
+    if (user) {
+      row.hidden = false;
+      promptRow.hidden = true;
+      $('#accountName').textContent = user.name || user.email || '';
+    } else {
+      row.hidden = true;
+      promptRow.hidden = false;
+    }
+  }
+
+  function findEntryById(id) {
+    for (var i = 0; i < state.blocks.length; i++) {
+      var entries = state.blocks[i].entries || [];
+      for (var j = 0; j < entries.length; j++) {
+        if (entries[j].id === id) return entries[j];
+      }
+    }
+    return null;
   }
 
   function loadMyTrips() {
@@ -296,6 +345,15 @@
     });
   }
 
+  // マイログの画面で使う、カテゴリごとの呼び名
+  var MYLOG_LABELS = {
+    food: '飯ログ',
+    lodging: 'ほてログ',
+    sightseeing: 'アクティビティーログ',
+    transport: '移動ログ',
+    other: 'その他ログ'
+  };
+
   // ---------- 状態 ----------
   var state = {
     trip: null,
@@ -304,12 +362,17 @@
     editingBlockId: null,
     formCategory: 'sightseeing',
     editingEntryId: null,
+    editingEntry: null,       // 編集中の記録（評価の表示・更新に使う）
     entryBlockId: null,       // 記録を追加する先の大項目
     formPhotoIds: [],         // 既存（サーバー上）の写真id
     pendingPhotos: [],        // 新規に選んだ、まだアップロードしていない {blob, url}
     formVideoIds: [],         // 既存（サーバー上）の動画id
     pendingVideos: [],        // 新規に選んだ、まだアップロードしていない {blob, name, size}
-    formCostItems: []         // {label, amount}
+    formCostItems: [],        // {label, amount}
+    loginReturnTo: 'home',    // ログイン画面から戻る先の画面名
+    myLogItems: [],
+    myLogCategory: 'food',
+    myLogSort: 'score'
   };
 
   function apiNoticeCheck() {
@@ -537,8 +600,14 @@
     if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
     if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
 
+    var ratingSummary = Core.ratingSummary(entry.ratings);
+    var ratingHtml = ratingSummary.count
+      ? '<div class="entry-rating">★ ' + ratingSummary.avg.toFixed(1) + '<span class="count">（' + ratingSummary.count + '人）</span></div>'
+      : '';
+
     card.innerHTML =
       '<div class="entry-author">記録：' + escapeHtml(entry.author || '匿名') + '</div>' +
+      ratingHtml +
       photosHtml +
       videosHtml +
       (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
@@ -624,6 +693,7 @@
   function openEntryForm(blockId, entry) {
     state.entryBlockId = blockId;
     state.editingEntryId = entry ? entry.id : null;
+    state.editingEntry = entry || null;
     state.formPhotoIds = entry ? (entry.photoIds || []).slice() : [];
     state.pendingPhotos = [];
     state.formVideoIds = entry ? (entry.videoIds || []).slice() : [];
@@ -645,7 +715,59 @@
     renderPhotoPreview();
     renderVideoPreview();
     renderCostItems();
+    renderEntryRatingSection();
     showScreen('entryForm');
+  }
+
+  // ---------- 評価（★1〜5） ----------
+  // 評価はログイン必須。閲覧・記録の追加自体はログイン不要のまま。
+  // 1つの記録に、ログインした人それぞれが1つずつ評価を付けられる（自分の分だけこの画面から操作する）。
+  function renderEntryRatingSection() {
+    var field = $('#entRatingField');
+    var entry = state.editingEntry;
+    if (!loginEnabled() || !entry) { field.hidden = true; return; }
+    field.hidden = false;
+    var user = loadCurrentUser();
+    var widget = $('#entRatingWidget');
+    var summary = Core.ratingSummary(entry.ratings);
+    var summaryText = summary.count ? ('みんなの平均：★' + summary.avg.toFixed(1) + '（' + summary.count + '人）') : 'まだ誰も評価していません';
+
+    if (!user) {
+      widget.innerHTML = '<button type="button" class="btn ghost small" id="btnRatingLogin">ログインして評価する</button>';
+      $('#btnRatingLogin').addEventListener('click', function () { openLogin('entryForm'); });
+      $('#entRatingSummary').textContent = summaryText;
+      return;
+    }
+
+    var mine = Core.myRatingScore(entry.ratings, user.email);
+    var stars = '';
+    for (var i = 1; i <= 5; i++) {
+      stars += '<button type="button" class="star-btn' + (i <= mine ? ' on' : '') + '" data-score="' + i + '" aria-label="★' + i + '">★</button>';
+    }
+    widget.innerHTML = '<div class="stars">' + stars + '</div>';
+    $all('.star-btn', widget).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var score = Number(btn.dataset.score);
+        setMyRating(score === mine ? 0 : score);
+      });
+    });
+    $('#entRatingSummary').textContent = summaryText;
+  }
+
+  function setMyRating(score) {
+    var user = loadCurrentUser();
+    if (!user || !state.editingEntryId) return;
+    var status = $('#entRatingSummary');
+    status.textContent = '保存中…';
+    var req = score > 0
+      ? api('/entries/' + encodeURIComponent(state.editingEntryId) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: score })
+      : api('/entries/' + encodeURIComponent(state.editingEntryId) + '/rating', 'DELETE', { raterEmail: user.email });
+    req.then(function () {
+      return refreshTrip();
+    }).then(function () {
+      state.editingEntry = findEntryById(state.editingEntryId);
+      renderEntryRatingSection();
+    }).catch(function () { status.textContent = '評価の保存に失敗しました。もう一度お試しください。'; });
   }
 
   function renderPhotoPreview() {
@@ -783,6 +905,74 @@
     }).catch(function () { $('#entFormStatus').textContent = '削除に失敗しました。'; });
   }
 
+  // ---------- マイログ（ログイン中の自分の評価を、旅行をまたいで振り返る） ----------
+  function openMyLog() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('mylog'); return; }
+    showScreen('mylog');
+    $('#mylogList').innerHTML = '<div class="empty">読み込み中…</div>';
+    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
+      state.myLogItems = data.items || [];
+      renderMyLog();
+    }).catch(function () {
+      $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
+    });
+  }
+
+  function renderMyLog() {
+    renderMyLogTabs();
+    renderMyLogSort();
+    renderMyLogList();
+  }
+
+  function renderMyLogTabs() {
+    var el = $('#mylogTabs');
+    el.innerHTML = Core.CATEGORIES.map(function (c) {
+      var on = c.key === state.myLogCategory;
+      var count = state.myLogItems.filter(function (it) { return it.category === c.key; }).length;
+      return '<button class="mylog-tab' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(MYLOG_LABELS[c.key] || c.label) + (count ? '（' + count + '）' : '') + '</button>';
+    }).join('');
+    $all('.mylog-tab', el).forEach(function (b) {
+      b.addEventListener('click', function () {
+        state.myLogCategory = b.dataset.cat;
+        renderMyLog();
+      });
+    });
+  }
+
+  function renderMyLogSort() {
+    $all('.sort-btn', $('#mylogSort')).forEach(function (b) {
+      b.classList.toggle('on', b.dataset.sort === state.myLogSort);
+    });
+  }
+
+  function renderMyLogList() {
+    var el = $('#mylogList');
+    var items = Core.sortMyLogItems(
+      state.myLogItems.filter(function (it) { return it.category === state.myLogCategory; }),
+      state.myLogSort
+    );
+    if (!items.length) {
+      el.innerHTML = '<div class="empty">まだ' + escapeHtml(MYLOG_LABELS[state.myLogCategory] || '') + 'に評価がありません。記録を開いて★を付けてみてください。</div>';
+      return;
+    }
+    el.innerHTML = '';
+    items.forEach(function (it) {
+      var row = document.createElement('button');
+      row.className = 'mylog-row';
+      var photoHtml = it.photoId ? '<div class="mylog-photo" style="background-image:url(\'' + escapeHtml(photoUrl(it.photoId)) + '\')"></div>' : '<div class="mylog-photo empty"></div>';
+      row.innerHTML =
+        photoHtml +
+        '<div class="mylog-info">' +
+        '<div class="mylog-label">' + escapeHtml(it.label || Core.categoryLabel(it.category)) + '</div>' +
+        '<div class="mylog-trip">' + escapeHtml(it.tripTitle) + (it.date ? '・' + escapeHtml(Core.formatDateJp(it.date)) : '') + '</div>' +
+        '</div>' +
+        '<div class="mylog-score">★' + it.score + '</div>';
+      row.addEventListener('click', function () { openTrip(it.tripId); });
+      el.appendChild(row);
+    });
+  }
+
   // ---------- 初期化 ----------
   function init() {
     $('#btnNewTrip').addEventListener('click', openNewTripForm);
@@ -838,23 +1028,34 @@
 
     $('#btnLogout').addEventListener('click', function () {
       clearCurrentUser();
-      history.pushState(null, '', location.pathname);
-      authGate();
+      renderAccountRow();
+      goHome();
+    });
+    $('#btnOpenLogin').addEventListener('click', function () { openLogin('home'); });
+    $('#btnLoginBack').addEventListener('click', closeLogin);
+    $('#btnOpenMyLog').addEventListener('click', function () {
+      if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
+    });
+
+    $('#mylogSort').addEventListener('click', function (e) {
+      var btn = e.target.closest('.sort-btn');
+      if (!btn) return;
+      state.myLogSort = btn.dataset.sort;
+      renderMyLog();
     });
 
     apiNoticeCheck();
-    authGate();
+    enterApp();
   }
 
-  // ログインが必要かどうかを判断し、必要ならログイン画面を、不要ならいつも通りホーム/旅行画面を出す
-  function authGate() {
-    if (!loginEnabled() || loadCurrentUser()) {
-      renderAccountRow();
-      enterApp();
-      return;
-    }
+  // 閲覧・記録の追加はログイン不要（今までどおりリンクで誰でも）。
+  // ログインが必要なのは「評価をつける」「マイログを見る」ときだけなので、
+  // 最初から画面をブロックせず、必要になった場面でopenLoginへ誘導する。
+  function openLogin(returnTo) {
+    state.loginReturnTo = returnTo || 'home';
     showScreen('login');
     $('#loginStatus').textContent = '';
+    $('#loginLead').textContent = 'ログインすると、評価をつけたりマイログを見たりできます';
 
     if (GOOGLE_CLIENT_ID) {
       if (!window.google || !window.google.accounts) {
@@ -872,12 +1073,31 @@
     }
   }
 
+  // ログイン画面を、ログインせずに閉じる（元の画面へ戻る）
+  function closeLogin() {
+    goToReturnScreen(state.loginReturnTo, false);
+  }
+
+  function goToReturnScreen(target, loggedIn) {
+    if (target === 'entryForm' && state.editingEntryId) {
+      showScreen('entryForm');
+      renderEntryRatingSection();
+    } else if (target === 'tripDetail' && state.trip) {
+      showScreen('tripDetail');
+      renderTripDetail();
+    } else if (target === 'mylog' && loggedIn) {
+      openMyLog();
+    } else {
+      goHome();
+    }
+  }
+
   function handleGoogleCredential(response) {
     var payload = decodeJwtPayload(response.credential);
     if (!payload) { $('#loginStatus').textContent = 'ログインに失敗しました。もう一度お試しください。'; return; }
     saveCurrentUser({ name: payload.name, email: payload.email, picture: payload.picture, provider: 'google' });
     renderAccountRow();
-    enterApp();
+    goToReturnScreen(state.loginReturnTo, true);
   }
 
   function handleAppleSignIn() {
@@ -902,14 +1122,15 @@
         provider: 'apple'
       });
       renderAccountRow();
-      enterApp();
+      goToReturnScreen(state.loginReturnTo, true);
     }).catch(function () {
       $('#loginStatus').textContent = 'Appleログインに失敗、またはキャンセルされました。';
     });
   }
 
-  // ログインの確認が済んだあと、実際にホーム/共有された旅行を表示する
+  // 起動時：ログイン状態にかかわらず、いつもどおりホーム/共有された旅行を表示する
   function enterApp() {
+    renderAccountRow();
     var tripId = Core.getTripIdFromSearch(location.search);
     if (tripId) openTrip(tripId);
     else { showScreen('home'); renderHome(); }

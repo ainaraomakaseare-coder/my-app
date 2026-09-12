@@ -53,3 +53,22 @@ CREATE TABLE entries (
 
 CREATE INDEX IF NOT EXISTS idx_blocks_trip ON blocks(trip_id);
 CREATE INDEX IF NOT EXISTS idx_entries_block ON entries(block_id);
+
+-- v4：評価（★1〜5）を追加。既存のtrips/blocks/entriesは変更しないので、
+-- このテーブルとインデックスだけ追加すればよい（DROP TABLEなし＝データは消えない）。
+-- 1つのentryに、ログイン済みの人がそれぞれ1件ずつ評価を持てる（rater_emailで一意）。
+-- 評価はログイン必須の機能で、rater_emailはクライアントが送ってきた値をそのまま信用する
+-- （このアプリ全体と同じ「サーバー側でトークン検証はしない」簡易的な仕組みのため）。
+CREATE TABLE IF NOT EXISTS ratings (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL,
+  rater_email TEXT NOT NULL,
+  rater_name TEXT NOT NULL DEFAULT '',
+  score INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(entry_id, rater_email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ratings_entry ON ratings(entry_id);
+CREATE INDEX IF NOT EXISTS idx_ratings_rater ON ratings(rater_email);

@@ -18,7 +18,7 @@ function cors(origin, allowed) {
   const ok = origin === allowed || local;
   return {
     "access-control-allow-origin": ok ? origin : allowed,
-    "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "access-control-allow-headers": "content-type",
     "vary": "Origin",
   };
@@ -130,9 +130,23 @@ async function getTrip(id, env, headers) {
         .bind(...blockRows.map((b) => b.id))
         .all()
     : { results: [] };
+  const entryIds = entryRows.map((r) => r.id);
+  const ratingsByEntry = {};
+  if (entryIds.length) {
+    const { results: ratingRows } = await env.DB.prepare(
+      `SELECT * FROM ratings WHERE entry_id IN (${entryIds.map(() => "?").join(",")})`
+    )
+      .bind(...entryIds)
+      .all();
+    ratingRows.forEach((row) => {
+      (ratingsByEntry[row.entry_id] = ratingsByEntry[row.entry_id] || []).push(rowToRating(row));
+    });
+  }
   const entriesByBlock = {};
   entryRows.forEach((row) => {
-    (entriesByBlock[row.block_id] = entriesByBlock[row.block_id] || []).push(rowToEntry(row));
+    const entry = rowToEntry(row);
+    entry.ratings = ratingsByEntry[row.id] || [];
+    (entriesByBlock[row.block_id] = entriesByBlock[row.block_id] || []).push(entry);
   });
   const blocks = blockRows.map((row) => ({ ...rowToBlock(row), entries: entriesByBlock[row.id] || [] }));
   return json({ trip: rowToTrip(tripRow), blocks }, 200, headers);
@@ -170,6 +184,10 @@ async function updateTrip(id, request, env, headers) {
 async function deleteTrip(id, env, headers) {
   const { results: blockRows } = await env.DB.prepare("SELECT id FROM blocks WHERE trip_id = ?").bind(id).all();
   for (const b of blockRows) {
+    const { results: entryRows } = await env.DB.prepare("SELECT id FROM entries WHERE block_id = ?").bind(b.id).all();
+    for (const e of entryRows) {
+      await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(e.id).run();
+    }
     await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(b.id).run();
   }
   await env.DB.prepare("DELETE FROM blocks WHERE trip_id = ?").bind(id).run();
@@ -254,6 +272,10 @@ async function updateBlock(id, request, env, headers) {
 }
 
 async function deleteBlock(id, env, headers) {
+  const { results: entryRows } = await env.DB.prepare("SELECT id FROM entries WHERE block_id = ?").bind(id).all();
+  for (const e of entryRows) {
+    await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(e.id).run();
+  }
   await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM blocks WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
@@ -368,8 +390,121 @@ async function updateEntry(id, request, env, headers) {
 }
 
 async function deleteEntry(id, env, headers) {
+  await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM entries WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
+}
+
+/* ---------- ratings（評価） ----------
+ * ログイン必須の機能。rater_email はクライアントが送ってきた値をそのまま信用する
+ * （サーバー側でトークン検証はしない、このアプリ全体と同じ簡易的な仕組み）。
+ * 1つのentryに、raterEmailごとに1件だけ評価を持てる（UNIQUE制約でupsert）。
+ */
+
+function validRatingInput(x) {
+  if (!x || typeof x !== "object") return false;
+  if (!isStr(x.raterEmail, 200) || x.raterEmail.trim().length < 3) return false;
+  if (!optStr(x.raterName, 100)) return false;
+  if (!Number.isInteger(x.score) || x.score < 1 || x.score > 5) return false;
+  return true;
+}
+
+function rowToRating(row) {
+  return {
+    id: row.id,
+    entryId: row.entry_id,
+    raterEmail: row.rater_email,
+    raterName: row.rater_name,
+    score: row.score,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function setRating(entryId, request, env, headers) {
+  const entry = await env.DB.prepare("SELECT id FROM entries WHERE id = ?").bind(entryId).first();
+  if (!entry) return json({ error: "entry_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!validRatingInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  const email = data.raterEmail.trim().toLowerCase();
+  const name = (data.raterName || "").trim();
+  const existing = await env.DB.prepare("SELECT id FROM ratings WHERE entry_id = ? AND rater_email = ?")
+    .bind(entryId, email)
+    .first();
+  const t = nowIso();
+  if (existing) {
+    await env.DB.prepare("UPDATE ratings SET score=?, rater_name=?, updated_at=? WHERE id=?")
+      .bind(data.score, name, t, existing.id)
+      .run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO ratings (id, entry_id, rater_email, rater_name, score, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
+    )
+      .bind(uid("rat"), entryId, email, name, data.score, t, t)
+      .run();
+  }
+  const { results } = await env.DB.prepare("SELECT * FROM ratings WHERE entry_id = ?").bind(entryId).all();
+  return json({ ratings: results.map(rowToRating) }, 200, headers);
+}
+
+async function deleteRating(entryId, request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    data = {};
+  }
+  const email = (data.raterEmail || "").trim().toLowerCase();
+  if (!email) return json({ error: "invalid_input" }, 400, headers);
+  await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ? AND rater_email = ?").bind(entryId, email).run();
+  const { results } = await env.DB.prepare("SELECT * FROM ratings WHERE entry_id = ?").bind(entryId).all();
+  return json({ ratings: results.map(rowToRating) }, 200, headers);
+}
+
+/* ---------- マイログ：ログイン中の本人が付けた評価を、旅行をまたいで一覧する ---------- */
+
+async function getMyLog(email, env, headers) {
+  if (!email) return json({ error: "invalid_input" }, 400, headers);
+  const { results } = await env.DB.prepare(
+    `SELECT r.score AS score, r.updated_at AS rated_at,
+            e.id AS entry_id, e.episode AS episode, e.photo_ids AS photo_ids,
+            b.id AS block_id, b.date AS date, b.label AS label, b.category AS category,
+            t.id AS trip_id, t.title AS trip_title
+     FROM ratings r
+     JOIN entries e ON e.id = r.entry_id
+     JOIN blocks b ON b.id = e.block_id
+     JOIN trips t ON t.id = b.trip_id
+     WHERE r.rater_email = ?
+     ORDER BY r.updated_at DESC`
+  )
+    .bind(email)
+    .all();
+  const items = results.map((row) => {
+    let photoId = "";
+    try {
+      photoId = (JSON.parse(row.photo_ids || "[]"))[0] || "";
+    } catch {
+      photoId = "";
+    }
+    return {
+      entryId: row.entry_id,
+      blockId: row.block_id,
+      tripId: row.trip_id,
+      tripTitle: row.trip_title,
+      category: row.category,
+      label: row.label,
+      date: row.date,
+      episode: row.episode,
+      photoId,
+      score: row.score,
+      ratedAt: row.rated_at,
+    };
+  });
+  return json({ items }, 200, headers);
 }
 
 /* ---------- photos / videos (R2) ---------- */
@@ -425,7 +560,7 @@ export default {
       return json({ error: "origin_not_allowed" }, 403, headers);
     }
 
-    const write = method === "POST" || method === "PATCH" || method === "DELETE";
+    const write = method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE";
     if (write && env.WRITE_RATE_LIMITER) {
       const actor = request.headers.get("cf-connecting-ip") || "anonymous";
       const limited = await env.WRITE_RATE_LIMITER.limit({ key: actor });
@@ -445,6 +580,12 @@ export default {
     if (method === "POST" && (m = path.match(/^\/blocks\/([^/]+)\/entries$/))) return createEntry(m[1], request, env, headers);
     if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)$/))) return updateEntry(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)$/))) return deleteEntry(m[1], env, headers);
+
+    if (method === "PUT" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return setRating(m[1], request, env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return deleteRating(m[1], request, env, headers);
+    if (method === "GET" && path === "/mylog") {
+      return getMyLog((url.searchParams.get("email") || "").trim().toLowerCase(), env, headers);
+    }
 
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);

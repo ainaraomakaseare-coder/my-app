@@ -21,12 +21,15 @@
 <body>
 <div class="app" id="app">
 
-  <!-- ============ ログイン（Google/Apple Client ID未設定ならこの画面自体が使われない） ============ -->
+  <!-- ============ ログイン（Google/Apple Client ID未設定ならこの画面自体が使われない。閲覧はログイン不要で、評価をつける・マイログを見るときだけこの画面に来る） ============ -->
   <section class="screen" data-screen="login">
     <div class="wrap narrow login-wrap">
+      <header class="hd">
+        <button class="btn text back" id="btnLoginBack">← 戻る</button>
+      </header>
       <div class="hd" style="text-align:center">
         <h1>たびログ</h1>
-        <p class="lead">ログインしてください</p>
+        <p class="lead" id="loginLead">ログインしてください</p>
       </div>
       <div id="googleSignInButton" class="google-signin-slot"></div>
       <button class="apple-signin-btn" id="appleSignInButton" hidden>
@@ -47,7 +50,12 @@
 
       <div class="account-row" id="accountRow" hidden>
         <span id="accountName"></span>
+        <button class="btn text" id="btnOpenMyLog">マイログ</button>
         <button class="btn text" id="btnLogout">ログアウト</button>
+      </div>
+      <div class="account-row" id="loginPromptRow" hidden>
+        <span>評価・マイログを使うにはログインしてください</span>
+        <button class="btn text" id="btnOpenLogin">ログインする</button>
       </div>
 
       <p class="notice" id="apiNotice" hidden></p>
@@ -227,6 +235,12 @@
           <textarea id="entDetail" rows="4" placeholder="持ち物・注意点・裏話など、もっと書きたいことがあれば"></textarea>
         </div>
 
+        <div class="field" id="entRatingField" hidden>
+          <label>評価</label>
+          <div class="rating-widget" id="entRatingWidget"></div>
+          <p class="hint" id="entRatingSummary"></p>
+        </div>
+
         <div class="field">
           <label>費用の明細</label>
           <div class="cost-items" id="entCostItems"></div>
@@ -261,6 +275,26 @@
           <button class="btn primary wide" id="btnSaveEntry">保存する</button>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ============ マイログ（ログイン中の自分の評価を、旅行をまたいで振り返る） ============ -->
+  <section class="screen" data-screen="mylog">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="home">← 戻る</button>
+        <h1>マイログ</h1>
+        <p class="lead">これまで評価したものを振り返る（自分だけに見える記録です）</p>
+      </header>
+
+      <div class="mylog-tabs" id="mylogTabs"></div>
+
+      <div class="mylog-sort" id="mylogSort">
+        <button class="sort-btn" data-sort="score">評価が高い順</button>
+        <button class="sort-btn" data-sort="date">新しい順</button>
+      </div>
+
+      <div class="mylog-list" id="mylogList"></div>
     </div>
   </section>
 
