@@ -6,18 +6,25 @@
 
 **Trip（旅行）**:
 1件の旅行・イベント全体を表す最上位の単位。タイトル・出発日〜帰着日・参加者（companions）を持つ。共有はTrip単位のURL（`trip_xxxxxxxx`というIDを含む）で行う。
-_Avoid_: 旅程（Episodeの集まりを指すのか、Tripそのものを指すのか曖昧になるため単体では使わない）
 
-**Episode（記録）**:
-Trip内の、ある日・ある時間に起きた1つの出来事。場所・写真・ひとことメモ・費用・楽しかった度（rating）・種類（category）・地図やサイトのURL・予約サイト名・別行動タグ（groupTag）を持つ。
-_Avoid_: エピソード単体は「アクティビティ」と呼ばない（宿泊・移動もEpisodeとして同じ形で扱うため、activityという言葉は活動系のcategoryだけを指すと誤解される）
+**Block（大項目／予定）**:
+Trip内の、ある日・ある時間の「予定」。日付・時間・見出し（label：例「那覇空港に集合」）・種類（category）を持つ、いつ・どこで・何をする時間かという枠。1つ以上のEntryがぶら下がる。
+_Avoid_: エピソード（Entry側の語なので、Blockを指して使わない）
+
+**Entry（小項目／記録）**:
+あるBlockのときの、一人ひとり（またはサブグループ）の記録。エピソード（episode）・ひとこと（comment）・写真・費用の明細（costItems）・待ち時間（waitTime）・地図URL（mapUrl）・お店のHP（shopUrl）・記録した人（author）を持つ。
+_Avoid_: アクティビティ（宿泊・移動もEntryとして同じ形で扱うため、activityという言葉は活動系のcategoryだけを指すと誤解される）
+
+**別行動**:
+旅行中、全員が常に同じ行動とは限らないこと。仕組みとしては特別なフィールドを持たず、**同じBlockの下にEntryを複数作ることで表現する**（例：「15:00 首里城公園に到着」というBlockの下に、父チームのEntryと母チームのEntryを2つ並べる）。
+_Avoid_: グループタグ／groupTag（初期の設計案で検討したが、複数Entryで表現する方式に置き換えたため使わない）
 
 **Category（種類）**:
-Episodeの区分。`sightseeing`（観光）・`food`（食事）・`lodging`（宿泊）・`transport`（移動）・`other`（その他）の5つ。`lodging`だけタイムライン上で見た目を変える（本日の宿として強調する）。
+Blockの区分。`sightseeing`（観光）・`food`（食事）・`lodging`（宿泊）・`transport`（移動）・`other`（その他）の5つ。`lodging`だけタイムライン上で見た目を変える（宿泊として強調する）。
 
-**groupTag（別行動タグ）**:
-「父・妹チーム」のような自由記述の文字列。旅行中に全員が常に同じ行動とは限らない（別行動する場合がある）ことを表すための、Episode側の任意フィールド。空文字は「全員で一緒」を意味する。
-_Avoid_: グループ（Wiki側の「group」type Wikiと紛らわしいため、別行動の文脈では必ずgroupTagまたは「別行動タグ」と呼ぶ）
+**費用の明細（costItems）**:
+Entryが持つ、`{label, amount}` の配列。例：「そば ¥800」「飲み物 ¥400」。合計はEntryごと・Blockごと・Trip全体それぞれで自動計算する（`entryCostTotal` / `blockCostTotal` / `tripTotalCost`）。
+_Avoid_: 一人当たりの費用、という言葉を「複数人の合計を割り勘した金額」の意味では使わない（Entry自体が1人またはそのサブグループの記録なので、Entryに書いた金額がそのままその人の費用になる）
 
 **共有リンク / 招待**:
 `index.html?trip=<TripのID>` の形のURL。ログイン機能を持たないため、このURLを知っていること自体が閲覧・編集の権限になる（Googleドキュメントの「リンクを知っている全員が編集可」に近い方式）。

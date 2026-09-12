@@ -1,5 +1,5 @@
 /*
- * 日付計算・並べ替え・グループ分けなど、純粋な関数だけを検証する。
+ * 日付計算・並べ替え・グループ分け・費用の合計など、純粋な関数だけを検証する。
  * ブラウザ操作は含まない。実行: node test/data.test.js
  */
 var path = require('path');
@@ -39,48 +39,53 @@ eq('allDatesForTrip: 開始・終了日から全日程を作る', T.allDatesForT
   ['2024-08-10', '2024-08-11', '2024-08-12', '2024-08-13']);
 
 var tripNoDates = { startDate: '', endDate: '' };
-var epsNoTripDates = [{ date: '2024-08-12' }, { date: '2024-08-10' }, { date: '2024-08-10' }];
-eq('allDatesForTrip: 日程未設定ならエピソードの日付から重複なく作る', T.allDatesForTrip(tripNoDates, epsNoTripDates),
+var blocksNoTripDates = [{ date: '2024-08-12' }, { date: '2024-08-10' }, { date: '2024-08-10' }];
+eq('allDatesForTrip: 日程未設定ならblockの日付から重複なく作る', T.allDatesForTrip(tripNoDates, blocksNoTripDates),
   ['2024-08-10', '2024-08-12']);
 
-var epsWithUndated = [{ date: '2024-08-10' }, { date: '' }];
-eq('allDatesForTrip: 日付未設定のエピソードは末尾にまとめる', T.allDatesForTrip(trip, epsWithUndated),
+var blocksWithUndated = [{ date: '2024-08-10' }, { date: '' }];
+eq('allDatesForTrip: 日付未設定のblockは末尾にまとめる', T.allDatesForTrip(trip, blocksWithUndated),
   ['2024-08-10', '2024-08-11', '2024-08-12', '2024-08-13', '']);
 
-/* ---- sortEpisodes / groupEpisodesByDate ---- */
-var eps = [
+/* ---- sortBlocks / groupBlocksByDate ---- */
+var blocks = [
   { id: 'a', date: '2024-08-11', time: '09:00', createdAt: '2' },
   { id: 'b', date: '2024-08-10', time: '19:00', createdAt: '1' },
   { id: 'c', date: '2024-08-10', time: '10:00', createdAt: '3' }
 ];
-eq('sortEpisodes: 日付→時間の順に並ぶ', T.sortEpisodes(eps).map(function (e) { return e.id; }), ['c', 'b', 'a']);
+eq('sortBlocks: 日付→時間の順に並ぶ', T.sortBlocks(blocks).map(function (b) { return b.id; }), ['c', 'b', 'a']);
 
-var grouped = T.groupEpisodesByDate(eps);
-eq('groupEpisodesByDate: 日付ごとにまとまる', Object.keys(grouped).sort(), ['2024-08-10', '2024-08-11']);
-eq('groupEpisodesByDate: 同じ日は時間順', grouped['2024-08-10'].map(function (e) { return e.id; }), ['c', 'b']);
+var grouped = T.groupBlocksByDate(blocks);
+eq('groupBlocksByDate: 日付ごとにまとまる', Object.keys(grouped).sort(), ['2024-08-10', '2024-08-11']);
+eq('groupBlocksByDate: 同じ日は時間順', grouped['2024-08-10'].map(function (b) { return b.id; }), ['c', 'b']);
 
-/* ---- 別行動タグ ---- */
-var epsTagged = [
-  { id: '1', groupTag: '' },
-  { id: '2', groupTag: '父・妹チーム' },
-  { id: '3', groupTag: '父・妹チーム' },
-  { id: '4', groupTag: '母・わたしチーム' }
+/* ---- 費用（小項目の明細→合計、大項目・旅行全体の合計） ---- */
+eq('entryCostTotal: 明細を合計する', T.entryCostTotal({ costItems: [{ label: 'そば', amount: 800 }, { label: '飲み物', amount: 400 }] }), 1200);
+eq('entryCostTotal: 明細が無ければ0', T.entryCostTotal({ costItems: [] }), 0);
+eq('entryCostTotal: entry自体が無くても0', T.entryCostTotal(null), 0);
+
+var blockWithEntries = {
+  entries: [
+    { costItems: [{ label: 'a', amount: 600 }] },
+    { costItems: [{ label: 'b', amount: 900 }] }
+  ]
+};
+eq('blockCostTotal: 複数の小項目（別行動）を合計する', T.blockCostTotal(blockWithEntries), 1500);
+
+var blocksForTripTotal = [
+  { entries: [{ costItems: [{ label: 'a', amount: 1000 }] }] },
+  { entries: [{ costItems: [{ label: 'b', amount: 2000 }] }, { costItems: [{ label: 'c', amount: 500 }] }] }
 ];
-eq('distinctGroupTags: 空文字は除いて重複なく出す', T.distinctGroupTags(epsTagged), ['父・妹チーム', '母・わたしチーム']);
-eq('filterEpisodesByGroupTag: 空文字(全員)は全件', T.filterEpisodesByGroupTag(epsTagged, '').length, 4);
-eq('filterEpisodesByGroupTag: タグ指定でそのチームだけ', T.filterEpisodesByGroupTag(epsTagged, '父・妹チーム').map(function (e) { return e.id; }), ['2', '3']);
+eq('tripTotalCost: 旅行全体の合計', T.tripTotalCost(blocksForTripTotal), 3500);
 
-/* ---- 費用の合計・宿泊先 ---- */
-var epsCost = [{ cost: 1200 }, { cost: 4800 }, { cost: null }, {}];
-eq('tripTotalCost: costがある分だけ合計する', T.tripTotalCost(epsCost), 6000);
-
-var epsLodging = [
-  { category: 'lodging', placeName: 'オーシャンビューホテル那覇' },
-  { category: 'food', placeName: '国際通りの食堂' },
-  { category: 'lodging', placeName: 'オーシャンビューホテル那覇' }
+/* ---- 宿泊先 ---- */
+var blocksLodging = [
+  { category: 'lodging', label: 'オーシャンビューホテル那覇' },
+  { category: 'food', label: '国際通りの食堂' },
+  { category: 'lodging', label: 'オーシャンビューホテル那覇' }
 ];
-eq('primaryLodgingName: lodgingカテゴリの場所名を重複なく', T.primaryLodgingName(epsLodging), 'オーシャンビューホテル那覇');
-eq('primaryLodgingName: lodgingが無ければ空文字', T.primaryLodgingName([{ category: 'food', placeName: 'x' }]), '');
+eq('primaryLodgingName: lodgingカテゴリの見出しを重複なく', T.primaryLodgingName(blocksLodging), 'オーシャンビューホテル那覇');
+eq('primaryLodgingName: lodgingが無ければ空文字', T.primaryLodgingName([{ category: 'food', label: 'x' }]), '');
 
 /* ---- parseTags / URL ---- */
 eq('parseTags: 読点区切りで空要素は除く', T.parseTags('父、母、、妹'), ['父', '母', '妹']);

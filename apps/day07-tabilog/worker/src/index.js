@@ -1,12 +1,13 @@
 /*
  * たびログ API Worker。
- * 旅行（trip）とその中の時間ごとの記録（episode）をD1に、写真の実体はR2に保存する。
+ * 旅行（trip）と、その中の「大項目（block：いつ・どこで・何をする時間か）」
+ * 「小項目（entry：そのときの一人ひとりの記録。別行動なら同じblockに複数ぶら下がる）」
+ * をD1に、写真の実体はR2に保存する。
  * ログインの仕組みは持たない。旅行のURL（trip id）を知っている人だけが読み書きできる
  * 「リンクを知っていれば入れる」方式（Googleドキュメントの共有リンクに近い）。
  * 家族・少人数グループでの利用を想定しており、不特定多数への公開は想定していない。
  */
 
-const MAX_JSON_BYTES = 20000;
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -48,6 +49,16 @@ function optStr(x, max) {
 
 function optUrl(x, max) {
   return x === undefined || x === null || x === "" || (isStr(x, max) && URL_RE.test(x));
+}
+
+function validCostItems(x) {
+  if (x === undefined) return true;
+  if (!Array.isArray(x) || x.length > 30) return false;
+  return x.every((it) =>
+    it && typeof it === "object"
+    && isStr(it.label, 60)
+    && Number.isInteger(it.amount) && it.amount >= 0 && it.amount <= 1000000
+  );
 }
 
 /* ---------- trips ---------- */
@@ -107,16 +118,24 @@ async function createTrip(request, env, headers) {
 async function getTrip(id, env, headers) {
   const tripRow = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
   if (!tripRow) return json({ error: "not_found" }, 404, headers);
-  const { results } = await env.DB.prepare(
-    "SELECT * FROM episodes WHERE trip_id = ? ORDER BY date ASC, time ASC, created_at ASC"
+  const { results: blockRows } = await env.DB.prepare(
+    "SELECT * FROM blocks WHERE trip_id = ? ORDER BY date ASC, time ASC, created_at ASC"
   )
     .bind(id)
     .all();
-  return json(
-    { trip: rowToTrip(tripRow), episodes: results.map(rowToEpisode) },
-    200,
-    headers
-  );
+  const { results: entryRows } = blockRows.length
+    ? await env.DB.prepare(
+        `SELECT * FROM entries WHERE block_id IN (${blockRows.map(() => "?").join(",")}) ORDER BY created_at ASC`
+      )
+        .bind(...blockRows.map((b) => b.id))
+        .all()
+    : { results: [] };
+  const entriesByBlock = {};
+  entryRows.forEach((row) => {
+    (entriesByBlock[row.block_id] = entriesByBlock[row.block_id] || []).push(rowToEntry(row));
+  });
+  const blocks = blockRows.map((row) => ({ ...rowToBlock(row), entries: entriesByBlock[row.id] || [] }));
+  return json({ trip: rowToTrip(tripRow), blocks }, 200, headers);
 }
 
 async function updateTrip(id, request, env, headers) {
@@ -149,59 +168,40 @@ async function updateTrip(id, request, env, headers) {
 }
 
 async function deleteTrip(id, env, headers) {
-  await env.DB.prepare("DELETE FROM episodes WHERE trip_id = ?").bind(id).run();
+  const { results: blockRows } = await env.DB.prepare("SELECT id FROM blocks WHERE trip_id = ?").bind(id).all();
+  for (const b of blockRows) {
+    await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(b.id).run();
+  }
+  await env.DB.prepare("DELETE FROM blocks WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM trips WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
 }
 
-/* ---------- episodes ---------- */
+/* ---------- blocks（大項目） ---------- */
 
-function validEpisodeInput(x) {
+function validBlockInput(x) {
   if (!x || typeof x !== "object") return false;
   if (x.date !== undefined && x.date !== "" && !DATE_RE.test(x.date)) return false;
   if (x.time !== undefined && x.time !== "" && !TIME_RE.test(x.time)) return false;
-  if (!optStr(x.title, 200)) return false;
-  if (!optStr(x.note, 4000)) return false;
+  if (!optStr(x.label, 200)) return false;
   if (x.category !== undefined && !CATEGORIES.includes(x.category)) return false;
-  if (!optStr(x.placeName, 200)) return false;
-  if (!optUrl(x.mapUrl, 500)) return false;
-  if (!optUrl(x.infoUrl, 500)) return false;
-  if (!optStr(x.bookingSite, 100)) return false;
-  if (x.cost !== undefined && x.cost !== null && (!Number.isInteger(x.cost) || x.cost < 0 || x.cost > 10000000)) return false;
-  if (x.rating !== undefined && x.rating !== null && (!Number.isInteger(x.rating) || x.rating < 1 || x.rating > 5)) return false;
-  if (!optStr(x.groupTag, 50)) return false;
-  if (!optStr(x.author, 50)) return false;
-  if (x.photoIds !== undefined) {
-    if (!Array.isArray(x.photoIds) || x.photoIds.length > 20) return false;
-    if (!x.photoIds.every((p) => typeof p === "string" && p.length <= 80)) return false;
-  }
   return true;
 }
 
-function rowToEpisode(row) {
+function rowToBlock(row) {
   return {
     id: row.id,
     tripId: row.trip_id,
     date: row.date,
     time: row.time,
-    title: row.title,
-    note: row.note,
+    label: row.label,
     category: row.category,
-    placeName: row.place_name,
-    mapUrl: row.map_url,
-    infoUrl: row.info_url,
-    bookingSite: row.booking_site,
-    cost: row.cost === null || row.cost === undefined ? null : row.cost,
-    rating: row.rating === null || row.rating === undefined ? null : row.rating,
-    groupTag: row.group_tag,
-    author: row.author,
-    photoIds: JSON.parse(row.photo_ids || "[]"),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
-async function createEpisode(tripId, request, env, headers) {
+async function createBlock(tripId, request, env, headers) {
   const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
   if (!trip) return json({ error: "trip_not_found" }, 404, headers);
   let data;
@@ -210,44 +210,29 @@ async function createEpisode(tripId, request, env, headers) {
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
-  if (!validEpisodeInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  if (!validBlockInput(data)) return json({ error: "invalid_input" }, 400, headers);
   const t = nowIso();
   const row = {
-    id: uid("ep"),
+    id: uid("blk"),
     trip_id: tripId,
     date: data.date || "",
     time: data.time || "",
-    title: (data.title || "").trim(),
-    note: (data.note || "").trim(),
+    label: (data.label || "").trim(),
     category: data.category || "sightseeing",
-    place_name: (data.placeName || "").trim(),
-    map_url: data.mapUrl || "",
-    info_url: data.infoUrl || "",
-    booking_site: (data.bookingSite || "").trim(),
-    cost: data.cost === undefined ? null : data.cost,
-    rating: data.rating === undefined ? null : data.rating,
-    group_tag: (data.groupTag || "").trim(),
-    author: (data.author || "").trim(),
-    photo_ids: JSON.stringify(data.photoIds || []),
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    `INSERT INTO episodes (id, trip_id, date, time, title, note, category, place_name, map_url, info_url, booking_site, cost, rating, group_tag, author, photo_ids, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    "INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
   )
-    .bind(
-      row.id, row.trip_id, row.date, row.time, row.title, row.note, row.category, row.place_name,
-      row.map_url, row.info_url, row.booking_site, row.cost, row.rating, row.group_tag, row.author,
-      row.photo_ids, row.created_at, row.updated_at
-    )
+    .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.created_at, row.updated_at)
     .run();
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, tripId).run();
-  return json(rowToEpisode(row), 201, headers);
+  return json({ ...rowToBlock(row), entries: [] }, 201, headers);
 }
 
-async function updateEpisode(id, request, env, headers) {
-  const existing = await env.DB.prepare("SELECT * FROM episodes WHERE id = ?").bind(id).first();
+async function updateBlock(id, request, env, headers) {
+  const existing = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   if (!existing) return json({ error: "not_found" }, 404, headers);
   let data;
   try {
@@ -255,26 +240,125 @@ async function updateEpisode(id, request, env, headers) {
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
-  if (!validEpisodeInput(data)) return json({ error: "invalid_input" }, 400, headers);
-  const cur = rowToEpisode(existing);
+  if (!validBlockInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  const cur = rowToBlock(existing);
   const merged = { ...cur, ...data };
   const t = nowIso();
   await env.DB.prepare(
-    `UPDATE episodes SET date=?, time=?, title=?, note=?, category=?, place_name=?, map_url=?, info_url=?, booking_site=?, cost=?, rating=?, group_tag=?, author=?, photo_ids=?, updated_at=? WHERE id=?`
+    "UPDATE blocks SET date=?, time=?, label=?, category=?, updated_at=? WHERE id=?"
   )
-    .bind(
-      merged.date || "", merged.time || "", (merged.title || "").trim(), (merged.note || "").trim(),
-      merged.category || "sightseeing", (merged.placeName || "").trim(), merged.mapUrl || "", merged.infoUrl || "",
-      (merged.bookingSite || "").trim(), merged.cost ?? null, merged.rating ?? null,
-      (merged.groupTag || "").trim(), (merged.author || "").trim(), JSON.stringify(merged.photoIds || []), t, id
-    )
+    .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", t, id)
     .run();
-  const updated = await env.DB.prepare("SELECT * FROM episodes WHERE id = ?").bind(id).first();
-  return json(rowToEpisode(updated), 200, headers);
+  const updated = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
+  return json(rowToBlock(updated), 200, headers);
 }
 
-async function deleteEpisode(id, env, headers) {
-  await env.DB.prepare("DELETE FROM episodes WHERE id = ?").bind(id).run();
+async function deleteBlock(id, env, headers) {
+  await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(id).run();
+  await env.DB.prepare("DELETE FROM blocks WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, headers);
+}
+
+/* ---------- entries（小項目） ---------- */
+
+function validEntryInput(x) {
+  if (!x || typeof x !== "object") return false;
+  if (!optStr(x.episode, 4000)) return false;
+  if (!optStr(x.comment, 300)) return false;
+  if (!validCostItems(x.costItems)) return false;
+  if (!optStr(x.waitTime, 50)) return false;
+  if (!optUrl(x.mapUrl, 500)) return false;
+  if (!optUrl(x.shopUrl, 500)) return false;
+  if (!optStr(x.author, 50)) return false;
+  if (x.photoIds !== undefined) {
+    if (!Array.isArray(x.photoIds) || x.photoIds.length > 20) return false;
+    if (!x.photoIds.every((p) => typeof p === "string" && p.length <= 80)) return false;
+  }
+  return true;
+}
+
+function rowToEntry(row) {
+  return {
+    id: row.id,
+    blockId: row.block_id,
+    episode: row.episode,
+    comment: row.comment,
+    photoIds: JSON.parse(row.photo_ids || "[]"),
+    costItems: JSON.parse(row.cost_items || "[]"),
+    waitTime: row.wait_time,
+    mapUrl: row.map_url,
+    shopUrl: row.shop_url,
+    author: row.author,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function createEntry(blockId, request, env, headers) {
+  const block = await env.DB.prepare("SELECT id FROM blocks WHERE id = ?").bind(blockId).first();
+  if (!block) return json({ error: "block_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!validEntryInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  const t = nowIso();
+  const row = {
+    id: uid("ent"),
+    block_id: blockId,
+    episode: (data.episode || "").trim(),
+    comment: (data.comment || "").trim(),
+    photo_ids: JSON.stringify(data.photoIds || []),
+    cost_items: JSON.stringify(data.costItems || []),
+    wait_time: (data.waitTime || "").trim(),
+    map_url: data.mapUrl || "",
+    shop_url: data.shopUrl || "",
+    author: (data.author || "").trim(),
+    created_at: t,
+    updated_at: t,
+  };
+  await env.DB.prepare(
+    `INSERT INTO entries (id, block_id, episode, comment, photo_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+  )
+    .bind(
+      row.id, row.block_id, row.episode, row.comment, row.photo_ids, row.cost_items,
+      row.wait_time, row.map_url, row.shop_url, row.author, row.created_at, row.updated_at
+    )
+    .run();
+  return json(rowToEntry(row), 201, headers);
+}
+
+async function updateEntry(id, request, env, headers) {
+  const existing = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
+  if (!existing) return json({ error: "not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!validEntryInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  const cur = rowToEntry(existing);
+  const merged = { ...cur, ...data };
+  const t = nowIso();
+  await env.DB.prepare(
+    `UPDATE entries SET episode=?, comment=?, photo_ids=?, cost_items=?, wait_time=?, map_url=?, shop_url=?, author=?, updated_at=? WHERE id=?`
+  )
+    .bind(
+      (merged.episode || "").trim(), (merged.comment || "").trim(), JSON.stringify(merged.photoIds || []),
+      JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(),
+      merged.mapUrl || "", merged.shopUrl || "", (merged.author || "").trim(), t, id
+    )
+    .run();
+  const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
+  return json(rowToEntry(updated), 200, headers);
+}
+
+async function deleteEntry(id, env, headers) {
+  await env.DB.prepare("DELETE FROM entries WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
 }
 
@@ -336,9 +420,15 @@ export default {
     if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)$/))) return getTrip(m[1], env, headers);
     if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)$/))) return updateTrip(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)$/))) return deleteTrip(m[1], env, headers);
-    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/episodes$/))) return createEpisode(m[1], request, env, headers);
-    if (method === "PATCH" && (m = path.match(/^\/episodes\/([^/]+)$/))) return updateEpisode(m[1], request, env, headers);
-    if (method === "DELETE" && (m = path.match(/^\/episodes\/([^/]+)$/))) return deleteEpisode(m[1], env, headers);
+
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/blocks$/))) return createBlock(m[1], request, env, headers);
+    if (method === "PATCH" && (m = path.match(/^\/blocks\/([^/]+)$/))) return updateBlock(m[1], request, env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/blocks\/([^/]+)$/))) return deleteBlock(m[1], env, headers);
+
+    if (method === "POST" && (m = path.match(/^\/blocks\/([^/]+)\/entries$/))) return createEntry(m[1], request, env, headers);
+    if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)$/))) return updateEntry(m[1], request, env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)$/))) return deleteEntry(m[1], env, headers);
+
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);
 

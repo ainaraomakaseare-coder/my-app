@@ -1,17 +1,18 @@
 /*
  * たびログ
- * 旅行（trip）とエピソードはサーバー（Cloudflare Worker + D1 + R2）に保存する。
+ * 旅行（trip）と、その中の「大項目（block）」「小項目（entry）」はサーバー
+ * （Cloudflare Worker + D1 + R2）に保存する。
  * データを扱う純粋な関数は window.TabiLog に集めてあり、node からもテストできる。
  */
 (function (root) {
   'use strict';
 
   var CATEGORIES = [
-    { key: 'sightseeing', label: '観光' },
-    { key: 'food', label: '食事' },
-    { key: 'lodging', label: '宿泊' },
-    { key: 'transport', label: '移動' },
-    { key: 'other', label: 'その他' }
+    { key: 'sightseeing', label: '観光', color: 'oklch(60% 0.13 150)' },
+    { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
+    { key: 'lodging', label: '宿泊', color: 'oklch(48% 0.1 195)' },
+    { key: 'transport', label: '移動', color: 'oklch(60% 0.05 260)' },
+    { key: 'other', label: 'その他', color: 'oklch(55% 0.02 280)' }
   ];
 
   var WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
@@ -19,6 +20,10 @@
   function categoryLabel(key) {
     var c = CATEGORIES.filter(function (c) { return c.key === key; })[0];
     return c ? c.label : key;
+  }
+  function categoryColor(key) {
+    var c = CATEGORIES.filter(function (c) { return c.key === key; })[0];
+    return c ? c.color : 'oklch(55% 0.02 280)';
   }
 
   function formatYen(n) {
@@ -60,9 +65,9 @@
     return diff === 0 ? '日帰り' : diff + '泊' + (diff + 1) + '日';
   }
 
-  // 開始日・終了日から旅行の全日程を作る。無ければエピソードに実際にある日付から作る
-  // （日付未入力のエピソードがあれば、末尾に空文字のキーとしてまとめる）。
-  function allDatesForTrip(trip, episodes) {
+  // 開始日・終了日から旅行の全日程を作る。無ければ大項目に実際にある日付から作る
+  // （日付未入力の大項目があれば、末尾に空文字のキーとしてまとめる）。
+  function allDatesForTrip(trip, blocks) {
     var dates = [];
     var start = trip ? parseDate(trip.startDate) : null;
     var end = trip ? parseDate(trip.endDate) : null;
@@ -75,59 +80,52 @@
       }
     } else {
       var seen = {};
-      (episodes || []).forEach(function (ep) { if (ep.date) seen[ep.date] = true; });
+      (blocks || []).forEach(function (b) { if (b.date) seen[b.date] = true; });
       dates = Object.keys(seen).sort();
     }
-    var hasUndated = (episodes || []).some(function (ep) { return !ep.date; });
+    var hasUndated = (blocks || []).some(function (b) { return !b.date; });
     if (hasUndated) dates = dates.concat(['']);
     return dates;
   }
 
-  function sortEpisodes(episodes) {
-    return (episodes || []).slice().sort(function (a, b) {
+  function sortBlocks(blocks) {
+    return (blocks || []).slice().sort(function (a, b) {
       if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
       if (a.time !== b.time) return (a.time || '').localeCompare(b.time || '');
       return (a.createdAt || '').localeCompare(b.createdAt || '');
     });
   }
 
-  function groupEpisodesByDate(episodes) {
+  function groupBlocksByDate(blocks) {
     var map = {};
-    sortEpisodes(episodes).forEach(function (ep) {
-      var key = ep.date || '';
+    sortBlocks(blocks).forEach(function (b) {
+      var key = b.date || '';
       if (!map[key]) map[key] = [];
-      map[key].push(ep);
+      map[key].push(b);
     });
     return map;
   }
 
-  function distinctGroupTags(episodes) {
-    var seen = {};
-    var out = [];
-    (episodes || []).forEach(function (ep) {
-      var tag = (ep.groupTag || '').trim();
-      if (tag && !seen[tag]) { seen[tag] = true; out.push(tag); }
-    });
-    return out;
-  }
-
-  function filterEpisodesByGroupTag(episodes, tag) {
-    if (!tag) return (episodes || []).slice();
-    return (episodes || []).filter(function (ep) { return (ep.groupTag || '') === tag; });
-  }
-
-  function tripTotalCost(episodes) {
-    return (episodes || []).reduce(function (sum, ep) {
-      return sum + (typeof ep.cost === 'number' ? ep.cost : 0);
+  function entryCostTotal(entry) {
+    return ((entry && entry.costItems) || []).reduce(function (sum, it) {
+      return sum + (typeof it.amount === 'number' ? it.amount : 0);
     }, 0);
   }
 
-  function primaryLodgingName(episodes) {
-    var lodging = (episodes || []).filter(function (ep) { return ep.category === 'lodging' && ep.placeName; });
+  function blockCostTotal(block) {
+    return ((block && block.entries) || []).reduce(function (sum, e) { return sum + entryCostTotal(e); }, 0);
+  }
+
+  function tripTotalCost(blocks) {
+    return (blocks || []).reduce(function (sum, b) { return sum + blockCostTotal(b); }, 0);
+  }
+
+  function primaryLodgingName(blocks) {
+    var lodging = (blocks || []).filter(function (b) { return b.category === 'lodging' && b.label; });
     if (!lodging.length) return '';
     var names = [];
     var seen = {};
-    lodging.forEach(function (ep) { if (!seen[ep.placeName]) { seen[ep.placeName] = true; names.push(ep.placeName); } });
+    lodging.forEach(function (b) { if (!seen[b.label]) { seen[b.label] = true; names.push(b.label); } });
     return names.join('・');
   }
 
@@ -154,6 +152,7 @@
   var Core = {
     CATEGORIES: CATEGORIES,
     categoryLabel: categoryLabel,
+    categoryColor: categoryColor,
     formatYen: formatYen,
     parseDate: parseDate,
     dateDiffDays: dateDiffDays,
@@ -161,10 +160,10 @@
     dayLabel: dayLabel,
     tripNights: tripNights,
     allDatesForTrip: allDatesForTrip,
-    sortEpisodes: sortEpisodes,
-    groupEpisodesByDate: groupEpisodesByDate,
-    distinctGroupTags: distinctGroupTags,
-    filterEpisodesByGroupTag: filterEpisodesByGroupTag,
+    sortBlocks: sortBlocks,
+    groupBlocksByDate: groupBlocksByDate,
+    entryCostTotal: entryCostTotal,
+    blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
     primaryLodgingName: primaryLodgingName,
     parseTags: parseTags,
@@ -265,14 +264,15 @@
   // ---------- 状態 ----------
   var state = {
     trip: null,
-    episodes: [],
+    blocks: [],
     selectedDate: null,
-    selectedGroupTag: '',
-    editingEpisodeId: null,
+    editingBlockId: null,
     formCategory: 'sightseeing',
-    formRating: null,
-    formPhotoIds: [],   // 既存（サーバー上）の写真id
-    pendingPhotos: []   // 新規に選んだ、まだアップロードしていない {blob, url}
+    editingEntryId: null,
+    entryBlockId: null,       // 記録を追加する先の大項目
+    formPhotoIds: [],         // 既存（サーバー上）の写真id
+    pendingPhotos: [],        // 新規に選んだ、まだアップロードしていない {blob, url}
+    formCostItems: []         // {label, amount}
   };
 
   function apiNoticeCheck() {
@@ -300,10 +300,10 @@
       card.className = 'trip-card';
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
       card.innerHTML =
-        '<div class="trip-card-cover"><div class="trip-card-text"><div class="t">' + escapeHtml(t.title) + '</div>' +
-        (dateText ? '<div class="d">' + escapeHtml(dateText) + '</div>' : '') + '</div></div>' +
-        '<div class="trip-card-body"><div class="trip-card-companions">' +
-        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') + '</div></div>';
+        '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
+        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
+        '<div class="trip-card-companions">' +
+        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') + '</div>';
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
     });
@@ -320,9 +320,8 @@
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
       state.trip = data.trip;
-      state.episodes = data.episodes;
-      state.selectedGroupTag = '';
-      var dates = Core.allDatesForTrip(state.trip, state.episodes);
+      state.blocks = data.blocks;
+      var dates = Core.allDatesForTrip(state.trip, state.blocks);
       var today = new Date().toISOString().slice(0, 10);
       state.selectedDate = dates.indexOf(today) !== -1 ? today : (dates[0] !== undefined ? dates[0] : '');
       rememberTrip(state.trip);
@@ -338,7 +337,7 @@
   function refreshTrip() {
     return api('/trips/' + encodeURIComponent(state.trip.id)).then(function (data) {
       state.trip = data.trip;
-      state.episodes = data.episodes;
+      state.blocks = data.blocks;
     });
   }
 
@@ -380,14 +379,13 @@
     $('#tripDates').textContent = range + (nights ? '・' + nights : '');
     $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
 
-    var lodging = Core.primaryLodgingName(state.episodes);
-    var total = Core.tripTotalCost(state.episodes);
+    var lodging = Core.primaryLodgingName(state.blocks);
+    var total = Core.tripTotalCost(state.blocks);
     $('#tripStats').innerHTML =
       statCard('宿泊先', lodging || '未設定') +
       statCard('総費用', Core.formatYen(total) || '¥0') +
-      statCard('日程', nights || (Core.allDatesForTrip(trip, state.episodes).length + '日'));
+      statCard('日程', nights || (Core.allDatesForTrip(trip, state.blocks).length + '日'));
 
-    renderGroupFilter();
     renderDayTabs();
     renderDaySection();
   }
@@ -396,31 +394,13 @@
     return '<div class="stat-card"><div class="lbl">' + escapeHtml(label) + '</div><div class="val">' + escapeHtml(value) + '</div></div>';
   }
 
-  function renderGroupFilter() {
-    var tags = Core.distinctGroupTags(state.episodes);
-    var el = $('#groupFilter');
-    if (!tags.length) { el.innerHTML = ''; return; }
-    var all = [''].concat(tags);
-    el.innerHTML = all.map(function (tag) {
-      var on = tag === state.selectedGroupTag;
-      return '<button class="gf-chip' + (on ? ' on' : '') + '" data-tag="' + escapeHtml(tag) + '">' + escapeHtml(tag || '全員') + '</button>';
-    }).join('');
-    $all('.gf-chip', el).forEach(function (b) {
-      b.addEventListener('click', function () {
-        state.selectedGroupTag = b.dataset.tag;
-        renderGroupFilter();
-        renderDaySection();
-      });
-    });
-  }
-
   function renderDayTabs() {
-    var dates = Core.allDatesForTrip(state.trip, state.episodes);
+    var dates = Core.allDatesForTrip(state.trip, state.blocks);
     var el = $('#dayTabs');
     if (!dates.length) { el.innerHTML = ''; return; }
-    el.innerHTML = dates.map(function (d, i) {
+    el.innerHTML = dates.map(function (d) {
       var on = d === state.selectedDate;
-      return '<button class="day-tab' + (on ? ' on' : '') + '" data-date="' + escapeHtml(d) + '"><span class="n">' + (i + 1) + '</span>' + escapeHtml(Core.dayLabel(state.trip, d)) + '</button>';
+      return '<button class="day-tab' + (on ? ' on' : '') + '" data-date="' + escapeHtml(d) + '">' + escapeHtml(Core.dayLabel(state.trip, d)) + '</button>';
     }).join('');
     $all('.day-tab', el).forEach(function (b) {
       b.addEventListener('click', function () {
@@ -431,142 +411,121 @@
     });
   }
 
-  function currentDayEpisodes() {
-    var byDate = Core.groupEpisodesByDate(state.episodes);
-    var dayEpisodes = byDate[state.selectedDate || ''] || [];
-    return Core.filterEpisodesByGroupTag(dayEpisodes, state.selectedGroupTag);
+  function currentDayBlocks() {
+    var byDate = Core.groupBlocksByDate(state.blocks);
+    return byDate[state.selectedDate || ''] || [];
   }
 
   function renderDaySection() {
-    var trip = state.trip;
-    $('#dayTitle').textContent = Core.dayLabel(trip, state.selectedDate) + 'のモデルコース';
-    var episodes = currentDayEpisodes();
-    var placeNames = episodes.map(function (ep) { return ep.placeName; }).filter(Boolean);
-    $('#dayRouteText').textContent = placeNames.length ? placeNames.join(' → ') : '';
-
-    renderRouteStrip(episodes);
-    renderTimeline(episodes);
+    $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
+    renderTimeline(currentDayBlocks());
   }
 
-  function renderRouteStrip(episodes) {
-    var el = $('#routeStrip');
-    var withPlace = episodes.filter(function (ep) { return ep.placeName; });
-    if (withPlace.length < 2) { el.innerHTML = ''; return; }
-    var nodes = withPlace.map(function (ep, i) {
-      return '<div class="route-node' + (ep.category === 'lodging' ? ' lodging' : '') + '"><div class="dot">' + (i + 1) + '</div>' +
-        '<div class="lbl">' + escapeHtml(ep.placeName) + '</div></div>' +
-        (i < withPlace.length - 1 ? '<div class="route-link"></div>' : '');
-    }).join('');
-    el.innerHTML = '<div class="route-strip-inner">' + nodes + '</div>';
-  }
-
-  function renderTimeline(episodes) {
+  function renderTimeline(blocks) {
     var el = $('#timeline');
     el.innerHTML = '';
-    if (!episodes.length) {
+    if (!blocks.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = 'この日の記録はまだありません。下のボタンから追加できます。';
       el.appendChild(empty);
     }
-    episodes.forEach(function (ep, i) {
-      var item = document.createElement('div');
-      item.className = 'tl-item' + (ep.category === 'lodging' ? ' lodging' : '');
-      var photo = ep.photoIds && ep.photoIds[0] ? '<div class="tl-photo" style="background-image:url(\'' + escapeHtml(photoUrl(ep.photoIds[0])) + '\')"></div>' : photoPlaceholder();
-      var stars = ep.rating ? starsHtml(ep.rating) : '';
-      var price = (ep.cost || ep.cost === 0) ? '<div class="tl-price">' + escapeHtml(Core.formatYen(ep.cost)) + '</div>' : '';
-      var links = linksHtml(ep);
-      var lodgingLabel = ep.category === 'lodging' ? '<div class="tl-lodging-label">' + bedIcon() + '本日の宿</div>' : '';
-      item.innerHTML =
-        '<div class="tl-badge"><div class="n">' + (i + 1) + '</div>' + (ep.time ? '<div class="t">' + escapeHtml(ep.time) + '</div>' : '') + '</div>' +
-        '<div class="tl-card">' + lodgingLabel +
-        '<div class="tl-card-main">' + photo +
-        '<div style="flex:1;min-width:0">' +
-        '<div class="tl-title">' + escapeHtml(ep.placeName || ep.title || Core.categoryLabel(ep.category)) + '</div>' +
-        (ep.note ? '<div class="tl-note">' + escapeHtml(ep.note) + '</div>' : '') +
-        '</div></div>' +
-        ((stars || price) ? '<div class="tl-meta"><div class="tl-stars">' + stars + '</div>' + price + '</div>' : '') +
-        (links ? '<div class="tl-links">' + links + '</div>' : '') +
-        '</div>';
-      item.addEventListener('click', function () { openEpisodeForm(ep); });
-      el.appendChild(item);
+    blocks.forEach(function (block) {
+      el.appendChild(renderBlockEl(block));
     });
     var addBtn = document.createElement('button');
-    addBtn.className = 'tl-add';
-    addBtn.innerHTML = plusIcon() + '<span>' + escapeHtml(Core.dayLabel(state.trip, state.selectedDate)) + 'にエピソードを追加</span>';
-    addBtn.addEventListener('click', function () { openEpisodeForm(null); });
+    addBtn.className = 'block-add';
+    addBtn.innerHTML = plusIcon() + '<span>予定を追加</span>';
+    addBtn.addEventListener('click', function () { openBlockForm(null); });
     el.appendChild(addBtn);
   }
 
-  function photoPlaceholder() {
-    return '<div class="tl-photo">' + cameraIcon() + '</div>';
+  function renderBlockEl(block) {
+    var wrap = document.createElement('div');
+    wrap.className = 'block';
+
+    var head = document.createElement('div');
+    head.className = 'block-head';
+    head.innerHTML =
+      (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
+      '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
+      '<span class="block-cat"><span class="dot" style="background:' + Core.categoryColor(block.category) + '"></span>' + escapeHtml(Core.categoryLabel(block.category)) + '</span>';
+    head.addEventListener('click', function () { openBlockForm(block); });
+    wrap.appendChild(head);
+
+    var entriesWrap = document.createElement('div');
+    entriesWrap.className = 'entries';
+    (block.entries || []).forEach(function (entry) {
+      entriesWrap.appendChild(renderEntryEl(block, entry));
+    });
+    wrap.appendChild(entriesWrap);
+
+    var addEntryBtn = document.createElement('button');
+    addEntryBtn.className = 'entry-add';
+    addEntryBtn.innerHTML = plusIcon() + '<span>' + ((block.entries || []).length ? '別の記録を追加（別行動など）' : '記録を追加') + '</span>';
+    addEntryBtn.addEventListener('click', function (e) { e.stopPropagation(); openEntryForm(block.id, null); });
+    wrap.appendChild(addEntryBtn);
+
+    return wrap;
   }
-  function cameraIcon() {
-    return '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h1.3l.7-1.2c.2-.3.5-.5.9-.5h4.2c.4 0 .7.2.9.5l.7 1.2H15a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="10" cy="10.5" r="3.2"/></svg>';
+
+  function renderEntryEl(block, entry) {
+    var card = document.createElement('div');
+    card.className = 'entry-card' + (block.category === 'lodging' ? ' lodging' : '');
+
+    var photosHtml = (entry.photoIds || []).length
+      ? '<div class="entry-photos">' + entry.photoIds.map(function (id) {
+          return '<div class="entry-photo" style="background-image:url(\'' + escapeHtml(photoUrl(id)) + '\')"></div>';
+        }).join('') + '</div>'
+      : '';
+
+    var costItems = entry.costItems || [];
+    var costHtml = costItems.length
+      ? '<div class="cost-lines">' +
+        costItems.map(function (it) {
+          return '<div class="cost-line"><span>' + escapeHtml(it.label) + '</span><span>' + escapeHtml(Core.formatYen(it.amount)) + '</span></div>';
+        }).join('') +
+        '<div class="cost-line total"><span>計</span><span>' + escapeHtml(Core.formatYen(Core.entryCostTotal(entry))) + '</span></div>' +
+        '</div>'
+      : '';
+
+    var metaBits = [];
+    if (entry.waitTime) metaBits.push('<span>待ち時間 ' + escapeHtml(entry.waitTime) + '</span>');
+    if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
+    if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
+
+    card.innerHTML =
+      '<div class="entry-author">記録：' + escapeHtml(entry.author || '匿名') + '</div>' +
+      photosHtml +
+      (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
+      (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
+      costHtml +
+      (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '');
+
+    card.addEventListener('click', function () { openEntryForm(block.id, entry); });
+    return card;
   }
+
   function plusIcon() {
-    return '<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>';
-  }
-  function bedIcon() {
-    return '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 16v-9"/><path d="M2.5 13h15v3"/><path d="M2.5 13v-2.5a1.5 1.5 0 0 1 1.5-1.5h4.5v4"/><path d="M9.5 9h6.5a1.5 1.5 0 0 1 1.5 1.5V13"/><circle cx="5.3" cy="8.3" r="1.3"/></svg>';
-  }
-  function starSvg(filled) {
-    return '<svg width="13" height="13" viewBox="0 0 20 20"><path d="M10 2.5l2.35 4.76 5.25.76-3.8 3.7.9 5.23L10 14.6l-4.7 2.35.9-5.23-3.8-3.7 5.25-.76z" fill="' +
-      (filled ? '#e0a940' : 'none') + '" stroke="' + (filled ? 'none' : '#c9bda6') + '" stroke-width="1.3"/></svg>';
-  }
-  function starsHtml(rating) {
-    var out = '';
-    for (var i = 1; i <= 5; i++) out += starSvg(i <= rating);
-    return out;
-  }
-  function pinIcon() {
-    return '<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17.5s6-5.6 6-10a6 6 0 1 0-12 0c0 4.4 6 10 6 10z"/><circle cx="10" cy="7.5" r="2"/></svg>';
-  }
-  function linkIcon() {
-    return '<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 11.5l3-3"/><path d="M7 13.5L5 15.5a2.5 2.5 0 0 1-3.5-3.5l3-3a2.5 2.5 0 0 1 3.5 0"/><path d="M13 6.5l2-2a2.5 2.5 0 1 1 3.5 3.5l-3 3a2.5 2.5 0 0 1-3.5 0"/></svg>';
-  }
-  function tagIcon() {
-    return '<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3H5a2 2 0 0 0-2 2v6l8.6 8.6a2 2 0 0 0 2.8 0l4.2-4.2a2 2 0 0 0 0-2.8L11 3z"/><circle cx="7.2" cy="7.2" r="1.2"/></svg>';
+    return '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>';
   }
 
-  function linksHtml(ep) {
-    var out = '';
-    if (ep.mapUrl) out += '<a class="tl-link" href="' + escapeHtml(ep.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + pinIcon() + '地図で見る</a>';
-    if (ep.infoUrl) out += '<a class="tl-link" href="' + escapeHtml(ep.infoUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + linkIcon() + '公式サイト</a>';
-    if (ep.bookingSite) out += '<span class="tl-link">' + tagIcon() + escapeHtml(ep.bookingSite) + '</span>';
-    return out;
-  }
-
-  // ---------- エピソードの追加・編集 ----------
-  function openEpisodeForm(ep) {
-    state.editingEpisodeId = ep ? ep.id : null;
-    state.formCategory = ep ? ep.category : 'sightseeing';
-    state.formRating = ep ? ep.rating : null;
-    state.formPhotoIds = ep ? (ep.photoIds || []).slice() : [];
-    state.pendingPhotos = [];
-
-    $('#epFormTitle').textContent = ep ? 'この記録を編集' : 'この時間の思い出を追加';
-    $('#epDate').value = ep ? ep.date : (state.selectedDate || new Date().toISOString().slice(0, 10));
-    $('#epTime').value = ep ? ep.time : '';
-    $('#epPlace').value = ep ? ep.placeName : '';
-    $('#epNote').value = ep ? ep.note : '';
-    $('#epCost').value = ep && (ep.cost || ep.cost === 0) ? ep.cost : '';
-    $('#epGroupTag').value = ep ? ep.groupTag : '';
-    $('#epMapUrl').value = ep ? ep.mapUrl : '';
-    $('#epInfoUrl').value = ep ? ep.infoUrl : '';
-    $('#epBookingSite').value = ep ? ep.bookingSite : '';
-    $('#epAuthor').value = ep ? ep.author : '';
-    $('#epFormStatus').textContent = '';
-    $('#btnDeleteEpisode').hidden = !ep;
-
+  // ---------- 大項目（予定）の追加・編集 ----------
+  function openBlockForm(block) {
+    state.editingBlockId = block ? block.id : null;
+    state.formCategory = block ? block.category : 'sightseeing';
+    $('#blkFormTitle').textContent = block ? '予定を編集' : '予定を追加';
+    $('#blkDate').value = block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10));
+    $('#blkTime').value = block ? block.time : '';
+    $('#blkLabel').value = block ? block.label : '';
+    $('#blkFormStatus').textContent = '';
+    $('#btnDeleteBlock').hidden = !block;
     renderCategoryChips();
-    renderRatingPicker();
-    renderPhotoPreview();
-    showScreen('episodeForm');
+    showScreen('blockForm');
   }
 
   function renderCategoryChips() {
-    var el = $('#epCategoryChips');
+    var el = $('#blkCategoryChips');
     el.innerHTML = Core.CATEGORIES.map(function (c) {
       return '<button type="button" class="cat-chip' + (c.key === state.formCategory ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(c.label) + '</button>';
     }).join('');
@@ -575,25 +534,72 @@
     });
   }
 
-  function renderRatingPicker() {
-    var el = $('#epRatingPicker');
-    el.innerHTML = '';
-    for (var i = 1; i <= 5; i++) {
-      (function (i) {
-        var b = document.createElement('button');
-        b.type = 'button';
-        b.innerHTML = starSvg(state.formRating && i <= state.formRating);
-        b.addEventListener('click', function () {
-          state.formRating = state.formRating === i ? null : i;
-          renderRatingPicker();
-        });
-        el.appendChild(b);
-      })(i);
-    }
+  function saveBlock() {
+    var status = $('#blkFormStatus');
+    if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
+    var label = $('#blkLabel').value.trim();
+    if (!label) { status.textContent = '見出しを入力してください。'; return; }
+    status.textContent = '保存中…';
+    var payload = {
+      date: $('#blkDate').value || '',
+      time: $('#blkTime').value || '',
+      label: label,
+      category: state.formCategory
+    };
+    var req = state.editingBlockId
+      ? api('/blocks/' + encodeURIComponent(state.editingBlockId), 'PATCH', payload)
+      : api('/trips/' + encodeURIComponent(state.trip.id) + '/blocks', 'POST', payload);
+    req.then(function (block) {
+      return refreshTrip().then(function () {
+        state.selectedDate = block.date || '';
+        renderDayTabs();
+        if (state.editingBlockId) {
+          showScreen('tripDetail');
+          renderTripDetail();
+        } else {
+          // 新規の予定は、続けて最初の記録を書いてもらう
+          openEntryForm(block.id, null);
+        }
+      });
+    }).catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
+  }
+
+  function deleteBlock() {
+    if (!state.editingBlockId) return;
+    if (!confirm('この予定と、ぶら下がる記録をすべて削除しますか？')) return;
+    api('/blocks/' + encodeURIComponent(state.editingBlockId), 'DELETE').then(function () {
+      return refreshTrip();
+    }).then(function () {
+      showScreen('tripDetail');
+      renderTripDetail();
+    }).catch(function () { $('#blkFormStatus').textContent = '削除に失敗しました。'; });
+  }
+
+  // ---------- 小項目（記録）の追加・編集 ----------
+  function openEntryForm(blockId, entry) {
+    state.entryBlockId = blockId;
+    state.editingEntryId = entry ? entry.id : null;
+    state.formPhotoIds = entry ? (entry.photoIds || []).slice() : [];
+    state.pendingPhotos = [];
+    state.formCostItems = entry ? (entry.costItems || []).map(function (it) { return { label: it.label, amount: it.amount }; }) : [];
+
+    $('#entFormTitle').textContent = entry ? '記録を編集' : '記録を追加';
+    $('#entEpisode').value = entry ? entry.episode : '';
+    $('#entComment').value = entry ? entry.comment : '';
+    $('#entWaitTime').value = entry ? entry.waitTime : '';
+    $('#entMapUrl').value = entry ? entry.mapUrl : '';
+    $('#entShopUrl').value = entry ? entry.shopUrl : '';
+    $('#entAuthor').value = entry ? entry.author : '';
+    $('#entFormStatus').textContent = '';
+    $('#btnDeleteEntry').hidden = !entry;
+
+    renderPhotoPreview();
+    renderCostItems();
+    showScreen('entryForm');
   }
 
   function renderPhotoPreview() {
-    var el = $('#epPhotoPreview');
+    var el = $('#entPhotoPreview');
     el.innerHTML = '';
     state.formPhotoIds.forEach(function (id, idx) {
       var ph = document.createElement('div');
@@ -617,40 +623,64 @@
     });
   }
 
-  function saveEpisode() {
-    var status = $('#epFormStatus');
-    var place = $('#epPlace').value.trim();
+  function renderCostItems() {
+    var el = $('#entCostItems');
+    el.innerHTML = '';
+    state.formCostItems.forEach(function (item, idx) {
+      var row = document.createElement('div');
+      row.className = 'cost-item-row';
+      row.innerHTML =
+        '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
+        '<input type="number" min="0" step="1" placeholder="円" value="' + (item.amount || '') + '">' +
+        '<button type="button" aria-label="削除">×</button>';
+      var inputs = row.querySelectorAll('input');
+      inputs[0].addEventListener('input', function (e) { state.formCostItems[idx].label = e.target.value; });
+      inputs[1].addEventListener('input', function (e) {
+        state.formCostItems[idx].amount = Math.max(0, parseInt(e.target.value, 10) || 0);
+        renderCostTotal();
+      });
+      row.querySelector('button').addEventListener('click', function () {
+        state.formCostItems.splice(idx, 1);
+        renderCostItems();
+      });
+      el.appendChild(row);
+    });
+    renderCostTotal();
+  }
+
+  function renderCostTotal() {
+    var total = state.formCostItems.reduce(function (s, it) { return s + (it.amount || 0); }, 0);
+    $('#entCostTotal').textContent = state.formCostItems.length ? '計 ' + Core.formatYen(total) : '';
+  }
+
+  function saveEntry() {
+    var status = $('#entFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
-    if (!place) { status.textContent = '場所を入力してください。'; return; }
+    var author = $('#entAuthor').value.trim();
+    if (!author) { status.textContent = '記録した人を入力してください。'; return; }
     status.textContent = '保存中…';
 
-    var costRaw = $('#epCost').value;
     var payload = {
-      date: $('#epDate').value || '',
-      time: $('#epTime').value || '',
-      placeName: place,
-      category: state.formCategory,
-      note: $('#epNote').value.trim(),
-      cost: costRaw === '' ? null : Math.max(0, parseInt(costRaw, 10) || 0),
-      rating: state.formRating,
-      groupTag: $('#epGroupTag').value.trim(),
-      mapUrl: $('#epMapUrl').value.trim(),
-      infoUrl: $('#epInfoUrl').value.trim(),
-      bookingSite: $('#epBookingSite').value.trim(),
-      author: $('#epAuthor').value.trim()
+      episode: $('#entEpisode').value.trim(),
+      comment: $('#entComment').value.trim(),
+      costItems: state.formCostItems.filter(function (it) { return it.label.trim() || it.amount; })
+        .map(function (it) { return { label: it.label.trim() || '費用', amount: it.amount || 0 }; }),
+      waitTime: $('#entWaitTime').value.trim(),
+      mapUrl: $('#entMapUrl').value.trim(),
+      shopUrl: $('#entShopUrl').value.trim(),
+      author: author
     };
 
     Promise.all(state.pendingPhotos.map(function (p) { return uploadPhotoBlob(p.blob); }))
       .then(function (uploaded) {
         payload.photoIds = state.formPhotoIds.concat(uploaded.map(function (u) { return u.id; }));
-        var req = state.editingEpisodeId
-          ? api('/episodes/' + encodeURIComponent(state.editingEpisodeId), 'PATCH', payload)
-          : api('/trips/' + encodeURIComponent(state.trip.id) + '/episodes', 'POST', payload);
+        var req = state.editingEntryId
+          ? api('/entries/' + encodeURIComponent(state.editingEntryId), 'PATCH', payload)
+          : api('/blocks/' + encodeURIComponent(state.entryBlockId) + '/entries', 'POST', payload);
         return req;
       })
-      .then(function (ep) {
+      .then(function () {
         return refreshTrip().then(function () {
-          state.selectedDate = ep.date || '';
           showScreen('tripDetail');
           renderTripDetail();
         });
@@ -658,15 +688,15 @@
       .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
   }
 
-  function deleteEpisode() {
-    if (!state.editingEpisodeId) return;
+  function deleteEntry() {
+    if (!state.editingEntryId) return;
     if (!confirm('この記録を削除しますか？')) return;
-    api('/episodes/' + encodeURIComponent(state.editingEpisodeId), 'DELETE').then(function () {
+    api('/entries/' + encodeURIComponent(state.editingEntryId), 'DELETE').then(function () {
       return refreshTrip();
     }).then(function () {
       showScreen('tripDetail');
       renderTripDetail();
-    }).catch(function () { $('#epFormStatus').textContent = '削除に失敗しました。'; });
+    }).catch(function () { $('#entFormStatus').textContent = '削除に失敗しました。'; });
   }
 
   // ---------- 初期化 ----------
@@ -681,11 +711,18 @@
     $('#btnShareTrip').addEventListener('click', copyShareLink);
     $('#btnInvite').addEventListener('click', copyShareLink);
 
-    $('#btnSaveEpisode').addEventListener('click', saveEpisode);
-    $('#btnDeleteEpisode').addEventListener('click', deleteEpisode);
+    $('#btnSaveBlock').addEventListener('click', saveBlock);
+    $('#btnDeleteBlock').addEventListener('click', deleteBlock);
 
-    $('#epPhotoPicker').addEventListener('click', function () { $('#epPhoto').click(); });
-    $('#epPhoto').addEventListener('change', function (e) {
+    $('#btnSaveEntry').addEventListener('click', saveEntry);
+    $('#btnDeleteEntry').addEventListener('click', deleteEntry);
+    $('#btnAddCostItem').addEventListener('click', function () {
+      state.formCostItems.push({ label: '', amount: 0 });
+      renderCostItems();
+    });
+
+    $('#entPhotoPicker').addEventListener('click', function () { $('#entPhoto').click(); });
+    $('#entPhoto').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
       Promise.all(files.map(function (f) { return fileToCompressedBlob(f, 1280, 0.72); })).then(function (blobs) {
         blobs.forEach(function (blob) { state.pendingPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
@@ -694,7 +731,7 @@
       e.target.value = '';
     });
 
-    $all('.back').forEach(function (b) {
+    $all('[data-back]').forEach(function (b) {
       b.addEventListener('click', function () {
         var to = b.dataset.back;
         if (to === 'home') goHome();
