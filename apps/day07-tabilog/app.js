@@ -657,7 +657,6 @@
     var status = $('#entFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
     var author = $('#entAuthor').value.trim();
-    if (!author) { status.textContent = '記録した人を入力してください。'; return; }
     status.textContent = '保存中…';
 
     var payload = {
