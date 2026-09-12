@@ -1,0 +1,15 @@
+{
+  "name": "tabilog-ios",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "sync": "cap sync ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/ios": "^6.1.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2"
+  }
+}

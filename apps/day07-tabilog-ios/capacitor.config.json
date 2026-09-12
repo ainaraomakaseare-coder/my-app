@@ -1,0 +1,8 @@
+{
+  "appId": "com.hiroyaapps.tabilog",
+  "appName": "たびログ",
+  "webDir": "../day07-tabilog",
+  "ios": {
+    "contentInset": "automatic"
+  }
+}

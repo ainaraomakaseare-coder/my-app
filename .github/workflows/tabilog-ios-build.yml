@@ -1,0 +1,99 @@
+name: たびログ iOS ビルド & TestFlightアップロード
+
+# 手動実行のみ（勝手に走って審査提出用のビルドが増えないように）。
+# GitHubリポジトリの「Actions」タブ → このワークフロー名 → 「Run workflow」から実行する。
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    # iOSアプリのビルドにはXcodeが必要なため、macOSランナーを使う
+    # （パブリックリポジトリなら無料枠で使えることが多い）。
+    runs-on: macos-latest
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Node.jsを準備
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Capacitorの依存パッケージをインストール
+        working-directory: apps/day07-tabilog-ios
+        run: npm install
+
+      - name: iOSプロジェクトを生成（毎回作り直す。ネイティブのios/フォルダはリポジトリに入れない）
+        working-directory: apps/day07-tabilog-ios
+        run: npx cap add ios
+
+      - name: Web側の最新の中身をiOSプロジェクトへ反映
+        working-directory: apps/day07-tabilog-ios
+        run: npx cap sync ios
+
+      - name: App Store ConnectのAPIキーをファイルに書き出す
+        working-directory: apps/day07-tabilog-ios
+        run: |
+          mkdir -p ~/private_keys
+          echo "${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}" > ~/private_keys/AuthKey_${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}.p8
+
+      - name: ExportOptions.plistを作る
+        working-directory: apps/day07-tabilog-ios
+        run: |
+          cat > ExportOptions.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>teamID</key>
+            <string>${{ secrets.APPLE_TEAM_ID }}</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: アーカイブをビルド（自動署名。App Store Connect APIキーで認証）
+        working-directory: apps/day07-tabilog-ios/ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
+            -archivePath ../../build/App.xcarchive archive \
+            DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
+            CODE_SIGN_STYLE=Automatic \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+
+      - name: .ipaを書き出す
+        working-directory: apps/day07-tabilog-ios
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}.p8 \
+            -authenticationKeyID ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }} \
+            -authenticationKeyIssuerID ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+
+      - name: TestFlightへアップロード
+        working-directory: apps/day07-tabilog-ios
+        run: |
+          xcrun altool --upload-app \
+            -f build/export/*.ipa \
+            -t ios \
+            --apiKey ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }} \
+            --apiIssuer ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+
+      - name: ビルド成果物を保存（失敗時の確認用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabilog-ios-build
+          path: |
+            apps/day07-tabilog-ios/build
+          retention-days: 5
