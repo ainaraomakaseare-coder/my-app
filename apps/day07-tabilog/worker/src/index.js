@@ -526,6 +526,7 @@ function rowToDayInfo(row) {
     weatherCode: row.weather_code,
     tempMax: row.temp_max,
     tempMin: row.temp_min,
+    precipSum: row.precip_sum,
     isForecast: !!row.is_forecast,
     fetchedAt: row.fetched_at,
   };
@@ -547,7 +548,7 @@ async function fetchDailyWeather(lat, lon, date) {
   const url = base
     + "?latitude=" + encodeURIComponent(lat)
     + "&longitude=" + encodeURIComponent(lon)
-    + "&daily=weathercode,temperature_2m_max,temperature_2m_min"
+    + "&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum"
     + "&timezone=auto&start_date=" + date + "&end_date=" + date;
   const res = await fetch(url);
   if (!res.ok) return null;
@@ -559,6 +560,7 @@ async function fetchDailyWeather(lat, lon, date) {
     weatherCode: daily.weathercode ? daily.weathercode[idx] : null,
     tempMax: daily.temperature_2m_max ? daily.temperature_2m_max[idx] : null,
     tempMin: daily.temperature_2m_min ? daily.temperature_2m_min[idx] : null,
+    precipSum: daily.precipitation_sum ? daily.precipitation_sum[idx] : null,
     isForecast: !isPast,
   };
 }
@@ -590,20 +592,21 @@ async function setDayPlace(tripId, date, request, env, headers) {
     weather_code: weather ? weather.weatherCode : null,
     temp_max: weather ? weather.tempMax : null,
     temp_min: weather ? weather.tempMin : null,
+    precip_sum: weather ? weather.precipSum : null,
     is_forecast: weather && weather.isForecast ? 1 : 0,
     fetched_at: weather ? t : "",
   };
   if (existing) {
     await env.DB.prepare(
-      "UPDATE day_infos SET place=?, lat=?, lon=?, weather_code=?, temp_max=?, temp_min=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=?"
+      "UPDATE day_infos SET place=?, lat=?, lon=?, weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=?"
     )
-      .bind(row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.is_forecast, row.fetched_at, t, id)
+      .bind(row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, id)
       .run();
   } else {
     await env.DB.prepare(
-      "INSERT INTO day_infos (id, trip_id, date, place, lat, lon, weather_code, temp_max, temp_min, is_forecast, fetched_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+      "INSERT INTO day_infos (id, trip_id, date, place, lat, lon, weather_code, temp_max, temp_min, precip_sum, is_forecast, fetched_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
     )
-      .bind(id, tripId, date, row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.is_forecast, row.fetched_at, t, t)
+      .bind(id, tripId, date, row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, t)
       .run();
   }
   const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();

@@ -178,9 +178,15 @@
     return out;
   }
 
-  // WMO weather code（Open-Meteoが返す天気コード）を日本語の短い表示に変換する
-  function weatherLabel(code) {
+  // WMO weather code（Open-Meteoが返す天気コード）を日本語の短い表示に変換する。
+  // precipSum（その日の降水量mm）が1mm以下なら、雨系のコードでも「曇り」として扱う
+  // （コードだけだと、ごく僅かな小雨でも「雨」表示になってしまうため）。
+  // 雷雨（95以上）は降水量が少なくても雷そのものが観測された結果なので対象外。
+  function weatherLabel(code, precipSum) {
     if (code === null || code === undefined) return '';
+    var isLightRain = ((code >= 51 && code <= 67) || (code >= 80 && code <= 82))
+      && typeof precipSum === 'number' && precipSum <= 1;
+    if (isLightRain) return '曇り';
     if (code === 0) return '快晴';
     if (code === 1 || code === 2) return '晴れ';
     if (code === 3) return '曇り';
@@ -555,7 +561,7 @@
     var info = findDayInfo(state.selectedDate);
     if (info && info.weatherCode !== null && info.weatherCode !== undefined) {
       btn.classList.add('has-weather');
-      var label = Core.weatherLabel(info.weatherCode);
+      var label = Core.weatherLabel(info.weatherCode, info.precipSum);
       var temps = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) + '℃/' + Math.round(info.tempMin) + '℃' : '';
       btn.innerHTML = escapeHtml(info.place) + '　' + escapeHtml(label) + ' ' + escapeHtml(temps)
         + (info.isForecast ? ' <span class="forecast-mark">（予報）</span>' : '');

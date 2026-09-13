@@ -79,6 +79,8 @@ CREATE INDEX IF NOT EXISTS idx_ratings_rater ON ratings(rater_email);
 -- 地名→緯度経度の変換、天気・気温の取得はどちらもOpen-Meteo（無料・APIキー不要）を使う。
 -- 日付が今日より前なら実況（archive-api）、今日以降なら予報（forecast api）を取得し、
 -- is_forecastで区別する。日付が過ぎたらis_forecast=0の実況値で上書きする想定。
+-- precip_sum（降水量mm）はv6で追加。「1mm以下なら曇り扱いにする」判定に使う
+-- （天気コードだけだと、ごく僅かな小雨でも「雨」表示になってしまうため）。
 CREATE TABLE IF NOT EXISTS day_infos (
   id TEXT PRIMARY KEY,
   trip_id TEXT NOT NULL,
@@ -89,6 +91,7 @@ CREATE TABLE IF NOT EXISTS day_infos (
   weather_code INTEGER,
   temp_max REAL,
   temp_min REAL,
+  precip_sum REAL,
   is_forecast INTEGER NOT NULL DEFAULT 0,
   fetched_at TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
@@ -97,3 +100,9 @@ CREATE TABLE IF NOT EXISTS day_infos (
 );
 
 CREATE INDEX IF NOT EXISTS idx_day_infos_trip ON day_infos(trip_id);
+
+-- v6：day_infosに降水量（precip_sum）を追加。上のCREATE TABLEには最初から含めてあるため、
+-- これは「v5時点で作成済みの（precip_sumを持たない）day_infosテーブル」を更新するための
+-- 一度きりの文。既にprecip_sum列がある状態でこの行を再実行するとエラーになる点に注意
+-- （その場合はこの1行だけ削除してから再実行すればよい。他のCREATE系はすべて再実行安全）。
+ALTER TABLE day_infos ADD COLUMN precip_sum REAL;

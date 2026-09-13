@@ -130,5 +130,13 @@ eq('weatherLabel: 71〜77は雪', T.weatherLabel(73), '雪');
 eq('weatherLabel: 95以上は雷雨', T.weatherLabel(96), '雷雨');
 eq('weatherLabel: nullは空文字', T.weatherLabel(null), '');
 
+/* ---- weatherLabel: 降水量1mm以下は曇り扱い ---- */
+eq('weatherLabel: 雨コードでも降水量1mm以下なら曇り', T.weatherLabel(63, 0.5), '曇り');
+eq('weatherLabel: 降水量ちょうど1mmも曇り', T.weatherLabel(63, 1), '曇り');
+eq('weatherLabel: 降水量が1mmを超えれば雨のまま', T.weatherLabel(63, 5), '雨');
+eq('weatherLabel: にわか雨コードでも同様に曇り扱い', T.weatherLabel(80, 0.2), '曇り');
+eq('weatherLabel: 雷雨は降水量が少なくても雷雨のまま', T.weatherLabel(96, 0.2), '雷雨');
+eq('weatherLabel: 降水量が渡されなければ従来どおり', T.weatherLabel(63), '雨');
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
