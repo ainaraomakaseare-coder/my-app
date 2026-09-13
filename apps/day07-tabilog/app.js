@@ -550,7 +550,7 @@
     head.innerHTML =
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
-      '<span class="block-cat"><span class="dot" style="background:' + Core.categoryColor(block.category) + '"></span>' + escapeHtml(Core.categoryLabel(block.category)) + '</span>';
+      '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>';
     head.addEventListener('click', function () { openBlockForm(block); });
     wrap.appendChild(head);
 
