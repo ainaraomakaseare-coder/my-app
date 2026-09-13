@@ -1,6 +1,6 @@
 {
   "appId": "com.hiroyaapps.tabilog",
-  "appName": "たびログ",
+  "appName": "旅の足跡",
   "webDir": "../day07-tabilog",
   "ios": {
     "contentInset": "automatic"

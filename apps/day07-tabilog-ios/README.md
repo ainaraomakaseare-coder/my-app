@@ -1,6 +1,6 @@
-# たびログ iOSアプリ化
+# 旅の足跡 iOSアプリ化
 
-`apps/day07-tabilog/`（Web版のたびログ）を、[Capacitor](https://capacitorjs.com/) でiOSアプリの器に包み、GitHub Actions上のMac（クラウド）でビルドしてTestFlight（→App Store）に送る仕組みです。**Macを持っていなくてもビルドできます**（ビルド作業はすべてGitHub Actionsのmacosランナー上で行われます）。
+`apps/day07-tabilog/`（Web版の旅の足跡）を、[Capacitor](https://capacitorjs.com/) でiOSアプリの器に包み、GitHub Actions上のMac（クラウド）でビルドしてTestFlight（→App Store）に送る仕組みです。**Macを持っていなくてもビルドできます**（ビルド作業はすべてGitHub Actionsのmacosランナー上で行われます）。
 
 見た目・データはすべてWeb版（`apps/day07-tabilog/`）と共通です。このフォルダには「Web版をアプリとして包むための設定」だけが入っていて、`ios/` というネイティブのXcodeプロジェクトは**リポジトリには入れず、ビルドのたびにCI上で作り直します**（中身が大きい・環境依存のファイルのため）。
 
@@ -41,7 +41,7 @@ https://developer.apple.com/account の「Membership」ページに表示され�
 
 1. https://appstoreconnect.apple.com/apps → 「+」→「新規App」
 2. プラットフォーム：iOS
-3. 名前：たびログ（他の人が使っていなければそのまま使えます。使われていたら別名にする必要があります）
+3. 名前：旅の足跡（他の人が使っていなければそのまま使えます。使われていたら別名にする必要があります）
 4. Bundle ID：`com.hiroyaapps.tabilog`（`capacitor.config.json` と同じ値にする。事前に developer.apple.com の「Identifiers」からこのBundle IDを登録しておく必要があります。この登録画面で「Sign in with Apple」にもチェックを入れておいてください）
 5. SKU：何でもよい（例：`tabilog001`）
 
@@ -62,7 +62,7 @@ Appleでサインインを有効にする手順（Googleログインを提供す
 
 ### 6. ビルドを実行する
 
-このリポジトリの「Actions」タブ →「たびログ iOS ビルド & TestFlightアップロード」→「Run workflow」ボタンで手動実行します。成功すると、数分〜数十分後にTestFlightにビルドが表示されます（App Store Connect側でのメール審査待ちが入ることもあります）。
+このリポジトリの「Actions」タブ →「旅の足跡 iOS ビルド & TestFlightアップロード」→「Run workflow」ボタンで手動実行します。成功すると、数分〜数十分後にTestFlightにビルドが表示されます（App Store Connect側でのメール審査待ちが入ることもあります）。
 
 ### 7. TestFlightで確認 → 本審査へ
 
