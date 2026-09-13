@@ -384,6 +384,7 @@
     trip: null,
     blocks: [],
     days: [],                // 旅行の日ごとの場所・天気（{date, place, weatherCode, tempMax, tempMin, isForecast}）
+    members: [],             // アカウント参加者（{accountId, name, joinedAt}）。ゲスト参加者(companions)とは別
     selectedDate: null,
     editingBlockId: null,
     formCategory: 'sightseeing',
@@ -397,6 +398,7 @@
     formCostItems: [],        // {label, amount}
     loginReturnTo: 'home',    // ログイン画面から戻る先の画面名
     myLogItems: [],
+    myLogTrips: [],
     myLogCategory: 'food',
     myLogSort: 'score'
   };
@@ -448,6 +450,7 @@
       state.trip = data.trip;
       state.blocks = data.blocks;
       state.days = data.days || [];
+      state.members = data.members || [];
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       rememberTrip(state.trip);
@@ -465,6 +468,7 @@
       state.trip = data.trip;
       state.blocks = data.blocks;
       state.days = data.days || [];
+      state.members = data.members || [];
     });
   }
 
@@ -505,6 +509,7 @@
     var nights = Core.tripNights(trip);
     $('#tripDates').textContent = range + (nights ? '・' + nights : '');
     $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
+    renderTripJoin();
 
     var lodging = Core.primaryLodgingName(state.blocks);
     var total = Core.tripTotalCost(state.blocks);
@@ -515,6 +520,38 @@
 
     renderDayTabs();
     renderDaySection();
+  }
+
+  // ---------- アカウント参加者（参加する） ----------
+  // ゲスト参加者（companions、テキストのみ）とは別に、ログイン中の本人が押すことで
+  // 自分のアカウントをこの旅行に紐付ける。紐付いた旅行はマイログの「参加した旅行一覧」に出る。
+  function renderTripJoin() {
+    var user = loadCurrentUser();
+    var members = state.members || [];
+    var namesEl = $('#tripMembers');
+    namesEl.textContent = members.length
+      ? 'アカウント参加：' + members.map(function (m) { return m.name || 'アカウント参加者'; }).join('・')
+      : '';
+    var btn = $('#btnJoinTrip');
+    var joined = user && user.accountId && members.some(function (m) { return m.accountId === user.accountId; });
+    btn.disabled = !!joined;
+    btn.textContent = joined ? '参加済み' : '参加する';
+  }
+
+  function handleJoinTrip() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('tripDetail'); return; }
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/join', 'POST', { email: user.email, name: user.name || '' })
+      .then(function (res) {
+        state.members = res.members || [];
+        if (res.accountId && user.accountId !== res.accountId) {
+          saveCurrentUser(Object.assign({}, user, { accountId: res.accountId }));
+        }
+        renderTripJoin();
+      })
+      .catch(function () {
+        $('#tripDetailStatus').textContent = '参加に失敗しました。もう一度お試しください。';
+      });
   }
 
   function statCard(label, value) {
@@ -985,6 +1022,7 @@
     $('#mylogList').innerHTML = '<div class="empty">読み込み中…</div>';
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogItems = data.items || [];
+      state.myLogTrips = data.trips || [];
       renderMyLog();
     }).catch(function () {
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
@@ -992,9 +1030,32 @@
   }
 
   function renderMyLog() {
+    renderMyLogTrips();
     renderMyLogTabs();
     renderMyLogSort();
     renderMyLogList();
+  }
+
+  // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。
+  // 評価の細かいログ（下のカテゴリ別一覧）とは別物で、どの端末からログインしても同じ内容が見える。
+  function renderMyLogTrips() {
+    var el = $('#mylogTripList');
+    var trips = state.myLogTrips || [];
+    if (!trips.length) {
+      el.innerHTML = '<div class="empty">まだ参加した旅行がありません。旅行のページで「参加する」を押すとここに表示されます。</div>';
+      return;
+    }
+    el.innerHTML = '';
+    trips.forEach(function (t) {
+      var card = document.createElement('button');
+      card.className = 'trip-card';
+      var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
+      card.innerHTML =
+        '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
+        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>';
+      card.addEventListener('click', function () { openTrip(t.id); });
+      el.appendChild(card);
+    });
   }
 
   function renderMyLogTabs() {
@@ -1056,6 +1117,7 @@
 
     $('#btnShareTrip').addEventListener('click', copyShareLink);
     $('#btnInvite').addEventListener('click', copyShareLink);
+    $('#btnJoinTrip').addEventListener('click', handleJoinTrip);
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);
@@ -1191,15 +1253,29 @@
     if (!code) { $('#loginStatus').textContent = 'コードを入力してください。'; return; }
     $('#loginStatus').textContent = '確認中…';
     api('/auth/email/verify', 'POST', { email: email, code: code }).then(function (res) {
-      saveCurrentUser({ name: name || res.name || email, email: res.email, provider: 'email' });
-      renderAccountRow();
-      goToReturnScreen(state.loginReturnTo, true);
+      ensureAccountAndProceed({ name: name || res.name || email, email: res.email, provider: 'email' });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
       if (msg === 'wrong_code') $('#loginStatus').textContent = 'コードが正しくありません。';
       else if (msg === 'expired') $('#loginStatus').textContent = 'コードの有効期限が切れました。もう一度送信してください。';
       else if (msg === 'too_many_attempts') $('#loginStatus').textContent = '間違いが多いため、コードを無効にしました。もう一度送信してください。';
       else $('#loginStatus').textContent = '確認に失敗しました。もう一度お試しください。';
+    });
+  }
+
+  // ログイン成功後の共通処理：アカウントID（6桁、サーバー側で発行）を取得してから
+  // 元の画面に戻る。アカウントIDは「参加者」欄で生のメールアドレスを晒さず本人を
+  // 指し示すための識別子で、これが無いと「参加する」機能が使えない。
+  // 取得に失敗してもログイン自体は成立させる（参加機能だけ使えない状態で進む）。
+  function ensureAccountAndProceed(user) {
+    saveCurrentUser(user);
+    renderAccountRow();
+    api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
+      saveCurrentUser(Object.assign({}, loadCurrentUser(), { accountId: account.accountId }));
+    }).catch(function () {
+      // アカウントIDが取れなくてもログインは成立させる
+    }).then(function () {
+      goToReturnScreen(state.loginReturnTo, true);
     });
   }
 
@@ -1225,9 +1301,7 @@
   function handleGoogleCredential(response) {
     var payload = decodeJwtPayload(response.credential);
     if (!payload) { $('#loginStatus').textContent = 'ログインに失敗しました。もう一度お試しください。'; return; }
-    saveCurrentUser({ name: payload.name, email: payload.email, picture: payload.picture, provider: 'google' });
-    renderAccountRow();
-    goToReturnScreen(state.loginReturnTo, true);
+    ensureAccountAndProceed({ name: payload.name, email: payload.email, picture: payload.picture, provider: 'google' });
   }
 
   function handleAppleSignIn() {
@@ -1246,13 +1320,11 @@
       var payload = decodeJwtPayload(res.authorization.id_token) || {};
       var name = (res.user && res.user.name) ? [res.user.name.firstName, res.user.name.lastName].filter(Boolean).join(' ') : '';
       var existing = loadCurrentUser();
-      saveCurrentUser({
+      ensureAccountAndProceed({
         name: name || (existing && existing.provider === 'apple' ? existing.name : '') || '',
         email: (res.user && res.user.email) || payload.email || '',
         provider: 'apple'
       });
-      renderAccountRow();
-      goToReturnScreen(state.loginReturnTo, true);
     }).catch(function () {
       $('#loginStatus').textContent = 'Appleログインに失敗、またはキャンセルされました。';
     });

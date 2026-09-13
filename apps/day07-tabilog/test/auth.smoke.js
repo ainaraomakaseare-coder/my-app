@@ -57,6 +57,16 @@ function installFakeApi(page) {
   const entriesByBlock = {};
   const ratingsByEntry = {}; // entryId -> { email: {raterEmail, raterName, score} }
   const otpsByEmail = {}; // email -> { code, name }（メールOTPのフェイク実装。常に123456で確認できる）
+  const accountsByEmail = {}; // email -> { accountId, name }（アカウント参加者のフェイク実装）
+  const membersByTrip = {}; // tripId -> [{accountId, name, joinedAt}]
+  let accountSeq = 0;
+
+  function getOrCreateAccount(email, name) {
+    var e = (email || '').toLowerCase();
+    if (!accountsByEmail[e]) accountsByEmail[e] = { accountId: String(100000 + (++accountSeq)), name: name || '' };
+    else if (name) accountsByEmail[e].name = name;
+    return accountsByEmail[e];
+  }
 
   function entryWithRatings(e) {
     return Object.assign({}, e, { ratings: Object.values(ratingsByEntry[e.id] || {}) });
@@ -77,7 +87,23 @@ function installFakeApi(page) {
       if (!t) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' });
       const tripBlocks = Object.values(blocks).filter((b) => b.tripId === id)
         .map((b) => ({ ...b, entries: (entriesByBlock[b.id] || []).map(entryWithRatings) }));
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ trip: t, blocks: tripBlocks }) });
+      const members = membersByTrip[id] || [];
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ trip: t, blocks: tripBlocks, members }) });
+    }),
+    page.route(/\/api\/accounts\/ensure$/, async (route) => {
+      const data = JSON.parse(route.request().postData());
+      const account = getOrCreateAccount(data.email, data.name);
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ accountId: account.accountId, email: (data.email || '').toLowerCase(), name: account.name }) });
+    }),
+    page.route(/\/api\/trips\/([^/]+)\/join$/, async (route) => {
+      const tripId = decodeURIComponent(route.request().url().match(/\/api\/trips\/([^/]+)\/join$/)[1]);
+      const data = JSON.parse(route.request().postData());
+      const account = getOrCreateAccount(data.email, data.name);
+      membersByTrip[tripId] = membersByTrip[tripId] || [];
+      if (!membersByTrip[tripId].some((m) => m.accountId === account.accountId)) {
+        membersByTrip[tripId].push({ accountId: account.accountId, name: account.name, joinedAt: 'now' });
+      }
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ members: membersByTrip[tripId], accountId: account.accountId }) });
     }),
     page.route(/\/api\/trips\/([^/]+)\/blocks$/, async (route) => {
       const tripId = decodeURIComponent(route.request().url().match(/\/api\/trips\/([^/]+)\/blocks$/)[1]);
@@ -125,7 +151,13 @@ function installFakeApi(page) {
           }
         });
       });
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items }) });
+      const account = accountsByEmail[email];
+      const joinedTrips = account
+        ? Object.keys(membersByTrip)
+            .filter((tripId) => membersByTrip[tripId].some((m) => m.accountId === account.accountId))
+            .map((tripId) => trips[tripId])
+        : [];
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items, trips: joinedTrips }) });
     }),
     page.route(/\/api\/auth\/email\/send$/, async (route) => {
       const data = JSON.parse(route.request().postData());
@@ -191,6 +223,14 @@ function installFakeApi(page) {
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   check('ログインなしでも旅行を作れる', true);
 
+  // ---- 参加する（未ログインなら、押すとログイン画面に行く） ----
+  check('ログイン前は「参加する」ボタンが見える', (await page.textContent('#btnJoinTrip')) === '参加する');
+  await page.click('#btnJoinTrip');
+  await page.waitForSelector('.screen[data-screen="login"].active');
+  check('未ログインで「参加する」を押すとログイン画面に行く', true);
+  await page.click('#btnLoginBack');
+  await page.waitForSelector('.screen[data-screen="tripDetail"].active');
+
   await page.click('.block-add');
   await page.waitForSelector('.screen[data-screen="blockForm"].active');
   await page.fill('#blkLabel', 'テスト予定');
@@ -230,6 +270,12 @@ function installFakeApi(page) {
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   check('旅行詳細の記録カードに平均評価が表示される', (await page.textContent('.entry-rating')).indexOf('★ 4.0') !== -1);
 
+  // ---- 参加する（ログイン中：アカウント参加者として旅行に紐付く） ----
+  await page.click('#btnJoinTrip');
+  await page.waitForFunction(() => (document.querySelector('#btnJoinTrip') || {}).textContent === '参加済み');
+  check('参加すると「参加済み」になる', true);
+  check('参加すると自分の名前がアカウント参加者欄に出る', (await page.textContent('#tripMembers')).includes('テスト太郎'));
+
   // ---- アカウント欄・マイログ ----
   await page.click('.screen.active [data-back="home"]');
   await page.waitForSelector('.screen[data-screen="home"].active');
@@ -243,6 +289,7 @@ function installFakeApi(page) {
   await page.click('.mylog-tab[data-cat="sightseeing"]');
   await page.waitForSelector('.mylog-row');
   check('マイログの一覧に、さきほど評価した記録が出る', (await page.textContent('.mylog-row .mylog-score')) === '★4');
+  check('マイログの「参加した旅行一覧」に、参加した旅行が出る', (await page.textContent('#mylogTripList')).includes('未ログイン旅行'));
 
   // ---- ログアウト ----
   await page.click('.screen.active [data-back="home"]').catch(() => {});

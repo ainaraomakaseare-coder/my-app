@@ -151,7 +151,9 @@ async function getTrip(id, env, headers) {
   const blocks = blockRows.map((row) => ({ ...rowToBlock(row), entries: entriesByBlock[row.id] || [] }));
   const { results: dayRows } = await env.DB.prepare("SELECT * FROM day_infos WHERE trip_id = ?").bind(id).all();
   const days = dayRows.map(rowToDayInfo);
-  return json({ trip: rowToTrip(tripRow), blocks, days }, 200, headers);
+  const { results: memberRows } = await env.DB.prepare("SELECT * FROM trip_members WHERE trip_id = ?").bind(id).all();
+  const members = memberRows.map(rowToMember);
+  return json({ trip: rowToTrip(tripRow), blocks, days, members }, 200, headers);
 }
 
 async function updateTrip(id, request, env, headers) {
@@ -194,6 +196,7 @@ async function deleteTrip(id, env, headers) {
   }
   await env.DB.prepare("DELETE FROM blocks WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM day_infos WHERE trip_id = ?").bind(id).run();
+  await env.DB.prepare("DELETE FROM trip_members WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM trips WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
 }
@@ -507,7 +510,20 @@ async function getMyLog(email, env, headers) {
       ratedAt: row.rated_at,
     };
   });
-  return json({ items }, 200, headers);
+
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(email).first();
+  let trips = [];
+  if (account) {
+    const { results: tripRows } = await env.DB.prepare(
+      `SELECT t.* FROM trip_members m JOIN trips t ON t.id = m.trip_id
+       WHERE m.account_id = ? ORDER BY t.start_date DESC, t.created_at DESC`
+    )
+      .bind(account.account_id)
+      .all();
+    trips = tripRows.map(rowToTrip);
+  }
+
+  return json({ items, trips }, 200, headers);
 }
 
 /* ---------- 日ごとの天気（day_infos） ----------
@@ -726,6 +742,105 @@ async function verifyEmailOtp(request, env, headers) {
   return json({ email, name: row.name }, 200, headers);
 }
 
+/* ---------- アカウント・参加者（アカウント参加者） ----------
+ * ログイン（Google/Apple/メールOTP）が一度でも成功したメールアドレスに対し、
+ * サーバー側に永続的な「アカウント」を作る。account_idは6桁の数字（自動採番）で、
+ * 参加者一覧などで生のメールアドレスを晒さずその人を指し示すために使う。
+ * 「参加する」を押すと、Trip×account_idの組でtrip_membersに1件登録される
+ * （ゲスト参加者＝trips.companionsのテキストとは別物。既存データには触れない）。
+ */
+
+function generateAccountId() {
+  const bytes = new Uint32Array(1);
+  crypto.getRandomValues(bytes);
+  return String(100000 + (bytes[0] % 900000));
+}
+
+function rowToAccount(row) {
+  return { accountId: row.account_id, email: row.email, name: row.name };
+}
+
+function rowToMember(row) {
+  return { accountId: row.account_id, name: row.name, joinedAt: row.joined_at };
+}
+
+async function getOrCreateAccount(env, email, name) {
+  const existing = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(email).first();
+  const t = nowIso();
+  if (existing) {
+    if (name && name !== existing.name) {
+      await env.DB.prepare("UPDATE accounts SET name=?, updated_at=? WHERE email=?").bind(name, t, email).run();
+      return { ...existing, name, updated_at: t };
+    }
+    return existing;
+  }
+  for (let i = 0; i < 10; i++) {
+    const accountId = generateAccountId();
+    try {
+      await env.DB.prepare(
+        "INSERT INTO accounts (email, account_id, name, created_at, updated_at) VALUES (?,?,?,?,?)"
+      )
+        .bind(email, accountId, name || "", t, t)
+        .run();
+      return { email, account_id: accountId, name: name || "", created_at: t, updated_at: t };
+    } catch (e) {
+      const msg = String((e && e.message) || "");
+      if (msg.indexOf("UNIQUE") === -1) throw e;
+      if (msg.indexOf("accounts.email") !== -1) {
+        const row = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(email).first();
+        if (row) return row;
+      }
+      // account_idの衝突（極めて稀）：ループして採番し直す
+    }
+  }
+  throw new Error("account_id_generation_failed");
+}
+
+async function ensureAccount(request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (!optStr(data.name, 100)) return json({ error: "invalid_input" }, 400, headers);
+  const email = data.email.trim().toLowerCase();
+  const name = (data.name || "").trim();
+  const account = await getOrCreateAccount(env, email, name);
+  return json(rowToAccount(account), 200, headers);
+}
+
+async function joinTrip(tripId, request, env, headers) {
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (!optStr(data.name, 100)) return json({ error: "invalid_input" }, 400, headers);
+  const email = data.email.trim().toLowerCase();
+  const name = (data.name || "").trim();
+  const account = await getOrCreateAccount(env, email, name);
+  const accountId = account.account_id;
+
+  const existing = await env.DB.prepare("SELECT id FROM trip_members WHERE trip_id = ? AND account_id = ?")
+    .bind(tripId, accountId)
+    .first();
+  if (!existing) {
+    await env.DB.prepare(
+      "INSERT INTO trip_members (id, trip_id, account_id, name, joined_at) VALUES (?,?,?,?,?)"
+    )
+      .bind(uid("mem"), tripId, accountId, account.name, nowIso())
+      .run();
+  }
+  const { results } = await env.DB.prepare("SELECT * FROM trip_members WHERE trip_id = ?").bind(tripId).all();
+  return json({ members: results.map(rowToMember), accountId }, 200, headers);
+}
+
 /* ---------- photos / videos (R2) ---------- */
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // 圧縮後を想定した上限。無料枠(R2 10GB)を長く保つため。
@@ -811,6 +926,9 @@ export default {
 
     if (method === "POST" && path === "/auth/email/send") return sendEmailOtp(request, env, headers);
     if (method === "POST" && path === "/auth/email/verify") return verifyEmailOtp(request, env, headers);
+
+    if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
 
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);

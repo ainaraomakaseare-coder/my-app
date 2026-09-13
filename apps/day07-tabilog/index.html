@@ -149,6 +149,13 @@
         </button>
       </div>
 
+      <!-- アカウント参加者：ログイン中の本人が押して自分のアカウントをこの旅行に紐付ける。
+           ゲスト参加者（上のcompanions、テキストのみ）とは別物。 -->
+      <div class="companions-row">
+        <div class="companions-names" id="tripMembers"></div>
+        <button class="chip-btn" id="btnJoinTrip">参加する</button>
+      </div>
+
       <div class="stats-row" id="tripStats"></div>
 
       <div class="day-tabs" id="dayTabs"></div>
@@ -303,6 +310,14 @@
         <p class="lead">これまで評価したものを振り返る（自分だけに見える記録です）</p>
       </header>
 
+      <div class="section-label">
+        <div class="section-title">参加した旅行</div>
+      </div>
+      <div class="trip-list" id="mylogTripList"></div>
+
+      <div class="section-label">
+        <div class="section-title">評価したもの</div>
+      </div>
       <div class="mylog-tabs" id="mylogTabs"></div>
 
       <div class="mylog-sort" id="mylogSort">

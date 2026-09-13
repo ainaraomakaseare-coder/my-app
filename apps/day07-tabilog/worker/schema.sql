@@ -101,11 +101,8 @@ CREATE TABLE IF NOT EXISTS day_infos (
 
 CREATE INDEX IF NOT EXISTS idx_day_infos_trip ON day_infos(trip_id);
 
--- v6：day_infosに降水量（precip_sum）を追加。上のCREATE TABLEには最初から含めてあるため、
--- これは「v5時点で作成済みの（precip_sumを持たない）day_infosテーブル」を更新するための
--- 一度きりの文。既にprecip_sum列がある状態でこの行を再実行するとエラーになる点に注意
--- （その場合はこの1行だけ削除してから再実行すればよい。他のCREATE系はすべて再実行安全）。
-ALTER TABLE day_infos ADD COLUMN precip_sum REAL;
+-- v6：day_infosに降水量（precip_sum）を追加した（ALTER TABLE ADD COLUMNの一度きりの文。
+-- 本番環境では反映済みのため、この行は削除済み。上のCREATE TABLEには最初から含めてある）。
 
 -- v7：メールでのログインを「その場で入力するだけ」から「実際にメールでコードを送って
 -- 確認する（OTP）」方式に変更したため、コードを一時的に保存するテーブルを追加。
@@ -119,3 +116,32 @@ CREATE TABLE IF NOT EXISTS email_otps (
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- v8：参加者（companions）に「アカウント参加者」を追加。ログイン中の本人が旅行のURLを
+-- 開いて「参加する」を押すと、その人のアカウントがTripに紐付く（従来どおりテキストで
+-- 名前を入れるだけの「ゲスト参加者」＝companions列とは別物。既存データには影響しない）。
+--
+-- accounts：いずれかの方法で一度でもログインしたメールアドレスに対して作られる、
+-- 永続的なアカウント記録。account_idは6桁の数字（自動採番）で、参加者一覧などで
+-- 生のメールアドレスを晒さずその人を指し示すために使う。
+CREATE TABLE IF NOT EXISTS accounts (
+  email TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- trip_members：Trip×account_idで「参加する」を押した記録。1つのTripに同じアカウントは
+-- 1件まで（UNIQUE制約）。nameはその時点のアカウント名のスナップショット。
+CREATE TABLE IF NOT EXISTS trip_members (
+  id TEXT PRIMARY KEY,
+  trip_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  joined_at TEXT NOT NULL,
+  UNIQUE(trip_id, account_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trip_members_trip ON trip_members(trip_id);
+CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
