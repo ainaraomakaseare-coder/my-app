@@ -501,6 +501,39 @@
     });
   }
 
+  // ---------- 旅行のタイトル・日程・参加者を編集する ----------
+  function openTripEditForm() {
+    var trip = state.trip;
+    $('#teTitle').value = trip.title;
+    $('#teStart').value = trip.startDate || '';
+    $('#teEnd').value = trip.endDate || '';
+    $('#teCompanions').value = (trip.companions || []).join('、');
+    $('#tripEditStatus').textContent = '';
+    showScreen('tripEditForm');
+  }
+
+  function saveTripEdit() {
+    var title = $('#teTitle').value.trim();
+    var status = $('#tripEditStatus');
+    if (!title) { status.textContent = 'タイトルを入力してください。'; return; }
+    status.textContent = '保存中…';
+    api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', {
+      title: title,
+      startDate: $('#teStart').value,
+      endDate: $('#teEnd').value,
+      companions: Core.parseTags($('#teCompanions').value)
+    }).then(function (trip) {
+      state.trip = trip;
+      rememberTrip(trip);
+      var dates = Core.allDatesForTrip(state.trip, state.blocks);
+      if (dates.indexOf(state.selectedDate) === -1) state.selectedDate = dates[0] !== undefined ? dates[0] : '';
+      showScreen('tripDetail');
+      renderTripDetail();
+    }).catch(function () {
+      status.textContent = '保存に失敗しました。もう一度お試しください。';
+    });
+  }
+
   // ---------- 旅行詳細 ----------
   function renderTripDetail() {
     var trip = state.trip;
@@ -529,6 +562,7 @@
     var user = loadCurrentUser();
     var members = state.members || [];
     var namesEl = $('#tripMembers');
+    namesEl.hidden = !members.length;
     namesEl.textContent = members.length
       ? 'アカウント参加：' + members.map(function (m) { return m.name || 'アカウント参加者'; }).join('・')
       : '';
@@ -1118,6 +1152,8 @@
     $('#btnShareTrip').addEventListener('click', copyShareLink);
     $('#btnInvite').addEventListener('click', copyShareLink);
     $('#btnJoinTrip').addEventListener('click', handleJoinTrip);
+    $('#btnEditTrip').addEventListener('click', openTripEditForm);
+    $('#btnSaveTripEdit').addEventListener('click', saveTripEdit);
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);

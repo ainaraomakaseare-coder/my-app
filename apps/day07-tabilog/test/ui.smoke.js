@@ -94,9 +94,15 @@ const TINY_PNG = Buffer.from(
   });
 
   await page.route(/\/api\/trips\/([^/]+)$/, async (route) => {
-    const id = decodeURIComponent(route.request().url().match(/\/api\/trips\/([^/]+)$/)[1]);
+    const req = route.request();
+    const id = decodeURIComponent(req.url().match(/\/api\/trips\/([^/]+)$/)[1]);
     const t = trips[id];
     if (!t) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' });
+    if (req.method() === 'PATCH') {
+      const data = JSON.parse(req.postData());
+      trips[id] = Object.assign({}, t, data);
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(trips[id]) });
+    }
     const tripBlocks = Object.values(blocks).filter((b) => b.tripId === id)
       .map((b) => ({ ...b, entries: entriesByBlock[b.id] || [] }));
     const days = Object.values(dayInfosByTrip[id] || {});
@@ -202,6 +208,20 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   check('旅行タイトルが表示される', (await page.textContent('#tripTitle')) === '沖縄 家族旅行');
   check('日タブが2日ぶんできる (1泊2日)', (await page.$$('.day-tab')).length === 2);
+
+  // ---- 旅行のタイトル・日程・参加者を編集する ----
+  await page.click('#btnEditTrip');
+  await page.waitForSelector('.screen[data-screen="tripEditForm"].active');
+  check('編集フォームに今のタイトルが入っている', (await page.inputValue('#teTitle')) === '沖縄 家族旅行');
+  check('編集フォームに今の参加者が入っている', (await page.inputValue('#teCompanions')) === '父、母、妹');
+  await page.fill('#teTitle', '沖縄 家族旅行（3泊に延長）');
+  await page.fill('#teEnd', '2024-08-13');
+  await page.fill('#teCompanions', '父、母、妹、祖母');
+  await page.click('#btnSaveTripEdit');
+  await page.waitForSelector('.screen[data-screen="tripDetail"].active');
+  check('編集したタイトルが反映される', (await page.textContent('#tripTitle')) === '沖縄 家族旅行（3泊に延長）');
+  check('編集した参加者が反映される', (await page.textContent('#tripCompanions')).includes('祖母'));
+  check('日程を延ばすと日タブが増える', (await page.$$('.day-tab')).length === 4);
 
   // ---- 日ごとの場所・天気 ----
   check('場所未設定のときは「場所を設定」ボタンが出る', (await page.textContent('#dayWeather')).includes('場所を設定'));

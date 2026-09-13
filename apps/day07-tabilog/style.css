@@ -133,6 +133,8 @@ a:hover { text-decoration: underline; }
 
 .companions-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 0; }
 .companions-names { font-size: 12px; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.companions-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+#tripMembers { padding-top: 4px; }
 
 .stats-row { display: flex; gap: 8px; padding: 14px 0 4px; flex-wrap: wrap; }
 .stat-card { flex: 1; min-width: 100px; background: var(--card); border-radius: 12px; padding: 10px 11px; border: 1px solid var(--border); box-shadow: var(--card-shadow); }

@@ -125,6 +125,38 @@
     </div>
   </section>
 
+  <!-- ============ 旅のタイトル・日程・参加者を編集する ============ -->
+  <section class="screen" data-screen="tripEditForm">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="tripDetail">← 戻る</button>
+        <h1>旅行を編集</h1>
+      </header>
+
+      <div class="field">
+        <label for="teTitle">旅のタイトル</label>
+        <input type="text" id="teTitle" placeholder="例：沖縄 家族旅行">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="teStart">出発日</label>
+          <input type="date" id="teStart">
+        </div>
+        <div class="field">
+          <label for="teEnd">帰着日</label>
+          <input type="date" id="teEnd">
+        </div>
+      </div>
+      <div class="field">
+        <label for="teCompanions">だれと行った？（読点区切り）</label>
+        <input type="text" id="teCompanions" placeholder="例：父、母、妹">
+      </div>
+
+      <p class="hint" id="tripEditStatus"></p>
+      <button class="btn primary wide" id="btnSaveTripEdit">保存する</button>
+    </div>
+  </section>
+
   <!-- ============ 旅の詳細（日ごとのきろく） ============ -->
   <section class="screen" data-screen="tripDetail">
     <div class="wrap">
@@ -135,6 +167,9 @@
         <button class="icon-btn share-btn" id="btnShareTrip" aria-label="共有">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="15.5" cy="4.5" r="2.3"/><circle cx="4.5" cy="10" r="2.3"/><circle cx="15.5" cy="15.5" r="2.3"/><path d="M6.5 8.8l7-3.3"/><path d="M6.5 11.2l7 3.3"/></svg>
         </button>
+        <button class="icon-btn edit-btn" id="btnEditTrip" aria-label="旅行を編集">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5l3 3L6 17l-3.6.6.6-3.6L13.5 3.5z"/></svg>
+        </button>
         <div class="trip-cover-text">
           <div class="trip-title" id="tripTitle"></div>
           <div class="trip-dates" id="tripDates"></div>
@@ -143,18 +178,18 @@
 
       <div class="companions-row">
         <div class="companions-names" id="tripCompanions"></div>
-        <button class="chip-btn" id="btnInvite">
-          <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>
-          メンバーを招待
-        </button>
+        <div class="companions-actions">
+          <!-- アカウント参加者：ログイン中の本人が押して自分のアカウントをこの旅行に紐付ける。
+               ゲスト参加者（左のcompanions、テキストのみ）とは別物。 -->
+          <button class="chip-btn" id="btnJoinTrip">参加する</button>
+          <button class="chip-btn" id="btnInvite">
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>
+            メンバーを招待
+          </button>
+        </div>
       </div>
 
-      <!-- アカウント参加者：ログイン中の本人が押して自分のアカウントをこの旅行に紐付ける。
-           ゲスト参加者（上のcompanions、テキストのみ）とは別物。 -->
-      <div class="companions-row">
-        <div class="companions-names" id="tripMembers"></div>
-        <button class="chip-btn" id="btnJoinTrip">参加する</button>
-      </div>
+      <div class="companions-names" id="tripMembers" hidden></div>
 
       <div class="stats-row" id="tripStats"></div>
 
