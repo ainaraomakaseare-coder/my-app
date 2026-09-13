@@ -26,6 +26,11 @@
       "name": "WRITE_RATE_LIMITER",
       "namespace_id": "51019",
       "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "AI_RATE_LIMITER",
+      "namespace_id": "51020",
+      "simple": { "limit": 10, "period": 60 }
     }
   ],
   "observability": {

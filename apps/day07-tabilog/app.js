@@ -357,6 +357,22 @@
     });
   }
 
+  // meta（notes・author）はUTF-8を含みうるので、ヘッダーに載せる前にBase64化する
+  // （atob/btoaはLatin1前提のため、encodeURIComponent/unescapeで橋渡しする）
+  function createVoiceEntries(tripId, date, blob, meta) {
+    var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify(meta))));
+    return fetch(API_BASE + '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/voice-entries', {
+      method: 'POST',
+      headers: { 'content-type': blob.type || 'audio/webm', 'x-voice-meta': metaHeader },
+      body: blob
+    }).then(function (res) {
+      if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
+        throw new Error(e.error || ('http_' + res.status));
+      });
+      return res.json();
+    });
+  }
+
   function fileToCompressedBlob(file, maxDim, quality) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
@@ -598,6 +614,91 @@
       });
   }
 
+  // ---------- 音声でまとめて記録する（このアプリで唯一AIを呼び出す機能） ----------
+  // 話した順番どおりに複数の予定・記録へAIが分割し、今開いている日タブに直接保存する
+  // （保存前の確認画面は挟まない。docs/adr/0002参照）。
+  var voiceStream = null;
+  var voiceRecorder = null;
+  var voiceChunks = [];
+  var voiceBlob = null;
+  var voiceStartedAt = 0;
+
+  function pickVoiceMimeType() {
+    var candidates = ['audio/webm', 'audio/mp4', 'audio/ogg'];
+    for (var i = 0; i < candidates.length; i++) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+    }
+    return '';
+  }
+
+  function openVoiceEntryForm() {
+    voiceBlob = null;
+    $('#voiceNotes').value = '';
+    $('#btnVoiceRecord').textContent = '🎙 話しはじめる';
+    $('#btnVoiceRecord').disabled = false;
+    $('#btnCreateVoiceEntries').hidden = true;
+    $('#voiceRecordStatus').textContent = '';
+    $('#voiceEntryStatus').textContent = '';
+    showScreen('voiceEntryForm');
+  }
+
+  function handleVoiceRecordToggle() {
+    if (voiceRecorder && voiceRecorder.state === 'recording') {
+      voiceRecorder.stop();
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      $('#voiceRecordStatus').textContent = 'このブラウザは音声の録音に対応していません。';
+      return;
+    }
+    $('#voiceRecordStatus').textContent = 'マイクの使用を許可してください…';
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      voiceStream = stream;
+      var mimeType = pickVoiceMimeType();
+      voiceRecorder = mimeType ? new MediaRecorder(stream, { mimeType: mimeType }) : new MediaRecorder(stream);
+      voiceChunks = [];
+      voiceStartedAt = Date.now();
+      voiceRecorder.addEventListener('dataavailable', function (e) {
+        if (e.data && e.data.size) voiceChunks.push(e.data);
+      });
+      voiceRecorder.addEventListener('stop', function () {
+        voiceStream.getTracks().forEach(function (t) { t.stop(); });
+        voiceBlob = new Blob(voiceChunks, { type: voiceRecorder.mimeType || mimeType || 'audio/webm' });
+        var seconds = Math.max(1, Math.round((Date.now() - voiceStartedAt) / 1000));
+        $('#btnVoiceRecord').textContent = '🎙 話しなおす';
+        $('#voiceRecordStatus').textContent = '録音できました（約' + seconds + '秒）。内容を確認して「この内容で予定を作る」を押してください。';
+        $('#btnCreateVoiceEntries').hidden = false;
+      });
+      voiceRecorder.start();
+      $('#btnVoiceRecord').textContent = '⏹ 話し終わる';
+      $('#voiceRecordStatus').textContent = '録音中…話し終わったら押してください。';
+      $('#btnCreateVoiceEntries').hidden = true;
+    }).catch(function () {
+      $('#voiceRecordStatus').textContent = 'マイクを使えませんでした（許可されているか確認してください）。';
+    });
+  }
+
+  function handleCreateVoiceEntries() {
+    if (!voiceBlob) { $('#voiceEntryStatus').textContent = '先に録音してください。'; return; }
+    var user = loadCurrentUser();
+    var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '' };
+    $('#btnCreateVoiceEntries').disabled = true;
+    $('#voiceEntryStatus').textContent = 'AIが内容を確認しています…（数十秒かかることがあります）';
+    createVoiceEntries(state.trip.id, state.selectedDate, voiceBlob, meta).then(function () {
+      return refreshTrip();
+    }).then(function () {
+      showScreen('tripDetail');
+      renderDaySection();
+    }).catch(function (e) {
+      var msg = (e && e.message) || '';
+      $('#btnCreateVoiceEntries').disabled = false;
+      if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
+      else if (msg === 'rate_limited') $('#voiceEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
+      else $('#voiceEntryStatus').textContent = '失敗しました。もう一度お試しください。';
+    });
+  }
+
   function statCard(label, value) {
     return '<div class="stat-card"><div class="lbl">' + escapeHtml(label) + '</div><div class="val">' + escapeHtml(value) + '</div></div>';
   }
@@ -691,6 +792,12 @@
     addBtn.innerHTML = plusIcon() + '<span>予定を追加</span>';
     addBtn.addEventListener('click', function () { openBlockForm(null); });
     el.appendChild(addBtn);
+
+    var voiceBtn = document.createElement('button');
+    voiceBtn.className = 'block-add';
+    voiceBtn.innerHTML = '🎙<span>音声でまとめて記録する</span>';
+    voiceBtn.addEventListener('click', openVoiceEntryForm);
+    el.appendChild(voiceBtn);
   }
 
   function renderBlockEl(block) {
@@ -1164,6 +1271,8 @@
     $('#btnJoinTrip').addEventListener('click', handleJoinTrip);
     $('#btnEditTrip').addEventListener('click', openTripEditForm);
     $('#btnSaveTripEdit').addEventListener('click', saveTripEdit);
+    $('#btnVoiceRecord').addEventListener('click', handleVoiceRecordToggle);
+    $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);

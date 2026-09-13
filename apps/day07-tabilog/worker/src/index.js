@@ -3,9 +3,10 @@
  * 旅行（trip）と、その中の「大項目（block：いつ・どこで・何をする時間か）」
  * 「小項目（entry：そのときの一人ひとりの記録。別行動なら同じblockに複数ぶら下がる）」
  * をD1に、写真の実体はR2に保存する。
- * ログインの仕組みは持たない。旅行のURL（trip id）を知っている人だけが読み書きできる
- * 「リンクを知っていれば入れる」方式（Googleドキュメントの共有リンクに近い）。
+ * 旅行の閲覧・記録の追加はログイン不要。旅行のURL（trip id）を知っている人だけが
+ * 読み書きできる「リンクを知っていれば入れる」方式（Googleドキュメントの共有リンクに近い）。
  * 家族・少人数グループでの利用を想定しており、不特定多数への公開は想定していない。
+ * 「音声でまとめて記録する」機能だけ、唯一OpenAIを呼び出す（他の機能はAI不使用）。
  */
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
@@ -841,6 +842,197 @@ async function joinTrip(tripId, request, env, headers) {
   return json({ members: results.map(rowToMember), accountId }, 200, headers);
 }
 
+/* ---------- 音声からの記録作成（このアプリで唯一AIを呼び出す機能） ----------
+ * その日にあったことをまとめて話した音声（＋任意でURL・店名の雑多なメモ）を
+ * OpenAIに渡し、話した順番どおりに複数のBlock（予定）・Entry（記録）へ分割して
+ * その場で保存する。日付・時間帯はAIに判定させず、常に指定された日付に固定する
+ * （時刻は空のまま、作成順で並ぶ）。評価・費用などAIに推測させると事実と異なり
+ * やすい項目は対象外（docs/adr/0002参照）。保存前の確認画面は挟まない。
+ */
+
+const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const MAX_VOICE_AUDIO_BYTES = 15 * 1024 * 1024; // 数分の音声を想定した上限
+const VOICE_AUDIO_FORMATS = { "audio/webm": "webm", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/ogg": "ogg" };
+
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function outputText(response) {
+  if (typeof response.output_text === "string") return response.output_text;
+  for (const item of response.output || []) {
+    if (item.type !== "message") continue;
+    for (const part of item.content || []) {
+      if (part.type === "output_text" && typeof part.text === "string") return part.text;
+    }
+  }
+  return "";
+}
+
+function voicePrompt(notes) {
+  return [
+    "あなたは旅行記録アプリのアシスタントです。旅行者がその日の出来事をまとめて話した音声を聞いて、",
+    "予定（Block）とその記録（Entry）の配列に分割してください。",
+    "",
+    "ルール：",
+    "- 話された順番のとおりに配列を並べること",
+    "- 1つの出来事・場所ごとに1つのBlockを作ること",
+    "- categoryは次のいずれか一つ: sightseeing（観光）, food（食事）, lodging（宿泊）, transport（移動）, other（その他）",
+    "- labelは短い見出し（例：「ダイヤモンドヘッドに登る」）にすること",
+    "- entry.episodeには、話した内容をもとにした2〜3文程度の説明を書くこと（話していないことを推測で付け加えない）",
+    "- 評価・費用など、話されていない情報は絶対に作らないこと",
+    notes
+      ? "- 次のメモ（URLや店名が雑多に書かれている）の中に、Blockの内容と対応しそうなものがあれば、entry.mapUrlまたはentry.shopUrlに入れること。対応するものが無ければ空文字のままにすること。\n\nメモ:\n" + notes
+      : "- entry.mapUrl・entry.shopUrlは、音声内で明確なURLが無ければ空文字にすること",
+  ].join("\n");
+}
+
+function voiceBlocksSchema() {
+  return {
+    type: "object",
+    properties: {
+      blocks: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            label: { type: "string" },
+            category: { type: "string", enum: CATEGORIES },
+            entry: {
+              type: "object",
+              properties: {
+                episode: { type: "string" },
+                mapUrl: { type: "string" },
+                shopUrl: { type: "string" },
+              },
+              required: ["episode", "mapUrl", "shopUrl"],
+              additionalProperties: false,
+            },
+          },
+          required: ["label", "category", "entry"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["blocks"],
+    additionalProperties: false,
+  };
+}
+
+function decodeVoiceMeta(header) {
+  if (!header) return {};
+  try {
+    var json = decodeURIComponent(escape(atob(header)));
+    var meta = JSON.parse(json);
+    return meta && typeof meta === "object" ? meta : {};
+  } catch {
+    return {};
+  }
+}
+
+async function createBlocksFromVoice(tripId, date, request, env, headers) {
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  const contentType = (request.headers.get("content-type") || "").split(";")[0].trim();
+  const format = VOICE_AUDIO_FORMATS[contentType];
+  if (!format) return json({ error: "unsupported_type" }, 415, headers);
+
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
+
+  const meta = decodeVoiceMeta(request.headers.get("x-voice-meta"));
+  const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
+  const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
+
+  const audioBase64 = arrayBufferToBase64(buf);
+
+  const upstream = await fetch(OPENAI_RESPONSES_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: env.OPENAI_MODEL || "gpt-5.6-sol",
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_audio", input_audio: { data: audioBase64, format } },
+          { type: "input_text", text: voicePrompt(notes) },
+        ],
+      }],
+      reasoning: { effort: "medium" },
+      max_output_tokens: 2000,
+      store: false,
+      text: { format: { type: "json_schema", name: "voice_blocks", strict: true, schema: voiceBlocksSchema() } },
+    }),
+  });
+  if (!upstream.ok) {
+    console.error(JSON.stringify({ event: "openai_error", status: upstream.status }));
+    return json({ error: "upstream_error" }, 502, headers);
+  }
+  const response = await upstream.json();
+  let parsed;
+  try { parsed = JSON.parse(outputText(response)); }
+  catch { return json({ error: "invalid_model_output" }, 502, headers); }
+  if (!parsed || !Array.isArray(parsed.blocks)) return json({ error: "invalid_model_output" }, 502, headers);
+
+  const created = [];
+  const baseTime = Date.now();
+  for (let i = 0; i < parsed.blocks.length; i++) {
+    const b = parsed.blocks[i];
+    if (!b || typeof b !== "object") continue;
+    const label = isStr(b.label, 200) ? b.label.trim() : "";
+    if (!label) continue;
+    const category = CATEGORIES.includes(b.category) ? b.category : "sightseeing";
+    const t = new Date(baseTime + i * 10).toISOString(); // 話した順番で安定して並ぶよう少しずつずらす
+
+    const blockRow = { id: uid("blk"), trip_id: tripId, date, time: "", label, category, created_at: t, updated_at: t };
+    await env.DB.prepare(
+      "INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+    )
+      .bind(blockRow.id, blockRow.trip_id, blockRow.date, blockRow.time, blockRow.label, blockRow.category, blockRow.created_at, blockRow.updated_at)
+      .run();
+
+    const entryData = (b.entry && typeof b.entry === "object") ? b.entry : {};
+    const episode = isStr(entryData.episode, 4000) ? entryData.episode.trim() : "";
+    const mapUrl = optUrl(entryData.mapUrl, 500) ? (entryData.mapUrl || "") : "";
+    const shopUrl = optUrl(entryData.shopUrl, 500) ? (entryData.shopUrl || "") : "";
+    const entryRow = {
+      id: uid("ent"), block_id: blockRow.id, episode, comment: "", detail: "",
+      photo_ids: "[]", video_ids: "[]", cost_items: "[]", wait_time: "",
+      map_url: mapUrl, shop_url: shopUrl, author, created_at: t, updated_at: t,
+    };
+    await env.DB.prepare(
+      `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+      .bind(
+        entryRow.id, entryRow.block_id, entryRow.episode, entryRow.comment, entryRow.detail, entryRow.photo_ids,
+        entryRow.video_ids, entryRow.cost_items, entryRow.wait_time, entryRow.map_url, entryRow.shop_url,
+        entryRow.author, entryRow.created_at, entryRow.updated_at
+      )
+      .run();
+
+    created.push({ ...rowToBlock(blockRow), entries: [rowToEntry(entryRow)] });
+  }
+
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  return json({ blocks: created }, 200, headers);
+}
+
 /* ---------- photos / videos (R2) ---------- */
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // 圧縮後を想定した上限。無料枠(R2 10GB)を長く保つため。
@@ -929,6 +1121,10 @@ export default {
 
     if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
+
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/))) {
+      return createBlocksFromVoice(m[1], m[2], request, env, headers);
+    }
 
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);

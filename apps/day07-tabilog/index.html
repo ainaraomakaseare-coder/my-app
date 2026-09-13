@@ -157,6 +157,28 @@
     </div>
   </section>
 
+  <!-- ============ 音声でまとめて記録する（このアプリで唯一AIを呼び出す機能） ============ -->
+  <section class="screen" data-screen="voiceEntryForm">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="tripDetail">← 戻る</button>
+        <h1>音声でまとめて記録する</h1>
+        <p class="lead">その日にあったことをまとめて話すと、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）</p>
+      </header>
+
+      <div class="field">
+        <label for="voiceNotes">URLやお店の名前など（任意・雑多でOK）</label>
+        <textarea id="voiceNotes" rows="3" placeholder="例：https://maps.google.com/... ／ ファーマーズマーケット"></textarea>
+      </div>
+
+      <button class="btn primary wide" id="btnVoiceRecord">🎙 話しはじめる</button>
+      <p class="hint" id="voiceRecordStatus"></p>
+
+      <button class="btn primary wide" id="btnCreateVoiceEntries" hidden>この内容で予定を作る</button>
+      <p class="hint" id="voiceEntryStatus"></p>
+    </div>
+  </section>
+
   <!-- ============ 旅の詳細（日ごとのきろく） ============ -->
   <section class="screen" data-screen="tripDetail">
     <div class="wrap">
