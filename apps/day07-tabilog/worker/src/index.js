@@ -149,7 +149,9 @@ async function getTrip(id, env, headers) {
     (entriesByBlock[row.block_id] = entriesByBlock[row.block_id] || []).push(entry);
   });
   const blocks = blockRows.map((row) => ({ ...rowToBlock(row), entries: entriesByBlock[row.id] || [] }));
-  return json({ trip: rowToTrip(tripRow), blocks }, 200, headers);
+  const { results: dayRows } = await env.DB.prepare("SELECT * FROM day_infos WHERE trip_id = ?").bind(id).all();
+  const days = dayRows.map(rowToDayInfo);
+  return json({ trip: rowToTrip(tripRow), blocks, days }, 200, headers);
 }
 
 async function updateTrip(id, request, env, headers) {
@@ -191,6 +193,7 @@ async function deleteTrip(id, env, headers) {
     await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(b.id).run();
   }
   await env.DB.prepare("DELETE FROM blocks WHERE trip_id = ?").bind(id).run();
+  await env.DB.prepare("DELETE FROM day_infos WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM trips WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
 }
@@ -507,6 +510,111 @@ async function getMyLog(email, env, headers) {
   return json({ items }, 200, headers);
 }
 
+/* ---------- 日ごとの天気（day_infos） ----------
+ * 大項目（block）は1日に複数あるため、天気は「旅行×日付」の単位で持つ。
+ * 地名→緯度経度はOpen-Meteoのジオコーディング、天気・気温もOpen-Meteo
+ * （どちらも無料・APIキー不要）から取得する。日付が今日より前なら実況
+ * （archive-api）、今日以降なら予報（forecast api）を使う。
+ */
+
+function rowToDayInfo(row) {
+  return {
+    date: row.date,
+    place: row.place,
+    lat: row.lat,
+    lon: row.lon,
+    weatherCode: row.weather_code,
+    tempMax: row.temp_max,
+    tempMin: row.temp_min,
+    isForecast: !!row.is_forecast,
+    fetchedAt: row.fetched_at,
+  };
+}
+
+async function geocodePlace(place) {
+  const url = "https://geocoding-api.open-meteo.com/v1/search?count=1&language=ja&format=json&name=" + encodeURIComponent(place);
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const first = data && data.results && data.results[0];
+  if (!first) return null;
+  return { lat: first.latitude, lon: first.longitude };
+}
+
+async function fetchDailyWeather(lat, lon, date) {
+  const isPast = date < nowIso().slice(0, 10);
+  const base = isPast ? "https://archive-api.open-meteo.com/v1/archive" : "https://api.open-meteo.com/v1/forecast";
+  const url = base
+    + "?latitude=" + encodeURIComponent(lat)
+    + "&longitude=" + encodeURIComponent(lon)
+    + "&daily=weathercode,temperature_2m_max,temperature_2m_min"
+    + "&timezone=auto&start_date=" + date + "&end_date=" + date;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const daily = data && data.daily;
+  if (!daily || !daily.time || daily.time.indexOf(date) === -1) return null;
+  const idx = daily.time.indexOf(date);
+  return {
+    weatherCode: daily.weathercode ? daily.weathercode[idx] : null,
+    tempMax: daily.temperature_2m_max ? daily.temperature_2m_max[idx] : null,
+    tempMin: daily.temperature_2m_min ? daily.temperature_2m_min[idx] : null,
+    isForecast: !isPast,
+  };
+}
+
+async function setDayPlace(tripId, date, request, env, headers) {
+  if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isStr(data.place, 100) || !data.place.trim()) return json({ error: "invalid_input" }, 400, headers);
+  const place = data.place.trim();
+
+  const geo = await geocodePlace(place);
+  if (!geo) return json({ error: "place_not_found" }, 422, headers);
+  const weather = await fetchDailyWeather(geo.lat, geo.lon, date);
+
+  const t = nowIso();
+  const id = tripId + "_" + date;
+  const existing = await env.DB.prepare("SELECT id FROM day_infos WHERE id = ?").bind(id).first();
+  const row = {
+    place,
+    lat: geo.lat,
+    lon: geo.lon,
+    weather_code: weather ? weather.weatherCode : null,
+    temp_max: weather ? weather.tempMax : null,
+    temp_min: weather ? weather.tempMin : null,
+    is_forecast: weather && weather.isForecast ? 1 : 0,
+    fetched_at: weather ? t : "",
+  };
+  if (existing) {
+    await env.DB.prepare(
+      "UPDATE day_infos SET place=?, lat=?, lon=?, weather_code=?, temp_max=?, temp_min=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=?"
+    )
+      .bind(row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.is_forecast, row.fetched_at, t, id)
+      .run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO day_infos (id, trip_id, date, place, lat, lon, weather_code, temp_max, temp_min, is_forecast, fetched_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    )
+      .bind(id, tripId, date, row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.is_forecast, row.fetched_at, t, t)
+      .run();
+  }
+  const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
+  return json(rowToDayInfo(updated), 200, headers);
+}
+
+async function deleteDayPlace(tripId, date, env, headers) {
+  await env.DB.prepare("DELETE FROM day_infos WHERE id = ?").bind(tripId + "_" + date).run();
+  return json({ ok: true }, 200, headers);
+}
+
 /* ---------- photos / videos (R2) ---------- */
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // 圧縮後を想定した上限。無料枠(R2 10GB)を長く保つため。
@@ -586,6 +694,9 @@ export default {
     if (method === "GET" && path === "/mylog") {
       return getMyLog((url.searchParams.get("email") || "").trim().toLowerCase(), env, headers);
     }
+
+    if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return setDayPlace(m[1], m[2], request, env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return deleteDayPlace(m[1], m[2], env, headers);
 
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);

@@ -56,13 +56,23 @@ const TINY_PNG = Buffer.from(
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('dialog', (d) => d.accept());
+  let nextPromptAnswer = null;
+  page.on('dialog', (d) => {
+    if (d.type() === 'prompt' && nextPromptAnswer !== null) {
+      const answer = nextPromptAnswer;
+      nextPromptAnswer = null;
+      d.accept(answer);
+    } else {
+      d.accept();
+    }
+  });
 
   // ---- フェイクAPI（メモリ上のミニDB） ----
   let tripSeq = 0, blockSeq = 0, entrySeq = 0, photoSeq = 0;
   const trips = {};
   const blocks = {};   // id -> block（entriesは持たず、entriesByBlockで別管理）
   const entriesByBlock = {};
+  const dayInfosByTrip = {}; // tripId -> { date: {date, place, weatherCode, tempMax, tempMin, isForecast} }
 
   await page.route('**/', async (route) => {
     const res = await route.fetch();
@@ -89,7 +99,28 @@ const TINY_PNG = Buffer.from(
     if (!t) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' });
     const tripBlocks = Object.values(blocks).filter((b) => b.tripId === id)
       .map((b) => ({ ...b, entries: entriesByBlock[b.id] || [] }));
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ trip: t, blocks: tripBlocks }) });
+    const days = Object.values(dayInfosByTrip[id] || {});
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ trip: t, blocks: tripBlocks, days }) });
+  });
+
+  await page.route(/\/api\/trips\/([^/]+)\/days\/([^/]+)$/, async (route) => {
+    const req = route.request();
+    const m = req.url().match(/\/api\/trips\/([^/]+)\/days\/([^/]+)$/);
+    const tripId = decodeURIComponent(m[1]);
+    const date = decodeURIComponent(m[2]);
+    dayInfosByTrip[tripId] = dayInfosByTrip[tripId] || {};
+    if (req.method() === 'PUT') {
+      const data = JSON.parse(req.postData());
+      // 実際のOpen-Meteoは呼ばず、フェイクの天気を返す
+      const info = { date, place: data.place, weatherCode: 1, tempMax: 30, tempMin: 25, isForecast: false };
+      dayInfosByTrip[tripId][date] = info;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(info) });
+    }
+    if (req.method() === 'DELETE') {
+      delete dayInfosByTrip[tripId][date];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+    }
+    return route.fulfill({ status: 404, body: '{}' });
   });
 
   await page.route(/\/api\/trips\/([^/]+)\/blocks$/, async (route) => {
@@ -171,6 +202,16 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   check('旅行タイトルが表示される', (await page.textContent('#tripTitle')) === '沖縄 家族旅行');
   check('日タブが2日ぶんできる (1泊2日)', (await page.$$('.day-tab')).length === 2);
+
+  // ---- 日ごとの場所・天気 ----
+  check('場所未設定のときは「場所を設定」ボタンが出る', (await page.textContent('#dayWeather')).includes('場所を設定'));
+  nextPromptAnswer = '那覇市';
+  await page.click('#dayWeather');
+  await page.waitForFunction(() => {
+    const el = document.querySelector('#dayWeather');
+    return el && el.classList.contains('has-weather');
+  });
+  check('場所を設定すると天気・気温が表示される', (await page.textContent('#dayWeather')).includes('那覇市') && (await page.textContent('#dayWeather')).includes('℃'));
 
   // ---- 予定（大項目）を追加 ----
   await page.click('.block-add');

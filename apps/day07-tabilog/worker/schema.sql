@@ -72,3 +72,28 @@ CREATE TABLE IF NOT EXISTS ratings (
 
 CREATE INDEX IF NOT EXISTS idx_ratings_entry ON ratings(entry_id);
 CREATE INDEX IF NOT EXISTS idx_ratings_rater ON ratings(rater_email);
+
+-- v5：日ごとの天気を追加。既存テーブルは変更しない（DROP TABLEなし＝データは消えない）。
+-- 「大項目（block）」は1日に複数あるため、天気は大項目ごとではなく
+-- 旅行×日付の単位（1つの旅行の1日に1つ）で持つ。
+-- 地名→緯度経度の変換、天気・気温の取得はどちらもOpen-Meteo（無料・APIキー不要）を使う。
+-- 日付が今日より前なら実況（archive-api）、今日以降なら予報（forecast api）を取得し、
+-- is_forecastで区別する。日付が過ぎたらis_forecast=0の実況値で上書きする想定。
+CREATE TABLE IF NOT EXISTS day_infos (
+  id TEXT PRIMARY KEY,
+  trip_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  place TEXT NOT NULL DEFAULT '',
+  lat REAL,
+  lon REAL,
+  weather_code INTEGER,
+  temp_max REAL,
+  temp_min REAL,
+  is_forecast INTEGER NOT NULL DEFAULT 0,
+  fetched_at TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(trip_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_day_infos_trip ON day_infos(trip_id);

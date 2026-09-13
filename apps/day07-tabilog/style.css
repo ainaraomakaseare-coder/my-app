@@ -143,8 +143,15 @@ a:hover { text-decoration: underline; }
 .day-tab { padding: 6px 14px; border-radius: 999px; color: var(--ink-muted); font-size: 12.5px; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
 .day-tab.on { background: var(--accent); color: white; font-weight: 700; }
 
-.section-label { padding: 2px 0 8px; }
+.section-label { padding: 2px 0 8px; display: flex; align-items: center; gap: 8px; }
 .section-title { font-family: var(--font-display); font-size: 16px; font-weight: 700; }
+
+.day-weather {
+  margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700;
+  color: var(--ink-muted); background: var(--border-soft); padding: 5px 11px; border-radius: 999px; white-space: nowrap;
+}
+.day-weather.has-weather { color: var(--accent-deep); background: var(--accent-soft-bg); }
+.day-weather .forecast-mark { font-weight: 500; color: var(--ink-soft); }
 
 /* ---------- timeline: 大項目(block) / 小項目(entry) ---------- */
 .timeline { display: flex; flex-direction: column; gap: 16px; padding: 4px 0 8px; }

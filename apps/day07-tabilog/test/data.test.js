@@ -121,5 +121,14 @@ var myLogItems = [
 eq('sortMyLogItems: 評価が高い順（同点なら新しい順）', T.sortMyLogItems(myLogItems, 'score').map(function (i) { return i.entryId; }), ['3', '2', '1']);
 eq('sortMyLogItems: 新しい順', T.sortMyLogItems(myLogItems, 'date').map(function (i) { return i.entryId; }), ['3', '1', '2']);
 
+/* ---- weatherLabel（WMO天気コード→日本語） ---- */
+eq('weatherLabel: 0は快晴', T.weatherLabel(0), '快晴');
+eq('weatherLabel: 1・2は晴れ', T.weatherLabel(1), '晴れ');
+eq('weatherLabel: 3は曇り', T.weatherLabel(3), '曇り');
+eq('weatherLabel: 61〜67は雨', T.weatherLabel(63), '雨');
+eq('weatherLabel: 71〜77は雪', T.weatherLabel(73), '雪');
+eq('weatherLabel: 95以上は雷雨', T.weatherLabel(96), '雷雨');
+eq('weatherLabel: nullは空文字', T.weatherLabel(null), '');
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

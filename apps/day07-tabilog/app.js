@@ -178,6 +178,22 @@
     return out;
   }
 
+  // WMO weather code（Open-Meteoが返す天気コード）を日本語の短い表示に変換する
+  function weatherLabel(code) {
+    if (code === null || code === undefined) return '';
+    if (code === 0) return '快晴';
+    if (code === 1 || code === 2) return '晴れ';
+    if (code === 3) return '曇り';
+    if (code === 45 || code === 48) return '霧';
+    if (code >= 51 && code <= 57) return '霧雨';
+    if (code >= 61 && code <= 67) return '雨';
+    if (code >= 71 && code <= 77) return '雪';
+    if (code >= 80 && code <= 82) return 'にわか雨';
+    if (code >= 85 && code <= 86) return 'にわか雪';
+    if (code >= 95) return '雷雨';
+    return '';
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
     categoryLabel: categoryLabel,
@@ -201,7 +217,8 @@
     upsertTripIndexEntry: upsertTripIndexEntry,
     ratingSummary: ratingSummary,
     myRatingScore: myRatingScore,
-    sortMyLogItems: sortMyLogItems
+    sortMyLogItems: sortMyLogItems,
+    weatherLabel: weatherLabel
   };
 
   root.TabiLog = Core;
@@ -360,6 +377,7 @@
   var state = {
     trip: null,
     blocks: [],
+    days: [],                // 旅行の日ごとの場所・天気（{date, place, weatherCode, tempMax, tempMin, isForecast}）
     selectedDate: null,
     editingBlockId: null,
     formCategory: 'sightseeing',
@@ -423,6 +441,7 @@
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
       state.trip = data.trip;
       state.blocks = data.blocks;
+      state.days = data.days || [];
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       rememberTrip(state.trip);
@@ -439,6 +458,7 @@
     return api('/trips/' + encodeURIComponent(state.trip.id)).then(function (data) {
       state.trip = data.trip;
       state.blocks = data.blocks;
+      state.days = data.days || [];
     });
   }
 
@@ -520,6 +540,51 @@
   function renderDaySection() {
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
     renderTimeline(currentDayBlocks());
+    renderDayWeather();
+  }
+
+  // ---------- 日ごとの場所・天気 ----------
+  function findDayInfo(date) {
+    return (state.days || []).filter(function (d) { return d.date === date; })[0] || null;
+  }
+
+  function renderDayWeather() {
+    var btn = $('#dayWeather');
+    if (!state.selectedDate) { btn.hidden = true; return; }
+    btn.hidden = false;
+    var info = findDayInfo(state.selectedDate);
+    if (info && info.weatherCode !== null && info.weatherCode !== undefined) {
+      btn.classList.add('has-weather');
+      var label = Core.weatherLabel(info.weatherCode);
+      var temps = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) + '℃/' + Math.round(info.tempMin) + '℃' : '';
+      btn.innerHTML = escapeHtml(info.place) + '　' + escapeHtml(label) + ' ' + escapeHtml(temps)
+        + (info.isForecast ? ' <span class="forecast-mark">（予報）</span>' : '');
+    } else if (info && info.place) {
+      btn.classList.remove('has-weather');
+      btn.textContent = escapeHtml(info.place) + '（天気取得中…）';
+    } else {
+      btn.classList.remove('has-weather');
+      btn.textContent = '＋ 場所を設定';
+    }
+    btn.onclick = function () { promptDayPlace(); };
+  }
+
+  function promptDayPlace() {
+    if (!state.trip || !state.selectedDate) return;
+    var existing = findDayInfo(state.selectedDate);
+    var place = prompt('この日の場所（市区町村名など）を入力してください。天気・気温を自動で取得します。', existing ? existing.place : '');
+    if (place === null) return;
+    place = place.trim();
+    if (!place) return;
+    var btn = $('#dayWeather');
+    btn.textContent = '取得中…';
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate), 'PUT', { place: place })
+      .then(function () { return refreshTrip(); })
+      .then(function () { renderDayWeather(); })
+      .catch(function () {
+        alert('場所が見つからなかったか、天気の取得に失敗しました。地名を変えて試してください。');
+        renderDayWeather();
+      });
   }
 
   function renderTimeline(blocks) {
