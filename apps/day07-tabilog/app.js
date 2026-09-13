@@ -149,6 +149,11 @@
     return out.slice(0, 50);
   }
 
+  // サーバー側で削除済み（見つからない）旅行を、この索引からも取り除く
+  function removeTripIndexEntry(list, id) {
+    return (list || []).filter(function (t) { return t.id !== id; });
+  }
+
   // entryが持つ評価（{raterEmail, raterName, score}の配列）から、平均と件数を出す
   function ratingSummary(ratings) {
     var list = (ratings || []).filter(function (r) { return typeof r.score === 'number' && r.score > 0; });
@@ -221,6 +226,7 @@
     getTripIdFromSearch: getTripIdFromSearch,
     buildShareUrl: buildShareUrl,
     upsertTripIndexEntry: upsertTripIndexEntry,
+    removeTripIndexEntry: removeTripIndexEntry,
     ratingSummary: ratingSummary,
     myRatingScore: myRatingScore,
     sortMyLogItems: sortMyLogItems,
@@ -317,6 +323,9 @@
       id: trip.id, title: trip.title, startDate: trip.startDate, endDate: trip.endDate, companions: trip.companions
     });
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(list));
+  }
+  function forgetTrip(id) {
+    localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(Core.removeTripIndexEntry(loadMyTrips(), id)));
   }
 
   function photoUrl(id) {
@@ -458,7 +467,8 @@
       showScreen('tripDetail');
       renderTripDetail();
     }).catch(function () {
-      alert('旅行が見つかりませんでした。リンクを確認してください。');
+      forgetTrip(id);
+      alert('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。');
       goHome();
     });
   }

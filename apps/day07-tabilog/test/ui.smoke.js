@@ -303,6 +303,21 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   check('削除後は1件になる', (await page.$$('.entry-card')).length === 1);
 
+  // ---- サーバー側で消えた（見つからない）旅行は、ホーム画面の一覧からも消える ----
+  await page.click('.screen.active [data-back="home"]');
+  await page.waitForSelector('.screen[data-screen="home"].active');
+  await page.evaluate(() => {
+    var list = JSON.parse(localStorage.getItem('tabilog:my-trips') || '[]');
+    list.unshift({ id: 'trip_ghost', title: '消えた旅行', startDate: '', endDate: '', companions: [] });
+    localStorage.setItem('tabilog:my-trips', JSON.stringify(list));
+  });
+  await page.reload();
+  await page.waitForSelector('.screen[data-screen="home"].active');
+  check('サーバーに無い旅行もいったんは一覧に出る', (await page.textContent('#tripList')).includes('消えた旅行'));
+  await page.click('.trip-card:has-text("消えた旅行")');
+  await page.waitForFunction(() => !(document.querySelector('#tripList') || {}).textContent.includes('消えた旅行'));
+  check('見つからない旅行を開くと一覧から消える', !(await page.textContent('#tripList')).includes('消えた旅行'));
+
   check('ページ内エラーが発生していない', errors.length === 0, errors.join(' / '));
 
   await browser.close();

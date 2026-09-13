@@ -102,6 +102,11 @@ idx = T.upsertTripIndexEntry(idx, { id: 't1', title: 'A(更新)' });
 eq('upsertTripIndexEntry: 既存分は先頭へ移動し重複しない', idx.map(function (t) { return t.id; }), ['t1', 't2']);
 eq('upsertTripIndexEntry: 更新後の内容になる', idx[0].title, 'A(更新)');
 
+/* ---- removeTripIndexEntry（サーバー側で削除済みの旅行を索引からも消す） ---- */
+var idx2 = T.removeTripIndexEntry(idx, 't1');
+eq('removeTripIndexEntry: 指定したidが消える', idx2.map(function (t) { return t.id; }), ['t2']);
+eq('removeTripIndexEntry: 無い id を渡しても変わらない', T.removeTripIndexEntry(idx, 'nope').map(function (t) { return t.id; }), ['t1', 't2']);
+
 /* ---- 評価（ratingSummary / myRatingScore / sortMyLogItems） ---- */
 eq('ratingSummary: 平均と件数を出す', T.ratingSummary([{ score: 4 }, { score: 2 }]), { avg: 3, count: 2 });
 eq('ratingSummary: 評価が無ければ0件', T.ratingSummary([]), { avg: 0, count: 0 });
