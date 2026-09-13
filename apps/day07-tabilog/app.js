@@ -257,7 +257,9 @@
   function saveCurrentUser(u) { localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(u)); }
   function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); }
 
-  function loginEnabled() { return !!(GOOGLE_CLIENT_ID || APPLE_CLIENT_ID); }
+  // メールでのログイン（送信確認なしの簡易な本人確認）は常に使えるため、ログイン機能自体は常に有効。
+  // Google/Appleのボタンは各クライアントIDを設定したときだけ追加で出る。
+  function loginEnabled() { return true; }
 
   function renderAccountRow() {
     var row = $('#accountRow');
@@ -1033,6 +1035,7 @@
     });
     $('#btnOpenLogin').addEventListener('click', function () { openLogin('home'); });
     $('#btnLoginBack').addEventListener('click', closeLogin);
+    $('#btnEmailLogin').addEventListener('click', handleEmailLogin);
     $('#btnOpenMyLog').addEventListener('click', function () {
       if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
     });
@@ -1071,6 +1074,26 @@
       appleBtn.hidden = false;
       appleBtn.onclick = handleAppleSignIn;
     }
+
+    // 「または」の区切りは、Google/Appleどちらかのボタンが並んでいるときだけ意味を持つ
+    $('#emailLoginDivider').hidden = !(GOOGLE_CLIENT_ID || APPLE_CLIENT_ID);
+    var existing = loadCurrentUser();
+    $('#loginName').value = (existing && existing.provider === 'email') ? existing.name : '';
+    $('#loginEmail').value = (existing && existing.provider === 'email') ? existing.email : '';
+  }
+
+  // メールでのログイン。実際にメールを送って確認することはしない
+  // （Google/Appleと同じ「サーバー側で検証しない、簡易的な本人確認」の仕組み）。
+  function handleEmailLogin() {
+    var name = $('#loginName').value.trim();
+    var email = $('#loginEmail').value.trim();
+    if (!email || email.indexOf('@') === -1) {
+      $('#loginStatus').textContent = 'メールアドレスを入力してください。';
+      return;
+    }
+    saveCurrentUser({ name: name || email, email: email, provider: 'email' });
+    renderAccountRow();
+    goToReturnScreen(state.loginReturnTo, true);
   }
 
   // ログイン画面を、ログインせずに閉じる（元の画面へ戻る）

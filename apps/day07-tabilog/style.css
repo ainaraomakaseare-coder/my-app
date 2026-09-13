@@ -54,6 +54,15 @@ a:hover { text-decoration: underline; }
   width: 280px;
 }
 
+.login-divider { display: flex; align-items: center; gap: 10px; width: 280px; margin: 18px 0; color: var(--ink-soft); font-size: 11.5px; }
+.login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+.email-login-form { display: flex; flex-direction: column; gap: 10px; width: 280px; text-align: left; }
+.email-login-form input {
+  border: 1px solid var(--border); border-radius: 8px; padding: 11px 13px; background: var(--card); color: var(--ink); font-size: 14px;
+}
+.email-login-note { margin: 2px 0 0; text-align: center; }
+
 .account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0 0; font-size: 12.5px; color: var(--ink-muted); flex-wrap: wrap; }
 .account-row .btn.text { white-space: nowrap; flex-shrink: 0; }
 .account-row span { min-width: 0; }

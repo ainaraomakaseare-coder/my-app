@@ -272,6 +272,57 @@ function installFakeApi(page) {
   check('Appleログイン後は氏名が表示される', (await applePage.textContent('#accountName')) === 'アップル 花子');
   check('Appleログイン側でエラーが発生していない', appleErrors.length === 0, appleErrors.join(' / '));
 
+  // ---- メールでログイン（Google/AppleどちらのClient IDも未設定のまま。素のindex.html） ----
+  // 別コンテキスト＝別ブラウザ扱いにして、前段のGoogle/AppleログインのlocalStorageを引き継がないようにする
+  const emailCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const emailPage = await emailCtx.newPage();
+  const emailErrors = [];
+  emailPage.on('pageerror', (e) => emailErrors.push(e.message));
+  await emailPage.route('**/', async (route) => {
+    const res = await route.fetch();
+    let body = await res.text();
+    body = body.replace('<meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">', '<meta name="tabilog-api-endpoint" content="/api">');
+    await route.fulfill({ response: res, body, headers: { ...res.headers(), 'content-type': 'text/html; charset=utf-8' } });
+  });
+  await installFakeApi(emailPage);
+  await emailPage.goto(BASE);
+  check('Google/AppleのClient IDが未設定でも、ホーム画面には「ログインする」案内が出る（メールでのログインは常に使える）', !(await emailPage.isHidden('#loginPromptRow')));
+  await emailPage.click('#btnOpenLogin');
+  await emailPage.waitForSelector('.screen[data-screen="login"].active');
+  check('Client ID未設定のときはGoogleボタンが表示されない', await emailPage.isHidden('#googleSignInButton') || (await emailPage.textContent('#googleSignInButton')) === '');
+  check('Client ID未設定のときはAppleボタンが表示されない', await emailPage.isHidden('#appleSignInButton'));
+  check('Client ID未設定のときは区切り線を表示しない（メールしか選択肢が無いため）', await emailPage.isHidden('#emailLoginDivider'));
+  check('メールでのログインフォームは常に表示される', await emailPage.isVisible('#emailLoginForm'));
+
+  await emailPage.fill('#loginName', 'メール花子');
+  await emailPage.fill('#loginEmail', 'hanako-email@example.com');
+  await emailPage.click('#btnEmailLogin');
+  await emailPage.waitForSelector('.screen[data-screen="home"].active');
+  check('メールでログインすると氏名が表示される', (await emailPage.textContent('#accountName')) === 'メール花子');
+
+  await emailPage.click('#btnNewTrip');
+  await emailPage.fill('#ntTitle', 'メールログインテスト旅行');
+  await emailPage.click('#btnCreateTrip');
+  await emailPage.waitForSelector('.screen[data-screen="tripDetail"].active');
+  await emailPage.click('.block-add');
+  await emailPage.waitForSelector('.screen[data-screen="blockForm"].active');
+  await emailPage.fill('#blkLabel', 'メールテスト予定');
+  await emailPage.click('#btnSaveBlock');
+  await emailPage.waitForSelector('.screen[data-screen="entryForm"].active');
+  check('メールでログイン中は、記録した人が自動入力される', (await emailPage.inputValue('#entAuthor')) === 'メール花子');
+  await emailPage.click('#btnSaveEntry');
+  await emailPage.waitForSelector('.screen[data-screen="tripDetail"].active');
+  await emailPage.click('.entry-card >> nth=0 >> .entry-author');
+  await emailPage.waitForSelector('.screen[data-screen="entryForm"].active');
+  check('メールでログイン済みなら、Client ID未設定でも★ボタンが使える', await emailPage.isVisible('.star-btn'));
+  await emailPage.click('.star-btn[data-score="3"]');
+  await emailPage.waitForFunction(() => {
+    const btn = document.querySelector('.star-btn[data-score="3"]');
+    return btn && btn.classList.contains('on');
+  });
+  check('メールアカウントでも★を付けられる', true);
+  check('メールログイン側でエラーが発生していない', emailErrors.length === 0, emailErrors.join(' / '));
+
   await browser.close();
   server.close();
 
