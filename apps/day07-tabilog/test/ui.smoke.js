@@ -207,7 +207,7 @@ const TINY_PNG = Buffer.from(
   check('見出しが表示される', (await page.textContent('.block-label')) === '首里城公園に到着');
   check('小項目（記録）が1件表示される', (await page.$$('.entry-card')).length === 1);
   check('エピソードが表示される', (await page.textContent('.entry-episode')) === '守礼門の前で写真。暑いけど景色は最高。');
-  check('詳細が表示される', (await page.textContent('.entry-detail')) === '朝早く行くと空いていて写真が撮りやすい。');
+  check('詳細は一覧のカードには出さない（記録を開いたときだけ見える）', (await page.$$('.entry-detail')).length === 0);
   check('動画が表示される', (await page.$$('.entry-videos video')).length === 1);
   check('費用の合計が表示される', (await page.textContent('.cost-line.total')).includes('¥600'));
 
@@ -229,6 +229,7 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('.screen[data-screen="entryForm"].active');
   check('編集画面のタイトルになる', (await page.textContent('#entFormTitle')) === '記録を編集');
   check('削除ボタンが出る', await page.isVisible('#btnDeleteEntry'));
+  check('一覧には出ない詳細も、記録を開けば保存されたままの内容が見える', (await page.inputValue('#entDetail')) === '朝早く行くと空いていて写真が撮りやすい。');
   await page.fill('#entComment', '書き直した一言');
   await page.click('#btnSaveEntry');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');

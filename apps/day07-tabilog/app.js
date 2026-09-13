@@ -424,8 +424,7 @@
       state.trip = data.trip;
       state.blocks = data.blocks;
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
-      var today = new Date().toISOString().slice(0, 10);
-      state.selectedDate = dates.indexOf(today) !== -1 ? today : (dates[0] !== undefined ? dates[0] : '');
+      state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       rememberTrip(state.trip);
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       showScreen('tripDetail');
@@ -607,14 +606,14 @@
       ? '<div class="entry-rating">★ ' + ratingSummary.avg.toFixed(1) + '<span class="count">（' + ratingSummary.count + '人）</span></div>'
       : '';
 
+    // 詳細（detail）は一覧には出さない。タップして記録編集を開けば見られる。
     card.innerHTML =
-      '<div class="entry-author">記録：' + escapeHtml(entry.author || '匿名') + '</div>' +
-      ratingHtml +
-      photosHtml +
-      videosHtml +
       (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
       (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
-      (entry.detail ? '<div class="entry-detail">' + escapeHtml(entry.detail) + '</div>' : '') +
+      photosHtml +
+      videosHtml +
+      '<div class="entry-author">記録：' + escapeHtml(entry.author || '匿名') + '</div>' +
+      ratingHtml +
       costHtml +
       (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '');
 
