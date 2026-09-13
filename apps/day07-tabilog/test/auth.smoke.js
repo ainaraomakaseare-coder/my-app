@@ -56,6 +56,7 @@ function installFakeApi(page) {
   const blocks = {};
   const entriesByBlock = {};
   const ratingsByEntry = {}; // entryId -> { email: {raterEmail, raterName, score} }
+  const otpsByEmail = {}; // email -> { code, name }（メールOTPのフェイク実装。常に123456で確認できる）
 
   function entryWithRatings(e) {
     return Object.assign({}, e, { ratings: Object.values(ratingsByEntry[e.id] || {}) });
@@ -125,6 +126,20 @@ function installFakeApi(page) {
         });
       });
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items }) });
+    }),
+    page.route(/\/api\/auth\/email\/send$/, async (route) => {
+      const data = JSON.parse(route.request().postData());
+      otpsByEmail[data.email.toLowerCase()] = { code: '123456', name: data.name || '' };
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+    }),
+    page.route(/\/api\/auth\/email\/verify$/, async (route) => {
+      const data = JSON.parse(route.request().postData());
+      const email = data.email.toLowerCase();
+      const otp = otpsByEmail[email];
+      if (!otp) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' });
+      if (otp.code !== data.code) return route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"wrong_code"}' });
+      delete otpsByEmail[email];
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ email, name: otp.name }) });
     })
   ]);
 }
@@ -296,9 +311,17 @@ function installFakeApi(page) {
 
   await emailPage.fill('#loginName', 'メール花子');
   await emailPage.fill('#loginEmail', 'hanako-email@example.com');
-  await emailPage.click('#btnEmailLogin');
+  await emailPage.click('#btnSendOtp');
+  await emailPage.waitForSelector('#emailOtpForm:not([hidden])');
+  check('コード送信後は確認コード入力欄が出る', await emailPage.isVisible('#loginOtpCode'));
+  await emailPage.fill('#loginOtpCode', '000000');
+  await emailPage.click('#btnVerifyOtp');
+  await emailPage.waitForFunction(() => (document.querySelector('#loginStatus') || {}).textContent.includes('正しくありません'));
+  check('間違ったコードでは弾かれる', true);
+  await emailPage.fill('#loginOtpCode', '123456');
+  await emailPage.click('#btnVerifyOtp');
   await emailPage.waitForSelector('.screen[data-screen="home"].active');
-  check('メールでログインすると氏名が表示される', (await emailPage.textContent('#accountName')) === 'メール花子');
+  check('正しいコードでログインすると氏名が表示される', (await emailPage.textContent('#accountName')) === 'メール花子');
 
   await emailPage.click('#btnNewTrip');
   await emailPage.fill('#ntTitle', 'メールログインテスト旅行');

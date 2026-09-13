@@ -1,5 +1,5 @@
 /*
- * たびログ
+ * 旅の足跡
  * 旅行（trip）と、その中の「大項目（block）」「小項目（entry）」はサーバー
  * （Cloudflare Worker + D1 + R2）に保存する。
  * データを扱う純粋な関数は window.TabiLog に集めてあり、node からもテストできる。
@@ -1105,7 +1105,9 @@
     });
     $('#btnOpenLogin').addEventListener('click', function () { openLogin('home'); });
     $('#btnLoginBack').addEventListener('click', closeLogin);
-    $('#btnEmailLogin').addEventListener('click', handleEmailLogin);
+    $('#btnSendOtp').addEventListener('click', handleSendOtp);
+    $('#btnVerifyOtp').addEventListener('click', handleVerifyOtp);
+    $('#btnResendOtp').addEventListener('click', handleSendOtp);
     $('#btnOpenMyLog').addEventListener('click', function () {
       if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
     });
@@ -1150,20 +1152,55 @@
     var existing = loadCurrentUser();
     $('#loginName').value = (existing && existing.provider === 'email') ? existing.name : '';
     $('#loginEmail').value = (existing && existing.provider === 'email') ? existing.email : '';
+    $('#loginOtpCode').value = '';
+    $('#emailLoginForm').hidden = false;
+    $('#emailOtpForm').hidden = true;
   }
 
-  // メールでのログイン。実際にメールを送って確認することはしない
-  // （Google/Appleと同じ「サーバー側で検証しない、簡易的な本人確認」の仕組み）。
-  function handleEmailLogin() {
+  // メールでのログイン（OTP）。実際にメールで6桁のコードを送り、入力してもらうことで
+  // 「メールの持ち主であること」をサーバー側で確認する（Google/Appleとは違い、唯一
+  // サーバー側で検証するログイン方法）。
+  function handleSendOtp() {
     var name = $('#loginName').value.trim();
     var email = $('#loginEmail').value.trim();
     if (!email || email.indexOf('@') === -1) {
       $('#loginStatus').textContent = 'メールアドレスを入力してください。';
       return;
     }
-    saveCurrentUser({ name: name || email, email: email, provider: 'email' });
-    renderAccountRow();
-    goToReturnScreen(state.loginReturnTo, true);
+    $('#loginStatus').textContent = '送信中…';
+    api('/auth/email/send', 'POST', { name: name, email: email }).then(function () {
+      $('#loginStatus').textContent = '';
+      $('#emailOtpSentTo').textContent = email + ' に確認コードを送りました。';
+      $('#emailLoginForm').hidden = true;
+      $('#emailOtpForm').hidden = false;
+      $('#emailOtpForm').dataset.name = name;
+      $('#emailOtpForm').dataset.email = email;
+    }).catch(function (e) {
+      var msg = (e && e.message) || '';
+      if (msg === 'too_soon') $('#loginStatus').textContent = 'コードを送ったばかりです。少し時間をおいてから再度お試しください。';
+      else if (msg === 'email_not_configured') $('#loginStatus').textContent = 'メールログインがまだ設定されていません。他のログイン方法をお試しください。';
+      else $('#loginStatus').textContent = 'コードの送信に失敗しました。メールアドレスを確認してもう一度お試しください。';
+    });
+  }
+
+  function handleVerifyOtp() {
+    var form = $('#emailOtpForm');
+    var email = form.dataset.email;
+    var name = form.dataset.name;
+    var code = $('#loginOtpCode').value.trim();
+    if (!code) { $('#loginStatus').textContent = 'コードを入力してください。'; return; }
+    $('#loginStatus').textContent = '確認中…';
+    api('/auth/email/verify', 'POST', { email: email, code: code }).then(function (res) {
+      saveCurrentUser({ name: name || res.name || email, email: res.email, provider: 'email' });
+      renderAccountRow();
+      goToReturnScreen(state.loginReturnTo, true);
+    }).catch(function (e) {
+      var msg = (e && e.message) || '';
+      if (msg === 'wrong_code') $('#loginStatus').textContent = 'コードが正しくありません。';
+      else if (msg === 'expired') $('#loginStatus').textContent = 'コードの有効期限が切れました。もう一度送信してください。';
+      else if (msg === 'too_many_attempts') $('#loginStatus').textContent = '間違いが多いため、コードを無効にしました。もう一度送信してください。';
+      else $('#loginStatus').textContent = '確認に失敗しました。もう一度お試しください。';
+    });
   }
 
   // ログイン画面を、ログインせずに閉じる（元の画面へ戻る）

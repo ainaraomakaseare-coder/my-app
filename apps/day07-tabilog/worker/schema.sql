@@ -1,4 +1,4 @@
--- たびログ D1 スキーマ（v2：大項目 blocks / 小項目 entries の2階層）。
+-- 旅の足跡 D1 スキーマ（v2：大項目 blocks / 小項目 entries の2階層）。
 -- v1で作った episodes テーブルは廃止し、blocks（いつ・どこで・何をしたか）と
 -- entries（そのときの一人ひとりの記録。別行動なら同じblockに複数ぶら下がる）に分ける。
 -- 写真の実体はR2に置き、ここには photo_ids（R2のキーのJSON配列）だけを持つ。
@@ -106,3 +106,16 @@ CREATE INDEX IF NOT EXISTS idx_day_infos_trip ON day_infos(trip_id);
 -- 一度きりの文。既にprecip_sum列がある状態でこの行を再実行するとエラーになる点に注意
 -- （その場合はこの1行だけ削除してから再実行すればよい。他のCREATE系はすべて再実行安全）。
 ALTER TABLE day_infos ADD COLUMN precip_sum REAL;
+
+-- v7：メールでのログインを「その場で入力するだけ」から「実際にメールでコードを送って
+-- 確認する（OTP）」方式に変更したため、コードを一時的に保存するテーブルを追加。
+-- 1つのメールアドレスにつき有効なコードは常に1つ（送り直すと上書き）。
+-- 認証に成功した/期限切れ/試行回数を使い切ったら行ごと削除する（使い捨て）。
+CREATE TABLE IF NOT EXISTS email_otps (
+  email TEXT PRIMARY KEY,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);

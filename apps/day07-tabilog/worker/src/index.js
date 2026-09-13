@@ -1,5 +1,5 @@
 /*
- * たびログ API Worker。
+ * 旅の足跡 API Worker。
  * 旅行（trip）と、その中の「大項目（block：いつ・どこで・何をする時間か）」
  * 「小項目（entry：そのときの一人ひとりの記録。別行動なら同じblockに複数ぶら下がる）」
  * をD1に、写真の実体はR2に保存する。
@@ -618,6 +618,114 @@ async function deleteDayPlace(tripId, date, env, headers) {
   return json({ ok: true }, 200, headers);
 }
 
+/* ---------- メールでのログイン（OTP） ----------
+ * 実際にメールでコードを送って確認する、唯一「本当に本人確認できる」ログイン方法
+ * （Google/Appleはクライアント側で完結する簡易的な仕組みのままだが、こちらはサーバー
+ * 側でメールの持ち主であることを検証する）。メール送信にはResendを使う。
+ * RESEND_API_KEYはWorkerのsecretとして設定する（コードに直接書かない）。
+ */
+
+const OTP_EXPIRES_MINUTES = 10;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
+
+function generateOtpCode() {
+  const bytes = new Uint32Array(1);
+  crypto.getRandomValues(bytes);
+  return String(bytes[0] % 1000000).padStart(6, "0");
+}
+
+function isValidEmailFormat(email) {
+  return typeof email === "string" && email.length <= 200 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+async function sendOtpEmail(env, email, code) {
+  if (!env.RESEND_API_KEY) return { ok: false, error: "email_not_configured" };
+  const from = env.RESEND_FROM || "旅の足跡 <onboarding@resend.dev>";
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + env.RESEND_API_KEY,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [email],
+      subject: "旅の足跡：ログインコード",
+      text: "旅の足跡のログインコードです。\n\n" + code + "\n\n"
+        + OTP_EXPIRES_MINUTES + "分以内に入力してください。心当たりがない場合はこのメールを無視してください。",
+    }),
+  });
+  if (!res.ok) return { ok: false, error: "send_failed" };
+  return { ok: true };
+}
+
+async function sendEmailOtp(request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (!optStr(data.name, 100)) return json({ error: "invalid_input" }, 400, headers);
+  const email = data.email.trim().toLowerCase();
+  const name = (data.name || "").trim();
+
+  const existing = await env.DB.prepare("SELECT created_at FROM email_otps WHERE email = ?").bind(email).first();
+  if (existing) {
+    const elapsedSec = (Date.now() - new Date(existing.created_at).getTime()) / 1000;
+    if (elapsedSec < OTP_RESEND_COOLDOWN_SECONDS) {
+      return json({ error: "too_soon", retryAfterSeconds: Math.ceil(OTP_RESEND_COOLDOWN_SECONDS - elapsedSec) }, 429, headers);
+    }
+  }
+
+  const code = generateOtpCode();
+  const t = nowIso();
+  const expiresAt = new Date(Date.now() + OTP_EXPIRES_MINUTES * 60000).toISOString();
+
+  const sendResult = await sendOtpEmail(env, email, code);
+  if (!sendResult.ok) return json({ error: sendResult.error }, 502, headers);
+
+  await env.DB.prepare(
+    "INSERT INTO email_otps (email, code, name, attempts, expires_at, created_at) VALUES (?,?,?,0,?,?) "
+    + "ON CONFLICT(email) DO UPDATE SET code=excluded.code, name=excluded.name, attempts=0, expires_at=excluded.expires_at, created_at=excluded.created_at"
+  )
+    .bind(email, code, name, expiresAt, t)
+    .run();
+
+  return json({ ok: true }, 200, headers);
+}
+
+async function verifyEmailOtp(request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email) || !isStr(data.code, 6)) return json({ error: "invalid_input" }, 400, headers);
+  const email = data.email.trim().toLowerCase();
+  const code = (data.code || "").trim();
+
+  const row = await env.DB.prepare("SELECT * FROM email_otps WHERE email = ?").bind(email).first();
+  if (!row) return json({ error: "not_found" }, 404, headers);
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
+    return json({ error: "expired" }, 410, headers);
+  }
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
+    return json({ error: "too_many_attempts" }, 429, headers);
+  }
+  if (row.code !== code) {
+    await env.DB.prepare("UPDATE email_otps SET attempts = attempts + 1 WHERE email = ?").bind(email).run();
+    return json({ error: "wrong_code" }, 401, headers);
+  }
+  await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
+  return json({ email, name: row.name }, 200, headers);
+}
+
 /* ---------- photos / videos (R2) ---------- */
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // 圧縮後を想定した上限。無料枠(R2 10GB)を長く保つため。
@@ -700,6 +808,9 @@ export default {
 
     if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return setDayPlace(m[1], m[2], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return deleteDayPlace(m[1], m[2], env, headers);
+
+    if (method === "POST" && path === "/auth/email/send") return sendEmailOtp(request, env, headers);
+    if (method === "POST" && path === "/auth/email/verify") return verifyEmailOtp(request, env, headers);
 
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);

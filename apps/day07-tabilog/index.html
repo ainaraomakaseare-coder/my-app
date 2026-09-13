@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>たびログ</title>
+<title>旅の足跡</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230C66E4'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
 <!-- Worker公開後に、そのURLをcontentへ設定する。空のままだとサーバーに保存できず案内だけが出る。 -->
 <meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">
@@ -28,7 +28,7 @@
         <button class="btn text back" id="btnLoginBack">← 戻る</button>
       </header>
       <div class="hd" style="text-align:center">
-        <h1>たびログ</h1>
+        <h1>旅の足跡</h1>
         <p class="lead" id="loginLead">ログインしてください</p>
       </div>
       <div id="googleSignInButton" class="google-signin-slot"></div>
@@ -41,8 +41,14 @@
       <div class="email-login-form" id="emailLoginForm">
         <input type="text" id="loginName" placeholder="お名前（例：わたし）">
         <input type="email" id="loginEmail" placeholder="メールアドレス">
-        <button class="btn primary wide" id="btnEmailLogin">この内容でログイン</button>
-        <p class="hint email-login-note">メールは送信されません。入力した内容がそのまま「あなた」として扱われる、簡易的な仕組みです。</p>
+        <button class="btn primary wide" id="btnSendOtp">確認コードを送る</button>
+        <p class="hint email-login-note">入力したメールアドレスに確認コードを送ります。メールの持ち主であることを確認する、いちばん確実なログイン方法です。</p>
+      </div>
+      <div class="email-login-form" id="emailOtpForm" hidden>
+        <p class="hint" id="emailOtpSentTo"></p>
+        <input type="text" id="loginOtpCode" inputmode="numeric" maxlength="6" placeholder="6桁の確認コード">
+        <button class="btn primary wide" id="btnVerifyOtp">確認してログイン</button>
+        <button class="btn ghost small" id="btnResendOtp">コードを再送信する</button>
       </div>
 
       <p class="hint" id="loginStatus"></p>
@@ -53,7 +59,7 @@
   <section class="screen" data-screen="home">
     <div class="wrap">
       <header class="hd">
-        <h1>たびログ</h1>
+        <h1>旅の足跡</h1>
         <p class="lead">家族と過ごした、あの旅の記録。</p>
       </header>
 
