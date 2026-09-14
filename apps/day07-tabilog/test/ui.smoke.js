@@ -52,7 +52,7 @@ const TINY_PNG = Buffer.from(
   const { server, port } = await startServer();
   const BASE = `http://127.0.0.1:${port}/`;
   const browser = await launch();
-  const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const ctx = await browser.newContext({ viewport: { width: 420, height: 2400 } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -138,6 +138,15 @@ const TINY_PNG = Buffer.from(
     blocks[id] = b;
     entriesByBlock[id] = [];
     return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ ...b, entries: [] }) });
+  });
+
+  await page.route(/\/api\/trips\/([^/]+)\/days\/([^/]+)\/blocks\/reorder$/, async (route) => {
+    const data = JSON.parse(route.request().postData());
+    let seq = 0;
+    (data.blockIds || []).forEach((id) => {
+      if (blocks[id]) blocks[id].createdAt = 'order_' + String(seq++).padStart(3, '0');
+    });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
   });
 
   await page.route(/\/api\/blocks\/([^/]+)$/, async (route) => {
@@ -342,6 +351,30 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnSaveEntry');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   check('別行動の記録が2件になる', (await page.$$('.entry-card')).length === 2);
+
+  // ---- Blockの並べ替え（ドラッグ、時刻未設定のBlockだけ持ち手が出る） ----
+  await page.click('.block-add >> text=予定を追加');
+  await page.waitForSelector('.screen[data-screen="blockForm"].active');
+  await page.fill('#blkLabel', 'テスト2つ目の予定');
+  await page.click('#btnSaveBlock');
+  await page.waitForSelector('.screen[data-screen="entryForm"].active');
+  await page.click('.screen.active [data-back="tripDetail"]');
+  await page.waitForSelector('.screen[data-screen="tripDetail"].active');
+  check('新しい予定が2件目としてタイムラインに追加される', (await page.textContent('.block-label >> nth=1')) === 'テスト2つ目の予定');
+  check('時刻未設定のBlockにだけ並べ替えの持ち手が出る（時刻ありの1件目には出ない）', (await page.$$('.block-drag-handle')).length === 1);
+
+  const handle2 = page.locator('.block').nth(1).locator('.block-drag-handle');
+  const handleBox = await handle2.boundingBox();
+  const block0Box = await page.locator('.block').nth(0).boundingBox();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, block0Box.y + 5, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForFunction(() => {
+    const first = document.querySelector('.block-label');
+    return first && first.textContent === 'テスト2つ目の予定';
+  });
+  check('ドラッグして持ち上げると、2件目だったBlockが1件目になる', true);
 
   // ---- 編集 ----
   await page.click('.entry-card >> nth=0 >> .entry-author');

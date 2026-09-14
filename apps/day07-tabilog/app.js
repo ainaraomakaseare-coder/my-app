@@ -977,17 +977,26 @@
     el.appendChild(voiceBtn);
   }
 
+  var DRAG_HANDLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="5" r="1.4"/><circle cx="14" cy="5" r="1.4"/><circle cx="6" cy="10" r="1.4"/><circle cx="14" cy="10" r="1.4"/><circle cx="6" cy="15" r="1.4"/><circle cx="14" cy="15" r="1.4"/></svg>';
+
   function renderBlockEl(block) {
     var wrap = document.createElement('div');
     wrap.className = 'block';
+    wrap.dataset.blockId = block.id;
 
     var head = document.createElement('div');
     head.className = 'block-head';
     head.innerHTML =
+      // 時刻ありのBlockは常にその時刻の位置に固定するため、持ち手（ドラッグでの並べ替え）は
+      // 時刻未設定のBlockにだけ出す
+      (!block.time ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
       '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>';
-    head.addEventListener('click', function () { openBlockForm(block); });
+    head.addEventListener('click', function (e) {
+      if (e.target.closest('.block-drag-handle')) return;
+      openBlockForm(block);
+    });
     wrap.appendChild(head);
 
     var entriesWrap = document.createElement('div');
@@ -1004,6 +1013,87 @@
     wrap.appendChild(addEntryBtn);
 
     return wrap;
+  }
+
+  // ---------- Blockの並べ替え（ドラッグ、時刻未設定のBlockだけ） ----------
+  // 「感覚的に引っ張って場所を変えたい」という要望より。時刻ありのBlockは常にその時刻の
+  // 位置で固定したいので、持ち手（.block-drag-handle）自体を時刻未設定のBlockにしか出していない。
+  // ドラッグ中は他のBlockは動かさず、挿入位置に細い線（インジケーター）を出すだけにしてある
+  // （Blockの高さが写真の枚数などでまちまちなため、他要素を仮に動かす方式より確実に動く）。
+  var blockDragState = null;
+
+  function initBlockDragReorder() {
+    var timelineEl = $('#timeline');
+
+    timelineEl.addEventListener('pointerdown', function (e) {
+      var handle = e.target.closest('.block-drag-handle');
+      if (!handle) return;
+      var draggedEl = handle.closest('.block');
+      if (!draggedEl) return;
+      e.preventDefault();
+
+      var rect = draggedEl.getBoundingClientRect();
+      var siblings = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).filter(function (el) { return el !== draggedEl; });
+      var addBtn = timelineEl.querySelector('.block-add');
+      var originalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).map(function (el) { return el.dataset.blockId; });
+
+      var indicator = document.createElement('div');
+      indicator.className = 'block-drop-indicator';
+      timelineEl.insertBefore(indicator, draggedEl);
+
+      draggedEl.classList.add('dragging');
+      draggedEl.style.width = rect.width + 'px';
+      draggedEl.style.left = rect.left + 'px';
+      draggedEl.style.top = rect.top + 'px';
+
+      blockDragState = {
+        handle: handle, draggedEl: draggedEl, pointerId: e.pointerId, offsetY: e.clientY - rect.top,
+        siblings: siblings, addBtn: addBtn, indicator: indicator, originalOrder: originalOrder
+      };
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    timelineEl.addEventListener('pointermove', function (e) {
+      if (!blockDragState || e.pointerId !== blockDragState.pointerId) return;
+      e.preventDefault();
+      blockDragState.draggedEl.style.top = (e.clientY - blockDragState.offsetY) + 'px';
+
+      var target = null;
+      for (var i = 0; i < blockDragState.siblings.length; i++) {
+        var r = blockDragState.siblings[i].getBoundingClientRect();
+        if (e.clientY < r.top + r.height / 2) { target = blockDragState.siblings[i]; break; }
+      }
+      timelineEl.insertBefore(blockDragState.indicator, target || blockDragState.addBtn);
+    });
+
+    function endBlockDrag(e) {
+      if (!blockDragState || e.pointerId !== blockDragState.pointerId) return;
+      var ds = blockDragState;
+      blockDragState = null;
+      ds.handle.releasePointerCapture(ds.pointerId);
+      ds.draggedEl.classList.remove('dragging');
+      ds.draggedEl.style.top = '';
+      ds.draggedEl.style.left = '';
+      ds.draggedEl.style.width = '';
+      timelineEl.insertBefore(ds.draggedEl, ds.indicator);
+      ds.indicator.remove();
+
+      var finalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).map(function (el) { return el.dataset.blockId; });
+      if (finalOrder.join(',') !== ds.originalOrder.join(',')) persistBlockOrder(finalOrder);
+    }
+    timelineEl.addEventListener('pointerup', endBlockDrag);
+    timelineEl.addEventListener('pointercancel', endBlockDrag);
+  }
+
+  function persistBlockOrder(blockIds) {
+    if (!state.trip || !state.selectedDate) return;
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/blocks/reorder', 'PATCH', { blockIds: blockIds })
+      .then(function () { return refreshTrip(); })
+      .then(function () { renderDaySection(); })
+      .catch(function () {
+        alert('並べ替えの保存に失敗しました。もう一度お試しください。');
+        renderDaySection();
+      });
   }
 
   function renderEntryEl(block, entry) {
@@ -1509,6 +1599,7 @@
     $('#photoLightbox').addEventListener('click', function (e) {
       if (e.target === e.currentTarget) closePhotoLightbox();
     });
+    initBlockDragReorder();
 
     $('#btnNewTrip').addEventListener('click', openNewTripForm);
     $('#btnCreateTrip').addEventListener('click', createTrip);

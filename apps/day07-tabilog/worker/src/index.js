@@ -289,6 +289,39 @@ async function deleteBlock(id, env, headers) {
   return json({ ok: true }, 200, headers);
 }
 
+// 時刻未設定のBlockは、ドラッグ操作で並び順を自由に入れ替えられる（時刻が入っているBlockは
+// 常にその時刻の位置で固定なので対象外。フロント側でも時刻ありBlockには持ち手を出していない）。
+// 並び順そのものはcreated_atで表現しており（sortBlocksが時刻未設定同士はcreated_at順に
+// 並べるため）、ドラッグ後の見た目どおりの順番になるよう、その日のBlock全部のcreated_atを
+// 新しい順番で振り直す。
+async function reorderBlocks(tripId, date, request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!data || !Array.isArray(data.blockIds) || !data.blockIds.length || data.blockIds.length > 200) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  if (!data.blockIds.every((id) => isStr(id, 100))) return json({ error: "invalid_input" }, 400, headers);
+
+  const { results: rows } = await env.DB.prepare("SELECT id FROM blocks WHERE trip_id = ? AND date = ?")
+    .bind(tripId, date)
+    .all();
+  const validIds = new Set(rows.map((r) => r.id));
+  const baseTime = Date.now();
+  let i = 0;
+  for (const blockId of data.blockIds) {
+    if (!validIds.has(blockId)) continue;
+    const t = new Date(baseTime + i * 10).toISOString();
+    await env.DB.prepare("UPDATE blocks SET created_at=?, updated_at=? WHERE id=?").bind(t, t, blockId).run();
+    i++;
+  }
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  return json({ ok: true }, 200, headers);
+}
+
 /* ---------- entries（小項目） ---------- */
 
 function validEntryInput(x) {
@@ -1153,6 +1186,9 @@ export default {
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/blocks$/))) return createBlock(m[1], request, env, headers);
     if (method === "PATCH" && (m = path.match(/^\/blocks\/([^/]+)$/))) return updateBlock(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/blocks\/([^/]+)$/))) return deleteBlock(m[1], env, headers);
+    if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/blocks\/reorder$/))) {
+      return reorderBlocks(m[1], m[2], request, env, headers);
+    }
 
     if (method === "POST" && (m = path.match(/^\/blocks\/([^/]+)\/entries$/))) return createEntry(m[1], request, env, headers);
     if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)$/))) return updateEntry(m[1], request, env, headers);
