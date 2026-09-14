@@ -980,7 +980,8 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
     }),
   });
   if (!upstream.ok) {
-    console.error(JSON.stringify({ event: "openai_error", status: upstream.status }));
+    const errorBody = await upstream.text().catch(() => "");
+    console.error(JSON.stringify({ event: "openai_error", status: upstream.status, body: errorBody.slice(0, 500) }));
     return json({ error: "upstream_error" }, 502, headers);
   }
   const response = await upstream.json();
