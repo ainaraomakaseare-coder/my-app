@@ -346,31 +346,30 @@
     });
   }
 
-  function uploadPhotoBlob(blob) {
-    return fetch(API_BASE + '/photos', {
-      method: 'POST',
-      headers: { 'content-type': blob.type || 'image/jpeg' },
-      body: blob
-    }).then(function (res) {
-      if (!res.ok) throw new Error('upload_failed');
+  // 写真・音声など、生のバイナリをPOSTする共通の窓口（fetch＋エラー処理をここに集約する）
+  function postBinary(path, blob, extraHeaders) {
+    var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {});
+    return fetch(API_BASE + path, { method: 'POST', headers: headers, body: blob }).then(function (res) {
+      if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
+        throw new Error(e.error || ('http_' + res.status));
+      });
       return res.json();
     });
+  }
+
+  function uploadPhotoBlob(blob) {
+    return postBinary('/photos', blob);
   }
 
   // meta（notes・author）はUTF-8を含みうるので、ヘッダーに載せる前にBase64化する
   // （atob/btoaはLatin1前提のため、encodeURIComponent/unescapeで橋渡しする）
   function createVoiceEntries(tripId, date, blob, meta) {
     var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify(meta))));
-    return fetch(API_BASE + '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/voice-entries', {
-      method: 'POST',
-      headers: { 'content-type': blob.type || 'audio/webm', 'x-voice-meta': metaHeader },
-      body: blob
-    }).then(function (res) {
-      if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
-        throw new Error(e.error || ('http_' + res.status));
-      });
-      return res.json();
-    });
+    return postBinary(
+      '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/voice-entries',
+      blob,
+      { 'x-voice-meta': metaHeader }
+    );
   }
 
   function fileToCompressedBlob(file, maxDim, quality) {
