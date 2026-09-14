@@ -50,20 +50,28 @@ function fakeJwt(payload) {
 
 // フェイクAPI（メモリ上のミニDB）を1つのcontextに対して用意する。
 // trips/blocks/entriesに加えて、ratings（entryId -> {email: rating}）を持つ。
-function installFakeApi(page) {
-  let tripSeq = 0, blockSeq = 0, entrySeq = 0;
-  const trips = {};
-  const blocks = {};
-  const entriesByBlock = {};
-  const ratingsByEntry = {}; // entryId -> { email: {raterEmail, raterName, score} }
-  const otpsByEmail = {}; // email -> { code, name }（メールOTPのフェイク実装。常に123456で確認できる）
-  const accountsByEmail = {}; // email -> { accountId, name }（アカウント参加者のフェイク実装）
-  const membersByTrip = {}; // tripId -> [{accountId, name, joinedAt}]
-  let accountSeq = 0;
+// shared を渡すと、そのオブジェクトを複数ページ間で使い回す（＝同じアカウントのデータを
+// 「別の端末（＝別のbrowser context、localStorageは共有しない）」から見る状況を再現できる）
+async function installFakeApi(page, shared) {
+  const state = shared || {
+    tripSeq: 0, blockSeq: 0, entrySeq: 0, accountSeq: 0,
+    trips: {}, blocks: {}, entriesByBlock: {}, ratingsByEntry: {}, otpsByEmail: {},
+    accountsByEmail: {}, membersByTrip: {}
+  };
+  const trips = state.trips;
+  const blocks = state.blocks;
+  const entriesByBlock = state.entriesByBlock;
+  const ratingsByEntry = state.ratingsByEntry;
+  const otpsByEmail = state.otpsByEmail;
+  const accountsByEmail = state.accountsByEmail;
+  const membersByTrip = state.membersByTrip;
+  function nextTripId() { return 'trip_' + (++state.tripSeq); }
+  function nextBlockId() { return 'blk_' + (++state.blockSeq); }
+  function nextEntryId() { return 'ent_' + (++state.entrySeq); }
 
   function getOrCreateAccount(email, name) {
     var e = (email || '').toLowerCase();
-    if (!accountsByEmail[e]) accountsByEmail[e] = { accountId: String(100000 + (++accountSeq)), name: name || '' };
+    if (!accountsByEmail[e]) accountsByEmail[e] = { accountId: String(100000 + (++state.accountSeq)), name: name || '' };
     else if (name) accountsByEmail[e].name = name;
     return accountsByEmail[e];
   }
@@ -72,12 +80,12 @@ function installFakeApi(page) {
     return Object.assign({}, e, { ratings: Object.values(ratingsByEntry[e.id] || {}) });
   }
 
-  return Promise.all([
+  await Promise.all([
     page.route(/\/api\/trips$/, async (route) => {
       const req = route.request();
       if (req.method() !== 'POST') return route.fulfill({ status: 404, body: '{}' });
       const data = JSON.parse(req.postData());
-      const id = 'trip_' + (++tripSeq);
+      const id = nextTripId();
       trips[id] = { id, title: data.title, startDate: data.startDate || '', endDate: data.endDate || '', companions: data.companions || [], coverPhotoId: '', createdAt: 'now', updatedAt: 'now' };
       route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(trips[id]) });
     }),
@@ -108,7 +116,7 @@ function installFakeApi(page) {
     page.route(/\/api\/trips\/([^/]+)\/blocks$/, async (route) => {
       const tripId = decodeURIComponent(route.request().url().match(/\/api\/trips\/([^/]+)\/blocks$/)[1]);
       const data = JSON.parse(route.request().postData());
-      const id = 'blk_' + (++blockSeq);
+      const id = nextBlockId();
       blocks[id] = Object.assign({ id, tripId, createdAt: 'now', updatedAt: 'now' }, data);
       entriesByBlock[id] = [];
       route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ ...blocks[id], entries: [] }) });
@@ -116,7 +124,7 @@ function installFakeApi(page) {
     page.route(/\/api\/blocks\/([^/]+)\/entries$/, async (route) => {
       const blockId = decodeURIComponent(route.request().url().match(/\/api\/blocks\/([^/]+)\/entries$/)[1]);
       const data = JSON.parse(route.request().postData());
-      const id = 'ent_' + (++entrySeq);
+      const id = nextEntryId();
       const e = Object.assign({ id, blockId, createdAt: 'now', updatedAt: 'now' }, data);
       entriesByBlock[blockId].push(e);
       route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(entryWithRatings(e)) });
@@ -174,6 +182,7 @@ function installFakeApi(page) {
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ email, name: otp.name }) });
     })
   ]);
+  return state;
 }
 
 (async () => {
@@ -208,7 +217,7 @@ function installFakeApi(page) {
     await route.fulfill({ response: res, body, headers: { ...res.headers(), 'content-type': 'text/html; charset=utf-8' } });
   });
 
-  await installFakeApi(page);
+  const sharedApiState = await installFakeApi(page);
 
   await page.goto(BASE);
 
@@ -290,6 +299,37 @@ function installFakeApi(page) {
   await page.waitForSelector('.mylog-row');
   check('マイログの一覧に、さきほど評価した記録が出る', (await page.textContent('.mylog-row .mylog-score')) === '★4');
   check('マイログの「参加した旅行一覧」に、参加した旅行が出る', (await page.textContent('#mylogTripList')).includes('未ログイン旅行'));
+
+  // ---- 別の端末（localStorageを共有しない新しいcontext）で同じアカウントにログインすると、
+  //      この端末では一度も開いていない「参加した旅行」もホーム画面に出る ----
+  const otherDeviceCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const otherDevicePage = await otherDeviceCtx.newPage();
+  const otherDeviceErrors = [];
+  otherDevicePage.on('pageerror', (e) => otherDeviceErrors.push(e.message));
+  otherDevicePage.on('dialog', (d) => d.accept());
+  await otherDevicePage.route('**/', async (route) => {
+    const res = await route.fetch();
+    let body = await res.text();
+    body = body.replace('<meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">', '<meta name="tabilog-api-endpoint" content="/api">');
+    await route.fulfill({ response: res, body, headers: { ...res.headers(), 'content-type': 'text/html; charset=utf-8' } });
+  });
+  await installFakeApi(otherDevicePage, sharedApiState);
+  await otherDevicePage.goto(BASE);
+  check('別端末の初回アクセスでは、ホームの旅行一覧はまだ空（ローカル索引は端末ごとのため）', (await otherDevicePage.textContent('#tripList')).includes('まだ旅行がありません'));
+
+  await otherDevicePage.click('#btnOpenLogin');
+  await otherDevicePage.waitForSelector('.screen[data-screen="login"].active');
+  await otherDevicePage.fill('#loginName', 'テスト太郎');
+  await otherDevicePage.fill('#loginEmail', 'test-taro@example.com');
+  await otherDevicePage.click('#btnSendOtp');
+  await otherDevicePage.waitForSelector('#emailOtpForm:not([hidden])');
+  await otherDevicePage.fill('#loginOtpCode', '123456');
+  await otherDevicePage.click('#btnVerifyOtp');
+  await otherDevicePage.waitForSelector('.screen[data-screen="home"].active');
+  await otherDevicePage.waitForFunction(() => (document.querySelector('#tripList') || {}).textContent.includes('未ログイン旅行'));
+  check('別端末で同じアカウントにログインすると、参加済みの旅行がホームの一覧にも出るようになる', true);
+  check('別端末側でエラーが発生していない', otherDeviceErrors.length === 0, otherDeviceErrors.join(' / '));
+  await otherDeviceCtx.close();
 
   // ---- ログアウト ----
   await page.click('.screen.active [data-back="home"]').catch(() => {});

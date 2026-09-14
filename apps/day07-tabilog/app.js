@@ -439,6 +439,11 @@
   // ---------- ホーム ----------
   function renderHome() {
     apiNoticeCheck();
+    renderHomeTripList();
+    syncAccountTripsIntoHome();
+  }
+
+  function renderHomeTripList() {
     var list = loadMyTrips();
     var el = $('#tripList');
     if (!list.length) {
@@ -458,6 +463,32 @@
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
     });
+  }
+
+  // ホーム画面の旅行一覧は本来この端末のローカル索引（tabilog:my-trips）だけを見ているため、
+  // 別の端末で参加した旅行や、この端末の索引から消えてしまった旅行が表示されない弱点があった。
+  // ログイン中はアカウントに紐づく「参加した旅行」（マイログと同じ情報源）も取り寄せ、
+  // ローカル索引にまだ無ければ足しておく（＝以後はこの端末でもオフラインで一覧に出る）。
+  function syncAccountTripsIntoHome() {
+    var user = loadCurrentUser();
+    if (!API_BASE || !user) return;
+    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
+      var known = loadMyTrips();
+      var knownIds = {};
+      known.forEach(function (t) { knownIds[t.id] = true; });
+      var added = false;
+      (data.trips || []).forEach(function (t) {
+        if (knownIds[t.id]) return;
+        known = Core.upsertTripIndexEntry(known, {
+          id: t.id, title: t.title, startDate: t.startDate, endDate: t.endDate, companions: t.companions || []
+        });
+        added = true;
+      });
+      if (added) {
+        localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(known));
+        renderHomeTripList();
+      }
+    }).catch(function () {});
   }
 
   function goHome() {
