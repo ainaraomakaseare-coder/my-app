@@ -11,8 +11,8 @@
     { key: 'sightseeing', label: '観光', color: 'oklch(60% 0.13 150)' },
     { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
     { key: 'lodging', label: '宿泊', color: 'oklch(48% 0.1 195)' },
-    { key: 'transport', label: '移動', color: 'oklch(60% 0.05 260)' },
-    { key: 'other', label: 'その他', color: 'oklch(55% 0.02 280)' }
+    { key: 'transport', label: '移動', color: 'oklch(60% 0.12 260)' },
+    { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' }
   ];
 
   var WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
@@ -23,7 +23,7 @@
   }
   function categoryColor(key) {
     var c = CATEGORIES.filter(function (c) { return c.key === key; })[0];
-    return c ? c.color : 'oklch(55% 0.02 280)';
+    return c ? c.color : 'oklch(55% 0.08 280)';
   }
 
   function formatYen(n) {
