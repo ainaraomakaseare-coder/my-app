@@ -125,10 +125,20 @@ CREATE TABLE IF NOT EXISTS email_otps (
 -- accounts：いずれかの方法で一度でもログインしたメールアドレスに対して作られる、
 -- 永続的なアカウント記録。account_idは6桁の数字（自動採番）で、参加者一覧などで
 -- 生のメールアドレスを晒さずその人を指し示すために使う。
+-- plan：'free' | 'basic' | 'premium_plus'。音声入力（AI機能）の有料プラン（docs/adr/0004参照）。
+-- plan_period_start：利用回数（voice_uses_this_period）を数えている暦月の開始日（YYYY-MM-01）。
+-- 月が変わったらリセットする（Stripeの実際の請求日とは同期させない簡易な実装）。
+-- ticket_credits：買い切りの回数券の残数。サブスクの月間上限を使い切った後、こちらを消費する。
 CREATE TABLE IF NOT EXISTS accounts (
   email TEXT PRIMARY KEY,
   account_id TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL DEFAULT '',
+  plan TEXT NOT NULL DEFAULT 'free',
+  plan_period_start TEXT NOT NULL DEFAULT '',
+  voice_uses_this_period INTEGER NOT NULL DEFAULT 0,
+  ticket_credits INTEGER NOT NULL DEFAULT 0,
+  stripe_customer_id TEXT NOT NULL DEFAULT '',
+  stripe_subscription_id TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -152,3 +162,12 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- 更新するための一度きりの文。既にこの列がある状態で再実行するとエラーになる点に注意
 -- （その場合はこの1行だけ削除してから再実行すればよい。他のCREATE系はすべて再実行安全）。
 ALTER TABLE day_infos ADD COLUMN voice_transcript TEXT NOT NULL DEFAULT '';
+
+-- v10：accountsに音声入力の有料プラン関連の列を追加（docs/adr/0004）。上と同じく、
+-- 既存のaccountsテーブルを更新するための一度きりの文。再実行するとエラーになる点に注意。
+ALTER TABLE accounts ADD COLUMN plan TEXT NOT NULL DEFAULT 'free';
+ALTER TABLE accounts ADD COLUMN plan_period_start TEXT NOT NULL DEFAULT '';
+ALTER TABLE accounts ADD COLUMN voice_uses_this_period INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN ticket_credits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN stripe_customer_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE accounts ADD COLUMN stripe_subscription_id TEXT NOT NULL DEFAULT '';

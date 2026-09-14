@@ -55,6 +55,29 @@ async function launch() {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
 
+  // 音声入力は有料プラン専用（docs/adr/0004）になったため、テストでも
+  // ログイン済み・プレミア＋プラン契約中のアカウントとして進める。
+  const TEST_USER = { email: 'tester@example.com', name: 'テスト太郎', accountId: '123456' };
+  await page.addInitScript((user) => {
+    localStorage.setItem('tabilog:user', JSON.stringify(user));
+  }, TEST_USER);
+  await page.route(/\/api\/accounts\/ensure$/, async (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        accountId: TEST_USER.accountId,
+        email: TEST_USER.email,
+        name: TEST_USER.name,
+        plan: 'premium_plus',
+        voiceUsesThisPeriod: 0,
+        voiceMonthlyLimit: 50,
+        voiceRemainingThisPeriod: 50,
+        ticketCredits: 0
+      })
+    });
+  });
+
   await page.route('**/', async (route) => {
     const res = await route.fetch();
     let body = await res.text();
@@ -151,7 +174,8 @@ async function launch() {
   check('録音した音声データがサーバーに送られている', receivedBodySize > 0);
   check('content-typeが音声の形式になっている', receivedContentType.indexOf('audio/') === 0);
   check('メモ（notes）がx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.notes.indexOf('ファーマーズマーケット') !== -1);
-  check('ログイン中でなくてもauthorは空のまま送られる（未ログイン想定）', receivedMeta && receivedMeta.author === '');
+  check('ログイン中の名前がauthorとしてx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.author === TEST_USER.name);
+  check('ログイン中のメールアドレスもx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.email === TEST_USER.email);
 
   // ---- 同じ日にもう一度録音して送れる（1回目の成功後に「この内容で予定を作る」が無効のまま残らないか） ----
   await page.click('.block-add >> text=音声でまとめて記録する');

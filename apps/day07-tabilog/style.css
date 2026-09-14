@@ -298,6 +298,23 @@ a:hover { text-decoration: underline; }
 }
 .star-btn.on { color: #FFAB00; }
 
+/* ---------- 音声入力プラン ---------- */
+.plan-status {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow); padding: 14px 16px; margin-top: 6px;
+}
+.plan-status .plan-name { font-size: 15px; font-weight: 900; }
+.plan-status .plan-usage { font-size: 12.5px; color: var(--ink-muted); margin-top: 4px; }
+.plan-options { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.plan-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow); padding: 12px 16px;
+}
+.plan-card .plan-card-name { font-size: 13.5px; font-weight: 700; }
+.plan-card .plan-card-detail { font-size: 11.5px; color: var(--ink-muted); margin-top: 2px; }
+.plan-card button { flex-shrink: 0; }
+
 /* ---------- マイログ ---------- */
 .mylog-tabs { display: flex; gap: 6px; padding: 12px 0 4px; overflow-x: auto; }
 .mylog-tab { padding: 7px 13px; border-radius: 999px; color: var(--ink-muted); font-size: 12px; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
