@@ -622,6 +622,13 @@
   var voiceBlob = null;
   var voiceStartedAt = 0;
 
+  var MIC_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0"/><path d="M10 15v2.5M7 17.5h6"/></svg>';
+  var STOP_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="5" width="10" height="10" rx="2"/></svg>';
+
+  function setVoiceRecordLabel(icon, text) {
+    $('#btnVoiceRecord').innerHTML = icon + '<span>' + escapeHtml(text) + '</span>';
+  }
+
   function pickVoiceMimeType() {
     var candidates = ['audio/webm', 'audio/mp4', 'audio/ogg'];
     for (var i = 0; i < candidates.length; i++) {
@@ -633,7 +640,7 @@
   function openVoiceEntryForm() {
     voiceBlob = null;
     $('#voiceNotes').value = '';
-    $('#btnVoiceRecord').textContent = '🎙 話しはじめる';
+    setVoiceRecordLabel(MIC_ICON, '話しはじめる');
     $('#btnVoiceRecord').disabled = false;
     $('#btnCreateVoiceEntries').hidden = true;
     $('#voiceRecordStatus').textContent = '';
@@ -664,12 +671,12 @@
         voiceStream.getTracks().forEach(function (t) { t.stop(); });
         voiceBlob = new Blob(voiceChunks, { type: voiceRecorder.mimeType || mimeType || 'audio/webm' });
         var seconds = Math.max(1, Math.round((Date.now() - voiceStartedAt) / 1000));
-        $('#btnVoiceRecord').textContent = '🎙 話しなおす';
+        setVoiceRecordLabel(MIC_ICON, '話しなおす');
         $('#voiceRecordStatus').textContent = '録音できました（約' + seconds + '秒）。内容を確認して「この内容で予定を作る」を押してください。';
         $('#btnCreateVoiceEntries').hidden = false;
       });
       voiceRecorder.start();
-      $('#btnVoiceRecord').textContent = '⏹ 話し終わる';
+      setVoiceRecordLabel(STOP_ICON, '話し終わる');
       $('#voiceRecordStatus').textContent = '録音中…話し終わったら押してください。';
       $('#btnCreateVoiceEntries').hidden = true;
     }).catch(function () {
@@ -794,7 +801,7 @@
 
     var voiceBtn = document.createElement('button');
     voiceBtn.className = 'block-add';
-    voiceBtn.innerHTML = '🎙<span>音声でまとめて記録する</span>';
+    voiceBtn.innerHTML = MIC_ICON + '<span>音声でまとめて記録する</span>';
     voiceBtn.addEventListener('click', openVoiceEntryForm);
     el.appendChild(voiceBtn);
   }
