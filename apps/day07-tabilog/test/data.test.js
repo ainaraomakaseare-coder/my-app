@@ -84,8 +84,18 @@ var blocksLodging = [
   { category: 'food', label: '国際通りの食堂' },
   { category: 'lodging', label: 'オーシャンビューホテル那覇' }
 ];
-eq('primaryLodgingName: lodgingカテゴリの見出しを重複なく', T.primaryLodgingName(blocksLodging), 'オーシャンビューホテル那覇');
+eq('primaryLodgingName: lodgingカテゴリの最初の見出しを使う', T.primaryLodgingName(blocksLodging), 'オーシャンビューホテル那覇');
 eq('primaryLodgingName: lodgingが無ければ空文字', T.primaryLodgingName([{ category: 'food', label: 'x' }]), '');
+
+var blocksLodgingDifferentLabels = [
+  { category: 'lodging', label: '温泉宿の慶山に到着する' },
+  { category: 'lodging', label: '宿に戻る' }
+];
+eq(
+  'primaryLodgingName: 同じ宿でも見出しが違う複数Blockを繋げず、最初の1件だけにする（音声入力で複数Blockができるケース）',
+  T.primaryLodgingName(blocksLodgingDifferentLabels),
+  '温泉宿の慶山に到着する'
+);
 
 /* ---- parseTags / URL ---- */
 eq('parseTags: 読点区切りで空要素は除く', T.parseTags('父、母、、妹'), ['父', '母', '妹']);

@@ -120,13 +120,12 @@
     return (blocks || []).reduce(function (sum, b) { return sum + blockCostTotal(b); }, 0);
   }
 
+  // 宿泊カテゴリのBlockは「到着する」「宿に戻る」のように、同じ宿について複数できることがある
+  // （特に音声入力は行動ごとにBlockを分けるため）。すべて繋げると意味不明になるので、
+  // 一番最初（日程順で最初）の見出しだけを「宿泊先」として代表させる。
   function primaryLodgingName(blocks) {
     var lodging = (blocks || []).filter(function (b) { return b.category === 'lodging' && b.label; });
-    if (!lodging.length) return '';
-    var names = [];
-    var seen = {};
-    lodging.forEach(function (b) { if (!seen[b.label]) { seen[b.label] = true; names.push(b.label); } });
-    return names.join('・');
+    return lodging.length ? lodging[0].label : '';
   }
 
   function parseTags(text) {
@@ -621,6 +620,24 @@
   var voiceChunks = [];
   var voiceBlob = null;
   var voiceStartedAt = 0;
+  var voiceTimerInterval = null;
+
+  function formatVoiceElapsed(ms) {
+    var seconds = Math.max(0, Math.floor(ms / 1000));
+    var mm = Math.floor(seconds / 60);
+    var ss = seconds % 60;
+    return mm + ':' + (ss < 10 ? '0' : '') + ss;
+  }
+
+  function stopVoiceTimer() {
+    if (voiceTimerInterval) { clearInterval(voiceTimerInterval); voiceTimerInterval = null; }
+  }
+
+  // 録音中に別画面へ移動したとき、マイクを使いっぱなしにしないための後始末
+  // （既存のstopイベントハンドラがマイクの解放・タイマー停止まで行う）
+  function stopVoiceRecordingIfActive() {
+    if (voiceRecorder && voiceRecorder.state === 'recording') voiceRecorder.stop();
+  }
 
   var MIC_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0"/><path d="M10 15v2.5M7 17.5h6"/></svg>';
   var STOP_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="5" width="10" height="10" rx="2"/></svg>';
@@ -643,7 +660,9 @@
     setVoiceRecordLabel(MIC_ICON, '話しはじめる');
     $('#btnVoiceRecord').disabled = false;
     $('#btnCreateVoiceEntries').hidden = true;
+    $('#btnCreateVoiceEntries').disabled = false;
     $('#voiceRecordStatus').textContent = '';
+    $('#voiceRecordStatus').classList.remove('is-recording');
     $('#voiceEntryStatus').textContent = '';
     showScreen('voiceEntryForm');
   }
@@ -668,17 +687,24 @@
         if (e.data && e.data.size) voiceChunks.push(e.data);
       });
       voiceRecorder.addEventListener('stop', function () {
+        stopVoiceTimer();
         voiceStream.getTracks().forEach(function (t) { t.stop(); });
         voiceBlob = new Blob(voiceChunks, { type: voiceRecorder.mimeType || mimeType || 'audio/webm' });
         var seconds = Math.max(1, Math.round((Date.now() - voiceStartedAt) / 1000));
         setVoiceRecordLabel(MIC_ICON, '話しなおす');
+        $('#voiceRecordStatus').classList.remove('is-recording');
         $('#voiceRecordStatus').textContent = '録音できました（約' + seconds + '秒）。内容を確認して「この内容で予定を作る」を押してください。';
         $('#btnCreateVoiceEntries').hidden = false;
       });
       voiceRecorder.start();
       setVoiceRecordLabel(STOP_ICON, '話し終わる');
-      $('#voiceRecordStatus').textContent = '録音中…話し終わったら押してください。';
+      $('#voiceRecordStatus').classList.add('is-recording');
+      $('#voiceRecordStatus').textContent = '● 録音中… 0:00';
       $('#btnCreateVoiceEntries').hidden = true;
+      stopVoiceTimer();
+      voiceTimerInterval = setInterval(function () {
+        $('#voiceRecordStatus').textContent = '● 録音中… ' + formatVoiceElapsed(Date.now() - voiceStartedAt);
+      }, 500);
     }).catch(function () {
       $('#voiceRecordStatus').textContent = 'マイクを使えませんでした（許可されているか確認してください）。';
     });
@@ -693,6 +719,7 @@
     createVoiceEntries(state.trip.id, state.selectedDate, voiceBlob, meta).then(function () {
       return refreshTrip();
     }).then(function () {
+      $('#btnCreateVoiceEntries').disabled = false;
       showScreen('tripDetail');
       renderDaySection();
     }).catch(function (e) {
@@ -1325,6 +1352,7 @@
     $all('[data-back]').forEach(function (b) {
       b.addEventListener('click', function () {
         var to = b.dataset.back;
+        stopVoiceRecordingIfActive();
         if (to === 'home') goHome();
         else { showScreen(to); if (to === 'tripDetail') renderTripDetail(); }
       });

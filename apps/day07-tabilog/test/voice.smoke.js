@@ -77,6 +77,7 @@ async function launch() {
   let receivedContentType = '';
   let receivedMeta = null;
   let receivedBodySize = 0;
+  let voiceCallCount = 0;
   const FAKE_TRANSCRIPT = '朝からダイヤモンドヘッドに登って、そのあとファーマーズマーケット行っておいしい5ドルのアサイー食べておなか壊したんだよね、そのあとホテルに帰ってプールに行ったんだけどタオル忘れてびしょびしょで帰った。';
   await page.route(/\/api\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/, async (route) => {
     const req = route.request();
@@ -87,11 +88,15 @@ async function launch() {
     const metaHeader = req.headers()['x-voice-meta'];
     try { receivedMeta = JSON.parse(Buffer.from(metaHeader, 'base64').toString('utf-8')); } catch (e) { receivedMeta = null; }
     receivedBodySize = (req.postDataBuffer() || Buffer.alloc(0)).length;
+    voiceCallCount += 1;
 
+    // 実際のサーバーは毎回新しいIDでBlock/Entryを作る（同じ日にもう一度話すと積み増される）ので、
+    // モックも呼ばれるたびに新しいIDを発行する。
+    const suffix = voiceCallCount;
     const created = [
-      { id: 'blk_v1', tripId: 'trip_1', date: '2026-08-10', time: '', label: 'ダイヤモンドヘッドに登る', category: 'sightseeing', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v1', blockId: 'blk_v1', episode: '朝からダイヤモンドヘッドに登った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
-      { id: 'blk_v2', tripId: 'trip_1', date: '2026-08-10', time: '', label: 'ファーマーズマーケットでアサイーを食べる', category: 'food', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v2', blockId: 'blk_v2', episode: '5ドルのアサイーを食べたが、おなかを壊した。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: 'https://maps.example.com/farmers-market', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
-      { id: 'blk_v3', tripId: 'trip_1', date: '2026-08-10', time: '', label: 'プールでタオルを忘れる', category: 'other', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v3', blockId: 'blk_v3', episode: 'ホテルのプールに行ったがタオルを忘れ、びしょ濡れで帰った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] }
+      { id: 'blk_v1_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'ダイヤモンドヘッドに登る', category: 'sightseeing', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v1_' + suffix, blockId: 'blk_v1_' + suffix, episode: '朝からダイヤモンドヘッドに登った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
+      { id: 'blk_v2_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'ファーマーズマーケットでアサイーを食べる', category: 'food', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v2_' + suffix, blockId: 'blk_v2_' + suffix, episode: '5ドルのアサイーを食べたが、おなかを壊した。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: 'https://maps.example.com/farmers-market', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
+      { id: 'blk_v3_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'プールでタオルを忘れる', category: 'other', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v3_' + suffix, blockId: 'blk_v3_' + suffix, episode: 'ホテルのプールに行ったがタオルを忘れ、びしょ濡れで帰った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] }
     ];
     created.forEach((b) => {
       blocks[b.id] = { id: b.id, tripId: b.tripId, date: b.date, time: b.time, label: b.label, category: b.category, createdAt: b.createdAt, updatedAt: b.updatedAt };
@@ -145,6 +150,25 @@ async function launch() {
   check('content-typeが音声の形式になっている', receivedContentType.indexOf('audio/') === 0);
   check('メモ（notes）がx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.notes.indexOf('ファーマーズマーケット') !== -1);
   check('ログイン中でなくてもauthorは空のまま送られる（未ログイン想定）', receivedMeta && receivedMeta.author === '');
+
+  // ---- 同じ日にもう一度録音して送れる（1回目の成功後に「この内容で予定を作る」が無効のまま残らないか） ----
+  await page.click('.block-add >> text=音声でまとめて記録する');
+  await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
+  check('2回目もボタンが押せる状態で開く', !(await page.isDisabled('#btnCreateVoiceEntries')));
+  await page.click('#btnVoiceRecord');
+  await page.waitForFunction(() => (document.querySelector('#voiceRecordStatus') || {}).textContent.includes('録音中'));
+  check('録音中は経過時間が見える', /\d:\d\d/.test(await page.textContent('#voiceRecordStatus')));
+  await page.waitForTimeout(600);
+  const elapsedDuringRecording = await page.textContent('#voiceRecordStatus');
+  await page.waitForTimeout(600);
+  check('経過時間が更新されていく', (await page.textContent('#voiceRecordStatus')) !== elapsedDuringRecording);
+  await page.click('#btnVoiceRecord');
+  await page.waitForSelector('#btnCreateVoiceEntries:not([hidden])');
+  check('2回目の録音後もボタンが無効になっていない', !(await page.isDisabled('#btnCreateVoiceEntries')));
+  await page.click('#btnCreateVoiceEntries');
+  await page.waitForSelector('.screen[data-screen="tripDetail"].active');
+  await page.waitForFunction(() => document.querySelectorAll('.block').length === 6);
+  check('2回目の送信もタイムラインに積み増される（3件→6件）', (await page.$$('.block')).length === 6);
 
   check('ページ内エラーが発生していない', errors.length === 0, errors.join(' / '));
 
