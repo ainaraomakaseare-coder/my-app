@@ -1088,8 +1088,14 @@
   function persistBlockOrder(blockIds) {
     if (!state.trip || !state.selectedDate) return;
     api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/blocks/reorder', 'PATCH', { blockIds: blockIds })
-      .then(function () { return refreshTrip(); })
-      .then(function () { renderDaySection(); })
+      .then(function () {
+        // 保存自体はここで成功している。このあとの再取得・再描画で失敗しても
+        // 「保存に失敗した」と誤って伝えないよう、ここでは分けてcatchする
+        return refreshTrip().then(renderDaySection).catch(function (e) {
+          console.error('reorder: refresh/render failed after save succeeded', e);
+          renderDaySection();
+        });
+      })
       .catch(function () {
         alert('並べ替えの保存に失敗しました。もう一度お試しください。');
         renderDaySection();
