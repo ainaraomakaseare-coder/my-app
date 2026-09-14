@@ -88,10 +88,14 @@
     return dates;
   }
 
+  // 時刻(time)が両方とも分かっているときだけ時刻順に比べる。片方でも未設定なら
+  // 「時刻不明」として時刻では比べず、作成順（＝音声入力なら話した順）に委ねる。
+  // そうしないと、空文字は常にどんな時刻よりも文字列として小さいため、時刻が分かっている
+  // Blockと分かっていないBlockが混ざったとき、未設定の方が常に先頭に来てしまう
   function sortBlocks(blocks) {
     return (blocks || []).slice().sort(function (a, b) {
       if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
-      if (a.time !== b.time) return (a.time || '').localeCompare(b.time || '');
+      if (a.time && b.time && a.time !== b.time) return a.time.localeCompare(b.time);
       return (a.createdAt || '').localeCompare(b.createdAt || '');
     });
   }
@@ -1157,6 +1161,10 @@
     });
   }
 
+  // 費用の明細（costItems）は、基本は「個人（またはそのサブグループ）が実際に払った金額」を
+  // そのまま入れる（CONTEXT.md参照）。ただし駐車場代など全体でまとめて払ったものは、
+  // 「全体費用」と「人数」から個人費用を計算して入れられるよう、行ごとに電卓を用意する
+  // （計算結果を金額欄に反映するだけで、保存する値はあくまで個人費用のまま）。
   function renderCostItems() {
     var el = $('#entCostItems');
     el.innerHTML = '';
@@ -1166,14 +1174,38 @@
       row.innerHTML =
         '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
         '<input type="number" min="0" step="1" placeholder="円" value="' + (item.amount || '') + '">' +
+        '<button type="button" class="cost-split-toggle" aria-label="全体費用から計算">÷人数</button>' +
         '<button type="button" aria-label="削除">×</button>';
       var inputs = row.querySelectorAll('input');
+      var amountInput = inputs[1];
       inputs[0].addEventListener('input', function (e) { state.formCostItems[idx].label = e.target.value; });
-      inputs[1].addEventListener('input', function (e) {
+      amountInput.addEventListener('input', function (e) {
         state.formCostItems[idx].amount = Math.max(0, parseInt(e.target.value, 10) || 0);
         renderCostTotal();
       });
-      row.querySelector('button').addEventListener('click', function () {
+      row.querySelector('.cost-split-toggle').addEventListener('click', function () {
+        var existing = row.nextElementSibling;
+        if (existing && existing.classList.contains('cost-split-row')) { existing.remove(); return; }
+        var splitRow = document.createElement('div');
+        splitRow.className = 'cost-split-row';
+        splitRow.innerHTML =
+          '<input type="number" min="0" step="1" placeholder="全体費用（円）">' +
+          '<span>÷</span>' +
+          '<input type="number" min="1" step="1" placeholder="人数" value="2">' +
+          '<button type="button">反映</button>';
+        var splitInputs = splitRow.querySelectorAll('input');
+        splitRow.querySelector('button').addEventListener('click', function () {
+          var total = Math.max(0, parseInt(splitInputs[0].value, 10) || 0);
+          var count = Math.max(1, parseInt(splitInputs[1].value, 10) || 1);
+          var perPerson = Math.round(total / count);
+          amountInput.value = perPerson;
+          state.formCostItems[idx].amount = perPerson;
+          renderCostTotal();
+          splitRow.remove();
+        });
+        row.insertAdjacentElement('afterend', splitRow);
+      });
+      row.querySelector('[aria-label="削除"]').addEventListener('click', function () {
         state.formCostItems.splice(idx, 1);
         renderCostItems();
       });

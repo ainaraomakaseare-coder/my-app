@@ -901,9 +901,12 @@ function voicePrompt(transcript, notes) {
     "- 話された順番のとおりに配列を並べること",
     "- 1つの出来事・場所ごとに1つのBlockを作ること",
     "- categoryは次のいずれか一つ: sightseeing（観光）, food（食事）, lodging（宿泊）, transport（移動）, other（その他）",
-    "- labelは短い見出し（例：「ダイヤモンドヘッドに登る」）にすること",
+    "- labelは短い見出し（例：「ダイヤモンドヘッドに登る」）にすること。体言止め（名詞で終える）を基本とし、「〜する」「〜した」のような文にはしないこと",
+    "- categoryがlodging（宿泊）のときは、labelを宿泊施設名だけにすること（例：「ふふ奈良に到着する」ではなく「ふふ奈良」）",
     "- entry.episodeには、話した内容をもとにした2〜3文程度の説明を書くこと（話していないことを推測で付け加えない）",
-    "- 評価・費用など、話されていない情報は絶対に作らないこと",
+    "- block.timeは、「10時に着いた」「18時ごろ」のように具体的な時刻が話されたときだけ24時間表記のHH:MM（例：「10:00」）で入れ、話されていなければ空文字にすること。時刻を推測で作らないこと",
+    "- entry.costItemsは、「入場料800円」「一人5000円で3人だから15000円」のように具体的な金額が話されたときだけ、内訳（品目名と金額）を1件以上の配列で入れること。金額が話されていなければ空配列のままにすること。合計しか話されていなければ、品目名を「合計」などとして1件で入れてよい。金額を推測で作らないこと",
+    "- 評価など、話されていない情報は絶対に作らないこと",
     notes
       ? "- 次のメモ（URLや店名が雑多に書かれている）の中に、Blockの内容と対応しそうなものがあれば、entry.mapUrlまたはentry.shopUrlに入れること。対応するものが無ければ空文字のままにすること。\n\nメモ:\n" + notes
       : "- entry.mapUrl・entry.shopUrlは、音声内で明確なURLが無ければ空文字にすること",
@@ -921,18 +924,31 @@ function voiceBlocksSchema() {
           properties: {
             label: { type: "string" },
             category: { type: "string", enum: CATEGORIES },
+            time: { type: "string" },
             entry: {
               type: "object",
               properties: {
                 episode: { type: "string" },
                 mapUrl: { type: "string" },
                 shopUrl: { type: "string" },
+                costItems: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      label: { type: "string" },
+                      amount: { type: "integer" },
+                    },
+                    required: ["label", "amount"],
+                    additionalProperties: false,
+                  },
+                },
               },
-              required: ["episode", "mapUrl", "shopUrl"],
+              required: ["episode", "mapUrl", "shopUrl", "costItems"],
               additionalProperties: false,
             },
           },
-          required: ["label", "category", "entry"],
+          required: ["label", "category", "time", "entry"],
           additionalProperties: false,
         },
       },
@@ -1011,9 +1027,10 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
     const label = isStr(b.label, 200) ? b.label.trim() : "";
     if (!label) continue;
     const category = CATEGORIES.includes(b.category) ? b.category : "sightseeing";
+    const time = isStr(b.time, 5) && TIME_RE.test(b.time) ? b.time : "";
     const t = new Date(baseTime + i * 10).toISOString(); // 話した順番で安定して並ぶよう少しずつずらす
 
-    const blockRow = { id: uid("blk"), trip_id: tripId, date, time: "", label, category, created_at: t, updated_at: t };
+    const blockRow = { id: uid("blk"), trip_id: tripId, date, time, label, category, created_at: t, updated_at: t };
     await env.DB.prepare(
       "INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
     )

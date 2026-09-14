@@ -59,6 +59,15 @@ var grouped = T.groupBlocksByDate(blocks);
 eq('groupBlocksByDate: 日付ごとにまとまる', Object.keys(grouped).sort(), ['2024-08-10', '2024-08-11']);
 eq('groupBlocksByDate: 同じ日は時間順', grouped['2024-08-10'].map(function (b) { return b.id; }), ['c', 'b']);
 
+// 音声入力のように、一部のBlockだけ時刻が分かっていて残りは未設定（空文字）のことがある。
+// 未設定を「00:00より前」として先頭に押し出さず、作成順（＝話した順）のままにする
+var blocksMixedTime = [
+  { id: 'x', date: '2024-08-10', time: '10:00', createdAt: '1' },
+  { id: 'y', date: '2024-08-10', time: '', createdAt: '2' },
+  { id: 'z', date: '2024-08-10', time: '', createdAt: '3' }
+];
+eq('sortBlocks: 時刻不明のBlockは時刻順に割り込まず、作成順（話した順）のまま', T.sortBlocks(blocksMixedTime).map(function (b) { return b.id; }), ['x', 'y', 'z']);
+
 /* ---- 費用（小項目の明細→合計、大項目・旅行全体の合計） ---- */
 eq('entryCostTotal: 明細を合計する', T.entryCostTotal({ costItems: [{ label: 'そば', amount: 800 }, { label: '飲み物', amount: 400 }] }), 1200);
 eq('entryCostTotal: 明細が無ければ0', T.entryCostTotal({ costItems: [] }), 0);

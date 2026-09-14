@@ -94,8 +94,8 @@ async function launch() {
     // モックも呼ばれるたびに新しいIDを発行する。
     const suffix = voiceCallCount;
     const created = [
-      { id: 'blk_v1_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'ダイヤモンドヘッドに登る', category: 'sightseeing', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v1_' + suffix, blockId: 'blk_v1_' + suffix, episode: '朝からダイヤモンドヘッドに登った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
-      { id: 'blk_v2_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'ファーマーズマーケットでアサイーを食べる', category: 'food', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v2_' + suffix, blockId: 'blk_v2_' + suffix, episode: '5ドルのアサイーを食べたが、おなかを壊した。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: 'https://maps.example.com/farmers-market', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
+      { id: 'blk_v1_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '10:00', label: 'ダイヤモンドヘッドに登る', category: 'sightseeing', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v1_' + suffix, blockId: 'blk_v1_' + suffix, episode: '朝からダイヤモンドヘッドに登った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
+      { id: 'blk_v2_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'ファーマーズマーケットでアサイーを食べる', category: 'food', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v2_' + suffix, blockId: 'blk_v2_' + suffix, episode: '5ドルのアサイーを食べたが、おなかを壊した。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [{ label: 'アサイー', amount: 800 }], waitTime: '', mapUrl: 'https://maps.example.com/farmers-market', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
       { id: 'blk_v3_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'プールでタオルを忘れる', category: 'other', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v3_' + suffix, blockId: 'blk_v3_' + suffix, episode: 'ホテルのプールに行ったがタオルを忘れ、びしょ濡れで帰った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] }
     ];
     created.forEach((b) => {
@@ -140,6 +140,8 @@ async function launch() {
   check('話した順番どおりに並ぶ（1件目）', (await page.textContent('.block-label >> nth=0')) === 'ダイヤモンドヘッドに登る');
   check('話した順番どおりに並ぶ（2件目）', (await page.textContent('.block-label >> nth=1')) === 'ファーマーズマーケットでアサイーを食べる');
   check('話した順番どおりに並ぶ（3件目）', (await page.textContent('.block-label >> nth=2')) === 'プールでタオルを忘れる');
+  check('話した内容に具体的な時刻があれば、その予定の時刻として反映される', (await page.textContent('.block-time >> nth=0')) === '10:00');
+  check('話した内容に具体的な金額があれば、その記録の費用の明細として反映される', (await page.textContent('.cost-line.total >> nth=0')).includes('¥800'));
   check('メモに書いたURLが、対応する予定のentryに反映される（サーバー側の仕事だが、返り値どおり表示されるか）', (await page.textContent('.entry-card >> nth=1')).length > 0);
 
   check('文字起こしの折りたたみが表示される', await page.isVisible('#voiceTranscriptBox'));

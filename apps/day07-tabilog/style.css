@@ -239,6 +239,14 @@ a:hover { text-decoration: underline; }
 .cost-item-row input[type="text"] { flex: 1.6; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 9px 11px; }
 .cost-item-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 9px 8px; }
 .cost-item-row button { flex: 0 0 auto; background: none; border: none; color: var(--ink-soft); font-size: 16px; width: 22px; padding: 0; }
+.cost-item-row .cost-split-toggle {
+  width: auto; font-size: 11px; font-weight: 700; color: var(--accent); white-space: nowrap; padding: 6px 9px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--card);
+}
+.cost-split-row { display: flex; gap: 6px; align-items: center; margin: -2px 0 4px; padding: 8px; background: var(--border-soft); border-radius: var(--radius-control); }
+.cost-split-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 8px; font-size: 13px; }
+.cost-split-row span { color: var(--ink-soft); font-size: 12px; flex: 0 0 auto; }
+.cost-split-row button { flex: 0 0 auto; background: var(--accent); color: white; border: none; border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 700; }
 .cost-total { font-size: 12.5px; font-weight: 700; margin-top: 8px; }
 
 .sheet-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }

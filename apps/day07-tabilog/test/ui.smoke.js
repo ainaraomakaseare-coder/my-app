@@ -251,6 +251,18 @@ const TINY_PNG = Buffer.from(
   const rows = page.locator('.cost-item-row');
   await rows.nth(0).locator('input[type="text"]').fill('入場料');
   await rows.nth(0).locator('input[type="number"]').fill('600');
+
+  // ---- 全体費用÷人数の電卓（駐車場代などをまとめて払ったときの個人費用計算） ----
+  await page.click('#btnAddCostItem');
+  await rows.nth(1).locator('.cost-split-toggle').click();
+  const splitRow = page.locator('.cost-split-row').first();
+  await splitRow.locator('input[type="number"]').nth(0).fill('3000');
+  await splitRow.locator('input[type="number"]').nth(1).fill('2');
+  await splitRow.locator('button').click();
+  check('全体費用と人数から個人費用が計算され、金額欄に反映される', (await rows.nth(1).locator('input[type="number"]').inputValue()) === '1500');
+  await rows.nth(1).locator('[aria-label="削除"]').click();
+  check('削除すると費用の行が1件に戻る', (await page.locator('.cost-item-row').count()) === 1);
+
   await page.fill('#entAuthor', '父');
   const tmpPhoto = path.join(require('os').tmpdir(), 'tabilog-test.png');
   fs.writeFileSync(tmpPhoto, TINY_PNG);
