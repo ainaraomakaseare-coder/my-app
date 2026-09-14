@@ -337,6 +337,16 @@
     return API_BASE + '/photos/' + id;
   }
 
+  // ---------- 写真の拡大表示（ライトボックス） ----------
+  function openPhotoLightbox(url) {
+    $('#lightboxImg').src = url;
+    $('#photoLightbox').hidden = false;
+  }
+  function closePhotoLightbox() {
+    $('#photoLightbox').hidden = true;
+    $('#lightboxImg').src = '';
+  }
+
   function api(path, method, body) {
     return fetch(API_BASE + path, {
       method: method || 'GET',
@@ -398,6 +408,28 @@
     });
   }
 
+  // 画像を時計回りに90度単位で回す（スマホのカメラ写真が横向きに保存されてしまうときの手直し用）
+  function rotateImageBlob(blob, degrees) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(blob);
+      var img = new Image();
+      img.onerror = reject;
+      img.onload = function () {
+        var swap = (degrees / 90) % 2 !== 0;
+        var canvas = document.createElement('canvas');
+        canvas.width = swap ? img.height : img.width;
+        canvas.height = swap ? img.width : img.height;
+        var ctx = canvas.getContext('2d');
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate(degrees * Math.PI / 180);
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(function (out) { out ? resolve(out) : reject(new Error('toBlob failed')); }, 'image/jpeg', 0.85);
+      };
+      img.src = url;
+    });
+  }
+
   // ---------- 旅行のサムネイル画像（新規作成・編集フォームで共用） ----------
   function resetCoverPhotoDraft(existingId) {
     state.coverPhotoDraft = { blob: null, previewUrl: '', existingId: existingId || '', removed: false };
@@ -408,7 +440,7 @@
     var draft = state.coverPhotoDraft;
     var url = draft.blob ? draft.previewUrl : (!draft.removed && draft.existingId ? photoUrl(draft.existingId) : '');
     el.innerHTML = url
-      ? '<div class="ph"><img src="' + escapeHtml(url) + '"><button type="button" aria-label="削除">×</button></div>'
+      ? '<div class="ph"><img src="' + escapeHtml(url) + '"><button type="button" class="ph-remove" aria-label="削除">×</button></div>'
       : '';
     if (url) {
       el.querySelector('button').addEventListener('click', function () {
@@ -980,7 +1012,7 @@
 
     var photosHtml = (entry.photoIds || []).length
       ? '<div class="entry-photos">' + entry.photoIds.map(function (id) {
-          return '<div class="entry-photo" style="background-image:url(\'' + escapeHtml(photoUrl(id)) + '\')"></div>';
+          return '<div class="entry-photo" data-photo-id="' + escapeHtml(id) + '" style="background-image:url(\'' + escapeHtml(photoUrl(id)) + '\')"></div>';
         }).join('') + '</div>'
       : '';
 
@@ -1021,7 +1053,16 @@
       costHtml +
       (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '');
 
-    card.addEventListener('click', function () { openEntryForm(block.id, entry); });
+    // 写真をタップしたときは編集画面へ行かず、拡大表示（ライトボックス）を開く
+    card.addEventListener('click', function (e) {
+      var photoEl = e.target.closest('.entry-photo');
+      if (photoEl) {
+        e.stopPropagation();
+        openPhotoLightbox(photoUrl(photoEl.dataset.photoId));
+        return;
+      }
+      openEntryForm(block.id, entry);
+    });
     return card;
   }
 
@@ -1175,26 +1216,54 @@
     }).catch(function () { status.textContent = '評価の保存に失敗しました。もう一度お試しください。'; });
   }
 
+  var ROTATE_ICON = '<svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 8A6 6 0 1 0 16 11"/><path d="M16 4v4h-4"/></svg>';
+
   function renderPhotoPreview() {
     var el = $('#entPhotoPreview');
     el.innerHTML = '';
     state.formPhotoIds.forEach(function (id, idx) {
       var ph = document.createElement('div');
       ph.className = 'ph';
-      ph.innerHTML = '<img src="' + escapeHtml(photoUrl(id)) + '"><button type="button">×</button>';
-      ph.querySelector('button').addEventListener('click', function () {
+      ph.innerHTML = '<img src="' + escapeHtml(photoUrl(id)) + '">' +
+        '<button type="button" class="ph-rotate" aria-label="90度回す">' + ROTATE_ICON + '</button>' +
+        '<button type="button" class="ph-remove" aria-label="削除">×</button>';
+      ph.querySelector('.ph-remove').addEventListener('click', function () {
         state.formPhotoIds.splice(idx, 1);
         renderPhotoPreview();
+      });
+      // 保存済みの写真の回転は、一度取得→回転→再アップロードしてidを差し替える
+      // （このアプリに写真の上書き更新APIが無いため、新しい写真として置き換える形）
+      ph.querySelector('.ph-rotate').addEventListener('click', function () {
+        var btn = ph.querySelector('.ph-rotate');
+        btn.disabled = true;
+        fetch(photoUrl(id)).then(function (res) { return res.blob(); })
+          .then(function (blob) { return rotateImageBlob(blob, 90); })
+          .then(function (rotated) { return uploadPhotoBlob(rotated); })
+          .then(function (p) {
+            state.formPhotoIds[idx] = p.id;
+            renderPhotoPreview();
+          })
+          .catch(function () { btn.disabled = false; alert('写真の回転に失敗しました。もう一度お試しください。'); });
       });
       el.appendChild(ph);
     });
     state.pendingPhotos.forEach(function (p, idx) {
       var ph = document.createElement('div');
       ph.className = 'ph';
-      ph.innerHTML = '<img src="' + p.url + '"><button type="button">×</button>';
-      ph.querySelector('button').addEventListener('click', function () {
+      ph.innerHTML = '<img src="' + p.url + '">' +
+        '<button type="button" class="ph-rotate" aria-label="90度回す">' + ROTATE_ICON + '</button>' +
+        '<button type="button" class="ph-remove" aria-label="削除">×</button>';
+      ph.querySelector('.ph-remove').addEventListener('click', function () {
+        URL.revokeObjectURL(state.pendingPhotos[idx].url);
         state.pendingPhotos.splice(idx, 1);
         renderPhotoPreview();
+      });
+      ph.querySelector('.ph-rotate').addEventListener('click', function () {
+        rotateImageBlob(state.pendingPhotos[idx].blob, 90).then(function (rotated) {
+          URL.revokeObjectURL(state.pendingPhotos[idx].url);
+          state.pendingPhotos[idx] = { blob: rotated, url: URL.createObjectURL(rotated) };
+          renderPhotoPreview();
+        });
       });
       el.appendChild(ph);
     });
@@ -1436,6 +1505,11 @@
 
   // ---------- 初期化 ----------
   function init() {
+    $('#btnCloseLightbox').addEventListener('click', closePhotoLightbox);
+    $('#photoLightbox').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closePhotoLightbox();
+    });
+
     $('#btnNewTrip').addEventListener('click', openNewTripForm);
     $('#btnCreateTrip').addEventListener('click', createTrip);
     $('#btnOpenTripId').addEventListener('click', function () {

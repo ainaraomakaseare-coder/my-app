@@ -284,6 +284,16 @@ const TINY_PNG = Buffer.from(
   fs.writeFileSync(tmpPhoto, TINY_PNG);
   await page.setInputFiles('#entPhoto', tmpPhoto);
   await page.waitForSelector('#entPhotoPreview .ph img');
+
+  // ---- アップロード前の写真を90度回す ----
+  const srcBeforeRotate = await page.getAttribute('#entPhotoPreview .ph img', 'src');
+  await page.click('#entPhotoPreview .ph-rotate');
+  await page.waitForFunction((prev) => {
+    const img = document.querySelector('#entPhotoPreview .ph img');
+    return img && img.getAttribute('src') !== prev;
+  }, srcBeforeRotate);
+  check('アップロード前の写真を回すと、プレビュー画像が更新される', true);
+
   const tmpVideo = path.join(require('os').tmpdir(), 'tabilog-test.mp4');
   fs.writeFileSync(tmpVideo, Buffer.from('fake video bytes'));
   await page.setInputFiles('#entVideo', tmpVideo);
@@ -299,6 +309,26 @@ const TINY_PNG = Buffer.from(
   check('詳細は一覧のカードには出さない（記録を開いたときだけ見える）', (await page.$$('.entry-detail')).length === 0);
   check('動画が表示される', (await page.$$('.entry-videos video')).length === 1);
   check('費用の合計が表示される', (await page.textContent('.cost-line.total')).includes('¥600'));
+
+  // ---- 写真をタップすると拡大表示になる（編集画面には行かない） ----
+  await page.click('.entry-photo');
+  check('写真をタップすると拡大表示（ライトボックス）が開く', !(await page.isHidden('#photoLightbox')));
+  check('拡大表示のままentryFormには行かない', await page.isVisible('.screen[data-screen="tripDetail"].active'));
+  await page.click('#btnCloseLightbox');
+  check('閉じるボタンで拡大表示が閉じる', await page.isHidden('#photoLightbox'));
+
+  // ---- 保存済みの写真も90度回せる ----
+  await page.click('.entry-card >> nth=0 >> .entry-author');
+  await page.waitForSelector('.screen[data-screen="entryForm"].active');
+  const savedSrcBeforeRotate = await page.getAttribute('#entPhotoPreview .ph img', 'src');
+  await page.click('#entPhotoPreview .ph-rotate');
+  await page.waitForFunction((prev) => {
+    const img = document.querySelector('#entPhotoPreview .ph img');
+    return img && img.getAttribute('src') !== prev;
+  }, savedSrcBeforeRotate);
+  check('保存済みの写真も回すとプレビューが更新される（再アップロードして差し替え）', true);
+  await page.click('.screen.active [data-back="tripDetail"]');
+  await page.waitForSelector('.screen[data-screen="tripDetail"].active');
 
   // ---- 別行動：同じ大項目にもう1つ記録を追加 ----
   await page.click('.entry-add');
