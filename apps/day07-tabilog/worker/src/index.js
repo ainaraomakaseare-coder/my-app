@@ -20,7 +20,7 @@ function cors(origin, allowed) {
   return {
     "access-control-allow-origin": ok ? origin : allowed,
     "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-headers": "content-type, x-voice-meta",
     "vary": "Origin",
   };
 }
