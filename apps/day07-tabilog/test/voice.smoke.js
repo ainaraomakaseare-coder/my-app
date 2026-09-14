@@ -172,6 +172,17 @@ async function launch() {
   await page.waitForFunction(() => document.querySelectorAll('.block').length === 6);
   check('2回目の送信もタイムラインに積み増される（3件→6件）', (await page.$$('.block')).length === 6);
 
+  // ---- 1回の録音は3分まで（プレミアムプランの上限に合わせて、時間そのものをアプリ側で強制する） ----
+  await page.click('.block-add >> text=音声でまとめて記録する');
+  await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
+  await page.clock.install();
+  await page.click('#btnVoiceRecord');
+  await page.waitForFunction(() => (document.querySelector('#voiceRecordStatus') || {}).textContent.includes('録音中'));
+  await page.clock.fastForward(3 * 60 * 1000 + 1000);
+  await page.waitForSelector('#btnCreateVoiceEntries:not([hidden])');
+  check('3分に達すると自動的に録音が止まる', (await page.textContent('#voiceRecordStatus')).includes('自動的に止めました'));
+  check('録音ボタンのラベルも「話しなおす」に戻る', (await page.textContent('#btnVoiceRecord')).includes('話しなおす'));
+
   check('ページ内エラーが発生していない', errors.length === 0, errors.join(' / '));
 
   await browser.close();

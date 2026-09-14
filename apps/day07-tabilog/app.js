@@ -756,6 +756,10 @@
   var voiceBlob = null;
   var voiceStartedAt = 0;
   var voiceTimerInterval = null;
+  var voiceAutoStopped = false;
+  // プレミアムプランの「1回3分まで」に合わせて、録音時間そのものをアプリ側で強制する
+  // （時間の上限を超えられないようにしておけば、費用の見積もりが崩れない）
+  var VOICE_MAX_MS = 3 * 60 * 1000;
 
   function formatVoiceElapsed(ms) {
     var seconds = Math.max(0, Math.floor(ms / 1000));
@@ -818,6 +822,7 @@
       voiceRecorder = mimeType ? new MediaRecorder(stream, { mimeType: mimeType }) : new MediaRecorder(stream);
       voiceChunks = [];
       voiceStartedAt = Date.now();
+      voiceAutoStopped = false;
       voiceRecorder.addEventListener('dataavailable', function (e) {
         if (e.data && e.data.size) voiceChunks.push(e.data);
       });
@@ -828,7 +833,10 @@
         var seconds = Math.max(1, Math.round((Date.now() - voiceStartedAt) / 1000));
         setVoiceRecordLabel(MIC_ICON, '話しなおす');
         $('#voiceRecordStatus').classList.remove('is-recording');
-        $('#voiceRecordStatus').textContent = '録音できました（約' + seconds + '秒）。内容を確認して「この内容で予定を作る」を押してください。';
+        var doneMessage = '録音できました（約' + seconds + '秒）。内容を確認して「この内容で予定を作る」を押してください。';
+        $('#voiceRecordStatus').textContent = voiceAutoStopped
+          ? '1回の録音は3分までのため、自動的に止めました。' + doneMessage
+          : doneMessage;
         $('#btnCreateVoiceEntries').hidden = false;
       });
       voiceRecorder.start();
@@ -838,7 +846,13 @@
       $('#btnCreateVoiceEntries').hidden = true;
       stopVoiceTimer();
       voiceTimerInterval = setInterval(function () {
-        $('#voiceRecordStatus').textContent = '● 録音中… ' + formatVoiceElapsed(Date.now() - voiceStartedAt);
+        var elapsed = Date.now() - voiceStartedAt;
+        if (elapsed >= VOICE_MAX_MS) {
+          voiceAutoStopped = true;
+          if (voiceRecorder && voiceRecorder.state === 'recording') voiceRecorder.stop();
+          return;
+        }
+        $('#voiceRecordStatus').textContent = '● 録音中… ' + formatVoiceElapsed(elapsed) + ' / ' + formatVoiceElapsed(VOICE_MAX_MS);
       }, 500);
     }).catch(function () {
       $('#voiceRecordStatus').textContent = 'マイクを使えませんでした（許可されているか確認してください）。';
