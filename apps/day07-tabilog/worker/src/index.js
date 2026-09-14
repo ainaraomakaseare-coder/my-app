@@ -546,6 +546,7 @@ function rowToDayInfo(row) {
     precipSum: row.precip_sum,
     isForecast: !!row.is_forecast,
     fetchedAt: row.fetched_at,
+    voiceTranscript: row.voice_transcript || "",
   };
 }
 
@@ -851,17 +852,30 @@ async function joinTrip(tripId, request, env, headers) {
  */
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions";
 const MAX_VOICE_AUDIO_BYTES = 15 * 1024 * 1024; // 数分の音声を想定した上限
 const VOICE_AUDIO_FORMATS = { "audio/webm": "webm", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/ogg": "ogg" };
 
-function arrayBufferToBase64(buf) {
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+// 使っているモデルは音声を直接聞く方式（audio input）に対応していなかったため、
+// 先にWhisper（音声認識専用API）で文字起こしし、そのテキストを元に予定・記録へ
+// 分割する2段階にしている。文字起こし自体もその日のDayInfoに保存する。
+async function transcribeAudio(env, buf, contentType, format) {
+  const form = new FormData();
+  form.append("file", new Blob([buf], { type: contentType }), "audio." + format);
+  form.append("model", "whisper-1");
+  form.append("language", "ja");
+  const res = await fetch(OPENAI_TRANSCRIPTION_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.OPENAI_API_KEY}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const errorBody = await res.text().catch(() => "");
+    console.error(JSON.stringify({ event: "openai_transcribe_error", status: res.status, body: errorBody.slice(0, 500) }));
+    return null;
   }
-  return btoa(binary);
+  const data = await res.json();
+  return typeof data.text === "string" ? data.text.trim() : null;
 }
 
 function outputText(response) {
@@ -875,10 +889,13 @@ function outputText(response) {
   return "";
 }
 
-function voicePrompt(notes) {
+function voicePrompt(transcript, notes) {
   return [
-    "あなたは旅行記録アプリのアシスタントです。旅行者がその日の出来事をまとめて話した音声を聞いて、",
+    "あなたは旅行記録アプリのアシスタントです。旅行者がその日の出来事をまとめて話した音声の文字起こしを読んで、",
     "予定（Block）とその記録（Entry）の配列に分割してください。",
+    "",
+    "文字起こし:",
+    transcript,
     "",
     "ルール：",
     "- 話された順番のとおりに配列を並べること",
@@ -959,20 +976,16 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
   const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
   const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
 
-  const audioBase64 = arrayBufferToBase64(buf);
+  const transcript = await transcribeAudio(env, buf, contentType, format);
+  if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
+  if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
 
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
     body: JSON.stringify({
       model: env.OPENAI_MODEL || "gpt-5.6-sol",
-      input: [{
-        role: "user",
-        content: [
-          { type: "input_audio", input_audio: { data: audioBase64, format } },
-          { type: "input_text", text: voicePrompt(notes) },
-        ],
-      }],
+      input: voicePrompt(transcript, notes),
       reasoning: { effort: "medium" },
       max_output_tokens: 2000,
       store: false,
@@ -1030,8 +1043,27 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
     created.push({ ...rowToBlock(blockRow), entries: [rowToEntry(entryRow)] });
   }
 
+  await saveVoiceTranscript(env, tripId, date, transcript);
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
-  return json({ blocks: created }, 200, headers);
+  return json({ blocks: created, transcript }, 200, headers);
+}
+
+// 文字起こしをその日のDayInfoに保存する。同じ日に複数回話した場合は追記する
+// （天気・場所とは独立したフィールドなので、DayInfoが無ければ最小限の行を作る）。
+async function saveVoiceTranscript(env, tripId, date, transcript) {
+  const id = tripId + "_" + date;
+  const t = nowIso();
+  const existing = await env.DB.prepare("SELECT voice_transcript FROM day_infos WHERE id = ?").bind(id).first();
+  if (existing) {
+    const merged = existing.voice_transcript ? existing.voice_transcript + "\n\n---\n\n" + transcript : transcript;
+    await env.DB.prepare("UPDATE day_infos SET voice_transcript=?, updated_at=? WHERE id=?").bind(merged, t, id).run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO day_infos (id, trip_id, date, place, is_forecast, fetched_at, voice_transcript, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    )
+      .bind(id, tripId, date, "", 0, "", transcript, t, t)
+      .run();
+  }
 }
 
 /* ---------- photos / videos (R2) ---------- */

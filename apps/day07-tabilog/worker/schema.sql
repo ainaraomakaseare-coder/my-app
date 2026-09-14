@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS day_infos (
   precip_sum REAL,
   is_forecast INTEGER NOT NULL DEFAULT 0,
   fetched_at TEXT NOT NULL DEFAULT '',
+  voice_transcript TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(trip_id, date)
@@ -145,3 +146,9 @@ CREATE TABLE IF NOT EXISTS trip_members (
 
 CREATE INDEX IF NOT EXISTS idx_trip_members_trip ON trip_members(trip_id);
 CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
+
+-- v9：day_infosに音声入力の文字起こし（voice_transcript）を追加。上のCREATE TABLEには
+-- 最初から含めてあるため、これは既存の（voice_transcriptを持たない）day_infosテーブルを
+-- 更新するための一度きりの文。既にこの列がある状態で再実行するとエラーになる点に注意
+-- （その場合はこの1行だけ削除してから再実行すればよい。他のCREATE系はすべて再実行安全）。
+ALTER TABLE day_infos ADD COLUMN voice_transcript TEXT NOT NULL DEFAULT '';

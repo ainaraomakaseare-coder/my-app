@@ -63,20 +63,26 @@ async function launch() {
   });
 
   const blocks = {}, entriesByBlock = {};
+  const dayInfosByTrip = {}; // tripId -> date -> {voiceTranscript}
   await page.route(/\/api\/trips$/, async (route) => {
     const data = JSON.parse(route.request().postData());
     route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ id: 'trip_1', title: data.title, startDate: data.startDate || '', endDate: data.endDate || '', companions: data.companions || [], coverPhotoId: '', createdAt: 'now', updatedAt: 'now' }) });
   });
   await page.route(/\/api\/trips\/([^/]+)$/, async (route) => {
     const tripBlocks = Object.values(blocks).map((b) => ({ ...b, entries: entriesByBlock[b.id] || [] }));
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ trip: { id: 'trip_1', title: 'ハワイ旅行', startDate: '2026-08-10', endDate: '2026-08-10', companions: [] }, blocks: tripBlocks, days: [], members: [] }) });
+    const days = Object.entries(dayInfosByTrip.trip_1 || {}).map(([date, info]) => ({ date, place: '', weatherCode: null, tempMax: null, tempMin: null, isForecast: false, voiceTranscript: info.voiceTranscript || '' }));
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ trip: { id: 'trip_1', title: 'ハワイ旅行', startDate: '2026-08-10', endDate: '2026-08-10', companions: [] }, blocks: tripBlocks, days, members: [] }) });
   });
 
   let receivedContentType = '';
   let receivedMeta = null;
   let receivedBodySize = 0;
+  const FAKE_TRANSCRIPT = '朝からダイヤモンドヘッドに登って、そのあとファーマーズマーケット行っておいしい5ドルのアサイー食べておなか壊したんだよね、そのあとホテルに帰ってプールに行ったんだけどタオル忘れてびしょびしょで帰った。';
   await page.route(/\/api\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/, async (route) => {
     const req = route.request();
+    const m = req.url().match(/\/api\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/);
+    const tripId = decodeURIComponent(m[1]);
+    const date = decodeURIComponent(m[2]);
     receivedContentType = req.headers()['content-type'] || '';
     const metaHeader = req.headers()['x-voice-meta'];
     try { receivedMeta = JSON.parse(Buffer.from(metaHeader, 'base64').toString('utf-8')); } catch (e) { receivedMeta = null; }
@@ -91,7 +97,9 @@ async function launch() {
       blocks[b.id] = { id: b.id, tripId: b.tripId, date: b.date, time: b.time, label: b.label, category: b.category, createdAt: b.createdAt, updatedAt: b.updatedAt };
       entriesByBlock[b.id] = b.entries;
     });
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ blocks: created }) });
+    dayInfosByTrip[tripId] = dayInfosByTrip[tripId] || {};
+    dayInfosByTrip[tripId][date] = { voiceTranscript: FAKE_TRANSCRIPT };
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ blocks: created, transcript: FAKE_TRANSCRIPT }) });
   });
 
   await page.goto(BASE);
@@ -128,6 +136,10 @@ async function launch() {
   check('話した順番どおりに並ぶ（2件目）', (await page.textContent('.block-label >> nth=1')) === 'ファーマーズマーケットでアサイーを食べる');
   check('話した順番どおりに並ぶ（3件目）', (await page.textContent('.block-label >> nth=2')) === 'プールでタオルを忘れる');
   check('メモに書いたURLが、対応する予定のentryに反映される（サーバー側の仕事だが、返り値どおり表示されるか）', (await page.textContent('.entry-card >> nth=1')).length > 0);
+
+  check('文字起こしの折りたたみが表示される', await page.isVisible('#voiceTranscriptBox'));
+  await page.click('#voiceTranscriptBox summary');
+  check('文字起こしの内容が見える', (await page.textContent('#voiceTranscriptText')).includes('ダイヤモンドヘッドに登って'));
 
   check('録音した音声データがサーバーに送られている', receivedBodySize > 0);
   check('content-typeが音声の形式になっている', receivedContentType.indexOf('audio/') === 0);

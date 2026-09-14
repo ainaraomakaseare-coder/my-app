@@ -156,6 +156,10 @@ a:hover { text-decoration: underline; }
 .day-weather.has-weather { color: var(--accent-deep); background: var(--accent-soft-bg); }
 .day-weather .forecast-mark { font-weight: 500; color: var(--ink-soft); }
 
+.voice-transcript { margin-bottom: 10px; }
+.voice-transcript summary { font-size: 12px; color: var(--accent); font-weight: 700; cursor: pointer; }
+.voice-transcript p { font-size: 12.5px; color: var(--ink-muted); white-space: pre-line; line-height: 1.6; margin: 8px 0 0; padding: 10px 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+
 /* ---------- timeline: 大項目(block) / 小項目(entry) ---------- */
 .timeline { display: flex; flex-direction: column; gap: 16px; padding: 4px 0 8px; }
 .block { display: flex; flex-direction: column; gap: 8px; }

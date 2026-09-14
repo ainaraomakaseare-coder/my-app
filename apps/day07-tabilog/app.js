@@ -735,6 +735,15 @@
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
     renderTimeline(currentDayBlocks());
     renderDayWeather();
+    renderVoiceTranscript();
+  }
+
+  // 音声でまとめて記録したときの文字起こしを、その日の記録の下に折りたたみで表示する
+  function renderVoiceTranscript() {
+    var info = findDayInfo(state.selectedDate);
+    var text = info && info.voiceTranscript ? info.voiceTranscript : '';
+    $('#voiceTranscriptBox').hidden = !text;
+    $('#voiceTranscriptText').textContent = text;
   }
 
   // ---------- 日ごとの場所・天気 ----------
