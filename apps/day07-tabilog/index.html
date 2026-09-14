@@ -119,6 +119,15 @@
         <label for="ntCompanions">だれと行った？（読点区切り）</label>
         <input type="text" id="ntCompanions" placeholder="例：父、母、妹">
       </div>
+      <div class="field">
+        <label for="ntCoverPhoto">サムネイル画像（任意）</label>
+        <input type="file" id="ntCoverPhoto" accept="image/*" hidden>
+        <div class="photo-picker" id="ntCoverPhotoPicker">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h1.3l.7-1.2c.2-.3.5-.5.9-.5h4.2c.4 0 .7.2.9.5l.7 1.2H15a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="10" cy="10.5" r="3.2"/></svg>
+          <span>画像を選ぶ</span>
+        </div>
+        <div class="photo-preview" id="ntCoverPhotoPreview"></div>
+      </div>
 
       <p class="hint" id="newTripStatus"></p>
       <button class="btn primary wide" id="btnCreateTrip">この旅を作る</button>
@@ -150,6 +159,15 @@
       <div class="field">
         <label for="teCompanions">だれと行った？（読点区切り）</label>
         <input type="text" id="teCompanions" placeholder="例：父、母、妹">
+      </div>
+      <div class="field">
+        <label for="teCoverPhoto">サムネイル画像（任意）</label>
+        <input type="file" id="teCoverPhoto" accept="image/*" hidden>
+        <div class="photo-picker" id="teCoverPhotoPicker">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h1.3l.7-1.2c.2-.3.5-.5.9-.5h4.2c.4 0 .7.2.9.5l.7 1.2H15a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="10" cy="10.5" r="3.2"/></svg>
+          <span>画像を選ぶ</span>
+        </div>
+        <div class="photo-preview" id="teCoverPhotoPreview"></div>
       </div>
 
       <p class="hint" id="tripEditStatus"></p>
@@ -183,6 +201,7 @@
   <section class="screen" data-screen="tripDetail">
     <div class="wrap">
       <header class="trip-cover" id="tripCover">
+        <div class="trip-cover-photo" id="tripCoverPhoto" hidden></div>
         <button class="icon-btn back-btn" data-back="home" aria-label="戻る">
           <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M12.5 4.5L7 10l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>

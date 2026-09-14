@@ -323,7 +323,8 @@
   }
   function rememberTrip(trip) {
     var list = Core.upsertTripIndexEntry(loadMyTrips(), {
-      id: trip.id, title: trip.title, startDate: trip.startDate, endDate: trip.endDate, companions: trip.companions
+      id: trip.id, title: trip.title, startDate: trip.startDate, endDate: trip.endDate, companions: trip.companions,
+      coverPhotoId: trip.coverPhotoId || ''
     });
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(list));
   }
@@ -397,6 +398,46 @@
     });
   }
 
+  // ---------- 旅行のサムネイル画像（新規作成・編集フォームで共用） ----------
+  function resetCoverPhotoDraft(existingId) {
+    state.coverPhotoDraft = { blob: null, previewUrl: '', existingId: existingId || '', removed: false };
+  }
+
+  function renderCoverPhotoPreview(prefix) {
+    var el = $('#' + prefix + 'CoverPhotoPreview');
+    var draft = state.coverPhotoDraft;
+    var url = draft.blob ? draft.previewUrl : (!draft.removed && draft.existingId ? photoUrl(draft.existingId) : '');
+    el.innerHTML = url
+      ? '<div class="ph"><img src="' + escapeHtml(url) + '"><button type="button" aria-label="削除">×</button></div>'
+      : '';
+    if (url) {
+      el.querySelector('button').addEventListener('click', function () {
+        state.coverPhotoDraft.blob = null;
+        state.coverPhotoDraft.previewUrl = '';
+        state.coverPhotoDraft.removed = true;
+        renderCoverPhotoPreview(prefix);
+      });
+    }
+  }
+
+  function handleCoverPhotoChange(prefix, file) {
+    fileToCompressedBlob(file, 1280, 0.72).then(function (blob) {
+      state.coverPhotoDraft.blob = blob;
+      state.coverPhotoDraft.previewUrl = URL.createObjectURL(blob);
+      state.coverPhotoDraft.removed = false;
+      renderCoverPhotoPreview(prefix);
+    });
+  }
+
+  // 新しく選んだ画像があればアップロードしてそのidを、削除だけされていれば空文字を、
+  // どちらでもなければ元のidをそのまま使う
+  function resolveCoverPhotoId() {
+    var draft = state.coverPhotoDraft;
+    if (draft.blob) return uploadPhotoBlob(draft.blob).then(function (p) { return p.id; });
+    if (draft.removed) return Promise.resolve('');
+    return Promise.resolve(draft.existingId || '');
+  }
+
   // マイログの画面で使う、カテゴリごとの呼び名
   var MYLOG_LABELS = {
     food: '飯ログ',
@@ -427,7 +468,10 @@
     myLogItems: [],
     myLogTrips: [],
     myLogCategory: 'food',
-    myLogSort: 'score'
+    myLogSort: 'score',
+    // 旅行のサムネイル画像。新規作成・編集どちらのフォームでも使い回す
+    // （同時に開けるのは片方だけなので、フォームを開くたびに作り直す）
+    coverPhotoDraft: { blob: null, previewUrl: '', existingId: '', removed: false }
   };
 
   function apiNoticeCheck() {
@@ -447,6 +491,12 @@
     syncAccountTripsIntoHome();
   }
 
+  function tripThumbHtml(coverPhotoId) {
+    return coverPhotoId
+      ? '<div class="trip-card-thumb" style="background-image:url(\'' + escapeHtml(photoUrl(coverPhotoId)) + '\')"></div>'
+      : '';
+  }
+
   function renderHomeTripList() {
     var list = loadMyTrips();
     var el = $('#tripList');
@@ -460,10 +510,14 @@
       card.className = 'trip-card';
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
       card.innerHTML =
+        '<div class="trip-card-row">' +
+        tripThumbHtml(t.coverPhotoId) +
+        '<div class="trip-card-body">' +
         '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
         (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
         '<div class="trip-card-companions">' +
-        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') + '</div>';
+        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') + '</div>' +
+        '</div></div>';
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
     });
@@ -484,7 +538,8 @@
       (data.trips || []).forEach(function (t) {
         if (knownIds[t.id]) return;
         known = Core.upsertTripIndexEntry(known, {
-          id: t.id, title: t.title, startDate: t.startDate, endDate: t.endDate, companions: t.companions || []
+          id: t.id, title: t.title, startDate: t.startDate, endDate: t.endDate, companions: t.companions || [],
+          coverPhotoId: t.coverPhotoId || ''
         });
         added = true;
       });
@@ -538,6 +593,8 @@
     $('#ntEnd').value = '';
     $('#ntCompanions').value = '';
     $('#newTripStatus').textContent = '';
+    resetCoverPhotoDraft('');
+    renderCoverPhotoPreview('nt');
     showScreen('newTrip');
   }
 
@@ -547,11 +604,14 @@
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため作成できません。'; return; }
     if (!title) { status.textContent = 'タイトルを入力してください。'; return; }
     status.textContent = '作成中…';
-    api('/trips', 'POST', {
-      title: title,
-      startDate: $('#ntStart').value,
-      endDate: $('#ntEnd').value,
-      companions: Core.parseTags($('#ntCompanions').value)
+    resolveCoverPhotoId().then(function (coverPhotoId) {
+      return api('/trips', 'POST', {
+        title: title,
+        startDate: $('#ntStart').value,
+        endDate: $('#ntEnd').value,
+        companions: Core.parseTags($('#ntCompanions').value),
+        coverPhotoId: coverPhotoId
+      });
     }).then(function (trip) {
       rememberTrip(trip);
       openTrip(trip.id);
@@ -568,6 +628,8 @@
     $('#teEnd').value = trip.endDate || '';
     $('#teCompanions').value = (trip.companions || []).join('、');
     $('#tripEditStatus').textContent = '';
+    resetCoverPhotoDraft(trip.coverPhotoId || '');
+    renderCoverPhotoPreview('te');
     showScreen('tripEditForm');
   }
 
@@ -576,11 +638,14 @@
     var status = $('#tripEditStatus');
     if (!title) { status.textContent = 'タイトルを入力してください。'; return; }
     status.textContent = '保存中…';
-    api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', {
-      title: title,
-      startDate: $('#teStart').value,
-      endDate: $('#teEnd').value,
-      companions: Core.parseTags($('#teCompanions').value)
+    resolveCoverPhotoId().then(function (coverPhotoId) {
+      return api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', {
+        title: title,
+        startDate: $('#teStart').value,
+        endDate: $('#teEnd').value,
+        companions: Core.parseTags($('#teCompanions').value),
+        coverPhotoId: coverPhotoId
+      });
     }).then(function (trip) {
       state.trip = trip;
       rememberTrip(trip);
@@ -596,6 +661,9 @@
   // ---------- 旅行詳細 ----------
   function renderTripDetail() {
     var trip = state.trip;
+    var coverEl = $('#tripCoverPhoto');
+    coverEl.hidden = !trip.coverPhotoId;
+    coverEl.style.backgroundImage = trip.coverPhotoId ? "url('" + photoUrl(trip.coverPhotoId) + "')" : '';
     $('#tripTitle').textContent = trip.title;
     var range = trip.startDate ? Core.formatDateJp(trip.startDate) + (trip.endDate ? ' 〜 ' + Core.formatDateJp(trip.endDate) : '') : '日程未設定';
     var nights = Core.tripNights(trip);
@@ -1307,8 +1375,12 @@
       card.className = 'trip-card';
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
       card.innerHTML =
+        '<div class="trip-card-row">' +
+        tripThumbHtml(t.coverPhotoId) +
+        '<div class="trip-card-body">' +
         '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
-        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>';
+        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
+        '</div></div>';
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
     });
@@ -1376,6 +1448,14 @@
     $('#btnJoinTrip').addEventListener('click', handleJoinTrip);
     $('#btnEditTrip').addEventListener('click', openTripEditForm);
     $('#btnSaveTripEdit').addEventListener('click', saveTripEdit);
+    ['nt', 'te'].forEach(function (prefix) {
+      $('#' + prefix + 'CoverPhotoPicker').addEventListener('click', function () { $('#' + prefix + 'CoverPhoto').click(); });
+      $('#' + prefix + 'CoverPhoto').addEventListener('change', function (e) {
+        var file = (e.target.files || [])[0];
+        if (file) handleCoverPhotoChange(prefix, file);
+        e.target.value = '';
+      });
+    });
     $('#btnVoiceRecord').addEventListener('click', handleVoiceRecordToggle);
     $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
 

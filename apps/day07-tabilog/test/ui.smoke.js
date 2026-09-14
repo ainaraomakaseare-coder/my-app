@@ -86,7 +86,7 @@ const TINY_PNG = Buffer.from(
     if (req.method() === 'POST') {
       const data = JSON.parse(req.postData());
       const id = 'trip_' + (++tripSeq);
-      const t = { id, title: data.title, startDate: data.startDate || '', endDate: data.endDate || '', companions: data.companions || [], coverPhotoId: '', createdAt: 'now', updatedAt: 'now' };
+      const t = { id, title: data.title, startDate: data.startDate || '', endDate: data.endDate || '', companions: data.companions || [], coverPhotoId: data.coverPhotoId || '', createdAt: 'now', updatedAt: 'now' };
       trips[id] = t;
       return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(t) });
     }
@@ -198,30 +198,46 @@ const TINY_PNG = Buffer.from(
 
   await page.goto(BASE);
 
-  // ---- 新しい旅を作る ----
+  // ---- 新しい旅を作る（サムネイル画像つき） ----
+  const tmpCoverPhoto = path.join(require('os').tmpdir(), 'tabilog-test-cover.png');
+  fs.writeFileSync(tmpCoverPhoto, TINY_PNG);
   await page.click('#btnNewTrip');
   await page.fill('#ntTitle', '沖縄 家族旅行');
   await page.fill('#ntStart', '2024-08-10');
   await page.fill('#ntEnd', '2024-08-11');
   await page.fill('#ntCompanions', '父、母、妹');
+  await page.setInputFiles('#ntCoverPhoto', tmpCoverPhoto);
+  await page.waitForSelector('#ntCoverPhotoPreview .ph img');
+  check('新規作成フォームでサムネイル画像のプレビューが出る', true);
   await page.click('#btnCreateTrip');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   check('旅行タイトルが表示される', (await page.textContent('#tripTitle')) === '沖縄 家族旅行');
   check('日タブが2日ぶんできる (1泊2日)', (await page.$$('.day-tab')).length === 2);
+  check('旅行詳細画面にサムネイル画像が表示される', !(await page.isHidden('#tripCoverPhoto')));
 
-  // ---- 旅行のタイトル・日程・参加者を編集する ----
+  await page.click('.screen.active [data-back="home"]');
+  await page.waitForSelector('.screen[data-screen="home"].active');
+  check('ホーム画面の旅行カードにもサムネイル画像が出る', (await page.$$('.trip-card-thumb')).length === 1);
+  await page.click('.trip-card');
+  await page.waitForSelector('.screen[data-screen="tripDetail"].active');
+
+  // ---- 旅行のタイトル・日程・参加者・サムネイル画像を編集する ----
   await page.click('#btnEditTrip');
   await page.waitForSelector('.screen[data-screen="tripEditForm"].active');
   check('編集フォームに今のタイトルが入っている', (await page.inputValue('#teTitle')) === '沖縄 家族旅行');
   check('編集フォームに今の参加者が入っている', (await page.inputValue('#teCompanions')) === '父、母、妹');
+  check('編集フォームに今のサムネイル画像のプレビューが出る', (await page.$$('#teCoverPhotoPreview .ph img')).length === 1);
   await page.fill('#teTitle', '沖縄 家族旅行（3泊に延長）');
   await page.fill('#teEnd', '2024-08-13');
   await page.fill('#teCompanions', '父、母、妹、祖母');
+  await page.click('#teCoverPhotoPreview .ph button');
+  check('編集フォームでサムネイル画像を削除できる', (await page.$$('#teCoverPhotoPreview .ph')).length === 0);
   await page.click('#btnSaveTripEdit');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   check('編集したタイトルが反映される', (await page.textContent('#tripTitle')) === '沖縄 家族旅行（3泊に延長）');
   check('編集した参加者が反映される', (await page.textContent('#tripCompanions')).includes('祖母'));
   check('日程を延ばすと日タブが増える', (await page.$$('.day-tab')).length === 4);
+  check('サムネイル画像を削除すると旅行詳細から消える', await page.isHidden('#tripCoverPhoto'));
 
   // ---- 日ごとの場所・天気 ----
   check('場所未設定のときは「場所を設定」ボタンが出る', (await page.textContent('#dayWeather')).includes('場所を設定'));
@@ -267,7 +283,7 @@ const TINY_PNG = Buffer.from(
   const tmpPhoto = path.join(require('os').tmpdir(), 'tabilog-test.png');
   fs.writeFileSync(tmpPhoto, TINY_PNG);
   await page.setInputFiles('#entPhoto', tmpPhoto);
-  await page.waitForSelector('.photo-preview .ph img');
+  await page.waitForSelector('#entPhotoPreview .ph img');
   const tmpVideo = path.join(require('os').tmpdir(), 'tabilog-test.mp4');
   fs.writeFileSync(tmpVideo, Buffer.from('fake video bytes'));
   await page.setInputFiles('#entVideo', tmpVideo);

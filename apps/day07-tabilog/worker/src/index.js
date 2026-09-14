@@ -73,6 +73,7 @@ function validTripInput(x) {
     if (!Array.isArray(x.companions) || x.companions.length > 20) return false;
     if (!x.companions.every((c) => typeof c === "string" && c.length <= 50)) return false;
   }
+  if (!optStr(x.coverPhotoId, 300)) return false;
   return true;
 }
 
@@ -104,7 +105,7 @@ async function createTrip(request, env, headers) {
     start_date: data.startDate || "",
     end_date: data.endDate || "",
     companions: JSON.stringify(data.companions || []),
-    cover_photo_id: "",
+    cover_photo_id: data.coverPhotoId || "",
     created_at: t,
     updated_at: t,
   };
