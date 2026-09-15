@@ -310,21 +310,30 @@
   }
   .bulkApplyBtn { width: auto; padding: 10px 18px; }
 
-  .personCard.selectable { cursor: pointer; }
-  .selectBadge {
-    position: absolute;
-    top: 6px; right: 6px;
-    width: 24px; height: 24px;
-    border-radius: 50%;
+  .bulkList { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+  .bulkRow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     background: var(--card);
-    border: 2px solid var(--card-edge);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 0.8rem;
-    color: transparent;
-    z-index: 1;
+    border: 1px solid var(--card-edge);
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
   }
-  .personCard.selected { outline: 3px solid var(--rose); outline-offset: 2px; }
-  .personCard.selected .selectBadge { background: var(--rose); border-color: var(--rose); color: #fff; }
+  .bulkRow.selected { border-color: var(--rose); border-width: 2px; padding: 9px 13px; }
+  .bulkCheckbox { width: 20px; height: 20px; accent-color: var(--rose); flex: 0 0 auto; }
+  .bulkRowThumb {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--board);
+    display: flex; align-items: center; justify-content: center;
+    flex: 0 0 auto;
+    font-size: 1.1rem;
+  }
+  .bulkRowThumb img { width: 100%; height: 100%; object-fit: cover; }
+  .bulkRowName { flex: 1; font-size: 1rem; color: var(--ink); }
 
   .overlay {
     position: fixed;
@@ -1083,6 +1092,7 @@
     if (q) list = list.filter(function (p) { return (p.name || "").toLowerCase().indexOf(q) !== -1; });
 
     if (list.length === 0) {
+      els.grid.className = "grid";
       var msg = state.people.length === 0
         ? "まだ誰も登録されていません。右下の + から最初の思い出を追加しましょう。"
         : "見つかりませんでした。";
@@ -1090,6 +1100,12 @@
       return;
     }
 
+    if (state.bulkMode) {
+      renderBulkList(list);
+      return;
+    }
+
+    els.grid.className = "grid";
     els.grid.innerHTML = list.map(function (p) {
       var cover = p.photoUrls && p.photoUrls[0];
       var thumb = cover
@@ -1099,11 +1115,8 @@
       var tagsHtml = tags.length
         ? '<div class="personTags">' + tags.map(function (t) { return '<span class="miniTag">' + esc(t) + "</span>"; }).join("") + "</div>"
         : "";
-      var selected = state.bulkMode && state.bulkSelected.has(p.id);
-      var badgeHtml = state.bulkMode ? '<span class="selectBadge">✓</span>' : "";
       return (
-        '<div class="personCard' + (state.bulkMode ? " selectable" : "") + (selected ? " selected" : "") + '" tabindex="0" role="button" data-id="' + esc(p.id) + '">' +
-        badgeHtml +
+        '<div class="personCard" tabindex="0" role="button" data-id="' + esc(p.id) + '">' +
         '<span class="tape"></span>' +
         '<div class="thumbWrap">' + thumb + "</div>" +
         '<div class="personName hand">' + esc(p.name || "(名前未設定)") + "</div>" +
@@ -1114,18 +1127,35 @@
     }).join("");
 
     Array.prototype.forEach.call(els.grid.querySelectorAll(".personCard"), function (card) {
-      card.addEventListener("click", function () {
-        var id = card.getAttribute("data-id");
-        if (state.bulkMode) {
-          if (state.bulkSelected.has(id)) state.bulkSelected.delete(id);
-          else state.bulkSelected.add(id);
-          render();
-        } else {
-          openDetail(id);
-        }
-      });
+      card.addEventListener("click", function () { openDetail(card.getAttribute("data-id")); });
       card.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); card.click(); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(card.getAttribute("data-id")); }
+      });
+    });
+  }
+
+  function renderBulkList(list) {
+    els.grid.className = "bulkList";
+    els.grid.innerHTML = list.map(function (p) {
+      var cover = p.photoUrls && p.photoUrls[0];
+      var thumb = cover ? '<img src="' + esc(cover) + '" alt="" />' : "🙂";
+      var checked = state.bulkSelected.has(p.id);
+      return (
+        '<label class="bulkRow' + (checked ? " selected" : "") + '">' +
+        '<input type="checkbox" class="bulkCheckbox" data-id="' + esc(p.id) + '"' + (checked ? " checked" : "") + " />" +
+        '<span class="bulkRowThumb">' + thumb + "</span>" +
+        '<span class="bulkRowName">' + esc(p.name || "(名前未設定)") + "</span>" +
+        "</label>"
+      );
+    }).join("");
+
+    Array.prototype.forEach.call(els.grid.querySelectorAll(".bulkCheckbox"), function (cb) {
+      cb.addEventListener("change", function () {
+        var id = cb.getAttribute("data-id");
+        if (cb.checked) state.bulkSelected.add(id);
+        else state.bulkSelected.delete(id);
+        cb.closest(".bulkRow").classList.toggle("selected", cb.checked);
+        els.bulkCount.textContent = state.bulkSelected.size + "人選択中";
       });
     });
   }
