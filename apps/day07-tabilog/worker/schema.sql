@@ -160,11 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- v9：day_infosに音声入力の文字起こし（voice_transcript）列を追加する一度きりの文だった。
 -- 本番環境では反映済みのため、この行は削除済み（上のCREATE TABLEには最初から含めてある）。
 
--- v10：accountsに音声入力の有料プラン関連の列を追加（docs/adr/0004）。上と同じく、
--- 既存のaccountsテーブルを更新するための一度きりの文。再実行するとエラーになる点に注意。
-ALTER TABLE accounts ADD COLUMN plan TEXT NOT NULL DEFAULT 'free';
-ALTER TABLE accounts ADD COLUMN plan_period_start TEXT NOT NULL DEFAULT '';
-ALTER TABLE accounts ADD COLUMN voice_uses_this_period INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE accounts ADD COLUMN ticket_credits INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE accounts ADD COLUMN stripe_customer_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE accounts ADD COLUMN stripe_subscription_id TEXT NOT NULL DEFAULT '';
+-- v10：accountsに音声入力の有料プラン関連の列（plan・plan_period_start・
+-- voice_uses_this_period・ticket_credits・stripe_customer_id・stripe_subscription_id）を
+-- 追加する一度きりの文だった（docs/adr/0004）。本番環境では反映済みのため、この行は削除済み
+-- （上のCREATE TABLEには最初から含めてある）。
