@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポイまも</title>
+<meta name="poimamo-ai-endpoint" content="">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23C98A2E'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='%23fff' font-family='sans-serif'%3E%E3%83%9D%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<style>
+:root{
+  --bg:#FAF7F0;
+  --card:#FFFFFF;
+  --line:#E7E1D3;
+  --ink:#2B2620;
+  --ink-dim:#8A8272;
+  --accent:#C98A2E;
+  --accent-hi:#B67A22;
+  --danger:#D64545;
+  --danger-bg:#FCEBEA;
+  --warning:#B8781E;
+  --warning-bg:#FCF1DD;
+  --ok:#3E9B6A;
+  --expired:#9AA1AE;
+  --expired-bg:#F0EFEC;
+  --font:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
+  line-height:1.6;-webkit-text-size-adjust:100%;
+}
+button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:none}
+input,select,textarea{font-family:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+[hidden]{display:none !important}
+
+.wrap{max-width:480px;margin:0 auto;padding:16px 16px 56px;display:flex;flex-direction:column;gap:16px;min-height:100dvh}
+
+header.top{display:flex;flex-direction:column;gap:4px;padding:6px 2px}
+header.top h1{margin:0;font-size:22px;font-weight:900;letter-spacing:.02em}
+header.top p{margin:0;font-size:12.5px;color:var(--ink-dim)}
+
+.banner{border-radius:12px;padding:12px 14px;font-size:13.5px;font-weight:700;display:flex;gap:8px;align-items:flex-start}
+.banner.warn{background:var(--warning-bg);color:var(--warning)}
+.banner.danger{background:var(--danger-bg);color:var(--danger)}
+.banner.ok{background:#EAF6EF;color:var(--ok)}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.summary-row{display:flex;gap:10px}
+.summary-row .stat{flex:1;text-align:center;padding:10px 4px;border-radius:10px;background:var(--card);border:1px solid var(--line)}
+.summary-row .stat b{display:block;font-size:19px;font-variant-numeric:tabular-nums}
+.summary-row .stat span{font-size:11px;color:var(--ink-dim)}
+
+.btn{background:var(--card);border:1px solid var(--line);border-radius:10px;color:var(--ink);font-size:14px;padding:10px 14px;font-weight:700}
+.btn:hover{border-color:var(--accent)}
+.btn-main{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-main:hover{background:var(--accent-hi)}
+.btn-danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+.btn-danger.confirming{background:var(--danger);color:#fff}
+.btn-sm{font-size:12.5px;padding:6px 10px;border-radius:8px}
+.btn-ghost{background:none;border:none;color:var(--ink-dim);font-size:12.5px;text-decoration:underline;padding:4px}
+.btn:disabled{opacity:.45;cursor:default}
+.btn-block{width:100%}
+
+.entry-list{display:flex;flex-direction:column;gap:10px}
+.empty{color:var(--ink-dim);font-size:13.5px;text-align:center;padding:28px 10px}
+
+.entry{border-radius:14px;padding:12px 14px;border:1px solid var(--line);background:var(--card);display:flex;flex-direction:column;gap:6px}
+.entry.u-danger{border-color:var(--danger);background:var(--danger-bg)}
+.entry.u-warning{border-color:var(--warning);background:var(--warning-bg)}
+.entry.u-expired{background:var(--expired-bg);opacity:.85}
+.entry-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.entry-name{font-weight:700;font-size:15px}
+.entry-balance{font-size:19px;font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap}
+.entry-balance small{font-size:12px;font-weight:500;margin-left:2px}
+.badges{display:flex;gap:6px;flex-wrap:wrap}
+.badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--ink-dim)}
+.badge.limited{color:var(--accent-hi);border-color:var(--accent)}
+.expiry-line{font-size:13px;color:var(--ink-dim)}
+.expiry-line.u-danger{color:var(--danger);font-weight:700}
+.expiry-line.u-warning{color:var(--warning);font-weight:700}
+.expiry-line.u-expired{color:var(--expired);font-weight:700}
+.entry-memo{font-size:12.5px;color:var(--ink-dim)}
+.entry-actions{display:flex;gap:8px;margin-top:2px}
+
+.overlay{position:fixed;inset:0;background:rgba(43,38,32,.45);display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.sheet{background:var(--bg);border-radius:18px 18px 0 0;padding:16px 16px 24px;width:100%;max-width:480px;max-height:92dvh;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.sheet-head{display:flex;justify-content:space-between;align-items:center}
+.sheet-head h2{margin:0;font-size:17px}
+
+.tabs{display:flex;gap:6px}
+.tab{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px;font-size:13px;font-weight:700;color:var(--ink-dim)}
+.tab.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:12.5px;font-weight:700;color:var(--ink-dim)}
+.field input,.field select,.field textarea{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font-size:15px}
+.field textarea{resize:vertical;min-height:52px}
+.field .err{font-size:12px;color:var(--danger)}
+.radio-row{display:flex;gap:10px}
+.radio-row label{display:flex;align-items:center;gap:6px;font-size:13.5px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;flex:1}
+
+.ss-drop{border:2px dashed var(--line);border-radius:14px;padding:22px 14px;text-align:center;color:var(--ink-dim);font-size:13px}
+.ss-preview{max-width:100%;border-radius:10px;border:1px solid var(--line)}
+.ai-note{font-size:12.5px;color:var(--accent-hi);background:#FBF1E2;border-radius:10px;padding:8px 10px}
+.ai-off{font-size:12.5px;color:var(--ink-dim)}
+
+.backup-row{display:flex;gap:8px;justify-content:center}
+footer.note{font-size:11.5px;color:var(--ink-dim);text-align:center;padding:8px 4px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>ポイまも</h1>
+    <p>楽天ポイント・Vポイント・マイレージなど、あちこちのポイントの失効日をまとめて見張ります。</p>
+  </header>
+
+  <div id="banner-area"></div>
+
+  <div class="summary-row" id="summary-row"></div>
+
+  <button class="btn btn-main btn-block" id="open-add">＋ ポイントを登録</button>
+
+  <div class="entry-list" id="entry-list"></div>
+
+  <div class="backup-row">
+    <button class="btn btn-ghost" id="export-btn">データを書き出す</button>
+    <button class="btn btn-ghost" id="import-btn">読み込む</button>
+    <input type="file" id="import-file" accept="application/json" hidden>
+  </div>
+
+  <footer class="note">
+    データはこの端末のブラウザ内だけに保存されます（外部には送信しません）。スクショをAIに読み取らせたときだけ、その画像が一度だけ読み取り用サーバーに送られます。
+  </footer>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2 id="sheet-title">ポイントを登録</h2>
+      <button class="btn btn-sm" id="close-sheet">閉じる</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab on" id="tab-manual" type="button">手入力</button>
+      <button class="tab" id="tab-shot" type="button">スクショから読み取る</button>
+    </div>
+
+    <div id="panel-shot" hidden>
+      <div class="field">
+        <label for="shot-file">スクリーンショットを選ぶ</label>
+        <input type="file" id="shot-file" accept="image/*">
+      </div>
+      <img id="shot-preview" class="ss-preview" hidden>
+      <div id="ai-status"></div>
+      <button class="btn btn-main btn-block" id="shot-run" disabled>AIに読み取らせる</button>
+    </div>
+
+    <form id="entry-form">
+      <div class="field">
+        <label for="f-program">サービス</label>
+        <select id="f-program">
+          <option value="楽天ポイント">楽天ポイント</option>
+          <option value="Vポイント">Vポイント</option>
+          <option value="ANAマイレージ">ANAマイレージ</option>
+          <option value="Amazonポイント">Amazonポイント</option>
+          <option value="dポイント">dポイント</option>
+          <option value="PayPayポイント">PayPayポイント</option>
+          <option value="Pontaポイント">Pontaポイント</option>
+          <option value="その他">その他（自由入力）</option>
+        </select>
+        <div class="err" id="err-program"></div>
+      </div>
+
+      <div class="field" id="field-custom" hidden>
+        <label for="f-custom">サービス名</label>
+        <input type="text" id="f-custom" maxlength="40" placeholder="例：スタバカード">
+        <div class="err" id="err-custom"></div>
+      </div>
+
+      <div class="field">
+        <label>ポイントの種類</label>
+        <div class="radio-row">
+          <label><input type="radio" name="ptype" value="期間限定" checked> 期間限定</label>
+          <label><input type="radio" name="ptype" value="通常"> 通常</label>
+        </div>
+        <div class="err" id="err-ptype"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-balance">残高（ポイント）</label>
+        <input type="number" id="f-balance" min="0" step="1" inputmode="numeric" placeholder="例：1200">
+        <div class="err" id="err-balance"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-expiry">失効日</label>
+        <input type="date" id="f-expiry">
+        <div class="err" id="err-expiry"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-memo">メモ（任意）</label>
+        <textarea id="f-memo" maxlength="200" placeholder="例：楽天カードのポイント"></textarea>
+      </div>
+
+      <button type="submit" class="btn btn-main btn-block" id="save-btn">保存する</button>
+    </form>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+ * ここから下（LOGIC_MARK_START 〜 LOGIC_MARK_END）は
+ * 画面を持たない純粋なロジックだけ。test/logic.test.js から
+ * この部分だけを取り出してテストしている。
+ * ============================================================ */
+var LOGIC_MARK_START = 1;
+
+var KNOWN_PROGRAMS = ["楽天ポイント","Vポイント","ANAマイレージ","Amazonポイント","dポイント","PayPayポイント","Pontaポイント"];
+
+function pad2(n){ return String(n).padStart(2, "0"); }
+
+function todayStr(d){
+  d = d || new Date();
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+}
+
+function daysUntil(expiryDate, today){
+  if(!expiryDate) return null;
+  var a = new Date(expiryDate + "T00:00:00");
+  var b = new Date(today + "T00:00:00");
+  if(isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  return Math.round((a.getTime() - b.getTime()) / 86400000);
+}
+
+function urgencyOf(entry, today){
+  var d = daysUntil(entry.expiryDate, today);
+  if(d === null) return "none";
+  if(d < 0) return "expired";
+  if(d <= 7) return "danger";
+  if(d <= 30) return "warning";
+  return "ok";
+}
+
+function sortEntries(entries, today){
+  var withDate = entries.filter(function(e){ return !!e.expiryDate; });
+  var withoutDate = entries.filter(function(e){ return !e.expiryDate; });
+  withDate.sort(function(a, b){
+    if(a.expiryDate < b.expiryDate) return -1;
+    if(a.expiryDate > b.expiryDate) return 1;
+    return (a.createdAt || "") < (b.createdAt || "") ? 1 : -1;
+  });
+  withoutDate.sort(function(a, b){
+    return (a.createdAt || "") < (b.createdAt || "") ? 1 : -1;
+  });
+  return withDate.concat(withoutDate);
+}
+
+function summarize(entries, today){
+  var expiredCount = 0, soonCount = 0, totalBalance = 0;
+  entries.forEach(function(e){
+    totalBalance += Number(e.balance) || 0;
+    var u = urgencyOf(e, today);
+    if(u === "expired") expiredCount++;
+    else if(u === "danger" || u === "warning") soonCount++;
+  });
+  return { expiredCount: expiredCount, soonCount: soonCount, totalBalance: totalBalance };
+}
+
+function displayProgram(entry){
+  if(entry.program === "その他") return (entry.customProgramName || "").trim() || "その他";
+  return entry.program;
+}
+
+function validateEntry(input){
+  var errors = {};
+  var program = (input.program || "").trim();
+  if(!program) errors.program = "サービス名を選んでください";
+  if(program === "その他" && !(input.customProgramName || "").trim()){
+    errors.customProgramName = "サービス名を入力してください";
+  }
+  if(input.pointType !== "期間限定" && input.pointType !== "通常"){
+    errors.pointType = "ポイントの種類を選んでください";
+  }
+  var balance = input.balance;
+  if(balance === "" || balance === null || balance === undefined || isNaN(Number(balance)) || Number(balance) < 0){
+    errors.balance = "残高を正しく入力してください";
+  }
+  if(input.pointType === "期間限定" && !input.expiryDate){
+    errors.expiryDate = "期間限定ポイントは失効日を入力してください";
+  }
+  if(input.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.expiryDate)){
+    errors.expiryDate = "失効日の形式が正しくありません";
+  }
+  return { valid: Object.keys(errors).length === 0, errors: errors };
+}
+
+function normalizeEntry(input, existing, now){
+  now = now || new Date().toISOString();
+  return {
+    id: (existing && existing.id) || input.id || ("e" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)),
+    program: (input.program || "").trim(),
+    customProgramName: (input.customProgramName || "").trim(),
+    pointType: input.pointType,
+    balance: Math.max(0, Math.round(Number(input.balance) || 0)),
+    expiryDate: input.expiryDate || "",
+    memo: (input.memo || "").trim(),
+    source: input.source || "manual",
+    createdAt: (existing && existing.createdAt) || now,
+    updatedAt: now
+  };
+}
+
+function parseJapaneseDate(text){
+  if(!text) return null;
+  var m = String(text).match(/(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})/);
+  if(!m) return null;
+  return m[1] + "-" + pad2(Number(m[2])) + "-" + pad2(Number(m[3]));
+}
+
+function mapAiResult(ai){
+  if(!ai || typeof ai !== "object") return null;
+  var rawProgram = (ai.program || "").trim();
+  var program = KNOWN_PROGRAMS.indexOf(rawProgram) !== -1 ? rawProgram : "その他";
+  var customProgramName = program === "その他" ? rawProgram : "";
+  var pointType = ai.pointType === "通常" ? "通常" : "期間限定";
+  var expiryDate = ai.expiryDate || null;
+  if(expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)){
+    expiryDate = parseJapaneseDate(expiryDate);
+  }
+  var balance = (ai.balance === null || ai.balance === undefined || isNaN(Number(ai.balance)))
+    ? "" : Math.max(0, Math.round(Number(ai.balance)));
+  return {
+    program: program,
+    customProgramName: customProgramName,
+    pointType: pointType,
+    balance: balance,
+    expiryDate: expiryDate || "",
+    memo: "",
+    confidence: ai.confidence || "medium"
+  };
+}
+
+var LOGIC_MARK_END = 1;
+
+/* ============================================================
+ * ここから下は画面の描画・保存・イベント処理。
+ * ============================================================ */
+
+var STORAGE_KEY = "poimamo:entries:v1";
+
+function loadEntries(){
+  try{
+    var raw = localStorage.getItem(STORAGE_KEY);
+    var list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  }catch(e){
+    return [];
+  }
+}
+
+function saveEntries(list){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+}
+
+var state = {
+  entries: loadEntries(),
+  editingId: null,
+  aiDraft: null
+};
+
+function getAiEndpoint(){
+  var meta = document.querySelector('meta[name="poimamo-ai-endpoint"]');
+  var v = meta ? meta.getAttribute("content").trim() : "";
+  return v;
+}
+
+function fmtNum(n){
+  return Number(n || 0).toLocaleString("ja-JP");
+}
+
+function expiryLabel(entry, today){
+  if(!entry.expiryDate) return "失効日なし";
+  var d = daysUntil(entry.expiryDate, today);
+  if(d < 0) return "失効日 " + entry.expiryDate + "（" + Math.abs(d) + "日前に失効）";
+  if(d === 0) return "失効日 " + entry.expiryDate + "（本日失効）";
+  return "失効日 " + entry.expiryDate + "（あと" + d + "日）";
+}
+
+function render(){
+  var today = todayStr();
+  var entries = state.entries;
+  var sorted = sortEntries(entries, today);
+  var summary = summarize(entries, today);
+
+  var bannerArea = document.getElementById("banner-area");
+  bannerArea.innerHTML = "";
+  if(summary.expiredCount > 0 || summary.soonCount > 0){
+    var div = document.createElement("div");
+    var cls = summary.expiredCount > 0 ? "danger" : "warn";
+    var msgParts = [];
+    if(summary.expiredCount > 0) msgParts.push(summary.expiredCount + "件が失効済み");
+    if(summary.soonCount > 0) msgParts.push(summary.soonCount + "件が30日以内に失効");
+    div.className = "banner " + cls;
+    div.textContent = "⚠ " + msgParts.join(" ／ ") + "です。忘れずに使いましょう。";
+    bannerArea.appendChild(div);
+  }
+
+  var summaryRow = document.getElementById("summary-row");
+  summaryRow.innerHTML =
+    '<div class="stat"><b>' + entries.length + '</b><span>登録件数</span></div>' +
+    '<div class="stat"><b>' + fmtNum(summary.totalBalance) + '</b><span>合計ポイント</span></div>' +
+    '<div class="stat"><b>' + summary.soonCount + '</b><span>30日以内に失効</span></div>';
+
+  var list = document.getElementById("entry-list");
+  list.innerHTML = "";
+  if(sorted.length === 0){
+    var empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "まだ登録がありません。右上の「＋ ポイントを登録」から追加してください。";
+    list.appendChild(empty);
+    return;
+  }
+
+  sorted.forEach(function(entry){
+    var u = urgencyOf(entry, today);
+    var card = document.createElement("div");
+    card.className = "entry" + (u === "danger" || u === "warning" || u === "expired" ? " u-" + u : "");
+
+    var top = document.createElement("div");
+    top.className = "entry-top";
+    var name = document.createElement("div");
+    name.className = "entry-name";
+    name.textContent = displayProgram(entry);
+    var bal = document.createElement("div");
+    bal.className = "entry-balance";
+    bal.innerHTML = fmtNum(entry.balance) + "<small>pt</small>";
+    top.appendChild(name);
+    top.appendChild(bal);
+    card.appendChild(top);
+
+    var badges = document.createElement("div");
+    badges.className = "badges";
+    var typeBadge = document.createElement("span");
+    typeBadge.className = "badge" + (entry.pointType === "期間限定" ? " limited" : "");
+    typeBadge.textContent = entry.pointType;
+    badges.appendChild(typeBadge);
+    if(entry.source === "screenshot"){
+      var srcBadge = document.createElement("span");
+      srcBadge.className = "badge";
+      srcBadge.textContent = "スクショ登録";
+      badges.appendChild(srcBadge);
+    }
+    card.appendChild(badges);
+
+    var expiryLine = document.createElement("div");
+    expiryLine.className = "expiry-line" + (u !== "none" && u !== "ok" ? " u-" + u : "");
+    expiryLine.textContent = expiryLabel(entry, today);
+    card.appendChild(expiryLine);
+
+    if(entry.memo){
+      var memo = document.createElement("div");
+      memo.className = "entry-memo";
+      memo.textContent = entry.memo;
+      card.appendChild(memo);
+    }
+
+    var actions = document.createElement("div");
+    actions.className = "entry-actions";
+    var editBtn = document.createElement("button");
+    editBtn.className = "btn btn-sm";
+    editBtn.textContent = "編集";
+    editBtn.addEventListener("click", function(){ openEdit(entry.id); });
+    var delBtn = document.createElement("button");
+    delBtn.className = "btn btn-sm btn-danger";
+    delBtn.textContent = "削除";
+    var delTimer = null;
+    delBtn.addEventListener("click", function(){
+      if(delBtn.classList.contains("confirming")){
+        clearTimeout(delTimer);
+        deleteEntry(entry.id);
+        return;
+      }
+      delBtn.classList.add("confirming");
+      delBtn.textContent = "本当に削除？";
+      delTimer = setTimeout(function(){
+        delBtn.classList.remove("confirming");
+        delBtn.textContent = "削除";
+      }, 3000);
+    });
+    actions.appendChild(editBtn);
+    actions.appendChild(delBtn);
+    card.appendChild(actions);
+
+    list.appendChild(card);
+  });
+}
+
+function deleteEntry(id){
+  state.entries = state.entries.filter(function(e){ return e.id !== id; });
+  saveEntries(state.entries);
+  render();
+}
+
+function clearErrors(){
+  ["program", "custom", "ptype", "balance", "expiry"].forEach(function(k){
+    document.getElementById("err-" + k).textContent = "";
+  });
+}
+
+function fillForm(entry){
+  document.getElementById("f-program").value = entry.program || "楽天ポイント";
+  document.getElementById("f-custom").value = entry.customProgramName || "";
+  document.getElementById("field-custom").hidden = entry.program !== "その他";
+  var radios = document.querySelectorAll('input[name="ptype"]');
+  radios.forEach(function(r){ r.checked = r.value === (entry.pointType || "期間限定"); });
+  document.getElementById("f-balance").value = entry.balance === "" ? "" : (entry.balance || "");
+  document.getElementById("f-expiry").value = entry.expiryDate || "";
+  document.getElementById("f-memo").value = entry.memo || "";
+}
+
+function resetForm(){
+  fillForm({ program: "楽天ポイント", pointType: "期間限定", balance: "", expiryDate: "", memo: "" });
+  clearErrors();
+}
+
+function openSheet(title){
+  document.getElementById("sheet-title").textContent = title;
+  document.getElementById("overlay").hidden = false;
+  switchTab("manual");
+}
+
+function closeSheet(){
+  document.getElementById("overlay").hidden = true;
+  state.editingId = null;
+  state.aiDraft = null;
+  document.getElementById("shot-file").value = "";
+  document.getElementById("shot-preview").hidden = true;
+  document.getElementById("ai-status").innerHTML = "";
+  document.getElementById("shot-run").disabled = true;
+}
+
+function openAdd(){
+  state.editingId = null;
+  resetForm();
+  openSheet("ポイントを登録");
+}
+
+function openEdit(id){
+  var entry = state.entries.find(function(e){ return e.id === id; });
+  if(!entry) return;
+  state.editingId = id;
+  fillForm(entry);
+  clearErrors();
+  openSheet("ポイントを編集");
+}
+
+function switchTab(name){
+  var manualOn = name === "manual";
+  document.getElementById("tab-manual").classList.toggle("on", manualOn);
+  document.getElementById("tab-shot").classList.toggle("on", !manualOn);
+  document.getElementById("panel-shot").hidden = manualOn;
+  document.getElementById("entry-form").hidden = !manualOn;
+}
+
+function readFormInput(){
+  var ptypeEl = document.querySelector('input[name="ptype"]:checked');
+  return {
+    program: document.getElementById("f-program").value,
+    customProgramName: document.getElementById("f-custom").value,
+    pointType: ptypeEl ? ptypeEl.value : "",
+    balance: document.getElementById("f-balance").value,
+    expiryDate: document.getElementById("f-expiry").value,
+    memo: document.getElementById("f-memo").value
+  };
+}
+
+function showErrors(errors){
+  clearErrors();
+  Object.keys(errors).forEach(function(key){
+    var el = document.getElementById("err-" + (key === "customProgramName" ? "custom" : key === "pointType" ? "ptype" : key));
+    if(el) el.textContent = errors[key];
+  });
+}
+
+function resizeImageFile(file){
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    reader.onerror = function(){ reject(new Error("read_failed")); };
+    reader.onload = function(){
+      var img = new Image();
+      img.onerror = function(){ reject(new Error("decode_failed")); };
+      img.onload = function(){
+        var maxDim = 1280;
+        var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        var w = Math.max(1, Math.round(img.width * scale));
+        var h = Math.max(1, Math.round(img.height * scale));
+        var canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve({ dataUrl: canvas.toDataURL("image/jpeg", 0.82), mediaType: "image/jpeg" });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function requestAiExtraction(file){
+  var endpoint = getAiEndpoint();
+  if(!endpoint) throw new Error("ai_not_configured");
+  var resized = await resizeImageFile(file);
+  var base64 = resized.dataUrl.split(",")[1];
+  var res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ imageBase64: base64, mediaType: resized.mediaType })
+  });
+  var body = null;
+  try{ body = await res.json(); }catch(e){ body = null; }
+  if(!res.ok){
+    throw new Error((body && body.error) || ("http_" + res.status));
+  }
+  return body;
+}
+
+function setupEvents(){
+  document.getElementById("open-add").addEventListener("click", openAdd);
+  document.getElementById("close-sheet").addEventListener("click", closeSheet);
+  document.getElementById("overlay").addEventListener("click", function(e){
+    if(e.target.id === "overlay") closeSheet();
+  });
+  document.getElementById("tab-manual").addEventListener("click", function(){ switchTab("manual"); });
+  document.getElementById("tab-shot").addEventListener("click", function(){ switchTab("shot"); });
+
+  document.getElementById("f-program").addEventListener("change", function(){
+    document.getElementById("field-custom").hidden = this.value !== "その他";
+  });
+
+  document.getElementById("entry-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var input = readFormInput();
+    var result = validateEntry(input);
+    if(!result.valid){
+      showErrors(result.errors);
+      return;
+    }
+    var existing = state.editingId ? state.entries.find(function(e2){ return e2.id === state.editingId; }) : null;
+    input.source = (state.aiDraft ? "screenshot" : (existing ? existing.source : "manual"));
+    var normalized = normalizeEntry(input, existing);
+    if(existing){
+      state.entries = state.entries.map(function(e2){ return e2.id === existing.id ? normalized : e2; });
+    }else{
+      state.entries.push(normalized);
+    }
+    saveEntries(state.entries);
+    closeSheet();
+    render();
+  });
+
+  var shotFileInput = document.getElementById("shot-file");
+  shotFileInput.addEventListener("change", function(){
+    var file = shotFileInput.files && shotFileInput.files[0];
+    var statusEl = document.getElementById("ai-status");
+    var runBtn = document.getElementById("shot-run");
+    statusEl.innerHTML = "";
+    if(!file){
+      document.getElementById("shot-preview").hidden = true;
+      runBtn.disabled = true;
+      return;
+    }
+    var preview = document.getElementById("shot-preview");
+    var reader = new FileReader();
+    reader.onload = function(){ preview.src = reader.result; preview.hidden = false; };
+    reader.readAsDataURL(file);
+
+    if(!getAiEndpoint()){
+      statusEl.innerHTML = '<p class="ai-off">この端末ではまだAI読み取りが設定されていません。手入力タブから登録してください。</p>';
+      runBtn.disabled = true;
+      return;
+    }
+    runBtn.disabled = false;
+  });
+
+  document.getElementById("shot-run").addEventListener("click", async function(){
+    var file = shotFileInput.files && shotFileInput.files[0];
+    if(!file) return;
+    var statusEl = document.getElementById("ai-status");
+    var runBtn = document.getElementById("shot-run");
+    runBtn.disabled = true;
+    statusEl.innerHTML = '<p class="ai-off">AIが読み取っています…</p>';
+    try{
+      var ai = await requestAiExtraction(file);
+      var draft = mapAiResult(ai);
+      if(!draft) throw new Error("empty_result");
+      state.aiDraft = draft;
+      fillForm(draft);
+      clearErrors();
+      statusEl.innerHTML = '<p class="ai-note">AIが読み取った内容をフォームに入力しました。内容を確認してから保存してください。</p>';
+      switchTab("manual");
+    }catch(err){
+      var msg = err && err.message === "ai_not_configured"
+        ? "この端末ではまだAI読み取りが設定されていません。"
+        : "読み取りに失敗しました。手入力をご利用ください。";
+      statusEl.innerHTML = '<p class="ai-off">' + msg + '</p>';
+    }finally{
+      runBtn.disabled = false;
+    }
+  });
+
+  document.getElementById("export-btn").addEventListener("click", function(){
+    var blob = new Blob([JSON.stringify(state.entries, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "poimamo-" + todayStr() + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("import-btn").addEventListener("click", function(){
+    document.getElementById("import-file").click();
+  });
+  document.getElementById("import-file").addEventListener("change", function(){
+    var file = this.files && this.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try{
+        var list = JSON.parse(reader.result);
+        if(!Array.isArray(list)) throw new Error("not_array");
+        var byId = {};
+        state.entries.forEach(function(e){ byId[e.id] = e; });
+        list.forEach(function(raw){
+          var normalized = normalizeEntry(raw, byId[raw.id]);
+          byId[normalized.id] = normalized;
+        });
+        state.entries = Object.keys(byId).map(function(k){ return byId[k]; });
+        saveEntries(state.entries);
+        render();
+      }catch(e){
+        alert("読み込みに失敗しました。書き出したファイルを選んでください。");
+      }
+    };
+    reader.readAsText(file);
+    this.value = "";
+  });
+}
+
+setupEvents();
+render();
+</script>
+</body>
+</html>
