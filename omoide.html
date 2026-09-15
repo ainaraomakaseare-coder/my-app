@@ -6,10 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yomogi&family=Zen+Maru+Gothic:wght@400;500;700;900&display=swap">
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root {
     --board: #e7e0cd;
@@ -740,24 +737,17 @@
 (function () {
   "use strict";
 
-  // ============ Firebase 設定 ============
-  // Firebaseコンソール(プロジェクトの設定 → マイアプリ)で取得した値に置き換えてください。
-  var firebaseConfig = {
-    apiKey: "___YOUR_API_KEY___",
-    authDomain: "___YOUR_PROJECT___.firebaseapp.com",
-    projectId: "___YOUR_PROJECT___",
-    storageBucket: "___YOUR_PROJECT___.appspot.com",
-    messagingSenderId: "___YOUR_SENDER_ID___",
-    appId: "___YOUR_APP_ID___"
-  };
+  // ============ Supabase 設定 ============
+  // Supabaseの「プロジェクトの設定 → API」で取得した値に置き換えてください。
+  var SUPABASE_URL = "___YOUR_SUPABASE_URL___";
+  var SUPABASE_ANON_KEY = "___YOUR_SUPABASE_ANON_KEY___";
+  var PHOTOS_BUCKET = "photos";
 
   // 合言葉のSHA-256ハッシュ値。平文のまま置かないようにハッシュで持たせています。
-  // 変更したい場合は、下のconsole.logの手順でハッシュを作り直してください。
   var PASSPHRASE_SHA256 = "___PASSPHRASE_HASH___";
 
-  firebase.initializeApp(firebaseConfig);
-  var firestoreDb = firebase.firestore();
-  var storageService = firebase.storage();
+  var supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  var pollTimer = null;
 
   // ============ 合言葉ゲート ============
 
@@ -802,7 +792,6 @@
   var state = {
     db: null,
     people: [],
-    unsubscribe: null,
     sort: "recent",
     search: "",
     tagFilters: new Set(),
@@ -879,7 +868,7 @@
     });
   }
 
-  // ---------- 写真の保存(Firebase Storage) ----------
+  // ---------- 写真の保存(Supabase Storage) ----------
 
   function cryptoId() {
     if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
@@ -888,14 +877,21 @@
 
   async function uploadPhoto(file) {
     var safeName = (file.name || "photo").replace(/[^\w.\-]/g, "_");
-    var path = "photos/" + cryptoId() + "_" + safeName;
-    var ref = storageService.ref().child(path);
-    await ref.put(file);
-    return await ref.getDownloadURL();
+    var path = cryptoId() + "_" + safeName;
+    var up = await supabaseClient.storage.from(PHOTOS_BUCKET).upload(path, file);
+    if (up.error) throw up.error;
+    var pub = supabaseClient.storage.from(PHOTOS_BUCKET).getPublicUrl(path);
+    return pub.data.publicUrl;
   }
 
   async function deletePhotoByUrl(url) {
-    try { await storageService.refFromURL(url).delete(); } catch (e) {}
+    try {
+      var marker = "/" + PHOTOS_BUCKET + "/";
+      var idx = url.indexOf(marker);
+      if (idx === -1) return;
+      var path = decodeURIComponent(url.slice(idx + marker.length).split("?")[0]);
+      await supabaseClient.storage.from(PHOTOS_BUCKET).remove([path]);
+    } catch (e) {}
   }
 
   // ---------- 音声入力 ----------
@@ -979,34 +975,48 @@
     if (btn) btn.addEventListener("click", function () { window.location.reload(); });
   }
 
+  function rowToPerson(row) {
+    return {
+      id: row.id,
+      name: row.name,
+      nickname: row.nickname || "",
+      tags: row.tags || [],
+      hobbies: row.hobbies || [],
+      photoUrls: row.photo_urls || [],
+      episodes: row.episodes || [],
+      history: row.history || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
   async function init() {
     try {
-      await firebase.auth().signInAnonymously();
+      var signIn = await supabaseClient.auth.signInAnonymously();
+      if (signIn.error) throw signIn.error;
     } catch (e) {
       showConnectFailed();
       return;
     }
-    state.db = firestoreDb;
-    subscribe();
+    state.db = supabaseClient;
+    await loadPeople();
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(function () {
+      // 詳細画面を開いている間は、入力中のものを消さないよう自動更新しない
+      if (!state.selectedId && !tagPanelState.tagName) loadPeople();
+    }, 12000);
   }
 
-  function subscribe() {
-    if (state.unsubscribe) { state.unsubscribe(); state.unsubscribe = null; }
-    var col = state.db.collection("people");
-    var q = state.sort === "name" ? col.orderBy("name", "asc") : col.orderBy("createdAt", "desc");
-    state.unsubscribe = q.onSnapshot(
-      function (snap) {
-        state.people = snap.docs.map(function (d) {
-          var data = d.data() || {};
-          data.id = d.id;
-          return data;
-        });
-        render();
-      },
-      function (err) {
-        showToast("読み込みでエラーが起きました: " + (err && err.message ? err.message : ""));
-      }
-    );
+  async function loadPeople() {
+    var ascending = state.sort === "name";
+    var orderCol = state.sort === "name" ? "name" : "created_at";
+    var res = await supabaseClient.from("people").select("*").order(orderCol, { ascending: ascending });
+    if (res.error) {
+      showToast("読み込みでエラーが起きました: " + res.error.message);
+      return;
+    }
+    state.people = res.data.map(rowToPerson);
+    render();
   }
 
   // ---------- 一覧表示 ----------
@@ -1244,17 +1254,17 @@
       if (episodeText) {
         episodes.push({ id: cryptoId(), text: episodeText, createdAt: nowIso });
       }
-      await state.db.collection("people").add({
+      var res = await state.db.from("people").insert({
         name: name,
         nickname: els.addNicknameInput.value.trim(),
         tags: pendingAddTags.slice(),
         hobbies: pendingAddHobbies.slice(),
-        photoUrls: photoUrls,
+        photo_urls: photoUrls,
         episodes: episodes,
-        history: [],
-        createdAt: nowIso,
-        updatedAt: nowIso
+        history: []
       });
+      if (res.error) throw res.error;
+      await loadPeople();
       closeAdd();
       showToast("追加しました");
     } catch (e) {
@@ -1528,9 +1538,11 @@
     document.getElementById("deletePersonBtn").addEventListener("click", async function () {
       if (!confirm(p.name + " さんを削除します。元に戻せません。よろしいですか？")) return;
       try {
-        await state.db.collection("people").doc(p.id).delete();
+        var res = await state.db.from("people").delete().eq("id", p.id);
+        if (res.error) throw res.error;
         (p.photoUrls || []).forEach(function (url) { deletePhotoByUrl(url); });
         closeDetail();
+        await loadPeople();
         showToast("削除しました");
       } catch (e) {
         showToast("削除に失敗しました");
@@ -1538,10 +1550,24 @@
     });
   }
 
+  function personPatchToRow(patch) {
+    var row = {};
+    if ("name" in patch) row.name = patch.name;
+    if ("nickname" in patch) row.nickname = patch.nickname;
+    if ("tags" in patch) row.tags = patch.tags;
+    if ("hobbies" in patch) row.hobbies = patch.hobbies;
+    if ("photoUrls" in patch) row.photo_urls = patch.photoUrls;
+    if ("episodes" in patch) row.episodes = patch.episodes;
+    if ("history" in patch) row.history = patch.history;
+    row.updated_at = new Date().toISOString();
+    return row;
+  }
+
   async function updatePerson(id, patch) {
-    patch.updatedAt = new Date().toISOString();
     try {
-      await state.db.collection("people").doc(id).update(patch);
+      var res = await state.db.from("people").update(personPatchToRow(patch)).eq("id", id);
+      if (res.error) throw res.error;
+      await loadPeople();
     } catch (e) {
       showToast("更新に失敗しました: " + (e && e.message ? e.message : ""));
     }
@@ -1558,8 +1584,9 @@
     window.scrollTo(0, 0);
     renderTagDetail();
     try {
-      var doc = await state.db.collection("tagNotes").doc(tagName).get();
-      tagPanelState.notes = (doc.exists && doc.data().episodes) || [];
+      var res = await state.db.from("tag_notes").select("*").eq("tag_name", tagName).maybeSingle();
+      if (res.error) throw res.error;
+      tagPanelState.notes = (res.data && res.data.episodes) || [];
     } catch (e) {
       showToast("読み込みでエラーが起きました: " + (e && e.message ? e.message : ""));
     }
@@ -1573,10 +1600,12 @@
 
   async function saveTagNotes() {
     try {
-      await state.db.collection("tagNotes").doc(tagPanelState.tagName).set({
+      var res = await state.db.from("tag_notes").upsert({
+        tag_name: tagPanelState.tagName,
         episodes: tagPanelState.notes,
-        updatedAt: new Date().toISOString()
+        updated_at: new Date().toISOString()
       });
+      if (res.error) throw res.error;
     } catch (e) {
       showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
     }
@@ -1678,7 +1707,7 @@
       Array.prototype.forEach.call(document.querySelectorAll(".sortBtn"), function (b) { b.classList.remove("active"); });
       btn.classList.add("active");
       state.sort = btn.getAttribute("data-sort");
-      subscribe();
+      loadPeople();
     });
   });
 })();
