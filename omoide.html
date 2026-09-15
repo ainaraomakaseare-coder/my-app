@@ -744,7 +744,7 @@
   var PHOTOS_BUCKET = "photos";
 
   // 合言葉のSHA-256ハッシュ値。平文のまま置かないようにハッシュで持たせています。
-  var PASSPHRASE_SHA256 = "c1a785572e32f6aa8e59f44ef5e5d209192ef9b9acee4d84d54840f9975da3c0";
+  var PASSPHRASE_SHA256 = "e7d99b368fa7e36e253db9bde136aaad754f497c24bf72fbc21474fc79ac8b4a";
 
   var supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var pollTimer = null;
@@ -777,7 +777,7 @@
   }
 
   document.getElementById("gateSubmit").addEventListener("click", trySubmitGate);
-  gateInput.addEventListener("keydown", function (e) { if (e.key === "Enter") trySubmitGate(); });
+  gateInput.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.isComposing) trySubmitGate(); });
 
   (async function checkSavedGate() {
     try {
