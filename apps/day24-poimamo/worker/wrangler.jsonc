@@ -7,7 +7,7 @@
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
-    "ANTHROPIC_MODEL": "claude-haiku-4-5-20251001",
+    "ANTHROPIC_MODEL": "claude-haiku-4-5",
     "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io"
   },
   "secrets": {

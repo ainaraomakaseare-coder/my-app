@@ -106,7 +106,7 @@ export default {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
+        model: env.ANTHROPIC_MODEL || "claude-haiku-4-5",
         max_tokens: 512,
         tools: [extractionTool()],
         tool_choice: { type: "tool", name: "extract_point_info" },
