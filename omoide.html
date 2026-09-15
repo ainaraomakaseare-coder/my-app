@@ -739,12 +739,12 @@
 
   // ============ Supabase 設定 ============
   // Supabaseの「プロジェクトの設定 → API」で取得した値に置き換えてください。
-  var SUPABASE_URL = "___YOUR_SUPABASE_URL___";
-  var SUPABASE_ANON_KEY = "___YOUR_SUPABASE_ANON_KEY___";
+  var SUPABASE_URL = "https://kkukkhhocuuihytwwuoc.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_JZafbvGqkIKl9swIWxEBIA_8lbAfbpU";
   var PHOTOS_BUCKET = "photos";
 
   // 合言葉のSHA-256ハッシュ値。平文のまま置かないようにハッシュで持たせています。
-  var PASSPHRASE_SHA256 = "___PASSPHRASE_HASH___";
+  var PASSPHRASE_SHA256 = "c1a785572e32f6aa8e59f44ef5e5d209192ef9b9acee4d84d54840f9975da3c0";
 
   var supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var pollTimer = null;
