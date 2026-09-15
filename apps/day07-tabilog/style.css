@@ -111,6 +111,13 @@ a:hover { text-decoration: underline; }
 .field input[type="number"], .field input[type="url"], .field textarea {
   border: 1px solid var(--border); border-radius: var(--radius-control); padding: 11px 13px; background: var(--card); color: var(--ink);
 }
+/* 日付・時間・テキストなど1行入力の高さを揃える。特にiOS Safariは
+   <input type="time">が未入力のとき、値ありの<input type="date">より
+   低く描画されることがあり、paddingを揃えただけでは高さが一致しない */
+.field input[type="text"], .field input[type="date"], .field input[type="time"],
+.field input[type="number"], .field input[type="url"] {
+  height: 46px;
+}
 .field textarea { resize: vertical; }
 .open-link .row { display: flex; gap: 8px; }
 .open-link input { flex: 1; }
