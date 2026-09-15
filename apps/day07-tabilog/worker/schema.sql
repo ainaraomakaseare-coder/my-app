@@ -157,11 +157,8 @@ CREATE TABLE IF NOT EXISTS trip_members (
 CREATE INDEX IF NOT EXISTS idx_trip_members_trip ON trip_members(trip_id);
 CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 
--- v9：day_infosに音声入力の文字起こし（voice_transcript）を追加。上のCREATE TABLEには
--- 最初から含めてあるため、これは既存の（voice_transcriptを持たない）day_infosテーブルを
--- 更新するための一度きりの文。既にこの列がある状態で再実行するとエラーになる点に注意
--- （その場合はこの1行だけ削除してから再実行すればよい。他のCREATE系はすべて再実行安全）。
-ALTER TABLE day_infos ADD COLUMN voice_transcript TEXT NOT NULL DEFAULT '';
+-- v9：day_infosに音声入力の文字起こし（voice_transcript）列を追加する一度きりの文だった。
+-- 本番環境では反映済みのため、この行は削除済み（上のCREATE TABLEには最初から含めてある）。
 
 -- v10：accountsに音声入力の有料プラン関連の列を追加（docs/adr/0004）。上と同じく、
 -- 既存のaccountsテーブルを更新するための一度きりの文。再実行するとエラーになる点に注意。
