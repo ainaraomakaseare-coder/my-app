@@ -1269,12 +1269,6 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
     const t = new Date(baseTime + i * 10).toISOString(); // 話した順番で安定して並ぶよう少しずつずらす
 
     const blockRow = { id: uid("blk"), trip_id: tripId, date, time, label, category, created_at: t, updated_at: t };
-    await env.DB.prepare(
-      "INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
-    )
-      .bind(blockRow.id, blockRow.trip_id, blockRow.date, blockRow.time, blockRow.label, blockRow.category, blockRow.created_at, blockRow.updated_at)
-      .run();
-
     const entryData = (b.entry && typeof b.entry === "object") ? b.entry : {};
     const episode = isStr(entryData.episode, 4000) ? entryData.episode.trim() : "";
     const mapUrl = optUrl(entryData.mapUrl, 500) ? (entryData.mapUrl || "") : "";
@@ -1284,16 +1278,23 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
       photo_ids: "[]", video_ids: "[]", cost_items: "[]", wait_time: "",
       map_url: mapUrl, shop_url: shopUrl, author, created_at: t, updated_at: t,
     };
-    await env.DB.prepare(
-      `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    )
-      .bind(
+    // Block本体とその記録（entry）を1つのバッチ（D1のトランザクション）にまとめる。
+    // 別々のrun()にすると、Blockの保存だけ成功して記録の保存だけ失敗した場合に
+    // 「予定はあるのに記録が空」という気づきにくい中途半端な状態が残ってしまうため
+    // （2026-09-15、実際にこの状態で複数件の記録が失われる事故があった）。
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(blockRow.id, blockRow.trip_id, blockRow.date, blockRow.time, blockRow.label, blockRow.category, blockRow.created_at, blockRow.updated_at),
+      env.DB.prepare(
+        `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).bind(
         entryRow.id, entryRow.block_id, entryRow.episode, entryRow.comment, entryRow.detail, entryRow.photo_ids,
         entryRow.video_ids, entryRow.cost_items, entryRow.wait_time, entryRow.map_url, entryRow.shop_url,
         entryRow.author, entryRow.created_at, entryRow.updated_at
-      )
-      .run();
+      ),
+    ]);
 
     created.push({ ...rowToBlock(blockRow), entries: [rowToEntry(entryRow)] });
   }
