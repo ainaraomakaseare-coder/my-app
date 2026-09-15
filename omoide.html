@@ -283,6 +283,48 @@
     cursor: pointer;
     z-index: 10;
   }
+  .bulkBar {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: 0;
+    z-index: 15;
+    background: var(--card);
+    border-top: 1px solid var(--card-edge);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    box-shadow: 0 -6px 16px -6px var(--shadow);
+  }
+  .bulkCount { font-size: 0.85rem; color: var(--ink-soft); white-space: nowrap; }
+  .bulkBar #bulkTagInput {
+    flex: 1;
+    min-width: 140px;
+    padding: 10px 13px;
+    border-radius: 8px;
+    border: 1px solid var(--card-edge);
+    background: var(--board);
+    color: var(--ink);
+    font-size: 1rem;
+  }
+  .bulkApplyBtn { width: auto; padding: 10px 18px; }
+
+  .personCard.selectable { cursor: pointer; }
+  .selectBadge {
+    position: absolute;
+    top: 6px; right: 6px;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 2px solid var(--card-edge);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem;
+    color: transparent;
+    z-index: 1;
+  }
+  .personCard.selected { outline: 3px solid var(--rose); outline-offset: 2px; }
+  .personCard.selected .selectBadge { background: var(--rose); border-color: var(--rose); color: #fff; }
 
   .overlay {
     position: fixed;
@@ -661,6 +703,7 @@
       </div>
     </div>
     <div class="filterBar" id="tagFilterBar" hidden></div>
+    <button type="button" class="ghostBtn" id="bulkTagToggleBtn" style="margin-top:10px;">所属をまとめて付ける</button>
   </header>
 
   <main class="grid" id="grid">
@@ -670,62 +713,17 @@
   </main>
 
   <button class="fab" id="addFab" aria-label="思い出を追加" title="思い出を追加">+</button>
+
+  <div class="bulkBar" id="bulkBar" hidden>
+    <span class="bulkCount" id="bulkCount">0人選択中</span>
+    <input type="text" id="bulkTagInput" list="tagOptions" placeholder="追加する所属（例: 早稲田大学）" />
+    <button type="button" class="primaryBtn bulkApplyBtn" id="bulkApplyBtn">追加</button>
+    <button type="button" class="ghostBtn" id="bulkCancelBtn">やめる</button>
+  </div>
 </div>
 
 <datalist id="tagOptions"></datalist>
 <datalist id="hobbyOptions"></datalist>
-
-<div class="overlay" id="addModal" hidden>
-  <div class="overlayInner">
-    <button class="backBtn" id="addCancel">← もどる</button>
-    <h2 class="hand" style="font-size:1.4rem;margin:6px 0 20px;">新しい思い出を追加</h2>
-
-    <div class="field">
-      <label for="addPhotoInput">写真</label>
-      <div class="photoPicker">
-        <div class="photoPreview" id="addPhotoPreview">📷</div>
-        <div>
-          <label class="fileBtn" for="addPhotoInput">写真を選ぶ</label>
-          <input type="file" id="addPhotoInput" accept="image/*" style="display:none" />
-        </div>
-      </div>
-    </div>
-
-    <div class="field">
-      <label for="addNameInput">名前</label>
-      <input type="text" id="addNameInput" placeholder="例: 山田 太郎" />
-    </div>
-
-    <div class="field">
-      <label for="addNicknameInput">呼び名（任意）</label>
-      <input type="text" id="addNicknameInput" placeholder="例: たろちゃん" />
-    </div>
-
-    <div class="field">
-      <label for="addTagInput">所属（任意・いくつでも）</label>
-      <div class="tagChips" id="addTagChips"></div>
-      <input type="text" id="addTagInput" list="tagOptions" placeholder="例: 小学校の友達 → Enter" />
-      <p class="tagHint">「,」区切りでまとめて追加もできます。同じ人にいくつでも所属を付けられます。</p>
-    </div>
-
-    <div class="field">
-      <label for="addHobbyInput">趣味（任意・いくつでも）</label>
-      <div class="tagChips" id="addHobbyChips"></div>
-      <input type="text" id="addHobbyInput" list="hobbyOptions" placeholder="例: ギター → Enter" />
-    </div>
-
-    <div class="field">
-      <label for="addEpisodeInput">覚えているエピソード（任意）</label>
-      <div class="episodeInputRow">
-        <textarea id="addEpisodeInput" placeholder="どんな人だった？どんな思い出がある？"></textarea>
-        <button type="button" class="micBtn" id="addEpisodeMic" title="音声入力" aria-label="音声で入力する">🎤</button>
-      </div>
-      <p class="tagHint">保存すると詳細ページが開き、そこでエピソードを何個でも・経歴も追加できます。</p>
-    </div>
-
-    <button class="primaryBtn" id="addSaveBtn">保存する</button>
-  </div>
-</div>
 
 <div class="overlay detail" id="detailPanel" hidden>
   <div class="overlayInner" id="detailInner"></div>
@@ -799,7 +797,10 @@
     sort: "recent",
     search: "",
     tagFilters: new Set(),
-    selectedId: null
+    selectedId: null,
+    focusNameOnOpen: false,
+    bulkMode: false,
+    bulkSelected: new Set()
   };
 
   var els = {
@@ -807,31 +808,20 @@
     tagFilterBar: document.getElementById("tagFilterBar"),
     searchInput: document.getElementById("searchInput"),
     addFab: document.getElementById("addFab"),
-    addModal: document.getElementById("addModal"),
-    addCancel: document.getElementById("addCancel"),
-    addPhotoInput: document.getElementById("addPhotoInput"),
-    addPhotoPreview: document.getElementById("addPhotoPreview"),
-    addNameInput: document.getElementById("addNameInput"),
-    addNicknameInput: document.getElementById("addNicknameInput"),
-    addTagChips: document.getElementById("addTagChips"),
-    addTagInput: document.getElementById("addTagInput"),
-    addHobbyChips: document.getElementById("addHobbyChips"),
-    addHobbyInput: document.getElementById("addHobbyInput"),
     hobbyOptions: document.getElementById("hobbyOptions"),
-    addEpisodeInput: document.getElementById("addEpisodeInput"),
-    addEpisodeMic: document.getElementById("addEpisodeMic"),
-    addSaveBtn: document.getElementById("addSaveBtn"),
     tagOptions: document.getElementById("tagOptions"),
     detailPanel: document.getElementById("detailPanel"),
     detailInner: document.getElementById("detailInner"),
     tagPanel: document.getElementById("tagPanel"),
     tagInner: document.getElementById("tagInner"),
+    bulkTagToggleBtn: document.getElementById("bulkTagToggleBtn"),
+    bulkBar: document.getElementById("bulkBar"),
+    bulkCount: document.getElementById("bulkCount"),
+    bulkTagInput: document.getElementById("bulkTagInput"),
+    bulkApplyBtn: document.getElementById("bulkApplyBtn"),
+    bulkCancelBtn: document.getElementById("bulkCancelBtn"),
     toast: document.getElementById("toast")
   };
-
-  var pendingAddFile = null;
-  var pendingAddTags = [];
-  var pendingAddHobbies = [];
 
   function showToast(msg) {
     els.toast.textContent = msg;
@@ -1079,6 +1069,7 @@
     renderTagFilterBar();
     renderTagOptions();
     renderHobbyOptions();
+    if (state.bulkMode) els.bulkCount.textContent = state.bulkSelected.size + "人選択中";
 
     var list = state.people.slice();
     if (state.tagFilters.size > 0) {
@@ -1108,8 +1099,11 @@
       var tagsHtml = tags.length
         ? '<div class="personTags">' + tags.map(function (t) { return '<span class="miniTag">' + esc(t) + "</span>"; }).join("") + "</div>"
         : "";
+      var selected = state.bulkMode && state.bulkSelected.has(p.id);
+      var badgeHtml = state.bulkMode ? '<span class="selectBadge">✓</span>' : "";
       return (
-        '<div class="personCard" tabindex="0" role="button" data-id="' + esc(p.id) + '">' +
+        '<div class="personCard' + (state.bulkMode ? " selectable" : "") + (selected ? " selected" : "") + '" tabindex="0" role="button" data-id="' + esc(p.id) + '">' +
+        badgeHtml +
         '<span class="tape"></span>' +
         '<div class="thumbWrap">' + thumb + "</div>" +
         '<div class="personName hand">' + esc(p.name || "(名前未設定)") + "</div>" +
@@ -1120,9 +1114,18 @@
     }).join("");
 
     Array.prototype.forEach.call(els.grid.querySelectorAll(".personCard"), function (card) {
-      card.addEventListener("click", function () { openDetail(card.getAttribute("data-id")); });
+      card.addEventListener("click", function () {
+        var id = card.getAttribute("data-id");
+        if (state.bulkMode) {
+          if (state.bulkSelected.has(id)) state.bulkSelected.delete(id);
+          else state.bulkSelected.add(id);
+          render();
+        } else {
+          openDetail(id);
+        }
+      });
       card.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(card.getAttribute("data-id")); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); card.click(); }
       });
     });
   }
@@ -1148,136 +1151,27 @@
 
   // ---------- 追加フロー ----------
 
-  function renderAddTagChips() {
-    renderTagChipList(els.addTagChips, pendingAddTags, function (idx) {
-      pendingAddTags.splice(idx, 1);
-      renderAddTagChips();
-    });
-  }
-
-  els.addTagInput.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      var vals = parseTagInput(els.addTagInput.value);
-      vals.forEach(function (v) { if (v && pendingAddTags.indexOf(v) === -1) pendingAddTags.push(v); });
-      els.addTagInput.value = "";
-      renderAddTagChips();
-    }
-  });
-  els.addTagInput.addEventListener("blur", function () {
-    var vals = parseTagInput(els.addTagInput.value);
-    vals.forEach(function (v) { if (v && pendingAddTags.indexOf(v) === -1) pendingAddTags.push(v); });
-    els.addTagInput.value = "";
-    renderAddTagChips();
-  });
-
-  function renderAddHobbyChips() {
-    renderTagChipList(els.addHobbyChips, pendingAddHobbies, function (idx) {
-      pendingAddHobbies.splice(idx, 1);
-      renderAddHobbyChips();
-    });
-  }
-
-  els.addHobbyInput.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      var vals = parseTagInput(els.addHobbyInput.value);
-      vals.forEach(function (v) { if (v && pendingAddHobbies.indexOf(v) === -1) pendingAddHobbies.push(v); });
-      els.addHobbyInput.value = "";
-      renderAddHobbyChips();
-    }
-  });
-  els.addHobbyInput.addEventListener("blur", function () {
-    var vals = parseTagInput(els.addHobbyInput.value);
-    vals.forEach(function (v) { if (v && pendingAddHobbies.indexOf(v) === -1) pendingAddHobbies.push(v); });
-    els.addHobbyInput.value = "";
-    renderAddHobbyChips();
-  });
-
-  function openAdd() {
-    pendingAddFile = null;
-    pendingAddTags = [];
-    pendingAddHobbies = [];
-    els.addPhotoPreview.innerHTML = "📷";
-    els.addNameInput.value = "";
-    els.addNicknameInput.value = "";
-    els.addTagInput.value = "";
-    els.addHobbyInput.value = "";
-    els.addEpisodeInput.value = "";
-    els.addPhotoInput.value = "";
-    renderAddTagChips();
-    renderAddHobbyChips();
-    els.addModal.hidden = false;
-    setTimeout(function () { els.addNameInput.focus(); }, 50);
-  }
-
-  function closeAdd() { els.addModal.hidden = true; }
-
-  els.addPhotoInput.addEventListener("change", function () {
-    var f = els.addPhotoInput.files && els.addPhotoInput.files[0];
-    if (!f) return;
-    pendingAddFile = f;
-    var reader = new FileReader();
-    reader.onload = function () {
-      els.addPhotoPreview.innerHTML = '<img src="' + reader.result + '" alt="" />';
-    };
-    reader.readAsDataURL(f);
-  });
-
-  els.addFab.addEventListener("click", openAdd);
-  els.addCancel.addEventListener("click", closeAdd);
-  setupVoiceButton(els.addEpisodeMic, els.addEpisodeInput);
-
-  els.addSaveBtn.addEventListener("click", async function () {
-    var name = els.addNameInput.value.trim();
-    if (!name) { showToast("名前を入力してください"); els.addNameInput.focus(); return; }
+  els.addFab.addEventListener("click", async function () {
     if (!state.db) { showToast("保存機能が使えません"); return; }
-
-    var extraTags = parseTagInput(els.addTagInput.value);
-    extraTags.forEach(function (v) { if (v && pendingAddTags.indexOf(v) === -1) pendingAddTags.push(v); });
-    var extraHobbies = parseTagInput(els.addHobbyInput.value);
-    extraHobbies.forEach(function (v) { if (v && pendingAddHobbies.indexOf(v) === -1) pendingAddHobbies.push(v); });
-
-    els.addSaveBtn.disabled = true;
-    els.addSaveBtn.textContent = "保存中…";
-
-    var photoUrls = [];
-    if (pendingAddFile) {
-      try {
-        var url = await uploadPhoto(pendingAddFile);
-        photoUrls.push(url);
-      } catch (e) {
-        showToast("写真の保存に失敗しました。写真なしで登録します");
-      }
-    }
-
+    els.addFab.disabled = true;
     try {
-      var nowIso = new Date().toISOString();
-      var episodes = [];
-      var episodeText = els.addEpisodeInput.value.trim();
-      if (episodeText) {
-        episodes.push({ id: cryptoId(), text: episodeText, createdAt: nowIso });
-      }
       var res = await state.db.from("people").insert({
-        name: name,
-        nickname: els.addNicknameInput.value.trim(),
-        tags: pendingAddTags.slice(),
-        hobbies: pendingAddHobbies.slice(),
-        photo_urls: photoUrls,
-        episodes: episodes,
+        name: "",
+        nickname: "",
+        tags: [],
+        hobbies: [],
+        photo_urls: [],
+        episodes: [],
         history: []
       }).select();
       if (res.error) throw res.error;
       var newId = res.data && res.data[0] && res.data[0].id;
       await loadPeople();
-      closeAdd();
-      showToast("追加しました。ここからエピソードや経歴も書き足せます");
-      if (newId) openDetail(newId);
+      if (newId) openDetail(newId, { focusName: true });
     } catch (e) {
-      showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
+      showToast("追加に失敗しました: " + (e && e.message ? e.message : ""));
     } finally {
-      els.addSaveBtn.disabled = false;
-      els.addSaveBtn.textContent = "保存する";
+      els.addFab.disabled = false;
     }
   });
 
@@ -1288,8 +1182,9 @@
     return null;
   }
 
-  function openDetail(id) {
+  function openDetail(id, opts) {
     state.selectedId = id;
+    state.focusNameOnOpen = !!(opts && opts.focusName);
     renderDetail();
     els.detailPanel.hidden = false;
     window.scrollTo(0, 0);
@@ -1355,7 +1250,7 @@
       '<div class="detailHero">' +
       '<div class="detailPhoto">' + coverHtml + "</div>" +
       '<div style="flex:1;min-width:180px;">' +
-      '<input type="text" class="detailName hand" id="detailNameInput" value="' + esc(p.name || "") + '" aria-label="名前" />' +
+      '<input type="text" class="detailName hand" id="detailNameInput" value="' + esc(p.name || "") + '" placeholder="名前を入力" aria-label="名前" />' +
       '<input type="text" class="detailNickname" id="detailNicknameInput" value="' + esc(p.nickname || "") + '" placeholder="呼び名（任意）" aria-label="呼び名" />' +
       "</div>" +
       "</div>" +
@@ -1399,8 +1294,12 @@
     nameInput.addEventListener("change", function () {
       var v = nameInput.value.trim();
       if (!v) { nameInput.value = p.name || ""; return; }
-      updatePerson(p.id, { name: v });
+      updatePerson(p.id, { name: v }, "名前を保存しました");
     });
+    if (state.focusNameOnOpen) {
+      state.focusNameOnOpen = false;
+      setTimeout(function () { nameInput.focus(); }, 60);
+    }
 
     var nicknameInput = document.getElementById("detailNicknameInput");
     nicknameInput.addEventListener("change", function () {
@@ -1467,12 +1366,15 @@
     document.getElementById("detailPhotoInput").addEventListener("change", async function (e) {
       var f = e.target.files && e.target.files[0];
       if (!f) return;
+      showToast("写真をアップロード中…");
       try {
         var url = await uploadPhoto(f);
         var next = (p.photoUrls || []).concat([url]);
-        await updatePerson(p.id, { photoUrls: next });
+        p.photoUrls = next;
+        renderDetail();
+        await updatePerson(p.id, { photoUrls: next }, "写真を追加しました");
       } catch (err) {
-        showToast("写真の追加に失敗しました");
+        showToast("写真の追加に失敗しました: " + (err && err.message ? err.message : ""));
       }
     });
 
@@ -1481,7 +1383,9 @@
         var url = btn.getAttribute("data-remove-photo");
         if (!confirm("この写真を削除しますか？")) return;
         var next = (p.photoUrls || []).filter(function (x) { return x !== url; });
-        await updatePerson(p.id, { photoUrls: next });
+        p.photoUrls = next;
+        renderDetail();
+        await updatePerson(p.id, { photoUrls: next }, "写真を削除しました");
         deletePhotoByUrl(url);
       });
     });
@@ -1494,10 +1398,11 @@
       var text = textInput.value.trim();
       if (!text) { textInput.focus(); return; }
       var next = (p.history || []).concat([{ id: cryptoId(), year: yearInput.value.trim(), text: text, createdAt: new Date().toISOString() }]);
-      updatePerson(p.id, { history: next });
-      yearInput.value = "";
-      textInput.value = "";
-      textInput.focus();
+      p.history = next;
+      renderDetail();
+      var freshText = document.getElementById("newHistoryText");
+      if (freshText) freshText.focus();
+      updatePerson(p.id, { history: next }, "経歴を追加しました");
     }
     document.getElementById("addHistoryBtn").addEventListener("click", submitNewHistory);
     document.getElementById("newHistoryYear").addEventListener("keydown", function (e) {
@@ -1512,7 +1417,9 @@
         var hid = btn.getAttribute("data-remove-history");
         if (!confirm("この経歴を削除しますか？")) return;
         var next = (p.history || []).filter(function (x) { return x.id !== hid; });
-        await updatePerson(p.id, { history: next });
+        p.history = next;
+        renderDetail();
+        await updatePerson(p.id, { history: next }, "経歴を削除しました");
       });
     });
 
@@ -1523,9 +1430,11 @@
       var text = ta.value.trim();
       if (!text) { ta.focus(); return; }
       var next = (p.episodes || []).concat([{ id: cryptoId(), text: text, createdAt: new Date().toISOString() }]);
-      updatePerson(p.id, { episodes: next });
-      ta.value = "";
-      ta.focus();
+      p.episodes = next;
+      renderDetail();
+      var freshTa = document.getElementById("newEpisodeInput");
+      if (freshTa) freshTa.focus();
+      updatePerson(p.id, { episodes: next }, "エピソードを追加しました");
     }
     document.getElementById("addEpisodeBtn").addEventListener("click", submitNewEpisode);
     document.getElementById("newEpisodeInput").addEventListener("keydown", function (e) {
@@ -1537,7 +1446,9 @@
         var epId = btn.getAttribute("data-remove-ep");
         if (!confirm("このエピソードを削除しますか？")) return;
         var next = (p.episodes || []).filter(function (x) { return x.id !== epId; });
-        await updatePerson(p.id, { episodes: next });
+        p.episodes = next;
+        renderDetail();
+        await updatePerson(p.id, { episodes: next }, "エピソードを削除しました");
       });
     });
 
@@ -1569,13 +1480,14 @@
     return row;
   }
 
-  async function updatePerson(id, patch) {
+  async function updatePerson(id, patch, successMsg) {
     try {
       var res = await state.db.from("people").update(personPatchToRow(patch)).eq("id", id);
       if (res.error) throw res.error;
       await loadPeople();
+      showToast(successMsg || "保存しました");
     } catch (e) {
-      showToast("更新に失敗しました: " + (e && e.message ? e.message : ""));
+      showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
     }
   }
 
@@ -1715,6 +1627,59 @@
       state.sort = btn.getAttribute("data-sort");
       loadPeople();
     });
+  });
+
+  // ---------- 所属の一括付与 ----------
+
+  function exitBulkMode() {
+    state.bulkMode = false;
+    state.bulkSelected = new Set();
+    els.bulkBar.hidden = true;
+    els.bulkTagInput.value = "";
+    els.addFab.hidden = false;
+    render();
+  }
+
+  els.bulkTagToggleBtn.addEventListener("click", function () {
+    state.bulkMode = true;
+    state.bulkSelected = new Set();
+    els.bulkBar.hidden = false;
+    els.addFab.hidden = true;
+    render();
+  });
+
+  els.bulkCancelBtn.addEventListener("click", exitBulkMode);
+
+  els.bulkApplyBtn.addEventListener("click", async function () {
+    var tagVal = els.bulkTagInput.value.trim();
+    if (!tagVal) { showToast("所属の名前を入力してください"); els.bulkTagInput.focus(); return; }
+    if (state.bulkSelected.size === 0) { showToast("人を選んでください"); return; }
+
+    els.bulkApplyBtn.disabled = true;
+    els.bulkApplyBtn.textContent = "追加中…";
+    try {
+      var ids = Array.from(state.bulkSelected);
+      var results = await Promise.all(ids.map(function (id) {
+        var person = state.people.find(function (x) { return x.id === id; });
+        if (!person) return Promise.resolve({ error: null });
+        var next = personTags(person).slice();
+        if (next.indexOf(tagVal) === -1) next.push(tagVal);
+        return state.db.from("people").update(personPatchToRow({ tags: next })).eq("id", id);
+      }));
+      var failed = results.filter(function (r) { return r && r.error; });
+      await loadPeople();
+      if (failed.length) {
+        showToast((ids.length - failed.length) + "人に追加しました(" + failed.length + "人は失敗)");
+      } else {
+        showToast(ids.length + "人に「" + tagVal + "」を追加しました");
+      }
+      exitBulkMode();
+    } catch (e) {
+      showToast("追加に失敗しました: " + (e && e.message ? e.message : ""));
+    } finally {
+      els.bulkApplyBtn.disabled = false;
+      els.bulkApplyBtn.textContent = "追加";
+    }
   });
 })();
 </script>
