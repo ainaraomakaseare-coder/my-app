@@ -717,6 +717,7 @@
         <textarea id="addEpisodeInput" placeholder="どんな人だった？どんな思い出がある？"></textarea>
         <button type="button" class="micBtn" id="addEpisodeMic" title="音声入力" aria-label="音声で入力する">🎤</button>
       </div>
+      <p class="tagHint">保存すると詳細ページが開き、そこでエピソードを何個でも・経歴も追加できます。</p>
     </div>
 
     <button class="primaryBtn" id="addSaveBtn">保存する</button>
@@ -1262,11 +1263,13 @@
         photo_urls: photoUrls,
         episodes: episodes,
         history: []
-      });
+      }).select();
       if (res.error) throw res.error;
+      var newId = res.data && res.data[0] && res.data[0].id;
       await loadPeople();
       closeAdd();
-      showToast("追加しました");
+      showToast("追加しました。ここからエピソードや経歴も書き足せます");
+      if (newId) openDetail(newId);
     } catch (e) {
       showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
     } finally {
