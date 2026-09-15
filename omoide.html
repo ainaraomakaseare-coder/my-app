@@ -147,6 +147,41 @@
     cursor: pointer;
   }
   .chip.active { background: var(--rose); border-color: var(--rose); color: #fff; }
+  .chipGroup { display: inline-flex; align-items: center; gap: 2px; }
+  .chipNoteBtn {
+    border: 1px solid var(--card-edge);
+    background: var(--card);
+    color: var(--ink-soft);
+    border-radius: 999px;
+    padding: 6px 9px;
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .tagPeopleRow { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 20px; }
+  .tagPersonChip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--card-edge);
+    background: var(--card);
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 4px 12px 4px 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .tagPersonAvatar {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--board);
+    display: flex; align-items: center; justify-content: center;
+    flex: 0 0 auto;
+    font-size: 0.85rem;
+  }
+  .tagPersonAvatar img { width: 100%; height: 100%; object-fit: cover; }
 
   .grid {
     display: grid;
@@ -667,10 +702,10 @@
     </div>
 
     <div class="field">
-      <label for="addTagInput">タグ（任意・いくつでも）</label>
+      <label for="addTagInput">所属（任意・いくつでも）</label>
       <div class="tagChips" id="addTagChips"></div>
       <input type="text" id="addTagInput" list="tagOptions" placeholder="例: 小学校の友達 → Enter" />
-      <p class="tagHint">「,」区切りでまとめて追加もできます。同じ人に何個でも付けられます。</p>
+      <p class="tagHint">「,」区切りでまとめて追加もできます。同じ人にいくつでも所属を付けられます。</p>
     </div>
 
     <div class="field">
@@ -693,6 +728,10 @@
 
 <div class="overlay detail" id="detailPanel" hidden>
   <div class="overlayInner" id="detailInner"></div>
+</div>
+
+<div class="overlay detail" id="tagPanel" hidden>
+  <div class="overlayInner" id="tagInner"></div>
 </div>
 
 <div class="toast" id="toast" hidden></div>
@@ -792,6 +831,8 @@
     tagOptions: document.getElementById("tagOptions"),
     detailPanel: document.getElementById("detailPanel"),
     detailInner: document.getElementById("detailInner"),
+    tagPanel: document.getElementById("tagPanel"),
+    tagInner: document.getElementById("tagInner"),
     toast: document.getElementById("toast")
   };
 
@@ -986,7 +1027,10 @@
     els.tagFilterBar.hidden = false;
     var html = '<button type="button" class="chip' + (state.tagFilters.size === 0 ? " active" : "") + '" data-tag="">すべて</button>';
     tags.forEach(function (t) {
-      html += '<button type="button" class="chip' + (state.tagFilters.has(t) ? " active" : "") + '" data-tag="' + esc(t) + '">' + esc(t) + "</button>";
+      html += '<span class="chipGroup">' +
+        '<button type="button" class="chip' + (state.tagFilters.has(t) ? " active" : "") + '" data-tag="' + esc(t) + '">' + esc(t) + "</button>" +
+        '<button type="button" class="chipNoteBtn" data-tag-note="' + esc(t) + '" title="この所属の思い出を見る" aria-label="' + esc(t) + 'の思い出を見る">📖</button>' +
+        "</span>";
     });
     els.tagFilterBar.innerHTML = html;
     Array.prototype.forEach.call(els.tagFilterBar.querySelectorAll(".chip"), function (btn) {
@@ -997,6 +1041,9 @@
         else { state.tagFilters.add(t); }
         render();
       });
+    });
+    Array.prototype.forEach.call(els.tagFilterBar.querySelectorAll("[data-tag-note]"), function (btn) {
+      btn.addEventListener("click", function () { openTagDetail(btn.getAttribute("data-tag-note")); });
     });
   }
 
@@ -1297,7 +1344,7 @@
       "</div>" +
       "</div>" +
       '<div class="field" style="margin-top:14px;">' +
-      '<label for="detailTagInput">タグ</label>' +
+      '<label for="detailTagInput">所属</label>' +
       '<div class="tagChips" id="detailTagChips"></div>' +
       '<input type="text" id="detailTagInput" list="tagOptions" placeholder="例: サークルの音響チーム → Enter" />' +
       "</div>" +
@@ -1498,6 +1545,125 @@
     } catch (e) {
       showToast("更新に失敗しました: " + (e && e.message ? e.message : ""));
     }
+  }
+
+  // ---------- 所属ごとの思い出 ----------
+
+  var tagPanelState = { tagName: null, notes: [] };
+
+  async function openTagDetail(tagName) {
+    tagPanelState.tagName = tagName;
+    tagPanelState.notes = [];
+    els.tagPanel.hidden = false;
+    window.scrollTo(0, 0);
+    renderTagDetail();
+    try {
+      var doc = await state.db.collection("tagNotes").doc(tagName).get();
+      tagPanelState.notes = (doc.exists && doc.data().episodes) || [];
+    } catch (e) {
+      showToast("読み込みでエラーが起きました: " + (e && e.message ? e.message : ""));
+    }
+    renderTagDetail();
+  }
+
+  function closeTagDetail() {
+    els.tagPanel.hidden = true;
+    tagPanelState.tagName = null;
+  }
+
+  async function saveTagNotes() {
+    try {
+      await state.db.collection("tagNotes").doc(tagPanelState.tagName).set({
+        episodes: tagPanelState.notes,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (e) {
+      showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
+    }
+  }
+
+  function renderTagDetail() {
+    var tagName = tagPanelState.tagName;
+    if (!tagName) return;
+
+    var peopleWithTag = state.people.filter(function (p) { return personTags(p).indexOf(tagName) !== -1; });
+    var peopleHtml = peopleWithTag.length
+      ? peopleWithTag.map(function (p) {
+          var cover = p.photoUrls && p.photoUrls[0];
+          var avatar = cover ? '<img src="' + esc(cover) + '" alt="" />' : '<span>🙂</span>';
+          return (
+            '<button type="button" class="tagPersonChip" data-open-person="' + esc(p.id) + '">' +
+            '<span class="tagPersonAvatar">' + avatar + "</span>" + esc(p.name || "") +
+            "</button>"
+          );
+        }).join("")
+      : '<p class="noEpisodes">この所属の人はまだいません。</p>';
+
+    var notesSorted = tagPanelState.notes.slice().sort(function (a, b) {
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+    var notesHtml = notesSorted.length
+      ? notesSorted.map(function (ep) {
+          return (
+            '<div class="episode" data-tagnote-id="' + esc(ep.id) + '">' +
+            '<button class="removeEpisode" data-remove-tagnote="' + esc(ep.id) + '" title="削除" aria-label="この思い出を削除">×</button>' +
+            "<time>" + formatDate(ep.createdAt) + "</time>" +
+            "<p>" + esc(ep.text) + "</p>" +
+            "</div>"
+          );
+        }).join("")
+      : '<p class="noEpisodes">まだ思い出がありません。下から書き加えてみましょう。</p>';
+
+    els.tagInner.innerHTML =
+      '<button class="backBtn" id="tagBack">← 一覧へ</button>' +
+      '<p class="tagHint" style="margin:0 0 2px;">所属</p>' +
+      '<h2 class="hand" style="font-size:1.6rem;margin:0 0 4px;">' + esc(tagName) + "</h2>" +
+      '<p class="subtitle">' + peopleWithTag.length + "人</p>" +
+      '<div class="tagPeopleRow">' + peopleHtml + "</div>" +
+      '<div class="sectionLabel hand">エピソード</div>' +
+      '<p class="sectionHint">例: AさんとCさんがこれでけんかした、のように所属全体の思い出を書けます。</p>' +
+      '<div class="episodeForm">' +
+      '<textarea id="newTagNoteInput" placeholder="この所属であった出来事を書く"></textarea>' +
+      '<button type="button" class="micBtn" id="newTagNoteMic" title="音声入力" aria-label="音声で入力する">🎤</button>' +
+      '<button class="ghostBtn" id="addTagNoteBtn">追加</button>' +
+      "</div>" +
+      '<div id="tagNoteList">' + notesHtml + "</div>";
+
+    document.getElementById("tagBack").addEventListener("click", closeTagDetail);
+
+    Array.prototype.forEach.call(document.querySelectorAll("[data-open-person]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var pid = btn.getAttribute("data-open-person");
+        closeTagDetail();
+        openDetail(pid);
+      });
+    });
+
+    setupVoiceButton(document.getElementById("newTagNoteMic"), document.getElementById("newTagNoteInput"));
+
+    function submitTagNote() {
+      var ta = document.getElementById("newTagNoteInput");
+      var text = ta.value.trim();
+      if (!text) { ta.focus(); return; }
+      tagPanelState.notes = tagPanelState.notes.concat([{ id: cryptoId(), text: text, createdAt: new Date().toISOString() }]);
+      ta.value = "";
+      renderTagDetail();
+      saveTagNotes();
+    }
+    document.getElementById("addTagNoteBtn").addEventListener("click", submitTagNote);
+    document.getElementById("newTagNoteInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitTagNote(); }
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll("[data-remove-tagnote]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var id = btn.getAttribute("data-remove-tagnote");
+        if (!confirm("この思い出を削除しますか？")) return;
+        tagPanelState.notes = tagPanelState.notes.filter(function (x) { return x.id !== id; });
+        renderTagDetail();
+        saveTagNotes();
+      });
+    });
   }
 
   // ---------- 検索・並び替え ----------
