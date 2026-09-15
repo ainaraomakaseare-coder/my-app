@@ -184,16 +184,23 @@
         <p class="lead">その日にあったことをまとめて話すと、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）</p>
       </header>
 
-      <div class="field">
-        <label for="voiceNotes">URLやお店の名前など（任意・雑多でOK）</label>
-        <textarea id="voiceNotes" rows="3" placeholder="例：https://maps.google.com/... ／ ファーマーズマーケット"></textarea>
+      <div class="notice" id="voicePremiumRequired" hidden>
+        <p id="voicePremiumMessage"></p>
+        <button class="btn primary" id="btnGoToPlans">プランを見る</button>
       </div>
 
-      <button class="btn primary wide" id="btnVoiceRecord">話しはじめる</button>
-      <p class="hint" id="voiceRecordStatus"></p>
+      <div id="voiceRecordArea">
+        <div class="field">
+          <label for="voiceNotes">URLやお店の名前など（任意・雑多でOK）</label>
+          <textarea id="voiceNotes" rows="3" placeholder="例：https://maps.google.com/... ／ ファーマーズマーケット"></textarea>
+        </div>
 
-      <button class="btn primary wide" id="btnCreateVoiceEntries" hidden>この内容で予定を作る</button>
-      <p class="hint" id="voiceEntryStatus"></p>
+        <button class="btn primary wide" id="btnVoiceRecord">話しはじめる</button>
+        <p class="hint" id="voiceRecordStatus"></p>
+
+        <button class="btn primary wide" id="btnCreateVoiceEntries" hidden>この内容で予定を作る</button>
+        <p class="hint" id="voiceEntryStatus"></p>
+      </div>
     </div>
   </section>
 
@@ -390,6 +397,13 @@
         <h1>マイログ</h1>
         <p class="lead">これまで評価したものを振り返る（自分だけに見える記録です）</p>
       </header>
+
+      <div class="section-label">
+        <div class="section-title">音声入力プラン</div>
+      </div>
+      <div class="plan-status" id="planStatus"></div>
+      <div class="plan-options" id="planOptions"></div>
+      <p class="hint" id="planStatusMessage"></p>
 
       <div class="section-label">
         <div class="section-title">参加した旅行</div>

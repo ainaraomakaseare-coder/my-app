@@ -479,8 +479,16 @@
     other: 'その他ログ'
   };
 
+  // ---------- 音声入力の有料プラン（docs/adr/0004） ----------
+  var PLAN_LABELS = { free: '無料', basic: 'ベーシック', premium_plus: 'プレミア＋' };
+  var PLAN_OPTIONS = [
+    { plan: 'basic', name: 'ベーシック', detail: '月300円・音声入力 月10回まで' },
+    { plan: 'premium_plus', name: 'プレミア＋', detail: '月1000円・音声入力 月50回まで' }
+  ];
+
   // ---------- 状態 ----------
   var state = {
+    account: null,            // ログイン中アカウントのプラン状況（{plan, voiceRemainingThisPeriod, ticketCredits, ...}）
     trip: null,
     blocks: [],
     days: [],                // 旅行の日ごとの場所・天気（{date, place, weatherCode, tempMax, tempMin, isForecast}）
@@ -756,6 +764,10 @@
   var voiceBlob = null;
   var voiceStartedAt = 0;
   var voiceTimerInterval = null;
+  var voiceAutoStopped = false;
+  // プレミアムプランの「1回3分まで」に合わせて、録音時間そのものをアプリ側で強制する
+  // （時間の上限を超えられないようにしておけば、費用の見積もりが崩れない）
+  var VOICE_MAX_MS = 3 * 60 * 1000;
 
   function formatVoiceElapsed(ms) {
     var seconds = Math.max(0, Math.floor(ms / 1000));
@@ -789,17 +801,37 @@
     return '';
   }
 
+  // 音声入力は有料プラン専用（docs/adr/0004）。ログインしていない、またはプラン・回数券が
+  // 無い場合は、録音の代わりに案内とプランへの導線を出す。
   function openVoiceEntryForm() {
-    voiceBlob = null;
-    $('#voiceNotes').value = '';
-    setVoiceRecordLabel(MIC_ICON, '話しはじめる');
-    $('#btnVoiceRecord').disabled = false;
-    $('#btnCreateVoiceEntries').hidden = true;
-    $('#btnCreateVoiceEntries').disabled = false;
-    $('#voiceRecordStatus').textContent = '';
-    $('#voiceRecordStatus').classList.remove('is-recording');
-    $('#voiceEntryStatus').textContent = '';
+    var user = loadCurrentUser();
+    if (!user) { openLogin('voiceEntryForm'); return; }
     showScreen('voiceEntryForm');
+    $('#voicePremiumRequired').hidden = true;
+    $('#voiceRecordArea').hidden = true;
+    $('#voicePremiumMessage').textContent = '確認しています…';
+    fetchAccountStatus().then(function (account) {
+      var ok = account && (account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0);
+      if (!ok) {
+        $('#voicePremiumRequired').hidden = false;
+        $('#voiceRecordArea').hidden = true;
+        $('#voicePremiumMessage').textContent = (!account || account.plan === 'free')
+          ? '音声入力はプランに登録すると使えます。マイログからプランを選んでください。'
+          : '今月の音声入力の回数を使い切りました。プランのアップグレードや回数券をご検討ください。';
+        return;
+      }
+      voiceBlob = null;
+      $('#voiceNotes').value = '';
+      setVoiceRecordLabel(MIC_ICON, '話しはじめる');
+      $('#btnVoiceRecord').disabled = false;
+      $('#btnCreateVoiceEntries').hidden = true;
+      $('#btnCreateVoiceEntries').disabled = false;
+      $('#voiceRecordStatus').textContent = '';
+      $('#voiceRecordStatus').classList.remove('is-recording');
+      $('#voiceEntryStatus').textContent = '';
+      $('#voicePremiumRequired').hidden = true;
+      $('#voiceRecordArea').hidden = false;
+    });
   }
 
   function handleVoiceRecordToggle() {
@@ -818,6 +850,7 @@
       voiceRecorder = mimeType ? new MediaRecorder(stream, { mimeType: mimeType }) : new MediaRecorder(stream);
       voiceChunks = [];
       voiceStartedAt = Date.now();
+      voiceAutoStopped = false;
       voiceRecorder.addEventListener('dataavailable', function (e) {
         if (e.data && e.data.size) voiceChunks.push(e.data);
       });
@@ -828,7 +861,10 @@
         var seconds = Math.max(1, Math.round((Date.now() - voiceStartedAt) / 1000));
         setVoiceRecordLabel(MIC_ICON, '話しなおす');
         $('#voiceRecordStatus').classList.remove('is-recording');
-        $('#voiceRecordStatus').textContent = '録音できました（約' + seconds + '秒）。内容を確認して「この内容で予定を作る」を押してください。';
+        var doneMessage = '録音できました（約' + seconds + '秒）。内容を確認して「この内容で予定を作る」を押してください。';
+        $('#voiceRecordStatus').textContent = voiceAutoStopped
+          ? '1回の録音は3分までのため、自動的に止めました。' + doneMessage
+          : doneMessage;
         $('#btnCreateVoiceEntries').hidden = false;
       });
       voiceRecorder.start();
@@ -838,7 +874,13 @@
       $('#btnCreateVoiceEntries').hidden = true;
       stopVoiceTimer();
       voiceTimerInterval = setInterval(function () {
-        $('#voiceRecordStatus').textContent = '● 録音中… ' + formatVoiceElapsed(Date.now() - voiceStartedAt);
+        var elapsed = Date.now() - voiceStartedAt;
+        if (elapsed >= VOICE_MAX_MS) {
+          voiceAutoStopped = true;
+          if (voiceRecorder && voiceRecorder.state === 'recording') voiceRecorder.stop();
+          return;
+        }
+        $('#voiceRecordStatus').textContent = '● 録音中… ' + formatVoiceElapsed(elapsed) + ' / ' + formatVoiceElapsed(VOICE_MAX_MS);
       }, 500);
     }).catch(function () {
       $('#voiceRecordStatus').textContent = 'マイクを使えませんでした（許可されているか確認してください）。';
@@ -848,7 +890,7 @@
   function handleCreateVoiceEntries() {
     if (!voiceBlob) { $('#voiceEntryStatus').textContent = '先に録音してください。'; return; }
     var user = loadCurrentUser();
-    var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '' };
+    var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
     $('#btnCreateVoiceEntries').disabled = true;
     $('#voiceEntryStatus').textContent = 'AIが内容を確認しています…（数十秒かかることがあります）';
     createVoiceEntries(state.trip.id, state.selectedDate, voiceBlob, meta).then(function () {
@@ -863,6 +905,10 @@
       if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#voiceEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
+      else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
+        $('#voiceEntryStatus').textContent = '';
+        openVoiceEntryForm();
+      }
       else $('#voiceEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
   }
@@ -1516,6 +1562,86 @@
     }).catch(function () {
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
     });
+    fetchAccountStatus().then(renderPlanStatus);
+  }
+
+  // ---------- 音声入力プラン（docs/adr/0004） ----------
+  // アカウントのプラン・利用状況は/accounts/ensureがまとめて返すので、それをそのまま使い回す
+  // （ログインのたびに呼んでいる処理と同じもので、ここでは最新化のために呼び直しているだけ）。
+  function fetchAccountStatus() {
+    var user = loadCurrentUser();
+    if (!user) { state.account = null; return Promise.resolve(null); }
+    return api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
+      state.account = account;
+      return account;
+    }).catch(function () { state.account = null; return null; });
+  }
+
+  function renderPlanStatus() {
+    var statusEl = $('#planStatus');
+    var optionsEl = $('#planOptions');
+    var msgEl = $('#planStatusMessage');
+    var account = state.account;
+    if (!account) {
+      statusEl.innerHTML = '';
+      optionsEl.innerHTML = '';
+      msgEl.textContent = '';
+      return;
+    }
+    var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
+    var usageText = account.plan === 'free'
+      ? '音声入力機能はまだ使えません'
+      : '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
+    statusEl.innerHTML =
+      '<div class="plan-name">今のプラン：' + escapeHtml(planName) + '</div>' +
+      '<div class="plan-usage">' + escapeHtml(usageText) +
+      (account.ticketCredits ? '・回数券の残り' + account.ticketCredits + '回' : '') + '</div>';
+
+    optionsEl.innerHTML = '';
+    PLAN_OPTIONS.forEach(function (opt) {
+      if (account.plan === opt.plan) return;
+      var card = document.createElement('div');
+      card.className = 'plan-card';
+      card.innerHTML =
+        '<div><div class="plan-card-name">' + escapeHtml(opt.name) + '</div>' +
+        '<div class="plan-card-detail">' + escapeHtml(opt.detail) + '</div></div>' +
+        '<button class="btn primary" type="button">登録する</button>';
+      card.querySelector('button').addEventListener('click', function () { startCheckout(opt.plan); });
+      optionsEl.appendChild(card);
+    });
+    msgEl.textContent = '';
+  }
+
+  function startCheckout(plan) {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('mylog'); return; }
+    var msgEl = $('#planStatusMessage');
+    msgEl.textContent = '決済ページに移動しています…';
+    var returnUrl = location.origin + location.pathname;
+    api('/billing/checkout', 'POST', {
+      email: user.email,
+      plan: plan,
+      successUrl: returnUrl + '?billing=success',
+      cancelUrl: returnUrl + '?billing=cancel'
+    }).then(function (res) {
+      if (res && res.url) location.href = res.url;
+      else msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
+    }).catch(function () {
+      msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
+    });
+  }
+
+  // ページに戻ってきたときのURL（?billing=success/cancel）を見て、決済結果を伝える
+  function checkBillingReturn() {
+    var params = new URLSearchParams(location.search);
+    var billing = params.get('billing');
+    if (!billing) return;
+    history.replaceState(null, '', location.pathname);
+    if (billing === 'success') {
+      fetchAccountStatus().then(function () {
+        alert('プレミアムになりました！音声入力が使えるようになりました。');
+      });
+    }
   }
 
   function renderMyLog() {
@@ -1685,6 +1811,9 @@
     $('#btnOpenMyLog').addEventListener('click', function () {
       if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
     });
+    $('#btnGoToPlans').addEventListener('click', function () {
+      if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
+    });
 
     $('#mylogSort').addEventListener('click', function (e) {
       var btn = e.target.closest('.sort-btn');
@@ -1803,6 +1932,8 @@
     } else if (target === 'tripDetail' && state.trip) {
       showScreen('tripDetail');
       renderTripDetail();
+    } else if (target === 'voiceEntryForm' && state.trip) {
+      openVoiceEntryForm();
     } else if (target === 'mylog' && loggedIn) {
       openMyLog();
     } else {
@@ -1845,6 +1976,7 @@
   // 起動時：ログイン状態にかかわらず、いつもどおりホーム/共有された旅行を表示する
   function enterApp() {
     renderAccountRow();
+    checkBillingReturn();
     var tripId = Core.getTripIdFromSearch(location.search);
     if (tripId) openTrip(tripId);
     else { showScreen('home'); renderHome(); }

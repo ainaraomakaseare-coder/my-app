@@ -792,8 +792,36 @@ function generateAccountId() {
   return String(100000 + (bytes[0] % 900000));
 }
 
+// 月間の音声入力の上限（docs/adr/0004）。free（無料）は0＝音声入力を使えない。
+var PLAN_MONTHLY_LIMIT = { free: 0, basic: 10, premium_plus: 50 };
+
+function currentPeriodStart() {
+  var now = new Date();
+  return now.getUTCFullYear() + "-" + String(now.getUTCMonth() + 1).padStart(2, "0") + "-01";
+}
+
+// 暦月が変わっていたら利用回数をリセットする（Stripeの実際の請求日とは同期させない簡易な実装）。
+async function resetPeriodIfNeeded(env, row) {
+  var period = currentPeriodStart();
+  if (row.plan_period_start === period) return row;
+  await env.DB.prepare("UPDATE accounts SET plan_period_start=?, voice_uses_this_period=0, updated_at=? WHERE email=?")
+    .bind(period, nowIso(), row.email)
+    .run();
+  return { ...row, plan_period_start: period, voice_uses_this_period: 0 };
+}
+
 function rowToAccount(row) {
-  return { accountId: row.account_id, email: row.email, name: row.name };
+  var limit = PLAN_MONTHLY_LIMIT[row.plan] || 0;
+  return {
+    accountId: row.account_id,
+    email: row.email,
+    name: row.name,
+    plan: row.plan || "free",
+    voiceUsesThisPeriod: row.voice_uses_this_period || 0,
+    voiceMonthlyLimit: limit,
+    voiceRemainingThisPeriod: Math.max(0, limit - (row.voice_uses_this_period || 0)),
+    ticketCredits: row.ticket_credits || 0,
+  };
 }
 
 function rowToMember(row) {
@@ -843,8 +871,156 @@ async function ensureAccount(request, env, headers) {
   if (!optStr(data.name, 100)) return json({ error: "invalid_input" }, 400, headers);
   const email = data.email.trim().toLowerCase();
   const name = (data.name || "").trim();
-  const account = await getOrCreateAccount(env, email, name);
+  const account = await resetPeriodIfNeeded(env, await getOrCreateAccount(env, email, name));
   return json(rowToAccount(account), 200, headers);
+}
+
+/* ---------- Stripe（音声入力の有料プラン。docs/adr/0004） ----------
+ * npm SDKは使わず、OpenAI連携と同じくfetch()で直接REST APIを呼ぶ。
+ * StripeのAPIはJSONではなくapplication/x-www-form-urlencodedを受け取る。
+ */
+const STRIPE_API_BASE = "https://api.stripe.com/v1";
+const PLAN_PRICE_IDS = {
+  basic: "price_1UFbTgDKb5ecGXW9mdabWbFs",
+  premium_plus: "price_1UFbUiDKb5ecGXW9OG7jYfQu",
+};
+
+// StripeのAPIが期待するbracket記法（line_items[0][price]など）にネストしたオブジェクト・配列を変換する
+function stripeFormBody(params) {
+  const pairs = [];
+  function walk(prefix, value) {
+    if (value === undefined || value === null) return;
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => walk(`${prefix}[${i}]`, v));
+    } else if (typeof value === "object") {
+      Object.keys(value).forEach((k) => walk(prefix ? `${prefix}[${k}]` : k, value[k]));
+    } else {
+      pairs.push(encodeURIComponent(prefix) + "=" + encodeURIComponent(value));
+    }
+  }
+  Object.keys(params).forEach((k) => walk(k, params[k]));
+  return pairs.join("&");
+}
+
+async function createCheckoutSession(request, env, headers) {
+  if (!env.STRIPE_SECRET_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  const priceId = PLAN_PRICE_IDS[data.plan];
+  if (!priceId) return json({ error: "invalid_plan" }, 400, headers);
+  if (!optStr(data.successUrl, 500) || !data.successUrl) return json({ error: "invalid_input" }, 400, headers);
+  if (!optStr(data.cancelUrl, 500) || !data.cancelUrl) return json({ error: "invalid_input" }, 400, headers);
+  const email = data.email.trim().toLowerCase();
+
+  // Checkout StudioでUI上固定された値（fixed_by_ui）は、そのまま使う
+  const body = stripeFormBody({
+    mode: "subscription",
+    ui_mode: "hosted_page",
+    success_url: data.successUrl,
+    cancel_url: data.cancelUrl,
+    customer_email: email,
+    client_reference_id: email,
+    billing_address_collection: "auto",
+    payment_method_collection: "always",
+    phone_number_collection: { enabled: false },
+    automatic_tax: { enabled: false },
+    allow_promotion_codes: false,
+    submit_type: "auto",
+    line_items: [{ price: priceId, quantity: 1 }],
+    // Webhookでline_itemsを別途取得しなくて済むよう、どのプランを買ったかをmetadataに残しておく
+    metadata: { plan: data.plan },
+  });
+
+  const upstream = await fetch(`${STRIPE_API_BASE}/checkout/sessions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  if (!upstream.ok) {
+    const errorBody = await upstream.text().catch(() => "");
+    console.error(JSON.stringify({ event: "stripe_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+    return json({ error: "upstream_error" }, 502, headers);
+  }
+  const session = await upstream.json();
+  return json({ url: session.url }, 200, headers);
+}
+
+// Stripeの署名（stripe-signatureヘッダー）を検証する。https://docs.stripe.com/webhooks#verify-official-libraries
+// npm SDKを使わないため、Web Crypto APIのHMAC-SHA256で自前で検証する。
+async function verifyStripeSignature(rawBody, sigHeader, secret) {
+  if (!sigHeader) return false;
+  const parts = {};
+  sigHeader.split(",").forEach((kv) => {
+    const i = kv.indexOf("=");
+    if (i === -1) return;
+    parts[kv.slice(0, i)] = kv.slice(i + 1);
+  });
+  if (!parts.t || !parts.v1) return false;
+  // 5分より古いタイムスタンプは、リプレイ攻撃を避けるため拒否する
+  const age = Math.abs(Date.now() / 1000 - Number(parts.t));
+  if (!isFinite(age) || age > 300) return false;
+
+  const signedPayload = `${parts.t}.${rawBody}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signedPayload));
+  const expected = Array.from(new Uint8Array(sigBuf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (expected.length !== parts.v1.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ parts.v1.charCodeAt(i);
+  return diff === 0;
+}
+
+async function handleStripeWebhook(request, env, headers) {
+  if (!env.STRIPE_WEBHOOK_SECRET) return json({ error: "server_not_configured" }, 503, headers);
+  const rawBody = await request.text();
+  const valid = await verifyStripeSignature(rawBody, request.headers.get("stripe-signature"), env.STRIPE_WEBHOOK_SECRET);
+  if (!valid) return json({ error: "invalid_signature" }, 400, headers);
+
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const email = String(session.client_reference_id || session.customer_email || "").trim().toLowerCase();
+    const plan = session.metadata && session.metadata.plan;
+    if (email && PLAN_PRICE_IDS[plan]) {
+      const t = nowIso();
+      await env.DB.prepare(
+        `UPDATE accounts SET plan=?, plan_period_start=?, voice_uses_this_period=0,
+         stripe_customer_id=?, stripe_subscription_id=?, updated_at=? WHERE email=?`
+      )
+        .bind(plan, currentPeriodStart(), session.customer || "", session.subscription || "", t, email)
+        .run();
+    }
+  } else if (event.type === "customer.subscription.deleted") {
+    const subscription = event.data.object;
+    const customerId = subscription.customer;
+    if (customerId) {
+      await env.DB.prepare("UPDATE accounts SET plan='free', updated_at=? WHERE stripe_customer_id=?")
+        .bind(nowIso(), customerId)
+        .run();
+    }
+  }
+
+  return json({ received: true }, 200, headers);
 }
 
 async function joinTrip(tripId, request, env, headers) {
@@ -1003,17 +1179,34 @@ function decodeVoiceMeta(header) {
   }
 }
 
+// 音声入力を使う権利があるか確認する（docs/adr/0004）。実際の消費（回数を減らす）は
+// AI呼び出しが成功した後に行う（失敗した録音でユーザーの枠を消費しないため）。
+async function checkVoiceQuota(env, email) {
+  if (!isValidEmailFormat(email)) return { ok: false, reason: "login_required" };
+  const normalized = email.trim().toLowerCase();
+  const account = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(normalized).first();
+  if (!account) return { ok: false, reason: "login_required" };
+  const reset = await resetPeriodIfNeeded(env, account);
+  const limit = PLAN_MONTHLY_LIMIT[reset.plan] || 0;
+  if (reset.voice_uses_this_period < limit) return { ok: true, via: "plan", email: normalized };
+  if ((reset.ticket_credits || 0) > 0) return { ok: true, via: "ticket", email: normalized };
+  return { ok: false, reason: reset.plan === "free" ? "premium_required" : "quota_exceeded" };
+}
+
+async function consumeVoiceQuota(env, email, via) {
+  const t = nowIso();
+  if (via === "ticket") {
+    await env.DB.prepare("UPDATE accounts SET ticket_credits = MAX(0, ticket_credits - 1), updated_at=? WHERE email=?").bind(t, email).run();
+  } else {
+    await env.DB.prepare("UPDATE accounts SET voice_uses_this_period = voice_uses_this_period + 1, updated_at=? WHERE email=?").bind(t, email).run();
+  }
+}
+
 async function createBlocksFromVoice(tripId, date, request, env, headers) {
   if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
   if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
   const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
   if (!trip) return json({ error: "trip_not_found" }, 404, headers);
-
-  if (env.AI_RATE_LIMITER) {
-    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
-    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
-    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
-  }
 
   const contentType = (request.headers.get("content-type") || "").split(";")[0].trim();
   const format = VOICE_AUDIO_FORMATS[contentType];
@@ -1025,6 +1218,17 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
   const meta = decodeVoiceMeta(request.headers.get("x-voice-meta"));
   const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
   const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
+  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+
+  // プラン・回数券の確認（docs/adr/0004）。有料プランの範囲外なら、高くつくAI呼び出しの前に断る
+  const quota = await checkVoiceQuota(env, email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
 
   const transcript = await transcribeAudio(env, buf, contentType, format);
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
@@ -1096,6 +1300,7 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
 
   await saveVoiceTranscript(env, tripId, date, transcript);
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  await consumeVoiceQuota(env, quota.email, quota.via);
   return json({ blocks: created, transcript }, 200, headers);
 }
 
@@ -1166,7 +1371,14 @@ export default {
     const method = request.method;
 
     if (method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (origin !== env.ALLOWED_ORIGIN && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) && path.indexOf("/photos/") !== 0) {
+    // Webhookはブラウザ（Origin付き）ではなくStripeのサーバーから直接叩かれるため対象外。
+    // 代わりにstripe-signatureヘッダーの検証（handleStripeWebhook内）で認証する。
+    if (
+      origin !== env.ALLOWED_ORIGIN &&
+      !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) &&
+      path.indexOf("/photos/") !== 0 &&
+      path !== "/billing/webhook"
+    ) {
       return json({ error: "origin_not_allowed" }, 403, headers);
     }
 
@@ -1208,6 +1420,9 @@ export default {
 
     if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
+
+    if (method === "POST" && path === "/billing/checkout") return createCheckoutSession(request, env, headers);
+    if (method === "POST" && path === "/billing/webhook") return handleStripeWebhook(request, env, headers);
 
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/))) {
       return createBlocksFromVoice(m[1], m[2], request, env, headers);
