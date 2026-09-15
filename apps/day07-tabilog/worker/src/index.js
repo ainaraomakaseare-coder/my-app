@@ -1307,13 +1307,13 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
 
 // ---------- 一時的な復旧処理（2026-09-15、entriesテーブルが誤って消えた事故対応） ----------
 // 保存済みの文字起こし（day_infos.voice_transcript）をもう一度AIに読ませて予定＋記録を
-// 作り直し、「記録が0件の既存Block」にlabelで一致するものだけ記録を差し戻す。
-// 新しいBlockは作らない（既存のBlockとタイトル・カテゴリ・並び順は無事なため）。
+// 作り直し、「記録が0件の既存Block」に記録を差し戻す。新しいBlockは作らない
+// （既存のBlockとタイトル・カテゴリ・並び順は無事なため）。
+// AIは同じ内容でも毎回少し違う言い回しでlabelを作る（例：「新宿集合」→「新宿に集合する」）ため
+// label文字列の一致では対応づけられない。文字起こし1回分（segment）は話した順番どおりに
+// Blockを作っているはずなので、代わりに「そのsegmentで作られた件数ぶん、未記録Blockを
+// 古い順（＝話した順）から取って、順番で対応づける」方式にする。
 // 使い終わったら/admin/recover-entriesルートごと削除する。
-function normalizeLabel(s) {
-  return String(s || "").trim().replace(/\s+/g, "");
-}
-
 async function recoverEntriesForDay(env, tripId, date) {
   const dayInfo = await env.DB.prepare("SELECT voice_transcript FROM day_infos WHERE id = ?").bind(tripId + "_" + date).first();
   if (!dayInfo || !dayInfo.voice_transcript) return { date, matched: [], unmatched: [], error: "no_transcript" };
@@ -1330,6 +1330,7 @@ async function recoverEntriesForDay(env, tripId, date) {
   const segments = dayInfo.voice_transcript.split(/\n\n---\n\n/).map((s) => s.trim()).filter(Boolean);
   const matched = [];
   const unmatched = [];
+  let poolIndex = 0;
 
   for (const segment of segments) {
     const upstream = await fetch(OPENAI_RESPONSES_URL, {
@@ -1350,15 +1351,12 @@ async function recoverEntriesForDay(env, tripId, date) {
     try { parsed = JSON.parse(outputText(response)); } catch { parsed = null; }
     if (!parsed || !Array.isArray(parsed.blocks)) { unmatched.push({ reason: "invalid_model_output", segment: segment.slice(0, 80) }); continue; }
 
-    for (const b of parsed.blocks) {
-      if (!b || typeof b !== "object") continue;
-      const label = isStr(b.label, 200) ? b.label.trim() : "";
-      if (!label) continue;
-      const norm = normalizeLabel(label);
-      let target = pool.find((row) => normalizeLabel(row.label) === norm);
-      if (!target) target = pool.find((row) => normalizeLabel(row.label).includes(norm) || norm.includes(normalizeLabel(row.label)));
-      if (!target) { unmatched.push({ reason: "no_match", label }); continue; }
+    const items = parsed.blocks.filter((b) => b && typeof b === "object" && isStr(b.label, 200) && b.label.trim());
+    const slice = pool.slice(poolIndex, poolIndex + items.length);
 
+    for (let i = 0; i < slice.length; i++) {
+      const target = slice[i];
+      const b = items[i];
       const entryData = (b.entry && typeof b.entry === "object") ? b.entry : {};
       const episode = isStr(entryData.episode, 4000) ? entryData.episode.trim() : "";
       const mapUrl = optUrl(entryData.mapUrl, 500) ? (entryData.mapUrl || "") : "";
@@ -1374,13 +1372,15 @@ async function recoverEntriesForDay(env, tripId, date) {
       )
         .bind(uid("ent"), target.id, episode, "", "", "[]", "[]", JSON.stringify(costItems), "", mapUrl, shopUrl, "", t, t)
         .run();
-
-      pool.splice(pool.indexOf(target), 1);
-      matched.push({ blockId: target.id, label: target.label, episode });
+      matched.push({ blockId: target.id, blockLabel: target.label, regeneratedLabel: b.label.trim(), episode });
     }
+    for (let i = slice.length; i < items.length; i++) {
+      unmatched.push({ reason: "no_block_left", label: items[i].label.trim() });
+    }
+    poolIndex += slice.length;
   }
 
-  return { date, matched, unmatched, stillEmpty: pool.map((b) => ({ blockId: b.id, label: b.label })) };
+  return { date, matched, unmatched, stillEmpty: pool.slice(poolIndex).map((b) => ({ blockId: b.id, label: b.label })) };
 }
 
 async function handleRecoverEntries(request, env, headers) {
