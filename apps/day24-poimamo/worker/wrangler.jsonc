@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "poimamo-ai",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "ANTHROPIC_MODEL": "claude-haiku-4-5-20251001",
+    "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io"
+  },
+  "secrets": {
+    "required": ["ANTHROPIC_API_KEY"]
+  },
+  "ratelimits": [
+    {
+      "name": "AI_RATE_LIMITER",
+      "namespace_id": "72400",
+      "simple": { "limit": 8, "period": 60 }
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
