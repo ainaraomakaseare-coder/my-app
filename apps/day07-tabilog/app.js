@@ -1581,17 +1581,26 @@
     var statusEl = $('#planStatus');
     var optionsEl = $('#planOptions');
     var msgEl = $('#planStatusMessage');
+    var badgeEl = $('#planBadgeTop');
     var account = state.account;
     if (!account) {
       statusEl.innerHTML = '';
       optionsEl.innerHTML = '';
       msgEl.textContent = '';
+      badgeEl.hidden = true;
       return;
     }
     var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
     var usageText = account.plan === 'free'
       ? '音声入力機能はまだ使えません'
       : '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
+
+    badgeEl.hidden = false;
+    badgeEl.classList.toggle('is-free', account.plan === 'free');
+    badgeEl.textContent = account.plan === 'free'
+      ? '音声入力：未登録'
+      : planName + '・残り' + account.voiceRemainingThisPeriod + '回';
+
     statusEl.innerHTML =
       '<div class="plan-name">今のプラン：' + escapeHtml(planName) + '</div>' +
       '<div class="plan-usage">' + escapeHtml(usageText) +
@@ -1813,6 +1822,9 @@
     });
     $('#btnGoToPlans').addEventListener('click', function () {
       if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
+    });
+    $('#planBadgeTop').addEventListener('click', function () {
+      $('#planStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
 
     $('#mylogSort').addEventListener('click', function (e) {
