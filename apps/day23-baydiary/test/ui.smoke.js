@@ -1,13 +1,13 @@
 /*
  * 実ブラウザで記録の追加・編集・削除と各画面の切り替えを確かめる。
- * 実行: node test/bay-diary.smoke.js [bay-diary.html]
+ * 実行: node test/ui.smoke.js [index.html]
  */
 const { chromium } = require("/opt/node22/lib/node_modules/playwright");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
 
-const FILE = path.resolve(process.argv[2] || path.join(__dirname, "..", "bay-diary.html"));
+const FILE = path.resolve(process.argv[2] || path.join(__dirname, "..", "index.html"));
 
 let pass = 0, fail = 0;
 function check(label, cond, extra){

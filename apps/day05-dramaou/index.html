@@ -1,0 +1,5417 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ドラマ検定</title>
+<meta name="description" content="好きなドラマを入れると、その作品の問題が10問出ます。あなたのマニア度を測ります。">
+<!-- Worker公開後に、そのURLをcontentへ設定する。空なら従来方式だけで動く。 -->
+<meta name="drama-ai-endpoint" content="https://dramaou-ai.hiroya-apps.workers.dev">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ink:#0C1017;
+  --ink-hi:#151B26;
+  --ink-sink:#070A0F;
+  --line:#252E3E;
+  --line-lit:#36425A;
+  --paper:#ECE6DA;
+  --paper-dim:#9AA0AC;
+  --muted:#6E7789;
+  --lamp:#E8B44C;
+  --onair:#E0392C;
+  --onair-lit:#FF5B4A;
+  --cool:#6FA8B5;
+  --good:#5FBE8A;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
+  --font-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--ink);
+  background-image:
+    radial-gradient(ellipse 70% 45% at 50% -6%, rgba(232,180,76,.12), transparent 70%),
+    radial-gradient(ellipse 55% 38% at 50% 106%, rgba(111,168,181,.06), transparent 70%);
+  background-attachment:fixed;
+  color:var(--paper);
+  font-family:var(--font-body);
+  line-height:1.65;
+  -webkit-text-size-adjust:100%;
+}
+button,input{font-family:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--lamp);outline-offset:3px;border-radius:5px}
+[hidden]{display:none !important}
+.wrap{max-width:520px;margin:0 auto;padding:20px 18px 48px;display:flex;flex-direction:column;gap:20px;min-height:100dvh}
+
+/* ---- 見出し ---- */
+.masthead{display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.mast-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.logo{font-family:var(--font-display);font-weight:800;font-size:24px;letter-spacing:.1em;margin:0}
+.logo .on{color:var(--onair-lit)}
+.tagline{font-size:12px;color:var(--muted);letter-spacing:.08em}
+
+/* ---- 共通パーツ ---- */
+.card{background:var(--ink-hi);border:1px solid var(--line);border-radius:12px;padding:16px}
+.btn{
+  display:block;width:100%;padding:13px 16px;border-radius:10px;font-size:15px;font-weight:700;
+  letter-spacing:.06em;border:1px solid var(--line-lit);background:var(--ink-hi);color:var(--paper);
+  transition:background .12s, border-color .12s;
+}
+.btn:hover:not(:disabled){background:#1D2534;border-color:var(--lamp)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.primary{background:var(--lamp);color:#1A1206;border-color:var(--lamp)}
+.btn.primary:hover:not(:disabled){background:#F3C463;border-color:#F3C463}
+.btn.ghost{background:none;font-weight:500;font-size:13px;padding:9px 14px;color:var(--paper-dim)}
+.lead{font-size:14px;color:var(--paper-dim);margin:0}
+.note{font-size:12px;color:var(--muted);line-height:1.7}
+.err{color:var(--onair-lit);font-size:13px;line-height:1.7}
+
+/* ---- 入口 ---- */
+.search{display:flex;gap:8px}
+.search input{
+  flex:1;min-width:0;padding:13px 14px;border-radius:10px;background:var(--ink-sink);
+  border:1px solid var(--line-lit);font-size:16px;
+}
+.search input::placeholder{color:var(--muted)}
+.search button{flex:0 0 auto;padding:0 18px;border-radius:10px;border:1px solid var(--lamp);
+  background:var(--lamp);color:#1A1206;font-weight:700;font-size:14px}
+.search button:disabled{opacity:.4;cursor:default}
+.examples{display:flex;flex-wrap:wrap;gap:6px}
+.ex{background:none;border:1px solid var(--line);border-radius:99px;color:var(--paper-dim);
+  font-size:12px;padding:5px 11px;line-height:1.5}
+.ex:hover{border-color:var(--lamp);color:var(--paper)}
+
+/* ---- 候補 ---- */
+.hits{display:flex;flex-direction:column;gap:8px}
+.hit{display:flex;gap:12px;align-items:center;text-align:left;width:100%;padding:11px 12px;
+  border-radius:10px;background:var(--ink-hi);border:1px solid var(--line);color:inherit}
+.hit:hover{border-color:var(--lamp);background:#1D2534}
+.hit img{flex:0 0 auto;width:44px;height:60px;object-fit:cover;border-radius:5px;background:var(--ink-sink)}
+.hit .ph{flex:0 0 auto;width:44px;height:60px;border-radius:5px;background:var(--ink-sink);
+  display:grid;place-items:center;color:var(--muted);font-size:19px}
+.hit .t{font-weight:700;font-size:15px;line-height:1.45}
+.hit .d{font-size:12px;color:var(--muted);line-height:1.5;margin-top:2px}
+
+/* ---- 出題 ---- */
+.progress{display:flex;gap:3px}
+.progress i{flex:1;height:4px;border-radius:2px;background:var(--line)}
+.progress i.done{background:var(--lamp)}
+.progress i.miss{background:var(--onair)}
+.progress i.now{background:var(--paper-dim)}
+.qhead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);letter-spacing:.08em}
+.lv{padding:3px 9px;border-radius:99px;border:1px solid var(--line);letter-spacing:.14em;font-size:11px}
+.lv.l1{color:var(--cool);border-color:rgba(111,168,181,.45)}
+.lv.l2{color:var(--lamp);border-color:rgba(232,180,76,.45)}
+.lv.l3{color:var(--onair-lit);border-color:rgba(224,57,44,.5)}
+.qtext{font-family:var(--font-display);font-weight:600;font-size:20px;line-height:1.6;
+  letter-spacing:.02em;margin:0;text-wrap:pretty}
+.choices{display:flex;flex-direction:column;gap:9px}
+.ch{text-align:left;width:100%;padding:13px 15px;border-radius:10px;background:var(--ink-hi);
+  border:1px solid var(--line);font-size:15px;line-height:1.5;transition:border-color .12s,background .12s}
+.ch:hover:not(:disabled){border-color:var(--line-lit);background:#1D2534}
+.ch:disabled{cursor:default}
+.ch.right{border-color:var(--good);background:rgba(95,190,138,.13);color:#DFF3E8}
+.ch.wrong{border-color:var(--onair);background:rgba(224,57,44,.13);color:#F6DAD6}
+.ch .mk{font-weight:700;margin-right:9px;color:var(--muted)}
+.ch.right .mk{color:var(--good)} .ch.wrong .mk{color:var(--onair-lit)}
+.verdict{display:flex;flex-direction:column;gap:7px}
+.verdict .v{font-family:var(--font-display);font-weight:800;font-size:17px;letter-spacing:.06em}
+.verdict .v.o{color:var(--good)} .verdict .v.x{color:var(--onair-lit)}
+
+/* ---- 結果 ---- */
+.scorebox{text-align:center;display:flex;flex-direction:column;gap:9px;padding:22px 16px}
+.rank{font-family:var(--font-display);font-weight:800;font-size:35px;letter-spacing:.08em;
+  line-height:1.25;color:var(--lamp)}
+.pct{font-size:13px;color:var(--muted);letter-spacing:.1em;font-variant-numeric:tabular-nums}
+.pct b{color:var(--paper);font-size:20px;font-weight:700}
+.blurb{font-size:14px;color:var(--paper-dim);line-height:1.75;margin:0}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:78px 1fr 42px;align-items:center;gap:10px;font-size:12px}
+.bar .nm{color:var(--paper-dim);letter-spacing:.06em}
+.bar .tr{display:block;height:7px;border-radius:4px;background:var(--line);overflow:hidden}
+/* inline のままでは height が効かず、伸びない帯になる */
+.bar .fl{display:block;height:100%;border-radius:4px;background:var(--lamp);
+  transition:width .5s cubic-bezier(.2,.7,.3,1)}
+.bar .vl{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.review{display:flex;flex-direction:column;gap:9px}
+.rv{border-left:2px solid var(--line);padding:2px 0 2px 11px;font-size:13px;line-height:1.7}
+.rv.o{border-color:var(--good)} .rv.x{border-color:var(--onair)}
+.rv .q{color:var(--paper-dim)}
+.rv .a{font-weight:700}
+.rv.o .a{color:var(--good)} .rv.x .a{color:var(--onair-lit)}
+.src{font-size:12px;color:var(--muted)}
+.src a{color:var(--cool)}
+
+/* ---- 読み込み ---- */
+.loading{display:flex;flex-direction:column;gap:12px;align-items:center;padding:26px 12px;text-align:center}
+.spin{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);
+  border-top-color:var(--lamp);animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.found{display:flex;flex-wrap:wrap;gap:5px;justify-content:center}
+.tag{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.tag.has{color:var(--lamp);border-color:rgba(232,180,76,.4)}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
+
+/* Slackを思わせるワークスペースUI。ブランドを複製せず、情報階層を参考にする。 */
+:root{
+  --ink:#F8F8FA;--ink-hi:#FFF;--ink-sink:#F4F4F6;--line:#E3E3E7;--line-lit:#C8C7CC;
+  --paper:#1D1C1D;--paper-dim:#454245;--muted:#6F6B6F;--lamp:#611F69;
+  --onair:#E01E5A;--onair-lit:#E01E5A;--cool:#1264A3;--good:#007A5A;
+  --font-display:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic",sans-serif;
+  --font-body:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic",sans-serif
+}
+body{min-height:100dvh;background:#F8F8FA;background-image:none;color:var(--paper);line-height:1.55}
+body::before{content:"ドラマ王　　⌕  クイズを検索";position:fixed;z-index:15;left:260px;right:0;top:0;height:52px;display:flex;align-items:center;justify-content:center;background:#4A154B;color:#F7EEF7;box-shadow:0 1px rgba(0,0,0,.18);font-size:13px;font-weight:700}
+.wrap{max-width:none;margin:0;min-height:100dvh;padding:88px 56px 64px 316px;display:flex;align-items:center;gap:22px}
+.wrap>section{width:min(760px,100%)}
+.masthead{position:fixed;z-index:20;inset:0 auto 0 0;width:260px;padding:24px 18px;background:#3F0E40;border:0;color:#fff;box-shadow:inset -1px 0 rgba(0,0,0,.2);gap:16px}
+.masthead::before{content:"DR";display:grid;place-items:center;width:42px;height:42px;border-radius:11px;background:#36C5F0;color:#3F0E40;font-size:15px;font-weight:900;box-shadow:inset 0 0 0 3px rgba(255,255,255,.32)}
+.masthead::after{content:"チャンネル\A\A  #  クイズを探す\A  #  17作品の問題集\A  #  今日のスコア\A\Aダイレクトメッセージ\A\A  ●  クイズマスター";white-space:pre;display:block;padding:10px 8px;color:rgba(255,255,255,.74);font-size:13px;line-height:2.1;border-top:1px solid rgba(255,255,255,.16)}
+.mast-top{align-items:center;justify-content:flex-start}.logo{font-family:var(--font-body);font-size:20px;letter-spacing:0;font-weight:800}.logo .on{color:#2EB67D;font-size:14px;margin-left:5px}.tagline{margin:0;color:rgba(255,255,255,.68);font-size:12px;line-height:1.6;letter-spacing:0}
+#restart{position:absolute;left:18px;right:18px;bottom:22px;width:auto!important;color:#fff;border-color:rgba(255,255,255,.26);background:rgba(255,255,255,.08)}
+.card{background:#fff;border:1px solid #E3E3E7;border-radius:14px;padding:24px;box-shadow:0 1px 1px rgba(29,28,29,.04),0 8px 28px rgba(29,28,29,.08)}
+#scr-home{gap:18px!important}#scr-home::before{content:"クイズを始める";display:block;font-size:24px;line-height:1.25;font-weight:800;letter-spacing:-.02em}
+.lead{font-size:15px;color:#454245}.note{font-size:12px;color:#6F6B6F}.err{color:#C00F47}
+.search{gap:10px}.search input{min-height:48px;padding:12px 15px;background:#fff;border:1px solid #868486;color:#1D1C1D;border-radius:8px;box-shadow:inset 0 1px 2px rgba(0,0,0,.05)}
+.search input:focus{border-color:#1264A3;box-shadow:0 0 0 3px rgba(18,100,163,.18);outline:0}.search input::placeholder{color:#868486}
+.search button,.btn.primary{background:#611F69;border-color:#611F69;color:#fff;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,.12);letter-spacing:0}.search button:hover:not(:disabled),.btn.primary:hover:not(:disabled){background:#4A154B;border-color:#4A154B}
+.examples{gap:8px;padding-top:2px}.ex{background:#F8F8FA;border:1px solid #D8D7DA;color:#454245;border-radius:8px;font-size:12px;font-weight:600;padding:7px 11px;transition:.14s}.ex::before{content:"#";color:#868486;margin-right:5px}.ex:hover{background:#F2EAF3;border-color:#A86BB0;color:#4A154B;transform:translateY(-1px)}
+.btn{background:#fff;color:#1D1C1D;border-color:#C8C7CC;border-radius:8px;letter-spacing:0}.btn:hover:not(:disabled){background:#F8F8FA;border-color:#868486}.btn.ghost{color:#454245}
+.hit{background:#fff;border-color:#E3E3E7;border-radius:12px;padding:14px;box-shadow:0 2px 8px rgba(29,28,29,.05)}.hit:hover{background:#F8F8FA;border-color:#A86BB0}.hit img,.hit .ph{border-radius:8px;background:#F1EEF1}.hit .d{color:#6F6B6F}
+#scr-quiz{background:#fff;border:1px solid #E3E3E7;border-radius:14px;padding:26px;box-shadow:0 1px 1px rgba(29,28,29,.04),0 8px 28px rgba(29,28,29,.08)}
+.progress{gap:5px}.progress i{height:5px;background:#E8E8EB}.progress i.done{background:#611F69}.progress i.miss{background:#E01E5A}.progress i.now{background:#36C5F0}
+.qhead{color:#6F6B6F;letter-spacing:0}.lv{border-color:#D8D7DA;background:#F8F8FA;letter-spacing:.04em;font-weight:700}.lv.l1{color:#007A5A;border-color:#9DD8C8}.lv.l2{color:#9B5D00;border-color:#EBC98B}.lv.l3{color:#C00F47;border-color:#F2A8C2}
+.qtext{font-family:var(--font-body);font-size:22px;line-height:1.5;letter-spacing:-.01em;color:#1D1C1D}.choices{gap:10px}
+.ch{padding:14px 16px;background:#fff;border:1px solid #C8C7CC;border-radius:9px;color:#1D1C1D;box-shadow:0 1px 2px rgba(0,0,0,.03);transition:.14s}.ch:hover:not(:disabled){background:#F8F4F8;border-color:#611F69;transform:translateX(3px)}
+.ch .mk{display:inline-grid;place-items:center;width:25px;height:25px;border-radius:6px;background:#F1EEF1;color:#611F69;margin-right:10px}.ch.right{border-color:#007A5A;background:#ECF8F4;color:#0B4C3A}.ch.wrong{border-color:#E01E5A;background:#FFF0F5;color:#7A1236}
+.verdict{box-shadow:none;border-left:4px solid #611F69}.verdict .v{font-family:var(--font-body)}
+.scorebox{background:#4A154B;color:#fff;border:0;box-shadow:0 10px 30px rgba(74,21,75,.2)}.rank{font-family:var(--font-body);color:#fff;font-size:34px;letter-spacing:0}.pct{color:rgba(255,255,255,.72)}.pct b{color:#fff}.blurb{color:rgba(255,255,255,.82)}
+.bar .nm{color:#454245}.bar .tr{background:#ECEAEC}.bar .fl{background:#611F69}.bar .vl{color:#6F6B6F}.rv{border-color:#D8D7DA}.rv .q{color:#454245}.src{color:#6F6B6F}.src a{color:#1264A3}
+.spin{border-color:#E3E3E7;border-top-color:#611F69}.tag{border-color:#D8D7DA;color:#6F6B6F}.tag.has{color:#007A5A;border-color:#82CCB8;background:#ECF8F4}
+@media(max-width:780px){body::before{display:none}.wrap{padding:0 14px 40px;gap:16px;align-items:stretch}.wrap>section{width:100%}.masthead{position:relative;inset:auto;width:calc(100% + 28px);margin:0 -14px;padding:15px 18px;background:#4A154B;min-height:116px;border-radius:0;box-shadow:0 2px 8px rgba(0,0,0,.16)}.masthead::before{position:absolute;right:18px;top:16px;width:36px;height:36px}.masthead::after{display:none}.tagline{max-width:74%}#restart{left:auto;right:18px;bottom:15px}.card,#scr-quiz{padding:19px;border-radius:12px}#scr-home::before{font-size:21px}.search{flex-direction:column}.search button{min-height:46px}.qtext{font-size:19px}.ch{padding:13px 12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="mast-top">
+    <h1 class="logo">ドラマ検定<span class="on">●</span></h1>
+    <button class="btn ghost" id="restart" hidden style="width:auto">最初から</button>
+  </div>
+  <p class="tagline">好きなドラマの、どれだけ細部を覚えていますか</p>
+</header>
+
+<!-- 入口 -->
+<section id="scr-home" class="card" style="display:flex;flex-direction:column;gap:14px">
+  <p class="lead">作品名を入れると、日本語版 Wikipedia の記事から10問つくります。</p>
+  <div class="search">
+    <input id="q" type="search" placeholder="例：あまちゃん" autocomplete="off" enterkeyhint="search">
+    <button id="go">検索</button>
+  </div>
+  <div class="examples" id="examples"></div>
+  <p class="note">この17作品には、AIで作成して内容を確認した問題を20問ずつ用意してあります。</p>
+
+  <p class="note" id="home-note" hidden></p>
+</section>
+
+<!-- 候補 -->
+<section id="scr-hits" hidden style="display:flex;flex-direction:column;gap:12px">
+  <p class="lead" id="hits-lead"></p>
+  <div class="hits" id="hits"></div>
+  <button class="btn ghost" id="back-home">検索しなおす</button>
+</section>
+
+<!-- 読み込み -->
+<section id="scr-load" hidden>
+  <div class="card loading">
+    <div class="spin"></div>
+    <p class="lead" id="load-msg">記事を読んでいます…</p>
+    <div class="found" id="found"></div>
+  </div>
+</section>
+
+<!-- 出題 -->
+<section id="scr-quiz" hidden style="display:flex;flex-direction:column;gap:16px">
+  <div class="progress" id="progress"></div>
+  <div class="qhead">
+    <span id="qcount"></span>
+    <span class="lv" id="qlv"></span>
+  </div>
+  <p class="qtext" id="qtext"></p>
+  <div class="choices" id="choices"></div>
+  <div class="card verdict" id="verdict" hidden>
+    <span class="v" id="vmark"></span>
+    <span class="note" id="vnote"></span>
+  </div>
+  <button class="btn primary" id="next" hidden>次の問題</button>
+</section>
+
+<!-- 結果 -->
+<section id="scr-done" hidden style="display:flex;flex-direction:column;gap:16px">
+  <div class="card scorebox">
+    <div class="rank" id="rank"></div>
+    <div class="pct"><b id="score"></b> / <span id="full"></span> 点　正解 <span id="hits-n"></span>/10</div>
+    <p class="blurb" id="blurb"></p>
+  </div>
+  <div class="card bars" id="bars"></div>
+  <div class="card review" id="review"></div>
+  <p class="src" id="src"></p>
+  <button class="btn primary" id="again">同じドラマでもう一度</button>
+  <button class="btn" id="other">別のドラマで挑む</button>
+</section>
+
+</div>
+<script>
+(function(){
+"use strict";
+
+/* ============================ PURE-BEGIN ============================
+   この下の閉じ目印までは DOM にも通信にも触れない。
+   test/quiz.test.js が この範囲を切り出して node 上で直接動かす。
+   ==================================================================== */
+
+/* 選択肢に出す主要局。ここに寄せられない局では、局を当てる問題を出さない */
+var STATIONS = ["NHK","日本テレビ","TBS","フジテレビ","テレビ朝日","テレビ東京","WOWOW","Netflix"];
+
+/* 表記ゆれを正式名に寄せる。長い綴りを先に置き、上から順に当てる。
+   ここに無い綴りは空を返す。見知らぬ局を正解にしてしまわないため。   */
+var STATION_ALIAS = [
+  ["NHK総合","NHK"],["NHK BS","NHK"],["NHKBS","NHK"],["NHK教育","NHK"],["NHK Eテレ","NHK"],["NHK","NHK"],
+  ["日本テレビ","日本テレビ"],["日テレ","日本テレビ"],
+  ["TBSテレビ","TBS"],["東京放送","TBS"],["TBS","TBS"],
+  ["フジテレビジョン","フジテレビ"],["フジテレビ","フジテレビ"],
+  ["テレビ朝日","テレビ朝日"],["テレビ東京","テレビ東京"],
+  ["毎日放送","毎日放送"],["MBS","毎日放送"],["朝日放送","朝日放送"],["ABCテレビ","朝日放送"],
+  ["関西テレビ","関西テレビ"],["カンテレ","関西テレビ"],
+  ["讀賣テレビ","読売テレビ"],["読売テレビ","読売テレビ"],
+  ["テレビ大阪","テレビ大阪"],["東海テレビ","東海テレビ"],["中京テレビ","中京テレビ"],
+  ["WOWOW","WOWOW"],["Netflix","Netflix"],["Amazon","Amazon Prime Video"],["Hulu","Hulu"],
+  ["ABEMA","ABEMA"],["U-NEXT","U-NEXT"],["Disney","Disney+"]
+];
+function normStation(raw){
+  var s = cleanText(raw);
+  if(!s) return "";
+  for(var i = 0; i < STATION_ALIAS.length; i++){
+    if(s.indexOf(STATION_ALIAS[i][0]) >= 0) return STATION_ALIAS[i][1];
+  }
+  return "";
+}
+
+/* 記事には原作漫画やアニメ、海外リメイクの infobox も並ぶ。
+   実写ドラマの箱を選び違えると、別作品の放送局や出演者を掴んでしまう。 */
+var LIVE_KEYS  = ["出演者","演出","主演","プロデューサー","放送局","放送期間","放送時間"];
+var ANIME_KEYS = ["アニメーション制作","シリーズ構成","キャラクターデザイン","声の出演","総作画監督","音響監督","作画監督","アニメーション"];
+var BOOK_KEYS  = ["作者","掲載誌","出版社","巻数","レーベル","発表期間","判型","作画"];
+var SCORE_KEYS = ["放送局","放送期間","放送時間","回数","話数","演出","出演者","脚本","主題歌","プロデューサー","制作","音楽","原作","ジャンル"];
+
+function countKeys(box, keys){
+  var c = 0;
+  keys.forEach(function(k){ if(box[k] && cleanText(box[k])) c++; });
+  return c;
+}
+function boxKind(box){
+  var live = countKeys(box, LIVE_KEYS);
+  var anime = countKeys(box, ANIME_KEYS);
+  var book = countKeys(box, BOOK_KEYS);
+  if(anime > 0 && anime >= live) return "anime";
+  if(book > 0 && book >= live) return "book";
+  return live > 0 ? "live" : "other";
+}
+/* 箱を1つだけ選ぶ。またいで値を拾うと、フジ版の出演者に韓国版の放送局が
+   混ざるような取り違えが起きるので、混ぜないことを最優先にする。      */
+function pickInfobox(boxes){
+  if(!boxes || !boxes.length) return {};
+  var live = boxes.filter(function(b){ return boxKind(b) === "live"; });
+  var pool = live.length ? live : boxes;
+  var best = pool[0], bestScore = -1;
+  pool.forEach(function(b){
+    var score = countKeys(b, SCORE_KEYS);
+    /* 日本の局に寄せられる箱を優先する。海外版の箱を掴まないため */
+    if(normStation(b["放送局"] || b["制作局"] || b["放送チャンネル"] || "")) score += 3;
+    if(score > bestScore){ bestScore = score; best = b; }   /* 同点なら先に出てくる箱 */
+  });
+  return best;
+}
+
+/* 人物のダミー。年代で分けてあるのは、対象作と年代がずれた人を選んで
+   「実はその人も出ていた」という誤判定を起こしにくくするため */
+var ACTORS = {
+  "1990":["織田裕二","鈴木保奈美","唐沢寿明","江口洋介","常盤貴子","中山美穂","浅野温子","山口智子","豊川悦司","松嶋菜々子","反町隆史","財前直見"],
+  "2000":["木村拓哉","竹内結子","山下智久","上戸彩","篠原涼子","阿部寛","天海祐希","堤真一","仲間由紀恵","玉木宏","長瀬智也","小雪"],
+  "2010":["堺雅人","綾野剛","石原さとみ","有村架純","長澤まさみ","菅田将暉","吉高由里子","松坂桃李","高橋一生","満島ひかり","新垣結衣","星野源"],
+  "2020":["目黒蓮","川口春奈","横浜流星","上白石萌音","松村北斗","今田美桜","神木隆之介","杉咲花","中村倫也","岡田将生","広瀬すず","賀来賢人"]
+};
+var WRITERS = ["野木亜紀子","坂元裕二","宮藤官九郎","三谷幸喜","大石静","岡田惠和","遊川和彦","古沢良太","森下佳子","中園ミホ","井上由美子","金子茂樹","橋部敦子","浜田秀哉","黒岩勉"];
+var DIRECTORS = ["土井裕泰","堤幸彦","福田雄一","塚原あゆ子","新井順子","水田伸生","平川雄一朗","若松節朗","石井康晴","金子文紀","佐藤東弥","田中亮"];
+var COMPOSERS = ["菅野よう子","服部隆之","千住明","佐藤直紀","得田真裕","澤野弘之","林ゆうき","末廣健一郎","川井憲次","羽岡佳"];
+
+/* ---- 乱数（種つき）。テストで結果を固定できるようにする ---- */
+function rng(seed){
+  var s = seed >>> 0 || 1;
+  return function(){ s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+function pick(arr, rnd){ return arr[Math.floor(rnd() * arr.length)]; }
+function shuffle(arr, rnd){
+  var a = arr.slice();
+  for(var i = a.length - 1; i > 0; i--){
+    var j = Math.floor(rnd() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+
+/* ---- 文字列の掃除 ---- */
+/* 脚注 [1] や全角空白、改行を落として一行にする */
+function cleanText(s){
+  if(!s) return "";
+  return String(s)
+    .replace(/\[\s*(\d+|注\s*\d*|要出典|脚注\s*\d*)\s*\]/g, "")
+    .replace(/[ 　]/g, " ")
+    .replace(/\s*\n\s*/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+/* infobox の一欄には複数人が入る。区切りで割って、肩書きや補足を落とす。
+   <br> は読み取り側で改行にしてあるので、区切りとして先に割る。
+   cleanText は改行を空白に潰すので、割ってから一つずつ通す。          */
+function splitNames(s){
+  if(!s) return [];
+  return String(s)
+    .split(/[、，,／/・･\n]/)
+    .map(function(x){
+      return cleanText(x)
+        .replace(/[（(].*?[)）]/g, "")            /* （第1話）などの補足 */
+        .replace(/^\s*[-–—‐]\s*/, "")
+        .replace(/\s*(ほか|他|など)\s*$/, "")
+        .trim();
+    })
+    .filter(function(x){ return x.length >= 2 && x.length <= 24; });
+}
+
+/* infobox の人物欄には「2013年版」「半沢直樹II」「エピソードゼロ」のような
+   区切りの見出しが人名と同じ並びで入る。人名として扱えないものを落とす。  */
+function looksLikeName(s){
+  if(!s || s.length < 2 || s.length > 14) return false;
+  if(/\d/.test(s)) return false;                                  /* 2013年版、第2期 */
+  if(/[IVXivx]{2,}$/.test(s)) return false;                       /* 半沢直樹II */
+  if(/(年版|年度|シーズン|シリーズ|エピソード|パート|続編|前編|後編|特別編|総集編|劇場版|スペシャル|ゼロ)/.test(s)) return false;
+  if(/[「」『』（）()【】]/.test(s)) return false;
+  if(/^(ほか|他|など|不明|未定|なし|同上)$/.test(s)) return false;
+  return true;
+}
+/* 人物欄はこちらで読む。ジャンルや主題歌には使わない */
+function personNames(s){
+  var out = [], seen = {};
+  splitNames(s).forEach(function(n){
+    if(looksLikeName(n) && !seen[n]){ seen[n] = 1; out.push(n); }
+  });
+  return out;
+}
+
+/* ---- 数字の読み取り ---- */
+function toHalf(s){
+  return String(s).replace(/[０-９．]/g, function(c){
+    return c === "．" ? "." : String.fromCharCode(c.charCodeAt(0) - 0xFEE0);
+  });
+}
+/* 「全11話」「11回」「11」から 11 を取る */
+function readCount(s){
+  var m = toHalf(cleanText(s)).match(/(\d{1,3})\s*(?:話|回|エピソード)?/);
+  return m ? parseInt(m[1], 10) : null;
+}
+/* 「2016年10月11日 - 12月20日」から開始日を取る */
+function readDate(s){
+  var t = toHalf(cleanText(s));
+  var m = t.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  if(m) return { y:+m[1], m:+m[2], d:+m[3] };
+  m = t.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
+  if(m) return { y:+m[1], m:+m[2], d:null };
+  m = t.match(/(\d{4})/);
+  return m ? { y:+m[1], m:null, d:null } : null;
+}
+function dateLabel(o){
+  if(!o) return "";
+  if(o.m == null) return o.y + "年";
+  if(o.d == null) return o.y + "年" + o.m + "月";
+  return o.y + "年" + o.m + "月" + o.d + "日";
+}
+/* 「10.2%」「10.2％」から 10.2 を取る */
+function readRating(s){
+  var m = toHalf(cleanText(s)).match(/(\d{1,2}(?:\.\d)?)\s*[%％]/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+/* ---- infobox の生データを作品の形に整える ---- */
+/* info は {ラベル: 生テキスト} の入れ物。表記ゆれを吸収してひとつに寄せる */
+function fromInfobox(info){
+  function get(){
+    for(var i = 0; i < arguments.length; i++){
+      var k = arguments[i];
+      if(info[k] && cleanText(info[k])) return info[k];
+    }
+    return "";
+  }
+  var period = get("放送期間","放送期間・回数","放送日","公開期間","配信期間","放送");
+  var start = readDate(period) || readDate(get("放送開始","初回放送"));
+  /* 「TBS系列」「NHK総合テレビジョン」などの飾りごと名寄せする */
+  var station = normStation(get("放送局","制作局","放送チャンネル","配信","ネットワーク"));
+  return {
+    station: station,
+    start: start,
+    count: readCount(get("回数","話数","各話数","全話数")),
+    genre: splitNames(get("ジャンル","番組のジャンル")),
+    writers: personNames(get("脚本","脚本家","原案・脚本")),
+    directors: personNames(get("演出","監督","演出・監督")),
+    cast: personNames(get("出演者","出演","主演")),
+    composers: personNames(get("音楽","劇伴")),
+    theme: splitNames(get("主題歌","オープニング","エンディング","テーマ曲")),
+    origin: personNames(get("原作","原案")),
+    producers: personNames(get("プロデューサー","制作","製作","チーフプロデューサー"))
+  };
+}
+
+/* ---- 各話表を整える ---- */
+/* rows は [{no,date,subtitle,rating}] の粗い配列。欠けは落とす */
+function tidyEpisodes(rows){
+  var out = [], seen = {};
+  for(var i = 0; i < rows.length; i++){
+    var r = rows[i];
+    var no = r.no == null ? null : readCount(r.no);
+    if(no == null || no < 1 || no > 200 || seen[no]) continue;
+    seen[no] = 1;
+    out.push({
+      no: no,
+      date: readDate(r.date),
+      subtitle: cleanText(r.subtitle).replace(/^「(.*)」$/, "$1").replace(/^『(.*)』$/, "$1"),
+      rating: readRating(r.rating)
+    });
+  }
+  out.sort(function(a, b){ return a.no - b.no; });
+  return out;
+}
+
+/* ---- 作品としてまとめる ---- */
+function makeWork(title, url, info, epRows, chars, prose){
+  var w = fromInfobox(info);
+  w.title = title;
+  w.url = url;
+  /* 「半沢直樹II」のような続編の見出しが人物欄に並ぶことがある。
+     ただし主人公の役名が作品名と同じ作品は多いので、
+     作品名を含んで、なお長いものだけを落とす。                */
+  var core = String(title).replace(/[（(].*?[)）]/g, "").trim();
+  function isSeriesLabel(n){ return core.length >= 2 && n.length > core.length && n.indexOf(core) >= 0; }
+  ["writers","directors","cast","composers","origin","producers"].forEach(function(k){
+    w[k] = w[k].filter(function(n){ return !isSeriesLabel(n); });
+  });
+  w.episodes = tidyEpisodes(epRows || []);
+  /* 役名と俳優の組。役名が作品名と紛れている行は落とす */
+  w.characters = (chars || []).filter(function(c){
+    return c && c.role && c.actor && c.role !== c.actor && !isSeriesLabel(c.role);
+  });
+  /* あらすじなどの地の文。表からは取れない「物語の中で何が起きたか」の材料 */
+  w.prose = String(prose || "");
+  w.aiQuestions = [];
+  if(w.count == null && w.episodes.length >= 3) w.count = w.episodes.length;
+  /* 年代の帯。ダミー人物を対象作から離すのに使う */
+  var y = w.start ? w.start.y : null;
+  w.era = y == null ? null : y < 2000 ? "1990" : y < 2010 ? "2000" : y < 2020 ? "2010" : "2020";
+  return w;
+}
+
+/* 対象作と年代の離れた人物プールを返す */
+function farActors(era){
+  var keys = Object.keys(ACTORS);
+  if(!era) return keys.reduce(function(a, k){ return a.concat(ACTORS[k]); }, []);
+  var far = keys.filter(function(k){ return Math.abs(+k - +era) >= 20; });
+  if(!far.length) far = keys.filter(function(k){ return k !== era; });
+  return far.reduce(function(a, k){ return a.concat(ACTORS[k]); }, []);
+}
+
+/* 正解と重ならないダミーを n 個そろえる。足りなければ null */
+function distract(pool, exclude, n, rnd){
+  var bad = {};
+  (exclude || []).forEach(function(x){ if(x) bad[String(x)] = 1; });
+  var ok = pool.filter(function(x){ return x != null && !bad[String(x)]; });
+  /* 重複を落とす */
+  var uniq = [], seen = {};
+  ok.forEach(function(x){ if(!seen[String(x)]){ seen[String(x)] = 1; uniq.push(x); } });
+  if(uniq.length < n) return null;
+  return shuffle(uniq, rnd).slice(0, n);
+}
+
+/* 正解1つとダミー3つを混ぜて四択にする */
+function makeChoices(answer, wrongs, rnd){
+  var all = shuffle([answer].concat(wrongs), rnd);
+  return { choices: all.map(String), answer: all.indexOf(answer) };
+}
+
+/* 数値のダミー。正解の前後から散らす */
+function numberWrongs(correct, spread, n, rnd, min){
+  var cand = [];
+  for(var d = 1; d <= spread; d++){
+    if(min == null || correct - d >= min) cand.push(correct - d);
+    cand.push(correct + d);
+  }
+  return distract(cand, [correct], n, rnd);
+}
+
+/* ============ 出題テンプレ ============
+   ドラマの中身を問うものを content、放送局や年といった外側の事実を
+   fact とする。10問はできる限り content で埋め、足りないぶんだけ
+   fact で補う。make は問題の配列を返す（材料が無ければ空）。
+   level 1=易 2=中 3=難                                            */
+
+/* 選択肢に使える俳優の一覧。同じ作品の中から採ると、
+   「誰が出ていたか」ではなく「誰が何を演じたか」を問える。 */
+/* サブタイトルを本文に埋め込む。すでに鉤括弧で始まる題は重ねない */
+function quote(s){ return /^[「『]/.test(s) ? s : "「" + s + "」"; }
+
+function actorPool(w){
+  var a = w.characters.map(function(c){ return c.actor; }).concat(w.cast);
+  var out = [], seen = {};
+  a.forEach(function(x){ if(x && !seen[x]){ seen[x] = 1; out.push(x); } });
+  return out;
+}
+
+/* ---- 作り置きの設問 ----
+   2000年以降の代表作から選んだ17作品について、AIで候補を作り、
+   Wikipediaや番組公式の資料と照合した問題を20問ずつ置く。
+   **順位付けではない**（人気順の出典を取れないので、順位は名乗らない）。
+
+   決めぜりふや設定の核に加え、人物、出来事、各話タイトルも含む。
+   実際の出題ではこの問題群と、その場で記事から組み立てる問題を混ぜる。
+   誤りが見つかったらこの表と問題台帳を直す。
+
+   形は [問題文, 正解, [ダミー3つ], 難しさ, 解説]。
+   正解の位置はアプリ側で毎回混ぜるので、ここでは並べる順を気にしない。 */
+var BAKED = {
+  "半沢直樹": [
+    [
+      "『半沢直樹』で、半沢が繰り返した決めぜりふは？",
+      "やられたらやり返す、倍返しだ",
+      [
+        "逃げも隠れもいたしません",
+        "この落とし前はつけさせます",
+        "私はあきらめの悪い男です"
+      ],
+      1,
+      "「やられたらやり返す、倍返しだ」。2013年の流行語大賞にも選ばれた。"
+    ],
+    [
+      "『半沢直樹』第8話のサブタイトルは？",
+      "強敵ライバル登場! 負ければ出向の危機",
+      [
+        "上司の濡れ衣を振り払え! 悪者に倍返し",
+        "クソ上司に倍返し! 部下のピンチを救えるか!? 裏切り者も出現",
+        "5億から120億! 東京で、倍返しなるか本店に異動した半沢は巨大な敵と戦う!!"
+      ],
+      3,
+      "第8話は「強敵ライバル登場! 負ければ出向の危機」。"
+    ],
+    [
+      "『半沢直樹』第5話のサブタイトルは？",
+      "半沢が出向に…!? 生き残りをかけた戦",
+      [
+        "平均視聴率 29.0%（視聴率はビデオリサーチ調べ、関東地区・世帯・リアルタイム）",
+        "上司の濡れ衣を振り払え! 悪者に倍返し",
+        "5億から120億! 東京で、倍返しなるか本店に異動した半沢は巨大な敵と戦う!!"
+      ],
+      3,
+      "第5話は「半沢が出向に…!? 生き残りをかけた戦」。"
+    ],
+    [
+      "次のうち『半沢直樹』に出ていないのは？",
+      "江口洋介",
+      [
+        "相築あきこ",
+        "尾上松也",
+        "市川しんぺー"
+      ],
+      2,
+      "江口洋介 は出演者に挙がっていない。"
+    ],
+    [
+      "『半沢直樹』に出演していたのは？",
+      "堺雅人",
+      [
+        "財前直見",
+        "唐沢寿明",
+        "山口智子"
+      ],
+      1,
+      "堺雅人 が出演。"
+    ],
+    [
+      "『半沢直樹』で 半沢直樹 の妻にあたるのは？",
+      "半沢花",
+      [
+        "清田正伸",
+        "湯浅威",
+        "平山美幸"
+      ],
+      2,
+      "半沢花（演 上戸彩）が 半沢直樹 の妻。"
+    ],
+    [
+      "『半沢直樹』で 黒崎駿一 の部下にあたるのは？",
+      "加藤",
+      [
+        "広重多加夫",
+        "浅野利恵",
+        "高木"
+      ],
+      3,
+      "加藤（演 矢崎広）が 黒崎駿一 の部下。"
+    ],
+    [
+      "『半沢直樹』で 浅野匡 の妻にあたるのは？",
+      "浅野利恵",
+      [
+        "田宮基紀",
+        "古谷",
+        "木滝英雄"
+      ],
+      3,
+      "浅野利恵（演 中島ひろ子）が 浅野匡 の妻。"
+    ],
+    [
+      "『半沢直樹』で 瀬名洋介 を演じたのは？",
+      "尾上松也",
+      [
+        "森田順平",
+        "安藤彰則",
+        "吉沢亮"
+      ],
+      1,
+      "瀬名洋介 を演じたのは 尾上松也。"
+    ],
+    [
+      "『半沢直樹』で 柴田 を演じたのは？",
+      "安藤彰則",
+      [
+        "宮野真守",
+        "香川照之",
+        "及川光博"
+      ],
+      1,
+      "柴田 を演じたのは 安藤彰則。"
+    ],
+    [
+      "『半沢直樹』で 古田新太 が演じたのは？",
+      "三笠洋一郎",
+      [
+        "神谷巌夫",
+        "松下",
+        "箕部啓治"
+      ],
+      2,
+      "古田新太 が演じたのは 三笠洋一郎。"
+    ],
+    [
+      "『半沢直樹』で 宮崎 を演じたのは？",
+      "堀丞",
+      [
+        "中島裕翔",
+        "矢作マサル",
+        "長谷川公彦"
+      ],
+      1,
+      "宮崎 を演じたのは 堀丞。"
+    ],
+    [
+      "『半沢直樹』で 土田英生 が演じたのは？",
+      "平山一正",
+      [
+        "佐藤耕太",
+        "貝瀬夫人",
+        "高木"
+      ],
+      2,
+      "土田英生 が演じたのは 平山一正。"
+    ],
+    [
+      "『半沢直樹』で 井上肇 が演じたのは？",
+      "川原敏夫",
+      [
+        "福山夫人",
+        "浅野匡",
+        "来生卓治"
+      ],
+      2,
+      "井上肇 が演じたのは 川原敏夫。"
+    ],
+    [
+      "『半沢直樹』で 飯田 を演じたのは？",
+      "柴崎真人",
+      [
+        "志垣太郎",
+        "望月章男",
+        "若林瑠海"
+      ],
+      1,
+      "飯田 を演じたのは 柴崎真人。"
+    ],
+    [
+      "『半沢直樹』で 北川 を演じたのは？",
+      "階戸瑠李",
+      [
+        "竹財輝之助",
+        "山崎銀之丞",
+        "加藤虎ノ介"
+      ],
+      1,
+      "北川 を演じたのは 階戸瑠李。"
+    ],
+    [
+      "『半沢直樹』で 及川光博 が演じたのは？",
+      "渡真利忍",
+      [
+        "荒木裕二",
+        "浅野怜央",
+        "近藤直弼"
+      ],
+      2,
+      "及川光博 が演じたのは 渡真利忍。"
+    ],
+    [
+      "『半沢直樹』で 駿河太郎 が演じたのは？",
+      "湯浅威",
+      [
+        "波野吉弘",
+        "野崎三雄",
+        "古里則夫"
+      ],
+      2,
+      "駿河太郎 が演じたのは 湯浅威。"
+    ],
+    [
+      "『半沢直樹』で 垣内努 を演じたのは？",
+      "須田邦裕",
+      [
+        "永岡佑",
+        "滝藤賢一",
+        "石田剛太"
+      ],
+      1,
+      "垣内努 を演じたのは 須田邦裕。"
+    ],
+    [
+      "『半沢直樹』で 香川照之 が演じたのは？",
+      "大和田暁",
+      [
+        "棚橋貴子",
+        "坂本新之助",
+        "谷川幸代"
+      ],
+      2,
+      "香川照之 が演じたのは 大和田暁。"
+    ]
+  ],
+  "家政婦のミタ": [
+    [
+      "『家政婦のミタ』第10話のサブタイトルは？",
+      "息子よ、夫よ、お願い…私も天国に連れて行って!",
+      [
+        "全部脱いで! …承知しました",
+        "平均視聴率 24.7%（視聴率はビデオリサーチ調べ、関東地区・世帯）",
+        "崩壊寸前の家庭にやって来た笑顔を忘れた氷の女…"
+      ],
+      3,
+      "第10話は「息子よ、夫よ、お願い…私も天国に連れて行って!」。"
+    ],
+    [
+      "『家政婦のミタ』第6話のサブタイトルは？",
+      "私を殺して! …承知しました",
+      [
+        "私の過去、すべてお話します",
+        "平均視聴率 24.7%（視聴率はビデオリサーチ調べ、関東地区・世帯）",
+        "僕を裏切ったアイツを殺して"
+      ],
+      3,
+      "第6話は「私を殺して! …承知しました」。"
+    ],
+    [
+      "『家政婦のミタ』第1話のサブタイトルは？",
+      "崩壊寸前の家庭にやって来た笑顔を忘れた氷の女…",
+      [
+        "最終章の始まり! 一筋の涙…炎の中で私を死なせて",
+        "私の過去、すべてお話します",
+        "母を殺した父の正体を暴いて"
+      ],
+      2,
+      "第1話（第1話）は「崩壊寸前の家庭にやって来た笑顔を忘れた氷の女…」。"
+    ],
+    [
+      "『家政婦のミタ』第4話のサブタイトルは？",
+      "あなたの愛娘を誘拐しました",
+      [
+        "母を殺した父の正体を暴いて",
+        "崩壊寸前の家庭にやって来た笑顔を忘れた氷の女…",
+        "平均視聴率 24.7%（視聴率はビデオリサーチ調べ、関東地区・世帯）"
+      ],
+      3,
+      "第4話は「あなたの愛娘を誘拐しました」。"
+    ],
+    [
+      "『家政婦のミタ』第3話のサブタイトルは？",
+      "母を殺した父の正体を暴いて",
+      [
+        "息子よ、夫よ、お願い…私も天国に連れて行って!",
+        "全部脱いで! …承知しました",
+        "崩壊寸前の家庭にやって来た笑顔を忘れた氷の女…"
+      ],
+      3,
+      "第3話は「母を殺した父の正体を暴いて」。"
+    ],
+    [
+      "『家政婦のミタ』第9話のサブタイトルは？",
+      "最終章の始まり! 一筋の涙…炎の中で私を死なせて",
+      [
+        "死ぬまで二度と笑いません…",
+        "平均視聴率 24.7%（視聴率はビデオリサーチ調べ、関東地区・世帯）",
+        "母を殺した父の正体を暴いて"
+      ],
+      3,
+      "第9話は「最終章の始まり! 一筋の涙…炎の中で私を死なせて」。"
+    ],
+    [
+      "次のうち『家政婦のミタ』に出ていないのは？",
+      "中山美穂",
+      [
+        "野波麻帆",
+        "大家由祐子",
+        "比佐一成"
+      ],
+      2,
+      "中山美穂 は出演者に挙がっていない。"
+    ],
+    [
+      "『家政婦のミタ』に出演していたのは？",
+      "松嶋菜々子",
+      [
+        "唐沢寿明",
+        "鈴木保奈美",
+        "常盤貴子"
+      ],
+      1,
+      "松嶋菜々子 が出演。"
+    ],
+    [
+      "『家政婦のミタ』で 皆川真利子 の夫にあたるのは？",
+      "皆川功",
+      [
+        "警察官",
+        "拓也に誘われた女子学生",
+        "大場"
+      ],
+      2,
+      "皆川功（演 池田政典）が 皆川真利子 の夫。"
+    ],
+    [
+      "『家政婦のミタ』で 阿須田海斗 を演じたのは？",
+      "綾部守人",
+      [
+        "鈴木米香",
+        "滝澤晴幸",
+        "岡田隆之介"
+      ],
+      1,
+      "阿須田海斗 を演じたのは 綾部守人。"
+    ],
+    [
+      "『家政婦のミタ』で 阿須田恵一 を演じたのは？",
+      "長谷川博己",
+      [
+        "赤座美代子",
+        "勝地涼",
+        "本田望結"
+      ],
+      1,
+      "阿須田恵一 を演じたのは 長谷川博己。"
+    ],
+    [
+      "『家政婦のミタ』で 滝澤晴幸 が演じたのは？",
+      "重役",
+      [
+        "阿須田凪子",
+        "阿須田海斗",
+        "阿須田希衣"
+      ],
+      2,
+      "滝澤晴幸 が演じたのは 重役。"
+    ],
+    [
+      "『家政婦のミタ』で 春風ひとみ が演じたのは？",
+      "天野",
+      [
+        "結城うらら",
+        "阿須田結",
+        "ホテルのスタッフ"
+      ],
+      2,
+      "春風ひとみ が演じたのは 天野。"
+    ],
+    [
+      "『家政婦のミタ』で 結城うらら を演じたのは？",
+      "相武紗季",
+      [
+        "吉田翔",
+        "野波麻帆",
+        "鈴木米香"
+      ],
+      1,
+      "結城うらら を演じたのは 相武紗季。"
+    ],
+    [
+      "『家政婦のミタ』で 天野 を演じたのは？",
+      "春風ひとみ",
+      [
+        "平泉成",
+        "吉川まりあ",
+        "高橋育代"
+      ],
+      1,
+      "天野 を演じたのは 春風ひとみ。"
+    ],
+    [
+      "『家政婦のミタ』で 大家由祐子 が演じたのは？",
+      "阿須田凪子",
+      [
+        "阿須田希衣",
+        "エアガンショップの店員",
+        "結城義之"
+      ],
+      3,
+      "大家由祐子 が演じたのは 阿須田凪子。"
+    ],
+    [
+      "『家政婦のミタ』で 風間美枝 を演じたのは？",
+      "野波麻帆",
+      [
+        "吉沢志央",
+        "綾部守人",
+        "吉田翔"
+      ],
+      1,
+      "風間美枝 を演じたのは 野波麻帆。"
+    ],
+    [
+      "『家政婦のミタ』で 藤本哉汰 が演じたのは？",
+      "三田純",
+      [
+        "大場の母親",
+        "拓也に誘われた女子学生",
+        "阿須田結"
+      ],
+      2,
+      "藤本哉汰 が演じたのは 三田純。"
+    ],
+    [
+      "『家政婦のミタ』で 大場 を演じたのは？",
+      "勝地涼",
+      [
+        "齊藤陸",
+        "鈴木米香",
+        "岩崎泰次郎"
+      ],
+      1,
+      "大場 を演じたのは 勝地涼。"
+    ],
+    [
+      "『家政婦のミタ』で 赤座美代子 が演じたのは？",
+      "三田の義母",
+      [
+        "古田",
+        "風間美枝",
+        "阿須田凪子"
+      ],
+      2,
+      "赤座美代子 が演じたのは 三田の義母。"
+    ]
+  ],
+  "逃げるは恥だが役に立つ": [
+    [
+      "『逃げるは恥だが役に立つ』で、みくりと平匡が結んだ関係は？",
+      "契約結婚",
+      [
+        "偽装結婚",
+        "事実婚",
+        "見合い結婚"
+      ],
+      1,
+      "家事を仕事として請け負う契約結婚から始まる。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』のエンディングで流行したものは？",
+      "恋ダンス",
+      [
+        "逃げ恥ポーズ",
+        "ハグの日",
+        "みくり体操"
+      ],
+      1,
+      "星野源の『恋』に合わせた恋ダンス。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、みくりが平匡の家で始めた仕事は？",
+      "家事代行",
+      [
+        "家庭教師",
+        "経理代行",
+        "訪問介護"
+      ],
+      1,
+      "父の紹介で平匡の家事代行を始める。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、平匡の職業は？",
+      "システムエンジニア",
+      [
+        "ネットワークエンジニア",
+        "ソフトウェア営業担当",
+        "ウェブデザイナー"
+      ],
+      1,
+      "平匡はIT企業で働くシステムエンジニア。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、みくりが持つ学位は？",
+      "大学院修士",
+      [
+        "高校卒業",
+        "短期大学卒業",
+        "博士号"
+      ],
+      2,
+      "みくりは大学院を修了しているが就職に苦戦していた。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、平匡が自称していたのは？",
+      "プロの独身",
+      [
+        "恋愛の達人",
+        "家事の天才",
+        "結婚評論家"
+      ],
+      1,
+      "恋愛経験の乏しい平匡は自らをプロの独身と呼ぶ。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、土屋百合はみくりの何にあたる？",
+      "伯母",
+      [
+        "姉",
+        "母",
+        "上司"
+      ],
+      1,
+      "百合はみくりの母・桜の姉。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、みくりと平匡が決めた週一回の習慣は？",
+      "ハグの日",
+      [
+        "外食の日",
+        "掃除の日",
+        "会議の日"
+      ],
+      1,
+      "二人は火曜日をハグの日と決める。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、契約上の平匡の立場は？",
+      "雇用主",
+      [
+        "保証人",
+        "仲介人",
+        "共同経営者"
+      ],
+      2,
+      "契約結婚では平匡が雇用主、みくりが従業員。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、契約上のみくりの立場は？",
+      "従業員",
+      [
+        "取締役",
+        "保証人",
+        "顧客"
+      ],
+      2,
+      "家事労働に対して給与を受け取る従業員という設定。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、二人が契約結婚を周囲にどう説明した？",
+      "普通の結婚",
+      [
+        "ルームシェア",
+        "兄妹での同居",
+        "会社の寮生活"
+      ],
+      2,
+      "周囲には通常の結婚として知らせる。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、風見涼太が平匡に提案したのは？",
+      "家事代行のシェア",
+      [
+        "会社の共同経営",
+        "住宅の交換",
+        "海外への移住"
+      ],
+      2,
+      "風見はみくりの家事代行を分けてほしいと提案する。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、沼田頼綱が得意なのは？",
+      "料理",
+      [
+        "手品",
+        "英会話",
+        "書道"
+      ],
+      2,
+      "沼田は料理上手な平匡の同僚。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、平匡がみくりに支払うものは？",
+      "家事労働の給与",
+      [
+        "結婚祝い金",
+        "学費",
+        "家賃の全額"
+      ],
+      1,
+      "家事を無償にせず仕事として給与を支払う。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』の主な舞台となる都市は？",
+      "横浜",
+      [
+        "札幌",
+        "京都",
+        "福岡"
+      ],
+      2,
+      "みくりと平匡は横浜で暮らす。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、みくりが結婚を何に例えて提案した？",
+      "就職",
+      [
+        "留学",
+        "起業",
+        "転職活動"
+      ],
+      1,
+      "就職という意味で結婚する案を平匡に持ちかける。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、百合が勤める業界は？",
+      "化粧品業界",
+      [
+        "出版業界",
+        "旅行業界",
+        "金融業界"
+      ],
+      2,
+      "百合は化粧品会社で働くキャリアウーマン。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、みくりの父の名は？",
+      "森山栃男",
+      [
+        "津崎宗八",
+        "風見涼太",
+        "沼田頼綱"
+      ],
+      3,
+      "みくりの父は森山栃男。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』で、みくりの母の名は？",
+      "森山桜",
+      [
+        "土屋百合",
+        "田中安恵",
+        "梅原ナツキ"
+      ],
+      3,
+      "みくりの母は森山桜。"
+    ],
+    [
+      "『逃げるは恥だが役に立つ』の題名が示すのは、逃げることも何になり得るという考え？",
+      "役に立つ選択",
+      [
+        "必ず失敗する選択",
+        "法律違反の選択",
+        "勝負を捨てる選択"
+      ],
+      3,
+      "状況から逃げることも有効な道になり得るという題意。"
+    ]
+  ],
+  "あまちゃん": [
+    [
+      "『あまちゃん』で、驚いたときの掛け声として流行した言葉は？",
+      "じぇじぇじぇ",
+      [
+        "だんだん",
+        "なんでやねん",
+        "そうけぇ"
+      ],
+      1,
+      "北三陸の方言という設定の「じぇじぇじぇ」。2013年の流行語大賞に選ばれた。"
+    ],
+    [
+      "『あまちゃん』で、アキが北三陸で目指した仕事は？",
+      "海女",
+      [
+        "民宿の女将",
+        "駅員",
+        "漁師"
+      ],
+      1,
+      "祖母と同じ海女を目指すところから物語が動きだす。"
+    ],
+    [
+      "『あまちゃん』第19話のサブタイトルは？",
+      "おら、ウニが獲りてぇ",
+      [
+        "おら、みんなに会いでぇ！",
+        "おらの仁義なき戦い",
+        "おら、先輩が好きだ！"
+      ],
+      3,
+      "第19話は「おら、ウニが獲りてぇ」。"
+    ],
+    [
+      "『あまちゃん』第85話のサブタイトルは？",
+      "おらの仁義なき戦い",
+      [
+        "おら、先輩が好きだ！",
+        "おらたち、いつでも夢を",
+        "おら、地元に帰ろう!?"
+      ],
+      3,
+      "第85話は「おらの仁義なき戦い」。"
+    ],
+    [
+      "『あまちゃん』第1話のサブタイトルは？",
+      "おら、この海が好きだ！",
+      [
+        "おら、ドキドキがとまんねぇ",
+        "おらたちの大逆転",
+        "おら、先輩が好きだ！"
+      ],
+      2,
+      "第1話（第1話）は「おら、この海が好きだ！」。"
+    ],
+    [
+      "『あまちゃん』第79話のサブタイトルは？",
+      "おら、大女優の付き人になる",
+      [
+        "おら、悲しみがとまらねぇ",
+        "おらのハート、再点火",
+        "おら、ウニが獲りてぇ"
+      ],
+      3,
+      "第79話は「おら、大女優の付き人になる」。"
+    ],
+    [
+      "『あまちゃん』第61話のサブタイトルは？",
+      "おら、アイドルになりてぇ！",
+      [
+        "おらの大失恋",
+        "おらのママに歴史あり",
+        "おら、ウニが獲りてぇ"
+      ],
+      3,
+      "第61話は「おら、アイドルになりてぇ！」。"
+    ],
+    [
+      "『あまちゃん』第103話のサブタイトルは？",
+      "おら、地元に帰ろう!?",
+      [
+        "おらたち、熱いよね！",
+        "おら、悲しみがとまらねぇ",
+        "おらとママの潮騒のメモリー"
+      ],
+      3,
+      "第103話は「おら、地元に帰ろう!?」。"
+    ],
+    [
+      "『あまちゃん』第127話のサブタイトルは？",
+      "おらとママの潮騒のメモリー",
+      [
+        "おら、ウニが獲りてぇ",
+        "おら、友だちができた！",
+        "おら、アイドルになりてぇ！"
+      ],
+      3,
+      "第127話は「おらとママの潮騒のメモリー」。"
+    ],
+    [
+      "次のうち『あまちゃん』に出ていないのは？",
+      "浅野温子",
+      [
+        "杉本哲太",
+        "八木亜希子",
+        "平泉成"
+      ],
+      2,
+      "浅野温子 は出演者に挙がっていない。"
+    ],
+    [
+      "『あまちゃん』に出演していたのは？",
+      "尾美としのり",
+      [
+        "財前直見",
+        "唐沢寿明",
+        "山口智子"
+      ],
+      1,
+      "尾美としのり が出演。"
+    ],
+    [
+      "『あまちゃん』で 今野 弥生 の夫にあたるのは？",
+      "今野あつし",
+      [
+        "小野寺 薫子",
+        "荒巻 太一",
+        "黒川 正宗"
+      ],
+      2,
+      "今野あつし（演 菅原大吉）が 今野 弥生 の夫。"
+    ],
+    [
+      "『あまちゃん』で 足立 ユイ の兄にあたるのは？",
+      "足立 ヒロシ",
+      [
+        "甲斐",
+        "今野あつし",
+        "今野 弥生"
+      ],
+      3,
+      "足立 ヒロシ（演 小池徹平）が 足立 ユイ の兄。"
+    ],
+    [
+      "『あまちゃん』で 花巻 珠子 を演じたのは？",
+      "伊勢志摩",
+      [
+        "福士蒼汰",
+        "小泉今日子",
+        "小池徹平"
+      ],
+      1,
+      "花巻 珠子 を演じたのは 伊勢志摩。"
+    ],
+    [
+      "『あまちゃん』で マギー が演じたのは？",
+      "河島 耕作",
+      [
+        "菅原 保",
+        "今野あつし",
+        "長内 六郎"
+      ],
+      2,
+      "マギー が演じたのは 河島 耕作。"
+    ],
+    [
+      "『あまちゃん』で 荒川良々 が演じたのは？",
+      "吉田 正義",
+      [
+        "今野あつし",
+        "熊谷 美寿々",
+        "磯野 心平"
+      ],
+      2,
+      "荒川良々 が演じたのは 吉田 正義。"
+    ],
+    [
+      "『あまちゃん』で 安部 小百合 を演じたのは？",
+      "片桐はいり",
+      [
+        "山下リオ",
+        "安藤玉恵",
+        "小池徹平"
+      ],
+      1,
+      "安部 小百合 を演じたのは 片桐はいり。"
+    ],
+    [
+      "『あまちゃん』で 片桐はいり が演じたのは？",
+      "安部 小百合",
+      [
+        "荒巻 太一",
+        "熊谷 美寿々",
+        "河島 耕作"
+      ],
+      2,
+      "片桐はいり が演じたのは 安部 小百合。"
+    ],
+    [
+      "『あまちゃん』で 伊勢志摩 が演じたのは？",
+      "花巻 珠子",
+      [
+        "菅原 保",
+        "ヒビキ 一郎",
+        "天野 忠兵衛"
+      ],
+      2,
+      "伊勢志摩 が演じたのは 花巻 珠子。"
+    ],
+    [
+      "『あまちゃん』で 蔵下穂波 が演じたのは？",
+      "喜屋武 エレン",
+      [
+        "甲斐",
+        "黒川 正宗",
+        "磯野 心平"
+      ],
+      2,
+      "蔵下穂波 が演じたのは 喜屋武 エレン。"
+    ]
+  ],
+  "ごくせん": [
+    [
+      "『ごくせん』で、教師ヤンクミが隠していた素性は？",
+      "極道の一家の跡取り",
+      [
+        "元プロボクサー",
+        "元暴走族の総長",
+        "警察官僚の娘"
+      ],
+      2,
+      "大江戸一家という極道の家に生まれた四代目。それを隠して教壇に立つ。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』に出演していたのは？",
+      "松本潤",
+      [
+        "川口春奈",
+        "岡田将生",
+        "目黒蓮"
+      ],
+      1,
+      "松本潤 が出演。"
+    ],
+    [
+      "次のうち『ごくせん (テレビドラマ)』に出ていないのは？",
+      "目黒蓮",
+      [
+        "山崎一",
+        "塚本高史",
+        "賀来賢人"
+      ],
+      2,
+      "目黒蓮 は出演者に挙がっていない。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 矢吹 隼人 の父にあたるのは？",
+      "矢吹 博史",
+      [
+        "鬼瓦 銀次",
+        "南 陽一",
+        "小田切 百合子"
+      ],
+      2,
+      "矢吹 博史（演 内藤剛志）が 矢吹 隼人 の父。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 矢吹 隼人 の弟にあたるのは？",
+      "矢吹 拓",
+      [
+        "黒崎 裕次",
+        "緒方 加代子",
+        "熊井 和雄"
+      ],
+      3,
+      "矢吹 拓（演 石黒英雄）が 矢吹 隼人 の弟。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で はるか を演じたのは？",
+      "渋谷桃子",
+      [
+        "伊沢弘",
+        "升毅",
+        "大後寿々花"
+      ],
+      1,
+      "はるか を演じたのは 渋谷桃子。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で ヒロ を演じたのは？",
+      "山口龍人",
+      [
+        "竹村愛美",
+        "斉藤羅慈",
+        "坂田聡"
+      ],
+      1,
+      "ヒロ を演じたのは 山口龍人。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で ウエンツ瑛士 が演じたのは？",
+      "結城正人",
+      [
+        "郷田の手下",
+        "矢吹 博史",
+        "立花"
+      ],
+      2,
+      "ウエンツ瑛士 が演じたのは 結城正人。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 日向 浩介 を演じたのは？",
+      "小出恵介",
+      [
+        "須永千重",
+        "市川由衣",
+        "八神蓮"
+      ],
+      1,
+      "日向 浩介 を演じたのは 小出恵介。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 結城正人の母 を演じたのは？",
+      "大塚良重",
+      [
+        "小出恵介",
+        "金田明夫",
+        "石垣佑磨"
+      ],
+      1,
+      "結城正人の母 を演じたのは 大塚良重。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 市川由衣 が演じたのは？",
+      "沢田 なつみ",
+      [
+        "森崎 亜美",
+        "黒崎 裕次",
+        "風間 薫子"
+      ],
+      2,
+      "市川由衣 が演じたのは 沢田 なつみ。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 波岡一喜 が演じたのは？",
+      "田辺",
+      [
+        "鬼瓦 銀次",
+        "工藤 広樹",
+        "矢吹 隼人"
+      ],
+      2,
+      "波岡一喜 が演じたのは 田辺。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 村山 壽太 を演じたのは？",
+      "夕輝壽太",
+      [
+        "生瀬勝久",
+        "田代功児",
+        "脇知弘"
+      ],
+      1,
+      "村山 壽太 を演じたのは 夕輝壽太。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 安部 を演じたのは？",
+      "斉藤羅慈",
+      [
+        "斎藤工",
+        "渋谷桃子",
+        "鯨井康介"
+      ],
+      1,
+      "安部 を演じたのは 斉藤羅慈。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 楠見薫 が演じたのは？",
+      "倉木悟の母",
+      [
+        "高杉 怜太",
+        "菱山社長",
+        "熊井 雅子"
+      ],
+      2,
+      "楠見薫 が演じたのは 倉木悟の母。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 秋山菜津子 が演じたのは？",
+      "猿渡 さち子",
+      [
+        "ヒロ",
+        "山本 ユウジ",
+        "辰巳 圭吾"
+      ],
+      3,
+      "秋山菜津子 が演じたのは 猿渡 さち子。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で あゆみ を演じたのは？",
+      "加藤明日美",
+      [
+        "市川由衣",
+        "金子賢",
+        "赤西仁"
+      ],
+      1,
+      "あゆみ を演じたのは 加藤明日美。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 吉田 竜也 を演じたのは？",
+      "若葉竜也",
+      [
+        "賀来賢人",
+        "樋口浩二",
+        "成宮寛貴"
+      ],
+      1,
+      "吉田 竜也 を演じたのは 若葉竜也。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 笠原秀幸 が演じたのは？",
+      "渋谷",
+      [
+        "夏目誠一の友人",
+        "間宮",
+        "郷田の手下"
+      ],
+      2,
+      "笠原秀幸 が演じたのは 渋谷。"
+    ],
+    [
+      "『ごくせん (テレビドラマ)』で 八神蓮 が演じたのは？",
+      "芝山",
+      [
+        "由佳",
+        "神谷 美沙子",
+        "成田"
+      ],
+      2,
+      "八神蓮 が演じたのは 芝山。"
+    ]
+  ],
+  "白い巨塔": [
+    [
+      "『白い巨塔』の舞台となる大学の名は？",
+      "浪速大学",
+      [
+        "東都大学",
+        "阪神大学",
+        "帝都大学"
+      ],
+      3,
+      "浪速大学医学部附属病院。原作は山崎豊子。"
+    ],
+    [
+      "次のうち『白い巨塔 (2003年のテレビドラマ)』に出ていないのは？",
+      "上白石萌音",
+      [
+        "石坂浩二",
+        "嶋崎伸夫",
+        "梅沢昌代"
+      ],
+      2,
+      "上白石萌音 は出演者に挙がっていない。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』に出演していたのは？",
+      "唐沢寿明",
+      [
+        "賀来賢人",
+        "横浜流星",
+        "杉咲花"
+      ],
+      1,
+      "唐沢寿明 が出演。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 佐々木庸平 の妻にあたるのは？",
+      "佐々木よし江",
+      [
+        "佐々木庸一",
+        "林田加奈子",
+        "里見好彦"
+      ],
+      2,
+      "佐々木よし江（演 かたせ梨乃）が 佐々木庸平 の妻。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 財前又一 を演じたのは？",
+      "西田敏行",
+      [
+        "品川徹",
+        "嶋崎伸夫",
+        "三浦理恵子"
+      ],
+      1,
+      "財前又一 を演じたのは 西田敏行。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 則内大二郎 を演じたのは？",
+      "田口主将",
+      [
+        "片岡孝太郎",
+        "黒木瞳",
+        "山上賢治"
+      ],
+      1,
+      "則内大二郎 を演じたのは 田口主将。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 亀山君子 を演じたのは？",
+      "西田尚美",
+      [
+        "沢村一樹",
+        "隈部洋平",
+        "池内淳子"
+      ],
+      1,
+      "亀山君子 を演じたのは 西田尚美。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 平泉成 が演じたのは？",
+      "唐木豊一",
+      [
+        "今津昭二",
+        "林田加奈子",
+        "則内大二郎"
+      ],
+      2,
+      "平泉成 が演じたのは 唐木豊一。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 中原丈雄 が演じたのは？",
+      "船尾悟",
+      [
+        "野坂信子",
+        "佃友博",
+        "金井達夫"
+      ],
+      2,
+      "中原丈雄 が演じたのは 船尾悟。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 東貞蔵 を演じたのは？",
+      "石坂浩二",
+      [
+        "隈部洋平",
+        "中原丈雄",
+        "山田明郷"
+      ],
+      1,
+      "東貞蔵 を演じたのは 石坂浩二。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 柳原弘 を演じたのは？",
+      "伊藤英明",
+      [
+        "曽我廼家文童",
+        "かたせ梨乃",
+        "渡辺憲吉"
+      ],
+      1,
+      "柳原弘 を演じたのは 伊藤英明。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 片岡孝太郎 が演じたのは？",
+      "佃友博",
+      [
+        "安西信也",
+        "財前五郎",
+        "里見好彦"
+      ],
+      2,
+      "片岡孝太郎 が演じたのは 佃友博。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 片岡涼 が演じたのは？",
+      "里見好彦",
+      [
+        "佐々木よし江",
+        "竹内雄太",
+        "岩田重吉"
+      ],
+      2,
+      "片岡涼 が演じたのは 里見好彦。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 正木徹 を演じたのは？",
+      "潮哲也",
+      [
+        "渡辺憲吉",
+        "廣川三憲",
+        "大林丈史"
+      ],
+      1,
+      "正木徹 を演じたのは 潮哲也。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 西田尚美 が演じたのは？",
+      "亀山君子",
+      [
+        "小西みどり",
+        "唐木豊一",
+        "五十嵐修三"
+      ],
+      2,
+      "西田尚美 が演じたのは 亀山君子。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 廣川三憲 が演じたのは？",
+      "佐々木信平",
+      [
+        "亀山君子",
+        "東貞蔵",
+        "金井達夫"
+      ],
+      2,
+      "廣川三憲 が演じたのは 佐々木信平。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 関口仁 を演じたのは？",
+      "上川隆也",
+      [
+        "水野真紀",
+        "伊武雅刀",
+        "唐沢寿明"
+      ],
+      1,
+      "関口仁 を演じたのは 上川隆也。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 菊川昇 を演じたのは？",
+      "沢村一樹",
+      [
+        "片岡孝太郎",
+        "廣川三憲",
+        "矢田亜希子"
+      ],
+      1,
+      "菊川昇 を演じたのは 沢村一樹。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 矢田亜希子 が演じたのは？",
+      "東佐枝子",
+      [
+        "里見好彦",
+        "佐々木信平",
+        "財前五郎"
+      ],
+      2,
+      "矢田亜希子 が演じたのは 東佐枝子。"
+    ],
+    [
+      "『白い巨塔 (2003年のテレビドラマ)』で 唐木豊一 を演じたのは？",
+      "平泉成",
+      [
+        "西田尚美",
+        "水野あや",
+        "池内淳子"
+      ],
+      1,
+      "唐木豊一 を演じたのは 平泉成。"
+    ]
+  ],
+  "HERO": [
+    [
+      "『HERO』で、久利生公平の職業は？",
+      "検事",
+      [
+        "裁判官",
+        "刑事",
+        "弁護士"
+      ],
+      1,
+      "東京地検の検事。型破りな捜査で事件に踏み込んでいく。"
+    ],
+    [
+      "次のうち『HERO (テレビドラマ)』に出ていないのは？",
+      "目黒蓮",
+      [
+        "菊池均也",
+        "川面千晶",
+        "徳秀樹"
+      ],
+      2,
+      "目黒蓮 は出演者に挙がっていない。"
+    ],
+    [
+      "『HERO (テレビドラマ)』に出演していたのは？",
+      "おかやまはじめ",
+      [
+        "賀来賢人",
+        "横浜流星",
+        "杉咲花"
+      ],
+      1,
+      "おかやまはじめ が出演。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 滝 翔太 の母にあたるのは？",
+      "滝 光恵",
+      [
+        "庄野 怜治",
+        "咲坂 勇次",
+        "ニュースキャスター"
+      ],
+      2,
+      "滝 光恵（演 朝加真由美）が 滝 翔太 の母。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 真山 淳子 の母にあたるのは？",
+      "真山 初江",
+      [
+        "坂本 浩司",
+        "斉藤 多香子",
+        "梶原 洋人"
+      ],
+      3,
+      "真山 初江（演 大塚良重）が 真山 淳子 の母。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 川原 朝美 の母にあたるのは？",
+      "川原 敏江",
+      [
+        "庄野 怜治",
+        "国分 秀雄",
+        "喫茶あめんぼのマスター"
+      ],
+      2,
+      "川原 敏江（演 芦沢孝子）が 川原 朝美 の母。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 小山田 秀二 の姉にあたるのは？",
+      "小山田 美奈子",
+      [
+        "権藤 明",
+        "片山 恭子",
+        "鴨頭 真理子"
+      ],
+      3,
+      "小山田 美奈子（演 森下涼子）が 小山田 秀二 の姉。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 川邊 涼子 の兄にあたるのは？",
+      "川邊 芳樹",
+      [
+        "羽毛田 次郎",
+        "押坂 陽一郎",
+        "綿貫 耕一郎"
+      ],
+      2,
+      "川邊 芳樹（演 真田幹也）が 川邊 涼子 の兄。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 真衣 を演じたのは？",
+      "田辺岬",
+      [
+        "竹財輝之助",
+        "田山涼成",
+        "六平直政"
+      ],
+      1,
+      "真衣 を演じたのは 田辺岬。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 八木 を演じたのは？",
+      "小市慢太郎",
+      [
+        "浅野和之",
+        "ベンガル",
+        "須田琥珀"
+      ],
+      1,
+      "八木 を演じたのは 小市慢太郎。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 萩原 貴美子 を演じたのは？",
+      "宮田早苗",
+      [
+        "池内博之",
+        "中村ゆり",
+        "森山直太朗"
+      ],
+      1,
+      "萩原 貴美子 を演じたのは 宮田早苗。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 吉家章人 が演じたのは？",
+      "東山 三郎",
+      [
+        "加瀬 美波",
+        "泉谷 りり子",
+        "高梨 輝一郎"
+      ],
+      2,
+      "吉家章人 が演じたのは 東山 三郎。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 羽場裕一 が演じたのは？",
+      "松平 一臣",
+      [
+        "榎本 由起",
+        "奥沢 恵美",
+        "石本"
+      ],
+      2,
+      "羽場裕一 が演じたのは 松平 一臣。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 川邊 芳樹 を演じたのは？",
+      "真田幹也",
+      [
+        "池内博之",
+        "八嶋智人",
+        "山崎画大"
+      ],
+      1,
+      "川邊 芳樹 を演じたのは 真田幹也。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 小森 拓郎 を演じたのは？",
+      "ベンガル",
+      [
+        "森下涼子",
+        "並樹史朗",
+        "桜井幸子"
+      ],
+      1,
+      "小森 拓郎 を演じたのは ベンガル。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 戸田恵子 が演じたのは？",
+      "森脇 加奈子",
+      [
+        "貴島 直美",
+        "津軽 保",
+        "市川 英二"
+      ],
+      2,
+      "戸田恵子 が演じたのは 森脇 加奈子。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 久保晶 が演じたのは？",
+      "橋本",
+      [
+        "現場リポーター",
+        "ロッキー",
+        "滝田 明彦"
+      ],
+      2,
+      "久保晶 が演じたのは 橋本。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 神田川 を演じたのは？",
+      "渋川清彦",
+      [
+        "金田明夫",
+        "丸高愛実",
+        "半海一晃"
+      ],
+      1,
+      "神田川 を演じたのは 渋川清彦。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 中丸新将 が演じたのは？",
+      "高城",
+      [
+        "坂下 康明",
+        "岬 健介",
+        "首藤 礼二"
+      ],
+      2,
+      "中丸新将 が演じたのは 高城。"
+    ],
+    [
+      "『HERO (テレビドラマ)』で 手塚理美 が演じたのは？",
+      "古越 ひろ子",
+      [
+        "市川 英二",
+        "勝俣 大毅",
+        "及川 圭史"
+      ],
+      2,
+      "手塚理美 が演じたのは 古越 ひろ子。"
+    ]
+  ],
+  "花より男子": [
+    [
+      "『花より男子』で、学園を支配する4人組の呼び名は？",
+      "F4",
+      [
+        "BIG4",
+        "四天王",
+        "G4"
+      ],
+      1,
+      "Flower 4 の略で F4。財閥の御曹司4人。"
+    ],
+    [
+      "『花より男子』第4話のサブタイトルは？",
+      "初めての朝帰り!?",
+      [
+        "涙!! サヨナラ大好きなヒト",
+        "バトルF4解散!!",
+        "いざ女子高生日本一決定戦"
+      ],
+      3,
+      "第4話は「初めての朝帰り!?」。"
+    ],
+    [
+      "『花より男子』第6話のサブタイトルは？",
+      "大波乱一触即発の三角関係",
+      [
+        "命がけの愛の告白",
+        "宣戦布告!! お金より絶対に大切なモノ",
+        "初めての朝帰り!?"
+      ],
+      3,
+      "第6話は「大波乱一触即発の三角関係」。"
+    ],
+    [
+      "『花より男子』第1話のサブタイトルは？",
+      "宣戦布告!! お金より絶対に大切なモノ",
+      [
+        "平均視聴率 19.8%（視聴率は関東地区・ビデオリサーチ社調べ）",
+        "バトルF4解散!!",
+        "涙!! サヨナラ大好きなヒト"
+      ],
+      2,
+      "第1話（第1話）は「宣戦布告!! お金より絶対に大切なモノ」。"
+    ],
+    [
+      "『花より男子』第8話のサブタイトルは？",
+      "いざ女子高生日本一決定戦",
+      [
+        "最悪のファーストキス!!",
+        "初めての朝帰り!?",
+        "宣戦布告!! お金より絶対に大切なモノ"
+      ],
+      3,
+      "第8話は「いざ女子高生日本一決定戦」。"
+    ],
+    [
+      "『花より男子』第2話のサブタイトルは？",
+      "最悪のファーストキス!!",
+      [
+        "初めての朝帰り!?",
+        "涙!! サヨナラ大好きなヒト",
+        "平均視聴率 19.8%（視聴率は関東地区・ビデオリサーチ社調べ）"
+      ],
+      3,
+      "第2話は「最悪のファーストキス!!」。"
+    ],
+    [
+      "『花より男子』第3話のサブタイトルは？",
+      "涙!! サヨナラ大好きなヒト",
+      [
+        "初めての朝帰り!?",
+        "いざ女子高生日本一決定戦",
+        "命がけの愛の告白"
+      ],
+      3,
+      "第3話は「涙!! サヨナラ大好きなヒト」。"
+    ],
+    [
+      "『花より男子』第7話のサブタイトルは？",
+      "バトルF4解散!!",
+      [
+        "初めての朝帰り!?",
+        "大波乱一触即発の三角関係",
+        "いざ女子高生日本一決定戦"
+      ],
+      3,
+      "第7話は「バトルF4解散!!」。"
+    ],
+    [
+      "次のうち『花より男子』に出ていないのは？",
+      "今田美桜",
+      [
+        "阿部力",
+        "小栗旬",
+        "西原亜希"
+      ],
+      2,
+      "今田美桜 は出演者に挙がっていない。"
+    ],
+    [
+      "『花より男子』に出演していたのは？",
+      "井上真央",
+      [
+        "賀来賢人",
+        "横浜流星",
+        "杉咲花"
+      ],
+      1,
+      "井上真央 が出演。"
+    ],
+    [
+      "『花より男子』で 道明寺椿 を演じたのは？",
+      "松嶋菜々子",
+      [
+        "井上真央",
+        "松本潤",
+        "松田翔太"
+      ],
+      1,
+      "道明寺椿 を演じたのは 松嶋菜々子。"
+    ],
+    [
+      "『花より男子』で 花沢類 を演じたのは？",
+      "小栗旬",
+      [
+        "松嶋菜々子",
+        "松田翔太",
+        "石野真子"
+      ],
+      1,
+      "花沢類 を演じたのは 小栗旬。"
+    ],
+    [
+      "『花より男子』で 小栗旬 が演じたのは？",
+      "花沢類",
+      [
+        "西門総二郎",
+        "美作あきら",
+        "牧野つくし"
+      ],
+      2,
+      "小栗旬 が演じたのは 花沢類。"
+    ],
+    [
+      "『花より男子』で 千石幸代 を演じたのは？",
+      "加藤貴子",
+      [
+        "松田翔太",
+        "小林すすむ",
+        "小栗旬"
+      ],
+      1,
+      "千石幸代 を演じたのは 加藤貴子。"
+    ],
+    [
+      "『花より男子』で 松本潤 が演じたのは？",
+      "道明寺司",
+      [
+        "美作あきら",
+        "千石幸代",
+        "牧野千恵子"
+      ],
+      2,
+      "松本潤 が演じたのは 道明寺司。"
+    ],
+    [
+      "『花より男子』で 西原亜希 が演じたのは？",
+      "松岡優紀",
+      [
+        "西田",
+        "千石幸代",
+        "花沢類"
+      ],
+      2,
+      "西原亜希 が演じたのは 松岡優紀。"
+    ],
+    [
+      "『花より男子』で 松岡優紀 を演じたのは？",
+      "西原亜希",
+      [
+        "松本潤",
+        "加賀まりこ",
+        "小林すすむ"
+      ],
+      1,
+      "松岡優紀 を演じたのは 西原亜希。"
+    ],
+    [
+      "『花より男子』で 牧野千恵子 を演じたのは？",
+      "石野真子",
+      [
+        "加賀まりこ",
+        "西原亜希",
+        "井上真央"
+      ],
+      1,
+      "牧野千恵子 を演じたのは 石野真子。"
+    ],
+    [
+      "『花より男子』で 小林すすむ が演じたのは？",
+      "牧野晴男",
+      [
+        "西田",
+        "道明寺司",
+        "牧野つくし"
+      ],
+      2,
+      "小林すすむ が演じたのは 牧野晴男。"
+    ],
+    [
+      "『花より男子』で 井上真央 が演じたのは？",
+      "牧野つくし",
+      [
+        "美作あきら",
+        "花沢類",
+        "道明寺楓"
+      ],
+      2,
+      "井上真央 が演じたのは 牧野つくし。"
+    ]
+  ],
+  "JIN-仁-": [
+    [
+      "『JIN-仁-』で、南方仁がタイムスリップした時代は？",
+      "幕末",
+      [
+        "戦国時代",
+        "明治初期",
+        "平安時代"
+      ],
+      1,
+      "現代の医師が幕末の江戸へ飛ばされる。"
+    ],
+    [
+      "『JIN-仁-』で、南方仁の本来の専門は？",
+      "脳外科",
+      [
+        "心臓外科",
+        "内科",
+        "産婦人科"
+      ],
+      2,
+      "現代では脳外科医として働いていた。"
+    ],
+    [
+      "『JIN-仁-』で、仁が江戸で出会う歴史上の人物は？",
+      "坂本龍馬",
+      [
+        "西郷隆盛",
+        "伊藤博文",
+        "土方歳三"
+      ],
+      1,
+      "仁は坂本龍馬と出会い友情を深める。"
+    ],
+    [
+      "『JIN-仁-』で、仁の医療を支える武家の娘は？",
+      "橘咲",
+      [
+        "野風",
+        "友永未来",
+        "橘栄"
+      ],
+      1,
+      "橘咲は仁の助手として医療に関わる。"
+    ],
+    [
+      "『JIN-仁-』で、橘咲の兄は？",
+      "橘恭太郎",
+      [
+        "佐分利祐輔",
+        "緒方洪庵",
+        "鈴屋彦三郎"
+      ],
+      2,
+      "橘恭太郎は咲の兄で武士。"
+    ],
+    [
+      "『JIN-仁-』で、吉原の最上級の花魁として登場するのは？",
+      "野風",
+      [
+        "咲",
+        "茜",
+        "夕霧"
+      ],
+      1,
+      "野風は吉原の鈴屋で呼出を務める花魁。"
+    ],
+    [
+      "『JIN-仁-』で、野風が瓜二つなのは現代の誰？",
+      "友永未来",
+      [
+        "橘咲",
+        "橘栄",
+        "多紀元琰"
+      ],
+      2,
+      "野風は仁の現代の恋人・未来と同じ顔を持つ。"
+    ],
+    [
+      "『JIN-仁-』で、仁に協力する蘭方医は？",
+      "緒方洪庵",
+      [
+        "勝海舟",
+        "新門辰五郎",
+        "佐久間象山"
+      ],
+      2,
+      "緒方洪庵は仁の医術を認め支える。"
+    ],
+    [
+      "『JIN-仁-』で、仁が江戸で作ろうとする抗生物質は？",
+      "ペニシリン",
+      [
+        "ワクチン",
+        "インスリン",
+        "アスピリン"
+      ],
+      1,
+      "感染症治療のためペニシリン製造に挑む。"
+    ],
+    [
+      "『JIN-仁-』で、仁が治療法の普及に取り組む感染症は？",
+      "コレラ",
+      [
+        "結核",
+        "天然痘",
+        "脚気"
+      ],
+      2,
+      "江戸で流行するコレラの治療に奔走する。"
+    ],
+    [
+      "『JIN-仁-』で、仁が開く医療施設の名は？",
+      "仁友堂",
+      [
+        "適塾",
+        "西洋医学所",
+        "鈴屋"
+      ],
+      1,
+      "身分を問わず患者を診る仁友堂を開く。"
+    ],
+    [
+      "『JIN-仁-』で、仁が最初に救う橘家の人物は？",
+      "橘恭太郎",
+      [
+        "橘咲",
+        "橘栄",
+        "橘恭一郎"
+      ],
+      2,
+      "頭部に傷を負った恭太郎を手術する。"
+    ],
+    [
+      "『JIN-仁-』で、野風が暮らしていた場所は？",
+      "吉原",
+      [
+        "長崎",
+        "横浜",
+        "京都"
+      ],
+      1,
+      "野風は吉原の鈴屋にいる花魁。"
+    ],
+    [
+      "『JIN-仁-』で、仁が野風に行う大きな手術は？",
+      "乳がんの手術",
+      [
+        "心臓の手術",
+        "脳腫瘍の手術",
+        "盲腸の手術"
+      ],
+      2,
+      "仁は野風の乳がんを見つけ手術に挑む。"
+    ],
+    [
+      "『JIN-仁-』で、仁が現代から持ち込んだ医療技術が影響を与えるものは？",
+      "歴史",
+      [
+        "天候",
+        "地形",
+        "言語"
+      ],
+      1,
+      "人を救うほど歴史が変わる可能性に悩む。"
+    ],
+    [
+      "『JIN-仁-』で、仁がタイムスリップ前に勤務していた場所は？",
+      "大学病院",
+      [
+        "町の診療所",
+        "保健所",
+        "製薬会社"
+      ],
+      2,
+      "仁は現代の大学病院に勤める医師。"
+    ],
+    [
+      "『JIN-仁-』で、仁が江戸で直面する医療上の大きな制約は？",
+      "薬や器具が乏しい",
+      [
+        "患者が一人もいない",
+        "医師免許を失った",
+        "文字を読めない"
+      ],
+      1,
+      "近代的な薬や器具のない時代で治療法を工夫する。"
+    ],
+    [
+      "『JIN-仁-』で、坂本龍馬が入門する人物は？",
+      "勝海舟",
+      [
+        "緒方洪庵",
+        "新門辰五郎",
+        "西郷隆盛"
+      ],
+      3,
+      "龍馬は勝海舟に入門する。"
+    ],
+    [
+      "『JIN-仁-』で、仁が講義を行うようになる場所は？",
+      "西洋医学所",
+      [
+        "適塾",
+        "昌平坂学問所",
+        "仁友堂"
+      ],
+      3,
+      "緒方洪庵の肝煎りで西洋医学所の講義を担当する。"
+    ],
+    [
+      "『JIN-仁-』で、医学と並ぶ物語の大きな仕掛けは？",
+      "タイムスリップ",
+      [
+        "人格の入れ替わり",
+        "記憶喪失",
+        "夢の共有"
+      ],
+      1,
+      "現代医療と幕末を結ぶタイムスリップ医療劇。"
+    ]
+  ],
+  "アンナチュラル": [
+    [
+      "『アンナチュラル』で、UDIラボが扱うのは？",
+      "不自然死の解剖",
+      [
+        "未解決事件の再捜査",
+        "臓器移植の仲介",
+        "感染症の研究"
+      ],
+      2,
+      "不自然死究明研究所（UDIラボ）。死因を突きとめることが仕事。"
+    ],
+    [
+      "『アンナチュラル』第7話のサブタイトルは？",
+      "殺人遊戯",
+      [
+        "予定外の証人",
+        "死の報復",
+        "誰がために働く"
+      ],
+      3,
+      "第7話は「殺人遊戯」。"
+    ],
+    [
+      "『アンナチュラル』第9話のサブタイトルは？",
+      "敵の姿",
+      [
+        "殺人遊戯",
+        "死の報復",
+        "遥かなる我が家"
+      ],
+      3,
+      "第9話は「敵の姿」。"
+    ],
+    [
+      "『アンナチュラル』第1話のサブタイトルは？",
+      "名前のない毒",
+      [
+        "殺人遊戯",
+        "死にたがりの手紙",
+        "敵の姿"
+      ],
+      2,
+      "第1話（第1話）は「名前のない毒」。"
+    ],
+    [
+      "『アンナチュラル』第6話のサブタイトルは？",
+      "友達じゃない",
+      [
+        "遥かなる我が家",
+        "敵の姿",
+        "誰がために働く"
+      ],
+      3,
+      "第6話は「友達じゃない」。"
+    ],
+    [
+      "『アンナチュラル』の主題歌「Lemon」を歌ったのは？",
+      "米津玄師",
+      [
+        "秦基博",
+        "星野源",
+        "あいみょん"
+      ],
+      1,
+      "米津玄師の「Lemon」。ドラマとともに大きな話題になった。"
+    ],
+    [
+      "次のうち『アンナチュラル』に出ていないのは？",
+      "唐沢寿明",
+      [
+        "大石吾朗",
+        "中野剛",
+        "森高愛"
+      ],
+      2,
+      "唐沢寿明 は出演者に挙がっていない。"
+    ],
+    [
+      "『アンナチュラル』に出演していたのは？",
+      "今井隆文",
+      [
+        "財前直見",
+        "唐沢寿明",
+        "山口智子"
+      ],
+      1,
+      "今井隆文 が出演。"
+    ],
+    [
+      "『アンナチュラル』で 桜小路しずく の弟にあたるのは？",
+      "刈谷亮介",
+      [
+        "宮前",
+        "久部俊哉",
+        "まゆ"
+      ],
+      2,
+      "刈谷亮介（演 清水優）が 桜小路しずく の弟。"
+    ],
+    [
+      "『アンナチュラル』で 佐野祐斗 の妻にあたるのは？",
+      "佐野可奈子",
+      [
+        "小関浩二",
+        "まゆ",
+        "駕籠武"
+      ],
+      3,
+      "佐野可奈子（演 戸田菜穂）が 佐野祐斗 の妻。"
+    ],
+    [
+      "『アンナチュラル』で 敷島由果 の母にあたるのは？",
+      "敷島直美",
+      [
+        "教頭",
+        "小関浩二",
+        "木村"
+      ],
+      3,
+      "敷島直美（演 いしのようこ）が 敷島由果 の母。"
+    ],
+    [
+      "『アンナチュラル』で 町田修子 を演じたのは？",
+      "松熊つる松",
+      [
+        "坪倉由幸",
+        "菅野莉央",
+        "伊武雅刀"
+      ],
+      1,
+      "町田修子 を演じたのは 松熊つる松。"
+    ],
+    [
+      "『アンナチュラル』で 桜小路しずく を演じたのは？",
+      "音月桂",
+      [
+        "大石吾朗",
+        "渋江譲二",
+        "森高愛"
+      ],
+      1,
+      "桜小路しずく を演じたのは 音月桂。"
+    ],
+    [
+      "『アンナチュラル』で 大沼悟 を演じたのは？",
+      "栄信",
+      [
+        "斎藤洋介",
+        "村井國夫",
+        "いしのようこ"
+      ],
+      1,
+      "大沼悟 を演じたのは 栄信。"
+    ],
+    [
+      "『アンナチュラル』で 氏家恵 が演じたのは？",
+      "筒井",
+      [
+        "大沼悟",
+        "久部俊哉",
+        "小関浩二"
+      ],
+      2,
+      "氏家恵 が演じたのは 筒井。"
+    ],
+    [
+      "『アンナチュラル』で 清水優 が演じたのは？",
+      "刈谷亮介",
+      [
+        "小早川",
+        "松倉智恵",
+        "烏田守"
+      ],
+      2,
+      "清水優 が演じたのは 刈谷亮介。"
+    ],
+    [
+      "『アンナチュラル』で 敷島直美 を演じたのは？",
+      "いしのようこ",
+      [
+        "井浦新",
+        "柳憂怜",
+        "窪田正孝"
+      ],
+      1,
+      "敷島直美 を演じたのは いしのようこ。"
+    ],
+    [
+      "『アンナチュラル』で 筒井 を演じたのは？",
+      "氏家恵",
+      [
+        "薬師丸ひろ子",
+        "長野里美",
+        "北村有起哉"
+      ],
+      1,
+      "筒井 を演じたのは 氏家恵。"
+    ],
+    [
+      "『アンナチュラル』で 坪倉由幸 が演じたのは？",
+      "佐野祐斗",
+      [
+        "宮前",
+        "小早川",
+        "大崎めぐみ"
+      ],
+      2,
+      "坪倉由幸 が演じたのは 佐野祐斗。"
+    ],
+    [
+      "『アンナチュラル』で 藤村真優 が演じたのは？",
+      "佐野祐",
+      [
+        "室崎匡大",
+        "釣り人",
+        "教頭"
+      ],
+      2,
+      "藤村真優 が演じたのは 佐野祐。"
+    ]
+  ],
+  "カルテット": [
+    [
+      "『カルテット』で、4人が共同生活を送った場所は？",
+      "軽井沢の別荘",
+      [
+        "熱海の旅館",
+        "鎌倉の古民家",
+        "京都の町家"
+      ],
+      2,
+      "軽井沢の別荘で暮らしながら演奏を続ける。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』第8話のサブタイトルは？",
+      "最後で最大の嘘つきは誰だ!?激動の最終章、開幕!!",
+      [
+        "第2章開幕!?女の戦い、涙、告白…夫失踪の真相!!",
+        "なりすました女、衝撃の告白!!カルテット涙の別れ",
+        "第二章開幕!!夫の告白、妻の涙…迎える衝撃の結末"
+      ],
+      3,
+      "第8話は「最後で最大の嘘つきは誰だ!?激動の最終章、開幕!!」。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』第7話のサブタイトルは？",
+      "人を殺しました…夫婦決死の逃亡劇、涙の結末は!!",
+      [
+        "第二章開幕!!夫の告白、妻の涙…迎える衝撃の結末",
+        "片思いのはじまり…明かされる秘密、新たな嘘",
+        "なりすました女、衝撃の告白!!カルテット涙の別れ"
+      ],
+      3,
+      "第7話は「人を殺しました…夫婦決死の逃亡劇、涙の結末は!!」。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』第1話のサブタイトルは？",
+      "偶然の出会いに隠された4つの嘘…大人のラブサスペンス!!",
+      [
+        "なりすました女、衝撃の告白!!カルテット涙の別れ",
+        "人を殺しました…夫婦決死の逃亡劇、涙の結末は!!",
+        "あなたの過去バラしますよ…？秘密と恋の四角関係"
+      ],
+      2,
+      "第1話（第1話）は「偶然の出会いに隠された4つの嘘…大人のラブサスペンス!!」。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』第2話のサブタイトルは？",
+      "片思いのはじまり…明かされる秘密、新たな嘘",
+      [
+        "妻はピラニア、婚姻届けは呪いを叶えるデスノート",
+        "第二章開幕!!夫の告白、妻の涙…迎える衝撃の結末",
+        "人を殺しました…夫婦決死の逃亡劇、涙の結末は!!"
+      ],
+      3,
+      "第2話は「片思いのはじまり…明かされる秘密、新たな嘘」。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』第3話のサブタイトルは？",
+      "あなたの過去バラしますよ…？秘密と恋の四角関係",
+      [
+        "第2章開幕!?女の戦い、涙、告白…夫失踪の真相!!",
+        "偶然の出会いに隠された4つの嘘…大人のラブサスペンス!!",
+        "第二章開幕!!夫の告白、妻の涙…迎える衝撃の結末"
+      ],
+      3,
+      "第3話は「あなたの過去バラしますよ…？秘密と恋の四角関係」。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』第5話のサブタイトルは？",
+      "第2章開幕!?女の戦い、涙、告白…夫失踪の真相!!",
+      [
+        "偶然の出会いに隠された4つの嘘…大人のラブサスペンス!!",
+        "最後で最大の嘘つきは誰だ!?激動の最終章、開幕!!",
+        "妻はピラニア、婚姻届けは呪いを叶えるデスノート"
+      ],
+      3,
+      "第5話は「第2章開幕!?女の戦い、涙、告白…夫失踪の真相!!」。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』第4話のサブタイトルは？",
+      "妻はピラニア、婚姻届けは呪いを叶えるデスノート",
+      [
+        "第二章開幕!!夫の告白、妻の涙…迎える衝撃の結末",
+        "あなたの過去バラしますよ…？秘密と恋の四角関係",
+        "最後で最大の嘘つきは誰だ!?激動の最終章、開幕!!"
+      ],
+      3,
+      "第4話は「妻はピラニア、婚姻届けは呪いを叶えるデスノート」。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』第6話のサブタイトルは？",
+      "第二章開幕!!夫の告白、妻の涙…迎える衝撃の結末",
+      [
+        "なりすました女、衝撃の告白!!カルテット涙の別れ",
+        "人を殺しました…夫婦決死の逃亡劇、涙の結末は!!",
+        "最後で最大の嘘つきは誰だ!?激動の最終章、開幕!!"
+      ],
+      3,
+      "第6話は「第二章開幕!!夫の告白、妻の涙…迎える衝撃の結末」。"
+    ],
+    [
+      "次のうち『カルテット (2017年のテレビドラマ)』に出ていないのは？",
+      "唐沢寿明",
+      [
+        "阿部力",
+        "満島ひかり",
+        "Mummy-D"
+      ],
+      2,
+      "唐沢寿明 は出演者に挙がっていない。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』に出演していたのは？",
+      "西澤尚典",
+      [
+        "財前直見",
+        "唐沢寿明",
+        "山口智子"
+      ],
+      1,
+      "西澤尚典 が出演。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 山本 みずえ を演じたのは？",
+      "坂本美雨",
+      [
+        "Mummy-D",
+        "高橋一生",
+        "西澤尚典"
+      ],
+      1,
+      "山本 みずえ を演じたのは 坂本美雨。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 根本 を演じたのは？",
+      "ミッキー",
+      [
+        "阿部力",
+        "藤原季節",
+        "大倉孝二"
+      ],
+      1,
+      "根本 を演じたのは ミッキー。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 伊達暁 が演じたのは？",
+      "柊 学",
+      [
+        "村濱記者",
+        "船村 仙一",
+        "司会者"
+      ],
+      2,
+      "伊達暁 が演じたのは 柊 学。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 黒田大輔 が演じたのは？",
+      "村濱記者",
+      [
+        "中学生",
+        "西村",
+        "山本 みずえ"
+      ],
+      2,
+      "黒田大輔 が演じたのは 村濱記者。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 司会者 を演じたのは？",
+      "辻よしなり",
+      [
+        "木下政治",
+        "宮藤官九郎",
+        "大倉孝二"
+      ],
+      1,
+      "司会者 を演じたのは 辻よしなり。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 西村 を演じたのは？",
+      "阿部力",
+      [
+        "八木亜希子",
+        "満島ひかり",
+        "松たか子"
+      ],
+      1,
+      "西村 を演じたのは 阿部力。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 阿部力 が演じたのは？",
+      "西村",
+      [
+        "山本 みずえ",
+        "司会者",
+        "中学生"
+      ],
+      2,
+      "阿部力 が演じたのは 西村。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 村濱記者 を演じたのは？",
+      "黒田大輔",
+      [
+        "阿部力",
+        "宮藤官九郎",
+        "ミッキー"
+      ],
+      1,
+      "村濱記者 を演じたのは 黒田大輔。"
+    ],
+    [
+      "『カルテット (2017年のテレビドラマ)』で 木下政治 が演じたのは？",
+      "船村 仙一",
+      [
+        "司会者",
+        "村濱記者",
+        "西村"
+      ],
+      2,
+      "木下政治 が演じたのは 船村 仙一。"
+    ]
+  ],
+  "silent": [
+    [
+      "『Silent (テレビドラマ)』第5話のサブタイトルは？",
+      "無意識に名前出ちゃうくらいほんとに好き",
+      [
+        "好きになれてよかった…そう思いたい",
+        "音のない世界は悲しい世界じゃない。",
+        "戻れると思う。元に戻れたら嬉しいなぁって"
+      ],
+      3,
+      "第5話は「無意識に名前出ちゃうくらいほんとに好き」。"
+    ],
+    [
+      "『Silent (テレビドラマ)』第7話のサブタイトルは？",
+      "自分にだけ飛んでくるまっすぐな言葉",
+      [
+        "今はもう、好きじゃない…今好きなのは…",
+        "本気で愛した彼は音のない世界で生きていた",
+        "音のない世界は悲しい世界じゃない。"
+      ],
+      3,
+      "第7話は「自分にだけ飛んでくるまっすぐな言葉」。"
+    ],
+    [
+      "『Silent (テレビドラマ)』第1話のサブタイトルは？",
+      "本気で愛した彼は音のない世界で生きていた",
+      [
+        "一緒にいたくているだけなのに",
+        "また何も伝えずにいなくなるのは許さない",
+        "今はもう、好きじゃない…今好きなのは…"
+      ],
+      2,
+      "第1話（第1話）は「本気で愛した彼は音のない世界で生きていた」。"
+    ],
+    [
+      "『Silent (テレビドラマ)』第2話のサブタイトルは？",
+      "好きになれてよかった…そう思いたい",
+      [
+        "誰がどうやって力になってくれるの?",
+        "一緒にいたくているだけなのに",
+        "自分にだけ飛んでくるまっすぐな言葉"
+      ],
+      3,
+      "第2話は「好きになれてよかった…そう思いたい」。"
+    ],
+    [
+      "『Silent (テレビドラマ)』第3話のサブタイトルは？",
+      "今はもう、好きじゃない…今好きなのは…",
+      [
+        "また何も伝えずにいなくなるのは許さない",
+        "戻れると思う。元に戻れたら嬉しいなぁって",
+        "誰がどうやって力になってくれるの?"
+      ],
+      3,
+      "第3話は「今はもう、好きじゃない…今好きなのは…」。"
+    ],
+    [
+      "『Silent (テレビドラマ)』第4話のサブタイトルは？",
+      "戻れると思う。元に戻れたら嬉しいなぁって",
+      [
+        "また何も伝えずにいなくなるのは許さない",
+        "自分にだけ飛んでくるまっすぐな言葉",
+        "本気で愛した彼は音のない世界で生きていた"
+      ],
+      3,
+      "第4話は「戻れると思う。元に戻れたら嬉しいなぁって」。"
+    ],
+    [
+      "『Silent (テレビドラマ)』第9話のサブタイトルは？",
+      "誰がどうやって力になってくれるの?",
+      [
+        "また何も伝えずにいなくなるのは許さない",
+        "音のない世界は悲しい世界じゃない。",
+        "自分にだけ飛んでくるまっすぐな言葉"
+      ],
+      3,
+      "第9話は「誰がどうやって力になってくれるの?」。"
+    ],
+    [
+      "『Silent (テレビドラマ)』第6話のサブタイトルは？",
+      "音のない世界は悲しい世界じゃない。",
+      [
+        "自分にだけ飛んでくるまっすぐな言葉",
+        "また何も伝えずにいなくなるのは許さない",
+        "誰がどうやって力になってくれるの?"
+      ],
+      3,
+      "第6話は「音のない世界は悲しい世界じゃない。」。"
+    ],
+    [
+      "『Silent (テレビドラマ)』は全何話？",
+      "11話",
+      [
+        "15話",
+        "12話",
+        "8話"
+      ],
+      1,
+      "全 11 話。"
+    ],
+    [
+      "『Silent (テレビドラマ)』を放送したのは？",
+      "フジテレビ",
+      [
+        "TBS",
+        "Netflix",
+        "テレビ朝日"
+      ],
+      1,
+      "放送局は フジテレビ。"
+    ],
+    [
+      "『Silent (テレビドラマ)』に出演していたのは？",
+      "野村康太",
+      [
+        "常盤貴子",
+        "江口洋介",
+        "山口智子"
+      ],
+      1,
+      "野村康太 が出演。"
+    ],
+    [
+      "次のうち『Silent (テレビドラマ)』に出ていないのは？",
+      "松嶋菜々子",
+      [
+        "風間俊介",
+        "安井順平",
+        "古川さら"
+      ],
+      2,
+      "松嶋菜々子 は出演者に挙がっていない。"
+    ],
+    [
+      "『Silent (テレビドラマ)』で 佐倉隆司 を演じたのは？",
+      "利重剛",
+      [
+        "岡田直樹",
+        "安井順平",
+        "瀬戸口祥侑"
+      ],
+      1,
+      "佐倉隆司 を演じたのは 利重剛。"
+    ],
+    [
+      "『Silent (テレビドラマ)』で 岡田直樹 が演じたのは？",
+      "手話通訳士",
+      [
+        "青羽和泉",
+        "医師",
+        "紬の父親"
+      ],
+      2,
+      "岡田直樹 が演じたのは 手話通訳士。"
+    ],
+    [
+      "『Silent (テレビドラマ)』で 市野叶 が演じたのは？",
+      "男の子",
+      [
+        "佐倉隆司",
+        "早川",
+        "手話通訳士"
+      ],
+      2,
+      "市野叶 が演じたのは 男の子。"
+    ],
+    [
+      "『Silent (テレビドラマ)』で 古川さら が演じたのは？",
+      "葵衣",
+      [
+        "手話通訳士",
+        "佐倉隆司",
+        "医師"
+      ],
+      2,
+      "古川さら が演じたのは 葵衣。"
+    ],
+    [
+      "『Silent (テレビドラマ)』で 森口瑤子 が演じたのは？",
+      "青羽和泉",
+      [
+        "手話通訳士",
+        "佐倉隆司",
+        "大学生"
+      ],
+      2,
+      "森口瑤子 が演じたのは 青羽和泉。"
+    ],
+    [
+      "『Silent (テレビドラマ)』で 西田圭介 を演じたのは？",
+      "野村康太",
+      [
+        "松田陽子",
+        "鈴鹿央士",
+        "田中偉登"
+      ],
+      1,
+      "西田圭介 を演じたのは 野村康太。"
+    ],
+    [
+      "『Silent (テレビドラマ)』で 利重剛 が演じたのは？",
+      "佐倉隆司",
+      [
+        "紬の父親",
+        "葵衣",
+        "井草優生"
+      ],
+      2,
+      "利重剛 が演じたのは 佐倉隆司。"
+    ],
+    [
+      "『Silent (テレビドラマ)』で 野村康太 が演じたのは？",
+      "西田圭介",
+      [
+        "松井、園田",
+        "大学生",
+        "中村慶子"
+      ],
+      2,
+      "野村康太 が演じたのは 西田圭介。"
+    ]
+  ],
+  "鎌倉殿の13人": [
+    [
+      "『鎌倉殿の13人』の「13人」とは？",
+      "合議制に加わった御家人たち",
+      [
+        "13人の名を持つ武将",
+        "頼朝の13人の子",
+        "鎌倉に集った13人の僧"
+      ],
+      2,
+      "源頼朝の死後に置かれた十三人の合議制。その一人が北条義時。"
+    ],
+    [
+      "『鎌倉殿の13人』第18話のサブタイトルは？",
+      "壇ノ浦で舞った男",
+      [
+        "審判の日",
+        "悲しむ前に",
+        "いざ、鎌倉"
+      ],
+      3,
+      "第18話は「壇ノ浦で舞った男」。"
+    ],
+    [
+      "『鎌倉殿の13人』第45話のサブタイトルは？",
+      "八幡宮の階段",
+      [
+        "敵か、あるいは",
+        "いざ、鎌倉",
+        "ある朝敵、ある演説"
+      ],
+      3,
+      "第45話は「八幡宮の階段」。"
+    ],
+    [
+      "『鎌倉殿の13人』第1話のサブタイトルは？",
+      "大いなる小競り合い",
+      [
+        "ままならぬ玉",
+        "幼なじみの絆",
+        "許されざる嘘"
+      ],
+      2,
+      "第1話（第1話）は「大いなる小競り合い」。"
+    ],
+    [
+      "『鎌倉殿の13人』第27話のサブタイトルは？",
+      "鎌倉殿と十三人",
+      [
+        "根拠なき自信",
+        "決戦前夜",
+        "亀の前事件"
+      ],
+      3,
+      "第27話は「鎌倉殿と十三人」。"
+    ],
+    [
+      "『鎌倉殿の13人』第46話のサブタイトルは？",
+      "将軍になった女",
+      [
+        "決戦前夜",
+        "都の義仲",
+        "オンベレブンビンバ"
+      ],
+      3,
+      "第46話は「将軍になった女」。"
+    ],
+    [
+      "『鎌倉殿の13人』の脚本を書いたのは？",
+      "三谷幸喜",
+      [
+        "野木亜紀子",
+        "坂元裕二",
+        "宮藤官九郎"
+      ],
+      2,
+      "三谷幸喜。『新選組!』『真田丸』に続く大河ドラマの脚本。"
+    ],
+    [
+      "『鎌倉殿の13人』に出演していたのは？",
+      "小栗旬",
+      [
+        "木村拓哉",
+        "財前直見",
+        "鈴木保奈美"
+      ],
+      1,
+      "小栗旬 が出演。"
+    ],
+    [
+      "次のうち『鎌倉殿の13人』に出ていないのは？",
+      "木村拓哉",
+      [
+        "テイ龍進",
+        "尾碕真花",
+        "田中俊介"
+      ],
+      2,
+      "木村拓哉 は出演者に挙がっていない。"
+    ],
+    [
+      "『鎌倉殿の13人』で 平賀朝雅 の妻にあたるのは？",
+      "きく",
+      [
+        "源実朝",
+        "北条泰時",
+        "源義高"
+      ],
+      2,
+      "きく（演 八木莉可子）が 平賀朝雅 の妻。"
+    ],
+    [
+      "『鎌倉殿の13人』で 三浦義村 の息子にあたるのは？",
+      "駒若丸",
+      [
+        "陳和卿",
+        "土肥実平",
+        "大江広元"
+      ],
+      3,
+      "駒若丸（演 込江大牙）が 三浦義村 の息子。"
+    ],
+    [
+      "『鎌倉殿の13人』で 畠山重忠 の息子にあたるのは？",
+      "畠山重保",
+      [
+        "平宗盛",
+        "北条政村",
+        "朝比奈義秀"
+      ],
+      3,
+      "畠山重保（演 杉田雷麟）が 畠山重忠 の息子。"
+    ],
+    [
+      "『鎌倉殿の13人』で 安達景盛 の妻にあたるのは？",
+      "ゆう",
+      [
+        "海野幸氏",
+        "文覚",
+        "曽我五郎"
+      ],
+      3,
+      "ゆう（演 大部恵理子）が 安達景盛 の妻。"
+    ],
+    [
+      "『鎌倉殿の13人』で 稲毛重成 の妻にあたるのは？",
+      "あき",
+      [
+        "北条時房",
+        "大庭景親",
+        "山木兼隆"
+      ],
+      3,
+      "あき（演 尾碕真花）が 稲毛重成 の妻。"
+    ],
+    [
+      "『鎌倉殿の13人』で 巴御前 を演じたのは？",
+      "秋元才加",
+      [
+        "新納慎也",
+        "山崎一",
+        "天野眞由美"
+      ],
+      1,
+      "巴御前 を演じたのは 秋元才加。"
+    ],
+    [
+      "『鎌倉殿の13人』で 藤内光澄 を演じたのは？",
+      "長尾卓磨",
+      [
+        "磯山さやか",
+        "天野眞由美",
+        "杉田雷麟"
+      ],
+      1,
+      "藤内光澄 を演じたのは 長尾卓磨。"
+    ],
+    [
+      "『鎌倉殿の13人』で 海野幸氏 を演じたのは？",
+      "加部亜門",
+      [
+        "菅田将暉",
+        "春海四方",
+        "森本武晴"
+      ],
+      1,
+      "海野幸氏 を演じたのは 加部亜門。"
+    ],
+    [
+      "『鎌倉殿の13人』で 比企尼 を演じたのは？",
+      "草笛光子",
+      [
+        "南沙良",
+        "米本学仁",
+        "長澤まさみ"
+      ],
+      1,
+      "比企尼 を演じたのは 草笛光子。"
+    ],
+    [
+      "『鎌倉殿の13人』で 横田栄司 が演じたのは？",
+      "和田義盛",
+      [
+        "北条朝時",
+        "百姓",
+        "堤信遠"
+      ],
+      2,
+      "横田栄司 が演じたのは 和田義盛。"
+    ],
+    [
+      "『鎌倉殿の13人』で 阿南健治 が演じたのは？",
+      "土肥実平",
+      [
+        "くま",
+        "北条政村",
+        "山木兼隆"
+      ],
+      2,
+      "阿南健治 が演じたのは 土肥実平。"
+    ]
+  ],
+  "電車男": [
+    [
+      "『電車男』の物語の元になったものは？",
+      "ネット掲示板の書き込み",
+      [
+        "作者自身の日記",
+        "新聞の投書欄への投稿",
+        "ラジオ番組へのはがき"
+      ],
+      2,
+      "掲示板に書き込まれた実話とされる恋愛相談が元になっている。"
+    ],
+    [
+      "『電車男』という呼び名の由来は？",
+      "電車で女性を助けたこと",
+      [
+        "鉄道模型が趣味だったこと",
+        "電車で寝過ごす癖があったこと",
+        "電車の運転士だったこと"
+      ],
+      2,
+      "電車内で絡まれていた女性を助けたことから、掲示板でそう呼ばれた。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』第9話のサブタイトルは？",
+      "最終決戦は悲劇の予感",
+      [
+        "告白は波乱の幕開け!",
+        "ストーカー撃退大作戦",
+        "初デートに大ピンチ"
+      ],
+      3,
+      "第9話は「最終決戦は悲劇の予感」。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』第5話のサブタイトルは？",
+      "ストーカー撃退大作戦",
+      [
+        "100万人が見守った恋の行方",
+        "夏!サーフィン大特訓",
+        "初デートに大ピンチ"
+      ],
+      3,
+      "第5話は「ストーカー撃退大作戦」。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』第1話のサブタイトルは？",
+      "100万人が見守った恋の行方",
+      [
+        "最終決戦は悲劇の予感",
+        "復活!!涙のオタク激白",
+        "初デートに大ピンチ"
+      ],
+      2,
+      "第1話（第1話）は「100万人が見守った恋の行方」。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』第8話のサブタイトルは？",
+      "復活!!涙のオタク激白",
+      [
+        "初デートへ向け大変身",
+        "夏!サーフィン大特訓",
+        "告白は波乱の幕開け!"
+      ],
+      3,
+      "第8話は「復活!!涙のオタク激白」。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』第3話のサブタイトルは？",
+      "初デートに大ピンチ",
+      [
+        "ストーカー撃退大作戦",
+        "夏!サーフィン大特訓",
+        "復活!!涙のオタク激白"
+      ],
+      3,
+      "第3話は「初デートに大ピンチ」。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』第4話のサブタイトルは？",
+      "夏!サーフィン大特訓",
+      [
+        "初デートへ向け大変身",
+        "脱オタク!!涙の誕生日",
+        "初デートに大ピンチ"
+      ],
+      3,
+      "第4話は「夏!サーフィン大特訓」。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』に出演していたのは？",
+      "伊東美咲",
+      [
+        "杉咲花",
+        "広瀬すず",
+        "横浜流星"
+      ],
+      1,
+      "伊東美咲 が出演。"
+    ],
+    [
+      "次のうち『電車男 (テレビドラマ)』に出ていないのは？",
+      "神木隆之介",
+      [
+        "小栗旬",
+        "弓田真好杜",
+        "野水伊織"
+      ],
+      2,
+      "神木隆之介 は出演者に挙がっていない。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で エルメス/青山 沙織 の祖父にあたるのは？",
+      "山崎 照光",
+      [
+        "中年男性",
+        "岸和田",
+        "ミツル"
+      ],
+      2,
+      "山崎 照光（演 藤村俊二）が エルメス/青山 沙織 の祖父。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で エルメス/青山 沙織 の弟にあたるのは？",
+      "青山 啓介",
+      [
+        "川端やすなり",
+        "カップル男",
+        "桜井 和哉"
+      ],
+      3,
+      "青山 啓介（演 速水もこみち）が エルメス/青山 沙織 の弟。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で 陣釜 美鈴 を演じたのは？",
+      "白石美帆",
+      [
+        "藤村俊二",
+        "小出早織",
+        "波岡一喜"
+      ],
+      1,
+      "陣釜 美鈴 を演じたのは 白石美帆。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で 木下 寛一 を演じたのは？",
+      "塚地武雅",
+      [
+        "佐藤江梨子",
+        "野水伊織",
+        "伊藤淳史"
+      ],
+      1,
+      "木下 寛一 を演じたのは 塚地武雅。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で 浅野 真平 を演じたのは？",
+      "山崎樹範",
+      [
+        "海老原敬介",
+        "伊藤淳史",
+        "弓田真好杜"
+      ],
+      1,
+      "浅野 真平 を演じたのは 山崎樹範。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で 秋吉久美子 が演じたのは？",
+      "青山 由紀",
+      [
+        "飛田 行機",
+        "山田 恒生",
+        "黒木 文人"
+      ],
+      2,
+      "秋吉久美子 が演じたのは 青山 由紀。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で 松尾諭 が演じたのは？",
+      "ザスパ",
+      [
+        "井村 駿平",
+        "エルメス/青山 沙織",
+        "牛島 貞雄"
+      ],
+      2,
+      "松尾諭 が演じたのは ザスパ。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で 松永 勇作 を演じたのは？",
+      "劇団ひとり",
+      [
+        "堀北真希",
+        "本田誠人",
+        "大倉孝二"
+      ],
+      1,
+      "松永 勇作 を演じたのは 劇団ひとり。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で 前川泰之 が演じたのは？",
+      "及川 尚人",
+      [
+        "骨川 洒落男",
+        "エルメス/青山 沙織",
+        "青山 健吾"
+      ],
+      2,
+      "前川泰之 が演じたのは 及川 尚人。"
+    ],
+    [
+      "『電車男 (テレビドラマ)』で 青山 啓介 を演じたのは？",
+      "速水もこみち",
+      [
+        "掛田誠",
+        "大倉孝二",
+        "小嶌天天"
+      ],
+      1,
+      "青山 啓介 を演じたのは 速水もこみち。"
+    ]
+  ],
+  "LIAR GAME": [
+    [
+      "『LIAR GAME』の基本ルールは？",
+      "対戦相手から金を奪う",
+      [
+        "借金を早く返し終える",
+        "事務局の金庫から金を盗む",
+        "観客の投票数を競う"
+      ],
+      2,
+      "嘘や駆け引きを使い、対戦相手からマネーを奪い合うゲーム。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』第10話のサブタイトルは？",
+      "狂乱の展開！！ヨコヤに愕然、怒号の秋山",
+      [
+        "絶体絶命リストラ必至のナオ！！秋山は！?",
+        "22億争奪戦少数決開始！！",
+        "震撼リストラゲーム敗者復活戦始まる！！"
+      ],
+      3,
+      "第10話は「狂乱の展開！！ヨコヤに愕然、怒号の秋山」。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』第5話のサブタイトルは？",
+      "驚愕の結末！！21億円奪い取るのは誰だ！?",
+      [
+        "22億争奪戦少数決開始！！",
+        "最後にとっておきのゲームをご用意致しました…絶望…狡猾…裏切り…嘘そして希望…今宵、皆様は人間の本性を目撃、ライアーゲームの全ての謎が明らかになる場面に遭遇する…",
+        "壮絶頭脳戦の結末！?"
+      ],
+      3,
+      "第5話は「驚愕の結末！！21億円奪い取るのは誰だ！?」。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』第1話のサブタイトルは？",
+      "億の金をめぐる熾烈な頭脳戦が始まる",
+      [
+        "激震！！密輸ゲーム！！謎の強敵新たに出現",
+        "超感動！！核心に迫るナオ！！秋山は驚嘆！！",
+        "22億争奪戦少数決開始！！"
+      ],
+      2,
+      "第1話（第1話）は「億の金をめぐる熾烈な頭脳戦が始まる」。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』第6話のサブタイトルは？",
+      "震撼リストラゲーム敗者復活戦始まる！！",
+      [
+        "22億争奪戦少数決開始！！",
+        "驚愕の結末！！21億円奪い取るのは誰だ！?",
+        "絶体絶命リストラ必至のナオ！！秋山は！?"
+      ],
+      3,
+      "第6話は「震撼リストラゲーム敗者復活戦始まる！！」。"
+    ],
+    [
+      "次のうち『LIAR GAME (テレビドラマ)』に出ていないのは？",
+      "杉咲花",
+      [
+        "片桐はいり",
+        "桝木亜子",
+        "馬場佑樹"
+      ],
+      2,
+      "杉咲花 は出演者に挙がっていない。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』に出演していたのは？",
+      "戸田恵梨香",
+      [
+        "賀来賢人",
+        "横浜流星",
+        "杉咲花"
+      ],
+      1,
+      "戸田恵梨香 が出演。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 秋山 深一 の母にあたるのは？",
+      "秋山 美智子",
+      [
+        "麻生 ひろみ",
+        "斉木 カケル",
+        "西田 勇一"
+      ],
+      2,
+      "秋山 美智子（演 雨宮るみ子）が 秋山 深一 の母。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 丘辺 麗子 を演じたのは？",
+      "逢沢りな",
+      [
+        "菊地凛子",
+        "濱田マリ",
+        "石橋蓮司"
+      ],
+      1,
+      "丘辺 麗子 を演じたのは 逢沢りな。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 江藤 光一 を演じたのは？",
+      "和田聰宏",
+      [
+        "田口寛子",
+        "泉政行",
+        "眞島秀和"
+      ],
+      1,
+      "江藤 光一 を演じたのは 和田聰宏。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 阿部 ユキコ を演じたのは？",
+      "斎藤陽子",
+      [
+        "岩佐真悠子",
+        "上原敏郎",
+        "戸田恵梨香"
+      ],
+      1,
+      "阿部 ユキコ を演じたのは 斎藤陽子。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 石田愛希 が演じたのは？",
+      "コウタ",
+      [
+        "奥村 清美",
+        "谷村 光男",
+        "久慈 サトシ"
+      ],
+      2,
+      "石田愛希 が演じたのは コウタ。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 菊地凛子 が演じたのは？",
+      "葛城 リョウ",
+      [
+        "丘辺 雪也",
+        "秋山美智子の旧友",
+        "ヨコヤ ノリヒコ"
+      ],
+      2,
+      "菊地凛子 が演じたのは 葛城 リョウ。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 酒井 マコト を演じたのは？",
+      "川村陽介",
+      [
+        "岡野真那美",
+        "濱田マリ",
+        "青木一"
+      ],
+      1,
+      "酒井 マコト を演じたのは 川村陽介。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 嘉山 春美 を演じたのは？",
+      "小林きな子",
+      [
+        "中込佐知子",
+        "姜暢雄",
+        "馬場佑樹"
+      ],
+      1,
+      "嘉山 春美 を演じたのは 小林きな子。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 田口寛子 が演じたのは？",
+      "タカダ ミチコ",
+      [
+        "猿川 ケンジ",
+        "麻生 ひろみ",
+        "仙道 アラタ"
+      ],
+      2,
+      "田口寛子 が演じたのは タカダ ミチコ。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 荒川良々 が演じたのは？",
+      "西田 勇一",
+      [
+        "猿川 ケンジ",
+        "菅原 裕二",
+        "麻生 ひろみ"
+      ],
+      2,
+      "荒川良々 が演じたのは 西田 勇一。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で タモツ を演じたのは？",
+      "細田よしひこ",
+      [
+        "中込佐知子",
+        "一本気伸吾",
+        "坂本真"
+      ],
+      1,
+      "タモツ を演じたのは 細田よしひこ。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 新井浩文 が演じたのは？",
+      "桐生 ノブテル",
+      [
+        "木村 ケイ",
+        "安川 ノリヒコ",
+        "津村 アキラ"
+      ],
+      2,
+      "新井浩文 が演じたのは 桐生 ノブテル。"
+    ],
+    [
+      "『LIAR GAME (テレビドラマ)』で 秋山 深一 を演じたのは？",
+      "松田翔太",
+      [
+        "尾崎右宗",
+        "川村陽介",
+        "江角マキコ"
+      ],
+      1,
+      "秋山 深一 を演じたのは 松田翔太。"
+    ]
+  ],
+  "プロポーズ大作戦": [
+    [
+      "『プロポーズ大作戦』で、健が過去へ戻るときの掛け声は？",
+      "ハレルヤチャンス",
+      [
+        "リプレイチャンス",
+        "タイムリープ",
+        "リターンチャンス"
+      ],
+      1,
+      "妖精の力を借り、「ハレルヤチャンス」の掛け声で過去へ戻る。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第7話のサブタイトルは？",
+      "恋と花火はいつ散りますか?",
+      [
+        "明日やろうは馬鹿野郎ですか",
+        "ラスト・ハレルヤチャンス",
+        "最後の一瞬に何を賭けますか"
+      ],
+      3,
+      "第7話は「恋と花火はいつ散りますか?」。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第9話のサブタイトルは？",
+      "最後の一瞬に何を賭けますか",
+      [
+        "席がえしたら結婚できますか",
+        "年越しに流す涙は本物ですか",
+        "第2ボタンで結婚できますか"
+      ],
+      3,
+      "第9話は「最後の一瞬に何を賭けますか」。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第1話のサブタイトルは？",
+      "甲子園行けたら結婚できる!?",
+      [
+        "最後の一瞬に何を賭けますか",
+        "年越しに流す涙は本物ですか",
+        "席がえしたら結婚できますか"
+      ],
+      2,
+      "第1話（第1話）は「甲子園行けたら結婚できる!?」。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第5話のサブタイトルは？",
+      "明日やろうは馬鹿野郎ですか",
+      [
+        "10代最終日何を卒業しますか",
+        "甲子園行けたら結婚できる!?",
+        "年越しに流す涙は本物ですか"
+      ],
+      3,
+      "第5話は「明日やろうは馬鹿野郎ですか」。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第8話のサブタイトルは？",
+      "年越しに流す涙は本物ですか",
+      [
+        "席がえしたら結婚できますか",
+        "第2ボタンで結婚できますか",
+        "コーヒー牛乳で結婚できる!?"
+      ],
+      3,
+      "第8話は「年越しに流す涙は本物ですか」。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第10話のサブタイトルは？",
+      "ラスト・ハレルヤチャンス",
+      [
+        "明日やろうは馬鹿野郎ですか",
+        "第2ボタンで結婚できますか",
+        "平均視聴率 17.3%（視聴率は関東地区・ビデオリサーチ社調べ）"
+      ],
+      3,
+      "第10話は「ラスト・ハレルヤチャンス」。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第2話のサブタイトルは？",
+      "コーヒー牛乳で結婚できる!?",
+      [
+        "明日やろうは馬鹿野郎ですか",
+        "年越しに流す涙は本物ですか",
+        "平均視聴率 17.3%（視聴率は関東地区・ビデオリサーチ社調べ）"
+      ],
+      3,
+      "第2話は「コーヒー牛乳で結婚できる!?」。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第4話のサブタイトルは？",
+      "第2ボタンで結婚できますか",
+      [
+        "コーヒー牛乳で結婚できる!?",
+        "10代最終日何を卒業しますか",
+        "恋と花火はいつ散りますか?"
+      ],
+      3,
+      "第4話は「第2ボタンで結婚できますか」。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』第6話のサブタイトルは？",
+      "10代最終日何を卒業しますか",
+      [
+        "コーヒー牛乳で結婚できる!?",
+        "最後の一瞬に何を賭けますか",
+        "ラスト・ハレルヤチャンス"
+      ],
+      3,
+      "第6話は「10代最終日何を卒業しますか」。"
+    ],
+    [
+      "次のうち『プロポーズ大作戦 (テレビドラマ)』に出ていないのは？",
+      "今田美桜",
+      [
+        "山崎樹範",
+        "藤木直人",
+        "トラオレ"
+      ],
+      2,
+      "今田美桜 は出演者に挙がっていない。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』に出演していたのは？",
+      "山下智久",
+      [
+        "賀来賢人",
+        "横浜流星",
+        "杉咲花"
+      ],
+      1,
+      "山下智久 が出演。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』で 吉田 貴礼 を演じたのは？",
+      "森本レオ",
+      [
+        "松重豊",
+        "菊池健一郎",
+        "原史奈"
+      ],
+      1,
+      "吉田 貴礼 を演じたのは 森本レオ。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』で 伊藤 松憲 を演じたのは？",
+      "松重豊",
+      [
+        "宮崎美子",
+        "長澤まさみ",
+        "榮倉奈々"
+      ],
+      1,
+      "伊藤 松憲 を演じたのは 松重豊。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』で 松木 優子 を演じたのは？",
+      "原史奈",
+      [
+        "藤木直人",
+        "渡部豪太",
+        "宮崎美子"
+      ],
+      1,
+      "松木 優子 を演じたのは 原史奈。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』で トラオレ が演じたのは？",
+      "ジオ・ゲルグーグ",
+      [
+        "吉田 礼奈",
+        "多田 哲也",
+        "伊藤 松憲"
+      ],
+      2,
+      "トラオレ が演じたのは ジオ・ゲルグーグ。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』で 榮倉奈々 が演じたのは？",
+      "奥 エリ",
+      [
+        "西尾 保",
+        "吉田 礼奈",
+        "ジオ・ゲルグーグ"
+      ],
+      2,
+      "榮倉奈々 が演じたのは 奥 エリ。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』で 榎戸 幹雄 を演じたのは？",
+      "平岡祐太",
+      [
+        "トラオレ",
+        "榮倉奈々",
+        "山下智久"
+      ],
+      1,
+      "榎戸 幹雄 を演じたのは 平岡祐太。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』で 藤木直人 が演じたのは？",
+      "多田 哲也",
+      [
+        "妖精",
+        "吉田 貴礼",
+        "吉田 礼奈"
+      ],
+      2,
+      "藤木直人 が演じたのは 多田 哲也。"
+    ],
+    [
+      "『プロポーズ大作戦 (テレビドラマ)』で 山下智久 が演じたのは？",
+      "岩瀬 健",
+      [
+        "ジオ・ゲルグーグ",
+        "榎戸 幹雄",
+        "御法川 潤蔵"
+      ],
+      2,
+      "山下智久 が演じたのは 岩瀬 健。"
+    ]
+  ],
+  "ドクターX": [
+    [
+      "『ドクターX』で、大門未知子が繰り返した決めぜりふは？",
+      "私、失敗しないので",
+      [
+        "腕は落ちていません",
+        "私に不可能はない",
+        "致しません"
+      ],
+      1,
+      "「私、失敗しないので」。手術の腕だけで渡り歩く。"
+    ],
+    [
+      "『ドクターX』で、大門未知子の立場は？",
+      "フリーランスの外科医",
+      [
+        "救命救急センターの部長",
+        "離島の診療所の医師",
+        "大学病院の教授"
+      ],
+      2,
+      "どこの医局にも属さず、契約で手術だけを引き受ける。"
+    ],
+    [
+      "次のうち『ドクターX〜外科医・大門未知子〜』に出ていないのは？",
+      "常盤貴子",
+      [
+        "大地真央",
+        "西畑大吾",
+        "白井珠希"
+      ],
+      2,
+      "常盤貴子 は出演者に挙がっていない。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』に出演していたのは？",
+      "こあぶ",
+      [
+        "財前直見",
+        "唐沢寿明",
+        "山口智子"
+      ],
+      1,
+      "こあぶ が出演。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 五木和男 の妻にあたるのは？",
+      "五木陽子",
+      [
+        "シェルプ",
+        "八雲拓哉",
+        "神津比呂人"
+      ],
+      2,
+      "五木陽子（演 今藤洋子）が 五木和男 の妻。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 五島哲夫 の息子にあたるのは？",
+      "五島翔太",
+      [
+        "森本光",
+        "シェルプ",
+        "健太"
+      ],
+      3,
+      "五島翔太（演 横山歩）が 五島哲夫 の息子。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 七宮安江 の娘にあたるのは？",
+      "七宮萌香",
+      [
+        "東京地検特捜部・主任検事",
+        "新発田悠",
+        "松枝沙英"
+      ],
+      3,
+      "七宮萌香（演 白石糸）が 七宮安江 の娘。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 八田ちひろ の母にあたるのは？",
+      "八田和美",
+      [
+        "八乙女悠太",
+        "親父",
+        "リカ"
+      ],
+      3,
+      "八田和美（演 堀内敬子）が 八田ちひろ の母。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 二岡日出夫 の妻にあたるのは？",
+      "二岡千代子",
+      [
+        "鈴木ひとみ",
+        "事務長",
+        "ロック・シュリンプ"
+      ],
+      3,
+      "二岡千代子（演 星由里子）が 二岡日出夫 の妻。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 九重比佐子 の父にあたるのは？",
+      "九重節郎",
+      [
+        "二木麻也子",
+        "七尾貴志",
+        "日出夫の娘"
+      ],
+      2,
+      "九重節郎（演 大友康平）が 九重比佐子 の父。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 六浦良夫 の妻にあたるのは？",
+      "六浦敦子",
+      [
+        "加藤実夏",
+        "女将",
+        "東村練"
+      ],
+      3,
+      "六浦敦子（演 松金よね子）が 六浦良夫 の妻。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 八田ちひろ の父にあたるのは？",
+      "八田邦夫",
+      [
+        "水沢",
+        "金本洋二",
+        "蟹江三香"
+      ],
+      3,
+      "八田邦夫（演 石井一孝）が 八田ちひろ の父。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 清水弘恵 を演じたのは？",
+      "増田くみ",
+      [
+        "山口美也子",
+        "志賀野晋平",
+        "西原亜希"
+      ],
+      1,
+      "清水弘恵 を演じたのは 増田くみ。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 田中竜也 を演じたのは？",
+      "清水一希",
+      [
+        "みのすけ",
+        "松金よね子",
+        "井俣太良"
+      ],
+      1,
+      "田中竜也 を演じたのは 清水一希。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 西郷真悠子 が演じたのは？",
+      "三原千明",
+      [
+        "青島太郎",
+        "六浦敦子",
+        "金本洋二"
+      ],
+      2,
+      "西郷真悠子 が演じたのは 三原千明。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 八神さつき を演じたのは？",
+      "瀬戸朝香",
+      [
+        "西岡徳馬",
+        "くっきー!",
+        "工藤美桜"
+      ],
+      1,
+      "八神さつき を演じたのは 瀬戸朝香。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 竹中康平 を演じたのは？",
+      "大村朋宏",
+      [
+        "松下奈緒",
+        "松永優香",
+        "牧佳子"
+      ],
+      1,
+      "竹中康平 を演じたのは 大村朋宏。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 渡辺大知 が演じたのは？",
+      "一木淳",
+      [
+        "芽衣",
+        "三鴨寿",
+        "十条さくら"
+      ],
+      2,
+      "渡辺大知 が演じたのは 一木淳。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 久住小春 が演じたのは？",
+      "長森陽菜",
+      [
+        "中間大喜",
+        "九重節郎",
+        "赤木源"
+      ],
+      3,
+      "久住小春 が演じたのは 長森陽菜。"
+    ],
+    [
+      "『ドクターX〜外科医・大門未知子〜』で 大川舜一郎 を演じたのは？",
+      "井俣太良",
+      [
+        "夏秋佳代子",
+        "大藤瑛史",
+        "久住小春"
+      ],
+      1,
+      "大川舜一郎 を演じたのは 井俣太良。"
+    ]
+  ]
+};
+
+/* 記事の題名から作り置きを引く。記事の題名には
+   「HERO (テレビドラマ)」のように括弧の但し書きが付くことがある。 */
+function bakedKey(title){
+  return String(title || "").replace(/[（(].*$/, "").replace(/[\s　]+/g, "").trim();
+}
+function bakedFor(title){
+  var k = bakedKey(title);
+  if(BAKED[k]) return BAKED[k];
+  /* 「ドクターX 〜外科医・大門未知子〜」のように副題が続く題名もある */
+  var keys = Object.keys(BAKED);
+  for(var i = 0; i < keys.length; i++){
+    var normalizedKey = bakedKey(keys[i]);
+    if(normalizedKey.length >= 3 && k.indexOf(normalizedKey) === 0) return BAKED[keys[i]];
+  }
+  return null;
+}
+
+/* ---- 地の文を出題に使うための部品 ----
+   表や箱書きからは「誰が何を演じたか」までしか問えない。
+   物語の中で何が起きたかは、あらすじや人物の説明文にしか書いていない。 */
+
+/* クイズに使える節だけ拾う。受賞や外部リンクは物語の材料にならない */
+var PROSE_WANT = /あらすじ|概要|物語|ストーリー|登場人物|人物|キャスト|各話|エピソード/;
+var PROSE_SKIP = /受賞|関連|外部リンク|脚注|出典|参考文献|放送局|ネット局|主題歌|商品|書誌|備考|スタッフ/;
+
+/* 節の配列を、上限文字数まで詰める。節の途中では切らない。
+   文の途中で切れた材料から作った設問は壊れるので、入り切らない節は丸ごと落とす。 */
+function packProse(sections, limit){
+  var want = [], rest = [];
+  (sections || []).forEach(function(s){
+    if(!s || !s.text) return;
+    if(PROSE_SKIP.test(s.head || "")) return;
+    (PROSE_WANT.test(s.head || "") ? want : rest).push(s);
+  });
+  var out = [], used = 0;
+  want.concat(rest).forEach(function(s){
+    var piece = (s.head ? "## " + s.head + "\n" : "") + s.text;
+    if(used + piece.length > limit) return;
+    out.push(piece); used += piece.length;
+  });
+  return out.join("\n\n");
+}
+
+/* 地の文を文に割る。短すぎる文は設問にならず、長すぎる文は読ませるのが苦しい */
+function sentencesOf(text){
+  var out = [];
+  String(text || "").split("\n").forEach(function(line){
+    if(/^##/.test(line)) return;                    /* packProse が付ける節見出し */
+    line.split("。").forEach(function(t){
+      t = cleanText(t);
+      if(t.length >= 12 && t.length <= 64) out.push(t + "。");
+    });
+  });
+  return out;
+}
+
+/* 役名の呼び名を並べる。記事は「天野アキ」を本文で「アキ」と書くので、
+   フルネームだけで探すと地の文に一度も当たらない。
+   ただし他の人物と紛れる呼び名は使わない。伏せたときに誰だか決まらなくなる。 */
+function nameForms(role, all){
+  var cand = [role];
+  var sp = String(role).split(/[\s・=＝]/).filter(function(x){ return x.length >= 2; });
+  if(sp.length > 1) cand = cand.concat(sp);
+  else {
+    if(role.length >= 4){ cand.push(role.slice(0, 2)); cand.push(role.slice(-2)); }
+    if(role.length >= 5){ cand.push(role.slice(0, 3)); cand.push(role.slice(-3)); }
+  }
+  var uniq = [], seen = {};
+  cand.forEach(function(c){
+    if(!c || c.length < 2 || seen[c]) return;
+    seen[c] = 1;
+    /* その呼び名を含む役名が、対象の一人だけであること */
+    if((all || []).filter(function(r){ return r.indexOf(c) >= 0; }).length === 1) uniq.push(c);
+  });
+  return uniq;
+}
+
+/* 文の中の呼び名を伏せる。同じ呼び名が何度出ても全部伏せないと答えが漏れる */
+var BLANK = "〇〇〇";
+function blankOut(sentence, forms){
+  var out = String(sentence);
+  /* 長い呼び名から先に伏せる。「アキ」を先に伏せると「天野アキ」が壊れる */
+  (forms || []).slice().sort(function(a, b){ return b.length - a.length; })
+    .forEach(function(f){ out = out.split(f).join(BLANK); });
+  return out.replace(new RegExp("(" + BLANK + ")+", "g"), BLANK);
+}
+
+/* 人物の説明文によくある関係の言い回し */
+var REL = /(.{2,12}?)の(母|父|祖母|祖父|兄|姉|弟|妹|息子|娘|妻|夫|恋人|婚約者|同級生|幼なじみ|親友|上司|部下|秘書|担任|主治医)(?:[。、\s]|$)/;
+
+var TEMPLATES = [
+
+/* ---- 作り置き ----
+   記事の表からは作れない問題。あるものだけ混ぜ、残りは記事から作る。 */
+{ id:"baked", tier:"content", group:"baked", make:function(w, rnd){
+  var list = bakedFor(w.title) || [];
+  if(!list.length) return [];
+  return shuffle(list.slice(), rnd).map(function(b){
+    /* 正解の位置は毎回混ぜる。並べた順のままだと数問で気づかれる */
+    var c = makeChoices(b[1], b[2].slice(), rnd);
+    return { text:b[0], choices:c.choices, answer:c.answer, level:b[3], why:b[4] };
+  });
+}},
+
+/* ---- 地の文から作る（表からは問えない、物語の中身） ---- */
+
+/* 人物の説明文から役名を当てる。表を眺めただけでは答えられない */
+{ id:"chardesc", tier:"content", group:"story", make:function(w, rnd){
+  if(w.characters.length < 4) return [];
+  var roles = w.characters.map(function(c){ return c.role; });
+  var pool = w.characters.filter(function(c){
+    if(!c.desc || c.desc.length < 10 || c.desc.length > 70) return false;
+    /* 説明文に本人の役名や俳優名が入っていたら、答えが書いてある */
+    if(c.desc.indexOf(c.actor) >= 0) return false;
+    return nameForms(c.role, roles).every(function(f){ return c.desc.indexOf(f) < 0; });
+  });
+  return shuffle(pool, rnd).slice(0, 3).map(function(c, i){
+    var wrongs = distract(roles, [c.role], 3, rnd);
+    if(!wrongs) return null;
+    var ch = makeChoices(c.role, wrongs, rnd);
+    return { text:"『" + w.title + "』で「" + c.desc + "」と説明されるのは？",
+             choices:ch.choices, answer:ch.answer, level:i === 0 ? 2 : 3,
+             why:c.role + "（演 " + c.actor + "）の説明。" };
+  }).filter(Boolean);
+}},
+
+/* 人物どうしの関係を問う。「アキの母は誰か」は表には無い */
+{ id:"relation", tier:"content", group:"story", make:function(w, rnd){
+  if(w.characters.length < 4) return [];
+  var roles = w.characters.map(function(c){ return c.role; });
+  var made = [];
+  shuffle(w.characters, rnd).forEach(function(c){
+    if(made.length >= 2 || !c.desc) return;
+    var m = c.desc.match(REL);
+    if(!m) return;
+    /* 「◯◯の母」の◯◯が、この作品の別の人物として実在すること */
+    var who = null;
+    roles.forEach(function(r){
+      if(r === c.role) return;
+      if(r === m[1] || nameForms(r, roles).indexOf(m[1]) >= 0) who = r;
+    });
+    if(!who) return;
+    var wrongs = distract(roles, [c.role, who], 3, rnd);
+    if(!wrongs) return;
+    var ch = makeChoices(c.role, wrongs, rnd);
+    made.push({ text:"『" + w.title + "』で " + who + " の" + m[2] + "にあたるのは？",
+                choices:ch.choices, answer:ch.answer, level:made.length === 0 ? 2 : 3,
+                why:c.role + "（演 " + c.actor + "）が " + who + " の" + m[2] + "。" });
+  });
+  return made;
+}},
+
+/* あらすじの一節を伏せて当てさせる。どれも記事に書いてある本物の文なので、
+   うろ覚えでは引っかかる。観ていないと埋まらない。 */
+{ id:"cloze", tier:"content", group:"plot", make:function(w, rnd){
+  var roles = w.characters.map(function(c){ return c.role; });
+  if(roles.length < 4) return [];
+  var forms = {};
+  roles.forEach(function(r){ forms[r] = nameForms(r, roles); });
+  var made = [];
+  shuffle(sentencesOf(w.prose), rnd).forEach(function(sn){
+    if(made.length >= 3) return;
+    /* 文に出てくる人物がちょうど一人のときだけ使う。
+       二人以上いると、伏せた先が一意に決まらない */
+    var hit = roles.filter(function(r){
+      return forms[r].some(function(f){ return sn.indexOf(f) >= 0; });
+    });
+    if(hit.length !== 1) return;
+    var blanked = blankOut(sn, forms[hit[0]]);
+    if(blanked.indexOf(BLANK) < 0) return;
+    var wrongs = distract(roles, [hit[0]], 3, rnd);
+    if(!wrongs) return;
+    var ch = makeChoices(hit[0], wrongs, rnd);
+    made.push({ text:"あらすじの一節です。" + BLANK + " に入るのは？「" + blanked + "」",
+                choices:ch.choices, answer:ch.answer, level:made.length === 0 ? 2 : 3,
+                why:"正しくは「" + sn + "」。" });
+  });
+  return made;
+}},
+
+/* ---- 役名と俳優（中身の中心） ---- */
+{ id:"role2actor", tier:"content", group:"yaku", make:function(w, rnd){
+  if(w.characters.length < 4) return [];
+  var pool = actorPool(w);
+  return shuffle(w.characters, rnd).slice(0, 4).map(function(pr, i){
+    var wrongs = distract(pool, [pr.actor], 3, rnd)
+              || distract(farActors(w.era), [pr.actor], 3, rnd);
+    if(!wrongs) return null;
+    var c = makeChoices(pr.actor, wrongs, rnd);
+    return { text:"『" + w.title + "』で " + pr.role + " を演じたのは？",
+             choices:c.choices, answer:c.answer, level:i < 2 ? 1 : 2,
+             why:pr.role + " を演じたのは " + pr.actor + "。" };
+  }).filter(Boolean);
+}},
+
+{ id:"actor2role", tier:"content", group:"yaku", make:function(w, rnd){
+  if(w.characters.length < 4) return [];
+  var roles = w.characters.map(function(c){ return c.role; });
+  return shuffle(w.characters, rnd).slice(0, 3).map(function(pr, i){
+    var wrongs = distract(roles, [pr.role], 3, rnd);
+    if(!wrongs) return null;
+    var c = makeChoices(pr.role, wrongs, rnd);
+    return { text:"『" + w.title + "』で " + pr.actor + " が演じたのは？",
+             choices:c.choices, answer:c.answer, level:i < 2 ? 2 : 3,
+             why:pr.actor + " が演じたのは " + pr.role + "。" };
+  }).filter(Boolean);
+}},
+
+{ id:"notrole", tier:"content", group:"cast", make:function(w, rnd){
+  /* 登場人物のうち3人と、別の年代の俳優1人を混ぜる */
+  if(w.characters.length < 4) return [];
+  var pool = actorPool(w);
+  var outsider = pick(farActors(w.era).filter(function(a){ return pool.indexOf(a) < 0; }), rnd);
+  if(!outsider) return [];
+  var wrongs = distract(pool, [outsider], 3, rnd);
+  if(!wrongs) return [];
+  var c = makeChoices(outsider, wrongs, rnd);
+  return [{ text:"次のうち『" + w.title + "』に出ていないのは？",
+            choices:c.choices, answer:c.answer, level:2,
+            why:outsider + " は出演者に挙がっていない。" }];
+}},
+
+{ id:"cast", tier:"content", group:"cast", make:function(w, rnd){
+  var pool = actorPool(w);
+  if(!pool.length) return [];
+  var right = pool[0];
+  var wrongs = distract(farActors(w.era), pool, 3, rnd);
+  if(!wrongs) return [];
+  var c = makeChoices(right, wrongs, rnd);
+  return [{ text:"『" + w.title + "』に出演していたのは？",
+            choices:c.choices, answer:c.answer, level:1,
+            why:right + " が出演。" }];
+}},
+
+/* ---- サブタイトル ---- */
+{ id:"sub_first", tier:"content", group:"sub", make:function(w, rnd){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  if(subs.length < 4) return [];
+  var out = [];
+  [["第1話", subs[0]], ["最終話", subs[subs.length - 1]]].forEach(function(pair){
+    var t = pair[1];
+    var wrongs = distract(subs.map(function(e){ return e.subtitle; }), [t.subtitle], 3, rnd);
+    if(!wrongs) return;
+    var c = makeChoices(t.subtitle, wrongs, rnd);
+    out.push({ text:"『" + w.title + "』" + pair[0] + "のサブタイトルは？",
+               choices:c.choices, answer:c.answer, level:2,
+               why:pair[0] + "（第" + t.no + "話）は" + quote(t.subtitle) + "。" });
+  });
+  return out;
+}},
+
+{ id:"sub_mid", tier:"content", group:"sub", make:function(w, rnd){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  if(subs.length < 5) return [];
+  var mid = subs.slice(1, -1);
+  return shuffle(mid, rnd).slice(0, 3).map(function(t){
+    var wrongs = distract(subs.map(function(e){ return e.subtitle; }), [t.subtitle], 3, rnd);
+    if(!wrongs) return null;
+    var c = makeChoices(t.subtitle, wrongs, rnd);
+    return { text:"『" + w.title + "』第" + t.no + "話のサブタイトルは？",
+             choices:c.choices, answer:c.answer, level:3,
+             why:"第" + t.no + "話は" + quote(t.subtitle) + "。" };
+  }).filter(Boolean);
+}},
+
+{ id:"whichep", tier:"content", group:"sub", make:function(w, rnd){
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  if(subs.length < 4) return [];
+  return shuffle(subs, rnd).slice(0, 2).map(function(t){
+    var wrongs = distract(subs.map(function(e){ return e.no; }), [t.no], 3, rnd);
+    if(!wrongs) return null;
+    var c = makeChoices("第" + t.no + "話", wrongs.map(function(n){ return "第" + n + "話"; }), rnd);
+    return { text:quote(t.subtitle) + "は『" + w.title + "』の第何話？",
+             choices:c.choices, answer:c.answer, level:3,
+             why:quote(t.subtitle) + "は第" + t.no + "話。" };
+  }).filter(Boolean);
+}},
+
+/* ---- ここから下は、中身の問題が足りないときだけ使う ---- */
+{ id:"count", tier:"fact", make:function(w, rnd){
+  if(!w.count || w.count < 2) return [];
+  var wrongs = numberWrongs(w.count, 5, 3, rnd, 1);
+  if(!wrongs) return [];
+  var c = makeChoices(w.count + "話", wrongs.map(function(n){ return n + "話"; }), rnd);
+  return [{ text:"『" + w.title + "』は全何話？", choices:c.choices, answer:c.answer,
+            level:1, why:"全 " + w.count + " 話。" }];
+}},
+
+{ id:"station", tier:"fact", make:function(w, rnd){
+  /* 名寄せできなかった局や地方局では出さない。選択肢が不揃いになり、
+     正解も怪しくなるため                                          */
+  if(!w.station || STATIONS.indexOf(w.station) < 0) return [];
+  var wrongs = distract(STATIONS, [w.station], 3, rnd);
+  if(!wrongs) return [];
+  var c = makeChoices(w.station, wrongs, rnd);
+  return [{ text:"『" + w.title + "』を放送したのは？", choices:c.choices, answer:c.answer,
+            level:1, why:"放送局は " + w.station + "。" }];
+}},
+
+{ id:"year", tier:"fact", make:function(w, rnd){
+  if(!w.start) return [];
+  var wrongs = numberWrongs(w.start.y, 5, 3, rnd, 1950);
+  if(!wrongs) return [];
+  var c = makeChoices(w.start.y + "年", wrongs.map(function(y){ return y + "年"; }), rnd);
+  return [{ text:"『" + w.title + "』の放送が始まったのは何年？", choices:c.choices, answer:c.answer,
+            level:1, why:"放送開始は " + dateLabel(w.start) + "。" }];
+}},
+
+{ id:"toprating", tier:"fact", make:function(w, rnd){
+  var rated = w.episodes.filter(function(e){ return e.rating != null; });
+  if(rated.length < 4) return [];
+  var top = rated.reduce(function(a, b){ return b.rating > a.rating ? b : a; });
+  var wrongs = distract(rated.map(function(e){ return e.no; }), [top.no], 3, rnd);
+  if(!wrongs) return [];
+  var c = makeChoices("第" + top.no + "話", wrongs.map(function(n){ return "第" + n + "話"; }), rnd);
+  return [{ text:"『" + w.title + "』で最も視聴率が高かったのは？", choices:c.choices, answer:c.answer,
+            level:3, why:"第" + top.no + "話の " + top.rating + "% が最高。" }];
+}},
+
+{ id:"airdate", tier:"fact", make:function(w, rnd){
+  var e = w.episodes.filter(function(x){ return x.date && x.date.d != null; })[0];
+  if(!e) return [];
+  var base = new Date(e.date.y, e.date.m - 1, e.date.d), cand = [];
+  [-21, -14, -7, 7, 14, 21].forEach(function(off){
+    var d = new Date(base.getTime() + off * 86400000);
+    cand.push(dateLabel({ y:d.getFullYear(), m:d.getMonth() + 1, d:d.getDate() }));
+  });
+  var right = dateLabel(e.date);
+  var wrongs = distract(cand, [right], 3, rnd);
+  if(!wrongs) return [];
+  var c = makeChoices(right, wrongs, rnd);
+  return [{ text:"『" + w.title + "』第" + e.no + "話が放送されたのは？", choices:c.choices, answer:c.answer,
+            level:3, why:"第" + e.no + "話は " + right + " の放送。" }];
+}}
+];
+
+/* ---- 10問を組む ----
+   まず中身の問題だけで 易3・中4・難3 を狙い、埋まらない層を
+   中身の余りで、それでも足りなければ事実の問題で補う。      */
+var WANT = { 1:3, 2:4, 3:3 };
+/* 記事から拾う地の文の上限。長い記事で処理が重くならないようにするための枠 */
+var PROSE_LIMIT = 20000;
+var TOTAL = 10;
+
+/* 同じテンプレから何問まで採るか。同じ言い回しが並ぶと問題数の水増しに見える */
+var PER_TEMPLATE = 2;
+/* 同じ材料の系統から何問まで採るか。役名も出演者も「人物の表」という同じ材料 */
+var PER_GROUP = 4;
+/* 手で確認した作り置き問題は、10問中の半分まで使う。
+   残り半分は記事から作り、毎回の変化も残す。 */
+var BAKED_PER_QUIZ = 5;
+
+function buildQuiz(w, seed){
+  var rnd = rng(seed || 1);
+  var content = [], fact = [], spareC = [], spareF = [], baked = [], perGroup = {};
+  shuffle(TEMPLATES, rnd).forEach(function(t){
+    var made = t.make(w, rnd) || [];
+    if(!made.length) return;
+    made.forEach(function(q, i){
+      q.id = t.id + (made.length > 1 ? "#" + (i + 1) : "");
+      q.tier = t.tier;
+    });
+    /* テンプレの取りこぼしはここで止める。落ちた設問は捨てる */
+    made = made.filter(function(q){ return checkMade(q, w).length === 0; });
+    if(!made.length) return;
+    /* まずは同じ言い回し・同じ材料が並ばない範囲だけ採る */
+    var g = t.group || t.id;
+    var room = PER_GROUP - (perGroup[g] || 0);
+    /* 作り置きだけは通常テンプレの2問制限とは別枠で最大5問採る */
+    var take = t.id === "baked"
+      ? Math.min(BAKED_PER_QUIZ, made.length)
+      : Math.min(PER_TEMPLATE, room, made.length);
+    if(take < 0) take = 0;
+    perGroup[g] = (perGroup[g] || 0) + take;
+    /* 作り置きは手で作った、記事からは作れない問題。テンプレ同士の
+       取り合いに負けて出ないのでは置いた意味がないので、別に取っておく。 */
+    var pool = t.id === "baked" ? baked : (t.tier === "content" ? content : fact);
+    made.slice(0, take).forEach(function(q){ pool.push(q); });
+    /* 溢れたぶんは控えに回す。材料の薄い作品では、繰り返してでも数を揃えるほうがいい */
+    /* 作り置きの6問目以降を控えへ回すと、後段で上限を超えてしまうので採用しない */
+    if(t.id !== "baked"){
+      made.slice(take).forEach(function(q){ (t.tier === "content" ? spareC : spareF).push(q); });
+    }
+  });
+
+  function take(pool, lv, n){
+    var out = [];
+    for(var i = 0; i < pool.length && out.length < n; i++){
+      if(pool[i].level === lv) out.push(pool.splice(i--, 1)[0]);
+    }
+    return out;
+  }
+  var quiz = [];
+  [1, 2, 3].forEach(function(lv){
+    /* 中身の問題で埋まらない層は、外側の事実より先に「中身の控え」で埋める。
+       控えは同じ言い回しが重なるが、それでも事実問題より中身のほうが面白い。 */
+    var got = take(baked, lv, WANT[lv]);
+    if(got.length < WANT[lv]) got = got.concat(take(content, lv, WANT[lv] - got.length));
+    if(got.length < WANT[lv]) got = got.concat(take(spareC, lv, WANT[lv] - got.length));
+    if(got.length < WANT[lv]) got = got.concat(take(fact, lv, WANT[lv] - got.length));
+    quiz = quiz.concat(got);
+  });
+  /* 層が埋まらなかったぶんを足して数を合わせる。優先順は
+     中身 → 中身の控え → 外側の事実 → 事実の控え。
+     控えは同じ言い回しが重なるので最後だが、問題が少ないほうが困る。
+     材料の足りている作品では控えまで手が伸びない。 */
+  var rest = shuffle(baked, rnd)
+    .concat(shuffle(content, rnd))
+    .concat(shuffle(spareC, rnd))
+    .concat(shuffle(fact, rnd))
+    .concat(shuffle(spareF, rnd));
+  while(quiz.length < TOTAL && rest.length) quiz.push(rest.shift());
+  quiz.sort(function(a, b){ return a.level - b.level; });
+  return quiz.slice(0, TOTAL);
+}
+
+/* AIが10問すべてを検査に通せた場合は、その10問だけを使う。
+   AI問題と従来テンプレを混ぜると、品質を上げる目的なのに視聴率や
+   サブタイトル暗記が残るため。1問でも壊れていれば従来方式へ戻す。 */
+function buildAiQuiz(w, seed){
+  var rnd = rng(seed || 1);
+  var made = (w.aiQuestions || []).map(function(b, i){
+    var c = makeChoices(b[1], b[2].slice(), rnd);
+    return { id:"ai#" + (i + 1), tier:"content", text:b[0], choices:c.choices,
+             answer:c.answer, level:b[3], why:b[4] };
+  }).filter(function(q){ return checkMade(q, w).length === 0; });
+  if(made.length < TOTAL) return [];
+  return shuffle(made, rnd).slice(0, TOTAL).sort(function(a, b){ return a.level - b.level; });
+}
+
+function quizForWork(w, seed){
+  var ai = buildAiQuiz(w, seed);
+  return ai.length === TOTAL ? ai : buildQuiz(w, seed);
+}
+
+/* ---- 採点 ---- */
+/* 難しい問題ほど重い。満点は実際に出した問題の重みの合計 */
+function grade(quiz, answers){
+  var got = 0, full = 0, hits = 0;
+  var per = { 1:{ got:0, full:0 }, 2:{ got:0, full:0 }, 3:{ got:0, full:0 } };
+  quiz.forEach(function(q, i){
+    var w = q.level;
+    full += w; per[q.level].full += w;
+    if(answers[i] === q.answer){ got += w; hits++; per[q.level].got += w; }
+  });
+  return { score:got, full:full, hits:hits, ratio:full ? got / full : 0, per:per };
+}
+
+var RANKS = [
+  { at:1.00, name:"制作陣",     blurb:"全問正解。もうあなたが次の話を書いてください。" },
+  { at:0.85, name:"ガチ勢",     blurb:"各話のサブタイトルまで身体に入っている。相当です。" },
+  { at:0.70, name:"リアタイ勢", blurb:"毎週きちんと追っていた人の点数。制作陣まで見えています。" },
+  { at:0.50, name:"見てた人",   blurb:"筋はちゃんと覚えている。細部はもう一周すると化けます。" },
+  { at:0.30, name:"うろ覚え",   blurb:"話題になっていたのは知っている、くらいの手ざわり。" },
+  { at:0.00, name:"にわか",     blurb:"ここからです。まず初回だけでも観直してみませんか。" }
+];
+function rankOf(ratio){
+  for(var i = 0; i < RANKS.length; i++) if(ratio >= RANKS[i].at) return RANKS[i];
+  return RANKS[RANKS.length - 1];
+}
+
+
+/* ================= 出題の検査 =================
+   .claude/skills/quiz-design の「出題を出す前の4つの検査」をコードにしたもの。
+   テンプレの取りこぼしは必ず出るので、組み上げた設問は全部ここを通す。
+   落ちた設問は直さずに捨てる。数は他のテンプレで埋まる。 */
+
+/* 壊れている理由の配列を返す。空なら合格。answer は choices の添字。 */
+function checkMade(q, work){
+  var bad = [];
+  if(!q || typeof q !== "object") return ["設問の形が違う"];
+  if(typeof q.text !== "string" || q.text.trim().length < 6) bad.push("問題文が短すぎる");
+  if(!Array.isArray(q.choices)) return bad.concat("choices が配列でない");
+  if(q.choices.length !== 4) bad.push("選択肢が4つでない");
+  if(q.choices.some(function(c){ return typeof c !== "string" || !c.trim(); })) bad.push("空の選択肢がある");
+
+  var seen = {}, dup = false;
+  q.choices.forEach(function(c){ if(seen[c]) dup = true; seen[c] = 1; });
+  if(dup) bad.push("選択肢が重複している");
+
+  var ans = q.choices[q.answer];
+  if(typeof q.answer !== "number" || ans == null) bad.push("answer が選択肢を指していない");
+
+  /* 答えが問題文に漏れていないか。1文字の一致は偶然が多いので2文字から見る */
+  if(typeof ans === "string" && ans.length >= 2 &&
+     typeof q.text === "string" && q.text.indexOf(ans) >= 0) bad.push("問題文に答えが含まれている");
+
+  /* 正解だけ長さが浮いていないか。
+     比率だけで見ると「海女」対「喫茶店の店主」のような、日本語では普通の
+     組み合わせまで落ちてしまう。字数の差も一緒に見て、両方あてはまる時だけ弾く。 */
+  if(typeof ans === "string"){
+    var others = q.choices.filter(function(c, i){ return i !== q.answer; });
+    if(others.length){
+      var avg = others.reduce(function(a, c){ return a + c.length; }, 0) / others.length;
+      var ratio = ans.length > avg * 1.8 || ans.length * 1.8 < avg;
+      if(avg > 0 && ratio && Math.abs(ans.length - avg) >= 4) bad.push("正解だけ長さが浮いている");
+    }
+  }
+
+  if([1, 2, 3].indexOf(q.level) < 0) bad.push("level が 1〜3 でない");
+  /* 作品名そのものが答えになる設問は、題名を入れた時点で解けている */
+  if(work && work.title && ans === work.title) bad.push("作品名そのものが答えになっている");
+
+  return bad;
+}
+
+/* 難しさの呼び名。level は 1=易 2=中 3=難 なので、中身ではなく難しさで呼ぶ。
+   テンプレ出題とAI出題が混ざると、中身での呼び分けは嘘になる。 */
+var LEVEL_NAME = { 1:"やさしい", 2:"ふつう", 3:"難しい" };
+
+/* ============================= PURE-END ============================= */
+
+/* ---- 取得（ここから先は通信と DOM） ---- */
+var API = "https://ja.wikipedia.org/w/api.php";
+function api(params){
+  var u = new URL(API);
+  params.format = "json";
+  params.origin = "*";          /* CORS を許すための Wikipedia の作法 */
+  params.formatversion = "2";
+  Object.keys(params).forEach(function(k){ u.searchParams.set(k, params[k]); });
+  return fetch(u, { redirect:"follow" }).then(function(r){
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  });
+}
+
+/* 作品名で候補を引く。説明文でドラマらしいものを上に寄せる */
+function search(q){
+  return api({
+    action:"query", generator:"search", gsrsearch:q, gsrlimit:"14",
+    prop:"pageimages|description", piprop:"thumbnail", pithumbsize:"120"
+  }).then(function(j){
+    var pages = (j.query && j.query.pages) || [];
+    var hits = pages.map(function(p){
+      return { title:p.title, desc:p.description || "", thumb:p.thumbnail && p.thumbnail.source,
+               index:p.index || 99 };
+    });
+    function looksDrama(h){
+      return /ドラマ|テレビ番組|連続テレビ小説|大河ドラマ|テレビシリーズ|TVシリーズ/i.test(h.desc + " " + h.title);
+    }
+    hits.sort(function(a, b){
+      var d = (looksDrama(b) ? 1 : 0) - (looksDrama(a) ? 1 : 0);
+      return d !== 0 ? d : a.index - b.index;
+    });
+    return hits;
+  });
+}
+
+/* 記事の本文 HTML を取る。infobox と各話表がここに全部入っている */
+function fetchArticle(title){
+  return api({ action:"parse", page:title, prop:"text", redirects:"1" }).then(function(j){
+    if(j.error) throw new Error(j.error.info || "記事を読めません");
+    return { title:j.parse.title, html:j.parse.text };
+  });
+}
+
+/* ---- HTML から材料を抜く ---- */
+/* infobox の各行を {ラベル:テキスト} に。表記ゆれは fromInfobox が吸収する */
+function readInfobox(root){
+  var out = [];
+  var boxes = root.querySelectorAll("table.infobox, table.infobox_v2, table.infobox_v3");
+  for(var b = 0; b < boxes.length; b++){
+    var info = {};
+    var rows = boxes[b].querySelectorAll("tr");
+    for(var i = 0; i < rows.length; i++){
+      var th = rows[i].querySelector("th"), td = rows[i].querySelector("td");
+      if(!th || !td) continue;
+      var key = cleanText(th.textContent);
+      if(!key || info[key]) continue;
+      /* <br> と <li> を区切りとして残したいので、いったん改行に置き換える */
+      var clone = td.cloneNode(true);
+      clone.querySelectorAll("br").forEach(function(el){ el.replaceWith("\n"); });
+      clone.querySelectorAll("li").forEach(function(el){ el.append("\n"); });
+      clone.querySelectorAll("sup, style, .reference").forEach(function(el){ el.remove(); });
+      info[key] = clone.textContent;
+    }
+    out.push(info);
+  }
+  return out;
+}
+
+/* rowspan / colspan のある表を、行×列の升目に展開する。
+   演出や脚本が複数話にまたがる表では、素直に td を数えると列がずれ、
+   サブタイトルのつもりで演出や視聴率を読んでしまう。            */
+function tableGrid(table){
+  var grid = [], rows = table.rows;
+  for(var r = 0; r < rows.length; r++){
+    if(!grid[r]) grid[r] = [];
+    var cells = rows[r].cells, c = 0;
+    for(var i = 0; i < cells.length; i++){
+      while(grid[r][c] !== undefined) c++;         /* 上から伸びてきた升を avoid */
+      var cell = cells[i];
+      var rs = Math.max(1, parseInt(cell.getAttribute("rowspan") || "1", 10) || 1);
+      var cs = Math.max(1, parseInt(cell.getAttribute("colspan") || "1", 10) || 1);
+      var text = cleanText(cell.textContent);
+      for(var dr = 0; dr < rs; dr++){
+        for(var dc = 0; dc < cs; dc++){
+          if(!grid[r + dr]) grid[r + dr] = [];
+          grid[r + dr][c + dc] = text;
+        }
+      }
+      c += cs;
+    }
+  }
+  return grid;
+}
+
+/* 見出しの行から、どの列が何かを当てる */
+function matchColumns(head){
+  var col = { no:-1, date:-1, subtitle:-1, rating:-1 };
+  for(var h = 0; h < head.length; h++){
+    var label = cleanText(head[h] || "");
+    if(col.no < 0 && /^(話数?|各話|回|話|放送回|回数)$/.test(label)) col.no = h;
+    else if(col.date < 0 && /放送日|配信日|放送年月日|日付/.test(label)) col.date = h;
+    else if(col.subtitle < 0 && /サブタイトル|副題|話タイトル|各話タイトル|題名|^タイトル$/.test(label)) col.subtitle = h;
+    else if(col.rating < 0 && /視聴率/.test(label)) col.rating = h;
+  }
+  return col;
+}
+
+/* 表ひとつから各話を読む。見出しは先頭3行のどれかにある */
+function readEpisodeTable(table){
+  var grid = tableGrid(table);
+  if(grid.length < 3) return [];
+  for(var h = 0; h < Math.min(3, grid.length); h++){
+    var col = matchColumns(grid[h]);
+    if(col.no < 0 || (col.subtitle < 0 && col.rating < 0)) continue;
+    var got = [];
+    for(var r = h + 1; r < grid.length; r++){
+      var row = grid[r] || [];
+      function at(i){ return i >= 0 && row[i] != null ? row[i] : ""; }
+      got.push({ no:at(col.no), date:at(col.date), subtitle:at(col.subtitle), rating:at(col.rating) });
+    }
+    /* サブタイトルのつもりの列に数字ばかり並ぶなら、掴み違えているので捨てる */
+    if(col.subtitle >= 0){
+      var vals = got.map(function(g){ return g.subtitle; }).filter(function(v){ return v; });
+      var numeric = vals.filter(function(v){ return /^[\d.,%％\s-]+$/.test(toHalf(v)); }).length;
+      if(vals.length && numeric * 2 > vals.length){
+        got.forEach(function(g){ g.subtitle = ""; });
+      }
+    }
+    return got;
+  }
+  return [];
+}
+
+/* 記事の中の各話表を探す */
+function readEpisodes(root, expect){
+  var tables = root.querySelectorAll("table.wikitable");
+  var found = [];
+  for(var t = 0; t < tables.length; t++){
+    var got = readEpisodeTable(tables[t]);
+    if(got.length) found.push(got);
+  }
+  if(!found.length) return [];
+  /* 話数が分かっているなら、行数がそれに一番近い表を採る。
+     アニメ版や海外版の話数表を掴まないための決め手になる。   */
+  if(expect){
+    return found.reduce(function(a, b){
+      return Math.abs(b.length - expect) < Math.abs(a.length - expect) ? b : a;
+    });
+  }
+  var big = found.filter(function(g){ return g.length >= 4; });
+  return big.length ? big[0] : found[0];
+}
+
+/* 登場人物の節から「役名」と「演じた俳優」の組を拾う。
+   ja.wikipedia では
+       ; 役名（よみ）
+       : 演 - 俳優名
+   という書き方が最も広く、「演 -」が役と俳優を結ぶ確かな目印になる。
+   箇条書きしか無い記事のために、infobox の出演者を手がかりに
+   「役名 - 俳優名」のどちら側が俳優かを決める道も用意する。      */
+function readCharacters(root, castHint){
+  var pairs = [], seen = {};
+  function add(role, actor, desc){
+    role = cleanText(role).replace(/[（(].*?[)）]/g, "").replace(/[「」『』]/g, "").trim();
+    actor = personNames(actor)[0] || "";
+    if(!role || !actor || role === actor) return;
+    if(role.length < 2 || role.length > 20 || /\d/.test(role)) return;
+    if(seen[role] || seen[actor]) return;          /* 一人二役は選択肢が濁るので採らない */
+    seen[role] = seen[actor] = 1;
+    /* 説明文は出題の材料になる。「アキの母。」の一行が、そのまま関係を問う設問になる */
+    pairs.push({ role:role, actor:actor, desc:cleanText(desc || "") });
+  }
+  var ACT = /^演\s*[-‐−–—―:：]\s*(.+)$/;
+  var dts = root.querySelectorAll("dt");
+  for(var i = 0; i < dts.length; i++){
+    var n = dts[i].nextElementSibling, hit = null, desc = [];
+    while(n && n.tagName === "DD"){
+      var line = cleanText(n.textContent);
+      var m = line.match(ACT);
+      if(m && !hit) hit = m[1];
+      else if(hit) desc.push(line);          /* 演者の行より後ろが人物の説明 */
+      n = n.nextElementSibling;
+    }
+    if(hit) add(dts[i].textContent, hit, desc.join(" "));
+  }
+  if(pairs.length >= 4) return pairs;
+
+  var hint = {};
+  (castHint || []).forEach(function(a){ hint[a] = 1; });
+  var lis = root.querySelectorAll("li");
+  for(var j = 0; j < lis.length; j++){
+    var t = cleanText(lis[j].textContent);
+    var m2 = t.match(/^(.{2,20}?)\s*[-‐−–—―]\s*(.{2,20}?)(?:[（(]|$)/);
+    if(!m2) continue;
+    if(hint[m2[2]]) add(m2[1], m2[2]);
+    else if(hint[m2[1]]) add(m2[2], m2[1]);
+  }
+  return pairs;
+}
+
+function parseArticle(title, html){
+  var doc = new DOMParser().parseFromString(html, "text/html");
+  var url = "https://ja.wikipedia.org/wiki/" + encodeURIComponent(title.replace(/ /g, "_"));
+  var info = pickInfobox(readInfobox(doc.body));
+  var base = fromInfobox(info);
+  return makeWork(title, url, info,
+                  readEpisodes(doc.body, base.count),
+                  readCharacters(doc.body, base.cast),
+                  packProse(readProse(doc.body), PROSE_LIMIT));
+}
+
+/* ---- 記事の文章を節ごとに取る ----
+   表や箱書きではなく、あらすじや人物の説明そのもの。AIに読ませる材料になる。 */
+function readProse(root){
+  var out = [], head = "", buf = [];
+  function flush(){
+    var t = buf.join("\n").trim();
+    if(t) out.push({ head:head, text:t });
+    buf = [];
+  }
+  var body = root.querySelector(".mw-parser-output") || root;
+  /* 節見出しと段落を上から順に拾う。表・注釈・目次は材料にしない */
+  /* dd を含めるのは、日本語版の登場人物節が dl/dt/dd で書かれているため。
+     人物の説明はAIに読ませたい材料そのものなので、落とすと中身を問えなくなる。 */
+  var nodes = body.querySelectorAll("h2, h3, p, li, dd");
+  for(var i = 0; i < nodes.length; i++){
+    var el = nodes[i];
+    var tag = el.tagName.toLowerCase();
+    if(el.closest("table, .navbox, .reflist, #toc, .mw-editsection")) continue;
+    if(tag === "h2" || tag === "h3"){
+      flush();
+      head = cleanText(el.textContent).replace(/\[編集\]$/, "").trim();
+      continue;
+    }
+    /* 脚注番号は材料としては雑音 */
+    var clone = el.cloneNode(true);
+    var sups = clone.querySelectorAll("sup");
+    for(var s = 0; s < sups.length; s++) sups[s].remove();
+    var t = cleanText(clone.textContent);
+    if(t.length >= 12) buf.push(t);
+  }
+  flush();
+  return out;
+}
+
+/* ---- 画面 ---- */
+var $ = function(id){ return document.getElementById(id); };
+var SCREENS = ["home","hits","load","quiz","done"];
+function show(name){
+  SCREENS.forEach(function(s){ $("scr-" + s).hidden = (s !== name); });
+  $("restart").hidden = (name === "home");
+  window.scrollTo(0, 0);
+}
+
+/* 入口に出す作品名。作り置きのある作品をそのまま並べる。
+   手で書き写すと必ずずれるので、作り置きの表から引く。 */
+var EXAMPLES = Object.keys(BAKED);
+var state = { work:null, quiz:null, at:0, answers:[], locked:false };
+
+/* ---- 入口 ---- */
+EXAMPLES.forEach(function(name){
+  var b = document.createElement("button");
+  b.className = "ex"; b.textContent = name;
+  b.onclick = function(){ $("q").value = name; runSearch(); };
+  $("examples").append(b);
+});
+
+function runSearch(){
+  var q = $("q").value.trim();
+  if(!q) return;
+  $("go").disabled = true;
+  $("home-note").textContent = ""; $("home-note").hidden = true;
+  search(q).then(function(hits){
+    if(!hits.length){
+      $("home-note").innerHTML = '<span class="err">「' + esc(q) + '」で記事が見つかりませんでした。正式な題名で試してください。</span>';
+      $("home-note").hidden = false;
+      return;
+    }
+    showHits(q, hits);
+  }).catch(function(e){
+    $("home-note").innerHTML = '<span class="err">検索できませんでした（' + esc(e.message) + '）。'
+      + 'この画面をローカルのファイルとして開いている場合、通信が遮られていることがあります。</span>';
+    $("home-note").hidden = false;
+  }).then(function(){ $("go").disabled = false; });
+}
+$("go").onclick = runSearch;
+$("q").addEventListener("keydown", function(e){ if(e.key === "Enter") runSearch(); });
+
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){
+  return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]; }); }
+
+/* ---- 候補 ---- */
+function showHits(q, hits){
+  $("hits-lead").textContent = "「" + q + "」の候補です。挑む作品を選んでください。";
+  var box = $("hits"); box.textContent = "";
+  hits.forEach(function(h){
+    var b = document.createElement("button");
+    b.className = "hit";
+    var img = h.thumb
+      ? '<img src="' + esc(h.thumb) + '" alt="" loading="lazy">'
+      : '<span class="ph">▶</span>';
+    b.innerHTML = img + '<span><span class="t">' + esc(h.title) + '</span>'
+      + (h.desc ? '<span class="d">' + esc(h.desc) + '</span>' : '') + '</span>';
+    b.onclick = function(){ load(h.title); };
+    box.append(b);
+  });
+  show("hits");
+}
+$("back-home").onclick = function(){ show("home"); };
+$("restart").onclick = function(){ show("home"); };
+
+/* ---- 読み込みと生成 ---- */
+/* 出題が4問に満たないときは、埋めずに止めて理由を見せる。
+   質の低い問題で数を合わせるより、作れなかったと言うほうがいい。 */
+function tooFew(title){
+  $("load-msg").innerHTML = '<span class="err">「' + esc(title) + '」の記事からは問題を4問も作れませんでした。'
+    + '出演者や放送局が表にまとまっている作品だと出題できます。</span>';
+  var back = document.createElement("button");
+  back.className = "btn ghost"; back.textContent = "別の作品を選ぶ";
+  back.onclick = function(){ show("hits"); };
+  $("found").append(back);
+}
+
+function startQuiz(quiz){
+  state.quiz = quiz; state.at = 0; state.answers = [];
+  askQuestion();
+}
+
+function load(title){
+  show("load");
+  $("load-msg").textContent = "「" + title + "」の記事を読んでいます…";
+  $("found").textContent = "";
+
+  fetchArticle(title).then(function(a){
+    var w = parseArticle(a.title, a.html);
+    state.work = w;
+    reportFound(w);
+    return fetchAiQuestions(w).then(function(ai){
+      w.aiQuestions = ai;
+      var quiz = quizForWork(w, Date.now() & 0x7fffffff);
+      if(quiz.length < 4) return tooFew(a.title);
+      startQuiz(quiz);
+    });
+  }).catch(function(e){
+    $("load-msg").innerHTML = '<span class="err">記事を読めませんでした（' + esc(e.message) + '）。</span>';
+  });
+}
+
+/* AIは秘密鍵を持つWorker経由でだけ呼ぶ。Workerが未設定・失敗・時間切れでも
+   従来の作り置き＋記事ベース出題へ戻り、ゲーム自体は止めない。 */
+function fetchAiQuestions(w){
+  var meta = document.querySelector('meta[name="drama-ai-endpoint"]');
+  var endpoint = meta && meta.content.trim();
+  if(!endpoint) return Promise.resolve([]);
+  $("load-msg").textContent = "「" + w.title + "」の良問をAIが選んでいます…";
+  var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  var timer = ctrl ? setTimeout(function(){ ctrl.abort(); }, 12000) : null;
+  var payload = {
+    title:w.title,
+    prose:String(w.prose || "").slice(0, 14000),
+    characters:(w.characters || []).slice(0, 60).map(function(c){
+      return { role:c.role, actor:c.actor, desc:String(c.desc || "").slice(0, 180) };
+    }),
+    episodes:(w.episodes || []).slice(0, 30).map(function(e){
+      return { no:e.no, subtitle:e.subtitle || "" };
+    })
+  };
+  return fetch(endpoint, {
+    method:"POST",
+    headers:{ "content-type":"application/json" },
+    body:JSON.stringify(payload),
+    signal:ctrl ? ctrl.signal : undefined
+  }).then(function(r){
+    if(!r.ok) throw new Error("AI " + r.status);
+    return r.json();
+  }).then(function(j){
+    return (j.questions || []).map(function(q){
+      return [q.text, q.answer, q.wrongs, q.level, q.why];
+    }).filter(function(q){
+      return typeof q[0] === "string" && typeof q[1] === "string"
+        && Array.isArray(q[2]) && q[2].length === 3
+        && q[3] >= 1 && q[3] <= 3;
+    }).slice(0, 10);
+  }).catch(function(){ return []; }).then(function(qs){
+    if(timer) clearTimeout(timer);
+    return qs;
+  });
+}
+
+/* 何が取れたかを見せる。取れなかった材料が分かると原因を追いやすい */
+function reportFound(w){
+  var prose = w.prose;
+  var subs = w.episodes.filter(function(e){ return e.subtitle && e.subtitle.length >= 2; });
+  var items = [
+    ["文章" + (prose ? "：" + Math.round(prose.length / 100) / 10 + "千字" : ""), (prose || "").length >= 200],
+    ["登場人物" + (w.characters.length ? "：" + w.characters.length + "人" : ""), w.characters.length >= 4],
+    ["サブタイトル" + (subs.length ? "：" + subs.length + "話" : ""), subs.length >= 4],
+    ["出演者" + (w.cast.length ? "：" + w.cast.length + "人" : ""), w.cast.length > 0],
+    ["各話" + (w.episodes.length ? "：" + w.episodes.length + "話" : ""), w.episodes.length > 0],
+    ["放送局" + (w.station ? "：" + w.station : ""), !!w.station],
+    ["放送年" + (w.start ? "：" + w.start.y : ""), !!w.start],
+    ["話数" + (w.count != null ? "：" + w.count : ""), w.count != null],
+    ["視聴率", w.episodes.some(function(e){ return e.rating != null; })]
+  ];
+  var box = $("found"); box.textContent = "";
+  items.forEach(function(p){
+    var s = document.createElement("span");
+    s.className = "tag" + (p[1] ? " has" : "");
+    s.textContent = (p[1] ? "✓ " : "− ") + p[0];
+    box.append(s);
+  });
+}
+
+/* ---- 出題 ---- */
+function askQuestion(){
+  var q = state.quiz[state.at];
+  state.locked = false;
+  show("quiz");
+  paintProgress();
+  $("qcount").textContent = "第 " + (state.at + 1) + " 問 / " + state.quiz.length;
+  var lv = $("qlv");
+  lv.className = "lv l" + q.level;
+  lv.textContent = LEVEL_NAME[q.level];
+  $("qtext").textContent = q.text;
+  var box = $("choices"); box.textContent = "";
+  q.choices.forEach(function(c, i){
+    var b = document.createElement("button");
+    b.className = "ch";
+    b.innerHTML = '<span class="mk">' + "ABCD"[i] + '</span>' + esc(c);
+    b.onclick = function(){ answer(i); };
+    box.append(b);
+  });
+  $("verdict").hidden = true;
+  $("next").hidden = true;
+}
+
+function paintProgress(){
+  var box = $("progress"); box.textContent = "";
+  for(var i = 0; i < state.quiz.length; i++){
+    var el = document.createElement("i");
+    if(i < state.answers.length) el.className = state.answers[i] === state.quiz[i].answer ? "done" : "miss";
+    else if(i === state.at) el.className = "now";
+    box.append(el);
+  }
+}
+
+function answer(chosen){
+  if(state.locked) return;
+  state.locked = true;
+  var q = state.quiz[state.at];
+  state.answers.push(chosen);
+  var right = chosen === q.answer;
+  var btns = $("choices").children;
+  for(var i = 0; i < btns.length; i++){
+    btns[i].disabled = true;
+    if(i === q.answer) btns[i].classList.add("right");
+    else if(i === chosen) btns[i].classList.add("wrong");
+  }
+  $("vmark").className = "v " + (right ? "o" : "x");
+  $("vmark").textContent = right ? "正解" : "不正解";
+  $("vnote").textContent = q.why;
+  $("verdict").hidden = false;
+  paintProgress();
+  var last = state.at === state.quiz.length - 1;
+  $("next").textContent = last ? "結果を見る" : "次の問題";
+  $("next").hidden = false;
+}
+
+$("next").onclick = function(){
+  if(state.at < state.quiz.length - 1){ state.at++; askQuestion(); }
+  else finish();
+};
+
+/* ---- 結果 ---- */
+function finish(){
+  var g = grade(state.quiz, state.answers);
+  var r = rankOf(g.ratio);
+  $("rank").textContent = r.name;
+  $("score").textContent = g.score;
+  $("full").textContent = g.full;
+  $("hits-n").textContent = g.hits;
+  $("blurb").textContent = r.blurb;
+
+  var names = LEVEL_NAME;
+  var bars = $("bars"); bars.textContent = "";
+  [1, 2, 3].forEach(function(lv){
+    var p = g.per[lv];
+    if(!p.full) return;
+    var pct = Math.round(p.got / p.full * 100);
+    var row = document.createElement("div");
+    row.className = "bar";
+    row.innerHTML = '<span class="nm">' + names[lv] + '</span>'
+      + '<span class="tr"><span class="fl" style="width:' + pct + '%"></span></span>'
+      + '<span class="vl">' + pct + '%</span>';
+    bars.append(row);
+  });
+
+  var rv = $("review"); rv.textContent = "";
+  state.quiz.forEach(function(q, i){
+    var ok = state.answers[i] === q.answer;
+    var d = document.createElement("div");
+    d.className = "rv " + (ok ? "o" : "x");
+    d.innerHTML = '<span class="a">' + (ok ? "○" : "×") + '</span> '
+      + '<span class="q">' + esc(q.text) + '</span><br>' + esc(q.why);
+    rv.append(d);
+  });
+
+  $("src").innerHTML = '出典：<a href="' + esc(state.work.url) + '" target="_blank" rel="noopener">'
+    + esc(state.work.title) + ' - Wikipedia</a>（CC BY-SA）';
+  show("done");
+}
+
+$("again").onclick = function(){
+  /* 記事は取り直さない。材料は state.work に残っているので、種だけ変える */
+  startQuiz(quizForWork(state.work, Date.now() & 0x7fffffff));
+};
+$("other").onclick = function(){ show("home"); };
+
+/* テストから触れるように、純粋な部分だけ外に出す */
+window.__quiz = {
+  cleanText:cleanText, splitNames:splitNames, readCount:readCount, readDate:readDate,
+  readRating:readRating, fromInfobox:fromInfobox, tidyEpisodes:tidyEpisodes, makeWork:makeWork,
+  buildQuiz:buildQuiz, buildAiQuiz:buildAiQuiz, quizForWork:quizForWork,
+  grade:grade, rankOf:rankOf,
+  normStation:normStation, boxKind:boxKind, pickInfobox:pickInfobox,
+  looksLikeName:looksLikeName, personNames:personNames, readCharacters:readCharacters,
+  readInfobox:readInfobox, readEpisodes:readEpisodes, parseArticle:parseArticle,
+  packProse:packProse, readProse:readProse, checkMade:checkMade, LEVEL_NAME:LEVEL_NAME,
+  sentencesOf:sentencesOf, nameForms:nameForms, blankOut:blankOut,
+  BAKED:BAKED, bakedFor:bakedFor, bakedKey:bakedKey
+};
+
+show("home");
+})();
+</script>
+</body>
+</html>

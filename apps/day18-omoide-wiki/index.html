@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>おもいでWiki</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23151821'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='%23e8c98a'%3E憶%3C/text%3E%3C/svg%3E">
+<!-- Worker公開後に、そのURLをcontentへ設定する。空なら通常の固定質問インタビューだけで動く。 -->
+<meta name="omoide-ai-endpoint" content="https://omoide-wiki-ai.hiroya-apps.workers.dev">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ============ 一覧画面 ============ -->
+  <section class="screen active" data-screen="home">
+    <div class="wrap">
+      <header class="hd">
+        <h1>おもいでWiki</h1>
+        <p class="lead">1人の人生も、サークルやチームの思い出も。質問に答えたり、みんながエピソードを持ち寄ったりして、その人・その場所の「Wikipedia」を育てていくアプリです。</p>
+      </header>
+
+      <div id="wikiList" class="wiki-list"></div>
+
+      <div class="home-actions">
+        <button class="btn primary" id="btnNewWiki">＋ 新しく作る</button>
+        <button class="btn ghost" id="btnImport">JSONを読み込んで合体する</button>
+        <input type="file" id="fileImport" accept="application/json" hidden multiple>
+      </div>
+
+      <p class="hint" id="homeStatus"></p>
+
+      <p class="hint">
+        サーバーは使っていません。すべてこの端末のブラウザの中だけに保存されます。<br>
+        誰かと一緒にまとめたいときは、書き出したJSONファイルを送り合って「読み込んで合体する」で1つにできます。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 新規作成 ============ -->
+  <section class="screen" data-screen="new">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="home">← 戻る</button>
+        <h1>新しく作る</h1>
+      </header>
+
+      <div class="field">
+        <label>何についてのWikiですか？</label>
+        <div class="choice-row">
+          <label class="choice"><input type="radio" name="newType" value="person" checked><span>ひとりの人生</span></label>
+          <label class="choice"><input type="radio" name="newType" value="group"><span>サークル・チームの思い出</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="newTitle">名前 / サークル名</label>
+        <input type="text" id="newTitle" placeholder="例：山田太郎　／　テニスサークルOASIS">
+      </div>
+
+      <div class="field">
+        <label for="newSubtitle">一言（あとから変更できます）</label>
+        <input type="text" id="newSubtitle" placeholder="例：いつも笑っていた父　／　2019〜2023年 3期生">
+      </div>
+
+      <button class="btn primary wide" id="btnCreateWiki">作る</button>
+    </div>
+  </section>
+
+  <!-- ============ ダッシュボード（編集ホーム） ============ -->
+  <section class="screen" data-screen="dash">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="home">← 一覧へ</button>
+        <h1 id="dashTitle"></h1>
+        <p class="lead" id="dashSubtitle"></p>
+      </header>
+
+      <div class="dash-grid">
+        <button class="tile" id="tileInterview">
+          <span class="tile-emoji">🎙️</span>
+          <span class="tile-title">質問で深掘りする</span>
+          <span class="tile-desc">音声でも文字でも。人柄・好きなもの・特技・エピソードを少しずつ聞き出します。</span>
+        </button>
+        <button class="tile" id="tileEpisode">
+          <span class="tile-emoji">📷</span>
+          <span class="tile-title">エピソードを追加する</span>
+          <span class="tile-desc">写真つきの思い出を1本、誰でも書き足せます。</span>
+        </button>
+        <button class="tile" id="tileProfile">
+          <span class="tile-emoji">📝</span>
+          <span class="tile-title">基本情報を編集する</span>
+          <span class="tile-desc">名前・写真・プロフィール表・概要文。</span>
+        </button>
+        <button class="tile" id="tileView">
+          <span class="tile-emoji">📖</span>
+          <span class="tile-title">完成ページを見る</span>
+          <span class="tile-desc">Wikipedia風にまとめて表示・印刷。</span>
+        </button>
+        <button class="tile wide" id="tileTrips">
+          <span class="tile-emoji">🧳</span>
+          <span class="tile-title">旅行・イベントでまとめる</span>
+          <span class="tile-desc">「旅行・イベント名」をつけたエピソードを、だれがいて何があったかごとにふり返れます。</span>
+        </button>
+      </div>
+
+      <div class="dash-section">
+        <h2>集まった記録</h2>
+        <div class="entry-tabs" id="entryTabs"></div>
+        <div id="entryList" class="entry-list"></div>
+      </div>
+
+      <div class="dash-footer">
+        <button class="btn ghost" id="btnExportWiki">このWikiをJSONで書き出す</button>
+        <button class="btn danger-ghost" id="btnDeleteWiki">このWikiを削除する</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ インタビュー ============ -->
+  <section class="screen" data-screen="interview">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="dash">← やめる</button>
+        <div class="progress"><div class="progress-bar" id="interviewProgress"></div></div>
+      </header>
+
+      <div class="field">
+        <label for="ivAuthor">答えている人の名前（任意・記録に残ります）</label>
+        <input type="text" id="ivAuthor" placeholder="例：本人 ／ 長女・花子">
+      </div>
+
+      <div class="voice-toggle">
+        <label class="switch">
+          <input type="checkbox" id="voiceModeToggle">
+          <span>音声で会話する（質問を読み上げ→話して答える。話し終わりに「次」と言うと、ボタンを押さなくても次に進みます）</span>
+        </label>
+        <p class="voice-support" id="voiceSupportNote"></p>
+      </div>
+
+      <div class="voice-toggle" id="aiDeepenBlock" hidden>
+        <label class="switch">
+          <input type="checkbox" id="aiDeepenToggle">
+          <span>AIで深掘りする（回答に応じて追加の質問をします・少額のAPI利用料が発生します）</span>
+        </label>
+        <p class="voice-support" id="aiDeepenStatus"></p>
+      </div>
+
+      <div class="interview-card">
+        <p class="q-cat" id="qCategory"></p>
+        <p class="q-text" id="qText"></p>
+
+        <div class="answer-box">
+          <textarea id="qAnswer" rows="5" placeholder="ここに答えを書く（またはマイクで話す）"></textarea>
+          <button class="mic-btn" id="qMicBtn" title="音声入力">🎤</button>
+        </div>
+        <p class="mic-status" id="qMicStatus"></p>
+
+        <div class="field">
+          <label for="qPhotos">写真を添える（任意）</label>
+          <input type="file" id="qPhotos" accept="image/*" multiple>
+          <div id="qPhotoPreview" class="photo-preview"></div>
+        </div>
+
+        <div class="interview-actions">
+          <button class="btn text" id="btnPrevQ">← 前の質問に戻る</button>
+          <button class="btn text" id="btnSkipQ">この質問はとばす</button>
+          <button class="btn primary" id="btnSaveQ">記録して次へ</button>
+        </div>
+        <p class="hint">「前の質問に戻る」を押すと、直前の回答はいったん取り消されます。書き直して保存すると記録し直せます。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ エピソード追加 ============ -->
+  <section class="screen" data-screen="episode">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text" id="btnEpisodeBack">← 戻る</button>
+        <h1>エピソードを追加</h1>
+      </header>
+
+      <div class="field">
+        <label for="epTitle">タイトル</label>
+        <input type="text" id="epTitle" placeholder="例：雨の日の合宿で全員ずぶ濡れになった話">
+      </div>
+
+      <div class="field">
+        <label for="epBody">話してください</label>
+        <div class="answer-box">
+          <textarea id="epBody" rows="6" placeholder="そのときのこと、自由に書いてください（マイクでも話せます）"></textarea>
+          <button class="mic-btn" id="epMicBtn" title="音声入力">🎤</button>
+        </div>
+        <p class="mic-status" id="epMicStatus"></p>
+      </div>
+
+      <div class="field">
+        <label for="epPhotos">写真（複数選べます）</label>
+        <input type="file" id="epPhotos" accept="image/*" multiple>
+        <div id="epPhotoPreview" class="photo-preview"></div>
+      </div>
+
+      <div class="field">
+        <label for="epTrip">旅行・イベント名（任意）</label>
+        <input type="text" id="epTrip" list="epTripList" placeholder="例：2023年 沖縄旅行">
+        <datalist id="epTripList"></datalist>
+      </div>
+
+      <div class="field">
+        <label for="epParticipants">その場にいた人（カンマ区切り・任意）</label>
+        <input type="text" id="epParticipants" placeholder="例：鈴木, 田中, 佐藤">
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="epPeriod">いつ頃（自由形式）</label>
+          <input type="text" id="epPeriod" placeholder="例：2021年春 ／ 高校時代">
+        </div>
+        <div class="field">
+          <label for="epAuthor">書いた人の名前</label>
+          <input type="text" id="epAuthor" placeholder="例：鈴木">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="epTags">タグ（カンマ区切り・任意）</label>
+        <input type="text" id="epTags" placeholder="例：旅行, 合宿, 笑える話">
+      </div>
+
+      <button class="btn primary wide" id="btnSaveEpisode">追加する</button>
+    </div>
+  </section>
+
+  <!-- ============ 基本情報編集 ============ -->
+  <section class="screen" data-screen="profile">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="dash">← 戻る</button>
+        <h1>基本情報</h1>
+      </header>
+
+      <div class="field">
+        <label for="pfTitle">名前 / サークル名</label>
+        <input type="text" id="pfTitle">
+      </div>
+      <div class="field">
+        <label for="pfSubtitle">一言</label>
+        <input type="text" id="pfSubtitle">
+      </div>
+      <div class="field">
+        <label for="pfCover">表紙の写真</label>
+        <input type="file" id="pfCover" accept="image/*">
+        <div id="pfCoverPreview" class="photo-preview"></div>
+      </div>
+      <div class="field">
+        <label for="pfInfobox">プロフィール表（1行に「ラベル: 内容」）</label>
+        <textarea id="pfInfobox" rows="6" placeholder="生年月日: 1960年4月1日&#10;出身: 大阪府&#10;所属: 〇〇株式会社"></textarea>
+      </div>
+      <div class="field">
+        <label for="pfOverview">概要文</label>
+        <textarea id="pfOverview" rows="5" placeholder="どんな人・どんな場所だったか、短くまとめて紹介する文章"></textarea>
+      </div>
+
+      <button class="btn primary wide" id="btnSaveProfile">保存する</button>
+    </div>
+  </section>
+
+  <!-- ============ 完成ページ（Wikipedia風） ============ -->
+  <section class="screen" data-screen="view">
+    <div class="view-toolbar no-print">
+      <button class="btn text back" data-back="dash">← 戻る</button>
+      <div class="view-toolbar-actions">
+        <button class="btn ghost" id="btnCompose" hidden>✨ AIでまとめる</button>
+        <button class="btn ghost" id="btnPrint">🖨️ 印刷 / PDFで保存</button>
+      </div>
+    </div>
+    <p class="view-compose-note no-print" id="composeNote"></p>
+    <div class="wiki-page" id="wikiPage"></div>
+  </section>
+
+  <!-- ============ 旅行・イベントでまとめる（一覧） ============ -->
+  <section class="screen" data-screen="trips">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="dash">← 戻る</button>
+        <h1>旅行・イベントでまとめる</h1>
+        <p class="lead">エピソードに「旅行・イベント名」をつけると、ここで自動的にまとまります。だれがいて、どんな出来事があったかをふり返れます。</p>
+      </header>
+      <div id="tripsOnThisDay"></div>
+      <div id="tripsList" class="wiki-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ 旅行・イベントでまとめる（詳細） ============ -->
+  <section class="screen" data-screen="tripDetail">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="trips">← 一覧へ</button>
+        <h1 id="tripDetailTitle"></h1>
+        <button class="btn text" id="btnRenameTrip">✏️ 名前・日時・宿泊先を変更</button>
+
+        <div id="tripEditForm" hidden>
+          <div class="field">
+            <label for="tripEditName">旅行・イベント名</label>
+            <input type="text" id="tripEditName">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="tripEditStart">開始日時</label>
+              <input type="datetime-local" id="tripEditStart">
+            </div>
+            <div class="field">
+              <label for="tripEditEnd">終了日時（任意）</label>
+              <input type="datetime-local" id="tripEditEnd">
+            </div>
+          </div>
+          <div class="field">
+            <label for="tripEditLodging">宿泊先（任意）</label>
+            <input type="text" id="tripEditLodging" placeholder="例：加賀屋（石川県和倉温泉）">
+          </div>
+          <button class="btn primary" id="btnSaveTripEdit">保存する</button>
+          <button class="btn text" id="btnCancelTripEdit">キャンセル</button>
+        </div>
+
+        <p class="lead" id="tripDetailPeriod"></p>
+        <p class="lead" id="tripDetailLodging"></p>
+        <p class="lead" id="tripDetailParticipants"></p>
+        <button class="btn primary" id="btnAddTripEpisode">＋ このイベントにエピソードを追加</button>
+      </header>
+
+      <section class="stops-section">
+        <div class="stops-head">
+          <h2>過ごした一日</h2>
+          <p class="lead small">モデルコース（お手本の予定表）ではなく、実際に過ごした記録です。同じ時間帯に別行動した場合は、1つの予定の中に記録を分けて残せます。</p>
+          <button class="btn text" id="btnAddStop">＋ 予定を追加</button>
+        </div>
+
+        <div id="stopFormWrap" class="stop-form" hidden>
+          <div class="field-row">
+            <div class="field">
+              <label for="stopDate">日付</label>
+              <input type="date" id="stopDate">
+            </div>
+            <div class="field">
+              <label for="stopTime">時刻</label>
+              <input type="time" id="stopTime">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="stopTimeLabel">タイミング（任意）</label>
+              <input type="text" id="stopTimeLabel" list="stopTimeLabelList" placeholder="例：集合、到着">
+              <datalist id="stopTimeLabelList">
+                <option value="集合"></option>
+                <option value="到着"></option>
+                <option value="出発"></option>
+                <option value="解散"></option>
+                <option value="チェックイン"></option>
+                <option value="チェックアウト"></option>
+              </datalist>
+            </div>
+            <div class="field">
+              <label for="stopType">種類（任意）</label>
+              <input type="text" id="stopType" list="stopTypeList" placeholder="例：移動、食事">
+              <datalist id="stopTypeList">
+                <option value="移動"></option>
+                <option value="食事"></option>
+                <option value="観光"></option>
+                <option value="宿泊"></option>
+                <option value="買い物"></option>
+              </datalist>
+            </div>
+          </div>
+          <button class="btn primary" id="btnSaveStop">追加する</button>
+          <button class="btn text" id="btnCancelStop">キャンセル</button>
+        </div>
+
+        <div id="stopsTimeline"></div>
+
+        <div id="stopDetailFormWrap" class="stop-form" hidden>
+          <p class="lead small" id="stopDetailFormTarget"></p>
+          <div class="field">
+            <label for="sdAuthor">記録した人</label>
+            <input type="text" id="sdAuthor" placeholder="お名前">
+          </div>
+          <div class="field">
+            <label for="sdEpisode">エピソード</label>
+            <textarea id="sdEpisode" rows="3" placeholder="そこで何があったか"></textarea>
+          </div>
+          <div class="field">
+            <label for="sdComment">一言（任意）</label>
+            <input type="text" id="sdComment" placeholder="例：また行きたい！">
+          </div>
+          <div class="field">
+            <label for="sdPhotos">写真（任意）</label>
+            <input type="file" id="sdPhotos" accept="image/*" multiple>
+            <div id="sdPhotoPreview" class="photo-preview"></div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="sdPrice">一人あたりの値段（任意・円）</label>
+              <input type="number" id="sdPrice" min="0" placeholder="例：1200">
+            </div>
+            <div class="field">
+              <label for="sdWait">待ち時間（任意）</label>
+              <input type="text" id="sdWait" placeholder="例：20分">
+            </div>
+          </div>
+          <div class="field">
+            <label>値段の明細（任意）</label>
+            <div id="sdBreakdownRows"></div>
+            <button type="button" class="btn text small" id="btnAddBreakdownRow">＋ 明細を追加</button>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="sdMapUrl">地図のURL（任意）</label>
+              <input type="url" id="sdMapUrl" placeholder="https://maps...">
+            </div>
+            <div class="field">
+              <label for="sdShopUrl">お店のHP（任意）</label>
+              <input type="url" id="sdShopUrl" placeholder="https://...">
+            </div>
+          </div>
+          <button class="btn primary" id="btnSaveStopDetail">この記録を追加する</button>
+          <button class="btn text" id="btnCancelStopDetail">キャンセル</button>
+        </div>
+      </section>
+
+      <h2 class="wp-section-title">エピソード</h2>
+      <div id="tripDetailEpisodes" class="wp-album"></div>
+    </div>
+  </section>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

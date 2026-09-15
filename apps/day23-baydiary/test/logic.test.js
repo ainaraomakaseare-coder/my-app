@@ -1,10 +1,10 @@
 /*
- * 勝敗判定・集計・選手分析のロジックを bay-diary.html から直接読み出して検証する。
- * 実行: node test/bay-diary.logic.test.js
+ * 勝敗判定・集計・選手分析のロジックを index.html から直接読み出して検証する。
+ * 実行: node test/logic.test.js
  */
 var fs = require("fs"), path = require("path"), vm = require("vm");
 
-var html = fs.readFileSync(path.join(__dirname, "..", "bay-diary.html"), "utf8");
+var html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 var js = html.split("<script>")[1].split("</script>")[0];
 var src = js.slice(js.indexOf("var LOGIC_MARK_START"), js.indexOf("var LOGIC_MARK_END = 1;") + "var LOGIC_MARK_END = 1;".length);
 var box = {};

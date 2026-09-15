@@ -1,0 +1,1105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>輸入ブラックジャック</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+:root{
+  --sumi:#101520;
+  --sumi-hi:#19212F;
+  --sumi-sink:#0A0E16;
+  --line:#28324A;
+  --kinari:#EFE7D6;
+  --kinari-dim:#A7A192;
+  --shu:#DA402A;
+  --shu-lit:#F4614A;
+  --kincha:#DFAB4C;
+  --asagi:#6E9FA3;
+  --muted:#7F89A1;
+  --font-display:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
+  --font-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--sumi);
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -8%, rgba(223,171,76,.13), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 50% 108%, rgba(110,159,163,.07), transparent 70%);
+  background-attachment:fixed;
+  color:var(--kinari);
+  font-family:var(--font-body);
+  line-height:1.6;
+  -webkit-text-size-adjust:100%;
+}
+button{font-family:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--kincha);outline-offset:3px;border-radius:4px}
+[hidden]{display:none !important}
+
+#scr-title,#scr-setup,#scr-guard,#scr-select,#scr-reveal,#scr-draw,
+#scr-act,#scr-trade,#scr-swap,#scr-result,#scr-rules{
+  display:flex;flex-direction:column;gap:16px}
+#scr-guard{flex:1}
+.wrap{max-width:460px;margin:0 auto;padding:18px 18px 40px;display:flex;flex-direction:column;gap:18px;min-height:100dvh}
+
+/* ---- 見出し ---- */
+.masthead{display:flex;flex-direction:column;gap:7px;border-bottom:1px solid var(--line);padding-bottom:11px}
+.mast-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.logo{font-family:var(--font-display);font-weight:800;font-size:18px;letter-spacing:.02em;margin:0;white-space:nowrap}
+.logo .dot{color:var(--shu-lit);letter-spacing:.02em}
+.tools{display:flex;gap:6px}
+.tool{background:none;border:1px solid var(--line);border-radius:8px;color:var(--muted);
+  font-size:11px;letter-spacing:.06em;padding:5px 9px;line-height:1.4;white-space:nowrap;flex:0 0 auto}
+.tools{flex:0 0 auto}
+.ba{font-size:12px;color:var(--muted);letter-spacing:.08em;font-variant-numeric:tabular-nums}
+.ba b{color:var(--kincha);font-weight:700}
+
+/* ---- 見出しの帯 ---- */
+.turnline{text-align:center;display:flex;flex-direction:column;gap:6px;align-items:center}
+.role{font-size:11px;letter-spacing:.22em;padding:3px 10px;border-radius:99px;
+  border:1px solid var(--line);color:var(--muted)}
+.role.sen{color:var(--kincha);border-color:rgba(223,171,76,.45)}
+.who{font-family:var(--font-display);font-weight:800;font-size:26px;line-height:1.3;
+  letter-spacing:.04em;text-wrap:balance}
+.who.red{color:var(--shu-lit)}
+.who.black{color:var(--kinari)}
+.lead{color:var(--kinari-dim);font-size:14px;margin:0;line-height:1.8}
+.note{font-size:12px;color:var(--muted);margin:0;line-height:1.7}
+
+/* ---- 札 ---- */
+.card{
+  position:relative;aspect-ratio:5/7;border-radius:7px;border:0;padding:0;width:100%;
+  background:linear-gradient(158deg,#FAF4E6 8%,#E4DAC2 92%);
+  box-shadow:0 2px 0 #A99E86, 0 5px 10px rgba(0,0,0,.42);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  font-family:var(--font-display);line-height:1;transition:transform .12s ease, box-shadow .12s ease;
+}
+.card .cn{font-size:clamp(15px,4.6vw,21px);font-weight:800;letter-spacing:.02em}
+.card .cs{font-size:clamp(9px,2.8vw,13px)}
+.card.red{color:#C4351E}
+.card.black{color:#1B2333}
+.card.back{background:linear-gradient(158deg,#26314A,#151B28);box-shadow:0 2px 0 #0A0E16, 0 5px 10px rgba(0,0,0,.5)}
+.card.back::after{content:"";position:absolute;inset:5px;border-radius:4px;
+  border:1px solid rgba(223,171,76,.28);
+  background:repeating-linear-gradient(45deg,rgba(223,171,76,.10) 0 3px,transparent 3px 7px)}
+button.card:active{transform:translateY(2px);box-shadow:0 0 0 #A99E86, 0 3px 6px rgba(0,0,0,.4)}
+.card.on{outline:2px solid var(--kincha);outline-offset:2px}
+.card.spent{opacity:.24}
+.card.mini{border-radius:5px;box-shadow:0 1px 0 #A99E86, 0 3px 6px rgba(0,0,0,.35)}
+.card.mini .cn{font-size:14px}
+.card.mini .cs{font-size:9px}
+
+.deck{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.hand-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;max-width:296px;margin:0 auto;width:100%}
+.mini-row{display:flex;gap:6px;flex-wrap:wrap}
+.mini-row .slot{width:38px}
+.slot{display:flex;flex-direction:column;gap:5px;align-items:center;min-width:0}
+.slot .lb{font-size:10px;letter-spacing:.1em;color:var(--muted);white-space:nowrap}
+.slot.open .lb{color:var(--kincha);font-weight:700}
+
+/* ---- 集計 ---- */
+.tally{display:flex;justify-content:center;gap:16px;align-items:baseline;
+  background:var(--sumi-hi);border:1px solid var(--line);border-radius:12px;padding:11px 14px}
+.tally .t{font-size:12px;letter-spacing:.14em;color:var(--kinari-dim)}
+.tally .v{font-family:var(--font-display);font-weight:800;font-size:26px;font-variant-numeric:tabular-nums}
+.tally .v.ok{color:var(--kincha)}
+.tally .v.over{color:var(--shu-lit)}
+.warn{color:var(--shu-lit);font-size:13px;text-align:center;margin:0;letter-spacing:.04em}
+
+/* ---- ボタン ---- */
+.act{display:flex;flex-direction:column;gap:9px}
+.btn{border:0;border-radius:12px;padding:16px 20px;font-size:17px;font-weight:500;
+  letter-spacing:.09em;line-height:1.45;transition:transform .12s ease}
+.btn:active{transform:translateY(2px)}
+.btn:disabled{opacity:.4;cursor:default;transform:none}
+.btn-main{background:linear-gradient(178deg,#C4351E,#94210F);color:#fff;
+  font-size:18px;font-weight:700;letter-spacing:.09em;
+  box-shadow:0 5px 0 #6B1508,0 12px 22px rgba(148,33,15,.32)}
+.btn-main:active{box-shadow:0 3px 0 #6B1508,0 8px 15px rgba(148,33,15,.28)}
+.btn-ghost{background:var(--sumi-hi);border:1px solid var(--line)}
+.btn-ghost:disabled{opacity:.5}
+.btn-quiet{background:none;border:0;color:var(--muted);font-size:12px;letter-spacing:.1em;padding:6px}
+
+/* ---- パネル ---- */
+.panel{background:var(--sumi-hi);border:1px solid var(--line);border-radius:14px;padding:16px}
+.panel h2{font-family:var(--font-display);font-weight:600;font-size:14px;letter-spacing:.16em;
+  margin:0 0 12px;color:var(--kinari-dim)}
+.kv{display:flex;justify-content:space-between;gap:10px;align-items:baseline;
+  padding:8px 0;border-bottom:1px dashed rgba(40,50,74,.8);font-size:13px}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--kinari-dim)}
+.kv .v{font-variant-numeric:tabular-nums;font-weight:700}
+
+/* ---- 設定 ---- */
+.setup{display:flex;flex-direction:column;gap:15px}
+.name-row{display:flex;gap:8px;align-items:center}
+.seat{font-size:11px;letter-spacing:.14em;color:var(--muted);width:52px;flex:0 0 auto}
+input[type=text]{background:var(--sumi-sink);border:1px solid var(--line);border-radius:9px;
+  padding:11px 12px;color:var(--kinari);font-family:inherit;font-size:15px;min-width:0;flex:1}
+input::placeholder{color:#4E576D}
+.pick{display:flex;gap:8px}
+.pick button{flex:1;background:var(--sumi-sink);border:1px solid var(--line);border-radius:10px;
+  padding:12px;font-size:14px;letter-spacing:.1em}
+.pick button.on{border-color:var(--kincha);color:var(--kincha);background:#222C40}
+
+/* ---- 受け渡し ---- */
+.guard{display:flex;flex-direction:column;gap:20px;align-items:center;justify-content:center;
+  text-align:center;flex:1;padding:30px 0}
+.guard .to{font-family:var(--font-display);font-weight:800;font-size:30px;line-height:1.35;
+  letter-spacing:.04em;text-wrap:balance}
+.guard .to em{font-style:normal;color:var(--kincha)}
+.guard .sub{font-size:13px;color:var(--muted);letter-spacing:.06em;line-height:1.9}
+
+/* ---- 先攻決定 ---- */
+.duel{display:flex;justify-content:center;align-items:flex-end;gap:14px}
+.duel .side{display:flex;flex-direction:column;align-items:center;gap:7px;flex:1;max-width:110px}
+.duel .side .nm{font-size:12px;color:var(--kinari-dim);letter-spacing:.06em;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.duel .vs{font-family:var(--font-display);font-size:15px;color:var(--muted);padding-bottom:20px}
+.drawline{display:flex;gap:5px;justify-content:center}
+.drawline .slot{width:40px}
+.redraw{font-size:11px;color:var(--muted);letter-spacing:.1em;text-align:center}
+
+/* ---- 交換 ---- */
+.swap{display:flex;justify-content:center;align-items:center;gap:18px}
+.swap .side{display:flex;flex-direction:column;align-items:center;gap:8px;width:86px}
+.swap .side .nm{font-size:11px;color:var(--kinari-dim);letter-spacing:.06em;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.swap .arrow{font-size:22px;color:var(--kincha);font-family:var(--font-display)}
+@keyframes slidein{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+.anim{animation:slidein .34s ease both}
+@media (prefers-reduced-motion:reduce){.anim{animation:none}}
+
+/* ---- 結果 ---- */
+.board{display:flex;flex-direction:column;gap:14px}
+.seat-box{border:1px solid var(--line);border-radius:14px;padding:13px;background:var(--sumi-hi)}
+.seat-box.win{border-color:var(--kincha);box-shadow:inset 0 0 0 1px rgba(223,171,76,.22)}
+.seat-box .head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:10px}
+.seat-box .nm{font-family:var(--font-display);font-weight:800;font-size:18px;letter-spacing:.04em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seat-box.win .nm{color:var(--kincha)}
+.seat-box .sum{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.seat-box .sum.over{color:var(--shu-lit)}
+.seat-box .sum small{font-size:11px;letter-spacing:.1em;color:var(--shu-lit);margin-left:6px;font-weight:500}
+.verdict{text-align:center;display:flex;flex-direction:column;gap:5px}
+.verdict .big{font-family:var(--font-display);font-weight:800;font-size:30px;letter-spacing:.05em;
+  color:var(--kincha);text-shadow:0 0 28px rgba(223,171,76,.3);text-wrap:balance}
+.verdict .big.draw{color:var(--muted);text-shadow:none}
+.verdict .why{font-size:12px;color:var(--kinari-dim);letter-spacing:.04em}
+
+/* ---- 決着の演出 ---- */
+.seat-box .hand-row{perspective:660px}
+@keyframes flipin{
+  from{opacity:0;transform:rotateY(-84deg) translateY(7px)}
+  55% {opacity:1}
+  to  {opacity:1;transform:none}
+}
+@keyframes pop{
+  from{opacity:0;transform:scale(.72)}
+  62% {transform:scale(1.15)}
+  to  {opacity:1;transform:none}
+}
+@keyframes popshake{
+  0%  {opacity:0;transform:scale(.72)}
+  50% {opacity:1;transform:scale(1.18)}
+  66% {transform:translateX(-5px)}
+  78% {transform:translateX(4px)}
+  89% {transform:translateX(-2px)}
+  100%{opacity:1;transform:none}
+}
+@keyframes rise{
+  from{opacity:0;transform:translateY(16px);letter-spacing:.3em;text-shadow:none}
+  to  {opacity:1;transform:none;letter-spacing:.05em}
+}
+@keyframes lit{
+  from{border-color:var(--line);box-shadow:none}
+  to  {border-color:var(--kincha);
+       box-shadow:inset 0 0 0 1px rgba(223,171,76,.22), 0 0 34px rgba(223,171,76,.14)}
+}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+
+.celebrate .reveal{animation:flipin .44s cubic-bezier(.2,.85,.3,1) both}
+.celebrate .reveal-lb{animation:fadein .44s ease both}
+.celebrate .sum{animation:pop .40s cubic-bezier(.2,.9,.3,1) both}
+.celebrate .sum.over{animation:popshake .62s cubic-bezier(.2,.9,.3,1) both}
+.celebrate .seat-box.win{animation:lit .8s ease both;animation-delay:.98s}
+.celebrate .big{animation:rise .72s cubic-bezier(.2,.8,.3,1) both;animation-delay:.98s}
+.celebrate .why{animation:fadein .6s ease both;animation-delay:1.24s}
+.celebrate .panel,.celebrate > .act{animation:fadein .5s ease both;animation-delay:1.3s}
+#v-dust{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:40}
+@media (prefers-reduced-motion:reduce){
+  .celebrate .reveal,.celebrate .reveal-lb,.celebrate .sum,.celebrate .sum.over,
+  .celebrate .seat-box.win,.celebrate .big,.celebrate .why,
+  .celebrate .panel,.celebrate > .act{animation:none}
+}
+
+/* ---- ルール ---- */
+.rules{font-size:13px;line-height:1.9;color:var(--kinari-dim)}
+.rules h3{font-family:var(--font-display);font-size:14px;letter-spacing:.14em;color:var(--kincha);
+  margin:16px 0 5px;font-weight:600}
+.rules h3:first-child{margin-top:0}
+.rules p{margin:0 0 6px}
+.rules ul{margin:0;padding-left:1.2em}
+.rules table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.rules th,.rules td{border-bottom:1px dashed rgba(40,50,74,.8);padding:6px 4px;text-align:left}
+.rules th{color:var(--muted);font-weight:500;letter-spacing:.08em}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="mast-top">
+      <h1 class="logo"><span class="dot">輸入</span>ブラックジャック</h1>
+      <div class="tools">
+        <button class="tool" id="t-rules" type="button">ルール</button>
+        <button class="tool" id="t-quit" type="button" hidden>やめる</button>
+      </div>
+    </div>
+    <div class="ba" id="ba"></div>
+  </header>
+
+  <!-- タイトル -->
+  <section id="scr-title">
+    <div class="turnline" style="padding:22px 0 6px">
+      <div class="who">二十一を<br>取り合う</div>
+      <p class="lead">四枚の合計を二十一以下でできるだけ大きく。<br>相手と一枚ずつ交換しながら、手の内を読み合います。</p>
+    </div>
+    <div class="act">
+      <button class="btn btn-main" id="b-resume" type="button" hidden>続きから</button>
+      <button class="btn btn-main" id="b-start" type="button">ゲーム開始</button>
+      <button class="btn btn-ghost" id="b-rules" type="button">ルールを見る</button>
+    </div>
+  </section>
+
+  <!-- プレイヤー設定 -->
+  <section class="setup" id="scr-setup" hidden>
+    <p class="lead">二人の名前を入れて、どちらが赤の二十枚を使うか決めます。赤と黒は数字の構成がまったく同じなので、有利不利はありません。</p>
+    <div class="name-row"><span class="seat">一人目</span><input type="text" id="nm0" maxlength="12" placeholder="名前"></div>
+    <div class="name-row"><span class="seat">二人目</span><input type="text" id="nm1" maxlength="12" placeholder="名前"></div>
+    <div>
+      <p class="note" style="margin-bottom:7px">一人目が使う組</p>
+      <div class="pick" id="pick-color">
+        <button type="button" data-color="RED">赤（♥ ♦）</button>
+        <button type="button" data-color="BLACK">黒（♠ ♣）</button>
+      </div>
+    </div>
+    <div class="act">
+      <button class="btn btn-main" id="b-begin" type="button">対戦開始</button>
+      <button class="btn btn-quiet" id="b-back-title" type="button">戻る</button>
+    </div>
+  </section>
+
+  <!-- 受け渡し -->
+  <section id="scr-guard" hidden>
+    <div class="guard">
+      <div class="to" id="g-to"></div>
+      <p class="sub" id="g-sub"></p>
+      <div class="act" style="width:100%">
+        <button class="btn btn-main" id="b-guard" type="button">確認します</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 手札選択 -->
+  <section id="scr-select" hidden>
+    <div class="turnline">
+      <span class="role" id="s-role">手札選択</span>
+      <div class="who" id="s-who"></div>
+      <p class="note">二十枚から四枚を選びます。<b>選んだ順がそのまま並び順</b>になり、相手にもその位置で見えます。</p>
+    </div>
+    <div class="tally">
+      <span class="t">合計</span><span class="v" id="s-sum">0</span>
+      <span class="t">二十一まで</span><span class="v" id="s-left">21</span>
+    </div>
+    <p class="warn" id="s-warn" hidden>合計が21を超えています</p>
+    <div class="hand-row" id="s-hand"></div>
+    <div class="deck" id="s-deck"></div>
+    <div class="act">
+      <button class="btn btn-main" id="b-select" type="button" disabled>この四枚で決める</button>
+      <button class="btn btn-ghost" id="b-clear" type="button">選び直す</button>
+    </div>
+  </section>
+
+  <!-- 公開カード指名 -->
+  <section id="scr-reveal" hidden>
+    <div class="turnline">
+      <span class="role">公開札の指名</span>
+      <div class="who" id="r-who"></div>
+      <p class="note" id="r-note"></p>
+    </div>
+    <div class="hand-row" id="r-hand"></div>
+    <div class="act">
+      <button class="btn btn-main" id="b-reveal" type="button" disabled>この一枚を公開させる</button>
+    </div>
+  </section>
+
+  <!-- 先攻決定 -->
+  <section id="scr-draw" hidden>
+    <div class="turnline">
+      <span class="role">先攻決定</span>
+      <div class="who" id="d-who"></div>
+      <p class="note">手札に使わなかった十六枚から一枚ずつ引きます。大きい方が先攻か後攻かを選べます。</p>
+    </div>
+    <div class="duel">
+      <div class="side"><span class="nm" id="d-nm0"></span><div class="drawline" id="d-draw0"></div></div>
+      <span class="vs">対</span>
+      <div class="side"><span class="nm" id="d-nm1"></span><div class="drawline" id="d-draw1"></div></div>
+    </div>
+    <p class="redraw" id="d-redraw" hidden></p>
+    <div class="act">
+      <button class="btn btn-main" id="b-go-first" type="button">先攻を取る</button>
+      <button class="btn btn-ghost" id="b-go-second" type="button">後攻を取る</button>
+    </div>
+  </section>
+
+  <!-- 宣言 -->
+  <section id="scr-act" hidden>
+    <div class="turnline">
+      <span class="role sen" id="a-role"></span>
+      <div class="who" id="a-who"></div>
+    </div>
+    <div class="hand-row" id="a-hand"></div>
+    <div class="tally">
+      <span class="t">あなたの合計</span><span class="v" id="a-sum">0</span>
+    </div>
+    <div class="panel">
+      <h2>相手について分かっていること</h2>
+      <div class="mini-row" id="a-known"></div>
+      <p class="note" id="a-known-note" style="margin-top:9px"></p>
+    </div>
+    <p class="note" id="a-trade-note"></p>
+    <div class="act">
+      <button class="btn btn-ghost" id="b-check" type="button">チェック（交換しない）</button>
+      <button class="btn btn-main" id="b-trade" type="button">トレード（一枚交換する）</button>
+    </div>
+  </section>
+
+  <!-- トレード札選択 -->
+  <section id="scr-trade" hidden>
+    <div class="turnline">
+      <span class="role" id="t-role"></span>
+      <div class="who" id="t-who"></div>
+      <p class="note" id="t-note"></p>
+    </div>
+    <div class="hand-row" id="t-hand"></div>
+    <div class="tally">
+      <span class="t">出した後の合計</span><span class="v" id="t-sum">—</span>
+    </div>
+    <div class="act">
+      <button class="btn btn-main" id="b-give" type="button" disabled>この一枚を出す</button>
+    </div>
+  </section>
+
+  <!-- 交換の結果 -->
+  <section id="scr-swap" hidden>
+    <div class="turnline">
+      <span class="role">交換</span>
+      <div class="who" id="w-who">札を交換しました</div>
+      <p class="note">出した札は相手の手に、相手の札はあなたの手に入ります。二枚とも、この時点で二人に見えています。</p>
+    </div>
+    <div class="swap anim" id="w-body"></div>
+    <div class="act">
+      <button class="btn btn-main" id="b-swap-next" type="button">続ける</button>
+    </div>
+  </section>
+
+  <!-- 結果 -->
+  <section id="scr-result" hidden>
+    <canvas id="v-dust" aria-hidden="true"></canvas>
+    <div class="verdict">
+      <div class="big" id="v-big"></div>
+      <div class="why" id="v-why"></div>
+    </div>
+    <div class="board" id="v-board"></div>
+    <div class="panel">
+      <h2>通算成績</h2>
+      <div id="v-record"></div>
+    </div>
+    <div class="act">
+      <button class="btn btn-main" id="b-again" type="button">もう一局</button>
+      <button class="btn btn-quiet" id="b-end" type="button">やめる</button>
+    </div>
+  </section>
+
+  <!-- ルール -->
+  <section id="scr-rules" hidden>
+    <div class="rules">
+      <h3>ねらい</h3>
+      <p>手札四枚の合計を、二十一以下でできるだけ大きくします。二十二以上はバーストです。</p>
+
+      <h3>札</h3>
+      <p>トランプの A〜10 の四十枚。A は 1 として数えます。絵札とジョーカーは使いません。二人はそれぞれ赤（♥ ♦）か黒（♠ ♣）の二十枚を持ちます。どちらの組も 1〜10 が二枚ずつで、構成はまったく同じです。</p>
+
+      <h3>手札を決める</h3>
+      <p>自分の二十枚から、合計が二十一以下になる四枚を選びます。選んだ順がそのまま並び順になり、相手にもその位置で見えます。並べ方そのものが手掛かりになるので、順番にも意味があります。</p>
+
+      <h3>一枚だけ公開する</h3>
+      <p>双方が四枚を決めたら、相手の四枚のうち一枚を指名して表向きにさせます。裏向きの位置しか見えない状態で選びます。</p>
+
+      <h3>先攻を決める</h3>
+      <p>手札に使わなかった十六枚から一枚ずつ引き、大きい方が先攻か後攻かを選びます。同じ数字なら引き直します。</p>
+
+      <h3>チェックとトレード</h3>
+      <p>先攻から順に、どちらかを宣言します。</p>
+      <ul>
+        <li><b>チェック</b> ― 交換しません。</li>
+        <li><b>トレード</b> ― 双方が手札から一枚ずつ伏せて出し、同時に交換します。<b>宣言していない側も断れません。</b></li>
+      </ul>
+      <table>
+        <tr><th>先攻</th><th>後攻</th><th>交換</th></tr>
+        <tr><td>チェック</td><td>チェック</td><td>0 回</td></tr>
+        <tr><td>チェック</td><td>トレード</td><td>1 回</td></tr>
+        <tr><td>トレード</td><td>チェック</td><td>1 回</td></tr>
+        <tr><td>トレード</td><td>トレード</td><td>2 回</td></tr>
+      </table>
+      <p>交換で二十二以上になっても構いません。そこがこのゲームの怖いところです。公開されている札も出せますが、公開の枠は残るので、入ってきた札がそのまま表向きになります。</p>
+
+      <h3>勝敗</h3>
+      <ul>
+        <li>ともに二十一以下 ― 合計が大きい方の勝ち</li>
+        <li>片方だけバースト ― バーストしていない方の勝ち</li>
+        <li>ともにバースト ― 二十一からの超過が少ない方の勝ち</li>
+        <li>合計が同じ ― 大きい札から順に比べ、大きい方の勝ち</li>
+        <li>四枚すべて同じ ― 引き分け</li>
+      </ul>
+      <p>スートは勝敗に関係ありません。</p>
+
+      <h3>端末の受け渡し</h3>
+      <p>一台を二人で回します。伏せた手札を見る場面では受け渡しの画面を挟むので、指示に従って端末を渡してください。</p>
+    </div>
+    <div class="act">
+      <button class="btn btn-main" id="b-rules-close" type="button">戻る</button>
+    </div>
+  </section>
+
+</div>
+<script>
+(function(){
+"use strict";
+
+/* ========== 札と勝敗 ==========
+   ここから RULES_END までは test/bj.rules.test.js が直接読み出して検証する。 */
+var GOAL = 21;
+var HAND_SIZE = 4;
+var MAX_TRADE = 2;
+var SUITS = {RED:["HEART","DIAMOND"], BLACK:["SPADE","CLUB"]};
+var MARK = {HEART:"♥", DIAMOND:"♦", SPADE:"♠", CLUB:"♣"};
+var HEAD = {HEART:"H", DIAMOND:"D", SPADE:"S", CLUB:"C"};
+
+/* 赤も黒も 1〜10 が二枚ずつ。二人の選べる札はまったく同じで、運の差はない。 */
+function buildDeck(color){
+  var out = [];
+  SUITS[color].forEach(function(suit){
+    for(var n = 1; n <= 10; n++) out.push({id:HEAD[suit] + n, n:n, suit:suit, color:color});
+  });
+  return out;
+}
+function faceOf(n){ return n === 1 ? "A" : String(n); }
+function total(ns){ var t = 0; for(var i = 0; i < ns.length; i++) t += ns[i]; return t; }
+function isBurst(ns){ return total(ns) > GOAL; }
+
+/* 大きい札から順に比べる。a が強ければ 1、b が強ければ -1、四枚とも同じなら 0。 */
+function compareByCard(a, b){
+  var x = a.slice().sort(function(p, q){ return q - p; });
+  var y = b.slice().sort(function(p, q){ return q - p; });
+  for(var i = 0; i < x.length && i < y.length; i++){
+    if(x[i] !== y[i]) return x[i] > y[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+/* winner は 0 か 1、引き分けは -1。バーストしていても比較の向きは変えない。 */
+function judge(a, b){
+  var ta = total(a), tb = total(b);
+  var ba = ta > GOAL, bb = tb > GOAL;
+  if(ba !== bb) return {winner: ba ? 1 : 0, type:"burst"};
+  if(ta !== tb){
+    if(ba) return {winner: ta < tb ? 0 : 1, type:"closer"};  /* ともにバースト ・ 超過が少ない方 */
+    return {winner: ta > tb ? 0 : 1, type:"sum"};            /* ともに21以下 ・ 合計が大きい方 */
+  }
+  var c = compareByCard(a, b);
+  if(c !== 0) return {winner: c > 0 ? 0 : 1, type:"cards"};
+  return {winner:-1, type:"draw"};
+}
+
+/* 手札選択のバリデーション。初期手札だけは21以下でなければ確定できない。 */
+function canConfirm(ns){ return ns.length === HAND_SIZE && total(ns) <= GOAL; }
+function selectionError(ns){
+  if(ns.length > HAND_SIZE) return "四枚を超えて選べません";
+  if(ns.length === HAND_SIZE && total(ns) > GOAL) return "合計が21を超えています";
+  return "";
+}
+var RULES_END = true;
+
+/* ========== 状態 ========== */
+var STORE = "yunyu-blackjack-v1";
+var SCREENS = ["scr-title","scr-setup","scr-guard","scr-select","scr-reveal",
+               "scr-draw","scr-act","scr-trade","scr-swap","scr-result","scr-rules"];
+var GUARD_LABEL = {
+  select:"手札を選ぶ場面",
+  reveal:"相手の札を指名する場面",
+  act:"チェックかトレードを決める場面",
+  trade:"相手に渡す札を選ぶ場面"
+};
+
+var $ = function(id){ return document.getElementById(id); };
+var S = null;            /* 対局の状態 */
+var saved = null;        /* 起動時に localStorage から読んだ途中の対局 */
+var view = "title";      /* title / setup / game */
+var overlay = null;      /* "rules" のときルール画面をかぶせる */
+var setupColor = "RED";
+var sel = [];            /* 手札選択の途中 ・ 選んだ順の札 id */
+var pickIdx = null;      /* 指名やトレードで選んでいる位置 */
+var celebrate = false;   /* 結果画面を演出付きで出すか */
+
+function shuffle(a){
+  for(var i = a.length - 1; i > 0; i--){
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+function nums(hand){ return hand.map(function(c){ return c.n; }); }
+function cardById(p, id){
+  var d = S.decks[p];
+  for(var i = 0; i < d.length; i++) if(d[i].id === id) return d[i];
+  return null;
+}
+function esc(s){
+  return String(s).replace(/[&<>"]/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];
+  });
+}
+
+/* ========== 進行 ========== */
+function newGame(names, colorOfFirst){
+  S = {
+    names: names,
+    colors: colorOfFirst === "RED" ? ["RED","BLACK"] : ["BLACK","RED"],
+    record: {win:[0,0], draw:0},
+    round: 0
+  };
+  newRound();
+}
+function newRound(){
+  S.round++;
+  if(S.round > 1) S.colors = [S.colors[1], S.colors[0]];   /* 一局ごとに赤黒を入れ替える */
+  S.decks = [shuffle(buildDeck(S.colors[0])), shuffle(buildDeck(S.colors[1]))];
+  S.hands = [[],[]];      /* 選んだ順のまま。並びは最後まで崩さない */
+  S.pool  = [[],[]];      /* 手札に使わなかった十六枚 */
+  S.open  = [null,null];  /* open[i] = 相手に指名された、hands[i] の公開枠 */
+  S.given = [[],[]];      /* given[i] = i が相手に渡した札の id */
+  S.draws = [[],[]];
+  S.first = null; S.chooser = null;
+  S.acts  = [null,null];
+  S.picks = [null,null];
+  S.tradeNo = 0;
+  S.swap = null;
+  S.result = null;
+  S.phase = "select";
+  S.turn = 0;
+  S.holder = null;        /* いま端末を持っている人。turn と違えば受け渡しを挟む */
+  sel = []; pickIdx = null;
+}
+
+function confirmHand(){
+  var p = S.turn;
+  S.hands[p] = sel.map(function(id){ return cardById(p, id); });
+  S.pool[p] = S.decks[p].filter(function(c){ return sel.indexOf(c.id) < 0; });
+  sel = [];
+  if(p === 0){ S.turn = 1; return; }
+  S.phase = "reveal"; S.turn = 0;
+}
+
+function confirmReveal(){
+  var p = S.turn, opp = 1 - p;
+  S.open[opp] = pickIdx;          /* 相手の手札の、この位置を表向きにさせる */
+  pickIdx = null;
+  if(p === 0){ S.turn = 1; return; }
+  S.phase = "draw"; doDraw();
+}
+
+/* 手札に使わなかった十六枚から一枚ずつ。同じ数字なら引き直す。 */
+function doDraw(){
+  S.draws = [[],[]];
+  var a = null, b = null;
+  while(S.pool[0].length && S.pool[1].length){
+    a = S.pool[0].pop(); b = S.pool[1].pop();
+    S.draws[0].push(a); S.draws[1].push(b);
+    if(a.n !== b.n) break;
+  }
+  S.chooser = (a && b && a.n < b.n) ? 1 : 0;
+  S.holder = null;                /* 全員で見る画面なので、次は受け渡しから */
+}
+
+function chooseOrder(takeFirst){
+  S.first = takeFirst ? S.chooser : 1 - S.chooser;
+  S.phase = "act";
+  S.turn = S.first;
+}
+
+function declare(action){
+  S.acts[S.turn] = action;
+  if(action !== "trade"){ nextAfterAction(); return; }
+  S.picks = [null,null];
+  S.phase = "trade";
+  S.turn = S.first;               /* 出す札は先攻から選ぶ */
+}
+function nextAfterAction(){
+  var second = 1 - S.first;
+  if(S.acts[second] == null){ S.phase = "act"; S.turn = second; return; }
+  showdown();
+}
+
+function givePick(){
+  S.picks[S.turn] = pickIdx;
+  pickIdx = null;
+  if(S.turn === S.first){ S.turn = 1 - S.first; return; }
+  S.swap = {a:S.hands[0][S.picks[0]], b:S.hands[1][S.picks[1]]};
+  S.phase = "swap";
+  S.holder = null;
+}
+function applySwap(){
+  var i0 = S.picks[0], i1 = S.picks[1];
+  var c0 = S.hands[0][i0], c1 = S.hands[1][i1];
+  S.hands[0][i0] = c1;            /* 枠はそのまま。公開枠なら中身が変わっても公開のまま */
+  S.hands[1][i1] = c0;
+  S.given[0].push(c0.id);
+  S.given[1].push(c1.id);
+  S.picks = [null,null];
+  S.swap = null;
+  S.tradeNo++;
+  nextAfterAction();
+}
+
+function showdown(){
+  S.result = judge(nums(S.hands[0]), nums(S.hands[1]));
+  if(S.result.winner === -1) S.record.draw++;
+  else S.record.win[S.result.winner]++;
+  S.phase = "result";
+  S.holder = null;
+  celebrate = true;               /* 決着した直後の一度だけ演出する */
+}
+
+/* p から見て中身が確実に分かっている、相手の手札の位置 */
+function knownSlots(p){
+  var opp = 1 - p, out = [];
+  if(S.open[opp] != null) out.push(S.open[opp]);
+  S.hands[opp].forEach(function(c, i){
+    if(out.indexOf(i) < 0 && S.given[p].indexOf(c.id) >= 0) out.push(i);
+  });
+  return out.sort(function(a, b){ return a - b; });
+}
+
+/* ========== 保存 ========== */
+function save(){
+  try{ localStorage.setItem(STORE, JSON.stringify({S:S, sel:sel, pick:pickIdx})); }catch(e){}
+}
+function load(){
+  try{
+    var o = JSON.parse(localStorage.getItem(STORE));
+    return (o && o.S && o.S.names) ? o : null;
+  }catch(e){ return null; }
+}
+function clearSave(){ try{ localStorage.removeItem(STORE); }catch(e){} }
+
+/* ========== 描画 ========== */
+function show(id){ SCREENS.forEach(function(s){ $(s).hidden = (s !== id); }); }
+function fill(host, nodes){
+  var f = document.createDocumentFragment();
+  nodes.forEach(function(n){ f.appendChild(n); });
+  host.textContent = "";
+  host.appendChild(f);
+}
+function cardNode(card, o){
+  o = o || {};
+  var el = document.createElement(o.button ? "button" : "div");
+  if(o.button) el.type = "button";
+  el.className = "card " + (card.color === "RED" ? "red" : "black") +
+    (o.mini ? " mini" : "") + (o.on ? " on" : "") + (o.spent ? " spent" : "");
+  var n = document.createElement("span"); n.className = "cn"; n.textContent = faceOf(card.n);
+  var s = document.createElement("span"); s.className = "cs"; s.textContent = MARK[card.suit];
+  el.appendChild(n); el.appendChild(s);
+  el.setAttribute(o.button ? "aria-label" : "aria-hidden",
+                  o.button ? (faceOf(card.n) + " " + MARK[card.suit]) : "false");
+  return el;
+}
+function backNode(o){
+  o = o || {};
+  var el = document.createElement(o.button ? "button" : "div");
+  if(o.button) el.type = "button";
+  el.className = "card back" + (o.mini ? " mini" : "") + (o.on ? " on" : "");
+  if(o.faint) el.style.opacity = ".25";
+  return el;
+}
+function slotNode(inner, label, open){
+  var d = document.createElement("div");
+  d.className = "slot" + (open ? " open" : "");
+  d.appendChild(inner);
+  if(label){
+    var lb = document.createElement("span"); lb.className = "lb"; lb.textContent = label;
+    d.appendChild(lb);
+  }
+  return d;
+}
+function who(el, p, text){
+  el.textContent = text == null ? S.names[p] : text;
+  el.className = "who " + (S.colors[p] === "RED" ? "red" : "black");
+}
+function handSlots(p){
+  return S.hands[p].map(function(c, i){
+    var open = (S.open[p] === i);
+    return slotNode(cardNode(c), (i + 1) + "枚目" + (open ? " ・ 公開" : ""), open);
+  });
+}
+
+function render(){
+  if(overlay === "rules"){ show("scr-rules"); return; }
+  $("t-quit").hidden = (view !== "game");
+  if(view === "title"){
+    show("scr-title"); $("ba").textContent = "";
+    $("b-resume").hidden = !saved;
+    return;
+  }
+  if(view === "setup"){ show("scr-setup"); renderSetup(); $("ba").textContent = ""; return; }
+
+  var r = S.record;
+  $("ba").innerHTML = "第 <b>" + S.round + "</b> 局 ・ " +
+    esc(S.names[0]) + " <b>" + r.win[0] + "</b> / " +
+    esc(S.names[1]) + " <b>" + r.win[1] + "</b> ・ 分け <b>" + r.draw + "</b>";
+  save();
+
+  if(S.phase === "result"){ show("scr-result"); renderResult(); return; }
+  if(S.phase === "draw"){ show("scr-draw"); renderDraw(); return; }
+  if(S.phase === "swap"){ show("scr-swap"); renderSwap(); return; }
+  /* ここから先は伏せた札が出る画面。持ち手が変わるときだけ受け渡しを挟む。 */
+  if(S.holder !== S.turn){ show("scr-guard"); renderGuard(); return; }
+  if(S.phase === "select"){ show("scr-select"); renderSelect(); return; }
+  if(S.phase === "reveal"){ show("scr-reveal"); renderReveal(); return; }
+  if(S.phase === "act"){ show("scr-act"); renderAct(); return; }
+  if(S.phase === "trade"){ show("scr-trade"); renderTrade(); return; }
+}
+
+function renderSetup(){
+  Array.prototype.forEach.call($("pick-color").children, function(b){
+    b.className = (b.getAttribute("data-color") === setupColor) ? "on" : "";
+  });
+}
+
+function renderGuard(){
+  var p = S.turn;
+  $("g-to").innerHTML = "<em>" + esc(S.names[p]) + "</em> さんに<br>端末を渡してください";
+  $("g-sub").textContent = GUARD_LABEL[S.phase] + "です。ほかの人に画面が見えていないか確かめてから進んでください。";
+  $("b-guard").textContent = S.names[p] + " です";
+}
+
+function renderSelect(){
+  var p = S.turn;
+  who($("s-who"), p);
+  var picked = sel.map(function(id){ return cardById(p, id); });
+  var ns = nums(picked), t = total(ns);
+  $("s-sum").textContent = t;
+  $("s-sum").className = "v" + (t > GOAL ? " over" : (sel.length === HAND_SIZE ? " ok" : ""));
+  $("s-left").textContent = (t > GOAL) ? ("超過 " + (t - GOAL)) : (GOAL - t);
+  $("s-left").className = "v" + (t > GOAL ? " over" : "");
+  var err = selectionError(ns);
+  $("s-warn").hidden = !err; $("s-warn").textContent = err;
+  $("b-select").disabled = !canConfirm(ns);
+  $("b-clear").disabled = (sel.length === 0);
+
+  var slots = [];
+  for(var i = 0; i < HAND_SIZE; i++){
+    slots.push(picked[i]
+      ? slotNode(cardNode(picked[i]), (i + 1) + "枚目", false)
+      : slotNode(backNode({faint:true}), (i + 1) + "枚目", false));
+  }
+  fill($("s-hand"), slots);
+
+  var deck = S.decks[p].slice().sort(function(a, b){
+    return a.n - b.n || (a.suit < b.suit ? -1 : a.suit > b.suit ? 1 : 0);
+  });
+  fill($("s-deck"), deck.map(function(c){
+    var el = cardNode(c, {button:true, on:sel.indexOf(c.id) >= 0});
+    el.addEventListener("click", function(){ toggleSel(c.id); });
+    return el;
+  }));
+}
+function toggleSel(id){
+  var i = sel.indexOf(id);
+  if(i >= 0) sel.splice(i, 1);
+  else if(sel.length < HAND_SIZE) sel.push(id);
+  render();
+}
+
+function renderReveal(){
+  var p = S.turn, opp = 1 - p;
+  who($("r-who"), p);
+  $("r-note").textContent = S.names[opp] +
+    " さんの四枚です。中身は見えません。位置だけを頼りに、表向きにさせる一枚を選びます。";
+  fill($("r-hand"), S.hands[opp].map(function(c, i){
+    var el = backNode({button:true, on:pickIdx === i});
+    el.addEventListener("click", function(){ pickIdx = i; render(); });
+    return slotNode(el, (i + 1) + "枚目", false);
+  }));
+  $("b-reveal").disabled = (pickIdx == null);
+}
+
+function renderDraw(){
+  $("d-who").textContent = S.names[S.chooser] + " さんが選びます";
+  $("d-who").className = "who";
+  $("d-nm0").textContent = S.names[0];
+  $("d-nm1").textContent = S.names[1];
+  [0, 1].forEach(function(p){
+    var last = S.draws[p].length - 1;
+    fill($("d-draw" + p), S.draws[p].map(function(c, i){
+      return slotNode(cardNode(c, {mini:i !== last, spent:i !== last}), null, false);
+    }));
+  });
+  var re = S.draws[0].length - 1;
+  $("d-redraw").hidden = (re <= 0);
+  $("d-redraw").textContent = "同じ数字が出たので " + re + " 回 引き直しました";
+  $("b-go-first").textContent = S.names[S.chooser] + " は先攻を取る";
+  $("b-go-second").textContent = S.names[S.chooser] + " は後攻を取る";
+}
+
+function renderAct(){
+  var p = S.turn, opp = 1 - p;
+  $("a-role").textContent = (p === S.first) ? "先攻" : "後攻";
+  $("a-role").className = "role" + (p === S.first ? " sen" : "");
+  who($("a-who"), p);
+  fill($("a-hand"), handSlots(p));
+  var t = total(nums(S.hands[p]));
+  $("a-sum").textContent = t;
+  $("a-sum").className = "v" + (t > GOAL ? " over" : " ok");
+
+  var ks = knownSlots(p);
+  fill($("a-known"), ks.map(function(i){
+    return slotNode(cardNode(S.hands[opp][i], {mini:true}), (i + 1) + "枚目", S.open[opp] === i);
+  }));
+  $("a-known-note").textContent = ks.length
+    ? "公開させた札と、あなたが渡した札です。残り " + (HAND_SIZE - ks.length) + " 枚は分かりません。"
+    : "まだ何も分かっていません。";
+  $("a-trade-note").textContent = "これまでの交換 " + S.tradeNo + " 回（最大 " + MAX_TRADE + " 回）。" +
+    ((p === S.first) ? "あなたがトレードを宣言すると、相手は断れません。"
+                     : "あなたが宣言したところで、この局の交換は終わりです。");
+}
+
+function renderTrade(){
+  var p = S.turn;
+  $("t-role").textContent = ((p === S.first) ? "先攻" : "後攻") + " ・ " + (S.tradeNo + 1) + " 回目の交換";
+  who($("t-who"), p);
+  $("t-note").textContent = "相手に渡す一枚を選びます。相手が何を出すかは、二人とも決めるまで分かりません。";
+  fill($("t-hand"), S.hands[p].map(function(c, i){
+    var open = (S.open[p] === i);
+    var el = cardNode(c, {button:true, on:pickIdx === i});
+    el.addEventListener("click", function(){ pickIdx = i; render(); });
+    return slotNode(el, (i + 1) + "枚目" + (open ? " ・ 公開" : ""), open);
+  }));
+  var t = total(nums(S.hands[p]));
+  $("t-sum").textContent = (pickIdx == null) ? "—" : (t - S.hands[p][pickIdx].n) + " ＋ ?";
+  $("b-give").disabled = (pickIdx == null);
+}
+
+function renderSwap(){
+  var side = function(p, card){
+    var d = document.createElement("div"); d.className = "side";
+    var nm = document.createElement("span"); nm.className = "nm";
+    nm.textContent = S.names[p] + " が出した";
+    d.appendChild(nm); d.appendChild(cardNode(card));
+    return d;
+  };
+  var ar = document.createElement("span"); ar.className = "arrow"; ar.textContent = "⇄";
+  fill($("w-body"), [side(0, S.swap.a), ar, side(1, S.swap.b)]);
+  $("w-body").className = "swap anim";
+}
+
+/* ---- 金粉 ----
+   勝ちが決まったあと、上から金の粉が舞い落ちて消える。 */
+var dustRaf = null, dustAt = null;
+function stopDust(){
+  if(dustAt){ clearTimeout(dustAt); dustAt = null; }
+  if(dustRaf){ cancelAnimationFrame(dustRaf); dustRaf = null; }
+  var cv = $("v-dust");
+  if(cv && cv.getContext) cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+}
+function goldDust(){
+  dustAt = null;
+  var cv = $("v-dust");
+  if(!cv || !cv.getContext) return;
+  if($("scr-result").hidden) return;
+  try{
+    if(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  }catch(e){}
+
+  var w = cv.clientWidth, h = cv.clientHeight;
+  if(!w || !h) return;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = w * dpr; cv.height = h * dpr;
+  var g = cv.getContext("2d");
+  g.scale(dpr, dpr);
+
+  var bits = [];
+  for(var i = 0; i < 90; i++){
+    bits.push({
+      x: Math.random() * w,
+      y: -10 - Math.random() * h * 0.55,      /* 画面のすぐ上から湧かせる */
+      vy: 150 + Math.random() * 230,          /* 一秒あたりの落ちる距離 */
+      sway: 10 + Math.random() * 26,          /* 横に揺れる幅 */
+      phase: Math.random() * Math.PI * 2,
+      len: 2.4 + Math.random() * 5.2,
+      rot: Math.random() * Math.PI,
+      spin: (Math.random() - 0.5) * 5
+    });
+  }
+
+  var LIFE = 2600, FADE = 800, t0 = null;
+  function frame(now){
+    if(t0 === null) t0 = now;
+    var t = now - t0;
+    g.clearRect(0, 0, w, h);
+    if(t > LIFE){ dustRaf = null; return; }
+    var fade = (t < LIFE - FADE) ? 1 : (LIFE - t) / FADE;
+    for(var i = 0; i < bits.length; i++){
+      var b = bits[i];
+      var y = b.y + b.vy * t / 1000;
+      if(y < -20 || y > h + 20) continue;
+      g.save();
+      g.translate(b.x + Math.sin(b.phase + t / 430) * b.sway, y);
+      g.rotate(b.rot + b.spin * t / 1000);
+      g.globalAlpha = 0.9 * fade;
+      g.fillStyle = "#DFAB4C";
+      g.fillRect(-b.len / 2, -b.len / 5, b.len, b.len / 2.5);
+      g.restore();
+    }
+    dustRaf = requestAnimationFrame(frame);
+  }
+  dustRaf = requestAnimationFrame(frame);
+}
+
+function renderResult(){
+  var v = S.result;
+  var party = celebrate; celebrate = false;   /* 演出は決着直後の一度だけ */
+  $("v-big").textContent = (v.winner === -1) ? "引き分け" : (S.names[v.winner] + " の勝ち");
+  $("v-big").className = "big" + (v.winner === -1 ? " draw" : "");
+  $("v-why").textContent = whyText(v);
+  fill($("v-board"), [0, 1].map(function(p){ return seatBox(p, v, party); }));
+  $("scr-result").classList.toggle("celebrate", party);
+  stopDust();
+  /* 引き分けに金粉は似合わないので、勝ちが決まったときだけ舞わせる */
+  if(party && v.winner !== -1) dustAt = setTimeout(goldDust, 1000);
+  var r = S.record;
+  fill($("v-record"), [
+    kvNode(S.names[0] + "（" + (S.colors[0] === "RED" ? "赤" : "黒") + "）", r.win[0] + " 勝"),
+    kvNode(S.names[1] + "（" + (S.colors[1] === "RED" ? "赤" : "黒") + "）", r.win[1] + " 勝"),
+    kvNode("引き分け", r.draw + " 局")
+  ]);
+}
+function whyText(v){
+  if(v.type === "burst")  return "相手がバーストしたため";
+  if(v.type === "sum")    return "ともに21以下で、21により近いため";
+  if(v.type === "closer") return "ともにバーストし、21からの超過が少ないため";
+  if(v.type === "cards")  return "合計が同じため、大きい札から順に比べて決着";
+  return "四枚の数字がすべて同じため";
+}
+function seatBox(p, v, party){
+  var box = document.createElement("div");
+  box.className = "seat-box" + (v.winner === p ? " win" : "");
+  var head = document.createElement("div"); head.className = "head";
+  var nm = document.createElement("span"); nm.className = "nm"; nm.textContent = S.names[p];
+  var t = total(nums(S.hands[p]));
+  var sum = document.createElement("span");
+  sum.className = "sum" + (t > GOAL ? " over" : "");
+  sum.textContent = t;
+  if(t > GOAL){
+    var sm = document.createElement("small"); sm.textContent = "バースト"; sum.appendChild(sm);
+  }
+  head.appendChild(nm); head.appendChild(sum);
+  var row = document.createElement("div"); row.className = "hand-row";
+  fill(row, handSlots(p));
+  box.appendChild(head); box.appendChild(row);
+  if(party){
+    /* 手前の席から一枚ずつめくり、四枚めくり終えたところで合計を出す */
+    var base = p * 460;
+    Array.prototype.forEach.call(row.querySelectorAll(".slot"), function(slot, i){
+      var d = (base + i * 95) + "ms";
+      var card = slot.querySelector(".card"), lb = slot.querySelector(".lb");
+      card.classList.add("reveal"); card.style.animationDelay = d;
+      if(lb){ lb.classList.add("reveal-lb"); lb.style.animationDelay = d; }
+    });
+    sum.style.animationDelay = (base + 400) + "ms";
+  }
+  return box;
+}
+function kvNode(k, v){
+  var d = document.createElement("div"); d.className = "kv";
+  var a = document.createElement("span"); a.className = "k"; a.textContent = k;
+  var b = document.createElement("span"); b.className = "v"; b.textContent = v;
+  d.appendChild(a); d.appendChild(b);
+  return d;
+}
+
+/* ========== 操作 ========== */
+function on(id, fn){ $(id).addEventListener("click", fn); }
+function openRules(){ stopDust(); overlay = "rules"; render(); }
+
+on("t-rules", openRules);
+on("b-rules", openRules);
+on("b-rules-close", function(){ overlay = null; render(); });
+
+on("b-start", function(){ view = "setup"; render(); });
+on("b-back-title", function(){ view = "title"; render(); });
+on("b-resume", function(){
+  if(!saved) return;
+  S = saved.S; sel = saved.sel || [];
+  pickIdx = (saved.pick == null) ? null : saved.pick;
+  S.holder = null;                /* 再開時は必ず受け渡しから */
+  saved = null; view = "game"; render();
+});
+Array.prototype.forEach.call($("pick-color").children, function(b){
+  b.addEventListener("click", function(){ setupColor = b.getAttribute("data-color"); render(); });
+});
+on("b-begin", function(){
+  var a = ($("nm0").value || "").trim() || "一人目";
+  var b = ($("nm1").value || "").trim() || "二人目";
+  if(a === b) b = b + "（二人目）";
+  newGame([a, b], setupColor);
+  view = "game"; render();
+});
+
+on("b-guard", function(){ S.holder = S.turn; render(); });
+on("b-select", function(){ confirmHand(); render(); });
+on("b-clear", function(){ sel = []; render(); });
+on("b-reveal", function(){ confirmReveal(); render(); });
+on("b-go-first", function(){ chooseOrder(true); render(); });
+on("b-go-second", function(){ chooseOrder(false); render(); });
+on("b-check", function(){ declare("check"); render(); });
+on("b-trade", function(){ declare("trade"); render(); });
+on("b-give", function(){ givePick(); render(); });
+on("b-swap-next", function(){ applySwap(); render(); });
+on("b-again", function(){ stopDust(); newRound(); render(); });
+on("b-end", function(){ quit(); });
+on("t-quit", function(){
+  if(window.confirm("この対局をやめて、最初に戻りますか。")) quit();
+});
+function quit(){
+  stopDust();
+  clearSave(); saved = null; S = null; sel = []; pickIdx = null;
+  view = "title"; overlay = null; render();
+}
+
+/* ========== 起動 ========== */
+saved = load();
+render();
+
+/* テストから触れるように、判定だけ外へ出しておく */
+window.__bj = {judge:judge, total:total, compareByCard:compareByCard,
+               canConfirm:canConfirm, selectionError:selectionError, buildDeck:buildDeck};
+})();
+</script>
+</body>
+</html>

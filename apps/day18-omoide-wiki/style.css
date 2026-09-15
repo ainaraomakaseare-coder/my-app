@@ -1,0 +1,347 @@
+/* おもいでWiki。書く負担を減らすため、フォームは短く・マイクをすぐ押せる位置に置く。 */
+:root {
+  --bg: #f6f5fb;
+  --panel: #ffffff;
+  --panel-2: #eeeef7;
+  --line: #dfe0ec;
+  --text: #1f2130;
+  --muted: #6b6e84;
+  --accent: #5b4fd6;
+  --accent-hi: #4a3fc4;
+  --gold: #a9761f;
+  --danger: #c93a52;
+  /* 完成ページは実際のWikipediaの配色・書体に合わせている */
+  --wp-bg: #fff;
+  --wp-text: #202122;
+  --wp-muted: #54595d;
+  --wp-line: #a2a9b1;
+  --wp-link: #0645ad;
+  --wp-box: #f8f9fa;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  line-height: 1.7;
+  -webkit-text-size-adjust: 100%;
+}
+
+.wrap { max-width: 640px; margin: 0 auto; padding: 28px 18px 64px; }
+.wrap.narrow { max-width: 480px; }
+
+.screen { display: none; }
+.screen.active { display: block; }
+
+.hd { margin-bottom: 22px; }
+.hd h1 { font-size: 24px; margin: 6px 0 4px; letter-spacing: .02em; }
+.lead { color: var(--muted); font-size: 14px; margin: 0; }
+
+/* ---- ボタン共通 ---- */
+.btn {
+  font: inherit;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 11px 16px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, transform .1s;
+}
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+.btn.primary:hover { background: var(--accent-hi); }
+.btn.ghost { background: transparent; }
+.btn.ghost:hover { border-color: var(--accent); }
+.btn.danger-ghost { background: transparent; border-color: var(--line); color: var(--danger); }
+.btn.danger-ghost:hover { border-color: var(--danger); }
+.btn.text { background: none; border: none; padding: 4px 0; color: var(--muted); font-size: 13px; }
+.btn.text:hover { color: var(--text); }
+.btn.wide { display: block; width: 100%; text-align: center; padding: 13px; font-size: 15px; }
+.btn.back { margin-bottom: 10px; }
+
+/* ---- ホーム：Wiki一覧 ---- */
+.wiki-list { display: grid; gap: 12px; margin-bottom: 20px; }
+.wiki-card {
+  display: flex; gap: 12px; align-items: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 14px; cursor: pointer; text-align: left;
+}
+.wiki-card:hover { border-color: var(--accent); }
+.trips-era-heading {
+  font-size: 15px; color: var(--gold); margin: 18px 0 2px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.trips-era-heading:first-child { margin-top: 0; }
+.on-this-day {
+  background: var(--panel-2); border: 1px solid var(--accent); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 18px; font-size: 13.5px;
+}
+.on-this-day b { color: var(--accent); }
+.on-this-day ul { margin: 6px 0 0; padding-left: 1.2em; }
+.on-this-day li { cursor: pointer; margin-bottom: 4px; }
+.on-this-day li:hover { color: var(--accent); text-decoration: underline; }
+.wiki-card .thumb {
+  width: 52px; height: 52px; border-radius: 10px; background: var(--panel-2);
+  background-size: cover; background-position: center; flex: none;
+  display: flex; align-items: center; justify-content: center; font-size: 20px; color: var(--muted);
+}
+.wiki-card .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wiki-card .name { font-weight: 700; font-size: 16px; }
+.wiki-card .sub { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wiki-card .tag { font-size: 11px; color: var(--gold); border: 1px solid var(--gold); border-radius: 999px; padding: 1px 8px; display: inline-block; align-self: flex-start; margin-top: 2px; }
+
+.home-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 18px 0 14px; }
+.hint { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 14px; }
+.empty { color: var(--muted); font-size: 14px; padding: 20px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
+
+/* ---- フォーム共通 ---- */
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+input[type=text], textarea {
+  width: 100%; font: inherit; background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; resize: vertical;
+}
+input[type=text]:focus, textarea:focus { outline: none; border-color: var(--accent); }
+input[type=file] { color: var(--muted); font-size: 13px; }
+
+.choice-row { display: flex; gap: 10px; }
+.choice { flex: 1; }
+.choice input { display: none; }
+.choice span {
+  display: block; text-align: center; padding: 12px 8px; border: 1px solid var(--line);
+  border-radius: 10px; cursor: pointer; font-size: 14px;
+}
+.choice input:checked + span { border-color: var(--accent); background: rgba(91,79,214,.2); color: #fff; }
+
+.photo-preview { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.photo-preview img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+.photo-preview .rm {
+  position: relative; width: 72px; height: 72px;
+}
+.photo-preview .rm button {
+  position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--danger); color: #fff; border: none; font-size: 12px; line-height: 1; cursor: pointer;
+}
+
+/* ---- ダッシュボード ---- */
+.dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 26px; }
+.tile {
+  text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; color: var(--text);
+}
+.tile:hover { border-color: var(--accent); }
+.tile.wide { grid-column: 1 / -1; }
+.tile-emoji { font-size: 22px; }
+.tile-title { font-weight: 700; font-size: 14.5px; }
+.tile-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.dash-section h2 { font-size: 15px; color: var(--gold); margin: 0 0 10px; }
+.entry-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.entry-tabs button {
+  font: inherit; font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+  border-radius: 999px; padding: 6px 13px; cursor: pointer;
+}
+.entry-tabs button.active { border-color: var(--accent); color: #fff; background: rgba(91,79,214,.25); }
+
+.entry-list { display: grid; gap: 10px; margin-bottom: 20px; }
+.entry-item { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.entry-item .body { font-size: 14px; white-space: pre-wrap; }
+.entry-item .body b { color: var(--gold); }
+.entry-item .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+.entry-item .foot button { font: inherit; background: none; border: none; color: var(--muted); cursor: pointer; text-decoration: underline; }
+.entry-item .foot button:hover { color: var(--danger); }
+.entry-item .thumbs { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.entry-item .thumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; }
+
+.dash-footer { display: flex; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 16px; }
+
+/* ---- インタビュー ---- */
+.progress { height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin-top: 6px; }
+.progress-bar { height: 100%; background: var(--accent); width: 0%; transition: width .2s; }
+
+.voice-toggle { margin-bottom: 18px; }
+.switch { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--text); cursor: pointer; }
+.switch input { width: 36px; height: 20px; }
+.voice-support { font-size: 11.5px; color: var(--muted); margin: 4px 0 0 46px; }
+
+.interview-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+.q-cat { font-size: 12px; color: var(--gold); margin: 0 0 6px; letter-spacing: .04em; }
+.q-text { font-size: 18px; font-weight: 700; margin: 0 0 16px; line-height: 1.6; }
+
+.answer-box { position: relative; }
+.answer-box textarea { padding-right: 52px; }
+.mic-btn {
+  position: absolute; right: 8px; top: 8px; width: 38px; height: 38px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 17px; cursor: pointer;
+}
+.mic-btn.on { background: var(--danger); border-color: var(--danger); animation: pulse 1.2s infinite; }
+.mic-btn[disabled] { opacity: .35; cursor: not-allowed; }
+@keyframes pulse { 0%,100%{ box-shadow: 0 0 0 0 rgba(224,82,107,.5);} 50%{ box-shadow: 0 0 0 8px rgba(224,82,107,0);} }
+.mic-status { font-size: 11.5px; color: var(--muted); min-height: 16px; margin: 6px 2px 0; }
+
+.interview-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+
+/* ---- 完成ページ（本物のWikipediaの配色・書体・構成に寄せている） ---- */
+.view-toolbar {
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
+  max-width: 900px; margin: 0 auto; padding: 16px 18px;
+}
+.view-toolbar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.view-compose-note { max-width: 900px; margin: -4px auto 10px; padding: 0 18px; font-size: 12.5px; color: var(--muted); }
+.wiki-page {
+  max-width: 900px; margin: 0 auto 60px; background: var(--wp-bg); color: var(--wp-text);
+  border: 1px solid var(--wp-line); border-radius: 2px;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  font-size: 15px; line-height: 1.7;
+}
+.wp-head { padding: 26px 32px 14px; }
+.wp-head .kind { font-size: 11.5px; letter-spacing: .12em; color: var(--wp-muted); text-transform: uppercase; }
+.wp-head h1 {
+  font-family: Georgia, "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 400;
+  font-size: 34px; margin: 4px 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--wp-line);
+}
+.wp-head .sub { color: var(--wp-muted); font-size: 14px; font-style: italic; margin: 0; }
+
+.wp-body { display: grid; grid-template-columns: 1fr 272px; gap: 0; align-items: start; }
+.wp-main { padding: 8px 32px 36px; min-width: 0; }
+.wp-side { padding: 26px 22px 32px; border-left: 1px solid var(--wp-line); }
+
+.wp-toc { background: var(--wp-box); border: 1px solid var(--wp-line); border-radius: 2px; padding: 14px 20px; margin: 18px 0 28px; display: inline-block; }
+.wp-toc-title { font-weight: 700; margin-bottom: 8px; font-size: 14px; }
+.wp-toc ol { margin: 0; padding-left: 1.3em; font-size: 13.5px; }
+.wp-toc li { margin-bottom: 4px; }
+.wp-toc a { color: var(--wp-link); text-decoration: none; }
+.wp-toc a:hover { text-decoration: underline; }
+
+.wp-main section { margin-bottom: 28px; scroll-margin-top: 16px; }
+.wp-main h2 {
+  font-size: 21px; font-weight: 400; border-bottom: 1px solid var(--wp-line); padding-bottom: 5px; margin: 0 0 14px;
+}
+.wp-main p { margin: 0 0 10px; white-space: pre-wrap; }
+.wp-list { margin: 0; padding-left: 1.4em; }
+.wp-list li { margin-bottom: 10px; }
+.wp-list .who { font-size: 12px; color: var(--wp-muted); }
+.wp-list .q { font-size: 12px; font-weight: 700; color: var(--wp-muted); margin-bottom: 2px; }
+
+.wp-compose-list { margin: 0 0 10px; padding-left: 1.4em; }
+.wp-compose-list li { margin-bottom: 6px; }
+
+.wp-raw-toggle { margin: 8px 0 0; font-size: 12.5px; }
+.wp-raw-toggle summary { color: var(--wp-link); cursor: pointer; }
+.wp-raw-toggle .wp-list { margin-top: 10px; padding-left: 1.4em; }
+
+.wp-infobox { border: 1px solid var(--wp-line); font-size: 13px; background: var(--wp-bg); }
+.wp-infobox-title { font-weight: 700; font-size: 16px; text-align: center; padding: 10px 10px 8px; border-bottom: 1px solid var(--wp-line); }
+.wp-infobox-photo { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; border-bottom: 1px solid var(--wp-line); }
+.wp-infobox .row { display: flex; border-top: 1px solid var(--wp-line); }
+.wp-infobox .row:first-child { border-top: none; }
+.wp-infobox .k { width: 38%; padding: 8px 10px; background: var(--wp-box); color: var(--wp-text); font-weight: 600; }
+.wp-infobox .v { width: 62%; padding: 8px 10px; }
+.wp-side .contrib { margin-top: 18px; font-size: 12.5px; color: var(--wp-muted); }
+.wp-side .contrib b { display: block; color: var(--wp-text); font-size: 13px; margin-bottom: 4px; font-weight: 700; }
+
+.wp-trip-title { font-size: 15px; color: var(--wp-text); margin: 18px 0 10px; font-weight: 700; }
+.wp-trip-title:first-of-type { margin-top: 0; }
+.wp-album { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap: 14px; margin-bottom: 18px; }
+.wp-card { border: 1px solid var(--wp-line); border-radius: 2px; overflow: hidden; background: var(--wp-bg); }
+.wp-card img { width: 100%; height: 120px; object-fit: cover; display: block; }
+.wp-card .wp-card-body { padding: 10px 12px; }
+.wp-card .wp-card-title { font-weight: 700; font-size: 13.5px; margin-bottom: 4px; }
+.wp-card .wp-card-text { font-size: 12.5px; color: var(--wp-muted); white-space: pre-wrap; margin: 0 0 6px; }
+.wp-card .wp-card-meta { font-size: 11px; color: var(--wp-muted); display: flex; justify-content: space-between; }
+
+.wp-timeline { border-left: 2px solid var(--wp-line); margin: 0; padding-left: 18px; list-style: none; }
+.wp-timeline li { position: relative; margin-bottom: 14px; font-size: 13.5px; }
+.wp-timeline li::before { content: ""; position: absolute; left: -23px; top: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--wp-link); }
+.wp-timeline .period { font-weight: 700; margin-right: 8px; }
+
+.wp-empty { color: var(--wp-muted); font-size: 13px; }
+
+.wp-categories { border-top: 1px solid var(--wp-line); background: var(--wp-box); padding: 12px 32px; font-size: 12.5px; color: var(--wp-muted); }
+.wp-categories b { color: var(--wp-text); }
+.wp-categories .tag { color: var(--wp-link); }
+.wp-categories .tag::after { content: " | "; color: var(--wp-line); }
+.wp-categories .tag:last-child::after { content: ""; }
+
+/* ---- 過ごした一日（Stop/StopDetail）：Slack風の会話っぽい見た目 ---- */
+.wp-section-title { font-size: 15px; color: var(--gold); margin: 24px 0 10px; }
+.lead.small { font-size: 12.5px; margin-top: 4px; }
+.btn.small { padding: 5px 10px; font-size: 12px; border-radius: 8px; }
+
+.stops-section { margin: 18px 0 26px; }
+.stops-head h2 { font-size: 17px; margin: 0 0 2px; }
+.stops-head .btn { margin-top: 8px; }
+
+.stop-form {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px; margin: 10px 0 16px;
+}
+.stop-empty { color: var(--muted); font-size: 13px; padding: 14px 0; }
+
+.stop-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px; margin-bottom: 12px;
+}
+.stop-card-head { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.stop-pill {
+  display: inline-block; font-size: 11.5px; color: var(--muted); background: var(--panel-2);
+  border-radius: 999px; padding: 3px 10px;
+}
+.stop-time-pill { color: var(--text); font-weight: 700; background: transparent; border: 1px solid var(--line); }
+.stop-type-pill { color: var(--accent); }
+a.stop-link { text-decoration: none; }
+a.stop-link:hover { text-decoration: underline; }
+
+.stop-detail-list { display: flex; flex-direction: column; gap: 12px; }
+.stop-detail { display: flex; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.stop-detail-list > .stop-detail:first-child { border-top: none; padding-top: 0; }
+.stop-detail-avatar {
+  flex: none; width: 32px; height: 32px; border-radius: 8px; color: #fff; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; font-size: 14px;
+}
+.stop-detail-body { flex: 1; min-width: 0; }
+.stop-detail-header { margin-bottom: 2px; }
+.stop-detail-author { font-weight: 700; font-size: 13.5px; }
+.stop-detail-text { font-size: 13.5px; margin: 2px 0 4px; white-space: pre-wrap; }
+.stop-detail-comment { font-size: 13px; color: var(--muted); font-style: italic; margin: 0 0 4px; }
+.stop-detail-body .thumbs { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.stop-detail-body .thumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; }
+.stop-detail-meta { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 2px; }
+.stop-breakdown { font-size: 12px; color: var(--muted); margin: 4px 0; }
+.stop-breakdown summary { cursor: pointer; color: var(--accent); }
+.stop-breakdown ul { margin: 4px 0 0; padding-left: 1.2em; }
+
+.stop-rating { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.stop-rating-avg { font-size: 12.5px; color: var(--gold); }
+.stop-rate-form { display: flex; align-items: center; gap: 6px; }
+.stop-rate-form input.rate-name {
+  width: 92px; padding: 5px 8px; font-size: 12px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+}
+.stop-rate-form select.rate-score {
+  font: inherit; font-size: 12px; padding: 5px 6px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+}
+
+.breakdown-row { grid-template-columns: 1fr 1fr auto; align-items: center; gap: 8px; margin-bottom: 8px; }
+.breakdown-row .field { margin-bottom: 0; }
+
+@media (max-width: 720px) {
+  .wp-body { grid-template-columns: 1fr; }
+  .wp-side { border-left: none; border-top: 1px solid var(--wp-line); }
+  .dash-grid { grid-template-columns: 1fr 1fr; }
+  .field-row { grid-template-columns: 1fr; }
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .wiki-page, .wiki-page * { visibility: visible; }
+  .wiki-page { position: absolute; left: 0; top: 0; margin: 0; border-radius: 0; max-width: 100%; }
+  .no-print { display: none !important; }
+}

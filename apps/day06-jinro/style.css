@@ -1,0 +1,370 @@
+/* 人狼アプリのスタイル。スマホで使う前提なので、まず縦長の画面に合わせている。 */
+:root {
+  --bg: #12131a;
+  --panel: #1c1e28;
+  --panel-2: #242736;
+  --line: #333749;
+  --text: #eceef5;
+  --muted: #969ab0;
+  --accent: #b8442f;
+  --accent-hi: #d4553d;
+  --village: #6ba368;
+  --wolf: #c9524a;
+  --warn: #e0a33c;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+  line-height: 1.7;
+  -webkit-text-size-adjust: 100%;
+}
+
+.wrap {
+  max-width: 640px;
+  margin: 0 auto;
+  /* 右下に浮いている「最初から」に最後のボタンが隠れないよう、下を広めに空ける */
+  padding: 20px 16px calc(76px + env(safe-area-inset-bottom));
+}
+.wrap.narrow { max-width: 460px; }
+
+.screen { display: none; }
+.screen.active { display: block; }
+
+/* ---- 見出し ---- */
+.hd { margin-bottom: 20px; }
+.hd h1 {
+  font-size: 26px;
+  margin: 0 0 4px;
+  letter-spacing: .04em;
+}
+.hd .sub { margin: 0; color: var(--muted); font-size: 14px; }
+
+h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+  letter-spacing: .04em;
+}
+
+/* ---- パネル ---- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.panel.center { text-align: center; }
+
+.help { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+.help.small { font-size: 12px; }
+.note { font-size: 12px; color: var(--muted); text-align: center; margin-top: 14px; }
+
+.warn {
+  color: var(--warn);
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
+/* ---- 入力 ---- */
+textarea, input[type="number"] {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 16px; /* iOSで自動ズームさせない */
+  font-family: inherit;
+  line-height: 1.6;
+}
+textarea { resize: vertical; }
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.count { color: var(--muted); font-size: 14px; }
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.check input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+/* ---- 役職の増減 ---- */
+.rolerow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.rolerow:last-child { border-bottom: 0; }
+.rolerow-label { flex: 1; min-width: 0; }
+.rolerow-name { display: block; font-weight: 700; font-size: 15px; }
+.rolerow-desc { display: block; font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+.stepper { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.stepbtn {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+}
+.stepbtn:active { background: var(--line); }
+.stepval {
+  width: 52px;
+  text-align: center;
+  padding: 8px 4px;
+}
+
+.totals {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.totals b { color: var(--text); font-size: 16px; }
+
+/* ---- ボタン ---- */
+.btn {
+  display: inline-block;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 12px 18px;
+  font-size: 15px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  transition: background .12s, opacity .12s;
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:active { background: var(--accent-hi); }
+.btn-primary:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--line);
+}
+.btn-ghost:active { background: var(--panel-2); }
+.btn-ghost:disabled { color: var(--muted); opacity: .5; cursor: not-allowed; }
+.btn-lg { padding: 16px 22px; font-size: 17px; }
+.btn-sm { padding: 8px 14px; font-size: 13px; }
+.btn-block { display: block; width: 100%; }
+
+.reset {
+  position: fixed;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  background: rgba(28,30,40,.9);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+/* ---- QR ---- */
+.qrbox {
+  width: min(78vw, 300px);
+  margin: 14px auto;
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px;
+  aspect-ratio: 1 / 1;
+}
+.qrbox svg { display: block; }
+
+.qrpanel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.distname {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+/* ---- 対象を選ぶボタン ---- */
+.targets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.target {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text);
+  padding: 16px 12px;
+  font-size: 16px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.target:active { background: var(--accent); border-color: var(--accent); }
+
+.prompt { font-size: 16px; margin: 0 0 14px; }
+
+/* ---- 一覧 ---- */
+.alivelist, .revealed { list-style: none; margin: 0; padding: 0; }
+.alivelist li {
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+}
+.alivelist li:last-child { border-bottom: 0; }
+.alivelist li.dead, .revealed li.dead { color: var(--muted); text-decoration: line-through; }
+
+.revealed li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.revealed li:last-child { border-bottom: 0; }
+.rv-name { flex: 1; font-size: 15px; }
+.rv-role { font-weight: 700; font-size: 14px; }
+.rv-state { font-size: 12px; color: var(--muted); width: 34px; text-align: right; }
+
+.bigmsg { font-size: 19px; margin: 6px 0; line-height: 1.6; }
+
+/* ---- タイマー ---- */
+.timer {
+  font-size: 52px;
+  font-weight: 300;
+  letter-spacing: .04em;
+  margin: 4px 0 14px;
+  font-variant-numeric: tabular-nums;
+}
+.timer.is-up { color: var(--accent-hi); }
+
+/* ---- 陣営の色 ---- */
+.team-village { color: var(--village); }
+.team-wolf { color: var(--wolf); }
+
+/* ---- 参加者の役職カード ---- */
+body.is-player { display: flex; align-items: center; min-height: 100vh; }
+body.is-player .wrap { width: 100%; }
+
+.rolecard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 28px 22px;
+  text-align: center;
+  min-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.rolecard-name { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+.rolecard-hint { font-size: 13px; color: var(--muted); margin: 0 0 22px; }
+.rolecard-for { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+.rolecard-role { font-size: 40px; font-weight: 700; margin: 0; letter-spacing: .06em; }
+.rolecard-team { font-size: 14px; margin: 4px 0 18px; font-weight: 600; }
+.rolecard-desc {
+  font-size: 14px;
+  color: var(--text);
+  background: var(--panel-2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0 0 16px;
+  text-align: left;
+}
+
+.mates {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-bottom: 16px;
+}
+.mates-title { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+.mates ul { list-style: none; margin: 0; padding: 0; }
+.mates li { font-size: 18px; font-weight: 700; color: var(--wolf); }
+
+.verdict {
+  font-size: 34px;
+  font-weight: 700;
+  margin: 10px 0 18px;
+  letter-spacing: .05em;
+}
+.verdict.is-wolf { color: var(--wolf); }
+.verdict.is-human { color: var(--village); }
+
+@media (max-width: 380px) {
+  .targets { grid-template-columns: 1fr 1fr; }
+  .rolecard-role { font-size: 34px; }
+}
+
+/* ---- 部屋の番号 ---- */
+.codelist { list-style: none; margin: 0; padding: 0; }
+.codeitem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.codeitem:last-child { border-bottom: 0; }
+.codeitem-name { font-size: 16px; }
+.codeitem-code {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-hi);
+}
+
+.codeinput {
+  width: 100%;
+  max-width: 240px;
+  margin: 0 auto 18px;
+  display: block;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 12px;
+  font-family: inherit;
+  font-size: 38px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: .3em;
+  text-indent: .3em;
+  font-variant-numeric: tabular-nums;
+}
+.codeinput:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.codeinput::placeholder { color: var(--line); letter-spacing: .3em; }
+.rolecard-whose { font-size: 13px; color: var(--muted); margin: 0 0 2px; }
