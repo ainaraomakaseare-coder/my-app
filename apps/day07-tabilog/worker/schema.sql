@@ -30,11 +30,11 @@ CREATE TABLE IF NOT EXISTS blocks (
 
 -- 小項目：その予定のときの、一人ひとり（またはサブグループ）の記録。
 -- 別行動した場合は、同じblock_idのentryを複数作ることで表現する。
--- v3で detail（詳細）・video_ids（動画）を追加したため、entriesだけ作り直す
--- （試作段階のため、テーブルごと作り直す方式。tripsやblocksは対象外）。
-DROP TABLE IF EXISTS entries;
-
-CREATE TABLE entries (
+-- v3で detail（詳細）・video_ids（動画）を追加したときに一度だけ`DROP TABLE IF EXISTS entries`で
+-- 作り直したが、その一度きりの文を消し忘れていたため、後日この`schema.sql`をもう一度
+-- 全体実行したときに本番のentriesデータが丸ごと消える事故が起きた（2026-09-15）。
+-- 二度と起きないよう、他のCREATE TABLEと同じ「IF NOT EXISTS」の安全な形に直した。
+CREATE TABLE IF NOT EXISTS entries (
   id TEXT PRIMARY KEY,
   block_id TEXT NOT NULL,
   episode TEXT NOT NULL DEFAULT '',
