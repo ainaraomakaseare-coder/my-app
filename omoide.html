@@ -1,0 +1,1521 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>おもいでバインダー</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yomogi&family=Zen+Maru+Gothic:wght@400;500;700;900&display=swap">
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+<style>
+  :root {
+    --board: #e7e0cd;
+    --board-fiber: rgba(60, 54, 36, 0.05);
+    --card: #fdfbf4;
+    --card-edge: rgba(43, 40, 27, 0.10);
+    --ink: #2b2a22;
+    --ink-soft: #746c56;
+    --ink-faint: #9a917a;
+    --rose: #b1345f;
+    --rose-soft: #d98aa7;
+    --gold: #b8862c;
+    --gold-soft: #e3c477;
+    --teal: #2c5955;
+    --teal-soft: #6fa39c;
+    --danger: #a83232;
+    --shadow: rgba(43, 40, 27, 0.22);
+    --focus: #2c5955;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --board: #21231e;
+      --board-fiber: rgba(255, 255, 255, 0.03);
+      --card: #2c2e27;
+      --card-edge: rgba(255, 255, 255, 0.08);
+      --ink: #ece6d6;
+      --ink-soft: #b3ac97;
+      --ink-faint: #837c69;
+      --rose: #e2789b;
+      --rose-soft: #a24d68;
+      --gold: #e0b455;
+      --gold-soft: #8a6a2f;
+      --teal: #7fb8b0;
+      --teal-soft: #3d5c58;
+      --danger: #e08080;
+      --shadow: rgba(0, 0, 0, 0.55);
+      --focus: #7fb8b0;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --board: #21231e;
+    --board-fiber: rgba(255, 255, 255, 0.03);
+    --card: #2c2e27;
+    --card-edge: rgba(255, 255, 255, 0.08);
+    --ink: #ece6d6;
+    --ink-soft: #b3ac97;
+    --ink-faint: #837c69;
+    --rose: #e2789b;
+    --rose-soft: #a24d68;
+    --gold: #e0b455;
+    --gold-soft: #8a6a2f;
+    --teal: #7fb8b0;
+    --teal-soft: #3d5c58;
+    --danger: #e08080;
+    --shadow: rgba(0, 0, 0, 0.55);
+    --focus: #7fb8b0;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--board);
+    background-image:
+      radial-gradient(var(--board-fiber) 1px, transparent 1px);
+    background-size: 14px 14px;
+    color: var(--ink);
+    font-family: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, .hand { font-family: "Yomogi", "Zen Maru Gothic", sans-serif; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+  button { font-family: inherit; }
+  input, textarea { font-family: inherit; }
+
+  a, button { touch-action: manipulation; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+  #app {
+    padding: calc(18px + env(safe-area-inset-top, 0px)) 18px calc(96px + env(safe-area-inset-bottom, 0px));
+    max-width: 980px;
+    margin: 0 auto;
+  }
+
+  .topbar {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 5;
+    background: var(--board);
+    padding-top: 6px;
+    padding-bottom: 12px;
+    margin: -6px -18px 6px;
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+  .titleRow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .title {
+    font-size: clamp(1.6rem, 5vw, 2.1rem);
+    font-weight: 400;
+    margin: 4px 0 2px;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+  .subtitle { color: var(--ink-soft); font-size: 0.85rem; margin: 0 0 14px; }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  #searchInput {
+    flex: 1 1 200px;
+    min-width: 0;
+    padding: 10px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--card-edge);
+    background: var(--card);
+    color: var(--ink);
+    font-size: 0.95rem;
+  }
+  #searchInput::placeholder { color: var(--ink-faint); }
+
+  .sortToggle { display: flex; border-radius: 999px; background: var(--card); border: 1px solid var(--card-edge); overflow: hidden; flex: 0 0 auto; }
+  .sortBtn { border: none; background: transparent; color: var(--ink-soft); padding: 10px 14px; font-size: 0.85rem; cursor: pointer; }
+  .sortBtn.active { background: var(--teal); color: #fff; }
+
+  .filterBar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .chip {
+    border: 1px solid var(--card-edge);
+    background: var(--card);
+    color: var(--ink-soft);
+    border-radius: 999px;
+    padding: 6px 13px;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .chip.active { background: var(--rose); border-color: var(--rose); color: #fff; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 22px 18px;
+    margin-top: 18px;
+  }
+
+  .personCard {
+    background: var(--card);
+    border: 1px solid var(--card-edge);
+    border-radius: 4px;
+    padding: 10px 10px 14px;
+    box-shadow: 0 6px 14px -8px var(--shadow);
+    cursor: pointer;
+    text-align: center;
+    position: relative;
+    transition: transform 0.15s ease;
+  }
+  .personCard:nth-child(4n+1) { transform: rotate(-1.1deg); }
+  .personCard:nth-child(4n+2) { transform: rotate(0.8deg); }
+  .personCard:nth-child(4n+3) { transform: rotate(-0.5deg); }
+  .personCard:hover, .personCard:focus-visible { transform: rotate(0deg) scale(1.03); z-index: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .personCard { transition: none; }
+  }
+  .tape {
+    position: absolute;
+    top: -9px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-3deg);
+    width: 54px;
+    height: 20px;
+    opacity: 0.85;
+  }
+  .personCard:nth-child(3n) .tape { background: var(--gold-soft); }
+  .personCard:nth-child(3n+1) .tape { background: var(--rose-soft); }
+  .personCard:nth-child(3n+2) .tape { background: var(--teal-soft); }
+
+  .thumbWrap {
+    aspect-ratio: 1;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--card-edge);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .thumbWrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumbPlaceholder { color: var(--ink-faint); font-size: 1.8rem; }
+
+  .personName {
+    margin-top: 10px;
+    font-size: 1.05rem;
+    color: var(--ink);
+  }
+  .personNickname {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    margin-top: 1px;
+  }
+  .personTags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: center;
+    margin-top: 5px;
+  }
+  .miniTag {
+    font-size: 0.63rem;
+    color: var(--ink-faint);
+    background: var(--board);
+    border: 1px solid var(--card-edge);
+    border-radius: 999px;
+    padding: 1px 8px;
+  }
+
+  .emptyState {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--ink-soft);
+  }
+  .emptyState .hand { font-size: 1.4rem; display: block; margin-bottom: 8px; }
+
+  .fab {
+    position: fixed;
+    right: calc(20px + env(safe-area-inset-right, 0px));
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: var(--rose);
+    color: #fff;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    box-shadow: 0 8px 20px -6px var(--shadow);
+    cursor: pointer;
+    z-index: 10;
+  }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--board);
+    z-index: 20;
+    overflow-y: auto;
+    padding: calc(16px + env(safe-area-inset-top, 0px)) 18px calc(40px + env(safe-area-inset-bottom, 0px));
+  }
+  .overlay.gate { z-index: 50; }
+  .overlayInner { max-width: 640px; margin: 0 auto; }
+  .backBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+    padding: 8px 4px;
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+
+  .gateInput {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--card-edge);
+    background: var(--card);
+    color: var(--ink);
+    font-size: 1.1rem;
+    text-align: center;
+    letter-spacing: 0.08em;
+  }
+  .gateError { color: var(--danger); font-size: 0.85rem; min-height: 1.2em; margin-top: 10px; }
+
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 0.82rem; color: var(--ink-soft); margin-bottom: 6px; }
+  .field input[type="text"], .field textarea {
+    width: 100%;
+    padding: 11px 13px;
+    border-radius: 8px;
+    border: 1px solid var(--card-edge);
+    background: var(--card);
+    color: var(--ink);
+    font-size: 1rem;
+    resize: vertical;
+  }
+  .field textarea { min-height: 90px; }
+
+  .tagChips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .tagChip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--card);
+    border: 1px solid var(--card-edge);
+    color: var(--ink-soft);
+    border-radius: 999px;
+    padding: 5px 6px 5px 12px;
+    font-size: 0.82rem;
+  }
+  .tagChip button {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 2px;
+  }
+  .tagHint { font-size: 0.72rem; color: var(--ink-faint); margin-top: 4px; }
+
+  .photoPicker {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .photoPreview {
+    width: 88px; height: 88px;
+    border-radius: 6px;
+    background: var(--card);
+    border: 1px dashed var(--card-edge);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    color: var(--ink-faint);
+    flex: 0 0 auto;
+  }
+  .photoPreview img { width: 100%; height: 100%; object-fit: cover; }
+  .fileBtn {
+    border: 1px solid var(--card-edge);
+    background: var(--card);
+    color: var(--ink);
+    padding: 10px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+
+  .primaryBtn {
+    background: var(--teal);
+    color: #fff;
+    border: none;
+    padding: 13px 22px;
+    border-radius: 999px;
+    font-size: 1rem;
+    cursor: pointer;
+    width: 100%;
+  }
+  .primaryBtn:disabled { opacity: 0.55; cursor: default; }
+  .ghostBtn {
+    background: none;
+    border: 1px solid var(--card-edge);
+    color: var(--ink-soft);
+    padding: 9px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .dangerBtn {
+    background: none;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    padding: 9px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+
+  .micBtn {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--card-edge);
+    background: var(--card);
+    color: var(--ink);
+    font-size: 1.1rem;
+    cursor: pointer;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .micBtn.recording {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #fff;
+    animation: micPulse 1.4s ease-in-out infinite;
+  }
+  .micBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+  @keyframes micPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(168, 50, 50, 0.45); }
+    50% { box-shadow: 0 0 0 9px rgba(168, 50, 50, 0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .micBtn.recording { animation: none; }
+  }
+
+  .episodeInputRow { display: flex; gap: 8px; align-items: flex-start; }
+  .episodeInputRow textarea { flex: 1; min-width: 0; }
+
+  .detailHero {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .detailPhoto {
+    width: 140px; height: 140px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--card);
+    border: 1px solid var(--card-edge);
+    flex: 0 0 auto;
+  }
+  .detailPhoto img { width: 100%; height: 100%; object-fit: cover; }
+  .detailName {
+    font-size: 1.7rem;
+    margin: 4px 0 4px;
+    background: none;
+    border: none;
+    color: var(--ink);
+    width: 100%;
+    padding: 4px 2px;
+    border-bottom: 1px dashed transparent;
+  }
+  .detailName:hover, .detailName:focus { border-bottom-color: var(--card-edge); }
+  .detailNickname {
+    background: none;
+    border: none;
+    color: var(--ink-soft);
+    font-size: 0.88rem;
+    width: 100%;
+    padding: 2px 2px 4px;
+    border-bottom: 1px dashed transparent;
+  }
+  .detailNickname:hover, .detailNickname:focus { border-bottom-color: var(--card-edge); }
+
+  .gallery { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .galleryItem { position: relative; width: 72px; height: 72px; border-radius: 6px; overflow: hidden; border: 1px solid var(--card-edge); }
+  .galleryItem img { width: 100%; height: 100%; object-fit: cover; }
+  .galleryItem .removePhoto {
+    position: absolute; top: 2px; right: 2px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(20,18,10,0.65); color: #fff; border: none;
+    font-size: 0.75rem; line-height: 1; cursor: pointer;
+  }
+  .addPhotoTile {
+    width: 72px; height: 72px; border-radius: 6px;
+    border: 1px dashed var(--card-edge);
+    background: var(--card);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink-faint);
+    cursor: pointer;
+    font-size: 1.3rem;
+  }
+
+  .sectionLabel {
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    margin: 26px 0 10px;
+  }
+  .sectionHint { font-size: 0.72rem; color: var(--ink-faint); margin: -4px 0 12px; }
+
+  .historyForm {
+    margin-bottom: 16px;
+    padding: 12px;
+    border: 1px solid var(--card-edge);
+    border-radius: 8px;
+    background: var(--card);
+  }
+  .historyFormFields { display: flex; gap: 10px; flex-wrap: wrap; }
+  .historyField { display: flex; flex-direction: column; gap: 4px; }
+  .historyField label { font-size: 0.7rem; color: var(--ink-soft); }
+  .historyFieldWide { flex: 1; min-width: 160px; }
+  .historyFormActions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+  .historyYearInput {
+    width: 92px;
+    padding: 11px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--card-edge);
+    background: var(--board);
+    color: var(--ink);
+    font-size: 0.95rem;
+  }
+  .historyTextInput {
+    width: 100%;
+    padding: 11px 13px;
+    border-radius: 8px;
+    border: 1px solid var(--card-edge);
+    background: var(--board);
+    color: var(--ink);
+    font-size: 0.95rem;
+  }
+  .historyTableWrap {
+    overflow-x: auto;
+    margin-bottom: 14px;
+    border: 1px solid var(--card-edge);
+    border-radius: 6px;
+    background: var(--card);
+  }
+  .historyTable { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 320px; }
+  .historyTable th {
+    text-align: left;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--ink-faint);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--card-edge);
+  }
+  .historyTable td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--card-edge);
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  .historyTable tbody tr:last-child td { border-bottom: none; }
+  .historyYearCell {
+    position: relative;
+    width: 1%;
+    white-space: nowrap;
+    padding-left: 22px !important;
+    font-weight: 700;
+    color: var(--teal);
+    font-variant-numeric: tabular-nums;
+  }
+  .historyYearCell::before {
+    content: "";
+    position: absolute;
+    left: 9px;
+    top: 18px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--teal);
+  }
+  .historyTable tbody tr:not(:last-child) .historyYearCell::after {
+    content: "";
+    position: absolute;
+    left: 12px;
+    top: 25px;
+    bottom: -10px;
+    width: 1px;
+    background: var(--card-edge);
+  }
+  .historyActionsCell { width: 1%; text-align: right; }
+  .historyActionsCell .removeHistory {
+    background: none; border: none; color: var(--ink-faint);
+    cursor: pointer; font-size: 0.9rem; padding: 2px 4px;
+  }
+  .noHistory { color: var(--ink-faint); font-size: 0.85rem; padding: 12px; }
+
+  .episodeForm { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 18px; }
+  .episodeForm textarea { flex: 1; min-height: 46px; min-width: 0; }
+
+  .episode {
+    background: var(--card);
+    border: 1px solid var(--card-edge);
+    border-left: 3px solid var(--gold);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    position: relative;
+  }
+  .episode p { margin: 0; white-space: pre-wrap; line-height: 1.6; }
+  .episode time { display: block; font-size: 0.72rem; color: var(--ink-faint); margin-bottom: 4px; }
+  .episode .removeEpisode {
+    position: absolute; top: 8px; right: 8px;
+    background: none; border: none; color: var(--ink-faint);
+    cursor: pointer; font-size: 0.9rem;
+  }
+  .noEpisodes { color: var(--ink-faint); font-size: 0.85rem; }
+
+  .footerActions { margin-top: 30px; display: flex; justify-content: flex-end; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    background: var(--ink);
+    color: var(--board);
+    padding: 10px 20px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    z-index: 60;
+    box-shadow: 0 6px 16px -6px var(--shadow);
+    max-width: calc(100vw - 40px);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="overlay gate" id="gateOverlay">
+  <div class="overlayInner" style="max-width:360px;text-align:center;padding-top:18vh;">
+    <h2 class="hand" style="font-size:1.6rem;">合言葉を入力</h2>
+    <p class="subtitle">友達内で共有している合言葉を入れてください。</p>
+    <input type="password" id="gateInput" class="gateInput" placeholder="合言葉" autocomplete="off" />
+    <button class="primaryBtn" id="gateSubmit" style="margin-top:14px;">入る</button>
+    <p class="gateError" id="gateError"></p>
+  </div>
+</div>
+
+<div id="app">
+  <header class="topbar">
+    <div class="titleRow">
+      <h1 class="title">おもいでバインダー</h1>
+    </div>
+    <p class="subtitle">写真とエピソードで、あの頃の顔ぶれをしまっておく場所。みんなで書き足せます。</p>
+    <div class="controls">
+      <input type="search" id="searchInput" placeholder="名前で探す" aria-label="名前で探す" />
+      <div class="sortToggle" role="group" aria-label="並び替え">
+        <button type="button" class="sortBtn active" data-sort="recent">追加順</button>
+        <button type="button" class="sortBtn" data-sort="name">名前順</button>
+      </div>
+    </div>
+    <div class="filterBar" id="tagFilterBar" hidden></div>
+  </header>
+
+  <main class="grid" id="grid">
+    <div class="emptyState">
+      <span class="hand">読み込み中…</span>
+    </div>
+  </main>
+
+  <button class="fab" id="addFab" aria-label="思い出を追加" title="思い出を追加">+</button>
+</div>
+
+<datalist id="tagOptions"></datalist>
+<datalist id="hobbyOptions"></datalist>
+
+<div class="overlay" id="addModal" hidden>
+  <div class="overlayInner">
+    <button class="backBtn" id="addCancel">← もどる</button>
+    <h2 class="hand" style="font-size:1.4rem;margin:6px 0 20px;">新しい思い出を追加</h2>
+
+    <div class="field">
+      <label for="addPhotoInput">写真</label>
+      <div class="photoPicker">
+        <div class="photoPreview" id="addPhotoPreview">📷</div>
+        <div>
+          <label class="fileBtn" for="addPhotoInput">写真を選ぶ</label>
+          <input type="file" id="addPhotoInput" accept="image/*" capture="environment" style="display:none" />
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="addNameInput">名前</label>
+      <input type="text" id="addNameInput" placeholder="例: 山田 太郎" />
+    </div>
+
+    <div class="field">
+      <label for="addNicknameInput">呼び名（任意）</label>
+      <input type="text" id="addNicknameInput" placeholder="例: たろちゃん" />
+    </div>
+
+    <div class="field">
+      <label for="addTagInput">タグ（任意・いくつでも）</label>
+      <div class="tagChips" id="addTagChips"></div>
+      <input type="text" id="addTagInput" list="tagOptions" placeholder="例: 小学校の友達 → Enter" />
+      <p class="tagHint">「,」区切りでまとめて追加もできます。同じ人に何個でも付けられます。</p>
+    </div>
+
+    <div class="field">
+      <label for="addHobbyInput">趣味（任意・いくつでも）</label>
+      <div class="tagChips" id="addHobbyChips"></div>
+      <input type="text" id="addHobbyInput" list="hobbyOptions" placeholder="例: ギター → Enter" />
+    </div>
+
+    <div class="field">
+      <label for="addEpisodeInput">覚えているエピソード（任意）</label>
+      <div class="episodeInputRow">
+        <textarea id="addEpisodeInput" placeholder="どんな人だった？どんな思い出がある？"></textarea>
+        <button type="button" class="micBtn" id="addEpisodeMic" title="音声入力" aria-label="音声で入力する">🎤</button>
+      </div>
+    </div>
+
+    <button class="primaryBtn" id="addSaveBtn">保存する</button>
+  </div>
+</div>
+
+<div class="overlay detail" id="detailPanel" hidden>
+  <div class="overlayInner" id="detailInner"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ============ Firebase 設定 ============
+  // Firebaseコンソール(プロジェクトの設定 → マイアプリ)で取得した値に置き換えてください。
+  var firebaseConfig = {
+    apiKey: "___YOUR_API_KEY___",
+    authDomain: "___YOUR_PROJECT___.firebaseapp.com",
+    projectId: "___YOUR_PROJECT___",
+    storageBucket: "___YOUR_PROJECT___.appspot.com",
+    messagingSenderId: "___YOUR_SENDER_ID___",
+    appId: "___YOUR_APP_ID___"
+  };
+
+  // 合言葉のSHA-256ハッシュ値。平文のまま置かないようにハッシュで持たせています。
+  // 変更したい場合は、下のconsole.logの手順でハッシュを作り直してください。
+  var PASSPHRASE_SHA256 = "___PASSPHRASE_HASH___";
+
+  firebase.initializeApp(firebaseConfig);
+  var firestoreDb = firebase.firestore();
+  var storageService = firebase.storage();
+
+  // ============ 合言葉ゲート ============
+
+  async function sha256Hex(text) {
+    var enc = new TextEncoder().encode(text);
+    var buf = await crypto.subtle.digest("SHA-256", enc);
+    return Array.prototype.map.call(new Uint8Array(buf), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  var gateOverlay = document.getElementById("gateOverlay");
+  var gateInput = document.getElementById("gateInput");
+  var gateError = document.getElementById("gateError");
+
+  function passGate() {
+    gateOverlay.hidden = true;
+    init();
+  }
+
+  async function trySubmitGate() {
+    var hash = await sha256Hex(gateInput.value);
+    if (hash === PASSPHRASE_SHA256) {
+      try { localStorage.setItem("omoide_gate_ok_v1", hash); } catch (e) {}
+      passGate();
+    } else {
+      gateError.textContent = "合言葉が違います";
+    }
+  }
+
+  document.getElementById("gateSubmit").addEventListener("click", trySubmitGate);
+  gateInput.addEventListener("keydown", function (e) { if (e.key === "Enter") trySubmitGate(); });
+
+  (async function checkSavedGate() {
+    try {
+      var saved = localStorage.getItem("omoide_gate_ok_v1");
+      if (saved && saved === PASSPHRASE_SHA256) { passGate(); return; }
+    } catch (e) {}
+    setTimeout(function () { gateInput.focus(); }, 50);
+  })();
+
+  // ============ アプリ本体 ============
+
+  var state = {
+    db: null,
+    people: [],
+    unsubscribe: null,
+    sort: "recent",
+    search: "",
+    tagFilters: new Set(),
+    selectedId: null
+  };
+
+  var els = {
+    grid: document.getElementById("grid"),
+    tagFilterBar: document.getElementById("tagFilterBar"),
+    searchInput: document.getElementById("searchInput"),
+    addFab: document.getElementById("addFab"),
+    addModal: document.getElementById("addModal"),
+    addCancel: document.getElementById("addCancel"),
+    addPhotoInput: document.getElementById("addPhotoInput"),
+    addPhotoPreview: document.getElementById("addPhotoPreview"),
+    addNameInput: document.getElementById("addNameInput"),
+    addNicknameInput: document.getElementById("addNicknameInput"),
+    addTagChips: document.getElementById("addTagChips"),
+    addTagInput: document.getElementById("addTagInput"),
+    addHobbyChips: document.getElementById("addHobbyChips"),
+    addHobbyInput: document.getElementById("addHobbyInput"),
+    hobbyOptions: document.getElementById("hobbyOptions"),
+    addEpisodeInput: document.getElementById("addEpisodeInput"),
+    addEpisodeMic: document.getElementById("addEpisodeMic"),
+    addSaveBtn: document.getElementById("addSaveBtn"),
+    tagOptions: document.getElementById("tagOptions"),
+    detailPanel: document.getElementById("detailPanel"),
+    detailInner: document.getElementById("detailInner"),
+    toast: document.getElementById("toast")
+  };
+
+  var pendingAddFile = null;
+  var pendingAddTags = [];
+  var pendingAddHobbies = [];
+
+  function showToast(msg) {
+    els.toast.textContent = msg;
+    els.toast.hidden = false;
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function () { els.toast.hidden = true; }, 2800);
+  }
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  function formatDate(iso) {
+    try {
+      var d = new Date(iso);
+      return d.getFullYear() + "/" + String(d.getMonth() + 1).padStart(2, "0") + "/" + String(d.getDate()).padStart(2, "0");
+    } catch (e) { return ""; }
+  }
+
+  function personTags(p) {
+    if (p.tags && p.tags.length) return p.tags;
+    if (p.group) return [p.group];
+    return [];
+  }
+
+  function historySortKey(h) {
+    var m = /\d{3,4}/.exec(h.year || "");
+    return m ? parseInt(m[0], 10) : Infinity;
+  }
+
+  function sortedHistory(p) {
+    return (p.history || []).slice().sort(function (a, b) {
+      var ka = historySortKey(a), kb = historySortKey(b);
+      if (ka !== kb) return ka - kb;
+      return new Date(a.createdAt) - new Date(b.createdAt);
+    });
+  }
+
+  // ---------- 写真の保存(Firebase Storage) ----------
+
+  function cryptoId() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return "id-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  }
+
+  async function uploadPhoto(file) {
+    var safeName = (file.name || "photo").replace(/[^\w.\-]/g, "_");
+    var path = "photos/" + cryptoId() + "_" + safeName;
+    var ref = storageService.ref().child(path);
+    await ref.put(file);
+    return await ref.getDownloadURL();
+  }
+
+  async function deletePhotoByUrl(url) {
+    try { await storageService.refFromURL(url).delete(); } catch (e) {}
+  }
+
+  // ---------- 音声入力 ----------
+
+  function setupVoiceButton(btn, textarea) {
+    if (!btn) return;
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      btn.disabled = true;
+      btn.title = "この端末・ブラウザでは音声入力が使えません";
+      return;
+    }
+    var recognition = null;
+    var listening = false;
+
+    function stopUI() {
+      listening = false;
+      btn.classList.remove("recording");
+      btn.textContent = "🎤";
+      btn.title = "音声入力";
+    }
+
+    btn.addEventListener("click", function () {
+      if (listening) {
+        if (recognition) { try { recognition.stop(); } catch (e) {} }
+        return;
+      }
+      try {
+        recognition = new SR();
+      } catch (e) {
+        showToast("音声入力を開始できませんでした");
+        return;
+      }
+      recognition.lang = "ja-JP";
+      recognition.interimResults = false;
+      recognition.continuous = true;
+
+      recognition.onstart = function () {
+        listening = true;
+        btn.classList.add("recording");
+        btn.textContent = "■";
+        btn.title = "停止";
+      };
+      recognition.onresult = function (event) {
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            var text = event.results[i][0].transcript.trim();
+            if (!text) continue;
+            var cur = textarea.value;
+            if (cur && !/\s$/.test(cur)) cur += " ";
+            textarea.value = cur + text;
+          }
+        }
+      };
+      recognition.onerror = function (e) {
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          showToast("マイクの使用が許可されませんでした");
+        } else if (e.error !== "no-speech" && e.error !== "aborted") {
+          showToast("音声入力でエラーが起きました");
+        }
+      };
+      recognition.onend = stopUI;
+
+      try {
+        recognition.start();
+      } catch (e) {
+        showToast("音声入力を開始できませんでした");
+        stopUI();
+      }
+    });
+  }
+
+  // ---------- 初期化 ----------
+
+  function showConnectFailed() {
+    els.grid.innerHTML =
+      '<div class="emptyState"><span class="hand">接続できませんでした</span>' +
+      "電波状況を確認して、下のボタンでもう一度試してください。" +
+      '<div style="margin-top:14px;"><button type="button" class="ghostBtn" id="reloadBtn">もう一度読み込む</button></div></div>';
+    var btn = document.getElementById("reloadBtn");
+    if (btn) btn.addEventListener("click", function () { window.location.reload(); });
+  }
+
+  async function init() {
+    try {
+      await firebase.auth().signInAnonymously();
+    } catch (e) {
+      showConnectFailed();
+      return;
+    }
+    state.db = firestoreDb;
+    subscribe();
+  }
+
+  function subscribe() {
+    if (state.unsubscribe) { state.unsubscribe(); state.unsubscribe = null; }
+    var col = state.db.collection("people");
+    var q = state.sort === "name" ? col.orderBy("name", "asc") : col.orderBy("createdAt", "desc");
+    state.unsubscribe = q.onSnapshot(
+      function (snap) {
+        state.people = snap.docs.map(function (d) {
+          var data = d.data() || {};
+          data.id = d.id;
+          return data;
+        });
+        render();
+      },
+      function (err) {
+        showToast("読み込みでエラーが起きました: " + (err && err.message ? err.message : ""));
+      }
+    );
+  }
+
+  // ---------- 一覧表示 ----------
+
+  function distinctTags() {
+    var set = {};
+    state.people.forEach(function (p) { personTags(p).forEach(function (t) { set[t] = true; }); });
+    return Object.keys(set).sort();
+  }
+
+  function renderTagFilterBar() {
+    var tags = distinctTags();
+    if (tags.length === 0) {
+      els.tagFilterBar.hidden = true;
+      els.tagFilterBar.innerHTML = "";
+      return;
+    }
+    els.tagFilterBar.hidden = false;
+    var html = '<button type="button" class="chip' + (state.tagFilters.size === 0 ? " active" : "") + '" data-tag="">すべて</button>';
+    tags.forEach(function (t) {
+      html += '<button type="button" class="chip' + (state.tagFilters.has(t) ? " active" : "") + '" data-tag="' + esc(t) + '">' + esc(t) + "</button>";
+    });
+    els.tagFilterBar.innerHTML = html;
+    Array.prototype.forEach.call(els.tagFilterBar.querySelectorAll(".chip"), function (btn) {
+      btn.addEventListener("click", function () {
+        var t = btn.getAttribute("data-tag");
+        if (!t) { state.tagFilters.clear(); }
+        else if (state.tagFilters.has(t)) { state.tagFilters.delete(t); }
+        else { state.tagFilters.add(t); }
+        render();
+      });
+    });
+  }
+
+  function renderTagOptions() {
+    els.tagOptions.innerHTML = distinctTags().map(function (t) { return '<option value="' + esc(t) + '"></option>'; }).join("");
+  }
+
+  function distinctHobbies() {
+    var set = {};
+    state.people.forEach(function (p) { (p.hobbies || []).forEach(function (h) { set[h] = true; }); });
+    return Object.keys(set).sort();
+  }
+
+  function renderHobbyOptions() {
+    els.hobbyOptions.innerHTML = distinctHobbies().map(function (h) { return '<option value="' + esc(h) + '"></option>'; }).join("");
+  }
+
+  function render() {
+    renderTagFilterBar();
+    renderTagOptions();
+    renderHobbyOptions();
+
+    var list = state.people.slice();
+    if (state.tagFilters.size > 0) {
+      list = list.filter(function (p) {
+        var tags = personTags(p);
+        for (var t of state.tagFilters) if (tags.indexOf(t) !== -1) return true;
+        return false;
+      });
+    }
+    var q = state.search.trim().toLowerCase();
+    if (q) list = list.filter(function (p) { return (p.name || "").toLowerCase().indexOf(q) !== -1; });
+
+    if (list.length === 0) {
+      var msg = state.people.length === 0
+        ? "まだ誰も登録されていません。右下の + から最初の思い出を追加しましょう。"
+        : "見つかりませんでした。";
+      els.grid.innerHTML = '<div class="emptyState"><span class="hand">' + msg + "</span></div>";
+      return;
+    }
+
+    els.grid.innerHTML = list.map(function (p) {
+      var cover = p.photoUrls && p.photoUrls[0];
+      var thumb = cover
+        ? '<img src="' + esc(cover) + '" alt="" loading="lazy" />'
+        : '<span class="thumbPlaceholder">🙂</span>';
+      var tags = personTags(p);
+      var tagsHtml = tags.length
+        ? '<div class="personTags">' + tags.map(function (t) { return '<span class="miniTag">' + esc(t) + "</span>"; }).join("") + "</div>"
+        : "";
+      return (
+        '<div class="personCard" tabindex="0" role="button" data-id="' + esc(p.id) + '">' +
+        '<span class="tape"></span>' +
+        '<div class="thumbWrap">' + thumb + "</div>" +
+        '<div class="personName hand">' + esc(p.name || "(名前未設定)") + "</div>" +
+        (p.nickname ? '<div class="personNickname">' + esc(p.nickname) + "</div>" : "") +
+        tagsHtml +
+        "</div>"
+      );
+    }).join("");
+
+    Array.prototype.forEach.call(els.grid.querySelectorAll(".personCard"), function (card) {
+      card.addEventListener("click", function () { openDetail(card.getAttribute("data-id")); });
+      card.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(card.getAttribute("data-id")); }
+      });
+    });
+  }
+
+  // ---------- タグ・趣味チップの共通部品 ----------
+
+  function renderTagChipList(container, tags, onRemove) {
+    container.innerHTML = tags.map(function (t, i) {
+      return (
+        '<span class="tagChip">' + esc(t) +
+        '<button type="button" data-idx="' + i + '" aria-label="' + esc(t) + 'を削除">×</button>' +
+        "</span>"
+      );
+    }).join("");
+    Array.prototype.forEach.call(container.querySelectorAll("button"), function (btn) {
+      btn.addEventListener("click", function () { onRemove(parseInt(btn.getAttribute("data-idx"), 10)); });
+    });
+  }
+
+  function parseTagInput(raw) {
+    return raw.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  // ---------- 追加フロー ----------
+
+  function renderAddTagChips() {
+    renderTagChipList(els.addTagChips, pendingAddTags, function (idx) {
+      pendingAddTags.splice(idx, 1);
+      renderAddTagChips();
+    });
+  }
+
+  els.addTagInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      var vals = parseTagInput(els.addTagInput.value);
+      vals.forEach(function (v) { if (v && pendingAddTags.indexOf(v) === -1) pendingAddTags.push(v); });
+      els.addTagInput.value = "";
+      renderAddTagChips();
+    }
+  });
+  els.addTagInput.addEventListener("blur", function () {
+    var vals = parseTagInput(els.addTagInput.value);
+    vals.forEach(function (v) { if (v && pendingAddTags.indexOf(v) === -1) pendingAddTags.push(v); });
+    els.addTagInput.value = "";
+    renderAddTagChips();
+  });
+
+  function renderAddHobbyChips() {
+    renderTagChipList(els.addHobbyChips, pendingAddHobbies, function (idx) {
+      pendingAddHobbies.splice(idx, 1);
+      renderAddHobbyChips();
+    });
+  }
+
+  els.addHobbyInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      var vals = parseTagInput(els.addHobbyInput.value);
+      vals.forEach(function (v) { if (v && pendingAddHobbies.indexOf(v) === -1) pendingAddHobbies.push(v); });
+      els.addHobbyInput.value = "";
+      renderAddHobbyChips();
+    }
+  });
+  els.addHobbyInput.addEventListener("blur", function () {
+    var vals = parseTagInput(els.addHobbyInput.value);
+    vals.forEach(function (v) { if (v && pendingAddHobbies.indexOf(v) === -1) pendingAddHobbies.push(v); });
+    els.addHobbyInput.value = "";
+    renderAddHobbyChips();
+  });
+
+  function openAdd() {
+    pendingAddFile = null;
+    pendingAddTags = [];
+    pendingAddHobbies = [];
+    els.addPhotoPreview.innerHTML = "📷";
+    els.addNameInput.value = "";
+    els.addNicknameInput.value = "";
+    els.addTagInput.value = "";
+    els.addHobbyInput.value = "";
+    els.addEpisodeInput.value = "";
+    els.addPhotoInput.value = "";
+    renderAddTagChips();
+    renderAddHobbyChips();
+    els.addModal.hidden = false;
+    setTimeout(function () { els.addNameInput.focus(); }, 50);
+  }
+
+  function closeAdd() { els.addModal.hidden = true; }
+
+  els.addPhotoInput.addEventListener("change", function () {
+    var f = els.addPhotoInput.files && els.addPhotoInput.files[0];
+    if (!f) return;
+    pendingAddFile = f;
+    var reader = new FileReader();
+    reader.onload = function () {
+      els.addPhotoPreview.innerHTML = '<img src="' + reader.result + '" alt="" />';
+    };
+    reader.readAsDataURL(f);
+  });
+
+  els.addFab.addEventListener("click", openAdd);
+  els.addCancel.addEventListener("click", closeAdd);
+  setupVoiceButton(els.addEpisodeMic, els.addEpisodeInput);
+
+  els.addSaveBtn.addEventListener("click", async function () {
+    var name = els.addNameInput.value.trim();
+    if (!name) { showToast("名前を入力してください"); els.addNameInput.focus(); return; }
+    if (!state.db) { showToast("保存機能が使えません"); return; }
+
+    var extraTags = parseTagInput(els.addTagInput.value);
+    extraTags.forEach(function (v) { if (v && pendingAddTags.indexOf(v) === -1) pendingAddTags.push(v); });
+    var extraHobbies = parseTagInput(els.addHobbyInput.value);
+    extraHobbies.forEach(function (v) { if (v && pendingAddHobbies.indexOf(v) === -1) pendingAddHobbies.push(v); });
+
+    els.addSaveBtn.disabled = true;
+    els.addSaveBtn.textContent = "保存中…";
+
+    var photoUrls = [];
+    if (pendingAddFile) {
+      try {
+        var url = await uploadPhoto(pendingAddFile);
+        photoUrls.push(url);
+      } catch (e) {
+        showToast("写真の保存に失敗しました。写真なしで登録します");
+      }
+    }
+
+    try {
+      var nowIso = new Date().toISOString();
+      var episodes = [];
+      var episodeText = els.addEpisodeInput.value.trim();
+      if (episodeText) {
+        episodes.push({ id: cryptoId(), text: episodeText, createdAt: nowIso });
+      }
+      await state.db.collection("people").add({
+        name: name,
+        nickname: els.addNicknameInput.value.trim(),
+        tags: pendingAddTags.slice(),
+        hobbies: pendingAddHobbies.slice(),
+        photoUrls: photoUrls,
+        episodes: episodes,
+        history: [],
+        createdAt: nowIso,
+        updatedAt: nowIso
+      });
+      closeAdd();
+      showToast("追加しました");
+    } catch (e) {
+      showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
+    } finally {
+      els.addSaveBtn.disabled = false;
+      els.addSaveBtn.textContent = "保存する";
+    }
+  });
+
+  // ---------- 詳細画面 ----------
+
+  function findPerson(id) {
+    for (var i = 0; i < state.people.length; i++) if (state.people[i].id === id) return state.people[i];
+    return null;
+  }
+
+  function openDetail(id) {
+    state.selectedId = id;
+    renderDetail();
+    els.detailPanel.hidden = false;
+    window.scrollTo(0, 0);
+  }
+
+  function closeDetail() {
+    els.detailPanel.hidden = true;
+    state.selectedId = null;
+  }
+
+  function renderDetail() {
+    var p = findPerson(state.selectedId);
+    if (!p) { closeDetail(); return; }
+
+    var photoUrls = p.photoUrls || [];
+    var cover = photoUrls[0];
+    var coverHtml = cover
+      ? '<img src="' + esc(cover) + '" alt="" />'
+      : '<span class="thumbPlaceholder">🙂</span>';
+
+    var galleryHtml = photoUrls.map(function (url) {
+      return (
+        '<div class="galleryItem">' +
+        '<img src="' + esc(url) + '" alt="" />' +
+        '<button class="removePhoto" data-remove-photo="' + esc(url) + '" title="この写真を削除" aria-label="この写真を削除">×</button>' +
+        "</div>"
+      );
+    }).join("") + '<div class="addPhotoTile" id="addPhotoTile" title="写真を追加">＋</div>';
+
+    var episodesSorted = (p.episodes || []).slice().sort(function (a, b) {
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+    var episodesHtml = episodesSorted.length
+      ? episodesSorted.map(function (ep) {
+          return (
+            '<div class="episode" data-ep-id="' + esc(ep.id) + '">' +
+            '<button class="removeEpisode" data-remove-ep="' + esc(ep.id) + '" title="削除" aria-label="このエピソードを削除">×</button>' +
+            "<time>" + formatDate(ep.createdAt) + "</time>" +
+            "<p>" + esc(ep.text) + "</p>" +
+            "</div>"
+          );
+        }).join("")
+      : '<p class="noEpisodes">まだエピソードがありません。下から書き加えてみましょう。</p>';
+
+    var historySorted = sortedHistory(p);
+    var historyRowsHtml = historySorted.length
+      ? historySorted.map(function (h) {
+          return (
+            '<tr data-history-id="' + esc(h.id) + '">' +
+            '<td class="historyYearCell">' + esc(h.year || "") + "</td>" +
+            '<td>' + esc(h.text) + "</td>" +
+            '<td class="historyActionsCell"><button class="removeHistory" data-remove-history="' + esc(h.id) + '" title="削除" aria-label="この経歴を削除">×</button></td>' +
+            "</tr>"
+          );
+        }).join("")
+      : '<tr><td colspan="3" class="noHistory">まだ経歴が登録されていません。</td></tr>';
+    var historyHtml =
+      '<div class="historyTableWrap"><table class="historyTable"><thead><tr><th>年</th><th>できごと</th><th></th></tr></thead><tbody>' +
+      historyRowsHtml + "</tbody></table></div>";
+
+    els.detailInner.innerHTML =
+      '<button class="backBtn" id="detailBack">← 一覧へ</button>' +
+      '<div class="detailHero">' +
+      '<div class="detailPhoto">' + coverHtml + "</div>" +
+      '<div style="flex:1;min-width:180px;">' +
+      '<input type="text" class="detailName hand" id="detailNameInput" value="' + esc(p.name || "") + '" aria-label="名前" />' +
+      '<input type="text" class="detailNickname" id="detailNicknameInput" value="' + esc(p.nickname || "") + '" placeholder="呼び名（任意）" aria-label="呼び名" />' +
+      "</div>" +
+      "</div>" +
+      '<div class="field" style="margin-top:14px;">' +
+      '<label for="detailTagInput">タグ</label>' +
+      '<div class="tagChips" id="detailTagChips"></div>' +
+      '<input type="text" id="detailTagInput" list="tagOptions" placeholder="例: サークルの音響チーム → Enter" />' +
+      "</div>" +
+      '<div class="field">' +
+      '<label for="detailHobbyInput">趣味</label>' +
+      '<div class="tagChips" id="detailHobbyChips"></div>' +
+      '<input type="text" id="detailHobbyInput" list="hobbyOptions" placeholder="例: ギター → Enter" />' +
+      "</div>" +
+      '<div class="gallery" id="galleryArea">' + galleryHtml + "</div>" +
+      '<input type="file" id="detailPhotoInput" accept="image/*" capture="environment" style="display:none" />' +
+      '<div class="sectionLabel hand">経歴</div>' +
+      '<p class="sectionHint">例: 2014年 早稲田大学法学部卒業 のように、任意でいくつでも追加できます。</p>' +
+      '<div class="historyForm">' +
+      '<div class="historyFormFields">' +
+      '<div class="historyField"><label for="newHistoryYear">年（任意）</label><input type="text" id="newHistoryYear" class="historyYearInput" placeholder="例: 2014" /></div>' +
+      '<div class="historyField historyFieldWide"><label for="newHistoryText">できごと</label><input type="text" id="newHistoryText" class="historyTextInput" placeholder="例: 早稲田大学法学部卒業" /></div>' +
+      "</div>" +
+      '<div class="historyFormActions">' +
+      '<button type="button" class="micBtn" id="newHistoryMic" title="音声入力" aria-label="音声で入力する">🎤</button>' +
+      '<button class="ghostBtn" id="addHistoryBtn">追加</button>' +
+      "</div>" +
+      "</div>" +
+      '<div id="historyList">' + historyHtml + "</div>" +
+      '<div class="sectionLabel hand">エピソード</div>' +
+      '<div class="episodeForm">' +
+      '<textarea id="newEpisodeInput" placeholder="新しく思い出したことを書く"></textarea>' +
+      '<button type="button" class="micBtn" id="newEpisodeMic" title="音声入力" aria-label="音声で入力する">🎤</button>' +
+      '<button class="ghostBtn" id="addEpisodeBtn">追加</button>' +
+      "</div>" +
+      '<div id="episodeList">' + episodesHtml + "</div>" +
+      '<div class="footerActions"><button class="dangerBtn" id="deletePersonBtn">この人を削除する</button></div>';
+
+    document.getElementById("detailBack").addEventListener("click", closeDetail);
+
+    var nameInput = document.getElementById("detailNameInput");
+    nameInput.addEventListener("change", function () {
+      var v = nameInput.value.trim();
+      if (!v) { nameInput.value = p.name || ""; return; }
+      updatePerson(p.id, { name: v });
+    });
+
+    var nicknameInput = document.getElementById("detailNicknameInput");
+    nicknameInput.addEventListener("change", function () {
+      updatePerson(p.id, { nickname: nicknameInput.value.trim() });
+    });
+
+    var tagChipsEl = document.getElementById("detailTagChips");
+    var tagInputEl = document.getElementById("detailTagInput");
+    function renderDetailTags() {
+      renderTagChipList(tagChipsEl, personTags(p), function (idx) {
+        var next = personTags(p).slice();
+        next.splice(idx, 1);
+        p.tags = next;
+        renderDetailTags();
+        updatePerson(p.id, { tags: next });
+      });
+    }
+    renderDetailTags();
+    function addDetailTags() {
+      var vals = parseTagInput(tagInputEl.value);
+      if (!vals.length) return;
+      var next = personTags(p).slice();
+      vals.forEach(function (v) { if (v && next.indexOf(v) === -1) next.push(v); });
+      p.tags = next;
+      tagInputEl.value = "";
+      renderDetailTags();
+      updatePerson(p.id, { tags: next });
+    }
+    tagInputEl.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); addDetailTags(); }
+    });
+    tagInputEl.addEventListener("blur", addDetailTags);
+
+    var hobbyChipsEl = document.getElementById("detailHobbyChips");
+    var hobbyInputEl = document.getElementById("detailHobbyInput");
+    function renderDetailHobbies() {
+      renderTagChipList(hobbyChipsEl, p.hobbies || [], function (idx) {
+        var next = (p.hobbies || []).slice();
+        next.splice(idx, 1);
+        p.hobbies = next;
+        renderDetailHobbies();
+        updatePerson(p.id, { hobbies: next });
+      });
+    }
+    renderDetailHobbies();
+    function addDetailHobbies() {
+      var vals = parseTagInput(hobbyInputEl.value);
+      if (!vals.length) return;
+      var next = (p.hobbies || []).slice();
+      vals.forEach(function (v) { if (v && next.indexOf(v) === -1) next.push(v); });
+      p.hobbies = next;
+      hobbyInputEl.value = "";
+      renderDetailHobbies();
+      updatePerson(p.id, { hobbies: next });
+    }
+    hobbyInputEl.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); addDetailHobbies(); }
+    });
+    hobbyInputEl.addEventListener("blur", addDetailHobbies);
+
+    document.getElementById("addPhotoTile").addEventListener("click", function () {
+      document.getElementById("detailPhotoInput").click();
+    });
+    document.getElementById("detailPhotoInput").addEventListener("change", async function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (!f) return;
+      try {
+        var url = await uploadPhoto(f);
+        var next = (p.photoUrls || []).concat([url]);
+        await updatePerson(p.id, { photoUrls: next });
+      } catch (err) {
+        showToast("写真の追加に失敗しました");
+      }
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll("[data-remove-photo]"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var url = btn.getAttribute("data-remove-photo");
+        if (!confirm("この写真を削除しますか？")) return;
+        var next = (p.photoUrls || []).filter(function (x) { return x !== url; });
+        await updatePerson(p.id, { photoUrls: next });
+        deletePhotoByUrl(url);
+      });
+    });
+
+    setupVoiceButton(document.getElementById("newHistoryMic"), document.getElementById("newHistoryText"));
+
+    function submitNewHistory() {
+      var yearInput = document.getElementById("newHistoryYear");
+      var textInput = document.getElementById("newHistoryText");
+      var text = textInput.value.trim();
+      if (!text) { textInput.focus(); return; }
+      var next = (p.history || []).concat([{ id: cryptoId(), year: yearInput.value.trim(), text: text, createdAt: new Date().toISOString() }]);
+      updatePerson(p.id, { history: next });
+      yearInput.value = "";
+      textInput.value = "";
+      textInput.focus();
+    }
+    document.getElementById("addHistoryBtn").addEventListener("click", submitNewHistory);
+    document.getElementById("newHistoryYear").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); submitNewHistory(); }
+    });
+    document.getElementById("newHistoryText").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); submitNewHistory(); }
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll("[data-remove-history]"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var hid = btn.getAttribute("data-remove-history");
+        if (!confirm("この経歴を削除しますか？")) return;
+        var next = (p.history || []).filter(function (x) { return x.id !== hid; });
+        await updatePerson(p.id, { history: next });
+      });
+    });
+
+    setupVoiceButton(document.getElementById("newEpisodeMic"), document.getElementById("newEpisodeInput"));
+
+    function submitNewEpisode() {
+      var ta = document.getElementById("newEpisodeInput");
+      var text = ta.value.trim();
+      if (!text) { ta.focus(); return; }
+      var next = (p.episodes || []).concat([{ id: cryptoId(), text: text, createdAt: new Date().toISOString() }]);
+      updatePerson(p.id, { episodes: next });
+      ta.value = "";
+      ta.focus();
+    }
+    document.getElementById("addEpisodeBtn").addEventListener("click", submitNewEpisode);
+    document.getElementById("newEpisodeInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitNewEpisode(); }
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll("[data-remove-ep]"), function (btn) {
+      btn.addEventListener("click", async function () {
+        var epId = btn.getAttribute("data-remove-ep");
+        if (!confirm("このエピソードを削除しますか？")) return;
+        var next = (p.episodes || []).filter(function (x) { return x.id !== epId; });
+        await updatePerson(p.id, { episodes: next });
+      });
+    });
+
+    document.getElementById("deletePersonBtn").addEventListener("click", async function () {
+      if (!confirm(p.name + " さんを削除します。元に戻せません。よろしいですか？")) return;
+      try {
+        await state.db.collection("people").doc(p.id).delete();
+        (p.photoUrls || []).forEach(function (url) { deletePhotoByUrl(url); });
+        closeDetail();
+        showToast("削除しました");
+      } catch (e) {
+        showToast("削除に失敗しました");
+      }
+    });
+  }
+
+  async function updatePerson(id, patch) {
+    patch.updatedAt = new Date().toISOString();
+    try {
+      await state.db.collection("people").doc(id).update(patch);
+    } catch (e) {
+      showToast("更新に失敗しました: " + (e && e.message ? e.message : ""));
+    }
+  }
+
+  // ---------- 検索・並び替え ----------
+
+  els.searchInput.addEventListener("input", function () {
+    state.search = els.searchInput.value;
+    render();
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll(".sortBtn"), function (btn) {
+    btn.addEventListener("click", function () {
+      Array.prototype.forEach.call(document.querySelectorAll(".sortBtn"), function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      state.sort = btn.getAttribute("data-sort");
+      subscribe();
+    });
+  });
+})();
+</script>
+</body>
+</html>
