@@ -311,6 +311,7 @@ legend{font-family:var(--font-num);font-size:10.5px;letter-spacing:.1em;color:va
         <p class="settings-help">
           (任意) 試合結果の自動取得には <b>api-sports.io</b>（API-BASEBALL）の無料APIキーを使います。
           お持ちのキーを貼り付けると、試合日と対戦相手・スコアの自動取得を試せます。
+          <b>無料プランは2022〜2024年シーズンのみ対応で、今シーズンの試合は自動取得できません。</b>
           未対応の日や取得できない場合は、そのまま手入力してください。キーはこの端末のブラウザにのみ保存され、他所へ送信されることはありません。
         </p>
         <div class="settings-row">
@@ -550,11 +551,23 @@ function resizeImageFile(file, maxDim, quality){
 }
 
 /* ============ API から結果を取得（試験機能・失敗しても手入力に戻れる） ============ */
+function apiPlanError(json){
+  var e = json && json.errors;
+  if(!e) return null;
+  if(typeof e === "string") return e;
+  if(Array.isArray(e)) return e.length ? String(e[0]) : null;
+  var keys = Object.keys(e);
+  return keys.length ? String(e[keys[0]]) : null;
+}
+
 function fetchGameFromApi(dateStr){
   var apiKey = (state.settings.apiKey || "").trim();
   if(!apiKey) return Promise.reject(new Error("設定画面でAPIキーを登録してください"));
   var base = "https://v1.baseball.api-sports.io";
   var headers = { "x-apisports-key": apiKey };
+  // 無料プランは特定のシーズンしか許可されないため、チームIDの特定だけは
+  // そのシーズンで行う（チームIDそのものは年をまたいでも変わらない）
+  var TEAM_LOOKUP_FALLBACK_SEASON = 2024;
 
   function ensureTeam(){
     if(state.settings.apiTeamId && state.settings.apiLeagueId){
@@ -569,26 +582,38 @@ function fetchGameFromApi(dateStr){
         var npb = list.filter(function(l){
           return l && /Nippon|NPB|Central|Pacific/i.test(l.name || "");
         })[0] || list[0];
-        if(!npb || npb.id == null) throw new Error("リーグ情報が見つかりませんでした");
+        if(!npb || npb.id == null) throw new Error(apiPlanError(json) || "リーグ情報が見つかりませんでした");
         var leagueId = npb.id;
         // seasonsは新しい順に並んでいるとは限らないため、
         // current:true の年、なければ最大の年を使う
         var seasons = npb.seasons || [];
         var currentSeason = seasons.filter(function(s){ return s && s.current; })[0];
-        var season = currentSeason ? currentSeason.season
+        var preferredSeason = currentSeason ? currentSeason.season
           : seasons.length ? Math.max.apply(null, seasons.map(function(s){ return s.season; }))
           : CURRENT_YEAR;
-        return fetch(base + "/teams?league=" + leagueId + "&season=" + season + "&search=Yokohama", { headers: headers })
-          .then(function(r){ return r.json(); })
-          .then(function(tjson){
-            var raw = (tjson.response || [])[0];
-            var team = raw && (raw.team || raw);
-            if(!team || team.id == null) throw new Error("チーム情報が見つかりませんでした");
-            state.settings.apiTeamId = team.id;
-            state.settings.apiLeagueId = leagueId;
-            saveState();
-            return { teamId: team.id, leagueId: leagueId };
-          });
+
+        function lookupTeam(season){
+          return fetch(base + "/teams?league=" + leagueId + "&season=" + season + "&search=Yokohama", { headers: headers })
+            .then(function(r){ return r.json(); })
+            .then(function(tjson){
+              var raw = (tjson.response || [])[0];
+              var team = raw && (raw.team || raw);
+              if(!team || team.id == null){
+                var planErr = apiPlanError(tjson);
+                // 今シーズンがプラン制限で弾かれた場合は、許可されている
+                // シーズンでチームIDだけ取り直す（IDは年をまたいでも同じ）
+                if(planErr && season !== TEAM_LOOKUP_FALLBACK_SEASON){
+                  return lookupTeam(TEAM_LOOKUP_FALLBACK_SEASON);
+                }
+                throw new Error(planErr || "チーム情報が見つかりませんでした");
+              }
+              state.settings.apiTeamId = team.id;
+              state.settings.apiLeagueId = leagueId;
+              saveState();
+              return { teamId: team.id, leagueId: leagueId };
+            });
+        }
+        return lookupTeam(preferredSeason);
       });
   }
 
@@ -598,7 +623,9 @@ function fetchGameFromApi(dateStr){
       .then(function(r){ return r.json(); })
       .then(function(json){
         var game = (json.response || [])[0];
-        if(!game || !game.teams || !game.scores) throw new Error("この日の試合が見つかりませんでした");
+        if(!game || !game.teams || !game.scores){
+          throw new Error(apiPlanError(json) || "この日の試合が見つかりませんでした");
+        }
         var home = game.teams.home || {}, away = game.teams.away || {};
         var isHome = /Yokohama|DeNA|BayStars/i.test(home.name || "");
         var homeScore = game.scores.home && game.scores.home.total;
