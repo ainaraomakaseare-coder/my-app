@@ -72,7 +72,7 @@ a:hover { text-decoration: underline; }
 
 .email-login-form { display: flex; flex-direction: column; gap: 10px; width: 280px; text-align: left; }
 .email-login-form input {
-  border: 1px solid var(--border); border-radius: var(--radius-control); padding: 11px 13px; background: var(--card); color: var(--ink); font-size: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-control); padding: 11px 13px; background: var(--card); color: var(--ink); font-size: 16px;
 }
 .email-login-note { margin: 2px 0 0; text-align: center; }
 

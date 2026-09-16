@@ -347,7 +347,31 @@
     $('#lightboxImg').src = '';
   }
 
+  // iOSアプリ内では、WKWebViewのfetch実装がcapacitor://からのクロスオリジンPOSTの
+  // プリフライト後処理をうまく扱えず、本体のリクエストが送られないことがある。
+  // その場合はCapacitorHttpプラグイン経由でネイティブ側からHTTP通信する
+  // （ブラウザ版ではwindow.Capacitorが存在しないので、従来通りfetchを使う）。
+  function isNativeApp() {
+    return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  }
+
+  function nativeApi(path, method, body) {
+    return window.Capacitor.Plugins.CapacitorHttp.request({
+      url: API_BASE + path,
+      method: method || 'GET',
+      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      data: body
+    }).then(function (res) {
+      if (res.status < 200 || res.status >= 300) {
+        var e = (res.data && typeof res.data === 'object' && res.data.error) || ('http_' + res.status);
+        throw new Error(e);
+      }
+      return res.status === 204 ? null : res.data;
+    });
+  }
+
   function api(path, method, body) {
+    if (isNativeApp()) return nativeApi(path, method, body);
     return fetch(API_BASE + path, {
       method: method || 'GET',
       headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
