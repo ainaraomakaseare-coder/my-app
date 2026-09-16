@@ -944,6 +944,11 @@ async function createCheckoutSession(request, env, headers) {
     payment_method_collection: "always",
     phone_number_collection: { enabled: false },
     automatic_tax: { enabled: false },
+    // Stripeアカウントの「Managed Payments」機能がデフォルトで有効になっており、
+    // 有効なままだとautomatic_tax[enabled]=falseの指定がエラーになる
+    // （"automatic_tax[enabled] must be true when Managed Payments is enabled"）。
+    // このアプリでは税計算をしない元の設計を保つため、このリクエストだけ無効化する。
+    managed_payments: { enabled: false },
     allow_promotion_codes: false,
     submit_type: "auto",
     line_items: [{ price: priceId, quantity: 1 }],
