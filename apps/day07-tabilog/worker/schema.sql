@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS email_otps (
 -- plan_period_start：利用回数（voice_uses_this_period）を数えている暦月の開始日（YYYY-MM-01）。
 -- 月が変わったらリセットする（Stripeの実際の請求日とは同期させない簡易な実装）。
 -- ticket_credits：買い切りの回数券の残数。サブスクの月間上限を使い切った後、こちらを消費する。
+-- 新規登録時に3回分のボーナスを自動付与する（無料プランの月間上限と合わせ、登録した最初の月だけ実質5回になる）。
 CREATE TABLE IF NOT EXISTS accounts (
   email TEXT PRIMARY KEY,
   account_id TEXT NOT NULL UNIQUE,

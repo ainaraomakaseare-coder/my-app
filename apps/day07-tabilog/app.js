@@ -839,8 +839,8 @@
       if (!ok) {
         $('#voicePremiumRequired').hidden = false;
         $('#voiceRecordArea').hidden = true;
-        $('#voicePremiumMessage').textContent = (!account || account.plan === 'free')
-          ? '音声入力はプランに登録すると使えます。マイログからプランを選んでください。'
+        $('#voicePremiumMessage').textContent = !account
+          ? '音声入力はログインすると使えます。'
           : '今月の音声入力の回数を使い切りました。プランのアップグレードや回数券をご検討ください。';
         return;
       }
@@ -1615,15 +1615,11 @@
       return;
     }
     var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
-    var usageText = account.plan === 'free'
-      ? '音声入力機能はまだ使えません'
-      : '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
+    var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
 
     badgeEl.hidden = false;
     badgeEl.classList.toggle('is-free', account.plan === 'free');
-    badgeEl.textContent = account.plan === 'free'
-      ? '音声入力：未登録'
-      : planName + '・残り' + account.voiceRemainingThisPeriod + '回';
+    badgeEl.textContent = planName + '・残り' + account.voiceRemainingThisPeriod + '回';
 
     statusEl.innerHTML =
       '<div class="plan-name">今のプラン：' + escapeHtml(planName) + '</div>' +

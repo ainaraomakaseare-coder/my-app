@@ -803,8 +803,9 @@ function generateAccountId() {
   return String(100000 + (bytes[0] % 900000));
 }
 
-// 月間の音声入力の上限（docs/adr/0004）。free（無料）は0＝音声入力を使えない。
-var PLAN_MONTHLY_LIMIT = { free: 0, basic: 10, premium_plus: 50 };
+// 月間の音声入力の上限（docs/adr/0004）。free（無料）は月2回まで
+// （新規登録時にticket_creditsへ3回分のボーナスを付与するため、登録した最初の月だけ実質5回）。
+var PLAN_MONTHLY_LIMIT = { free: 2, basic: 10, premium_plus: 50 };
 
 function currentPeriodStart() {
   var now = new Date();
@@ -852,12 +853,15 @@ async function getOrCreateAccount(env, email, name) {
   for (let i = 0; i < 10; i++) {
     const accountId = generateAccountId();
     try {
+      // 新規登録の特典として、回数券(ticket_credits)に3回分のボーナスを付与する
+      // （無料プランの月間上限を使い切った後に消費されるため、登録した最初の月だけ実質5回になる）。
+      const welcomeTicketCredits = 3;
       await env.DB.prepare(
-        "INSERT INTO accounts (email, account_id, name, created_at, updated_at) VALUES (?,?,?,?,?)"
+        "INSERT INTO accounts (email, account_id, name, ticket_credits, created_at, updated_at) VALUES (?,?,?,?,?,?)"
       )
-        .bind(email, accountId, name || "", t, t)
+        .bind(email, accountId, name || "", welcomeTicketCredits, t, t)
         .run();
-      return { email, account_id: accountId, name: name || "", created_at: t, updated_at: t };
+      return { email, account_id: accountId, name: name || "", ticket_credits: welcomeTicketCredits, created_at: t, updated_at: t };
     } catch (e) {
       const msg = String((e && e.message) || "");
       if (msg.indexOf("UNIQUE") === -1) throw e;
