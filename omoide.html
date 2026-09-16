@@ -691,7 +691,7 @@
 <div class="overlay gate" id="gateOverlay">
   <div class="overlayInner" style="max-width:360px;text-align:center;padding-top:18vh;">
     <h2 class="hand" style="font-size:1.6rem;">合言葉を入力</h2>
-    <p class="subtitle">友達内で共有している合言葉を入れてください。</p>
+    <p class="subtitle">同じ合言葉を使った人同士だけで、内容を共有できます。新しい合言葉を使うと、新しい保管庫になります。</p>
     <input type="password" id="gateInput" class="gateInput" placeholder="合言葉" autocomplete="off" />
     <button class="primaryBtn" id="gateSubmit" style="margin-top:14px;">入る</button>
     <p class="gateError" id="gateError"></p>
@@ -712,7 +712,10 @@
       </div>
     </div>
     <div class="filterBar" id="tagFilterBar" hidden></div>
-    <button type="button" class="ghostBtn" id="bulkTagToggleBtn" style="margin-top:10px;">所属をまとめて付ける</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+      <button type="button" class="ghostBtn" id="bulkTagToggleBtn">所属をまとめて付ける</button>
+      <button type="button" class="ghostBtn" id="switchRoomBtn">別の合言葉に切り替える</button>
+    </div>
   </header>
 
   <main class="grid" id="grid">
@@ -754,13 +757,12 @@
   var SUPABASE_ANON_KEY = "sb_publishable_JZafbvGqkIKl9swIWxEBIA_8lbAfbpU";
   var PHOTOS_BUCKET = "photos";
 
-  // 合言葉のSHA-256ハッシュ値。平文のまま置かないようにハッシュで持たせています。
-  var PASSPHRASE_SHA256 = "e7d99b368fa7e36e253db9bde136aaad754f497c24bf72fbc21474fc79ac8b4a";
-
   var supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var pollTimer = null;
 
   // ============ 合言葉ゲート ============
+  // 合言葉ごとにSHA-256で「保管庫ID」を作り、そのIDのデータだけを見せる。
+  // 同じ合言葉を使えば同じ保管庫、違う合言葉なら自動的に別の保管庫になる。
 
   async function sha256Hex(text) {
     var enc = new TextEncoder().encode(text);
@@ -772,28 +774,35 @@
   var gateInput = document.getElementById("gateInput");
   var gateError = document.getElementById("gateError");
 
-  function passGate() {
+  function passGate(roomId) {
+    state.roomId = roomId;
+    try { localStorage.setItem("omoide_room_id_v1", roomId); } catch (e) {}
     gateOverlay.hidden = true;
     init();
   }
 
   async function trySubmitGate() {
-    var hash = await sha256Hex(gateInput.value);
-    if (hash === PASSPHRASE_SHA256) {
-      try { localStorage.setItem("omoide_gate_ok_v1", hash); } catch (e) {}
-      passGate();
-    } else {
-      gateError.textContent = "合言葉が違います";
-    }
+    var val = gateInput.value.trim();
+    if (!val) { gateError.textContent = "合言葉を入力してください"; return; }
+    var roomId = await sha256Hex(val);
+    passGate(roomId);
   }
 
   document.getElementById("gateSubmit").addEventListener("click", trySubmitGate);
   gateInput.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.isComposing) trySubmitGate(); });
 
-  (async function checkSavedGate() {
+  function showGate() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    gateInput.value = "";
+    gateError.textContent = "";
+    gateOverlay.hidden = false;
+    setTimeout(function () { gateInput.focus(); }, 50);
+  }
+
+  (function checkSavedGate() {
     try {
-      var saved = localStorage.getItem("omoide_gate_ok_v1");
-      if (saved && saved === PASSPHRASE_SHA256) { passGate(); return; }
+      var saved = localStorage.getItem("omoide_room_id_v1");
+      if (saved) { passGate(saved); return; }
     } catch (e) {}
     setTimeout(function () { gateInput.focus(); }, 50);
   })();
@@ -802,6 +811,7 @@
 
   var state = {
     db: null,
+    roomId: null,
     people: [],
     sort: "recent",
     search: "",
@@ -824,6 +834,7 @@
     tagPanel: document.getElementById("tagPanel"),
     tagInner: document.getElementById("tagInner"),
     bulkTagToggleBtn: document.getElementById("bulkTagToggleBtn"),
+    switchRoomBtn: document.getElementById("switchRoomBtn"),
     bulkBar: document.getElementById("bulkBar"),
     bulkCount: document.getElementById("bulkCount"),
     bulkTagInput: document.getElementById("bulkTagInput"),
@@ -1013,7 +1024,7 @@
   async function loadPeople() {
     var ascending = state.sort === "name";
     var orderCol = state.sort === "name" ? "name" : "created_at";
-    var res = await supabaseClient.from("people").select("*").order(orderCol, { ascending: ascending });
+    var res = await supabaseClient.from("people").select("*").eq("room_id", state.roomId).order(orderCol, { ascending: ascending });
     if (res.error) {
       showToast("読み込みでエラーが起きました: " + res.error.message);
       return;
@@ -1186,6 +1197,7 @@
     els.addFab.disabled = true;
     try {
       var res = await state.db.from("people").insert({
+        room_id: state.roomId,
         name: "",
         nickname: "",
         tags: [],
@@ -1485,7 +1497,7 @@
     document.getElementById("deletePersonBtn").addEventListener("click", async function () {
       if (!confirm(p.name + " さんを削除します。元に戻せません。よろしいですか？")) return;
       try {
-        var res = await state.db.from("people").delete().eq("id", p.id);
+        var res = await state.db.from("people").delete().eq("id", p.id).eq("room_id", state.roomId);
         if (res.error) throw res.error;
         (p.photoUrls || []).forEach(function (url) { deletePhotoByUrl(url); });
         closeDetail();
@@ -1512,7 +1524,7 @@
 
   async function updatePerson(id, patch, successMsg) {
     try {
-      var res = await state.db.from("people").update(personPatchToRow(patch)).eq("id", id);
+      var res = await state.db.from("people").update(personPatchToRow(patch)).eq("id", id).eq("room_id", state.roomId);
       if (res.error) throw res.error;
       await loadPeople();
       showToast(successMsg || "保存しました");
@@ -1532,7 +1544,7 @@
     window.scrollTo(0, 0);
     renderTagDetail();
     try {
-      var res = await state.db.from("tag_notes").select("*").eq("tag_name", tagName).maybeSingle();
+      var res = await state.db.from("tag_notes").select("*").eq("tag_name", tagName).eq("room_id", state.roomId).maybeSingle();
       if (res.error) throw res.error;
       tagPanelState.notes = (res.data && res.data.episodes) || [];
     } catch (e) {
@@ -1549,10 +1561,11 @@
   async function saveTagNotes() {
     try {
       var res = await state.db.from("tag_notes").upsert({
+        room_id: state.roomId,
         tag_name: tagPanelState.tagName,
         episodes: tagPanelState.notes,
         updated_at: new Date().toISOString()
-      });
+      }, { onConflict: "room_id,tag_name" });
       if (res.error) throw res.error;
     } catch (e) {
       showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
@@ -1643,6 +1656,20 @@
     });
   }
 
+  // ---------- 合言葉の切り替え ----------
+
+  els.switchRoomBtn.addEventListener("click", function () {
+    if (!confirm("別の合言葉に切り替えます。今見ている内容は一覧から見えなくなりますが、消えたわけではありません(同じ合言葉を入れればまた見られます)。よろしいですか？")) return;
+    try { localStorage.removeItem("omoide_room_id_v1"); } catch (e) {}
+    state.roomId = null;
+    state.people = [];
+    state.selectedId = null;
+    state.tagFilters = new Set();
+    els.detailPanel.hidden = true;
+    els.tagPanel.hidden = true;
+    showGate();
+  });
+
   // ---------- 検索・並び替え ----------
 
   els.searchInput.addEventListener("input", function () {
@@ -1694,7 +1721,7 @@
         if (!person) return Promise.resolve({ error: null });
         var next = personTags(person).slice();
         if (next.indexOf(tagVal) === -1) next.push(tagVal);
-        return state.db.from("people").update(personPatchToRow({ tags: next })).eq("id", id);
+        return state.db.from("people").update(personPatchToRow({ tags: next })).eq("id", id).eq("room_id", state.roomId);
       }));
       var failed = results.filter(function (r) { return r && r.error; });
       await loadPeople();
