@@ -28,6 +28,17 @@ jobs:
         working-directory: apps/day07-tabilog-ios
         run: npx cap add ios
 
+      - name: バージョン番号を設定
+        # ios/フォルダは毎回作り直しなので、ビルド番号を前回の実行から引き継げない。
+        # このワークフローの実行回数（github.run_number）を使えば、実行するたびに
+        # 必ず増えていく値になり、「同じビルド番号は再アップロードできない」という
+        # Apple側の制約を確実に満たせる。マーケティングバージョンはpackage.jsonの値を使う。
+        working-directory: apps/day07-tabilog-ios/ios/App
+        run: |
+          MARKETING_VERSION=$(node -p "require('../../package.json').version")
+          agvtool new-marketing-version "$MARKETING_VERSION"
+          agvtool new-version -all ${{ github.run_number }}
+
       - name: Web側の最新の中身をiOSプロジェクトへ反映
         working-directory: apps/day07-tabilog-ios
         run: npx cap sync ios
