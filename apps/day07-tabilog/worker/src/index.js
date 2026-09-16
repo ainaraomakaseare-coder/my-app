@@ -20,6 +20,9 @@ function isAllowedOrigin(origin, allowed) {
   // iOSアプリ（Capacitor）内のWebViewは、ページを https://... ではなく
   // capacitor://localhost から読み込んでいるため、そのOriginも許可する。
   if (origin === "capacitor://localhost") return true;
+  // CapacitorHttpプラグイン経由（WebViewを介さずネイティブ側がHTTPリクエストを
+  // 送る方式）だとOriginヘッダー自体が付かないため、それも許可する。
+  if (!origin) return true;
   return false;
 }
 

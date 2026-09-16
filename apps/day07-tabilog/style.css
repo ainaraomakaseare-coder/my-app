@@ -32,7 +32,9 @@ body {
 }
 
 button { font-family: inherit; color: inherit; cursor: pointer; border: none; background: none; padding: 0; appearance: none; -webkit-appearance: none; text-align: inherit; }
-input, textarea { font-family: inherit; font-size: 15px; }
+/* iOSは入力欄のfont-sizeが16px未満だと、タップ時に強制的にズームしてしまう
+   （viewportのuser-scalable=noを設定していても発生する既知の挙動）ため16px以上にする */
+input, textarea { font-family: inherit; font-size: 16px; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -304,7 +306,7 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--border); border-radius: 999px; background: var(--card);
 }
 .cost-split-row { display: flex; gap: 6px; align-items: center; margin: -2px 0 4px; padding: 8px; background: var(--border-soft); border-radius: var(--radius-control); }
-.cost-split-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 8px; font-size: 13px; }
+.cost-split-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 8px; font-size: 16px; }
 .cost-split-row span { color: var(--ink-soft); font-size: 12px; flex: 0 0 auto; }
 .cost-split-row button { flex: 0 0 auto; background: var(--accent); color: white; border: none; border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 700; }
 .cost-total { font-size: 12.5px; font-weight: 700; margin-top: 8px; }
