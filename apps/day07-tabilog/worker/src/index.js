@@ -943,11 +943,11 @@ async function createCheckoutSession(request, env, headers) {
     billing_address_collection: "auto",
     payment_method_collection: "always",
     phone_number_collection: { enabled: false },
-    automatic_tax: { enabled: false },
     // Stripeアカウントの「Managed Payments」機能がデフォルトで有効になっており、
-    // 有効なままだとautomatic_tax[enabled]=falseの指定がエラーになる
-    // （"automatic_tax[enabled] must be true when Managed Payments is enabled"）。
-    // このアプリでは税計算をしない元の設計を保つため、このリクエストだけ無効化する。
+    // automatic_tax[enabled]=falseを明示すると"must be true when Managed Payments
+    // is enabled"というエラーになる（managed_payments[enabled]=falseを併用しても
+    // 変わらなかった）。Stripe側のエラーメッセージが提示するもう一つの回避策として、
+    // automatic_taxパラメータ自体を渡さない（税計算については何も指定しない）。
     managed_payments: { enabled: false },
     allow_promotion_codes: false,
     submit_type: "auto",
