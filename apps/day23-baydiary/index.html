@@ -571,8 +571,13 @@ function fetchGameFromApi(dateStr){
         })[0] || list[0];
         if(!npb || npb.id == null) throw new Error("リーグ情報が見つかりませんでした");
         var leagueId = npb.id;
+        // seasonsは新しい順に並んでいるとは限らないため、
+        // current:true の年、なければ最大の年を使う
         var seasons = npb.seasons || [];
-        var season = seasons.length ? (seasons[seasons.length - 1].season || seasons[seasons.length - 1]) : CURRENT_YEAR;
+        var currentSeason = seasons.filter(function(s){ return s && s.current; })[0];
+        var season = currentSeason ? currentSeason.season
+          : seasons.length ? Math.max.apply(null, seasons.map(function(s){ return s.season; }))
+          : CURRENT_YEAR;
         return fetch(base + "/teams?league=" + leagueId + "&season=" + season + "&search=Yokohama", { headers: headers })
           .then(function(r){ return r.json(); })
           .then(function(tjson){
