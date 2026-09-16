@@ -1,0 +1,1314 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ポイまも</title>
+<meta name="poimamo-ai-endpoint" content="">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232B2620'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='%23FBF6EC' font-family='sans-serif'%3E%E3%83%9D%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<style>
+:root{
+  --bg:#FBF6EC;
+  --card:#FFFFFF;
+  --line:#E7DFCB;
+  --ink:#2B2620;
+  --ink-dim:#8A8272;
+  --danger:#C1432B;
+  --danger-bg:#FBE4E0;
+  --warning:#92621B;
+  --warning-bg:#FBEBD3;
+  --ok:#3D8259;
+  --expired:#8A8272;
+  --font:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+  --font-num:"JetBrains Mono",monospace;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
+  line-height:1.6;-webkit-text-size-adjust:100%;
+}
+button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:none}
+input,select,textarea{font-family:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px}
+[hidden]{display:none !important}
+
+.wrap{max-width:480px;margin:0 auto;padding:16px 16px 56px;display:flex;flex-direction:column;gap:16px;min-height:100dvh}
+
+header.top{display:flex;flex-direction:column;gap:4px;padding:6px 2px}
+header.top h1{margin:0;font-size:22px;font-weight:900;letter-spacing:.02em}
+header.top p{margin:0;font-size:12.5px;color:var(--ink-dim)}
+
+.banner{border-radius:10px;padding:11px 14px;font-size:12.5px;font-weight:700;display:flex;gap:9px;align-items:center;color:#fff}
+.banner.danger{background:var(--danger)}
+.banner.warn{background:#C98A2E}
+
+.summary-strip{display:flex;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.summary-cell{flex:1;padding:11px 6px;text-align:center}
+.summary-cell b{display:block;font-family:var(--font-num);font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.summary-cell span{font-size:10px;color:var(--ink-dim);margin-top:2px;display:block}
+.summary-sep{width:1px;background:repeating-linear-gradient(180deg,var(--line) 0 4px,transparent 4px 8px)}
+
+.btn{background:var(--card);border:1px solid var(--line);border-radius:10px;color:var(--ink);font-size:14px;padding:10px 14px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn:hover{border-color:var(--ink)}
+.btn-main{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.btn-main:hover{background:#413A2F}
+.btn-danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+.btn-danger.confirming{background:var(--danger);color:#fff}
+.btn-sm{font-size:12.5px;padding:6px 10px;border-radius:8px}
+.btn-ghost{background:none;border:none;color:var(--ink-dim);font-size:12.5px;text-decoration:underline;padding:4px}
+.btn:disabled{opacity:.45;cursor:default}
+.btn-block{width:100%}
+
+.empty{color:var(--ink-dim);font-size:13.5px;text-align:center;padding:28px 10px}
+
+/* ---- チケット風カード（メイン一覧・サービス単位） ---- */
+.group-list{display:flex;flex-direction:column;gap:12px}
+.ticket{display:flex;position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;min-height:78px;text-align:left;width:100%}
+.ticket:hover{border-color:var(--ink-dim)}
+.ticket .notch{position:absolute;left:100px;width:14px;height:14px;border-radius:50%;background:var(--bg)}
+.ticket .notch-top{top:-7px}
+.ticket .notch-bottom{bottom:-7px}
+.ticket-stub{width:100px;flex-shrink:0;border-radius:12px 0 0 12px;border-right:1.5px dashed var(--stub-line,var(--line));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px 6px;text-align:center;background:var(--stub-bg,#F1EDE2)}
+.ticket-badge{width:28px;height:28px;border-radius:50%;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;background:var(--stub-ink,#8A8272);flex-shrink:0}
+.ticket-stub-name{font-size:11px;font-weight:700;color:var(--stub-ink,#5b5548);word-break:break-word}
+.ticket-main{flex:1;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;min-width:0}
+.ticket-main-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.ticket-balance{font-family:var(--font-num);font-size:19px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ticket-balance small{font-size:11px;font-weight:500;margin-left:2px;color:var(--ink-dim)}
+.ticket-expiry{font-size:12px;font-weight:700;color:var(--ink-dim)}
+
+.ticket[data-urgency="danger"],.detail-title-card[data-urgency="danger"]{--stub-bg:#FBE4E0;--stub-ink:#C1432B;--stub-line:#E7C6BE}
+.ticket[data-urgency="danger"] .ticket-expiry{color:#C1432B}
+.ticket[data-urgency="warning"],.detail-title-card[data-urgency="warning"]{--stub-bg:#FBEBD3;--stub-ink:#92621B;--stub-line:#EAD9AE}
+.ticket[data-urgency="warning"] .ticket-expiry{color:#92621B}
+.ticket[data-urgency="ok"],.detail-title-card[data-urgency="ok"]{--stub-bg:#E9F3EC;--stub-ink:#3D8259;--stub-line:#C9E0CE}
+.ticket[data-urgency="expired"],.detail-title-card[data-urgency="expired"]{--stub-bg:#ECEAE4;--stub-ink:#8A8272;--stub-line:#DAD2C0}
+.ticket[data-urgency="expired"]{opacity:.82}
+.ticket[data-urgency="expired"] .ticket-expiry{color:#8A8272}
+.ticket[data-urgency="none"],.detail-title-card[data-urgency="none"]{--stub-bg:#F1EDE2;--stub-ink:#8A8272;--stub-line:var(--line)}
+
+.badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:#F1EDE2;color:var(--ink-dim)}
+.badge.limited{color:var(--danger);background:var(--danger-bg)}
+
+/* ---- 詳細画面 ---- */
+.detail-head{display:flex;align-items:center}
+.detail-title-card{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.detail-name{font-size:14px;font-weight:700;color:var(--ink-dim)}
+.detail-total{font-family:var(--font-num);font-size:24px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+.detail-total small{font-size:12px;font-weight:500;margin-left:3px;color:var(--ink-dim)}
+
+.lot-list{display:flex;flex-direction:column;gap:10px}
+.lot-row{position:relative;border:1px solid var(--line);border-radius:10px;padding:12px 14px 12px 18px;background:var(--card);display:flex;flex-direction:column;gap:6px}
+.lot-row::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:99px;background:var(--line)}
+.lot-row[data-urgency="danger"]::before{background:var(--danger)}
+.lot-row[data-urgency="warning"]::before{background:#C98A2E}
+.lot-row[data-urgency="ok"]::before{background:var(--ok)}
+.lot-row[data-urgency="expired"]::before{background:var(--expired)}
+.entry-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.entry-balance{font-family:var(--font-num);font-size:17px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.entry-balance small{font-size:11px;font-weight:500;margin-left:2px;color:var(--ink-dim)}
+.badges{display:flex;gap:6px;flex-wrap:wrap}
+.expiry-line{font-size:12.5px;color:var(--ink-dim)}
+.expiry-line.u-danger{color:var(--danger);font-weight:700}
+.expiry-line.u-warning{color:#92621B;font-weight:700}
+.expiry-line.u-expired{color:var(--expired);font-weight:700}
+.entry-memo{font-size:12px;color:var(--ink-dim)}
+.entry-actions{display:flex;gap:8px;margin-top:2px}
+
+.overlay{position:fixed;inset:0;background:rgba(43,38,32,.45);display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.sheet{background:var(--bg);border-radius:18px 18px 0 0;padding:16px 16px 24px;width:100%;max-width:480px;max-height:92dvh;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+.sheet-head{display:flex;justify-content:space-between;align-items:center}
+.sheet-head h2{margin:0;font-size:16.5px}
+
+.hint{font-size:12.5px;color:var(--ink-dim);margin:0}
+
+.tabs{display:flex;gap:6px}
+.tab{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px;font-size:13px;font-weight:700;color:var(--ink-dim)}
+.tab.on{color:var(--bg);background:var(--ink);border-color:var(--ink)}
+
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:12.5px;font-weight:700;color:var(--ink-dim)}
+.field input,.field select,.field textarea{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 11px;font-size:15px}
+.field textarea{resize:vertical;min-height:52px}
+.field .err{font-size:12px;color:var(--danger)}
+.radio-row{display:flex;gap:10px}
+.radio-row label{display:flex;align-items:center;gap:6px;font-size:13.5px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;flex:1}
+
+.ss-preview{max-width:100%;border-radius:10px;border:1px solid var(--line)}
+.ai-note{font-size:12.5px;color:#92621B;background:#FBEBD3;border-radius:10px;padding:8px 10px;margin:0}
+.ai-off{font-size:12.5px;color:var(--ink-dim);margin:0}
+
+.upd-row{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--card)}
+.upd-row .field-head{display:flex;justify-content:space-between;align-items:center}
+
+.backup-row{display:flex;gap:8px;justify-content:center}
+footer.note{font-size:11.5px;color:var(--ink-dim);text-align:center;padding:8px 4px 0}
+</style>
+</head>
+<body>
+
+<div class="wrap" id="view-list">
+  <header class="top">
+    <h1>ポイまも</h1>
+    <p>楽天ポイント・Vポイント・マイレージなど、あちこちのポイントの失効日をまとめて見張ります。</p>
+  </header>
+
+  <div id="banner-area"></div>
+
+  <div class="summary-strip" id="summary-row"></div>
+
+  <button class="btn btn-main btn-block" id="open-add">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    ポイントを登録
+  </button>
+
+  <div class="group-list" id="group-list"></div>
+
+  <div class="backup-row">
+    <button class="btn btn-ghost" id="export-btn">データを書き出す</button>
+    <button class="btn btn-ghost" id="import-btn">読み込む</button>
+    <input type="file" id="import-file" accept="application/json" hidden>
+  </div>
+
+  <footer class="note">
+    データはこの端末のブラウザ内だけに保存されます（外部には送信しません）。スクショをAIに読み取らせたときだけ、その画像が一度だけ読み取り用サーバーに送られます。
+  </footer>
+</div>
+
+<div class="wrap" id="view-detail" hidden>
+  <div class="detail-head">
+    <button class="btn btn-sm" id="detail-back">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5 8 12l7 7"/></svg>
+      一覧に戻る
+    </button>
+  </div>
+
+  <div class="detail-title-card" id="detail-title-card" data-urgency="none">
+    <div class="ticket-badge" id="detail-badge">?</div>
+    <div>
+      <div class="detail-name" id="detail-name"></div>
+      <div class="detail-total" id="detail-total"></div>
+    </div>
+  </div>
+
+  <div id="detail-banner"></div>
+
+  <div class="lot-list" id="lot-list"></div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <button class="btn" id="add-lot-btn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      内訳を手入力で追加
+    </button>
+    <button class="btn btn-main" id="open-update-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="14" r="3.5"/></svg>
+      スクショで情報を更新する
+    </button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2 id="sheet-title">ポイントを登録</h2>
+      <button class="btn btn-sm" id="close-sheet">閉じる</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab on" id="tab-manual" type="button">手入力</button>
+      <button class="tab" id="tab-shot" type="button">スクショから読み取る</button>
+    </div>
+
+    <div id="panel-shot" hidden>
+      <div class="field">
+        <label for="shot-file">スクリーンショットを選ぶ</label>
+        <input type="file" id="shot-file" accept="image/*">
+      </div>
+      <img id="shot-preview" class="ss-preview" hidden>
+      <div id="ai-status"></div>
+      <button class="btn btn-main btn-block" id="shot-run" disabled>AIに読み取らせる</button>
+    </div>
+
+    <form id="entry-form">
+      <div class="field" id="field-program">
+        <label for="f-program">サービス</label>
+        <select id="f-program">
+          <option value="楽天ポイント">楽天ポイント</option>
+          <option value="Vポイント">Vポイント</option>
+          <option value="ANAマイレージ">ANAマイレージ</option>
+          <option value="Amazonポイント">Amazonポイント</option>
+          <option value="dポイント">dポイント</option>
+          <option value="PayPayポイント">PayPayポイント</option>
+          <option value="Pontaポイント">Pontaポイント</option>
+          <option value="その他">その他（自由入力）</option>
+        </select>
+        <div class="err" id="err-program"></div>
+      </div>
+
+      <div class="field" id="field-custom" hidden>
+        <label for="f-custom">サービス名</label>
+        <input type="text" id="f-custom" maxlength="40" placeholder="例：スタバカード">
+        <div class="err" id="err-custom"></div>
+      </div>
+
+      <div class="field">
+        <label>ポイントの種類</label>
+        <div class="radio-row">
+          <label><input type="radio" name="ptype" value="期間限定" checked> 期間限定</label>
+          <label><input type="radio" name="ptype" value="通常"> 通常</label>
+        </div>
+        <div class="err" id="err-ptype"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-balance">残高（ポイント）</label>
+        <input type="number" id="f-balance" min="0" step="1" inputmode="numeric" placeholder="例：1200">
+        <div class="err" id="err-balance"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-expiry">失効日</label>
+        <input type="date" id="f-expiry">
+        <div class="err" id="err-expiry"></div>
+      </div>
+
+      <div class="field">
+        <label for="f-memo">メモ（任意）</label>
+        <textarea id="f-memo" maxlength="200" placeholder="例：楽天カードのポイント"></textarea>
+      </div>
+
+      <button type="submit" class="btn btn-main btn-block" id="save-btn">保存する</button>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="update-overlay" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2>「<span id="update-program-name"></span>」の内訳を更新</h2>
+      <button class="btn btn-sm" id="close-update">閉じる</button>
+    </div>
+    <p class="hint">スクショを読み取らせるか、下の一覧を直接編集してください。更新すると、このサービスの今の内訳は全てここでの内容に置き換わります。</p>
+
+    <div class="field">
+      <label for="upd-shot-file">スクリーンショットを選ぶ（任意）</label>
+      <input type="file" id="upd-shot-file" accept="image/*">
+    </div>
+    <img id="upd-shot-preview" class="ss-preview" hidden>
+    <div id="upd-ai-status"></div>
+    <button class="btn btn-main btn-block" id="upd-shot-run" disabled>AIに読み取らせる</button>
+
+    <div id="upd-rows" style="display:flex;flex-direction:column;gap:10px"></div>
+    <button class="btn btn-block" id="upd-add-row" type="button">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      内訳の行を追加
+    </button>
+
+    <div class="err" id="upd-error"></div>
+    <button class="btn btn-main btn-block" id="upd-confirm">この内容で更新する</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+ * ここから下（LOGIC_MARK_START 〜 LOGIC_MARK_END）は
+ * 画面を持たない純粋なロジックだけ。test/logic.test.js から
+ * この部分だけを取り出してテストしている。
+ * ============================================================ */
+var LOGIC_MARK_START = 1;
+
+var KNOWN_PROGRAMS = ["楽天ポイント","Vポイント","ANAマイレージ","Amazonポイント","dポイント","PayPayポイント","Pontaポイント"];
+var PROGRAM_BADGE_LETTERS = { "楽天ポイント":"楽", "Vポイント":"V", "ANAマイレージ":"ANA", "Amazonポイント":"Am", "dポイント":"d", "PayPayポイント":"PP", "Pontaポイント":"P" };
+
+function pad2(n){ return String(n).padStart(2, "0"); }
+
+function todayStr(d){
+  d = d || new Date();
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+}
+
+function daysUntil(expiryDate, today){
+  if(!expiryDate) return null;
+  var a = new Date(expiryDate + "T00:00:00");
+  var b = new Date(today + "T00:00:00");
+  if(isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  return Math.round((a.getTime() - b.getTime()) / 86400000);
+}
+
+function urgencyOf(entry, today){
+  var d = daysUntil(entry.expiryDate, today);
+  if(d === null) return "none";
+  if(d < 0) return "expired";
+  if(d <= 7) return "danger";
+  if(d <= 30) return "warning";
+  return "ok";
+}
+
+function summarize(entries, today){
+  var expiredCount = 0, soonCount = 0, totalBalance = 0;
+  entries.forEach(function(e){
+    totalBalance += Number(e.balance) || 0;
+    var u = urgencyOf(e, today);
+    if(u === "expired") expiredCount++;
+    else if(u === "danger" || u === "warning") soonCount++;
+  });
+  return { expiredCount: expiredCount, soonCount: soonCount, totalBalance: totalBalance };
+}
+
+function displayProgram(entry){
+  if(entry.program === "その他") return (entry.customProgramName || "").trim() || "その他";
+  return entry.program;
+}
+
+function validateEntry(input){
+  var errors = {};
+  var program = (input.program || "").trim();
+  if(!program) errors.program = "サービス名を選んでください";
+  if(program === "その他" && !(input.customProgramName || "").trim()){
+    errors.customProgramName = "サービス名を入力してください";
+  }
+  if(input.pointType !== "期間限定" && input.pointType !== "通常"){
+    errors.pointType = "ポイントの種類を選んでください";
+  }
+  var balance = input.balance;
+  if(balance === "" || balance === null || balance === undefined || isNaN(Number(balance)) || Number(balance) < 0){
+    errors.balance = "残高を正しく入力してください";
+  }
+  if(input.pointType === "期間限定" && !input.expiryDate){
+    errors.expiryDate = "期間限定ポイントは失効日を入力してください";
+  }
+  if(input.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.expiryDate)){
+    errors.expiryDate = "失効日の形式が正しくありません";
+  }
+  return { valid: Object.keys(errors).length === 0, errors: errors };
+}
+
+function normalizeEntry(input, existing, now){
+  now = now || new Date().toISOString();
+  return {
+    id: (existing && existing.id) || input.id || ("e" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)),
+    program: (input.program || "").trim(),
+    customProgramName: (input.customProgramName || "").trim(),
+    pointType: input.pointType,
+    balance: Math.max(0, Math.round(Number(input.balance) || 0)),
+    expiryDate: input.expiryDate || "",
+    memo: (input.memo || "").trim(),
+    source: input.source || "manual",
+    createdAt: (existing && existing.createdAt) || now,
+    updatedAt: now
+  };
+}
+
+function parseJapaneseDate(text){
+  if(!text) return null;
+  var m = String(text).match(/(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})/);
+  if(!m) return null;
+  return m[1] + "-" + pad2(Number(m[2])) + "-" + pad2(Number(m[3]));
+}
+
+function badgeLetterFor(group){
+  if(group.program !== "その他" && PROGRAM_BADGE_LETTERS[group.program]) return PROGRAM_BADGE_LETTERS[group.program];
+  return (group.key || "?").trim().slice(0, 2) || "?";
+}
+
+/* ---- 1つのサービスが複数の内訳（期間限定を複数＋通常）を持てるようにするグルーピング ---- */
+
+function groupLots(lots){
+  var order = [];
+  var map = {};
+  lots.forEach(function(lot){
+    var key = displayProgram(lot);
+    if(!map[key]){
+      map[key] = { key: key, program: lot.program, customProgramName: lot.customProgramName, lots: [] };
+      order.push(key);
+    }
+    map[key].lots.push(lot);
+  });
+  return order.map(function(k){ return map[k]; });
+}
+
+function groupTotalBalance(group){
+  return group.lots.reduce(function(sum, l){ return sum + (Number(l.balance) || 0); }, 0);
+}
+
+function groupNearestExpiryLot(group){
+  var withDate = group.lots.filter(function(l){ return !!l.expiryDate; });
+  if(!withDate.length) return null;
+  withDate.sort(function(a, b){ return a.expiryDate < b.expiryDate ? -1 : a.expiryDate > b.expiryDate ? 1 : 0; });
+  return withDate[0];
+}
+
+function groupUrgency(group, today){
+  var nearest = groupNearestExpiryLot(group);
+  return nearest ? urgencyOf(nearest, today) : "none";
+}
+
+function summarizeGroup(group, today){
+  var expiredCount = 0, soonCount = 0;
+  group.lots.forEach(function(l){
+    var u = urgencyOf(l, today);
+    if(u === "expired") expiredCount++;
+    else if(u === "danger" || u === "warning") soonCount++;
+  });
+  return { expiredCount: expiredCount, soonCount: soonCount };
+}
+
+function sortGroups(groups){
+  var withDate = groups.filter(function(g){ return !!groupNearestExpiryLot(g); });
+  var withoutDate = groups.filter(function(g){ return !groupNearestExpiryLot(g); });
+  withDate.sort(function(a, b){
+    var da = groupNearestExpiryLot(a).expiryDate;
+    var db = groupNearestExpiryLot(b).expiryDate;
+    return da < db ? -1 : da > db ? 1 : 0;
+  });
+  return withDate.concat(withoutDate);
+}
+
+function replaceGroupLots(allLots, groupKey, newLots){
+  return allLots.filter(function(l){ return displayProgram(l) !== groupKey; }).concat(newLots);
+}
+
+/* ---- スクショAI読み取り（1件だけ返していたのを、複数の内訳を配列で受け取れるように変更） ---- */
+
+function sanitizeLotFields(raw){
+  raw = raw || {};
+  var pointType = raw.pointType === "通常" ? "通常" : "期間限定";
+  var expiryDate = raw.expiryDate || null;
+  if(expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)){
+    expiryDate = parseJapaneseDate(expiryDate);
+  }
+  var balance = (raw.balance === null || raw.balance === undefined || isNaN(Number(raw.balance)))
+    ? "" : Math.max(0, Math.round(Number(raw.balance)));
+  return { pointType: pointType, balance: balance, expiryDate: expiryDate || "" };
+}
+
+function sanitizeAiLots(ai){
+  if(!ai || typeof ai !== "object" || !Array.isArray(ai.lots)) return null;
+  var rawProgram = (ai.program || "").trim();
+  var program = KNOWN_PROGRAMS.indexOf(rawProgram) !== -1 ? rawProgram : "その他";
+  var customProgramName = program === "その他" ? rawProgram : "";
+  return {
+    program: program,
+    customProgramName: customProgramName,
+    lots: ai.lots.map(sanitizeLotFields),
+    confidence: ai.confidence || "medium"
+  };
+}
+
+function mapAiResult(ai){
+  var sanitized = sanitizeAiLots(ai);
+  if(!sanitized || !sanitized.lots.length) return null;
+  var first = sanitized.lots[0];
+  return {
+    program: sanitized.program,
+    customProgramName: sanitized.customProgramName,
+    pointType: first.pointType,
+    balance: first.balance,
+    expiryDate: first.expiryDate,
+    memo: "",
+    confidence: sanitized.confidence
+  };
+}
+
+/* ---- 内訳の一括更新（レビュー画面）用 ---- */
+
+function validateLotRow(row){
+  var errors = {};
+  if(row.pointType !== "期間限定" && row.pointType !== "通常"){
+    errors.pointType = "種類を選んでください";
+  }
+  var balance = row.balance;
+  if(balance === "" || balance === null || balance === undefined || isNaN(Number(balance)) || Number(balance) < 0){
+    errors.balance = "残高を入力してください";
+  }
+  if(row.pointType === "期間限定" && !row.expiryDate){
+    errors.expiryDate = "失効日を入力してください";
+  }
+  if(row.expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(row.expiryDate)){
+    errors.expiryDate = "失効日の形式が正しくありません";
+  }
+  return { valid: Object.keys(errors).length === 0, errors: errors };
+}
+
+function validateLotRows(rows){
+  if(!rows || !rows.length){
+    return { valid: false, rowErrors: [], allError: "少なくとも1件は入力してください" };
+  }
+  var rowErrors = rows.map(validateLotRow);
+  return { valid: rowErrors.every(function(r){ return r.valid; }), rowErrors: rowErrors, allError: "" };
+}
+
+function firstErrorMessage(rowResult){
+  if(!rowResult || rowResult.valid) return "";
+  var keys = Object.keys(rowResult.errors);
+  return keys.length ? rowResult.errors[keys[0]] : "";
+}
+
+function buildLotsFromRows(rows, program, customProgramName, source, now){
+  return rows.map(function(row){
+    return normalizeEntry({
+      program: program,
+      customProgramName: customProgramName,
+      pointType: row.pointType,
+      balance: row.balance,
+      expiryDate: row.expiryDate,
+      memo: row.memo || "",
+      source: source
+    }, null, now);
+  });
+}
+
+var LOGIC_MARK_END = 1;
+
+/* ============================================================
+ * ここから下は画面の描画・保存・イベント処理。
+ * ============================================================ */
+
+var STORAGE_KEY = "poimamo:entries:v1";
+var ICON_WARNING = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 3 L22 20 H2 Z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="16.6" r="1" fill="currentColor" stroke="none"/></svg>';
+
+function loadEntries(){
+  try{
+    var raw = localStorage.getItem(STORAGE_KEY);
+    var list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  }catch(e){
+    return [];
+  }
+}
+
+function saveEntries(list){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+}
+
+var state = {
+  entries: loadEntries(),
+  currentView: "list",
+  detailKey: null,
+  formMode: "new",
+  editingId: null,
+  aiDraft: null,
+  updateGroupKey: null,
+  updateRows: [],
+  updateUsedAi: false
+};
+
+function getAiEndpoint(){
+  var meta = document.querySelector('meta[name="poimamo-ai-endpoint"]');
+  var v = meta ? meta.getAttribute("content").trim() : "";
+  return v;
+}
+
+function fmtNum(n){
+  return Number(n || 0).toLocaleString("ja-JP");
+}
+
+function expiryLabel(entry, today){
+  if(!entry.expiryDate) return "失効日なし";
+  var d = daysUntil(entry.expiryDate, today);
+  if(d < 0) return "失効日 " + entry.expiryDate + "（" + Math.abs(d) + "日前に失効）";
+  if(d === 0) return "失効日 " + entry.expiryDate + "（本日失効）";
+  return "失効日 " + entry.expiryDate + "（あと" + d + "日）";
+}
+
+function findGroup(key){
+  var groups = groupLots(state.entries);
+  for(var i = 0; i < groups.length; i++){
+    if(groups[i].key === key) return groups[i];
+  }
+  return null;
+}
+
+function render(){
+  renderList();
+  if(state.currentView === "detail"){
+    var group = findGroup(state.detailKey);
+    if(!group){
+      showListView();
+    }else{
+      renderDetail(group);
+    }
+  }
+}
+
+function renderList(){
+  var today = todayStr();
+  var groups = sortGroups(groupLots(state.entries));
+  var summary = summarize(state.entries, today);
+
+  var bannerArea = document.getElementById("banner-area");
+  bannerArea.innerHTML = "";
+  if(summary.expiredCount > 0 || summary.soonCount > 0){
+    var cls = summary.expiredCount > 0 ? "danger" : "warn";
+    var parts = [];
+    if(summary.expiredCount > 0) parts.push(summary.expiredCount + "件が失効済み");
+    if(summary.soonCount > 0) parts.push(summary.soonCount + "件が30日以内に失効");
+    var div = document.createElement("div");
+    div.className = "banner " + cls;
+    div.innerHTML = ICON_WARNING;
+    var span = document.createElement("span");
+    span.textContent = parts.join(" ／ ") + "です。忘れずに使いましょう。";
+    div.appendChild(span);
+    bannerArea.appendChild(div);
+  }
+
+  document.getElementById("summary-row").innerHTML =
+    '<div class="summary-cell"><b>' + groups.length + '</b><span>登録サービス</span></div>' +
+    '<div class="summary-sep"></div>' +
+    '<div class="summary-cell"><b>' + fmtNum(summary.totalBalance) + '</b><span>合計pt</span></div>' +
+    '<div class="summary-sep"></div>' +
+    '<div class="summary-cell"><b style="' + (summary.soonCount > 0 ? "color:#C1432B" : "") + '">' + summary.soonCount + '</b><span>30日以内に失効</span></div>';
+
+  var list = document.getElementById("group-list");
+  list.innerHTML = "";
+  if(groups.length === 0){
+    var empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "まだ登録がありません。下の「ポイントを登録」から追加してください。";
+    list.appendChild(empty);
+    return;
+  }
+
+  groups.forEach(function(group){
+    var urgency = groupUrgency(group, today);
+    var nearest = groupNearestExpiryLot(group);
+
+    var card = document.createElement("button");
+    card.type = "button";
+    card.className = "ticket";
+    card.dataset.urgency = urgency;
+
+    var notchTop = document.createElement("span");
+    notchTop.className = "notch notch-top";
+    var notchBottom = document.createElement("span");
+    notchBottom.className = "notch notch-bottom";
+    card.appendChild(notchTop);
+    card.appendChild(notchBottom);
+
+    var stub = document.createElement("div");
+    stub.className = "ticket-stub";
+    var badge = document.createElement("div");
+    badge.className = "ticket-badge";
+    badge.textContent = badgeLetterFor(group);
+    var stubName = document.createElement("div");
+    stubName.className = "ticket-stub-name";
+    stubName.textContent = group.key;
+    stub.appendChild(badge);
+    stub.appendChild(stubName);
+    card.appendChild(stub);
+
+    var main = document.createElement("div");
+    main.className = "ticket-main";
+    var mainTop = document.createElement("div");
+    mainTop.className = "ticket-main-top";
+    var typeBadge = document.createElement("span");
+    if(group.lots.length > 1){
+      typeBadge.className = "badge";
+      typeBadge.textContent = "内訳" + group.lots.length + "件";
+    }else{
+      typeBadge.className = "badge" + (group.lots[0].pointType === "期間限定" ? " limited" : "");
+      typeBadge.textContent = group.lots[0].pointType;
+    }
+    var balanceEl = document.createElement("span");
+    balanceEl.className = "ticket-balance";
+    balanceEl.innerHTML = fmtNum(groupTotalBalance(group)) + "<small>pt</small>";
+    mainTop.appendChild(typeBadge);
+    mainTop.appendChild(balanceEl);
+    var expiryEl = document.createElement("div");
+    expiryEl.className = "ticket-expiry";
+    expiryEl.textContent = nearest ? expiryLabel(nearest, today) : "失効日なし";
+    main.appendChild(mainTop);
+    main.appendChild(expiryEl);
+    card.appendChild(main);
+
+    card.addEventListener("click", function(){ showDetailView(group.key); });
+
+    list.appendChild(card);
+  });
+}
+
+function renderDetail(group){
+  var today = todayStr();
+  var urgency = groupUrgency(group, today);
+
+  document.getElementById("detail-title-card").dataset.urgency = urgency;
+  document.getElementById("detail-badge").textContent = badgeLetterFor(group);
+  document.getElementById("detail-name").textContent = group.key;
+  document.getElementById("detail-total").innerHTML = fmtNum(groupTotalBalance(group)) + "<small>pt</small>";
+
+  var bannerArea = document.getElementById("detail-banner");
+  bannerArea.innerHTML = "";
+  var groupSummary = summarizeGroup(group, today);
+  if(groupSummary.expiredCount > 0 || groupSummary.soonCount > 0){
+    var cls = groupSummary.expiredCount > 0 ? "danger" : "warn";
+    var parts = [];
+    if(groupSummary.expiredCount > 0) parts.push(groupSummary.expiredCount + "件が失効済み");
+    if(groupSummary.soonCount > 0) parts.push(groupSummary.soonCount + "件が30日以内に失効");
+    var div = document.createElement("div");
+    div.className = "banner " + cls;
+    div.innerHTML = ICON_WARNING;
+    var span = document.createElement("span");
+    span.textContent = parts.join(" ／ ") + "です。";
+    div.appendChild(span);
+    bannerArea.appendChild(div);
+  }
+
+  var list = document.getElementById("lot-list");
+  list.innerHTML = "";
+  var sortedLots = group.lots.slice().sort(function(a, b){
+    if(!!a.expiryDate !== !!b.expiryDate) return a.expiryDate ? -1 : 1;
+    if(a.expiryDate && b.expiryDate) return a.expiryDate < b.expiryDate ? -1 : (a.expiryDate > b.expiryDate ? 1 : 0);
+    return 0;
+  });
+
+  sortedLots.forEach(function(lot){
+    var u = urgencyOf(lot, today);
+    var row = document.createElement("div");
+    row.className = "lot-row";
+    row.dataset.urgency = u;
+
+    var top = document.createElement("div");
+    top.className = "entry-top";
+    var badgesWrap = document.createElement("div");
+    badgesWrap.className = "badges";
+    var typeBadge = document.createElement("span");
+    typeBadge.className = "badge" + (lot.pointType === "期間限定" ? " limited" : "");
+    typeBadge.textContent = lot.pointType;
+    badgesWrap.appendChild(typeBadge);
+    if(lot.source === "screenshot"){
+      var srcBadge = document.createElement("span");
+      srcBadge.className = "badge";
+      srcBadge.textContent = "スクショ";
+      badgesWrap.appendChild(srcBadge);
+    }
+    var bal = document.createElement("span");
+    bal.className = "entry-balance";
+    bal.innerHTML = fmtNum(lot.balance) + "<small>pt</small>";
+    top.appendChild(badgesWrap);
+    top.appendChild(bal);
+    row.appendChild(top);
+
+    var expiryEl = document.createElement("div");
+    expiryEl.className = "expiry-line" + (u !== "none" && u !== "ok" ? " u-" + u : "");
+    expiryEl.textContent = expiryLabel(lot, today);
+    row.appendChild(expiryEl);
+
+    if(lot.memo){
+      var memo = document.createElement("div");
+      memo.className = "entry-memo";
+      memo.textContent = lot.memo;
+      row.appendChild(memo);
+    }
+
+    var actions = document.createElement("div");
+    actions.className = "entry-actions";
+    var editBtn = document.createElement("button");
+    editBtn.className = "btn btn-sm";
+    editBtn.textContent = "編集";
+    editBtn.addEventListener("click", function(){ openEditLotSheet(lot.id); });
+    var delBtn = document.createElement("button");
+    delBtn.className = "btn btn-sm btn-danger";
+    delBtn.textContent = "削除";
+    var delTimer = null;
+    delBtn.addEventListener("click", function(){
+      if(delBtn.classList.contains("confirming")){
+        clearTimeout(delTimer);
+        deleteLot(lot.id);
+        return;
+      }
+      delBtn.classList.add("confirming");
+      delBtn.textContent = "本当に削除？";
+      delTimer = setTimeout(function(){
+        delBtn.classList.remove("confirming");
+        delBtn.textContent = "削除";
+      }, 3000);
+    });
+    actions.appendChild(editBtn);
+    actions.appendChild(delBtn);
+    row.appendChild(actions);
+
+    list.appendChild(row);
+  });
+}
+
+function showListView(){
+  state.currentView = "list";
+  state.detailKey = null;
+  document.getElementById("view-list").hidden = false;
+  document.getElementById("view-detail").hidden = true;
+}
+
+function showDetailView(key){
+  var group = findGroup(key);
+  if(!group) return;
+  state.currentView = "detail";
+  state.detailKey = key;
+  document.getElementById("view-list").hidden = true;
+  document.getElementById("view-detail").hidden = false;
+  renderDetail(group);
+}
+
+function deleteLot(id){
+  state.entries = state.entries.filter(function(e){ return e.id !== id; });
+  saveEntries(state.entries);
+  render();
+}
+
+function clearErrors(){
+  ["program", "custom", "ptype", "balance", "expiry"].forEach(function(k){
+    document.getElementById("err-" + k).textContent = "";
+  });
+}
+
+function fillForm(entry){
+  document.getElementById("f-program").value = entry.program || "楽天ポイント";
+  document.getElementById("f-custom").value = entry.customProgramName || "";
+  document.getElementById("field-custom").hidden = entry.program !== "その他";
+  var radios = document.querySelectorAll('input[name="ptype"]');
+  radios.forEach(function(r){ r.checked = r.value === (entry.pointType || "期間限定"); });
+  document.getElementById("f-balance").value = entry.balance === "" ? "" : (entry.balance || "");
+  document.getElementById("f-expiry").value = entry.expiryDate || "";
+  document.getElementById("f-memo").value = entry.memo || "";
+}
+
+function resetForm(){
+  fillForm({ program: "楽天ポイント", pointType: "期間限定", balance: "", expiryDate: "", memo: "" });
+  clearErrors();
+}
+
+function openSheet(title, showTabs){
+  document.getElementById("sheet-title").textContent = title;
+  document.querySelector("#overlay .tabs").hidden = !showTabs;
+  document.getElementById("overlay").hidden = false;
+  switchTab("manual");
+}
+
+function closeSheet(){
+  document.getElementById("overlay").hidden = true;
+  state.editingId = null;
+  state.aiDraft = null;
+  state.formMode = "new";
+  document.getElementById("shot-file").value = "";
+  document.getElementById("shot-preview").hidden = true;
+  document.getElementById("ai-status").innerHTML = "";
+  document.getElementById("shot-run").disabled = true;
+}
+
+function openNewProgramSheet(){
+  state.formMode = "new";
+  state.editingId = null;
+  resetForm();
+  document.getElementById("field-program").hidden = false;
+  openSheet("ポイントを登録", true);
+}
+
+function openAddLotSheet(groupKey){
+  var group = findGroup(groupKey);
+  if(!group) return;
+  state.formMode = "grouped";
+  state.editingId = null;
+  fillForm({ program: group.program, customProgramName: group.customProgramName, pointType: "期間限定", balance: "", expiryDate: "", memo: "" });
+  clearErrors();
+  document.getElementById("field-program").hidden = true;
+  document.getElementById("field-custom").hidden = true;
+  openSheet(group.key + "の内訳を追加", false);
+}
+
+function openEditLotSheet(lotId){
+  var lot = state.entries.find(function(e){ return e.id === lotId; });
+  if(!lot) return;
+  state.formMode = "grouped";
+  state.editingId = lotId;
+  fillForm(lot);
+  clearErrors();
+  document.getElementById("field-program").hidden = true;
+  document.getElementById("field-custom").hidden = true;
+  openSheet(displayProgram(lot) + "の内訳を編集", false);
+}
+
+function switchTab(name){
+  var manualOn = name === "manual";
+  document.getElementById("tab-manual").classList.toggle("on", manualOn);
+  document.getElementById("tab-shot").classList.toggle("on", !manualOn);
+  document.getElementById("panel-shot").hidden = manualOn;
+  document.getElementById("entry-form").hidden = !manualOn;
+}
+
+function readFormInput(){
+  var ptypeEl = document.querySelector('input[name="ptype"]:checked');
+  return {
+    program: document.getElementById("f-program").value,
+    customProgramName: document.getElementById("f-custom").value,
+    pointType: ptypeEl ? ptypeEl.value : "",
+    balance: document.getElementById("f-balance").value,
+    expiryDate: document.getElementById("f-expiry").value,
+    memo: document.getElementById("f-memo").value
+  };
+}
+
+function showErrors(errors){
+  clearErrors();
+  Object.keys(errors).forEach(function(key){
+    var el = document.getElementById("err-" + (key === "customProgramName" ? "custom" : key === "pointType" ? "ptype" : key));
+    if(el) el.textContent = errors[key];
+  });
+}
+
+function resizeImageFile(file){
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    reader.onerror = function(){ reject(new Error("read_failed")); };
+    reader.onload = function(){
+      var img = new Image();
+      img.onerror = function(){ reject(new Error("decode_failed")); };
+      img.onload = function(){
+        var maxDim = 1280;
+        var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        var w = Math.max(1, Math.round(img.width * scale));
+        var h = Math.max(1, Math.round(img.height * scale));
+        var canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve({ dataUrl: canvas.toDataURL("image/jpeg", 0.82), mediaType: "image/jpeg" });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function requestAiExtraction(file){
+  var endpoint = getAiEndpoint();
+  if(!endpoint) throw new Error("ai_not_configured");
+  var resized = await resizeImageFile(file);
+  var base64 = resized.dataUrl.split(",")[1];
+  var res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ imageBase64: base64, mediaType: resized.mediaType })
+  });
+  var body = null;
+  try{ body = await res.json(); }catch(e){ body = null; }
+  if(!res.ok){
+    throw new Error((body && body.error) || ("http_" + res.status));
+  }
+  return body;
+}
+
+/* ---- 内訳の一括更新（レビュー画面）のDOM操作 ---- */
+
+function renderUpdateRows(){
+  var wrap = document.getElementById("upd-rows");
+  wrap.innerHTML = "";
+  state.updateRows.forEach(function(row, i){
+    var box = document.createElement("div");
+    box.className = "field upd-row";
+
+    var head = document.createElement("div");
+    head.className = "field-head";
+    var label = document.createElement("label");
+    label.textContent = "内訳 " + (i + 1);
+    var rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "btn btn-sm btn-danger";
+    rm.textContent = "この行を削除";
+    rm.addEventListener("click", function(){
+      state.updateRows.splice(i, 1);
+      renderUpdateRows();
+    });
+    head.appendChild(label);
+    head.appendChild(rm);
+    box.appendChild(head);
+
+    var radioRow = document.createElement("div");
+    radioRow.className = "radio-row";
+    ["期間限定", "通常"].forEach(function(pt){
+      var lab = document.createElement("label");
+      var radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "upd-ptype-" + i;
+      radio.value = pt;
+      radio.checked = row.pointType === pt;
+      radio.addEventListener("change", function(){
+        row.pointType = pt;
+        renderUpdateRows();
+      });
+      lab.appendChild(radio);
+      lab.appendChild(document.createTextNode(" " + pt));
+      radioRow.appendChild(lab);
+    });
+    box.appendChild(radioRow);
+
+    var balInput = document.createElement("input");
+    balInput.type = "number";
+    balInput.min = "0";
+    balInput.step = "1";
+    balInput.placeholder = "残高（pt）";
+    balInput.value = (row.balance === undefined || row.balance === null) ? "" : row.balance;
+    balInput.addEventListener("input", function(){ row.balance = balInput.value; });
+    box.appendChild(balInput);
+
+    if(row.pointType === "期間限定"){
+      var dateInput = document.createElement("input");
+      dateInput.type = "date";
+      dateInput.value = row.expiryDate || "";
+      dateInput.addEventListener("input", function(){ row.expiryDate = dateInput.value; });
+      box.appendChild(dateInput);
+    }
+
+    var err = document.createElement("div");
+    err.className = "err";
+    err.textContent = row.error || "";
+    box.appendChild(err);
+
+    wrap.appendChild(box);
+  });
+}
+
+function openUpdateOverlay(){
+  var group = findGroup(state.detailKey);
+  if(!group) return;
+  state.updateGroupKey = group.key;
+  state.updateRows = [];
+  state.updateUsedAi = false;
+  document.getElementById("update-program-name").textContent = group.key;
+  document.getElementById("upd-shot-file").value = "";
+  document.getElementById("upd-shot-preview").hidden = true;
+  document.getElementById("upd-ai-status").innerHTML = "";
+  document.getElementById("upd-shot-run").disabled = true;
+  document.getElementById("upd-error").textContent = "";
+  renderUpdateRows();
+  document.getElementById("update-overlay").hidden = false;
+}
+
+function closeUpdateOverlay(){
+  document.getElementById("update-overlay").hidden = true;
+  state.updateGroupKey = null;
+  state.updateRows = [];
+}
+
+function setupEvents(){
+  document.getElementById("open-add").addEventListener("click", openNewProgramSheet);
+  document.getElementById("close-sheet").addEventListener("click", closeSheet);
+  document.getElementById("overlay").addEventListener("click", function(e){
+    if(e.target.id === "overlay") closeSheet();
+  });
+  document.getElementById("tab-manual").addEventListener("click", function(){ switchTab("manual"); });
+  document.getElementById("tab-shot").addEventListener("click", function(){ switchTab("shot"); });
+  document.getElementById("detail-back").addEventListener("click", showListView);
+  document.getElementById("add-lot-btn").addEventListener("click", function(){ openAddLotSheet(state.detailKey); });
+  document.getElementById("open-update-btn").addEventListener("click", openUpdateOverlay);
+  document.getElementById("close-update").addEventListener("click", closeUpdateOverlay);
+  document.getElementById("update-overlay").addEventListener("click", function(e){
+    if(e.target.id === "update-overlay") closeUpdateOverlay();
+  });
+  document.getElementById("upd-add-row").addEventListener("click", function(){
+    state.updateRows.push({ pointType: "期間限定", balance: "", expiryDate: "" });
+    renderUpdateRows();
+  });
+
+  document.getElementById("f-program").addEventListener("change", function(){
+    document.getElementById("field-custom").hidden = this.value !== "その他";
+  });
+
+  document.getElementById("entry-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    var input = readFormInput();
+    var result = validateEntry(input);
+    if(!result.valid){
+      showErrors(result.errors);
+      return;
+    }
+    var existing = state.editingId ? state.entries.find(function(e2){ return e2.id === state.editingId; }) : null;
+    input.source = (state.aiDraft ? "screenshot" : (existing ? existing.source : "manual"));
+    var normalized = normalizeEntry(input, existing);
+    if(existing){
+      state.entries = state.entries.map(function(e2){ return e2.id === existing.id ? normalized : e2; });
+    }else{
+      state.entries.push(normalized);
+    }
+    saveEntries(state.entries);
+    closeSheet();
+    render();
+  });
+
+  var shotFileInput = document.getElementById("shot-file");
+  shotFileInput.addEventListener("change", function(){
+    var file = shotFileInput.files && shotFileInput.files[0];
+    var statusEl = document.getElementById("ai-status");
+    var runBtn = document.getElementById("shot-run");
+    statusEl.innerHTML = "";
+    if(!file){
+      document.getElementById("shot-preview").hidden = true;
+      runBtn.disabled = true;
+      return;
+    }
+    var preview = document.getElementById("shot-preview");
+    var reader = new FileReader();
+    reader.onload = function(){ preview.src = reader.result; preview.hidden = false; };
+    reader.readAsDataURL(file);
+
+    if(!getAiEndpoint()){
+      statusEl.innerHTML = '<p class="ai-off">この端末ではまだAI読み取りが設定されていません。手入力タブから登録してください。</p>';
+      runBtn.disabled = true;
+      return;
+    }
+    runBtn.disabled = false;
+  });
+
+  document.getElementById("shot-run").addEventListener("click", async function(){
+    var file = shotFileInput.files && shotFileInput.files[0];
+    if(!file) return;
+    var statusEl = document.getElementById("ai-status");
+    var runBtn = document.getElementById("shot-run");
+    runBtn.disabled = true;
+    statusEl.innerHTML = '<p class="ai-off">AIが読み取っています…</p>';
+    try{
+      var ai = await requestAiExtraction(file);
+      var draft = mapAiResult(ai);
+      if(!draft) throw new Error("empty_result");
+      state.aiDraft = draft;
+      fillForm(draft);
+      clearErrors();
+      statusEl.innerHTML = '<p class="ai-note">AIが読み取った内容をフォームに入力しました。内容を確認してから保存してください。</p>';
+      switchTab("manual");
+    }catch(err){
+      var msg = err && err.message === "ai_not_configured"
+        ? "この端末ではまだAI読み取りが設定されていません。"
+        : "読み取りに失敗しました。手入力をご利用ください。";
+      statusEl.innerHTML = '<p class="ai-off">' + msg + '</p>';
+    }finally{
+      runBtn.disabled = false;
+    }
+  });
+
+  var updShotFileInput = document.getElementById("upd-shot-file");
+  updShotFileInput.addEventListener("change", function(){
+    var file = updShotFileInput.files && updShotFileInput.files[0];
+    var statusEl = document.getElementById("upd-ai-status");
+    var runBtn = document.getElementById("upd-shot-run");
+    statusEl.innerHTML = "";
+    if(!file){
+      document.getElementById("upd-shot-preview").hidden = true;
+      runBtn.disabled = true;
+      return;
+    }
+    var preview = document.getElementById("upd-shot-preview");
+    var reader = new FileReader();
+    reader.onload = function(){ preview.src = reader.result; preview.hidden = false; };
+    reader.readAsDataURL(file);
+
+    if(!getAiEndpoint()){
+      statusEl.innerHTML = '<p class="ai-off">この端末ではまだAI読み取りが設定されていません。下の一覧を手入力してください。</p>';
+      runBtn.disabled = true;
+      return;
+    }
+    runBtn.disabled = false;
+  });
+
+  document.getElementById("upd-shot-run").addEventListener("click", async function(){
+    var file = updShotFileInput.files && updShotFileInput.files[0];
+    if(!file) return;
+    var statusEl = document.getElementById("upd-ai-status");
+    var runBtn = document.getElementById("upd-shot-run");
+    runBtn.disabled = true;
+    statusEl.innerHTML = '<p class="ai-off">AIが読み取っています…</p>';
+    try{
+      var ai = await requestAiExtraction(file);
+      var sanitized = sanitizeAiLots(ai);
+      if(!sanitized || !sanitized.lots.length) throw new Error("empty_result");
+      state.updateRows = sanitized.lots.map(function(l){
+        return { pointType: l.pointType, balance: l.balance, expiryDate: l.expiryDate };
+      });
+      state.updateUsedAi = true;
+      renderUpdateRows();
+      statusEl.innerHTML = '<p class="ai-note">AIが読み取った内訳を一覧に入力しました。内容を確認してから更新してください。</p>';
+    }catch(err){
+      var msg = err && err.message === "ai_not_configured"
+        ? "この端末ではまだAI読み取りが設定されていません。下の一覧を手入力してください。"
+        : "読み取りに失敗しました。下の一覧を手入力してください。";
+      statusEl.innerHTML = '<p class="ai-off">' + msg + '</p>';
+    }finally{
+      runBtn.disabled = false;
+    }
+  });
+
+  document.getElementById("upd-confirm").addEventListener("click", function(){
+    var result = validateLotRows(state.updateRows);
+    state.updateRows.forEach(function(row, i){
+      row.error = result.rowErrors[i] ? firstErrorMessage(result.rowErrors[i]) : "";
+    });
+    renderUpdateRows();
+    var errorEl = document.getElementById("upd-error");
+    if(!result.valid){
+      errorEl.textContent = result.allError || "入力内容を確認してください。";
+      return;
+    }
+    var group = findGroup(state.updateGroupKey);
+    if(!group){
+      errorEl.textContent = "対象のサービスが見つかりませんでした。";
+      return;
+    }
+    errorEl.textContent = "";
+    var newLots = buildLotsFromRows(
+      state.updateRows,
+      group.program,
+      group.customProgramName,
+      state.updateUsedAi ? "screenshot" : "manual",
+      new Date().toISOString()
+    );
+    state.entries = replaceGroupLots(state.entries, state.updateGroupKey, newLots);
+    saveEntries(state.entries);
+    closeUpdateOverlay();
+    render();
+  });
+
+  document.getElementById("export-btn").addEventListener("click", function(){
+    var blob = new Blob([JSON.stringify(state.entries, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "poimamo-" + todayStr() + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("import-btn").addEventListener("click", function(){
+    document.getElementById("import-file").click();
+  });
+  document.getElementById("import-file").addEventListener("change", function(){
+    var file = this.files && this.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try{
+        var list = JSON.parse(reader.result);
+        if(!Array.isArray(list)) throw new Error("not_array");
+        var byId = {};
+        state.entries.forEach(function(e){ byId[e.id] = e; });
+        list.forEach(function(raw){
+          var normalized = normalizeEntry(raw, byId[raw.id]);
+          byId[normalized.id] = normalized;
+        });
+        state.entries = Object.keys(byId).map(function(k){ return byId[k]; });
+        saveEntries(state.entries);
+        render();
+      }catch(e){
+        alert("読み込みに失敗しました。書き出したファイルを選んでください。");
+      }
+    };
+    reader.readAsText(file);
+    this.value = "";
+  });
+}
+
+setupEvents();
+render();
+</script>
+</body>
+</html>
