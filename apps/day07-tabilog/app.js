@@ -1644,10 +1644,10 @@
     msgEl.textContent = '';
   }
 
-  // iOSアプリ内ではlocation.originがcapacitor://localhostになり、Stripeが
-  // 成功/キャンセル/戻り先URLとして受け付けないため、その場合は実際に
-  // 公開しているWebサイトのURLを使う。
-  function billingReturnUrl() {
+  // iOSアプリ内ではlocation.originがcapacitor://localhostになってしまい、
+  // Stripeへの戻り先URLとしては使えず、他の人と共有するリンクとしても開けない。
+  // その場合は実際に公開しているWebサイトのURLを使う。
+  function publicPageUrl() {
     return isNativeApp()
       ? 'https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/'
       : location.origin + location.pathname;
@@ -1658,7 +1658,7 @@
     if (!user) { openLogin('mylog'); return; }
     var msgEl = $('#planStatusMessage');
     msgEl.textContent = '決済ページに移動しています…';
-    var returnUrl = billingReturnUrl();
+    var returnUrl = publicPageUrl();
     api('/billing/checkout', 'POST', {
       email: user.email,
       plan: plan,
@@ -1679,7 +1679,7 @@
     msgEl.textContent = '支払い管理ページに移動しています…';
     api('/billing/portal', 'POST', {
       email: user.email,
-      returnUrl: billingReturnUrl()
+      returnUrl: publicPageUrl()
     }).then(function (res) {
       if (res && res.url) location.href = res.url;
       else msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
@@ -2045,7 +2045,12 @@
 
   function copyShareLink() {
     if (!state.trip) return;
-    var url = location.href;
+    // iOSアプリ内ではlocation.hrefがcapacitor://localhost/...になり、
+    // 他の人に共有しても開けないリンクになってしまうため、その場合は
+    // 実際に公開しているWebサイトのURLを組み立てる。
+    var url = isNativeApp()
+      ? Core.buildShareUrl(publicPageUrl(), '', state.trip.id)
+      : location.href;
     var done = function () {
       var status = $('#tripDetailStatus');
       status.textContent = 'リンクをコピーしました。共有した相手も見たり書き足したりできます。';
