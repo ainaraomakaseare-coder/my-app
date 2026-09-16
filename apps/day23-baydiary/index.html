@@ -6,164 +6,174 @@
 <title>ベイ日記</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Oswald:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Shippori+Mincho:wght@600;800&family=Space+Mono:wght@400;700&display=swap">
 <style>
 :root{
-  --navy:#0A1930;
-  --navy-hi:#122A4D;
-  --navy-sink:#060E1D;
-  --line:#233257;
-  --paper:#F4F6FA;
-  --ink:#101828;
-  --ink-dim:#5A6580;
-  --star:#FFCC00;
-  --star-dim:#B99B2E;
-  --blue:#2E6FD1;
-  --blue-lit:#5C9AF2;
-  --win:#33C17A;
-  --lose:#E2574C;
-  --draw:#D9A62E;
-  --muted:#8592AD;
-  --font-display:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+  --paper:#F3EAD6;
+  --paper-2:#EADFC4;
+  --card:#FFFFFF;
+  --ink:#1E2A44;
+  --ink-soft:#5B6478;
+  --navy:#1E2A44;
+  --brick:#A6432F;
+  --gold:#C99A3B;
+  --line:#C9BC9C;
+  --muted:#8A8272;
+  --font-display:"Shippori Mincho","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
   --font-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
-  --font-num:"Oswald","Zen Kaku Gothic New",sans-serif;
+  --font-num:"Space Mono","Zen Kaku Gothic New",monospace;
 }
 *{box-sizing:border-box}
 body{
   margin:0;
-  background:var(--navy);
-  background-image:
-    radial-gradient(ellipse 80% 45% at 50% -10%, rgba(255,204,0,.10), transparent 70%),
-    radial-gradient(ellipse 60% 40% at 50% 110%, rgba(46,111,209,.14), transparent 70%);
-  background-attachment:fixed;
-  color:var(--paper);
+  background:var(--paper);
+  background-image:radial-gradient(rgba(30,42,68,.05) 1px, transparent 1.3px);
+  background-size:7px 7px;
+  color:var(--ink);
   font-family:var(--font-body);
   line-height:1.6;
   -webkit-text-size-adjust:100%;
 }
 button{font-family:inherit;color:inherit;cursor:pointer}
 input,select,textarea{font-family:inherit;color:inherit}
-:focus-visible{outline:2px solid var(--star);outline-offset:2px;border-radius:4px}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}
 [hidden]{display:none !important}
-a{color:var(--blue-lit)}
+a{color:var(--brick)}
 
 .wrap{max-width:520px;margin:0 auto;padding:16px 16px 48px;display:flex;flex-direction:column;gap:16px;min-height:100dvh}
 
 /* ---- 見出し ---- */
-.masthead{display:flex;flex-direction:column;gap:10px;border-bottom:1px solid var(--line);padding-bottom:12px}
-.mast-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.logo{font-weight:900;font-size:22px;letter-spacing:.04em;margin:0;display:flex;align-items:baseline;gap:6px}
-.logo .star{color:var(--star)}
-.header-summary{font-size:12px;color:var(--muted);letter-spacing:.03em;font-variant-numeric:tabular-nums}
-.header-summary b{color:var(--star);font-weight:700}
-.tabs{display:flex;gap:6px;flex-wrap:wrap}
-.tab{background:none;border:1px solid var(--line);border-radius:99px;color:var(--muted);
-  font-size:12.5px;letter-spacing:.03em;padding:6px 12px;line-height:1.4}
-.tab.on{color:var(--navy);background:var(--star);border-color:var(--star);font-weight:700}
+.masthead{display:flex;flex-direction:column;align-items:center;gap:6px;border-bottom:2px dashed var(--line);padding-bottom:16px}
+.mast-top{display:flex;flex-direction:column;align-items:center;gap:4px;width:100%}
+.eyebrow{font-family:var(--font-num);font-size:10.5px;letter-spacing:.3em;color:var(--ink-soft)}
+.logo{font-family:var(--font-display);font-weight:800;font-size:32px;letter-spacing:.06em;margin:0;color:var(--navy)}
+.header-summary{font-size:11.5px;color:var(--ink-soft);letter-spacing:.05em;font-variant-numeric:tabular-nums}
+.header-summary b{color:var(--brick);font-weight:700}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.tab{background:none;border:1.5px dashed var(--line);border-radius:4px;color:var(--ink-soft);
+  font-family:var(--font-num);font-size:11.5px;letter-spacing:.08em;padding:6px 13px;line-height:1.4}
+.tab.on{color:var(--card);background:var(--navy);border-color:var(--navy);border-style:solid;font-weight:700}
 
 /* ---- 共通ボタン・カード ---- */
-.btn{background:var(--navy-hi);border:1px solid var(--line);border-radius:10px;color:var(--paper);
-  font-size:14px;padding:9px 14px;font-weight:500}
-.btn:hover{border-color:var(--blue-lit)}
-.btn-main{background:var(--star);border-color:var(--star);color:var(--navy);font-weight:700}
-.btn-main:hover{background:#FFD84D}
-.btn-danger{background:transparent;border-color:var(--lose);color:var(--lose)}
-.btn-danger.confirming{background:var(--lose);color:var(--paper)}
-.btn-sm{font-size:12.5px;padding:6px 10px}
+.btn{background:var(--card);border:1.5px solid var(--ink);border-radius:4px;color:var(--ink);
+  font-family:var(--font-num);font-size:13px;letter-spacing:.03em;padding:9px 14px;font-weight:400;
+  box-shadow:2px 2px 0 rgba(30,42,68,.14)}
+.btn:hover{transform:translate(1px,1px);box-shadow:1px 1px 0 rgba(30,42,68,.14)}
+.btn-main{background:var(--navy);border-color:var(--navy);color:var(--card);font-weight:700}
+.btn-main:hover{background:#2A3B5C}
+.btn-danger{background:var(--card);border-color:var(--brick);color:var(--brick)}
+.btn-danger.confirming{background:var(--brick);color:var(--card)}
+.btn-sm{font-size:11.5px;padding:6px 10px}
 .btn:disabled{opacity:.5;cursor:default}
-.card{background:var(--navy-hi);border:1px solid var(--line);border-radius:14px;padding:14px}
-.empty{color:var(--muted);font-size:13.5px;text-align:center;padding:24px 8px}
+.card{background:var(--card);border:1.5px solid var(--ink);border-radius:6px;padding:14px;
+  box-shadow:3px 3px 0 rgba(30,42,68,.12)}
+.empty{color:var(--ink-soft);font-size:13.5px;text-align:center;padding:24px 8px}
 
 /* ---- 一覧画面 ---- */
 .list-controls{display:flex;align-items:center;justify-content:space-between;gap:10px}
-select{background:var(--navy-hi);border:1px solid var(--line);border-radius:10px;color:var(--paper);
-  padding:8px 10px;font-size:14px}
-.stats-card{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
-.stat-chip{flex:1 1 0;min-width:64px;text-align:center;background:var(--navy-sink);
-  border:1px solid var(--line);border-radius:10px;padding:8px 6px}
-.stat-chip .lbl{font-size:11px;color:var(--muted);letter-spacing:.05em}
-.stat-chip .val{font-family:var(--font-num);font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
-.stat-chip.win .val{color:var(--win)}
-.stat-chip.lose .val{color:var(--lose)}
-.stat-chip.draw .val{color:var(--draw)}
-.stat-chip.rate .val{color:var(--star)}
+select{background:var(--card);border:1.5px solid var(--ink);border-radius:4px;color:var(--ink);
+  font-family:var(--font-num);padding:8px 10px;font-size:13px}
+.stats-card{display:flex;background:var(--card);border:1.5px solid var(--ink);border-radius:4px;
+  box-shadow:3px 3px 0 rgba(30,42,68,.12);overflow:hidden}
+.stat-chip{flex:1 1 0;min-width:0;text-align:center;padding:12px 4px;border-right:1.5px dashed var(--line)}
+.stat-chip:last-child{border-right:none}
+.stat-chip .lbl{font-size:9px;letter-spacing:.14em;color:var(--ink-soft)}
+.stat-chip .val{font-family:var(--font-num);font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--navy)}
+.stat-chip.win .val{color:var(--navy)}
+.stat-chip.lose .val{color:var(--ink-soft)}
+.stat-chip.draw .val{color:var(--ink-soft)}
+.stat-chip.rate .val{color:var(--brick)}
 
-.game-list{display:flex;flex-direction:column;gap:12px}
-.game-card{background:var(--navy-hi);border:1px solid var(--line);border-radius:14px;padding:14px;
-  display:flex;flex-direction:column;gap:8px}
-.gc-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.gc-date{font-size:13px;color:var(--muted)}
-.gc-badge{font-size:12px;font-weight:700;border-radius:99px;padding:3px 10px;line-height:1.5}
-.gc-badge.res-win{background:rgba(51,193,122,.18);color:var(--win)}
-.gc-badge.res-lose{background:rgba(226,87,76,.18);color:var(--lose)}
-.gc-badge.res-draw{background:rgba(217,166,46,.18);color:var(--draw)}
-.gc-badge.res-none{background:rgba(133,146,173,.18);color:var(--muted)}
-.gc-score-row{display:flex;align-items:baseline;gap:10px;justify-content:space-between}
-.gc-vs{font-size:15.5px;font-weight:700}
-.gc-score{font-family:var(--font-num);font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
-.gc-venue{font-size:12.5px;color:var(--muted)}
-.gc-meta{display:flex;flex-wrap:wrap;gap:6px;font-size:12px;color:var(--muted)}
-.gc-meta span{background:var(--navy-sink);border:1px solid var(--line);border-radius:8px;padding:2px 8px}
-.gc-mvp{font-size:13px}
-.gc-mvp b{color:var(--star)}
+.game-list{display:flex;flex-direction:column;gap:32px}
+.game-card{position:relative;background:var(--card);border:1.5px solid var(--ink);border-radius:6px;
+  box-shadow:4px 4px 0 rgba(30,42,68,.14);padding:16px 16px 14px;
+  display:flex;flex-direction:column;gap:10px}
+.game-card::before,.game-card::after{content:"";position:absolute;width:17px;height:17px;
+  background:var(--paper);border:1.5px solid var(--ink);border-radius:50%;left:-9.5px}
+.game-card::before{top:-9.5px} .game-card::after{bottom:-9.5px}
+.gc-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;
+  border-bottom:1.5px dashed var(--line);padding-bottom:10px}
+.gc-date{font-family:var(--font-num);font-size:12px;color:var(--ink-soft);letter-spacing:.02em}
+.gc-badge{display:inline-block;font-family:var(--font-num);font-size:11.5px;font-weight:700;
+  letter-spacing:.14em;border:2px solid currentColor;border-radius:4px;padding:2px 10px;
+  transform:rotate(-6deg);background:none}
+.gc-badge.res-win{color:var(--navy)}
+.gc-badge.res-lose{color:var(--brick)}
+.gc-badge.res-draw{color:var(--gold)}
+.gc-badge.res-none{color:var(--muted)}
+.gc-score-row{display:flex;align-items:center;gap:14px}
+.gc-vs{font-family:var(--font-display);font-weight:800;font-size:17px;color:var(--navy)}
+.gc-score{font-family:var(--font-num);font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--navy)}
+.gc-venue{font-size:11.5px;color:var(--ink-soft)}
+.gc-meta{display:flex;flex-wrap:wrap;gap:0;font-family:var(--font-num);font-size:11px;color:var(--ink-soft);
+  border-top:1.5px dashed var(--line);padding-top:10px}
+.gc-meta span{padding:0 12px 0 0;margin-right:12px;border-right:1.5px dashed var(--line)}
+.gc-meta span:last-child{border-right:none;margin-right:0}
+.gc-mvp{font-family:var(--font-display);font-size:13.5px;color:var(--ink);background:var(--paper-2);
+  border-radius:3px;padding:8px 10px}
+.gc-mvp b{color:var(--brick);font-weight:800}
 .gc-notable{display:flex;flex-wrap:wrap;gap:6px}
-.gc-notable span{font-size:11.5px;background:rgba(46,111,209,.18);color:var(--blue-lit);
-  border-radius:8px;padding:2px 8px}
-.gc-highlight{font-size:13px;color:var(--paper);white-space:pre-wrap}
-.gc-photos{display:flex;gap:6px;flex-wrap:wrap}
-.gc-photos img{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.gc-notable span{font-size:11px;color:var(--ink-soft);border:1px dashed var(--line);
+  border-radius:3px;padding:2px 8px}
+.gc-highlight{font-family:var(--font-display);font-size:13.5px;color:var(--ink);white-space:pre-wrap;line-height:1.8}
+.gc-photos{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.gc-photos img{width:64px;height:64px;object-fit:cover;border-radius:2px;border:4px solid var(--card);
+  box-shadow:0 2px 6px rgba(30,42,68,.25);transform:rotate(3deg)}
 .gc-actions{display:flex;gap:8px;justify-content:flex-end}
 
 /* ---- フォーム ---- */
 #game-form{display:flex;flex-direction:column;gap:14px}
-#game-form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);flex:1}
+#game-form label{display:flex;flex-direction:column;gap:4px;font-family:var(--font-num);
+  font-size:11px;letter-spacing:.04em;color:var(--ink-soft);flex:1}
 #game-form input,#game-form select,#game-form textarea{
-  background:var(--navy-sink);border:1px solid var(--line);border-radius:9px;
-  padding:9px 10px;font-size:14.5px;color:var(--paper)}
+  background:var(--card);border:1.5px solid var(--ink);border-radius:4px;
+  padding:9px 10px;font-size:14.5px;font-family:var(--font-body);color:var(--ink)}
 #game-form textarea{resize:vertical}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row > label{min-width:130px}
 .api-box{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.api-status{font-size:12.5px;color:var(--muted)}
-.api-status.ok{color:var(--win)}
-.api-status.err{color:var(--lose)}
+.api-status{font-size:12px;color:var(--ink-soft)}
+.api-status.ok{color:var(--navy)}
+.api-status.err{color:var(--brick)}
 .score-row{display:flex;align-items:flex-end;gap:10px}
-.score-sep{font-size:20px;color:var(--muted);padding-bottom:9px}
-fieldset{border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px}
-legend{font-size:12.5px;color:var(--muted);padding:0 6px}
+.score-sep{font-family:var(--font-num);font-size:20px;color:var(--ink-soft);padding-bottom:9px}
+fieldset{border:1.5px dashed var(--line);border-radius:6px;padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px}
+legend{font-family:var(--font-num);font-size:10.5px;letter-spacing:.1em;color:var(--ink-soft);padding:0 6px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip-tag{display:flex;align-items:center;gap:6px;background:var(--navy-sink);border:1px solid var(--line);
+.chip-tag{display:flex;align-items:center;gap:6px;background:var(--paper-2);border:1px solid var(--line);
   border-radius:99px;padding:4px 6px 4px 12px;font-size:13px}
-.chip-tag button{background:none;border:none;color:var(--muted);font-size:14px;line-height:1;padding:2px 4px}
+.chip-tag button{background:none;border:none;color:var(--ink-soft);font-size:14px;line-height:1;padding:2px 4px}
 .chip-input{display:flex;gap:8px}
 .chip-input input{flex:1}
 .photo-grid{display:flex;flex-wrap:wrap;gap:8px}
 .photo-thumb{position:relative;width:76px;height:76px}
-.photo-thumb img{width:100%;height:100%;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.photo-thumb img{width:100%;height:100%;object-fit:cover;border-radius:2px;border:4px solid var(--card);
+  box-shadow:0 2px 6px rgba(30,42,68,.25)}
 .photo-thumb button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;
-  background:var(--lose);color:#fff;border:none;font-size:12px;line-height:1}
+  background:var(--brick);color:#fff;border:none;font-size:12px;line-height:1}
 .notable-row{display:flex;gap:8px;align-items:center}
 .notable-row input{flex:1}
 .notable-row button{flex:0 0 auto}
 .form-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 
 /* ---- 選手分析 ---- */
-.player-row{background:var(--navy-hi);border:1px solid var(--line);border-radius:12px;padding:10px 14px}
+.player-row{background:var(--card);border:1.5px solid var(--ink);border-radius:6px;padding:10px 14px;
+  box-shadow:3px 3px 0 rgba(30,42,68,.12)}
 .player-row summary{display:flex;align-items:center;justify-content:space-between;cursor:pointer;list-style:none}
 .player-row summary::-webkit-details-marker{display:none}
-.player-name{font-weight:700;font-size:15px}
-.player-score{font-family:var(--font-num);color:var(--star);font-weight:700;font-variant-numeric:tabular-nums}
-.player-sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+.player-name{font-family:var(--font-display);font-weight:800;font-size:15px;color:var(--navy)}
+.player-score{font-family:var(--font-num);color:var(--brick);font-weight:700;font-variant-numeric:tabular-nums}
+.player-sub{font-family:var(--font-num);font-size:10.5px;color:var(--ink-soft);margin-top:2px}
 .player-games{margin:10px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
-.player-games li{font-size:12.5px;color:var(--paper);border-top:1px solid var(--line);padding-top:6px}
-.player-games .pg-head{color:var(--muted)}
+.player-games li{font-size:12.5px;color:var(--ink);border-top:1.5px dashed var(--line);padding-top:6px}
+.player-games .pg-head{color:var(--ink-soft);font-family:var(--font-num);font-size:11px}
 
 /* ---- 設定 ---- */
 #scr-settings{display:flex;flex-direction:column;gap:16px}
-.settings-help{font-size:12.5px;color:var(--muted)}
+.settings-help{font-size:12.5px;color:var(--ink-soft)}
 .settings-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.settings-row input{flex:1;min-width:180px;background:var(--navy-sink);border:1px solid var(--line);
-  border-radius:9px;padding:9px 10px;color:var(--paper);font-size:14px}
+.settings-row input{flex:1;min-width:180px;background:var(--card);border:1.5px solid var(--ink);
+  border-radius:4px;padding:9px 10px;color:var(--ink);font-size:14px}
 
 @media (max-width:420px){
   .row > label{min-width:100%}
@@ -174,7 +184,8 @@ legend{font-size:12.5px;color:var(--muted);padding:0 6px}
 <div class="wrap">
   <header class="masthead">
     <div class="mast-top">
-      <h1 class="logo"><span class="star">⭐</span>ベイ日記</h1>
+      <div class="eyebrow">YOKOHAMA DeNA BAYSTARS</div>
+      <h1 class="logo">ベイ日記</h1>
       <div class="header-summary" id="header-summary"></div>
     </div>
     <nav class="tabs">
@@ -342,11 +353,11 @@ var VENUES = ["横浜スタジアム","東京ドーム","神宮球場","阪神�
   "ZOZOマリンスタジアム","エスコンフィールドHOKKAIDO","みずほPayPayドーム","その他"];
 var WEATHERS = [
   {id:"", label:"(未設定)"},
-  {id:"sunny", label:"☀️ 晴れ"},
-  {id:"cloudy", label:"☁️ 曇り"},
-  {id:"rainy", label:"☂️ 雨"},
-  {id:"snowy", label:"❄️ 雪"},
-  {id:"dome", label:"🏟️ 屋内(ドーム)"},
+  {id:"sunny", label:"晴れ"},
+  {id:"cloudy", label:"曇り"},
+  {id:"rainy", label:"雨"},
+  {id:"snowy", label:"雪"},
+  {id:"dome", label:"屋内(ドーム)"},
   {id:"other", label:"その他"}
 ];
 var PLAYER_SEED = ["牧秀悟","宮﨑敏郎","佐野恵太","桑原将志","オースティン","森敬斗","度会隆輝","京田陽太","神里和毅","蝦名達夫","知野直人","東克樹"];
@@ -705,8 +716,8 @@ function gameCardHtml(g){
   var scoreText = (g.score.bay != null && g.score.opp != null) ? (g.score.bay + " － " + g.score.opp) : "- － -";
   var metaBits = [];
   if(g.weather) metaBits.push(weatherLabel(g.weather) + (g.temp != null && g.temp !== "" ? " " + g.temp + "℃" : ""));
-  if(g.companions && g.companions.length) metaBits.push("👥 " + g.companions.map(esc).join("・"));
-  if(g.ticketPrice != null && g.ticketPrice !== "") metaBits.push("🎫 " + yen(g.ticketPrice));
+  if(g.companions && g.companions.length) metaBits.push(g.companions.map(esc).join("・"));
+  if(g.ticketPrice != null && g.ticketPrice !== "") metaBits.push(yen(g.ticketPrice));
 
   var notableHtml = (g.notablePlayers || []).filter(function(p){ return p.name; }).map(function(p){
     return "<span title=\"" + esc(p.note || "") + "\">" + esc(p.name) + "</span>";
