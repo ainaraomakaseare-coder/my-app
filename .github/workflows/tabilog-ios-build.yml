@@ -1,4 +1,4 @@
-name: たびログ iOS ビルド & TestFlightアップロード
+name: 旅の足跡 iOS ビルド & TestFlightアップロード
 
 # 手動実行のみ（勝手に走って審査提出用のビルドが増えないように）。
 # GitHubリポジトリの「Actions」タブ → このワークフロー名 → 「Run workflow」から実行する。
