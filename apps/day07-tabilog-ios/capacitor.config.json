@@ -5,6 +5,13 @@
   "ios": {
     "contentInset": "automatic"
   },
+  "server": {
+    "allowNavigation": [
+      "checkout.stripe.com",
+      "billing.stripe.com",
+      "ainaraomakaseare-coder.github.io"
+    ]
+  },
   "plugins": {
     "CapacitorHttp": {
       "enabled": true

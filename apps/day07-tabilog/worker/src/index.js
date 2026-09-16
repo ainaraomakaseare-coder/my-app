@@ -973,6 +973,45 @@ async function createCheckoutSession(request, env, headers) {
   return json({ url: session.url }, 200, headers);
 }
 
+// Stripeのカスタマーポータル（支払い方法の変更・請求書の確認・解約ができるStripe提供のページ）
+// を開くためのセッションを作る。解約そのものはこのポータル側の操作で行われ、
+// 実際のプラン変更はStripeのWebhook（handleStripeWebhook）経由で反映される。
+async function createPortalSession(request, env, headers) {
+  if (!env.STRIPE_SECRET_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (!optStr(data.returnUrl, 500) || !data.returnUrl) return json({ error: "invalid_input" }, 400, headers);
+  const email = data.email.trim().toLowerCase();
+
+  const account = await env.DB.prepare("SELECT stripe_customer_id FROM accounts WHERE email = ?").bind(email).first();
+  if (!account || !account.stripe_customer_id) return json({ error: "no_subscription" }, 404, headers);
+
+  const body = stripeFormBody({
+    customer: account.stripe_customer_id,
+    return_url: data.returnUrl,
+  });
+  const upstream = await fetch(`${STRIPE_API_BASE}/billing_portal/sessions`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  if (!upstream.ok) {
+    const errorBody = await upstream.text().catch(() => "");
+    console.error(JSON.stringify({ event: "stripe_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+    return json({ error: "upstream_error" }, 502, headers);
+  }
+  const session = await upstream.json();
+  return json({ url: session.url }, 200, headers);
+}
+
 // Stripeの署名（stripe-signatureヘッダー）を検証する。https://docs.stripe.com/webhooks#verify-official-libraries
 // npm SDKを使わないため、Web Crypto APIのHMAC-SHA256で自前で検証する。
 async function verifyStripeSignature(rawBody, sigHeader, secret) {
@@ -1544,6 +1583,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
 
     if (method === "POST" && path === "/billing/checkout") return createCheckoutSession(request, env, headers);
+    if (method === "POST" && path === "/billing/portal") return createPortalSession(request, env, headers);
     if (method === "POST" && path === "/billing/webhook") return handleStripeWebhook(request, env, headers);
 
     if (method === "POST" && path === "/admin/recover-entries") return handleRecoverEntries(request, env, headers);

@@ -1606,14 +1606,17 @@
     var optionsEl = $('#planOptions');
     var msgEl = $('#planStatusMessage');
     var badgeEl = $('#planBadgeTop');
+    var manageBtn = $('#btnManageBilling');
     var account = state.account;
     if (!account) {
       statusEl.innerHTML = '';
       optionsEl.innerHTML = '';
       msgEl.textContent = '';
       badgeEl.hidden = true;
+      manageBtn.hidden = true;
       return;
     }
+    manageBtn.hidden = account.plan === 'free';
     var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
     var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
 
@@ -1641,17 +1644,21 @@
     msgEl.textContent = '';
   }
 
+  // iOSアプリ内ではlocation.originがcapacitor://localhostになり、Stripeが
+  // 成功/キャンセル/戻り先URLとして受け付けないため、その場合は実際に
+  // 公開しているWebサイトのURLを使う。
+  function billingReturnUrl() {
+    return isNativeApp()
+      ? 'https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/'
+      : location.origin + location.pathname;
+  }
+
   function startCheckout(plan) {
     var user = loadCurrentUser();
     if (!user) { openLogin('mylog'); return; }
     var msgEl = $('#planStatusMessage');
     msgEl.textContent = '決済ページに移動しています…';
-    // iOSアプリ内ではlocation.originがcapacitor://localhostになり、
-    // Stripeが成功/キャンセルURLとして受け付けず決済ページの作成自体が失敗するため、
-    // その場合は実際に公開しているWebサイトのURLを使う。
-    var returnUrl = isNativeApp()
-      ? 'https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/'
-      : location.origin + location.pathname;
+    var returnUrl = billingReturnUrl();
     api('/billing/checkout', 'POST', {
       email: user.email,
       plan: plan,
@@ -1662,6 +1669,22 @@
       else msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
     }).catch(function () {
       msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
+    });
+  }
+
+  function startBillingPortal() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('mylog'); return; }
+    var msgEl = $('#planStatusMessage');
+    msgEl.textContent = '支払い管理ページに移動しています…';
+    api('/billing/portal', 'POST', {
+      email: user.email,
+      returnUrl: billingReturnUrl()
+    }).then(function (res) {
+      if (res && res.url) location.href = res.url;
+      else msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
+    }).catch(function () {
+      msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
     });
   }
 
@@ -1851,6 +1874,7 @@
     $('#planBadgeTop').addEventListener('click', function () {
       $('#planStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+    $('#btnManageBilling').addEventListener('click', startBillingPortal);
 
     $('#mylogSort').addEventListener('click', function (e) {
       var btn = e.target.closest('.sort-btn');
