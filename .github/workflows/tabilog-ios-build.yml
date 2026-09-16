@@ -72,10 +72,15 @@ jobs:
           EOF
 
       - name: アーカイブをビルド（自動署名。App Store Connect APIキーで認証）
+        # -destinationを省略すると、CIランナーに実機が繋がっていないため
+        # 「実機テスト用のプロビジョニングプロファイルを作ろうとして、対象の実機が無く失敗する」
+        # ことがある（配布用アーカイブにテスト用プロファイルは本来不要）。
+        # generic/platform=iOSを明示し、配布用のアーカイブとして扱わせる。
         working-directory: apps/day07-tabilog-ios/ios/App
         run: |
           xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
             -archivePath ../../build/App.xcarchive archive \
+            -destination 'generic/platform=iOS' \
             DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
             CODE_SIGN_STYLE=Automatic \
             -allowProvisioningUpdates \
