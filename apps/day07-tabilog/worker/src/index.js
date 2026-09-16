@@ -14,9 +14,17 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const URL_RE = /^https?:\/\/\S+$/;
 
+function isAllowedOrigin(origin, allowed) {
+  if (origin === allowed) return true;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || "")) return true;
+  // iOSアプリ（Capacitor）内のWebViewは、ページを https://... ではなく
+  // capacitor://localhost から読み込んでいるため、そのOriginも許可する。
+  if (origin === "capacitor://localhost") return true;
+  return false;
+}
+
 function cors(origin, allowed) {
-  const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || "");
-  const ok = origin === allowed || local;
+  const ok = isAllowedOrigin(origin, allowed);
   return {
     "access-control-allow-origin": ok ? origin : allowed,
     "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
@@ -1476,8 +1484,7 @@ export default {
     // /admin/recover-entriesも同様にブラウザ以外（curl）から叩くため対象外
     // （代わりにx-recovery-keyヘッダーの検証で認証する。一時的な復旧処理のみ）。
     if (
-      origin !== env.ALLOWED_ORIGIN &&
-      !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) &&
+      !isAllowedOrigin(origin, env.ALLOWED_ORIGIN) &&
       path.indexOf("/photos/") !== 0 &&
       path !== "/billing/webhook" &&
       path !== "/admin/recover-entries"
