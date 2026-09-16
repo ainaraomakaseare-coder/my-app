@@ -122,6 +122,17 @@ Stripeのv10マイグレーション（accountsテーブルへのプラン列追
 
 ユーザーからの「記録が消えている」という報告を受け、まず`wrangler d1 execute`の読み取り専用クエリで実際のentries件数を確認したところ、**すべての旅行・すべての日付でentry_countが0件**という事態が判明。コードを見直して原因（消し忘れたDROP TABLE）を特定し、ユーザーに正直に経緯と自分の確認不足を伝えた。
 
+### iOSアプリのTestFlight提出：署名エラーが8回連続で発生した件（2026-09-16）
+
+GitHub Actions（macOSランナー）で`xcodebuild archive -allowProvisioningUpdates`によるApp Store Connect APIキー認証の自動署名を使い、TestFlightへのアップロードを試みたが、1〜7回目のビルドはすべて同じエラー「`Your team has no devices from which to generate a provisioning profile`」で失敗した。試した仮説と結果：
+
+1. `-destination 'generic/platform=iOS'`を追加 → 効果なし
+2. `CODE_SIGN_IDENTITY="Apple Distribution"`をコマンドライン引数で指定 → 別のエラー（`CODE_SIGN_STYLE=Automatic`と競合）になり撤回
+3. `project.pbxproj`内の`"Apple Development"`文字列を`sed`で`"Apple Distribution"`に書き換えるステップを追加 → ステップ自体は成功するが症状は変わらず（＝この文字列が原因ではなかった）。Apple Developerサイトの証明書一覧を確認すると、証明書は4つ自動生成されていたが**すべて種類が「Development」**だった
+4. App Store Connect APIキーの権限を「App Manager」から「管理者（Admin）」に変更 → 効果なし
+
+最終的に、エラーメッセージが示唆していた「実機が1台も登録されていない」ことが根本原因だと判断。ユーザーはMacを持っておらずWindows PCのみのため、Microsoft Storeの「Apple Devices」アプリ経由でiPhoneをUSB接続し、デバイスサマリー行（容量表示）をクリックしてUDID表示に切り替える方法でUDIDを取得、developer.apple.com上でデバイス登録してもらった。8回目のビルドで初めて「アーカイブをビルド」「TestFlightへアップロード」の両ステップが成功した。
+
 ## エラー・つまずき
 
 - テスト実行時、`playwright` はグローバルにインストールされていたが、このリポジトリのフォルダからは `require('playwright')` が解決できず `MODULE_NOT_FOUND` になった（ローカルの `node_modules` が無く、Node標準のモジュール解決では `/opt/node22/lib/node_modules` のようなグローバル置き場を辿らないため）
@@ -151,6 +162,7 @@ Stripeのv10マイグレーション（accountsテーブルへのプラン列追
   3. データ復旧：幸い、音声入力の文字起こし自体は別テーブル（`day_infos.voice_transcript`）にあり無事だったため、**文字起こしをもう一度AIに読ませて予定＋記録を作り直し、既存のBlockに記録だけ差し戻す**一時的な管理用エンドポイント（`/admin/recover-entries`、`x-recovery-key`ヘッダーで簡易認証）を追加した。最初はAIが生成する見出し（label）の文字列一致で対応づけようとしたが、**同じ内容でもAIは毎回微妙に違う言い回しでlabelを作る**ため大半が対応づかなかった。「文字起こし1回分は話した順にBlockを作っているはず」という前提に切り替え、**AIの再生成した件数ぶん、記録が空のBlockを古い順（話した順）から取って位置で対応づける**方式にしたところ、うまく対応づけられるようになった
   4. 音声入力ではなく手入力で作った旅行（文字起こしが存在しない）は、この方法では復旧できなかった。ユーザーに正直に伝え、該当部分は手動での入れ直しをお願いした
   5. 教訓：**「一度きりの文」と明記されたSQLでも、それが安全に消えているかは実際に確認しないと分からない。** ファイル全体を再実行する前に、中身を全部読んで危険な文（DROP TABLE等）が残っていないか確認すべきだった。v9・v10のALTER TABLE文は運用ルール（反映後に削除）を守れていたのに、それより古いDROP TABLEには同じ注意が向いていなかった
+- iOS自動署名エラーの解決：Apple側のエラーメッセージ「Your team has no devices...」を、複数の署名設定まわりの仮説（証明書の種類、APIキー権限、コマンドライン引数）より先に文字通り受け取り、「実機を1台も登録していない」という一番シンプルな原因を疑うべきだった。Macを持たないユーザーでも、Windows用の公式「Apple Devices」アプリでUDIDだけは取得できる
 
 ## 今日できるようになったこと
 
