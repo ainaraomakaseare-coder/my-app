@@ -76,6 +76,10 @@ jobs:
         # 「実機テスト用のプロビジョニングプロファイルを作ろうとして、対象の実機が無く失敗する」
         # ことがある（配布用アーカイブにテスト用プロファイルは本来不要）。
         # generic/platform=iOSを明示し、配布用のアーカイブとして扱わせる。
+        # それでも直らない場合、CODE_SIGN_STYLE=Automaticだけでは、証明書が
+        # 1つも無い真新しいDeveloperアカウントだと「開発用」のプロファイルを
+        # 誤って要求してしまうことがあるため、CODE_SIGN_IDENTITYで明示的に
+        # 「配布用（Apple Distribution）」の証明書を使うよう指定する。
         working-directory: apps/day07-tabilog-ios/ios/App
         run: |
           xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
@@ -83,6 +87,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
             CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
             -allowProvisioningUpdates \
             -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}.p8 \
             -authenticationKeyID ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }} \
