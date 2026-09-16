@@ -112,15 +112,18 @@ a:hover { text-decoration: underline; }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; min-width: 0; }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; min-width: 0; }
-/* iOS Safariはinput[type=date]/[type=time]を、指定した幅より少しはみ出して
-   描画することがあるため、box-sizing: border-boxとwidth: 100%だけでは
-   親要素（カード）の右端からはみ出て見えることがある。overflow: hiddenで
-   はみ出た分を強制的に切り詰める */
-.field input { width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
+.field input { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .field label { font-size: 12.5px; color: var(--ink-muted); font-weight: 500; }
 .field input[type="text"], .field input[type="date"], .field input[type="time"],
 .field input[type="number"], .field input[type="url"], .field textarea {
   border: 1px solid var(--border); border-radius: var(--radius-control); padding: 11px 13px; background: var(--card); color: var(--ink);
+}
+/* iOS Safariは input[type=date]/[type=time] を、他のinputとは違うネイティブの見た目
+   （OS標準の部品）で描画し、指定した幅より少しはみ出して見えることがあった。
+   -webkit-appearanceでネイティブの見た目自体を消し、見出し(text)の入力欄と
+   全く同じ見た目・サイズになるようにする */
+.field input[type="date"], .field input[type="time"] {
+  -webkit-appearance: none; appearance: none;
 }
 /* 日付・時間・テキストなど1行入力の高さを揃える。特にiOS Safariは
    <input type="time">が未入力のとき、値ありの<input type="date">より
