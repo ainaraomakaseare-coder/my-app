@@ -563,20 +563,22 @@ function fetchGameFromApi(dateStr){
     return fetch(base + "/leagues?country=Japan", { headers: headers })
       .then(function(r){ return r.json(); })
       .then(function(json){
-        var list = json.response || [];
+        // レスポンス形式はドキュメントで未確認のため、{league:{id,name}} という
+        // 入れ子構造と、{id,name} というフラットな構造の両方に対応しておく
+        var list = (json.response || []).map(function(l){ return (l && l.league) || l; });
         var npb = list.filter(function(l){
-          var name = l.league && l.league.name || "";
-          return /Nippon|NPB|Central|Pacific/i.test(name);
+          return l && /Nippon|NPB|Central|Pacific/i.test(l.name || "");
         })[0] || list[0];
-        if(!npb) throw new Error("リーグ情報が見つかりませんでした");
-        var leagueId = npb.league.id;
+        if(!npb || npb.id == null) throw new Error("リーグ情報が見つかりませんでした");
+        var leagueId = npb.id;
         var seasons = npb.seasons || [];
-        var season = seasons.length ? seasons[seasons.length - 1].season : CURRENT_YEAR;
+        var season = seasons.length ? (seasons[seasons.length - 1].season || seasons[seasons.length - 1]) : CURRENT_YEAR;
         return fetch(base + "/teams?league=" + leagueId + "&season=" + season + "&search=Yokohama", { headers: headers })
           .then(function(r){ return r.json(); })
           .then(function(tjson){
-            var team = (tjson.response || [])[0];
-            if(!team) throw new Error("チーム情報が見つかりませんでした");
+            var raw = (tjson.response || [])[0];
+            var team = raw && (raw.team || raw);
+            if(!team || team.id == null) throw new Error("チーム情報が見つかりませんでした");
             state.settings.apiTeamId = team.id;
             state.settings.apiLeagueId = leagueId;
             saveState();
@@ -591,12 +593,15 @@ function fetchGameFromApi(dateStr){
       .then(function(r){ return r.json(); })
       .then(function(json){
         var game = (json.response || [])[0];
-        if(!game) throw new Error("この日の試合が見つかりませんでした");
-        var home = game.teams.home, away = game.teams.away;
+        if(!game || !game.teams || !game.scores) throw new Error("この日の試合が見つかりませんでした");
+        var home = game.teams.home || {}, away = game.teams.away || {};
         var isHome = /Yokohama|DeNA|BayStars/i.test(home.name || "");
-        var bay = isHome ? game.scores.home.total : game.scores.away.total;
-        var opp = isHome ? game.scores.away.total : game.scores.home.total;
+        var homeScore = game.scores.home && game.scores.home.total;
+        var awayScore = game.scores.away && game.scores.away.total;
+        var bay = isHome ? homeScore : awayScore;
+        var opp = isHome ? awayScore : homeScore;
         var oppName = isHome ? away.name : home.name;
+        if(bay == null || opp == null) throw new Error("スコアがまだ確定していません");
         return { opponent: oppName, bay: bay, opp: opp, result: computeResult(bay, opp) };
       });
   });
