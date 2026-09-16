@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- 接続先。Supabase の Settings → Data API の Project URL と、
+     Settings → API Keys の Publishable key（sb_publishable_… で始まる方）を入れます。
+     publishable キーは公開してよいキーです。守っているのはキーの秘密ではなく、
+     データベース側の RLS です（README の「キーが公開されて平気な理由」を参照）。
+     Secret key（sb_secret_… ）は絶対にここへ書かないでください。 -->
+<meta name="soccer-supabase-url" content="https://cgerblghsuaqdqtymfki.supabase.co">
+<meta name="soccer-supabase-key" content="">
+<title>出欠登録</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<style>
+:root{
+  --bg:#F4F6F4;
+  --card:#FFFFFF;
+  --ink:#16211B;
+  --ink-2:#5A6B61;
+  --ink-3:#8B9A91;
+  --line:#DFE5E0;
+  --pitch:#1E7A46;
+  --pitch-lit:#259455;
+  --pitch-soft:#E4F2EA;
+  --absent:#C2453B;
+  --absent-soft:#FBE9E7;
+  --shadow:0 1px 2px rgba(22,33,27,.06), 0 6px 16px rgba(22,33,27,.05);
+  --font:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#101613; --card:#18211C; --ink:#E9EFEA; --ink-2:#A3B3A9; --ink-3:#75857B;
+    --line:#26332B; --pitch:#3FA96B; --pitch-lit:#4CBE7C; --pitch-soft:#17301F;
+    --absent:#E4695C; --absent-soft:#331916;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 6px 16px rgba(0,0,0,.3);
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--font);
+  line-height:1.65; -webkit-text-size-adjust:100%;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+button{font-family:inherit;cursor:pointer}
+:focus-visible{outline:3px solid var(--pitch-lit);outline-offset:2px;border-radius:6px}
+[hidden]{display:none !important}
+
+.wrap{max-width:520px;margin:0 auto;padding:16px 14px 48px}
+
+/* ---- ヘッダー ---- */
+.head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  padding:6px 2px 14px;border-bottom:1px solid var(--line);margin-bottom:16px;flex-wrap:wrap}
+.team{font-size:13px;color:var(--ink-2);letter-spacing:.04em;font-weight:500}
+.me{font-size:20px;font-weight:900;letter-spacing:.02em}
+.me .num{font-size:13px;font-weight:700;color:var(--pitch);
+  background:var(--pitch-soft);border-radius:5px;padding:2px 7px;margin-right:7px;vertical-align:2px}
+
+/* ---- 見出し ---- */
+.sect{font-size:12px;font-weight:700;color:var(--ink-3);letter-spacing:.12em;
+  margin:22px 2px 9px}
+
+/* ---- 予定カード ---- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:14px 14px 12px;margin-bottom:11px;box-shadow:var(--shadow)}
+.card.done{border-color:transparent;box-shadow:none;opacity:.72}
+
+.when{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px}
+.date{font-size:19px;font-weight:900;letter-spacing:.01em;font-variant-numeric:tabular-nums}
+.date .dow{font-size:14px;margin-left:1px}
+.date.sat .dow{color:#2F7BC4}
+.date.sun .dow{color:var(--absent)}
+.badge{font-size:11px;font-weight:700;letter-spacing:.06em;padding:3px 8px;border-radius:999px}
+.badge.match{background:var(--pitch);color:#fff}
+.badge.practice{background:var(--pitch-soft);color:var(--pitch)}
+.time{font-size:14px;font-weight:700;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.where{font-size:13px;color:var(--ink-2);margin:0 0 2px}
+.note{font-size:13px;color:var(--ink-3);margin:0}
+
+/* ---- 出欠ボタン ---- */
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0 10px}
+.pick button{
+  border:2px solid var(--line);background:var(--card);color:var(--ink-2);
+  border-radius:11px;padding:13px 6px;font-size:16px;font-weight:700;letter-spacing:.06em;
+  transition:transform .08s ease;
+}
+.pick button:active{transform:scale(.97)}
+.pick button[aria-pressed="true"].yes{background:var(--pitch);border-color:var(--pitch);color:#fff}
+.pick button[aria-pressed="true"].no{background:var(--absent);border-color:var(--absent);color:#fff}
+.pick button:disabled{opacity:.5;cursor:default}
+
+.tally{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.tally b{font-size:17px;font-weight:900;color:var(--ink)}
+.tally .yes b{color:var(--pitch)}
+.tally .waiting{color:var(--ink-3)}
+.who{margin-left:auto;background:none;border:none;color:var(--pitch);
+  font-size:13px;font-weight:700;padding:4px 2px;text-decoration:underline;text-underline-offset:3px}
+
+.roster{margin:11px 0 0;padding:11px 0 0;border-top:1px dashed var(--line);
+  display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:12.5px;padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2)}
+.chip.yes{background:var(--pitch-soft);border-color:transparent;color:var(--pitch);font-weight:700}
+.chip.no{background:var(--absent-soft);border-color:transparent;color:var(--absent)}
+.chip.loading{color:var(--ink-3);border-style:dashed}
+
+/* ---- 状態表示 ---- */
+.msg{padding:16px;border-radius:12px;font-size:14px;line-height:1.75}
+.msg.error{background:var(--absent-soft);color:var(--absent);border:1px solid transparent}
+.msg.info{background:var(--card);border:1px solid var(--line);color:var(--ink-2)}
+.msg code{background:rgba(127,127,127,.14);padding:1px 5px;border-radius:4px;font-size:12.5px}
+.empty{text-align:center;color:var(--ink-3);font-size:14px;padding:26px 10px}
+
+.toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,14px);
+  background:var(--ink);color:var(--bg);font-size:13.5px;font-weight:700;
+  padding:10px 18px;border-radius:999px;opacity:0;pointer-events:none;
+  transition:opacity .18s ease, transform .18s ease;z-index:20}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.bad{background:var(--absent);color:#fff}
+
+.foot{margin-top:26px;text-align:center;font-size:12px;color:var(--ink-3)}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div id="app" aria-live="polite">
+    <p class="empty">読み込んでいます…</p>
+  </div>
+  <p class="foot" id="foot" hidden>押した内容はすぐ保存されます</p>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script src="./js/db.js"></script>
+<script>
+(function () {
+  const app = document.getElementById('app');
+  const foot = document.getElementById('foot');
+  const toastEl = document.getElementById('toast');
+
+  let token = null;
+  let data = null;
+  let openEvent = null;      // 「誰が来る？」を開いている予定のid
+  let rosterCache = {};
+  let busy = false;
+
+  // ---- 小さな道具 ----
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+
+  function fmtDate(iso) {
+    const [y, m, d] = String(iso).split('-').map(Number);
+    const dt = new Date(y, m - 1, d);          // ローカルで組み立て（時差でずれないように）
+    const dow = dt.getDay();
+    return {
+      text: m + '/' + d,
+      dow: DOW[dow],
+      cls: dow === 0 ? 'sun' : dow === 6 ? 'sat' : '',
+    };
+  }
+
+  const fmtTime = (t) => (t ? String(t).slice(0, 5) : '');
+
+  let toastTimer = null;
+  function toast(text, bad) {
+    toastEl.textContent = text;
+    toastEl.className = 'toast show' + (bad ? ' bad' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.className = 'toast'; }, bad ? 4200 : 1600);
+  }
+
+  // ---- 画面 ----
+  function showMessage(kind, html) {
+    foot.hidden = true;
+    app.innerHTML = '<div class="msg ' + kind + '">' + html + '</div>';
+  }
+
+  function eventCard(ev, isPast) {
+    const d = fmtDate(ev.date);
+    const yes = ev.yes_count || 0;
+    const no = ev.no_count || 0;
+    const waiting = Math.max(0, (data.member_count || 0) - yes - no);
+    const kindLabel = ev.kind === 'match' ? '試合' : '練習';
+
+    let html = '<div class="card' + (isPast ? ' done' : '') + '">';
+
+    html += '<div class="when">';
+    html += '<span class="date ' + d.cls + '">' + d.text + '<span class="dow">(' + d.dow + ')</span></span>';
+    html += '<span class="badge ' + ev.kind + '">' + kindLabel + '</span>';
+    if (ev.start_time) html += '<span class="time">' + esc(fmtTime(ev.start_time)) + '</span>';
+    html += '</div>';
+
+    if (ev.place) html += '<p class="where">' + esc(ev.place) + '</p>';
+    if (ev.note) html += '<p class="note">' + esc(ev.note) + '</p>';
+
+    if (!isPast) {
+      html += '<div class="pick">';
+      html += '<button class="yes" data-act="set" data-ev="' + ev.id + '" data-v="yes"' +
+              ' aria-pressed="' + (ev.my_status === 'yes') + '">出席</button>';
+      html += '<button class="no" data-act="set" data-ev="' + ev.id + '" data-v="no"' +
+              ' aria-pressed="' + (ev.my_status === 'no') + '">欠席</button>';
+      html += '</div>';
+    }
+
+    html += '<div class="tally">';
+    html += '<span class="yes">出席 <b>' + yes + '</b></span>';
+    html += '<span>欠席 <b>' + no + '</b></span>';
+    if (!isPast) html += '<span class="waiting">未回答 <b>' + waiting + '</b></span>';
+    html += '<button class="who" data-act="who" data-ev="' + ev.id + '">' +
+            (openEvent === ev.id ? '閉じる' : '誰が来る？') + '</button>';
+    html += '</div>';
+
+    if (openEvent === ev.id) {
+      const roster = rosterCache[ev.id];
+      html += '<div class="roster">';
+      if (!roster) {
+        html += '<span class="chip loading">読み込み中…</span>';
+      } else {
+        for (const m of roster) {
+          const cls = m.status === 'yes' ? 'yes' : m.status === 'no' ? 'no' : '';
+          const mark = m.status === 'yes' ? '○ ' : m.status === 'no' ? '× ' : '';
+          html += '<span class="chip ' + cls + '">' + mark + esc(m.name) + '</span>';
+        }
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function render() {
+    const me = data.me;
+    let html = '';
+
+    html += '<div class="head">';
+    html += '<div><div class="team">' + esc(data.team) + '</div>';
+    html += '<div class="me">' + (me.number ? '<span class="num">' + esc(me.number) + '</span>' : '') +
+            esc(me.name) + '</div></div>';
+    html += '</div>';
+
+    const upcoming = data.events || [];
+    html += '<div class="sect">これからの予定</div>';
+    if (!upcoming.length) {
+      html += '<p class="empty">これからの予定はまだ登録されていません。</p>';
+    } else {
+      for (const ev of upcoming) html += eventCard(ev, false);
+    }
+
+    const past = (data.past || []).slice(0, 5);
+    if (past.length) {
+      html += '<div class="sect">おわった分</div>';
+      for (const ev of past) html += eventCard(ev, true);
+    }
+
+    app.innerHTML = html;
+    foot.hidden = false;
+  }
+
+  // ---- 操作 ----
+  async function setStatus(eventId, value) {
+    if (busy) return;
+    const current = (data.events || []).find((e) => e.id === eventId);
+    // 同じボタンをもう一度押したら未回答に戻す
+    const next = current && current.my_status === value ? null : value;
+
+    busy = true;
+    document.querySelectorAll('.pick button').forEach((b) => { b.disabled = true; });
+    try {
+      data = await DB.rpc('set_status', { p_token: token, p_event_id: eventId, p_status: next });
+      delete rosterCache[eventId];
+      if (openEvent === eventId) await loadRoster(eventId);
+      render();
+      toast(next === 'yes' ? '出席で登録しました' : next === 'no' ? '欠席で登録しました' : '未回答に戻しました');
+    } catch (e) {
+      toast(e.message, true);
+      document.querySelectorAll('.pick button').forEach((b) => { b.disabled = false; });
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function loadRoster(eventId) {
+    const res = await DB.rpc('event_detail', { p_token: token, p_event_id: eventId });
+    rosterCache[eventId] = res.roster || [];
+  }
+
+  async function toggleWho(eventId) {
+    if (openEvent === eventId) { openEvent = null; render(); return; }
+    openEvent = eventId;
+    render();
+    if (!rosterCache[eventId]) {
+      try { await loadRoster(eventId); } catch (e) { toast(e.message, true); }
+      render();
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    if (btn.dataset.act === 'set') setStatus(btn.dataset.ev, btn.dataset.v);
+    if (btn.dataset.act === 'who') toggleWho(btn.dataset.ev);
+  });
+
+  // ---- 起動 ----
+  async function start() {
+    if (!DB.ready()) {
+      showMessage('info',
+        '<b>まだ接続先が設定されていません。</b><br>' +
+        'index.html の <code>soccer-supabase-key</code> の meta タグに、Supabase の ' +
+        'Publishable key を入れてください。');
+      return;
+    }
+
+    token = (location.hash || '').replace(/^#\/?m?\/?/, '').trim();
+    if (!token) {
+      showMessage('info',
+        '<b>個人リンクから開いてください。</b><br>' +
+        'チームのLINEに届いた、あなた専用のURLをタップすると出欠を登録できます。' +
+        'リンクが分からない場合はマネージャーに聞いてください。');
+      return;
+    }
+
+    try {
+      data = await DB.rpc('member_home', { p_token: token });
+      render();
+    } catch (e) {
+      showMessage('error', '<b>開けませんでした。</b><br>' + esc(e.message));
+    }
+  }
+
+  window.addEventListener('hashchange', () => location.reload());
+  start();
+})();
+</script>
+</body>
+</html>
