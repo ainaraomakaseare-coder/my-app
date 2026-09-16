@@ -4,214 +4,501 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>30日で30アプリ</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23151821'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' fill='%23e8eaf2'%3E30%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23C23B22'/%3E%3Ctext x='16' y='23' font-size='16' text-anchor='middle' fill='%23F6F1E6' font-family='Georgia,serif'%3E30%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
 <style>
-  :root { --bg:#151821; --card:#1e2230; --line:#333849; --text:#e8eaf2; --muted:#959ab0; --accent:#c8643c; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); line-height:1.7;
-         font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic",sans-serif; }
-  .wrap { max-width:720px; margin:0 auto; padding:48px 20px 64px; }
-  h1 { font-size:30px; margin:0 0 6px; letter-spacing:.04em; }
-  .lead { color:var(--muted); margin:0 0 36px; font-size:15px; }
-  ul { list-style:none; margin:0; padding:0; display:grid; gap:14px; }
-  a.card { display:block; background:var(--card); border:1px solid var(--line); border-radius:14px;
-           padding:18px 20px; text-decoration:none; color:inherit; transition:border-color .15s, transform .15s; }
-  a.card:hover { border-color:var(--accent); transform:translateY(-2px); }
-  .day { font-size:12px; color:var(--accent); font-weight:700; letter-spacing:.1em; }
-  .name { font-size:20px; font-weight:700; margin:2px 0 4px; }
-  .desc { font-size:13px; color:var(--muted); margin:0; }
-  .new { font-size:12px; color:var(--muted); margin:8px 0 0; padding-top:8px; border-top:1px solid var(--line); }
-  .new b { color:var(--text); font-weight:600; }
-  .card.unpublished { display:block; background:var(--card); border:1px dashed var(--line); border-radius:14px;
-           padding:18px 20px; opacity:.82; }
-  .day-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  .badge { flex:0 0 auto; font-size:11px; color:var(--muted); border:1px solid var(--line);
-           border-radius:999px; padding:2px 9px; letter-spacing:.04em; }
-  .gap { list-style:none; padding:2px 4px; text-align:center; font-size:12px; color:var(--muted); letter-spacing:.03em; }
-  footer { margin-top:40px; font-size:12px; color:var(--muted); text-align:center; }
-  footer a { color:var(--muted); }
+  :root{
+    --paper:#F6F1E6; --paper-line:#E3D9C6; --ink:#211D17; --ink-dim:#7A7062;
+    --accent:#C23B22; --accent-soft:#E9DCC9;
+    --serif:"Shippori Mincho B1","Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
+    --sans:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.7}
+  a{color:inherit}
+  .wrap{max-width:660px;margin:0 auto;padding:56px 24px 90px}
+  .kicker{font-size:11px;letter-spacing:.32em;color:var(--accent);font-weight:700}
+  h1{font-family:var(--serif);font-weight:800;font-size:36px;margin:12px 0 10px;letter-spacing:.02em}
+  .lead{font-size:14.5px;line-height:1.9;color:var(--ink-dim);margin:0 0 8px;max-width:48ch}
+  ul.entries{list-style:none;margin:44px 0 0;padding:0}
+  .entry{position:relative;padding:28px 0 32px;border-top:1px solid var(--paper-line)}
+  .entry:first-child{border-top:1px solid var(--ink)}
+  .ghost{position:absolute;right:-2px;top:16px;font-family:var(--serif);font-weight:800;
+    font-size:72px;color:var(--accent-soft);line-height:1;z-index:0;user-select:none;pointer-events:none}
+  .body{position:relative;z-index:1;padding-right:74px}
+  .daytag{font-size:11px;letter-spacing:.22em;color:var(--ink-dim);font-weight:700}
+  .name{font-family:var(--serif);font-weight:800;font-size:23px;margin:7px 0 11px;letter-spacing:.01em}
+  .desc{font-size:14px;line-height:1.9;color:var(--ink);margin:0 0 13px}
+  .new{font-size:12.5px;line-height:1.85;color:var(--ink-dim);margin:0 0 18px;padding-left:14px;
+    border-left:2px solid var(--accent-soft)}
+  .new b{color:var(--ink);font-weight:700}
+  .links{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .lnk{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;
+    letter-spacing:.03em;padding:9px 16px;border-radius:2px;text-decoration:none;transition:opacity .15s}
+  .lnk:hover{opacity:.75}
+  .lnk.app{background:var(--ink);color:var(--paper)}
+  .lnk.video{border:1px solid var(--ink);color:var(--ink)}
+  .lnk.none{border:1px dashed var(--paper-line);color:var(--ink-dim)}
+  .lnk svg{width:12px;height:12px;flex:0 0 auto}
+  .gap{list-style:none;padding:20px 0;text-align:center;font-size:12.5px;color:var(--ink-dim);
+    letter-spacing:.04em;border-top:1px solid var(--paper-line)}
+  footer{margin-top:44px;font-size:12px;color:var(--ink-dim);text-align:center;line-height:1.9}
+  footer a{color:var(--ink-dim)}
+  @media (max-width:480px){
+    h1{font-size:28px}
+    .ghost{font-size:52px;top:12px}
+    .body{padding-right:56px}
+    .name{font-size:20px}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <div class="kicker">30 DAYS, 30 APPS</div>
   <h1>30日で30アプリ</h1>
-  <p class="lead">AIアプリ開発初心者が、30日で30個のアプリを作る記録。1日ひとつ、新しい開発スキルを覚えていきます。</p>
+  <p class="lead">AIアプリ開発初心者が、30日で30個のアプリを作る記録。1日ひとつ、新しい開発スキルを覚えていきます。各DAYの様子はYouTube Shortsでも見られます。</p>
 
-  <ul>
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 1</span><span class="badge">紹介のみ</span></div>
-      <p class="name">くじ引きアプリ</p>
-      <p class="desc">ボタンを押して抽選できる、初めての自作アプリ。AIに作りたいものを伝え、実際に画面で動く形にしました。</p>
-      <p class="new">新しい挑戦：<b>プログラミング初心者が、AIと初めてアプリを作る</b></p>
-    </div></li>
+  <ul class="entries">
+    <li class="entry">
+      <span class="ghost">01</span>
+      <div class="body">
+        <span class="daytag">DAY 1</span>
+        <p class="name">くじ引きアプリ</p>
+        <p class="desc">ボタンを押して抽選できる、初めての自作アプリ。AIに作りたいものを伝え、実際に画面で動く形にしました。</p>
+        <p class="new">新しい挑戦：<b>プログラミング初心者が、AIと初めてアプリを作る</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/uEHYUOzh8rM?si=N2qNLu-hgjhHvWZO" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 2</span><span class="badge">紹介のみ</span></div>
-      <p class="name">ミリオネア風クイズ</p>
-      <p class="desc">4択問題に答えて楽しむクイズゲーム。出題から回答、正誤判定まで、ゲームとして遊べる流れを作りました。</p>
-      <p class="new">新しい挑戦：<b>画面の切り替えや正誤判定のあるゲームを作る</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">02</span>
+      <div class="body">
+        <span class="daytag">DAY 2</span>
+        <p class="name">ミリオネア風クイズ</p>
+        <p class="desc">4択問題に答えて楽しむクイズゲーム。出題から回答、正誤判定まで、ゲームとして遊べる流れを作りました。</p>
+        <p class="new">新しい挑戦：<b>画面の切り替えや正誤判定のあるゲームを作る</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/J36k07X_5rk?si=9-rJ4fC2k7cafPOF" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day03-chinchiro/">
-      <span class="day">DAY 3</span>
-      <p class="name">チンチロ</p>
-      <p class="desc">サイコロの出目で勝負するチンチロアプリ。作り始める前にAIから質問してもらい、必要なルールや機能を整理しました。</p>
-      <p class="new">新しい挑戦：<b>AIに先に質問してもらい、作るものを具体化する</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">03</span>
+      <div class="body">
+        <span class="daytag">DAY 3</span>
+        <p class="name">チンチロ</p>
+        <p class="desc">サイコロの出目で勝負するチンチロアプリ。作り始める前にAIから質問してもらい、必要なルールや機能を整理しました。</p>
+        <p class="new">新しい挑戦：<b>AIに先に質問してもらい、作るものを具体化する</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day03-chinchiro/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/8ivQuJa29-s?si=c4Gz1s2lnZFZQ8HX" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day04-blackjack/">
-      <span class="day">DAY 4</span>
-      <p class="name">輸入ブラックジャック</p>
-      <p class="desc">独自ルールを取り入れたブラックジャック。普段は感覚で遊んでいるルールを言葉にし、AIと確認しながら実装しました。</p>
-      <p class="new">新しい挑戦：<b>複雑な独自ルールを、AIが実装できる説明にする</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">04</span>
+      <div class="body">
+        <span class="daytag">DAY 4</span>
+        <p class="name">輸入ブラックジャック</p>
+        <p class="desc">独自ルールを取り入れたブラックジャック。普段は感覚で遊んでいるルールを言葉にし、AIと確認しながら実装しました。</p>
+        <p class="new">新しい挑戦：<b>複雑な独自ルールを、AIが実装できる説明にする</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day04-blackjack/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/txHqWma03rc?si=-zB9tDKtZBKrETgc" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day05-dramaou/">
-      <span class="day">DAY 5</span>
-      <p class="name">ドラマ王</p>
-      <p class="desc">ドラマの知識で楽しむクイズアプリ。良い問題と悪い問題の例をAIに渡し、答えの曖昧さや難易度を改善しました。</p>
-      <p class="new">新しい挑戦：<b>AIに問題を作らせるための品質基準を伝える</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">05</span>
+      <div class="body">
+        <span class="daytag">DAY 5</span>
+        <p class="name">ドラマ王</p>
+        <p class="desc">ドラマの知識で楽しむクイズアプリ。良い問題と悪い問題の例をAIに渡し、答えの曖昧さや難易度を改善しました。</p>
+        <p class="new">新しい挑戦：<b>AIに問題を作らせるための品質基準を伝える</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day05-dramaou/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/4u84pgwnGOw?si=4HKfghMo_NZE9yyD" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day06-jinro/">
-      <span class="day">DAY 6</span>
-      <p class="name">人狼</p>
-      <p class="desc">参加者がそれぞれのスマホから参加し、自分の役職を確認できる人狼アプリ。1台の端末を回す遊びから、複数端末で遊べる形へ広げました。</p>
-      <p class="new">新しい挑戦：<b>アプリをネット公開し、複数のスマホで使う</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">06</span>
+      <div class="body">
+        <span class="daytag">DAY 6</span>
+        <p class="name">人狼</p>
+        <p class="desc">参加者がそれぞれのスマホから参加し、自分の役職を確認できる人狼アプリ。1台の端末を回す遊びから、複数端末で遊べる形へ広げました。</p>
+        <p class="new">新しい挑戦：<b>アプリをネット公開し、複数のスマホで使う</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day06-jinro/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/So6TvNWXJes?si=mWaekZIgVHPbjAoi" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day07-soccer-attendance/">
-      <span class="day">DAY 7</span>
-      <p class="name">サッカー出欠管理</p>
-      <p class="desc">チームの予定とメンバーの出欠を管理するアプリ。データベースに保存することで、画面を閉じても記録が残り、共有できるようにしました。</p>
-      <p class="new">新しい挑戦：<b>データベースを使って、記録を保存・共有する</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">07</span>
+      <div class="body">
+        <span class="daytag">DAY 7</span>
+        <p class="name">サッカー出欠管理</p>
+        <p class="desc">チームの予定とメンバーの出欠を管理するアプリ。データベースに保存することで、画面を閉じても記録が残り、共有できるようにしました。</p>
+        <p class="new">新しい挑戦：<b>データベースを使って、記録を保存・共有する</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day07-soccer-attendance/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/7NaIpDODvzw?si=TX9NGNVc0DqX9jHb" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day07-soccer-attendance/">
-      <span class="day">DAY 8</span>
-      <p class="name">サッカー出欠管理・実用化</p>
-      <p class="desc">実際のサッカーチームへアプリを提案。名簿や予定、出欠の管理を、チームの運用や利用者の要望に合わせて見直しました。</p>
-      <p class="new">新しい挑戦：<b>実際の利用者に提案し、要望を受けて改善する</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">08</span>
+      <div class="body">
+        <span class="daytag">DAY 8</span>
+        <p class="name">サッカー出欠管理・実用化</p>
+        <p class="desc">実際のサッカーチームへアプリを提案。名簿や予定、出欠の管理を、チームの運用や利用者の要望に合わせて見直しました。</p>
+        <p class="new">新しい挑戦：<b>実際の利用者に提案し、要望を受けて改善する</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day07-soccer-attendance/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/1f5iw6yLhkA?si=Pg7tnn-RExIxt-_6" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day05-dramaou/">
-      <span class="day">DAY 9</span>
-      <p class="name">ドラマ王・改良版</p>
-      <p class="desc">Wikipediaのドラマ情報をもとに、アプリ内でAIがクイズを生成。生成した候補を検査し、利用者に出す問題の質を整えました。</p>
-      <p class="new">新しい挑戦：<b>外部AIのAPIを組み込み、アプリの中でAIを動かす</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">09</span>
+      <div class="body">
+        <span class="daytag">DAY 9</span>
+        <p class="name">ドラマ王・改良版</p>
+        <p class="desc">Wikipediaのドラマ情報をもとに、アプリ内でAIがクイズを生成。生成した候補を検査し、利用者に出す問題の質を整えました。</p>
+        <p class="new">新しい挑戦：<b>外部AIのAPIを組み込み、アプリの中でAIを動かす</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day05-dramaou/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/iWkuDNA2HZk?si=yKG2L9ZPHZU6syUg" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 10</span><span class="badge">紹介のみ</span></div>
-      <p class="name">マルチジャンル・パーティークイズ</p>
-      <p class="desc">参加者が選んだWikipedia記事から、AIが難易度別のクイズを作るパーティーゲーム。チーム対戦や得点管理、採点の取り消しにも対応しました。</p>
-      <p class="new">新しい挑戦：<b>好きな題材からAIが問題を作る、対戦型ゲームへ発展させる</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">10</span>
+      <div class="body">
+        <span class="daytag">DAY 10</span>
+        <p class="name">マルチジャンル・パーティークイズ</p>
+        <p class="desc">参加者が選んだWikipedia記事から、AIが難易度別のクイズを作るパーティーゲーム。チーム対戦や得点管理、採点の取り消しにも対応しました。</p>
+        <p class="new">新しい挑戦：<b>好きな題材からAIが問題を作る、対戦型ゲームへ発展させる</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/hRrYxoPF-U8?si=O1zcq-9BwrQ0c5rF" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 11</span><span class="badge">紹介のみ</span></div>
-      <p class="name">投稿卓</p>
-      <p class="desc">自作アプリからSNSへ投稿するための管理アプリ。SNSごとの認証や権限を設定し、Instagramへの投稿を実現しました。</p>
-      <p class="new">新しい挑戦：<b>SNSのAPIと連携し、自作アプリから投稿する</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">11</span>
+      <div class="body">
+        <span class="daytag">DAY 11</span>
+        <p class="name">投稿卓</p>
+        <p class="desc">自作アプリからSNSへ投稿するための管理アプリ。SNSごとの認証や権限を設定し、Instagramへの投稿を実現しました。</p>
+        <p class="new">新しい挑戦：<b>SNSのAPIと連携し、自作アプリから投稿する</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/EBSf4_FfJZQ?si=uI-ZY_FlMRgUc7ek" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 12</span><span class="badge">紹介のみ</span></div>
-      <p class="name">投稿卓 NEO</p>
-      <p class="desc">投稿卓に予約投稿の仕組みを追加。処理をクラウド側へ移し、自分のPCを閉じていても予約時刻に投稿処理が動くようにしました。</p>
-      <p class="new">新しい挑戦：<b>PCを開いていなくても動く、クラウドでの自動処理</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">12</span>
+      <div class="body">
+        <span class="daytag">DAY 12</span>
+        <p class="name">投稿卓 NEO</p>
+        <p class="desc">投稿卓に予約投稿の仕組みを追加。処理をクラウド側へ移し、自分のPCを閉じていても予約時刻に投稿処理が動くようにしました。</p>
+        <p class="new">新しい挑戦：<b>PCを開いていなくても動く、クラウドでの自動処理</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/C6nZsMIp0Fc?si=Zpmz-j6FaCcHWZDI" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 13</span><span class="badge">紹介のみ</span></div>
-      <p class="name">アフィリエイト運用アプリ</p>
-      <p class="desc">ネタの入力から投稿文・動画の生成、点検、下書き保存、SNSへの受け渡しまでをまとめた運用アプリ。A8.netの案件を使い、実際の運用を進めました。</p>
-      <p class="new">新しい挑戦：<b>複数の生成・確認・保存処理を、ひと続きの運用にする</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">13</span>
+      <div class="body">
+        <span class="daytag">DAY 13</span>
+        <p class="name">アフィリエイト運用アプリ</p>
+        <p class="desc">ネタの入力から投稿文・動画の生成、点検、下書き保存、SNSへの受け渡しまでをまとめた運用アプリ。A8.netの案件を使い、実際の運用を進めました。</p>
+        <p class="new">新しい挑戦：<b>複数の生成・確認・保存処理を、ひと続きの運用にする</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/EqMJrypTMss?si=IrsYJt8EJdePWbdM" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 14</span><span class="badge">紹介のみ</span></div>
-      <p class="name">AI動画編集</p>
-      <p class="desc">自撮りや画面録画をもとに、AIが紹介動画を編集。不要な部分のカット、字幕、説明テロップ、最後のRESULTまで、動画制作の作業を任せました。</p>
-      <p class="new">新しい挑戦：<b>撮影素材をAIに渡し、編集済みの動画に仕上げる</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">14</span>
+      <div class="body">
+        <span class="daytag">DAY 14</span>
+        <p class="name">AI動画編集</p>
+        <p class="desc">自撮りや画面録画をもとに、AIが紹介動画を編集。不要な部分のカット、字幕、説明テロップ、最後のRESULTまで、動画制作の作業を任せました。</p>
+        <p class="new">新しい挑戦：<b>撮影素材をAIに渡し、編集済みの動画に仕上げる</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/liJlkuC0CC0?si=-FRsQReeaXExWiT-" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 15</span><span class="badge">紹介のみ</span></div>
-      <p class="name">note記事作成</p>
-      <p class="desc">開発ログをもとに、失敗や学びが伝わる記事を作成。タイトルや本文、ヘッダー画像を整え、noteの下書きとして保存しました。</p>
-      <p class="new">新しい挑戦：<b>開発記録を記事に変え、外部サービスの下書き登録まで進める</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">15</span>
+      <div class="body">
+        <span class="daytag">DAY 15</span>
+        <p class="name">note記事作成</p>
+        <p class="desc">開発ログをもとに、失敗や学びが伝わる記事を作成。タイトルや本文、ヘッダー画像を整え、noteの下書きとして保存しました。</p>
+        <p class="new">新しい挑戦：<b>開発記録を記事に変え、外部サービスの下書き登録まで進める</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/So6TvNWXJes?si=3TaThNZxfHAP2SPt" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 16</span><span class="badge">紹介のみ</span></div>
-      <p class="name">モルック規程検索</p>
-      <p class="desc">複数の公式PDFを横断し、質問に関係する箇所を探す検索アプリ。文書名・ページ番号・原文を表示し、根拠となるPDFも開けます。</p>
-      <p class="new">新しい挑戦：<b>大量の資料を分割し、質問に関連する部分を検索する</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">16</span>
+      <div class="body">
+        <span class="daytag">DAY 16</span>
+        <p class="name">モルック規程検索</p>
+        <p class="desc">複数の公式PDFを横断し、質問に関係する箇所を探す検索アプリ。文書名・ページ番号・原文を表示し、根拠となるPDFも開けます。</p>
+        <p class="new">新しい挑戦：<b>大量の資料を分割し、質問に関連する部分を検索する</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/3BvJfSXJVr8?si=3oBnz2AWDgdAIZyJ" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 17</span><span class="badge">紹介のみ</span></div>
-      <p class="name">モルック規程RAGチャットボット</p>
-      <p class="desc">DAY16の検索を、AIが根拠付きで答えるチャットへ発展。質問の意味や会話の流れを踏まえ、資料に根拠がなければ回答を止める仕組みを加えました。</p>
-      <p class="new">新しい挑戦：<b>検索した資料を根拠に、AIが会話形式で回答する</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">17</span>
+      <div class="body">
+        <span class="daytag">DAY 17</span>
+        <p class="name">モルック規程RAGチャットボット</p>
+        <p class="desc">DAY16の検索を、AIが根拠付きで答えるチャットへ発展。質問の意味や会話の流れを踏まえ、資料に根拠がなければ回答を止める仕組みを加えました。</p>
+        <p class="new">新しい挑戦：<b>検索した資料を根拠に、AIが会話形式で回答する</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/fB-pA2n-DWE?si=1dWQQpYmxHnUBn_I" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day18-omoide-wiki/">
-      <span class="day">DAY 18</span>
-      <p class="name">おもいでWiki</p>
-      <p class="desc">AIのインタビューに音声で答えながら、人生や思い出を記録するアプリ。話した内容を深掘りする質問を通して、その人らしいエピソードを残します。</p>
-      <p class="new">新しい挑戦：<b>音声で対話しながら、AIが思い出を聞き出す</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">18</span>
+      <div class="body">
+        <span class="daytag">DAY 18</span>
+        <p class="name">おもいでWiki</p>
+        <p class="desc">AIのインタビューに音声で答えながら、人生や思い出を記録するアプリ。話した内容を深掘りする質問を通して、その人らしいエピソードを残します。</p>
+        <p class="new">新しい挑戦：<b>音声で対話しながら、AIが思い出を聞き出す</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day18-omoide-wiki/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/_1ofax5UZ7w?si=5D7oDL6PlxdKO8z7" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day07-tabilog/">
-      <span class="day">DAY 19</span>
-      <p class="name">旅の足跡</p>
-      <p class="desc">旅行の写真・動画・場所・費用・感想を、予定ごとにまとめる旅行記録アプリ。一緒に行った人との共有や、旅先のお気に入りの振り返りに対応しました。</p>
-      <p class="new">新しい挑戦：<b>複数人の旅行記録を、予定や場所と結び付けて共有する</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">19</span>
+      <div class="body">
+        <span class="daytag">DAY 19</span>
+        <p class="name">旅の足跡</p>
+        <p class="desc">旅行の写真・動画・場所・費用・感想を、予定ごとにまとめる旅行記録アプリ。一緒に行った人との共有や、旅先のお気に入りの振り返りに対応しました。</p>
+        <p class="new">新しい挑戦：<b>複数人の旅行記録を、予定や場所と結び付けて共有する</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day07-tabilog/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/FSS15twQYw4?si=HIZYKx-Hz7U4FLig" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day07-tabilog/">
-      <span class="day">DAY 20</span>
-      <p class="name">旅の足跡・音声入力</p>
-      <p class="desc">その日にあったことをまとめて話すと、文字起こしをもとにAIが複数の予定・記録へ整理。メールの確認コードによるログインも追加しました。</p>
-      <p class="new">新しい挑戦：<b>音声を文字にし、AIが記録として使える形に整理する</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">20</span>
+      <div class="body">
+        <span class="daytag">DAY 20</span>
+        <p class="name">旅の足跡・音声入力</p>
+        <p class="desc">その日にあったことをまとめて話すと、文字起こしをもとにAIが複数の予定・記録へ整理。メールの確認コードによるログインも追加しました。</p>
+        <p class="new">新しい挑戦：<b>音声を文字にし、AIが記録として使える形に整理する</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day07-tabilog/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+          <a class="lnk video" href="https://youtube.com/shorts/jOQLTC39QN0?si=9bF0anHkEIvHPNDm" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 21</span><span class="badge">紹介のみ</span></div>
-      <p class="name">チケットアンテナ</p>
-      <p class="desc">ベイスターズのチケット販売や抽選の見逃しを減らすためのアプリ。販売開始・申込期限・応募条件をまとめ、新しく検出した受付を見つけやすく表示します。</p>
-      <p class="new">新しい挑戦：<b>複数の販売元から情報を集め、新しい受付を見分ける</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">21</span>
+      <div class="body">
+        <span class="daytag">DAY 21</span>
+        <p class="name">チケットアンテナ</p>
+        <p class="desc">ベイスターズのチケット販売や抽選の見逃しを減らすためのアプリ。販売開始・申込期限・応募条件をまとめ、新しく検出した受付を見つけやすく表示します。</p>
+        <p class="new">新しい挑戦：<b>複数の販売元から情報を集め、新しい受付を見分ける</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+          <a class="lnk video" href="https://youtube.com/shorts/TWqAZr7w8Tw?si=zcJMCMHfApy2d7FG" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M8 5v14l11-7-11-7z" fill="currentColor"/></svg>
+            Shorts を見る
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><div class="card unpublished">
-      <div class="day-row"><span class="day">DAY 22</span><span class="badge">紹介のみ</span></div>
-      <p class="name">ともだち名鑑</p>
-      <p class="desc">友達の写真・趣味・経歴・エピソードを、人ごとにまとめる紹介アプリ。友達も編集でき、大学やサークルなどの所属ごとに整理したり、みんなのエピソードを残したりできます。</p>
-      <p class="new">新しい挑戦：<b>友達と一緒にプロフィールを育てられる、共同編集の仕組みを作る</b></p>
-    </div></li>
+    <li class="entry">
+      <span class="ghost">22</span>
+      <div class="body">
+        <span class="daytag">DAY 22</span>
+        <p class="name">ともだち名鑑</p>
+        <p class="desc">友達の写真・趣味・経歴・エピソードを、人ごとにまとめる紹介アプリ。友達も編集でき、大学やサークルなどの所属ごとに整理したり、みんなのエピソードを残したりできます。</p>
+        <p class="new">新しい挑戦：<b>友達と一緒にプロフィールを育てられる、共同編集の仕組みを作る</b></p>
+        <div class="links">
+          <span class="lnk none">紹介のみ</span>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day23-baydiary/">
-      <span class="day">DAY 23</span>
-      <p class="name">ベイ日記</p>
-      <p class="desc">横浜DeNAベイスターズの観戦記録日記。行った試合の対戦相手・スコア・勝敗はもちろん、同行者やチケット代、天気、写真、自分なりのMVPや興奮したシーンまで残せます。</p>
-      <p class="new">新しい挑戦：<b>個人的な観戦記録から選手の活躍を分析する</b></p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">23</span>
+      <div class="body">
+        <span class="daytag">DAY 23</span>
+        <p class="name">ベイ日記</p>
+        <p class="desc">横浜DeNAベイスターズの観戦記録日記。行った試合の対戦相手・スコア・勝敗はもちろん、同行者やチケット代、天気、写真、自分なりのMVPや興奮したシーンまで残せます。</p>
+        <p class="new">新しい挑戦：<b>個人的な観戦記録から選手の活躍を分析する</b></p>
+        <div class="links">
+          <a class="lnk app" href="apps/day23-baydiary/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+        </div>
+      </div>
+    </li>
 
-    <li><a class="card" href="apps/day24-poimamo/">
-      <span class="day">DAY 24〜25</span>
-      <p class="name">ポイまも</p>
-      <p class="desc">楽天ポイント・Vポイント・ANAマイレージ・Amazonポイントなど、あちこちのポイントの残高と失効日をまとめて管理。1つのサービスが持つ複数の内訳（失効日違いの期間限定ポイント＋通常ポイント）をサービス単位でまとめて表示し、スクショをAIに読み取らせて内訳ごと更新できます（読み取り結果は必ず確認してから確定）。</p>
-      <p class="new">新しい挑戦：<b>スクリーンショットをAI（画像理解）に読み取らせて登録内容を自動入力する</b>（DAY25で<b>Claude Designでのビジュアル刷新</b>と<b>サービス単位の複数内訳・スクショ一括更新</b>を追加）</p>
-    </a></li>
+    <li class="entry">
+      <span class="ghost">24</span>
+      <div class="body">
+        <span class="daytag">DAY 24〜25</span>
+        <p class="name">ポイまも</p>
+        <p class="desc">楽天ポイント・Vポイント・ANAマイレージ・Amazonポイントなど、あちこちのポイントの残高と失効日をまとめて管理。1つのサービスが持つ複数の内訳（失効日違いの期間限定ポイント＋通常ポイント）をサービス単位でまとめて表示し、スクショをAIに読み取らせて内訳ごと更新できます（読み取り結果は必ず確認してから確定）。</p>
+        <p class="new">新しい挑戦：<b>スクリーンショットをAI（画像理解）に読み取らせて登録内容を自動入力する</b>（DAY25で<b>Claude Designでのビジュアル刷新</b>と<b>サービス単位の複数内訳・スクショ一括更新</b>を追加）</p>
+        <div class="links">
+          <a class="lnk app" href="apps/day24-poimamo/">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            アプリを開く
+          </a>
+        </div>
+      </div>
+    </li>
 
     <li class="gap">DAY 26〜30 ・ まだ公開できる形になっていません</li>
   </ul>
 
   <footer>
     企画の記録は <a href="docs/progress.md">docs/progress.md</a> にあります。<br>
-    「紹介のみ」のDAYは、このサイト（GitHub Pages）にはまだ載せていないアプリのため、紹介文だけを掲載しています。
+    「紹介のみ」のDAYは、このサイト（GitHub Pages）にはまだアプリを載せていないため、紹介文とShorts動画だけを掲載しています。
   </footer>
 </div>
 </body>
