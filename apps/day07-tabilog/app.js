@@ -1650,7 +1650,12 @@
     if (!user) { openLogin('mylog'); return; }
     var msgEl = $('#planStatusMessage');
     msgEl.textContent = '決済ページに移動しています…';
-    var returnUrl = location.origin + location.pathname;
+    // iOSアプリ内ではlocation.originがcapacitor://localhostになり、
+    // Stripeが成功/キャンセルURLとして受け付けず決済ページの作成自体が失敗するため、
+    // その場合は実際に公開しているWebサイトのURLを使う。
+    var returnUrl = isNativeApp()
+      ? 'https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/'
+      : location.origin + location.pathname;
     api('/billing/checkout', 'POST', {
       email: user.email,
       plan: plan,

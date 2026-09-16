@@ -12,7 +12,7 @@
     {
       "binding": "DB",
       "database_name": "tabilog-db",
-      "database_id": "REPLACE_WITH_YOUR_DATABASE_ID"
+      "database_id": "9c69d573-f2c3-4105-8b97-ba3ba49119b1"
     }
   ],
   "r2_buckets": [
