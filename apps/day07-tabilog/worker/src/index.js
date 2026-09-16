@@ -1477,6 +1477,9 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    // 一時的な調査用ログ（iOSアプリからのOriginヘッダーの実際の値を確認するため）。
+    // 原因が分かり次第このconsole.logは削除する。
+    console.log("origin header:", JSON.stringify(origin), "path:", path, "method:", method);
 
     if (method === "OPTIONS") return new Response(null, { status: 204, headers });
     // Webhookはブラウザ（Origin付き）ではなくStripeのサーバーから直接叩かれるため対象外。
