@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>旅の足跡</title>
+<meta name="robots" content="noindex">
+<link rel="canonical" href="https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/">
+<!-- meta refreshは付けない。付けるとクエリ文字列(?trip=...)を保ったまま転送するJSより先に
+     発火し、共有リンク（旅行ID付きURL）を開いたときにトップページへ飛んでしまうため -->
+<noscript><meta http-equiv="refresh" content="0; url=../day07-tabilog/"></noscript>
+<style>
+  body { margin: 0; min-height: 100dvh; display: flex; align-items: center; justify-content: center;
+         background: #FFF7E8; color: #3D2B1F; font-family: 'Zen Maru Gothic', system-ui, sans-serif; text-align: center; }
+  a { color: #FF6B4A; font-weight: 700; }
+</style>
+</head>
+<body>
+  <p>「旅の足跡」に移動しています…<br><a href="../day07-tabilog/">移動しない場合はこちらを押してください</a></p>
+  <script>
+    location.replace('../day07-tabilog/' + location.search + location.hash);
+  </script>
+</body>
+</html>
