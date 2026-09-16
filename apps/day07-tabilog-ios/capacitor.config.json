@@ -4,5 +4,10 @@
   "webDir": "../day07-tabilog",
   "ios": {
     "contentInset": "automatic"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
   }
 }
