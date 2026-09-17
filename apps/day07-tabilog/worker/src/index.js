@@ -1269,12 +1269,7 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
 
   const { buf, contentType, getHeader } = await readBinaryBody(request);
   const format = VOICE_AUDIO_FORMATS[contentType];
-  if (!format) {
-    // 一時的な調査用ログ（iOSの録音が実際にどのcontentTypeで送られてくるか確認するため）。
-    // 原因が分かり次第このconsole.logは削除する。
-    console.log("voice unsupported_type:", JSON.stringify(contentType));
-    return json({ error: "unsupported_type" }, 415, headers);
-  }
+  if (!format) return json({ error: "unsupported_type" }, 415, headers);
 
   if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
 
@@ -1507,7 +1502,7 @@ async function readBinaryBody(request) {
     const sentHeaders = (data.headers && typeof data.headers === "object") ? data.headers : {};
     return {
       buf: bytes.buffer,
-      contentType: String(data.contentType || ""),
+      contentType: String(data.contentType || "").split(";")[0].trim(),
       getHeader: (name) => sentHeaders[name] ?? sentHeaders[name.toLowerCase()] ?? null,
     };
   }

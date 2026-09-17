@@ -854,6 +854,7 @@
   function openVoiceEntryForm() {
     var user = loadCurrentUser();
     if (!user) { openLogin('voiceEntryForm'); return; }
+    if (!state.selectedDate) { alert('先に日付を選んでから音声入力を始めてください。'); return; }
     showScreen('voiceEntryForm');
     $('#voicePremiumRequired').hidden = true;
     $('#voiceRecordArea').hidden = true;
