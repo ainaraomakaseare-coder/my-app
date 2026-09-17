@@ -28,6 +28,14 @@ jobs:
         working-directory: apps/day07-tabilog-ios
         run: npx cap add ios
 
+      - name: マイク利用の説明文をInfo.plistに追加する
+        # 「音声でまとめて記録する」機能がマイクを使うが、iOSはInfo.plistに
+        # NSMicrophoneUsageDescription（利用目的の説明文）が無いとマイクへの
+        # アクセスを許可しない。ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
+        working-directory: apps/day07-tabilog-ios/ios/App/App
+        run: |
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '音声で旅の記録をまとめて追加するために使用します'" Info.plist
+
       - name: バージョン番号を設定
         # ios/フォルダは毎回作り直しなので、ビルド番号を前回の実行から引き継げない。
         # このワークフローの実行回数（github.run_number）を使えば、実行するたびに
