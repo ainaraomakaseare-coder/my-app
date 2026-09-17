@@ -62,7 +62,9 @@ jobs:
           P12_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ github.run_id }}
         run: |
-          echo "$P12_BASE64" | base64 --decode > distribution.p12
+          # secretsに貼り付ける際に紛れ込みがちな改行・前後の空白を取り除いてから使う
+          P12_PASSWORD=$(printf '%s' "$P12_PASSWORD" | tr -d '\n\r' | xargs)
+          echo "$P12_BASE64" | tr -d '\n\r ' | base64 --decode > distribution.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
