@@ -28,6 +28,37 @@ jobs:
         working-directory: apps/day07-tabilog-ios
         run: npx cap add ios
 
+      - name: CocoaPodsのライブラリターゲットで署名を要求しないようにする
+        # Pods-App・Capacitor・CapacitorCordovaなどのライブラリターゲットは、
+        # アプリ本体に組み込まれて一緒に署名されるため、本来プロビジョニング
+        # プロファイルを必要としない。CODE_SIGN_STYLE=Manualを指定すると
+        # これらのターゲットも巻き込まれ「does not support provisioning
+        # profiles」というエラーになるため、Podfileのpost_installフックで
+        # ライブラリターゲットだけ署名を求めないようにする（pod installが走る
+        # 直前・Podfile生成直後に行う必要がある）。
+        working-directory: apps/day07-tabilog-ios/ios/App
+        run: |
+          python3 - << 'PYEOF'
+          with open("Podfile") as f:
+              content = f.read()
+          marker = "post_install do |installer|\n"
+          injected = (
+              "  installer.pods_project.targets.each do |target|\n"
+              "    target.build_configurations.each do |config|\n"
+              "      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\n"
+              "      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
+              "    end\n"
+              "  end\n"
+          )
+          if marker in content:
+              # 既存のpost_installフックの中に差し込む（フックは1つしか定義できないため）
+              content = content.replace(marker, marker + injected, 1)
+          else:
+              content += "\n" + marker + injected + "end\n"
+          with open("Podfile", "w") as f:
+              f.write(content)
+          PYEOF
+
       - name: マイク利用の説明文をInfo.plistに追加する
         # 「音声でまとめて記録する」機能がマイクを使うが、iOSはInfo.plistに
         # NSMicrophoneUsageDescription（利用目的の説明文）が無いとマイクへの
