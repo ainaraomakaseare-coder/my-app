@@ -6,6 +6,7 @@
     "contentInset": "automatic"
   },
   "server": {
+    "iosScheme": "https",
     "allowNavigation": [
       "checkout.stripe.com",
       "billing.stripe.com",
