@@ -1269,7 +1269,12 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
 
   const { buf, contentType, getHeader } = await readBinaryBody(request);
   const format = VOICE_AUDIO_FORMATS[contentType];
-  if (!format) return json({ error: "unsupported_type" }, 415, headers);
+  if (!format) {
+    // 一時的な調査用ログ（iOSの録音が実際にどのcontentTypeで送られてくるか確認するため）。
+    // 原因が分かり次第このconsole.logは削除する。
+    console.log("voice unsupported_type:", JSON.stringify(contentType));
+    return json({ error: "unsupported_type" }, 415, headers);
+  }
 
   if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
 
