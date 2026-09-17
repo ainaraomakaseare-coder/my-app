@@ -384,8 +384,32 @@
     });
   }
 
-  // 写真・音声など、生のバイナリをPOSTする共通の窓口（fetch＋エラー処理をここに集約する）
+  function blobToBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onloadend = function () {
+        var result = reader.result;
+        var comma = result.indexOf(',');
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = function () { reject(new Error('read_failed')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // 写真・音声など、生のバイナリをPOSTする共通の窓口（fetch＋エラー処理をここに集約する）。
+  // iOSアプリ内ではWKWebViewのfetchでバイナリボディを直接送るとクロスオリジンPOSTが
+  // 失敗するため、その場合はbase64化してJSON({dataBase64, contentType, headers})で送る。
   function postBinary(path, blob, extraHeaders) {
+    if (isNativeApp()) {
+      return blobToBase64(blob).then(function (dataBase64) {
+        return nativeApi(path, 'POST', {
+          dataBase64: dataBase64,
+          contentType: blob.type || 'application/octet-stream',
+          headers: extraHeaders || {}
+        });
+      });
+    }
     var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {});
     return fetch(API_BASE + path, { method: 'POST', headers: headers, body: blob }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {

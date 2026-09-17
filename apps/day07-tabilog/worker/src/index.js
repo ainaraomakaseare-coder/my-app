@@ -1267,14 +1267,13 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
   const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
   if (!trip) return json({ error: "trip_not_found" }, 404, headers);
 
-  const contentType = (request.headers.get("content-type") || "").split(";")[0].trim();
+  const { buf, contentType, getHeader } = await readBinaryBody(request);
   const format = VOICE_AUDIO_FORMATS[contentType];
   if (!format) return json({ error: "unsupported_type" }, 415, headers);
 
-  const buf = await request.arrayBuffer();
   if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
 
-  const meta = decodeVoiceMeta(request.headers.get("x-voice-meta"));
+  const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
   const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
   const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
   const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
@@ -1489,14 +1488,38 @@ const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 動画は圧縮しないので大�
 const IMAGE_EXT = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" };
 const VIDEO_EXT = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm" };
 
+// 生のバイナリPOST(ブラウザ版)、またはiOSアプリ(CapacitorHttp)から送られてくる
+// JSON({dataBase64, contentType, headers})のどちらでも同じように扱えるようにする。
+// iOSアプリ内ではWKWebViewのfetchでバイナリボディを直接送るとクロスオリジンPOSTが
+// 失敗する既知の制約があるため、アプリ側はbase64化してJSONで送ってくる。
+async function readBinaryBody(request) {
+  const requestContentType = (request.headers.get("content-type") || "").split(";")[0].trim();
+  if (requestContentType === "application/json") {
+    const data = await request.json();
+    const binary = atob(String(data.dataBase64 || ""));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const sentHeaders = (data.headers && typeof data.headers === "object") ? data.headers : {};
+    return {
+      buf: bytes.buffer,
+      contentType: String(data.contentType || ""),
+      getHeader: (name) => sentHeaders[name] ?? sentHeaders[name.toLowerCase()] ?? null,
+    };
+  }
+  return {
+    buf: await request.arrayBuffer(),
+    contentType: requestContentType,
+    getHeader: (name) => request.headers.get(name),
+  };
+}
+
 async function uploadPhoto(request, env, headers) {
-  const contentType = request.headers.get("content-type") || "image/jpeg";
+  const { buf, contentType } = await readBinaryBody(request);
   const isImage = Object.prototype.hasOwnProperty.call(IMAGE_EXT, contentType);
   const isVideo = Object.prototype.hasOwnProperty.call(VIDEO_EXT, contentType);
   if (!isImage && !isVideo) {
     return json({ error: "unsupported_type" }, 415, headers);
   }
-  const buf = await request.arrayBuffer();
   const maxBytes = isVideo ? MAX_VIDEO_BYTES : MAX_PHOTO_BYTES;
   if (buf.byteLength === 0 || buf.byteLength > maxBytes) {
     return json({ error: "invalid_size" }, 413, headers);
