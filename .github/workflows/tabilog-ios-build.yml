@@ -73,17 +73,18 @@ jobs:
           security list-keychains -d user -s build.keychain $(security list-keychains -d user | sed 's/"//g')
           rm distribution.p12
 
-      - name: 配布用の証明書を使うようプロジェクトファイルを書き換える
-        # Xcode/Capacitorが生成するプロジェクトは、Release構成にも既定で
-        # CODE_SIGN_IDENTITY = "Apple Development" が焼き込まれている
-        # （App本体だけでなく、CocoaPodsが生成するPods.xcodeproj内の各ターゲットも同じ）。
-        # xcodebuildのコマンドライン引数でCODE_SIGN_IDENTITYを上書きしようとすると、
-        # 「CODE_SIGN_STYLE=Automaticと競合している」というエラーになるため、
-        # コマンドラインではなくプロジェクトファイル自体を書き換えて解決する。
-        working-directory: apps/day07-tabilog-ios/ios
+      - name: プロビジョニングプロファイルをインストールする
+        # CODE_SIGN_STYLE=Automaticのままだと、証明書を用意してもXcodeの自動署名の
+        # 判断で開発用(Development)のプロファイルを要求し続け、いくら証明書を
+        # 作り直しても解決しなかった（自動署名モードではプロジェクトファイルの
+        # CODE_SIGN_IDENTITYの指定が無視されるため）。手動署名に切り替え、
+        # 1回だけ作った配布用プロビジョニングプロファイルを使う。
+        env:
+          PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          find . -name "project.pbxproj" -exec sed -i '' \
-            's/CODE_SIGN_IDENTITY = "Apple Development"/CODE_SIGN_IDENTITY = "Apple Distribution"/g' {} \;
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE_BASE64" | tr -d '\n\r ' | base64 --decode \
+            > ~/Library/MobileDevice/Provisioning\ Profiles/tabilog-appstore.mobileprovision
 
       - name: アイコン・スプラッシュ画像を生成する（resources/icon.png・splash.pngから）
         working-directory: apps/day07-tabilog-ios
@@ -108,30 +109,30 @@ jobs:
             <key>teamID</key>
             <string>${{ secrets.APPLE_TEAM_ID }}</string>
             <key>signingStyle</key>
-            <string>automatic</string>
+            <string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.hiroyaapps.tabilog</key>
+              <string>tabilog-appstore</string>
+            </dict>
           </dict>
           </plist>
           EOF
 
-      - name: アーカイブをビルド（自動署名。App Store Connect APIキーで認証）
+      - name: アーカイブをビルド（手動署名。1回だけ作った配布用証明書・プロファイルを使う）
         # -destinationを省略すると、CIランナーに実機が繋がっていないため
         # 「実機テスト用のプロビジョニングプロファイルを作ろうとして、対象の実機が無く失敗する」
         # ことがある（配布用アーカイブにテスト用プロファイルは本来不要）。
         # generic/platform=iOSを明示し、配布用のアーカイブとして扱わせる。
-        # CODE_SIGN_IDENTITYはコマンドラインでは渡さない（CODE_SIGN_STYLE=Automaticと
-        # 競合するエラーになるため）。配布用証明書への切り替えは、直前のステップで
-        # プロジェクトファイル自体を書き換える形で行っている。
         working-directory: apps/day07-tabilog-ios/ios/App
         run: |
           xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
             -archivePath ../../build/App.xcarchive archive \
             -destination 'generic/platform=iOS' \
             DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
-            CODE_SIGN_STYLE=Automatic \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}.p8 \
-            -authenticationKeyID ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }} \
-            -authenticationKeyIssuerID ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER=tabilog-appstore
 
       - name: .ipaを書き出す
         working-directory: apps/day07-tabilog-ios
