@@ -275,6 +275,12 @@ function makeTmpPng(name){
   check("今日の日付を表示",(await txt("#cal-today-label")).includes(todayIso.replaceAll("-","/")));
   check("今日のセルを強調",await page.getAttribute('.calendar-day[data-date="'+todayIso+'"]',"aria-current")==="date");
   check("通常マイルも当日の失効予定に表示",(await txt("#cal-events")).includes("165 マイル"));
+  check("直近の失効カードに今日のマイル",(await txt("#next-expiry")).includes("165")&&(await txt("#next-expiry")).includes("今日"));
+  await page.click("#cal-all");
+  check("月全体の予定へ切替",(await txt("#cal-events")).includes("この月の失効予定"));
+  check("月の残高にマイルを表示",(await txt("#cal-month-total")).includes("マイル"));
+  await page.click("#next-expiry button");
+  check("直近の予定へジャンプ",await page.getAttribute('.calendar-day[data-date="'+todayIso+'"]',"aria-pressed")==="true");
   const thisMonth=await txt("#cal-month");
   await page.click("#cal-next");
   check("翌月へ移動",await txt("#cal-month")!==thisMonth);
