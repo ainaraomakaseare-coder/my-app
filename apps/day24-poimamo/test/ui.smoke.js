@@ -260,6 +260,44 @@ function makeTmpPng(name){
   await page.unroute(AI_ENDPOINT + "/**");
   await page.click("#close-update");
 
+  // 通常マイルの単位・期限・カレンダー・保存を確認する。
+  const todayDate = new Date();
+  const todayIso = todayDate.getFullYear()+"-"+String(todayDate.getMonth()+1).padStart(2,"0")+"-"+String(todayDate.getDate()).padStart(2,"0");
+  await page.click("#open-add");
+  await page.selectOption("#f-program","ANAマイレージ");
+  check("ANAの手入力はマイルになる",await val("#f-unit")==="マイル");
+  await page.check('input[name="ptype"][value="通常"]');
+  await page.fill("#f-balance","165");
+  await page.fill("#f-expiry",todayIso);
+  await page.click("#save-btn");
+  check("一覧にマイル単位を表示",(await txt('.ticket:has-text("ANAマイレージ")')).includes("165マイル"));
+  check("登録残高はptとマイルを分ける",(await txt("#summary-row")).includes("pt")&&(await txt("#summary-row")).includes("マイル"));
+  check("今日の日付を表示",(await txt("#cal-today-label")).includes(todayIso.replaceAll("-","/")));
+  check("今日のセルを強調",await page.getAttribute('.calendar-day[data-date="'+todayIso+'"]',"aria-current")==="date");
+  check("通常マイルも当日の失効予定に表示",(await txt("#cal-events")).includes("165 マイル"));
+  const thisMonth=await txt("#cal-month");
+  await page.click("#cal-next");
+  check("翌月へ移動",await txt("#cal-month")!==thisMonth);
+  await page.click("#cal-today");
+  check("今日へ戻れる",await txt("#cal-month")===thisMonth);
+  await page.click('.calendar-day[data-date="'+todayIso+'"]');
+  await page.click('.calendar-event:has-text("ANAマイレージ")');
+  check("カレンダーからサービス詳細へ",(await txt("#detail-total")).includes("165マイル"));
+  check("通常マイルの期限を詳細へ表示",(await txt("#lot-list")).includes("通常"));
+  await page.click("#detail-back");
+  await page.reload();
+  check("再読み込み後もマイルと期限が残る",(await txt("#cal-events")).includes("165 マイル"));
+  check("スマホで横にはみ出さない",await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+  if(process.env.POIMAMO_QA_DIR){
+    fs.mkdirSync(process.env.POIMAMO_QA_DIR,{recursive:true});
+    await page.screenshot({path:path.join(process.env.POIMAMO_QA_DIR,"mobile.png"),fullPage:true});
+    await page.setViewportSize({width:1280,height:900});
+    await page.screenshot({path:path.join(process.env.POIMAMO_QA_DIR,"desktop.png"),fullPage:true});
+    await page.click("#open-add");
+    await page.screenshot({path:path.join(process.env.POIMAMO_QA_DIR,"form.png"),fullPage:true});
+    await page.click("#close-sheet");
+  }
+
   // 書き出し
   const [download] = await Promise.all([
     page.waitForEvent("download"),

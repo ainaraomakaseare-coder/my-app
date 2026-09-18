@@ -223,5 +223,26 @@ eq("12月", box.expiryMonthInfo("2026-12").date, "2026-12-31");
 eq("明記された日は月末に上書きしない",box.sanitizeLotFields({pointType:"期間限定",balance:10,expiryDate:"2026-07-15",expiryMonth:"2026-07"}).expiryDate,"2026-07-15");
 ok("保存時も読み取った月のメモを保持",box.buildLotsFromRows([months[0]],"楽天ポイント","","screenshot")[0].memo.includes("7月失効"));
 
+/* 単位・通常マイル・カレンダー */
+eq("既存ANAデータはマイルとして扱う",box.unitOf({program:"ANAマイレージ"}),"マイル");
+eq("単位明記はサービス名より優先",box.unitOf({program:"ANAマイレージ",unit:"pt"}),"pt");
+eq("ポイントとマイルを分ける",box.balancesByUnit([{balance:100,unit:"pt"},{balance:3538,program:"ANAマイレージ"}]),{pt:100,"マイル":3538});
+eq("単位を保存",box.normalizeEntry({program:"その他",customProgramName:"JAL",pointType:"通常",balance:100,unit:"マイル"}).unit,"マイル");
+var ana=box.sanitizeAiLots({program:"ANAマイレージ",unit:"マイル",lots:[{pointType:"通常",balance:165,expiryMonth:"2027-04"}]}).lots[0];
+eq("通常マイルの月末を補完",ana.expiryDate,"2027-04-30");
+eq("通常マイルの単位を保持",ana.unit,"マイル");
+eq("通常を期間限定に変えない",ana.pointType,"通常");
+var unknownNormal=box.sanitizeAiLots({program:"ANAマイレージ",unit:"マイル",lots:[{pointType:"通常",balance:165,expiryMonth:"04"}]}).lots[0];
+ok("通常でも年不明の期限は確認が必要",!box.validateLotRow(unknownNormal).valid);
+eq("12月から翌年へ",box.shiftMonth("2026-12",1),"2027-01");
+eq("1月から前年へ",box.shiftMonth("2026-01",-1),"2025-12");
+eq("閏年2月は29日",box.calendarDays("2028-02").filter(Boolean).length,29);
+eq("平年2月は28日",box.calendarDays("2027-02").filter(Boolean).length,28);
+eq("2026年9月1日は火曜日",box.calendarDays("2026-09")[2],"2026-09-01");
+ok("存在しない日付は拒否",!box.validDate("2026-02-30"));
+ok("期限カレンダーに通常マイルも含む",box.expiryEvents([{balance:165,pointType:"通常",expiryDate:"2027-04-30",unit:"マイル"}],"2027-04").length===1);
+eq("期限なし・他月・0残高はカレンダーへ入れない",box.expiryEvents([{balance:0,expiryDate:"2027-04-30"},{balance:2,expiryDate:""},{balance:3,expiryDate:"2027-05-31"}],"2027-04").length,0);
+ok("ICSにもマイル単位",box.buildIcsContent({id:"ana",unit:"マイル",balance:165,expiryDate:"2027-04-30"},"ANAマイレージ").includes("165マイル"));
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
