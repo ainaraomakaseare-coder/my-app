@@ -1,6 +1,7 @@
 /*
  * 実ブラウザで、サービス単位のグルーピング・詳細画面への遷移・内訳の追加編集削除・
- * スクショ一括更新画面（AI未設定時のフォールバック）・書き出し/読み込みの流れを確かめる。
+ * スクショ一括更新画面（本番Workerへの実リクエストはモックして応答／エンドポイント
+ * 未設定時のフォールバック）・書き出し/読み込みの流れを確かめる。
  * 実行: node test/ui.smoke.js [index.html]
  */
 const { chromium } = require("/opt/node22/lib/node_modules/playwright");
@@ -100,7 +101,19 @@ function check(label, cond, extra){
   const rakutenBadge = await page.$eval('.ticket:has-text("楽天ポイント") .badge', e => e.textContent);
   check("複数内訳は「内訳N件」と表示される", rakutenBadge.includes("内訳3件"), "got " + rakutenBadge);
 
-  // スクショで一括更新：AI未設定なら手入力の一覧編集にフォールバックする
+  // スクショで一括更新：本番のAI Workerエンドポイントが設定済みなので、実際のリクエスト先を
+  // モックして応答させ、コスト・外部通信なしで本物の読み取り→反映の流れを確認する
+  const AI_ENDPOINT = "https://poimamo-ai.hiroya-apps.workers.dev";
+  await page.route(AI_ENDPOINT + "/**", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      program: "楽天ポイント",
+      lots: [{ pointType: "通常", balance: 5000, expiryDate: null }],
+      confidence: "high",
+    }),
+  }));
+
   await page.click('.ticket:has-text("楽天ポイント")');
   await page.click("#open-update-btn");
   check("更新オーバーレイが開く", await vis("#update-overlay"));
@@ -112,20 +125,18 @@ function check(label, cond, extra){
   const tmp = path.join(require("os").tmpdir(), "poimamo-test.png");
   fs.writeFileSync(tmp, buffer);
   await page.setInputFiles("#upd-shot-file", tmp);
-  check("AI未設定の案内が出る", (await txt("#upd-ai-status")).includes("設定されていません"));
-  check("読み取りボタンは無効化される", !(await page.isEnabled("#upd-shot-run")));
+  check("エンドポイント設定済みなので読み取りボタンが有効になる", await page.isEnabled("#upd-shot-run"));
+  await page.click("#upd-shot-run");
+  await page.waitForSelector("#upd-rows .upd-row");
+  check("AIの読み取り結果が一覧に入力される（1行）", (await count(".upd-row")) === 1);
+  check("読み取り成功メッセージが出る", (await txt("#upd-ai-status")).includes("確認してから"));
   fs.unlinkSync(tmp);
 
-  // 手入力で行を追加して一括更新（既存の内訳が丸ごと置き換わる）
-  await page.click("#upd-add-row");
-  check("行が1つ追加される", (await count(".upd-row")) === 1);
-  await page.click('#upd-rows input[type="radio"][value="通常"]');
-  await page.fill('#upd-rows input[type="number"]', "5000");
   await page.click("#upd-confirm");
   check("更新後オーバーレイが閉じる", await page.isHidden("#update-overlay"));
   check("内訳が置き換わり1件になる", (await count(".lot-row")) === 1);
   const updatedTotal = await txt("#detail-total");
-  check("合計残高が5000ptに置き換わる", updatedTotal.includes("5,000"), "got " + updatedTotal);
+  check("合計残高が5000ptに置き換わる（AI読み取り結果通り）", updatedTotal.includes("5,000"), "got " + updatedTotal);
 
   // 内訳の編集
   await page.click(".lot-row .entry-actions .btn:not(.btn-danger)");
@@ -142,6 +153,21 @@ function check(label, cond, extra){
   check("最後の内訳を削除すると一覧に自動遷移する", await vis("#view-list"));
   check("楽天ポイントのチケットは消える", (await page.$('.ticket:has-text("楽天ポイント")')) === null);
   check("スタバカードのチケットは残る", (await page.$('.ticket:has-text("スタバカード")')) !== null);
+
+  // エンドポイント未設定時のフォールバックも確認する（メタタグを一時的に空にして検証）
+  await page.evaluate(() => document.querySelector('meta[name="poimamo-ai-endpoint"]').setAttribute("content", ""));
+  await page.click('.ticket:has-text("スタバカード")');
+  await page.click("#open-update-btn");
+  const tmp2 = path.join(require("os").tmpdir(), "poimamo-test2.png");
+  fs.writeFileSync(tmp2, buffer);
+  await page.setInputFiles("#upd-shot-file", tmp2);
+  check("エンドポイント未設定時はAI未設定の案内が出る", (await txt("#upd-ai-status")).includes("設定されていません"));
+  check("エンドポイント未設定時は読み取りボタンが無効化される", !(await page.isEnabled("#upd-shot-run")));
+  fs.unlinkSync(tmp2);
+  await page.click("#close-update");
+  await page.click("#detail-back");
+  await page.evaluate((url) => document.querySelector('meta[name="poimamo-ai-endpoint"]').setAttribute("content", url), AI_ENDPOINT);
+  await page.unroute(AI_ENDPOINT + "/**");
 
   // 書き出し
   const [download] = await Promise.all([
