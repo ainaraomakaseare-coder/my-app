@@ -890,6 +890,42 @@ async function ensureAccount(request, env, headers) {
   return json(rowToAccount(account), 200, headers);
 }
 
+// アカウント削除（Appleのガイドライン5.1.1(v)対応：アカウント作成機能があるアプリは
+// アプリ内から自分でアカウントを削除できる必要がある）。
+// 消えるのはアカウント本体（メール・名前・プラン・回数券・参加した旅行への紐付け）だけで、
+// 旅行の記録自体は家族と共有しているものなので削除しない。
+// 有料プランの契約中だった場合は、二重請求を避けるためStripeの定期購入も解約する。
+async function deleteAccount(request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  const email = data.email.trim().toLowerCase();
+
+  const account = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(email).first();
+  if (!account) return json({ error: "not_found" }, 404, headers);
+
+  if (account.stripe_subscription_id && env.STRIPE_SECRET_KEY) {
+    const upstream = await fetch(`${STRIPE_API_BASE}/subscriptions/${account.stripe_subscription_id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+    });
+    if (!upstream.ok) {
+      const errorBody = await upstream.text().catch(() => "");
+      console.error(JSON.stringify({ event: "stripe_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+      return json({ error: "subscription_cancel_failed" }, 502, headers);
+    }
+  }
+
+  await env.DB.prepare("DELETE FROM ratings WHERE rater_email = ?").bind(email).run();
+  await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
+  await env.DB.prepare("DELETE FROM accounts WHERE email = ?").bind(email).run();
+  return json({ ok: true }, 200, headers);
+}
+
 /* ---------- Stripe（音声入力の有料プラン。docs/adr/0004） ----------
  * npm SDKは使わず、OpenAI連携と同じくfetch()で直接REST APIを呼ぶ。
  * StripeのAPIはJSONではなくapplication/x-www-form-urlencodedを受け取る。
@@ -1603,6 +1639,7 @@ export default {
     if (method === "POST" && path === "/auth/email/verify") return verifyEmailOtp(request, env, headers);
 
     if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
+    if (method === "POST" && path === "/accounts/delete") return deleteAccount(request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
 
     if (method === "POST" && path === "/billing/checkout") return createCheckoutSession(request, env, headers);

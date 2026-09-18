@@ -1713,6 +1713,21 @@
     });
   }
 
+  // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
+  // アカウント本体（メール・名前・プラン・回数券・参加した旅行への紐付け）だけを消す。
+  function deleteMyAccount() {
+    var user = loadCurrentUser();
+    if (!user) return;
+    if (!confirm('アカウントを削除しますか？\n（メールアドレス・名前・プラン・回数券の情報が削除されます。旅行の記録自体は削除されません）')) return;
+    api('/accounts/delete', 'POST', { email: user.email }).then(function () {
+      clearCurrentUser();
+      alert('アカウントを削除しました。');
+      goHome();
+    }).catch(function () {
+      alert('アカウントの削除に失敗しました。もう一度お試しください。');
+    });
+  }
+
   // ページに戻ってきたときのURL（?billing=success/cancel）を見て、決済結果を伝える
   function checkBillingReturn() {
     var params = new URLSearchParams(location.search);
@@ -1900,6 +1915,7 @@
       $('#planStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     $('#btnManageBilling').addEventListener('click', startBillingPortal);
+    $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
 
     $('#mylogSort').addEventListener('click', function (e) {
       var btn = e.target.closest('.sort-btn');
