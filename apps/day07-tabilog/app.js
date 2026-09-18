@@ -1719,7 +1719,7 @@
   function deleteMyAccount() {
     var user = loadCurrentUser();
     if (!user) return;
-    if (!confirm('アカウントを削除しますか？\n（名前・プラン・回数券の情報が削除されます。旅行の記録自体は削除されません）')) return;
+    if (!confirm('アカウントを削除しますか？\n（名前・プラン・回数券の情報が削除されます。旅行の記録自体は削除されません。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
     api('/accounts/delete', 'POST', { email: user.email }).then(function () {
       clearCurrentUser();
       renderAccountRow();
