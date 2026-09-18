@@ -55,16 +55,20 @@ function extractionTool() {
     input_schema: {
       type: "object",
       additionalProperties: false,
-      required: ["program", "lots", "confidence"],
+      required: ["program", "lots", "confidence", "totalBalance", "regularBalance", "limitedBalance", "limitedBreakdownComplete"],
       properties: {
         program: {
           type: "string",
           description: "ポイントサービス名。画面から読み取れた表記のまま（例：楽天ポイント、Vポイント、ANAマイレージ、Amazonポイント）",
         },
+        totalBalance: { type: ["number", "null"], description: "現在保有する合計・利用可能ポイント（通常＋期間限定）。通算獲得は対象外。画面に無ければnull" },
+        regularBalance: { type: ["number", "null"], description: "通常ポイントと明記された残高だけ。合計や保有ポイントをここに入れない。画面に無ければnull。引き算しない" },
+        limitedBalance: { type: ["number", "null"], description: "期間限定ポイント全体の小計と明記された数値。無ければnull。月別の一行や合計ポイントとは別" },
+        limitedBreakdownComplete: { type: "boolean", description: "期間限定の全ての内訳が画像内に揃っていることを確認できた場合のみtrue。スクロール途中や一部期間のみならfalse" },
         lots: {
           type: "array",
-          minItems: 1,
-          description: "画面に表示されている内訳を1件ずつ。期間限定ポイントが失効日ごとに複数表示されている場合は、それぞれを別の要素にする。通常ポイントも表示されていれば1件として含める",
+          minItems: 0,
+          description: "期間限定ポイントの失効日・失効月ごとの内訳だけ。合計・通常・期間限定の小計は含めない。通常残高はregularBalanceへ。期間限定がなければ空配列",
           items: {
             type: "object",
             additionalProperties: false,
@@ -87,9 +91,12 @@ function promptText() {
   return [
     "これはポイントサービスの画面のスクリーンショットです（1枚のこともあれば、画面をスクロールしながら複数枚に分けて撮影したこともあります）。",
     "表示されているポイントの内訳を、1件ずつ配列（lots）にしてextract_point_infoツールで返してください。画像が複数枚ある場合は、全ての画像に写っている内訳をまとめて、重複のない1つの配列にしてください。同じ内訳が2枚の画像に重なって写っている場合は1回だけ数えてください。",
+    "合計・保有ポイントはtotalBalance、明記された通常ポイントはregularBalance、期間限定の小計はlimitedBalanceに分けて、画像の数値をそのまま返してください。AIでは引き算しないでください。lotsは期間限定の月別・期限別の末端の内訳だけで、合計・通常・小計は絶対に入れないでください。",
+    "例：合計1000pt、期間限定200pt、7月100pt、8月100ptなら、totalBalance=1000、regularBalance=null、limitedBalance=200、lotsは7月100と8月100の2件です。通常800ptの計算はサーバー側が行います。合計1000ptを通常1000ptと扱ってはいけません。",
+    "通常800ptと期間限定200ptが明記されているならregularBalance=800、limitedBalance=200です。通常ポイントに有効期限があっても期間限定のlotsへ重ねて入れないでください。小計200ptと月別100pt+100ptも二重登録しません。",
     "多くのポイントサービスでは、失効月ごとに分かれた複数の期間限定ポイント（例：8月失効の100pt、9月失効の10pt、10月失効の5pt…）と、失効しない通常ポイント（例：1000pt）が同時に表示されます。",
     "失効月・失効日ごとの内訳が3件以上、あるいは月別の一覧のように並んでいる場合でも、見えている行を1つも省略・要約せず、全ての行をそれぞれ別の要素としてlotsに含めてください。多いからといってまとめたり代表値だけ返したりしないでください。",
-    "「通算ポイント」「累計獲得ポイント」「これまでの合計」など、今使える残高ではなく過去の獲得合計・実績を示しているだけの数値は、lotsに含めないでください（対象外です）。lotsに含めるのは、現在保有していて今後使える残高（期間限定ポイントの各内訳、または通常ポイント）だけです。",
+    "「通算ポイント」「累計獲得ポイント」「これまでの合計」など、今使える残高ではなく過去の獲得合計・実績を示しているだけの数値は、lotsに含めないでください（対象外です）。lotsに含めるのは、現在保有する期間限定ポイントの各内訳だけです。通常ポイントはregularBalanceに分けてください。",
     "「失効予定」「有効期限」などの見出しの下の「7月 100ポイント」「8月 200pt」は、それぞれ7月に100pt、8月に200ptが失効する別々の内訳です。各行に失効という文字がなくても、見出し・列名との対応から読み取ってください。月の数字をポイント数と取り違えないでください。",
     "月別のグラフは月ラベルと明記されたポイント数の対応を読み取ってください。棒の高さだけから数値を推測しないでください。獲得履歴・利用履歴の月は失効月として扱わず、合計とその内訳を二重に加算しないでください。",
     "日まで明記された失効日はexpiryDateにYYYY-MM-DDで返してください。月だけの場合はexpiryDateをnullにし、expiryMonthにYYYY-MMを返してください（例：2026年の見出しの下の7月100pt → balance:100, expiryMonth:2026-07）。月末日はアプリ側で計算します。年が画像内の見出しや同じ一覧から確定できない場合はexpiryMonthをMM（例07）にし、現在の年や翌年を推測しないでください。日付も月もない通常ポイントは両方nullです。",
@@ -103,6 +110,29 @@ function toolInputFrom(response) {
     if (block.type === "tool_use" && block.name === "extract_point_info") return block.input;
   }
   return null;
+}
+
+// 合計を通常残高に取り違えず、画像に揃った内訳からだけ計算する。
+function reconcileBalances(result) {
+  const amount = value => value === null || (Number.isSafeInteger(value) && value >= 0);
+  const { totalBalance: total, regularBalance: regular, limitedBalance: limited } = result;
+  if (![total, regular, limited].every(amount)
+      || typeof result.limitedBreakdownComplete !== "boolean"
+      || result.lots.some(l => !l || l.pointType !== "期間限定" || !Number.isSafeInteger(l.balance) || l.balance < 0)) return null;
+  const sum = result.lots.reduce((n, l) => n + l.balance, 0);
+  if (!Number.isSafeInteger(sum)) return null;
+  // 小計と期限別の合計が合わなければ、画像不足や重複の可能性がある。
+  if (limited !== null && limited !== sum) return null;
+  let normal = regular;
+  if (normal === null && total !== null) {
+    if (limited === null && !result.limitedBreakdownComplete) return null;
+    normal = total - sum;
+    if (normal < 0) return null;
+  }
+  if (total !== null && normal !== null && normal + sum !== total) return null;
+  const lots = result.lots.slice();
+  if (normal !== null) lots.push({ pointType: "通常", balance: normal, expiryDate: null, expiryMonth: null });
+  return { ...result, lots };
 }
 
 export default {
@@ -160,6 +190,8 @@ export default {
     const result = toolInputFrom(response);
     if (response.stop_reason === "max_tokens" || !result || !Array.isArray(result.lots)) return json({ error: "invalid_model_output" }, 502, headers);
 
-    return json(result, 200, headers);
+    const reconciled = reconcileBalances(result);
+    if (!reconciled) return json({ error: "inconsistent_balances" }, 422, headers);
+    return json(reconciled, 200, headers);
   },
 };
