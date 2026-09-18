@@ -252,6 +252,17 @@ input::file-selector-button{border:0;border-radius:7px;background:#e0e9cd;color:
 .calendar-day{min-height:59px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:8px 0 4px;border:1px solid transparent;border-radius:10px;font-family:var(--font-num);font-size:13px;gap:3px}.calendar-day:hover{background:#edf2e3}.calendar-day.is-today{background:#203f34;color:#fff}.calendar-day[aria-pressed=true]{border-color:#77955e;box-shadow:0 0 0 1px #77955e}.calendar-dot{font-size:9px;color:#a0462c;background:#f8e7da;border-radius:5px;padding:1px 5px;font-family:var(--font)}
 .calendar-legend{display:flex;gap:16px;font-size:10px;color:var(--ink-dim);margin:10px 0 17px}.calendar-events{border-top:1px solid var(--line);padding-top:14px}.calendar-events h4{font-size:12px;margin:0 0 10px}.calendar-event{display:flex;width:100%;justify-content:space-between;text-align:left;gap:12px;padding:12px 0;border-bottom:1px solid #edf0e7;font-size:12px}.calendar-event strong{white-space:nowrap;font-family:var(--font-num);font-size:12px}.calendar-event:hover{color:#758c45}#cal-undated{margin-top:15px;font-size:10px;line-height:1.8}
 @media(max-width:480px){.calendar-panel{padding:18px 14px}.calendar-grid{gap:2px}.calendar-day{min-height:52px}.calendar-event{flex-wrap:wrap;gap:5px}.intro{display:none}.wallet-panel{padding:18px 22px}.summary-cell:nth-child(3){padding-bottom:12px}.wallet-foot{margin-top:12px}.summary-cell:nth-child(3) b{font-size:33px}}
+/* Expiry overview: keep the next action visible on small screens. */
+.next-expiry{display:flex;align-items:center;gap:18px;background:#eee9da;border:1px solid #e1dac6;border-radius:20px;padding:20px 22px}
+.next-expiry[hidden]{display:none}.next-copy strong small{display:inline;font-size:11px;margin-left:4px}
+.next-date{flex:0 0 60px;text-align:center;border-right:1px solid #d6cfbb;padding-right:18px;color:#745c34;font-size:11px}
+.next-date b{display:block;font:500 32px/1.2 'JetBrains Mono',monospace;letter-spacing:-2px}
+.next-copy{flex:1;min-width:0}.next-copy p{margin:0 0 4px;font-size:11px;color:#776847}.next-copy strong{display:block;font-size:17px;overflow-wrap:anywhere}.next-copy>small{display:block;font-size:11px;color:#776847;margin-top:4px}
+.next-expiry .btn{background:#fffaf0;border-color:#d9cfb6;flex-shrink:0}
+.month-overview{display:flex;align-items:center;gap:10px;background:#f1f4ec;border-radius:12px;padding:11px 13px;margin:12px 0 16px;font-size:11px;color:#62745e}
+.month-overview strong{flex:1;font-size:15px;color:var(--ink)}.month-overview strong small{font-size:10px}.month-overview .btn{background:#fffdf8}
+.calendar-day:hover{background:#f0f3e9}.calendar-day.is-today{box-shadow:inset 0 0 0 2px #355847}
+@media(max-width:600px){.next-expiry{gap:12px;padding:16px}.next-copy strong{font-size:15px}.next-date{flex-basis:48px;padding-right:12px}.next-expiry .btn{font-size:11px;padding:8px}.month-overview{gap:8px;padding:10px}.calendar-panel{padding:18px}.wallet-panel{padding:22px}.wallet-foot{margin-top:12px}}
 </style>
 </head>
 <body>
@@ -286,10 +297,13 @@ input::file-selector-button{border:0;border-radius:7px;background:#e0e9cd;color:
     </button>
   </div>
 
+  <section id="next-expiry" class="next-expiry" aria-label="次の失効予定"></section>
+
   <section class="calendar-panel" aria-label="失効カレンダー">
     <div class="calendar-heading"><div><p class="eyebrow">EXPIRY CALENDAR</p><h2>失効カレンダー</h2></div><button class="btn btn-sm" id="cal-today" type="button">今日へ</button></div>
     <p id="cal-today-label" class="calendar-today"></p>
     <div class="calendar-nav"><button class="btn btn-sm" id="cal-prev" aria-label="前の月">‹</button><h3 id="cal-month" aria-live="polite"></h3><button class="btn btn-sm" id="cal-next" aria-label="次の月">›</button></div>
+    <div class="month-overview"><span>この月に失効</span><strong id="cal-month-total"></strong><button type="button" class="btn btn-sm" id="cal-all">月の予定</button></div>
     <div class="calendar-week" aria-hidden="true"><span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span></div>
     <div id="cal-grid" class="calendar-grid"></div>
     <p class="calendar-legend"><span>● 今日</span><span>• 失効予定あり</span></p>
@@ -866,6 +880,8 @@ function renderCalendar(){
   var today=todayStr(), month=state.calendarMonth, events=expiryEvents(state.entries,month);
   document.getElementById("cal-today-label").textContent="今日は " + today.replace(/-/g,"/") + "（" + "日月火水木金土"[new Date(today+"T00:00:00").getDay()] + "）";
   document.getElementById("cal-month").textContent=Number(month.slice(0,4))+"年"+Number(month.slice(5))+"月";
+  document.getElementById("cal-month-total").innerHTML=formatBalances(events);
+  document.getElementById("cal-all").setAttribute("aria-pressed",String(!state.calendarSelected));
   var grid=document.getElementById("cal-grid"); grid.replaceChildren();
   calendarDays(month).forEach(function(date){
     if(!date){var blank=document.createElement("span");grid.appendChild(blank);return;}
@@ -893,6 +909,23 @@ function renderCalendar(){
   });
   var unknown=state.entries.filter(function(e){return !validDate(e.expiryDate)&&Number(e.balance)>0;}).length;
   document.getElementById("cal-undated").textContent=unknown?"期限なし・未確認の内訳が"+unknown+"件あります。日付のある内訳のみ表示しています。":"日付をタップすると、その日に失効する内訳を確認できます。";
+}
+
+function renderNextExpiry(today){
+  var panel=document.getElementById("next-expiry");panel.replaceChildren();
+  var upcoming=state.entries.filter(function(e){return validDate(e.expiryDate)&&e.expiryDate>=today&&Number(e.balance)>0;}).sort(function(a,b){return a.expiryDate.localeCompare(b.expiryDate);});
+  if(!upcoming.length){panel.hidden=true;return;}
+  panel.hidden=false;
+  var date=upcoming[0].expiryDate, lots=upcoming.filter(function(e){return e.expiryDate===date;});
+  var stamp=document.createElement("div");stamp.className="next-date";stamp.innerHTML=Number(date.slice(5,7))+"月<b>"+Number(date.slice(8))+"</b>";
+  var copy=document.createElement("div");copy.className="next-copy";
+  var label=document.createElement("p");label.textContent=date===today?"今日が有効期限です":"次に失効するポイント";
+  var amount=document.createElement("strong");amount.innerHTML=formatBalances(lots);
+  var caption=document.createElement("small");caption.textContent=date.replace(/-/g,"/")+" · "+lots.length+"件の内訳";
+  copy.append(label,amount,caption);
+  var button=document.createElement("button");button.type="button";button.className="btn btn-sm";button.textContent="予定を見る";
+  button.addEventListener("click",function(){state.calendarMonth=date.slice(0,7);state.calendarSelected=date;renderCalendar();document.getElementById("cal-events").scrollIntoView({block:"center"});document.querySelector('.calendar-day[data-date="'+date+'"]').focus({preventScroll:true});});
+  panel.append(stamp,copy,button);
 }
 
 function renderList(){
@@ -924,6 +957,7 @@ function renderList(){
     '<div class="summary-cell"><b style="' + (summary.soonCount > 0 ? "color:#C1432B" : "") + '">' + summary.soonCount + '</b><span>30日以内に失効</span></div>';
 
   renderCalendar();
+  renderNextExpiry(today);
 
   var list = document.getElementById("group-list");
   list.innerHTML = "";
@@ -1396,6 +1430,7 @@ function closeUpdateOverlay(){
 }
 
 function setupEvents(){
+  document.getElementById("cal-all").addEventListener("click",function(){state.calendarSelected=null;renderCalendar();});
   document.getElementById("cal-prev").addEventListener("click",function(){state.calendarMonth=shiftMonth(state.calendarMonth,-1);state.calendarSelected=null;renderCalendar();});
   document.getElementById("cal-next").addEventListener("click",function(){state.calendarMonth=shiftMonth(state.calendarMonth,1);state.calendarSelected=null;renderCalendar();});
   document.getElementById("cal-today").addEventListener("click",function(){state.calendarMonth=todayStr().slice(0,7);state.calendarSelected=todayStr();renderCalendar();});
