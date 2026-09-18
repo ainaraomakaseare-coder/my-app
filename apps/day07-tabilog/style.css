@@ -223,6 +223,21 @@ a:hover { text-decoration: underline; }
 .entries { display: flex; flex-direction: column; gap: 8px; }
 .entry-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 12px; cursor: pointer; }
 .entry-card.lodging { background: var(--teal-bg); border-color: var(--teal-border); }
+.entry-card.dragging { position: fixed; z-index: 50; box-shadow: 0 8px 20px rgba(61, 43, 31, 0.25); opacity: 0.96; pointer-events: none; }
+
+/* 記録を別の予定へ移す（ドラッグ持ち手・「移動」ボタン） */
+.entry-card-head { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin: -4px -4px 2px; }
+.entry-move-btn {
+  display: flex; align-items: center; gap: 3px; border: none; background: none; padding: 5px 6px; margin: -4px;
+  color: var(--ink-soft); font-size: 10.5px; font-weight: 700;
+}
+.entry-drag-handle { flex-shrink: 0; color: var(--ink-soft); padding: 5px; margin: -4px; touch-action: none; cursor: grab; }
+.entry-move-menu:not([hidden]) { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 10px; }
+.entry-move-target {
+  text-align: left; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 9px 11px;
+  background: var(--border-soft); color: var(--ink); font-size: 12.5px; font-weight: 500;
+}
+.block.drop-target { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: var(--radius-card); }
 .entry-author { font-size: 10.5px; color: var(--ink-soft); margin-top: 10px; margin-bottom: 4px; }
 .entry-photos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; margin-bottom: 10px; }
 .entry-photo {

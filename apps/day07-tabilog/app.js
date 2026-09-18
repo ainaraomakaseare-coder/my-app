@@ -1073,6 +1073,7 @@
   }
 
   var DRAG_HANDLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="5" r="1.4"/><circle cx="14" cy="5" r="1.4"/><circle cx="6" cy="10" r="1.4"/><circle cx="14" cy="10" r="1.4"/><circle cx="6" cy="15" r="1.4"/><circle cx="14" cy="15" r="1.4"/></svg>';
+  var MOVE_ICON = '<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h12M11 6l4 4-4 4"/></svg>';
 
   function renderBlockEl(block) {
     var wrap = document.createElement('div');
@@ -1200,6 +1201,8 @@
   function renderEntryEl(block, entry) {
     var card = document.createElement('div');
     card.className = 'entry-card' + (block.category === 'lodging' ? ' lodging' : '');
+    card.dataset.entryId = entry.id;
+    card.dataset.blockId = block.id;
 
     var photosHtml = (entry.photoIds || []).length
       ? '<div class="entry-photos">' + entry.photoIds.map(function (id) {
@@ -1234,7 +1237,15 @@
       : '';
 
     // 詳細（detail）は一覧には出さない。タップして記録編集を開けば見られる。
+    // entry-card-head：別の予定へこの記録を移す用（音声入力で「予定」になってしまったものを
+    // 別の予定の「記録」として移したい、という要望より）。持ち手をドラッグするか、
+    // 「移動」ボタンから移動先の予定を選んでも移せる。同じ日の予定にだけ移動できる。
     card.innerHTML =
+      '<div class="entry-card-head">' +
+        '<button type="button" class="entry-move-btn" aria-label="別の予定に移動">' + MOVE_ICON + '<span>移動</span></button>' +
+        '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
+      '</div>' +
+      '<div class="entry-move-menu" hidden></div>' +
       (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
       (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
       photosHtml +
@@ -1252,9 +1263,111 @@
         openPhotoLightbox(photoUrl(photoEl.dataset.photoId));
         return;
       }
+      if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       openEntryForm(block.id, entry);
     });
+    $('.entry-move-btn', card).addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggleEntryMoveMenu(card, entry.id, block.id);
+    });
     return card;
+  }
+
+  // 「移動」ボタン：同じ日の他の予定を一覧で出し、選ぶとそこへ記録を移す
+  // （指でのドラッグ操作がしづらい場合の代わり）。
+  function toggleEntryMoveMenu(card, entryId, currentBlockId) {
+    var menu = $('.entry-move-menu', card);
+    var wasOpen = !menu.hidden;
+    $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
+    if (wasOpen) return;
+
+    var targets = currentDayBlocks().filter(function (b) { return b.id !== currentBlockId; });
+    if (!targets.length) {
+      menu.innerHTML = '<p class="hint">この日には他に移動先の予定がありません。</p>';
+    } else {
+      menu.innerHTML = targets.map(function (b) {
+        return '<button type="button" class="entry-move-target" data-block-id="' + escapeHtml(b.id) + '">' +
+          (b.time ? escapeHtml(b.time) + ' ' : '') + escapeHtml(b.label || Core.categoryLabel(b.category)) +
+          '</button>';
+      }).join('');
+      $all('.entry-move-target', menu).forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          moveEntryTo(entryId, btn.dataset.blockId);
+        });
+      });
+    }
+    menu.hidden = false;
+  }
+
+  function moveEntryTo(entryId, targetBlockId) {
+    api('/entries/' + encodeURIComponent(entryId) + '/move', 'PATCH', { blockId: targetBlockId })
+      .then(function () { return refreshTrip(); })
+      .then(function () { renderDaySection(); })
+      .catch(function () { alert('記録の移動に失敗しました。もう一度お試しください。'); });
+  }
+
+  // ---------- 記録（entry）のドラッグでの移動（別の予定へ）----------
+  // Blockの並べ替え（initBlockDragReorder）と同じくpointer eventsで実装。
+  // こちらは「同じリスト内での並べ替え」ではなく「別のBlockへ移す」操作なので、
+  // ドラッグ中はカードを指に追従させ、指の真下にあるBlockを移動先候補としてハイライトするだけ。
+  var entryDragState = null;
+
+  function initEntryDragMove() {
+    var timelineEl = $('#timeline');
+
+    timelineEl.addEventListener('pointerdown', function (e) {
+      var handle = e.target.closest('.entry-drag-handle');
+      if (!handle) return;
+      var draggedEl = handle.closest('.entry-card');
+      if (!draggedEl) return;
+      e.preventDefault();
+
+      var rect = draggedEl.getBoundingClientRect();
+      entryDragState = {
+        handle: handle, draggedEl: draggedEl, pointerId: e.pointerId,
+        offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+        width: rect.width, sourceBlockId: draggedEl.dataset.blockId, targetEl: null
+      };
+      draggedEl.style.width = rect.width + 'px';
+      draggedEl.style.left = rect.left + 'px';
+      draggedEl.style.top = rect.top + 'px';
+      draggedEl.classList.add('dragging');
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    timelineEl.addEventListener('pointermove', function (e) {
+      if (!entryDragState || e.pointerId !== entryDragState.pointerId) return;
+      e.preventDefault();
+      entryDragState.draggedEl.style.left = (e.clientX - entryDragState.offsetX) + 'px';
+      entryDragState.draggedEl.style.top = (e.clientY - entryDragState.offsetY) + 'px';
+
+      var under = document.elementFromPoint(e.clientX, e.clientY);
+      var blockEl = under && under.closest('.block');
+      if (blockEl && blockEl.dataset.blockId === entryDragState.sourceBlockId) blockEl = null;
+      if (entryDragState.targetEl !== blockEl) {
+        if (entryDragState.targetEl) entryDragState.targetEl.classList.remove('drop-target');
+        if (blockEl) blockEl.classList.add('drop-target');
+        entryDragState.targetEl = blockEl;
+      }
+    });
+
+    function endEntryDrag(e) {
+      if (!entryDragState || e.pointerId !== entryDragState.pointerId) return;
+      var ds = entryDragState;
+      entryDragState = null;
+      ds.handle.releasePointerCapture(ds.pointerId);
+      ds.draggedEl.classList.remove('dragging');
+      ds.draggedEl.style.left = '';
+      ds.draggedEl.style.top = '';
+      ds.draggedEl.style.width = '';
+      if (ds.targetEl) {
+        ds.targetEl.classList.remove('drop-target');
+        moveEntryTo(ds.draggedEl.dataset.entryId, ds.targetEl.dataset.blockId);
+      }
+    }
+    timelineEl.addEventListener('pointerup', endEntryDrag);
+    timelineEl.addEventListener('pointercancel', endEntryDrag);
   }
 
   function plusIcon() {
@@ -1831,6 +1944,11 @@
       if (e.target === e.currentTarget) closePhotoLightbox();
     });
     initBlockDragReorder();
+    initEntryDragMove();
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
+      $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
+    });
 
     $('#btnNewTrip').addEventListener('click', openNewTripForm);
     $('#btnCreateTrip').addEventListener('click', createTrip);
