@@ -181,11 +181,68 @@ eq("balanceがnullなら空文字", sanitized2.lots[0].balance, "");
 eq("lotsが配列でなければnull", box.sanitizeAiLots({ program: "楽天ポイント", confidence: "high" }), null);
 eq("AI結果自体がnullならnull", box.sanitizeAiLots(null), null);
 
-var mapped1 = box.mapAiResult(ai1);
-eq("mapAiResultは先頭の内訳だけを使う（新規登録の簡易フロー用）", mapped1.balance, 100);
-eq("mapAiResultのexpiryDate", mapped1.expiryDate, "2026-08-30");
-eq("mapAiResultのprogram", mapped1.program, "楽天ポイント");
-eq("AI結果がnullならnull", box.mapAiResult(null), null);
+/* ---- addDaysToDateStr / icsEscape / buildIcsContent（カレンダー登録） ---- */
+eq("翌日になる", box.addDaysToDateStr("2026-08-30", 1), "2026-08-31");
+eq("月をまたぐ", box.addDaysToDateStr("2026-08-31", 1), "2026-09-01");
+eq("年をまたぐ", box.addDaysToDateStr("2026-12-31", 1), "2027-01-01");
+
+eq("カンマをエスケープ", box.icsEscape("a,b"), "a\\,b");
+eq("セミコロンをエスケープ", box.icsEscape("a;b"), "a\\;b");
+eq("改行をエスケープ", box.icsEscape("a\nb"), "a\\nb");
+eq("バックスラッシュをエスケープ", box.icsEscape("a\\b"), "a\\\\b");
+
+var icsLot = { id: "lot1", balance: 100, expiryDate: "2026-08-30" };
+var ics = box.buildIcsContent(icsLot, "楽天ポイント", "2026-08-01T00:00:00.000Z");
+ok("VCALENDARで始まる", ics.indexOf("BEGIN:VCALENDAR") === 0);
+ok("VEVENTを含む", ics.indexOf("BEGIN:VEVENT") !== -1);
+ok("UIDにlotのidが入る", ics.indexOf("UID:lot1@poimamo") !== -1);
+ok("DTSTARTが失効日", ics.indexOf("DTSTART;VALUE=DATE:20260830") !== -1);
+ok("DTENDは失効日の翌日", ics.indexOf("DTEND;VALUE=DATE:20260831") !== -1);
+ok("3日前にリマインドするVALARM", ics.indexOf("TRIGGER:-P3D") !== -1);
+ok("サービス名と残高がSUMMARYに入る", ics.indexOf("楽天ポイント") !== -1 && ics.indexOf("100pt") !== -1);
+ok("CRLFで終端する行がある", ics.indexOf("\r\n") !== -1);
+
+/* 月だけの失効内訳を省略せず、月末を暦から計算する。 */
+var months = box.sanitizeAiLots({program:"楽天ポイント", lots:[
+  {pointType:"期間限定",balance:100,expiryDate:null,expiryMonth:"2026-07"},
+  {pointType:"期間限定",balance:200,expiryDate:null,expiryMonth:"2026-08"},
+  {pointType:"期間限定",balance:30,expiryDate:null,expiryMonth:"07"}
+]}).lots;
+eq("月別の3行を保持", months.length, 3);
+eq("7月と8月の残高を保持", months.map(function(l){return l.balance;}), [100,200,30]);
+eq("7月の末日", months[0].expiryDate, "2026-07-31");
+eq("8月の末日", months[1].expiryDate, "2026-08-31");
+eq("年不明は推測しない", months[2].expiryDate, "");
+ok("年不明でも7月という情報を保持", months[2].memo.includes("7月失効"));
+ok("年不明のまま保存できない", !box.validateLotRow(months[2]).valid);
+eq("閏年2月", box.expiryMonthInfo("2028-02").date, "2028-02-29");
+eq("平年2月", box.expiryMonthInfo("2027-02").date, "2027-02-28");
+eq("30日までの月", box.expiryMonthInfo("2026-04").date, "2026-04-30");
+eq("12月", box.expiryMonthInfo("2026-12").date, "2026-12-31");
+["2026-00","2026-13","7月",{},null].forEach(function(v){eq("不正な月を拒否 "+JSON.stringify(v),box.expiryMonthInfo(v),null);});
+eq("明記された日は月末に上書きしない",box.sanitizeLotFields({pointType:"期間限定",balance:10,expiryDate:"2026-07-15",expiryMonth:"2026-07"}).expiryDate,"2026-07-15");
+ok("保存時も読み取った月のメモを保持",box.buildLotsFromRows([months[0]],"楽天ポイント","","screenshot")[0].memo.includes("7月失効"));
+
+/* 単位・通常マイル・カレンダー */
+eq("既存ANAデータはマイルとして扱う",box.unitOf({program:"ANAマイレージ"}),"マイル");
+eq("単位明記はサービス名より優先",box.unitOf({program:"ANAマイレージ",unit:"pt"}),"pt");
+eq("ポイントとマイルを分ける",box.balancesByUnit([{balance:100,unit:"pt"},{balance:3538,program:"ANAマイレージ"}]),{pt:100,"マイル":3538});
+eq("単位を保存",box.normalizeEntry({program:"その他",customProgramName:"JAL",pointType:"通常",balance:100,unit:"マイル"}).unit,"マイル");
+var ana=box.sanitizeAiLots({program:"ANAマイレージ",unit:"マイル",lots:[{pointType:"通常",balance:165,expiryMonth:"2027-04"}]}).lots[0];
+eq("通常マイルの月末を補完",ana.expiryDate,"2027-04-30");
+eq("通常マイルの単位を保持",ana.unit,"マイル");
+eq("通常を期間限定に変えない",ana.pointType,"通常");
+var unknownNormal=box.sanitizeAiLots({program:"ANAマイレージ",unit:"マイル",lots:[{pointType:"通常",balance:165,expiryMonth:"04"}]}).lots[0];
+ok("通常でも年不明の期限は確認が必要",!box.validateLotRow(unknownNormal).valid);
+eq("12月から翌年へ",box.shiftMonth("2026-12",1),"2027-01");
+eq("1月から前年へ",box.shiftMonth("2026-01",-1),"2025-12");
+eq("閏年2月は29日",box.calendarDays("2028-02").filter(Boolean).length,29);
+eq("平年2月は28日",box.calendarDays("2027-02").filter(Boolean).length,28);
+eq("2026年9月1日は火曜日",box.calendarDays("2026-09")[2],"2026-09-01");
+ok("存在しない日付は拒否",!box.validDate("2026-02-30"));
+ok("期限カレンダーに通常マイルも含む",box.expiryEvents([{balance:165,pointType:"通常",expiryDate:"2027-04-30",unit:"マイル"}],"2027-04").length===1);
+eq("期限なし・他月・0残高はカレンダーへ入れない",box.expiryEvents([{balance:0,expiryDate:"2027-04-30"},{balance:2,expiryDate:""},{balance:3,expiryDate:"2027-05-31"}],"2027-04").length,0);
+ok("ICSにもマイル単位",box.buildIcsContent({id:"ana",unit:"マイル",balance:165,expiryDate:"2027-04-30"},"ANAマイレージ").includes("165マイル"));
 
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
