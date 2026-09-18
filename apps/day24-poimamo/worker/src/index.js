@@ -136,7 +136,8 @@ export default {
       }),
     });
     if (!upstream.ok) {
-      console.error(JSON.stringify({ event: "anthropic_error", status: upstream.status }));
+      const errBody = await upstream.text().catch(() => "");
+      console.error(JSON.stringify({ event: "anthropic_error", status: upstream.status, body: errBody.slice(0, 800) }));
       return json({ error: "upstream_error" }, 502, headers);
     }
     const response = await upstream.json();
