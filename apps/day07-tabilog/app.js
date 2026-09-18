@@ -1721,6 +1721,7 @@
     if (!confirm('アカウントを削除しますか？\n（メールアドレス・名前・プラン・回数券の情報が削除されます。旅行の記録自体は削除されません）')) return;
     api('/accounts/delete', 'POST', { email: user.email }).then(function () {
       clearCurrentUser();
+      renderAccountRow();
       alert('アカウントを削除しました。');
       goHome();
     }).catch(function () {
