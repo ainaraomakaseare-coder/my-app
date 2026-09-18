@@ -202,5 +202,26 @@ ok("3日前にリマインドするVALARM", ics.indexOf("TRIGGER:-P3D") !== -1);
 ok("サービス名と残高がSUMMARYに入る", ics.indexOf("楽天ポイント") !== -1 && ics.indexOf("100pt") !== -1);
 ok("CRLFで終端する行がある", ics.indexOf("\r\n") !== -1);
 
+/* 月だけの失効内訳を省略せず、月末を暦から計算する。 */
+var months = box.sanitizeAiLots({program:"楽天ポイント", lots:[
+  {pointType:"期間限定",balance:100,expiryDate:null,expiryMonth:"2026-07"},
+  {pointType:"期間限定",balance:200,expiryDate:null,expiryMonth:"2026-08"},
+  {pointType:"期間限定",balance:30,expiryDate:null,expiryMonth:"07"}
+]}).lots;
+eq("月別の3行を保持", months.length, 3);
+eq("7月と8月の残高を保持", months.map(function(l){return l.balance;}), [100,200,30]);
+eq("7月の末日", months[0].expiryDate, "2026-07-31");
+eq("8月の末日", months[1].expiryDate, "2026-08-31");
+eq("年不明は推測しない", months[2].expiryDate, "");
+ok("年不明でも7月という情報を保持", months[2].memo.includes("7月失効"));
+ok("年不明のまま保存できない", !box.validateLotRow(months[2]).valid);
+eq("閏年2月", box.expiryMonthInfo("2028-02").date, "2028-02-29");
+eq("平年2月", box.expiryMonthInfo("2027-02").date, "2027-02-28");
+eq("30日までの月", box.expiryMonthInfo("2026-04").date, "2026-04-30");
+eq("12月", box.expiryMonthInfo("2026-12").date, "2026-12-31");
+["2026-00","2026-13","7月",{},null].forEach(function(v){eq("不正な月を拒否 "+JSON.stringify(v),box.expiryMonthInfo(v),null);});
+eq("明記された日は月末に上書きしない",box.sanitizeLotFields({pointType:"期間限定",balance:10,expiryDate:"2026-07-15",expiryMonth:"2026-07"}).expiryDate,"2026-07-15");
+ok("保存時も読み取った月のメモを保持",box.buildLotsFromRows([months[0]],"楽天ポイント","","screenshot")[0].memo.includes("7月失効"));
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
