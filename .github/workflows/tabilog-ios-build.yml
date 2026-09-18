@@ -66,6 +66,10 @@ jobs:
         working-directory: apps/day07-tabilog-ios/ios/App/App
         run: |
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '音声で旅の記録をまとめて追加するために使用します'" Info.plist
+          # 独自の暗号化は使っておらず標準的なHTTPS通信のみのため、輸出コンプライアンスの
+          # 質問（TestFlight配信のたびに毎回聞かれるやつ）が出ないようここで申告しておく。
+          # ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" Info.plist
 
       - name: バージョン番号を設定
         # ios/フォルダは毎回作り直しなので、ビルド番号を前回の実行から引き継げない。
