@@ -1,9 +1,11 @@
 /*
  * ポイまも AI Worker。
- * ポイントサービスのスクリーンショット画像を受け取り、Anthropic API（Claude）に
- * 読み取らせて「サービス名」と「内訳（期間限定ポイントの複数のロット＋通常ポイント）」を
- * 構造化して返す。楽天ポイントのように、1つのサービスが失効日の異なる複数の期間限定
- * ポイントと通常ポイントを同時に持つ実態があるため、内訳は配列で返す。
+ * ポイントサービスのスクリーンショット画像（1枚〜複数枚）を受け取り、Anthropic API
+ * （Claude）に読み取らせて「サービス名」と「内訳（期間限定ポイントの複数のロット＋
+ * 通常ポイント）」を構造化して返す。楽天ポイントのように、1つのサービスが失効日の
+ * 異なる複数の期間限定ポイントと通常ポイントを同時に持つ実態があるため、内訳は配列で
+ * 返す。長いリストを画面に収まらずスクロールして複数枚に分けて撮影した場合も、複数枚
+ * まとめて1回のリクエストで読み取れるようにしている。
  * 画像は保存せず、その場で読み取ってレスポンスを返すだけ（ログにも残さない）。
  * APIキーをブラウザに出さないための構成で、DAY05のドラマ王・DAY18のおもいでWikiの
  * Workerと同じ形。個人のポイント画面という機微な画像を扱うためキャッシュはしない。
@@ -11,7 +13,8 @@
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ALLOWED_MEDIA_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const MAX_BASE64_CHARS = 6_000_000; // base64換算でおよそ4.5MB相当まで
+const MAX_BASE64_CHARS = 6_000_000; // base64換算でおよそ4.5MB相当まで（1枚あたり）
+const MAX_IMAGES = 6; // 長いリストをスクロールして複数枚に分けて撮った場合に対応するための上限
 
 function cors(origin, allowed) {
   const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || "");
@@ -33,10 +36,16 @@ function json(body, status, headers) {
 
 function validInput(x) {
   return x && typeof x === "object"
-    && typeof x.imageBase64 === "string"
-    && x.imageBase64.length > 0
-    && x.imageBase64.length <= MAX_BASE64_CHARS
-    && ALLOWED_MEDIA_TYPES.includes(x.mediaType);
+    && Array.isArray(x.images)
+    && x.images.length >= 1
+    && x.images.length <= MAX_IMAGES
+    && x.images.every((img) =>
+      img && typeof img === "object"
+      && typeof img.data === "string"
+      && img.data.length > 0
+      && img.data.length <= MAX_BASE64_CHARS
+      && ALLOWED_MEDIA_TYPES.includes(img.mediaType)
+    );
 }
 
 function extractionTool() {
@@ -75,8 +84,8 @@ function extractionTool() {
 
 function promptText() {
   return [
-    "これはポイントサービスの画面のスクリーンショットです。",
-    "表示されているポイントの内訳を、1件ずつ配列（lots）にしてextract_point_infoツールで返してください。",
+    "これはポイントサービスの画面のスクリーンショットです（1枚のこともあれば、画面をスクロールしながら複数枚に分けて撮影したこともあります）。",
+    "表示されているポイントの内訳を、1件ずつ配列（lots）にしてextract_point_infoツールで返してください。画像が複数枚ある場合は、全ての画像に写っている内訳をまとめて、重複のない1つの配列にしてください。同じ内訳が2枚の画像に重なって写っている場合は1回だけ数えてください。",
     "多くのポイントサービスでは、失効月ごとに分かれた複数の期間限定ポイント（例：8月失効の100pt、9月失効の10pt、10月失効の5pt…）と、失効しない通常ポイント（例：1000pt）が同時に表示されます。",
     "失効月・失効日ごとの内訳が3件以上、あるいは月別の一覧のように並んでいる場合でも、見えている行を1つも省略・要約せず、全ての行をそれぞれ別の要素としてlotsに含めてください。多いからといってまとめたり代表値だけ返したりしないでください。",
     "「通算ポイント」「累計獲得ポイント」「これまでの合計」など、今使える残高ではなく過去の獲得合計・実績を示しているだけの数値は、lotsに含めないでください（対象外です）。lotsに含めるのは、現在保有していて今後使える残高（期間限定ポイントの各内訳、または通常ポイント）だけです。",
@@ -122,7 +131,7 @@ export default {
       },
       body: JSON.stringify({
         model: env.ANTHROPIC_MODEL || "claude-haiku-4-5",
-        max_tokens: 1024,
+        max_tokens: 1536,
         tools: [extractionTool()],
         tool_choice: { type: "tool", name: "extract_point_info" },
         messages: [
@@ -130,7 +139,10 @@ export default {
             role: "user",
             content: [
               { type: "text", text: promptText() },
-              { type: "image", source: { type: "base64", media_type: data.mediaType, data: data.imageBase64 } },
+              ...data.images.map((img) => ({
+                type: "image",
+                source: { type: "base64", media_type: img.mediaType, data: img.data },
+              })),
             ],
           },
         ],

@@ -116,7 +116,7 @@ header.top p{margin:0;font-size:12.5px;color:var(--ink-dim)}
 .expiry-line.u-warning{color:#92621B;font-weight:700}
 .expiry-line.u-expired{color:var(--expired);font-weight:700}
 .entry-memo{font-size:12px;color:var(--ink-dim)}
-.entry-actions{display:flex;gap:8px;margin-top:2px}
+.entry-actions{display:flex;gap:8px;margin-top:2px;flex-wrap:wrap}
 
 .overlay{position:fixed;inset:0;background:rgba(43,38,32,.45);display:flex;align-items:flex-end;justify-content:center;z-index:20}
 .sheet{background:var(--bg);border-radius:18px 18px 0 0;padding:16px 16px 24px;width:100%;max-width:480px;max-height:92dvh;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
@@ -124,10 +124,6 @@ header.top p{margin:0;font-size:12.5px;color:var(--ink-dim)}
 .sheet-head h2{margin:0;font-size:16.5px}
 
 .hint{font-size:12.5px;color:var(--ink-dim);margin:0}
-
-.tabs{display:flex;gap:6px}
-.tab{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px;font-size:13px;font-weight:700;color:var(--ink-dim)}
-.tab.on{color:var(--bg);background:var(--ink);border-color:var(--ink)}
 
 .field{display:flex;flex-direction:column;gap:5px}
 .field label{font-size:12.5px;font-weight:700;color:var(--ink-dim)}
@@ -137,7 +133,8 @@ header.top p{margin:0;font-size:12.5px;color:var(--ink-dim)}
 .radio-row{display:flex;gap:10px}
 .radio-row label{display:flex;align-items:center;gap:6px;font-size:13.5px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;flex:1}
 
-.ss-preview{max-width:100%;max-height:220px;width:auto;display:block;object-fit:contain;border-radius:10px;border:1px solid var(--line)}
+.ss-thumbs{display:flex;gap:8px;flex-wrap:wrap}
+.ss-thumb{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 .ai-note{font-size:12.5px;color:#92621B;background:#FBEBD3;border-radius:10px;padding:8px 10px;margin:0}
 .ai-off{font-size:12.5px;color:var(--ink-dim);margin:0}
 
@@ -160,10 +157,16 @@ footer.note{font-size:11.5px;color:var(--ink-dim);text-align:center;padding:8px 
 
   <div class="summary-strip" id="summary-row"></div>
 
-  <button class="btn btn-main btn-block" id="open-add">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    ポイントを登録
-  </button>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <button class="btn btn-main btn-block" id="open-add">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      ポイントを登録
+    </button>
+    <button class="btn btn-block" id="open-add-shot">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="14" r="3.5"/></svg>
+      スクショから登録
+    </button>
+  </div>
 
   <div class="group-list" id="group-list"></div>
 
@@ -215,21 +218,6 @@ footer.note{font-size:11.5px;color:var(--ink-dim);text-align:center;padding:8px 
     <div class="sheet-head">
       <h2 id="sheet-title">ポイントを登録</h2>
       <button class="btn btn-sm" id="close-sheet">閉じる</button>
-    </div>
-
-    <div class="tabs">
-      <button class="tab on" id="tab-manual" type="button">手入力</button>
-      <button class="tab" id="tab-shot" type="button">スクショから読み取る</button>
-    </div>
-
-    <div id="panel-shot" hidden>
-      <div class="field">
-        <label for="shot-file">スクリーンショットを選ぶ</label>
-        <input type="file" id="shot-file" accept="image/*">
-      </div>
-      <button class="btn btn-main btn-block" id="shot-run" disabled>AIに読み取らせる</button>
-      <div id="ai-status"></div>
-      <img id="shot-preview" class="ss-preview" hidden>
     </div>
 
     <form id="entry-form">
@@ -288,18 +276,36 @@ footer.note{font-size:11.5px;color:var(--ink-dim);text-align:center;padding:8px 
 <div class="overlay" id="update-overlay" hidden>
   <div class="sheet">
     <div class="sheet-head">
-      <h2>「<span id="update-program-name"></span>」の内訳を更新</h2>
+      <h2 id="shot-overlay-title">スクショから登録</h2>
       <button class="btn btn-sm" id="close-update">閉じる</button>
     </div>
-    <p class="hint">スクショを読み取らせるか、下の一覧を直接編集してください。更新すると、このサービスの今の内訳は全てここでの内容に置き換わります。</p>
+    <p class="hint" id="shot-overlay-hint"></p>
+
+    <div class="field" id="shot-program-field">
+      <label for="shot-program-select">サービス</label>
+      <select id="shot-program-select">
+        <option value="楽天ポイント">楽天ポイント</option>
+        <option value="Vポイント">Vポイント</option>
+        <option value="ANAマイレージ">ANAマイレージ</option>
+        <option value="Amazonポイント">Amazonポイント</option>
+        <option value="dポイント">dポイント</option>
+        <option value="PayPayポイント">PayPayポイント</option>
+        <option value="Pontaポイント">Pontaポイント</option>
+        <option value="その他">その他（自由入力）</option>
+      </select>
+    </div>
+    <div class="field" id="shot-custom-field" hidden>
+      <label for="shot-custom-name">サービス名</label>
+      <input type="text" id="shot-custom-name" maxlength="40" placeholder="例：スタバカード">
+    </div>
 
     <div class="field">
-      <label for="upd-shot-file">スクリーンショットを選ぶ（任意）</label>
-      <input type="file" id="upd-shot-file" accept="image/*">
+      <label for="upd-shot-file">スクリーンショットを選ぶ（複数選択可・任意）</label>
+      <input type="file" id="upd-shot-file" accept="image/*" multiple>
     </div>
     <button class="btn btn-main btn-block" id="upd-shot-run" disabled>AIに読み取らせる</button>
     <div id="upd-ai-status"></div>
-    <img id="upd-shot-preview" class="ss-preview" hidden>
+    <div id="upd-shot-thumbs" class="ss-thumbs"></div>
 
     <div id="upd-rows" style="display:flex;flex-direction:column;gap:10px"></div>
     <button class="btn btn-block" id="upd-add-row" type="button">
@@ -498,21 +504,6 @@ function sanitizeAiLots(ai){
   };
 }
 
-function mapAiResult(ai){
-  var sanitized = sanitizeAiLots(ai);
-  if(!sanitized || !sanitized.lots.length) return null;
-  var first = sanitized.lots[0];
-  return {
-    program: sanitized.program,
-    customProgramName: sanitized.customProgramName,
-    pointType: first.pointType,
-    balance: first.balance,
-    expiryDate: first.expiryDate,
-    memo: "",
-    confidence: sanitized.confidence
-  };
-}
-
 /* ---- 内訳の一括更新（レビュー画面）用 ---- */
 
 function validateLotRow(row){
@@ -561,6 +552,50 @@ function buildLotsFromRows(rows, program, customProgramName, source, now){
   });
 }
 
+/* ---- カレンダー登録（.ics）用 ---- */
+
+function addDaysToDateStr(dateStr, n){
+  var d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+}
+
+function icsEscape(text){
+  return String(text == null ? "" : text)
+    .replace(/\\/g, "\\\\")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;")
+    .replace(/\n/g, "\\n");
+}
+
+function buildIcsContent(lot, displayName, nowIso){
+  var stamp = (nowIso || new Date().toISOString()).replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  var startDate = (lot.expiryDate || "").replace(/-/g, "");
+  var endDate = addDaysToDateStr(lot.expiryDate, 1).replace(/-/g, "");
+  var summary = icsEscape("【失効】" + displayName + " " + (Math.round(Number(lot.balance) || 0)) + "pt");
+  var description = icsEscape("ポイまも: " + displayName + " のポイントが失効します");
+  var lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//poimamo//JP",
+    "BEGIN:VEVENT",
+    "UID:" + lot.id + "@poimamo",
+    "DTSTAMP:" + stamp,
+    "DTSTART;VALUE=DATE:" + startDate,
+    "DTEND;VALUE=DATE:" + endDate,
+    "SUMMARY:" + summary,
+    "DESCRIPTION:" + description,
+    "BEGIN:VALARM",
+    "ACTION:DISPLAY",
+    "DESCRIPTION:ポイント失効リマインド",
+    "TRIGGER:-P3D",
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ];
+  return lines.join("\r\n") + "\r\n";
+}
+
 var LOGIC_MARK_END = 1;
 
 /* ============================================================
@@ -569,6 +604,7 @@ var LOGIC_MARK_END = 1;
 
 var STORAGE_KEY = "poimamo:entries:v1";
 var ICON_WARNING = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 3 L22 20 H2 Z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="16.6" r="1" fill="currentColor" stroke="none"/></svg>';
+var ICON_CALENDAR = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
 
 function loadEntries(){
   try{
@@ -590,7 +626,7 @@ var state = {
   detailKey: null,
   formMode: "new",
   editingId: null,
-  aiDraft: null,
+  shotMode: null,
   updateGroupKey: null,
   updateRows: [],
   updateUsedAi: false
@@ -805,6 +841,16 @@ function renderDetail(group){
 
     var actions = document.createElement("div");
     actions.className = "entry-actions";
+    if(lot.expiryDate){
+      var icsBtn = document.createElement("button");
+      icsBtn.className = "btn btn-sm";
+      icsBtn.innerHTML = ICON_CALENDAR;
+      var icsLabel = document.createElement("span");
+      icsLabel.textContent = "カレンダー";
+      icsBtn.appendChild(icsLabel);
+      icsBtn.addEventListener("click", function(){ downloadIcsForLot(lot); });
+      actions.appendChild(icsBtn);
+    }
     var editBtn = document.createElement("button");
     editBtn.className = "btn btn-sm";
     editBtn.textContent = "編集";
@@ -857,6 +903,19 @@ function deleteLot(id){
   render();
 }
 
+function downloadIcsForLot(lot){
+  var content = buildIcsContent(lot, displayProgram(lot), new Date().toISOString());
+  var blob = new Blob([content], { type: "text/calendar;charset=utf-8" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "poimamo-" + lot.id + ".ics";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function clearErrors(){
   ["program", "custom", "ptype", "balance", "expiry"].forEach(function(k){
     document.getElementById("err-" + k).textContent = "";
@@ -879,30 +938,23 @@ function resetForm(){
   clearErrors();
 }
 
-function openSheet(title, showTabs){
+function openSheet(title){
   document.getElementById("sheet-title").textContent = title;
-  document.querySelector("#overlay .tabs").hidden = !showTabs;
   document.getElementById("overlay").hidden = false;
-  switchTab("manual");
 }
 
 function closeSheet(){
   document.getElementById("overlay").hidden = true;
   state.editingId = null;
-  state.aiDraft = null;
   state.formMode = "new";
-  document.getElementById("shot-file").value = "";
-  document.getElementById("shot-preview").hidden = true;
-  document.getElementById("ai-status").innerHTML = "";
-  document.getElementById("shot-run").disabled = true;
 }
 
-function openNewProgramSheet(){
+function openAddSheet(){
   state.formMode = "new";
   state.editingId = null;
   resetForm();
   document.getElementById("field-program").hidden = false;
-  openSheet("ポイントを登録", true);
+  openSheet("ポイントを登録");
 }
 
 function openAddLotSheet(groupKey){
@@ -914,7 +966,7 @@ function openAddLotSheet(groupKey){
   clearErrors();
   document.getElementById("field-program").hidden = true;
   document.getElementById("field-custom").hidden = true;
-  openSheet(group.key + "の内訳を追加", false);
+  openSheet(group.key + "の内訳を追加");
 }
 
 function openEditLotSheet(lotId){
@@ -926,15 +978,7 @@ function openEditLotSheet(lotId){
   clearErrors();
   document.getElementById("field-program").hidden = true;
   document.getElementById("field-custom").hidden = true;
-  openSheet(displayProgram(lot) + "の内訳を編集", false);
-}
-
-function switchTab(name){
-  var manualOn = name === "manual";
-  document.getElementById("tab-manual").classList.toggle("on", manualOn);
-  document.getElementById("tab-shot").classList.toggle("on", !manualOn);
-  document.getElementById("panel-shot").hidden = manualOn;
-  document.getElementById("entry-form").hidden = !manualOn;
+  openSheet(displayProgram(lot) + "の内訳を編集");
 }
 
 function readFormInput(){
@@ -980,15 +1024,18 @@ function resizeImageFile(file){
   });
 }
 
-async function requestAiExtraction(file){
+async function requestAiExtraction(files){
   var endpoint = getAiEndpoint();
   if(!endpoint) throw new Error("ai_not_configured");
-  var resized = await resizeImageFile(file);
-  var base64 = resized.dataUrl.split(",")[1];
+  var images = [];
+  for(var i = 0; i < files.length; i++){
+    var resized = await resizeImageFile(files[i]);
+    images.push({ data: resized.dataUrl.split(",")[1], mediaType: resized.mediaType });
+  }
   var res = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ imageBase64: base64, mediaType: resized.mediaType })
+    body: JSON.stringify({ images: images })
   });
   var body = null;
   try{ body = await res.json(); }catch(e){ body = null; }
@@ -1068,39 +1115,53 @@ function renderUpdateRows(){
   });
 }
 
-function openUpdateOverlay(){
-  var group = findGroup(state.detailKey);
-  if(!group) return;
-  state.updateGroupKey = group.key;
+function openShotOverlay(mode, groupKey){
+  state.shotMode = mode;
+  state.updateGroupKey = groupKey || null;
   state.updateRows = [];
   state.updateUsedAi = false;
-  document.getElementById("update-program-name").textContent = group.key;
   document.getElementById("upd-shot-file").value = "";
-  document.getElementById("upd-shot-preview").hidden = true;
+  document.getElementById("upd-shot-thumbs").innerHTML = "";
   document.getElementById("upd-ai-status").innerHTML = "";
   document.getElementById("upd-shot-run").disabled = true;
   document.getElementById("upd-error").textContent = "";
   renderUpdateRows();
+
+  var isNew = mode === "new";
+  document.getElementById("shot-program-field").hidden = !isNew;
+  document.getElementById("shot-custom-field").hidden = true;
+  if(isNew){
+    document.getElementById("shot-program-select").value = "楽天ポイント";
+    document.getElementById("shot-custom-name").value = "";
+    document.getElementById("shot-overlay-title").textContent = "スクショから登録";
+    document.getElementById("shot-overlay-hint").textContent = "スクショを選ぶとAIが内容を読み取ります（複数枚まとめて選べます）。読み取り後に内容を確認し、サービスを選んで登録してください。";
+    document.getElementById("upd-confirm").textContent = "この内容で登録する";
+  }else{
+    var group = findGroup(groupKey);
+    document.getElementById("shot-overlay-title").textContent = (group ? group.key : "") + "の内訳を更新";
+    document.getElementById("shot-overlay-hint").textContent = "スクショを選ぶか、下の一覧を直接編集してください（複数枚まとめて選べます）。更新すると、このサービスの今の内訳は全てここでの内容に置き換わります。";
+    document.getElementById("upd-confirm").textContent = "この内容で更新する";
+  }
   document.getElementById("update-overlay").hidden = false;
 }
 
 function closeUpdateOverlay(){
   document.getElementById("update-overlay").hidden = true;
+  state.shotMode = null;
   state.updateGroupKey = null;
   state.updateRows = [];
 }
 
 function setupEvents(){
-  document.getElementById("open-add").addEventListener("click", openNewProgramSheet);
+  document.getElementById("open-add").addEventListener("click", openAddSheet);
+  document.getElementById("open-add-shot").addEventListener("click", function(){ openShotOverlay("new"); });
   document.getElementById("close-sheet").addEventListener("click", closeSheet);
   document.getElementById("overlay").addEventListener("click", function(e){
     if(e.target.id === "overlay") closeSheet();
   });
-  document.getElementById("tab-manual").addEventListener("click", function(){ switchTab("manual"); });
-  document.getElementById("tab-shot").addEventListener("click", function(){ switchTab("shot"); });
   document.getElementById("detail-back").addEventListener("click", showListView);
   document.getElementById("add-lot-btn").addEventListener("click", function(){ openAddLotSheet(state.detailKey); });
-  document.getElementById("open-update-btn").addEventListener("click", openUpdateOverlay);
+  document.getElementById("open-update-btn").addEventListener("click", function(){ openShotOverlay("update", state.detailKey); });
   document.getElementById("close-update").addEventListener("click", closeUpdateOverlay);
   document.getElementById("update-overlay").addEventListener("click", function(e){
     if(e.target.id === "update-overlay") closeUpdateOverlay();
@@ -1108,6 +1169,9 @@ function setupEvents(){
   document.getElementById("upd-add-row").addEventListener("click", function(){
     state.updateRows.push({ pointType: "期間限定", balance: "", expiryDate: "" });
     renderUpdateRows();
+  });
+  document.getElementById("shot-program-select").addEventListener("change", function(){
+    document.getElementById("shot-custom-field").hidden = this.value !== "その他";
   });
 
   document.getElementById("f-program").addEventListener("change", function(){
@@ -1123,7 +1187,7 @@ function setupEvents(){
       return;
     }
     var existing = state.editingId ? state.entries.find(function(e2){ return e2.id === state.editingId; }) : null;
-    input.source = (state.aiDraft ? "screenshot" : (existing ? existing.source : "manual"));
+    input.source = existing ? existing.source : "manual";
     var normalized = normalizeEntry(input, existing);
     if(existing){
       state.entries = state.entries.map(function(e2){ return e2.id === existing.id ? normalized : e2; });
@@ -1135,71 +1199,26 @@ function setupEvents(){
     render();
   });
 
-  var shotFileInput = document.getElementById("shot-file");
-  shotFileInput.addEventListener("change", function(){
-    var file = shotFileInput.files && shotFileInput.files[0];
-    var statusEl = document.getElementById("ai-status");
-    var runBtn = document.getElementById("shot-run");
-    statusEl.innerHTML = "";
-    if(!file){
-      document.getElementById("shot-preview").hidden = true;
-      runBtn.disabled = true;
-      return;
-    }
-    var preview = document.getElementById("shot-preview");
-    var reader = new FileReader();
-    reader.onload = function(){ preview.src = reader.result; preview.hidden = false; };
-    reader.readAsDataURL(file);
-
-    if(!getAiEndpoint()){
-      statusEl.innerHTML = '<p class="ai-off">この端末ではまだAI読み取りが設定されていません。手入力タブから登録してください。</p>';
-      runBtn.disabled = true;
-      return;
-    }
-    runBtn.disabled = false;
-  });
-
-  document.getElementById("shot-run").addEventListener("click", async function(){
-    var file = shotFileInput.files && shotFileInput.files[0];
-    if(!file) return;
-    var statusEl = document.getElementById("ai-status");
-    var runBtn = document.getElementById("shot-run");
-    runBtn.disabled = true;
-    statusEl.innerHTML = '<p class="ai-off">AIが読み取っています…</p>';
-    try{
-      var ai = await requestAiExtraction(file);
-      var draft = mapAiResult(ai);
-      if(!draft) throw new Error("empty_result");
-      state.aiDraft = draft;
-      fillForm(draft);
-      clearErrors();
-      statusEl.innerHTML = '<p class="ai-note">AIが読み取った内容をフォームに入力しました。内容を確認してから保存してください。</p>';
-      switchTab("manual");
-    }catch(err){
-      var msg = err && err.message === "ai_not_configured"
-        ? "この端末ではまだAI読み取りが設定されていません。"
-        : "読み取りに失敗しました。手入力をご利用ください。";
-      statusEl.innerHTML = '<p class="ai-off">' + msg + '</p>';
-    }finally{
-      runBtn.disabled = false;
-    }
-  });
-
   var updShotFileInput = document.getElementById("upd-shot-file");
   updShotFileInput.addEventListener("change", function(){
-    var file = updShotFileInput.files && updShotFileInput.files[0];
+    var files = Array.prototype.slice.call(updShotFileInput.files || []);
     var statusEl = document.getElementById("upd-ai-status");
+    var thumbsEl = document.getElementById("upd-shot-thumbs");
     var runBtn = document.getElementById("upd-shot-run");
     statusEl.innerHTML = "";
-    if(!file){
-      document.getElementById("upd-shot-preview").hidden = true;
+    thumbsEl.innerHTML = "";
+    if(!files.length){
       runBtn.disabled = true;
       return;
     }
-    var preview = document.getElementById("upd-shot-preview");
-    var reader = new FileReader();
-    reader.onload = function(){ preview.src = reader.result; preview.hidden = false; };
-    reader.readAsDataURL(file);
+    files.forEach(function(file){
+      var img = document.createElement("img");
+      img.className = "ss-thumb";
+      var reader = new FileReader();
+      reader.onload = function(){ img.src = reader.result; };
+      reader.readAsDataURL(file);
+      thumbsEl.appendChild(img);
+    });
 
     if(!getAiEndpoint()){
       statusEl.innerHTML = '<p class="ai-off">この端末ではまだAI読み取りが設定されていません。下の一覧を手入力してください。</p>';
@@ -1210,22 +1229,29 @@ function setupEvents(){
   });
 
   document.getElementById("upd-shot-run").addEventListener("click", async function(){
-    var file = updShotFileInput.files && updShotFileInput.files[0];
-    if(!file) return;
+    var files = Array.prototype.slice.call(updShotFileInput.files || []);
+    if(!files.length) return;
     var statusEl = document.getElementById("upd-ai-status");
     var runBtn = document.getElementById("upd-shot-run");
     runBtn.disabled = true;
     statusEl.innerHTML = '<p class="ai-off">AIが読み取っています…</p>';
     try{
-      var ai = await requestAiExtraction(file);
+      var ai = await requestAiExtraction(files);
       var sanitized = sanitizeAiLots(ai);
       if(!sanitized || !sanitized.lots.length) throw new Error("empty_result");
       state.updateRows = sanitized.lots.map(function(l){
         return { pointType: l.pointType, balance: l.balance, expiryDate: l.expiryDate };
       });
       state.updateUsedAi = true;
+      if(state.shotMode === "new"){
+        document.getElementById("shot-program-select").value = sanitized.program;
+        document.getElementById("shot-custom-field").hidden = sanitized.program !== "その他";
+        if(sanitized.program === "その他"){
+          document.getElementById("shot-custom-name").value = sanitized.customProgramName;
+        }
+      }
       renderUpdateRows();
-      statusEl.innerHTML = '<p class="ai-note">AIが読み取った内訳を一覧に入力しました。内容を確認してから更新してください。</p>';
+      statusEl.innerHTML = '<p class="ai-note">AIが読み取った内訳を一覧に入力しました。内容を確認してから' + (state.shotMode === "new" ? "登録" : "更新") + 'してください。</p>';
     }catch(err){
       var msg = err && err.message === "ai_not_configured"
         ? "この端末ではまだAI読み取りが設定されていません。下の一覧を手入力してください。"
@@ -1247,20 +1273,40 @@ function setupEvents(){
       errorEl.textContent = result.allError || "入力内容を確認してください。";
       return;
     }
+
+    if(state.shotMode === "new"){
+      var program = document.getElementById("shot-program-select").value;
+      var customProgramName = document.getElementById("shot-custom-name").value;
+      if(program === "その他" && !customProgramName.trim()){
+        errorEl.textContent = "サービス名を入力してください。";
+        return;
+      }
+      errorEl.textContent = "";
+      var newLots = buildLotsFromRows(
+        state.updateRows, program, customProgramName,
+        state.updateUsedAi ? "screenshot" : "manual", new Date().toISOString()
+      );
+      state.entries = state.entries.concat(newLots);
+      saveEntries(state.entries);
+      closeUpdateOverlay();
+      render();
+      return;
+    }
+
     var group = findGroup(state.updateGroupKey);
     if(!group){
       errorEl.textContent = "対象のサービスが見つかりませんでした。";
       return;
     }
     errorEl.textContent = "";
-    var newLots = buildLotsFromRows(
+    var newLots2 = buildLotsFromRows(
       state.updateRows,
       group.program,
       group.customProgramName,
       state.updateUsedAi ? "screenshot" : "manual",
       new Date().toISOString()
     );
-    state.entries = replaceGroupLots(state.entries, state.updateGroupKey, newLots);
+    state.entries = replaceGroupLots(state.entries, state.updateGroupKey, newLots2);
     saveEntries(state.entries);
     closeUpdateOverlay();
     render();
