@@ -243,6 +243,23 @@ function makeTmpPng(name){
   check("楽天ポイントのチケットは消える", (await page.$('.ticket:has-text("楽天ポイント")')) === null);
   check("スタバカードのチケットは残る", (await page.$('.ticket:has-text("スタバカード")')) !== null);
 
+  // 合計不一致の場合は登録せず、画像追加の案内を表示する。
+  const errorCountBefore422 = errors.length;
+  await page.route(AI_ENDPOINT + "/**", route => route.fulfill({status:422,contentType:"application/json",body:JSON.stringify({error:"inconsistent_balances"})}));
+  await page.click("#open-add-shot");
+  const badShot = makeTmpPng("poimamo-inconsistent.png");
+  await page.setInputFiles("#upd-shot-file", badShot);
+  await page.click("#upd-shot-run");
+  await page.waitForFunction(() => document.getElementById("upd-ai-status").textContent.includes("合計と内訳"));
+  check("合計不一致なら画像追加を案内", (await txt("#upd-ai-status")).includes("画像を追加"));
+  check("合計不一致の結果を登録行へ入れない", (await count(".upd-row")) === 0);
+  for(let i=errors.length-1;i>=errorCountBefore422;i--){
+    if(errors[i].includes("status of 422")) errors.splice(i,1);
+  }
+  fs.unlinkSync(badShot);
+  await page.unroute(AI_ENDPOINT + "/**");
+  await page.click("#close-update");
+
   // 書き出し
   const [download] = await Promise.all([
     page.waitForEvent("download"),

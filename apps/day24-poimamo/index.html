@@ -1280,6 +1280,8 @@ function setupEvents(){
     }catch(err){
       var msg = err && err.message === "ai_not_configured"
         ? "この端末ではまだAI読み取りが設定されていません。下の一覧を手入力してください。"
+        : err && err.message === "inconsistent_balances"
+        ? "合計と内訳が一致しないか、通常・期間限定の区別を確認できませんでした。合計・通常・期間限定の全内訳が写る画像を追加して再度読み取るか、下の一覧を手入力してください。"
         : "読み取りに失敗しました。下の一覧を手入力してください。";
       statusEl.innerHTML = '<p class="ai-off">' + msg + '</p>';
     }finally{
