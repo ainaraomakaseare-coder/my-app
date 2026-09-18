@@ -451,19 +451,30 @@ async function deleteEntry(id, env, headers) {
 // 別の予定の「記録」として移す用途）。移動先は同じ日の予定に限る（サーバー側でも検証する）。
 async function moveEntry(id, request, env, headers) {
   const entry = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
-  if (!entry) return json({ error: "not_found" }, 404, headers);
+  if (!entry) {
+    console.error(JSON.stringify({ event: "move_entry_fail", reason: "not_found", entryId: id }));
+    return json({ error: "not_found" }, 404, headers);
+  }
   let data;
   try {
     data = await request.json();
   } catch {
+    console.error(JSON.stringify({ event: "move_entry_fail", reason: "invalid_json", entryId: id }));
     return json({ error: "invalid_json" }, 400, headers);
   }
-  if (!isStr(data.blockId, 100)) return json({ error: "invalid_input" }, 400, headers);
+  if (!isStr(data.blockId, 100)) {
+    console.error(JSON.stringify({ event: "move_entry_fail", reason: "invalid_input", entryId: id, blockId: data.blockId }));
+    return json({ error: "invalid_input" }, 400, headers);
+  }
 
   const currentBlock = await env.DB.prepare("SELECT trip_id, date FROM blocks WHERE id = ?").bind(entry.block_id).first();
   const targetBlock = await env.DB.prepare("SELECT id, trip_id, date FROM blocks WHERE id = ?").bind(data.blockId).first();
-  if (!currentBlock || !targetBlock) return json({ error: "block_not_found" }, 404, headers);
+  if (!currentBlock || !targetBlock) {
+    console.error(JSON.stringify({ event: "move_entry_fail", reason: "block_not_found", entryId: id, currentBlockId: entry.block_id, targetBlockId: data.blockId, hasCurrentBlock: !!currentBlock, hasTargetBlock: !!targetBlock }));
+    return json({ error: "block_not_found" }, 404, headers);
+  }
   if (targetBlock.trip_id !== currentBlock.trip_id || targetBlock.date !== currentBlock.date) {
+    console.error(JSON.stringify({ event: "move_entry_fail", reason: "different_day", currentDate: currentBlock.date, targetDate: targetBlock.date, currentTrip: currentBlock.trip_id, targetTrip: targetBlock.trip_id }));
     return json({ error: "different_day" }, 400, headers);
   }
 
