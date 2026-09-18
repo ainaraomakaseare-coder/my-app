@@ -88,15 +88,23 @@
     return dates;
   }
 
-  // 時刻(time)が両方とも分かっているときだけ時刻順に比べる。片方でも未設定なら
-  // 「時刻不明」として時刻では比べず、作成順（＝音声入力なら話した順）に委ねる。
-  // そうしないと、空文字は常にどんな時刻よりも文字列として小さいため、時刻が分かっている
-  // Blockと分かっていないBlockが混ざったとき、未設定の方が常に先頭に来てしまう
+  // 時刻ありのBlockは常に時刻順で先に並べ、時刻なしのBlockはその後ろに作成順（＝ドラッグでの
+  // 並べ替え順）で並べる。
+  // 以前は「両方とも時刻が分かっているときだけ時刻で比べ、片方でも未設定なら作成順に委ねる」
+  // 方式だったが、これは比較の一貫性（推移律：AがBより前でBがCより前ならAはCより前、が
+  // 常に成り立つこと）が無く、時刻なしのBlockが1件でも混ざっていると、時刻ありのBlock同士の
+  // 並び順までJavaScriptのsort()の内部処理によって壊れることがあった（2026-09-19、
+  // 実際に9時の予定が10時の予定より後ろに表示される不具合として発覚）。
+  // 「時刻ありは常に時刻順が先頭グループ、時刻なしは後ろグループ」という1本のキーに正規化
+  // することで、一貫性のある比較にしている。
+  function blockSortKey(b) {
+    return b.time ? '0:' + b.time : '1:' + (b.createdAt || '');
+  }
+
   function sortBlocks(blocks) {
     return (blocks || []).slice().sort(function (a, b) {
       if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
-      if (a.time && b.time && a.time !== b.time) return a.time.localeCompare(b.time);
-      return (a.createdAt || '').localeCompare(b.createdAt || '');
+      return blockSortKey(a).localeCompare(blockSortKey(b));
     });
   }
 
@@ -1168,9 +1176,12 @@
       e.preventDefault();
 
       var rect = draggedEl.getBoundingClientRect();
-      var siblings = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).filter(function (el) { return el !== draggedEl; });
+      // 時刻ありのBlockは並べ替えの対象外（常に時刻順で固定）。持ち手が出ているBlock
+      // （＝時刻なしのBlock）同士でだけ順番を入れ替えられるようにする。
+      var draggableBlocks = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).filter(function (el) { return el.querySelector('.block-drag-handle'); });
+      var siblings = draggableBlocks.filter(function (el) { return el !== draggedEl; });
       var addBtn = timelineEl.querySelector('.block-add');
-      var originalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).map(function (el) { return el.dataset.blockId; });
+      var originalOrder = draggableBlocks.map(function (el) { return el.dataset.blockId; });
 
       var indicator = document.createElement('div');
       indicator.className = 'block-drop-indicator';
@@ -1213,7 +1224,9 @@
       timelineEl.insertBefore(ds.draggedEl, ds.indicator);
       ds.indicator.remove();
 
-      var finalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).map(function (el) { return el.dataset.blockId; });
+      var finalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block'))
+        .filter(function (el) { return el.querySelector('.block-drag-handle'); })
+        .map(function (el) { return el.dataset.blockId; });
       if (finalOrder.join(',') !== ds.originalOrder.join(',')) persistBlockOrder(finalOrder);
     }
     timelineEl.addEventListener('pointerup', endBlockDrag);
