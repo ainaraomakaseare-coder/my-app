@@ -479,6 +479,19 @@ function replaceGroupLots(allLots, groupKey, newLots){
 
 /* ---- スクショAI読み取り（1件だけ返していたのを、複数の内訳を配列で受け取れるように変更） ---- */
 
+// 年のない失効月は捨てずに確認用メモへ残す。現在年での補完はしない。
+function expiryMonthInfo(value){
+  if(typeof value !== "string") return null;
+  var m = /^(?:(\d{4})-)?(0[1-9]|1[0-2])$/.exec(value);
+  if(!m) return null;
+  var month = Number(m[2]);
+  if(!m[1]) return { date: "", note: month + "月失効（年が不明です。失効日を入力してください）" };
+  var year = Number(m[1]);
+  if(year < 1000) return null;
+  var last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { date: m[1] + "-" + m[2] + "-" + last, note: year + "年" + month + "月失効（月末日を仮入力。実際の期限を確認してください）" };
+}
+
 function sanitizeLotFields(raw){
   raw = raw || {};
   var pointType = raw.pointType === "通常" ? "通常" : "期間限定";
@@ -486,9 +499,15 @@ function sanitizeLotFields(raw){
   if(expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)){
     expiryDate = parseJapaneseDate(expiryDate);
   }
+  var monthInfo = expiryMonthInfo(raw.expiryMonth);
+  var memo = "";
+  if(!expiryDate && monthInfo){
+    expiryDate = monthInfo.date;
+    memo = monthInfo.note;
+  }
   var balance = (raw.balance === null || raw.balance === undefined || isNaN(Number(raw.balance)))
     ? "" : Math.max(0, Math.round(Number(raw.balance)));
-  return { pointType: pointType, balance: balance, expiryDate: expiryDate || "" };
+  return { pointType: pointType, balance: balance, expiryDate: expiryDate || "", memo: memo };
 }
 
 function sanitizeAiLots(ai){
@@ -1069,6 +1088,12 @@ function renderUpdateRows(){
     head.appendChild(label);
     head.appendChild(rm);
     box.appendChild(head);
+    if(row.memo){
+      var note = document.createElement("p");
+      note.className = "ai-note";
+      note.textContent = row.memo;
+      box.appendChild(note);
+    }
 
     var radioRow = document.createElement("div");
     radioRow.className = "radio-row";
@@ -1240,7 +1265,7 @@ function setupEvents(){
       var sanitized = sanitizeAiLots(ai);
       if(!sanitized || !sanitized.lots.length) throw new Error("empty_result");
       state.updateRows = sanitized.lots.map(function(l){
-        return { pointType: l.pointType, balance: l.balance, expiryDate: l.expiryDate };
+        return { pointType: l.pointType, balance: l.balance, expiryDate: l.expiryDate, memo: l.memo };
       });
       state.updateUsedAi = true;
       if(state.shotMode === "new"){

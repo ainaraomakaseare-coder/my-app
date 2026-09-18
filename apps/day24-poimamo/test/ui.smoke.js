@@ -5,7 +5,7 @@
  * カレンダー登録（.ics）・書き出し/読み込みの流れを確かめる。
  * 実行: node test/ui.smoke.js [index.html]
  */
-const { chromium } = require("/opt/node22/lib/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -38,7 +38,7 @@ function makeTmpPng(name){
   await new Promise(r => server.listen(0, "127.0.0.1", r));
   const URL = "http://127.0.0.1:" + server.address().port + "/";
 
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? {channel: process.env.PLAYWRIGHT_CHANNEL} : {});
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await ctx.newPage();
 
@@ -139,7 +139,8 @@ function makeTmpPng(name){
       body: JSON.stringify({
         program: "dポイント",
         lots: [
-          { pointType: "期間限定", balance: 50, expiryDate: "2026-10-31" },
+          { pointType: "期間限定", balance: 50, expiryDate: null, expiryMonth: "2026-07" },
+          { pointType: "期間限定", balance: 0, expiryDate: null, expiryMonth: "08" },
           { pointType: "通常", balance: 200, expiryDate: null },
         ],
         confidence: "high",
@@ -157,8 +158,13 @@ function makeTmpPng(name){
   check("エンドポイント設定済みなので読み取りボタンが有効になる", await page.isEnabled("#upd-shot-run"));
   await page.click("#upd-shot-run");
   await page.waitForSelector("#upd-rows .upd-row");
-  check("AIの読み取り結果が一覧に入力される（2行）", (await count(".upd-row")) === 2);
+  check("AIの読み取り結果が一覧に入力される（3行）", (await count(".upd-row")) === 3);
   check("AIが推測したサービスがプルダウンに反映される", (await val("#shot-program-select")) === "dポイント");
+  check("月のみの期限は7月末になる", await val('.upd-row:nth-child(1) input[type="date"]') === "2026-07-31");
+  check("年不明の月も確認画面に残る", (await txt(".upd-row:nth-child(2)")).includes("8月失効"));
+  await page.click("#upd-confirm");
+  check("年不明のまま登録しない", await vis("#update-overlay"));
+  await page.fill('.upd-row:nth-child(2) input[type="date"]', "2026-08-31");
   await page.click("#upd-confirm");
   check("登録後オーバーレイが閉じる", await page.isHidden("#update-overlay"));
   check("新しいサービス（3件目）が一覧に追加される", (await count(".ticket")) === 3);
