@@ -1714,11 +1714,12 @@
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
-  // アカウント本体（メール・名前・プラン・回数券・参加した旅行への紐付け）だけを消す。
+  // アカウント本体（名前・プラン・回数券・参加した旅行への紐付け）だけを消す。
+  // メールアドレスは、新規登録特典の不正な繰り返し取得を防ぐため残す（worker側の実装を参照）。
   function deleteMyAccount() {
     var user = loadCurrentUser();
     if (!user) return;
-    if (!confirm('アカウントを削除しますか？\n（メールアドレス・名前・プラン・回数券の情報が削除されます。旅行の記録自体は削除されません）')) return;
+    if (!confirm('アカウントを削除しますか？\n（名前・プラン・回数券の情報が削除されます。旅行の記録自体は削除されません）')) return;
     api('/accounts/delete', 'POST', { email: user.email }).then(function () {
       clearCurrentUser();
       renderAccountRow();

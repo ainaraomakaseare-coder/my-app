@@ -892,9 +892,13 @@ async function ensureAccount(request, env, headers) {
 
 // アカウント削除（Appleのガイドライン5.1.1(v)対応：アカウント作成機能があるアプリは
 // アプリ内から自分でアカウントを削除できる必要がある）。
-// 消えるのはアカウント本体（メール・名前・プラン・回数券・参加した旅行への紐付け）だけで、
+// 消えるのはアカウント本体（名前・プラン・回数券・参加した旅行への紐付け）で、
 // 旅行の記録自体は家族と共有しているものなので削除しない。
 // 有料プランの契約中だった場合は、二重請求を避けるためStripeの定期購入も解約する。
+//
+// accountsの行自体はemailをキーにしたまま残し、個人情報だけ空にする（完全にDELETEしない）。
+// これは「削除→登録し直す」を繰り返して新規登録特典（回数券3回分）を無限に得られてしまう
+// 抜け道を防ぐため（getOrCreateAccountはemailの行が既に存在する場合は特典を付与しない）。
 async function deleteAccount(request, env, headers) {
   let data;
   try {
@@ -922,7 +926,12 @@ async function deleteAccount(request, env, headers) {
 
   await env.DB.prepare("DELETE FROM ratings WHERE rater_email = ?").bind(email).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
-  await env.DB.prepare("DELETE FROM accounts WHERE email = ?").bind(email).run();
+  await env.DB.prepare(
+    `UPDATE accounts SET name='', plan='free', plan_period_start='', voice_uses_this_period=0,
+     ticket_credits=0, stripe_customer_id='', stripe_subscription_id='', updated_at=? WHERE email=?`
+  )
+    .bind(nowIso(), email)
+    .run();
   return json({ ok: true }, 200, headers);
 }
 
