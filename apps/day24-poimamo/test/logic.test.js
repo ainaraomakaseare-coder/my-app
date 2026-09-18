@@ -181,11 +181,26 @@ eq("balanceがnullなら空文字", sanitized2.lots[0].balance, "");
 eq("lotsが配列でなければnull", box.sanitizeAiLots({ program: "楽天ポイント", confidence: "high" }), null);
 eq("AI結果自体がnullならnull", box.sanitizeAiLots(null), null);
 
-var mapped1 = box.mapAiResult(ai1);
-eq("mapAiResultは先頭の内訳だけを使う（新規登録の簡易フロー用）", mapped1.balance, 100);
-eq("mapAiResultのexpiryDate", mapped1.expiryDate, "2026-08-30");
-eq("mapAiResultのprogram", mapped1.program, "楽天ポイント");
-eq("AI結果がnullならnull", box.mapAiResult(null), null);
+/* ---- addDaysToDateStr / icsEscape / buildIcsContent（カレンダー登録） ---- */
+eq("翌日になる", box.addDaysToDateStr("2026-08-30", 1), "2026-08-31");
+eq("月をまたぐ", box.addDaysToDateStr("2026-08-31", 1), "2026-09-01");
+eq("年をまたぐ", box.addDaysToDateStr("2026-12-31", 1), "2027-01-01");
+
+eq("カンマをエスケープ", box.icsEscape("a,b"), "a\\,b");
+eq("セミコロンをエスケープ", box.icsEscape("a;b"), "a\\;b");
+eq("改行をエスケープ", box.icsEscape("a\nb"), "a\\nb");
+eq("バックスラッシュをエスケープ", box.icsEscape("a\\b"), "a\\\\b");
+
+var icsLot = { id: "lot1", balance: 100, expiryDate: "2026-08-30" };
+var ics = box.buildIcsContent(icsLot, "楽天ポイント", "2026-08-01T00:00:00.000Z");
+ok("VCALENDARで始まる", ics.indexOf("BEGIN:VCALENDAR") === 0);
+ok("VEVENTを含む", ics.indexOf("BEGIN:VEVENT") !== -1);
+ok("UIDにlotのidが入る", ics.indexOf("UID:lot1@poimamo") !== -1);
+ok("DTSTARTが失効日", ics.indexOf("DTSTART;VALUE=DATE:20260830") !== -1);
+ok("DTENDは失効日の翌日", ics.indexOf("DTEND;VALUE=DATE:20260831") !== -1);
+ok("3日前にリマインドするVALARM", ics.indexOf("TRIGGER:-P3D") !== -1);
+ok("サービス名と残高がSUMMARYに入る", ics.indexOf("楽天ポイント") !== -1 && ics.indexOf("100pt") !== -1);
+ok("CRLFで終端する行がある", ics.indexOf("\r\n") !== -1);
 
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
