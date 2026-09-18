@@ -137,7 +137,7 @@ header.top p{margin:0;font-size:12.5px;color:var(--ink-dim)}
 .radio-row{display:flex;gap:10px}
 .radio-row label{display:flex;align-items:center;gap:6px;font-size:13.5px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;flex:1}
 
-.ss-preview{max-width:100%;border-radius:10px;border:1px solid var(--line)}
+.ss-preview{max-width:100%;max-height:220px;width:auto;display:block;object-fit:contain;border-radius:10px;border:1px solid var(--line)}
 .ai-note{font-size:12.5px;color:#92621B;background:#FBEBD3;border-radius:10px;padding:8px 10px;margin:0}
 .ai-off{font-size:12.5px;color:var(--ink-dim);margin:0}
 
@@ -227,9 +227,9 @@ footer.note{font-size:11.5px;color:var(--ink-dim);text-align:center;padding:8px 
         <label for="shot-file">スクリーンショットを選ぶ</label>
         <input type="file" id="shot-file" accept="image/*">
       </div>
-      <img id="shot-preview" class="ss-preview" hidden>
-      <div id="ai-status"></div>
       <button class="btn btn-main btn-block" id="shot-run" disabled>AIに読み取らせる</button>
+      <div id="ai-status"></div>
+      <img id="shot-preview" class="ss-preview" hidden>
     </div>
 
     <form id="entry-form">
@@ -297,9 +297,9 @@ footer.note{font-size:11.5px;color:var(--ink-dim);text-align:center;padding:8px 
       <label for="upd-shot-file">スクリーンショットを選ぶ（任意）</label>
       <input type="file" id="upd-shot-file" accept="image/*">
     </div>
-    <img id="upd-shot-preview" class="ss-preview" hidden>
-    <div id="upd-ai-status"></div>
     <button class="btn btn-main btn-block" id="upd-shot-run" disabled>AIに読み取らせる</button>
+    <div id="upd-ai-status"></div>
+    <img id="upd-shot-preview" class="ss-preview" hidden>
 
     <div id="upd-rows" style="display:flex;flex-direction:column;gap:10px"></div>
     <button class="btn btn-block" id="upd-add-row" type="button">
