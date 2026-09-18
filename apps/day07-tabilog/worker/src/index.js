@@ -447,6 +447,32 @@ async function deleteEntry(id, env, headers) {
   return json({ ok: true }, 200, headers);
 }
 
+// 記録(entry)を、別の予定(block)にぶら下げ直す（音声入力で「予定」になってしまったものを
+// 別の予定の「記録」として移す用途）。移動先は同じ日の予定に限る（サーバー側でも検証する）。
+async function moveEntry(id, request, env, headers) {
+  const entry = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
+  if (!entry) return json({ error: "not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isStr(data.blockId, 100)) return json({ error: "invalid_input" }, 400, headers);
+
+  const currentBlock = await env.DB.prepare("SELECT trip_id, date FROM blocks WHERE id = ?").bind(entry.block_id).first();
+  const targetBlock = await env.DB.prepare("SELECT id, trip_id, date FROM blocks WHERE id = ?").bind(data.blockId).first();
+  if (!currentBlock || !targetBlock) return json({ error: "block_not_found" }, 404, headers);
+  if (targetBlock.trip_id !== currentBlock.trip_id || targetBlock.date !== currentBlock.date) {
+    return json({ error: "different_day" }, 400, headers);
+  }
+
+  const t = nowIso();
+  await env.DB.prepare("UPDATE entries SET block_id=?, updated_at=? WHERE id=?").bind(data.blockId, t, id).run();
+  const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
+  return json(rowToEntry(updated), 200, headers);
+}
+
 /* ---------- ratings（評価） ----------
  * ログイン必須の機能。rater_email はクライアントが送ってきた値をそのまま信用する
  * （サーバー側でトークン検証はしない、このアプリ全体と同じ簡易的な仕組み）。
@@ -853,15 +879,14 @@ async function getOrCreateAccount(env, email, name) {
   for (let i = 0; i < 10; i++) {
     const accountId = generateAccountId();
     try {
-      // 新規登録の特典として、回数券(ticket_credits)に3回分のボーナスを付与する
-      // （無料プランの月間上限を使い切った後に消費されるため、登録した最初の月だけ実質5回になる）。
-      const welcomeTicketCredits = 3;
+      // 新規登録特典(回数券3回分)は廃止（アカウント削除→再登録を繰り返せば無限に得られて
+      // しまうため。docs/adr/0004参照）。
       await env.DB.prepare(
-        "INSERT INTO accounts (email, account_id, name, ticket_credits, created_at, updated_at) VALUES (?,?,?,?,?,?)"
+        "INSERT INTO accounts (email, account_id, name, created_at, updated_at) VALUES (?,?,?,?,?)"
       )
-        .bind(email, accountId, name || "", welcomeTicketCredits, t, t)
+        .bind(email, accountId, name || "", t, t)
         .run();
-      return { email, account_id: accountId, name: name || "", ticket_credits: welcomeTicketCredits, created_at: t, updated_at: t };
+      return { email, account_id: accountId, name: name || "", ticket_credits: 0, created_at: t, updated_at: t };
     } catch (e) {
       const msg = String((e && e.message) || "");
       if (msg.indexOf("UNIQUE") === -1) throw e;
@@ -926,9 +951,13 @@ async function deleteAccount(request, env, headers) {
 
   await env.DB.prepare("DELETE FROM ratings WHERE rater_email = ?").bind(email).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
+  // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
+  // 「削除→再登録」を繰り返すだけで無料プランの月間上限(2回)が毎回復活してしまう
+  // （新規登録特典の抜け道と同じ構図）。月が変わったときのリセットはresetPeriodIfNeeded()に
+  // 任せる。
   await env.DB.prepare(
-    `UPDATE accounts SET name='', plan='free', plan_period_start='', voice_uses_this_period=0,
-     ticket_credits=0, stripe_customer_id='', stripe_subscription_id='', updated_at=? WHERE email=?`
+    `UPDATE accounts SET name='', plan='free', ticket_credits=0,
+     stripe_customer_id='', stripe_subscription_id='', updated_at=? WHERE email=?`
   )
     .bind(nowIso(), email)
     .run();
@@ -1633,6 +1662,7 @@ export default {
 
     if (method === "POST" && (m = path.match(/^\/blocks\/([^/]+)\/entries$/))) return createEntry(m[1], request, env, headers);
     if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)$/))) return updateEntry(m[1], request, env, headers);
+    if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)\/move$/))) return moveEntry(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)$/))) return deleteEntry(m[1], env, headers);
 
     if (method === "PUT" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return setRating(m[1], request, env, headers);
