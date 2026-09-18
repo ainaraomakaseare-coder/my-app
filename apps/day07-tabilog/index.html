@@ -175,13 +175,13 @@
     </div>
   </section>
 
-  <!-- ============ 音声でまとめて記録する（このアプリで唯一AIを呼び出す機能） ============ -->
+  <!-- ============ 音声・メモでまとめて記録する（このアプリで唯一AIを呼び出す機能） ============ -->
   <section class="screen" data-screen="voiceEntryForm">
     <div class="wrap narrow">
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
-        <h1>音声でまとめて記録する</h1>
-        <p class="lead">その日にあったことをまとめて話すと、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）</p>
+        <h1>音声・メモでまとめて記録する</h1>
+        <p class="lead">その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）</p>
       </header>
 
       <div class="notice" id="voicePremiumRequired" hidden>
@@ -200,6 +200,15 @@
 
         <button class="btn primary wide" id="btnCreateVoiceEntries" hidden>この内容で予定を作る</button>
         <p class="hint" id="voiceEntryStatus"></p>
+
+        <div class="or-divider">または</div>
+
+        <div class="field">
+          <label for="textMemoInput">スケジュールやメモをそのまま貼り付ける</label>
+          <textarea id="textMemoInput" rows="8" placeholder="例：10時 那覇空港集合／12時 沖縄そば https://maps.google.com/.../ 15時 首里城公園"></textarea>
+        </div>
+        <button class="btn primary wide" id="btnCreateTextEntries">この内容で予定を作る</button>
+        <p class="hint" id="textEntryStatus"></p>
       </div>
     </div>
   </section>

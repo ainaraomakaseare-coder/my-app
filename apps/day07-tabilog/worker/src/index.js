@@ -1339,43 +1339,15 @@ async function consumeVoiceQuota(env, email, via) {
   }
 }
 
-async function createBlocksFromVoice(tripId, date, request, env, headers) {
-  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
-  if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
-  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
-  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
-
-  const { buf, contentType, getHeader } = await readBinaryBody(request);
-  const format = VOICE_AUDIO_FORMATS[contentType];
-  if (!format) return json({ error: "unsupported_type" }, 415, headers);
-
-  if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
-
-  const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
-  const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
-  const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
-  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
-
-  // プラン・回数券の確認（docs/adr/0004）。有料プランの範囲外なら、高くつくAI呼び出しの前に断る
-  const quota = await checkVoiceQuota(env, email);
-  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
-
-  if (env.AI_RATE_LIMITER) {
-    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
-    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
-    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
-  }
-
-  const transcript = await transcribeAudio(env, buf, contentType, format);
-  if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
-  if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
-
+// 文字起こし（音声入力）または直接入力されたメモ・スケジュールのテキストを、AIで
+// 予定（Block）とその記録（Entry）の配列に整理してもらう。音声入力・メモ入力の共通処理。
+async function organizeTextIntoBlocks(env, text, notes) {
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
     body: JSON.stringify({
       model: env.OPENAI_MODEL || "gpt-5.6-sol",
-      input: voicePrompt(transcript, notes),
+      input: voicePrompt(text, notes),
       reasoning: { effort: "medium" },
       max_output_tokens: 2000,
       store: false,
@@ -1385,18 +1357,22 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
   if (!upstream.ok) {
     const errorBody = await upstream.text().catch(() => "");
     console.error(JSON.stringify({ event: "openai_error", status: upstream.status, body: errorBody.slice(0, 500) }));
-    return json({ error: "upstream_error" }, 502, headers);
+    return { error: "upstream_error" };
   }
   const response = await upstream.json();
   let parsed;
   try { parsed = JSON.parse(outputText(response)); }
-  catch { return json({ error: "invalid_model_output" }, 502, headers); }
-  if (!parsed || !Array.isArray(parsed.blocks)) return json({ error: "invalid_model_output" }, 502, headers);
+  catch { return { error: "invalid_model_output" }; }
+  if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
+  return { blocks: parsed.blocks };
+}
 
+// organizeTextIntoBlocksが返したBlock配列を、実際にDBへ保存する（Block本体とその記録の両方）。
+async function saveOrganizedBlocks(env, tripId, date, blocksData, author) {
   const created = [];
   const baseTime = Date.now();
-  for (let i = 0; i < parsed.blocks.length; i++) {
-    const b = parsed.blocks[i];
+  for (let i = 0; i < blocksData.length; i++) {
+    const b = blocksData[i];
     if (!b || typeof b !== "object") continue;
     const label = isStr(b.label, 200) ? b.label.trim() : "";
     if (!label) continue;
@@ -1434,11 +1410,90 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
 
     created.push({ ...rowToBlock(blockRow), entries: [rowToEntry(entryRow)] });
   }
+  return created;
+}
+
+async function createBlocksFromVoice(tripId, date, request, env, headers) {
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+
+  const { buf, contentType, getHeader } = await readBinaryBody(request);
+  const format = VOICE_AUDIO_FORMATS[contentType];
+  if (!format) return json({ error: "unsupported_type" }, 415, headers);
+
+  if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
+
+  const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
+  const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
+  const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
+  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+
+  // プラン・回数券の確認（docs/adr/0004）。有料プランの範囲外なら、高くつくAI呼び出しの前に断る
+  const quota = await checkVoiceQuota(env, email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  const transcript = await transcribeAudio(env, buf, contentType, format);
+  if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
+  if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
+
+  const result = await organizeTextIntoBlocks(env, transcript, notes);
+  if (result.error) return json({ error: result.error }, 502, headers);
+  const created = await saveOrganizedBlocks(env, tripId, date, result.blocks, author);
 
   await saveVoiceTranscript(env, tripId, date, transcript);
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
   await consumeVoiceQuota(env, quota.email, quota.via);
   return json({ blocks: created, transcript }, 200, headers);
+}
+
+// メモ・スケジュールのテキストを直接貼り付けて整理してもらう版（音声入力の文字起こし版と
+// 中身はほぼ同じで、録音・Whisperでの文字起こしが無いだけ。利用回数の枠は音声入力と共有する
+// （docs/adr/0004）。
+const MAX_TEXT_MEMO_CHARS = 4000;
+
+async function createBlocksFromText(tripId, date, request, env, headers) {
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  const text = isStr(data.text, MAX_TEXT_MEMO_CHARS) ? data.text.trim() : "";
+  if (!text) return json({ error: "empty_text" }, 422, headers);
+  const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
+  const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
+  const email = optStr(data.email, 200) && data.email ? String(data.email).trim() : "";
+
+  const quota = await checkVoiceQuota(env, email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  const result = await organizeTextIntoBlocks(env, text, notes);
+  if (result.error) return json({ error: result.error }, 502, headers);
+  const created = await saveOrganizedBlocks(env, tripId, date, result.blocks, author);
+
+  await saveVoiceTranscript(env, tripId, date, text);
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  await consumeVoiceQuota(env, quota.email, quota.via);
+  return json({ blocks: created, transcript: text }, 200, headers);
 }
 
 // ---------- 一時的な復旧処理（2026-09-15、entriesテーブルが誤って消えた事故対応） ----------
@@ -1693,6 +1748,9 @@ export default {
 
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/))) {
       return createBlocksFromVoice(m[1], m[2], request, env, headers);
+    }
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/text-entries$/))) {
+      return createBlocksFromText(m[1], m[2], request, env, headers);
     }
 
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);

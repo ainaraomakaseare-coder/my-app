@@ -434,6 +434,15 @@
     );
   }
 
+  // 音声の文字起こし版と違い、貼り付けたテキストをそのままJSONで送るだけなのでbase64化は不要
+  function createTextEntries(tripId, date, text, meta) {
+    return api(
+      '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/text-entries',
+      'POST',
+      { text: text, notes: meta.notes, author: meta.author, email: meta.email }
+    );
+  }
+
   function fileToCompressedBlob(file, maxDim, quality) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
@@ -878,6 +887,9 @@
       $('#voiceRecordStatus').textContent = '';
       $('#voiceRecordStatus').classList.remove('is-recording');
       $('#voiceEntryStatus').textContent = '';
+      $('#textMemoInput').value = '';
+      $('#btnCreateTextEntries').disabled = false;
+      $('#textEntryStatus').textContent = '';
       $('#voicePremiumRequired').hidden = true;
       $('#voiceRecordArea').hidden = false;
     });
@@ -959,6 +971,33 @@
         openVoiceEntryForm();
       }
       else $('#voiceEntryStatus').textContent = '失敗しました。もう一度お試しください。';
+    });
+  }
+
+  function handleCreateTextEntries() {
+    var text = $('#textMemoInput').value.trim();
+    if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
+    var user = loadCurrentUser();
+    var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
+    $('#btnCreateTextEntries').disabled = true;
+    $('#textEntryStatus').textContent = 'AIが内容を確認しています…';
+    createTextEntries(state.trip.id, state.selectedDate, text, meta).then(function () {
+      return refreshTrip();
+    }).then(function () {
+      $('#btnCreateTextEntries').disabled = false;
+      showScreen('tripDetail');
+      renderDaySection();
+    }).catch(function (e) {
+      var msg = (e && e.message) || '';
+      $('#btnCreateTextEntries').disabled = false;
+      if (msg === 'server_not_configured') $('#textEntryStatus').textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
+      else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
+      else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
+        $('#textEntryStatus').textContent = '';
+        openVoiceEntryForm();
+      }
+      else $('#textEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
   }
 
@@ -1067,7 +1106,7 @@
 
     var voiceBtn = document.createElement('button');
     voiceBtn.className = 'block-add';
-    voiceBtn.innerHTML = MIC_ICON + '<span>音声でまとめて記録する</span>';
+    voiceBtn.innerHTML = MIC_ICON + '<span>音声・メモでまとめて記録する</span>';
     voiceBtn.addEventListener('click', openVoiceEntryForm);
     el.appendChild(voiceBtn);
   }
@@ -1972,6 +2011,7 @@
     });
     $('#btnVoiceRecord').addEventListener('click', handleVoiceRecordToggle);
     $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
+    $('#btnCreateTextEntries').addEventListener('click', handleCreateTextEntries);
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);
