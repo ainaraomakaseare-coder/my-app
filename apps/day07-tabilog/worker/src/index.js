@@ -879,14 +879,18 @@ async function getOrCreateAccount(env, email, name) {
   for (let i = 0; i < 10; i++) {
     const accountId = generateAccountId();
     try {
-      // 新規登録特典(回数券3回分)は廃止（アカウント削除→再登録を繰り返せば無限に得られて
-      // しまうため。docs/adr/0004参照）。
+      // 新規登録の特典として、回数券(ticket_credits)に3回分のボーナスを付与する
+      // （無料プランの月間上限を使い切った後に消費されるため、登録した最初の月だけ実質5回になる。
+      // 機能の良さを知ってもらうための特典なので、本物の初回登録だけに限定したい。
+      // deleteAccount()はこの行をDELETEせず空にするだけなので、削除→再登録では
+      // このINSERT分岐に来ず、特典を再び得ることはできない。docs/adr/0004参照）。
+      const welcomeTicketCredits = 3;
       await env.DB.prepare(
-        "INSERT INTO accounts (email, account_id, name, created_at, updated_at) VALUES (?,?,?,?,?)"
+        "INSERT INTO accounts (email, account_id, name, ticket_credits, created_at, updated_at) VALUES (?,?,?,?,?,?)"
       )
-        .bind(email, accountId, name || "", t, t)
+        .bind(email, accountId, name || "", welcomeTicketCredits, t, t)
         .run();
-      return { email, account_id: accountId, name: name || "", ticket_credits: 0, created_at: t, updated_at: t };
+      return { email, account_id: accountId, name: name || "", ticket_credits: welcomeTicketCredits, created_at: t, updated_at: t };
     } catch (e) {
       const msg = String((e && e.message) || "");
       if (msg.indexOf("UNIQUE") === -1) throw e;
