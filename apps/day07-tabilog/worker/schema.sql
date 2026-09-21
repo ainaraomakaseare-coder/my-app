@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS ratings (
   entry_id TEXT NOT NULL,
   rater_email TEXT NOT NULL,
   rater_name TEXT NOT NULL DEFAULT '',
+  -- score: 1〜5。型はINTEGERだがSQLiteの型親和性により3.7のような0.1刻みの小数もそのまま保存できる
+  -- （整数に丸めずに入れられる値はREALとして保存される。マイグレーション不要）。
   score INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,

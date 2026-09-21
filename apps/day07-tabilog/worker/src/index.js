@@ -489,8 +489,15 @@ function validRatingInput(x) {
   if (!x || typeof x !== "object") return false;
   if (!isStr(x.raterEmail, 200) || x.raterEmail.trim().length < 3) return false;
   if (!optStr(x.raterName, 100)) return false;
-  if (!Number.isInteger(x.score) || x.score < 1 || x.score > 5) return false;
+  // 基本は★1〜5の整数だが、0.1刻みの細かい評価も許可する（例: 3.7）
+  if (typeof x.score !== "number" || !isFinite(x.score)) return false;
+  if (x.score < 1 || x.score > 5) return false;
   return true;
+}
+
+// 0.1刻みに丸める（浮動小数点の誤差でDBの値がバラつかないように）
+function roundScore(score) {
+  return Math.round(score * 10) / 10;
 }
 
 function rowToRating(row) {
@@ -519,16 +526,17 @@ async function setRating(entryId, request, env, headers) {
   const existing = await env.DB.prepare("SELECT id FROM ratings WHERE entry_id = ? AND rater_email = ?")
     .bind(entryId, email)
     .first();
+  const score = roundScore(data.score);
   const t = nowIso();
   if (existing) {
     await env.DB.prepare("UPDATE ratings SET score=?, rater_name=?, updated_at=? WHERE id=?")
-      .bind(data.score, name, t, existing.id)
+      .bind(score, name, t, existing.id)
       .run();
   } else {
     await env.DB.prepare(
       "INSERT INTO ratings (id, entry_id, rater_email, rater_name, score, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
     )
-      .bind(uid("rat"), entryId, email, name, data.score, t, t)
+      .bind(uid("rat"), entryId, email, name, score, t, t)
       .run();
   }
   const { results } = await env.DB.prepare("SELECT * FROM ratings WHERE entry_id = ?").bind(entryId).all();

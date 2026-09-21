@@ -1604,17 +1604,33 @@
     }
 
     var mine = Core.myRatingScore(entry.ratings, user.email);
+    var mineWhole = Math.round(mine); // 星タップの見た目は整数（0.1刻みの端数は微調整ボタンで付ける）
     var stars = '';
     for (var i = 1; i <= 5; i++) {
-      stars += '<button type="button" class="star-btn' + (i <= mine ? ' on' : '') + '" data-score="' + i + '" aria-label="★' + i + '">★</button>';
+      stars += '<button type="button" class="star-btn' + (i <= mineWhole ? ' on' : '') + '" data-score="' + i + '" aria-label="★' + i + '">★</button>';
     }
-    widget.innerHTML = '<div class="stars">' + stars + '</div>';
+    var fine = mine > 0
+      ? '<div class="rating-fine">' +
+        '<button type="button" class="btn ghost small" id="ratingFineMinus">－0.1</button>' +
+        '<span class="rating-fine-value">★' + mine.toFixed(1) + '</span>' +
+        '<button type="button" class="btn ghost small" id="ratingFinePlus">＋0.1</button>' +
+        '</div>'
+      : '';
+    widget.innerHTML = '<div class="stars">' + stars + '</div>' + fine;
     $all('.star-btn', widget).forEach(function (btn) {
       btn.addEventListener('click', function () {
         var score = Number(btn.dataset.score);
-        setMyRating(score === mine ? 0 : score);
+        setMyRating(score === mineWhole ? 0 : score);
       });
     });
+    if (mine > 0) {
+      $('#ratingFineMinus', widget).addEventListener('click', function () {
+        setMyRating(Math.max(1, Math.round((mine - 0.1) * 10) / 10));
+      });
+      $('#ratingFinePlus', widget).addEventListener('click', function () {
+        setMyRating(Math.min(5, Math.round((mine + 0.1) * 10) / 10));
+      });
+    }
     $('#entRatingSummary').textContent = summaryText;
   }
 

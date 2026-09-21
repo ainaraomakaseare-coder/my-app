@@ -359,6 +359,8 @@ a:hover { text-decoration: underline; }
   font-size: 26px; line-height: 1; color: var(--border); background: none; border: none; padding: 2px;
 }
 .star-btn.on { color: #FFAB00; }
+.rating-fine { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.rating-fine-value { font-size: 13px; color: var(--ink-muted); min-width: 34px; text-align: center; }
 
 /* ---------- 音声入力プラン ---------- */
 .plan-status {
