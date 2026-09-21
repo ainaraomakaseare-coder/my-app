@@ -66,6 +66,10 @@ jobs:
         working-directory: apps/day07-tabilog-ios/ios/App/App
         run: |
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '音声で旅の記録をまとめて追加するために使用します'" Info.plist
+          # 記録に写真を追加するとき「写真を撮る」を選ぶとカメラを使うが、マイクと同じ理由で
+          # NSCameraUsageDescriptionが無いと（許可を求める前に）即座にアプリがクラッシュする。
+          # 「写真ライブラリから選ぶ」はカメラを使わないため、この説明文が無くても正常に動いていた。
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string '旅の記録にその場で撮った写真を追加するために使用します'" Info.plist
           # 独自の暗号化は使っておらず標準的なHTTPS通信のみのため、輸出コンプライアンスの
           # 質問（TestFlight配信のたびに毎回聞かれるやつ）が出ないようここで申告しておく。
           # ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
