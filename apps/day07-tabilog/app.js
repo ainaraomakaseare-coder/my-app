@@ -2056,9 +2056,11 @@
       row.innerHTML =
         '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
         '<input type="number" min="0" step="1" placeholder="円" value="' + (item.amount || '') + '">' +
-        '<button type="button" class="cost-split-toggle" aria-label="全体費用から計算">÷人数</button>' +
-        '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
-        '<button type="button" aria-label="削除">×</button>';
+        '<button type="button" aria-label="削除">×</button>' +
+        '<div class="cost-item-row-actions">' +
+          '<button type="button" class="cost-split-toggle" aria-label="全体費用から計算">÷人数</button>' +
+          '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
+        '</div>';
       var inputs = row.querySelectorAll('input');
       var amountInput = inputs[1];
       inputs[0].addEventListener('input', function (e) { state.formCostItems[idx].label = e.target.value; });
