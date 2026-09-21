@@ -1088,6 +1088,63 @@
     return byDate[state.selectedDate || ''] || [];
   }
 
+  // 日タブを左右スワイプで切り替える。タイムライン上での横方向の指の動きを見て、
+  // 縦スクロールと誤認しないよう「最初にどちらの向きに動いたか」で一度だけ判定する。
+  // Blockの並べ替え・記録の移動ドラッグは持ち手（.block-drag-handle / .entry-drag-handle）
+  // から始まる操作なので、そこから始まったタッチはスワイプの対象にしない。
+  var daySwipeState = null;
+  function initDaySwipe() {
+    var el = $('#timeline');
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { daySwipeState = null; return; }
+      if (e.target.closest('.block-drag-handle, .entry-drag-handle, a, video, button, input, textarea, select')) {
+        daySwipeState = null;
+        return;
+      }
+      var t = e.touches[0];
+      daySwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!daySwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - daySwipeState.startX;
+      var dy = t.clientY - daySwipeState.startY;
+      if (!daySwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        daySwipeState.decided = true;
+        daySwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (daySwipeState.decided && daySwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!daySwipeState) return;
+      var ds = daySwipeState;
+      daySwipeState = null;
+      if (!ds.decided || !ds.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - ds.startX;
+      if (Math.abs(dx) < 60) return;
+      goToAdjacentDay(dx < 0 ? 1 : -1);
+    });
+
+    el.addEventListener('touchcancel', function () { daySwipeState = null; });
+  }
+
+  function goToAdjacentDay(delta) {
+    var dates = Core.allDatesForTrip(state.trip, state.blocks);
+    var idx = dates.indexOf(state.selectedDate);
+    if (idx === -1) return;
+    var nextIdx = idx + delta;
+    if (nextIdx < 0 || nextIdx >= dates.length) return; // 最初・最後の日では何もしない
+    state.selectedDate = dates[nextIdx];
+    renderDayTabs();
+    renderDaySection();
+    var activeTab = $('#dayTabs .day-tab.on');
+    if (activeTab) activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }
+
   function renderDaySection() {
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
     renderTimeline(currentDayBlocks());
@@ -2082,6 +2139,7 @@
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
     initBlockDragReorder();
     initEntryDragMove();
+    initDaySwipe();
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
