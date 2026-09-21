@@ -756,6 +756,7 @@
     loginReturnTo: 'home',    // ログイン画面から戻る先の画面名
     myLogItems: [],
     myLogTrips: [],
+    myLogPlaces: { prefectures: [], countries: [] },
     myLogCategory: 'food',
     myLogSort: 'score',
     // 旅行のサムネイル画像。新規作成・編集どちらのフォームでも使い回す
@@ -2213,6 +2214,7 @@
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogItems = data.items || [];
       state.myLogTrips = data.trips || [];
+      state.myLogPlaces = data.places || { prefectures: [], countries: [] };
       renderMyLog();
     }).catch(function () {
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
@@ -2351,9 +2353,33 @@
 
   function renderMyLog() {
     renderMyLogTrips();
+    renderMyLogPlaces();
     renderMyLogTabs();
     renderMyLogSort();
     renderMyLogList();
+  }
+
+  // 「訪れた都道府県・国」：参加した旅行の「日ごとの場所」（天気取得のときに入力した地名）から
+  // サーバー側で自動集計されたものを、そのままチップで並べるだけ（フロント側では集計しない）。
+  function renderMyLogPlaces() {
+    var el = $('#mylogPlaces');
+    var places = state.myLogPlaces || { prefectures: [], countries: [] };
+    var prefectures = places.prefectures || [];
+    var countries = places.countries || [];
+    if (!prefectures.length && !countries.length) {
+      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行の日タブで「＋場所を設定」すると、ここに自動で集計されます。</div>';
+      return;
+    }
+    var html = '';
+    if (prefectures.length) {
+      html += '<div class="visited-group"><span class="visited-group-label">都道府県（' + prefectures.length + '）</span><div class="visited-chips">'
+        + prefectures.map(function (p) { return '<span class="visited-chip">' + escapeHtml(p) + '</span>'; }).join('') + '</div></div>';
+    }
+    if (countries.length) {
+      html += '<div class="visited-group"><span class="visited-group-label">海外（' + countries.length + 'か国）</span><div class="visited-chips">'
+        + countries.map(function (c) { return '<span class="visited-chip">' + escapeHtml(c) + '</span>'; }).join('') + '</div></div>';
+    }
+    el.innerHTML = html;
   }
 
   // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。

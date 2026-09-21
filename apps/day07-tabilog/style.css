@@ -432,6 +432,11 @@ a:hover { text-decoration: underline; }
 .plan-card button { flex-shrink: 0; }
 
 /* ---------- マイログ ---------- */
+.visited-places { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
+.visited-group { display: flex; flex-direction: column; gap: 6px; }
+.visited-group-label { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); }
+.visited-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.visited-chip { padding: 6px 12px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 12.5px; font-weight: 700; }
 .mylog-tabs { display: flex; gap: 6px; padding: 12px 0 4px; overflow-x: auto; }
 .mylog-tab { padding: 7px 13px; border-radius: 999px; color: var(--ink-muted); font-size: 12px; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
 .mylog-tab.on { background: var(--accent); color: white; font-weight: 700; }

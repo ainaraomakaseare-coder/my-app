@@ -92,6 +92,10 @@ CREATE TABLE IF NOT EXISTS day_infos (
   place TEXT NOT NULL DEFAULT '',
   lat REAL,
   lon REAL,
+  -- admin1（都道府県・州など）・country（国）：ジオコーディング（天気の取得と同じAPI呼び出し）の
+  -- 結果からついでに保存する（v13）。「訪れた都道府県・国」の集計専用の別入力はしない。
+  admin1 TEXT NOT NULL DEFAULT '',
+  country TEXT NOT NULL DEFAULT '',
   weather_code INTEGER,
   temp_max REAL,
   temp_min REAL,
@@ -180,3 +184,8 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- v12：day_infosに weather_manual（自動取得した天気を手動で修正したかどうか）を
 -- 追加する一度きりの文。本番環境へ反映するまでは、下記を1回だけ実行すること。
 -- ALTER TABLE day_infos ADD COLUMN weather_manual INTEGER NOT NULL DEFAULT 0;
+
+-- v13：day_infosに admin1（都道府県・州など）・country（国）を追加する一度きりの文。
+-- 本番環境へ反映するまでは、下記を2回（1文ずつ）実行すること。
+-- ALTER TABLE day_infos ADD COLUMN admin1 TEXT NOT NULL DEFAULT '';
+-- ALTER TABLE day_infos ADD COLUMN country TEXT NOT NULL DEFAULT '';

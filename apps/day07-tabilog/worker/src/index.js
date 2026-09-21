@@ -604,6 +604,7 @@ async function getMyLog(email, env, headers) {
 
   const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(email).first();
   let trips = [];
+  let places = { prefectures: [], countries: [] };
   if (account) {
     const { results: tripRows } = await env.DB.prepare(
       `SELECT t.* FROM trip_members m JOIN trips t ON t.id = m.trip_id
@@ -612,9 +613,33 @@ async function getMyLog(email, env, headers) {
       .bind(account.account_id)
       .all();
     trips = tripRows.map(rowToTrip);
+    places = await getVisitedPlaces(env, trips.map((t) => t.id));
   }
 
-  return json({ items, trips }, 200, headers);
+  return json({ items, trips, places }, 200, headers);
+}
+
+// 参加した旅行（trips）にまたがる「日ごとの場所」（day_infos.admin1/country、天気取得のついでに
+// 保存したもの）から、訪れた都道府県・国を重複なく集計する。都道府県は country が「日本」の
+// 行だけを対象にする（海外のadmin1＝州などを都道府県として混ぜないため）。
+async function getVisitedPlaces(env, tripIds) {
+  if (!tripIds.length) return { prefectures: [], countries: [] };
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT admin1, country FROM day_infos
+     WHERE trip_id IN (${tripIds.map(() => "?").join(",")}) AND (admin1 != '' OR country != '')`
+  )
+    .bind(...tripIds)
+    .all();
+  const prefectures = new Set();
+  const countries = new Set();
+  results.forEach((row) => {
+    if (row.country === "日本" && row.admin1) prefectures.add(row.admin1);
+    else if (row.country && row.country !== "日本") countries.add(row.country);
+  });
+  return {
+    prefectures: Array.from(prefectures).sort(),
+    countries: Array.from(countries).sort(),
+  };
 }
 
 /* ---------- 日ごとの天気（day_infos） ----------
@@ -630,6 +655,8 @@ function rowToDayInfo(row) {
     place: row.place,
     lat: row.lat,
     lon: row.lon,
+    admin1: row.admin1 || "",
+    country: row.country || "",
     weatherCode: row.weather_code,
     tempMax: row.temp_max,
     tempMin: row.temp_min,
@@ -652,7 +679,9 @@ async function geocodePlace(place) {
   const data = await res.json();
   const first = data && data.results && data.results[0];
   if (!first) return null;
-  return { lat: first.latitude, lon: first.longitude };
+  // admin1（都道府県・州など）・country（国）は、天気取得と同じこのジオコーディング結果から
+  // ついでに取れる。「訪れた都道府県・国」の集計（v13）専用に別の入力・別のAPI呼び出しは要らない。
+  return { lat: first.latitude, lon: first.longitude, admin1: first.admin1 || "", country: first.country || "" };
 }
 
 async function fetchDailyWeather(lat, lon, date) {
@@ -702,6 +731,8 @@ async function setDayPlace(tripId, date, request, env, headers) {
     place,
     lat: geo.lat,
     lon: geo.lon,
+    admin1: geo.admin1,
+    country: geo.country,
     weather_code: weather ? weather.weatherCode : null,
     temp_max: weather ? weather.tempMax : null,
     temp_min: weather ? weather.tempMin : null,
@@ -713,15 +744,15 @@ async function setDayPlace(tripId, date, request, env, headers) {
     // 場所を入力し直すのは「自動取得をやり直したい」という意思表示なので、
     // 手動修正フラグ（weather_manual）はここでリセットする。
     await env.DB.prepare(
-      "UPDATE day_infos SET place=?, lat=?, lon=?, weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, weather_manual=0, updated_at=? WHERE id=?"
+      "UPDATE day_infos SET place=?, lat=?, lon=?, admin1=?, country=?, weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, weather_manual=0, updated_at=? WHERE id=?"
     )
-      .bind(row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, id)
+      .bind(row.place, row.lat, row.lon, row.admin1, row.country, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, id)
       .run();
   } else {
     await env.DB.prepare(
-      "INSERT INTO day_infos (id, trip_id, date, place, lat, lon, weather_code, temp_max, temp_min, precip_sum, is_forecast, fetched_at, weather_manual, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)"
+      "INSERT INTO day_infos (id, trip_id, date, place, lat, lon, admin1, country, weather_code, temp_max, temp_min, precip_sum, is_forecast, fetched_at, weather_manual, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)"
     )
-      .bind(id, tripId, date, row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, t)
+      .bind(id, tripId, date, row.place, row.lat, row.lon, row.admin1, row.country, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, t)
       .run();
   }
   const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
