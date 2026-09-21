@@ -632,8 +632,13 @@ function rowToDayInfo(row) {
     isForecast: !!row.is_forecast,
     fetchedAt: row.fetched_at,
     voiceTranscript: row.voice_transcript || "",
+    weatherManual: !!row.weather_manual,
   };
 }
+
+// 手動で選べる天気の種類。weatherLabel()の表示区分（快晴／晴れ／曇り／霧／霧雨／雨／雪／
+// にわか雨／にわか雪／雷雨）それぞれの代表的なWMOコードだけを許可する。
+const MANUAL_WEATHER_CODES = [0, 1, 3, 45, 51, 61, 71, 80, 85, 95];
 
 async function geocodePlace(place) {
   const url = "https://geocoding-api.open-meteo.com/v1/search?count=1&language=ja&format=json&name=" + encodeURIComponent(place);
@@ -700,18 +705,50 @@ async function setDayPlace(tripId, date, request, env, headers) {
     fetched_at: weather ? t : "",
   };
   if (existing) {
+    // 場所を入力し直すのは「自動取得をやり直したい」という意思表示なので、
+    // 手動修正フラグ（weather_manual）はここでリセットする。
     await env.DB.prepare(
-      "UPDATE day_infos SET place=?, lat=?, lon=?, weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=?"
+      "UPDATE day_infos SET place=?, lat=?, lon=?, weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, weather_manual=0, updated_at=? WHERE id=?"
     )
       .bind(row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, id)
       .run();
   } else {
     await env.DB.prepare(
-      "INSERT INTO day_infos (id, trip_id, date, place, lat, lon, weather_code, temp_max, temp_min, precip_sum, is_forecast, fetched_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+      "INSERT INTO day_infos (id, trip_id, date, place, lat, lon, weather_code, temp_max, temp_min, precip_sum, is_forecast, fetched_at, weather_manual, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)"
     )
       .bind(id, tripId, date, row.place, row.lat, row.lon, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, t)
       .run();
   }
+  const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
+  return json(rowToDayInfo(updated), 200, headers);
+}
+
+// 自動取得した天気が実際と違うときに、本人が手動で修正するためのエンドポイント。
+// 場所（place）は変えず、天気アイコン・気温だけを上書きする。降水量（precip_sum）は
+// 手動入力では持たないためクリアする（weatherLabel()の「1mm以下なら曇り扱い」判定は
+// precipSumがnumberのときだけ働くので、nullなら選んだ天気コードの表示がそのまま出る）。
+async function setDayWeatherManual(tripId, date, request, env, headers) {
+  if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  const id = tripId + "_" + date;
+  const existing = await env.DB.prepare("SELECT id FROM day_infos WHERE id = ?").bind(id).first();
+  if (!existing) return json({ error: "day_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!Number.isInteger(data.weatherCode) || MANUAL_WEATHER_CODES.indexOf(data.weatherCode) === -1) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const tempMax = typeof data.tempMax === "number" && isFinite(data.tempMax) && data.tempMax >= -80 && data.tempMax <= 80 ? data.tempMax : null;
+  const tempMin = typeof data.tempMin === "number" && isFinite(data.tempMin) && data.tempMin >= -80 && data.tempMin <= 80 ? data.tempMin : null;
+  const t = nowIso();
+  await env.DB.prepare(
+    "UPDATE day_infos SET weather_code=?, temp_max=?, temp_min=?, precip_sum=NULL, is_forecast=0, weather_manual=1, fetched_at=?, updated_at=? WHERE id=?"
+  )
+    .bind(data.weatherCode, tempMax, tempMin, t, t, id)
+    .run();
   const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
   return json(rowToDayInfo(updated), 200, headers);
 }
@@ -1746,6 +1783,7 @@ export default {
 
     if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return setDayPlace(m[1], m[2], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return deleteDayPlace(m[1], m[2], env, headers);
+    if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/weather$/))) return setDayWeatherManual(m[1], m[2], request, env, headers);
 
     if (method === "POST" && path === "/auth/email/send") return sendEmailOtp(request, env, headers);
     if (method === "POST" && path === "/auth/email/verify") return verifyEmailOtp(request, env, headers);

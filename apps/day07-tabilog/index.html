@@ -259,6 +259,36 @@
       <div class="section-label">
         <div class="section-title" id="dayTitle"></div>
         <button class="day-weather" id="dayWeather"></button>
+        <button class="icon-btn weather-edit-btn" id="btnEditWeather" aria-label="天気を修正" hidden>
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5l3 3L6 17l-3.6.6.6-3.6L13.5 3.5z"/></svg>
+        </button>
+      </div>
+
+      <div class="weather-edit-panel" id="weatherEditPanel" hidden>
+        <label>天気
+          <select id="weatherEditCode">
+            <option value="0">快晴</option>
+            <option value="1">晴れ</option>
+            <option value="3">曇り</option>
+            <option value="45">霧</option>
+            <option value="51">霧雨</option>
+            <option value="61">雨</option>
+            <option value="71">雪</option>
+            <option value="80">にわか雨</option>
+            <option value="85">にわか雪</option>
+            <option value="95">雷雨</option>
+          </select>
+        </label>
+        <div class="weather-edit-temps">
+          <label>最高<input type="number" id="weatherEditMax" inputmode="decimal" placeholder="℃"></label>
+          <label>最低<input type="number" id="weatherEditMin" inputmode="decimal" placeholder="℃"></label>
+        </div>
+        <p class="hint">自動取得した天気と違うときに、実際の天気に修正できます。</p>
+        <div class="weather-edit-actions">
+          <button type="button" class="btn ghost small" id="btnCancelWeatherEdit">キャンセル</button>
+          <button type="button" class="btn primary small" id="btnSaveWeatherEdit">保存</button>
+        </div>
+        <p class="hint" id="weatherEditStatus"></p>
       </div>
 
       <details class="voice-transcript" id="voiceTranscriptBox" hidden>

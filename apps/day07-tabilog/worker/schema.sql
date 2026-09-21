@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS day_infos (
   is_forecast INTEGER NOT NULL DEFAULT 0,
   fetched_at TEXT NOT NULL DEFAULT '',
   voice_transcript TEXT NOT NULL DEFAULT '',
+  -- weather_manual：1なら、自動取得した天気を本人が手動で修正したもの（v12）。
+  -- 場所を入力し直す（setDayPlace）と自動取得の値で上書きされ、0に戻る。
+  weather_manual INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(trip_id, date)
@@ -173,3 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- v11：entriesに time（記録の時間、任意）・other_url（その他URL、任意）を追加する
 -- 一度きりの文だった。本番環境では反映済みのため、この行は削除済み
 -- （上のCREATE TABLEには最初から含めてある）。
+
+-- v12：day_infosに weather_manual（自動取得した天気を手動で修正したかどうか）を
+-- 追加する一度きりの文。本番環境へ反映するまでは、下記を1回だけ実行すること。
+-- ALTER TABLE day_infos ADD COLUMN weather_manual INTEGER NOT NULL DEFAULT 0;

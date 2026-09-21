@@ -96,6 +96,7 @@ a:hover { text-decoration: underline; }
 .btn.primary:hover { background: var(--accent-deep); }
 .btn.ghost { background: transparent; }
 .btn.ghost.small { padding: 7px 12px; font-size: 12.5px; font-weight: 500; }
+.btn.primary.small { padding: 7px 12px; font-size: 12.5px; font-weight: 600; }
 .btn.danger { color: var(--danger); border-color: #FFC9C2; }
 .btn.text { background: none; border: none; padding: 6px 0; color: var(--ink-muted); font-weight: 500; }
 .btn.wide { width: 100%; }
@@ -197,6 +198,18 @@ a:hover { text-decoration: underline; }
 }
 .day-weather.has-weather { color: var(--accent-deep); background: var(--accent-soft-bg); }
 .day-weather .forecast-mark { font-weight: 500; color: var(--ink-soft); }
+.weather-edit-btn { width: 26px; height: 26px; flex-shrink: 0; }
+
+.weather-edit-panel {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-control);
+  padding: 12px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;
+}
+.weather-edit-panel label { font-size: 12.5px; color: var(--ink-muted); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.weather-edit-panel select, .weather-edit-panel input { border: 1px solid var(--border); border-radius: 10px; padding: 7px 9px; font-size: 14px; background: var(--bg); color: var(--ink); }
+.weather-edit-temps { display: flex; gap: 12px; }
+.weather-edit-temps label { flex: 1; }
+.weather-edit-temps input { width: 100%; }
+.weather-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 .voice-transcript { margin-bottom: 10px; }
 .voice-transcript summary { font-size: 12px; color: var(--accent); font-weight: 700; cursor: pointer; }

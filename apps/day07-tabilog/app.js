@@ -1167,15 +1167,19 @@
 
   function renderDayWeather() {
     var btn = $('#dayWeather');
-    if (!state.selectedDate) { btn.hidden = true; return; }
+    var editBtn = $('#btnEditWeather');
+    $('#weatherEditPanel').hidden = true;
+    if (!state.selectedDate) { btn.hidden = true; editBtn.hidden = true; return; }
     btn.hidden = false;
     var info = findDayInfo(state.selectedDate);
-    if (info && info.weatherCode !== null && info.weatherCode !== undefined) {
+    var hasWeather = info && info.weatherCode !== null && info.weatherCode !== undefined;
+    if (hasWeather) {
       btn.classList.add('has-weather');
       var label = Core.weatherLabel(info.weatherCode, info.precipSum);
       var temps = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) + '℃/' + Math.round(info.tempMin) + '℃' : '';
       btn.innerHTML = escapeHtml(info.place) + '　' + escapeHtml(label) + ' ' + escapeHtml(temps)
-        + (info.isForecast ? ' <span class="forecast-mark">（予報）</span>' : '');
+        + (info.isForecast ? ' <span class="forecast-mark">（予報）</span>' : '')
+        + (info.weatherManual ? ' <span class="forecast-mark">（手動修正）</span>' : '');
     } else if (info && info.place) {
       btn.classList.remove('has-weather');
       btn.textContent = escapeHtml(info.place) + '（天気取得中…）';
@@ -1184,6 +1188,37 @@
       btn.textContent = '＋ 場所を設定';
     }
     btn.onclick = function () { promptDayPlace(); };
+    // 天気が取れている日だけ、手動修正ボタンを出す（場所未設定の日は修正のしようがない）
+    editBtn.hidden = !hasWeather;
+    editBtn.onclick = function () { openWeatherEditPanel(info); };
+  }
+
+  function openWeatherEditPanel(info) {
+    var panel = $('#weatherEditPanel');
+    $('#weatherEditCode').value = String(info.weatherCode);
+    $('#weatherEditMax').value = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) : '';
+    $('#weatherEditMin').value = (info.tempMin !== null && info.tempMin !== undefined) ? Math.round(info.tempMin) : '';
+    $('#weatherEditStatus').textContent = '';
+    panel.hidden = false;
+  }
+
+  function saveWeatherEdit() {
+    if (!state.trip || !state.selectedDate) return;
+    var status = $('#weatherEditStatus');
+    var weatherCode = Number($('#weatherEditCode').value);
+    var maxVal = $('#weatherEditMax').value.trim();
+    var minVal = $('#weatherEditMin').value.trim();
+    var payload = { weatherCode: weatherCode };
+    if (maxVal !== '') payload.tempMax = Number(maxVal);
+    if (minVal !== '') payload.tempMin = Number(minVal);
+    status.textContent = '保存中…';
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/weather', 'PATCH', payload)
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        $('#weatherEditPanel').hidden = true;
+        renderDayWeather();
+      })
+      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
   }
 
   function promptDayPlace() {
@@ -2137,6 +2172,8 @@
       if (e.target === e.currentTarget) closeVideoLightbox();
     });
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
+    $('#btnCancelWeatherEdit').addEventListener('click', function () { $('#weatherEditPanel').hidden = true; });
+    $('#btnSaveWeatherEdit').addEventListener('click', saveWeatherEdit);
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
