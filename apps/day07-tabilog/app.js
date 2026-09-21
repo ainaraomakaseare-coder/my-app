@@ -1802,6 +1802,8 @@
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
+    $('#entPlaceSearch').value = '';
+    $('#entMapPreview').hidden = true;
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
@@ -2147,6 +2149,23 @@
     });
   }
 
+  // ---------- 場所名からの地図検索（「地図のURL」欄の入力補助） ----------
+  // Google Maps Embed API（APIキーが要る）は使わず、キー不要の地図表示・検索URLの
+  // 形式（.../maps?q=...&output=embed、.../maps/search/?api=1&query=...）だけを使う。
+  // どちらもGoogle側が場所名をその場で解決してくれるので、こちらでジオコーディングは行わない。
+  function showPlaceMapPreview() {
+    var place = $('#entPlaceSearch').value.trim();
+    if (!place) return;
+    $('#entMapPreviewFrame').src = 'https://maps.google.com/maps?q=' + encodeURIComponent(place) + '&output=embed';
+    $('#entMapPreview').hidden = false;
+  }
+
+  function useSearchedPlaceAsMapUrl() {
+    var place = $('#entPlaceSearch').value.trim();
+    if (!place) return;
+    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(place);
+  }
+
   function saveEntry() {
     var status = $('#entFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
@@ -2469,6 +2488,11 @@
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
     $('#btnOpenSettlement').addEventListener('click', openSettlement);
     $('#btnScanReceipt').addEventListener('click', function () { $('#receiptFileInput').click(); });
+    $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
+    $('#entPlaceSearch').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); showPlaceMapPreview(); }
+    });
+    $('#btnUseMapUrl').addEventListener('click', useSearchedPlaceAsMapUrl);
     $('#receiptFileInput').addEventListener('change', function (e) {
       var file = e.target.files[0];
       e.target.value = '';

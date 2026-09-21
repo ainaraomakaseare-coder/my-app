@@ -462,6 +462,14 @@
           <div class="field">
             <label for="entMapUrl">地図のURL（任意）</label>
             <input type="url" id="entMapUrl" placeholder="https://maps.google.com/...">
+            <div class="map-search-row">
+              <input type="text" id="entPlaceSearch" placeholder="場所名で検索（例：ユニバ）">
+              <button type="button" class="btn ghost small" id="btnPlaceSearch">地図を検索</button>
+            </div>
+            <div class="map-preview" id="entMapPreview" hidden>
+              <iframe id="entMapPreviewFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+              <button type="button" class="btn ghost small" id="btnUseMapUrl">このURLを地図欄に入れる</button>
+            </div>
           </div>
           <div class="field">
             <label for="entShopUrl">お店・施設のHP（任意）</label>
