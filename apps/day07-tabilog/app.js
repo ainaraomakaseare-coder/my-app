@@ -1282,6 +1282,7 @@
     if (entry.waitTime) metaBits.push('<span>待ち時間 ' + escapeHtml(entry.waitTime) + '</span>');
     if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
     if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
+    if (entry.otherUrl) metaBits.push('<a href="' + escapeHtml(entry.otherUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">リンク</a>');
 
     var ratingSummary = Core.ratingSummary(entry.ratings);
     var ratingHtml = ratingSummary.count
@@ -1298,6 +1299,7 @@
         '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
       '</div>' +
       '<div class="entry-move-menu" hidden></div>' +
+      (entry.time ? '<div class="entry-time">' + escapeHtml(entry.time) + '</div>' : '') +
       (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
       (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
       photosHtml +
@@ -1315,6 +1317,10 @@
         openPhotoLightbox(photoUrl(photoEl.dataset.photoId));
         return;
       }
+      // 動画（.entry-videos内のvideoタグ）の操作・全画面再生からの復帰は編集画面へ行かない。
+      // iOSのWKWebViewは動画の全画面再生を閉じたときにvideo要素へ合成的なclickイベントを
+      // 発生させることがあり、これを拾うと「動画を見て戻ったら勝手に編集画面が開く」ことになる。
+      if (e.target.closest('.entry-videos')) return;
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       openEntryForm(block.id, entry);
     });
@@ -1507,8 +1513,10 @@
     $('#entComment').value = entry ? entry.comment : '';
     $('#entDetail').value = entry ? entry.detail : '';
     $('#entWaitTime').value = entry ? entry.waitTime : '';
+    $('#entTime').value = entry ? entry.time : '';
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
+    $('#entOtherUrl').value = entry ? entry.otherUrl : '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
@@ -1725,8 +1733,10 @@
       costItems: state.formCostItems.filter(function (it) { return it.label.trim() || it.amount; })
         .map(function (it) { return { label: it.label.trim() || '費用', amount: it.amount || 0 }; }),
       waitTime: $('#entWaitTime').value.trim(),
+      time: $('#entTime').value || '',
       mapUrl: $('#entMapUrl').value.trim(),
       shopUrl: $('#entShopUrl').value.trim(),
+      otherUrl: $('#entOtherUrl').value.trim(),
       author: author
     };
 

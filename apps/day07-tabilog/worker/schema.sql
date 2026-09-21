@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS entries (
   wait_time TEXT NOT NULL DEFAULT '',
   map_url TEXT NOT NULL DEFAULT '',
   shop_url TEXT NOT NULL DEFAULT '',
+  other_url TEXT NOT NULL DEFAULT '',
+  time TEXT NOT NULL DEFAULT '',
   author TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -165,3 +167,9 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- voice_uses_this_period・ticket_credits・stripe_customer_id・stripe_subscription_id）を
 -- 追加する一度きりの文だった（docs/adr/0004）。本番環境では反映済みのため、この行は削除済み
 -- （上のCREATE TABLEには最初から含めてある）。
+
+-- v11：entriesに time（記録の時間、任意）・other_url（その他URL、任意）を追加する。
+-- 本番環境（既に動いているD1）にはこの2本のALTER TABLEを一度だけ実行してください。
+-- 実行後、この2行は上のv9・v10と同じく削除します。
+ALTER TABLE entries ADD COLUMN time TEXT NOT NULL DEFAULT '';
+ALTER TABLE entries ADD COLUMN other_url TEXT NOT NULL DEFAULT '';

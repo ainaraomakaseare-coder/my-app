@@ -342,8 +342,10 @@ function validEntryInput(x) {
   if (!optStr(x.detail, 4000)) return false;
   if (!validCostItems(x.costItems)) return false;
   if (!optStr(x.waitTime, 50)) return false;
+  if (x.time !== undefined && x.time !== "" && !TIME_RE.test(x.time)) return false;
   if (!optUrl(x.mapUrl, 500)) return false;
   if (!optUrl(x.shopUrl, 500)) return false;
+  if (!optUrl(x.otherUrl, 500)) return false;
   if (!optStr(x.author, 50)) return false;
   if (x.photoIds !== undefined) {
     if (!Array.isArray(x.photoIds) || x.photoIds.length > 20) return false;
@@ -367,8 +369,10 @@ function rowToEntry(row) {
     videoIds: JSON.parse(row.video_ids || "[]"),
     costItems: JSON.parse(row.cost_items || "[]"),
     waitTime: row.wait_time,
+    time: row.time,
     mapUrl: row.map_url,
     shopUrl: row.shop_url,
+    otherUrl: row.other_url,
     author: row.author,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -396,19 +400,21 @@ async function createEntry(blockId, request, env, headers) {
     video_ids: JSON.stringify(data.videoIds || []),
     cost_items: JSON.stringify(data.costItems || []),
     wait_time: (data.waitTime || "").trim(),
+    time: data.time || "",
     map_url: data.mapUrl || "",
     shop_url: data.shopUrl || "",
+    other_url: data.otherUrl || "",
     author: (data.author || "").trim(),
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   )
     .bind(
       row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
-      row.cost_items, row.wait_time, row.map_url, row.shop_url, row.author, row.created_at, row.updated_at
+      row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.created_at, row.updated_at
     )
     .run();
   return json(rowToEntry(row), 201, headers);
@@ -428,13 +434,13 @@ async function updateEntry(id, request, env, headers) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   await env.DB.prepare(
-    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, map_url=?, shop_url=?, author=?, updated_at=? WHERE id=?`
+    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, updated_at=? WHERE id=?`
   )
     .bind(
       (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
       JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
-      JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(),
-      merged.mapUrl || "", merged.shopUrl || "", (merged.author || "").trim(), t, id
+      JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
+      merged.mapUrl || "", merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(), t, id
     )
     .run();
   const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();

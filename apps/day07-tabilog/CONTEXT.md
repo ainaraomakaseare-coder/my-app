@@ -24,7 +24,7 @@ _Avoid_: エピソード（Entry側の語なので、Blockを指して使わな�
 _Avoid_: 「時刻が両方とも分かっているときだけ時刻で比べ、片方でも未設定なら作成順に委ねる」という以前の実装を再現しないこと。一見自然だが、3件以上を比較する際に推移律（AがBより前・BがCより前ならAはCより前、が常に成り立つこと）が崩れ、`Array.sort()`の内部処理次第で**時刻ありのBlock同士の並びまで壊れることがある**（2026-09-19に実際に発覚した不具合。詳細は`app.js`の`blockSortKey`のコメント参照）。
 
 **Entry（小項目／記録）**:
-あるBlockのときの、一人ひとり（またはサブグループ）の記録。エピソード（episode）・ひとこと（comment）・写真・費用の明細（costItems）・待ち時間（waitTime）・地図URL（mapUrl）・お店のHP（shopUrl）・記録した人（author）を持つ。
+あるBlockのときの、一人ひとり（またはサブグループ）の記録。エピソード（episode）・ひとこと（comment）・写真・費用の明細（costItems）・待ち時間（waitTime）・時間（time、任意。Blockの時間とは別物で、記録そのものの時刻を付けたいときに使う）・地図URL（mapUrl）・お店のHP（shopUrl）・その他URL（otherUrl、任意）・記録した人（author）を持つ。
 _Avoid_: アクティビティ（宿泊・移動もEntryとして同じ形で扱うため、activityという言葉は活動系のcategoryだけを指すと誤解される）
 
 **写真の拡大表示・回転**:
