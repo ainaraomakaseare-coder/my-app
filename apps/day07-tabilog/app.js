@@ -132,6 +132,81 @@
     return (blocks || []).reduce(function (sum, b) { return sum + blockCostTotal(b); }, 0);
   }
 
+  // ---------- 割り勘（貸し借り・精算） ----------
+  // costItemの立て替え・割り勘情報（paidBy・splitAmong）から、参加者ごとの貸し借り残高を
+  // 集計する。paidByが無い費用行は「誰が払ったか分からない」ので集計から除外する
+  // （旧仕様のときのように、Entryのauthorを勝手に払った人とみなすことはしない。
+  // 「他の人が立て替えたのも入れられるようにしたい」という要望どおり、払った人は本人が
+  // 明示的に選ぶ前提のため）。splitAmongが無い費用行は「割り勘なしの個人費用」という、
+  // これまでどおりの意味として扱い、paidBy本人だけで割ったもの（＝貸し借りゼロ）とみなす。
+  // 戻り値は {費用のあった参加者名: 残高（円、プラス＝もらう側、マイナス＝払う側）}。
+  function tripBalances(trip, blocks) {
+    var balance = {};
+    ((trip && trip.companions) || []).forEach(function (name) { balance[name] = 0; });
+    function add(name, yen) {
+      if (!name) return;
+      balance[name] = (balance[name] || 0) + yen;
+    }
+    (blocks || []).forEach(function (block) {
+      (block.entries || []).forEach(function (entry) {
+        (entry.costItems || []).forEach(function (item) {
+          var paidBy = item.paidBy || '';
+          if (!paidBy || !(item.amount > 0)) return;
+          var splitAmong = (item.splitAmong && item.splitAmong.length) ? item.splitAmong : [paidBy];
+          add(paidBy, item.amount);
+          var share = item.amount / splitAmong.length;
+          splitAmong.forEach(function (name) { add(name, -share); });
+        });
+      });
+    });
+    return balance;
+  }
+
+  // 貸し借り残高（tripBalancesの結果）から、送金の回数が最小になるような精算方法を作る
+  // （最も多くもらう人と最も多く払う人を順にマッチさせる、よく知られた貪欲法）。
+  // 端数（1円未満）は四捨五入し、集計誤差で1円未満だけ残るケースは無視する。
+  function settlementPlan(balance) {
+    var creditors = [];
+    var debtors = [];
+    Object.keys(balance || {}).forEach(function (name) {
+      var yen = Math.round(balance[name]);
+      if (yen > 0) creditors.push({ name: name, amount: yen });
+      else if (yen < 0) debtors.push({ name: name, amount: -yen });
+    });
+    creditors.sort(function (a, b) { return b.amount - a.amount; });
+    debtors.sort(function (a, b) { return b.amount - a.amount; });
+    var plan = [];
+    var i = 0, j = 0;
+    while (i < debtors.length && j < creditors.length) {
+      var pay = Math.min(debtors[i].amount, creditors[j].amount);
+      if (pay >= 1) plan.push({ from: debtors[i].name, to: creditors[j].name, amount: pay });
+      debtors[i].amount -= pay;
+      creditors[j].amount -= pay;
+      if (debtors[i].amount < 1) i++;
+      if (creditors[j].amount < 1) j++;
+    }
+    return plan;
+  }
+
+  // 割り勘の対象になっている費用行だけを、日付順に一覧できる形にする（精算画面の「支出一覧」用）
+  function tripExpenseList(blocks) {
+    var out = [];
+    (blocks || []).forEach(function (block) {
+      (block.entries || []).forEach(function (entry) {
+        (entry.costItems || []).forEach(function (item) {
+          if (!item.paidBy || !(item.amount > 0)) return;
+          out.push({
+            date: block.date, label: item.label, amount: item.amount,
+            paidBy: item.paidBy, splitAmong: (item.splitAmong && item.splitAmong.length) ? item.splitAmong : [item.paidBy],
+            blockLabel: block.label,
+          });
+        });
+      });
+    });
+    out.sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
+    return out;
+  }
+
   // 宿泊カテゴリのBlockは「到着する」「宿に戻る」のように、同じ宿について複数できることがある
   // （特に音声入力は行動ごとにBlockを分けるため）。すべて繋げると意味不明になるので、
   // 一番最初（日程順で最初）の見出しだけを「宿泊先」として代表させる。
@@ -232,6 +307,9 @@
     entryCostTotal: entryCostTotal,
     blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
+    tripBalances: tripBalances,
+    settlementPlan: settlementPlan,
+    tripExpenseList: tripExpenseList,
     primaryLodgingName: primaryLodgingName,
     parseTags: parseTags,
     getTripIdFromSearch: getTripIdFromSearch,
@@ -406,6 +484,52 @@
         else openPhotoLightbox(url);
       });
     });
+  }
+
+  // ---------- 精算（割り勘の貸し借り・精算方法） ----------
+  function openSettlement() {
+    renderSettlement();
+    showScreen('settlement');
+  }
+
+  function renderSettlement() {
+    var expenses = Core.tripExpenseList(state.blocks);
+    var hasExpenses = expenses.length > 0;
+    $('#settlementEmpty').hidden = hasExpenses;
+    $('#settlementBody').hidden = !hasExpenses;
+    if (!hasExpenses) return;
+
+    var balance = Core.tripBalances(state.trip, state.blocks);
+    var names = Object.keys(balance).filter(function (n) { return Math.round(balance[n]) !== 0; });
+    // 貸し借りが無い（＝0円の）参加者も、参加していることが分かるよう一覧には残す
+    (state.trip.companions || []).forEach(function (n) { if (names.indexOf(n) === -1) names.push(n); });
+
+    $('#settlementBalances').innerHTML = names.map(function (name) {
+      var yen = Math.round(balance[name] || 0);
+      var cls = yen > 0 ? 'plus' : (yen < 0 ? 'minus' : '');
+      var text = yen > 0 ? '+' + Core.formatYen(yen) + '（もらう）' : (yen < 0 ? '－' + Core.formatYen(-yen) + '（払う）' : '±¥0');
+      return '<div class="balance-row ' + cls + '"><span class="name">' + escapeHtml(name) + '</span><span class="amount">' + escapeHtml(text) + '</span></div>';
+    }).join('');
+
+    var plan = Core.settlementPlan(balance);
+    var planEl = $('#settlementPlanList');
+    if (!plan.length) {
+      planEl.innerHTML = '<p class="empty">貸し借りはありません。</p>';
+    } else {
+      planEl.innerHTML = plan.map(function (p) {
+        return '<div class="settle-plan-row"><span class="from">' + escapeHtml(p.from) + '</span>' + SETTLE_ARROW_ICON
+          + '<span class="to">' + escapeHtml(p.to) + '</span><span class="amount">' + escapeHtml(Core.formatYen(p.amount)) + '</span></div>';
+      }).join('');
+    }
+
+    $('#settlementExpenses').innerHTML = expenses.map(function (e) {
+      var splitText = e.splitAmong.length > 1 ? e.splitAmong.join('・') + 'で割り勘' : e.paidBy + 'の分';
+      var dateText = e.date ? e.date.slice(5).replace('-', '/') : '';
+      return '<div class="expense-row">' +
+        '<div class="expense-main"><span class="label">' + escapeHtml(e.label || '（内容未入力）') + '</span><span class="amount">' + escapeHtml(Core.formatYen(e.amount)) + '</span></div>' +
+        '<div class="expense-sub">' + escapeHtml(dateText) + '　' + escapeHtml(e.paidBy) + 'が立替・' + escapeHtml(splitText) + '</div>' +
+        '</div>';
+    }).join('');
   }
 
   // iOSアプリ内では、WKWebViewのfetch実装がcapacitor://からのクロスオリジンPOSTの
@@ -1274,6 +1398,7 @@
   var DRAG_HANDLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="5" r="1.4"/><circle cx="14" cy="5" r="1.4"/><circle cx="6" cy="10" r="1.4"/><circle cx="14" cy="10" r="1.4"/><circle cx="6" cy="15" r="1.4"/><circle cx="14" cy="15" r="1.4"/></svg>';
   var MOVE_ICON = '<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h12M11 6l4 4-4 4"/></svg>';
   var ALBUM_PLAY_ICON = '<svg width="26" height="26" viewBox="0 0 20 20" fill="currentColor"><path d="M6.5 4.5v11l9-5.5z"/></svg>';
+  var SETTLE_ARROW_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h13M11 6l5 4-5 4"/></svg>';
 
   function renderBlockEl(block) {
     var wrap = document.createElement('div');
@@ -1659,7 +1784,12 @@
     state.pendingPhotos = [];
     state.formVideoIds = entry ? (entry.videoIds || []).slice() : [];
     state.pendingVideos = [];
-    state.formCostItems = entry ? (entry.costItems || []).map(function (it) { return { label: it.label, amount: it.amount }; }) : [];
+    state.formCostItems = entry ? (entry.costItems || []).map(function (it) {
+      var copy = { label: it.label, amount: it.amount };
+      if (it.paidBy) copy.paidBy = it.paidBy;
+      if (it.splitAmong && it.splitAmong.length) copy.splitAmong = it.splitAmong.slice();
+      return copy;
+    }) : [];
     $('#receiptScanStatus').textContent = '';
 
     $('#entFormTitle').textContent = entry ? '記録を編集' : '記録を追加';
@@ -1832,20 +1962,102 @@
     });
   }
 
+  function closeCostSubRow(row, className) {
+    var sib = row.nextElementSibling;
+    if (sib && sib.classList.contains(className)) sib.remove();
+  }
+
+  // 「立て替え」（誰が払った・誰と割るか）の選択パネル。旅行の参加者（trip.companions）を
+  // チップで選ぶだけのシンプルな作り。チップを押すたびに全体を再描画するとパネルが
+  // 閉じてしまうので、ここだけはDOMを直接書き換えて開いたままにする。
+  function buildCostPayerRow(idx, row) {
+    var companions = (state.trip && state.trip.companions) || [];
+    var panel = document.createElement('div');
+    panel.className = 'cost-payer-row';
+    if (!companions.length) {
+      panel.innerHTML = '<p class="hint">参加者が未設定です。旅行の編集画面で参加者を入力すると選べるようになります。</p>';
+      return panel;
+    }
+    function currentItem() { return state.formCostItems[idx]; }
+    function updateToggleButton() {
+      var btn = row.querySelector('.cost-payer-toggle');
+      var paidBy = currentItem().paidBy;
+      btn.textContent = paidBy ? (paidBy + 'が立替') : '立て替えを設定';
+      btn.classList.toggle('on', !!paidBy);
+    }
+
+    var payerSection = document.createElement('div');
+    payerSection.className = 'cost-payer-section';
+    payerSection.innerHTML = '<span class="cost-payer-label">払った人</span><div class="chip-select" data-role="payer"></div>';
+    var splitSection = document.createElement('div');
+    splitSection.className = 'cost-payer-section';
+    splitSection.innerHTML = '<span class="cost-payer-label">割る人（未選択なら払った人だけ）</span><div class="chip-select" data-role="split"></div>';
+    var payerChipWrap = payerSection.querySelector('[data-role="payer"]');
+    var splitChipWrap = splitSection.querySelector('[data-role="split"]');
+
+    companions.forEach(function (name) {
+      var payerBtn = document.createElement('button');
+      payerBtn.type = 'button';
+      payerBtn.className = 'chip-option' + (currentItem().paidBy === name ? ' on' : '');
+      payerBtn.textContent = name;
+      payerBtn.addEventListener('click', function () {
+        var item = currentItem();
+        item.paidBy = (item.paidBy === name) ? '' : name;
+        $all('.chip-option', payerChipWrap).forEach(function (b) { b.classList.toggle('on', b === payerBtn && !!item.paidBy); });
+        updateToggleButton();
+      });
+      payerChipWrap.appendChild(payerBtn);
+
+      var splitBtn = document.createElement('button');
+      splitBtn.type = 'button';
+      splitBtn.className = 'chip-option' + ((currentItem().splitAmong || []).indexOf(name) !== -1 ? ' on' : '');
+      splitBtn.textContent = name;
+      splitBtn.addEventListener('click', function () {
+        var item = currentItem();
+        item.splitAmong = item.splitAmong || [];
+        var pos = item.splitAmong.indexOf(name);
+        if (pos === -1) item.splitAmong.push(name); else item.splitAmong.splice(pos, 1);
+        splitBtn.classList.toggle('on', item.splitAmong.indexOf(name) !== -1);
+      });
+      splitChipWrap.appendChild(splitBtn);
+    });
+
+    var clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'btn ghost small cost-payer-clear';
+    clearBtn.textContent = '立て替えの設定を外す';
+    clearBtn.addEventListener('click', function () {
+      var item = currentItem();
+      delete item.paidBy;
+      delete item.splitAmong;
+      updateToggleButton();
+      panel.remove();
+    });
+
+    panel.appendChild(payerSection);
+    panel.appendChild(splitSection);
+    panel.appendChild(clearBtn);
+    return panel;
+  }
+
   // 費用の明細（costItems）は、基本は「個人（またはそのサブグループ）が実際に払った金額」を
   // そのまま入れる（CONTEXT.md参照）。ただし駐車場代など全体でまとめて払ったものは、
   // 「全体費用」と「人数」から個人費用を計算して入れられるよう、行ごとに電卓を用意する
   // （計算結果を金額欄に反映するだけで、保存する値はあくまで個人費用のまま）。
+  // 「立て替え」（誰が払った・誰と割るか）は任意項目。触らなければ、これまでどおり
+  // 「本人の個人費用」として扱われ、割り勘の精算画面（貸し借り）には出てこない。
   function renderCostItems() {
     var el = $('#entCostItems');
     el.innerHTML = '';
     state.formCostItems.forEach(function (item, idx) {
       var row = document.createElement('div');
       row.className = 'cost-item-row';
+      var payerLabel = item.paidBy ? (item.paidBy + 'が立替') : '立て替えを設定';
       row.innerHTML =
         '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
         '<input type="number" min="0" step="1" placeholder="円" value="' + (item.amount || '') + '">' +
         '<button type="button" class="cost-split-toggle" aria-label="全体費用から計算">÷人数</button>' +
+        '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
         '<button type="button" aria-label="削除">×</button>';
       var inputs = row.querySelectorAll('input');
       var amountInput = inputs[1];
@@ -1855,6 +2067,7 @@
         renderCostTotal();
       });
       row.querySelector('.cost-split-toggle').addEventListener('click', function () {
+        closeCostSubRow(row, 'cost-payer-row');
         var existing = row.nextElementSibling;
         if (existing && existing.classList.contains('cost-split-row')) { existing.remove(); return; }
         var splitRow = document.createElement('div');
@@ -1875,6 +2088,12 @@
           splitRow.remove();
         });
         row.insertAdjacentElement('afterend', splitRow);
+      });
+      row.querySelector('.cost-payer-toggle').addEventListener('click', function () {
+        closeCostSubRow(row, 'cost-split-row');
+        var existing = row.nextElementSibling;
+        if (existing && existing.classList.contains('cost-payer-row')) { existing.remove(); return; }
+        row.insertAdjacentElement('afterend', buildCostPayerRow(idx, row));
       });
       row.querySelector('[aria-label="削除"]').addEventListener('click', function () {
         state.formCostItems.splice(idx, 1);
@@ -1936,7 +2155,12 @@
       comment: $('#entComment').value.trim(),
       detail: $('#entDetail').value.trim(),
       costItems: state.formCostItems.filter(function (it) { return it.label.trim() || it.amount; })
-        .map(function (it) { return { label: it.label.trim() || '費用', amount: it.amount || 0 }; }),
+        .map(function (it) {
+          var out = { label: it.label.trim() || '費用', amount: it.amount || 0 };
+          if (it.paidBy) out.paidBy = it.paidBy;
+          if (it.splitAmong && it.splitAmong.length) out.splitAmong = it.splitAmong;
+          return out;
+        }),
       waitTime: $('#entWaitTime').value.trim(),
       time: $('#entTime').value || '',
       mapUrl: $('#entMapUrl').value.trim(),
@@ -2215,6 +2439,7 @@
       if (e.target === e.currentTarget) closeVideoLightbox();
     });
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
+    $('#btnOpenSettlement').addEventListener('click', openSettlement);
     $('#btnScanReceipt').addEventListener('click', function () { $('#receiptFileInput').click(); });
     $('#receiptFileInput').addEventListener('change', function (e) {
       var file = e.target.files[0];

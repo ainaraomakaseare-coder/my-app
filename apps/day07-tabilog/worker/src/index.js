@@ -63,6 +63,9 @@ function optUrl(x, max) {
   return x === undefined || x === null || x === "" || (isStr(x, max) && URL_RE.test(x));
 }
 
+// paidBy（実際に払った人。省略時はEntryのauthorとみなす）・splitAmong（割り勘の対象者。
+// 省略時はpaidBy本人だけとみなし＝割り勘なしの個人費用という、これまでどおりの意味になる）は
+// どちらも任意項目。既存データ（この2つを持たない古いcostItems）との後方互換のため。
 function validCostItems(x) {
   if (x === undefined) return true;
   if (!Array.isArray(x) || x.length > 30) return false;
@@ -70,6 +73,8 @@ function validCostItems(x) {
     it && typeof it === "object"
     && isStr(it.label, 60)
     && Number.isInteger(it.amount) && it.amount >= 0 && it.amount <= 1000000
+    && optStr(it.paidBy, 50)
+    && (it.splitAmong === undefined || (Array.isArray(it.splitAmong) && it.splitAmong.length <= 20 && it.splitAmong.every((n) => typeof n === "string" && n.length <= 50)))
   );
 }
 

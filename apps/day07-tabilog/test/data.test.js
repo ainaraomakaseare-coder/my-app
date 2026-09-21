@@ -87,6 +87,36 @@ var blocksForTripTotal = [
 ];
 eq('tripTotalCost: 旅行全体の合計', T.tripTotalCost(blocksForTripTotal), 3500);
 
+/* ---- 割り勘（貸し借り・精算） ---- */
+var tripForBalance = { companions: ['父', '母', '私'] };
+var blocksForBalance = [
+  { date: '2024-08-10', label: '夕食', entries: [{ costItems: [
+    { label: '夕食', amount: 3000, paidBy: '父', splitAmong: ['父', '母', '私'] }
+  ] }] },
+  { date: '2024-08-11', label: '入場料', entries: [{ costItems: [
+    { label: '入場料', amount: 1000, paidBy: '私' } // splitAmong省略＝自分だけの個人費用
+  ] }] }
+];
+var balance = T.tripBalances(tripForBalance, blocksForBalance);
+eq('tripBalances: 払った人はプラス、割った人はマイナス', balance['父'], 2000);
+eq('tripBalances: 3等分された分だけマイナス', balance['母'], -1000);
+eq('tripBalances: splitAmong省略の費用は貸し借りゼロ（自分で払って自分で使った扱い）', balance['私'], -1000 /* 夕食の自分の割 */ + 0 /* 個人費用は貸し借りなし */);
+
+eq('tripBalances: paidByが無い費用行は集計しない（古いデータとの後方互換）',
+  T.tripBalances({ companions: ['a', 'b'] }, [{ entries: [{ costItems: [{ label: 'x', amount: 500 }] }] }]),
+  { a: 0, b: 0 });
+
+var plan = T.settlementPlan({ '父': 2000, '母': -1000, '私': -1000 });
+eq('settlementPlan: 送金回数が最小になるよう精算する', plan.length, 2);
+eq('settlementPlan: 合計金額は残高の絶対値と一致する', plan.reduce(function (s, p) { return s + p.amount; }, 0), 2000);
+plan.forEach(function (p) { ok('settlementPlan: 宛先は必ず貸している人（父）', p.to === '父'); });
+
+eq('settlementPlan: 全員ゼロなら精算不要', T.settlementPlan({ a: 0, b: 0 }), []);
+
+var expenses = T.tripExpenseList(blocksForBalance);
+eq('tripExpenseList: paidByがある費用行だけを新しい日付順で一覧する', expenses.map(function (e) { return e.label; }), ['入場料', '夕食']);
+eq('tripExpenseList: splitAmong省略時はpaidBy本人だけとして補う', expenses[0].splitAmong, ['私']);
+
 /* ---- 宿泊先 ---- */
 var blocksLodging = [
   { category: 'lodging', label: 'オーシャンビューホテル那覇' },

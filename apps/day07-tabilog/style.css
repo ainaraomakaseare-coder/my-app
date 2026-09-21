@@ -346,7 +346,7 @@ a:hover { text-decoration: underline; }
 .entry-videos video { display: block; width: auto; max-width: 100%; max-height: 260px; margin: 0 auto; border-radius: var(--radius-control); background: #000; }
 
 .cost-items { display: flex; flex-direction: column; gap: 8px; }
-.cost-item-row { display: flex; gap: 8px; align-items: center; }
+.cost-item-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; row-gap: 6px; }
 .cost-item-row input[type="text"] { flex: 1.6; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 9px 11px; }
 .cost-item-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 9px 8px; }
 .cost-item-row button { flex: 0 0 auto; background: none; border: none; color: var(--ink-soft); font-size: 16px; width: 22px; padding: 0; }
@@ -358,8 +358,45 @@ a:hover { text-decoration: underline; }
 .cost-split-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); padding: 8px; font-size: 16px; }
 .cost-split-row span { color: var(--ink-soft); font-size: 12px; flex: 0 0 auto; }
 .cost-split-row button { flex: 0 0 auto; background: var(--accent); color: white; border: none; border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 700; }
+.cost-item-row .cost-payer-toggle {
+  width: auto; font-size: 11px; font-weight: 700; color: var(--ink-muted); white-space: nowrap; padding: 6px 9px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--card);
+}
+.cost-item-row .cost-payer-toggle.on { color: var(--accent-deep); background: var(--accent-soft-bg); border-color: var(--accent-soft-bg); }
+.cost-payer-row {
+  display: flex; flex-direction: column; gap: 8px; margin: -2px 0 4px; padding: 10px;
+  background: var(--border-soft); border-radius: var(--radius-control);
+}
+.cost-payer-section { display: flex; flex-direction: column; gap: 6px; }
+.cost-payer-label { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); }
+.chip-select { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-option {
+  border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 600;
+  background: var(--card); color: var(--ink);
+}
+.chip-option.on { background: var(--accent); color: white; border-color: var(--accent); }
+.cost-payer-clear { align-self: flex-start; }
 .cost-total { font-size: 12.5px; font-weight: 700; margin-top: 8px; }
 .cost-item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- 精算（割り勘） ---------- */
+.balance-list, .settle-plan-list, .expense-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.balance-row {
+  display: flex; justify-content: space-between; align-items: center; padding: 10px 12px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-control); font-weight: 700;
+}
+.balance-row .amount { font-variant-numeric: tabular-nums; }
+.balance-row.plus .amount { color: var(--teal); }
+.balance-row.minus .amount { color: var(--accent-deep); }
+.settle-plan-row {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-control); font-size: 13.5px;
+}
+.settle-plan-row .from, .settle-plan-row .to { font-weight: 700; }
+.settle-plan-row .amount { margin-left: auto; font-weight: 700; color: var(--accent-deep); font-variant-numeric: tabular-nums; }
+.expense-row { padding: 10px 12px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-control); }
+.expense-main { display: flex; justify-content: space-between; font-weight: 700; }
+.expense-sub { font-size: 12px; color: var(--ink-muted); margin-top: 3px; }
 
 .sheet-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
 
