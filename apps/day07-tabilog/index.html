@@ -416,7 +416,12 @@
         <div class="field">
           <label>費用の明細</label>
           <div class="cost-items" id="entCostItems"></div>
-          <button type="button" class="btn ghost small" id="btnAddCostItem">＋ 明細を追加</button>
+          <div class="cost-item-actions">
+            <button type="button" class="btn ghost small" id="btnAddCostItem">＋ 明細を追加</button>
+            <button type="button" class="btn ghost small" id="btnScanReceipt">レシートを読み取る</button>
+          </div>
+          <input type="file" id="receiptFileInput" accept="image/*" capture="environment" hidden>
+          <p class="hint" id="receiptScanStatus"></p>
           <div class="cost-total" id="entCostTotal"></div>
         </div>
 

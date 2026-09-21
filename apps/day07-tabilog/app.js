@@ -504,6 +504,13 @@
     );
   }
 
+  // レシート・領収書の写真をAIに読み取らせ、費用明細の候補（{label, amount}の配列）を返してもらう。
+  // 音声入力・テキストメモと同じ利用枠を消費するため、メールアドレスをmetaヘッダーで送る。
+  function scanReceiptBlob(blob, email) {
+    var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify({ email: email }))));
+    return postBinary('/receipts/scan', blob, { 'x-receipt-meta': metaHeader });
+  }
+
   function fileToCompressedBlob(file, maxDim, quality) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
@@ -1653,6 +1660,7 @@
     state.formVideoIds = entry ? (entry.videoIds || []).slice() : [];
     state.pendingVideos = [];
     state.formCostItems = entry ? (entry.costItems || []).map(function (it) { return { label: it.label, amount: it.amount }; }) : [];
+    $('#receiptScanStatus').textContent = '';
 
     $('#entFormTitle').textContent = entry ? '記録を編集' : '記録を追加';
     $('#entEpisode').value = entry ? entry.episode : '';
@@ -1880,6 +1888,41 @@
   function renderCostTotal() {
     var total = state.formCostItems.reduce(function (s, it) { return s + (it.amount || 0); }, 0);
     $('#entCostTotal').textContent = state.formCostItems.length ? '計 ' + Core.formatYen(total) : '';
+  }
+
+  // レシートの写真から読み取った内訳を費用明細欄に追加するだけで、まだ何も保存はしない。
+  // 「保存」ボタンを押すまでは本人が内容を見て消す・直すことができる（AIの読み取り誤りが
+  // そのままDBに残らないようにするための確認ステップ）。
+  function handleScanReceipt(file) {
+    var user = loadCurrentUser();
+    if (!user) {
+      $('#receiptScanStatus').textContent = 'ログインすると使えます。';
+      return;
+    }
+    var status = $('#receiptScanStatus');
+    status.textContent = '読み取り中…（数十秒かかることがあります）';
+    $('#btnScanReceipt').disabled = true;
+    fileToCompressedBlob(file, 1600, 0.85).then(function (blob) {
+      return scanReceiptBlob(blob, user.email);
+    }).then(function (res) {
+      $('#btnScanReceipt').disabled = false;
+      var items = (res && res.items) || [];
+      if (!items.length) { status.textContent = '品目を読み取れませんでした。写真を変えてお試しください。'; return; }
+      items.forEach(function (it) {
+        state.formCostItems.push({ label: (it.label || '').trim(), amount: Math.max(0, Math.round(it.amount || 0)) });
+      });
+      renderCostItems();
+      status.textContent = items.length + '件の明細を追加しました。内容を確認してください。';
+    }).catch(function (e) {
+      $('#btnScanReceipt').disabled = false;
+      var msg = (e && e.message) || '';
+      if (msg === 'server_not_configured') status.textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
+      else if (msg === 'rate_limited') status.textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'invalid_model_output' || msg === 'upstream_error') status.textContent = 'うまく読み取れませんでした。もう一度お試しください。';
+      else if (msg === 'premium_required' || msg === 'quota_exceeded') status.textContent = '今月の利用回数の上限に達しました（音声入力・テキストメモと共通の枠です）。';
+      else if (msg === 'login_required') status.textContent = 'ログインすると使えます。';
+      else status.textContent = '失敗しました。もう一度お試しください。';
+    });
   }
 
   function saveEntry() {
@@ -2172,6 +2215,12 @@
       if (e.target === e.currentTarget) closeVideoLightbox();
     });
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
+    $('#btnScanReceipt').addEventListener('click', function () { $('#receiptFileInput').click(); });
+    $('#receiptFileInput').addEventListener('change', function (e) {
+      var file = e.target.files[0];
+      e.target.value = '';
+      if (file) handleScanReceipt(file);
+    });
     $('#btnCancelWeatherEdit').addEventListener('click', function () { $('#weatherEditPanel').hidden = true; });
     $('#btnSaveWeatherEdit').addEventListener('click', saveWeatherEdit);
     initBlockDragReorder();

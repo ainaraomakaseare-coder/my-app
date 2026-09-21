@@ -1547,6 +1547,117 @@ async function createBlocksFromText(tripId, date, request, env, headers) {
   return json({ blocks: created, transcript: text }, 200, headers);
 }
 
+// ---------- レシート読み取り（AI/Vision） ----------
+// レシート・領収書の写真をAIに読み取らせ、費用明細（品目名・金額）の候補を返すだけの
+// エンドポイント。何も保存はせず、返した内訳は記録編集画面の費用明細欄にそのまま追加され、
+// 本人が確認・修正してから「保存」を押すまでは確定しない（レシート内容の読み取り誤りが
+// そのままDBに残らないようにするため）。利用回数は音声入力・テキストメモと同じ枠を消費する。
+const MAX_RECEIPT_IMAGE_BYTES = 6 * 1024 * 1024; // 圧縮後を想定した上限（クライアント側で圧縮してから送る）
+
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function receiptPrompt() {
+  return [
+    "あなたは旅行記録アプリのアシスタントです。添付されたレシート・領収書の写真を読み取り、",
+    "費用の内訳（品目名と金額）を配列で返してください。",
+    "",
+    "ルール：",
+    "- 各品目の金額は、税込みの実際の支払額を整数円で入れること",
+    "- 個々の品目を読み分けられない場合は、「合計」などの品目名で1件にまとめてよい",
+    "- 割引・値引きの行がある場合は、金額をマイナスにして1件の品目として入れること",
+    "- レシートに書かれていない品目や金額を推測で作らないこと。写真が不鮮明で読み取れない場合は、読み取れた範囲だけを返すこと",
+    "- 店名・日付など、品目名と金額以外の情報は含めないこと",
+  ].join("\n");
+}
+
+function receiptItemsSchema() {
+  return {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            label: { type: "string" },
+            amount: { type: "integer" },
+          },
+          required: ["label", "amount"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["items"],
+    additionalProperties: false,
+  };
+}
+
+async function scanReceipt(request, env, headers) {
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  const { buf, contentType, getHeader } = await readBinaryBody(request);
+  if (!Object.prototype.hasOwnProperty.call(IMAGE_EXT, contentType)) return json({ error: "unsupported_type" }, 415, headers);
+  if (buf.byteLength === 0 || buf.byteLength > MAX_RECEIPT_IMAGE_BYTES) return json({ error: "invalid_size" }, 413, headers);
+
+  const meta = decodeVoiceMeta(getHeader("x-receipt-meta"));
+  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+
+  // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
+  const quota = await checkVoiceQuota(env, email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  const base64 = arrayBufferToBase64(buf);
+  const upstream = await fetch(OPENAI_RESPONSES_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: env.OPENAI_MODEL || "gpt-5.6-sol",
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: receiptPrompt() },
+            { type: "input_image", image_url: `data:${contentType};base64,${base64}` },
+          ],
+        },
+      ],
+      reasoning: { effort: "medium" },
+      max_output_tokens: 1500,
+      store: false,
+      text: { format: { type: "json_schema", name: "receipt_items", strict: true, schema: receiptItemsSchema() } },
+    }),
+  });
+  if (!upstream.ok) {
+    const errorBody = await upstream.text().catch(() => "");
+    console.error(JSON.stringify({ event: "openai_receipt_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+    return json({ error: "upstream_error" }, 502, headers);
+  }
+  const response = await upstream.json();
+  let parsed;
+  try {
+    parsed = JSON.parse(outputText(response));
+  } catch {
+    return json({ error: "invalid_model_output" }, 502, headers);
+  }
+  if (!parsed || !Array.isArray(parsed.items)) return json({ error: "invalid_model_output" }, 502, headers);
+
+  await consumeVoiceQuota(env, quota.email, quota.via);
+  return json({ items: parsed.items }, 200, headers);
+}
+
 // ---------- 一時的な復旧処理（2026-09-15、entriesテーブルが誤って消えた事故対応） ----------
 // 保存済みの文字起こし（day_infos.voice_transcript）をもう一度AIに読ませて予定＋記録を
 // 作り直し、「記録が0件の既存Block」に記録を差し戻す。新しいBlockは作らない
@@ -1807,6 +1918,8 @@ export default {
 
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);
+
+    if (method === "POST" && path === "/receipts/scan") return scanReceipt(request, env, headers);
 
     return json({ error: "not_found" }, 404, headers);
   },
