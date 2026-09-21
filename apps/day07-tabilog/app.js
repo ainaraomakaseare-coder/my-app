@@ -355,6 +355,59 @@
     $('#lightboxImg').src = '';
   }
 
+  function openVideoLightbox(url) {
+    $('#lightboxVideo').src = url;
+    $('#videoLightbox').hidden = false;
+  }
+  function closeVideoLightbox() {
+    var v = $('#lightboxVideo');
+    v.pause();
+    v.src = '';
+    $('#videoLightbox').hidden = true;
+  }
+
+  // ---------- アルバム（旅行全体の写真・動画をまとめて見る） ----------
+  function openAlbum() {
+    renderAlbum();
+    showScreen('album');
+  }
+
+  function renderAlbum() {
+    var items = [];
+    (state.blocks || []).forEach(function (block) {
+      (block.entries || []).forEach(function (entry) {
+        (entry.photoIds || []).forEach(function (id) {
+          items.push({ type: 'photo', id: id, date: block.date || '' });
+        });
+        (entry.videoIds || []).forEach(function (id) {
+          items.push({ type: 'video', id: id, date: block.date || '' });
+        });
+      });
+    });
+    items.sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
+
+    var grid = $('#albumGrid');
+    $('#albumEmpty').hidden = items.length > 0;
+    grid.innerHTML = items.map(function (it) {
+      var dateBadge = it.date ? '<span class="album-date">' + escapeHtml(it.date.slice(5).replace('-', '/')) + '</span>' : '';
+      if (it.type === 'photo') {
+        return '<div class="album-tile" data-type="photo" data-id="' + escapeHtml(it.id) + '" style="background-image:url(\'' + escapeHtml(photoUrl(it.id)) + '\')">' + dateBadge + '</div>';
+      }
+      return '<div class="album-tile" data-type="video" data-id="' + escapeHtml(it.id) + '">' +
+        '<video src="' + escapeHtml(photoUrl(it.id)) + '#t=0.1" preload="metadata" muted playsinline></video>' +
+        '<div class="album-play">' + ALBUM_PLAY_ICON + '</div>' + dateBadge +
+        '</div>';
+    }).join('');
+
+    $all('.album-tile', grid).forEach(function (tile) {
+      tile.addEventListener('click', function () {
+        var url = photoUrl(tile.dataset.id);
+        if (tile.dataset.type === 'video') openVideoLightbox(url);
+        else openPhotoLightbox(url);
+      });
+    });
+  }
+
   // iOSアプリ内では、WKWebViewのfetch実装がcapacitor://からのクロスオリジンPOSTの
   // プリフライト後処理をうまく扱えず、本体のリクエストが送られないことがある。
   // その場合はCapacitorHttpプラグイン経由でネイティブ側からHTTP通信する
@@ -1121,6 +1174,7 @@
 
   var DRAG_HANDLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="5" r="1.4"/><circle cx="14" cy="5" r="1.4"/><circle cx="6" cy="10" r="1.4"/><circle cx="14" cy="10" r="1.4"/><circle cx="6" cy="15" r="1.4"/><circle cx="14" cy="15" r="1.4"/></svg>';
   var MOVE_ICON = '<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h12M11 6l4 4-4 4"/></svg>';
+  var ALBUM_PLAY_ICON = '<svg width="26" height="26" viewBox="0 0 20 20" fill="currentColor"><path d="M6.5 4.5v11l9-5.5z"/></svg>';
 
   function renderBlockEl(block) {
     var wrap = document.createElement('div');
@@ -2005,6 +2059,11 @@
     $('#photoLightbox').addEventListener('click', function (e) {
       if (e.target === e.currentTarget) closePhotoLightbox();
     });
+    $('#btnCloseVideoLightbox').addEventListener('click', closeVideoLightbox);
+    $('#videoLightbox').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeVideoLightbox();
+    });
+    $('#btnOpenAlbum').addEventListener('click', openAlbum);
     initBlockDragReorder();
     initEntryDragMove();
     document.addEventListener('click', function (e) {
@@ -2056,7 +2115,7 @@
       e.target.value = '';
     });
 
-    var MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+    var MAX_VIDEO_BYTES = 200 * 1024 * 1024;
     $('#entVideoPicker').addEventListener('click', function () { $('#entVideo').click(); });
     $('#entVideo').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
@@ -2065,7 +2124,7 @@
         state.pendingVideos.push({ blob: f, name: f.name, size: f.size });
       });
       renderVideoPreview();
-      if (tooBig.length) alert('50MBを超える動画は追加できませんでした：' + tooBig.map(function (f) { return f.name; }).join('、'));
+      if (tooBig.length) alert('200MBを超える動画は追加できませんでした：' + tooBig.map(function (f) { return f.name; }).join('、'));
       e.target.value = '';
     });
 

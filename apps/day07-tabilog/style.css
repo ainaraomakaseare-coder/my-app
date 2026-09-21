@@ -294,12 +294,29 @@ a:hover { text-decoration: underline; }
   display: flex; align-items: center; justify-content: center;
 }
 
+/* ---------- アルバム（旅行全体の写真・動画） ---------- */
+.album-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.album-tile {
+  position: relative; aspect-ratio: 1 / 1; background-color: var(--border-soft); background-size: cover;
+  background-position: center; border-radius: var(--radius-control); overflow: hidden;
+}
+.album-tile video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.album-tile .album-play {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 14, 8, 0.18); color: #fff;
+}
+.album-tile .album-date {
+  position: absolute; left: 4px; bottom: 4px; font-size: 9.5px; font-weight: 700; color: #fff;
+  background: rgba(20, 14, 8, 0.45); padding: 1px 6px; border-radius: 999px;
+}
+
 /* ---------- 写真の拡大表示（ライトボックス） ---------- */
 .lightbox {
   position: fixed; inset: 0; background: rgba(20, 14, 8, 0.9); z-index: 100;
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .lightbox img { max-width: 100%; max-height: 100%; border-radius: var(--radius-control); }
+.lightbox video { max-width: 100%; max-height: 100%; border-radius: var(--radius-control); background: #000; }
 .lightbox-close {
   position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%;
   background: rgba(255, 255, 255, 0.15); color: #fff; display: flex; align-items: center; justify-content: center;

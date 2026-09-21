@@ -243,6 +243,10 @@
             <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>
             メンバーを招待
           </button>
+          <button class="chip-btn" id="btnOpenAlbum">
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="1.6"/><path d="M2.5 13l4-4 3 3 3.5-3.5L17.5 13"/><circle cx="6.5" cy="7.5" r="1.2"/></svg>
+            アルバム
+          </button>
         </div>
       </div>
 
@@ -265,6 +269,19 @@
       <div class="timeline" id="timeline"></div>
 
       <p class="hint" id="tripDetailStatus"></p>
+    </div>
+  </section>
+
+  <!-- ============ アルバム（旅行全体の写真・動画をまとめて見る） ============ -->
+  <section class="screen" data-screen="album">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="tripDetail">← 戻る</button>
+        <h1>アルバム</h1>
+        <p class="lead">この旅行の写真・動画をまとめて見られます（日付が新しい順）</p>
+      </header>
+      <div class="album-grid" id="albumGrid"></div>
+      <p class="empty" id="albumEmpty" hidden>まだ写真・動画がありません。</p>
     </div>
   </section>
 
@@ -331,7 +348,7 @@
         </div>
 
         <div class="field">
-          <label for="entVideo">動画（1本あたり最大50MB）</label>
+          <label for="entVideo">動画（1本あたり最大200MB）</label>
           <input type="file" id="entVideo" accept="video/*" multiple hidden>
           <div class="photo-picker" id="entVideoPicker">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="11" height="10" rx="1.6"/><path d="M13.5 8.2l4-2.4v8.4l-4-2.4z"/></svg>
@@ -463,6 +480,14 @@
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
   </button>
   <img id="lightboxImg" src="" alt="">
+</div>
+
+<!-- ============ 動画の拡大再生（アルバムから） ============ -->
+<div class="lightbox" id="videoLightbox" hidden>
+  <button class="lightbox-close" id="btnCloseVideoLightbox" aria-label="閉じる">
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+  </button>
+  <video id="lightboxVideo" src="" controls playsinline></video>
 </div>
 
 <script src="app.js"></script>

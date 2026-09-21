@@ -1622,7 +1622,7 @@ async function saveVoiceTranscript(env, tripId, date, transcript) {
 /* ---------- photos / videos (R2) ---------- */
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // 圧縮後を想定した上限。無料枠(R2 10GB)を長く保つため。
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 動画は圧縮しないので大きめの上限にしている。
+const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 動画は圧縮しないので大きめの上限にしている。
 
 const IMAGE_EXT = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" };
 const VIDEO_EXT = { "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm" };
