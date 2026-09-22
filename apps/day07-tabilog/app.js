@@ -1994,7 +1994,10 @@
     payerSection.innerHTML = '<span class="cost-payer-label">払った人</span><div class="chip-select" data-role="payer"></div>';
     var splitSection = document.createElement('div');
     splitSection.className = 'cost-payer-section';
-    splitSection.innerHTML = '<span class="cost-payer-label">割る人（未選択なら払った人だけ）</span><div class="chip-select" data-role="split"></div>';
+    splitSection.innerHTML =
+      '<span class="cost-payer-label">割る人（未選択なら払った人だけ）</span>' +
+      '<div class="chip-select" data-role="split"></div>' +
+      '<button type="button" class="btn ghost small cost-split-even">参加者全員で均等割り</button>';
     var payerChipWrap = payerSection.querySelector('[data-role="payer"]');
     var splitChipWrap = splitSection.querySelector('[data-role="split"]');
 
@@ -2023,6 +2026,12 @@
         splitBtn.classList.toggle('on', item.splitAmong.indexOf(name) !== -1);
       });
       splitChipWrap.appendChild(splitBtn);
+    });
+
+    splitSection.querySelector('.cost-split-even').addEventListener('click', function () {
+      var item = currentItem();
+      item.splitAmong = companions.slice();
+      $all('.chip-option', splitChipWrap).forEach(function (b) { b.classList.add('on'); });
     });
 
     var clearBtn = document.createElement('button');

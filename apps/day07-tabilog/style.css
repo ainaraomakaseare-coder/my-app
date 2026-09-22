@@ -382,7 +382,7 @@ a:hover { text-decoration: underline; }
   background: var(--card); color: var(--ink);
 }
 .chip-option.on { background: var(--accent); color: white; border-color: var(--accent); }
-.cost-payer-clear { align-self: flex-start; }
+.cost-payer-clear, .cost-split-even { align-self: flex-start; }
 .cost-total { font-size: 12.5px; font-weight: 700; margin-top: 8px; }
 .cost-item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
