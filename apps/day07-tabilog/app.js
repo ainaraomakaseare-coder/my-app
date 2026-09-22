@@ -1350,7 +1350,7 @@
         $('#weatherEditPanel').hidden = true;
         renderDayWeather();
       })
-      .catch(function (e) { status.textContent = '保存に失敗しました（' + ((e && e.message) || '原因不明') + '）。もう一度お試しください。'; });
+      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
   }
 
   function promptDayPlace() {
@@ -1880,7 +1880,7 @@
     }).then(function () {
       state.editingEntry = findEntryById(state.editingEntryId);
       renderEntryRatingSection();
-    }).catch(function (e) { status.textContent = '評価の保存に失敗しました（' + ((e && e.message) || '原因不明') + '）。もう一度お試しください。'; });
+    }).catch(function () { status.textContent = '評価の保存に失敗しました。もう一度お試しください。'; });
   }
 
   var ROTATE_ICON = '<svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 8A6 6 0 1 0 16 11"/><path d="M16 4v4h-4"/></svg>';
