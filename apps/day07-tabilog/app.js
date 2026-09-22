@@ -1541,9 +1541,15 @@
         }).join('') + '</div>'
       : '';
 
+    // 動画も写真と同じ粒度（正方形のタイル）で並べる。タップすると動画ライトボックスを開く
+    // （インラインでcontrolsを出す作りだと、縦長動画がそのままの縦横比で表示されて
+    // 写真の並びと見た目が揃わなかったため）。
     var videosHtml = (entry.videoIds || []).length
       ? '<div class="entry-videos">' + entry.videoIds.map(function (id) {
-          return '<video src="' + escapeHtml(photoUrl(id)) + '" controls></video>';
+          return '<div class="entry-video-tile" data-video-id="' + escapeHtml(id) + '">' +
+            '<video src="' + escapeHtml(photoUrl(id)) + '#t=0.1" preload="metadata" muted playsinline></video>' +
+            '<div class="entry-video-play">' + ALBUM_PLAY_ICON + '</div>' +
+          '</div>';
         }).join('') + '</div>'
       : '';
 
@@ -1588,7 +1594,11 @@
       costHtml +
       (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '');
 
-    // 写真をタップしたときは編集画面へ行かず、拡大表示（ライトボックス）を開く
+    // 写真・動画をタップしたときは編集画面へ行かず、拡大表示（ライトボックス）を開く。
+    // 動画は（アルバムと同じく）タイルをタップしたときだけライトボックスを開く作りにしたので、
+    // 以前あった「動画の全画面再生から戻ると編集画面が勝手に開く」バグ（iOSのWKWebViewが
+    // 全画面再生を閉じたときにvideo要素へ合成的なclickイベントを発生させる挙動が原因だった）も、
+    // ライトボックスがentry-cardの外側にあるDOM構造になったことで併せて解消される。
     card.addEventListener('click', function (e) {
       var photoEl = e.target.closest('.entry-photo');
       if (photoEl) {
@@ -1596,10 +1606,12 @@
         openPhotoLightbox(photoUrl(photoEl.dataset.photoId));
         return;
       }
-      // 動画（.entry-videos内のvideoタグ）の操作・全画面再生からの復帰は編集画面へ行かない。
-      // iOSのWKWebViewは動画の全画面再生を閉じたときにvideo要素へ合成的なclickイベントを
-      // 発生させることがあり、これを拾うと「動画を見て戻ったら勝手に編集画面が開く」ことになる。
-      if (e.target.closest('.entry-videos')) return;
+      var videoTile = e.target.closest('.entry-video-tile');
+      if (videoTile) {
+        e.stopPropagation();
+        openVideoLightbox(photoUrl(videoTile.dataset.videoId));
+        return;
+      }
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       openEntryForm(block.id, entry);
     });
