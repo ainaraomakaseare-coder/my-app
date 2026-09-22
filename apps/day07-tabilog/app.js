@@ -215,6 +215,58 @@
     return lodging.length ? lodging[0].label : '';
   }
 
+  // 宿泊先を「何泊目に、どこに泊まったか」で一覧にする。宿泊カテゴリのBlockは、
+  // そのBlockの日付「以降」ずっとそこに泊まっている（次の宿泊Blockが出てくるまで）とみなす
+  // （「1日目にAホテル到着、7日目にBホテルへ移動」なら、1〜6泊目がAホテル・7泊目がBホテル）。
+  // 同じ宿が連続する夜はまとめて「1〜7泊目」のように範囲でまとめる。
+  function lodgingByNight(trip, blocks) {
+    var dates = allDatesForTrip(trip, blocks);
+    if (dates.length < 2) return []; // 日帰り、または日程が確定していない旅行には「泊」が無い
+    var nights = dates.length - 1;
+    var lodging = (blocks || [])
+      .filter(function (b) { return b.category === 'lodging' && b.label && b.date; })
+      .slice()
+      .sort(function (a, b) {
+        if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
+        return blockSortKey(a).localeCompare(blockSortKey(b));
+      });
+    var labelForNight = [];
+    for (var i = 0; i < nights; i++) {
+      var nightDate = dates[i];
+      var applicable = '';
+      for (var j = 0; j < lodging.length; j++) {
+        if (lodging[j].date <= nightDate) applicable = lodging[j].label; else break;
+      }
+      labelForNight.push(applicable);
+    }
+    var groups = [];
+    labelForNight.forEach(function (label, idx) {
+      var n = idx + 1;
+      var last = groups[groups.length - 1];
+      if (last && last.label === label) last.to = n;
+      else groups.push({ label: label, from: n, to: n });
+    });
+    return groups;
+  }
+
+  // 費用の総額を「実際に払った人」ごとに内訳表示するための集計。立て替え（paidBy）を
+  // 設定した費用行はpaidByへ、設定していない費用行（従来どおりの個人費用）はEntryの
+  // authorへ、それぞれ全額を計上する（誰か1人が全部払ったことにして二重計上はしない）。
+  function costBreakdownByPerson(blocks) {
+    var totals = {};
+    (blocks || []).forEach(function (block) {
+      (block.entries || []).forEach(function (entry) {
+        (entry.costItems || []).forEach(function (item) {
+          if (!(item.amount > 0)) return;
+          var payer = item.paidBy || entry.author || '';
+          if (!payer) return;
+          totals[payer] = (totals[payer] || 0) + item.amount;
+        });
+      });
+    });
+    return totals;
+  }
+
   function parseTags(text) {
     return (text || '').split(/[、,]/).map(function (s) { return s.trim(); }).filter(Boolean);
   }
@@ -311,6 +363,8 @@
     settlementPlan: settlementPlan,
     tripExpenseList: tripExpenseList,
     primaryLodgingName: primaryLodgingName,
+    lodgingByNight: lodgingByNight,
+    costBreakdownByPerson: costBreakdownByPerson,
     parseTags: parseTags,
     getTripIdFromSearch: getTripIdFromSearch,
     buildShareUrl: buildShareUrl,
@@ -948,6 +1002,32 @@
     });
   }
 
+  // 宿泊先の統計カード用の表示文字列。「1〜6泊目：Aホテル／7泊目：Bホテル」のように、
+  // 同じ宿が続く夜はまとめる（lodgingByNight）。宿泊が1か所だけの旅行では、これまでどおり
+  // 宿の名前だけをシンプルに出す（範囲表記を付けない）。
+  function formatLodgingStat(groups) {
+    if (!groups.length) return Core.primaryLodgingName(state.blocks) || '未設定';
+    if (groups.length === 1) return groups[0].label || '未設定';
+    return groups.map(function (g) {
+      var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
+      return range + '：' + (g.label || '未定');
+    }).join('／');
+  }
+
+  // 総費用の内訳（誰が実際にいくら払ったか）。統計カードの「総費用」をタップすると開閉する。
+  function toggleCostBreakdown() {
+    var panel = $('#costBreakdownPanel');
+    if (!panel.hidden) { panel.hidden = true; return; }
+    var breakdown = Core.costBreakdownByPerson(state.blocks);
+    var names = Object.keys(breakdown).sort(function (a, b) { return breakdown[b] - breakdown[a]; });
+    panel.innerHTML = names.length
+      ? names.map(function (name) {
+          return '<div class="cost-breakdown-row"><span class="name">' + escapeHtml(name) + '</span><span class="amount">' + escapeHtml(Core.formatYen(breakdown[name])) + '</span></div>';
+        }).join('')
+      : '<p class="empty">まだ費用の記録がありません。</p>';
+    panel.hidden = false;
+  }
+
   // ---------- 旅行詳細 ----------
   function renderTripDetail() {
     var trip = state.trip;
@@ -961,12 +1041,14 @@
     $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
     renderTripJoin();
 
-    var lodging = Core.primaryLodgingName(state.blocks);
+    var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
     var total = Core.tripTotalCost(state.blocks);
     $('#tripStats').innerHTML =
-      statCard('宿泊先', lodging || '未設定') +
-      statCard('総費用', Core.formatYen(total) || '¥0') +
+      statCard('宿泊先', lodging) +
+      '<button type="button" class="stat-card stat-card-btn" id="btnShowCostBreakdown"><div class="lbl">総費用</div><div class="val">' + escapeHtml(Core.formatYen(total) || '¥0') + '</div></button>' +
       statCard('日程', nights || (Core.allDatesForTrip(trip, state.blocks).length + '日'));
+    $('#costBreakdownPanel').hidden = true;
+    $('#btnShowCostBreakdown').addEventListener('click', toggleCostBreakdown);
 
     renderDayTabs();
     renderDaySection();

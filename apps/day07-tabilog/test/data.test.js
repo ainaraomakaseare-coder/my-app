@@ -136,6 +136,40 @@ eq(
   '温泉宿の慶山に到着する'
 );
 
+/* ---- lodgingByNight（何泊目にどこへ泊まったか） ---- */
+var tripForNights = { startDate: '2024-08-10', endDate: '2024-08-17' }; // 7泊8日
+var blocksTwoLodgings = [
+  { category: 'lodging', label: 'Aホテル', date: '2024-08-10', createdAt: '1' },
+  { category: 'lodging', label: 'Bホテル', date: '2024-08-16', createdAt: '2' }
+];
+var nights = T.lodgingByNight(tripForNights, blocksTwoLodgings);
+eq('lodgingByNight: 7泊8日で宿が1回変わるので2グループに分かれる', nights.length, 2);
+eq('lodgingByNight: 1〜6泊目はAホテル', [nights[0].label, nights[0].from, nights[0].to], ['Aホテル', 1, 6]);
+eq('lodgingByNight: 7泊目はBホテル', [nights[1].label, nights[1].from, nights[1].to], ['Bホテル', 7, 7]);
+
+eq('lodgingByNight: 日帰り（日程1日）なら「泊」は無い', T.lodgingByNight({ startDate: '2024-08-10', endDate: '2024-08-10' }, []), []);
+eq('lodgingByNight: 日程未設定・Blockも無ければ空配列', T.lodgingByNight({ startDate: '', endDate: '' }, []), []);
+
+var blocksSameLodgingTwice = [
+  { category: 'lodging', label: '温泉宿の慶山に到着する', date: '2024-08-10', createdAt: '1' },
+  { category: 'lodging', label: '宿に戻る', date: '2024-08-10', createdAt: '2' },
+  { category: 'lodging', label: '温泉宿の慶山', date: '2024-08-12', createdAt: '3' }
+];
+var nightsSame = T.lodgingByNight({ startDate: '2024-08-10', endDate: '2024-08-13' }, blocksSameLodgingTwice);
+eq('lodgingByNight: 同じ日に複数Blockがあれば後のBlockの見出しを採用', nightsSame[0].label, '宿に戻る');
+
+/* ---- costBreakdownByPerson（総費用を払った人ごとに内訳） ---- */
+var blocksForBreakdown = [
+  { entries: [
+    { author: '私', costItems: [{ label: 'お土産', amount: 1000 }] }, // paidByが無い＝個人費用としてauthorに計上
+    { author: '私', costItems: [{ label: '夕食', amount: 3000, paidBy: '父', splitAmong: ['父', '母', '私'] }] }
+  ] }
+];
+var breakdown = T.costBreakdownByPerson(blocksForBreakdown);
+eq('costBreakdownByPerson: paidByが無い費用はauthorに計上', breakdown['私'], 1000);
+eq('costBreakdownByPerson: paidByがある費用は全額payerに計上（割った額ではない）', breakdown['父'], 3000);
+eq('costBreakdownByPerson: 登場しない人は含まれない', breakdown['母'], undefined);
+
 /* ---- parseTags / URL ---- */
 eq('parseTags: 読点区切りで空要素は除く', T.parseTags('父、母、、妹'), ['父', '母', '妹']);
 eq('getTripIdFromSearch: ?tripを取り出す', T.getTripIdFromSearch('?trip=trip_abc123'), 'trip_abc123');

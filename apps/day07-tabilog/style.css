@@ -190,6 +190,13 @@ a:hover { text-decoration: underline; }
   font-size: 13.5px; font-weight: 700; margin-top: 3px; line-height: 1.3;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
 }
+.stat-card-btn { text-align: left; font-family: inherit; width: 100%; }
+.cost-breakdown-panel { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.cost-breakdown-row {
+  display: flex; justify-content: space-between; padding: 9px 12px; font-size: 13px; font-weight: 700;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-control);
+}
+.cost-breakdown-row .amount { font-variant-numeric: tabular-nums; }
 
 .day-tabs { display: flex; gap: 6px; padding: 12px 0; overflow-x: auto; }
 .day-tab { padding: 6px 14px; border-radius: 999px; color: var(--ink-muted); font-size: 12.5px; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
