@@ -1350,7 +1350,7 @@
         $('#weatherEditPanel').hidden = true;
         renderDayWeather();
       })
-      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
+      .catch(function (e) { status.textContent = '保存に失敗しました（' + ((e && e.message) || '原因不明') + '）。もう一度お試しください。'; });
   }
 
   function promptDayPlace() {
@@ -1880,7 +1880,7 @@
     }).then(function () {
       state.editingEntry = findEntryById(state.editingEntryId);
       renderEntryRatingSection();
-    }).catch(function () { status.textContent = '評価の保存に失敗しました。もう一度お試しください。'; });
+    }).catch(function (e) { status.textContent = '評価の保存に失敗しました（' + ((e && e.message) || '原因不明') + '）。もう一度お試しください。'; });
   }
 
   var ROTATE_ICON = '<svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 8A6 6 0 1 0 16 11"/><path d="M16 4v4h-4"/></svg>';
@@ -1963,11 +1963,6 @@
       });
       el.appendChild(chip);
     });
-  }
-
-  function closeCostSubRow(row, className) {
-    var sib = row.nextElementSibling;
-    if (sib && sib.classList.contains(className)) sib.remove();
   }
 
   // 「立て替え」（誰が払った・誰と割るか）の選択パネル。旅行の参加者（trip.companions）を
@@ -2053,9 +2048,10 @@
   }
 
   // 費用の明細（costItems）は、基本は「個人（またはそのサブグループ）が実際に払った金額」を
-  // そのまま入れる（CONTEXT.md参照）。ただし駐車場代など全体でまとめて払ったものは、
-  // 「全体費用」と「人数」から個人費用を計算して入れられるよう、行ごとに電卓を用意する
-  // （計算結果を金額欄に反映するだけで、保存する値はあくまで個人費用のまま）。
+  // そのまま入れる（CONTEXT.md参照）。駐車場代など全体でまとめて払ったものを人数で割りたい
+  // ときは、下記「立て替え」機能で全体の金額をそのまま入れ、払った人・割る人を選ぶ
+  // （以前あった「全体費用÷人数」電卓は、金額欄の意味が「個人費用」と「全体の金額」の
+  // どちらか曖昧になり、立て替え機能と併用すると二重に割ってしまう事故のもとだったため廃止した）。
   // 「立て替え」（誰が払った・誰と割るか）は任意項目。触らなければ、これまでどおり
   // 「本人の個人費用」として扱われ、割り勘の精算画面（貸し借り）には出てこない。
   function renderCostItems() {
@@ -2070,7 +2066,6 @@
         '<input type="number" min="0" step="1" placeholder="円" value="' + (item.amount || '') + '">' +
         '<button type="button" aria-label="削除">×</button>' +
         '<div class="cost-item-row-actions">' +
-          '<button type="button" class="cost-split-toggle" aria-label="全体費用から計算">÷人数</button>' +
           '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
         '</div>';
       var inputs = row.querySelectorAll('input');
@@ -2080,31 +2075,7 @@
         state.formCostItems[idx].amount = Math.max(0, parseInt(e.target.value, 10) || 0);
         renderCostTotal();
       });
-      row.querySelector('.cost-split-toggle').addEventListener('click', function () {
-        closeCostSubRow(row, 'cost-payer-row');
-        var existing = row.nextElementSibling;
-        if (existing && existing.classList.contains('cost-split-row')) { existing.remove(); return; }
-        var splitRow = document.createElement('div');
-        splitRow.className = 'cost-split-row';
-        splitRow.innerHTML =
-          '<input type="number" min="0" step="1" placeholder="全体費用（円）">' +
-          '<span>÷</span>' +
-          '<input type="number" min="1" step="1" placeholder="人数" value="2">' +
-          '<button type="button">反映</button>';
-        var splitInputs = splitRow.querySelectorAll('input');
-        splitRow.querySelector('button').addEventListener('click', function () {
-          var total = Math.max(0, parseInt(splitInputs[0].value, 10) || 0);
-          var count = Math.max(1, parseInt(splitInputs[1].value, 10) || 1);
-          var perPerson = Math.round(total / count);
-          amountInput.value = perPerson;
-          state.formCostItems[idx].amount = perPerson;
-          renderCostTotal();
-          splitRow.remove();
-        });
-        row.insertAdjacentElement('afterend', splitRow);
-      });
       row.querySelector('.cost-payer-toggle').addEventListener('click', function () {
-        closeCostSubRow(row, 'cost-split-row');
         var existing = row.nextElementSibling;
         if (existing && existing.classList.contains('cost-payer-row')) { existing.remove(); return; }
         row.insertAdjacentElement('afterend', buildCostPayerRow(idx, row));

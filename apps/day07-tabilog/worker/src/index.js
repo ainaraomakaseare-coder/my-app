@@ -518,14 +518,21 @@ function rowToRating(row) {
 
 async function setRating(entryId, request, env, headers) {
   const entry = await env.DB.prepare("SELECT id FROM entries WHERE id = ?").bind(entryId).first();
-  if (!entry) return json({ error: "entry_not_found" }, 404, headers);
+  if (!entry) {
+    console.error(JSON.stringify({ event: "rating_fail", reason: "entry_not_found", entryId }));
+    return json({ error: "entry_not_found" }, 404, headers);
+  }
   let data;
   try {
     data = await request.json();
-  } catch {
+  } catch (e) {
+    console.error(JSON.stringify({ event: "rating_fail", reason: "invalid_json", message: String(e) }));
     return json({ error: "invalid_json" }, 400, headers);
   }
-  if (!validRatingInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  if (!validRatingInput(data)) {
+    console.error(JSON.stringify({ event: "rating_fail", reason: "invalid_input", data }));
+    return json({ error: "invalid_input" }, 400, headers);
+  }
   const email = data.raterEmail.trim().toLowerCase();
   const name = (data.raterName || "").trim();
   const existing = await env.DB.prepare("SELECT id FROM ratings WHERE entry_id = ? AND rater_email = ?")
@@ -764,17 +771,25 @@ async function setDayPlace(tripId, date, request, env, headers) {
 // 手動入力では持たないためクリアする（weatherLabel()の「1mm以下なら曇り扱い」判定は
 // precipSumがnumberのときだけ働くので、nullなら選んだ天気コードの表示がそのまま出る）。
 async function setDayWeatherManual(tripId, date, request, env, headers) {
-  if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  if (!DATE_RE.test(date)) {
+    console.error(JSON.stringify({ event: "weather_manual_fail", reason: "invalid_date", tripId, date }));
+    return json({ error: "invalid_date" }, 400, headers);
+  }
   const id = tripId + "_" + date;
   const existing = await env.DB.prepare("SELECT id FROM day_infos WHERE id = ?").bind(id).first();
-  if (!existing) return json({ error: "day_not_found" }, 404, headers);
+  if (!existing) {
+    console.error(JSON.stringify({ event: "weather_manual_fail", reason: "day_not_found", id }));
+    return json({ error: "day_not_found" }, 404, headers);
+  }
   let data;
   try {
     data = await request.json();
-  } catch {
+  } catch (e) {
+    console.error(JSON.stringify({ event: "weather_manual_fail", reason: "invalid_json", message: String(e) }));
     return json({ error: "invalid_json" }, 400, headers);
   }
   if (!Number.isInteger(data.weatherCode) || MANUAL_WEATHER_CODES.indexOf(data.weatherCode) === -1) {
+    console.error(JSON.stringify({ event: "weather_manual_fail", reason: "invalid_input", data }));
     return json({ error: "invalid_input" }, 400, headers);
   }
   const tempMax = typeof data.tempMax === "number" && isFinite(data.tempMax) && data.tempMax >= -80 && data.tempMax <= 80 ? data.tempMax : null;
