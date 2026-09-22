@@ -135,7 +135,10 @@ async function createTrip(request, env, headers) {
 
 async function getTrip(id, env, headers) {
   const tripRow = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
-  if (!tripRow) return json({ error: "not_found" }, 404, headers);
+  if (!tripRow) {
+    console.error(JSON.stringify({ event: "get_trip_not_found", id }));
+    return json({ error: "not_found" }, 404, headers);
+  }
   const { results: blockRows } = await env.DB.prepare(
     "SELECT * FROM blocks WHERE trip_id = ? ORDER BY date ASC, time ASC, created_at ASC"
   )
@@ -1972,6 +1975,7 @@ export default {
 
     if (method === "POST" && path === "/receipts/scan") return scanReceipt(request, env, headers);
 
+    console.error(JSON.stringify({ event: "route_not_found", method, path }));
     return json({ error: "not_found" }, 404, headers);
   },
 };
