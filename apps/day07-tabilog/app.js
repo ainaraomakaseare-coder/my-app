@@ -478,13 +478,74 @@
   }
 
   // ---------- 写真の拡大表示（ライトボックス） ----------
-  function openPhotoLightbox(url) {
-    $('#lightboxImg').src = url;
+  // 同じ記録（Entry）に複数枚あるときは、左右スワイプ・矢印ボタンで次・前の写真に移れる。
+  // photoIdsは1枚だけのとき（アルバムなど）も配列で渡し、常に同じ仕組みで動かす。
+  var lightboxState = { photoIds: [], index: 0 };
+  function openPhotoLightbox(photoIds, index) {
+    lightboxState.photoIds = photoIds || [];
+    lightboxState.index = index || 0;
+    renderLightboxPhoto();
     $('#photoLightbox').hidden = false;
+  }
+  function renderLightboxPhoto() {
+    var ids = lightboxState.photoIds;
+    $('#lightboxImg').src = photoUrl(ids[lightboxState.index]);
+    var multi = ids.length > 1;
+    $('#lightboxPrev').hidden = !multi;
+    $('#lightboxNext').hidden = !multi;
+    $('#lightboxCount').hidden = !multi;
+    $('#lightboxCount').textContent = (lightboxState.index + 1) + ' / ' + ids.length;
+  }
+  function showLightboxPhoto(delta) {
+    var ids = lightboxState.photoIds;
+    var next = lightboxState.index + delta;
+    if (next < 0 || next >= ids.length) return; // 最初・最後の写真ではそれ以上進めない
+    lightboxState.index = next;
+    renderLightboxPhoto();
   }
   function closePhotoLightbox() {
     $('#photoLightbox').hidden = true;
     $('#lightboxImg').src = '';
+    lightboxState = { photoIds: [], index: 0 };
+  }
+
+  // 日タブのスワイプ（initDaySwipe）と同じ考え方：最初にどちらの向きに大きく動いたかを
+  // 一度だけ判定し、横方向のときだけ次・前の写真に切り替える（縦方向はライトボックスの
+  // 閉じる操作などと衝突しないよう、何もしない）。
+  var lightboxSwipeState = null;
+  function initLightboxSwipe() {
+    var el = $('#photoLightbox');
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1 || e.target.closest('.lightbox-nav, .lightbox-close')) { lightboxSwipeState = null; return; }
+      var t = e.touches[0];
+      lightboxSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!lightboxSwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - lightboxSwipeState.startX;
+      var dy = t.clientY - lightboxSwipeState.startY;
+      if (!lightboxSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        lightboxSwipeState.decided = true;
+        lightboxSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (lightboxSwipeState.decided && lightboxSwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!lightboxSwipeState) return;
+      var ds = lightboxSwipeState;
+      lightboxSwipeState = null;
+      if (!ds.decided || !ds.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - ds.startX;
+      if (Math.abs(dx) < 50) return;
+      showLightboxPhoto(dx < 0 ? 1 : -1);
+    });
+
+    el.addEventListener('touchcancel', function () { lightboxSwipeState = null; });
   }
 
   function openVideoLightbox(url) {
@@ -535,7 +596,7 @@
       tile.addEventListener('click', function () {
         var url = photoUrl(tile.dataset.id);
         if (tile.dataset.type === 'video') openVideoLightbox(url);
-        else openPhotoLightbox(url);
+        else openPhotoLightbox([tile.dataset.id], 0);
       });
     });
   }
@@ -1685,7 +1746,8 @@
       var photoEl = e.target.closest('.entry-photo');
       if (photoEl) {
         e.stopPropagation();
-        openPhotoLightbox(photoUrl(photoEl.dataset.photoId));
+        var photoIds = entry.photoIds || [];
+        openPhotoLightbox(photoIds, Math.max(0, photoIds.indexOf(photoEl.dataset.photoId)));
         return;
       }
       var videoTile = e.target.closest('.entry-video-tile');
@@ -2555,6 +2617,9 @@
     $('#photoLightbox').addEventListener('click', function (e) {
       if (e.target === e.currentTarget) closePhotoLightbox();
     });
+    $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(-1); });
+    $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(1); });
+    initLightboxSwipe();
     $('#btnCloseVideoLightbox').addEventListener('click', closeVideoLightbox);
     $('#videoLightbox').addEventListener('click', function (e) {
       if (e.target === e.currentTarget) closeVideoLightbox();
