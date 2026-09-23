@@ -1170,10 +1170,34 @@
     }).join('／');
   }
 
+  // 宿泊先の内訳（何泊目にどこへ泊まったか、全件）。統計カードの表示文字列（formatLodgingStat）は
+  // 3行までしか出せない（.stat-card .valのline-clamp）ため、宿泊先が3件を超える旅行では
+  // 全部を確認できなかった。統計カードの「宿泊先」をタップすると開閉する（DAY30〜）。
+  function toggleLodgingBreakdown() {
+    var panel = $('#lodgingBreakdownPanel');
+    if (!panel.hidden) { panel.hidden = true; return; }
+    $('#costBreakdownPanel').hidden = true;
+    var groups = Core.lodgingByNight(state.trip, state.blocks);
+    var primaryName = Core.primaryLodgingName(state.blocks);
+    if (groups.length) {
+      panel.innerHTML = groups.map(function (g) {
+        var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
+        return '<div class="cost-breakdown-row"><span class="name">' + escapeHtml(range) + '</span><span class="amount">' + escapeHtml(g.label || '未定') + '</span></div>';
+      }).join('');
+    } else if (primaryName) {
+      // 日帰りなど「泊」の無い旅行では日ごとの内訳が作れないため、宿泊カテゴリの見出しをそのまま出す
+      panel.innerHTML = '<div class="cost-breakdown-row"><span class="name">宿泊先</span><span class="amount">' + escapeHtml(primaryName) + '</span></div>';
+    } else {
+      panel.innerHTML = '<p class="empty">宿泊カテゴリの予定がまだありません。</p>';
+    }
+    panel.hidden = false;
+  }
+
   // 総費用の内訳（誰が実際にいくら払ったか）。統計カードの「総費用」をタップすると開閉する。
   function toggleCostBreakdown() {
     var panel = $('#costBreakdownPanel');
     if (!panel.hidden) { panel.hidden = true; return; }
+    $('#lodgingBreakdownPanel').hidden = true;
     var breakdown = Core.costBreakdownByPerson(state.blocks);
     var names = Object.keys(breakdown).sort(function (a, b) { return breakdown[b] - breakdown[a]; });
     panel.innerHTML = names.length
@@ -1200,10 +1224,12 @@
     var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
     var total = Core.tripTotalCost(state.blocks);
     $('#tripStats').innerHTML =
-      statCard('宿泊先', lodging) +
+      '<button type="button" class="stat-card stat-card-btn" id="btnShowLodgingBreakdown"><div class="lbl">宿泊先</div><div class="val">' + escapeHtml(lodging) + '</div></button>' +
       '<button type="button" class="stat-card stat-card-btn" id="btnShowCostBreakdown"><div class="lbl">総費用</div><div class="val">' + escapeHtml(Core.formatYen(total) || '¥0') + '</div></button>' +
       statCard('日程', nights || (Core.allDatesForTrip(trip, state.blocks).length + '日'));
+    $('#lodgingBreakdownPanel').hidden = true;
     $('#costBreakdownPanel').hidden = true;
+    $('#btnShowLodgingBreakdown').addEventListener('click', toggleLodgingBreakdown);
     $('#btnShowCostBreakdown').addEventListener('click', toggleCostBreakdown);
 
     renderDayTabs();
