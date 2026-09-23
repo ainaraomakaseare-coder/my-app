@@ -90,6 +90,7 @@ function validTripInput(x) {
     if (!x.companions.every((c) => typeof c === "string" && c.length <= 50)) return false;
   }
   if (!optStr(x.coverPhotoId, 300)) return false;
+  if (!optStr(x.tripType, 50)) return false;
   return true;
 }
 
@@ -100,6 +101,7 @@ function rowToTrip(row) {
     startDate: row.start_date,
     endDate: row.end_date,
     companions: JSON.parse(row.companions || "[]"),
+    tripType: row.trip_type || "",
     coverPhotoId: row.cover_photo_id || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -122,13 +124,14 @@ async function createTrip(request, env, headers) {
     end_date: data.endDate || "",
     companions: JSON.stringify(data.companions || []),
     cover_photo_id: data.coverPhotoId || "",
+    trip_type: data.tripType || "",
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    "INSERT INTO trips (id, title, start_date, end_date, companions, cover_photo_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO trips (id, title, start_date, end_date, companions, cover_photo_id, trip_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   )
-    .bind(trip.id, trip.title, trip.start_date, trip.end_date, trip.companions, trip.cover_photo_id, trip.created_at, trip.updated_at)
+    .bind(trip.id, trip.title, trip.start_date, trip.end_date, trip.companions, trip.cover_photo_id, trip.trip_type, trip.created_at, trip.updated_at)
     .run();
   return json(rowToTrip(trip), 201, headers);
 }
@@ -192,12 +195,13 @@ async function updateTrip(id, request, env, headers) {
     end_date: data.endDate !== undefined ? data.endDate : existing.end_date,
     companions: data.companions !== undefined ? JSON.stringify(data.companions) : existing.companions,
     cover_photo_id: data.coverPhotoId !== undefined ? String(data.coverPhotoId) : existing.cover_photo_id,
+    trip_type: data.tripType !== undefined ? String(data.tripType) : existing.trip_type,
     updated_at: nowIso(),
   };
   await env.DB.prepare(
-    "UPDATE trips SET title=?, start_date=?, end_date=?, companions=?, cover_photo_id=?, updated_at=? WHERE id=?"
+    "UPDATE trips SET title=?, start_date=?, end_date=?, companions=?, cover_photo_id=?, trip_type=?, updated_at=? WHERE id=?"
   )
-    .bind(next.title, next.start_date, next.end_date, next.companions, next.cover_photo_id, next.updated_at, id)
+    .bind(next.title, next.start_date, next.end_date, next.companions, next.cover_photo_id, next.trip_type, next.updated_at, id)
     .run();
   const updated = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
   return json(rowToTrip(updated), 200, headers);

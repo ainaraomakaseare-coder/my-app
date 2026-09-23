@@ -292,6 +292,35 @@
     return (list || []).filter(function (t) { return t.id !== id; });
   }
 
+  // ホーム画面の「最近開いた旅行一覧」を、誰と行ったか・年・旅行区分（自由入力）で絞り込む。
+  // 3つとも指定が無ければ全件そのまま返す（AND条件）。
+  function filterTrips(trips, filters) {
+    filters = filters || {};
+    return (trips || []).filter(function (t) {
+      if (filters.companion && (t.companions || []).indexOf(filters.companion) === -1) return false;
+      if (filters.year && (t.startDate || '').slice(0, 4) !== filters.year) return false;
+      if (filters.tripType && (t.tripType || '') !== filters.tripType) return false;
+      return true;
+    });
+  }
+
+  // 上の絞り込み欄（プルダウン）に出す選択肢を、実際に旅行データに登場する値だけから作る
+  // （固定の選択肢を用意すると、人によって「サークルの友達」「大学のサークル」のように
+  // 呼び方が揺れて選べない値が出てしまうため、自由入力＋実データからの選択肢にしている）。
+  function tripFilterOptions(trips) {
+    var companions = {}, years = {}, tripTypes = {};
+    (trips || []).forEach(function (t) {
+      (t.companions || []).forEach(function (c) { if (c) companions[c] = true; });
+      if (t.startDate) years[t.startDate.slice(0, 4)] = true;
+      if (t.tripType) tripTypes[t.tripType] = true;
+    });
+    return {
+      companions: Object.keys(companions).sort(),
+      years: Object.keys(years).sort().reverse(),
+      tripTypes: Object.keys(tripTypes).sort(),
+    };
+  }
+
   // entryが持つ評価（{raterEmail, raterName, score}の配列）から、平均と件数を出す
   function ratingSummary(ratings) {
     var list = (ratings || []).filter(function (r) { return typeof r.score === 'number' && r.score > 0; });
@@ -370,6 +399,8 @@
     buildShareUrl: buildShareUrl,
     upsertTripIndexEntry: upsertTripIndexEntry,
     removeTripIndexEntry: removeTripIndexEntry,
+    filterTrips: filterTrips,
+    tripFilterOptions: tripFilterOptions,
     ratingSummary: ratingSummary,
     myRatingScore: myRatingScore,
     sortMyLogItems: sortMyLogItems,
@@ -464,7 +495,7 @@
   function rememberTrip(trip) {
     var list = Core.upsertTripIndexEntry(loadMyTrips(), {
       id: trip.id, title: trip.title, startDate: trip.startDate, endDate: trip.endDate, companions: trip.companions,
-      coverPhotoId: trip.coverPhotoId || ''
+      tripType: trip.tripType || '', coverPhotoId: trip.coverPhotoId || ''
     });
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(list));
   }
@@ -872,6 +903,7 @@
     myLogItems: [],
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [] },
+    homeFilters: { companion: '', year: '', tripType: '' },
     myLogCategory: 'food',
     myLogSort: 'score',
     // 旅行のサムネイル画像。新規作成・編集どちらのフォームでも使い回す
@@ -902,11 +934,38 @@
       : '';
   }
 
+  // 絞り込み欄（誰と一緒か・年・旅行区分）の選択肢を、実際の旅行データから作り直す。
+  // 今選んでいる値はstate.homeFiltersに持っておき、作り直したあとも選択状態を保つ。
+  function renderTripFilterOptions(allTrips) {
+    var opts = Core.tripFilterOptions(allTrips);
+    var f = state.homeFilters;
+    $('#filterCompanion').innerHTML = '<option value="">誰と一緒か：すべて</option>' +
+      opts.companions.map(function (c) {
+        return '<option value="' + escapeHtml(c) + '"' + (f.companion === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+      }).join('');
+    $('#filterYear').innerHTML = '<option value="">年：すべて</option>' +
+      opts.years.map(function (y) {
+        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + escapeHtml(y) + '年</option>';
+      }).join('');
+    $('#filterTripType').innerHTML = '<option value="">旅行区分：すべて</option>' +
+      opts.tripTypes.map(function (tt) {
+        return '<option value="' + escapeHtml(tt) + '"' + (f.tripType === tt ? ' selected' : '') + '>' + escapeHtml(tt) + '</option>';
+      }).join('');
+  }
+
   function renderHomeTripList() {
-    var list = loadMyTrips();
+    var allTrips = loadMyTrips();
+    $('#tripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない
+    if (allTrips.length >= 2) renderTripFilterOptions(allTrips);
+
+    var list = Core.filterTrips(allTrips, state.homeFilters);
     var el = $('#tripList');
-    if (!list.length) {
+    if (!allTrips.length) {
       el.innerHTML = '<div class="empty">まだ旅行がありません。「＋ 新しい旅を記録する」から始めてください。</div>';
+      return;
+    }
+    if (!list.length) {
+      el.innerHTML = '<div class="empty">条件に一致する旅行がありません。</div>';
       return;
     }
     el.innerHTML = '';
@@ -921,7 +980,9 @@
         '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
         (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
         '<div class="trip-card-companions">' +
-        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') + '</div>' +
+        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+        (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
+        '</div>' +
         '</div></div>';
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
@@ -944,7 +1005,7 @@
         if (knownIds[t.id]) return;
         known = Core.upsertTripIndexEntry(known, {
           id: t.id, title: t.title, startDate: t.startDate, endDate: t.endDate, companions: t.companions || [],
-          coverPhotoId: t.coverPhotoId || ''
+          tripType: t.tripType || '', coverPhotoId: t.coverPhotoId || ''
         });
         added = true;
       });
@@ -997,6 +1058,7 @@
     $('#ntStart').value = '';
     $('#ntEnd').value = '';
     $('#ntCompanions').value = '';
+    $('#ntTripType').value = '';
     $('#newTripStatus').textContent = '';
     resetCoverPhotoDraft('');
     renderCoverPhotoPreview('nt');
@@ -1015,6 +1077,7 @@
         startDate: $('#ntStart').value,
         endDate: $('#ntEnd').value,
         companions: Core.parseTags($('#ntCompanions').value),
+        tripType: $('#ntTripType').value.trim(),
         coverPhotoId: coverPhotoId
       });
     }).then(function (trip) {
@@ -1032,6 +1095,7 @@
     $('#teStart').value = trip.startDate || '';
     $('#teEnd').value = trip.endDate || '';
     $('#teCompanions').value = (trip.companions || []).join('、');
+    $('#teTripType').value = trip.tripType || '';
     $('#tripEditStatus').textContent = '';
     resetCoverPhotoDraft(trip.coverPhotoId || '');
     renderCoverPhotoPreview('te');
@@ -1049,6 +1113,7 @@
         startDate: $('#teStart').value,
         endDate: $('#teEnd').value,
         companions: Core.parseTags($('#teCompanions').value),
+        tripType: $('#teTripType').value.trim(),
         coverPhotoId: coverPhotoId
       });
     }).then(function (trip) {
@@ -2626,6 +2691,9 @@
     });
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
     $('#btnOpenSettlement').addEventListener('click', openSettlement);
+    $('#filterCompanion').addEventListener('change', function (e) { state.homeFilters.companion = e.target.value; renderHomeTripList(); });
+    $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
+    $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
     $('#btnScanReceipt').addEventListener('click', function () { $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
     $('#entPlaceSearch').addEventListener('keydown', function (e) {

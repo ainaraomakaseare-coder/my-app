@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS trips (
   end_date TEXT NOT NULL DEFAULT '',
   companions TEXT NOT NULL DEFAULT '[]',
   cover_photo_id TEXT NOT NULL DEFAULT '',
+  -- trip_type：旅行区分（サークルの友達、バイト先、家族など）。自由入力、絞り込み用（v14）。
+  trip_type TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -189,3 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- 本番環境へ反映するまでは、下記を2回（1文ずつ）実行すること。
 -- ALTER TABLE day_infos ADD COLUMN admin1 TEXT NOT NULL DEFAULT '';
 -- ALTER TABLE day_infos ADD COLUMN country TEXT NOT NULL DEFAULT '';
+
+-- v14：tripsに trip_type（旅行区分。サークルの友達／バイト先／家族など、自由入力）を
+-- 追加する一度きりの文。本番環境へ反映するまでは、下記を1回だけ実行すること。
+-- ALTER TABLE trips ADD COLUMN trip_type TEXT NOT NULL DEFAULT '';

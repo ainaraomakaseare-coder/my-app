@@ -75,6 +75,12 @@
 
       <p class="notice" id="apiNotice" hidden></p>
 
+      <div class="trip-filters" id="tripFilters" hidden>
+        <select id="filterCompanion"><option value="">誰と一緒か：すべて</option></select>
+        <select id="filterYear"><option value="">年：すべて</option></select>
+        <select id="filterTripType"><option value="">旅行区分：すべて</option></select>
+      </div>
+
       <div id="tripList" class="trip-list"></div>
 
       <div class="home-actions">
@@ -120,6 +126,10 @@
         <input type="text" id="ntCompanions" placeholder="例：父、母、妹">
       </div>
       <div class="field">
+        <label for="ntTripType">旅行区分（任意）</label>
+        <input type="text" id="ntTripType" placeholder="例：家族、サークルの友達、バイト先">
+      </div>
+      <div class="field">
         <label for="ntCoverPhoto">サムネイル画像（任意）</label>
         <input type="file" id="ntCoverPhoto" accept="image/*" hidden>
         <div class="photo-picker" id="ntCoverPhotoPicker">
@@ -159,6 +169,10 @@
       <div class="field">
         <label for="teCompanions">だれと行った？（読点区切り）</label>
         <input type="text" id="teCompanions" placeholder="例：父、母、妹">
+      </div>
+      <div class="field">
+        <label for="teTripType">旅行区分（任意）</label>
+        <input type="text" id="teTripType" placeholder="例：家族、サークルの友達、バイト先">
       </div>
       <div class="field">
         <label for="teCoverPhoto">サムネイル画像（任意）</label>
