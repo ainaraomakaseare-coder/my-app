@@ -136,6 +136,27 @@ async function createTrip(request, env, headers) {
   return json(rowToTrip(trip), 201, headers);
 }
 
+// D1（SQLite）は1クエリでまとめて使えるバインドパラメータの数に上限があり（実測で100前後）、
+// WHERE x IN (...) に一度に大量のIDを入れると「D1_ERROR: too many SQL variables」で
+// 落ちる。「複数日をまとめて記録する」（DAY30〜）で一度に何十件ものBlock/Entryが作られると
+// 実際にこれで旅行の読み込みが失敗する事故が起きたため、IDが多いときは上限より少ない
+// チャンクに分けて複数回クエリし、結果をまとめて返すようにする。sqlBeforeIn/sqlAfterInの
+// 間にIN句のプレースホルダーが入る（バインドはID以外に無い呼び出し専用、他の条件は
+// リテラルで書く）。
+const D1_MAX_IN_PARAMS = 90;
+
+async function selectWhereIn(env, sqlBeforeIn, ids, sqlAfterIn) {
+  const all = [];
+  for (let i = 0; i < ids.length; i += D1_MAX_IN_PARAMS) {
+    const chunk = ids.slice(i, i + D1_MAX_IN_PARAMS);
+    const { results } = await env.DB.prepare(sqlBeforeIn + chunk.map(() => "?").join(",") + sqlAfterIn)
+      .bind(...chunk)
+      .all();
+    all.push(...results);
+  }
+  return all;
+}
+
 async function getTrip(id, env, headers) {
   const tripRow = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
   if (!tripRow) return json({ error: "not_found" }, 404, headers);
@@ -144,21 +165,13 @@ async function getTrip(id, env, headers) {
   )
     .bind(id)
     .all();
-  const { results: entryRows } = blockRows.length
-    ? await env.DB.prepare(
-        `SELECT * FROM entries WHERE block_id IN (${blockRows.map(() => "?").join(",")}) ORDER BY created_at ASC`
-      )
-        .bind(...blockRows.map((b) => b.id))
-        .all()
-    : { results: [] };
+  const entryRows = blockRows.length
+    ? await selectWhereIn(env, "SELECT * FROM entries WHERE block_id IN (", blockRows.map((b) => b.id), ") ORDER BY created_at ASC")
+    : [];
   const entryIds = entryRows.map((r) => r.id);
   const ratingsByEntry = {};
   if (entryIds.length) {
-    const { results: ratingRows } = await env.DB.prepare(
-      `SELECT * FROM ratings WHERE entry_id IN (${entryIds.map(() => "?").join(",")})`
-    )
-      .bind(...entryIds)
-      .all();
+    const ratingRows = await selectWhereIn(env, "SELECT * FROM ratings WHERE entry_id IN (", entryIds, ")");
     ratingRows.forEach((row) => {
       (ratingsByEntry[row.entry_id] = ratingsByEntry[row.entry_id] || []).push(rowToRating(row));
     });
@@ -628,12 +641,9 @@ async function getMyLog(email, env, headers) {
 // 行だけを対象にする（海外のadmin1＝州などを都道府県として混ぜないため）。
 async function getVisitedPlaces(env, tripIds) {
   if (!tripIds.length) return { prefectures: [], countries: [] };
-  const { results } = await env.DB.prepare(
-    `SELECT DISTINCT admin1, country FROM day_infos
-     WHERE trip_id IN (${tripIds.map(() => "?").join(",")}) AND (admin1 != '' OR country != '')`
-  )
-    .bind(...tripIds)
-    .all();
+  const results = await selectWhereIn(
+    env, "SELECT DISTINCT admin1, country FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
+  );
   const prefectures = new Set();
   const countries = new Set();
   results.forEach((row) => {
@@ -1884,9 +1894,9 @@ async function recoverEntriesForDay(env, tripId, date) {
   const { results: blockRows } = await env.DB.prepare(
     "SELECT * FROM blocks WHERE trip_id = ? AND date = ? ORDER BY created_at ASC"
   ).bind(tripId, date).all();
-  const { results: existingEntryRows } = blockRows.length
-    ? await env.DB.prepare(`SELECT block_id FROM entries WHERE block_id IN (${blockRows.map(() => "?").join(",")})`).bind(...blockRows.map((b) => b.id)).all()
-    : { results: [] };
+  const existingEntryRows = blockRows.length
+    ? await selectWhereIn(env, "SELECT block_id FROM entries WHERE block_id IN (", blockRows.map((b) => b.id), ")")
+    : [];
   const blocksWithEntries = new Set(existingEntryRows.map((r) => r.block_id));
   const pool = blockRows.filter((b) => !blocksWithEntries.has(b.id));
 
