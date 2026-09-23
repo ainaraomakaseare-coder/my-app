@@ -177,6 +177,31 @@ a:hover { text-decoration: underline; }
   display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 10px; font-weight: 700;
   background: var(--accent-soft-bg); color: var(--accent-deep);
 }
+/* サムネイル画像がある旅行だけ、ホーム画面のカードを「写真を大きく＋下に参加者のアイコン」の見た目にする
+   （DAY30〜）。マイログの「参加した旅行一覧」は今までどおり.trip-card-row／.trip-card-thumbの小さい一覧のまま。 */
+.trip-card.has-photo { padding: 0; overflow: hidden; }
+.trip-card-photo {
+  width: 100%; height: 140px; background-color: var(--border-soft); background-size: cover; background-position: center; position: relative;
+}
+.trip-card-photo-badge {
+  position: absolute; left: 12px; top: 12px; background: rgba(255, 255, 255, 0.92); border-radius: 999px;
+  padding: 5px 12px; font-size: 11.5px; font-weight: 600; color: var(--accent-deep);
+}
+.trip-card-info { padding: 14px 16px 16px; }
+.trip-card-people { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.trip-card-avatars { display: flex; }
+.trip-card-avatar {
+  width: 22px; height: 22px; border-radius: 999px; border: 2px solid var(--card); margin-left: -6px;
+  display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0;
+}
+.trip-card-avatar:first-child { margin-left: 0; }
+.trip-card-avatar.c0 { background: #FFD9A0; color: #A6620C; }
+.trip-card-avatar.c1 { background: #B9E4D0; color: #1F8A5C; }
+.trip-card-avatar.c2 { background: #CFE0FF; color: #3563C9; }
+.trip-card-avatar.c3 { background: #FFD3CB; color: #C4482F; }
+.trip-card-avatar.c4 { background: #E4D4FA; color: #6B3FA0; }
+.trip-card-avatar.c5 { background: #FFE9A8; color: #9C7A0A; }
+.trip-card-people-text { font-size: 12px; color: var(--ink-muted); }
 .empty { color: var(--ink-soft); font-size: 13px; padding: 20px 0; }
 
 /* ---------- trip detail header ---------- */

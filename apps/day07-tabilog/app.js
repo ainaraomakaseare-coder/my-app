@@ -934,6 +934,22 @@
       : '';
   }
 
+  // 参加者名を丸いアイコン（頭文字＋色）で表示するための色分け。名前ごとに毎回同じ色になるよう、
+  // 文字列から単純なハッシュ値を出して6色から選ぶだけで、特別な意味は持たせていない。
+  function avatarColorClass(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) { h = (h * 31 + name.charCodeAt(i)) & 0xffffffff; }
+    return 'c' + (Math.abs(h) % 6);
+  }
+  function tripCardAvatarsHtml(companions) {
+    var list = (companions || []).filter(Boolean);
+    if (!list.length) return '';
+    return '<div class="trip-card-avatars">' + list.slice(0, 4).map(function (name) {
+      var initial = name.trim().charAt(0) || '?';
+      return '<span class="trip-card-avatar ' + avatarColorClass(name) + '">' + escapeHtml(initial) + '</span>';
+    }).join('') + '</div>';
+  }
+
   // 絞り込み欄（誰と一緒か・年・旅行区分）の選択肢を、実際の旅行データから作り直す。
   // 今選んでいる値はstate.homeFiltersに持っておき、作り直したあとも選択状態を保つ。
   function renderTripFilterOptions(allTrips) {
@@ -971,19 +987,33 @@
     el.innerHTML = '';
     list.forEach(function (t) {
       var card = document.createElement('button');
-      card.className = 'trip-card';
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
-      card.innerHTML =
-        '<div class="trip-card-row">' +
-        tripThumbHtml(t.coverPhotoId) +
-        '<div class="trip-card-body">' +
+      var infoHtml =
         '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
-        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
-        '<div class="trip-card-companions">' +
-        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
-        (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
-        '</div>' +
-        '</div></div>';
+        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>';
+      // サムネイル画像がある旅行は、写真を大きく見せてその上に旅行区分バッジを重ね、
+      // 写真の下にタイトル・日程・参加者のアイコンを並べる（ホーム画面だけの見た目。
+      // マイログの「参加した旅行一覧」は今までどおりの小さいサムネイルの一覧のまま）。
+      if (t.coverPhotoId) {
+        card.className = 'trip-card has-photo';
+        card.innerHTML =
+          '<div class="trip-card-photo" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')">' +
+          (t.tripType ? '<span class="trip-card-photo-badge">' + escapeHtml(t.tripType) + '</span>' : '') +
+          '</div>' +
+          '<div class="trip-card-info">' + infoHtml +
+          '<div class="trip-card-people">' + tripCardAvatarsHtml(t.companions) +
+          '<span class="trip-card-people-text">' +
+          ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+          '</span></div></div>';
+      } else {
+        card.className = 'trip-card';
+        card.innerHTML =
+          infoHtml +
+          '<div class="trip-card-companions">' +
+          ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+          (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
+          '</div>';
+      }
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
     });

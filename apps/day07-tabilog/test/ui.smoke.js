@@ -226,7 +226,7 @@ const TINY_PNG = Buffer.from(
 
   await page.click('.screen.active [data-back="home"]');
   await page.waitForSelector('.screen[data-screen="home"].active');
-  check('ホーム画面の旅行カードにもサムネイル画像が出る', (await page.$$('.trip-card-thumb')).length === 1);
+  check('ホーム画面の旅行カードにもサムネイル画像が出る（写真を大きく見せるカード）', (await page.$$('.trip-card-photo')).length === 1);
   await page.click('.trip-card');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
 
