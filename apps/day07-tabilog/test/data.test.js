@@ -204,6 +204,11 @@ eq('filterTrips: 旅行区分で絞る', T.filterTrips(tripsForFilter, { tripTyp
 eq('filterTrips: 複数条件はAND', T.filterTrips(tripsForFilter, { companion: '父', year: '2024' }).map(function (t) { return t.id; }), ['t1', 't3']);
 eq('filterTrips: 一致するものが無ければ空配列', T.filterTrips(tripsForFilter, { tripType: 'ハネムーン' }), []);
 
+/* ---- sortTrips（ホーム画面の旅行一覧の並び替え） ---- */
+eq('sortTrips: 空文字は元の順のまま（最近開いた順）', T.sortTrips(tripsForFilter, '').map(function (t) { return t.id; }), ['t1', 't2', 't3', 't4']);
+eq('sortTrips: date_desc は日程が新しい順・未設定は末尾', T.sortTrips(tripsForFilter, 'date_desc').map(function (t) { return t.id; }), ['t2', 't1', 't3', 't4']);
+eq('sortTrips: date_asc は日程が古い順・未設定は末尾', T.sortTrips(tripsForFilter, 'date_asc').map(function (t) { return t.id; }), ['t3', 't1', 't2', 't4']);
+
 var opts = T.tripFilterOptions(tripsForFilter);
 eq('tripFilterOptions: 誰と一緒かの選択肢（重複なし）', opts.companions, ['サークルの先輩', '母', '父']);
 eq('tripFilterOptions: 年の選択肢（新しい年が先）', opts.years, ['2025', '2024']);

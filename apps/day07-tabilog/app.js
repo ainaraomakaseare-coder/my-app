@@ -304,6 +304,18 @@
     });
   }
 
+  // ホーム画面の並び順。''（既定）は「最近開いた・編集した順」（upsertTripIndexEntryの並びそのまま）。
+  // 'date_asc'/'date_desc'は旅行の開始日で並べ替える。日程未設定の旅行はどちらの向きでも末尾に置く。
+  function sortTrips(trips, sortKey) {
+    var out = (trips || []).slice();
+    if (sortKey === 'date_asc') {
+      out.sort(function (a, b) { return (a.startDate || '9999-99-99').localeCompare(b.startDate || '9999-99-99'); });
+    } else if (sortKey === 'date_desc') {
+      out.sort(function (a, b) { return (b.startDate || '').localeCompare(a.startDate || ''); });
+    }
+    return out;
+  }
+
   // 上の絞り込み欄（プルダウン）に出す選択肢を、実際に旅行データに登場する値だけから作る
   // （固定の選択肢を用意すると、人によって「サークルの友達」「大学のサークル」のように
   // 呼び方が揺れて選べない値が出てしまうため、自由入力＋実データからの選択肢にしている）。
@@ -400,6 +412,7 @@
     upsertTripIndexEntry: upsertTripIndexEntry,
     removeTripIndexEntry: removeTripIndexEntry,
     filterTrips: filterTrips,
+    sortTrips: sortTrips,
     tripFilterOptions: tripFilterOptions,
     ratingSummary: ratingSummary,
     myRatingScore: myRatingScore,
@@ -941,7 +954,7 @@
     myLogItems: [],
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [] },
-    homeFilters: { companion: '', year: '', tripType: '' },
+    homeFilters: { companion: '', year: '', tripType: '', sort: '' },
     myLogCategory: 'food',
     myLogSort: 'score',
     // 旅行のサムネイル画像。新規作成・編集どちらのフォームでも使い回す
@@ -1012,7 +1025,8 @@
     $('#tripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない
     if (allTrips.length >= 2) renderTripFilterOptions(allTrips);
 
-    var list = Core.filterTrips(allTrips, state.homeFilters);
+    var list = Core.sortTrips(Core.filterTrips(allTrips, state.homeFilters), state.homeFilters.sort);
+    $('#sortTripOrder').value = state.homeFilters.sort;
     var el = $('#tripList');
     if (!allTrips.length) {
       el.innerHTML = '<div class="empty">まだ旅行がありません。「＋ 新しい旅を記録する」から始めてください。</div>';
@@ -2825,6 +2839,7 @@
     $('#filterCompanion').addEventListener('change', function (e) { state.homeFilters.companion = e.target.value; renderHomeTripList(); });
     $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
+    $('#sortTripOrder').addEventListener('change', function (e) { state.homeFilters.sort = e.target.value; renderHomeTripList(); });
     $('#btnScanReceipt').addEventListener('click', function () { $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
