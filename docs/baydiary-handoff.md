@@ -2,7 +2,7 @@
 
 - 対象：`apps/day23-baydiary/`。HTML単体（`index.html`）＋テスト（`test/logic.test.js`・`test/ui.smoke.js`）。ビルド・サーバー不要。
 - 元の会話：https://claude.ai/code/session_018CqvieSoA152ZNZ5Z95QSN
-- 作業ブランチ：`claude/determined-newton-6flah9`。**PR #30（`docs/logs/day23.md`・`docs/progress.md`への時間/費用の記録のみ、コード変更なし）がまだ未マージ**。このブランチには最新`main`をマージ済みで、コンフリクトも解消してpush済み。今回の新機能（応援球団選択・球場別/月別成績など）はまだ1行もコードを書いていない（調査のみ）。**新しいセッションはこのブランチの続きから始めること**（`git checkout -B claude/determined-newton-6flah9 origin/claude/determined-newton-6flah9`）。もしPR #30が既にマージ済みなら、通常どおり`origin/main`から作り直してよい。
+- 作業ブランチ：`claude/determined-newton-6flah9`。**[PR #30](https://github.com/ainaraomakaseare-coder/my-app/pull/30)（`docs/logs/day23.md`・`docs/progress.md`への時間/費用の記録のみ、コード変更なし）がまだ未マージ**。このブランチには最新`main`をマージ済みで、コンフリクトも解消してpush済み。今回の新機能（応援球団選択・球場別/月別成績など）はまだ1行もコードを書いていない（調査のみ）。**新しいセッションはこのブランチの続きから始めること**（`git checkout -B claude/determined-newton-6flah9 origin/claude/determined-newton-6flah9`）。もしPR #30が既にマージ済みなら、通常どおり`origin/main`から作り直してよい。
 - 注意：このプロジェクトは複数セッションが同じブランチ名`claude/determined-newton-6flah9`を使い回す運用のため、**「前のPRがマージ済みか」を必ずGitHubで確認してから`git checkout -B ... origin/main`で作り直すこと**。未マージのまま作り直すと、pushしたコミットを見失う（このセッションで2回発生し、その都度`origin/claude/determined-newton-6flah9`から復旧した）。
 - 前提として、ログは`docs/logs/day23.md`に集約されている。DAY23は既に「完了」扱いだが、その後の改修は新しいDAY番号を作らず、`day23.md`に「## 追記：〜」を追加する形で続けてきた（このリポジトリの慣習）。今回の作業も同じ形で追記すること。
 
