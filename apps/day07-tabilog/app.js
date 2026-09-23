@@ -590,6 +590,44 @@
     $('#videoLightbox').hidden = true;
   }
 
+  // 写真・動画の保存（アルバムから開いたライトボックスの「保存」ボタン、DAY30〜）。
+  // Web Share API（ファイル共有）に対応していれば、iOSの共有シート経由で「画像/動画を保存」を
+  // 出せるのでそちらを優先する。対応していない環境（主にPCブラウザ）ではオブジェクトURL＋
+  // <a download>でのダウンロードにフォールバックする（cross-originのURLへ直接download属性を
+  // 付けてもブラウザに無視されるため、一度fetchでblobとして取り込んでからdownloadする必要がある）。
+  function downloadBlob(blob, filename) {
+    var objectUrl = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 10000);
+  }
+
+  function saveMediaFromUrl(url, filename, btn) {
+    if (!url) return;
+    if (btn) btn.disabled = true;
+    fetch(url).then(function (res) {
+      if (!res.ok) throw new Error('fetch_failed');
+      return res.blob();
+    }).then(function (blob) {
+      var file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        return navigator.share({ files: [file] }).catch(function (e) {
+          if (e && e.name === 'AbortError') return; // 共有シートをキャンセルしただけなので何もしない
+          downloadBlob(blob, filename);
+        });
+      }
+      downloadBlob(blob, filename);
+    }).catch(function () {
+      alert('保存に失敗しました。もう一度お試しください。');
+    }).then(function () {
+      if (btn) btn.disabled = false;
+    });
+  }
+
   // ---------- アルバム（旅行全体の写真・動画をまとめて見る） ----------
   function openAlbum() {
     renderAlbum();
@@ -2766,8 +2804,19 @@
     });
     $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(-1); });
     $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(1); });
+    $('#btnSaveLightboxPhoto').addEventListener('click', function (e) {
+      e.stopPropagation();
+      var id = lightboxState.photoIds[lightboxState.index];
+      if (id) saveMediaFromUrl(photoUrl(id), id, e.currentTarget);
+    });
     initLightboxSwipe();
     $('#btnCloseVideoLightbox').addEventListener('click', closeVideoLightbox);
+    $('#btnSaveLightboxVideo').addEventListener('click', function (e) {
+      e.stopPropagation();
+      var src = $('#lightboxVideo').src;
+      var filename = (src.split('/').pop() || 'video.mp4').split('#')[0].split('?')[0];
+      saveMediaFromUrl(src, filename, e.currentTarget);
+    });
     $('#videoLightbox').addEventListener('click', function (e) {
       if (e.target === e.currentTarget) closeVideoLightbox();
     });

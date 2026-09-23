@@ -406,6 +406,11 @@ a:hover { text-decoration: underline; }
   position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%;
   background: rgba(255, 255, 255, 0.15); color: #fff; display: flex; align-items: center; justify-content: center;
 }
+.lightbox-save {
+  position: absolute; top: 16px; left: 16px; width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15); color: #fff; display: flex; align-items: center; justify-content: center;
+}
+.lightbox-save[disabled] { opacity: 0.5; }
 .lightbox-nav {
   position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; border-radius: 50%;
   background: rgba(255, 255, 255, 0.15); color: #fff; display: flex; align-items: center; justify-content: center;
