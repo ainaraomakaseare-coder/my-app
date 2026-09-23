@@ -2266,11 +2266,17 @@
   // チップで選ぶだけのシンプルな作り。チップを押すたびに全体を再描画するとパネルが
   // 閉じてしまうので、ここだけはDOMを直接書き換えて開いたままにする。
   function buildCostPayerRow(idx, row) {
+    // trip.companions は「一緒に行った人」（＝自分以外）の一覧なので、これだけだと
+    // 記録している本人が払った・割る人に選べない（DAY30〜、実際に「自分が入っていない」
+    // という報告を受けて対応）。今の「記録した人（#entAuthor）」欄の値を本人として
+    // 先頭に加える（companions側には追加しない＝「〇〇と一緒」の表示はそのまま）。
     var companions = (state.trip && state.trip.companions) || [];
+    var self = $('#entAuthor').value.trim();
+    var people = self && companions.indexOf(self) === -1 ? [self].concat(companions) : companions.slice();
     var panel = document.createElement('div');
     panel.className = 'cost-payer-row';
-    if (!companions.length) {
-      panel.innerHTML = '<p class="hint">参加者が未設定です。旅行の編集画面で参加者を入力すると選べるようになります。</p>';
+    if (!people.length) {
+      panel.innerHTML = '<p class="hint">参加者が未設定です。旅行の編集画面で参加者を入力する、または「記録した人」欄に名前を入れると選べるようになります。</p>';
       return panel;
     }
     function currentItem() { return state.formCostItems[idx]; }
@@ -2293,7 +2299,7 @@
     var payerChipWrap = payerSection.querySelector('[data-role="payer"]');
     var splitChipWrap = splitSection.querySelector('[data-role="split"]');
 
-    companions.forEach(function (name) {
+    people.forEach(function (name) {
       var payerBtn = document.createElement('button');
       payerBtn.type = 'button';
       payerBtn.className = 'chip-option' + (currentItem().paidBy === name ? ' on' : '');
@@ -2322,7 +2328,7 @@
 
     splitSection.querySelector('.cost-split-even').addEventListener('click', function () {
       var item = currentItem();
-      item.splitAmong = companions.slice();
+      item.splitAmong = people.slice();
       $all('.chip-option', splitChipWrap).forEach(function (b) { b.classList.add('on'); });
     });
 
