@@ -1351,6 +1351,38 @@ function voicePrompt(transcript, notes) {
   ].join("\n");
 }
 
+// 複数日ぶんをまとめて話す／書くときに使うプロンプト（DAY30〜）。「1日目は〜、次の日は〜」
+// のような表現から、AI自身にその出来事が何日目のことかも判定させ、Blockごとにdate
+// （YYYY-MM-DD）を付けてもらう。1日固定のvoicePromptと違い、日の判定を誤るリスクがあるため、
+// 「複数日をまとめて記録する」という別の入り口を明示的に選んだときだけ使う。
+function multiDayPrompt(transcript, notes, dates) {
+  const dayList = dates.map(function (d, i) { return (i + 1) + "日目：" + d; }).join("\n");
+  return [
+    "あなたは旅行記録アプリのアシスタントです。旅行者が複数日にわたる出来事をまとめて話した（または書いた）内容を読んで、",
+    "予定（Block）とその記録（Entry）の配列に分割してください。この旅行の日程は次のとおりです。",
+    "",
+    dayList,
+    "",
+    "文字起こし・メモ:",
+    transcript,
+    "",
+    "ルール：",
+    "- 話された／書かれた順番のとおりに配列を並べること",
+    "- 1つの出来事・場所ごとに1つのBlockを作ること",
+    "- 各Blockのdateには、その出来事があった日を上記の日程からYYYY-MM-DD形式で選んで入れること。「1日目」「次の日」「2日目の朝」のような表現から判断し、はっきりしなければ直前のBlockと同じ日にすること。最初のBlockで日が全く分からなければ1日目の日付にすること",
+    "- categoryは次のいずれか一つ: sightseeing（観光）, food（食事）, lodging（宿泊）, transport（移動）, other（その他）",
+    "- labelは短い見出し（例：「ダイヤモンドヘッドに登る」）にすること。体言止め（名詞で終える）を基本とし、「〜する」「〜した」のような文にはしないこと",
+    "- categoryがlodging（宿泊）のときは、labelを宿泊施設名だけにすること（例：「ふふ奈良に到着する」ではなく「ふふ奈良」）",
+    "- entry.episodeには、話した／書かれた内容をもとにした2〜3文程度の説明を書くこと（話していないことを推測で付け加えない）",
+    "- block.timeは、「10時に着いた」「18時ごろ」のように具体的な時刻が話されたときだけ24時間表記のHH:MM（例：「10:00」）で入れ、話されていなければ空文字にすること。時刻を推測で作らないこと",
+    "- entry.costItemsは、「入場料800円」「一人5000円で3人だから15000円」のように具体的な金額が話されたときだけ、内訳（品目名と金額）を1件以上の配列で入れること。金額が話されていなければ空配列のままにすること。合計しか話されていなければ、品目名を「合計」などとして1件で入れてよい。金額を推測で作らないこと",
+    "- 評価など、話されていない情報は絶対に作らないこと",
+    notes
+      ? "- 次のメモ（URLや店名が雑多に書かれている）の中に、Blockの内容と対応しそうなものがあれば、entry.mapUrlまたはentry.shopUrlに入れること。対応するものが無ければ空文字のままにすること。\n\nメモ:\n" + notes
+      : "- entry.mapUrl・entry.shopUrlは、音声内で明確なURLが無ければ空文字にすること",
+  ].join("\n");
+}
+
 function voiceBlocksSchema() {
   return {
     type: "object",
@@ -1396,6 +1428,32 @@ function voiceBlocksSchema() {
   };
 }
 
+// voiceBlocksSchemaに、Blockごとの日付（date）を必須項目として追加しただけのもの。
+function multiDayBlocksSchema() {
+  const schema = voiceBlocksSchema();
+  const itemSchema = schema.properties.blocks.items;
+  itemSchema.properties.date = { type: "string" };
+  itemSchema.required = ["date", "label", "category", "time", "entry"];
+  return schema;
+}
+
+// 旅行の開始日〜終了日を1日ずつのYYYY-MM-DD配列にする（「1日目」「2日目」…とAIに教えるため）。
+// 異常に長い日程を渡されてもAIへのリクエストが際限なく膨らまないよう、60日で打ち切る。
+function tripDateList(startDate, endDate) {
+  if (!DATE_RE.test(startDate)) return [];
+  if (!DATE_RE.test(endDate)) return [startDate];
+  const start = new Date(startDate + "T00:00:00Z");
+  const end = new Date(endDate + "T00:00:00Z");
+  if (end.getTime() < start.getTime()) return [startDate];
+  const dates = [];
+  const cur = new Date(start.getTime());
+  while (cur.getTime() <= end.getTime() && dates.length < 60) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return dates;
+}
+
 function decodeVoiceMeta(header) {
   if (!header) return {};
   try {
@@ -1432,17 +1490,25 @@ async function consumeVoiceQuota(env, email, via) {
 
 // 文字起こし（音声入力）または直接入力されたメモ・スケジュールのテキストを、AIで
 // 予定（Block）とその記録（Entry）の配列に整理してもらう。音声入力・メモ入力の共通処理。
-async function organizeTextIntoBlocks(env, text, notes) {
+// datesを渡すと「複数日をまとめて記録する」用のプロンプト・スキーマ（Blockごとにdateも
+// 判定させる）に切り替わる（DAY30〜、渡さなければ今までどおり1日固定のまま）。
+async function organizeTextIntoBlocks(env, text, notes, dates) {
+  const multiDay = Array.isArray(dates) && dates.length > 1;
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
     body: JSON.stringify({
       model: env.OPENAI_MODEL || "gpt-5.6-sol",
-      input: voicePrompt(text, notes),
+      input: multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes),
       reasoning: { effort: "medium" },
-      max_output_tokens: 2000,
+      max_output_tokens: multiDay ? 3000 : 2000,
       store: false,
-      text: { format: { type: "json_schema", name: "voice_blocks", strict: true, schema: voiceBlocksSchema() } },
+      text: {
+        format: {
+          type: "json_schema", name: multiDay ? "voice_blocks_multi_day" : "voice_blocks", strict: true,
+          schema: multiDay ? multiDayBlocksSchema() : voiceBlocksSchema(),
+        },
+      },
     }),
   });
   if (!upstream.ok) {
@@ -1459,7 +1525,14 @@ async function organizeTextIntoBlocks(env, text, notes) {
 }
 
 // organizeTextIntoBlocksが返したBlock配列を、実際にDBへ保存する（Block本体とその記録の両方）。
-async function saveOrganizedBlocks(env, tripId, date, blocksData, author) {
+// dateOrDatesは、1日固定の呼び出しなら文字列（今までどおり全件その日付）、「複数日をまとめて
+// 記録する」からの呼び出しなら配列（旅行の日程の一覧）を渡す。配列のときは、AIが付けた
+// Blockごとのdateがその一覧に含まれるものだけを信用し、それ以外（無い・範囲外）は
+// 一覧の最初の日にフォールバックする（AIの出力を無条件には信用しない）。
+async function saveOrganizedBlocks(env, tripId, dateOrDates, blocksData, author) {
+  const multiDay = Array.isArray(dateOrDates);
+  const validDates = multiDay ? new Set(dateOrDates) : null;
+  const fallbackDate = multiDay ? (dateOrDates[0] || "") : dateOrDates;
   const created = [];
   const baseTime = Date.now();
   for (let i = 0; i < blocksData.length; i++) {
@@ -1467,6 +1540,8 @@ async function saveOrganizedBlocks(env, tripId, date, blocksData, author) {
     if (!b || typeof b !== "object") continue;
     const label = isStr(b.label, 200) ? b.label.trim() : "";
     if (!label) continue;
+    const date = multiDay ? (isStr(b.date, 10) && validDates.has(b.date) ? b.date : fallbackDate) : dateOrDates;
+    if (!date) continue;
     const category = CATEGORIES.includes(b.category) ? b.category : "sightseeing";
     const time = isStr(b.time, 5) && TIME_RE.test(b.time) ? b.time : "";
     const t = new Date(baseTime + i * 10).toISOString(); // 話した順番で安定して並ぶよう少しずつずらす
@@ -1582,6 +1657,90 @@ async function createBlocksFromText(tripId, date, request, env, headers) {
   const created = await saveOrganizedBlocks(env, tripId, date, result.blocks, author);
 
   await saveVoiceTranscript(env, tripId, date, text);
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  await consumeVoiceQuota(env, quota.email, quota.via);
+  return json({ blocks: created, transcript: text }, 200, headers);
+}
+
+// 「複数日をまとめて記録する」（DAY30〜）：createBlocksFromVoice/createBlocksFromTextと
+// 違って特定の日タブに紐づかない（日付ではなく旅行そのものに対する呼び出し）ため、
+// 旅行の開始日〜終了日をtripDateListで求め、AI自身にBlockごとの日も判定させる。
+// 文字起こしの保存（saveVoiceTranscript）はどの日の下に出すべきか一意に決まらないため、
+// 複数日モードでは行わない（1日固定のときだけの機能のまま）。
+const MAX_MULTI_DAY_TEXT_CHARS = 8000;
+
+async function createBlocksFromVoiceMultiDay(tripId, request, env, headers) {
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  const dates = tripDateList(trip.start_date, trip.end_date);
+  if (dates.length < 2) return json({ error: "trip_dates_required" }, 400, headers);
+
+  const { buf, contentType, getHeader } = await readBinaryBody(request);
+  const format = VOICE_AUDIO_FORMATS[contentType];
+  if (!format) return json({ error: "unsupported_type" }, 415, headers);
+
+  if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
+
+  const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
+  const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
+  const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
+  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+
+  const quota = await checkVoiceQuota(env, email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  const transcript = await transcribeAudio(env, buf, contentType, format);
+  if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
+  if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
+
+  const result = await organizeTextIntoBlocks(env, transcript, notes, dates);
+  if (result.error) return json({ error: result.error }, 502, headers);
+  const created = await saveOrganizedBlocks(env, tripId, dates, result.blocks, author);
+
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  await consumeVoiceQuota(env, quota.email, quota.via);
+  return json({ blocks: created, transcript }, 200, headers);
+}
+
+async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  const dates = tripDateList(trip.start_date, trip.end_date);
+  if (dates.length < 2) return json({ error: "trip_dates_required" }, 400, headers);
+
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  const text = isStr(data.text, MAX_MULTI_DAY_TEXT_CHARS) ? data.text.trim() : "";
+  if (!text) return json({ error: "empty_text" }, 422, headers);
+  const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
+  const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
+  const email = optStr(data.email, 200) && data.email ? String(data.email).trim() : "";
+
+  const quota = await checkVoiceQuota(env, email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  const result = await organizeTextIntoBlocks(env, text, notes, dates);
+  if (result.error) return json({ error: result.error }, 502, headers);
+  const created = await saveOrganizedBlocks(env, tripId, dates, result.blocks, author);
+
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
   await consumeVoiceQuota(env, quota.email, quota.via);
   return json({ blocks: created, transcript: text }, 200, headers);
@@ -1954,6 +2113,13 @@ export default {
     }
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/text-entries$/))) {
       return createBlocksFromText(m[1], m[2], request, env, headers);
+    }
+    // 「複数日をまとめて記録する」：特定の日タブではなく旅行そのものに対して呼ぶ（DAY30〜）
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/voice-entries$/))) {
+      return createBlocksFromVoiceMultiDay(m[1], request, env, headers);
+    }
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/text-entries$/))) {
+      return createBlocksFromTextMultiDay(m[1], request, env, headers);
     }
 
     if (method === "POST" && path === "/photos") return uploadPhoto(request, env, headers);

@@ -755,23 +755,23 @@
   }
 
   // meta（notes・author）はUTF-8を含みうるので、ヘッダーに載せる前にBase64化する
-  // （atob/btoaはLatin1前提のため、encodeURIComponent/unescapeで橋渡しする）
+  // （atob/btoaはLatin1前提のため、encodeURIComponent/unescapeで橋渡しする）。
+  // date省略時は「複数日をまとめて記録する」（DAY30〜）：特定の日タブに紐づけず、
+  // 旅行そのものに対して呼ぶ（AI自身が各予定の日を判定する）。
   function createVoiceEntries(tripId, date, blob, meta) {
     var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify(meta))));
-    return postBinary(
-      '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/voice-entries',
-      blob,
-      { 'x-voice-meta': metaHeader }
-    );
+    var path = date
+      ? '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/voice-entries'
+      : '/trips/' + encodeURIComponent(tripId) + '/voice-entries';
+    return postBinary(path, blob, { 'x-voice-meta': metaHeader });
   }
 
   // 音声の文字起こし版と違い、貼り付けたテキストをそのままJSONで送るだけなのでbase64化は不要
   function createTextEntries(tripId, date, text, meta) {
-    return api(
-      '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/text-entries',
-      'POST',
-      { text: text, notes: meta.notes, author: meta.author, email: meta.email }
-    );
+    var path = date
+      ? '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/text-entries'
+      : '/trips/' + encodeURIComponent(tripId) + '/text-entries';
+    return api(path, 'POST', { text: text, notes: meta.notes, author: meta.author, email: meta.email });
   }
 
   // レシート・領収書の写真をAIに読み取らせ、費用明細の候補（{label, amount}の配列）を返してもらう。
@@ -1291,10 +1291,18 @@
 
   // 音声入力は有料プラン専用（docs/adr/0004）。ログインしていない、またはプラン・回数券が
   // 無い場合は、録音の代わりに案内とプランへの導線を出す。
-  function openVoiceEntryForm() {
+  // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
+  // 旅行の日程全体に対してAIが各予定の日も判定する（state.voiceEntryMultiDayで保持し、
+  // 保存時にcreateVoiceEntries/createTextEntriesへ渡すdateをnullにする分岐に使う）。
+  function openVoiceEntryForm(multiDay) {
     var user = loadCurrentUser();
     if (!user) { openLogin('voiceEntryForm'); return; }
-    if (!state.selectedDate) { alert('先に日付を選んでから音声入力を始めてください。'); return; }
+    if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから音声入力を始めてください。'); return; }
+    state.voiceEntryMultiDay = !!multiDay;
+    $('#voiceEntryTitle').textContent = multiDay ? '複数日をまとめて記録する' : '音声・メモでまとめて記録する';
+    $('#voiceEntryLead').textContent = multiDay
+      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、AIが「1日目は〜」のような話し方から日を判定して予定・記録に分けて保存します（評価や費用はあとで入力してください）'
+      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）';
     showScreen('voiceEntryForm');
     $('#voicePremiumRequired').hidden = true;
     $('#voiceRecordArea').hidden = true;
@@ -1385,7 +1393,7 @@
     var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
     $('#btnCreateVoiceEntries').disabled = true;
     $('#voiceEntryStatus').textContent = 'AIが内容を確認しています…（数十秒かかることがあります）';
-    createVoiceEntries(state.trip.id, state.selectedDate, voiceBlob, meta).then(function () {
+    createVoiceEntries(state.trip.id, state.voiceEntryMultiDay ? null : state.selectedDate, voiceBlob, meta).then(function () {
       return refreshTrip();
     }).then(function () {
       $('#btnCreateVoiceEntries').disabled = false;
@@ -1396,10 +1404,11 @@
       $('#btnCreateVoiceEntries').disabled = false;
       if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#voiceEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'trip_dates_required') $('#voiceEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
       else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#voiceEntryStatus').textContent = '';
-        openVoiceEntryForm();
+        openVoiceEntryForm(state.voiceEntryMultiDay);
       }
       else $('#voiceEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
@@ -1412,7 +1421,7 @@
     var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
     $('#btnCreateTextEntries').disabled = true;
     $('#textEntryStatus').textContent = 'AIが内容を確認しています…';
-    createTextEntries(state.trip.id, state.selectedDate, text, meta).then(function () {
+    createTextEntries(state.trip.id, state.voiceEntryMultiDay ? null : state.selectedDate, text, meta).then(function () {
       return refreshTrip();
     }).then(function () {
       $('#btnCreateTextEntries').disabled = false;
@@ -1423,10 +1432,11 @@
       $('#btnCreateTextEntries').disabled = false;
       if (msg === 'server_not_configured') $('#textEntryStatus').textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'trip_dates_required') $('#textEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
       else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#textEntryStatus').textContent = '';
-        openVoiceEntryForm();
+        openVoiceEntryForm(state.voiceEntryMultiDay);
       }
       else $('#textEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
@@ -1630,8 +1640,18 @@
     var voiceBtn = document.createElement('button');
     voiceBtn.className = 'block-add';
     voiceBtn.innerHTML = MIC_ICON + '<span>音声・メモでまとめて記録する</span>';
-    voiceBtn.addEventListener('click', openVoiceEntryForm);
+    // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
+    // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
+    // なるバグの元）。必ずラップして呼ぶ。
+    voiceBtn.addEventListener('click', function () { openVoiceEntryForm(false); });
     el.appendChild(voiceBtn);
+
+    // 「複数日をまとめて記録する」（DAY30〜）：日タブを選ばず旅行全体に対して話す・貼り付ける
+    var multiDayBtn = document.createElement('button');
+    multiDayBtn.className = 'block-add';
+    multiDayBtn.innerHTML = MIC_ICON + '<span>複数日をまとめて記録する</span>';
+    multiDayBtn.addEventListener('click', function () { openVoiceEntryForm(true); });
+    el.appendChild(multiDayBtn);
   }
 
   var DRAG_HANDLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="5" r="1.4"/><circle cx="14" cy="5" r="1.4"/><circle cx="6" cy="10" r="1.4"/><circle cx="14" cy="10" r="1.4"/><circle cx="6" cy="15" r="1.4"/><circle cx="14" cy="15" r="1.4"/></svg>';
