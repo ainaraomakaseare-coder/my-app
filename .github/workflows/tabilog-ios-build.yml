@@ -1,4 +1,4 @@
-name: たびログ iOS ビルド & TestFlightアップロード
+name: 旅の足跡 iOS ビルド & TestFlightアップロード
 
 # 手動実行のみ（勝手に走って審査提出用のビルドが増えないように）。
 # GitHubリポジトリの「Actions」タブ → このワークフロー名 → 「Run workflow」から実行する。
@@ -28,6 +28,53 @@ jobs:
         working-directory: apps/day07-tabilog-ios
         run: npx cap add ios
 
+      - name: CocoaPodsのライブラリターゲットで署名を要求しないようにする
+        # Pods-App・Capacitor・CapacitorCordovaなどのライブラリターゲットは、
+        # アプリ本体に組み込まれて一緒に署名されるため、本来プロビジョニング
+        # プロファイルを必要としない。CODE_SIGN_STYLE=Manualを指定すると
+        # これらのターゲットも巻き込まれ「does not support provisioning
+        # profiles」というエラーになるため、Podfileのpost_installフックで
+        # ライブラリターゲットだけ署名を求めないようにする（pod installが走る
+        # 直前・Podfile生成直後に行う必要がある）。
+        working-directory: apps/day07-tabilog-ios/ios/App
+        run: |
+          python3 - << 'PYEOF'
+          with open("Podfile") as f:
+              content = f.read()
+          marker = "post_install do |installer|\n"
+          injected = (
+              "  installer.pods_project.targets.each do |target|\n"
+              "    target.build_configurations.each do |config|\n"
+              "      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\n"
+              "      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
+              "    end\n"
+              "  end\n"
+          )
+          if marker in content:
+              # 既存のpost_installフックの中に差し込む（フックは1つしか定義できないため）
+              content = content.replace(marker, marker + injected, 1)
+          else:
+              content += "\n" + marker + injected + "end\n"
+          with open("Podfile", "w") as f:
+              f.write(content)
+          PYEOF
+
+      - name: マイク利用の説明文をInfo.plistに追加する
+        # 「音声でまとめて記録する」機能がマイクを使うが、iOSはInfo.plistに
+        # NSMicrophoneUsageDescription（利用目的の説明文）が無いとマイクへの
+        # アクセスを許可しない。ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
+        working-directory: apps/day07-tabilog-ios/ios/App/App
+        run: |
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '音声で旅の記録をまとめて追加するために使用します'" Info.plist
+          # 記録に写真を追加するとき「写真を撮る」を選ぶとカメラを使うが、マイクと同じ理由で
+          # NSCameraUsageDescriptionが無いと（許可を求める前に）即座にアプリがクラッシュする。
+          # 「写真ライブラリから選ぶ」はカメラを使わないため、この説明文が無くても正常に動いていた。
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string '旅の記録にその場で撮った写真を追加するために使用します'" Info.plist
+          # 独自の暗号化は使っておらず標準的なHTTPS通信のみのため、輸出コンプライアンスの
+          # 質問（TestFlight配信のたびに毎回聞かれるやつ）が出ないようここで申告しておく。
+          # ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" Info.plist
+
       - name: バージョン番号を設定
         # ios/フォルダは毎回作り直しなので、ビルド番号を前回の実行から引き継げない。
         # このワークフローの実行回数（github.run_number）を使えば、実行するたびに
@@ -42,6 +89,41 @@ jobs:
       - name: Web側の最新の中身をiOSプロジェクトへ反映
         working-directory: apps/day07-tabilog-ios
         run: npx cap sync ios
+
+      - name: 配布用証明書をキーチェーンにインストールする
+        # CIの実行環境は毎回使い捨てのMacのため、-allowProvisioningUpdatesだけに
+        # 任せると、既存の証明書を再利用できず実行のたびに新しい証明書が作られてしまい
+        # Apple側の証明書数の上限にすぐ達してしまっていた。1回だけ作った配布用証明書
+        # （秘密鍵とセットでsecretsに保存）を、毎回一時キーチェーンにインストールして
+        # 使い回すことで、証明書が際限なく増えるのを防ぐ。
+        env:
+          P12_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          # secretsに貼り付ける際に紛れ込みがちな改行・前後の空白を取り除いてから使う
+          P12_PASSWORD=$(printf '%s' "$P12_PASSWORD" | tr -d '\n\r' | xargs)
+          echo "$P12_BASE64" | tr -d '\n\r ' | base64 --decode > distribution.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import distribution.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security list-keychains -d user -s build.keychain $(security list-keychains -d user | sed 's/"//g')
+          rm distribution.p12
+
+      - name: プロビジョニングプロファイルをインストールする
+        # CODE_SIGN_STYLE=Automaticのままだと、証明書を用意してもXcodeの自動署名の
+        # 判断で開発用(Development)のプロファイルを要求し続け、いくら証明書を
+        # 作り直しても解決しなかった（自動署名モードではプロジェクトファイルの
+        # CODE_SIGN_IDENTITYの指定が無視されるため）。手動署名に切り替え、
+        # 1回だけ作った配布用プロビジョニングプロファイルを使う。
+        env:
+          PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE_BASE64" | tr -d '\n\r ' | base64 --decode \
+            > ~/Library/MobileDevice/Provisioning\ Profiles/tabilog-appstore.mobileprovision
 
       - name: アイコン・スプラッシュ画像を生成する（resources/icon.png・splash.pngから）
         working-directory: apps/day07-tabilog-ios
@@ -66,22 +148,35 @@ jobs:
             <key>teamID</key>
             <string>${{ secrets.APPLE_TEAM_ID }}</string>
             <key>signingStyle</key>
-            <string>automatic</string>
+            <string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.hiroyaapps.tabilog</key>
+              <string>tabilog-appstore</string>
+            </dict>
           </dict>
           </plist>
           EOF
 
-      - name: アーカイブをビルド（自動署名。App Store Connect APIキーで認証）
+      - name: アーカイブをビルド（手動署名。1回だけ作った配布用証明書・プロファイルを使う）
+        # -destinationを省略すると、CIランナーに実機が繋がっていないため
+        # 「実機テスト用のプロビジョニングプロファイルを作ろうとして、対象の実機が無く失敗する」
+        # ことがある（配布用アーカイブにテスト用プロファイルは本来不要）。
+        # generic/platform=iOSを明示し、配布用のアーカイブとして扱わせる。
         working-directory: apps/day07-tabilog-ios/ios/App
         run: |
+          # IPHONEOS_DEPLOYMENT_TARGET: Capacitorのデフォルト(13.0)のままだと、
+          # 2027年春以降アップロードできなくなる(Appleが15.0以上を必須化)との警告が
+          # 毎回届くため、ここで15.0に引き上げる。コマンドラインで渡すとApp・Podsの
+          # 両ターゲットに反映される。
           xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
             -archivePath ../../build/App.xcarchive archive \
+            -destination 'generic/platform=iOS' \
             DEVELOPMENT_TEAM=${{ secrets.APPLE_TEAM_ID }} \
-            CODE_SIGN_STYLE=Automatic \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}.p8 \
-            -authenticationKeyID ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }} \
-            -authenticationKeyIssuerID ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER=tabilog-appstore \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0
 
       - name: .ipaを書き出す
         working-directory: apps/day07-tabilog-ios

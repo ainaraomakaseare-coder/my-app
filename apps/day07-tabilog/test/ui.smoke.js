@@ -226,7 +226,7 @@ const TINY_PNG = Buffer.from(
 
   await page.click('.screen.active [data-back="home"]');
   await page.waitForSelector('.screen[data-screen="home"].active');
-  check('ホーム画面の旅行カードにもサムネイル画像が出る', (await page.$$('.trip-card-thumb')).length === 1);
+  check('ホーム画面の旅行カードにもサムネイル画像が出る（写真を大きく見せるカード）', (await page.$$('.trip-card-photo')).length === 1);
   await page.click('.trip-card');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
 
@@ -277,14 +277,16 @@ const TINY_PNG = Buffer.from(
   await rows.nth(0).locator('input[type="text"]').fill('入場料');
   await rows.nth(0).locator('input[type="number"]').fill('600');
 
-  // ---- 全体費用÷人数の電卓（駐車場代などをまとめて払ったときの個人費用計算） ----
+  // ---- 立て替え（払った人・割る人を選ぶ割り勘機能） ----
   await page.click('#btnAddCostItem');
-  await rows.nth(1).locator('.cost-split-toggle').click();
-  const splitRow = page.locator('.cost-split-row').first();
-  await splitRow.locator('input[type="number"]').nth(0).fill('3000');
-  await splitRow.locator('input[type="number"]').nth(1).fill('2');
-  await splitRow.locator('button').click();
-  check('全体費用と人数から個人費用が計算され、金額欄に反映される', (await rows.nth(1).locator('input[type="number"]').inputValue()) === '1500');
+  await rows.nth(1).locator('input[type="text"]').fill('駐車場代');
+  await rows.nth(1).locator('input[type="number"]').fill('3000');
+  await rows.nth(1).locator('.cost-payer-toggle').click();
+  const payerPanel = page.locator('.cost-payer-row');
+  await payerPanel.locator('[data-role="payer"] .chip-option:has-text("父")').click();
+  await payerPanel.locator('.cost-split-even').click();
+  check('参加者全員で均等割りを押すと全員の割る人チップがonになる', (await payerPanel.locator('[data-role="split"] .chip-option.on').count()) === 4);
+  check('立て替えボタンに払った人の名前が反映される', (await rows.nth(1).locator('.cost-payer-toggle').textContent()) === '父が立替');
   await rows.nth(1).locator('[aria-label="削除"]').click();
   check('削除すると費用の行が1件に戻る', (await page.locator('.cost-item-row').count()) === 1);
 

@@ -73,3 +73,22 @@ AI：11分
 ・見た目確認用のデモデータの日付が既に過去になっていて、一見バグに見えた（データが悪いだけで実装は正しかった）
 あと5 apps
 ```
+
+## 追記（2026-09-18）：Workerを実際にデプロイし、AI機能を有効化
+
+DAY24・25の時点ではCloudflareへのデプロイ権限がクラウドセッションに無く、Worker本体のコードとデプロイ手順だけを用意した状態で止まっていました。今回、ユーザー自身のPC（Windows・PowerShell）で以下を実施し、実際にAI読み取り機能を有効化しました。
+
+- `npx wrangler login`でCloudflareにブラウザ経由でログイン（APIトークンの発行・環境変数への登録は不要だった。前段でクラウドセッションの環境変数にAPIトークンを登録する方法も試みたが、結局PC上で直接ログインする方が簡単だった）
+- `npx wrangler secret put ANTHROPIC_API_KEY`でAnthropicのAPIキーをWorkerのsecretとして登録
+- `npx wrangler deploy`で`poimamo-ai`を公開。公開URLは`https://poimamo-ai.hiroya-apps.workers.dev`
+- 公開URLを`apps/day24-poimamo/index.html`の`poimamo-ai-endpoint`メタタグに設定し、クラウドセッション側でコミット・プッシュ・公開
+
+### つまずいたこと（追加）
+
+- PC上のリポジトリのクローンが、DAY24より前の古いブランチ（`claude/drama-app-polish-9fa7a7`）のままだった。DAY23・DAY24でも同種の「古いブランチ・古いチェックアウトのまま作業を始めてしまう」つまずきが繰り返し発生している
+- `git pull`時にWindows特有の`Deletion of directory '.git/refs/remotes/origin/claude' failed`という警告ループが発生。実害はなく、`n`で抜けて進めば問題なかった
+
+### 解決方法（追加）
+
+- `git fetch` → `git checkout main` → `git pull origin main`で最新化してから作業を再開
+- クラウドセッションの環境変数連携という遠回りをせず、PC上で`wrangler login`する方法に途中で切り替えた（実機のブラウザでログインできるなら、そちらの方が単純）

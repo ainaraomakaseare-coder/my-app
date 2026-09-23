@@ -2,18 +2,15 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>旅の足跡</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%23FF6B4A'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%2300BF8F'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
 <!-- Worker公開後に、そのURLをcontentへ設定する。空のままだとサーバーに保存できず案内だけが出る。 -->
 <meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">
 <!-- Google Cloud ConsoleでOAuthクライアントIDを発行後、ここに設定する。空のままならGoogleログインは使われない。 -->
 <meta name="tabilog-google-client-id" content="">
 <!-- Apple DeveloperでService IDを発行後、ここに設定する。空のままならAppleログインは使われない。 -->
 <meta name="tabilog-apple-client-id" content="">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700;900&display=swap">
 <link rel="stylesheet" href="style.css">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js" async defer></script>
@@ -75,6 +72,12 @@
 
       <p class="notice" id="apiNotice" hidden></p>
 
+      <div class="trip-filters" id="tripFilters" hidden>
+        <select id="filterCompanion"><option value="">誰と一緒か：すべて</option></select>
+        <select id="filterYear"><option value="">年：すべて</option></select>
+        <select id="filterTripType"><option value="">旅行区分：すべて</option></select>
+      </div>
+
       <div id="tripList" class="trip-list"></div>
 
       <div class="home-actions">
@@ -120,6 +123,10 @@
         <input type="text" id="ntCompanions" placeholder="例：父、母、妹">
       </div>
       <div class="field">
+        <label for="ntTripType">旅行区分（任意）</label>
+        <input type="text" id="ntTripType" placeholder="例：家族、サークルの友達、バイト先">
+      </div>
+      <div class="field">
         <label for="ntCoverPhoto">サムネイル画像（任意）</label>
         <input type="file" id="ntCoverPhoto" accept="image/*" hidden>
         <div class="photo-picker" id="ntCoverPhotoPicker">
@@ -161,6 +168,10 @@
         <input type="text" id="teCompanions" placeholder="例：父、母、妹">
       </div>
       <div class="field">
+        <label for="teTripType">旅行区分（任意）</label>
+        <input type="text" id="teTripType" placeholder="例：家族、サークルの友達、バイト先">
+      </div>
+      <div class="field">
         <label for="teCoverPhoto">サムネイル画像（任意）</label>
         <input type="file" id="teCoverPhoto" accept="image/*" hidden>
         <div class="photo-picker" id="teCoverPhotoPicker">
@@ -175,13 +186,13 @@
     </div>
   </section>
 
-  <!-- ============ 音声でまとめて記録する（このアプリで唯一AIを呼び出す機能） ============ -->
+  <!-- ============ 音声・メモでまとめて記録する（このアプリで唯一AIを呼び出す機能） ============ -->
   <section class="screen" data-screen="voiceEntryForm">
     <div class="wrap narrow">
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
-        <h1>音声でまとめて記録する</h1>
-        <p class="lead">その日にあったことをまとめて話すと、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）</p>
+        <h1 id="voiceEntryTitle">音声・メモでまとめて記録する</h1>
+        <p class="lead" id="voiceEntryLead">その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）</p>
       </header>
 
       <div class="notice" id="voicePremiumRequired" hidden>
@@ -200,6 +211,15 @@
 
         <button class="btn primary wide" id="btnCreateVoiceEntries" hidden>この内容で予定を作る</button>
         <p class="hint" id="voiceEntryStatus"></p>
+
+        <div class="or-divider">または</div>
+
+        <div class="field">
+          <label for="textMemoInput">スケジュールやメモをそのまま貼り付ける</label>
+          <textarea id="textMemoInput" rows="8" placeholder="例：10時 那覇空港集合／12時 沖縄そば https://maps.google.com/.../ 15時 首里城公園"></textarea>
+        </div>
+        <button class="btn primary wide" id="btnCreateTextEntries">この内容で予定を作る</button>
+        <p class="hint" id="textEntryStatus"></p>
       </div>
     </div>
   </section>
@@ -234,18 +254,58 @@
             <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>
             メンバーを招待
           </button>
+          <button class="chip-btn" id="btnOpenAlbum">
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="1.6"/><path d="M2.5 13l4-4 3 3 3.5-3.5L17.5 13"/><circle cx="6.5" cy="7.5" r="1.2"/></svg>
+            アルバム
+          </button>
+          <button class="chip-btn" id="btnOpenSettlement">
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M10 5.5v9M12.8 7.6c0-1.2-1.3-2.1-2.8-2.1-1.7 0-2.8.9-2.8 2 0 1.2 1 1.6 2.8 2 1.8.4 2.8.9 2.8 2.1 0 1.1-1.1 2-2.8 2-1.5 0-2.8-.8-2.8-2.1"/></svg>
+            精算
+          </button>
         </div>
       </div>
 
       <div class="companions-names" id="tripMembers" hidden></div>
 
       <div class="stats-row" id="tripStats"></div>
+      <div class="cost-breakdown-panel" id="lodgingBreakdownPanel" hidden></div>
+      <div class="cost-breakdown-panel" id="costBreakdownPanel" hidden></div>
 
       <div class="day-tabs" id="dayTabs"></div>
 
       <div class="section-label">
         <div class="section-title" id="dayTitle"></div>
         <button class="day-weather" id="dayWeather"></button>
+        <button class="icon-btn weather-edit-btn" id="btnEditWeather" aria-label="天気を修正" hidden>
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5l3 3L6 17l-3.6.6.6-3.6L13.5 3.5z"/></svg>
+        </button>
+      </div>
+
+      <div class="weather-edit-panel" id="weatherEditPanel" hidden>
+        <label>天気
+          <select id="weatherEditCode">
+            <option value="0">快晴</option>
+            <option value="1">晴れ</option>
+            <option value="3">曇り</option>
+            <option value="45">霧</option>
+            <option value="51">霧雨</option>
+            <option value="61">雨</option>
+            <option value="71">雪</option>
+            <option value="80">にわか雨</option>
+            <option value="85">にわか雪</option>
+            <option value="95">雷雨</option>
+          </select>
+        </label>
+        <div class="weather-edit-temps">
+          <label>最高<input type="number" id="weatherEditMax" inputmode="decimal" placeholder="℃"></label>
+          <label>最低<input type="number" id="weatherEditMin" inputmode="decimal" placeholder="℃"></label>
+        </div>
+        <p class="hint">自動取得した天気と違うときに、実際の天気に修正できます。</p>
+        <div class="weather-edit-actions">
+          <button type="button" class="btn ghost small" id="btnCancelWeatherEdit">キャンセル</button>
+          <button type="button" class="btn primary small" id="btnSaveWeatherEdit">保存</button>
+        </div>
+        <p class="hint" id="weatherEditStatus"></p>
       </div>
 
       <details class="voice-transcript" id="voiceTranscriptBox" hidden>
@@ -256,6 +316,43 @@
       <div class="timeline" id="timeline"></div>
 
       <p class="hint" id="tripDetailStatus"></p>
+    </div>
+  </section>
+
+  <!-- ============ アルバム（旅行全体の写真・動画をまとめて見る） ============ -->
+  <section class="screen" data-screen="album">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="tripDetail">← 戻る</button>
+        <h1>アルバム</h1>
+        <p class="lead">この旅行の写真・動画をまとめて見られます（日付が新しい順）</p>
+      </header>
+      <div class="album-grid" id="albumGrid"></div>
+      <p class="empty" id="albumEmpty" hidden>まだ写真・動画がありません。</p>
+    </div>
+  </section>
+
+  <!-- ============ 精算（割り勘の貸し借り・精算方法） ============ -->
+  <section class="screen" data-screen="settlement">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="tripDetail">← 戻る</button>
+        <h1>精算</h1>
+        <p class="lead">記録の費用明細で「立て替え」を設定した分だけを集計します。設定していない費用（個人の分だけの記録）は含みません。</p>
+      </header>
+
+      <p class="empty" id="settlementEmpty" hidden>立て替えが設定された費用がまだありません。記録の費用明細から「立て替えを設定」で追加できます。</p>
+
+      <div id="settlementBody" hidden>
+        <div class="section-label"><div class="section-title">貸し借り</div></div>
+        <div class="balance-list" id="settlementBalances"></div>
+
+        <div class="section-label"><div class="section-title">精算方法</div></div>
+        <div class="settle-plan-list" id="settlementPlanList"></div>
+
+        <div class="section-label"><div class="section-title">支出一覧</div></div>
+        <div class="expense-list" id="settlementExpenses"></div>
+      </div>
     </div>
   </section>
 
@@ -322,13 +419,18 @@
         </div>
 
         <div class="field">
-          <label for="entVideo">動画（1本あたり最大50MB）</label>
+          <label for="entVideo">動画（1本あたり最大200MB）</label>
           <input type="file" id="entVideo" accept="video/*" multiple hidden>
           <div class="photo-picker" id="entVideoPicker">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="11" height="10" rx="1.6"/><path d="M13.5 8.2l4-2.4v8.4l-4-2.4z"/></svg>
             <span>動画を追加する</span>
           </div>
           <div class="video-preview" id="entVideoPreview"></div>
+        </div>
+
+        <div class="field">
+          <label for="entTime">時間（任意）</label>
+          <input type="time" id="entTime">
         </div>
 
         <div class="field">
@@ -355,7 +457,12 @@
         <div class="field">
           <label>費用の明細</label>
           <div class="cost-items" id="entCostItems"></div>
-          <button type="button" class="btn ghost small" id="btnAddCostItem">＋ 明細を追加</button>
+          <div class="cost-item-actions">
+            <button type="button" class="btn ghost small" id="btnAddCostItem">＋ 明細を追加</button>
+            <button type="button" class="btn ghost small" id="btnScanReceipt">レシートを読み取る</button>
+          </div>
+          <input type="file" id="receiptFileInput" accept="image/*" capture="environment" hidden>
+          <p class="hint" id="receiptScanStatus"></p>
           <div class="cost-total" id="entCostTotal"></div>
         </div>
 
@@ -368,11 +475,24 @@
           <div class="field">
             <label for="entMapUrl">地図のURL（任意）</label>
             <input type="url" id="entMapUrl" placeholder="https://maps.google.com/...">
+            <div class="map-search-row">
+              <input type="text" id="entPlaceSearch" placeholder="場所名で検索（例：ユニバ）">
+              <button type="button" class="btn ghost small" id="btnPlaceSearch">地図を検索</button>
+            </div>
+            <div class="map-preview" id="entMapPreview" hidden>
+              <iframe id="entMapPreviewFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+              <button type="button" class="btn ghost small" id="btnUseMapUrl">このURLを地図欄に入れる</button>
+            </div>
           </div>
           <div class="field">
             <label for="entShopUrl">お店・施設のHP（任意）</label>
             <input type="url" id="entShopUrl" placeholder="https://...">
           </div>
+        </div>
+
+        <div class="field">
+          <label for="entOtherUrl">その他URL（任意）</label>
+          <input type="url" id="entOtherUrl" placeholder="https://...">
         </div>
 
         <div class="field">
@@ -409,6 +529,12 @@
       <div class="trip-list" id="mylogTripList"></div>
 
       <div class="section-label">
+        <div class="section-title">訪れた都道府県・国</div>
+      </div>
+      <p class="hint">参加した旅行で「日ごとの場所」に入力した地名から自動で集計します（天気の取得と同じ地名データを使うので、別の入力は不要です）。</p>
+      <div class="visited-places" id="mylogPlaces"></div>
+
+      <div class="section-label">
         <div class="section-title">評価したもの</div>
       </div>
       <div class="mylog-tabs" id="mylogTabs"></div>
@@ -425,7 +551,14 @@
       </div>
       <div class="plan-status" id="planStatus"></div>
       <div class="plan-options" id="planOptions"></div>
+      <button class="btn text" id="btnManageBilling" type="button" hidden>支払い方法の変更・解約はこちら</button>
       <p class="hint" id="planStatusMessage"></p>
+
+      <div class="section-label">
+        <div class="section-title">アカウント</div>
+      </div>
+      <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
+      <p class="hint">アカウント（名前・プラン・回数券・参加した旅行への紐付け）を削除します。旅行の記録自体は家族と共有しているものなので削除されません。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
     </div>
   </section>
 
@@ -437,6 +570,21 @@
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
   </button>
   <img id="lightboxImg" src="" alt="">
+  <button class="lightbox-nav lightbox-nav-prev" id="lightboxPrev" aria-label="前の写真" hidden>
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4.5L7 10l5.5 5.5"/></svg>
+  </button>
+  <button class="lightbox-nav lightbox-nav-next" id="lightboxNext" aria-label="次の写真" hidden>
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
+  </button>
+  <div class="lightbox-count" id="lightboxCount" hidden></div>
+</div>
+
+<!-- ============ 動画の拡大再生（アルバムから） ============ -->
+<div class="lightbox" id="videoLightbox" hidden>
+  <button class="lightbox-close" id="btnCloseVideoLightbox" aria-label="閉じる">
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+  </button>
+  <video id="lightboxVideo" src="" controls playsinline></video>
 </div>
 
 <script src="app.js"></script>

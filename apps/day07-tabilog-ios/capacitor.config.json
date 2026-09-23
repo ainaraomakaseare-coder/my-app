@@ -4,5 +4,18 @@
   "webDir": "../day07-tabilog",
   "ios": {
     "contentInset": "automatic"
+  },
+  "server": {
+    "iosScheme": "https",
+    "allowNavigation": [
+      "checkout.stripe.com",
+      "billing.stripe.com",
+      "ainaraomakaseare-coder.github.io"
+    ]
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
   }
 }

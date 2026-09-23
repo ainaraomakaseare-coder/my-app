@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS trips (
   end_date TEXT NOT NULL DEFAULT '',
   companions TEXT NOT NULL DEFAULT '[]',
   cover_photo_id TEXT NOT NULL DEFAULT '',
+  -- trip_type：旅行区分（サークルの友達、バイト先、家族など）。自由入力、絞り込み用（v14）。
+  trip_type TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -46,6 +48,8 @@ CREATE TABLE IF NOT EXISTS entries (
   wait_time TEXT NOT NULL DEFAULT '',
   map_url TEXT NOT NULL DEFAULT '',
   shop_url TEXT NOT NULL DEFAULT '',
+  other_url TEXT NOT NULL DEFAULT '',
+  time TEXT NOT NULL DEFAULT '',
   author TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -64,6 +68,8 @@ CREATE TABLE IF NOT EXISTS ratings (
   entry_id TEXT NOT NULL,
   rater_email TEXT NOT NULL,
   rater_name TEXT NOT NULL DEFAULT '',
+  -- score: 1〜5。型はINTEGERだがSQLiteの型親和性により3.7のような0.1刻みの小数もそのまま保存できる
+  -- （整数に丸めずに入れられる値はREALとして保存される。マイグレーション不要）。
   score INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -88,6 +94,10 @@ CREATE TABLE IF NOT EXISTS day_infos (
   place TEXT NOT NULL DEFAULT '',
   lat REAL,
   lon REAL,
+  -- admin1（都道府県・州など）・country（国）：ジオコーディング（天気の取得と同じAPI呼び出し）の
+  -- 結果からついでに保存する（v13）。「訪れた都道府県・国」の集計専用の別入力はしない。
+  admin1 TEXT NOT NULL DEFAULT '',
+  country TEXT NOT NULL DEFAULT '',
   weather_code INTEGER,
   temp_max REAL,
   temp_min REAL,
@@ -95,6 +105,9 @@ CREATE TABLE IF NOT EXISTS day_infos (
   is_forecast INTEGER NOT NULL DEFAULT 0,
   fetched_at TEXT NOT NULL DEFAULT '',
   voice_transcript TEXT NOT NULL DEFAULT '',
+  -- weather_manual：1なら、自動取得した天気を本人が手動で修正したもの（v12）。
+  -- 場所を入力し直す（setDayPlace）と自動取得の値で上書きされ、0に戻る。
+  weather_manual INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(trip_id, date)
@@ -129,6 +142,7 @@ CREATE TABLE IF NOT EXISTS email_otps (
 -- plan_period_start：利用回数（voice_uses_this_period）を数えている暦月の開始日（YYYY-MM-01）。
 -- 月が変わったらリセットする（Stripeの実際の請求日とは同期させない簡易な実装）。
 -- ticket_credits：買い切りの回数券の残数。サブスクの月間上限を使い切った後、こちらを消費する。
+-- 新規登録時に3回分のボーナスを自動付与する（無料プランの月間上限と合わせ、登録した最初の月だけ実質5回になる）。
 CREATE TABLE IF NOT EXISTS accounts (
   email TEXT PRIMARY KEY,
   account_id TEXT NOT NULL UNIQUE,
@@ -164,3 +178,20 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- voice_uses_this_period・ticket_credits・stripe_customer_id・stripe_subscription_id）を
 -- 追加する一度きりの文だった（docs/adr/0004）。本番環境では反映済みのため、この行は削除済み
 -- （上のCREATE TABLEには最初から含めてある）。
+
+-- v11：entriesに time（記録の時間、任意）・other_url（その他URL、任意）を追加する
+-- 一度きりの文だった。本番環境では反映済みのため、この行は削除済み
+-- （上のCREATE TABLEには最初から含めてある）。
+
+-- v12：day_infosに weather_manual（自動取得した天気を手動で修正したかどうか）を
+-- 追加する一度きりの文。本番環境へ反映するまでは、下記を1回だけ実行すること。
+-- ALTER TABLE day_infos ADD COLUMN weather_manual INTEGER NOT NULL DEFAULT 0;
+
+-- v13：day_infosに admin1（都道府県・州など）・country（国）を追加する一度きりの文。
+-- 本番環境へ反映するまでは、下記を2回（1文ずつ）実行すること。
+-- ALTER TABLE day_infos ADD COLUMN admin1 TEXT NOT NULL DEFAULT '';
+-- ALTER TABLE day_infos ADD COLUMN country TEXT NOT NULL DEFAULT '';
+
+-- v14：tripsに trip_type（旅行区分。サークルの友達／バイト先／家族など、自由入力）を
+-- 追加する一度きりの文。本番環境へ反映するまでは、下記を1回だけ実行すること。
+-- ALTER TABLE trips ADD COLUMN trip_type TEXT NOT NULL DEFAULT '';

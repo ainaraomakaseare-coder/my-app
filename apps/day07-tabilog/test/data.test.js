@@ -87,6 +87,36 @@ var blocksForTripTotal = [
 ];
 eq('tripTotalCost: 旅行全体の合計', T.tripTotalCost(blocksForTripTotal), 3500);
 
+/* ---- 割り勘（貸し借り・精算） ---- */
+var tripForBalance = { companions: ['父', '母', '私'] };
+var blocksForBalance = [
+  { date: '2024-08-10', label: '夕食', entries: [{ costItems: [
+    { label: '夕食', amount: 3000, paidBy: '父', splitAmong: ['父', '母', '私'] }
+  ] }] },
+  { date: '2024-08-11', label: '入場料', entries: [{ costItems: [
+    { label: '入場料', amount: 1000, paidBy: '私' } // splitAmong省略＝自分だけの個人費用
+  ] }] }
+];
+var balance = T.tripBalances(tripForBalance, blocksForBalance);
+eq('tripBalances: 払った人はプラス、割った人はマイナス', balance['父'], 2000);
+eq('tripBalances: 3等分された分だけマイナス', balance['母'], -1000);
+eq('tripBalances: splitAmong省略の費用は貸し借りゼロ（自分で払って自分で使った扱い）', balance['私'], -1000 /* 夕食の自分の割 */ + 0 /* 個人費用は貸し借りなし */);
+
+eq('tripBalances: paidByが無い費用行は集計しない（古いデータとの後方互換）',
+  T.tripBalances({ companions: ['a', 'b'] }, [{ entries: [{ costItems: [{ label: 'x', amount: 500 }] }] }]),
+  { a: 0, b: 0 });
+
+var plan = T.settlementPlan({ '父': 2000, '母': -1000, '私': -1000 });
+eq('settlementPlan: 送金回数が最小になるよう精算する', plan.length, 2);
+eq('settlementPlan: 合計金額は残高の絶対値と一致する', plan.reduce(function (s, p) { return s + p.amount; }, 0), 2000);
+plan.forEach(function (p) { ok('settlementPlan: 宛先は必ず貸している人（父）', p.to === '父'); });
+
+eq('settlementPlan: 全員ゼロなら精算不要', T.settlementPlan({ a: 0, b: 0 }), []);
+
+var expenses = T.tripExpenseList(blocksForBalance);
+eq('tripExpenseList: paidByがある費用行だけを新しい日付順で一覧する', expenses.map(function (e) { return e.label; }), ['入場料', '夕食']);
+eq('tripExpenseList: splitAmong省略時はpaidBy本人だけとして補う', expenses[0].splitAmong, ['私']);
+
 /* ---- 宿泊先 ---- */
 var blocksLodging = [
   { category: 'lodging', label: 'オーシャンビューホテル那覇' },
@@ -105,6 +135,40 @@ eq(
   T.primaryLodgingName(blocksLodgingDifferentLabels),
   '温泉宿の慶山に到着する'
 );
+
+/* ---- lodgingByNight（何泊目にどこへ泊まったか） ---- */
+var tripForNights = { startDate: '2024-08-10', endDate: '2024-08-17' }; // 7泊8日
+var blocksTwoLodgings = [
+  { category: 'lodging', label: 'Aホテル', date: '2024-08-10', createdAt: '1' },
+  { category: 'lodging', label: 'Bホテル', date: '2024-08-16', createdAt: '2' }
+];
+var nights = T.lodgingByNight(tripForNights, blocksTwoLodgings);
+eq('lodgingByNight: 7泊8日で宿が1回変わるので2グループに分かれる', nights.length, 2);
+eq('lodgingByNight: 1〜6泊目はAホテル', [nights[0].label, nights[0].from, nights[0].to], ['Aホテル', 1, 6]);
+eq('lodgingByNight: 7泊目はBホテル', [nights[1].label, nights[1].from, nights[1].to], ['Bホテル', 7, 7]);
+
+eq('lodgingByNight: 日帰り（日程1日）なら「泊」は無い', T.lodgingByNight({ startDate: '2024-08-10', endDate: '2024-08-10' }, []), []);
+eq('lodgingByNight: 日程未設定・Blockも無ければ空配列', T.lodgingByNight({ startDate: '', endDate: '' }, []), []);
+
+var blocksSameLodgingTwice = [
+  { category: 'lodging', label: '温泉宿の慶山に到着する', date: '2024-08-10', createdAt: '1' },
+  { category: 'lodging', label: '宿に戻る', date: '2024-08-10', createdAt: '2' },
+  { category: 'lodging', label: '温泉宿の慶山', date: '2024-08-12', createdAt: '3' }
+];
+var nightsSame = T.lodgingByNight({ startDate: '2024-08-10', endDate: '2024-08-13' }, blocksSameLodgingTwice);
+eq('lodgingByNight: 同じ日に複数Blockがあれば後のBlockの見出しを採用', nightsSame[0].label, '宿に戻る');
+
+/* ---- costBreakdownByPerson（総費用を払った人ごとに内訳） ---- */
+var blocksForBreakdown = [
+  { entries: [
+    { author: '私', costItems: [{ label: 'お土産', amount: 1000 }] }, // paidByが無い＝個人費用としてauthorに計上
+    { author: '私', costItems: [{ label: '夕食', amount: 3000, paidBy: '父', splitAmong: ['父', '母', '私'] }] }
+  ] }
+];
+var breakdown = T.costBreakdownByPerson(blocksForBreakdown);
+eq('costBreakdownByPerson: paidByが無い費用はauthorに計上', breakdown['私'], 1000);
+eq('costBreakdownByPerson: paidByがある費用は全額payerに計上（割った額ではない）', breakdown['父'], 3000);
+eq('costBreakdownByPerson: 登場しない人は含まれない', breakdown['母'], undefined);
 
 /* ---- parseTags / URL ---- */
 eq('parseTags: 読点区切りで空要素は除く', T.parseTags('父、母、、妹'), ['父', '母', '妹']);
@@ -125,6 +189,25 @@ eq('upsertTripIndexEntry: 更新後の内容になる', idx[0].title, 'A(更新)
 var idx2 = T.removeTripIndexEntry(idx, 't1');
 eq('removeTripIndexEntry: 指定したidが消える', idx2.map(function (t) { return t.id; }), ['t2']);
 eq('removeTripIndexEntry: 無い id を渡しても変わらない', T.removeTripIndexEntry(idx, 'nope').map(function (t) { return t.id; }), ['t1', 't2']);
+
+/* ---- filterTrips / tripFilterOptions（ホーム画面の旅行一覧の絞り込み） ---- */
+var tripsForFilter = [
+  { id: 't1', companions: ['父', '母'], startDate: '2024-08-10', tripType: '家族' },
+  { id: 't2', companions: ['サークルの先輩'], startDate: '2025-03-01', tripType: 'サークルの友達' },
+  { id: 't3', companions: ['父'], startDate: '2024-01-05', tripType: '家族' },
+  { id: 't4', companions: [], startDate: '', tripType: '' }
+];
+eq('filterTrips: 絞り込み無しなら全件', T.filterTrips(tripsForFilter, {}).map(function (t) { return t.id; }), ['t1', 't2', 't3', 't4']);
+eq('filterTrips: 誰と一緒かで絞る', T.filterTrips(tripsForFilter, { companion: '父' }).map(function (t) { return t.id; }), ['t1', 't3']);
+eq('filterTrips: 年で絞る', T.filterTrips(tripsForFilter, { year: '2024' }).map(function (t) { return t.id; }), ['t1', 't3']);
+eq('filterTrips: 旅行区分で絞る', T.filterTrips(tripsForFilter, { tripType: 'サークルの友達' }).map(function (t) { return t.id; }), ['t2']);
+eq('filterTrips: 複数条件はAND', T.filterTrips(tripsForFilter, { companion: '父', year: '2024' }).map(function (t) { return t.id; }), ['t1', 't3']);
+eq('filterTrips: 一致するものが無ければ空配列', T.filterTrips(tripsForFilter, { tripType: 'ハネムーン' }), []);
+
+var opts = T.tripFilterOptions(tripsForFilter);
+eq('tripFilterOptions: 誰と一緒かの選択肢（重複なし）', opts.companions, ['サークルの先輩', '母', '父']);
+eq('tripFilterOptions: 年の選択肢（新しい年が先）', opts.years, ['2025', '2024']);
+eq('tripFilterOptions: 旅行区分の選択肢（重複なし）', opts.tripTypes, ['サークルの友達', '家族']);
 
 /* ---- 評価（ratingSummary / myRatingScore / sortMyLogItems） ---- */
 eq('ratingSummary: 平均と件数を出す', T.ratingSummary([{ score: 4 }, { score: 2 }]), { avg: 3, count: 2 });

@@ -88,15 +88,23 @@
     return dates;
   }
 
-  // 時刻(time)が両方とも分かっているときだけ時刻順に比べる。片方でも未設定なら
-  // 「時刻不明」として時刻では比べず、作成順（＝音声入力なら話した順）に委ねる。
-  // そうしないと、空文字は常にどんな時刻よりも文字列として小さいため、時刻が分かっている
-  // Blockと分かっていないBlockが混ざったとき、未設定の方が常に先頭に来てしまう
+  // 時刻ありのBlockは常に時刻順で先に並べ、時刻なしのBlockはその後ろに作成順（＝ドラッグでの
+  // 並べ替え順）で並べる。
+  // 以前は「両方とも時刻が分かっているときだけ時刻で比べ、片方でも未設定なら作成順に委ねる」
+  // 方式だったが、これは比較の一貫性（推移律：AがBより前でBがCより前ならAはCより前、が
+  // 常に成り立つこと）が無く、時刻なしのBlockが1件でも混ざっていると、時刻ありのBlock同士の
+  // 並び順までJavaScriptのsort()の内部処理によって壊れることがあった（2026-09-19、
+  // 実際に9時の予定が10時の予定より後ろに表示される不具合として発覚）。
+  // 「時刻ありは常に時刻順が先頭グループ、時刻なしは後ろグループ」という1本のキーに正規化
+  // することで、一貫性のある比較にしている。
+  function blockSortKey(b) {
+    return b.time ? '0:' + b.time : '1:' + (b.createdAt || '');
+  }
+
   function sortBlocks(blocks) {
     return (blocks || []).slice().sort(function (a, b) {
       if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
-      if (a.time && b.time && a.time !== b.time) return a.time.localeCompare(b.time);
-      return (a.createdAt || '').localeCompare(b.createdAt || '');
+      return blockSortKey(a).localeCompare(blockSortKey(b));
     });
   }
 
@@ -124,12 +132,139 @@
     return (blocks || []).reduce(function (sum, b) { return sum + blockCostTotal(b); }, 0);
   }
 
+  // ---------- 割り勘（貸し借り・精算） ----------
+  // costItemの立て替え・割り勘情報（paidBy・splitAmong）から、参加者ごとの貸し借り残高を
+  // 集計する。paidByが無い費用行は「誰が払ったか分からない」ので集計から除外する
+  // （旧仕様のときのように、Entryのauthorを勝手に払った人とみなすことはしない。
+  // 「他の人が立て替えたのも入れられるようにしたい」という要望どおり、払った人は本人が
+  // 明示的に選ぶ前提のため）。splitAmongが無い費用行は「割り勘なしの個人費用」という、
+  // これまでどおりの意味として扱い、paidBy本人だけで割ったもの（＝貸し借りゼロ）とみなす。
+  // 戻り値は {費用のあった参加者名: 残高（円、プラス＝もらう側、マイナス＝払う側）}。
+  function tripBalances(trip, blocks) {
+    var balance = {};
+    ((trip && trip.companions) || []).forEach(function (name) { balance[name] = 0; });
+    function add(name, yen) {
+      if (!name) return;
+      balance[name] = (balance[name] || 0) + yen;
+    }
+    (blocks || []).forEach(function (block) {
+      (block.entries || []).forEach(function (entry) {
+        (entry.costItems || []).forEach(function (item) {
+          var paidBy = item.paidBy || '';
+          if (!paidBy || !(item.amount > 0)) return;
+          var splitAmong = (item.splitAmong && item.splitAmong.length) ? item.splitAmong : [paidBy];
+          add(paidBy, item.amount);
+          var share = item.amount / splitAmong.length;
+          splitAmong.forEach(function (name) { add(name, -share); });
+        });
+      });
+    });
+    return balance;
+  }
+
+  // 貸し借り残高（tripBalancesの結果）から、送金の回数が最小になるような精算方法を作る
+  // （最も多くもらう人と最も多く払う人を順にマッチさせる、よく知られた貪欲法）。
+  // 端数（1円未満）は四捨五入し、集計誤差で1円未満だけ残るケースは無視する。
+  function settlementPlan(balance) {
+    var creditors = [];
+    var debtors = [];
+    Object.keys(balance || {}).forEach(function (name) {
+      var yen = Math.round(balance[name]);
+      if (yen > 0) creditors.push({ name: name, amount: yen });
+      else if (yen < 0) debtors.push({ name: name, amount: -yen });
+    });
+    creditors.sort(function (a, b) { return b.amount - a.amount; });
+    debtors.sort(function (a, b) { return b.amount - a.amount; });
+    var plan = [];
+    var i = 0, j = 0;
+    while (i < debtors.length && j < creditors.length) {
+      var pay = Math.min(debtors[i].amount, creditors[j].amount);
+      if (pay >= 1) plan.push({ from: debtors[i].name, to: creditors[j].name, amount: pay });
+      debtors[i].amount -= pay;
+      creditors[j].amount -= pay;
+      if (debtors[i].amount < 1) i++;
+      if (creditors[j].amount < 1) j++;
+    }
+    return plan;
+  }
+
+  // 割り勘の対象になっている費用行だけを、日付順に一覧できる形にする（精算画面の「支出一覧」用）
+  function tripExpenseList(blocks) {
+    var out = [];
+    (blocks || []).forEach(function (block) {
+      (block.entries || []).forEach(function (entry) {
+        (entry.costItems || []).forEach(function (item) {
+          if (!item.paidBy || !(item.amount > 0)) return;
+          out.push({
+            date: block.date, label: item.label, amount: item.amount,
+            paidBy: item.paidBy, splitAmong: (item.splitAmong && item.splitAmong.length) ? item.splitAmong : [item.paidBy],
+            blockLabel: block.label,
+          });
+        });
+      });
+    });
+    out.sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
+    return out;
+  }
+
   // 宿泊カテゴリのBlockは「到着する」「宿に戻る」のように、同じ宿について複数できることがある
   // （特に音声入力は行動ごとにBlockを分けるため）。すべて繋げると意味不明になるので、
   // 一番最初（日程順で最初）の見出しだけを「宿泊先」として代表させる。
   function primaryLodgingName(blocks) {
     var lodging = (blocks || []).filter(function (b) { return b.category === 'lodging' && b.label; });
     return lodging.length ? lodging[0].label : '';
+  }
+
+  // 宿泊先を「何泊目に、どこに泊まったか」で一覧にする。宿泊カテゴリのBlockは、
+  // そのBlockの日付「以降」ずっとそこに泊まっている（次の宿泊Blockが出てくるまで）とみなす
+  // （「1日目にAホテル到着、7日目にBホテルへ移動」なら、1〜6泊目がAホテル・7泊目がBホテル）。
+  // 同じ宿が連続する夜はまとめて「1〜7泊目」のように範囲でまとめる。
+  function lodgingByNight(trip, blocks) {
+    var dates = allDatesForTrip(trip, blocks);
+    if (dates.length < 2) return []; // 日帰り、または日程が確定していない旅行には「泊」が無い
+    var nights = dates.length - 1;
+    var lodging = (blocks || [])
+      .filter(function (b) { return b.category === 'lodging' && b.label && b.date; })
+      .slice()
+      .sort(function (a, b) {
+        if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
+        return blockSortKey(a).localeCompare(blockSortKey(b));
+      });
+    var labelForNight = [];
+    for (var i = 0; i < nights; i++) {
+      var nightDate = dates[i];
+      var applicable = '';
+      for (var j = 0; j < lodging.length; j++) {
+        if (lodging[j].date <= nightDate) applicable = lodging[j].label; else break;
+      }
+      labelForNight.push(applicable);
+    }
+    var groups = [];
+    labelForNight.forEach(function (label, idx) {
+      var n = idx + 1;
+      var last = groups[groups.length - 1];
+      if (last && last.label === label) last.to = n;
+      else groups.push({ label: label, from: n, to: n });
+    });
+    return groups;
+  }
+
+  // 費用の総額を「実際に払った人」ごとに内訳表示するための集計。立て替え（paidBy）を
+  // 設定した費用行はpaidByへ、設定していない費用行（従来どおりの個人費用）はEntryの
+  // authorへ、それぞれ全額を計上する（誰か1人が全部払ったことにして二重計上はしない）。
+  function costBreakdownByPerson(blocks) {
+    var totals = {};
+    (blocks || []).forEach(function (block) {
+      (block.entries || []).forEach(function (entry) {
+        (entry.costItems || []).forEach(function (item) {
+          if (!(item.amount > 0)) return;
+          var payer = item.paidBy || entry.author || '';
+          if (!payer) return;
+          totals[payer] = (totals[payer] || 0) + item.amount;
+        });
+      });
+    });
+    return totals;
   }
 
   function parseTags(text) {
@@ -155,6 +290,35 @@
   // サーバー側で削除済み（見つからない）旅行を、この索引からも取り除く
   function removeTripIndexEntry(list, id) {
     return (list || []).filter(function (t) { return t.id !== id; });
+  }
+
+  // ホーム画面の「最近開いた旅行一覧」を、誰と行ったか・年・旅行区分（自由入力）で絞り込む。
+  // 3つとも指定が無ければ全件そのまま返す（AND条件）。
+  function filterTrips(trips, filters) {
+    filters = filters || {};
+    return (trips || []).filter(function (t) {
+      if (filters.companion && (t.companions || []).indexOf(filters.companion) === -1) return false;
+      if (filters.year && (t.startDate || '').slice(0, 4) !== filters.year) return false;
+      if (filters.tripType && (t.tripType || '') !== filters.tripType) return false;
+      return true;
+    });
+  }
+
+  // 上の絞り込み欄（プルダウン）に出す選択肢を、実際に旅行データに登場する値だけから作る
+  // （固定の選択肢を用意すると、人によって「サークルの友達」「大学のサークル」のように
+  // 呼び方が揺れて選べない値が出てしまうため、自由入力＋実データからの選択肢にしている）。
+  function tripFilterOptions(trips) {
+    var companions = {}, years = {}, tripTypes = {};
+    (trips || []).forEach(function (t) {
+      (t.companions || []).forEach(function (c) { if (c) companions[c] = true; });
+      if (t.startDate) years[t.startDate.slice(0, 4)] = true;
+      if (t.tripType) tripTypes[t.tripType] = true;
+    });
+    return {
+      companions: Object.keys(companions).sort(),
+      years: Object.keys(years).sort().reverse(),
+      tripTypes: Object.keys(tripTypes).sort(),
+    };
   }
 
   // entryが持つ評価（{raterEmail, raterName, score}の配列）から、平均と件数を出す
@@ -224,12 +388,19 @@
     entryCostTotal: entryCostTotal,
     blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
+    tripBalances: tripBalances,
+    settlementPlan: settlementPlan,
+    tripExpenseList: tripExpenseList,
     primaryLodgingName: primaryLodgingName,
+    lodgingByNight: lodgingByNight,
+    costBreakdownByPerson: costBreakdownByPerson,
     parseTags: parseTags,
     getTripIdFromSearch: getTripIdFromSearch,
     buildShareUrl: buildShareUrl,
     upsertTripIndexEntry: upsertTripIndexEntry,
     removeTripIndexEntry: removeTripIndexEntry,
+    filterTrips: filterTrips,
+    tripFilterOptions: tripFilterOptions,
     ratingSummary: ratingSummary,
     myRatingScore: myRatingScore,
     sortMyLogItems: sortMyLogItems,
@@ -324,7 +495,7 @@
   function rememberTrip(trip) {
     var list = Core.upsertTripIndexEntry(loadMyTrips(), {
       id: trip.id, title: trip.title, startDate: trip.startDate, endDate: trip.endDate, companions: trip.companions,
-      coverPhotoId: trip.coverPhotoId || ''
+      tripType: trip.tripType || '', coverPhotoId: trip.coverPhotoId || ''
     });
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(list));
   }
@@ -338,16 +509,200 @@
   }
 
   // ---------- 写真の拡大表示（ライトボックス） ----------
-  function openPhotoLightbox(url) {
-    $('#lightboxImg').src = url;
+  // 同じ記録（Entry）に複数枚あるときは、左右スワイプ・矢印ボタンで次・前の写真に移れる。
+  // photoIdsは1枚だけのとき（アルバムなど）も配列で渡し、常に同じ仕組みで動かす。
+  var lightboxState = { photoIds: [], index: 0 };
+  function openPhotoLightbox(photoIds, index) {
+    lightboxState.photoIds = photoIds || [];
+    lightboxState.index = index || 0;
+    renderLightboxPhoto();
     $('#photoLightbox').hidden = false;
+  }
+  function renderLightboxPhoto() {
+    var ids = lightboxState.photoIds;
+    $('#lightboxImg').src = photoUrl(ids[lightboxState.index]);
+    var multi = ids.length > 1;
+    $('#lightboxPrev').hidden = !multi;
+    $('#lightboxNext').hidden = !multi;
+    $('#lightboxCount').hidden = !multi;
+    $('#lightboxCount').textContent = (lightboxState.index + 1) + ' / ' + ids.length;
+  }
+  function showLightboxPhoto(delta) {
+    var ids = lightboxState.photoIds;
+    var next = lightboxState.index + delta;
+    if (next < 0 || next >= ids.length) return; // 最初・最後の写真ではそれ以上進めない
+    lightboxState.index = next;
+    renderLightboxPhoto();
   }
   function closePhotoLightbox() {
     $('#photoLightbox').hidden = true;
     $('#lightboxImg').src = '';
+    lightboxState = { photoIds: [], index: 0 };
+  }
+
+  // 日タブのスワイプ（initDaySwipe）と同じ考え方：最初にどちらの向きに大きく動いたかを
+  // 一度だけ判定し、横方向のときだけ次・前の写真に切り替える（縦方向はライトボックスの
+  // 閉じる操作などと衝突しないよう、何もしない）。
+  var lightboxSwipeState = null;
+  function initLightboxSwipe() {
+    var el = $('#photoLightbox');
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1 || e.target.closest('.lightbox-nav, .lightbox-close')) { lightboxSwipeState = null; return; }
+      var t = e.touches[0];
+      lightboxSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!lightboxSwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - lightboxSwipeState.startX;
+      var dy = t.clientY - lightboxSwipeState.startY;
+      if (!lightboxSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        lightboxSwipeState.decided = true;
+        lightboxSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (lightboxSwipeState.decided && lightboxSwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!lightboxSwipeState) return;
+      var ds = lightboxSwipeState;
+      lightboxSwipeState = null;
+      if (!ds.decided || !ds.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - ds.startX;
+      if (Math.abs(dx) < 50) return;
+      showLightboxPhoto(dx < 0 ? 1 : -1);
+    });
+
+    el.addEventListener('touchcancel', function () { lightboxSwipeState = null; });
+  }
+
+  function openVideoLightbox(url) {
+    $('#lightboxVideo').src = url;
+    $('#videoLightbox').hidden = false;
+  }
+  function closeVideoLightbox() {
+    var v = $('#lightboxVideo');
+    v.pause();
+    v.src = '';
+    $('#videoLightbox').hidden = true;
+  }
+
+  // ---------- アルバム（旅行全体の写真・動画をまとめて見る） ----------
+  function openAlbum() {
+    renderAlbum();
+    showScreen('album');
+  }
+
+  function renderAlbum() {
+    var items = [];
+    (state.blocks || []).forEach(function (block) {
+      (block.entries || []).forEach(function (entry) {
+        (entry.photoIds || []).forEach(function (id) {
+          items.push({ type: 'photo', id: id, date: block.date || '' });
+        });
+        (entry.videoIds || []).forEach(function (id) {
+          items.push({ type: 'video', id: id, date: block.date || '' });
+        });
+      });
+    });
+    items.sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
+
+    var grid = $('#albumGrid');
+    $('#albumEmpty').hidden = items.length > 0;
+    grid.innerHTML = items.map(function (it) {
+      var dateBadge = it.date ? '<span class="album-date">' + escapeHtml(it.date.slice(5).replace('-', '/')) + '</span>' : '';
+      if (it.type === 'photo') {
+        return '<div class="album-tile" data-type="photo" data-id="' + escapeHtml(it.id) + '" style="background-image:url(\'' + escapeHtml(photoUrl(it.id)) + '\')">' + dateBadge + '</div>';
+      }
+      return '<div class="album-tile" data-type="video" data-id="' + escapeHtml(it.id) + '">' +
+        '<video src="' + escapeHtml(photoUrl(it.id)) + '#t=0.1" preload="metadata" muted playsinline></video>' +
+        '<div class="album-play">' + ALBUM_PLAY_ICON + '</div>' + dateBadge +
+        '</div>';
+    }).join('');
+
+    $all('.album-tile', grid).forEach(function (tile) {
+      tile.addEventListener('click', function () {
+        var url = photoUrl(tile.dataset.id);
+        if (tile.dataset.type === 'video') openVideoLightbox(url);
+        else openPhotoLightbox([tile.dataset.id], 0);
+      });
+    });
+  }
+
+  // ---------- 精算（割り勘の貸し借り・精算方法） ----------
+  function openSettlement() {
+    renderSettlement();
+    showScreen('settlement');
+  }
+
+  function renderSettlement() {
+    var expenses = Core.tripExpenseList(state.blocks);
+    var hasExpenses = expenses.length > 0;
+    $('#settlementEmpty').hidden = hasExpenses;
+    $('#settlementBody').hidden = !hasExpenses;
+    if (!hasExpenses) return;
+
+    var balance = Core.tripBalances(state.trip, state.blocks);
+    var names = Object.keys(balance).filter(function (n) { return Math.round(balance[n]) !== 0; });
+    // 貸し借りが無い（＝0円の）参加者も、参加していることが分かるよう一覧には残す
+    (state.trip.companions || []).forEach(function (n) { if (names.indexOf(n) === -1) names.push(n); });
+
+    $('#settlementBalances').innerHTML = names.map(function (name) {
+      var yen = Math.round(balance[name] || 0);
+      var cls = yen > 0 ? 'plus' : (yen < 0 ? 'minus' : '');
+      var text = yen > 0 ? '+' + Core.formatYen(yen) + '（もらう）' : (yen < 0 ? '－' + Core.formatYen(-yen) + '（払う）' : '±¥0');
+      return '<div class="balance-row ' + cls + '"><span class="name">' + escapeHtml(name) + '</span><span class="amount">' + escapeHtml(text) + '</span></div>';
+    }).join('');
+
+    var plan = Core.settlementPlan(balance);
+    var planEl = $('#settlementPlanList');
+    if (!plan.length) {
+      planEl.innerHTML = '<p class="empty">貸し借りはありません。</p>';
+    } else {
+      planEl.innerHTML = plan.map(function (p) {
+        return '<div class="settle-plan-row"><span class="from">' + escapeHtml(p.from) + '</span>' + SETTLE_ARROW_ICON
+          + '<span class="to">' + escapeHtml(p.to) + '</span><span class="amount">' + escapeHtml(Core.formatYen(p.amount)) + '</span></div>';
+      }).join('');
+    }
+
+    $('#settlementExpenses').innerHTML = expenses.map(function (e) {
+      var splitText = e.splitAmong.length > 1 ? e.splitAmong.join('・') + 'で割り勘' : e.paidBy + 'の分';
+      var dateText = e.date ? e.date.slice(5).replace('-', '/') : '';
+      return '<div class="expense-row">' +
+        '<div class="expense-main"><span class="label">' + escapeHtml(e.label || '（内容未入力）') + '</span><span class="amount">' + escapeHtml(Core.formatYen(e.amount)) + '</span></div>' +
+        '<div class="expense-sub">' + escapeHtml(dateText) + '　' + escapeHtml(e.paidBy) + 'が立替・' + escapeHtml(splitText) + '</div>' +
+        '</div>';
+    }).join('');
+  }
+
+  // iOSアプリ内では、WKWebViewのfetch実装がcapacitor://からのクロスオリジンPOSTの
+  // プリフライト後処理をうまく扱えず、本体のリクエストが送られないことがある。
+  // その場合はCapacitorHttpプラグイン経由でネイティブ側からHTTP通信する
+  // （ブラウザ版ではwindow.Capacitorが存在しないので、従来通りfetchを使う）。
+  function isNativeApp() {
+    return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  }
+
+  function nativeApi(path, method, body) {
+    return window.Capacitor.Plugins.CapacitorHttp.request({
+      url: API_BASE + path,
+      method: method || 'GET',
+      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      data: body
+    }).then(function (res) {
+      if (res.status < 200 || res.status >= 300) {
+        var e = (res.data && typeof res.data === 'object' && res.data.error) || ('http_' + res.status);
+        throw new Error(e);
+      }
+      return res.status === 204 ? null : res.data;
+    });
   }
 
   function api(path, method, body) {
+    if (isNativeApp()) return nativeApi(path, method, body);
     return fetch(API_BASE + path, {
       method: method || 'GET',
       headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
@@ -360,8 +715,32 @@
     });
   }
 
-  // 写真・音声など、生のバイナリをPOSTする共通の窓口（fetch＋エラー処理をここに集約する）
+  function blobToBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onloadend = function () {
+        var result = reader.result;
+        var comma = result.indexOf(',');
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = function () { reject(new Error('read_failed')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // 写真・音声など、生のバイナリをPOSTする共通の窓口（fetch＋エラー処理をここに集約する）。
+  // iOSアプリ内ではWKWebViewのfetchでバイナリボディを直接送るとクロスオリジンPOSTが
+  // 失敗するため、その場合はbase64化してJSON({dataBase64, contentType, headers})で送る。
   function postBinary(path, blob, extraHeaders) {
+    if (isNativeApp()) {
+      return blobToBase64(blob).then(function (dataBase64) {
+        return nativeApi(path, 'POST', {
+          dataBase64: dataBase64,
+          contentType: blob.type || 'application/octet-stream',
+          headers: extraHeaders || {}
+        });
+      });
+    }
     var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {});
     return fetch(API_BASE + path, { method: 'POST', headers: headers, body: blob }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
@@ -376,14 +755,30 @@
   }
 
   // meta（notes・author）はUTF-8を含みうるので、ヘッダーに載せる前にBase64化する
-  // （atob/btoaはLatin1前提のため、encodeURIComponent/unescapeで橋渡しする）
+  // （atob/btoaはLatin1前提のため、encodeURIComponent/unescapeで橋渡しする）。
+  // date省略時は「複数日をまとめて記録する」（DAY30〜）：特定の日タブに紐づけず、
+  // 旅行そのものに対して呼ぶ（AI自身が各予定の日を判定する）。
   function createVoiceEntries(tripId, date, blob, meta) {
     var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify(meta))));
-    return postBinary(
-      '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/voice-entries',
-      blob,
-      { 'x-voice-meta': metaHeader }
-    );
+    var path = date
+      ? '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/voice-entries'
+      : '/trips/' + encodeURIComponent(tripId) + '/voice-entries';
+    return postBinary(path, blob, { 'x-voice-meta': metaHeader });
+  }
+
+  // 音声の文字起こし版と違い、貼り付けたテキストをそのままJSONで送るだけなのでbase64化は不要
+  function createTextEntries(tripId, date, text, meta) {
+    var path = date
+      ? '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/text-entries'
+      : '/trips/' + encodeURIComponent(tripId) + '/text-entries';
+    return api(path, 'POST', { text: text, notes: meta.notes, author: meta.author, email: meta.email });
+  }
+
+  // レシート・領収書の写真をAIに読み取らせ、費用明細の候補（{label, amount}の配列）を返してもらう。
+  // 音声入力・テキストメモと同じ利用枠を消費するため、メールアドレスをmetaヘッダーで送る。
+  function scanReceiptBlob(blob, email) {
+    var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify({ email: email }))));
+    return postBinary('/receipts/scan', blob, { 'x-receipt-meta': metaHeader });
   }
 
   function fileToCompressedBlob(file, maxDim, quality) {
@@ -507,6 +902,8 @@
     loginReturnTo: 'home',    // ログイン画面から戻る先の画面名
     myLogItems: [],
     myLogTrips: [],
+    myLogPlaces: { prefectures: [], countries: [] },
+    homeFilters: { companion: '', year: '', tripType: '' },
     myLogCategory: 'food',
     myLogSort: 'score',
     // 旅行のサムネイル画像。新規作成・編集どちらのフォームでも使い回す
@@ -537,27 +934,86 @@
       : '';
   }
 
+  // 参加者名を丸いアイコン（頭文字＋色）で表示するための色分け。名前ごとに毎回同じ色になるよう、
+  // 文字列から単純なハッシュ値を出して6色から選ぶだけで、特別な意味は持たせていない。
+  function avatarColorClass(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) { h = (h * 31 + name.charCodeAt(i)) & 0xffffffff; }
+    return 'c' + (Math.abs(h) % 6);
+  }
+  function tripCardAvatarsHtml(companions) {
+    var list = (companions || []).filter(Boolean);
+    if (!list.length) return '';
+    return '<div class="trip-card-avatars">' + list.slice(0, 4).map(function (name) {
+      var initial = name.trim().charAt(0) || '?';
+      return '<span class="trip-card-avatar ' + avatarColorClass(name) + '">' + escapeHtml(initial) + '</span>';
+    }).join('') + '</div>';
+  }
+
+  // 絞り込み欄（誰と一緒か・年・旅行区分）の選択肢を、実際の旅行データから作り直す。
+  // 今選んでいる値はstate.homeFiltersに持っておき、作り直したあとも選択状態を保つ。
+  function renderTripFilterOptions(allTrips) {
+    var opts = Core.tripFilterOptions(allTrips);
+    var f = state.homeFilters;
+    $('#filterCompanion').innerHTML = '<option value="">誰と一緒か：すべて</option>' +
+      opts.companions.map(function (c) {
+        return '<option value="' + escapeHtml(c) + '"' + (f.companion === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+      }).join('');
+    $('#filterYear').innerHTML = '<option value="">年：すべて</option>' +
+      opts.years.map(function (y) {
+        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + escapeHtml(y) + '年</option>';
+      }).join('');
+    $('#filterTripType').innerHTML = '<option value="">旅行区分：すべて</option>' +
+      opts.tripTypes.map(function (tt) {
+        return '<option value="' + escapeHtml(tt) + '"' + (f.tripType === tt ? ' selected' : '') + '>' + escapeHtml(tt) + '</option>';
+      }).join('');
+  }
+
   function renderHomeTripList() {
-    var list = loadMyTrips();
+    var allTrips = loadMyTrips();
+    $('#tripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない
+    if (allTrips.length >= 2) renderTripFilterOptions(allTrips);
+
+    var list = Core.filterTrips(allTrips, state.homeFilters);
     var el = $('#tripList');
-    if (!list.length) {
+    if (!allTrips.length) {
       el.innerHTML = '<div class="empty">まだ旅行がありません。「＋ 新しい旅を記録する」から始めてください。</div>';
+      return;
+    }
+    if (!list.length) {
+      el.innerHTML = '<div class="empty">条件に一致する旅行がありません。</div>';
       return;
     }
     el.innerHTML = '';
     list.forEach(function (t) {
       var card = document.createElement('button');
-      card.className = 'trip-card';
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
-      card.innerHTML =
-        '<div class="trip-card-row">' +
-        tripThumbHtml(t.coverPhotoId) +
-        '<div class="trip-card-body">' +
+      var infoHtml =
         '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
-        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
-        '<div class="trip-card-companions">' +
-        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') + '</div>' +
-        '</div></div>';
+        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>';
+      // サムネイル画像がある旅行は、写真を大きく見せてその上に旅行区分バッジを重ね、
+      // 写真の下にタイトル・日程・参加者のアイコンを並べる（ホーム画面だけの見た目。
+      // マイログの「参加した旅行一覧」は今までどおりの小さいサムネイルの一覧のまま）。
+      if (t.coverPhotoId) {
+        card.className = 'trip-card has-photo';
+        card.innerHTML =
+          '<div class="trip-card-photo" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')">' +
+          (t.tripType ? '<span class="trip-card-photo-badge">' + escapeHtml(t.tripType) + '</span>' : '') +
+          '</div>' +
+          '<div class="trip-card-info">' + infoHtml +
+          '<div class="trip-card-people">' + tripCardAvatarsHtml(t.companions) +
+          '<span class="trip-card-people-text">' +
+          ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+          '</span></div></div>';
+      } else {
+        card.className = 'trip-card';
+        card.innerHTML =
+          infoHtml +
+          '<div class="trip-card-companions">' +
+          ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+          (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
+          '</div>';
+      }
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
     });
@@ -579,7 +1035,7 @@
         if (knownIds[t.id]) return;
         known = Core.upsertTripIndexEntry(known, {
           id: t.id, title: t.title, startDate: t.startDate, endDate: t.endDate, companions: t.companions || [],
-          coverPhotoId: t.coverPhotoId || ''
+          tripType: t.tripType || '', coverPhotoId: t.coverPhotoId || ''
         });
         added = true;
       });
@@ -632,6 +1088,7 @@
     $('#ntStart').value = '';
     $('#ntEnd').value = '';
     $('#ntCompanions').value = '';
+    $('#ntTripType').value = '';
     $('#newTripStatus').textContent = '';
     resetCoverPhotoDraft('');
     renderCoverPhotoPreview('nt');
@@ -650,6 +1107,7 @@
         startDate: $('#ntStart').value,
         endDate: $('#ntEnd').value,
         companions: Core.parseTags($('#ntCompanions').value),
+        tripType: $('#ntTripType').value.trim(),
         coverPhotoId: coverPhotoId
       });
     }).then(function (trip) {
@@ -667,6 +1125,7 @@
     $('#teStart').value = trip.startDate || '';
     $('#teEnd').value = trip.endDate || '';
     $('#teCompanions').value = (trip.companions || []).join('、');
+    $('#teTripType').value = trip.tripType || '';
     $('#tripEditStatus').textContent = '';
     resetCoverPhotoDraft(trip.coverPhotoId || '');
     renderCoverPhotoPreview('te');
@@ -684,6 +1143,7 @@
         startDate: $('#teStart').value,
         endDate: $('#teEnd').value,
         companions: Core.parseTags($('#teCompanions').value),
+        tripType: $('#teTripType').value.trim(),
         coverPhotoId: coverPhotoId
       });
     }).then(function (trip) {
@@ -696,6 +1156,56 @@
     }).catch(function () {
       status.textContent = '保存に失敗しました。もう一度お試しください。';
     });
+  }
+
+  // 宿泊先の統計カード用の表示文字列。「1〜6泊目：Aホテル／7泊目：Bホテル」のように、
+  // 同じ宿が続く夜はまとめる（lodgingByNight）。宿泊が1か所だけの旅行では、これまでどおり
+  // 宿の名前だけをシンプルに出す（範囲表記を付けない）。
+  function formatLodgingStat(groups) {
+    if (!groups.length) return Core.primaryLodgingName(state.blocks) || '未設定';
+    if (groups.length === 1) return groups[0].label || '未設定';
+    return groups.map(function (g) {
+      var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
+      return range + '：' + (g.label || '未定');
+    }).join('／');
+  }
+
+  // 宿泊先の内訳（何泊目にどこへ泊まったか、全件）。統計カードの表示文字列（formatLodgingStat）は
+  // 3行までしか出せない（.stat-card .valのline-clamp）ため、宿泊先が3件を超える旅行では
+  // 全部を確認できなかった。統計カードの「宿泊先」をタップすると開閉する（DAY30〜）。
+  function toggleLodgingBreakdown() {
+    var panel = $('#lodgingBreakdownPanel');
+    if (!panel.hidden) { panel.hidden = true; return; }
+    $('#costBreakdownPanel').hidden = true;
+    var groups = Core.lodgingByNight(state.trip, state.blocks);
+    var primaryName = Core.primaryLodgingName(state.blocks);
+    if (groups.length) {
+      panel.innerHTML = groups.map(function (g) {
+        var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
+        return '<div class="cost-breakdown-row"><span class="name">' + escapeHtml(range) + '</span><span class="amount">' + escapeHtml(g.label || '未定') + '</span></div>';
+      }).join('');
+    } else if (primaryName) {
+      // 日帰りなど「泊」の無い旅行では日ごとの内訳が作れないため、宿泊カテゴリの見出しをそのまま出す
+      panel.innerHTML = '<div class="cost-breakdown-row"><span class="name">宿泊先</span><span class="amount">' + escapeHtml(primaryName) + '</span></div>';
+    } else {
+      panel.innerHTML = '<p class="empty">宿泊カテゴリの予定がまだありません。</p>';
+    }
+    panel.hidden = false;
+  }
+
+  // 総費用の内訳（誰が実際にいくら払ったか）。統計カードの「総費用」をタップすると開閉する。
+  function toggleCostBreakdown() {
+    var panel = $('#costBreakdownPanel');
+    if (!panel.hidden) { panel.hidden = true; return; }
+    $('#lodgingBreakdownPanel').hidden = true;
+    var breakdown = Core.costBreakdownByPerson(state.blocks);
+    var names = Object.keys(breakdown).sort(function (a, b) { return breakdown[b] - breakdown[a]; });
+    panel.innerHTML = names.length
+      ? names.map(function (name) {
+          return '<div class="cost-breakdown-row"><span class="name">' + escapeHtml(name) + '</span><span class="amount">' + escapeHtml(Core.formatYen(breakdown[name])) + '</span></div>';
+        }).join('')
+      : '<p class="empty">まだ費用の記録がありません。</p>';
+    panel.hidden = false;
   }
 
   // ---------- 旅行詳細 ----------
@@ -711,12 +1221,16 @@
     $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
     renderTripJoin();
 
-    var lodging = Core.primaryLodgingName(state.blocks);
+    var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
     var total = Core.tripTotalCost(state.blocks);
     $('#tripStats').innerHTML =
-      statCard('宿泊先', lodging || '未設定') +
-      statCard('総費用', Core.formatYen(total) || '¥0') +
+      '<button type="button" class="stat-card stat-card-btn" id="btnShowLodgingBreakdown"><div class="lbl">宿泊先</div><div class="val">' + escapeHtml(lodging) + '</div></button>' +
+      '<button type="button" class="stat-card stat-card-btn" id="btnShowCostBreakdown"><div class="lbl">総費用</div><div class="val">' + escapeHtml(Core.formatYen(total) || '¥0') + '</div></button>' +
       statCard('日程', nights || (Core.allDatesForTrip(trip, state.blocks).length + '日'));
+    $('#lodgingBreakdownPanel').hidden = true;
+    $('#costBreakdownPanel').hidden = true;
+    $('#btnShowLodgingBreakdown').addEventListener('click', toggleLodgingBreakdown);
+    $('#btnShowCostBreakdown').addEventListener('click', toggleCostBreakdown);
 
     renderDayTabs();
     renderDaySection();
@@ -803,9 +1317,18 @@
 
   // 音声入力は有料プラン専用（docs/adr/0004）。ログインしていない、またはプラン・回数券が
   // 無い場合は、録音の代わりに案内とプランへの導線を出す。
-  function openVoiceEntryForm() {
+  // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
+  // 旅行の日程全体に対してAIが各予定の日も判定する（state.voiceEntryMultiDayで保持し、
+  // 保存時にcreateVoiceEntries/createTextEntriesへ渡すdateをnullにする分岐に使う）。
+  function openVoiceEntryForm(multiDay) {
     var user = loadCurrentUser();
     if (!user) { openLogin('voiceEntryForm'); return; }
+    if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから音声入力を始めてください。'); return; }
+    state.voiceEntryMultiDay = !!multiDay;
+    $('#voiceEntryTitle').textContent = multiDay ? '複数日をまとめて記録する' : '音声・メモでまとめて記録する';
+    $('#voiceEntryLead').textContent = multiDay
+      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、AIが「1日目は〜」のような話し方から日を判定して予定・記録に分けて保存します（評価や費用はあとで入力してください）'
+      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）';
     showScreen('voiceEntryForm');
     $('#voicePremiumRequired').hidden = true;
     $('#voiceRecordArea').hidden = true;
@@ -815,8 +1338,8 @@
       if (!ok) {
         $('#voicePremiumRequired').hidden = false;
         $('#voiceRecordArea').hidden = true;
-        $('#voicePremiumMessage').textContent = (!account || account.plan === 'free')
-          ? '音声入力はプランに登録すると使えます。マイログからプランを選んでください。'
+        $('#voicePremiumMessage').textContent = !account
+          ? '音声入力はログインすると使えます。'
           : '今月の音声入力の回数を使い切りました。プランのアップグレードや回数券をご検討ください。';
         return;
       }
@@ -829,6 +1352,9 @@
       $('#voiceRecordStatus').textContent = '';
       $('#voiceRecordStatus').classList.remove('is-recording');
       $('#voiceEntryStatus').textContent = '';
+      $('#textMemoInput').value = '';
+      $('#btnCreateTextEntries').disabled = false;
+      $('#textEntryStatus').textContent = '';
       $('#voicePremiumRequired').hidden = true;
       $('#voiceRecordArea').hidden = false;
     });
@@ -893,7 +1419,7 @@
     var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
     $('#btnCreateVoiceEntries').disabled = true;
     $('#voiceEntryStatus').textContent = 'AIが内容を確認しています…（数十秒かかることがあります）';
-    createVoiceEntries(state.trip.id, state.selectedDate, voiceBlob, meta).then(function () {
+    createVoiceEntries(state.trip.id, state.voiceEntryMultiDay ? null : state.selectedDate, voiceBlob, meta).then(function () {
       return refreshTrip();
     }).then(function () {
       $('#btnCreateVoiceEntries').disabled = false;
@@ -904,12 +1430,41 @@
       $('#btnCreateVoiceEntries').disabled = false;
       if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#voiceEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'trip_dates_required') $('#voiceEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
       else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#voiceEntryStatus').textContent = '';
-        openVoiceEntryForm();
+        openVoiceEntryForm(state.voiceEntryMultiDay);
       }
       else $('#voiceEntryStatus').textContent = '失敗しました。もう一度お試しください。';
+    });
+  }
+
+  function handleCreateTextEntries() {
+    var text = $('#textMemoInput').value.trim();
+    if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
+    var user = loadCurrentUser();
+    var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
+    $('#btnCreateTextEntries').disabled = true;
+    $('#textEntryStatus').textContent = 'AIが内容を確認しています…';
+    createTextEntries(state.trip.id, state.voiceEntryMultiDay ? null : state.selectedDate, text, meta).then(function () {
+      return refreshTrip();
+    }).then(function () {
+      $('#btnCreateTextEntries').disabled = false;
+      showScreen('tripDetail');
+      renderDaySection();
+    }).catch(function (e) {
+      var msg = (e && e.message) || '';
+      $('#btnCreateTextEntries').disabled = false;
+      if (msg === 'server_not_configured') $('#textEntryStatus').textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
+      else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'trip_dates_required') $('#textEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
+      else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
+      else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
+        $('#textEntryStatus').textContent = '';
+        openVoiceEntryForm(state.voiceEntryMultiDay);
+      }
+      else $('#textEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
   }
 
@@ -939,6 +1494,63 @@
     return byDate[state.selectedDate || ''] || [];
   }
 
+  // 日タブを左右スワイプで切り替える。タイムライン上での横方向の指の動きを見て、
+  // 縦スクロールと誤認しないよう「最初にどちらの向きに動いたか」で一度だけ判定する。
+  // Blockの並べ替え・記録の移動ドラッグは持ち手（.block-drag-handle / .entry-drag-handle）
+  // から始まる操作なので、そこから始まったタッチはスワイプの対象にしない。
+  var daySwipeState = null;
+  function initDaySwipe() {
+    var el = $('#timeline');
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { daySwipeState = null; return; }
+      if (e.target.closest('.block-drag-handle, .entry-drag-handle, a, video, button, input, textarea, select')) {
+        daySwipeState = null;
+        return;
+      }
+      var t = e.touches[0];
+      daySwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!daySwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - daySwipeState.startX;
+      var dy = t.clientY - daySwipeState.startY;
+      if (!daySwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        daySwipeState.decided = true;
+        daySwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (daySwipeState.decided && daySwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!daySwipeState) return;
+      var ds = daySwipeState;
+      daySwipeState = null;
+      if (!ds.decided || !ds.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - ds.startX;
+      if (Math.abs(dx) < 60) return;
+      goToAdjacentDay(dx < 0 ? 1 : -1);
+    });
+
+    el.addEventListener('touchcancel', function () { daySwipeState = null; });
+  }
+
+  function goToAdjacentDay(delta) {
+    var dates = Core.allDatesForTrip(state.trip, state.blocks);
+    var idx = dates.indexOf(state.selectedDate);
+    if (idx === -1) return;
+    var nextIdx = idx + delta;
+    if (nextIdx < 0 || nextIdx >= dates.length) return; // 最初・最後の日では何もしない
+    state.selectedDate = dates[nextIdx];
+    renderDayTabs();
+    renderDaySection();
+    var activeTab = $('#dayTabs .day-tab.on');
+    if (activeTab) activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }
+
   function renderDaySection() {
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
     renderTimeline(currentDayBlocks());
@@ -961,15 +1573,19 @@
 
   function renderDayWeather() {
     var btn = $('#dayWeather');
-    if (!state.selectedDate) { btn.hidden = true; return; }
+    var editBtn = $('#btnEditWeather');
+    $('#weatherEditPanel').hidden = true;
+    if (!state.selectedDate) { btn.hidden = true; editBtn.hidden = true; return; }
     btn.hidden = false;
     var info = findDayInfo(state.selectedDate);
-    if (info && info.weatherCode !== null && info.weatherCode !== undefined) {
+    var hasWeather = info && info.weatherCode !== null && info.weatherCode !== undefined;
+    if (hasWeather) {
       btn.classList.add('has-weather');
       var label = Core.weatherLabel(info.weatherCode, info.precipSum);
       var temps = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) + '℃/' + Math.round(info.tempMin) + '℃' : '';
       btn.innerHTML = escapeHtml(info.place) + '　' + escapeHtml(label) + ' ' + escapeHtml(temps)
-        + (info.isForecast ? ' <span class="forecast-mark">（予報）</span>' : '');
+        + (info.isForecast ? ' <span class="forecast-mark">（予報）</span>' : '')
+        + (info.weatherManual ? ' <span class="forecast-mark">（手動修正）</span>' : '');
     } else if (info && info.place) {
       btn.classList.remove('has-weather');
       btn.textContent = escapeHtml(info.place) + '（天気取得中…）';
@@ -978,6 +1594,37 @@
       btn.textContent = '＋ 場所を設定';
     }
     btn.onclick = function () { promptDayPlace(); };
+    // 天気が取れている日だけ、手動修正ボタンを出す（場所未設定の日は修正のしようがない）
+    editBtn.hidden = !hasWeather;
+    editBtn.onclick = function () { openWeatherEditPanel(info); };
+  }
+
+  function openWeatherEditPanel(info) {
+    var panel = $('#weatherEditPanel');
+    $('#weatherEditCode').value = String(info.weatherCode);
+    $('#weatherEditMax').value = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) : '';
+    $('#weatherEditMin').value = (info.tempMin !== null && info.tempMin !== undefined) ? Math.round(info.tempMin) : '';
+    $('#weatherEditStatus').textContent = '';
+    panel.hidden = false;
+  }
+
+  function saveWeatherEdit() {
+    if (!state.trip || !state.selectedDate) return;
+    var status = $('#weatherEditStatus');
+    var weatherCode = Number($('#weatherEditCode').value);
+    var maxVal = $('#weatherEditMax').value.trim();
+    var minVal = $('#weatherEditMin').value.trim();
+    var payload = { weatherCode: weatherCode };
+    if (maxVal !== '') payload.tempMax = Number(maxVal);
+    if (minVal !== '') payload.tempMin = Number(minVal);
+    status.textContent = '保存中…';
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/weather', 'PATCH', payload)
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        $('#weatherEditPanel').hidden = true;
+        renderDayWeather();
+      })
+      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
   }
 
   function promptDayPlace() {
@@ -1018,12 +1665,25 @@
 
     var voiceBtn = document.createElement('button');
     voiceBtn.className = 'block-add';
-    voiceBtn.innerHTML = MIC_ICON + '<span>音声でまとめて記録する</span>';
-    voiceBtn.addEventListener('click', openVoiceEntryForm);
+    voiceBtn.innerHTML = MIC_ICON + '<span>音声・メモでまとめて記録する</span>';
+    // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
+    // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
+    // なるバグの元）。必ずラップして呼ぶ。
+    voiceBtn.addEventListener('click', function () { openVoiceEntryForm(false); });
     el.appendChild(voiceBtn);
+
+    // 「複数日をまとめて記録する」（DAY30〜）：日タブを選ばず旅行全体に対して話す・貼り付ける
+    var multiDayBtn = document.createElement('button');
+    multiDayBtn.className = 'block-add';
+    multiDayBtn.innerHTML = MIC_ICON + '<span>複数日をまとめて記録する</span>';
+    multiDayBtn.addEventListener('click', function () { openVoiceEntryForm(true); });
+    el.appendChild(multiDayBtn);
   }
 
   var DRAG_HANDLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="5" r="1.4"/><circle cx="14" cy="5" r="1.4"/><circle cx="6" cy="10" r="1.4"/><circle cx="14" cy="10" r="1.4"/><circle cx="6" cy="15" r="1.4"/><circle cx="14" cy="15" r="1.4"/></svg>';
+  var MOVE_ICON = '<svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h12M11 6l4 4-4 4"/></svg>';
+  var ALBUM_PLAY_ICON = '<svg width="26" height="26" viewBox="0 0 20 20" fill="currentColor"><path d="M6.5 4.5v11l9-5.5z"/></svg>';
+  var SETTLE_ARROW_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h13M11 6l5 4-5 4"/></svg>';
 
   function renderBlockEl(block) {
     var wrap = document.createElement('div');
@@ -1079,9 +1739,12 @@
       e.preventDefault();
 
       var rect = draggedEl.getBoundingClientRect();
-      var siblings = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).filter(function (el) { return el !== draggedEl; });
+      // 時刻ありのBlockは並べ替えの対象外（常に時刻順で固定）。持ち手が出ているBlock
+      // （＝時刻なしのBlock）同士でだけ順番を入れ替えられるようにする。
+      var draggableBlocks = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).filter(function (el) { return el.querySelector('.block-drag-handle'); });
+      var siblings = draggableBlocks.filter(function (el) { return el !== draggedEl; });
       var addBtn = timelineEl.querySelector('.block-add');
-      var originalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).map(function (el) { return el.dataset.blockId; });
+      var originalOrder = draggableBlocks.map(function (el) { return el.dataset.blockId; });
 
       var indicator = document.createElement('div');
       indicator.className = 'block-drop-indicator';
@@ -1124,7 +1787,9 @@
       timelineEl.insertBefore(ds.draggedEl, ds.indicator);
       ds.indicator.remove();
 
-      var finalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).map(function (el) { return el.dataset.blockId; });
+      var finalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block'))
+        .filter(function (el) { return el.querySelector('.block-drag-handle'); })
+        .map(function (el) { return el.dataset.blockId; });
       if (finalOrder.join(',') !== ds.originalOrder.join(',')) persistBlockOrder(finalOrder);
     }
     timelineEl.addEventListener('pointerup', endBlockDrag);
@@ -1151,6 +1816,8 @@
   function renderEntryEl(block, entry) {
     var card = document.createElement('div');
     card.className = 'entry-card' + (block.category === 'lodging' ? ' lodging' : '');
+    card.dataset.entryId = entry.id;
+    card.dataset.blockId = block.id;
 
     var photosHtml = (entry.photoIds || []).length
       ? '<div class="entry-photos">' + entry.photoIds.map(function (id) {
@@ -1158,9 +1825,15 @@
         }).join('') + '</div>'
       : '';
 
+    // 動画も写真と同じ粒度（正方形のタイル）で並べる。タップすると動画ライトボックスを開く
+    // （インラインでcontrolsを出す作りだと、縦長動画がそのままの縦横比で表示されて
+    // 写真の並びと見た目が揃わなかったため）。
     var videosHtml = (entry.videoIds || []).length
       ? '<div class="entry-videos">' + entry.videoIds.map(function (id) {
-          return '<video src="' + escapeHtml(photoUrl(id)) + '" controls></video>';
+          return '<div class="entry-video-tile" data-video-id="' + escapeHtml(id) + '">' +
+            '<video src="' + escapeHtml(photoUrl(id)) + '#t=0.1" preload="metadata" muted playsinline></video>' +
+            '<div class="entry-video-play">' + ALBUM_PLAY_ICON + '</div>' +
+          '</div>';
         }).join('') + '</div>'
       : '';
 
@@ -1178,6 +1851,7 @@
     if (entry.waitTime) metaBits.push('<span>待ち時間 ' + escapeHtml(entry.waitTime) + '</span>');
     if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
     if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
+    if (entry.otherUrl) metaBits.push('<a href="' + escapeHtml(entry.otherUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">リンク</a>');
 
     var ratingSummary = Core.ratingSummary(entry.ratings);
     var ratingHtml = ratingSummary.count
@@ -1185,7 +1859,16 @@
       : '';
 
     // 詳細（detail）は一覧には出さない。タップして記録編集を開けば見られる。
+    // entry-card-head：別の予定へこの記録を移す用（音声入力で「予定」になってしまったものを
+    // 別の予定の「記録」として移したい、という要望より）。持ち手をドラッグするか、
+    // 「移動」ボタンから移動先の予定を選んでも移せる。同じ日の予定にだけ移動できる。
     card.innerHTML =
+      '<div class="entry-card-head">' +
+        '<button type="button" class="entry-move-btn" aria-label="別の予定に移動">' + MOVE_ICON + '<span>移動</span></button>' +
+        '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
+      '</div>' +
+      '<div class="entry-move-menu" hidden></div>' +
+      (entry.time ? '<div class="entry-time">' + escapeHtml(entry.time) + '</div>' : '') +
       (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
       (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
       photosHtml +
@@ -1195,17 +1878,130 @@
       costHtml +
       (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '');
 
-    // 写真をタップしたときは編集画面へ行かず、拡大表示（ライトボックス）を開く
+    // 写真・動画をタップしたときは編集画面へ行かず、拡大表示（ライトボックス）を開く。
+    // 動画は（アルバムと同じく）タイルをタップしたときだけライトボックスを開く作りにしたので、
+    // 以前あった「動画の全画面再生から戻ると編集画面が勝手に開く」バグ（iOSのWKWebViewが
+    // 全画面再生を閉じたときにvideo要素へ合成的なclickイベントを発生させる挙動が原因だった）も、
+    // ライトボックスがentry-cardの外側にあるDOM構造になったことで併せて解消される。
     card.addEventListener('click', function (e) {
       var photoEl = e.target.closest('.entry-photo');
       if (photoEl) {
         e.stopPropagation();
-        openPhotoLightbox(photoUrl(photoEl.dataset.photoId));
+        var photoIds = entry.photoIds || [];
+        openPhotoLightbox(photoIds, Math.max(0, photoIds.indexOf(photoEl.dataset.photoId)));
         return;
       }
+      var videoTile = e.target.closest('.entry-video-tile');
+      if (videoTile) {
+        e.stopPropagation();
+        openVideoLightbox(photoUrl(videoTile.dataset.videoId));
+        return;
+      }
+      if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       openEntryForm(block.id, entry);
     });
+    $('.entry-move-btn', card).addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggleEntryMoveMenu(card, entry.id, block.id);
+    });
     return card;
+  }
+
+  // 「移動」ボタン：同じ日の他の予定を一覧で出し、選ぶとそこへ記録を移す
+  // （指でのドラッグ操作がしづらい場合の代わり）。
+  function toggleEntryMoveMenu(card, entryId, currentBlockId) {
+    var menu = $('.entry-move-menu', card);
+    var wasOpen = !menu.hidden;
+    $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
+    if (wasOpen) return;
+
+    var targets = currentDayBlocks().filter(function (b) { return b.id !== currentBlockId; });
+    if (!targets.length) {
+      menu.innerHTML = '<p class="hint">この日には他に移動先の予定がありません。</p>';
+    } else {
+      menu.innerHTML = targets.map(function (b) {
+        return '<button type="button" class="entry-move-target" data-block-id="' + escapeHtml(b.id) + '">' +
+          (b.time ? escapeHtml(b.time) + ' ' : '') + escapeHtml(b.label || Core.categoryLabel(b.category)) +
+          '</button>';
+      }).join('');
+      $all('.entry-move-target', menu).forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          moveEntryTo(entryId, btn.dataset.blockId);
+        });
+      });
+    }
+    menu.hidden = false;
+  }
+
+  function moveEntryTo(entryId, targetBlockId) {
+    api('/entries/' + encodeURIComponent(entryId) + '/move', 'PATCH', { blockId: targetBlockId })
+      .then(function () { return refreshTrip(); })
+      .then(function () { renderDaySection(); })
+      .catch(function () { alert('記録の移動に失敗しました。もう一度お試しください。'); });
+  }
+
+  // ---------- 記録（entry）のドラッグでの移動（別の予定へ）----------
+  // Blockの並べ替え（initBlockDragReorder）と同じくpointer eventsで実装。
+  // こちらは「同じリスト内での並べ替え」ではなく「別のBlockへ移す」操作なので、
+  // ドラッグ中はカードを指に追従させ、指の真下にあるBlockを移動先候補としてハイライトするだけ。
+  var entryDragState = null;
+
+  function initEntryDragMove() {
+    var timelineEl = $('#timeline');
+
+    timelineEl.addEventListener('pointerdown', function (e) {
+      var handle = e.target.closest('.entry-drag-handle');
+      if (!handle) return;
+      var draggedEl = handle.closest('.entry-card');
+      if (!draggedEl) return;
+      e.preventDefault();
+
+      var rect = draggedEl.getBoundingClientRect();
+      entryDragState = {
+        handle: handle, draggedEl: draggedEl, pointerId: e.pointerId,
+        offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+        width: rect.width, sourceBlockId: draggedEl.dataset.blockId, targetEl: null
+      };
+      draggedEl.style.width = rect.width + 'px';
+      draggedEl.style.left = rect.left + 'px';
+      draggedEl.style.top = rect.top + 'px';
+      draggedEl.classList.add('dragging');
+      handle.setPointerCapture(e.pointerId);
+    });
+
+    timelineEl.addEventListener('pointermove', function (e) {
+      if (!entryDragState || e.pointerId !== entryDragState.pointerId) return;
+      e.preventDefault();
+      entryDragState.draggedEl.style.left = (e.clientX - entryDragState.offsetX) + 'px';
+      entryDragState.draggedEl.style.top = (e.clientY - entryDragState.offsetY) + 'px';
+
+      var under = document.elementFromPoint(e.clientX, e.clientY);
+      var blockEl = under && under.closest('.block');
+      if (blockEl && blockEl.dataset.blockId === entryDragState.sourceBlockId) blockEl = null;
+      if (entryDragState.targetEl !== blockEl) {
+        if (entryDragState.targetEl) entryDragState.targetEl.classList.remove('drop-target');
+        if (blockEl) blockEl.classList.add('drop-target');
+        entryDragState.targetEl = blockEl;
+      }
+    });
+
+    function endEntryDrag(e) {
+      if (!entryDragState || e.pointerId !== entryDragState.pointerId) return;
+      var ds = entryDragState;
+      entryDragState = null;
+      ds.handle.releasePointerCapture(ds.pointerId);
+      ds.draggedEl.classList.remove('dragging');
+      ds.draggedEl.style.left = '';
+      ds.draggedEl.style.top = '';
+      ds.draggedEl.style.width = '';
+      if (ds.targetEl) {
+        ds.targetEl.classList.remove('drop-target');
+        moveEntryTo(ds.draggedEl.dataset.entryId, ds.targetEl.dataset.blockId);
+      }
+    }
+    timelineEl.addEventListener('pointerup', endEntryDrag);
+    timelineEl.addEventListener('pointercancel', endEntryDrag);
   }
 
   function plusIcon() {
@@ -1286,15 +2082,25 @@
     state.pendingPhotos = [];
     state.formVideoIds = entry ? (entry.videoIds || []).slice() : [];
     state.pendingVideos = [];
-    state.formCostItems = entry ? (entry.costItems || []).map(function (it) { return { label: it.label, amount: it.amount }; }) : [];
+    state.formCostItems = entry ? (entry.costItems || []).map(function (it) {
+      var copy = { label: it.label, amount: it.amount };
+      if (it.paidBy) copy.paidBy = it.paidBy;
+      if (it.splitAmong && it.splitAmong.length) copy.splitAmong = it.splitAmong.slice();
+      return copy;
+    }) : [];
+    $('#receiptScanStatus').textContent = '';
 
     $('#entFormTitle').textContent = entry ? '記録を編集' : '記録を追加';
     $('#entEpisode').value = entry ? entry.episode : '';
     $('#entComment').value = entry ? entry.comment : '';
     $('#entDetail').value = entry ? entry.detail : '';
     $('#entWaitTime').value = entry ? entry.waitTime : '';
+    $('#entTime').value = entry ? entry.time : '';
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
+    $('#entOtherUrl').value = entry ? entry.otherUrl : '';
+    $('#entPlaceSearch').value = '';
+    $('#entMapPreview').hidden = true;
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
@@ -1328,17 +2134,33 @@
     }
 
     var mine = Core.myRatingScore(entry.ratings, user.email);
+    var mineWhole = Math.round(mine); // 星タップの見た目は整数（0.1刻みの端数は微調整ボタンで付ける）
     var stars = '';
     for (var i = 1; i <= 5; i++) {
-      stars += '<button type="button" class="star-btn' + (i <= mine ? ' on' : '') + '" data-score="' + i + '" aria-label="★' + i + '">★</button>';
+      stars += '<button type="button" class="star-btn' + (i <= mineWhole ? ' on' : '') + '" data-score="' + i + '" aria-label="★' + i + '">★</button>';
     }
-    widget.innerHTML = '<div class="stars">' + stars + '</div>';
+    var fine = mine > 0
+      ? '<div class="rating-fine">' +
+        '<button type="button" class="btn ghost small" id="ratingFineMinus">－0.1</button>' +
+        '<span class="rating-fine-value">★' + mine.toFixed(1) + '</span>' +
+        '<button type="button" class="btn ghost small" id="ratingFinePlus">＋0.1</button>' +
+        '</div>'
+      : '';
+    widget.innerHTML = '<div class="stars">' + stars + '</div>' + fine;
     $all('.star-btn', widget).forEach(function (btn) {
       btn.addEventListener('click', function () {
         var score = Number(btn.dataset.score);
-        setMyRating(score === mine ? 0 : score);
+        setMyRating(score === mineWhole ? 0 : score);
       });
     });
+    if (mine > 0) {
+      $('#ratingFineMinus', widget).addEventListener('click', function () {
+        setMyRating(Math.max(1, Math.round((mine - 0.1) * 10) / 10));
+      });
+      $('#ratingFinePlus', widget).addEventListener('click', function () {
+        setMyRating(Math.min(5, Math.round((mine + 0.1) * 10) / 10));
+      });
+    }
     $('#entRatingSummary').textContent = summaryText;
   }
 
@@ -1440,21 +2262,109 @@
     });
   }
 
+  // 「立て替え」（誰が払った・誰と割るか）の選択パネル。旅行の参加者（trip.companions）を
+  // チップで選ぶだけのシンプルな作り。チップを押すたびに全体を再描画するとパネルが
+  // 閉じてしまうので、ここだけはDOMを直接書き換えて開いたままにする。
+  function buildCostPayerRow(idx, row) {
+    var companions = (state.trip && state.trip.companions) || [];
+    var panel = document.createElement('div');
+    panel.className = 'cost-payer-row';
+    if (!companions.length) {
+      panel.innerHTML = '<p class="hint">参加者が未設定です。旅行の編集画面で参加者を入力すると選べるようになります。</p>';
+      return panel;
+    }
+    function currentItem() { return state.formCostItems[idx]; }
+    function updateToggleButton() {
+      var btn = row.querySelector('.cost-payer-toggle');
+      var paidBy = currentItem().paidBy;
+      btn.textContent = paidBy ? (paidBy + 'が立替') : '立て替えを設定';
+      btn.classList.toggle('on', !!paidBy);
+    }
+
+    var payerSection = document.createElement('div');
+    payerSection.className = 'cost-payer-section';
+    payerSection.innerHTML = '<span class="cost-payer-label">払った人</span><div class="chip-select" data-role="payer"></div>';
+    var splitSection = document.createElement('div');
+    splitSection.className = 'cost-payer-section';
+    splitSection.innerHTML =
+      '<span class="cost-payer-label">割る人（未選択なら払った人だけ）</span>' +
+      '<div class="chip-select" data-role="split"></div>' +
+      '<button type="button" class="btn ghost small cost-split-even">参加者全員で均等割り</button>';
+    var payerChipWrap = payerSection.querySelector('[data-role="payer"]');
+    var splitChipWrap = splitSection.querySelector('[data-role="split"]');
+
+    companions.forEach(function (name) {
+      var payerBtn = document.createElement('button');
+      payerBtn.type = 'button';
+      payerBtn.className = 'chip-option' + (currentItem().paidBy === name ? ' on' : '');
+      payerBtn.textContent = name;
+      payerBtn.addEventListener('click', function () {
+        var item = currentItem();
+        item.paidBy = (item.paidBy === name) ? '' : name;
+        $all('.chip-option', payerChipWrap).forEach(function (b) { b.classList.toggle('on', b === payerBtn && !!item.paidBy); });
+        updateToggleButton();
+      });
+      payerChipWrap.appendChild(payerBtn);
+
+      var splitBtn = document.createElement('button');
+      splitBtn.type = 'button';
+      splitBtn.className = 'chip-option' + ((currentItem().splitAmong || []).indexOf(name) !== -1 ? ' on' : '');
+      splitBtn.textContent = name;
+      splitBtn.addEventListener('click', function () {
+        var item = currentItem();
+        item.splitAmong = item.splitAmong || [];
+        var pos = item.splitAmong.indexOf(name);
+        if (pos === -1) item.splitAmong.push(name); else item.splitAmong.splice(pos, 1);
+        splitBtn.classList.toggle('on', item.splitAmong.indexOf(name) !== -1);
+      });
+      splitChipWrap.appendChild(splitBtn);
+    });
+
+    splitSection.querySelector('.cost-split-even').addEventListener('click', function () {
+      var item = currentItem();
+      item.splitAmong = companions.slice();
+      $all('.chip-option', splitChipWrap).forEach(function (b) { b.classList.add('on'); });
+    });
+
+    var clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'btn ghost small cost-payer-clear';
+    clearBtn.textContent = '立て替えの設定を外す';
+    clearBtn.addEventListener('click', function () {
+      var item = currentItem();
+      delete item.paidBy;
+      delete item.splitAmong;
+      updateToggleButton();
+      panel.remove();
+    });
+
+    panel.appendChild(payerSection);
+    panel.appendChild(splitSection);
+    panel.appendChild(clearBtn);
+    return panel;
+  }
+
   // 費用の明細（costItems）は、基本は「個人（またはそのサブグループ）が実際に払った金額」を
-  // そのまま入れる（CONTEXT.md参照）。ただし駐車場代など全体でまとめて払ったものは、
-  // 「全体費用」と「人数」から個人費用を計算して入れられるよう、行ごとに電卓を用意する
-  // （計算結果を金額欄に反映するだけで、保存する値はあくまで個人費用のまま）。
+  // そのまま入れる（CONTEXT.md参照）。駐車場代など全体でまとめて払ったものを人数で割りたい
+  // ときは、下記「立て替え」機能で全体の金額をそのまま入れ、払った人・割る人を選ぶ
+  // （以前あった「全体費用÷人数」電卓は、金額欄の意味が「個人費用」と「全体の金額」の
+  // どちらか曖昧になり、立て替え機能と併用すると二重に割ってしまう事故のもとだったため廃止した）。
+  // 「立て替え」（誰が払った・誰と割るか）は任意項目。触らなければ、これまでどおり
+  // 「本人の個人費用」として扱われ、割り勘の精算画面（貸し借り）には出てこない。
   function renderCostItems() {
     var el = $('#entCostItems');
     el.innerHTML = '';
     state.formCostItems.forEach(function (item, idx) {
       var row = document.createElement('div');
       row.className = 'cost-item-row';
+      var payerLabel = item.paidBy ? (item.paidBy + 'が立替') : '立て替えを設定';
       row.innerHTML =
         '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
         '<input type="number" min="0" step="1" placeholder="円" value="' + (item.amount || '') + '">' +
-        '<button type="button" class="cost-split-toggle" aria-label="全体費用から計算">÷人数</button>' +
-        '<button type="button" aria-label="削除">×</button>';
+        '<button type="button" aria-label="削除">×</button>' +
+        '<div class="cost-item-row-actions">' +
+          '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
+        '</div>';
       var inputs = row.querySelectorAll('input');
       var amountInput = inputs[1];
       inputs[0].addEventListener('input', function (e) { state.formCostItems[idx].label = e.target.value; });
@@ -1462,27 +2372,10 @@
         state.formCostItems[idx].amount = Math.max(0, parseInt(e.target.value, 10) || 0);
         renderCostTotal();
       });
-      row.querySelector('.cost-split-toggle').addEventListener('click', function () {
+      row.querySelector('.cost-payer-toggle').addEventListener('click', function () {
         var existing = row.nextElementSibling;
-        if (existing && existing.classList.contains('cost-split-row')) { existing.remove(); return; }
-        var splitRow = document.createElement('div');
-        splitRow.className = 'cost-split-row';
-        splitRow.innerHTML =
-          '<input type="number" min="0" step="1" placeholder="全体費用（円）">' +
-          '<span>÷</span>' +
-          '<input type="number" min="1" step="1" placeholder="人数" value="2">' +
-          '<button type="button">反映</button>';
-        var splitInputs = splitRow.querySelectorAll('input');
-        splitRow.querySelector('button').addEventListener('click', function () {
-          var total = Math.max(0, parseInt(splitInputs[0].value, 10) || 0);
-          var count = Math.max(1, parseInt(splitInputs[1].value, 10) || 1);
-          var perPerson = Math.round(total / count);
-          amountInput.value = perPerson;
-          state.formCostItems[idx].amount = perPerson;
-          renderCostTotal();
-          splitRow.remove();
-        });
-        row.insertAdjacentElement('afterend', splitRow);
+        if (existing && existing.classList.contains('cost-payer-row')) { existing.remove(); return; }
+        row.insertAdjacentElement('afterend', buildCostPayerRow(idx, row));
       });
       row.querySelector('[aria-label="削除"]').addEventListener('click', function () {
         state.formCostItems.splice(idx, 1);
@@ -1498,6 +2391,58 @@
     $('#entCostTotal').textContent = state.formCostItems.length ? '計 ' + Core.formatYen(total) : '';
   }
 
+  // レシートの写真から読み取った内訳を費用明細欄に追加するだけで、まだ何も保存はしない。
+  // 「保存」ボタンを押すまでは本人が内容を見て消す・直すことができる（AIの読み取り誤りが
+  // そのままDBに残らないようにするための確認ステップ）。
+  function handleScanReceipt(file) {
+    var user = loadCurrentUser();
+    if (!user) {
+      $('#receiptScanStatus').textContent = 'ログインすると使えます。';
+      return;
+    }
+    var status = $('#receiptScanStatus');
+    status.textContent = '読み取り中…（数十秒かかることがあります）';
+    $('#btnScanReceipt').disabled = true;
+    fileToCompressedBlob(file, 1600, 0.85).then(function (blob) {
+      return scanReceiptBlob(blob, user.email);
+    }).then(function (res) {
+      $('#btnScanReceipt').disabled = false;
+      var items = (res && res.items) || [];
+      if (!items.length) { status.textContent = '品目を読み取れませんでした。写真を変えてお試しください。'; return; }
+      items.forEach(function (it) {
+        state.formCostItems.push({ label: (it.label || '').trim(), amount: Math.max(0, Math.round(it.amount || 0)) });
+      });
+      renderCostItems();
+      status.textContent = items.length + '件の明細を追加しました。内容を確認してください。';
+    }).catch(function (e) {
+      $('#btnScanReceipt').disabled = false;
+      var msg = (e && e.message) || '';
+      if (msg === 'server_not_configured') status.textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
+      else if (msg === 'rate_limited') status.textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'invalid_model_output' || msg === 'upstream_error') status.textContent = 'うまく読み取れませんでした。もう一度お試しください。';
+      else if (msg === 'premium_required' || msg === 'quota_exceeded') status.textContent = '今月の利用回数の上限に達しました（音声入力・テキストメモと共通の枠です）。';
+      else if (msg === 'login_required') status.textContent = 'ログインすると使えます。';
+      else status.textContent = '失敗しました。もう一度お試しください。';
+    });
+  }
+
+  // ---------- 場所名からの地図検索（「地図のURL」欄の入力補助） ----------
+  // Google Maps Embed API（APIキーが要る）は使わず、キー不要の地図表示・検索URLの
+  // 形式（.../maps?q=...&output=embed、.../maps/search/?api=1&query=...）だけを使う。
+  // どちらもGoogle側が場所名をその場で解決してくれるので、こちらでジオコーディングは行わない。
+  function showPlaceMapPreview() {
+    var place = $('#entPlaceSearch').value.trim();
+    if (!place) return;
+    $('#entMapPreviewFrame').src = 'https://maps.google.com/maps?q=' + encodeURIComponent(place) + '&output=embed';
+    $('#entMapPreview').hidden = false;
+  }
+
+  function useSearchedPlaceAsMapUrl() {
+    var place = $('#entPlaceSearch').value.trim();
+    if (!place) return;
+    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(place);
+  }
+
   function saveEntry() {
     var status = $('#entFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
@@ -1509,10 +2454,17 @@
       comment: $('#entComment').value.trim(),
       detail: $('#entDetail').value.trim(),
       costItems: state.formCostItems.filter(function (it) { return it.label.trim() || it.amount; })
-        .map(function (it) { return { label: it.label.trim() || '費用', amount: it.amount || 0 }; }),
+        .map(function (it) {
+          var out = { label: it.label.trim() || '費用', amount: it.amount || 0 };
+          if (it.paidBy) out.paidBy = it.paidBy;
+          if (it.splitAmong && it.splitAmong.length) out.splitAmong = it.splitAmong;
+          return out;
+        }),
       waitTime: $('#entWaitTime').value.trim(),
+      time: $('#entTime').value || '',
       mapUrl: $('#entMapUrl').value.trim(),
       shopUrl: $('#entShopUrl').value.trim(),
+      otherUrl: $('#entOtherUrl').value.trim(),
       author: author
     };
 
@@ -1558,6 +2510,7 @@
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogItems = data.items || [];
       state.myLogTrips = data.trips || [];
+      state.myLogPlaces = data.places || { prefectures: [], countries: [] };
       renderMyLog();
     }).catch(function () {
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
@@ -1582,24 +2535,23 @@
     var optionsEl = $('#planOptions');
     var msgEl = $('#planStatusMessage');
     var badgeEl = $('#planBadgeTop');
+    var manageBtn = $('#btnManageBilling');
     var account = state.account;
     if (!account) {
       statusEl.innerHTML = '';
       optionsEl.innerHTML = '';
       msgEl.textContent = '';
       badgeEl.hidden = true;
+      manageBtn.hidden = true;
       return;
     }
+    manageBtn.hidden = account.plan === 'free';
     var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
-    var usageText = account.plan === 'free'
-      ? '音声入力機能はまだ使えません'
-      : '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
+    var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
 
     badgeEl.hidden = false;
     badgeEl.classList.toggle('is-free', account.plan === 'free');
-    badgeEl.textContent = account.plan === 'free'
-      ? '音声入力：未登録'
-      : planName + '・残り' + account.voiceRemainingThisPeriod + '回';
+    badgeEl.textContent = planName + '・残り' + account.voiceRemainingThisPeriod + '回';
 
     statusEl.innerHTML =
       '<div class="plan-name">今のプラン：' + escapeHtml(planName) + '</div>' +
@@ -1621,12 +2573,21 @@
     msgEl.textContent = '';
   }
 
+  // iOSアプリ内ではlocation.originがcapacitor://localhostになってしまい、
+  // Stripeへの戻り先URLとしては使えず、他の人と共有するリンクとしても開けない。
+  // その場合は実際に公開しているWebサイトのURLを使う。
+  function publicPageUrl() {
+    return isNativeApp()
+      ? 'https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/'
+      : location.origin + location.pathname;
+  }
+
   function startCheckout(plan) {
     var user = loadCurrentUser();
     if (!user) { openLogin('mylog'); return; }
     var msgEl = $('#planStatusMessage');
     msgEl.textContent = '決済ページに移動しています…';
-    var returnUrl = location.origin + location.pathname;
+    var returnUrl = publicPageUrl();
     api('/billing/checkout', 'POST', {
       email: user.email,
       plan: plan,
@@ -1637,6 +2598,39 @@
       else msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
     }).catch(function () {
       msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
+    });
+  }
+
+  function startBillingPortal() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('mylog'); return; }
+    var msgEl = $('#planStatusMessage');
+    msgEl.textContent = '支払い管理ページに移動しています…';
+    api('/billing/portal', 'POST', {
+      email: user.email,
+      returnUrl: publicPageUrl()
+    }).then(function (res) {
+      if (res && res.url) location.href = res.url;
+      else msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
+    }).catch(function () {
+      msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
+    });
+  }
+
+  // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
+  // アカウント本体（名前・プラン・回数券・参加した旅行への紐付け）だけを消す。
+  // メールアドレスは、削除→再登録を繰り返した無料枠の不正な繰り返し取得を防ぐため残す（worker側の実装を参照）。
+  function deleteMyAccount() {
+    var user = loadCurrentUser();
+    if (!user) return;
+    if (!confirm('アカウントを削除しますか？\n（名前・プラン・回数券の情報が削除されます。旅行の記録自体は削除されません。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
+    api('/accounts/delete', 'POST', { email: user.email }).then(function () {
+      clearCurrentUser();
+      renderAccountRow();
+      alert('アカウントを削除しました。');
+      goHome();
+    }).catch(function () {
+      alert('アカウントの削除に失敗しました。もう一度お試しください。');
     });
   }
 
@@ -1655,9 +2649,33 @@
 
   function renderMyLog() {
     renderMyLogTrips();
+    renderMyLogPlaces();
     renderMyLogTabs();
     renderMyLogSort();
     renderMyLogList();
+  }
+
+  // 「訪れた都道府県・国」：参加した旅行の「日ごとの場所」（天気取得のときに入力した地名）から
+  // サーバー側で自動集計されたものを、そのままチップで並べるだけ（フロント側では集計しない）。
+  function renderMyLogPlaces() {
+    var el = $('#mylogPlaces');
+    var places = state.myLogPlaces || { prefectures: [], countries: [] };
+    var prefectures = places.prefectures || [];
+    var countries = places.countries || [];
+    if (!prefectures.length && !countries.length) {
+      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行の日タブで「＋場所を設定」すると、ここに自動で集計されます。</div>';
+      return;
+    }
+    var html = '';
+    if (prefectures.length) {
+      html += '<div class="visited-group"><span class="visited-group-label">都道府県（' + prefectures.length + '）</span><div class="visited-chips">'
+        + prefectures.map(function (p) { return '<span class="visited-chip">' + escapeHtml(p) + '</span>'; }).join('') + '</div></div>';
+    }
+    if (countries.length) {
+      html += '<div class="visited-group"><span class="visited-group-label">海外（' + countries.length + 'か国）</span><div class="visited-chips">'
+        + countries.map(function (c) { return '<span class="visited-chip">' + escapeHtml(c) + '</span>'; }).join('') + '</div></div>';
+    }
+    el.innerHTML = html;
   }
 
   // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。
@@ -1740,7 +2758,38 @@
     $('#photoLightbox').addEventListener('click', function (e) {
       if (e.target === e.currentTarget) closePhotoLightbox();
     });
+    $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(-1); });
+    $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(1); });
+    initLightboxSwipe();
+    $('#btnCloseVideoLightbox').addEventListener('click', closeVideoLightbox);
+    $('#videoLightbox').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeVideoLightbox();
+    });
+    $('#btnOpenAlbum').addEventListener('click', openAlbum);
+    $('#btnOpenSettlement').addEventListener('click', openSettlement);
+    $('#filterCompanion').addEventListener('change', function (e) { state.homeFilters.companion = e.target.value; renderHomeTripList(); });
+    $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
+    $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
+    $('#btnScanReceipt').addEventListener('click', function () { $('#receiptFileInput').click(); });
+    $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
+    $('#entPlaceSearch').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); showPlaceMapPreview(); }
+    });
+    $('#btnUseMapUrl').addEventListener('click', useSearchedPlaceAsMapUrl);
+    $('#receiptFileInput').addEventListener('change', function (e) {
+      var file = e.target.files[0];
+      e.target.value = '';
+      if (file) handleScanReceipt(file);
+    });
+    $('#btnCancelWeatherEdit').addEventListener('click', function () { $('#weatherEditPanel').hidden = true; });
+    $('#btnSaveWeatherEdit').addEventListener('click', saveWeatherEdit);
     initBlockDragReorder();
+    initEntryDragMove();
+    initDaySwipe();
+    document.addEventListener('click', function (e) {
+      if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
+      $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
+    });
 
     $('#btnNewTrip').addEventListener('click', openNewTripForm);
     $('#btnCreateTrip').addEventListener('click', createTrip);
@@ -1764,6 +2813,7 @@
     });
     $('#btnVoiceRecord').addEventListener('click', handleVoiceRecordToggle);
     $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
+    $('#btnCreateTextEntries').addEventListener('click', handleCreateTextEntries);
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);
@@ -1785,7 +2835,7 @@
       e.target.value = '';
     });
 
-    var MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+    var MAX_VIDEO_BYTES = 200 * 1024 * 1024;
     $('#entVideoPicker').addEventListener('click', function () { $('#entVideo').click(); });
     $('#entVideo').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
@@ -1794,7 +2844,7 @@
         state.pendingVideos.push({ blob: f, name: f.name, size: f.size });
       });
       renderVideoPreview();
-      if (tooBig.length) alert('50MBを超える動画は追加できませんでした：' + tooBig.map(function (f) { return f.name; }).join('、'));
+      if (tooBig.length) alert('200MBを超える動画は追加できませんでした：' + tooBig.map(function (f) { return f.name; }).join('、'));
       e.target.value = '';
     });
 
@@ -1826,6 +2876,8 @@
     $('#planBadgeTop').addEventListener('click', function () {
       $('#planStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+    $('#btnManageBilling').addEventListener('click', startBillingPortal);
+    $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
 
     $('#mylogSort').addEventListener('click', function (e) {
       var btn = e.target.closest('.sort-btn');
@@ -1996,7 +3048,12 @@
 
   function copyShareLink() {
     if (!state.trip) return;
-    var url = location.href;
+    // iOSアプリ内ではlocation.hrefがcapacitor://localhost/...になり、
+    // 他の人に共有しても開けないリンクになってしまうため、その場合は
+    // 実際に公開しているWebサイトのURLを組み立てる。
+    var url = isNativeApp()
+      ? Core.buildShareUrl(publicPageUrl(), '', state.trip.id)
+      : location.href;
     var done = function () {
       var status = $('#tripDetailStatus');
       status.textContent = 'リンクをコピーしました。共有した相手も見たり書き足したりできます。';
