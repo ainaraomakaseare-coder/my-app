@@ -2,7 +2,7 @@
  * 実ブラウザで記録の追加・編集・削除と各画面の切り替えを確かめる。
  * 実行: node test/ui.smoke.js [index.html]
  */
-const { chromium } = require("/opt/node22/lib/node_modules/playwright");
+const { chromium } = require("playwright");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -24,7 +24,7 @@ function check(label, cond, extra){
   await new Promise(r => server.listen(0, "127.0.0.1", r));
   const URL = "http://127.0.0.1:" + server.address().port + "/";
 
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? {channel:process.env.PLAYWRIGHT_CHANNEL} : {});
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await ctx.newPage();
 
@@ -32,6 +32,7 @@ function check(label, cond, extra){
   page.on("pageerror", e => errors.push(String(e)));
   page.on("console", m => { if(m.type() === "error" && !/font|net::/i.test(m.text())) errors.push(m.text()); });
   await page.goto(URL);
+  await page.click("#nav-list");
 
   const vis = s => page.isVisible(s);
   const val = s => page.$eval(s, e => e.value);
@@ -50,7 +51,7 @@ function check(label, cond, extra){
   await page.fill("#f-venue", "横浜スタジアム");
   await page.fill("#f-bay-score", "5");
   await page.fill("#f-opp-score", "3");
-  check("スコア入力で勝敗が自動判定される", await val("#f-result"), "win");
+  check("スコア入力で勝敗が自動判定される", await val("#f-result") === "win");
 
   await page.fill("#f-companion-input", "友人A");
   await page.click("#f-companion-add");
@@ -110,11 +111,12 @@ function check(label, cond, extra){
   await page.click("#settings-api-save");
   await page.reload();
   await page.click("#nav-settings");
-  check("APIキーが保存され再読み込み後も残る", await val("#settings-api-key"), "dummy-key-123");
+  check("APIキーが保存され再読み込み後も残る", await val("#settings-api-key") === "dummy-key-123");
 
   /* ───────── 再読み込みしてもデータが残る ───────── */
   await page.reload();
-  check("再読み込み後も一覧画面", await vis("#scr-list"));
+  check("再読み込み後はホーム画面", await vis("#scr-dashboard"));
+  await page.click("#nav-list");
   check("再読み込み後も記録が残る", await count(".game-card") === 1);
 
   check("JS エラーなし", errors.length === 0, errors.join(" | "));
