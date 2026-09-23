@@ -1501,7 +1501,11 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
       model: env.OPENAI_MODEL || "gpt-5.6-sol",
       input: multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes),
       reasoning: { effort: "medium" },
-      max_output_tokens: multiDay ? 3000 : 2000,
+      // 複数日モードは1回のレスポンスに何日ぶんものBlock/Entryが収まるため、1日固定より
+      // ずっと大きな出力になる（reasoningトークンもこの上限を共有する）。3000では
+      // 5日分程度の入力で出力が尻切れになりJSON.parseに失敗することが実際にあったため、
+      // 十分な余裕を持たせている（DAY30、実機での不具合報告を受けて調整）。
+      max_output_tokens: multiDay ? 12000 : 2000,
       store: false,
       text: {
         format: {
@@ -1519,7 +1523,14 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
   const response = await upstream.json();
   let parsed;
   try { parsed = JSON.parse(outputText(response)); }
-  catch { return { error: "invalid_model_output" }; }
+  catch {
+    console.error(JSON.stringify({
+      event: "voice_blocks_parse_error", multiDay, status: response.status,
+      incompleteReason: response.incomplete_details && response.incomplete_details.reason,
+      outputTextLength: outputText(response).length,
+    }));
+    return { error: "invalid_model_output" };
+  }
   if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
   return { blocks: parsed.blocks };
 }
