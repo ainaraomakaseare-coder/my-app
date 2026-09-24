@@ -44,6 +44,9 @@ jobs:
       - name: Build for simulator
         if: inputs.destination != 'testflight'
         run: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO build
+      - name: Launch iPhone simulator and capture appearance
+        if: inputs.destination != 'testflight'
+        run: bash scripts/simulator-smoke.sh
       - name: Sign and upload to TestFlight
         if: inputs.destination == 'testflight'
         env:
@@ -61,5 +64,6 @@ jobs:
           path: |
             apps/day23-baydiary-ios/build/simulator/Build/Products/Debug-iphonesimulator/App.app
             apps/day23-baydiary-ios/build/export/*.ipa
+            apps/day23-baydiary-ios/build/qa/
           retention-days: 5
           if-no-files-found: error
