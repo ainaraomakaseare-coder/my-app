@@ -29,6 +29,8 @@ if(!project.pbxGroupByName('Resources')) {
   const main=project.getFirstProject().firstProject.mainGroup;
   project.getPBXGroupByKey(main).children.push({value:group.uuid,comment:'Resources'});
 }
+// xcode's serializer emits a literal 'undefined' directory for an unset path.
+delete project.pbxGroupByName('Resources').path;
 if(!project.hasFile('App/PrivacyInfo.xcprivacy'))project.addResourceFile('App/PrivacyInfo.xcprivacy',{target:project.getFirstTarget().uuid});
 await fs.copyFile('native/BayDiaryViewController.swift','ios/App/App/BayDiaryViewController.swift');
 if(!project.hasFile('BayDiaryViewController.swift')) {
