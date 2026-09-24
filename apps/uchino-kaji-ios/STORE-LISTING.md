@@ -15,4 +15,8 @@
 ・共有URLの再発行で古いリンクを無効化
 
 URLを知っている人は家庭の名前、家事設定、実績を読み書きできます。家族以外に転送しないでください。
-プライバシーポリシーURLとサポートURLは公開前に確定。
+プライバシーポリシーURL: https://uchino-kaji-shared.hiroyasmz.chatgpt.site/privacy
+サポートURL: https://uchino-kaji-shared.hiroyasmz.chatgpt.site/support
+マーケティングURL: https://uchino-kaji-shared.hiroyasmz.chatgpt.site
+
+App Privacy回答案: 家の名前・表示名・家事設定・家事の実績（User Content）を同期・集計のため収集。アカウント・広告・追跡はなし。App Store Connectの選択肢を確認して確定する。
