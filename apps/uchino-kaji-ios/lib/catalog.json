@@ -1,0 +1,884 @@
+[
+  {
+    "id": "c0-0",
+    "name": "朝食を用意",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 15
+  },
+  {
+    "id": "c0-1",
+    "name": "昼食を用意",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c0-2",
+    "name": "夕食を用意",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c0-3",
+    "name": "弁当の支度",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c0-4",
+    "name": "食卓の準備・片付け",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 5
+  },
+  {
+    "id": "c0-5",
+    "name": "食器・調理器具の洗浄",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 15
+  },
+  {
+    "id": "c0-6",
+    "name": "食器を収納",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 5
+  },
+  {
+    "id": "c0-7",
+    "name": "シンクの洗浄",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 5
+  },
+  {
+    "id": "c0-8",
+    "name": "コンロの拭き上げ",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 3,
+    "weight": 10
+  },
+  {
+    "id": "c0-9",
+    "name": "冷蔵庫の整理と期限確認",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c0-10",
+    "name": "換気扇の油汚れ落とし",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "months",
+    "every": 3,
+    "weight": 30
+  },
+  {
+    "id": "c0-11",
+    "name": "飲み物の作り置き",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "days",
+    "every": 2,
+    "weight": 5
+  },
+  {
+    "id": "c0-12",
+    "name": "製氷容器のお手入れ",
+    "category": "食事・台所",
+    "source": "fukui",
+    "kind": "months",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c1-0",
+    "name": "衣類の回収・仕分け・洗濯機のセット",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 2,
+    "weight": 10
+  },
+  {
+    "id": "c1-1",
+    "name": "洗濯物を干す・乾燥機へ移す",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 2,
+    "weight": 10
+  },
+  {
+    "id": "c1-2",
+    "name": "洗濯物の取り込みと収納",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 2,
+    "weight": 15
+  },
+  {
+    "id": "c1-3",
+    "name": "部分洗い・しみ抜き",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c1-4",
+    "name": "衣類のアイロンがけ",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 7,
+    "weight": 15
+  },
+  {
+    "id": "c1-5",
+    "name": "タオル類の交換",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 5
+  },
+  {
+    "id": "c1-6",
+    "name": "寝具カバーの交換と洗濯",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 7,
+    "weight": 15
+  },
+  {
+    "id": "c1-7",
+    "name": "布団を干す",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 14,
+    "weight": 10
+  },
+  {
+    "id": "c1-8",
+    "name": "洗濯・乾燥フィルターのお手入れ",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "days",
+    "every": 2,
+    "weight": 5
+  },
+  {
+    "id": "c1-9",
+    "name": "衣類をクリーニングへ出す・受け取る",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c1-10",
+    "name": "衣類の補修",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c1-11",
+    "name": "衣替えと衣類整理",
+    "category": "洗濯・衣類",
+    "source": "osaka",
+    "kind": "months",
+    "every": 6,
+    "weight": 40
+  },
+  {
+    "id": "c2-0",
+    "name": "浴槽を洗う",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c2-1",
+    "name": "浴室の床・壁のお手入れ",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 7,
+    "weight": 20
+  },
+  {
+    "id": "c2-2",
+    "name": "浴室排水口のごみ取り",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 3,
+    "weight": 5
+  },
+  {
+    "id": "c2-3",
+    "name": "浴室の鏡・蛇口の水あか取り",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 14,
+    "weight": 15
+  },
+  {
+    "id": "c2-4",
+    "name": "トイレの便器・便座清掃",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 3,
+    "weight": 10
+  },
+  {
+    "id": "c2-5",
+    "name": "トイレの床・壁清掃",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c2-6",
+    "name": "洗面ボウルの洗浄",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 3,
+    "weight": 5
+  },
+  {
+    "id": "c2-7",
+    "name": "洗面所の床・鏡清掃",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c2-8",
+    "name": "浴室用品の詰め替え",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "months",
+    "every": 1,
+    "weight": 5
+  },
+  {
+    "id": "c2-9",
+    "name": "トイレ用品の補充",
+    "category": "浴室・トイレ",
+    "source": "fukui",
+    "kind": "days",
+    "every": 7,
+    "weight": 5
+  },
+  {
+    "id": "c3-0",
+    "name": "床の掃除機がけ",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "days",
+    "every": 3,
+    "weight": 15
+  },
+  {
+    "id": "c3-1",
+    "name": "床の拭き掃除",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "days",
+    "every": 7,
+    "weight": 15
+  },
+  {
+    "id": "c3-2",
+    "name": "棚・家具のほこり取り",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c3-3",
+    "name": "窓ガラスのお手入れ",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "months",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c3-4",
+    "name": "窓枠・レールのお手入れ",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "months",
+    "every": 3,
+    "weight": 20
+  },
+  {
+    "id": "c3-5",
+    "name": "ドアノブ・スイッチ清掃",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "days",
+    "every": 7,
+    "weight": 5
+  },
+  {
+    "id": "c3-6",
+    "name": "換気口の清掃",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "months",
+    "every": 3,
+    "weight": 15
+  },
+  {
+    "id": "c3-7",
+    "name": "エアコンフィルターの点検・清掃",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "months",
+    "every": 1,
+    "weight": 15
+  },
+  {
+    "id": "c3-8",
+    "name": "照明器具のほこり取り",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "months",
+    "every": 3,
+    "weight": 15
+  },
+  {
+    "id": "c3-9",
+    "name": "ベッドを整える",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "days",
+    "every": 1,
+    "weight": 5
+  },
+  {
+    "id": "c3-10",
+    "name": "出しっぱなしの物を収納",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "days",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c3-11",
+    "name": "玄関の掃き掃除",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c3-12",
+    "name": "靴の整理と手入れ",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "months",
+    "every": 1,
+    "weight": 15
+  },
+  {
+    "id": "c3-13",
+    "name": "ベランダの清掃",
+    "category": "部屋・住まい",
+    "source": "kao",
+    "kind": "months",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c4-0",
+    "name": "ごみを集めて分別",
+    "category": "ごみ・資源",
+    "source": "fukui",
+    "kind": "days",
+    "every": 2,
+    "weight": 10
+  },
+  {
+    "id": "c4-1",
+    "name": "可燃ごみを集積所へ運ぶ",
+    "category": "ごみ・資源",
+    "source": "fukui",
+    "kind": "days",
+    "every": 3,
+    "weight": 5
+  },
+  {
+    "id": "c4-2",
+    "name": "資源ごみを洗って整理",
+    "category": "ごみ・資源",
+    "source": "fukui",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c4-3",
+    "name": "資源ごみを集積所へ運ぶ",
+    "category": "ごみ・資源",
+    "source": "fukui",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c4-4",
+    "name": "段ボール・古紙をまとめる",
+    "category": "ごみ・資源",
+    "source": "fukui",
+    "kind": "days",
+    "every": 14,
+    "weight": 10
+  },
+  {
+    "id": "c4-5",
+    "name": "ごみ箱の洗浄",
+    "category": "ごみ・資源",
+    "source": "fukui",
+    "kind": "months",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c4-6",
+    "name": "粗大ごみの手配・搬出",
+    "category": "ごみ・資源",
+    "source": "fukui",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c5-0",
+    "name": "献立と買い物メモの作成",
+    "category": "買い物・補充",
+    "source": "osaka",
+    "kind": "days",
+    "every": 3,
+    "weight": 10
+  },
+  {
+    "id": "c5-1",
+    "name": "食材の買い出し",
+    "category": "買い物・補充",
+    "source": "osaka",
+    "kind": "days",
+    "every": 3,
+    "weight": 30
+  },
+  {
+    "id": "c5-2",
+    "name": "購入品の収納・小分け",
+    "category": "買い物・補充",
+    "source": "osaka",
+    "kind": "days",
+    "every": 3,
+    "weight": 10
+  },
+  {
+    "id": "c5-3",
+    "name": "日用品の在庫チェック",
+    "category": "買い物・補充",
+    "source": "osaka",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c5-4",
+    "name": "日用品の購入",
+    "category": "買い物・補充",
+    "source": "osaka",
+    "kind": "days",
+    "every": 14,
+    "weight": 20
+  },
+  {
+    "id": "c5-5",
+    "name": "洗剤・石けんの補充",
+    "category": "買い物・補充",
+    "source": "osaka",
+    "kind": "months",
+    "every": 1,
+    "weight": 5
+  },
+  {
+    "id": "c5-6",
+    "name": "備蓄品の期限確認と入れ替え",
+    "category": "買い物・補充",
+    "source": "osaka",
+    "kind": "months",
+    "every": 6,
+    "weight": 20
+  },
+  {
+    "id": "c6-0",
+    "name": "郵便物と書類の仕分け",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "days",
+    "every": 3,
+    "weight": 10
+  },
+  {
+    "id": "c6-1",
+    "name": "家計の記録・支払い確認",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "months",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c6-2",
+    "name": "荷物の受け取り・発送手配",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c6-3",
+    "name": "役所・銀行の手続き",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c6-4",
+    "name": "家庭の予定調整・予約",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c6-5",
+    "name": "電池・電球の交換",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c6-6",
+    "name": "自治会の連絡・活動",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c6-7",
+    "name": "家族の通院への付き添い",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 60
+  },
+  {
+    "id": "c6-8",
+    "name": "自動車・自転車の手入れ",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "months",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c6-9",
+    "name": "防災用品の点検",
+    "category": "家計・暮らしの管理",
+    "source": "fukui",
+    "kind": "months",
+    "every": 6,
+    "weight": 20
+  },
+  {
+    "id": "c7-0",
+    "name": "洗濯槽の洗浄",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "months",
+    "every": 3,
+    "weight": 15
+  },
+  {
+    "id": "c7-1",
+    "name": "電子レンジ内部の清掃",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "days",
+    "every": 14,
+    "weight": 10
+  },
+  {
+    "id": "c7-2",
+    "name": "炊飯器のお手入れ",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "days",
+    "every": 3,
+    "weight": 5
+  },
+  {
+    "id": "c7-3",
+    "name": "食洗機のフィルター清掃",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "days",
+    "every": 7,
+    "weight": 10
+  },
+  {
+    "id": "c7-4",
+    "name": "加湿器のお手入れ",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "days",
+    "every": 7,
+    "weight": 15
+  },
+  {
+    "id": "c7-5",
+    "name": "空気清浄機のフィルター点検",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "months",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c7-6",
+    "name": "カーテンの洗濯",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "months",
+    "every": 6,
+    "weight": 30
+  },
+  {
+    "id": "c7-7",
+    "name": "寝具の季節入れ替え",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "months",
+    "every": 6,
+    "weight": 30
+  },
+  {
+    "id": "c7-8",
+    "name": "庭の除草・落ち葉集め",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "months",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c7-9",
+    "name": "玄関まわりの除雪",
+    "category": "季節・設備",
+    "source": "original",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c8-0",
+    "name": "ペットの食事と水の用意",
+    "category": "ペット・植物",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c8-1",
+    "name": "ペットのトイレ清掃",
+    "category": "ペット・植物",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c8-2",
+    "name": "ペットの散歩",
+    "category": "ペット・植物",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c8-3",
+    "name": "ペット用品のお手入れ",
+    "category": "ペット・植物",
+    "source": "osaka",
+    "kind": "days",
+    "every": 7,
+    "weight": 15
+  },
+  {
+    "id": "c8-4",
+    "name": "植物の水分チェック・水やり",
+    "category": "ペット・植物",
+    "source": "osaka",
+    "kind": "days",
+    "every": 3,
+    "weight": 5
+  },
+  {
+    "id": "c9-0",
+    "name": "子どもの朝支度を手伝う",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 15
+  },
+  {
+    "id": "c9-1",
+    "name": "園・学校などへの送り迎え",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c9-2",
+    "name": "子どもの食事の準備・補助",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c9-3",
+    "name": "子どもの入浴の手伝い",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c9-4",
+    "name": "寝る前の支度・寝かしつけ",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c9-5",
+    "name": "おむつ交換・授乳対応",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 30
+  },
+  {
+    "id": "c9-6",
+    "name": "学校の連絡と持ち物の確認",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 10
+  },
+  {
+    "id": "c9-7",
+    "name": "宿題・学習のサポート",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 1,
+    "weight": 20
+  },
+  {
+    "id": "c9-8",
+    "name": "子どもの衣類・靴のお手入れ",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "days",
+    "every": 7,
+    "weight": 15
+  },
+  {
+    "id": "c9-9",
+    "name": "健診や予防接種の予約・付き添い",
+    "category": "育児（必要な家庭のみ）",
+    "source": "osaka",
+    "kind": "ondemand",
+    "every": 1,
+    "weight": 60
+  }
+]
