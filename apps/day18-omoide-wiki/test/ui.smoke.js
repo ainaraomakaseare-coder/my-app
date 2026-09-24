@@ -266,7 +266,8 @@ const TINY_PNG = Buffer.from(
   await page.fill('#stopType', '食事');
   await page.click('#btnSaveStop');
   await page.waitForFunction(() => document.getElementById('stopFormWrap').hidden === true);
-  check('予定を追加すると一覧に日時が出る', (await page.textContent('#stopsTimeline')).indexOf('2019年10月5日 12:00') !== -1);
+  check('予定を追加すると日付の見出し（曜日つき）が出る', (await page.textContent('.stop-day-heading')) === '2019年10月5日（土）');
+  check('予定の時刻が左の列に出る', (await page.textContent('.stop-time')) === '12:00');
   check('タイミングと種類のラベルが出る', (await page.textContent('#stopsTimeline')).indexOf('到着') !== -1 && (await page.textContent('#stopsTimeline')).indexOf('食事') !== -1);
 
   await page.click('.add-detail-btn');
@@ -287,7 +288,7 @@ const TINY_PNG = Buffer.from(
   await page.waitForFunction(() => document.getElementById('stopDetailFormWrap').hidden === true);
   check('記録を追加すると小項目として表示される', (await page.textContent('#stopsTimeline')).indexOf('ラーメンを食べた') !== -1);
   check('一言も表示される', (await page.textContent('#stopsTimeline')).indexOf('また来たい') !== -1);
-  check('一人あたりの値段が表示される', (await page.textContent('#stopsTimeline')).indexOf('1200円') !== -1);
+  check('一人あたりの値段が表示される', (await page.textContent('#stopsTimeline')).indexOf('1,200円') !== -1);
   check('待ち時間が表示される', (await page.textContent('#stopsTimeline')).indexOf('15分') !== -1);
   check('地図・お店のリンクが表示される', await page.locator('.stop-link').count() === 2);
   check('写真のサムネイルが表示される', await page.locator('.stop-detail-body .thumbs img').count() === 1);
@@ -523,6 +524,7 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('[data-screen=home].active');
   check('削除すると一覧から消える', (await page.textContent('#wikiList')).indexOf('やまだ たろう') === -1);
 
+  check('絵文字ではなくSVGアイコンが描かれている', await page.locator('svg.icon').count() > 0);
   check('JSのエラーが発生していない', errors.length === 0, errors.join(' / '));
 
   await browser.close();
