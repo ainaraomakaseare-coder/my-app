@@ -1367,6 +1367,26 @@
     return '';
   }
 
+  // 音声入力・レシート読み取りは、内容の読み取りのため録音データ・メモの文章・レシート写真を
+  // 外部のAIサービス（OpenAI）へ送信する（Apple Guideline 5.1.1(i)/5.1.2(i)対応）。
+  // 送信前に必ず内容を説明し、同意を得てから実際の送信処理へ進む。一度同意すればこの端末では
+  // 再確認しない（同意そのものをやり直したい場合はブラウザのサイトデータ削除で戻せる）。
+  var AI_CONSENT_KEY = 'tabilog:ai-consent';
+  function hasAiConsent() {
+    try { return localStorage.getItem(AI_CONSENT_KEY) === '1'; } catch (e) { return false; }
+  }
+  function confirmAiDataSharing() {
+    if (hasAiConsent()) return true;
+    var ok = confirm(
+      '音声入力・レシート読み取りでは、録音した音声・入力したメモの文章・レシートの写真を、' +
+      '内容の読み取り・文字起こしのために外部のAIサービス（OpenAI）へ送信します。\n' +
+      '送信されたデータはOpenAIのモデル学習には使われません（APIの既定ポリシー）。\n\n' +
+      '同意してこの機能を使いますか？'
+    );
+    if (ok) { try { localStorage.setItem(AI_CONSENT_KEY, '1'); } catch (e) {} }
+    return ok;
+  }
+
   // 音声入力は有料プラン専用（docs/adr/0004）。ログインしていない、またはプラン・回数券が
   // 無い場合は、録音の代わりに案内とプランへの導線を出す。
   // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
@@ -1376,6 +1396,7 @@
     var user = loadCurrentUser();
     if (!user) { openLogin('voiceEntryForm'); return; }
     if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから音声入力を始めてください。'); return; }
+    if (!confirmAiDataSharing()) return;
     state.voiceEntryMultiDay = !!multiDay;
     $('#voiceEntryTitle').textContent = multiDay ? '複数日をまとめて記録する' : '音声・メモでまとめて記録する';
     $('#voiceEntryLead').textContent = multiDay
@@ -2840,7 +2861,7 @@
     $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
     $('#sortTripOrder').addEventListener('change', function (e) { state.homeFilters.sort = e.target.value; renderHomeTripList(); });
-    $('#btnScanReceipt').addEventListener('click', function () { $('#receiptFileInput').click(); });
+    $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); showPlaceMapPreview(); }
