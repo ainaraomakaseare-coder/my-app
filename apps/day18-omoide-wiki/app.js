@@ -1098,13 +1098,73 @@
     Object.keys(micControllers).forEach(function (k) { micControllers[k].stop(); });
   }
 
-  function speak(text, onend) {
+  function speakWithBrowser(text, onend) {
     if (!supportsSynthesis()) { if (onend) onend(); return; }
-    window.speechSynthesis.cancel();
     var u = new SpeechSynthesisUtterance(text);
     u.lang = 'ja-JP';
     if (onend) u.onend = onend;
     window.speechSynthesis.speak(u);
+  }
+
+  // 読み上げはWorker経由のGemini TTSを優先し、使えないときはブラウザ標準の音声に切り替える。
+  // 1つの<audio>を使い回すのは、iPhoneなどで「最初のタップで一度鳴らした要素」しか後から再生できないため。
+  var ttsAudio = null;
+  var ttsUnavailable = false; // Worker側にGeminiのキーが無いと分かったら、このページを開いている間は試さない
+  var speakToken = 0;
+  var SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+
+  function unlockTtsAudio() {
+    if (ttsAudio) return;
+    ttsAudio = new Audio();
+    ttsAudio.src = SILENT_WAV;
+    var p = ttsAudio.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+
+  function stopSpeaking() {
+    speakToken++;
+    if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+
+  function fetchSpeech(text) {
+    var endpoint = getAiEndpoint();
+    if (!endpoint || ttsUnavailable) return Promise.resolve(null);
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 15000) : null;
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'tts', text: text }),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (res) {
+      if (timer) clearTimeout(timer);
+      if (res.status === 503) ttsUnavailable = true;
+      var type = res.headers.get('content-type') || '';
+      return res.ok && type.indexOf('audio/') === 0 ? res.blob() : null;
+    }).catch(function () {
+      if (timer) clearTimeout(timer);
+      return null;
+    });
+  }
+
+  function speak(text, onend) {
+    stopSpeaking();
+    var token = speakToken;
+    var fallback = function () { if (token === speakToken) speakWithBrowser(text, onend); };
+    fetchSpeech(text).then(function (blob) {
+      if (token !== speakToken) return;
+      if (!blob) { fallback(); return; }
+      if (!ttsAudio) ttsAudio = new Audio();
+      var url = URL.createObjectURL(blob);
+      ttsAudio.onended = function () {
+        URL.revokeObjectURL(url);
+        if (token === speakToken && onend) onend();
+      };
+      ttsAudio.src = url;
+      var p = ttsAudio.play();
+      if (p && p.catch) p.catch(function () { URL.revokeObjectURL(url); fallback(); });
+    });
   }
 
   // ---------- インタビュー ----------
@@ -1351,7 +1411,7 @@
   function goToPreviousQuestion() {
     if (!interviewHistory.length) return;
     stopAllMics();
-    window.speechSynthesis && window.speechSynthesis.cancel();
+    stopSpeaking();
     var last = interviewHistory.pop();
     var w = currentWiki();
     if (last.entryId) {
@@ -1372,7 +1432,7 @@
     // 何問か答えるごとに、続けるかどうかを聞く（お年寄りなど、長く話すと疲れる人のための一区切り）
     if (sessionAnswered > 0 && sessionAnswered !== lastBreakCheckpoint && sessionAnswered % BREAK_EVERY === 0) {
       lastBreakCheckpoint = sessionAnswered;
-      window.speechSynthesis && window.speechSynthesis.cancel();
+      stopSpeaking();
       var keepGoing = confirm(
         'ここまでで' + sessionAnswered + '問お答えいただきました。少し休憩しますか？\n\n' +
         '「OK」で続ける／「キャンセル」で今日はここまでにする（答えた内容はもう保存されているので、続きはまた今度できます）'
@@ -1401,7 +1461,7 @@
   }
 
   function finishInterview(message) {
-    window.speechSynthesis && window.speechSynthesis.cancel();
+    stopSpeaking();
     alert(message || '決まっている質問には答え終えました。またいつでも「質問で深掘りする」から続きができます。');
     openDash(currentWikiId);
   }
@@ -2171,6 +2231,7 @@
   function init() {
     store = loadStore();
     hydrateIcons();
+    document.addEventListener('pointerdown', unlockTtsAudio, { once: true });
 
     $('#btnNewWiki').addEventListener('click', function () { resetNewForm(); showScreen('new'); });
     $('#btnCreateWiki').addEventListener('click', createWiki);
@@ -2278,7 +2339,7 @@
     $all('.back').forEach(function (b) {
       b.addEventListener('click', function () {
         stopAllMics();
-        window.speechSynthesis && window.speechSynthesis.cancel();
+        stopSpeaking();
         showScreen(b.dataset.back);
         if (b.dataset.back === 'home') renderHome();
         if (b.dataset.back === 'dash') renderDash();

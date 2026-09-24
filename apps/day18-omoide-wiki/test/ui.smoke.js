@@ -379,15 +379,30 @@ const TINY_PNG = Buffer.from(
   // ---- AI深掘り（フェイクのWorkerを立てて模擬する） ----
   let aiCallCount = 0;
   let lastAiPayload = null;
+  const ttsTexts = [];
+  // 0.1秒の無音WAV（読み上げの代わりに返す）
+  const SILENT_WAV = (() => {
+    const pcm = Buffer.alloc(1600);
+    const h = Buffer.alloc(44);
+    h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8); h.write('fmt ', 12);
+    h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(8000, 24);
+    h.writeUInt32LE(16000, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
+    return Buffer.concat([h, pcm]);
+  })();
   const aiServer = http.createServer((req, res) => {
     const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
     if (req.method === 'OPTIONS') { res.writeHead(204, corsHeaders); return res.end(); }
     let body = '';
     req.on('data', c => { body += c; });
     req.on('end', () => {
-      aiCallCount++;
       let parsed = {};
       try { parsed = JSON.parse(body); } catch (e) { /* noop */ }
+      if (parsed.action === 'tts') {
+        ttsTexts.push(parsed.text);
+        res.writeHead(200, { 'Content-Type': 'audio/wav', ...corsHeaders });
+        return res.end(SILENT_WAV);
+      }
+      aiCallCount++;
       if (parsed.action !== 'compose') lastAiPayload = parsed;
       setTimeout(() => {
         res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
@@ -416,6 +431,10 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('[data-screen=interview].active');
   check('AIエンドポイント設定時はAI深掘りトグルが表示される', !(await page.isHidden('#aiDeepenBlock')));
   check('AI深掘りはWorker設定済みなら初回からONになっている', await page.isChecked('#aiDeepenToggle'));
+  const firstAiQuestion = await page.textContent('#qText');
+  for (let i = 0; i < 30 && !ttsTexts.length; i++) await page.waitForTimeout(100);
+  check('Worker設定時は、質問の読み上げをWorker（Gemini）に頼む', ttsTexts.indexOf(firstAiQuestion) !== -1, JSON.stringify(ttsTexts));
+  check('読み上げの依頼はAI深掘りの呼び出し回数に数えない', aiCallCount === 0, 'aiCallCount=' + aiCallCount);
 
   await page.fill('#qAnswer', '最初の回答です');
   await page.click('#btnSaveQ');

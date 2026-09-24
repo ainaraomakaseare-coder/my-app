@@ -208,6 +208,85 @@ function outputText(response) {
   return "";
 }
 
+/* ---- 読み上げ（Gemini TTS）---- */
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const TTS_MAX_CHARS = 400;
+
+function validTtsInput(x) {
+  return x && typeof x.text === "string" && x.text.trim().length >= 1 && x.text.length <= TTS_MAX_CHARS;
+}
+
+// Geminiは生のPCM（16bit・モノラル）を返すことがあるため、ブラウザでそのまま鳴らせるWAVに包む
+function pcmToWav(pcm, sampleRate) {
+  const header = new ArrayBuffer(44);
+  const v = new DataView(header);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + pcm.length, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, pcm.length, true);
+  const out = new Uint8Array(44 + pcm.length);
+  out.set(new Uint8Array(header), 0);
+  out.set(pcm, 44);
+  return out;
+}
+
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function audioFromGemini(response) {
+  for (const cand of response.candidates || []) {
+    for (const part of (cand.content && cand.content.parts) || []) {
+      const inline = part.inlineData || part.inline_data;
+      if (!inline || !inline.data) continue;
+      const mime = (inline.mimeType || inline.mime_type || "").toLowerCase();
+      const bytes = base64ToBytes(inline.data);
+      if (mime.includes("wav")) return { bytes, mime: "audio/wav" };
+      if (mime.includes("l16") || mime.includes("pcm") || !mime) {
+        const rate = Number((mime.match(/rate=(\d+)/) || [])[1]) || 24000;
+        return { bytes: pcmToWav(bytes, rate), mime: "audio/wav" };
+      }
+      return { bytes, mime };
+    }
+  }
+  return null;
+}
+
+async function requestGeminiSpeech(env, text, voiceName) {
+  const model = env.GEMINI_TTS_MODEL || "gemini-3.8-flash-lite-tts";
+  const generationConfig = { responseModalities: ["AUDIO"] };
+  if (voiceName) generationConfig.speechConfig = { voiceConfig: { prebuiltVoiceConfig: { voiceName } } };
+  return fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": env.GEMINI_API_KEY, "content-type": "application/json" },
+    body: JSON.stringify({ contents: [{ parts: [{ text }] }], generationConfig }),
+  });
+}
+
+async function handleTts(data, env, headers) {
+  if (!env.GEMINI_API_KEY) return json({ error: "tts_not_configured" }, 503, headers);
+  if (!validTtsInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  const text = data.text.trim();
+  let upstream = await requestGeminiSpeech(env, text, env.GEMINI_TTS_VOICE);
+  // 声の名前がモデル側で使えなくなっていても読み上げ自体は止めないよう、声の指定なしで1回だけやり直す
+  if (upstream.status === 400 && env.GEMINI_TTS_VOICE) upstream = await requestGeminiSpeech(env, text, "");
+  if (!upstream.ok) {
+    console.error(JSON.stringify({ event: "gemini_tts_error", status: upstream.status, body: (await upstream.text()).slice(0, 500) }));
+    return json({ error: "upstream_error" }, 502, headers);
+  }
+  const audio = audioFromGemini(await upstream.json());
+  if (!audio) return json({ error: "invalid_model_output" }, 502, headers);
+  return new Response(audio.bytes, {
+    status: 200,
+    headers: { "content-type": audio.mime, "cache-control": "no-store", ...headers },
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get("origin") || "";
@@ -217,13 +296,20 @@ export default {
     if (origin !== env.ALLOWED_ORIGIN && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       return json({ error: "origin_not_allowed" }, 403, headers);
     }
-    if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
-
     let data;
     try { data = await request.json(); } catch { return json({ error: "invalid_json" }, 400, headers); }
 
     /* 個人の回答内容はキャッシュしない。接続元単位でのみレート制限する。 */
     const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+
+    // 読み上げは質問のたびに呼ばれるため、AI深掘りとは別枠のレート制限にしている
+    if (data && data.action === "tts") {
+      const ttsLimited = await env.TTS_RATE_LIMITER.limit({ key: actor });
+      if (!ttsLimited.success) return json({ error: "rate_limited" }, 429, headers);
+      return handleTts(data, env, headers);
+    }
+
+    if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
     const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
 
