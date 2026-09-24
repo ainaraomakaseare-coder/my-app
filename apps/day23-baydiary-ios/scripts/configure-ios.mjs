@@ -50,6 +50,6 @@ await fs.writeFile(storyboardPath,storyboard);
 await fs.writeFile('ios/App/App.xcodeproj/project.pbxproj',project.writeSync());
 const icons='ios/App/App/Assets.xcassets/AppIcon.appiconset';
 await fs.mkdir(icons,{recursive:true});
-await sharp('resources/icon.svg').png().toFile(icons+'/AppIcon.png');
+await sharp('resources/icon.svg').removeAlpha().png().toFile(icons+'/AppIcon.png');
 await fs.writeFile(icons+'/Contents.json',JSON.stringify({images:[{filename:'AppIcon.png',idiom:'universal',platform:'ios',size:'1024x1024'}],info:{author:'xcode',version:1}},null,2));
 console.log('Configured iOS identity, permissions, privacy manifest and opaque 1024px icon.');

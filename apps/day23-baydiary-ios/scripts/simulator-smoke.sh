@@ -19,3 +19,6 @@ if ! grep -q 'com.hiroyaapps.baydiary' build/qa/processes.txt; then
   echo 'BayDiary is not running after launch' >&2
   exit 1
 fi
+
+# Preserve executable bits and framework symlinks when downloading from Actions.
+tar -czf build/BayDiary-simulator.tar.gz -C build/simulator/Build/Products/Debug-iphonesimulator App.app

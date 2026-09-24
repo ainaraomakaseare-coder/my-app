@@ -34,7 +34,7 @@ Macでは Xcode 26以降で ios/App/App.xcodeproj を開きます。依存管理
 | APPSTORE_CONNECT_API_ISSUER_ID | Issuer ID |
 | APPSTORE_CONNECT_API_PRIVATE_KEY | .p8秘密鍵 |
 
-既存証明書とAPIキーの再利用は権限と有効期限を確認して行います。既存の旅の足跡のプロファイルは再利用できません。専用profileのBundle ID/Team ID/有効期限/配信種別はビルド時に検査します。CI環境名は baydiary-build / baydiary-testflight。GitHubへの書込権限が必要です。現接続はREADなのでローカル準備までです。
+既存証明書とAPIキーの再利用は権限と有効期限を確認して行います。既存の旅の足跡のプロファイルは再利用できません。専用profileのBundle ID/Team ID/有効期限/配信種別はビルド時に検査します。CI環境名は baydiary-build / baydiary-testflight。GitHubへの書込権限が必要です。所有者アカウントのADMIN権限を確認し、開発ブランチをGitHubへ送信済みです。
 
 ## データ移行と実機検証
 
@@ -58,4 +58,4 @@ src/ios.css は端末フォント・相対文字サイズ・ダークモード�
 
 開発ブランチへのpushで署名不要のシミュレータービルドを行います。TestFlight送信は従来どおり明示的なworkflow_dispatchのみです。
 
-シミュレータービルド後はiPhoneを起動し、アプリをインストールして明暗両画面を撮影します。生成物のbuild/qaに起動時のスクリーンショットとプロセス一覧を保存します。これは起動確認であり、写真・共有・課金などの実機テストを代替しません。
+シミュレータービルド後はiPhoneを起動し、アプリをインストールして明暗両画面を撮影します。ダウンロード用のシミュレーターアプリは実行権限を保つtar.gzで保存します。生成物のbuild/qaに起動時のスクリーンショットとプロセス一覧を保存します。これは起動確認であり、写真・共有・課金などの実機テストを代替しません。

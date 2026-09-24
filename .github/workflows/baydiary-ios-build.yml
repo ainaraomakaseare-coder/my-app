@@ -62,7 +62,7 @@ jobs:
         with:
           name: baydiary-ios-${{ github.run_number }}
           path: |
-            apps/day23-baydiary-ios/build/simulator/Build/Products/Debug-iphonesimulator/App.app
+            apps/day23-baydiary-ios/build/BayDiary-simulator.tar.gz
             apps/day23-baydiary-ios/build/export/*.ipa
             apps/day23-baydiary-ios/build/qa/
           retention-days: 5
