@@ -515,6 +515,15 @@
   function forgetTrip(id) {
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(Core.removeTripIndexEntry(loadMyTrips(), id)));
   }
+  // 「この端末の旅行の履歴を削除」。tabilog:my-tripsはログイン状態と無関係の端末ローカルな
+  // 索引（ログアウトしても消えない）なので、別アカウントに切り替えて試すときなどに前の
+  // 旅行が残り続けて紛らわしい、という声を受けて追加した手動クリア機能。サーバー上の旅行
+  // データ自体は削除しない（あくまでこの端末の「開いたことのある旅行」一覧が空になるだけ）。
+  function clearTripHistory() {
+    if (!confirm('この端末に保存されている「旅行の履歴」を削除しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを知っていれば引き続き開けます）')) return;
+    localStorage.removeItem(MY_TRIPS_KEY);
+    renderHomeTripList();
+  }
 
   function photoUrl(id) {
     if (!id) return '';
@@ -1023,6 +1032,7 @@
   function renderHomeTripList() {
     var allTrips = loadMyTrips();
     $('#tripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない
+    $('#btnClearTripHistory').hidden = !allTrips.length; // 履歴が無ければ削除ボタンも出さない
     if (allTrips.length >= 2) renderTripFilterOptions(allTrips);
 
     var list = Core.sortTrips(Core.filterTrips(allTrips, state.homeFilters), state.homeFilters.sort);
@@ -2861,6 +2871,7 @@
     $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
     $('#sortTripOrder').addEventListener('change', function (e) { state.homeFilters.sort = e.target.value; renderHomeTripList(); });
+    $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
