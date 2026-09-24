@@ -1,0 +1,47 @@
+name: うちの家事 iOS TestFlight
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: uchino-kaji-testflight
+  cancel-in-progress: false
+jobs:
+  upload:
+    runs-on: macos-26
+    timeout-minutes: 35
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_P12_BASE64 }}
+      DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+      PROFILE_BASE64: ${{ secrets.KAJI_PROVISIONING_PROFILE_BASE64 }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+      API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+      API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+    defaults:
+      run:
+        working-directory: apps/uchino-kaji-ios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/uchino-kaji-ios/package-lock.json
+      - name: Require current iOS SDK
+        run: |
+          XCODE_PATH=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)
+          test -n "$XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+      - run: npm ci
+      - run: npm run ios:add
+      - name: Build and upload to TestFlight
+        run: bash scripts/testflight.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uchino-kaji-ipa-${{ github.run_number }}
+          path: apps/uchino-kaji-ios/build/export/*.ipa
+          retention-days: 5
+          if-no-files-found: error
