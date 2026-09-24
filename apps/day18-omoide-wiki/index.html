@@ -20,7 +20,7 @@
     <div class="wrap">
       <header class="hd">
         <h1>おもいでWiki</h1>
-        <p class="lead">1人の人生も、サークルやチームの思い出も。質問に答えたり、みんながエピソードを持ち寄ったりして、その人・その場所の「Wikipedia」を育てていくアプリです。</p>
+        <p class="lead">ひとりの人生を、質問に答えたり、みんながエピソードを持ち寄ったりしながら、その人の「Wikipedia」として育てていくアプリです。</p>
       </header>
 
       <div id="wikiList" class="wiki-list"></div>
@@ -48,7 +48,8 @@
         <h1>新しく作る</h1>
       </header>
 
-      <div class="field">
+      <!-- サークル・チーム用は当面新しく作れないようにしている（作成済みのWikiはそのまま使える）。戻すときはhiddenを外す -->
+      <div class="field" id="newTypeField" hidden>
         <label>何についてのWikiですか？</label>
         <div class="choice-row">
           <label class="choice"><input type="radio" name="newType" value="person" checked><span>ひとりの人生</span></label>
@@ -57,13 +58,13 @@
       </div>
 
       <div class="field">
-        <label for="newTitle">名前 / サークル名</label>
-        <input type="text" id="newTitle" placeholder="例：山田太郎　／　テニスサークルOASIS">
+        <label for="newTitle">名前</label>
+        <input type="text" id="newTitle" placeholder="例：山田太郎">
       </div>
 
       <div class="field">
         <label for="newSubtitle">一言（あとから変更できます）</label>
-        <input type="text" id="newSubtitle" placeholder="例：いつも笑っていた父　／　2019〜2023年 3期生">
+        <input type="text" id="newSubtitle" placeholder="例：いつも笑っていた父">
       </div>
 
       <button class="btn primary wide" id="btnCreateWiki">作る</button>

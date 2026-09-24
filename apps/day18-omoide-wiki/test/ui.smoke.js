@@ -86,6 +86,7 @@ const TINY_PNG = Buffer.from(
 
   // ---- 新規作成 ----
   await page.click('#btnNewWiki');
+  check('新規作成では、サークル・チームの選択肢は隠れている（当面は個人のみ）', await page.isHidden('#newTypeField'));
   await page.check('input[name=newType][value=person]');
   await page.fill('#newTitle', 'やまだ たろう');
   await page.fill('#newSubtitle', 'いつも笑っていた父');
