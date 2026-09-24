@@ -112,6 +112,19 @@ PRマージ後、「デザインダサい」との評価を受けた。DAY24〜2
 
 書き換え後も`node test/logic.test.js`（20件）・`node test/ui.smoke.js`（27件）が全て通過することを確認し、Playwrightで一覧・選手分析・フォーム・設定の4画面をスクリーンショットで目視確認した。
 
+## 追記：iOSアプリ化（マージ後）
+
+ユーザーから「iOSでアプリ化しよう」というリクエスト。DAY26で確立した「旅の足跡」のiOS化（Capacitor＋GitHub ActionsのmacOSランナーでビルドしTestFlightへアップロード）とまったく同じ仕組みを、ベイ日記にも適用した。
+
+- `apps/day23-baydiary-ios/`を新規作成。`capacitor.config.json`（`appId: com.hiroyaapps.baydiary`）・`package.json`は`day07-tabilog-ios`と同じ依存構成
+- アプリアイコン（1024×1024）とスプラッシュ（2732×2732）は、ベイ日記のチケット風デザイン（紺インク・クリーム紙・レンガ色）に合わせた野球ボールのモチーフをSVGで描き、Playwrightでスクリーンショットして生成した（外部の画像生成ツールを使わず、既存のPlaywright環境で完結させた）
+- `apps/day23-baydiary/privacy.html`を新規作成。本アプリはサーバーを持たずlocalStorage/IndexedDBのみに保存するため、「データは収集されません」と申告できる、旅の足跡よりシンプルな内容にした
+- `.github/workflows/baydiary-ios-build.yml`は、`tabilog-ios-build.yml`をほぼそのまま流用。**Apple Developer Programの登録・Team ID・App Store Connect APIキー・配布用証明書は、旅の足跡（DAY26）で作った同じApple Developerアカウントのものをそのまま使い回せる**ため、追加費用は発生しない（年会費$99の重複登録は不要）。一方、**Bundle ID固有のプロビジョニングプロファイルだけはアプリごとに別物が必要**なため、新しいシークレット`IOS_BAYDIARY_PROVISIONING_PROFILE_BASE64`として区別した
+- 写真添付でカメラ利用の説明文（`NSCameraUsageDescription`）が無いとクラッシュする、というDAY26で踏んだつまずきを、あらかじめInfo.plistへの追加ステップとして反映済み（同じ`<input type="file" accept="image/*">`を使っているため同じ問題が起きるはず）
+- `apps/day23-baydiary-ios/app-store-listing.md`・`README.md`（Apple管理画面での作業手順、旅の足跡との使い回し表つき）も用意した
+
+**未検証・ユーザー側の作業が必要な点**：このワークフロー自体はまだ一度もビルドを実行していない（tabilog-ios-build.ymlも実行検証済みとは限らない）。また、ベイ日記専用のBundle ID登録・App Store Connect上のアプリ作成・プロビジョニングプロファイル作成は、Appleの管理画面でユーザー自身が行う必要があり、まだ未実施。
+
 ## DAY RESULT
 
 ```
@@ -119,15 +132,18 @@ DAY 23 RESULT
 アプリ：ベイ日記（横浜DeNAベイスターズの観戦記録日記）
 人間：1h30m（本人申告・概算）
 AI：2h0m（本人申告・概算）
-費用：0円（api-sports.io有料プランへの加入は見送り、新規課金なし）
+費用：0円（api-sports.io有料プランへの加入は見送り、新規課金なし。iOS化もApple Developerアカウントを旅の足跡と共有するため追加費用なし）
 今日できるようになったこと
 ・観戦記録のような公式API未整備の領域で、手入力を主・API取得を試験的補助にする設計判断
 ・写真をIndexedDBに縮小保存し、localStorageの容量制限を避ける
 ・「デザインダサい」との指摘から、Claude Designで複数案を作りユーザーに選んでもらう進め方
 ・外部APIのエラーメッセージをそのまま表示する実装にしたことで、コードの推測ミスとAPI側の契約上の制約を素早く切り分けられた
+・別アプリ（旅の足跡）で確立したiOS化の仕組みを、Bundle ID固有の部分だけ差し替えて別アプリに横展開する
+・アプリアイコン・スプラッシュをPlaywrightでのスクリーンショット生成だけで用意する
 つまずいたこと
 ・開発環境のリポジトリが古い状態のまま止まっていることに気づかず、PR作成後に配置をやり直した
 ・NPBの試合結果を安定・無料で返す公式API相当のものが見つからなかった
 ・API-BASEBALLの無料プランは、チーム情報が2022〜2024年シーズン限定、試合結果はさらに厳しく実行日前後のみという制約があり、今シーズンの観戦記録には実質使えなかった
+・複数セッションが同じ作業ブランチ名を使い回す運用のため、未マージのPRを見失いかけるミスを2回起こした（その都度origin側から復旧）
 あと7 apps
 ```
