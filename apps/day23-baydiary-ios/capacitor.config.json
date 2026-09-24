@@ -1,0 +1,9 @@
+{
+  "appId": "com.hiroyaapps.baydiary",
+  "appName": "ベイ日記",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "automatic",
+    "backgroundColor": "#f4f6f8"
+  }
+}

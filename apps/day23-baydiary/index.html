@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="baydiary-public-url" content="">
 <title>ベイ日記 — あなたの観戦を、もっと面白く。</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -192,6 +192,9 @@ fieldset{min-width:0}#f-photo-input{width:100%;max-width:100%}
 
 #share-dialog>.section-heading{position:sticky;top:-28px;z-index:2;background:var(--paper);padding:12px 0;margin-bottom:16px}@media(max-width:700px){#share-dialog>.section-heading{top:-18px}}
 .competition-cards>div{min-width:0}.competition-cards .metric{height:calc(100% - 40px)}.competition-cards .text-button{white-space:normal;min-height:40px;width:100%}.list-controls{flex-wrap:wrap}#list-competition{max-width:100%}
+/* Keep controls clear of iPhone cutouts and the home indicator. */
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+@media(max-width:640px){input,select,textarea{font-size:16px}}
 </style>
 </head>
 <body>
@@ -1197,17 +1200,10 @@ function renderSettings(){
 }
 
 function exportData(){
-  getAllPhotos().then(function(photos){
+  getAllPhotos().then(async function(photos){
     var payload = { games: state.games, settings: state.settings, photos: photos, exportedAt: new Date().toISOString() };
     var blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = "bay-diary-" + new Date().toISOString().slice(0,10) + ".json";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    await downloadBlob(blob, "bay-diary-" + new Date().toISOString().slice(0,10) + ".json");
   });
 }
 
@@ -1343,7 +1339,7 @@ $('analysis-year').onchange=function(){ui.analysisYear=Number(this.value);render
 $('actual-form').onsubmit=function(ev){ev.preventDefault();var actual={win:Number($('actual-win').value),lose:Number($('actual-lose').value),draw:Number($('actual-draw').value)};if(!validActual(actual))return;var records=state.settings.actualRecords||(state.settings.actualRecords={});if(!records[ui.analysisTeam])records[ui.analysisTeam]={};records[ui.analysisTeam][ui.analysisYear]=actual;saveState();renderAnalysis();};
 
 var shareFile=null,shareVersion=0,memoReview=[],memoReviewedText='',memoController=null;
-function downloadBlob(blob,name){var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+function downloadBlob(blob,name){if(window.BayDiaryNative)return window.BayDiaryNative.shareFile(blob,name).catch(function(){alert('保存・共有を完了できませんでした。もう一度お試しください。');});var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 async function copyFeatureText(text,field,status){try{await navigator.clipboard.writeText(text);$(status).textContent='コピーしました。';}catch(e){$(field).hidden=false;$(field).value=text;$(field).focus();$(field).select();$(status).textContent='コピーできないため、表示した文章を選択してコピーしてください。';}}
 function publicShareURL(){var el=document.querySelector('meta[name="baydiary-public-url"]');try{var u=new URL(el?el.content:'');return u.protocol==='https:'&&!u.username&&!u.password&&!/^(localhost|127\.|\[::1\])/.test(u.hostname)?u.href:'';}catch(e){return '';}}
 function openShare(fromAnalysis){
@@ -1382,7 +1378,7 @@ $('share-team').onchange=()=>{ensureYearOptions($('share-year'),listYears(teamGa
 ['share-mode','share-year','share-venue','share-competition'].forEach(id=>$(id).onchange=renderShare);
 $('share-copy').onclick=()=>copyFeatureText($('share-caption').value,'share-caption','share-status');
 $('share-download').onclick=()=>{if(shareFile)downloadBlob(shareFile,shareFile.name);};
-$('share-native').onclick=async function(){if(!shareFile)return;try{if(navigator.canShare&&navigator.canShare({files:[shareFile]})){await navigator.share({files:[shareFile],title:'ベイ日記｜観戦成績',text:$('share-caption').value});$('share-status').textContent='共有メニューを閉じました。';}else{downloadBlob(shareFile,shareFile.name);$('share-status').textContent='このブラウザでは画像を保存します。投稿文もコピーしてお使いください。';}}catch(e){$('share-status').textContent=e.name==='AbortError'?'共有をキャンセルしました。':'共有できませんでした。「画像を保存」をお試しください。';}};
+$('share-native').onclick=async function(){if(!shareFile)return;try{if(window.BayDiaryNative){await window.BayDiaryNative.shareFile(shareFile,shareFile.name,$('share-caption').value);$('share-status').textContent='共有メニューを閉じました。';}else if(navigator.canShare&&navigator.canShare({files:[shareFile]})){await navigator.share({files:[shareFile],title:'ベイ日記｜観戦成績',text:$('share-caption').value});$('share-status').textContent='共有メニューを閉じました。';}else{downloadBlob(shareFile,shareFile.name);$('share-status').textContent='このブラウザでは画像を保存します。投稿文もコピーしてお使いください。';}}catch(e){$('share-status').textContent=e.name==='AbortError'?'共有をキャンセルしました。':'共有できませんでした。「画像を保存」をお試しください。';}};
 function openMemo(){if(!$('memo-team').options.length)fillTeamSelect($('memo-team'),selectedTeam());setView('memo');}
 function invalidateMemo(){memoReview=[];memoReviewedText='';$('memo-review').innerHTML='';$('memo-review-status').textContent='JSONを確認して「取込内容を確認」を押してください。';$('memo-import').disabled=true;}
 function previewMemo(){
@@ -1411,7 +1407,7 @@ $('memo-analyze').onclick=async function(){
  var input;try{input=memoInput();}catch(e){$('memo-status').textContent=e.message;return;}
  var previousDraft=$('memo-json').value;memoController=new AbortController();$('memo-analyze').disabled=true;$('memo-cancel-ai').hidden=false;$('memo-status').textContent='AIがメモを読み取っています…';
  var timeout=setTimeout(()=>memoController&&memoController.abort(),95000);
- try{var response=await fetch('/api/memo-extract',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal:memoController.signal});var data;try{data=await response.json();}catch(e){throw new Error('AI接続用サーバーでアプリを開いてください。別のAIで作ったJSONも読み込めます。');}if(!response.ok)throw new Error(data.error||'AI読み取りに失敗しました。');if(!Array.isArray(data.games))throw new Error('AIの応答形式が不正です。再試行してください。');
+ try{var response=await (window.BayDiaryNative?window.BayDiaryNative.extractMemo:fetch)('/api/memo-extract',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal:memoController.signal});var data;try{data=await response.json();}catch(e){throw new Error('AI接続用サーバーでアプリを開いてください。別のAIで作ったJSONも読み込めます。');}if(!response.ok)throw new Error(data.error||'AI読み取りに失敗しました。');if(!Array.isArray(data.games))throw new Error('AIの応答形式が不正です。再試行してください。');
  var json=JSON.stringify(data,null,2);if($('memo-json').value!==previousDraft){downloadBlob(new Blob([json],{type:'application/json'}),'baydiary-ai-result.json');$('memo-status').textContent='編集中のJSONを保護するため、AI結果をファイルとして保存しました。';}else{$('memo-json').value=json;previewMemo();$('memo-status').textContent=data.games.length?'読み取りが完了しました。内容を確認して登録してください。':'観戦試合を見つけられませんでした。試合日や相手を含めてください。';}
  }catch(e){$('memo-status').textContent=e.name==='AbortError'?'読み取りを中止しました（または時間切れ）。メモは残っています。':e.message;}finally{clearTimeout(timeout);memoController=null;$('memo-analyze').disabled=false;$('memo-cancel-ai').hidden=true;}
 };

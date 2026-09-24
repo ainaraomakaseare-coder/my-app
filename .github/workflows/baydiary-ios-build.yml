@@ -1,0 +1,62 @@
+name: BayDiary iOS
+on:
+  workflow_dispatch:
+    inputs:
+      destination:
+        description: Simulator build or upload to TestFlight
+        type: choice
+        options: [simulator, testflight]
+        default: simulator
+permissions:
+  contents: read
+concurrency:
+  group: baydiary-ios
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 35
+    environment: ${{ inputs.destination == 'testflight' && 'baydiary-testflight' || 'baydiary-build' }}
+    defaults:
+      run:
+        working-directory: apps/day23-baydiary-ios
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/day23-baydiary-ios/package-lock.json
+      - name: Require Xcode 26 or newer
+        run: |
+          XCODE_PATH=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)
+          test -n "$XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+      - run: npm ci
+      - run: npm run ios:add
+      - run: npm test
+      - name: Build for simulator
+        if: inputs.destination == 'simulator'
+        run: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO build
+      - name: Sign and upload to TestFlight
+        if: inputs.destination == 'testflight'
+        env:
+          DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_P12_BASE64 }}
+          DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.BAYDIARY_PROVISIONING_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+          API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+        run: bash scripts/testflight.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baydiary-ios-${{ github.run_number }}
+          path: |
+            apps/day23-baydiary-ios/build/simulator/Build/Products/Debug-iphonesimulator/App.app
+            apps/day23-baydiary-ios/build/export/*.ipa
+          retention-days: 5
+          if-no-files-found: error
