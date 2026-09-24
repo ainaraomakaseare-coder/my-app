@@ -272,7 +272,7 @@ fieldset{min-width:0}#f-photo-input{width:100%;max-width:100%}
         </label>
 
         <div class="api-box">
-          <button type="button" class="btn btn-sm" id="f-api-fetch">試合結果をAPIから取得（試験機能）</button>
+          <button type="button" class="btn btn-sm" id="f-api-fetch" hidden>試合結果をAPIから取得（試験機能）</button>
           <span class="api-status" id="f-api-status"></span>
         </div>
 
@@ -360,7 +360,7 @@ fieldset{min-width:0}#f-photo-input{width:100%;max-width:100%}
       <div class="page-heading"><div><p class="kicker">MAKE IT YOURS</p><h2>あなたの観戦スタイルに。</h2></div></div>
       <div class="card"><h3>応援する球団</h3><label for="settings-team">ホームで表示する球団</label><select id="settings-team"></select><p class="settings-help">12球団に対応。変更しても過去の記録は、記録時の応援球団のまま残ります。</p></div>
       <div class="card"><p class="kicker">FREE / PLUS</p><h3>思い出は無料で。分析は、もっと深く。</h3><p class="settings-help">無料：観戦記録・写真・今季と通算の成績・直近6試合。<br>Plus候補：年度別比較・月別・球場別・チーム勝率との比較。</p><p class="plan-note">現在は詳細分析も無料公開中。料金・提供時期は未定です。</p></div>
-      <div class="card">
+      <div class="card" id="settings-baseball-api" hidden>
         <p class="settings-help">
           (任意) 試合結果の自動取得には <b>api-sports.io</b>（API-BASEBALL）の無料APIキーを使えます。
           ただし検証の結果、<b>無料プランでは試合結果（/games）の取得が実行日の前後数日ほどに限られ、

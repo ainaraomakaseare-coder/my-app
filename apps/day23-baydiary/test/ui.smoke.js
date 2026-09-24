@@ -107,11 +107,7 @@ function check(label, cond, extra){
   /* ───────── 設定画面：APIキー保存とエクスポート/インポートの導線 ───────── */
   await page.click("#nav-settings");
   check("設定画面に切り替わる", await vis("#scr-settings"));
-  await page.fill("#settings-api-key", "dummy-key-123");
-  await page.click("#settings-api-save");
-  await page.reload();
-  await page.click("#nav-settings");
-  check("APIキーが保存され再読み込み後も残る", await val("#settings-api-key") === "dummy-key-123");
+  check("試合結果APIの設定欄は非表示", !(await vis("#settings-api-key")));
 
   /* ───────── 再読み込みしてもデータが残る ───────── */
   await page.reload();
