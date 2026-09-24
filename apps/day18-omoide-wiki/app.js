@@ -1148,12 +1148,39 @@
     });
   }
 
-  function speak(text, onend) {
+  // 作った音声は質問文ごとに覚えておき、同じ質問を読むときは作り直さない（待ち時間も費用も減る）
+  var speechCache = {};
+  var speechCacheOrder = [];
+  var SPEECH_CACHE_MAX = 20;
+
+  function getSpeech(text) {
+    if (speechCache[text]) return speechCache[text];
+    var p = fetchSpeech(text).then(function (blob) {
+      if (!blob && speechCache[text] === p) delete speechCache[text];
+      return blob;
+    });
+    speechCache[text] = p;
+    speechCacheOrder.push(text);
+    if (speechCacheOrder.length > SPEECH_CACHE_MAX) delete speechCache[speechCacheOrder.shift()];
+    return p;
+  }
+
+  // 今の質問を読んでいる間に、次の質問の音声を先に作っておく
+  function prefetchSpeech(text) {
+    if (!text || !getAiEndpoint() || ttsUnavailable || speechCache[text]) return;
+    getSpeech(text);
+  }
+
+  function speak(text, onend, onwaiting) {
     stopSpeaking();
     var token = speakToken;
     var fallback = function () { if (token === speakToken) speakWithBrowser(text, onend); };
-    fetchSpeech(text).then(function (blob) {
+    var pending = getSpeech(text);
+    var waitingTimer = onwaiting ? setTimeout(function () { if (token === speakToken) onwaiting(true); }, 300) : null;
+    pending.then(function (blob) {
+      if (waitingTimer) clearTimeout(waitingTimer);
       if (token !== speakToken) return;
+      if (onwaiting) onwaiting(false);
       if (!blob) { fallback(); return; }
       if (!ttsAudio) ttsAudio = new Audio();
       var url = URL.createObjectURL(blob);
@@ -1162,8 +1189,8 @@
         if (token === speakToken && onend) onend();
       };
       ttsAudio.src = url;
-      var p = ttsAudio.play();
-      if (p && p.catch) p.catch(function () { URL.revokeObjectURL(url); fallback(); });
+      var played = ttsAudio.play();
+      if (played && played.catch) played.catch(function () { URL.revokeObjectURL(url); fallback(); });
     });
   }
 
@@ -1402,7 +1429,11 @@
       if (!$('#btnSaveQ').disabled) saveInterviewAnswer(false);
     });
     if ($('#voiceModeToggle').checked) {
-      speak(q.question, function () { ctrl.start(); });
+      speak(q.question, function () { ctrl.start(); }, function (waiting) {
+        $('#qMicStatus').textContent = waiting ? '読み上げを準備しています…' : '';
+      });
+      var next = interviewQueue[interviewIndex + 1];
+      getSpeech(q.question).then(function () { if (next) prefetchSpeech(next.question); });
     }
   }
 

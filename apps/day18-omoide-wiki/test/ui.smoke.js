@@ -399,8 +399,11 @@ const TINY_PNG = Buffer.from(
       try { parsed = JSON.parse(body); } catch (e) { /* noop */ }
       if (parsed.action === 'tts') {
         ttsTexts.push(parsed.text);
-        res.writeHead(200, { 'Content-Type': 'audio/wav', ...corsHeaders });
-        return res.end(SILENT_WAV);
+        // 本物のGeminiと同じく、音声ができるまで少し待たせる
+        return setTimeout(() => {
+          res.writeHead(200, { 'Content-Type': 'audio/wav', ...corsHeaders });
+          res.end(SILENT_WAV);
+        }, 600);
       }
       aiCallCount++;
       if (parsed.action !== 'compose') lastAiPayload = parsed;
@@ -429,12 +432,16 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('[data-screen=dash].active');
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
+  await page.waitForFunction(() => (document.getElementById('qMicStatus').textContent || '').indexOf('読み上げを準備しています') !== -1);
+  check('音声ができるまでの間は「読み上げを準備しています…」と表示する', true);
   check('AIエンドポイント設定時はAI深掘りトグルが表示される', !(await page.isHidden('#aiDeepenBlock')));
   check('AI深掘りはWorker設定済みなら初回からONになっている', await page.isChecked('#aiDeepenToggle'));
   const firstAiQuestion = await page.textContent('#qText');
   for (let i = 0; i < 30 && !ttsTexts.length; i++) await page.waitForTimeout(100);
   check('Worker設定時は、質問の読み上げをWorker（Gemini）に頼む', ttsTexts.indexOf(firstAiQuestion) !== -1, JSON.stringify(ttsTexts));
   check('読み上げの依頼はAI深掘りの呼び出し回数に数えない', aiCallCount === 0, 'aiCallCount=' + aiCallCount);
+  for (let i = 0; i < 30 && ttsTexts.length < 2; i++) await page.waitForTimeout(100);
+  check('今の質問を読んでいる間に、次の質問の音声を先に作っておく', ttsTexts.length >= 2 && ttsTexts[1] !== firstAiQuestion, JSON.stringify(ttsTexts));
 
   await page.fill('#qAnswer', '最初の回答です');
   await page.click('#btnSaveQ');
@@ -451,6 +458,7 @@ const TINY_PNG = Buffer.from(
     await page.waitForFunction((d) => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問' + d) !== -1, depth);
   }
   check('depth6までは追い質問が続く', (await page.textContent('#qCategory')).indexOf('AIの深掘り') !== -1);
+  check('同じ質問の音声を二度作らない', new Set(ttsTexts).size === ttsTexts.length, JSON.stringify(ttsTexts));
 
   await page.fill('#qAnswer', '深掘り回答6');
   await page.click('#btnSaveQ');
