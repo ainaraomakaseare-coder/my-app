@@ -1,14 +1,14 @@
-# ベイ日記 iOSアプリ化
+# 観戦日記 iOSアプリ化
 
-`apps/day23-baydiary/`（Web版のベイ日記）を、[Capacitor](https://capacitorjs.com/) でiOSアプリの器に包み、GitHub Actions上のMac（クラウド）でビルドしてTestFlight（→App Store）に送る仕組みです。**Macを持っていなくてもビルドできます**（ビルド作業はすべてGitHub Actionsのmacosランナー上で行われます）。仕組みは`apps/day07-tabilog-ios/`（旅の足跡のiOS化）と同じで、そちらで一度つまずいた箇所（署名まわり）はあらかじめ踏まえてあります。
+`apps/day23-baydiary/`（Web版の観戦日記）を、[Capacitor](https://capacitorjs.com/) でiOSアプリの器に包み、GitHub Actions上のMac（クラウド）でビルドしてTestFlight（→App Store）に送る仕組みです。**Macを持っていなくてもビルドできます**（ビルド作業はすべてGitHub Actionsのmacosランナー上で行われます）。仕組みは`apps/day07-tabilog-ios/`（旅の足跡のiOS化）と同じで、そちらで一度つまずいた箇所（署名まわり）はあらかじめ踏まえてあります。
 
 見た目・データはすべてWeb版（`apps/day23-baydiary/`）と共通です。このフォルダには「Web版をアプリとして包むための設定」だけが入っていて、`ios/` というネイティブのXcodeプロジェクトは**リポジトリには入れず、ビルドのたびにCI上で作り直します**。
 
-アプリアイコン・起動画面（スプラッシュ）は `resources/icon.png`（1024×1024）・`resources/splash.png`（2732×2732）として、ベイ日記のチケット風デザイン（紺・クリーム・レンガ色）に合わせて用意済みです。ビルド時に `@capacitor/assets` が自動的に各サイズへ書き出します（差し替えたい場合はこの2枚を上書きしてください）。
+アプリアイコン・起動画面（スプラッシュ）は `resources/icon.png`（1024×1024）・`resources/splash.png`（2732×2732）として、観戦日記のチケット風デザイン（紺・クリーム・レンガ色）に合わせて用意済みです。ビルド時に `@capacitor/assets` が自動的に各サイズへ書き出します（差し替えたい場合はこの2枚を上書きしてください）。
 
 ## 費用（すでに旅の足跡でApple Developer Programに登録済みなら、追加費用なし）
 
-- **Apple Developer Program：年間99ドル**。ただし**旅の足跡（DAY26）で既に登録済みのはず**なので、同じアカウントでベイ日記も配布でき、追加の年会費は発生しません
+- **Apple Developer Program：年間99ドル**。ただし**旅の足跡（DAY26）で既に登録済みのはず**なので、同じアカウントで観戦日記も配布でき、追加の年会費は発生しません
 - GitHub Actionsのmacosランナー：パブリックリポジトリなら無料枠で足りることがほとんどです
 
 ## 旅の足跡と共有できるもの・できないもの
@@ -21,11 +21,11 @@ Apple Developerアカウントは1つで複数のアプリを配布できるた�
 | Team ID（`APPLE_TEAM_ID`） | 使い回せる |
 | App Store Connect APIキー（`APPSTORE_CONNECT_API_KEY_ID`・`APPSTORE_CONNECT_API_ISSUER_ID`・`APPSTORE_CONNECT_API_PRIVATE_KEY`） | 使い回せる（App Manager権限はアカウント内の全アプリに効く） |
 | 配布用証明書（`IOS_DIST_CERTIFICATE_P12_BASE64`・`IOS_DIST_CERTIFICATE_PASSWORD`） | 使い回せる（証明書はアカウント単位） |
-| **Bundle ID** | **使い回せない**（ベイ日記専用に新しく作る：`com.hiroyaapps.baydiary`） |
+| **Bundle ID** | **使い回せない**（観戦日記専用に新しく作る：`com.hiroyaapps.baydiary`） |
 | **プロビジョニングプロファイル** | **使い回せない**（Bundle IDごとに別物。新しいシークレット`IOS_BAYDIARY_PROVISIONING_PROFILE_BASE64`として登録する） |
 | **App Store Connect上のアプリの箱** | **使い回せない**（アプリごとに新規作成） |
 
-つまり、下記の手順のうち **1〜3は旅の足跡で済んでいれば飛ばしてOK**です。**4・5・6がベイ日記で新しく必要な作業**です。
+つまり、下記の手順のうち **1〜3は旅の足跡で済んでいれば飛ばしてOK**です。**4・5・6が観戦日記で新しく必要な作業**です。
 
 ## 進め方（Appleの管理画面での作業が中心です）
 
@@ -39,11 +39,11 @@ Apple Developerアカウントは1つで複数のアプリを配布できるた�
 
 `apps/day07-tabilog-ios/README.md` の手順2・3で作ったものをそのまま使います。GitHubシークレットに既に `APPLE_TEAM_ID`・`APPSTORE_CONNECT_API_KEY_ID`・`APPSTORE_CONNECT_API_ISSUER_ID`・`APPSTORE_CONNECT_API_PRIVATE_KEY` が登録されていれば、そのままで大丈夫です。
 
-### 4. ベイ日記専用のBundle IDを登録する
+### 4. 観戦日記専用のBundle IDを登録する
 
 1. https://developer.apple.com/account/resources/identifiers/list を開く
 2. 「+」→「App IDs」→「App」
-3. Description：`ベイ日記`（何でもよい）
+3. Description：`観戦日記`（何でもよい）
 4. Bundle ID：「Explicit」で `com.hiroyaapps.baydiary` と入力
 5. Capabilities：特にチェック不要（Sign in with Appleなどは使っていません）
 6. 「Continue」→「Register」
@@ -52,14 +52,14 @@ Apple Developerアカウントは1つで複数のアプリを配布できるた�
 
 1. https://appstoreconnect.apple.com/apps → 「+」→「新規App」
 2. プラットフォーム：iOS
-3. 名前：ベイ日記（他の人が使っていなければそのまま使えます）
+3. 名前：観戦日記（他の人が使っていなければそのまま使えます）
 4. 主言語：日本語
 5. Bundle ID：手順4で登録した `com.hiroyaapps.baydiary` を選択
 6. SKU：何でもよい（例：`baydiary001`）
 
 説明文・キーワード・データ収集の申告内容などの下書きは `app-store-listing.md` にまとめてあります。コピーして使ってください。プライバシーポリシーのURLは `../day23-baydiary/privacy.html`（公開後は `https://ainaraomakaseare-coder.github.io/my-app/apps/day23-baydiary/privacy.html`）です。
 
-### 6. ベイ日記専用のプロビジョニングプロファイルを作る
+### 6. 観戦日記専用のプロビジョニングプロファイルを作る
 
 1. https://developer.apple.com/account/resources/profiles/list を開く
 2. 「+」→「App Store」（配布用）を選択
@@ -84,7 +84,7 @@ base64 -i baydiary_App_Store.mobileprovision | pbcopy
 
 ### 7. ビルドを実行する
 
-このリポジトリの「Actions」タブ →「ベイ日記 iOS ビルド & TestFlightアップロード」→「Run workflow」ボタンで手動実行します。成功すると、数分〜数十分後にTestFlightにビルドが表示されます（App Store Connect側でのメール審査待ちが入ることもあります）。
+このリポジトリの「Actions」タブ →「観戦日記 iOS ビルド & TestFlightアップロード」→「Run workflow」ボタンで手動実行します。成功すると、数分〜数十分後にTestFlightにビルドが表示されます（App Store Connect側でのメール審査待ちが入ることもあります）。
 
 ### 8. TestFlightで確認 → 本審査へ
 
@@ -93,7 +93,7 @@ base64 -i baydiary_App_Store.mobileprovision | pbcopy
 
 ## 正直にお伝えしておきたいこと
 
-このワークフロー（`.github/workflows/baydiary-ios-build.yml`）は、旅の足跡（`day07-tabilog-ios`）で実際に確立した仕組みをそのまま流用したものですが、**ベイ日記自体でのビルドはまだ一度も検証していません**。Bundle ID・プロビジョニングプロファイル名などの細部で、初回実行時にエラーが出る可能性があります。実行してみて、エラーが出たら一緒に直していきましょう。
+このワークフロー（`.github/workflows/baydiary-ios-build.yml`）は、旅の足跡（`day07-tabilog-ios`）で実際に確立した仕組みをそのまま流用したものですが、**観戦日記自体でのビルドはまだ一度も検証していません**。Bundle ID・プロビジョニングプロファイル名などの細部で、初回実行時にエラーが出る可能性があります。実行してみて、エラーが出たら一緒に直していきましょう。
 
 写真添付まわり（カメラ利用の説明文）は旅の足跡での学びをあらかじめ反映済みですが、実機での動作確認はまだできていません。
 

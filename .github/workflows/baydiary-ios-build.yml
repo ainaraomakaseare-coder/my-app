@@ -1,4 +1,4 @@
-name: ベイ日記 iOS ビルド & TestFlightアップロード
+name: 観戦日記 iOS ビルド & TestFlightアップロード
 
 # 手動実行のみ（勝手に走って審査提出用のビルドが増えないように）。
 # GitHubリポジトリの「Actions」タブ → このワークフロー名 → 「Run workflow」から実行する。
@@ -109,7 +109,7 @@ jobs:
       - name: プロビジョニングプロファイルをインストールする
         # プロビジョニングプロファイルはBundle IDごとに別物が必要なため、
         # 旅の足跡（com.hiroyaapps.tabilog用）のものは使い回せない。
-        # ベイ日記（com.hiroyaapps.baydiary）専用に新しく作った、別のシークレットを使う。
+        # 観戦日記（com.hiroyaapps.baydiary）専用に新しく作った、別のシークレットを使う。
         env:
           PROFILE_BASE64: ${{ secrets.IOS_BAYDIARY_PROVISIONING_PROFILE_BASE64 }}
         run: |
