@@ -630,7 +630,7 @@ function loadState(){
   }catch(e){ return { games: [], settings: {} }; }
 }
 function saveState(){
-  try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
+  try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); return true; }catch(e){ alert("記録を保存できませんでした。空き容量と保存設定を確認してください。入力内容はこの画面に残っています。"); return false; }
 }
 
 /* ============ 写真保存（IndexedDB） ============ */
@@ -842,6 +842,7 @@ var $ = function(id){ return document.getElementById(id); };
 
 function setView(view){
   ui.view = view;
+  document.dispatchEvent(new CustomEvent("baydiary:view",{detail:{view:view}}));
   ["dashboard","analysis","list","form","players","settings","memo"].forEach(function(v){
     $("scr-" + v).hidden = (v !== view);
   });
@@ -856,6 +857,12 @@ function setView(view){
   if(view === "players") renderPlayers();
 }
 
+// Native tabs use the same routing entry point as the web controls.
+window.bayNavigate=function(view){
+  if(!["dashboard","analysis","list","players","settings"].includes(view))return false;
+  if(ui.view==='form'&&ui.formDirty&&!confirm('編集内容を破棄して移動しますか？'))return false;
+  ui.formDirty=false;setView(view);window.scrollTo(0,0);return true;
+};
 /* ============ 一覧画面 ============ */
 function ensureYearOptions(selectEl, years, selected){
   var ys = years.slice();
@@ -1023,6 +1030,7 @@ function openForm(id){
     });
   }
 
+  ui.formDirty=false;
   setView("form");
 }
 
@@ -1083,6 +1091,7 @@ function renderPhotoGrid(){
 }
 
 function closeForm(){
+  ui.formDirty=false;
   ui.editingId = null;
   setView("list");
 }
@@ -1136,23 +1145,29 @@ function submitForm(ev){
     createdAt: existing ? existing.createdAt : Date.now()
   });
 
+  if(ui.saving)return;
+  ui.saving=true;
+  var saveButton=$("game-form").querySelector('button[type="submit"]');
+  if(saveButton)saveButton.disabled=true;
   var savePhotos = Promise.all(
     ui.photos.filter(function(p){ return !p.existing; }).map(function(p){ return putPhoto(p.id, p.dataUrl); })
-    .concat(ui.deletedPhotoIds.map(function(pid){ return deletePhoto(pid); }))
+
   );
 
   savePhotos.then(function(){
+    var previousGames=state.games.slice();
     if(existing){
       var idx = state.games.indexOf(existing);
       state.games[idx] = game;
     } else {
       state.games.push(game);
     }
-    saveState();
+    if(!saveState()){state.games=previousGames;return;}
+    ui.deletedPhotoIds.forEach(function(pid){deletePhoto(pid).catch(function(){});});
     ui.listYear = yearOf(game.date);
     if(!competitionGames([game],ui.listCompetition).length)ui.listCompetition="all";
     closeForm();
-  });
+  }).catch(function(){ $("f-api-status").textContent="写真を保存できませんでした。入力内容は残っています。写真を減らすか、空き容量を確認して再試行してください。";$("f-api-status").className="api-status err"; }).finally(function(){ui.saving=false;if(saveButton)saveButton.disabled=false;});
 }
 
 function deleteCurrentGame(){
@@ -1165,8 +1180,9 @@ function deleteCurrentGame(){
     return;
   }
   var g = state.games.filter(function(x){ return x.id === ui.editingId; })[0];
+  var previousGames=state.games;
   state.games = state.games.filter(function(x){ return x.id !== ui.editingId; });
-  saveState();
+  if(!saveState()){state.games=previousGames;return;}
   var deletions = (g && g.photoIds || []).map(function(pid){ return deletePhoto(pid); });
   Promise.all(deletions).then(closeForm);
 }
@@ -1241,8 +1257,9 @@ function resetAllData(){
     setTimeout(function(){ btn.classList.remove("confirming"); btn.textContent = "すべての記録を削除"; }, 4000);
     return;
   }
+  var previousState=state;
   state = { games: [], settings: {} };
-  saveState();
+  if(!saveState()){state=previousState;return;}
   indexedDB.deleteDatabase(PHOTO_DB_NAME);
   photoUrlCache = {};
   btn.classList.remove("confirming");
@@ -1252,7 +1269,7 @@ function resetAllData(){
 
 /* ============ イベント配線 ============ */
 document.querySelectorAll(".tab").forEach(function(tab){
-  tab.onclick = function(){ setView(tab.getAttribute("data-view")); };
+  tab.onclick = function(){ window.bayNavigate(tab.getAttribute("data-view")); };
 });
 $("year-select").onchange = function(){ ui.listYear = Number($("year-select").value); renderList(); };
 $("players-year-select").onchange = function(){
@@ -1260,7 +1277,11 @@ $("players-year-select").onchange = function(){
   renderPlayers();
 };
 $("add-game").onclick = function(){ openForm(null); };
-$("f-cancel").onclick = closeForm;
+$("f-cancel").onclick = function(){if(!ui.formDirty||confirm('編集内容を破棄しますか？')){ui.formDirty=false;closeForm();}};
+$('game-form').addEventListener('input',()=>{ui.formDirty=true;});
+$('game-form').addEventListener('change',()=>{ui.formDirty=true;});
+$('game-form').addEventListener('click',function(e){if(e.target.closest('[data-remove-companion],[data-remove-photo],[data-remove-notable],#f-restore-memo'))ui.formDirty=true;});
+window.addEventListener('beforeunload',function(e){if(ui.view==='form'&&ui.formDirty){e.preventDefault();e.returnValue='';}});
 $("f-delete").onclick = deleteCurrentGame;
 $("game-form").onsubmit = submitForm;
 $("f-companion-add").onclick = addCompanion;

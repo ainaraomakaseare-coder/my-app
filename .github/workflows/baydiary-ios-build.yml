@@ -1,5 +1,8 @@
 name: BayDiary iOS
 on:
+  push:
+    branches: [codex/baydiary-stats-redesign]
+    paths: ["apps/day23-baydiary/**", "apps/day23-baydiary-ios/**", ".github/workflows/baydiary-ios-build.yml"]
   workflow_dispatch:
     inputs:
       destination:
@@ -39,7 +42,7 @@ jobs:
       - run: npm run ios:add
       - run: npm test
       - name: Build for simulator
-        if: inputs.destination == 'simulator'
+        if: inputs.destination != 'testflight'
         run: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO build
       - name: Sign and upload to TestFlight
         if: inputs.destination == 'testflight'

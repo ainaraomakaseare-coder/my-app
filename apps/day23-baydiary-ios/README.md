@@ -49,3 +49,11 @@ Web版とiOS版の保存領域は別です。Web版「設定→書き出す」�
 tasks/todo.md と STORE-LISTING.md を参照。AI公開基盤、課金、実機検証、公開プライバシーポリシー/サポートURL、スクリーンショットとプライバシー申告が残っています。将来AIを有効化する際は現在の端末内処理のみのプライバシーマニフェスト/説明も見直してください。
 
 参照: [Capacitor環境要件](https://capacitorjs.com/docs/getting-started/environment-setup)、[Filesystemプライバシー要件](https://capacitorjs.com/docs/apis/filesystem)、[Appleビルドアップロード](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds)、[App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)。
+
+## iPhone向けネイティブ画面
+
+native/BayDiaryViewController.swift にUIKitのタブバーと単一Capacitor画面を実装しています。SF Symbols、選択時の触覚フィードバック、入力画面でのタブ非表示、ネイティブとWebの選択状態同期に対応。SceneDelegateとStoryboardの両起動経路を構成スクリプトで更新します。再生成してもSwiftソースを失いません。
+
+src/ios.css は端末フォント・相対文字サイズ・ダークモード・44pt以上の操作領域・モーション抑制に対応。全画面をSwiftUIに書き直したものではなく、UIKitの操作部と既存Webの記録/分析画面を組み合わせた構成です。SwiftコードはWindowsでコンパイルできないため、クラウドXcodeの検証が完了するまではネイティブ動作確認済みとは扱いません。
+
+開発ブランチへのpushで署名不要のシミュレータービルドを行います。TestFlight送信は従来どおり明示的なworkflow_dispatchのみです。

@@ -30,6 +30,21 @@ if(!project.pbxGroupByName('Resources')) {
   project.getPBXGroupByKey(main).children.push({value:group.uuid,comment:'Resources'});
 }
 if(!project.hasFile('App/PrivacyInfo.xcprivacy'))project.addResourceFile('App/PrivacyInfo.xcprivacy',{target:project.getFirstTarget().uuid});
+await fs.copyFile('native/BayDiaryViewController.swift','ios/App/App/BayDiaryViewController.swift');
+if(!project.hasFile('BayDiaryViewController.swift')) {
+  const groups=project.hash.project.objects.PBXGroup;
+  const appGroup=Object.keys(groups).find(key=>groups[key]?.path==='App');
+  if(!appGroup)throw new Error('Xcode App group not found');
+  project.addSourceFile('BayDiaryViewController.swift',{target:project.getFirstTarget().uuid},appGroup);
+}
+const scenePath='ios/App/App/SceneDelegate.swift';
+let scene=await fs.readFile(scenePath,'utf8');
+scene=scene.replace('window?.rootViewController = CAPBridgeViewController()','window?.rootViewController = BayDiaryViewController()');
+await fs.writeFile(scenePath,scene);
+const storyboardPath='ios/App/App/Base.lproj/Main.storyboard';
+let storyboard=await fs.readFile(storyboardPath,'utf8');
+storyboard=storyboard.replace('customClass="CAPBridgeViewController" customModule="Capacitor"','customClass="BayDiaryViewController" customModule="App"');
+await fs.writeFile(storyboardPath,storyboard);
 await fs.writeFile('ios/App/App.xcodeproj/project.pbxproj',project.writeSync());
 const icons='ios/App/App/Assets.xcassets/AppIcon.appiconset';
 await fs.mkdir(icons,{recursive:true});
