@@ -1152,25 +1152,62 @@
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   }
 
-  function fetchSpeech(text) {
-    var endpoint = getAiEndpoint();
-    if (!endpoint || ttsUnavailable) return Promise.resolve(null);
+  // 標準の声に切り替わった理由。画面に出して、原因（キー未登録・利用上限など）が分かるようにする
+  var TTS_FALLBACK_REASONS = {
+    tts_not_configured: 'WorkerにGeminiのAPIキーが登録されていません',
+    gemini_rate_limited: 'Geminiの利用回数の上限に達しました（無料枠の上限の可能性があります）',
+    rate_limited: '読み上げの回数がアプリ側の上限（1分30回）に達しました',
+    upstream_error: 'Gemini側でエラーが起きました',
+    timeout: 'Geminiの応答に時間がかかりすぎました',
+    network: 'Workerに接続できませんでした',
+    play_blocked: 'ブラウザが音声の再生を止めました（画面を一度タップすると直ることがあります）'
+  };
+  var lastTtsError = '';
+
+  function fetchSpeechOnce(text) {
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 15000) : null;
-    return fetch(endpoint, {
+    return fetch(getAiEndpoint(), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'tts', text: text }),
       signal: ctrl ? ctrl.signal : undefined
     }).then(function (res) {
       if (timer) clearTimeout(timer);
-      if (res.status === 503) ttsUnavailable = true;
       var type = res.headers.get('content-type') || '';
-      return res.ok && type.indexOf('audio/') === 0 ? res.blob() : null;
-    }).catch(function () {
+      if (res.ok && type.indexOf('audio/') === 0) return res.blob().then(function (blob) { return { blob: blob }; });
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        return { error: body.error || 'upstream_error', status: body.upstreamStatus || res.status };
+      });
+    }).catch(function (e) {
       if (timer) clearTimeout(timer);
+      return { error: e && e.name === 'AbortError' ? 'timeout' : 'network' };
+    });
+  }
+
+  function fetchSpeech(text) {
+    if (!getAiEndpoint() || ttsUnavailable) return Promise.resolve(null);
+    return fetchSpeechOnce(text).then(function (r) {
+      // 一時的な失敗（混雑・通信の瞬断など）は、少し待って1回だけやり直す
+      if (r.blob || r.error === 'tts_not_configured' || r.error === 'invalid_input') return r;
+      return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return fetchSpeechOnce(text); });
+    }).then(function (r) {
+      if (r.blob) return r.blob;
+      // キーが本当に未登録のときだけ、このページを開いている間はGeminiを試さない
+      if (r.error === 'tts_not_configured') ttsUnavailable = true;
+      lastTtsError = r.error + (r.status ? '（コード' + r.status + '）' : '');
+      console.warn('Geminiの読み上げに失敗したため、ブラウザ標準の声に切り替えました：' + lastTtsError);
       return null;
     });
+  }
+
+  function showTtsNote(errorKey) {
+    var el = $('#ttsNote');
+    if (!el) return;
+    if (!errorKey) { el.textContent = ''; return; }
+    var key = errorKey.split('（')[0];
+    el.textContent = 'Geminiの声が使えなかったため、ブラウザ標準の声で読み上げています。理由：' +
+      (TTS_FALLBACK_REASONS[key] || errorKey) + (errorKey.indexOf('（') !== -1 ? errorKey.slice(errorKey.indexOf('（')) : '');
   }
 
   // 作った音声は質問文ごとに覚えておき、同じ質問を読むときは作り直さない（待ち時間も費用も減る）
@@ -1199,7 +1236,11 @@
   function speak(text, onend, onwaiting) {
     stopSpeaking();
     var token = speakToken;
-    var fallback = function () { if (token === speakToken) speakWithBrowser(text, onend); };
+    var fallback = function (reason) {
+      if (token !== speakToken) return;
+      if (getAiEndpoint()) showTtsNote(reason || lastTtsError);
+      speakWithBrowser(text, onend);
+    };
     var pending = getSpeech(text);
     var waitingTimer = onwaiting ? setTimeout(function () { if (token === speakToken) onwaiting(true); }, 300) : null;
     pending.then(function (blob) {
@@ -1207,6 +1248,7 @@
       if (token !== speakToken) return;
       if (onwaiting) onwaiting(false);
       if (!blob) { fallback(); return; }
+      showTtsNote('');
       if (!ttsAudio) ttsAudio = new Audio();
       var url = URL.createObjectURL(blob);
       ttsAudio.onended = function () {
@@ -1215,7 +1257,7 @@
       };
       ttsAudio.src = url;
       var played = ttsAudio.play();
-      if (played && played.catch) played.catch(function () { URL.revokeObjectURL(url); fallback(); });
+      if (played && played.catch) played.catch(function () { URL.revokeObjectURL(url); fallback('play_blocked'); });
     });
   }
 

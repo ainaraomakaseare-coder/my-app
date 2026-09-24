@@ -298,7 +298,9 @@ async function handleTts(data, env, headers) {
   if (upstream.status === 400 && env.GEMINI_TTS_VOICE) upstream = await requestGeminiSpeech(env, text, "");
   if (!upstream.ok) {
     console.error(JSON.stringify({ event: "gemini_tts_error", status: upstream.status, body: (await upstream.text()).slice(0, 500) }));
-    return json({ error: "upstream_error" }, 502, headers);
+    // アプリ側で「なぜ標準の声に切り替わったか」を表示できるよう、Geminiの利用上限だけは区別して返す
+    if (upstream.status === 429) return json({ error: "gemini_rate_limited" }, 429, headers);
+    return json({ error: "upstream_error", upstreamStatus: upstream.status }, 502, headers);
   }
   const audio = audioFromGemini(await upstream.json());
   if (!audio) return json({ error: "invalid_model_output" }, 502, headers);

@@ -381,6 +381,7 @@ const TINY_PNG = Buffer.from(
   let aiCallCount = 0;
   let lastAiPayload = null;
   const ttsTexts = [];
+  let ttsFailNext = 0; // この回数だけ、読み上げの依頼を「Geminiの利用上限」で失敗させる
   // 0.1秒の無音WAV（読み上げの代わりに返す）
   const SILENT_WAV = (() => {
     const pcm = Buffer.alloc(1600);
@@ -399,6 +400,11 @@ const TINY_PNG = Buffer.from(
       let parsed = {};
       try { parsed = JSON.parse(body); } catch (e) { /* noop */ }
       if (parsed.action === 'tts') {
+        if (ttsFailNext > 0) {
+          ttsFailNext--;
+          res.writeHead(429, { 'Content-Type': 'application/json', ...corsHeaders });
+          return res.end(JSON.stringify({ error: 'gemini_rate_limited' }));
+        }
         ttsTexts.push(parsed.text);
         // 本物のGeminiと同じく、音声ができるまで少し待たせる
         return setTimeout(() => {
@@ -454,9 +460,18 @@ const TINY_PNG = Buffer.from(
 
   // MAX_AI_DEPTH(6)に達するまで追い質問が続くことを確認する（2回目〜6回目）
   for (let depth = 2; depth <= 6; depth++) {
+    if (depth === 4) ttsFailNext = 2; // 1回目もやり直しも失敗させる
     await page.fill('#qAnswer', '深掘り回答' + (depth - 1));
     await page.click('#btnSaveQ');
     await page.waitForFunction((d) => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問' + d) !== -1, depth);
+    if (depth === 4) {
+      await page.waitForFunction(() => (document.getElementById('ttsNote').textContent || '').indexOf('利用回数の上限') !== -1);
+      check('Geminiが使えず標準の声に切り替えたときは、その理由を画面に出す', true);
+    }
+    if (depth === 5) {
+      await page.waitForFunction(() => document.getElementById('ttsNote').textContent === '');
+      check('一時的に失敗しても、次の質問ではGeminiの声に戻る（ずっと標準の声のままにならない）', ttsTexts.indexOf(await page.textContent('#qText')) !== -1);
+    }
   }
   check('depth6までは追い質問が続く', (await page.textContent('#qCategory')).indexOf('AIの深掘り') !== -1);
   check('同じ質問の音声を二度作らない', new Set(ttsTexts).size === ttsTexts.length, JSON.stringify(ttsTexts));
