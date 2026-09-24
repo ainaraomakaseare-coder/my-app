@@ -2272,7 +2272,27 @@
 
   // ---------- 書き出し・読み込み ----------
 
+  // iOSアプリ（Capacitor）の中ではリンクによるダウンロードや印刷が動かないため、その判定に使う
+  function nativePlugins() {
+    var cap = window.Capacitor;
+    return cap && cap.isNativePlatform && cap.isNativePlatform() ? (cap.Plugins || {}) : null;
+  }
+
+  // アプリ内では一時フォルダにファイルを書き、iPhoneの共有シート（AirDrop・ファイルに保存・LINEなど）を開く
+  function shareFileInApp(plugins, filename, text) {
+    var safeName = filename.replace(/[\\/:*?"<>|]/g, '_');
+    plugins.Filesystem.writeFile({ path: safeName, data: text, directory: 'CACHE', encoding: 'utf8' })
+      .then(function (res) { return plugins.Share.share({ title: safeName, files: [res.uri] }); })
+      .catch(function (e) {
+        var msg = String((e && e.message) || e);
+        if (/cancel/i.test(msg)) return; // 共有シートを閉じただけ
+        alert('書き出しに失敗しました：' + msg);
+      });
+  }
+
   function download(filename, text) {
+    var plugins = nativePlugins();
+    if (plugins && plugins.Filesystem && plugins.Share) { shareFileInApp(plugins, filename, text); return; }
     var blob = new Blob([text], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
@@ -2329,6 +2349,7 @@
   function init() {
     store = loadStore();
     hydrateIcons();
+    if (nativePlugins()) $('#btnPrint').hidden = true; // アプリ内ではwindow.print()が動かない
     document.addEventListener('pointerdown', unlockTtsAudio, { once: true });
 
     $('#btnNewWiki').addEventListener('click', function () { resetNewForm(); showScreen('new'); });

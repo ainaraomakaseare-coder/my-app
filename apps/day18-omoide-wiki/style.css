@@ -35,6 +35,8 @@
 }
 
 * { box-sizing: border-box; }
+/* .btn などに display を指定すると hidden 属性が効かなくなるため、hidden を必ず優先させる */
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;

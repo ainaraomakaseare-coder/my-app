@@ -188,6 +188,7 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnRenameTrip');
   await page.waitForSelector('#tripEditForm:not([hidden])');
   check('編集フォームに現在の名前が入っている', (await page.inputValue('#tripEditName')) === '秋の遠足');
+  check('編集フォームを開いている間は「変更」ボタンが隠れる（hidden属性が効いている）', await page.isHidden('#btnRenameTrip'));
 
   // キャンセルすると何も変わらない
   await page.fill('#tripEditName', 'キャンセルされるはずの名前');
@@ -568,6 +569,36 @@ const TINY_PNG = Buffer.from(
   check('削除すると一覧から消える', (await page.textContent('#wikiList')).indexOf('やまだ たろう') === -1);
 
   check('絵文字ではなくSVGアイコンが描かれている', await page.locator('svg.icon').count() > 0);
+  // ---- iOSアプリ（Capacitor）の中：書き出しは共有シート、印刷ボタンは隠す ----
+  const appCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await appCtx.addInitScript(() => {
+    window.__shared = [];
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: {
+        Filesystem: { writeFile: (o) => { window.__written = o; return Promise.resolve({ uri: 'file:///cache/' + o.path }); } },
+        Share: { share: (o) => { window.__shared.push(o); return Promise.resolve({}); } }
+      }
+    };
+  });
+  const appPage = await appCtx.newPage();
+  appPage.on('pageerror', e => errors.push(e.message));
+  await appPage.goto(BASE);
+  await appPage.click('#btnNewWiki');
+  await appPage.fill('#newTitle', 'アプリの人');
+  await appPage.click('#btnCreateWiki');
+  await appPage.waitForSelector('[data-screen=dash].active');
+  await appPage.click('#btnExportWiki');
+  await appPage.waitForFunction(() => window.__shared.length === 1);
+  const written = await appPage.evaluate(() => window.__written);
+  const shared = await appPage.evaluate(() => window.__shared[0]);
+  check('アプリ内の書き出しは、JSONファイルを一時フォルダに書いてから', written && written.path === 'アプリの人.json' && JSON.parse(written.data).schema === 'omoide-wiki');
+  check('iPhoneの共有シートで渡す', shared.files && shared.files[0] === 'file:///cache/アプリの人.json');
+  await appPage.click('#tileView');
+  await appPage.waitForSelector('[data-screen=view].active');
+  check('アプリ内では印刷ボタンを隠す', await appPage.isHidden('#btnPrint'));
+  await appCtx.close();
+
   check('JSのエラーが発生していない', errors.length === 0, errors.join(' / '));
 
   await browser.close();
