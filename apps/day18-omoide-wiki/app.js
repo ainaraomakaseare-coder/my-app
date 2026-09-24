@@ -737,6 +737,37 @@
   function $(sel) { return document.querySelector(sel); }
   function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
 
+  // Lucide（https://lucide.dev, ISC License）のパスだけを持ち、ビルドなしでSVGアイコンとして描く
+  var ICONS = {
+    'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+    'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+    'plus': '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    'mic': '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>',
+    'camera': '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+    'square-pen': '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>',
+    'book-open': '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+    'luggage': '<path d="M6 20a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2"/><path d="M8 18V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v14"/><path d="M10 20h4"/><circle cx="16" cy="20" r="2"/><circle cx="8" cy="20" r="2"/>',
+    'printer': '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
+    'pencil': '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+    'calendar': '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+    'banknote': '<rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
+    'clock': '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    'map-pin': '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
+    'external-link': '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+    'upload': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+    'trash': '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>'
+  };
+
+  function icon(name) {
+    return '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[name] || '') + '</svg>';
+  }
+
+  function hydrateIcons() {
+    $all('[data-icon]').forEach(function (el) { el.innerHTML = icon(el.dataset.icon); });
+  }
+
   // 1件のWikiの読み込み（normalizeWiki）が予期せず失敗しても、他のWikiまで
   // 巻き込んで消えてしまわないよう、Wikiごとに個別にtry/catchする。
   // （以前はここで1つでも例外が出ると、保存されている全Wikiが見えなくなっていた）
@@ -793,12 +824,12 @@
       var count = countAll(w);
       var thumb = w.coverPhoto ? 'style="background-image:url(' + w.coverPhoto + ')"' : '';
       card.innerHTML =
-        '<span class="thumb" ' + thumb + '>' + (w.coverPhoto ? '' : (w.type === 'group' ? '🎪' : '🧑')) + '</span>' +
+        '<span class="thumb" ' + thumb + '>' + (w.coverPhoto ? '' : escapeHtml(avatarInitial(w.title))) + '</span>' +
         '<span class="meta">' +
           '<span class="name">' + escapeHtml(w.title || '（名前未設定）') + '</span>' +
           '<span class="sub">' + escapeHtml(w.subtitle || '') + '</span>' +
           '<span class="tag">' + (LABELS[w.type].kind) + '・記録' + count + '件</span>' +
-        '</span>';
+        '</span>' + icon('chevron-right');
       card.addEventListener('click', function () { openDash(w.id); });
       list.appendChild(card);
     });
@@ -1601,7 +1632,7 @@
     var el = $('#tripsOnThisDay');
     var trips = onThisDayTrips(w, todayMonthDay());
     if (!trips.length) { el.innerHTML = ''; return; }
-    el.innerHTML = '<div class="on-this-day"><b>📅 今日は何の日</b><ul>' +
+    el.innerHTML = '<div class="on-this-day"><div class="on-this-day-title">' + icon('calendar') + '今日は何の日</div><ul>' +
       trips.map(function (tr) {
         var year = tr.startDate ? tr.startDate.slice(0, 4) : '';
         return '<li data-trip-id="' + tr.id + '">' + (year ? year + '年 ' : '') + escapeHtml(tr.title) + '</li>';
@@ -1664,12 +1695,12 @@
         var card = document.createElement('button');
         card.className = 'wiki-card';
         card.innerHTML =
-          '<span class="thumb" ' + (thumb ? 'style="background-image:url(' + thumb + ')"' : '') + '>' + (thumb ? '' : '🧳') + '</span>' +
+          '<span class="thumb" ' + (thumb ? 'style="background-image:url(' + thumb + ')"' : '') + '>' + (thumb ? '' : icon('luggage')) + '</span>' +
           '<span class="meta">' +
             '<span class="name">' + escapeHtml(g.trip) + '</span>' +
             '<span class="sub">' + escapeHtml(subParts.join('・')) + '</span>' +
             '<span class="tag">エピソード' + g.episodes.length + '件</span>' +
-          '</span>';
+          '</span>' + icon('chevron-right');
         card.addEventListener('click', function () { openTripDetail(g.tripId); });
         listEl.appendChild(card);
       });
@@ -1757,7 +1788,7 @@
     var s = String(name || '?');
     var hash = 0;
     for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
-    return 'hsl(' + (hash % 360) + ', 55%, 45%)';
+    return 'hsl(' + (hash % 360) + ', 32%, 40%)';
   }
 
   function stopHeaderLabel(stop) {
@@ -1765,40 +1796,53 @@
     return when || '日時未記入';
   }
 
+  function yen(v) {
+    var n = Number(v);
+    return (v === '' || v == null || isNaN(n)) ? escapeHtml(String(v == null ? '' : v)) : n.toLocaleString('ja-JP');
+  }
+
+  function stopDayLabel(date) {
+    var p = (date || '').split('-');
+    if (p.length !== 3) return '日付未記入';
+    var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return formatDateJa(date) + '（' + '日月火水木金土'.charAt(d.getDay()) + '）';
+  }
+
   function stopDetailHtml(detail) {
     var photosHtml = detail.photos && detail.photos.length
-      ? '<div class="thumbs">' + detail.photos.slice(0, 4).map(function (p) { return '<img src="' + p + '">'; }).join('') + '</div>'
+      ? '<div class="thumbs">' + detail.photos.slice(0, 4).map(function (p) { return '<img src="' + p + '" alt="">'; }).join('') + '</div>'
       : '';
     var metaBits = [];
-    if (detail.pricePerPerson !== '' && detail.pricePerPerson != null) metaBits.push('<span class="stop-pill">💴 一人 ' + escapeHtml(String(detail.pricePerPerson)) + '円</span>');
-    if (detail.waitTime) metaBits.push('<span class="stop-pill">⏱ 待ち ' + escapeHtml(detail.waitTime) + '</span>');
-    if (detail.mapUrl) metaBits.push('<a class="stop-pill stop-link" href="' + escapeHtml(detail.mapUrl) + '" target="_blank" rel="noopener">🗺 地図</a>');
-    if (detail.shopUrl) metaBits.push('<a class="stop-pill stop-link" href="' + escapeHtml(detail.shopUrl) + '" target="_blank" rel="noopener">🔗 お店のHP</a>');
+    if (detail.pricePerPerson !== '' && detail.pricePerPerson != null) metaBits.push('<span class="stop-meta-item">' + icon('banknote') + '一人 ' + yen(detail.pricePerPerson) + '円</span>');
+    if (detail.waitTime) metaBits.push('<span class="stop-meta-item">' + icon('clock') + '待ち ' + escapeHtml(detail.waitTime) + '</span>');
+    if (detail.mapUrl) metaBits.push('<a class="stop-meta-item stop-link" href="' + escapeHtml(detail.mapUrl) + '" target="_blank" rel="noopener">' + icon('map-pin') + '地図</a>');
+    if (detail.shopUrl) metaBits.push('<a class="stop-meta-item stop-link" href="' + escapeHtml(detail.shopUrl) + '" target="_blank" rel="noopener">' + icon('external-link') + 'お店のHP</a>');
     var breakdownHtml = detail.priceBreakdown && detail.priceBreakdown.length
-      ? '<details class="stop-breakdown"><summary>明細を見る</summary><ul>' +
-        detail.priceBreakdown.map(function (b) { return '<li>' + escapeHtml(b.label || '') + '：' + escapeHtml(String(b.amount != null ? b.amount : '')) + '円</li>'; }).join('') +
-        '</ul></details>'
+      ? '<details class="stop-breakdown"><summary>明細を見る</summary><dl>' +
+        detail.priceBreakdown.map(function (b) { return '<div><dt>' + escapeHtml(b.label || '') + '</dt><dd>' + yen(b.amount) + '円</dd></div>'; }).join('') +
+        '</dl></details>'
       : '';
     var avg = averageRating(detail);
     var ratingCount = (detail.ratings || []).length;
-    var avgHtml = avg != null ? ('★' + avg + '（' + ratingCount + '件）') : 'まだ評価がありません';
+    var avgHtml = avg != null
+      ? ('<span class="stop-rating-avg">★' + avg + '（' + ratingCount + '件）</span>')
+      : '<span class="stop-rating-avg is-empty">まだ評価がありません</span>';
     return '<div class="stop-detail">' +
       '<div class="stop-detail-avatar" style="background:' + avatarColor(detail.author) + '">' + escapeHtml(avatarInitial(detail.author)) + '</div>' +
       '<div class="stop-detail-body">' +
-      '<div class="stop-detail-header"><span class="stop-detail-author">' + escapeHtml(detail.author || '名前未記入') + '</span></div>' +
+      '<div class="stop-detail-author">' + escapeHtml(detail.author || '名前未記入') + '</div>' +
       (detail.episode ? '<p class="stop-detail-text">' + escapeHtml(detail.episode) + '</p>' : '') +
-      (detail.comment ? '<p class="stop-detail-comment">「' + escapeHtml(detail.comment) + '」</p>' : '') +
+      (detail.comment ? '<p class="stop-detail-comment">' + escapeHtml(detail.comment) + '</p>' : '') +
       photosHtml +
       (metaBits.length ? '<div class="stop-detail-meta">' + metaBits.join('') + '</div>' : '') +
       breakdownHtml +
-      '<div class="stop-rating">' +
-      '<span class="stop-rating-avg">' + avgHtml + '</span>' +
+      '<div class="stop-rating">' + avgHtml +
       '<form class="stop-rate-form" data-detail-id="' + detail.id + '">' +
-      '<input type="text" class="rate-name" placeholder="お名前" required>' +
-      '<select class="rate-score">' +
+      '<input type="text" class="rate-name" placeholder="お名前" aria-label="評価する人の名前" required>' +
+      '<select class="rate-score" aria-label="点数">' +
       [5, 4, 3, 2, 1].map(function (n) { return '<option value="' + n + '">★' + n + '</option>'; }).join('') +
       '</select>' +
-      '<button type="submit" class="btn text small">評価する</button>' +
+      '<button type="submit" class="btn outline small">評価する</button>' +
       '</form>' +
       '</div>' +
       '</div>' +
@@ -1807,25 +1851,37 @@
 
   function stopCardHtml(w, stop) {
     var details = detailsForStop(w, stop.id);
-    return '<div class="stop-card">' +
+    return '<li class="stop-card">' +
+      '<div class="stop-time">' + escapeHtml(stop.time || '—') + '</div>' +
+      '<div class="stop-main">' +
       '<div class="stop-card-head">' +
-      '<span class="stop-pill stop-time-pill">' + escapeHtml(stopHeaderLabel(stop)) + '</span>' +
-      (stop.timeLabel ? '<span class="stop-pill">' + escapeHtml(stop.timeLabel) + '</span>' : '') +
-      (stop.type ? '<span class="stop-pill stop-type-pill">' + escapeHtml(stop.type) + '</span>' : '') +
+      '<span class="stop-label">' + escapeHtml(stop.timeLabel || '予定') + '</span>' +
+      (stop.type ? '<span class="stop-type">' + escapeHtml(stop.type) + '</span>' : '') +
       '</div>' +
-      '<div class="stop-detail-list">' +
-      (details.length ? details.map(stopDetailHtml).join('') : '<p class="stop-empty">まだ記録がありません。</p>') +
+      (details.length ? '<div class="stop-detail-list">' + details.map(stopDetailHtml).join('') + '</div>' : '') +
+      '<button class="btn text small add-detail-btn" data-stop-id="' + stop.id + '">' + icon('plus') + '記録を追加（別行動もOK）</button>' +
       '</div>' +
-      '<button class="btn text small add-detail-btn" data-stop-id="' + stop.id + '">＋ 記録を追加（別行動もOK）</button>' +
-      '</div>';
+      '</li>';
   }
 
+  // 日付ごとに見出しを立て、その中で時刻を左端にそろえて並べる（「その日どう過ごしたか」を縦に読めるように）
   function renderStopsTimeline(tripId) {
     var w = currentWiki();
     var stops = stopsForTrip(w, tripId);
-    $('#stopsTimeline').innerHTML = stops.length
-      ? stops.map(function (s) { return stopCardHtml(w, s); }).join('')
-      : '<p class="stop-empty">まだ予定が記録されていません。「＋ 予定を追加」から始めましょう。</p>';
+    if (!stops.length) {
+      $('#stopsTimeline').innerHTML = '<p class="stop-empty">まだ予定が記録されていません。「予定を追加」から始めましょう。</p>';
+      return;
+    }
+    var days = [];
+    stops.forEach(function (s) {
+      var last = days[days.length - 1];
+      if (!last || last.date !== s.date) days.push({ date: s.date, stops: [s] });
+      else last.stops.push(s);
+    });
+    $('#stopsTimeline').innerHTML = days.map(function (d) {
+      return '<div class="stop-day"><h3 class="stop-day-heading">' + escapeHtml(stopDayLabel(d.date)) + '</h3>' +
+        '<ol class="stop-list">' + d.stops.map(function (s) { return stopCardHtml(w, s); }).join('') + '</ol></div>';
+    }).join('');
   }
 
   function openStopForm() {
@@ -1895,7 +1951,7 @@
     row.className = 'field-row breakdown-row';
     row.innerHTML = '<div class="field"><input type="text" class="bd-label" placeholder="例：入場料"></div>' +
       '<div class="field"><input type="number" class="bd-amount" min="0" placeholder="円"></div>' +
-      '<button type="button" class="btn text small bd-remove">×</button>';
+      '<button type="button" class="btn ghost small bd-remove" aria-label="この明細を削除">' + icon('trash') + '</button>';
     row.querySelector('.bd-remove').addEventListener('click', function () { row.remove(); });
     $('#sdBreakdownRows').appendChild(row);
   }
@@ -2044,7 +2100,7 @@
     var note = $('#composeNote');
     if (note) {
       note.textContent = w.composed
-        ? ('✨ ' + formatDateTimeJa(w.composedAt) + 'にAIがまとめた文章です。各項目の「元の回答を見る」からいつでも元のやり取りを確認できます。')
+        ? (formatDateTimeJa(w.composedAt) + 'にAIがまとめた文章です。各項目の「元の回答を見る」からいつでも元のやり取りを確認できます。')
         : '';
     }
   }
@@ -2114,6 +2170,7 @@
 
   function init() {
     store = loadStore();
+    hydrateIcons();
 
     $('#btnNewWiki').addEventListener('click', function () { resetNewForm(); showScreen('new'); });
     $('#btnCreateWiki').addEventListener('click', createWiki);
