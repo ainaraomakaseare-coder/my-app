@@ -8,9 +8,9 @@ python3 scripts/signing.py
 security create-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
-security import "$signing_dir/distribution.p12" -P "$DIST_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain" >/dev/null
+security import "$signing_dir/distribution.p12" -P "$DIST_CERT_PASSWORD" -t cert -f pkcs12 -k "$keychain" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
 security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
-security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$keychain_password" "$keychain" >/dev/null
 export IOS_PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :provisioningProfiles:com.hiroyaapps.uchinokaji' "$signing_dir/ExportOptions.plist")"
 export IOS_TEAM_ID="$APPLE_TEAM_ID"
 node scripts/configure-ios.mjs
