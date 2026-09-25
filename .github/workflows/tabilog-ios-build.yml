@@ -81,6 +81,13 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.hiroyaapps.tabilog" Info.plist
           /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" Info.plist
           /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string tabilog" Info.plist
+          # アプリが日本語対応だと申告する。Capacitorのひな形は英語（en）だけの申告なので、そのままだと
+          # 端末が日本語でも、文字を長押ししたときの「Copy / Paste」、写真の選択画面、キーボードの
+          # 「Done」などのシステムの表示が英語になっていた。
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDevelopmentRegion ja" Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleDevelopmentRegion string ja" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations array" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations:0 string ja" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleAllowMixedLocalizations bool true" Info.plist
 
       - name: ユニバーサルリンク（Associated Domains）の設定を追加する
         # 共有リンクをアプリで開けるよう、リポジトリに置いたApp.entitlementsをコピーし、
