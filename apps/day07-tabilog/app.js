@@ -304,6 +304,18 @@
     });
   }
 
+  // ホーム画面の並び順。''（既定）は「最近開いた・編集した順」（upsertTripIndexEntryの並びそのまま）。
+  // 'date_asc'/'date_desc'は旅行の開始日で並べ替える。日程未設定の旅行はどちらの向きでも末尾に置く。
+  function sortTrips(trips, sortKey) {
+    var out = (trips || []).slice();
+    if (sortKey === 'date_asc') {
+      out.sort(function (a, b) { return (a.startDate || '9999-99-99').localeCompare(b.startDate || '9999-99-99'); });
+    } else if (sortKey === 'date_desc') {
+      out.sort(function (a, b) { return (b.startDate || '').localeCompare(a.startDate || ''); });
+    }
+    return out;
+  }
+
   // 上の絞り込み欄（プルダウン）に出す選択肢を、実際に旅行データに登場する値だけから作る
   // （固定の選択肢を用意すると、人によって「サークルの友達」「大学のサークル」のように
   // 呼び方が揺れて選べない値が出てしまうため、自由入力＋実データからの選択肢にしている）。
@@ -400,6 +412,7 @@
     upsertTripIndexEntry: upsertTripIndexEntry,
     removeTripIndexEntry: removeTripIndexEntry,
     filterTrips: filterTrips,
+    sortTrips: sortTrips,
     tripFilterOptions: tripFilterOptions,
     ratingSummary: ratingSummary,
     myRatingScore: myRatingScore,
@@ -502,6 +515,15 @@
   function forgetTrip(id) {
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(Core.removeTripIndexEntry(loadMyTrips(), id)));
   }
+  // 「この端末の旅行の履歴を削除」。tabilog:my-tripsはログイン状態と無関係の端末ローカルな
+  // 索引（ログアウトしても消えない）なので、別アカウントに切り替えて試すときなどに前の
+  // 旅行が残り続けて紛らわしい、という声を受けて追加した手動クリア機能。サーバー上の旅行
+  // データ自体は削除しない（あくまでこの端末の「開いたことのある旅行」一覧が空になるだけ）。
+  function clearTripHistory() {
+    if (!confirm('この端末に保存されている「旅行の履歴」を削除しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを知っていれば引き続き開けます）')) return;
+    localStorage.removeItem(MY_TRIPS_KEY);
+    renderHomeTripList();
+  }
 
   function photoUrl(id) {
     if (!id) return '';
@@ -588,6 +610,44 @@
     v.pause();
     v.src = '';
     $('#videoLightbox').hidden = true;
+  }
+
+  // 写真・動画の保存（アルバムから開いたライトボックスの「保存」ボタン、DAY30〜）。
+  // Web Share API（ファイル共有）に対応していれば、iOSの共有シート経由で「画像/動画を保存」を
+  // 出せるのでそちらを優先する。対応していない環境（主にPCブラウザ）ではオブジェクトURL＋
+  // <a download>でのダウンロードにフォールバックする（cross-originのURLへ直接download属性を
+  // 付けてもブラウザに無視されるため、一度fetchでblobとして取り込んでからdownloadする必要がある）。
+  function downloadBlob(blob, filename) {
+    var objectUrl = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 10000);
+  }
+
+  function saveMediaFromUrl(url, filename, btn) {
+    if (!url) return;
+    if (btn) btn.disabled = true;
+    fetch(url).then(function (res) {
+      if (!res.ok) throw new Error('fetch_failed');
+      return res.blob();
+    }).then(function (blob) {
+      var file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        return navigator.share({ files: [file] }).catch(function (e) {
+          if (e && e.name === 'AbortError') return; // 共有シートをキャンセルしただけなので何もしない
+          downloadBlob(blob, filename);
+        });
+      }
+      downloadBlob(blob, filename);
+    }).catch(function () {
+      alert('保存に失敗しました。もう一度お試しください。');
+    }).then(function () {
+      if (btn) btn.disabled = false;
+    });
   }
 
   // ---------- アルバム（旅行全体の写真・動画をまとめて見る） ----------
@@ -903,7 +963,7 @@
     myLogItems: [],
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [] },
-    homeFilters: { companion: '', year: '', tripType: '' },
+    homeFilters: { companion: '', year: '', tripType: '', sort: '' },
     myLogCategory: 'food',
     myLogSort: 'score',
     // 旅行のサムネイル画像。新規作成・編集どちらのフォームでも使い回す
@@ -972,9 +1032,11 @@
   function renderHomeTripList() {
     var allTrips = loadMyTrips();
     $('#tripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない
+    $('#btnClearTripHistory').hidden = !allTrips.length; // 履歴が無ければ削除ボタンも出さない
     if (allTrips.length >= 2) renderTripFilterOptions(allTrips);
 
-    var list = Core.filterTrips(allTrips, state.homeFilters);
+    var list = Core.sortTrips(Core.filterTrips(allTrips, state.homeFilters), state.homeFilters.sort);
+    $('#sortTripOrder').value = state.homeFilters.sort;
     var el = $('#tripList');
     if (!allTrips.length) {
       el.innerHTML = '<div class="empty">まだ旅行がありません。「＋ 新しい旅を記録する」から始めてください。</div>';
@@ -1315,6 +1377,26 @@
     return '';
   }
 
+  // 音声入力・レシート読み取りは、内容の読み取りのため録音データ・メモの文章・レシート写真を
+  // 外部のAIサービス（OpenAI）へ送信する（Apple Guideline 5.1.1(i)/5.1.2(i)対応）。
+  // 送信前に必ず内容を説明し、同意を得てから実際の送信処理へ進む。一度同意すればこの端末では
+  // 再確認しない（同意そのものをやり直したい場合はブラウザのサイトデータ削除で戻せる）。
+  var AI_CONSENT_KEY = 'tabilog:ai-consent';
+  function hasAiConsent() {
+    try { return localStorage.getItem(AI_CONSENT_KEY) === '1'; } catch (e) { return false; }
+  }
+  function confirmAiDataSharing() {
+    if (hasAiConsent()) return true;
+    var ok = confirm(
+      '音声入力・レシート読み取りでは、録音した音声・入力したメモの文章・レシートの写真を、' +
+      '内容の読み取り・文字起こしのために外部のAIサービス（OpenAI）へ送信します。\n' +
+      '送信されたデータはOpenAIのモデル学習には使われません（APIの既定ポリシー）。\n\n' +
+      '同意してこの機能を使いますか？'
+    );
+    if (ok) { try { localStorage.setItem(AI_CONSENT_KEY, '1'); } catch (e) {} }
+    return ok;
+  }
+
   // 音声入力は有料プラン専用（docs/adr/0004）。ログインしていない、またはプラン・回数券が
   // 無い場合は、録音の代わりに案内とプランへの導線を出す。
   // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
@@ -1324,6 +1406,7 @@
     var user = loadCurrentUser();
     if (!user) { openLogin('voiceEntryForm'); return; }
     if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから音声入力を始めてください。'); return; }
+    if (!confirmAiDataSharing()) return;
     state.voiceEntryMultiDay = !!multiDay;
     $('#voiceEntryTitle').textContent = multiDay ? '複数日をまとめて記録する' : '音声・メモでまとめて記録する';
     $('#voiceEntryLead').textContent = multiDay
@@ -1494,10 +1577,17 @@
     return byDate[state.selectedDate || ''] || [];
   }
 
+  // 画面の左端（EDGE_SWIPE_BACK_PX以内）から始まったスワイプだけを「戻る」操作として扱うための
+  // しきい値。iOSのエッジスワイプ相当の操作を、タイムライン上の日タブ切り替えスワイプ（どこから
+  // 始めてもよい）と区別するために使う。日タブスワイプ側は、この範囲から始まったタッチを
+  // 「戻る」操作に譲って自分では反応しないようにしている（initDaySwipe参照）。
+  var EDGE_SWIPE_BACK_PX = 24;
+
   // 日タブを左右スワイプで切り替える。タイムライン上での横方向の指の動きを見て、
   // 縦スクロールと誤認しないよう「最初にどちらの向きに動いたか」で一度だけ判定する。
   // Blockの並べ替え・記録の移動ドラッグは持ち手（.block-drag-handle / .entry-drag-handle）
   // から始まる操作なので、そこから始まったタッチはスワイプの対象にしない。
+  // 画面左端から始まったタッチも対象にしない（そちらは「戻る」操作、initEdgeSwipeBack参照）。
   var daySwipeState = null;
   function initDaySwipe() {
     var el = $('#timeline');
@@ -1509,7 +1599,12 @@
         return;
       }
       var t = e.touches[0];
-      daySwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+      if (t.clientX <= EDGE_SWIPE_BACK_PX) { daySwipeState = null; return; }
+      // 「最初にどちらの向きに動いたか判定するまでの数px」の間はpreventDefaultしていないため、
+      // 指が斜めに動いただけでもその間にページが数px縦スクロールしてしまうことがある
+      // （横スワイプのつもりが、判定後に見た目がわずかにずれる不具合の原因）。横方向と判定できた
+      // 時点で、その間にずれた分のスクロール位置を元に戻す。
+      daySwipeState = { startX: t.clientX, startY: t.clientY, startScrollY: window.scrollY, decided: false, horizontal: false };
     }, { passive: true });
 
     el.addEventListener('touchmove', function (e) {
@@ -1520,6 +1615,9 @@
       if (!daySwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
         daySwipeState.decided = true;
         daySwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+        if (daySwipeState.horizontal && window.scrollY !== daySwipeState.startScrollY) {
+          window.scrollTo(window.scrollX, daySwipeState.startScrollY);
+        }
       }
       if (daySwipeState.decided && daySwipeState.horizontal) e.preventDefault();
     }, { passive: false });
@@ -1536,6 +1634,45 @@
     });
 
     el.addEventListener('touchcancel', function () { daySwipeState = null; });
+  }
+
+  // 画面左端からのスワイプで「戻る」操作にする（iOSのエッジスワイプ相当）。マイログ画面・
+  // 旅行詳細画面（日タブがどれを選んでいても、そこから直接ホームへ戻れる）の両方で使う共通処理。
+  var edgeSwipeBackState = null;
+  function initEdgeSwipeBack(el, onBack) {
+    if (!el) return;
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { edgeSwipeBackState = null; return; }
+      var t = e.touches[0];
+      if (t.clientX > EDGE_SWIPE_BACK_PX) { edgeSwipeBackState = null; return; }
+      edgeSwipeBackState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!edgeSwipeBackState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - edgeSwipeBackState.startX;
+      var dy = t.clientY - edgeSwipeBackState.startY;
+      if (!edgeSwipeBackState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        edgeSwipeBackState.decided = true;
+        edgeSwipeBackState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (edgeSwipeBackState.decided && edgeSwipeBackState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!edgeSwipeBackState) return;
+      var es = edgeSwipeBackState;
+      edgeSwipeBackState = null;
+      if (!es.decided || !es.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - es.startX;
+      if (dx < 60) return; // 左→右に一定以上動いたときだけ
+      onBack();
+    });
+
+    el.addEventListener('touchcancel', function () { edgeSwipeBackState = null; });
   }
 
   function goToAdjacentDay(delta) {
@@ -2266,11 +2403,17 @@
   // チップで選ぶだけのシンプルな作り。チップを押すたびに全体を再描画するとパネルが
   // 閉じてしまうので、ここだけはDOMを直接書き換えて開いたままにする。
   function buildCostPayerRow(idx, row) {
+    // trip.companions は「一緒に行った人」（＝自分以外）の一覧なので、これだけだと
+    // 記録している本人が払った・割る人に選べない（DAY30〜、実際に「自分が入っていない」
+    // という報告を受けて対応）。今の「記録した人（#entAuthor）」欄の値を本人として
+    // 先頭に加える（companions側には追加しない＝「〇〇と一緒」の表示はそのまま）。
     var companions = (state.trip && state.trip.companions) || [];
+    var self = $('#entAuthor').value.trim();
+    var people = self && companions.indexOf(self) === -1 ? [self].concat(companions) : companions.slice();
     var panel = document.createElement('div');
     panel.className = 'cost-payer-row';
-    if (!companions.length) {
-      panel.innerHTML = '<p class="hint">参加者が未設定です。旅行の編集画面で参加者を入力すると選べるようになります。</p>';
+    if (!people.length) {
+      panel.innerHTML = '<p class="hint">参加者が未設定です。旅行の編集画面で参加者を入力する、または「記録した人」欄に名前を入れると選べるようになります。</p>';
       return panel;
     }
     function currentItem() { return state.formCostItems[idx]; }
@@ -2293,7 +2436,7 @@
     var payerChipWrap = payerSection.querySelector('[data-role="payer"]');
     var splitChipWrap = splitSection.querySelector('[data-role="split"]');
 
-    companions.forEach(function (name) {
+    people.forEach(function (name) {
       var payerBtn = document.createElement('button');
       payerBtn.type = 'button';
       payerBtn.className = 'chip-option' + (currentItem().paidBy === name ? ' on' : '');
@@ -2322,7 +2465,7 @@
 
     splitSection.querySelector('.cost-split-even').addEventListener('click', function () {
       var item = currentItem();
-      item.splitAmong = companions.slice();
+      item.splitAmong = people.slice();
       $all('.chip-option', splitChipWrap).forEach(function (b) { b.classList.add('on'); });
     });
 
@@ -2760,8 +2903,19 @@
     });
     $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(-1); });
     $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(1); });
+    $('#btnSaveLightboxPhoto').addEventListener('click', function (e) {
+      e.stopPropagation();
+      var id = lightboxState.photoIds[lightboxState.index];
+      if (id) saveMediaFromUrl(photoUrl(id), id, e.currentTarget);
+    });
     initLightboxSwipe();
     $('#btnCloseVideoLightbox').addEventListener('click', closeVideoLightbox);
+    $('#btnSaveLightboxVideo').addEventListener('click', function (e) {
+      e.stopPropagation();
+      var src = $('#lightboxVideo').src;
+      var filename = (src.split('/').pop() || 'video.mp4').split('#')[0].split('?')[0];
+      saveMediaFromUrl(src, filename, e.currentTarget);
+    });
     $('#videoLightbox').addEventListener('click', function (e) {
       if (e.target === e.currentTarget) closeVideoLightbox();
     });
@@ -2770,7 +2924,9 @@
     $('#filterCompanion').addEventListener('change', function (e) { state.homeFilters.companion = e.target.value; renderHomeTripList(); });
     $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
-    $('#btnScanReceipt').addEventListener('click', function () { $('#receiptFileInput').click(); });
+    $('#sortTripOrder').addEventListener('change', function (e) { state.homeFilters.sort = e.target.value; renderHomeTripList(); });
+    $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
+    $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); showPlaceMapPreview(); }
@@ -2786,6 +2942,8 @@
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
+    initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
+    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), goHome);
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });

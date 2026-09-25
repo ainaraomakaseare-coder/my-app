@@ -4,7 +4,7 @@ import xcode from 'xcode';
 import sharp from 'sharp';
 const file='ios/App/App/Info.plist';
 const info=plist.parse(await fs.readFile(file,'utf8'));
-info.CFBundleDisplayName='ベイ日記';
+info.CFBundleDisplayName='観戦日記';
 info.NSCameraUsageDescription='観戦記録に添付する写真を撮影するためにカメラを使用します。';
 info.NSPhotoLibraryUsageDescription='観戦記録に添付する写真を選ぶために写真ライブラリを使用します。';
 info.NSPhotoLibraryAddUsageDescription='共有した観戦成績の画像を写真ライブラリに保存するために使用します。';
@@ -33,6 +33,11 @@ if(!project.pbxGroupByName('Resources')) {
 delete project.pbxGroupByName('Resources').path;
 if(!project.hasFile('App/PrivacyInfo.xcprivacy'))project.addResourceFile('App/PrivacyInfo.xcprivacy',{target:project.getFirstTarget().uuid});
 await fs.copyFile('native/BayDiaryViewController.swift','ios/App/App/BayDiaryViewController.swift');
+// Reuse the App Store launch artwork in the native launch screen.
+const splash='ios/App/App/Assets.xcassets/Splash.imageset';
+await fs.mkdir(splash,{recursive:true});
+await fs.copyFile('resources/splash.png',splash+'/splash-2732x2732.png');
+await fs.writeFile(splash+'/Contents.json',JSON.stringify({images:[{filename:'splash-2732x2732.png',idiom:'universal',scale:'1x'},{filename:'splash-2732x2732.png',idiom:'universal',scale:'2x'},{filename:'splash-2732x2732.png',idiom:'universal',scale:'3x'}],info:{author:'xcode',version:1}},null,2));
 if(!project.hasFile('BayDiaryViewController.swift')) {
   const groups=project.hash.project.objects.PBXGroup;
   const appGroup=Object.keys(groups).find(key=>groups[key]?.path==='App');
@@ -50,6 +55,6 @@ await fs.writeFile(storyboardPath,storyboard);
 await fs.writeFile('ios/App/App.xcodeproj/project.pbxproj',project.writeSync());
 const icons='ios/App/App/Assets.xcassets/AppIcon.appiconset';
 await fs.mkdir(icons,{recursive:true});
-await sharp('resources/icon.svg').removeAlpha().png().toFile(icons+'/AppIcon.png');
+await sharp('resources/icon.png').resize(1024,1024,{fit:'cover'}).removeAlpha().png().toFile(icons+'/AppIcon.png');
 await fs.writeFile(icons+'/Contents.json',JSON.stringify({images:[{filename:'AppIcon.png',idiom:'universal',platform:'ios',size:'1024x1024'}],info:{author:'xcode',version:1}},null,2));
 console.log('Configured iOS identity, permissions, privacy manifest and opaque 1024px icon.');

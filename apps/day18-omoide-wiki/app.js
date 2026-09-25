@@ -352,43 +352,68 @@
   // （言い回しを調整するたびに既に答えた質問が再度出てきてしまうのを防ぐ）。
   var QUESTIONS = {
     person: {
+      // 本物のWikipediaの「来歴」のように、学校名・会社名・年・役職など、記事の骨組みになる事実を聞く。
+      // 言い回しを変えても答え済みの判定はkeyで行うため、keyは変えないこと。
       history: [
-        { key: 'birth-place', text: 'まずは基本から聞かせてください！生まれはどこですか？（都道府県・市区町村、当時の様子も分かれば嬉しいです）' },
-        { key: 'birth-story', text: '生まれたときのエピソードで、家族から聞いている面白い話はありますか？' },
+        { key: 'birth-place', text: 'まずは基本から！生まれた場所を教えてください（都道府県・市区町村まで分かると嬉しいです）' },
         { key: 'birth-date', text: '生年月日を教えてください（西暦・元号どちらでも大丈夫です）' },
+        { key: 'name-origin', text: 'お名前の由来や、名付けた人を知っていますか？昔からのあだ名や呼ばれ方もあれば教えてください' },
+        { key: 'family-of-origin', text: '育った家族のことを教えてください。ご両親のお仕事や、きょうだいは何人で何番目でしたか？' },
+        { key: 'birth-story', text: '生まれたときのエピソードで、家族から聞いている面白い話はありますか？' },
         { key: 'blood-type', text: '血液型は何ですか？分かれば教えてください' },
-        { key: 'kindergarten', text: '幼稚園・保育園はどこに通っていましたか？当時どんな子どもだったか、ぜひ聞かせてください！' },
-        { key: 'elementary-school', text: '小学校はどこですか？小学校時代の一番の思い出、教えてください！' },
-        { key: 'elementary-friends', text: '小学校で仲良かった友達や、忘れられない先生はいましたか？' },
-        { key: 'junior-high', text: '中学校はどこですか？当時、一番夢中になっていたことは何ですか？' },
-        { key: 'high-school', text: '高校はどこですか？高校時代の忘れられない出来事、聞かせてください！' },
-        { key: 'high-school-friends', text: '高校で仲良かった友達や、当時よく一緒にいた人は誰でしたか？その人たちとの楽しい思い出があれば教えてください' },
-        { key: 'college-or-job', text: '大学・専門学校、または最初の就職先はどこですか？そこを選んだ理由もぜひ聞かせてください' },
+        { key: 'kindergarten', text: '通っていた幼稚園・保育園の名前を教えてください！当時どんな子どもだったかも聞かせてください' },
+        { key: 'elementary-school', text: '小学校の名前と、入学した年を教えてください。小学校時代の一番の思い出もぜひ！' },
+        { key: 'elementary-friends', text: '小学校で仲の良かった友達や、忘れられない先生の名前は覚えていますか？どんな人でしたか？' },
+        { key: 'junior-high', text: '中学校の名前を教えてください。入っていた部活や、一番夢中になっていたことは何でしたか？' },
+        { key: 'club-achievements', text: '部活や習いごとで、大会の成績・賞・級や段など、形に残った結果はありますか？何年のことかも教えてください' },
+        { key: 'high-school', text: '高校の名前と、何科・どのコースだったかを教えてください。高校時代の忘れられない出来事もぜひ！' },
+        { key: 'high-school-friends', text: '高校で仲の良かった友達や、よく一緒にいた人は誰でしたか？その人たちとの思い出も教えてください' },
+        { key: 'coming-of-age', text: '成人式はどこで、どんなふうに迎えましたか？一緒にいた人や、その日の思い出も聞かせてください' },
+        { key: 'leaving-home', text: '初めて実家を出て暮らし始めたのはいつ、どこでしたか？そのころの暮らしぶりも教えてください' },
+        { key: 'college-or-job', text: '高校のあと、進んだ大学・専門学校（学部・学科まで）や就職先を教えてください。そこを選んだ理由も！' },
         { key: 'college-good-bad', text: 'そこに入って一番良かったこと、そして一番つらかった・悲しかったこと、それぞれ聞かせてください' },
-        { key: 'college-circle', text: '大学・専門学校でサークルや部活、ゼミなどはありましたか？そこでの仲良かった人や楽しかった出来事を教えてください' },
-        { key: 'part-time-job', text: 'アルバイト先で仲良くなった人や、印象に残っている出来事はありますか？' },
-        { key: 'first-job', text: '初めての仕事、社会に出たころのこと。覚えている出来事があればぜひ！' },
-        { key: 'marriage', text: '結婚した思い出はありますか？時期や、馴れ初めのエピソードも聞かせてください' },
-        { key: 'children', text: 'お子さんやご家族が増えた思い出はありますか？そのときの気持ちも聞かせてください' },
-        { key: 'moving', text: '引っ越しをした思い出はありますか？いつ、どこからどこへ、そのきっかけも聞かせてください' },
-        { key: 'retirement', text: '仕事に区切りをつけた（退職した）ときのことを覚えていますか？そのときの気持ちも聞かせてください' },
-        { key: 'turning-point', text: 'これまでの人生で、一番大きな転機・決断だったと思う出来事は何ですか？' }
+        { key: 'college-circle', text: '大学・専門学校で入っていたサークル・部活・ゼミの名前を教えてください。そこで仲の良かった人や出来事も！' },
+        { key: 'part-time-job', text: 'アルバイトは何をしていましたか？お店や会社の名前と、そこで印象に残っている出来事を教えてください' },
+        { key: 'first-job', text: '最初に働いた会社・職場の名前と、入った年、最初に担当した仕事を教えてください' },
+        { key: 'first-big-purchase', text: '初めて自分のお金で買った大きな買い物（車・バイクなど）は何でしたか？買ったときのワクワクも聞かせてください' },
+        { key: 'first-overseas', text: '初めて海外に行ったのはいつ、どこでしたか？そのときの驚きや思い出も教えてください' },
+        { key: 'career', text: 'その後の仕事の歩みを、古い順に教えてください。会社名・部署や役職・だいたいの年を分かる範囲で！' },
+        { key: 'job-change', text: '転職・独立・転勤など、仕事の大きな変化はありましたか？何年に、どうしてそうしたのかも教えてください' },
+        { key: 'work-achievement', text: '仕事で一番誇れる成果や、任された大きな仕事は何ですか？何年ごろのことかも教えてください' },
+        { key: 'qualifications-awards', text: '取った資格や免許、表彰されたことはありますか？取った年も分かれば教えてください' },
+        { key: 'marriage', text: '結婚した年と、お相手との出会い（馴れ初め）を教えてください' },
+        { key: 'children', text: 'お子さんやお孫さんについて、生まれた年やお名前など、話せる範囲で教えてください' },
+        { key: 'home', text: '家を建てた・買った、あるいは長く暮らした家の思い出はありますか？いつ、どこだったかも教えてください' },
+        { key: 'pets', text: '一緒に暮らしたペットはいますか？名前や、家に来た年、思い出のエピソードも聞かせてください' },
+        { key: 'moving', text: '住んだことのある場所を、古い順に教えてください。引っ越しのきっかけも分かれば！' },
+        { key: 'grandchildren', text: '初めてお孫さんが生まれたのはいつですか？そのときの気持ちも聞かせてください' },
+        { key: 'illness', text: '大きな病気やけがを乗り越えた経験はありますか？（話せる範囲で大丈夫です）' },
+        { key: 'community', text: '地域の活動やボランティア、入っていた会や団体はありますか？そこでの役割も教えてください' },
+        { key: 'retirement', text: '仕事に区切りをつけた（退職した）のはいつですか？そのときの気持ちや、その後の暮らしも聞かせてください' },
+        { key: 'milestone-birthday', text: '還暦や古希など、節目の誕生日はどんなふうに迎えましたか？誰にどうお祝いしてもらいましたか？' },
+        { key: 'turning-point', text: 'これまでの人生で、一番大きな転機・決断だったと思う出来事は何ですか？何年ごろのことですか？' }
       ],
       personality: [
         { key: 'personality-summary', text: '自分の性格をひとことで言うと、どんな感じだと思いますか？そう思うきっかけになった具体的な出来事も、あわせて聞かせてください！' },
         { key: 'personality-surprise-laugh', text: '「らしいな」と周りが思わず笑った・驚いた瞬間はありますか？そのときの状況も聞かせてください' },
         { key: 'personality-unexpected-action', text: 'これまでで一番意外だった行動は何でしたか？何があってそうなったか、ぜひ教えてください' },
         { key: 'personality-helped-someone', text: '誰かが困っているのを見て、実際にどう動いたか。覚えている場面を一つ教えてください' },
-        { key: 'personality-belief', text: '「これだけは譲れない」という信念や考え方はありますか？それを貫いた具体的な出来事も教えてください' }
+        { key: 'personality-belief', text: '「これだけは譲れない」という信念や考え方はありますか？それを貫いた具体的な出来事も教えてください' },
+        { key: 'personality-influence', text: '人生で一番影響を受けた人は誰ですか？（家族・先生・有名人など）どんな影響を受けましたか？' },
+        { key: 'personality-motto', text: '座右の銘や、よく口にする言葉・口ぐせはありますか？' }
       ],
+      // 好きなものは「事実を聞く」より「気持ちよく語ってもらう」ことを優先する聞き方にしている
       favorites: [
-        { key: 'favorite-food', text: '一番好きな食べ物は何ですか？それを好きになったきっかけの出来事も聞かせてください' },
-        { key: 'favorite-song', text: '一番好きな曲を1つ挙げるとしたら何ですか？好きになったきっかけや、聴くと思い出す出来事を教えてください' },
-        { key: 'favorite-movie-book', text: '心に残っている映画・本はありますか？それに出会ったときの状況も聞かせてください' },
-        { key: 'favorite-place', text: '一番好きな場所はどこですか？そこが好きになった具体的なきっかけや思い出も聞かせてください' },
-        { key: 'favorite-holiday', text: '休日に実際にあった、印象に残っている一日を一つ教えてください（どこで何をしたか）' },
-        { key: 'favorite-commitment', text: '「ここだけは譲れない」というこだわりはありますか？それが表れた具体的な出来事も教えてください' },
-        { key: 'favorite-hobby', text: '今ハマっている趣味や、時間を忘れて没頭できることは何ですか？始めたきっかけも聞かせてください！' }
+        { key: 'favorite-food', text: '一番好きな食べ物は何ですか？どこがたまらなく好きなのか、思う存分語ってください！' },
+        { key: 'favorite-song', text: '一番好きな曲と、歌っている人を教えてください！その曲のどこにグッとくるのか、ぜひ聞かせてください' },
+        { key: 'favorite-movie-book', text: '何度でも人にすすめたくなる映画や本はありますか？タイトルと、どこが最高なのかを聞かせてください！' },
+        { key: 'favorite-fan', text: '応援しているチームや、夢中になった有名人はいますか？好きになった瞬間のこと、ぜひ聞かせてください！' },
+        { key: 'favorite-place', text: '一番好きな場所はどこですか？そこにいると、どんな気分になれますか？' },
+        { key: 'favorite-holiday', text: '最高だった休日の一日を教えてください！朝から晩まで、どこで何をしましたか？' },
+        { key: 'favorite-commitment', text: '「これにはちょっとうるさいよ」というこだわりはありますか？ぜひ熱く語ってください！' },
+        { key: 'favorite-hobby', text: '今ハマっていることは何ですか？その魅力を、知らない人にも伝わるように教えてください！' },
+        { key: 'favorite-recommend', text: '好きなものの中で「これだけは一度味わってほしい！」と人にすすめたいものはありますか？' },
+        { key: 'favorite-happy-moment', text: 'どんなときに一番「幸せだなあ」と感じますか？' }
       ],
       skills: [
         { key: 'skill-best', text: '得意なこと・自信のあることは何ですか？一番の武器だと思うものをぜひ教えてください！' },
@@ -737,6 +762,37 @@
   function $(sel) { return document.querySelector(sel); }
   function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
 
+  // Lucide（https://lucide.dev, ISC License）のパスだけを持ち、ビルドなしでSVGアイコンとして描く
+  var ICONS = {
+    'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+    'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+    'plus': '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    'mic': '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>',
+    'camera': '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+    'square-pen': '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>',
+    'book-open': '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+    'luggage': '<path d="M6 20a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2"/><path d="M8 18V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v14"/><path d="M10 20h4"/><circle cx="16" cy="20" r="2"/><circle cx="8" cy="20" r="2"/>',
+    'printer': '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
+    'pencil': '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+    'calendar': '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+    'banknote': '<rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
+    'clock': '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    'map-pin': '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
+    'external-link': '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+    'upload': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+    'trash': '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>'
+  };
+
+  function icon(name) {
+    return '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[name] || '') + '</svg>';
+  }
+
+  function hydrateIcons() {
+    $all('[data-icon]').forEach(function (el) { el.innerHTML = icon(el.dataset.icon); });
+  }
+
   // 1件のWikiの読み込み（normalizeWiki）が予期せず失敗しても、他のWikiまで
   // 巻き込んで消えてしまわないよう、Wikiごとに個別にtry/catchする。
   // （以前はここで1つでも例外が出ると、保存されている全Wikiが見えなくなっていた）
@@ -793,12 +849,12 @@
       var count = countAll(w);
       var thumb = w.coverPhoto ? 'style="background-image:url(' + w.coverPhoto + ')"' : '';
       card.innerHTML =
-        '<span class="thumb" ' + thumb + '>' + (w.coverPhoto ? '' : (w.type === 'group' ? '🎪' : '🧑')) + '</span>' +
+        '<span class="thumb" ' + thumb + '>' + (w.coverPhoto ? '' : escapeHtml(avatarInitial(w.title))) + '</span>' +
         '<span class="meta">' +
           '<span class="name">' + escapeHtml(w.title || '（名前未設定）') + '</span>' +
           '<span class="sub">' + escapeHtml(w.subtitle || '') + '</span>' +
           '<span class="tag">' + (LABELS[w.type].kind) + '・記録' + count + '件</span>' +
-        '</span>';
+        '</span>' + icon('chevron-right');
       card.addEventListener('click', function () { openDash(w.id); });
       list.appendChild(card);
     });
@@ -1067,13 +1123,142 @@
     Object.keys(micControllers).forEach(function (k) { micControllers[k].stop(); });
   }
 
-  function speak(text, onend) {
+  function speakWithBrowser(text, onend) {
     if (!supportsSynthesis()) { if (onend) onend(); return; }
-    window.speechSynthesis.cancel();
     var u = new SpeechSynthesisUtterance(text);
     u.lang = 'ja-JP';
     if (onend) u.onend = onend;
     window.speechSynthesis.speak(u);
+  }
+
+  // 読み上げはWorker経由のGemini TTSを優先し、使えないときはブラウザ標準の音声に切り替える。
+  // 1つの<audio>を使い回すのは、iPhoneなどで「最初のタップで一度鳴らした要素」しか後から再生できないため。
+  var ttsAudio = null;
+  var ttsUnavailable = false; // Worker側にGeminiのキーが無いと分かったら、このページを開いている間は試さない
+  var speakToken = 0;
+  var SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+
+  function unlockTtsAudio() {
+    if (ttsAudio) return;
+    ttsAudio = new Audio();
+    ttsAudio.src = SILENT_WAV;
+    var p = ttsAudio.play();
+    if (p && p.catch) p.catch(function () {});
+  }
+
+  function stopSpeaking() {
+    speakToken++;
+    if (ttsAudio) { ttsAudio.pause(); ttsAudio.onended = null; }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+
+  // 標準の声に切り替わった理由。画面に出して、原因（キー未登録・利用上限など）が分かるようにする
+  var TTS_FALLBACK_REASONS = {
+    tts_not_configured: 'WorkerにGeminiのAPIキーが登録されていません',
+    gemini_rate_limited: 'Geminiの利用回数の上限に達しました（無料枠の上限の可能性があります）',
+    rate_limited: '読み上げの回数がアプリ側の上限（1分30回）に達しました',
+    upstream_error: 'Gemini側でエラーが起きました',
+    timeout: 'Geminiの応答に時間がかかりすぎました',
+    network: 'Workerに接続できませんでした',
+    play_blocked: 'ブラウザが音声の再生を止めました（画面を一度タップすると直ることがあります）'
+  };
+  var lastTtsError = '';
+
+  function fetchSpeechOnce(text) {
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 15000) : null;
+    return fetch(getAiEndpoint(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'tts', text: text }),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (res) {
+      if (timer) clearTimeout(timer);
+      var type = res.headers.get('content-type') || '';
+      if (res.ok && type.indexOf('audio/') === 0) return res.blob().then(function (blob) { return { blob: blob }; });
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        return { error: body.error || 'upstream_error', status: body.upstreamStatus || res.status };
+      });
+    }).catch(function (e) {
+      if (timer) clearTimeout(timer);
+      return { error: e && e.name === 'AbortError' ? 'timeout' : 'network' };
+    });
+  }
+
+  function fetchSpeech(text) {
+    if (!getAiEndpoint() || ttsUnavailable) return Promise.resolve(null);
+    return fetchSpeechOnce(text).then(function (r) {
+      // 一時的な失敗（混雑・通信の瞬断など）は、少し待って1回だけやり直す
+      if (r.blob || r.error === 'tts_not_configured' || r.error === 'invalid_input') return r;
+      return new Promise(function (resolve) { setTimeout(resolve, 1500); }).then(function () { return fetchSpeechOnce(text); });
+    }).then(function (r) {
+      if (r.blob) return r.blob;
+      // キーが本当に未登録のときだけ、このページを開いている間はGeminiを試さない
+      if (r.error === 'tts_not_configured') ttsUnavailable = true;
+      lastTtsError = r.error + (r.status ? '（コード' + r.status + '）' : '');
+      console.warn('Geminiの読み上げに失敗したため、ブラウザ標準の声に切り替えました：' + lastTtsError);
+      return null;
+    });
+  }
+
+  function showTtsNote(errorKey) {
+    var el = $('#ttsNote');
+    if (!el) return;
+    if (!errorKey) { el.textContent = ''; return; }
+    var key = errorKey.split('（')[0];
+    el.textContent = 'Geminiの声が使えなかったため、ブラウザ標準の声で読み上げています。理由：' +
+      (TTS_FALLBACK_REASONS[key] || errorKey) + (errorKey.indexOf('（') !== -1 ? errorKey.slice(errorKey.indexOf('（')) : '');
+  }
+
+  // 作った音声は質問文ごとに覚えておき、同じ質問を読むときは作り直さない（待ち時間も費用も減る）
+  var speechCache = {};
+  var speechCacheOrder = [];
+  var SPEECH_CACHE_MAX = 20;
+
+  function getSpeech(text) {
+    if (speechCache[text]) return speechCache[text];
+    var p = fetchSpeech(text).then(function (blob) {
+      if (!blob && speechCache[text] === p) delete speechCache[text];
+      return blob;
+    });
+    speechCache[text] = p;
+    speechCacheOrder.push(text);
+    if (speechCacheOrder.length > SPEECH_CACHE_MAX) delete speechCache[speechCacheOrder.shift()];
+    return p;
+  }
+
+  // 今の質問を読んでいる間に、次の質問の音声を先に作っておく
+  function prefetchSpeech(text) {
+    if (!text || !getAiEndpoint() || ttsUnavailable || speechCache[text]) return;
+    getSpeech(text);
+  }
+
+  function speak(text, onend, onwaiting) {
+    stopSpeaking();
+    var token = speakToken;
+    var fallback = function (reason) {
+      if (token !== speakToken) return;
+      if (getAiEndpoint()) showTtsNote(reason || lastTtsError);
+      speakWithBrowser(text, onend);
+    };
+    var pending = getSpeech(text);
+    var waitingTimer = onwaiting ? setTimeout(function () { if (token === speakToken) onwaiting(true); }, 300) : null;
+    pending.then(function (blob) {
+      if (waitingTimer) clearTimeout(waitingTimer);
+      if (token !== speakToken) return;
+      if (onwaiting) onwaiting(false);
+      if (!blob) { fallback(); return; }
+      showTtsNote('');
+      if (!ttsAudio) ttsAudio = new Audio();
+      var url = URL.createObjectURL(blob);
+      ttsAudio.onended = function () {
+        URL.revokeObjectURL(url);
+        if (token === speakToken && onend) onend();
+      };
+      ttsAudio.src = url;
+      var played = ttsAudio.play();
+      if (played && played.catch) played.catch(function () { URL.revokeObjectURL(url); fallback('play_blocked'); });
+    });
   }
 
   // ---------- インタビュー ----------
@@ -1311,7 +1496,11 @@
       if (!$('#btnSaveQ').disabled) saveInterviewAnswer(false);
     });
     if ($('#voiceModeToggle').checked) {
-      speak(q.question, function () { ctrl.start(); });
+      speak(q.question, function () { ctrl.start(); }, function (waiting) {
+        $('#qMicStatus').textContent = waiting ? '読み上げを準備しています…' : '';
+      });
+      var next = interviewQueue[interviewIndex + 1];
+      getSpeech(q.question).then(function () { if (next) prefetchSpeech(next.question); });
     }
   }
 
@@ -1320,7 +1509,7 @@
   function goToPreviousQuestion() {
     if (!interviewHistory.length) return;
     stopAllMics();
-    window.speechSynthesis && window.speechSynthesis.cancel();
+    stopSpeaking();
     var last = interviewHistory.pop();
     var w = currentWiki();
     if (last.entryId) {
@@ -1341,7 +1530,7 @@
     // 何問か答えるごとに、続けるかどうかを聞く（お年寄りなど、長く話すと疲れる人のための一区切り）
     if (sessionAnswered > 0 && sessionAnswered !== lastBreakCheckpoint && sessionAnswered % BREAK_EVERY === 0) {
       lastBreakCheckpoint = sessionAnswered;
-      window.speechSynthesis && window.speechSynthesis.cancel();
+      stopSpeaking();
       var keepGoing = confirm(
         'ここまでで' + sessionAnswered + '問お答えいただきました。少し休憩しますか？\n\n' +
         '「OK」で続ける／「キャンセル」で今日はここまでにする（答えた内容はもう保存されているので、続きはまた今度できます）'
@@ -1370,7 +1559,7 @@
   }
 
   function finishInterview(message) {
-    window.speechSynthesis && window.speechSynthesis.cancel();
+    stopSpeaking();
     alert(message || '決まっている質問には答え終えました。またいつでも「質問で深掘りする」から続きができます。');
     openDash(currentWikiId);
   }
@@ -1601,7 +1790,7 @@
     var el = $('#tripsOnThisDay');
     var trips = onThisDayTrips(w, todayMonthDay());
     if (!trips.length) { el.innerHTML = ''; return; }
-    el.innerHTML = '<div class="on-this-day"><b>📅 今日は何の日</b><ul>' +
+    el.innerHTML = '<div class="on-this-day"><div class="on-this-day-title">' + icon('calendar') + '今日は何の日</div><ul>' +
       trips.map(function (tr) {
         var year = tr.startDate ? tr.startDate.slice(0, 4) : '';
         return '<li data-trip-id="' + tr.id + '">' + (year ? year + '年 ' : '') + escapeHtml(tr.title) + '</li>';
@@ -1664,12 +1853,12 @@
         var card = document.createElement('button');
         card.className = 'wiki-card';
         card.innerHTML =
-          '<span class="thumb" ' + (thumb ? 'style="background-image:url(' + thumb + ')"' : '') + '>' + (thumb ? '' : '🧳') + '</span>' +
+          '<span class="thumb" ' + (thumb ? 'style="background-image:url(' + thumb + ')"' : '') + '>' + (thumb ? '' : icon('luggage')) + '</span>' +
           '<span class="meta">' +
             '<span class="name">' + escapeHtml(g.trip) + '</span>' +
             '<span class="sub">' + escapeHtml(subParts.join('・')) + '</span>' +
             '<span class="tag">エピソード' + g.episodes.length + '件</span>' +
-          '</span>';
+          '</span>' + icon('chevron-right');
         card.addEventListener('click', function () { openTripDetail(g.tripId); });
         listEl.appendChild(card);
       });
@@ -1757,7 +1946,7 @@
     var s = String(name || '?');
     var hash = 0;
     for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
-    return 'hsl(' + (hash % 360) + ', 55%, 45%)';
+    return 'hsl(' + (hash % 360) + ', 32%, 40%)';
   }
 
   function stopHeaderLabel(stop) {
@@ -1765,40 +1954,53 @@
     return when || '日時未記入';
   }
 
+  function yen(v) {
+    var n = Number(v);
+    return (v === '' || v == null || isNaN(n)) ? escapeHtml(String(v == null ? '' : v)) : n.toLocaleString('ja-JP');
+  }
+
+  function stopDayLabel(date) {
+    var p = (date || '').split('-');
+    if (p.length !== 3) return '日付未記入';
+    var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return formatDateJa(date) + '（' + '日月火水木金土'.charAt(d.getDay()) + '）';
+  }
+
   function stopDetailHtml(detail) {
     var photosHtml = detail.photos && detail.photos.length
-      ? '<div class="thumbs">' + detail.photos.slice(0, 4).map(function (p) { return '<img src="' + p + '">'; }).join('') + '</div>'
+      ? '<div class="thumbs">' + detail.photos.slice(0, 4).map(function (p) { return '<img src="' + p + '" alt="">'; }).join('') + '</div>'
       : '';
     var metaBits = [];
-    if (detail.pricePerPerson !== '' && detail.pricePerPerson != null) metaBits.push('<span class="stop-pill">💴 一人 ' + escapeHtml(String(detail.pricePerPerson)) + '円</span>');
-    if (detail.waitTime) metaBits.push('<span class="stop-pill">⏱ 待ち ' + escapeHtml(detail.waitTime) + '</span>');
-    if (detail.mapUrl) metaBits.push('<a class="stop-pill stop-link" href="' + escapeHtml(detail.mapUrl) + '" target="_blank" rel="noopener">🗺 地図</a>');
-    if (detail.shopUrl) metaBits.push('<a class="stop-pill stop-link" href="' + escapeHtml(detail.shopUrl) + '" target="_blank" rel="noopener">🔗 お店のHP</a>');
+    if (detail.pricePerPerson !== '' && detail.pricePerPerson != null) metaBits.push('<span class="stop-meta-item">' + icon('banknote') + '一人 ' + yen(detail.pricePerPerson) + '円</span>');
+    if (detail.waitTime) metaBits.push('<span class="stop-meta-item">' + icon('clock') + '待ち ' + escapeHtml(detail.waitTime) + '</span>');
+    if (detail.mapUrl) metaBits.push('<a class="stop-meta-item stop-link" href="' + escapeHtml(detail.mapUrl) + '" target="_blank" rel="noopener">' + icon('map-pin') + '地図</a>');
+    if (detail.shopUrl) metaBits.push('<a class="stop-meta-item stop-link" href="' + escapeHtml(detail.shopUrl) + '" target="_blank" rel="noopener">' + icon('external-link') + 'お店のHP</a>');
     var breakdownHtml = detail.priceBreakdown && detail.priceBreakdown.length
-      ? '<details class="stop-breakdown"><summary>明細を見る</summary><ul>' +
-        detail.priceBreakdown.map(function (b) { return '<li>' + escapeHtml(b.label || '') + '：' + escapeHtml(String(b.amount != null ? b.amount : '')) + '円</li>'; }).join('') +
-        '</ul></details>'
+      ? '<details class="stop-breakdown"><summary>明細を見る</summary><dl>' +
+        detail.priceBreakdown.map(function (b) { return '<div><dt>' + escapeHtml(b.label || '') + '</dt><dd>' + yen(b.amount) + '円</dd></div>'; }).join('') +
+        '</dl></details>'
       : '';
     var avg = averageRating(detail);
     var ratingCount = (detail.ratings || []).length;
-    var avgHtml = avg != null ? ('★' + avg + '（' + ratingCount + '件）') : 'まだ評価がありません';
+    var avgHtml = avg != null
+      ? ('<span class="stop-rating-avg">★' + avg + '（' + ratingCount + '件）</span>')
+      : '<span class="stop-rating-avg is-empty">まだ評価がありません</span>';
     return '<div class="stop-detail">' +
       '<div class="stop-detail-avatar" style="background:' + avatarColor(detail.author) + '">' + escapeHtml(avatarInitial(detail.author)) + '</div>' +
       '<div class="stop-detail-body">' +
-      '<div class="stop-detail-header"><span class="stop-detail-author">' + escapeHtml(detail.author || '名前未記入') + '</span></div>' +
+      '<div class="stop-detail-author">' + escapeHtml(detail.author || '名前未記入') + '</div>' +
       (detail.episode ? '<p class="stop-detail-text">' + escapeHtml(detail.episode) + '</p>' : '') +
-      (detail.comment ? '<p class="stop-detail-comment">「' + escapeHtml(detail.comment) + '」</p>' : '') +
+      (detail.comment ? '<p class="stop-detail-comment">' + escapeHtml(detail.comment) + '</p>' : '') +
       photosHtml +
       (metaBits.length ? '<div class="stop-detail-meta">' + metaBits.join('') + '</div>' : '') +
       breakdownHtml +
-      '<div class="stop-rating">' +
-      '<span class="stop-rating-avg">' + avgHtml + '</span>' +
+      '<div class="stop-rating">' + avgHtml +
       '<form class="stop-rate-form" data-detail-id="' + detail.id + '">' +
-      '<input type="text" class="rate-name" placeholder="お名前" required>' +
-      '<select class="rate-score">' +
+      '<input type="text" class="rate-name" placeholder="お名前" aria-label="評価する人の名前" required>' +
+      '<select class="rate-score" aria-label="点数">' +
       [5, 4, 3, 2, 1].map(function (n) { return '<option value="' + n + '">★' + n + '</option>'; }).join('') +
       '</select>' +
-      '<button type="submit" class="btn text small">評価する</button>' +
+      '<button type="submit" class="btn outline small">評価する</button>' +
       '</form>' +
       '</div>' +
       '</div>' +
@@ -1807,25 +2009,37 @@
 
   function stopCardHtml(w, stop) {
     var details = detailsForStop(w, stop.id);
-    return '<div class="stop-card">' +
+    return '<li class="stop-card">' +
+      '<div class="stop-time">' + escapeHtml(stop.time || '—') + '</div>' +
+      '<div class="stop-main">' +
       '<div class="stop-card-head">' +
-      '<span class="stop-pill stop-time-pill">' + escapeHtml(stopHeaderLabel(stop)) + '</span>' +
-      (stop.timeLabel ? '<span class="stop-pill">' + escapeHtml(stop.timeLabel) + '</span>' : '') +
-      (stop.type ? '<span class="stop-pill stop-type-pill">' + escapeHtml(stop.type) + '</span>' : '') +
+      '<span class="stop-label">' + escapeHtml(stop.timeLabel || '予定') + '</span>' +
+      (stop.type ? '<span class="stop-type">' + escapeHtml(stop.type) + '</span>' : '') +
       '</div>' +
-      '<div class="stop-detail-list">' +
-      (details.length ? details.map(stopDetailHtml).join('') : '<p class="stop-empty">まだ記録がありません。</p>') +
+      (details.length ? '<div class="stop-detail-list">' + details.map(stopDetailHtml).join('') + '</div>' : '') +
+      '<button class="btn text small add-detail-btn" data-stop-id="' + stop.id + '">' + icon('plus') + '記録を追加（別行動もOK）</button>' +
       '</div>' +
-      '<button class="btn text small add-detail-btn" data-stop-id="' + stop.id + '">＋ 記録を追加（別行動もOK）</button>' +
-      '</div>';
+      '</li>';
   }
 
+  // 日付ごとに見出しを立て、その中で時刻を左端にそろえて並べる（「その日どう過ごしたか」を縦に読めるように）
   function renderStopsTimeline(tripId) {
     var w = currentWiki();
     var stops = stopsForTrip(w, tripId);
-    $('#stopsTimeline').innerHTML = stops.length
-      ? stops.map(function (s) { return stopCardHtml(w, s); }).join('')
-      : '<p class="stop-empty">まだ予定が記録されていません。「＋ 予定を追加」から始めましょう。</p>';
+    if (!stops.length) {
+      $('#stopsTimeline').innerHTML = '<p class="stop-empty">まだ予定が記録されていません。「予定を追加」から始めましょう。</p>';
+      return;
+    }
+    var days = [];
+    stops.forEach(function (s) {
+      var last = days[days.length - 1];
+      if (!last || last.date !== s.date) days.push({ date: s.date, stops: [s] });
+      else last.stops.push(s);
+    });
+    $('#stopsTimeline').innerHTML = days.map(function (d) {
+      return '<div class="stop-day"><h3 class="stop-day-heading">' + escapeHtml(stopDayLabel(d.date)) + '</h3>' +
+        '<ol class="stop-list">' + d.stops.map(function (s) { return stopCardHtml(w, s); }).join('') + '</ol></div>';
+    }).join('');
   }
 
   function openStopForm() {
@@ -1895,7 +2109,7 @@
     row.className = 'field-row breakdown-row';
     row.innerHTML = '<div class="field"><input type="text" class="bd-label" placeholder="例：入場料"></div>' +
       '<div class="field"><input type="number" class="bd-amount" min="0" placeholder="円"></div>' +
-      '<button type="button" class="btn text small bd-remove">×</button>';
+      '<button type="button" class="btn ghost small bd-remove" aria-label="この明細を削除">' + icon('trash') + '</button>';
     row.querySelector('.bd-remove').addEventListener('click', function () { row.remove(); });
     $('#sdBreakdownRows').appendChild(row);
   }
@@ -2044,7 +2258,7 @@
     var note = $('#composeNote');
     if (note) {
       note.textContent = w.composed
-        ? ('✨ ' + formatDateTimeJa(w.composedAt) + 'にAIがまとめた文章です。各項目の「元の回答を見る」からいつでも元のやり取りを確認できます。')
+        ? (formatDateTimeJa(w.composedAt) + 'にAIがまとめた文章です。各項目の「元の回答を見る」からいつでも元のやり取りを確認できます。')
         : '';
     }
   }
@@ -2058,7 +2272,27 @@
 
   // ---------- 書き出し・読み込み ----------
 
+  // iOSアプリ（Capacitor）の中ではリンクによるダウンロードや印刷が動かないため、その判定に使う
+  function nativePlugins() {
+    var cap = window.Capacitor;
+    return cap && cap.isNativePlatform && cap.isNativePlatform() ? (cap.Plugins || {}) : null;
+  }
+
+  // アプリ内では一時フォルダにファイルを書き、iPhoneの共有シート（AirDrop・ファイルに保存・LINEなど）を開く
+  function shareFileInApp(plugins, filename, text) {
+    var safeName = filename.replace(/[\\/:*?"<>|]/g, '_');
+    plugins.Filesystem.writeFile({ path: safeName, data: text, directory: 'CACHE', encoding: 'utf8' })
+      .then(function (res) { return plugins.Share.share({ title: safeName, files: [res.uri] }); })
+      .catch(function (e) {
+        var msg = String((e && e.message) || e);
+        if (/cancel/i.test(msg)) return; // 共有シートを閉じただけ
+        alert('書き出しに失敗しました：' + msg);
+      });
+  }
+
   function download(filename, text) {
+    var plugins = nativePlugins();
+    if (plugins && plugins.Filesystem && plugins.Share) { shareFileInApp(plugins, filename, text); return; }
     var blob = new Blob([text], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
@@ -2114,6 +2348,9 @@
 
   function init() {
     store = loadStore();
+    hydrateIcons();
+    if (nativePlugins()) $('#btnPrint').hidden = true; // アプリ内ではwindow.print()が動かない
+    document.addEventListener('pointerdown', unlockTtsAudio, { once: true });
 
     $('#btnNewWiki').addEventListener('click', function () { resetNewForm(); showScreen('new'); });
     $('#btnCreateWiki').addEventListener('click', createWiki);
@@ -2221,7 +2458,7 @@
     $all('.back').forEach(function (b) {
       b.addEventListener('click', function () {
         stopAllMics();
-        window.speechSynthesis && window.speechSynthesis.cancel();
+        stopSpeaking();
         showScreen(b.dataset.back);
         if (b.dataset.back === 'home') renderHome();
         if (b.dataset.back === 'dash') renderDash();

@@ -1,7 +1,7 @@
 name: BayDiary iOS
 on:
   push:
-    branches: [codex/baydiary-stats-redesign]
+    branches: [main, 'codex/*']
     paths: ["apps/day23-baydiary/**", "apps/day23-baydiary-ios/**", ".github/workflows/baydiary-ios-build.yml"]
   workflow_dispatch:
     inputs:

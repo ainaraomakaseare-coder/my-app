@@ -86,6 +86,7 @@ const TINY_PNG = Buffer.from(
 
   // ---- 新規作成 ----
   await page.click('#btnNewWiki');
+  check('新規作成では、サークル・チームの選択肢は隠れている（当面は個人のみ）', await page.isHidden('#newTypeField'));
   await page.check('input[name=newType][value=person]');
   await page.fill('#newTitle', 'やまだ たろう');
   await page.fill('#newSubtitle', 'いつも笑っていた父');
@@ -187,6 +188,7 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnRenameTrip');
   await page.waitForSelector('#tripEditForm:not([hidden])');
   check('編集フォームに現在の名前が入っている', (await page.inputValue('#tripEditName')) === '秋の遠足');
+  check('編集フォームを開いている間は「変更」ボタンが隠れる（hidden属性が効いている）', await page.isHidden('#btnRenameTrip'));
 
   // キャンセルすると何も変わらない
   await page.fill('#tripEditName', 'キャンセルされるはずの名前');
@@ -266,7 +268,8 @@ const TINY_PNG = Buffer.from(
   await page.fill('#stopType', '食事');
   await page.click('#btnSaveStop');
   await page.waitForFunction(() => document.getElementById('stopFormWrap').hidden === true);
-  check('予定を追加すると一覧に日時が出る', (await page.textContent('#stopsTimeline')).indexOf('2019年10月5日 12:00') !== -1);
+  check('予定を追加すると日付の見出し（曜日つき）が出る', (await page.textContent('.stop-day-heading')) === '2019年10月5日（土）');
+  check('予定の時刻が左の列に出る', (await page.textContent('.stop-time')) === '12:00');
   check('タイミングと種類のラベルが出る', (await page.textContent('#stopsTimeline')).indexOf('到着') !== -1 && (await page.textContent('#stopsTimeline')).indexOf('食事') !== -1);
 
   await page.click('.add-detail-btn');
@@ -287,7 +290,7 @@ const TINY_PNG = Buffer.from(
   await page.waitForFunction(() => document.getElementById('stopDetailFormWrap').hidden === true);
   check('記録を追加すると小項目として表示される', (await page.textContent('#stopsTimeline')).indexOf('ラーメンを食べた') !== -1);
   check('一言も表示される', (await page.textContent('#stopsTimeline')).indexOf('また来たい') !== -1);
-  check('一人あたりの値段が表示される', (await page.textContent('#stopsTimeline')).indexOf('1200円') !== -1);
+  check('一人あたりの値段が表示される', (await page.textContent('#stopsTimeline')).indexOf('1,200円') !== -1);
   check('待ち時間が表示される', (await page.textContent('#stopsTimeline')).indexOf('15分') !== -1);
   check('地図・お店のリンクが表示される', await page.locator('.stop-link').count() === 2);
   check('写真のサムネイルが表示される', await page.locator('.stop-detail-body .thumbs img').count() === 1);
@@ -378,15 +381,39 @@ const TINY_PNG = Buffer.from(
   // ---- AI深掘り（フェイクのWorkerを立てて模擬する） ----
   let aiCallCount = 0;
   let lastAiPayload = null;
+  const ttsTexts = [];
+  let ttsFailNext = 0; // この回数だけ、読み上げの依頼を「Geminiの利用上限」で失敗させる
+  // 0.1秒の無音WAV（読み上げの代わりに返す）
+  const SILENT_WAV = (() => {
+    const pcm = Buffer.alloc(1600);
+    const h = Buffer.alloc(44);
+    h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8); h.write('fmt ', 12);
+    h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(8000, 24);
+    h.writeUInt32LE(16000, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
+    return Buffer.concat([h, pcm]);
+  })();
   const aiServer = http.createServer((req, res) => {
     const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
     if (req.method === 'OPTIONS') { res.writeHead(204, corsHeaders); return res.end(); }
     let body = '';
     req.on('data', c => { body += c; });
     req.on('end', () => {
-      aiCallCount++;
       let parsed = {};
       try { parsed = JSON.parse(body); } catch (e) { /* noop */ }
+      if (parsed.action === 'tts') {
+        if (ttsFailNext > 0) {
+          ttsFailNext--;
+          res.writeHead(429, { 'Content-Type': 'application/json', ...corsHeaders });
+          return res.end(JSON.stringify({ error: 'gemini_rate_limited' }));
+        }
+        ttsTexts.push(parsed.text);
+        // 本物のGeminiと同じく、音声ができるまで少し待たせる
+        return setTimeout(() => {
+          res.writeHead(200, { 'Content-Type': 'audio/wav', ...corsHeaders });
+          res.end(SILENT_WAV);
+        }, 600);
+      }
+      aiCallCount++;
       if (parsed.action !== 'compose') lastAiPayload = parsed;
       setTimeout(() => {
         res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
@@ -413,8 +440,16 @@ const TINY_PNG = Buffer.from(
   await page.waitForSelector('[data-screen=dash].active');
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
+  await page.waitForFunction(() => (document.getElementById('qMicStatus').textContent || '').indexOf('読み上げを準備しています') !== -1);
+  check('音声ができるまでの間は「読み上げを準備しています…」と表示する', true);
   check('AIエンドポイント設定時はAI深掘りトグルが表示される', !(await page.isHidden('#aiDeepenBlock')));
   check('AI深掘りはWorker設定済みなら初回からONになっている', await page.isChecked('#aiDeepenToggle'));
+  const firstAiQuestion = await page.textContent('#qText');
+  for (let i = 0; i < 30 && !ttsTexts.length; i++) await page.waitForTimeout(100);
+  check('Worker設定時は、質問の読み上げをWorker（Gemini）に頼む', ttsTexts.indexOf(firstAiQuestion) !== -1, JSON.stringify(ttsTexts));
+  check('読み上げの依頼はAI深掘りの呼び出し回数に数えない', aiCallCount === 0, 'aiCallCount=' + aiCallCount);
+  for (let i = 0; i < 30 && ttsTexts.length < 2; i++) await page.waitForTimeout(100);
+  check('今の質問を読んでいる間に、次の質問の音声を先に作っておく', ttsTexts.length >= 2 && ttsTexts[1] !== firstAiQuestion, JSON.stringify(ttsTexts));
 
   await page.fill('#qAnswer', '最初の回答です');
   await page.click('#btnSaveQ');
@@ -426,11 +461,21 @@ const TINY_PNG = Buffer.from(
 
   // MAX_AI_DEPTH(6)に達するまで追い質問が続くことを確認する（2回目〜6回目）
   for (let depth = 2; depth <= 6; depth++) {
+    if (depth === 4) ttsFailNext = 2; // 1回目もやり直しも失敗させる
     await page.fill('#qAnswer', '深掘り回答' + (depth - 1));
     await page.click('#btnSaveQ');
     await page.waitForFunction((d) => (document.getElementById('qText').textContent || '').indexOf('AIの追い質問' + d) !== -1, depth);
+    if (depth === 4) {
+      await page.waitForFunction(() => (document.getElementById('ttsNote').textContent || '').indexOf('利用回数の上限') !== -1);
+      check('Geminiが使えず標準の声に切り替えたときは、その理由を画面に出す', true);
+    }
+    if (depth === 5) {
+      await page.waitForFunction(() => document.getElementById('ttsNote').textContent === '');
+      check('一時的に失敗しても、次の質問ではGeminiの声に戻る（ずっと標準の声のままにならない）', ttsTexts.indexOf(await page.textContent('#qText')) !== -1);
+    }
   }
   check('depth6までは追い質問が続く', (await page.textContent('#qCategory')).indexOf('AIの深掘り') !== -1);
+  check('同じ質問の音声を二度作らない', new Set(ttsTexts).size === ttsTexts.length, JSON.stringify(ttsTexts));
 
   await page.fill('#qAnswer', '深掘り回答6');
   await page.click('#btnSaveQ');
@@ -522,6 +567,37 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnDeleteWiki');
   await page.waitForSelector('[data-screen=home].active');
   check('削除すると一覧から消える', (await page.textContent('#wikiList')).indexOf('やまだ たろう') === -1);
+
+  check('絵文字ではなくSVGアイコンが描かれている', await page.locator('svg.icon').count() > 0);
+  // ---- iOSアプリ（Capacitor）の中：書き出しは共有シート、印刷ボタンは隠す ----
+  const appCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await appCtx.addInitScript(() => {
+    window.__shared = [];
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: {
+        Filesystem: { writeFile: (o) => { window.__written = o; return Promise.resolve({ uri: 'file:///cache/' + o.path }); } },
+        Share: { share: (o) => { window.__shared.push(o); return Promise.resolve({}); } }
+      }
+    };
+  });
+  const appPage = await appCtx.newPage();
+  appPage.on('pageerror', e => errors.push(e.message));
+  await appPage.goto(BASE);
+  await appPage.click('#btnNewWiki');
+  await appPage.fill('#newTitle', 'アプリの人');
+  await appPage.click('#btnCreateWiki');
+  await appPage.waitForSelector('[data-screen=dash].active');
+  await appPage.click('#btnExportWiki');
+  await appPage.waitForFunction(() => window.__shared.length === 1);
+  const written = await appPage.evaluate(() => window.__written);
+  const shared = await appPage.evaluate(() => window.__shared[0]);
+  check('アプリ内の書き出しは、JSONファイルを一時フォルダに書いてから', written && written.path === 'アプリの人.json' && JSON.parse(written.data).schema === 'omoide-wiki');
+  check('iPhoneの共有シートで渡す', shared.files && shared.files[0] === 'file:///cache/アプリの人.json');
+  await appPage.click('#tileView');
+  await appPage.waitForSelector('[data-screen=view].active');
+  check('アプリ内では印刷ボタンを隠す', await appPage.isHidden('#btnPrint'));
+  await appCtx.close();
 
   check('JSのエラーが発生していない', errors.length === 0, errors.join(' / '));
 

@@ -15,6 +15,11 @@ function createServer({key=process.env.OPENAI_API_KEY, model=process.env.OPENAI_
     const port=server.address().port;
     const hosts=['127.0.0.1:'+port,'localhost:'+port];
     if(!hosts.includes(req.headers.host))return send(res,403,{error:'許可されていないホストです。'});
+    if(req.method==='GET' && req.url==='/icon.png') {
+      const iconPath=path.join(__dirname,'icon.png');
+      res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff'});
+      fs.createReadStream(iconPath).pipe(res);return;
+    }
     if(req.method==='GET' && (req.url==='/' || req.url==='/index.html')) {
       let current=fs.readFileSync(htmlPath,'utf8');
       try { const u=new URL(publicURL);if(u.protocol==='https:'&&!u.username&&!u.password&&!/^(localhost|127\.|\[::1\])/.test(u.hostname))current=current.replace('<meta name="baydiary-public-url" content="">','<meta name="baydiary-public-url" content="'+u.href.replace(/[&"<>]/g,c=>({'&':'&amp;','"':'&quot;','<':'&lt;','>':'&gt;'}[c]))+'">'); } catch {}

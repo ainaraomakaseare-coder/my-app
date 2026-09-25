@@ -1,4 +1,4 @@
-# ベイ日記 iOS
+# 観戦日記 iOS
 
 配信準備中。Web版を同梱するCapacitor 8アプリです。Bundle ID案は com.hiroyaapps.baydiary。既存の「旅の足跡」と同じApple Developerアカウントを使用しますが、アプリ登録・配信プロファイルは別です。
 
@@ -59,3 +59,6 @@ src/ios.css は端末フォント・相対文字サイズ・ダークモード�
 開発ブランチへのpushで署名不要のシミュレータービルドを行います。TestFlight送信は従来どおり明示的なworkflow_dispatchのみです。
 
 シミュレータービルド後はiPhoneを起動し、アプリをインストールして明暗両画面を撮影します。ダウンロード用のシミュレーターアプリは実行権限を保つtar.gzで保存します。生成物のbuild/qaに起動時のスクリーンショットとプロセス一覧を保存します。これは起動確認であり、写真・共有・課金などの実機テストを代替しません。
+
+申請用の先行設定・スプラッシュ画像・ストア掲載文は `resources/icon.png`、`resources/splash.png`、`app-store-listing.md` にあり、このビルドでも同じアプリ名「観戦日記」を使います。
+# このアプリを使う前提とテスト対象は apps/day23-baydiary-ios/README.md を参照。

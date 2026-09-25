@@ -1,6 +1,6 @@
 {
   "appId": "com.hiroyaapps.baydiary",
-  "appName": "ベイ日記",
+  "appName": "観戦日記",
   "webDir": "www",
   "ios": {
     "contentInset": "automatic",

@@ -58,6 +58,16 @@ function schema() {
   };
 }
 
+// 個人のWikiだけ、Wikipediaの「来歴」に載る事実を補う観点を先頭に足す（サークル・チームは今回の見直しの対象外）
+const FACT_ANGLES = [
+  "正式名称・固有名詞（「地元の高校」「会社」「友達」のようにぼかされている、学校名・会社名・部署名・店名・地名・人名）",
+  "いつのことか（西暦の年・そのときの年齢・続いた期間）",
+  "所属・役職・肩書・担当（部活のポジション、会社での役職、任された役割など）",
+  "数字で表せること（人数、順位、記録、期間など）",
+  "結果とその後（大会の結果、受賞、昇進、周りからの評価など）",
+  "その時期の前後にあった人生の節目で、まだ聞けていないもの（進学・就職・転職・結婚・出産・引っ越し・家を建てた・ペットを迎えた・大病を乗り越えた・孫の誕生など）",
+];
+
 const ANGLES = [
   "いつ、どこでの出来事か（具体的な日時・場所）",
   "そのとき一緒にいた人や、その時期によく一緒にいた友人・仲間との関係",
@@ -76,15 +86,26 @@ function prompt(data) {
   const who = data.subjectType === "group" ? "サークルやチームの思い出" : "その人の人生";
   const history = data.history.map(t => `質問「${t.q}」→回答「${t.a}」`).join("\n");
   const len = data.answer.length;
+  const isPerson = data.subjectType === "person";
+  const isFavorites = isPerson && (data.categoryLabel === "好きなもの" || data.categoryLabel === "特技");
+  const angles = isPerson ? FACT_ANGLES.concat(ANGLES) : ANGLES;
   return [
     `あなたは「${who}」をもっともっと深く知っていきたい、プロのインタビュアーです。話し相手は「${data.subjectName}」について話しています。`,
     "この記録は、あとで家族が読み返したときに「こんなにいろいろな経験をしてきた、豊かな人生だったんだ」と実感できるように残すものです。抽象的な感想で終わらせず、いつ・どこで・誰と・何をしたという具体的な場面（旅行ならどこに行ったか、など）が1つでも多く残るように質問してください。",
-    "直前の回答を読み、以下の「深掘りの観点」の中から、今の回答にとって一番ネタになりそうなもの（具体的なエピソードとして語れそうなもの）を1つ選んでください。趣味・特技の話が出てきたら積極的に深掘りしてください。",
-    "深掘りの観点：\n" + ANGLES.map(a => "・" + a).join("\n"),
-    "選んだ観点に沿って、追加質問を1つ作ってください。ただし、いきなり質問文だけを出すのではなく、直前の回答を受けた短い相づちや感想（「それは大変でしたね」「いいですね」「へえ、〇〇だったんですね」など）を一言添えてから、自然に質問へつなげてください。友人と雑談しているような、温かく自然な話し言葉にすること（80文字程度まで）。「〜について教えてください」のような機械的な言い回しは避け、普段の会話で聞くような聞き方にすること。箇条書きや記号は使わないこと。",
+    isPerson && !isFavorites ? "この記録は最終的に、本物のWikipediaの記事のような形にまとめます。Wikipediaの記事には「何年に」「どこの（正式名称）」「何をして」「どんな役職・立場で」「どんな結果だったか」という事実が欠かせません。直前の回答でこれらがぼかされている・抜けている場合（例：「地元の高校に行った」「会社に入った」「大会で優勝した」のように、名前・年・大会名などが無い）は、まずその抜けている事実を1つか2つ、自然な会話の流れで聞き出してください（例：「その高校はなんという学校でしたか？何年ごろ卒業されました？」）。事実がそろっている場合は、そのときの出来事・気持ち・その後などのエピソードを深掘りしてください。回答やこれまでのやり取りにすでに出てきた事実を聞き直さないこと。" : "",
+    isFavorites ? "今は本人の好きなもの・得意なことの話です。ここでは事実を集めるよりも、話している本人が気持ちよくなって『もっと話したい！』と感じることを最優先にしてください。心から興味を持った聞き手として、どこがたまらなく好きなのか、ハマったきっかけ、一番の思い出、人にすすめるならどこか、それをしているときの気分、などを聞き、好きなものを思う存分『語ってもらう』聞き方にすること。相づちでは本人の好きなものを一緒に面白がり、共感や驚きをしっかり伝えること。作品名・店名・チーム名などが抜けていれば、話の流れで自然に聞いてもよい。" : "",
+    isPerson && !isFavorites
+      ? "直前の回答を読み、以下の「深掘りの観点」の中から、今の回答にとって一番足りないもの・一番ネタになりそうなものを1つ選んでください（上の方針どおり、事実が抜けていれば事実を補う観点を優先）。趣味・特技の話が出てきたら積極的に深掘りしてください。"
+      : "直前の回答を読み、以下の「深掘りの観点」の中から、今の回答にとって一番ネタになりそうなもの（具体的なエピソードとして語れそうなもの）を1つ選んでください。趣味・特技の話が出てきたら積極的に深掘りしてください。",
+    "深掘りの観点：\n" + angles.map(a => "・" + a).join("\n"),
+    "選んだ観点に沿って、追加質問を1つ作ってください。ただし、いきなり質問文だけを出すのではなく、直前の回答を受けた短い相づちや感想（「それは大変でしたね」「いいですね」「へえ、〇〇だったんですね」など）を一言添えてから、自然に質問へつなげてください。友人と雑談しているような、温かく自然な話し言葉にすること（100文字程度まで）。「〜について教えてください」のような機械的な言い回しは避け、普段の会話で聞くような聞き方にすること。箇条書きや記号は使わないこと。",
     "答える側が『それ聞かれるの嬉しいな、もっと話したいな』とウキウキ・ワクワクした気持ちになるような、明るく前のめりな聞き方にすること。関心・驚き・楽しみが伝わる言葉選びを心がけ、事務的・機械的な響きは避けること。",
-    "深掘りを続けるかどうかは、直前の回答の分量・具体性で判断してください。回答がごく短い・情報が薄い（相槌程度、数文字〜十数文字など）場合は、無理に深掘りせず done を true にしてください。反対に、回答が具体的でエピソードや感情が豊富に語られている場合は、まだ聞ける観点が残っていれば done を false にして積極的に深掘りを続けてください。",
-    `今の回答の文字数：${len}文字（${len < 15 ? "かなり短いので、無理に深掘りしないほうがよい" : len < 40 ? "やや短め" : "十分な分量があるので、深掘りの余地を積極的に探ってよい"}）`,
+    isPerson
+      ? "深掘りを続けるかどうか：回答が短くても、名前・年などWikipediaに載せたい事実が抜けている、または好きなものをもっと語ってもらえそうなら、深掘りしてください（done は false）。「覚えていない」「特にない」「言いたくない」のように、答えられない・答えたくない様子なら、無理に聞かず done を true にしてください。回答が具体的でエピソードや感情が豊富な場合は、まだ聞ける観点が残っていれば done を false にして積極的に深掘りを続けてください。"
+      : "深掘りを続けるかどうかは、直前の回答の分量・具体性で判断してください。回答がごく短い・情報が薄い（相槌程度、数文字〜十数文字など）場合は、無理に深掘りせず done を true にしてください。反対に、回答が具体的でエピソードや感情が豊富に語られている場合は、まだ聞ける観点が残っていれば done を false にして積極的に深掘りを続けてください。",
+    isPerson
+      ? `今の回答の文字数：${len}文字（${len < 15 ? "短い回答。事実が抜けていれば補う質問を、答えられない様子なら done に" : len < 40 ? "やや短め。抜けている事実や、もっと語ってもらえる余地がないか確かめる" : "十分な分量があるので、深掘りの余地を積極的に探ってよい"}）`
+      : `今の回答の文字数：${len}文字（${len < 15 ? "かなり短いので、無理に深掘りしないほうがよい" : len < 40 ? "やや短め" : "十分な分量があるので、深掘りの余地を積極的に探ってよい"}）`,
     `この話題はすでに${data.depth}回深掘りしています。${data.depth >= 6 ? "十分な回数なので、余程ネタがなければ done にしてください。" : ""}`,
     data.profile ? `プロフィール表：\n${data.profile}\n（生年月日や結成年などがここに書かれていれば、その時代に日本で流行っていた具体的な番組・音楽・芸能人を挙げて「〇〇はお好きでしたか？」のように尋ねると喜ばれます。年代が分からない・自信が持てない場合は、無理に使わず他の観点にしてください。不確かな年代で古すぎる／新しすぎるものを挙げるのは避けること）` : "",
     `カテゴリ：${data.categoryLabel}`,
@@ -208,6 +229,87 @@ function outputText(response) {
   return "";
 }
 
+/* ---- 読み上げ（Gemini TTS）---- */
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const TTS_MAX_CHARS = 400;
+
+function validTtsInput(x) {
+  return x && typeof x.text === "string" && x.text.trim().length >= 1 && x.text.length <= TTS_MAX_CHARS;
+}
+
+// Geminiは生のPCM（16bit・モノラル）を返すことがあるため、ブラウザでそのまま鳴らせるWAVに包む
+function pcmToWav(pcm, sampleRate) {
+  const header = new ArrayBuffer(44);
+  const v = new DataView(header);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + pcm.length, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, pcm.length, true);
+  const out = new Uint8Array(44 + pcm.length);
+  out.set(new Uint8Array(header), 0);
+  out.set(pcm, 44);
+  return out;
+}
+
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function audioFromGemini(response) {
+  for (const cand of response.candidates || []) {
+    for (const part of (cand.content && cand.content.parts) || []) {
+      const inline = part.inlineData || part.inline_data;
+      if (!inline || !inline.data) continue;
+      const mime = (inline.mimeType || inline.mime_type || "").toLowerCase();
+      const bytes = base64ToBytes(inline.data);
+      if (mime.includes("wav")) return { bytes, mime: "audio/wav" };
+      if (mime.includes("l16") || mime.includes("pcm") || !mime) {
+        const rate = Number((mime.match(/rate=(\d+)/) || [])[1]) || 24000;
+        return { bytes: pcmToWav(bytes, rate), mime: "audio/wav" };
+      }
+      return { bytes, mime };
+    }
+  }
+  return null;
+}
+
+async function requestGeminiSpeech(env, text, voiceName) {
+  const model = env.GEMINI_TTS_MODEL || "gemini-3.8-flash-lite-tts";
+  const generationConfig = { responseModalities: ["AUDIO"] };
+  if (voiceName) generationConfig.speechConfig = { voiceConfig: { prebuiltVoiceConfig: { voiceName } } };
+  return fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": env.GEMINI_API_KEY, "content-type": "application/json" },
+    body: JSON.stringify({ contents: [{ parts: [{ text }] }], generationConfig }),
+  });
+}
+
+async function handleTts(data, env, headers) {
+  if (!env.GEMINI_API_KEY) return json({ error: "tts_not_configured" }, 503, headers);
+  if (!validTtsInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  const text = data.text.trim();
+  let upstream = await requestGeminiSpeech(env, text, env.GEMINI_TTS_VOICE);
+  // 声の名前がモデル側で使えなくなっていても読み上げ自体は止めないよう、声の指定なしで1回だけやり直す
+  if (upstream.status === 400 && env.GEMINI_TTS_VOICE) upstream = await requestGeminiSpeech(env, text, "");
+  if (!upstream.ok) {
+    console.error(JSON.stringify({ event: "gemini_tts_error", status: upstream.status, body: (await upstream.text()).slice(0, 500) }));
+    // アプリ側で「なぜ標準の声に切り替わったか」を表示できるよう、Geminiの利用上限だけは区別して返す
+    if (upstream.status === 429) return json({ error: "gemini_rate_limited" }, 429, headers);
+    return json({ error: "upstream_error", upstreamStatus: upstream.status }, 502, headers);
+  }
+  const audio = audioFromGemini(await upstream.json());
+  if (!audio) return json({ error: "invalid_model_output" }, 502, headers);
+  return new Response(audio.bytes, {
+    status: 200,
+    headers: { "content-type": audio.mime, "cache-control": "no-store", ...headers },
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get("origin") || "";
@@ -217,13 +319,20 @@ export default {
     if (origin !== env.ALLOWED_ORIGIN && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       return json({ error: "origin_not_allowed" }, 403, headers);
     }
-    if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
-
     let data;
     try { data = await request.json(); } catch { return json({ error: "invalid_json" }, 400, headers); }
 
     /* 個人の回答内容はキャッシュしない。接続元単位でのみレート制限する。 */
     const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+
+    // 読み上げは質問のたびに呼ばれるため、AI深掘りとは別枠のレート制限にしている
+    if (data && data.action === "tts") {
+      const ttsLimited = await env.TTS_RATE_LIMITER.limit({ key: actor });
+      if (!ttsLimited.success) return json({ error: "rate_limited" }, 429, headers);
+      return handleTts(data, env, headers);
+    }
+
+    if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
     const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
 
