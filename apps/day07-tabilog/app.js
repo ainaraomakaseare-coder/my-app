@@ -3000,6 +3000,8 @@
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
     $('#entPlaceSearch').value = '';
     $('#entMapPreview').hidden = true;
+    $('#entPlaceCandidates').hidden = true;
+    $('#entPlaceStatus').textContent = '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
@@ -3454,18 +3456,60 @@
   // ---------- 場所名からの地図検索（「地図のURL」欄の入力補助） ----------
   // Google Maps Embed API（APIキーが要る）は使わず、キー不要の地図表示・検索URLの
   // 形式（.../maps?q=...&output=embed、.../maps/search/?api=1&query=...）だけを使う。
-  // どちらもGoogle側が場所名をその場で解決してくれるので、こちらでジオコーディングは行わない。
+  // 以前はGoogleがいちばん上に出した場所しか選べず、違う場所だったときに選び直せなかったため、
+  // Worker（/places/search）から候補を最大8件もらってプルダウンで選べるようにした。候補を選ぶと
+  // その座標の地図URLを入れる（地図でふりかえるでも、その場所へぴったり移動する）。
+  // 候補に無い小さなお店などのために、最後に「Googleマップで名前のまま検索」も残す。
+  var placeCandidates = [];
+  var PLACE_GOOGLE = 'google';
+
   function showPlaceMapPreview() {
     var place = $('#entPlaceSearch').value.trim();
     if (!place) return;
-    $('#entMapPreviewFrame').src = 'https://maps.google.com/maps?q=' + encodeURIComponent(place) + '&output=embed';
+    var select = $('#entPlaceCandidates');
+    var status = $('#entPlaceStatus');
+    status.textContent = '候補を探しています…';
+    select.hidden = true;
+    api('/places/search?q=' + encodeURIComponent(place)).then(function (res) {
+      placeCandidates = (res && res.places) || [];
+      select.innerHTML = placeCandidates.map(function (p, i) {
+        return '<option value="' + i + '">' + escapeHtml(p.name + (p.address ? '（' + p.address + '）' : '')) + '</option>';
+      }).join('') + '<option value="' + PLACE_GOOGLE + '">候補にない場合：「' + escapeHtml(place) + '」をGoogleマップで検索</option>';
+      select.hidden = false;
+      status.textContent = placeCandidates.length
+        ? '候補が' + placeCandidates.length + '件見つかりました。違う場所なら、上のリストから選び直してください。'
+        : '候補が見つかりませんでした。Googleマップの検索結果を表示しています。';
+      select.value = placeCandidates.length ? '0' : PLACE_GOOGLE;
+      previewSelectedPlace();
+    }).catch(function () {
+      // 候補が取れなくても、これまでどおりGoogleマップの検索結果は見られるようにする
+      placeCandidates = [];
+      select.innerHTML = '<option value="' + PLACE_GOOGLE + '">「' + escapeHtml(place) + '」をGoogleマップで検索</option>';
+      select.value = PLACE_GOOGLE;
+      select.hidden = true;
+      status.textContent = '';
+      previewSelectedPlace();
+    });
+  }
+
+  function selectedPlace() {
+    var v = $('#entPlaceCandidates').value;
+    return v === PLACE_GOOGLE || v === '' ? null : placeCandidates[Number(v)] || null;
+  }
+
+  function previewSelectedPlace() {
+    var p = selectedPlace();
+    var q = p ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
+    if (!q) return;
+    $('#entMapPreviewFrame').src = 'https://maps.google.com/maps?q=' + encodeURIComponent(q) + '&z=16&output=embed';
     $('#entMapPreview').hidden = false;
   }
 
   function useSearchedPlaceAsMapUrl() {
-    var place = $('#entPlaceSearch').value.trim();
-    if (!place) return;
-    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(place);
+    var p = selectedPlace();
+    var q = p ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
+    if (!q) return;
+    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
 
   function saveEntry() {
@@ -4126,6 +4170,7 @@
     $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
+    $('#entPlaceCandidates').addEventListener('change', previewSelectedPlace);
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); showPlaceMapPreview(); }
     });

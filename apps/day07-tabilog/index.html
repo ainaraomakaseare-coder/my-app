@@ -557,6 +557,9 @@
               <input type="text" id="entPlaceSearch" placeholder="場所名で検索（例：ユニバ）">
               <button type="button" class="btn ghost small" id="btnPlaceSearch">地図を検索</button>
             </div>
+            <!-- 検索の候補（先頭が違う場所だったときに選び直せるように。app.jsのsearchPlaceCandidates） -->
+            <select class="place-candidates" id="entPlaceCandidates" hidden aria-label="場所の候補"></select>
+            <p class="hint" id="entPlaceStatus"></p>
             <div class="map-preview" id="entMapPreview" hidden>
               <iframe id="entMapPreviewFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
               <button type="button" class="btn ghost small" id="btnUseMapUrl">このURLを地図欄に入れる</button>

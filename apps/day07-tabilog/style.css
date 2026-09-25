@@ -698,3 +698,5 @@ body.sheet-open { overflow: hidden; }
 .travel-arrow { color: var(--ink-muted); }
 .travel-time { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 13px; }
 #entTravelField > input { width: 100%; margin-bottom: 8px; }
+
+.place-candidates { width: 100%; margin-top: 8px; font-size: 16px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--card); }

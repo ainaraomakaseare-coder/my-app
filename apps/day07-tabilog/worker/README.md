@@ -145,3 +145,7 @@ npx wrangler deploy
 ```
 npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel.sql
 ```
+
+## 場所の候補検索（2026-09-25 追加）
+
+記録フォームの「場所名で検索」は、以前はGoogleマップが一番上に出した場所しか選べなかった。`GET /places/search?q=`でNominatimから最大8件（重要度の高い順）を返し、プルダウンで選べるようにした。どれも小さな同名地区なら、Open-Meteoの市区町村を先に出す。選んだ候補は座標入りの地図URL（`?api=1&query=緯度,経度`）になるので、地図でふりかえるでもその場所へぴったり移動する。DBの変更は無い。

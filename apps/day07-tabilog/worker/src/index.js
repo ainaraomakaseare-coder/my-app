@@ -992,6 +992,68 @@ async function geocodeMapUrl(raw) {
 
 // q：記録の地図のURL（今のアプリ）か、地名（見出しから推測していた以前のアプリ。審査中・配布済みの
 // iOSアプリのために残す）。
+// 記録フォームの「場所名で検索」用に、候補を複数返す（先頭が違う場所だったときに選び直せるように）。
+// 地図でふりかえると同じNominatimを使い、世界中を対象に最大8件。結果はCache APIに30日置く。
+async function searchPlaces(q, headers, ctx) {
+  q = (q || "").trim();
+  if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-places.cache/v2?q=" + encodeURIComponent(q));
+  const hit = await cache.match(cacheKey);
+  if (hit) return json(await hit.json(), 200, headers);
+  let list = [];
+  try {
+    const res = await fetch(
+      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&accept-language=ja&q=" + encodeURIComponent(q),
+      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+    );
+    if (res.ok) list = await res.json();
+  } catch {
+    list = [];
+  }
+  list = (Array.isArray(list) ? list : []).slice().sort((a, b) => (Number(b.importance) || 0) - (Number(a.importance) || 0));
+  // 地図でふりかえると同じく、小さな同名地区しか無い（重要度が低い）ときは、市区町村を返すOpen-Meteoの
+  // 候補を先に出す（「山梨」はNominatimだと千葉県・北海道の同名地区ばかりで、山梨県が出てこない）
+  let cities = [];
+  if (!list.length || (Number(list[0].importance) || 0) < GEOCODE_MIN_IMPORTANCE) {
+    try {
+      const res = await fetch("https://geocoding-api.open-meteo.com/v1/search?count=5&language=ja&format=json&name=" + encodeURIComponent(q));
+      const data = res.ok ? await res.json() : null;
+      cities = ((data && data.results) || []).map((r) => ({
+        name: r.name,
+        address: (r.country === "日本" ? [r.admin1, r.admin2] : [r.country, r.admin1]).filter(Boolean).join(" "),
+        lat: r.latitude, lng: r.longitude,
+      }));
+    } catch {
+      cities = [];
+    }
+  }
+  if (!list.length && !cities.length) return json({ places: [] }, 200, headers);
+  const seen = new Set();
+  const places = cities.concat(list
+    .map((r) => {
+      const full = String(r.display_name || "");
+      const name = String(r.name || full.split(",")[0] || "").trim();
+      // display_nameは「番地, 町, 市, 県, 郵便番号, 国」のように細かい順に並ぶので、郵便番号を除き、
+      // 大きい方から3つ（県 市 区）を見せる。海外は国名を先頭に添える（日本国内なら国名は省く）。
+      const parts = full.split(",").map((x) => x.trim()).filter((x) => x && x !== name && !/^[\d\-\s]{3,10}$/.test(x));
+      const country = parts[parts.length - 1] || "";
+      const big = parts.slice(0, -1).slice(-3).reverse();
+      return {
+        name,
+        address: (country === "日本" ? big : [country].concat(big)).join(" "),
+        lat: parseFloat(r.lat), lng: parseFloat(r.lon),
+      };
+    }))
+    .filter((x) => x.name && isFinite(x.lat) && isFinite(x.lng))
+    .filter((x) => { const k = x.name + "|" + x.lat.toFixed(3) + "," + x.lng.toFixed(3); if (seen.has(k)) return false; seen.add(k); return true; });
+  const body = { places };
+  ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+  })));
+  return json(body, 200, headers);
+}
+
 async function geocodeForReplay(q, headers, ctx) {
   q = (q || "").trim();
   const isUrl = /^https?:\/\//i.test(q);
@@ -2668,6 +2730,7 @@ export default {
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx);
+    if (method === "GET" && path === "/places/search") return searchPlaces(url.searchParams.get("q"), headers, ctx);
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
       if (auth.error) return json({ error: auth.error }, auth.status, headers);
