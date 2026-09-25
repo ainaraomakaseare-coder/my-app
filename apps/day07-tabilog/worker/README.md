@@ -134,6 +134,6 @@ npx wrangler deploy
 
 `schema.sql`はすべて`CREATE TABLE IF NOT EXISTS`なので、全体を実行しても既存のテーブル・データは変わらない（v3のときのような`DROP TABLE`は残っていない）。
 
-**通報の通知先**：`wrangler.jsonc`の`vars`に`"REPORT_NOTIFY_EMAIL": "運営者のメールアドレス"`を足すと、コメントが通報されたときにResend経由でメールが届く（`RESEND_API_KEY`はログイン用に設定済みのものを使う）。
+**通報の通知先**：`npx wrangler secret put REPORT_NOTIFY_EMAIL`で運営者のメールアドレスを登録すると、コメントが通報されたときにResend経由でメールが届く（`RESEND_API_KEY`はログイン用に設定済みのものを使う）。`wrangler.jsonc`は公開リポジトリに入っているので、メールアドレスはそこに書かずsecretにする。
 
 **トークン必須への切り替え**：1.1.0以降のiOSアプリが行き渡ったら、`vars`に`"REQUIRE_SESSION": "1"`を足して`wrangler deploy`する。以後、トークンを送らない古いアプリからのアカウント操作は拒否される。
