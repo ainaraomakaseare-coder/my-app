@@ -69,6 +69,16 @@ Appleでサインインを有効にする手順（Googleログインを提供す
 1. App Store Connect →対象アプリ→「TestFlight」タブでビルドを内部テスターに配布し、実機で動作確認
 2. 問題なければ「App Store」タブから、スクリーンショット・説明文・プライバシーポリシーURLなどを入力して審査に提出
 
+## 共有リンクをアプリで開く（ユニバーサルリンク）
+
+旅行の共有リンク（`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/?trip=…`）を、アプリを入れている人が開くとアプリが起動し、その旅行が表示されます。入れていない人はこれまでどおりWebで開きます。
+
+- **ドメイン直下の確認ファイル**：`https://ainaraomakaseare-coder.github.io/.well-known/apple-app-site-association`。ドメイン直下はこの`my-app`リポジトリの管轄外なので、別リポジトリ `ainaraomakaseare-coder.github.io` に置いています（`?trip=`付きのURLだけをアプリで開く設定）
+- **アプリ側の設定**：`App.entitlements`（Associated Domains）をCIが毎回`ios/`へコピーして組み込みます。App ID（`com.hiroyaapps.tabilog`）でAssociated Domainsを有効にし、配布用プロビジョニングプロファイルを作り直してシークレット`IOS_PROVISIONING_PROFILE_BASE64`を更新しておかないと、ビルドが署名エラーになります
+- **カスタムURLスキーム** `tabilog://open?trip=…`：LINEなどのアプリ内ブラウザではユニバーサルリンクが効かないため、Web版の案内バナーの「アプリで開く」はこちらでアプリを起動します（Info.plistへの追加はCIで行います）
+- **インストールの案内**：Web版の`index.html`の`apple-itunes-app`（Smart App Banner）にApp StoreのIDを入れてコメントを外すと、SafariではAppleの純正バナーが、LINEなどのアプリ内ブラウザでは自作のバナーが出ます。App Store公開前はコメントのままにしておきます（リンク先がまだ存在しないため）
+- 動作確認：Appleが確認ファイルを読めているかは `https://app-site-association.cdn-apple.com/a/v1/ainaraomakaseare-coder.github.io` で確認できます（反映に最大1日程度かかることがあります）
+
 ## 正直にお伝えしておきたいこと
 
 このワークフロー（`.github/workflows/tabilog-ios-build.yml`）は、実際にXcodeでのビルドを一度も検証していない**たたき台**です。iOSの証明書まわりの設定は細かい部分でつまずきやすく、Apple Developer Programに登録してシークレットを設定したあとに実行してみて、エラーが出たら一緒に直していく前提で用意しています。うまく1回で通るとは限らないことをご了承ください。

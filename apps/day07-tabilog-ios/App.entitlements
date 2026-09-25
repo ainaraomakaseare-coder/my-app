@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 共有リンク（ainaraomakaseare-coder.github.io の ?trip=…）をアプリで開くためのユニバーサルリンク設定。
+	     CIで毎回 ios/App/App/App.entitlements にコピーされる。 -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:ainaraomakaseare-coder.github.io</string>
+	</array>
+</dict>
+</plist>

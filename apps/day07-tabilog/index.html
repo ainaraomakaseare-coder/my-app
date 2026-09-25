@@ -11,11 +11,28 @@
 <meta name="tabilog-google-client-id" content="">
 <!-- Apple DeveloperでService IDを発行後、ここに設定する。空のままならAppleログインは使われない。 -->
 <meta name="tabilog-apple-client-id" content="">
+<!-- iOSアプリのApp Store公開後に、App Store ConnectのApple ID（数字）を入れてコメントを外す。
+     SafariではAppleの純正バナー（Smart App Banner）が出て、入っていない人には「入手」、
+     入っている人には「開く」が表示される。app.jsもこのapp-idを読んで、LINEなどのアプリ内ブラウザ向けの
+     自作バナーを出す（コメントのままなら、どちらのバナーも出ない）。
+<meta name="apple-itunes-app" content="app-id=0000000000">
+-->
 <link rel="stylesheet" href="style.css">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js" async defer></script>
 </head>
 <body>
+<!-- iPhone/iPadのLINEなどアプリ内ブラウザで開いたときだけ出す、アプリへの案内（app.jsのsetupAppBanner） -->
+<div class="app-banner" id="appBanner" hidden>
+  <div class="app-banner-icon" aria-hidden="true">旅</div>
+  <div class="app-banner-text">
+    <strong>旅の足跡 アプリ</strong>
+    <span>共有された旅行をアプリですぐ開けます</span>
+  </div>
+  <a class="app-banner-btn ghost" id="appBannerOpen" href="#">アプリで開く</a>
+  <a class="app-banner-btn" id="appBannerGet" href="#" target="_blank" rel="noopener">入手</a>
+  <button class="app-banner-close" id="appBannerClose" type="button" aria-label="閉じる">×</button>
+</div>
 <div class="app" id="app">
 
   <!-- ============ ログイン（Google/Appleはクライアント ID設定時のみボタン表示。メールでのログインは常に使える。閲覧はログイン不要で、評価をつける・マイログを見るときだけこの画面に来る） ============ -->

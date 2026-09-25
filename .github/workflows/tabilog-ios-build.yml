@@ -74,6 +74,36 @@ jobs:
           # 質問（TestFlight配信のたびに毎回聞かれるやつ）が出ないようここで申告しておく。
           # ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" Info.plist
+          # カスタムURLスキーム（tabilog://open?trip=…）。LINEなどのアプリ内ブラウザでは
+          # ユニバーサルリンクが効かないため、Web版の案内バナーの「アプリで開く」からこれで起動する。
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.hiroyaapps.tabilog" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string tabilog" Info.plist
+
+      - name: ユニバーサルリンク（Associated Domains）の設定を追加する
+        # 共有リンクをアプリで開けるよう、リポジトリに置いたApp.entitlementsをコピーし、
+        # アプリ本体のターゲット（INFOPLIST_FILE = App/Info.plist; を持つビルド設定）にだけ
+        # CODE_SIGN_ENTITLEMENTSを足す。xcodebuildの引数で渡すとPodsのターゲットにも
+        # 効いてしまうため、project.pbxprojを直接書き換える。
+        # 配布用プロビジョニングプロファイルにAssociated Domainsが含まれていないと
+        # アーカイブが署名エラーで失敗する（App IDでAssociated Domainsを有効にして作り直す必要がある）。
+        working-directory: apps/day07-tabilog-ios/ios/App
+        run: |
+          cp ../../App.entitlements App/App.entitlements
+          python3 - << 'PYEOF'
+          path = "App.xcodeproj/project.pbxproj"
+          with open(path) as f:
+              content = f.read()
+          marker = "INFOPLIST_FILE = App/Info.plist;"
+          count = content.count(marker)
+          if count != 2:
+              raise SystemExit(f"App target build settings not found as expected (found {count})")
+          content = content.replace(marker, marker + "\n\t\t\t\tCODE_SIGN_ENTITLEMENTS = App/App.entitlements;")
+          with open(path, "w") as f:
+              f.write(content)
+          PYEOF
 
       - name: バージョン番号を設定
         # ios/フォルダは毎回作り直しなので、ビルド番号を前回の実行から引き継げない。

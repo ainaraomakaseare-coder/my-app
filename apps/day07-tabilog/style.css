@@ -95,6 +95,29 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius-control); padding: 10px 14px; font-size: 13px; margin: 12px 0;
 }
 
+/* ---------- アプリへの案内バナー（iPhone/iPadのアプリ内ブラウザ向け） ---------- */
+.app-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--card); border-bottom: 1px solid var(--border);
+}
+.app-banner[hidden] { display: none; }
+.app-banner-icon {
+  flex: none; width: 40px; height: 40px; border-radius: 10px;
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 20px;
+  display: flex; align-items: center; justify-content: center;
+}
+.app-banner-text { flex: 1; min-width: 0; line-height: 1.35; }
+.app-banner-text strong { display: block; font-size: 13.5px; }
+.app-banner-text span { display: block; font-size: 11.5px; color: var(--ink-muted); }
+.app-banner-btn {
+  flex: none; border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 700;
+  background: var(--accent); color: #fff; text-decoration: none; white-space: nowrap;
+}
+.app-banner-btn.ghost { background: var(--accent-soft-bg); color: var(--accent-deep); }
+.app-banner-close {
+  flex: none; border: none; background: none; color: var(--ink-soft); font-size: 18px; padding: 0 2px; cursor: pointer;
+}
+
 /* ---------- buttons ---------- */
 .btn {
   border: none; border-radius: var(--radius-control); padding: 12px 18px; font-size: 14.5px; font-weight: 700;

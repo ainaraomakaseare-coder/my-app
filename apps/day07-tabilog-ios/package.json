@@ -6,6 +6,7 @@
     "sync": "cap sync ios"
   },
   "dependencies": {
+    "@capacitor/app": "^6.0.2",
     "@capacitor/core": "^6.1.2",
     "@capacitor/ios": "^6.1.2"
   },

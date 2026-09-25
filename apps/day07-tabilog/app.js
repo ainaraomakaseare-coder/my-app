@@ -3812,6 +3812,74 @@
     var tripId = Core.getTripIdFromSearch(location.search);
     if (tripId) openTrip(tripId);
     else { showScreen('home'); renderHome(); }
+    listenForAppLinks();
+    setupAppBanner();
+  }
+
+  // ---------- ユニバーサルリンク（iOSアプリ） ----------
+  // 共有リンク（https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/?trip=…）を
+  // アプリを入れている人が開くと、Safariではなくこのアプリが起動する（ドメイン直下の
+  // apple-app-site-associationと、CIで付けるAssociated Domainsの設定による）。
+  // アプリの中身はcapacitor://localhost/で動いているので、location.searchには?trip=が載らない。
+  // 代わりに@capacitor/appから開かれたURLを受け取り、その旅行を開く。
+  // アプリが起動していなかった場合（コールドスタート）はappUrlOpenの通知を取り逃すため、
+  // getLaunchUrl()でも起動時のURLを確認する。
+  // Web版の案内バナーから来るカスタムURLスキーム（tabilog://open?trip=…）も同じ形で受け取れる。
+  function tripIdFromUrl(url) {
+    try { return Core.getTripIdFromSearch(new URL(url).search); } catch (e) { return ''; }
+  }
+
+  // ---------- アプリへの案内（Web版をiPhone/iPadで開いたとき） ----------
+  // App StoreのIDは、index.htmlのSmart App Banner（apple-itunes-app）のapp-idから読む
+  // （公開前はコメントアウトしてあるので空になり、どちらのバナーも出ない）。
+  // Safariでは純正のバナーが出るので、自作のバナーはLINEなどのアプリ内ブラウザでだけ出す
+  // （アプリ内ブラウザではユニバーサルリンクが効かず、純正バナーも出ないため）。
+  // 「アプリで開く」はカスタムURLスキーム（tabilog://open?trip=…）でアプリを起動する。
+  var APP_BANNER_DISMISSED_KEY = 'tabilog:app-banner-dismissed';
+
+  function appStoreId() {
+    var meta = document.querySelector('meta[name="apple-itunes-app"]');
+    var m = meta && /app-id=(\d+)/.exec(meta.getAttribute('content') || '');
+    return m ? m[1] : '';
+  }
+
+  function isIOSDevice() {
+    return /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOSはMacのふりをする
+  }
+
+  function isInAppBrowser() {
+    return /Line\/|FBAN|FBAV|Instagram|Twitter|MicroMessenger|CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
+  }
+
+  function setupAppBanner() {
+    var id = appStoreId();
+    if (!id || isNativeApp() || !isIOSDevice() || !isInAppBrowser()) return;
+    try { if (localStorage.getItem(APP_BANNER_DISMISSED_KEY)) return; } catch (e) { /* 読めなければ出す */ }
+    $('#appBannerGet').href = 'https://apps.apple.com/jp/app/id' + id;
+    $('#appBannerOpen').addEventListener('click', function (e) {
+      e.preventDefault();
+      var tripId = Core.getTripIdFromSearch(location.search);
+      location.href = 'tabilog://open' + (tripId ? '?trip=' + encodeURIComponent(tripId) : '');
+    });
+    $('#appBannerClose').addEventListener('click', function () {
+      $('#appBanner').hidden = true;
+      try { localStorage.setItem(APP_BANNER_DISMISSED_KEY, '1'); } catch (e) { /* 次回また出るだけ */ }
+    });
+    $('#appBanner').hidden = false;
+  }
+
+  function listenForAppLinks() {
+    var App = isNativeApp() && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (!App) return;
+    App.addListener('appUrlOpen', function (ev) {
+      var id = tripIdFromUrl(ev && ev.url);
+      if (id) openTrip(id);
+    });
+    App.getLaunchUrl().then(function (res) {
+      var id = tripIdFromUrl(res && res.url);
+      if (id) openTrip(id);
+    }).catch(function () {});
   }
 
   function copyShareLink() {
