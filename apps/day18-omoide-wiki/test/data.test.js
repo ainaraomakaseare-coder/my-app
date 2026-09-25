@@ -311,5 +311,41 @@ ok('stopsが無ければ空配列で補われる', Array.isArray(migratedItinera
 ok('ratingsが無い小項目にも空配列が補われる', Array.isArray(migratedItinerary.stopDetails[0].ratings));
 ok('priceBreakdownが無い小項目にも空配列が補われる', Array.isArray(migratedItinerary.stopDetails[0].priceBreakdown));
 
+/* ---- 過去の回答・エピソードの編集 ---- */
+var editWiki = W.newWiki('person', '編集テスト', '');
+var editEntryItem = W.newEntry('京都です', '本人', '生まれはどこですか？', 'birth-place');
+editEntryItem.updatedAt = '2020-01-01T00:00:00.000Z';
+editWiki.history.push(editEntryItem);
+editWiki.composed = { history: '・京都で生まれる', personality: '明るい人' };
+var editEp = W.newEpisode({ title: '遠足', body: 'まあ雨でした' });
+editEp.composedBody = '雨の遠足だった';
+editWiki.episodes.push(editEp);
+W.editEntry(editWiki, 'history', editEntryItem.id, { text: '  大阪です  ' });
+eq('回答を書き直せる（前後の空白は取る）', editWiki.history[0].text, '大阪です');
+ok('書き直すと更新日時が新しくなる（複数人の記録を合体しても編集が優先される）', editEntryItem.updatedAt > '2020-01-01T00:00:00.000Z');
+ok('書き直した項目のAIまとめ文は、古い内容のままなので外す', !editWiki.composed.history);
+eq('ほかの項目のAIまとめ文は残す', editWiki.composed.personality, '明るい人');
+W.editEntry(editWiki, 'episodes', editEp.id, { title: '雨の遠足', body: '雨でした' });
+eq('エピソードのタイトルを書き直せる', editWiki.episodes[0].title, '雨の遠足');
+ok('エピソードを書き直すと、AIが整えた文章は外す', !editWiki.episodes[0].composedBody);
+eq('存在しない記録を編集しようとしても何もしない', W.editEntry(editWiki, 'history', 'no-such-id', { text: 'x' }), null);
+var older = JSON.parse(JSON.stringify(editWiki));
+older.history[0].text = '京都です'; older.history[0].updatedAt = '2020-01-01T00:00:00.000Z';
+eq('編集前の古いコピーと合体しても、編集後の回答が残る', W.mergeEntryArrays(editWiki.history, older.history)[0].text, '大阪です');
+
+/* ---- 共有用ファイル（HTML）：見た目のまま読めて、読み込めば続きを書ける ---- */
+var shareWiki = W.newWiki('person', 'タイトル</script><b>', '');
+shareWiki.history.push(W.newEntry('本文に</script>が入っても壊れない', '本人', '質問'));
+var shareHtml = W.buildShareHtml(shareWiki.title, '<div class="wp-head"><h1>見出し</h1></div>', '.wp-head{color:red}', W.exportPayload([shareWiki]));
+ok('共有用ファイルは完成ページの見た目を含む', shareHtml.indexOf('<div class="wp-head"><h1>見出し</h1></div>') !== -1 && shareHtml.indexOf('.wp-head{color:red}') !== -1);
+ok('データの中の「</script>」でページが壊れない（埋め込み部分に生の < を書かない）', shareHtml.split('</script>').length === 2);
+ok('タイトルの記号は画面に文字として出る', shareHtml.indexOf('<title>タイトル&lt;/script&gt;&lt;b&gt; - おもいでWiki</title>') !== -1);
+var sharedBack = W.parseImportPayload(shareHtml);
+eq('共有用ファイルを読み込むと、元のWikiに戻る', sharedBack[0].history[0].text, '本文に</script>が入っても壊れない');
+eq('共有用ファイルのタイトルも元どおり', sharedBack[0].title, 'タイトル</script><b>');
+var threw = false;
+try { W.parseImportPayload('<html><body>ただのページ</body></html>'); } catch (e) { threw = true; }
+ok('データの入っていないHTMLは読み込まない', threw);
+
 console.log('\n' + pass + ' 件 通過 / ' + fail + ' 件 失敗');
 process.exit(fail ? 1 : 0);

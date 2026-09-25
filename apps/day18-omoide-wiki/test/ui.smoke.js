@@ -62,7 +62,9 @@ const TINY_PNG = Buffer.from(
   let dismissNextConfirm = false;
   let lastDismissedMessage = '';
   let promptQueue = [];
+  let lastConfirmMessage = '';
   page.on('dialog', d => {
+    if (d.type() === 'confirm') lastConfirmMessage = d.message();
     if (dismissNextConfirm && d.type() === 'confirm') {
       dismissNextConfirm = false;
       lastDismissedMessage = d.message();
@@ -101,6 +103,8 @@ const TINY_PNG = Buffer.from(
   check('AIエンドポイント未設定時はAI深掘りトグルが隠れている', await page.isHidden('#aiDeepenBlock'));
   check('音声で会話するは初回からONになっている', await page.isChecked('#voiceModeToggle'));
   check('最初の質問は生い立ち・経歴カテゴリから始まる', (await page.textContent('#qCategory')).indexOf('生い立ち・経歴') !== -1);
+  check('1回に聞く数は、最初は5問（ちょっとずつ）', (await page.inputValue('#paceSelect')) === '5');
+  await page.selectOption('#paceSelect', '15');
   const firstQuestion = await page.textContent('#qText');
   await page.fill('#qAnswer', '几帳面で、誰にでも敬語で話す人でした');
   await page.setInputFiles('#qPhotos', [tmpPhoto]);
@@ -170,6 +174,21 @@ const TINY_PNG = Buffer.from(
   check('エピソードが記録に増える', (await page.textContent('#entryList')).indexOf('雨の遠足') !== -1);
   check('サムネイルが表示される', await page.locator('#entryList .thumbs img').count() > 0);
   check('旅行名がダッシュボードの記録に表示される', (await page.textContent('#entryList')).indexOf('秋の遠足') !== -1);
+
+  // ---- 過去の回答を編集する ----
+  await page.locator('#entryList .entry-item:has-text("几帳面で") .entry-edit').click();
+  check('編集を押すと、元の回答が入った入力欄が出る', (await page.inputValue('#entryList .edit-text')) === '几帳面で、誰にでも敬語で話す人でした');
+  await page.click('#entryList .edit-cancel');
+  check('キャンセルすると変わらない', (await page.textContent('#entryList')).indexOf('誰にでも敬語で') !== -1);
+  await page.locator('#entryList .entry-item:has-text("几帳面で") .entry-edit').click();
+  await page.fill('#entryList .edit-text', '几帳面で、誰にでも丁寧に話す人でした');
+  await page.click('#entryList .edit-save');
+  check('過去の回答を書き直して保存できる', (await page.textContent('#entryList')).indexOf('誰にでも丁寧に話す') !== -1 && (await page.textContent('#entryList')).indexOf('敬語で') === -1);
+  await page.locator('#entryList .entry-item:has-text("雨の遠足") .entry-edit').click();
+  check('エピソードはタイトルも編集できる', (await page.inputValue('#entryList .edit-title')) === '雨の遠足で全員ずぶ濡れになった話');
+  await page.fill('#entryList .edit-text', 'バスが来なくて、みんなで歌いながら駅まで歩いた');
+  await page.click('#entryList .edit-save');
+  check('エピソードの本文を書き直して保存できる', (await page.textContent('#entryList')).indexOf('駅まで歩いた') !== -1);
 
   // ---- 旅行・イベントでまとめる ----
   await page.click('#tileTrips');
@@ -347,6 +366,33 @@ const TINY_PNG = Buffer.from(
   check('目次に生い立ち・経歴が出る', (await page.textContent('.wp-toc')).indexOf('生い立ち・経歴') !== -1);
   check('人物像・性格の回答に、答えた質問文がラベルとして表示される', (await page.textContent('.wp-main')).indexOf('几帳面で') !== -1 && (await page.locator('.wp-list .q').count()) > 0);
 
+  // ---- 完成ページを「ファイルで送る」：見た目のまま読めて、別の端末で読み込めば続きを書ける ----
+  const [shareDl] = await Promise.all([page.waitForEvent('download'), page.click('#btnShareFile')]);
+  // ファイル名はテスト用の画面なしChromiumだと日本語がすべて「download」になるため、中身で確かめる
+  const sharePath = path.join(os.tmpdir(), 'omoide-share.html');
+  await shareDl.saveAs(sharePath);
+  const shareHtml = fs.readFileSync(sharePath, 'utf8');
+  check('共有用ファイルにWikiのデータが埋め込まれている', shareHtml.indexOf('id="omoide-wiki-data"') !== -1);
+  const viewer = await browser.newPage();
+  await viewer.goto('file://' + sharePath);
+  check('受け取った人は、アプリがなくてもWikiの形で読める', (await viewer.textContent('.wp-head h1')) === 'やまだ たろう' && (await viewer.locator('.wp-toc').count()) === 1);
+  check('見た目（スタイル）も一緒に入っている', (await viewer.evaluate(() => getComputedStyle(document.querySelector('.wp-toc')).borderTopStyle)) === 'solid');
+  check('続きを書き足す方法の案内が入っている', (await viewer.textContent('.shared-note')).indexOf('ファイルを読み込んで合体する') !== -1);
+  await viewer.close();
+  // 別の端末（まっさらな状態）で読み込むと、そのWikiが入って続きが書ける
+  const otherCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const other = await otherCtx.newPage();
+  other.on('pageerror', e => errors.push(e.message));
+  await other.goto(BASE);
+  await other.setInputFiles('#fileImport', sharePath);
+  await other.waitForFunction(() => (document.getElementById('homeStatus').textContent || '').indexOf('読み込み完了') !== -1);
+  check('別の端末で共有用ファイルを読み込むと、そのWikiが入る', (await other.textContent('#wikiList')).indexOf('やまだ たろう') !== -1);
+  await other.click('.wiki-card:has-text("やまだ たろう")');
+  await other.waitForSelector('[data-screen=dash].active');
+  check('読み込んだWikiの記録が、別の端末でも見られる（続きを書き足せる）', (await other.textContent('#entryList')).indexOf('几帳面で') !== -1);
+  await otherCtx.close();
+  fs.unlinkSync(sharePath);
+
   // ---- 書き出し ----
   const [download] = await Promise.all([
     page.waitForEvent('download'),
@@ -438,8 +484,27 @@ const TINY_PNG = Buffer.from(
 
   await page.click('[data-screen="view"] .back');
   await page.waitForSelector('[data-screen=dash].active');
+  // AIに送る前に同意を聞く（App Store 審査ガイドライン 5.1.2）。まず「使わない」を選ぶ
+  await page.click('#tileInterview');
+  await page.waitForSelector('#aiConsent:not([hidden])');
+  check('Worker設定時は、インタビューの前にAIへの送信の同意画面を出す', await page.isVisible('#aiConsent'));
+  check('同意画面には送る相手（Google・OpenAI）を書いてある', /Google/.test(await page.textContent('#aiConsent')) && /OpenAI/.test(await page.textContent('#aiConsent')));
+  check('同意する前は、まだ何も送っていない', ttsTexts.length === 0 && aiCallCount === 0);
+  await page.click('#aiConsentDecline');
+  await page.waitForSelector('[data-screen=interview].active');
+  await page.waitForTimeout(600);
+  check('「使わない」を選ぶと、AI深掘りはオフになる', !(await page.isChecked('#aiDeepenToggle')));
+  check('「使わない」を選ぶと、読み上げもGeminiに送らない（端末の声で読む）', ttsTexts.length === 0, JSON.stringify(ttsTexts));
+  await page.click('#aiDeepenToggle');
+  await page.waitForSelector('#aiConsent:not([hidden])');
+  check('あとからAI深掘りをオンにすると、もう一度同意画面を出す', await page.isVisible('#aiConsent'));
+  await page.click('#aiConsentAgree');
+  check('同意するとAI深掘りがオンになる', await page.isChecked('#aiDeepenToggle'));
+  await page.click('[data-screen="interview"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
+  check('一度答えたら、同意画面は毎回は出さない', await page.isHidden('#aiConsent'));
   await page.waitForFunction(() => (document.getElementById('qMicStatus').textContent || '').indexOf('読み上げを準備しています') !== -1);
   check('音声ができるまでの間は「読み上げを準備しています…」と表示する', true);
   check('AIエンドポイント設定時はAI深掘りトグルが表示される', !(await page.isHidden('#aiDeepenBlock')));
@@ -537,7 +602,7 @@ const TINY_PNG = Buffer.from(
 
   aiServer.close();
 
-  // ---- 15問ごとの休憩確認（お年寄りなど、長く話すと疲れる人向け） ----
+  // ---- 1回に聞く数ごとの区切り（お年寄りなど、少しずつ聞いて何日もかけて増やしていく） ----
   await page.click('[data-screen="dash"] .back');
   await page.waitForSelector('[data-screen=home].active');
   await page.click('#btnNewWiki');
@@ -545,19 +610,32 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnCreateWiki');
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
-  for (let i = 0; i < 14; i++) {
+  check('選んだ「1回に聞く数」は次のインタビューでも覚えている', (await page.inputValue('#paceSelect')) === '15');
+  await page.selectOption('#paceSelect', '3');
+  for (let i = 0; i < 2; i++) {
     await page.fill('#qAnswer', 'テスト回答' + i);
     await page.click('#btnSaveQ');
     await page.waitForFunction(() => !document.getElementById('btnSaveQ').disabled);
   }
-  dismissNextConfirm = true;
-  await page.fill('#qAnswer', 'テスト回答14');
+  lastConfirmMessage = '';
+  dismissNextConfirm = true; // 「キャンセル」＝もう少し続ける
+  await page.fill('#qAnswer', 'テスト回答2');
   await page.click('#btnSaveQ');
+  await page.waitForFunction(() => !document.getElementById('btnSaveQ').disabled);
+  check('3問答えると一区切りの確認が出る', lastConfirmMessage.indexOf('今日は3問') !== -1 && lastConfirmMessage.indexOf('休憩') !== -1, lastConfirmMessage);
+  check('一区切りでは、Wikiにたまった思い出の件数も伝える', lastConfirmMessage.indexOf('全部で3件') !== -1, lastConfirmMessage);
+  check('「キャンセル」を選ぶと、そのままインタビューを続けられる', await page.locator('[data-screen=interview].active').count() === 1);
+  for (let i = 3; i < 5; i++) {
+    await page.fill('#qAnswer', 'テスト回答' + i);
+    await page.click('#btnSaveQ');
+    await page.waitForFunction(() => !document.getElementById('btnSaveQ').disabled);
+  }
+  await page.fill('#qAnswer', 'テスト回答5');
+  await page.click('#btnSaveQ'); // 6問目で2回目の区切り。「OK」＝今日はここまで
   await page.waitForSelector('[data-screen=dash].active');
-  check('15問ごとに休憩を確認するダイアログが出る', lastDismissedMessage.indexOf('休憩') !== -1);
-  check('休憩で「今日はここまで」を選ぶとダッシュボードに戻る（＝インタビューが終わる）', await page.locator('[data-screen=dash].active').count() === 1);
+  check('一区切りで「OK」を選ぶと、今日はここまでになる', lastConfirmMessage.indexOf('今日は6問') !== -1, lastConfirmMessage);
   const savedCount = ((await page.textContent('#entryList')).match(/テスト回答/g) || []).length;
-  check('休憩を挟んでも15問ぶんきちんと保存されている', savedCount === 15, 'savedCount=' + savedCount);
+  check('区切りを挟んでも、答えた6問ぶんきちんと保存されている', savedCount === 6, 'savedCount=' + savedCount);
   await page.click('#btnDeleteWiki');
   await page.waitForSelector('[data-screen=home].active');
   await page.click('.wiki-card:has-text("やまだ たろう")');
@@ -569,6 +647,119 @@ const TINY_PNG = Buffer.from(
   check('削除すると一覧から消える', (await page.textContent('#wikiList')).indexOf('やまだ たろう') === -1);
 
   check('絵文字ではなくSVGアイコンが描かれている', await page.locator('svg.icon').count() > 0);
+  // ---- 音声で答えて「次」と言ったあと、前の質問の聞き取り結果が遅れて届いても次の回答欄に書き込まない ----
+  const micCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await micCtx.addInitScript(() => {
+    localStorage.setItem('omoide-wiki:aiConsent', 'granted');
+    window.__srs = [];
+    // iPhoneと同じく、動いている最中にもう一度startするとエラーになり、止めた合図（onend）は少し遅れて届く
+    function FakeSR() { this.started = false; window.__srs.push(this); }
+    FakeSR.prototype.start = function () { if (this.started) throw new Error('already started'); this.started = true; };
+    FakeSR.prototype.stop = function () { const sr = this; setTimeout(() => { sr.started = false; sr.onend && sr.onend(); }, 150); };
+    FakeSR.prototype.abort = FakeSR.prototype.stop;
+    window.SpeechRecognition = FakeSR;
+    window.webkitSpeechRecognition = FakeSR;
+    window.__say = (sr, text) => sr.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: true })] });
+  });
+  const micPage = await micCtx.newPage();
+  micPage.on('pageerror', e => errors.push(e.message));
+  await micPage.goto(BASE);
+  // 接続できない先をWorkerとして設定し、AIにつながらないときの表示も確かめる
+  await micPage.evaluate(() => {
+    document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', 'http://127.0.0.1:9/');
+  });
+  await micPage.click('#btnNewWiki');
+  await micPage.fill('#newTitle', '声で答える人');
+  await micPage.click('#btnCreateWiki');
+  await micPage.waitForSelector('[data-screen=dash].active');
+  await micPage.click('#tileInterview');
+  await micPage.waitForSelector('[data-screen=interview].active');
+  const micFirstQ = await micPage.textContent('#qText');
+  await micPage.evaluate(() => { const b = document.getElementById('qMicBtn'); if (!b.classList.contains('on')) b.click(); });
+  await micPage.evaluate(() => window.__say(window.__srs[window.__srs.length - 1], '東京で生まれました 次'));
+  await micPage.waitForFunction((q) => document.getElementById('qText').textContent !== q, micFirstQ);
+  check('「次」と言うと、その前までの回答が記録されて次の質問に進む', true);
+  check('AIにつながらないときは、インタビュー画面に理由を出す',
+    (await micPage.textContent('#aiDeepenStatus')).indexOf('Workerに接続できませんでした') !== -1, await micPage.textContent('#aiDeepenStatus'));
+  check('次の質問の回答欄は空になっている', (await micPage.inputValue('#qAnswer')) === '');
+  // 止めた合図（onend）が届く前に、前の質問の聞き取り結果が遅れて届いた場合
+  await micPage.evaluate(() => window.__say(window.__srs[0], '遅れて届いた前の回答'));
+  await micPage.waitForTimeout(300);
+  check('前の質問の聞き取り結果が遅れて届いても、次の質問の回答欄には書き込まない', (await micPage.inputValue('#qAnswer')) === '');
+  check('音声認識は質問ごとに作り直さず、1つを使い回す（iPhoneは同時に1つしか動かせないため）', (await micPage.evaluate(() => window.__srs.length)) === 1);
+  // 2問目でもマイクを押して話せば、ちゃんと聞き取れる
+  await micPage.evaluate(() => { const b = document.getElementById('qMicBtn'); if (!b.classList.contains('on')) b.click(); });
+  await micPage.waitForFunction(() => window.__srs[0].started === true);
+  await micPage.evaluate(() => window.__say(window.__srs[0], '二つ目の答えです'));
+  check('2問目以降も、話した言葉が回答欄に入る', (await micPage.inputValue('#qAnswer')) === '二つ目の答えです', await micPage.inputValue('#qAnswer'));
+  await micCtx.close();
+
+  // ---- iOSアプリの中では、iPhone本体の音声認識（プラグイン）を使い、2問目以降も聞き取れる ----
+  const nativeCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await nativeCtx.addInitScript(() => {
+    const listeners = {};
+    const emit = (name, data) => (listeners[name] || []).forEach(f => f(data));
+    let running = false;
+    window.__nativeStarts = 0;
+    window.__partial = (t) => emit('partialResults', { matches: [t] });
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: {
+        SpeechRecognition: {
+          checkPermissions: () => Promise.resolve({ speechRecognition: 'granted' }),
+          requestPermissions: () => Promise.resolve({ speechRecognition: 'granted' }),
+          // 本物と同じく、聞き取り中にもう一度startすると断られ、stoppedは少し遅れて届く
+          start: () => {
+            if (running) return Promise.reject(new Error('Ongoing speech recognition'));
+            running = true; window.__nativeStarts++;
+            setTimeout(() => emit('listeningState', { status: 'started' }), 10);
+            return Promise.resolve();
+          },
+          stop: () => { setTimeout(() => { running = false; emit('listeningState', { status: 'stopped' }); }, 100); return Promise.resolve(); },
+          addListener: (name, f) => { (listeners[name] = listeners[name] || []).push(f); return Promise.resolve({ remove() {} }); }
+        }
+      }
+    };
+  });
+  const nativePage = await nativeCtx.newPage();
+  nativePage.on('pageerror', e => errors.push(e.message));
+  await nativePage.goto(BASE);
+  await nativePage.evaluate(() => { document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', ''); });
+  await nativePage.click('#btnNewWiki');
+  await nativePage.fill('#newTitle', 'iPhoneで答える人');
+  await nativePage.click('#btnCreateWiki');
+  await nativePage.waitForSelector('[data-screen=dash].active');
+  await nativePage.click('#tileInterview');
+  await nativePage.waitForSelector('[data-screen=interview].active');
+  check('iOSアプリではiPhone本体の音声認識が使えるので、マイクボタンが押せる', !(await nativePage.isDisabled('#qMicBtn')));
+  const nq1 = await nativePage.textContent('#qText');
+  await nativePage.click('#qMicBtn');
+  await nativePage.waitForFunction(() => window.__nativeStarts === 1);
+  await nativePage.evaluate(() => window.__partial('東京で生まれました'));
+  check('iPhone本体の音声認識の途中経過が、回答欄に入る', (await nativePage.inputValue('#qAnswer')) === '東京で生まれました');
+  // 「次の日に…」と話している途中で一瞬「次」で終わっても、次の質問には進まない
+  await nativePage.evaluate(() => { window.__partial('東京で生まれました 次'); setTimeout(() => window.__partial('東京で生まれました 次の日に引っ越しました'), 300); });
+  await nativePage.waitForTimeout(1600);
+  check('話の途中で一瞬「次」で終わっただけでは、次の質問に進まない', (await nativePage.textContent('#qText')) === nq1);
+  await nativePage.evaluate(() => window.__partial('東京で生まれました 次の日に引っ越しました 次'));
+  await nativePage.waitForFunction((q) => document.getElementById('qText').textContent !== q, nq1);
+  check('最後に「次」と言って1.2秒続きがなければ、次の質問に進む', true);
+  check('次の質問の回答欄は空（iPhone版）', (await nativePage.inputValue('#qAnswer')) === '');
+  await nativePage.evaluate(() => window.__partial('遅れて届いた前の回答'));
+  check('止めたあとに届いた前の質問の聞き取り結果は、次の回答欄に書き込まない（iPhone版）', (await nativePage.inputValue('#qAnswer')) === '');
+  await nativePage.waitForTimeout(200);
+  await nativePage.click('#qMicBtn');
+  await nativePage.waitForFunction(() => window.__nativeStarts === 2);
+  await nativePage.evaluate(() => window.__partial('二つ目の答えです'));
+  check('2問目以降も、iPhone本体の音声認識で聞き取れる', (await nativePage.inputValue('#qAnswer')) === '二つ目の答えです', await nativePage.inputValue('#qAnswer'));
+  const firstAnswer = await nativePage.evaluate(() => {
+    const W = window.OmoideWiki; const store = JSON.parse(localStorage.getItem(W.STORAGE_KEY));
+    const w = Object.values(store.wikis).find(x => x.title === 'iPhoneで答える人');
+    return w.history.map(e => e.text);
+  });
+  check('「次」の手前までが1問目の回答として保存される', firstAnswer[0] === '東京で生まれました\n次の日に引っ越しました' || firstAnswer[0] === '東京で生まれました 次の日に引っ越しました', JSON.stringify(firstAnswer));
+  await nativeCtx.close();
+
   // ---- iOSアプリ（Capacitor）の中：書き出しは共有シート、印刷ボタンは隠す ----
   const appCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
   await appCtx.addInitScript(() => {

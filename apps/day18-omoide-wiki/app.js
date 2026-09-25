@@ -263,6 +263,24 @@
 
   // ---------- マージ（複数人のJSONを1つに合体する） ----------
 
+  // 過去の回答・エピソードを書き直す。更新日時を新しくするので、複数人の記録を合体しても編集が優先される。
+  // 書き直した回答から作ったAIのまとめ文は古い内容のままになるため外す（もう一度「AIでまとめる」で作り直せる）。
+  function editEntry(wiki, cat, id, fields) {
+    var item = (wiki[cat] || []).filter(function (x) { return x.id === id; })[0];
+    if (!item) return null;
+    if (cat === 'episodes') {
+      if (fields.title != null) item.title = String(fields.title).trim();
+      if (fields.body != null) item.body = String(fields.body).trim();
+      delete item.composedBody;
+    } else {
+      item.text = String(fields.text == null ? item.text : fields.text).trim();
+      if (wiki.composed && wiki.composed[cat]) delete wiki.composed[cat];
+    }
+    item.updatedAt = nowIso();
+    wiki.updatedAt = item.updatedAt;
+    return item;
+  }
+
   function mergeEntryArrays(existing, incoming) {
     var byId = {};
     (existing || []).forEach(function (item) { byId[item.id] = item; });
@@ -323,7 +341,40 @@
     return { store: next, added: addedCount, merged: mergedCount };
   }
 
-  function parseImportPayload(jsonText) {
+  // 「ファイルで送る」で作る共有用HTML。見た目のまま読めるページの中に、Wikiのデータも埋め込んでおき、
+  // 受け取った人が「ファイルを読み込んで合体する」で選べば、別の端末でも続きを書き足せるようにする。
+  var SHARE_DATA_ID = 'omoide-wiki-data';
+  var APP_PUBLIC_URL = 'https://ainaraomakaseare-coder.github.io/my-app/apps/day18-omoide-wiki/';
+
+  function buildShareHtml(title, pageHtml, cssText, payload) {
+    // データの中に「</script>」などが含まれていてもページが壊れないよう、< を文字コードで書く
+    var json = JSON.stringify(payload).replace(/</g, '\\u003c');
+    var safeTitle = String(title || 'おもいでWiki').replace(/[<>&"]/g, function (c) {
+      return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c];
+    });
+    return '<!DOCTYPE html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+      '<title>' + safeTitle + ' - おもいでWiki</title>\n' +
+      '<style>\n' + (cssText || '') + '\n' +
+      'body { background: #fff; padding: 16px 12px 40px; }\n' +
+      '.wiki-page { margin: 0 auto 24px; }\n' +
+      '.shared-note { max-width: 900px; margin: 0 auto; font-size: 13px; line-height: 1.8; color: #54595d; }\n' +
+      '.shared-note a { color: #0645ad; }\n' +
+      '</style>\n</head>\n<body>\n' +
+      '<div class="wiki-page">' + pageHtml + '</div>\n' +
+      '<p class="shared-note">この記事は「おもいでWiki」で作りました。続きを書き足したいときは、' +
+      '<a href="' + APP_PUBLIC_URL + '">おもいでWiki</a>を開いて「ファイルを読み込んで合体する」でこのファイルを選んでください。</p>\n' +
+      '<script type="application/json" id="' + SHARE_DATA_ID + '">' + json + '</script>\n' +
+      '</body>\n</html>\n';
+  }
+
+  function parseImportPayload(fileText) {
+    var jsonText = String(fileText || '');
+    if (/^\s*</.test(jsonText)) {
+      var m = jsonText.match(new RegExp('<script type="application/json" id="' + SHARE_DATA_ID + '">([\\s\\S]*?)</script>'));
+      if (!m) throw new Error('このファイルにはおもいでWikiのデータが入っていないようです');
+      jsonText = m[1];
+    }
     var data = JSON.parse(jsonText);
     if (Array.isArray(data)) return data;
     if (data && Array.isArray(data.wikis)) return data.wikis;
@@ -713,9 +764,11 @@
     buildProfileContext: buildProfileContext,
     parseTags: parseTags,
     mergeEntryArrays: mergeEntryArrays,
+    editEntry: editEntry,
     mergeWiki: mergeWiki,
     mergeImport: mergeImport,
     parseImportPayload: parseImportPayload,
+    buildShareHtml: buildShareHtml,
     exportPayload: exportPayload,
     addContributor: addContributor,
     estimateBytes: estimateBytes,
@@ -750,7 +803,9 @@
   var interviewIndex = 0;
   var sessionAnswered = 0;
   var lastBreakCheckpoint = 0;
-  var BREAK_EVERY = 15;
+  // 1回に聞く数。お年寄りなど長く話すと疲れる人のために、少しずつ聞いて何日もかけて増やしていけるようにする
+  var PACE_PREF_KEY = 'omoide-wiki:pace';
+  var DEFAULT_PACE = 5;
   var aiThreadHistory = [];
   var interviewHistory = []; // 「前の質問に戻る」用。各ステップで {index, category, entryId, text} を積む
   var pendingEpisodePhotos = [];
@@ -781,6 +836,7 @@
     'external-link': '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
     'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
     'upload': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+    'share': '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m16 6-4-4-4 4"/><path d="M12 2v13"/>',
     'trash': '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>'
   };
 
@@ -959,12 +1015,38 @@
         '<div class="body">' + bodyHtml + '</div>' + thumbsHtml +
         '<div class="foot"><span>' + escapeHtml(L[r.cat]) + (r.item.author ? '・' + escapeHtml(r.item.author) : '') +
           (r.item.tripId ? '・' + escapeHtml(tripTitle(w, r.item.tripId)) : '') +
-          (r.item.period ? '・' + escapeHtml(r.item.period) : '') + '</span><button data-cat="' + r.cat + '" data-id="' + r.item.id + '">削除</button></div>';
-      el.querySelector('button').addEventListener('click', function () {
+          (r.item.period ? '・' + escapeHtml(r.item.period) : '') + '</span>' +
+          '<span class="foot-actions"><button class="entry-edit">編集</button><button class="entry-delete">削除</button></span></div>';
+      el.querySelector('.entry-edit').addEventListener('click', function () { openEntryEditor(el, w, r.cat, r.item); });
+      el.querySelector('.entry-delete').addEventListener('click', function () {
         if (!confirm('この記録を削除しますか？')) return;
         deleteEntry(r.cat, r.item.id);
       });
       listEl.appendChild(el);
+    });
+  }
+
+  // 集まった記録の1件を、その場で書き直す
+  function openEntryEditor(el, w, cat, item) {
+    var isEpisode = cat === 'episodes';
+    el.classList.add('editing');
+    el.innerHTML =
+      (item.prompt ? '<div class="edit-prompt">' + escapeHtml(item.prompt) + '</div>' : '') +
+      (isEpisode ? '<input type="text" class="edit-title" aria-label="タイトル" placeholder="タイトル">' : '') +
+      '<textarea class="edit-text" rows="5" aria-label="回答"></textarea>' +
+      '<div class="edit-actions"><button class="btn primary small edit-save">保存する</button><button class="btn text small edit-cancel">キャンセル</button></div>';
+    if (isEpisode) el.querySelector('.edit-title').value = item.title || '';
+    var ta = el.querySelector('.edit-text');
+    ta.value = isEpisode ? (item.body || '') : (item.text || '');
+    ta.focus();
+    el.querySelector('.edit-cancel').addEventListener('click', function () { renderDash(); });
+    el.querySelector('.edit-save').addEventListener('click', function () {
+      var text = ta.value.trim();
+      var title = isEpisode ? el.querySelector('.edit-title').value.trim() : '';
+      if (!text && !title) { alert('空にはできません。消したいときは「削除」を使ってください。'); return; }
+      editEntry(w, cat, item.id, isEpisode ? { title: title, body: text } : { text: text });
+      persist();
+      renderDash();
     });
   }
 
@@ -999,6 +1081,19 @@
       return true;
     }
   }
+  function loadPacePref() {
+    try {
+      var v = localStorage.getItem(PACE_PREF_KEY);
+      return v === null ? DEFAULT_PACE : Number(v);
+    } catch (e) {
+      return DEFAULT_PACE;
+    }
+  }
+
+  function savePacePref(n) {
+    try { localStorage.setItem(PACE_PREF_KEY, String(n)); } catch (e) { /* 保存できなくても致命的ではない */ }
+  }
+
   function saveVoicePref(on) {
     try { localStorage.setItem(VOICE_PREF_KEY, on ? 'on' : 'off'); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
@@ -1019,8 +1114,46 @@
     try { localStorage.setItem(AI_DEEPEN_PREF_KEY, on ? 'on' : 'off'); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
 
+  // 回答や質問の文章を外部のAI（OpenAI・Google）に送ってよいかの同意。
+  // App Store 審査ガイドライン 5.1.2 により、第三者のAIに個人のデータを送る前に、
+  // 送る相手と内容を示して本人の許可をもらう必要がある。
+  // 'granted'（同意）／'denied'（使わない）／''（まだ聞いていない）
+  var AI_CONSENT_KEY = 'omoide-wiki:aiConsent';
+  function loadAiConsent() {
+    try { return localStorage.getItem(AI_CONSENT_KEY) || ''; } catch (e) { return ''; }
+  }
+  function saveAiConsent(v) {
+    try { localStorage.setItem(AI_CONSENT_KEY, v); } catch (e) { /* 保存できなくても、その場の判断は使える */ }
+    aiConsentMemory = v;
+  }
+  var aiConsentMemory = '';
+  function hasAiConsent() { return (loadAiConsent() || aiConsentMemory) === 'granted'; }
+
+  // 同意画面を出して、選んだ結果（true＝同意）を cb に渡す
+  function askAiConsent(cb) {
+    var box = $('#aiConsent');
+    var done = function (ok) {
+      box.hidden = true;
+      $('#aiConsentAgree').onclick = null;
+      $('#aiConsentDecline').onclick = null;
+      saveAiConsent(ok ? 'granted' : 'denied');
+      if (!ok) resetSpeechCache();
+      cb(ok);
+    };
+    $('#aiConsentAgree').onclick = function () { done(true); };
+    $('#aiConsentDecline').onclick = function () { done(false); };
+    box.hidden = false;
+    $('#aiConsentAgree').focus();
+  }
+
+  // まだ聞いていなければ同意画面を出してから、聞いたことがあればすぐに cb を呼ぶ
+  function ensureAiConsent(cb) {
+    if (!getAiEndpoint() || loadAiConsent() || aiConsentMemory) { cb(hasAiConsent()); return; }
+    askAiConsent(cb);
+  }
+
   function supportsRecognition() {
-    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    return !!(nativeSpeechPlugin() || window.SpeechRecognition || window.webkitSpeechRecognition);
   }
   function supportsSynthesis() {
     return !!window.speechSynthesis;
@@ -1030,21 +1163,45 @@
   // お年寄りなど、画面の操作より声だけで完結させたい人のための仕組み。
   var NEXT_COMMAND_RE = /(次へ|次の質問|つぎ|次)\s*[。、,.]?\s*$/;
 
+  // 音声認識は画面（インタビュー・エピソード）ごとに1つだけ作り、質問が変わっても使い回す。
+  // iPhoneは音声認識を同時に1つしか動かせず、前のが終わりきる前に次を始めると何も聞き取らなくなる。
+  // また、マイクが動いている間の音はiPhoneの受話口から小さく鳴るため、読み上げも「終わった」合図
+  // （onend）を待ってから始める。
   function createMicController(textareaEl, btnEl, statusEl, onNext) {
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       btnEl.disabled = true;
       statusEl.textContent = 'このブラウザは音声入力に対応していません。文字で入力してください。';
-      return { start: function () {}, stop: function () {}, isOn: function () { return false; } };
+      return {
+        start: function () {}, stop: function () {}, isOn: function () { return false; },
+        retarget: function () {}, whenIdle: function (cb) { cb(); }
+      };
     }
     var recog = new SR();
     recog.lang = 'ja-JP';
     recog.interimResults = true;
     recog.continuous = true;
-    var on = false;
+    var on = false;        // 聞き取りたい状態か
+    var running = false;   // 認識が実際に動いているか（start から onend まで）
+    var stopping = false;  // 止めるよう頼んだが、まだ onend が来ていない
+    var idleWaiters = [];
     var baseText = '';
 
+    function beginRecognition() {
+      if (running) return;
+      running = true;
+      try { recog.start(); } catch (e) { running = false; }
+    }
+
+    function flushIdleWaiters() {
+      var waiters = idleWaiters;
+      idleWaiters = [];
+      waiters.forEach(function (cb) { cb(); });
+    }
+
     recog.onresult = function (event) {
+      // 止めたあとに遅れて届いた結果を書き込むと、次の質問の回答欄に前の回答が残ってしまう
+      if (!on || stopping) return;
       var finalChunk = '', interimChunk = '';
       for (var i = event.resultIndex; i < event.results.length; i++) {
         var res = event.results[i];
@@ -1063,25 +1220,28 @@
         baseText = (baseText ? baseText + '\n' : '') + finalChunk;
         textareaEl.value = baseText;
       }
-      statusEl.textContent = on ? ('聞き取り中… ' + interimChunk) : (triggered ? '「次」と聞こえたので次へ進みます…' : '');
+      statusEl.textContent = triggered ? '「次」と聞こえたので次へ進みます…' : ('聞き取り中… ' + interimChunk);
       if (triggered) {
+        var next = onNext;
         // recog.onresult の実行中に recog.stop() を呼ぶと不安定になることがあるため、一呼吸おく
-        setTimeout(function () { onNext(); }, 0);
+        setTimeout(function () { next(); }, 0);
       }
     };
     recog.onerror = function (e) {
+      // 無音で区切られた・こちらから止めた、はエラーではない（onend で必要なら再開する）
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
       statusEl.textContent = e.error === 'not-allowed' ? 'マイクの使用が許可されていません。' : '音声入力でエラーが発生しました（' + e.error + '）。';
-      on = false;
-      btnEl.classList.remove('on');
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        on = false;
+        btnEl.classList.remove('on');
+      }
     };
     recog.onend = function () {
-      if (on) {
-        // 無音が続くとブラウザ側が自動終了することがあるため、続けたい場合は再開する
-        try { recog.start(); } catch (e) { /* 既に開始中などは無視 */ }
-      } else {
-        btnEl.classList.remove('on');
-        statusEl.textContent = '';
-      }
+      running = false;
+      stopping = false;
+      if (on) { beginRecognition(); return; } // 無音で自動終了した、または止めている間に再開を頼まれた
+      btnEl.classList.remove('on');
+      flushIdleWaiters();
     };
 
     return {
@@ -1089,13 +1249,162 @@
         baseText = textareaEl.value;
         on = true;
         btnEl.classList.add('on');
-        try { recog.start(); } catch (e) { /* already started */ }
+        beginRecognition(); // 止めている途中なら、onend のあとに始まる
       },
       stop: function () {
         on = false;
-        try { recog.stop(); } catch (e) {}
         btnEl.classList.remove('on');
         statusEl.textContent = '';
+        if (running && !stopping) {
+          stopping = true;
+          try { recog.stop(); } catch (e) {}
+        }
+      },
+      // 次の質問（別の回答欄）に切り替える。いったん止めてから向け先だけ差し替える
+      retarget: function (t, b, st, next) {
+        this.stop();
+        textareaEl = t; btnEl = b; statusEl = st; onNext = next;
+      },
+      // 音声認識が完全に止まってから cb を呼ぶ（止まっていればすぐ呼ぶ）
+      whenIdle: function (cb) {
+        if (!running) { cb(); return; }
+        var done = false;
+        var once = function () { if (done) return; done = true; setTimeout(cb, 300); };
+        idleWaiters.push(once);
+        setTimeout(once, 2000); // onend が来ない場合の保険
+      },
+      isOn: function () { return on; }
+    };
+  }
+
+  // iPhoneアプリの中では、ブラウザ標準の音声認識が1回目のあと聞き取らなくなるため、
+  // iPhone本体の音声認識（@capacitor-community/speech-recognition）を使う。
+  // このプラグインは画面ごとではなく1つだけなので、インタビュー・エピソードで1つの操作役を使い回す。
+  var sharedNativeMic = null;
+
+  function nativeSpeechPlugin() {
+    var plugins = nativePlugins();
+    return plugins && plugins.SpeechRecognition ? plugins.SpeechRecognition : null;
+  }
+
+  function createNativeMicController(plugin, textareaEl, btnEl, statusEl, onNext) {
+    var on = false;        // 聞き取りたい状態か
+    var running = false;   // 聞き取りが実際に動いているか（start から stopped まで）
+    var stopping = false;  // 止めるよう頼んだが、まだ stopped が来ていない
+    var baseText = '';     // 回答欄にすでに確定している文字
+    var current = '';      // 今の聞き取りで認識している文字（聞き取りが続く間に何度も更新される）
+    var idleWaiters = [];
+    var nextTimer = null;
+    var permissionOk = false;
+    var retries = 0;
+
+    function render() { textareaEl.value = baseText + (baseText && current ? '\n' : '') + current; }
+    function commit() {
+      if (current) { baseText = baseText + (baseText ? '\n' : '') + current; current = ''; }
+    }
+    function flushIdleWaiters() {
+      var waiters = idleWaiters;
+      idleWaiters = [];
+      waiters.forEach(function (cb) { cb(); });
+    }
+    function fail(message) {
+      on = false;
+      running = false;
+      btnEl.classList.remove('on');
+      statusEl.textContent = message;
+      flushIdleWaiters();
+    }
+    function ensurePermission() {
+      if (permissionOk) return Promise.resolve(true);
+      return plugin.checkPermissions().then(function (r) {
+        if (r.speechRecognition === 'granted') return r;
+        return plugin.requestPermissions();
+      }).then(function (r) {
+        permissionOk = r.speechRecognition === 'granted';
+        return permissionOk;
+      });
+    }
+    function begin() {
+      if (running) return;
+      running = true;
+      ensurePermission().then(function (ok) {
+        if (!ok) { fail('マイクまたは音声認識の使用が許可されていません。iPhoneの「設定」アプリから、おもいでWikiに許可してください。'); return; }
+        if (!on) { running = false; flushIdleWaiters(); return; }
+        return plugin.start({ language: 'ja-JP', partialResults: true, popup: false, maxResults: 1 }).then(function () { retries = 0; });
+      }).catch(function (e) {
+        running = false;
+        var msg = String((e && e.message) || e);
+        // 前の聞き取りの後片付けがまだ終わっていない。少し待ってからやり直す
+        if (/ongoing/i.test(msg) && retries < 6) {
+          retries++;
+          setTimeout(function () { if (on) begin(); }, 500);
+          return;
+        }
+        fail('音声入力でエラーが発生しました（' + msg + '）。');
+      });
+    }
+
+    plugin.addListener('partialResults', function (data) {
+      if (!on || stopping) return; // 止めたあとに遅れて届いた結果は、次の回答欄に書き込まない
+      var text = (data && data.matches && data.matches[0]) || '';
+      current = text;
+      if (nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
+      var m = onNext ? text.match(NEXT_COMMAND_RE) : null;
+      if (m) {
+        // 「次の日に…」の途中で一瞬「次」で終わることがあるため、1.2秒続きが来なければ「次」とみなす
+        nextTimer = setTimeout(function () {
+          nextTimer = null;
+          if (!on || stopping || current !== text) return;
+          current = text.slice(0, m.index).trim();
+          render();
+          commit();
+          statusEl.textContent = '「次」と聞こえたので次へ進みます…';
+          onNext();
+        }, 1200);
+      }
+      render();
+      statusEl.textContent = '聞き取り中…';
+    });
+    plugin.addListener('listeningState', function (data) {
+      if (data && data.status === 'started') { running = true; return; }
+      running = false;
+      stopping = false;
+      // 無音や時間切れで区切られた／前の後片付けで止められた場合は、続きを聞き直す
+      if (on) { commit(); begin(); return; }
+      btnEl.classList.remove('on');
+      flushIdleWaiters();
+    });
+
+    return {
+      start: function () {
+        baseText = textareaEl.value;
+        current = '';
+        on = true;
+        btnEl.classList.add('on');
+        statusEl.textContent = '聞き取り中…';
+        begin(); // 止めている途中なら、stopped のあとに始まる
+      },
+      stop: function () {
+        on = false;
+        if (nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
+        btnEl.classList.remove('on');
+        statusEl.textContent = '';
+        if (running && !stopping) {
+          stopping = true;
+          plugin.stop().catch(function () {});
+        }
+      },
+      retarget: function (t, b, st, next) {
+        this.stop();
+        textareaEl = t; btnEl = b; statusEl = st; onNext = next;
+        baseText = ''; current = '';
+      },
+      whenIdle: function (cb) {
+        if (!running) { cb(); return; }
+        var done = false;
+        var once = function () { if (done) return; done = true; setTimeout(cb, 300); };
+        idleWaiters.push(once);
+        setTimeout(once, 2000);
       },
       isOn: function () { return on; }
     };
@@ -1113,8 +1422,17 @@
   }
 
   function setMicController(key, textareaEl, btnEl, statusEl, onNext) {
-    if (micControllers[key]) micControllers[key].stop();
-    var ctrl = createMicController(textareaEl, btnEl, statusEl, onNext);
+    var plugin = nativeSpeechPlugin();
+    if (plugin) {
+      if (sharedNativeMic) sharedNativeMic.retarget(textareaEl, btnEl, statusEl, onNext);
+      else sharedNativeMic = createNativeMicController(plugin, textareaEl, btnEl, statusEl, onNext);
+      btnEl.disabled = false;
+      micControllers[key] = sharedNativeMic;
+      return sharedNativeMic;
+    }
+    var ctrl = micControllers[key];
+    if (ctrl) { ctrl.retarget(textareaEl, btnEl, statusEl, onNext); return ctrl; }
+    ctrl = createMicController(textareaEl, btnEl, statusEl, onNext);
     micControllers[key] = ctrl;
     return ctrl;
   }
@@ -1186,7 +1504,7 @@
   }
 
   function fetchSpeech(text) {
-    if (!getAiEndpoint() || ttsUnavailable) return Promise.resolve(null);
+    if (!getAiEndpoint() || ttsUnavailable || !hasAiConsent()) return Promise.resolve(null);
     return fetchSpeechOnce(text).then(function (r) {
       // 一時的な失敗（混雑・通信の瞬断など）は、少し待って1回だけやり直す
       if (r.blob || r.error === 'tts_not_configured' || r.error === 'invalid_input') return r;
@@ -1213,6 +1531,7 @@
   // 作った音声は質問文ごとに覚えておき、同じ質問を読むときは作り直さない（待ち時間も費用も減る）
   var speechCache = {};
   var speechCacheOrder = [];
+  function resetSpeechCache() { speechCache = {}; speechCacheOrder = []; }
   var SPEECH_CACHE_MAX = 20;
 
   function getSpeech(text) {
@@ -1229,7 +1548,7 @@
 
   // 今の質問を読んでいる間に、次の質問の音声を先に作っておく
   function prefetchSpeech(text) {
-    if (!text || !getAiEndpoint() || ttsUnavailable || speechCache[text]) return;
+    if (!text || !getAiEndpoint() || ttsUnavailable || !hasAiConsent() || speechCache[text]) return;
     getSpeech(text);
   }
 
@@ -1238,7 +1557,7 @@
     var token = speakToken;
     var fallback = function (reason) {
       if (token !== speakToken) return;
-      if (getAiEndpoint()) showTtsNote(reason || lastTtsError);
+      if (getAiEndpoint() && hasAiConsent()) showTtsNote(reason || lastTtsError);
       speakWithBrowser(text, onend);
     };
     var pending = getSpeech(text);
@@ -1272,9 +1591,20 @@
   // 回答内容を読んで、追加の深掘り質問を1つだけ作ってもらう。
   // Worker未設定・通信失敗・12秒以内に応答なしのいずれでも null を返し、
   // インタビュー自体は止めずに次の固定質問へ進める。
+  // AIの深掘りにつながらなかった理由（つながったときは空）。インタビュー画面に出して原因を切り分ける
+  var lastAiError = '';
+
+  function aiErrorReason(status, error) {
+    if (error === 'timeout') return 'AIの応答に時間がかかりすぎました';
+    if (error === 'network') return 'Workerに接続できませんでした';
+    if (status === 403) return 'このアプリからの接続がWorkerに許可されていません（コード403）';
+    if (status === 429) return 'AIを使う回数の上限に達しました（コード429）';
+    return 'AIでエラーが起きました（コード' + status + '）';
+  }
+
   function fetchAiFollowUp(payload) {
     var endpoint = getAiEndpoint();
-    if (!endpoint) return Promise.resolve(null);
+    if (!endpoint || !hasAiConsent()) return Promise.resolve(null);
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 12000) : null;
     return fetch(endpoint, {
@@ -1284,13 +1614,23 @@
       signal: ctrl ? ctrl.signal : undefined
     }).then(function (res) {
       if (timer) clearTimeout(timer);
+      lastAiError = res.ok ? '' : aiErrorReason(res.status);
       return res.ok ? res.json() : null;
-    }).catch(function () {
+    }).catch(function (e) {
       if (timer) clearTimeout(timer);
+      lastAiError = aiErrorReason(0, e && e.name === 'AbortError' ? 'timeout' : 'network');
       return null;
     }).then(function (data) {
       return (data && typeof data.followUp === 'string') ? data : null;
     });
+  }
+
+  var AI_DEEPEN_STATUS_TEXT = '回答ごとにAIが次の質問を考えます（数秒かかることがあります・少額のAPI利用料が発生します）';
+
+  function showAiDeepenStatus() {
+    $('#aiDeepenStatus').textContent = lastAiError
+      ? ('AIにつながらなかったため、決まった質問で続けています。理由：' + lastAiError)
+      : AI_DEEPEN_STATUS_TEXT;
   }
 
   // 一問一答の生の回答を、AIにWikipedia記事のような自然な文章へ書き直してもらう。
@@ -1300,6 +1640,7 @@
   function fetchAiCompose(payload) {
     var endpoint = getAiEndpoint();
     if (!endpoint) return Promise.resolve({ ok: false, reason: 'Workerが設定されていません' });
+    if (!hasAiConsent()) return Promise.resolve({ ok: false, reason: 'AIへの送信に同意していません' });
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 60000) : null;
     return fetch(endpoint, {
@@ -1330,6 +1671,10 @@
     var endpoint = getAiEndpoint();
     if (!endpoint) {
       alert('AIでまとめるには、先にWorkerを公開してください（worker/README.md を参照）。');
+      return;
+    }
+    if (!hasAiConsent()) {
+      askAiConsent(function (ok) { if (ok) composeWikiWithAi(w); });
       return;
     }
     var btn = $('#btnCompose');
@@ -1444,6 +1789,7 @@
       profile: buildProfileContext(w),
       askedQuestions: askedQuestionTexts(w, cat)
     }).then(function (result) {
+      showAiDeepenStatus();
       if (result && !result.done && result.followUp) {
         interviewQueue.push({ category: cat, question: result.followUp, depth: 0, dynamic: true, grown: true });
         return true;
@@ -1467,15 +1813,17 @@
       ? (supportsSynthesis() ? '' : '※ このブラウザは質問の読み上げに対応していません（音声入力はできます）')
       : '※ このブラウザは音声入力・読み上げに対応していないようです。文字で入力してください。';
 
-    var aiEndpoint = getAiEndpoint();
-    $('#aiDeepenBlock').hidden = !aiEndpoint;
-    $('#aiDeepenToggle').checked = aiEndpoint ? loadAiDeepenPref() : false;
-    $('#aiDeepenStatus').textContent = aiEndpoint
-      ? '回答ごとにAIが次の質問を考えます（数秒かかることがあります・少額のAPI利用料が発生します）'
-      : '';
+    // 最初の質問を読み上げる前に、AIへの送信の同意を確かめる（まだ聞いていないときだけ画面が出る）
+    ensureAiConsent(function () {
+      var aiEndpoint = getAiEndpoint();
+      $('#aiDeepenBlock').hidden = !aiEndpoint;
+      $('#aiConsentLinkWrap').hidden = !aiEndpoint;
+      $('#aiDeepenToggle').checked = aiEndpoint && hasAiConsent() ? loadAiDeepenPref() : false;
+      $('#aiDeepenStatus').textContent = aiEndpoint ? AI_DEEPEN_STATUS_TEXT : '';
 
-    showScreen('interview');
-    advanceInterview();
+      showScreen('interview');
+      advanceInterview();
+    });
   }
 
   function renderInterviewQuestion(prefillText) {
@@ -1496,8 +1844,12 @@
       if (!$('#btnSaveQ').disabled) saveInterviewAnswer(false);
     });
     if ($('#voiceModeToggle').checked) {
-      speak(q.question, function () { ctrl.start(); }, function (waiting) {
-        $('#qMicStatus').textContent = waiting ? '読み上げを準備しています…' : '';
+      ctrl.whenIdle(function () {
+        // 待っている間に別の質問・画面に移っていたら読まない
+        if ($('#qText').textContent !== q.question || !$('[data-screen="interview"]').classList.contains('active')) return;
+        speak(q.question, function () { ctrl.start(); }, function (waiting) {
+          $('#qMicStatus').textContent = waiting ? '読み上げを準備しています…' : '';
+        });
       });
       var next = interviewQueue[interviewIndex + 1];
       getSpeech(q.question).then(function () { if (next) prefetchSpeech(next.question); });
@@ -1527,16 +1879,23 @@
   }
 
   function advanceInterview() {
-    // 何問か答えるごとに、続けるかどうかを聞く（お年寄りなど、長く話すと疲れる人のための一区切り）
-    if (sessionAnswered > 0 && sessionAnswered !== lastBreakCheckpoint && sessionAnswered % BREAK_EVERY === 0) {
+    // 「1回に聞く数」ごとに一区切りを入れる。押しやすいOKを「今日はここまで」にし、
+    // 何日もかけて少しずつ思い出が増えていく実感が持てるよう、たまった件数も伝える
+    var pace = Number($('#paceSelect').value) || 0;
+    if (pace > 0 && sessionAnswered > 0 && sessionAnswered !== lastBreakCheckpoint && sessionAnswered % pace === 0) {
       lastBreakCheckpoint = sessionAnswered;
       stopSpeaking();
-      var keepGoing = confirm(
-        'ここまでで' + sessionAnswered + '問お答えいただきました。少し休憩しますか？\n\n' +
-        '「OK」で続ける／「キャンセル」で今日はここまでにする（答えた内容はもう保存されているので、続きはまた今度できます）'
+      stopAllMics();
+      var total = countAll(currentWiki());
+      var stopHere = confirm(
+        '今日は' + sessionAnswered + '問答えていただきました。ありがとうございます！\n' +
+        'このWikiには、全部で' + total + '件の思い出がたまりました。\n\n' +
+        '少し休憩しますか？\n' +
+        '「OK」：今日はここまで（答えた内容は保存済み。続きはまた今度）\n' +
+        '「キャンセル」：もう少し続ける'
       );
-      if (!keepGoing) {
-        finishInterview('今日はここまでにしましょう。お疲れさまでした。続きはまた今度、「質問で深掘りする」から始められます。');
+      if (stopHere) {
+        finishInterview('お疲れさまでした。続きはまた今度、「質問で深掘りする」から始められます（答えた質問は二度と聞きません）。');
         return;
       }
     }
@@ -1550,6 +1909,7 @@
     if ($('#aiDeepenToggle').checked && getAiEndpoint()) {
       setInterviewBusy(true, 'AIが次に聞くことを考えています…');
       growQueueWithAi(currentWiki()).then(function (grew) {
+        showAiDeepenStatus();
         if (grew) { renderInterviewQuestion(); }
         else { finishInterview(); }
       });
@@ -1618,6 +1978,7 @@
       profile: buildProfileContext(w),
       askedQuestions: askedQuestionTexts(w, q.category)
     }).then(function (result) {
+      showAiDeepenStatus();
       if (result && !result.done && result.followUp) {
         interviewQueue.splice(interviewIndex + 1, 0, {
           category: q.category, question: result.followUp, depth: q.depth + 1, dynamic: true
@@ -2290,15 +2651,34 @@
       });
   }
 
-  function download(filename, text) {
+  function download(filename, text, mimeType) {
     var plugins = nativePlugins();
     if (plugins && plugins.Filesystem && plugins.Share) { shareFileInApp(plugins, filename, text); return; }
-    var blob = new Blob([text], { type: 'application/json' });
+    var blob = new Blob([text], { type: mimeType || 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  // 完成ページの見た目に使っているCSSを、そのまま共有用ファイルに入れる
+  function appStyleText() {
+    var out = [];
+    Array.prototype.forEach.call(document.styleSheets, function (sheet) {
+      if (!sheet.href || !/style\.css(\?|$)/.test(sheet.href)) return;
+      try {
+        Array.prototype.forEach.call(sheet.cssRules, function (rule) { out.push(rule.cssText); });
+      } catch (e) { /* 読めないスタイルは飛ばす */ }
+    });
+    return out.join('\n');
+  }
+
+  function shareWikiAsFile() {
+    var w = currentWiki();
+    renderWikiPage(w);
+    var html = buildShareHtml(w.title, $('#wikiPage').innerHTML, appStyleText(), exportPayload([w]));
+    download((w.title || 'おもいでWiki') + '.html', html, 'text/html');
   }
 
   function exportCurrentWiki() {
@@ -2360,7 +2740,27 @@
     bindMicButton('interview', $('#qMicBtn'));
     bindMicButton('episode', $('#epMicBtn'));
     $('#voiceModeToggle').addEventListener('change', function (e) { saveVoicePref(e.target.checked); });
-    $('#aiDeepenToggle').addEventListener('change', function (e) { saveAiDeepenPref(e.target.checked); });
+    $('#aiDeepenToggle').addEventListener('change', function (e) {
+      var box = e.target;
+      if (box.checked && !hasAiConsent()) {
+        // 同意していないままAIをオンにしたら、先に同意画面を出す
+        box.checked = false;
+        askAiConsent(function (ok) {
+          box.checked = ok;
+          if (ok) saveAiDeepenPref(true);
+        });
+        return;
+      }
+      saveAiDeepenPref(box.checked);
+    });
+    $('#btnAiConsent').addEventListener('click', function () {
+      askAiConsent(function (ok) {
+        $('#aiDeepenToggle').checked = ok && loadAiDeepenPref();
+        $('#ttsNote').textContent = '';
+      });
+    });
+    $('#paceSelect').value = String(loadPacePref());
+    $('#paceSelect').addEventListener('change', function (e) { savePacePref(Number(e.target.value)); });
 
     $('#tileInterview').addEventListener('click', startInterview);
     $('#tileEpisode').addEventListener('click', function () { openEpisodeForm(); });
@@ -2453,6 +2853,7 @@
     $('#btnExportWiki').addEventListener('click', exportCurrentWiki);
     $('#btnDeleteWiki').addEventListener('click', deleteCurrentWiki);
     $('#btnPrint').addEventListener('click', function () { window.print(); });
+    $('#btnShareFile').addEventListener('click', shareWikiAsFile);
     $('#btnCompose').addEventListener('click', function () { composeWikiWithAi(currentWiki()); });
 
     $all('.back').forEach(function (b) {

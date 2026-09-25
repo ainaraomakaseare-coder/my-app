@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー | おもいでWiki</title>
+<style>
+  :root { --bg: #fafafa; --fg: #18181b; --muted: #52525b; --faint: #71717a; --accent: #b45309; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #18181b; --fg: #fafafa; --muted: #d4d4d8; --faint: #a1a1aa; --accent: #f59e0b; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif; line-height: 1.8; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 40px 16px 80px; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 16px; margin-top: 32px; }
+  p, li { font-size: 14px; color: var(--muted); }
+  a { color: var(--accent); }
+  .updated { color: var(--faint); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>おもいでWiki プライバシーポリシー</h1>
+  <p class="updated">最終更新日：2026年9月25日</p>
+
+  <p>「おもいでWiki」（以下「本アプリ」）は、質問に答えたりエピソードを持ち寄ったりしながら、ひとりの人生を百科事典のような1ページにまとめていくアプリです。本ポリシーは、本アプリが扱う情報と、その取り扱いについて説明します。</p>
+
+  <h2>1. 扱う情報</h2>
+  <ul>
+    <li><strong>利用者が入力する情報</strong>：ページの名前（呼び名）、インタビューへの回答、エピソード、写真、プロフィール欄、旅行などの「過ごした一日」の記録と評価。これらはすべて、利用者が自らの意思で入力する内容です。</li>
+    <li><strong>音声</strong>：「音声で会話する」をオンにしたときだけ、マイクで話した声を文字に変えるために使います（下記「3. 第三者サービス」を参照）。録音した音声そのものを本アプリが保存・送信することはありません。</li>
+  </ul>
+  <p>本アプリは、アカウント登録・ログイン・位置情報・連絡先・広告用の識別子を使いません。</p>
+
+  <h2>2. 情報の保存先</h2>
+  <p>入力された情報（写真を含む）は、<strong>利用者の端末の中だけ</strong>に保存されます。開発者のサーバーに保存されることはなく、開発者が内容を見ることもできません。アプリを削除すると、端末内のデータも消えます。</p>
+  <p>「ファイルで送る」機能を使うと、ページの内容をまとめたファイルが端末内で作られ、利用者が選んだ方法（メッセージ・メール・AirDropなど）で、利用者が選んだ相手に送られます。送り先は利用者ご自身が決めるもので、本アプリが自動で誰かに送ることはありません。</p>
+
+  <h2>3. 第三者サービス（AI・音声）</h2>
+  <p>次の機能を使うと、文章が外部のサービスに送られます。AIの機能（下記の1と2）は、<strong>はじめて使う前にアプリ内で送る相手と内容を表示し、同意を得たうえで</strong>送信します。同意しない場合、AIの機能は使われず、端末の標準の声での読み上げと、決まった質問でのインタビューで引き続き利用できます。同意は、インタビュー画面の「AIへの送信について」からいつでも変更できます。</p>
+  <ol>
+    <li><strong>自然な声での読み上げ（Google LLC の Gemini API）</strong>：読み上げる質問の文章を送ります。AIが考えた質問には、それまでの回答の一部が含まれることがあります。</li>
+    <li><strong>AIによる深掘り質問・文章のまとめ（OpenAI, L.L.C. の API）</strong>：インタビューの回答やエピソードの文章、ページの名前（呼び名）を送ります。写真は送りません。</li>
+    <li><strong>音声の文字起こし（Apple Inc. の音声認識）</strong>：iPhoneアプリで「音声で会話する」を使うと、話した声を文字にするため、iOSの音声認識機能を使います。音声の扱いはAppleのプライバシーポリシーに従います。</li>
+  </ol>
+  <p>1と2の送信は、開発者が管理する中継サーバー（Cloudflare Workers）を通ります。中継サーバーは内容を保存せず、使いすぎを防ぐため接続元のIPアドレスごとに回数を数えるだけです。OpenAIへの送信は保存しない設定（store: false）で行い、OpenAI・Google（有料プラン）ともに、各社の規約により送った内容はAIの学習には使われません。</p>
+  <ul>
+    <li>OpenAIのプライバシーポリシー：<a href="https://openai.com/policies/privacy-policy">https://openai.com/policies/privacy-policy</a></li>
+    <li>Googleのプライバシーポリシー：<a href="https://policies.google.com/privacy">https://policies.google.com/privacy</a></li>
+    <li>Gemini API の追加利用規約：<a href="https://ai.google.dev/gemini-api/terms">https://ai.google.dev/gemini-api/terms</a></li>
+    <li>Appleのプライバシーポリシー：<a href="https://www.apple.com/legal/privacy/">https://www.apple.com/legal/privacy/</a></li>
+  </ul>
+
+  <h2>4. トラッキング・広告</h2>
+  <p>本アプリは広告を表示せず、利用者の行動を追跡（トラッキング）することもありません。入力された情報を販売・第三者へ提供することもありません（上記3の機能のための送信を除きます）。</p>
+
+  <h2>5. データの削除</h2>
+  <p>記録は、アプリ内の「編集」「削除」からいつでも書き直し・削除できます。ページごと削除することもできます。端末の外にデータを保存していないため、アプリを削除すればすべてのデータが消えます。</p>
+
+  <h2>6. ほかの人の情報について</h2>
+  <p>本アプリでは、ご家族など本人以外の方の思い出を記録することがあります。ほかの人のことを書くときや、ページを人に送るときは、ご本人やご家族の気持ちに配慮してお使いください。</p>
+
+  <h2>7. 本ポリシーの変更</h2>
+  <p>本ポリシーの内容は、必要に応じて変更されることがあります。変更後の内容は本ページに掲載した時点から効力を生じるものとします。</p>
+
+  <h2>お問い合わせ</h2>
+  <p>本アプリに関するお問い合わせは、<a href="https://github.com/ainaraomakaseare-coder/my-app/issues">GitHub の Issues</a> からご連絡ください。</p>
+</div>
+</body>
+</html>
