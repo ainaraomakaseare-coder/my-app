@@ -260,6 +260,8 @@
         <textarea id="xt"></textarea>
         <label for="tt">TikTok 本文</label>
         <textarea id="tt"></textarea>
+        <label for="th">Threads 本文（500文字まで。案件リンクは載せられません）</label>
+        <textarea id="th"></textarea>
       </details>
 
       <div class="row" style="margin-top:12px">
@@ -450,7 +452,7 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const NET_LABEL = { instagram:'Instagram', youtube:'YouTube', x:'X', tiktok:'TikTok' };
+const NET_LABEL = { instagram:'Instagram', youtube:'YouTube', x:'X', tiktok:'TikTok', threads:'Threads' };
 const ST_LABEL = {
   draft:'下書き', scheduled:'投稿予約', processing:'処理中',
   done:'投稿成功', partial:'一部成功', failed:'投稿失敗',
@@ -571,6 +573,7 @@ function collect(status) {
     yt_description: $('ytd').value || $('common').value,
     x_text: $('xt').value || $('common').value,
     tt_caption: $('tt').value || $('common').value,
+    th_text: $('th').value || $('common').value,
     scheduled_at_jst: $('when').value,
     group_id: currentGroup,
     has_affiliate_link: $('affiFlag').checked,
@@ -599,7 +602,7 @@ async function save(status) {
 
   try {
     await api('/api/posts', { method:'POST', body: collect(status) });
-    ['title','common','ig','ytt','ytd','xt','tt','when'].forEach((id) => { $(id).value = ''; });
+    ['title','common','ig','ytt','ytd','xt','tt','th','when'].forEach((id) => { $(id).value = ''; });
     $('file').value = ''; uploaded = null; appliedDraft = null; $('fileInfo').textContent = '';
     renderTargets();   // 選んだ投稿先を外すので、TikTok の投稿設定も閉じて最初からにする
     resetTt();
@@ -791,6 +794,7 @@ const NET_NOTE = {
   youtube: '審査前のため、非公開でアップロードされます',
   x: '投稿1件あたり約2.3円（リンク付きは約30円）',
   tiktok: 'TikTokアプリの下書きに届きます（本文はアプリ側で入力）。直接投稿の権限はありません',
+  threads: '公開投稿までできます（トークンは自動で延長）。案件リンクは載せられません',
   tiktokDirect: '直接投稿できます（投稿ごとに公開範囲などを選びます）。審査前は非公開アカウントのみ',
 };
 
@@ -864,11 +868,11 @@ function showProfileNote() {
 /**
  * 「自動投稿してよいSNS」の選択欄を作る。
  *
- * ★ 出すのは Instagram と X だけ。TikTok と YouTube は、
+ * ★ 出すのは Instagram・X・Threads だけ（叩くと即公開されるSNS）。TikTok と YouTube は、
  *   許可のあるなしに関わらず下書き・非公開までしか進まないので、
  *   選ばせると「選ばなければ止まる」と誤解させてしまう。
  */
-const AUTO_NETWORKS = ['instagram', 'x'];
+const AUTO_NETWORKS = ['instagram', 'x', 'threads'];
 
 function fillAutoNetworks(box, chosen, onChange) {
   box.innerHTML = '';
@@ -1176,7 +1180,7 @@ function renderConn() {
   add.className = 'row';
   add.style.cssText = 'padding-top:12px;border-top:1px solid var(--line);margin-top:8px';
   add.innerHTML = '<span class="muted" style="width:100%">アカウントを追加する</span>';
-  for (const net of ['youtube', 'x', 'tiktok']) {
+  for (const net of ['youtube', 'x', 'tiktok', 'threads']) {
     const b = document.createElement('button');
     b.textContent = NET_LABEL[net] + ' を繋ぐ';
     // ★ 繋いだ先が宙に浮かないよう、いま見ている運用アカウントを一緒に渡す。
@@ -1192,7 +1196,7 @@ function renderConn() {
   //   このブラウザのログイン状態で決まる。ここが取り違えの元。
   note.textContent =
     'Instagram は下の欄からトークンを登録してください。\n' +
-    '※ YouTube・X・TikTok は、いまこのブラウザでログイン中のアカウントに繋がります。' +
+    '※ YouTube・X・TikTok・Threads は、いまこのブラウザでログイン中のアカウントに繋がります。' +
     '別のアカウントを繋ぐときは、先にそのSNSでログインし直すか、シークレットウィンドウで開いてください。';
   note.style.whiteSpace = 'pre-wrap';
   add.appendChild(note);
@@ -1706,6 +1710,8 @@ function applyGenerated(d) {
   $('ig').value = p.igCaption || d.igCaption || '';
   $('tt').value = p.ttCaption || d.ttCaption || '';
   $('xt').value = p.xText || d.xText || '';
+  // Threads は短い（500文字）ので、同じく短い X の本文を下敷きにする。
+  $('th').value = p.xText || d.xText || '';
   $('ytt').value = d.title || '';
   $('ytd').value = p.ytDescription || d.igCaption || '';
   $('affiFlag').checked = !!d.hasAffiliateLink;
@@ -1851,6 +1857,7 @@ async function takeAsset(p, key, btn) {
     if (key === 'igCaption') await copyText(p.ig_caption);
     else if (key === 'ttCaption') await copyText(p.tt_caption);
     else if (key === 'xText') await copyText(p.x_text);
+    else if (key === 'thText') await copyText(p.th_text || p.body_common);
     else if (key === 'video') await downloadVideo(p);
     else if (key === 'posterBefore') await downloadPoster(p, false);
     else if (key === 'posterAfter') await downloadPoster(p, true);
@@ -2066,6 +2073,7 @@ $('bulkRun').onclick = async () => {
           yt_description: post.ytDescription,
           x_text: post.xText,
           tt_caption: post.ttCaption,
+          th_text: post.xText,
           scheduled_at_jst: ok ? when : '',
           group_id: currentGroup,
           has_affiliate_link: affi,
@@ -2392,7 +2400,8 @@ function render(p) {
       const d = p.draft || {};
       const text = { ttCaption: p.tt_caption || d.ttCaption,
                      igCaption: p.ig_caption || d.igCaption,
-                     xText: p.x_text || d.xText }[b.dataset.after];
+                     xText: p.x_text || d.xText,
+                     thText: p.th_text || p.body_common || d.xText }[b.dataset.after];
       try { await copyText(text); b.textContent = 'コピーしました'; }
       catch (e) { alert(e.message); }
     };
