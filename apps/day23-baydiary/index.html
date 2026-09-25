@@ -246,7 +246,7 @@ button,input,select,textarea{font:inherit}button,.btn,.tab,select{min-height:44p
 
   <main id="app">
 <section id="scr-memo" hidden>
- <div class="page-heading"><div><p class="kicker">YOUR MEMORIES, ALL TOGETHER</p><h2>メモから、一気に観戦日記へ。</h2></div></div>
+ <div class="page-heading"><div><p class="kicker">YOUR MEMORIES, ALL TOGETHER</p><h2>メモから、一気に観戦日記へ。</h2></div><button class="text-button" id="memo-back">← ホームへ戻る</button></div>
  <div class="card memo-step"><h3>1. 過去のメモを読み込む</h3><p class="settings-help">テキストを貼り付けるか、.txt / .md / .csv を選択してください。複数ファイルにも対応（合計3万文字まで）。</p>
  <label class="btn" for="memo-files">メモファイルを選ぶ</label><input id="memo-files" type="file" accept=".txt,.md,.csv,text/plain,text/markdown,text/csv" multiple hidden>
  <label for="memo-text" class="input-label">観戦メモ</label><textarea id="memo-text" rows="8" maxlength="30000" placeholder="2025/4/12 横浜スタジアム、阪神戦。DeNAが5-3で勝ち！牧がMVP。チケット4500円。"></textarea>
@@ -1470,6 +1470,7 @@ $('memo-analyze').onclick=async function(){
 };
 
 $('list-memo').onclick=openMemo; $('analysis-share').onclick=()=>openShare(true);
+$('memo-back').onclick=function(){setView('dashboard');};
 function fillCompetitionSelect(el,value,filters){el.innerHTML=(filters?COMPETITION_FILTERS:COMPETITIONS).map(c=>'<option value="'+c.id+'">'+c.label+'</option>').join('');el.value=value;}
 $('list-competition').onchange=function(){ui.listCompetition=this.value;renderList();};
 $('analysis-competition').onchange=function(){ui.analysisCompetition=this.value;renderAnalysis();};
