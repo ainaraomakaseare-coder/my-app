@@ -1577,10 +1577,17 @@
     return byDate[state.selectedDate || ''] || [];
   }
 
+  // 画面の左端（EDGE_SWIPE_BACK_PX以内）から始まったスワイプだけを「戻る」操作として扱うための
+  // しきい値。iOSのエッジスワイプ相当の操作を、タイムライン上の日タブ切り替えスワイプ（どこから
+  // 始めてもよい）と区別するために使う。日タブスワイプ側は、この範囲から始まったタッチを
+  // 「戻る」操作に譲って自分では反応しないようにしている（initDaySwipe参照）。
+  var EDGE_SWIPE_BACK_PX = 24;
+
   // 日タブを左右スワイプで切り替える。タイムライン上での横方向の指の動きを見て、
   // 縦スクロールと誤認しないよう「最初にどちらの向きに動いたか」で一度だけ判定する。
   // Blockの並べ替え・記録の移動ドラッグは持ち手（.block-drag-handle / .entry-drag-handle）
   // から始まる操作なので、そこから始まったタッチはスワイプの対象にしない。
+  // 画面左端から始まったタッチも対象にしない（そちらは「戻る」操作、initEdgeSwipeBack参照）。
   var daySwipeState = null;
   function initDaySwipe() {
     var el = $('#timeline');
@@ -1592,7 +1599,12 @@
         return;
       }
       var t = e.touches[0];
-      daySwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+      if (t.clientX <= EDGE_SWIPE_BACK_PX) { daySwipeState = null; return; }
+      // 「最初にどちらの向きに動いたか判定するまでの数px」の間はpreventDefaultしていないため、
+      // 指が斜めに動いただけでもその間にページが数px縦スクロールしてしまうことがある
+      // （横スワイプのつもりが、判定後に見た目がわずかにずれる不具合の原因）。横方向と判定できた
+      // 時点で、その間にずれた分のスクロール位置を元に戻す。
+      daySwipeState = { startX: t.clientX, startY: t.clientY, startScrollY: window.scrollY, decided: false, horizontal: false };
     }, { passive: true });
 
     el.addEventListener('touchmove', function (e) {
@@ -1603,6 +1615,9 @@
       if (!daySwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
         daySwipeState.decided = true;
         daySwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+        if (daySwipeState.horizontal && window.scrollY !== daySwipeState.startScrollY) {
+          window.scrollTo(window.scrollX, daySwipeState.startScrollY);
+        }
       }
       if (daySwipeState.decided && daySwipeState.horizontal) e.preventDefault();
     }, { passive: false });
@@ -1621,6 +1636,45 @@
     el.addEventListener('touchcancel', function () { daySwipeState = null; });
   }
 
+  // 画面左端からのスワイプで「戻る」操作にする（iOSのエッジスワイプ相当）。マイログ画面・
+  // 旅行詳細画面（日タブがどれを選んでいても、そこから直接ホームへ戻れる）の両方で使う共通処理。
+  var edgeSwipeBackState = null;
+  function initEdgeSwipeBack(el, onBack) {
+    if (!el) return;
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { edgeSwipeBackState = null; return; }
+      var t = e.touches[0];
+      if (t.clientX > EDGE_SWIPE_BACK_PX) { edgeSwipeBackState = null; return; }
+      edgeSwipeBackState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!edgeSwipeBackState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - edgeSwipeBackState.startX;
+      var dy = t.clientY - edgeSwipeBackState.startY;
+      if (!edgeSwipeBackState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        edgeSwipeBackState.decided = true;
+        edgeSwipeBackState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (edgeSwipeBackState.decided && edgeSwipeBackState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!edgeSwipeBackState) return;
+      var es = edgeSwipeBackState;
+      edgeSwipeBackState = null;
+      if (!es.decided || !es.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - es.startX;
+      if (dx < 60) return; // 左→右に一定以上動いたときだけ
+      onBack();
+    });
+
+    el.addEventListener('touchcancel', function () { edgeSwipeBackState = null; });
+  }
+
   function goToAdjacentDay(delta) {
     var dates = Core.allDatesForTrip(state.trip, state.blocks);
     var idx = dates.indexOf(state.selectedDate);
@@ -1632,49 +1686,6 @@
     renderDaySection();
     var activeTab = $('#dayTabs .day-tab.on');
     if (activeTab) activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-  }
-
-  // マイログ画面を右方向へスワイプするとホーム（旅の足跡）に戻る、iOSのエッジスワイプ相当の操作。
-  // 判定の考え方はinitDaySwipeと同じ（最初の指の動きが横方向かどうかで一度だけ決める）。
-  var mylogSwipeState = null;
-  function initMylogSwipeBack() {
-    var el = document.querySelector('[data-screen="mylog"]');
-    if (!el) return;
-
-    el.addEventListener('touchstart', function (e) {
-      if (e.touches.length !== 1) { mylogSwipeState = null; return; }
-      if (e.target.closest('a, video, button, input, textarea, select')) {
-        mylogSwipeState = null;
-        return;
-      }
-      var t = e.touches[0];
-      mylogSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
-    }, { passive: true });
-
-    el.addEventListener('touchmove', function (e) {
-      if (!mylogSwipeState || e.touches.length !== 1) return;
-      var t = e.touches[0];
-      var dx = t.clientX - mylogSwipeState.startX;
-      var dy = t.clientY - mylogSwipeState.startY;
-      if (!mylogSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-        mylogSwipeState.decided = true;
-        mylogSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
-      }
-      if (mylogSwipeState.decided && mylogSwipeState.horizontal) e.preventDefault();
-    }, { passive: false });
-
-    el.addEventListener('touchend', function (e) {
-      if (!mylogSwipeState) return;
-      var ms = mylogSwipeState;
-      mylogSwipeState = null;
-      if (!ms.decided || !ms.horizontal) return;
-      var t = e.changedTouches[0];
-      var dx = t.clientX - ms.startX;
-      if (dx < 60) return; // 左→右（戻る方向）に一定以上動いたときだけ
-      goHome();
-    });
-
-    el.addEventListener('touchcancel', function () { mylogSwipeState = null; });
   }
 
   function renderDaySection() {
@@ -2931,7 +2942,8 @@
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
-    initMylogSwipeBack();
+    initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
+    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), goHome);
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
