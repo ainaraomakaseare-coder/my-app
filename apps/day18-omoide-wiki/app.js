@@ -1030,24 +1030,45 @@
   // お年寄りなど、画面の操作より声だけで完結させたい人のための仕組み。
   var NEXT_COMMAND_RE = /(次へ|次の質問|つぎ|次)\s*[。、,.]?\s*$/;
 
+  // 音声認識は画面（インタビュー・エピソード）ごとに1つだけ作り、質問が変わっても使い回す。
+  // iPhoneは音声認識を同時に1つしか動かせず、前のが終わりきる前に次を始めると何も聞き取らなくなる。
+  // また、マイクが動いている間の音はiPhoneの受話口から小さく鳴るため、読み上げも「終わった」合図
+  // （onend）を待ってから始める。
   function createMicController(textareaEl, btnEl, statusEl, onNext) {
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       btnEl.disabled = true;
       statusEl.textContent = 'このブラウザは音声入力に対応していません。文字で入力してください。';
-      return { start: function () {}, stop: function () {}, dispose: function () {}, isOn: function () { return false; } };
+      return {
+        start: function () {}, stop: function () {}, isOn: function () { return false; },
+        retarget: function () {}, whenIdle: function (cb) { cb(); }
+      };
     }
     var recog = new SR();
     recog.lang = 'ja-JP';
     recog.interimResults = true;
     recog.continuous = true;
-    var on = false;
-    var retired = false; // 次の質問に切り替わったあとは、この認識からの結果・状態変化をすべて無視する
+    var on = false;        // 聞き取りたい状態か
+    var running = false;   // 認識が実際に動いているか（start から onend まで）
+    var stopping = false;  // 止めるよう頼んだが、まだ onend が来ていない
+    var idleWaiters = [];
     var baseText = '';
+
+    function beginRecognition() {
+      if (running) return;
+      running = true;
+      try { recog.start(); } catch (e) { running = false; }
+    }
+
+    function flushIdleWaiters() {
+      var waiters = idleWaiters;
+      idleWaiters = [];
+      waiters.forEach(function (cb) { cb(); });
+    }
 
     recog.onresult = function (event) {
       // 止めたあとに遅れて届いた結果を書き込むと、次の質問の回答欄に前の回答が残ってしまう
-      if (retired || !on) return;
+      if (!on || stopping) return;
       var finalChunk = '', interimChunk = '';
       for (var i = event.resultIndex; i < event.results.length; i++) {
         var res = event.results[i];
@@ -1066,27 +1087,28 @@
         baseText = (baseText ? baseText + '\n' : '') + finalChunk;
         textareaEl.value = baseText;
       }
-      statusEl.textContent = on ? ('聞き取り中… ' + interimChunk) : (triggered ? '「次」と聞こえたので次へ進みます…' : '');
+      statusEl.textContent = triggered ? '「次」と聞こえたので次へ進みます…' : ('聞き取り中… ' + interimChunk);
       if (triggered) {
+        var next = onNext;
         // recog.onresult の実行中に recog.stop() を呼ぶと不安定になることがあるため、一呼吸おく
-        setTimeout(function () { onNext(); }, 0);
+        setTimeout(function () { next(); }, 0);
       }
     };
     recog.onerror = function (e) {
-      if (retired) return;
+      // 無音で区切られた・こちらから止めた、はエラーではない（onend で必要なら再開する）
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
       statusEl.textContent = e.error === 'not-allowed' ? 'マイクの使用が許可されていません。' : '音声入力でエラーが発生しました（' + e.error + '）。';
-      on = false;
-      btnEl.classList.remove('on');
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        on = false;
+        btnEl.classList.remove('on');
+      }
     };
     recog.onend = function () {
-      if (retired) return;
-      if (on) {
-        // 無音が続くとブラウザ側が自動終了することがあるため、続けたい場合は再開する
-        try { recog.start(); } catch (e) { /* 既に開始中などは無視 */ }
-      } else {
-        btnEl.classList.remove('on');
-        statusEl.textContent = '';
-      }
+      running = false;
+      stopping = false;
+      if (on) { beginRecognition(); return; } // 無音で自動終了した、または止めている間に再開を頼まれた
+      btnEl.classList.remove('on');
+      flushIdleWaiters();
     };
 
     return {
@@ -1094,21 +1116,29 @@
         baseText = textareaEl.value;
         on = true;
         btnEl.classList.add('on');
-        try { recog.start(); } catch (e) { /* already started */ }
+        beginRecognition(); // 止めている途中なら、onend のあとに始まる
       },
       stop: function () {
         on = false;
-        try { recog.stop(); } catch (e) {}
         btnEl.classList.remove('on');
         statusEl.textContent = '';
+        if (running && !stopping) {
+          stopping = true;
+          try { recog.stop(); } catch (e) {}
+        }
       },
-      // 別の質問用に作り直すとき。聞き取り途中の結果も捨てる（abort）
-      dispose: function () {
-        on = false;
-        retired = true;
-        try { recog.abort(); } catch (e) {}
-        btnEl.classList.remove('on');
-        statusEl.textContent = '';
+      // 次の質問（別の回答欄）に切り替える。いったん止めてから向け先だけ差し替える
+      retarget: function (t, b, st, next) {
+        this.stop();
+        textareaEl = t; btnEl = b; statusEl = st; onNext = next;
+      },
+      // 音声認識が完全に止まってから cb を呼ぶ（止まっていればすぐ呼ぶ）
+      whenIdle: function (cb) {
+        if (!running) { cb(); return; }
+        var done = false;
+        var once = function () { if (done) return; done = true; setTimeout(cb, 300); };
+        idleWaiters.push(once);
+        setTimeout(once, 2000); // onend が来ない場合の保険
       },
       isOn: function () { return on; }
     };
@@ -1126,8 +1156,9 @@
   }
 
   function setMicController(key, textareaEl, btnEl, statusEl, onNext) {
-    if (micControllers[key]) micControllers[key].dispose();
-    var ctrl = createMicController(textareaEl, btnEl, statusEl, onNext);
+    var ctrl = micControllers[key];
+    if (ctrl) { ctrl.retarget(textareaEl, btnEl, statusEl, onNext); return ctrl; }
+    ctrl = createMicController(textareaEl, btnEl, statusEl, onNext);
     micControllers[key] = ctrl;
     return ctrl;
   }
@@ -1529,8 +1560,12 @@
       if (!$('#btnSaveQ').disabled) saveInterviewAnswer(false);
     });
     if ($('#voiceModeToggle').checked) {
-      speak(q.question, function () { ctrl.start(); }, function (waiting) {
-        $('#qMicStatus').textContent = waiting ? '読み上げを準備しています…' : '';
+      ctrl.whenIdle(function () {
+        // 待っている間に別の質問・画面に移っていたら読まない
+        if ($('#qText').textContent !== q.question || !$('[data-screen="interview"]').classList.contains('active')) return;
+        speak(q.question, function () { ctrl.start(); }, function (waiting) {
+          $('#qMicStatus').textContent = waiting ? '読み上げを準備しています…' : '';
+        });
       });
       var next = interviewQueue[interviewIndex + 1];
       getSpeech(q.question).then(function () { if (next) prefetchSpeech(next.question); });

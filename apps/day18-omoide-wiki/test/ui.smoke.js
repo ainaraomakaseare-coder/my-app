@@ -573,10 +573,11 @@ const TINY_PNG = Buffer.from(
   const micCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
   await micCtx.addInitScript(() => {
     window.__srs = [];
+    // iPhoneと同じく、動いている最中にもう一度startするとエラーになり、止めた合図（onend）は少し遅れて届く
     function FakeSR() { this.started = false; window.__srs.push(this); }
-    FakeSR.prototype.start = function () { this.started = true; };
-    FakeSR.prototype.stop = function () { this.started = false; };
-    FakeSR.prototype.abort = function () { this.started = false; };
+    FakeSR.prototype.start = function () { if (this.started) throw new Error('already started'); this.started = true; };
+    FakeSR.prototype.stop = function () { const sr = this; setTimeout(() => { sr.started = false; sr.onend && sr.onend(); }, 150); };
+    FakeSR.prototype.abort = FakeSR.prototype.stop;
     window.SpeechRecognition = FakeSR;
     window.webkitSpeechRecognition = FakeSR;
     window.__say = (sr, text) => sr.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: true })] });
@@ -602,10 +603,16 @@ const TINY_PNG = Buffer.from(
   check('AIにつながらないときは、インタビュー画面に理由を出す',
     (await micPage.textContent('#aiDeepenStatus')).indexOf('Workerに接続できませんでした') !== -1, await micPage.textContent('#aiDeepenStatus'));
   check('次の質問の回答欄は空になっている', (await micPage.inputValue('#qAnswer')) === '');
-  const srCount = await micPage.evaluate(() => window.__srs.length);
-  await micPage.evaluate(() => { const old = window.__srs[0]; window.__say(old, '遅れて届いた前の回答'); old.onend(); });
+  // 止めた合図（onend）が届く前に、前の質問の聞き取り結果が遅れて届いた場合
+  await micPage.evaluate(() => window.__say(window.__srs[0], '遅れて届いた前の回答'));
+  await micPage.waitForTimeout(300);
   check('前の質問の聞き取り結果が遅れて届いても、次の質問の回答欄には書き込まない', (await micPage.inputValue('#qAnswer')) === '');
-  check('質問が変わると、音声認識は作り直される', srCount >= 2);
+  check('音声認識は質問ごとに作り直さず、1つを使い回す（iPhoneは同時に1つしか動かせないため）', (await micPage.evaluate(() => window.__srs.length)) === 1);
+  // 2問目でもマイクを押して話せば、ちゃんと聞き取れる
+  await micPage.evaluate(() => { const b = document.getElementById('qMicBtn'); if (!b.classList.contains('on')) b.click(); });
+  await micPage.waitForFunction(() => window.__srs[0].started === true);
+  await micPage.evaluate(() => window.__say(window.__srs[0], '二つ目の答えです'));
+  check('2問目以降も、話した言葉が回答欄に入る', (await micPage.inputValue('#qAnswer')) === '二つ目の答えです', await micPage.inputValue('#qAnswer'));
   await micCtx.close();
 
   // ---- iOSアプリ（Capacitor）の中：書き出しは共有シート、印刷ボタンは隠す ----
