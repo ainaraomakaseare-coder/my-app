@@ -1,0 +1,20 @@
+name: おもいでWiki TestFlight 内部テスターへ配信
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  assign-latest-build:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 最新の有効ビルドを内部テスターへ割り当て
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+        run: node apps/day18-omoide-wiki-ios/scripts/assign-testflight-build.mjs
