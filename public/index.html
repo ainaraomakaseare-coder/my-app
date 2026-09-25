@@ -1088,7 +1088,16 @@ function renderConn() {
     // 引換券を持っている連携は、入場券が1時間で切れても自動で取り直せる。
     // ここを区別しないと「あと1時間で切れる」と誤解させてしまう。
     let expiry;
-    if (a.auto_refresh) {
+    if (a.auth_error) {
+      // ★ 自動更新に失敗した連携。「自動更新」と出したままだと、切れていることに気づけない。
+      //   SNS 側が返した理由をそのまま見せる（こちらの推測より確か）。
+      expiry = `<span class="badge b-failed">切れています（${jst(a.auth_error.at)}）</span>` +
+        `<div class="err" style="font-size:13px">${escapeHtml(a.auth_error.message)}` +
+        (a.network === 'youtube'
+          ? '<br>何度も切れる場合：Google Cloud の「OAuth同意画面」が「テスト中」だと7日で切れます。「本番」に公開してください。'
+          : '') +
+        '<br>「繋ぐ」からもう一度連携すると直ります。</div>';
+    } else if (a.auto_refresh) {
       expiry = '<span class="badge">自動更新</span>';
     } else if (a.expires_at) {
       const soon = new Date(a.expires_at).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000;
