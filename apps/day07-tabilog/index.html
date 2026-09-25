@@ -549,7 +549,7 @@
           <input type="text" id="entWaitTime" placeholder="例：20分待ち">
         </div>
 
-        <div class="field-row">
+        <!-- 地図の欄は、候補の地図を広く見せるため横並びにせず、横幅いっぱいに使う -->
           <div class="field">
             <label for="entMapUrl">地図のURL（任意）</label>
             <input type="url" id="entMapUrl" placeholder="https://maps.google.com/...">
@@ -561,7 +561,17 @@
             <select class="place-candidates" id="entPlaceCandidates" hidden aria-label="場所の候補"></select>
             <p class="hint" id="entPlaceStatus"></p>
             <div class="map-preview" id="entMapPreview" hidden>
-              <iframe id="entMapPreviewFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+              <!-- 候補を選んだとき：指で拡大・縮小でき、ピンを動かして位置を直せる地図（Leaflet） -->
+              <div class="place-map" id="entPlaceMap" hidden></div>
+              <p class="hint" id="entPlaceMapHint" hidden>指で拡大・縮小できます。ピンを動かすか地図をタップすると、位置を細かく直せます。</p>
+              <!-- 「Googleマップで検索」を選んだとき：Googleの埋め込み地図＋拡大・縮小ボタン -->
+              <div class="map-frame-wrap" id="entMapFrameWrap">
+                <iframe id="entMapPreviewFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                <div class="map-zoom">
+                  <button type="button" id="btnMapZoomIn" aria-label="拡大">＋</button>
+                  <button type="button" id="btnMapZoomOut" aria-label="縮小">－</button>
+                </div>
+              </div>
               <button type="button" class="btn ghost small" id="btnUseMapUrl">このURLを地図欄に入れる</button>
             </div>
           </div>
@@ -569,7 +579,6 @@
             <label for="entShopUrl">お店・施設のHP（任意）</label>
             <input type="url" id="entShopUrl" placeholder="https://...">
           </div>
-        </div>
 
         <div class="field">
           <label for="entOtherUrl">その他URL（任意）</label>

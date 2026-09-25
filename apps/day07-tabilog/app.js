@@ -3497,12 +3497,61 @@
     return v === PLACE_GOOGLE || v === '' ? null : placeCandidates[Number(v)] || null;
   }
 
+  // 候補を選んだときのプレビューは、地図でふりかえると同じLeaflet（OpenStreetMap）の地図にする。
+  // Googleの埋め込み地図はアプリ内では指で拡大・縮小しにくかったため。ピンはドラッグでき、地図をタップしても
+  // そこへ動く（候補の座標を細かく直せる。直した座標がそのまま地図URLに入る）。
+  // 「Googleマップで検索」のときだけは座標が無いのでGoogleの埋め込み地図のままにし、＋/－ボタンで拡大・縮小する。
+  var placeMap = null, placeMarker = null, placeFrameZoom = 16;
+
+  function movePlacePin(latlng) {
+    placeMarker.setLatLng(latlng);
+    var cur = selectedPlace();
+    if (cur) {
+      cur.lat = Math.round(latlng.lat * 1e6) / 1e6;
+      cur.lng = Math.round(latlng.lng * 1e6) / 1e6;
+    }
+  }
+
+  function showPlaceFrame() {
+    $('#entPlaceMap').hidden = true;
+    $('#entPlaceMapHint').hidden = true;
+    $('#entMapFrameWrap').hidden = false;
+    var q = $('#entPlaceSearch').value.trim();
+    if (q) $('#entMapPreviewFrame').src = 'https://maps.google.com/maps?q=' + encodeURIComponent(q) + '&z=' + placeFrameZoom + '&output=embed';
+  }
+
+  function zoomPlaceFrame(delta) {
+    placeFrameZoom = Math.max(3, Math.min(20, placeFrameZoom + delta));
+    showPlaceFrame();
+  }
+
   function previewSelectedPlace() {
     var p = selectedPlace();
-    var q = p ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
-    if (!q) return;
-    $('#entMapPreviewFrame').src = 'https://maps.google.com/maps?q=' + encodeURIComponent(q) + '&z=16&output=embed';
+    if (!p && !$('#entPlaceSearch').value.trim()) return;
     $('#entMapPreview').hidden = false;
+    if (!p) { placeFrameZoom = 16; showPlaceFrame(); return; }
+    $('#entMapFrameWrap').hidden = true;
+    $('#entPlaceMap').hidden = false;
+    $('#entPlaceMapHint').hidden = false;
+    loadLeaflet().then(function (L) {
+      if (!placeMap) {
+        placeMap = L.map($('#entPlaceMap'));
+        placeMap.attributionControl.setPrefix(false);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(placeMap);
+        placeMarker = L.marker([p.lat, p.lng], {
+          draggable: true,
+          icon: L.divIcon({ className: '', html: '<div class="place-pin"></div>', iconSize: [26, 26], iconAnchor: [13, 26] })
+        }).addTo(placeMap);
+        placeMarker.on('dragend', function () { movePlacePin(placeMarker.getLatLng()); });
+        placeMap.on('click', function (e) { movePlacePin(e.latlng); });
+      }
+      placeMap.invalidateSize(); // 隠れていた要素に作った・表示し直した地図は、大きさを測り直さないと崩れる
+      placeMap.setView([p.lat, p.lng], 16);
+      placeMarker.setLatLng([p.lat, p.lng]);
+    }).catch(function () { placeFrameZoom = 16; showPlaceFrame(); });
   }
 
   function useSearchedPlaceAsMapUrl() {
@@ -4229,6 +4278,8 @@
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
     $('#entPlaceCandidates').addEventListener('change', previewSelectedPlace);
+    $('#btnMapZoomIn').addEventListener('click', function () { zoomPlaceFrame(1); });
+    $('#btnMapZoomOut').addEventListener('click', function () { zoomPlaceFrame(-1); });
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); showPlaceMapPreview(); }
     });
