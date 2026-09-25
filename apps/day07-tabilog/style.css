@@ -48,7 +48,9 @@ a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [hidden] { display: none !important; }
 
-.app { min-height: 100dvh; }
+/* どこかの要素が画面幅をはみ出しても、ページが横にずれないようにする安全策（clipはスクロール領域を作らないので、
+   position: stickyなどに影響しない） */
+.app { min-height: 100dvh; overflow-x: clip; }
 .screen { display: none; }
 .screen.active { display: block; }
 
@@ -246,9 +248,11 @@ a:hover { text-decoration: underline; }
 .trip-title { font-family: var(--font-display); font-size: 20px; font-weight: 700; margin-top: 10px; }
 .trip-dates { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
 
-.companions-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 0; }
+/* ボタン（参加する・招待・アルバム・精算）が画面幅より広いと、ページ全体が横に少しずれて動いていた。
+   入りきらないときは折り返す */
+.companions-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 0; }
 .companions-names { font-size: 12px; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.companions-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.companions-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
 #tripMembers { padding-top: 4px; }
 
 .stats-row { display: flex; gap: 10px; padding: 14px 0 4px; flex-wrap: wrap; }
