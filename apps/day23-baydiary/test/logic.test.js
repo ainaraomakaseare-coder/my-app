@@ -62,5 +62,34 @@ eq("MVP回数と活躍回数が別集計", [tally[0].mvpCount, tally[0].notableC
 eq("試合ごとのメモが残る", tally[0].games.map(function(g){ return g.note; }), ["満塁弾", "猛打賞"]);
 eq("年で絞り込める", box.playerTally(playerGames, 2024).length, 0);
 
+
+/* Team migration and analytics boundaries */
+eq('旧記録はDeNAに移行',box.normalizeGame({id:'old'}).myTeam,'baystars');
+eq('球団スナップショットを保持',box.normalizeGame({id:'t',myTeam:'tigers'}).myTeam,'tigers');
+eq('不明な球団IDは互換既定値',box.normalizeGame({myTeam:'invalid'}).myTeam,'baystars');
+eq('全12球団',box.TEAMS.length,12);
+var mixed=[...games,box.normalizeGame({id:'t',myTeam:'tigers',date:'2025-04-01',result:'win',venue:'甲子園'})];
+eq('球団を混ぜない',box.teamGames(mixed,'tigers').length,1);
+eq('旧記録を抽出できる',box.teamGames([{date:'2024-01-01'}],'baystars').length,1);
+eq('空の勝率',box.seasonStats([],null).winRate,null);
+eq('引き分けだけの勝率',box.seasonStats([{result:'draw'}],null).winRate,null);
+eq('未設定の集計',box.seasonStats([{}],null).unknown,1);
+eq('年度別は新しい順',box.statsByYear(games).map(x=>x.label),['2025年','2024年']);
+eq('月別は年を混ぜない',box.statsByMonth(games,2025).map(x=>[x.label,x.stats.played]),[['04月',2],['05月',1]]);
+eq('空の月別',box.statsByMonth(games,2023),[]);
+eq('空の球場名をまとめる',box.statsByVenue(games,2025)[0].label,'球場未設定');
+eq('特殊な球場名も安全',box.statsByVenue([{date:'2025-04-01',venue:'__proto__',result:'win'}],2025)[0].stats.win,1);
+var seq=Array.from({length:9},(_,i)=>({id:String(i),date:'2025-04-'+String(i+1).padStart(2,'0'),result:i===8?null:i===7?'draw':'win'}));
+var recent=box.recentGames(seq,'2025-04-08');
+eq('直近6件・未設定を除外',recent.map(x=>x.id),['7','6','5','4','3','2']);
+eq('未来日を除外',box.recentGames(seq,'2025-04-03').length,3);
+eq('元データ順を変えない',seq[0].id,'0');
+eq('引き分けを比較分母から除外',box.actualRate({win:3,lose:1,draw:2}),.75);
+eq('ゼロ勝敗は未定義',box.actualRate({win:0,lose:0,draw:3}),null);
+eq('負数は無効',box.validActual({win:-1,lose:0,draw:0}),false);
+eq('小数は無効',box.validActual({win:1.5,lose:0,draw:0}),false);
+eq('比較はパーセントポイント',box.rateDifference({winRate:.75},{win:1,lose:1,draw:0}),25);
+eq('記録なし比較',box.rateDifference({winRate:null},{win:1,lose:1,draw:0}),null);
+
 console.log("\n" + pass + " 件 通過 / " + fail + " 件 失敗");
 process.exit(fail ? 1 : 0);

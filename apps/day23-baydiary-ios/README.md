@@ -1,103 +1,64 @@
-# 観戦日記 iOSアプリ化
+# 観戦日記 iOS
 
-`apps/day23-baydiary/`（Web版の観戦日記）を、[Capacitor](https://capacitorjs.com/) でiOSアプリの器に包み、GitHub Actions上のMac（クラウド）でビルドしてTestFlight（→App Store）に送る仕組みです。**Macを持っていなくてもビルドできます**（ビルド作業はすべてGitHub Actionsのmacosランナー上で行われます）。仕組みは`apps/day07-tabilog-ios/`（旅の足跡のiOS化）と同じで、そちらで一度つまずいた箇所（署名まわり）はあらかじめ踏まえてあります。
+配信準備中。Web版を同梱するCapacitor 8アプリです。Bundle ID案は com.hiroyaapps.baydiary。既存の「旅の足跡」と同じApple Developerアカウントを使用しますが、アプリ登録・配信プロファイルは別です。
 
-見た目・データはすべてWeb版（`apps/day23-baydiary/`）と共通です。このフォルダには「Web版をアプリとして包むための設定」だけが入っていて、`ios/` というネイティブのXcodeプロジェクトは**リポジトリには入れず、ビルドのたびにCI上で作り直します**。
+## 現在の範囲
 
-アプリアイコン・起動画面（スプラッシュ）は `resources/icon.png`（1024×1024）・`resources/splash.png`（2732×2732）として、観戦日記のチケット風デザイン（紺・クリーム・レンガ色）に合わせて用意済みです。ビルド時に `@capacitor/assets` が自動的に各サイズへ書き出します（差し替えたい場合はこの2枚を上書きしてください）。
+観戦記録・年度/月/球場/大会別の分析・結果画像・JSON取込を同梱。PNGとバックアップJSONはiOS共有シートから保存/送信します。オンラインフォントは同梱時に除去し、端末フォントを使います。OpenAIキーや開発サーバーは含めません。
 
-## 費用（すでに旅の足跡でApple Developer Programに登録済みなら、追加費用なし）
+iOSテスト版のAI読み取りは無効です。PCのlocalhostサーバーには接続しません。公開HTTPS APIと認証・利用枠管理が完成した時点で src/native.mjs の extractMemo を置き換え、送信先・送信内容を表示して明示的同意を得るUIを追加します。既存Web版のAIは引き続き利用可能です。
 
-- **Apple Developer Program：年間99ドル**。ただし**旅の足跡（DAY26）で既に登録済みのはず**なので、同じアカウントで観戦日記も配布でき、追加の年会費は発生しません
-- GitHub Actionsのmacosランナー：パブリックリポジトリなら無料枠で足りることがほとんどです
+無料50試合/追加50試合100円/分析Plusは計画段階で、購入も利用枠もまだ実装されていません。このビルドは内部テスト用であり、App Store提出可能な完成版ではありません。
 
-## 旅の足跡と共有できるもの・できないもの
+## ローカル準備
 
-Apple Developerアカウントは1つで複数のアプリを配布できるため、以下は**旅の足跡のセットアップ時に作ったものをそのまま使い回せます**（GitHubシークレットも同じ名前で既に登録されているはずなので、追加作業は不要です）。
+Node.js 22以降。npm ci → npm run ios:add（初回のみ）、以降 npm run sync。npm test で共有と同梱チェック。ios/ と www/ は再生成するためGit対象外です。
 
-| 項目 | 使い回せる？ |
-|---|---|
-| Apple Developer Programの登録 | 使い回せる |
-| Team ID（`APPLE_TEAM_ID`） | 使い回せる |
-| App Store Connect APIキー（`APPSTORE_CONNECT_API_KEY_ID`・`APPSTORE_CONNECT_API_ISSUER_ID`・`APPSTORE_CONNECT_API_PRIVATE_KEY`） | 使い回せる（App Manager権限はアカウント内の全アプリに効く） |
-| 配布用証明書（`IOS_DIST_CERTIFICATE_P12_BASE64`・`IOS_DIST_CERTIFICATE_PASSWORD`） | 使い回せる（証明書はアカウント単位） |
-| **Bundle ID** | **使い回せない**（観戦日記専用に新しく作る：`com.hiroyaapps.baydiary`） |
-| **プロビジョニングプロファイル** | **使い回せない**（Bundle IDごとに別物。新しいシークレット`IOS_BAYDIARY_PROVISIONING_PROFILE_BASE64`として登録する） |
-| **App Store Connect上のアプリの箱** | **使い回せない**（アプリごとに新規作成） |
+Macでは Xcode 26以降で ios/App/App.xcodeproj を開きます。依存管理はSwift Package Manager。iOS 15以降が対象です。Windowsでは生成・同期まで可能ですが、Xcodeでのコンパイル/署名/実機実行はできません。
 
-つまり、下記の手順のうち **1〜3は旅の足跡で済んでいれば飛ばしてOK**です。**4・5・6が観戦日記で新しく必要な作業**です。
+## GitHub Actions
 
-## 進め方（Appleの管理画面での作業が中心です）
+専用ワークフロー BayDiary iOS を workflow_dispatch で実行します。
+- simulator: 秘密鍵不要でシミュレーター用App.appを生成。
+- testflight: 同じ開発者チームで署名し、TestFlightへアップロード。App Store一般公開/審査提出は行いません。
 
-**ここから先は、Appleの管理画面（developer.apple.com・appstoreconnect.apple.com）でご自身のApple IDを使って行う作業です。私（Claude）が代わりに行うことはできません。** 一緒に画面を見ながら進めましょう。
+新しいアプリをApple Developer/App Store Connectに登録し、専用App Store配信プロファイルを作成して、次のSecretsを設定してください。値をチャット・Git・HTMLに貼らないでください。
 
-### 1. Apple Developer Programに登録する（旅の足跡で済んでいれば不要）
+| Secret | 内容 |
+| --- | --- |
+| BAYDIARY_PROVISIONING_PROFILE_BASE64 | com.hiroyaapps.baydiary 専用のApp Store配信プロファイル |
+| IOS_DIST_CERTIFICATE_P12_BASE64 | 既存アカウントのApple Distribution証明書（秘密鍵を含む） |
+| IOS_DIST_CERTIFICATE_PASSWORD | p12パスワード |
+| APPLE_TEAM_ID | 同じApple DeveloperチームのID |
+| APPSTORE_CONNECT_API_KEY_ID | App Store Connect APIキーID |
+| APPSTORE_CONNECT_API_ISSUER_ID | Issuer ID |
+| APPSTORE_CONNECT_API_PRIVATE_KEY | .p8秘密鍵 |
 
-`apps/day07-tabilog-ios/README.md` の手順1を参照してください。
+既存証明書とAPIキーの再利用は権限と有効期限を確認して行います。既存の旅の足跡のプロファイルは再利用できません。専用profileのBundle ID/Team ID/有効期限/配信種別はビルド時に検査します。CI環境名は baydiary-build / baydiary-testflight。GitHubへの書込権限が必要です。所有者アカウントのADMIN権限を確認し、開発ブランチをGitHubへ送信済みです。
 
-### 2〜3. App Store ConnectのAPIキー・Team ID（旅の足跡で済んでいれば不要）
+## データ移行と実機検証
 
-`apps/day07-tabilog-ios/README.md` の手順2・3で作ったものをそのまま使います。GitHubシークレットに既に `APPLE_TEAM_ID`・`APPSTORE_CONNECT_API_KEY_ID`・`APPSTORE_CONNECT_API_ISSUER_ID`・`APPSTORE_CONNECT_API_PRIVATE_KEY` が登録されていれば、そのままで大丈夫です。
+Web版とiOS版の保存領域は別です。Web版「設定→書き出す」で写真込みのJSONを保存し、iOS版で読み込んでください。ブラウザのデータを自動移行はしません。
 
-### 4. 観戦日記専用のBundle IDを登録する
+実機で必須: 写真添付→アプリ強制終了→再起動後の復元、更新後の記録保持、PNGを写真/LINE等へ共有、写真込みJSONのファイル保存/復元、共有キャンセル、大きなバックアップ、横向き・iPad、機内モード。
 
-1. https://developer.apple.com/account/resources/identifiers/list を開く
-2. 「+」→「App IDs」→「App」
-3. Description：`観戦日記`（何でもよい）
-4. Bundle ID：「Explicit」で `com.hiroyaapps.baydiary` と入力
-5. Capabilities：特にチェック不要（Sign in with Appleなどは使っていません）
-6. 「Continue」→「Register」
+現在の記録はWebViewのlocalStorage、写真はIndexedDBです。端末内保存の実機保持検証が未完です。大きなJSONはbase64変換でメモリを使うため実機で上限を確認してください。重要な記録はJSONバックアップを維持してください。
 
-### 5. App Store Connectでアプリの箱を作る
+## 公開前の残件
 
-1. https://appstoreconnect.apple.com/apps → 「+」→「新規App」
-2. プラットフォーム：iOS
-3. 名前：観戦日記（他の人が使っていなければそのまま使えます）
-4. 主言語：日本語
-5. Bundle ID：手順4で登録した `com.hiroyaapps.baydiary` を選択
-6. SKU：何でもよい（例：`baydiary001`）
+tasks/todo.md と STORE-LISTING.md を参照。AI公開基盤、課金、実機検証、公開プライバシーポリシー/サポートURL、スクリーンショットとプライバシー申告が残っています。将来AIを有効化する際は現在の端末内処理のみのプライバシーマニフェスト/説明も見直してください。
 
-説明文・キーワード・データ収集の申告内容などの下書きは `app-store-listing.md` にまとめてあります。コピーして使ってください。プライバシーポリシーのURLは `../day23-baydiary/privacy.html`（公開後は `https://ainaraomakaseare-coder.github.io/my-app/apps/day23-baydiary/privacy.html`）です。
+参照: [Capacitor環境要件](https://capacitorjs.com/docs/getting-started/environment-setup)、[Filesystemプライバシー要件](https://capacitorjs.com/docs/apis/filesystem)、[Appleビルドアップロード](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds)、[App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)。
 
-### 6. 観戦日記専用のプロビジョニングプロファイルを作る
+## iPhone向けネイティブ画面
 
-1. https://developer.apple.com/account/resources/profiles/list を開く
-2. 「+」→「App Store」（配布用）を選択
-3. App ID：手順4で登録した `com.hiroyaapps.baydiary` を選択
-4. 証明書：旅の足跡のときに作った配布用証明書（Apple Distribution）を選択
-5. Profile Name：`baydiary-appstore`（ワークフロー内の名前と一致させる必要があります。変える場合は `.github/workflows/baydiary-ios-build.yml` 内の`baydiary-appstore`も合わせて変更してください）
-6. 「Generate」→ ダウンロード（`.mobileprovision`ファイル）
+native/BayDiaryViewController.swift にUIKitのタブバーと単一Capacitor画面を実装しています。SF Symbols、選択時の触覚フィードバック、入力画面でのタブ非表示、ネイティブとWebの選択状態同期に対応。SceneDelegateとStoryboardの両起動経路を構成スクリプトで更新します。再生成してもSwiftソースを失いません。
 
-ダウンロードしたファイルをbase64化して、GitHubシークレットに登録します。
+src/ios.css は端末フォント・相対文字サイズ・ダークモード・44pt以上の操作領域・モーション抑制に対応。全画面をSwiftUIに書き直したものではなく、UIKitの操作部と既存Webの記録/分析画面を組み合わせた構成です。SwiftコードはWindowsでコンパイルできないため、クラウドXcodeの検証が完了するまではネイティブ動作確認済みとは扱いません。
 
-```
-base64 -i baydiary_App_Store.mobileprovision | pbcopy
-```
+開発ブランチへのpushで署名不要のシミュレータービルドを行います。TestFlight送信は従来どおり明示的なworkflow_dispatchのみです。
 
-（Macでの例。上記コマンドでクリップボードにコピーされます。WindowsやLinuxでは `certutil -encode` や `base64` コマンドを適宜使ってください）
+シミュレータービルド後はiPhoneを起動し、アプリをインストールして明暗両画面を撮影します。ダウンロード用のシミュレーターアプリは実行権限を保つtar.gzで保存します。生成物のbuild/qaに起動時のスクリーンショットとプロセス一覧を保存します。これは起動確認であり、写真・共有・課金などの実機テストを代替しません。
 
-このリポジトリの Settings → Secrets and variables → Actions → 「New repository secret」で、以下を登録してください。
-
-| シークレット名 | 値 |
-|---|---|
-| `IOS_BAYDIARY_PROVISIONING_PROFILE_BASE64` | 上記でコピーしたbase64文字列 |
-
-### 7. ビルドを実行する
-
-このリポジトリの「Actions」タブ →「観戦日記 iOS ビルド & TestFlightアップロード」→「Run workflow」ボタンで手動実行します。成功すると、数分〜数十分後にTestFlightにビルドが表示されます（App Store Connect側でのメール審査待ちが入ることもあります）。
-
-### 8. TestFlightで確認 → 本審査へ
-
-1. App Store Connect →対象アプリ→「TestFlight」タブでビルドを内部テスターに配布し、実機で動作確認
-2. 問題なければ「App Store」タブから、スクリーンショット・説明文・プライバシーポリシーURLなどを入力して審査に提出
-
-## 正直にお伝えしておきたいこと
-
-このワークフロー（`.github/workflows/baydiary-ios-build.yml`）は、旅の足跡（`day07-tabilog-ios`）で実際に確立した仕組みをそのまま流用したものですが、**観戦日記自体でのビルドはまだ一度も検証していません**。Bundle ID・プロビジョニングプロファイル名などの細部で、初回実行時にエラーが出る可能性があります。実行してみて、エラーが出たら一緒に直していきましょう。
-
-写真添付まわり（カメラ利用の説明文）は旅の足跡での学びをあらかじめ反映済みですが、実機での動作確認はまだできていません。
-
-## まだ用意していないもの
-
-- **スクリーンショット**：App Store Connectへの申請に必要です。実機かPlaywrightのスクリーンショットで用意しましょう
-- 上記の手順4〜6（Bundle ID登録・App Store Connectのアプリ作成・プロビジョニングプロファイル作成）は、まだ実施していません。必要になったタイミングで一緒に進めましょう
+申請用の先行設定・スプラッシュ画像・ストア掲載文は `resources/icon.png`、`resources/splash.png`、`app-store-listing.md` にあり、このビルドでも同じアプリ名「観戦日記」を使います。
+# このアプリを使う前提とテスト対象は apps/day23-baydiary-ios/README.md を参照。
