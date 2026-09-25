@@ -42,6 +42,14 @@
   .side .sep{height:1px;background:var(--line);margin:14px 0 8px}
   .side button.quiet{color:var(--muted);font-size:13px}
   #viewTabs{margin-bottom:14px}
+  .entry{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-top:12px}
+  .entry .entry-h{font-size:13px;font-weight:600;margin:12px 0 4px}
+  .entry .erow{display:grid;gap:6px;margin-bottom:6px;align-items:center}
+  .entry .erow.tasks{grid-template-columns:1fr 90px 90px 32px}
+  .entry .erow.expenses{grid-template-columns:1fr 120px 32px}
+  .entry .erow.services{grid-template-columns:1fr 1fr 32px}
+  .entry .erow input{margin:0}
+  .entry #entryIncome label{margin:0}
   .series-stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
   .series-stats .st{border:1px solid var(--line);border-radius:10px;padding:6px 12px;min-width:92px}
   .series-stats .st b{display:block;font-size:18px}
@@ -70,7 +78,7 @@
   .sub{color:var(--muted);font-size:12px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
   label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
-  input[type=text],input[type=password],input[type=datetime-local],textarea,select{
+  input[type=text],input[type=password],input[type=datetime-local],input[type=number],input[type=date],textarea,select{
     width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;
     background:var(--bg);color:var(--ink);font:inherit}
   textarea{min-height:74px;resize:vertical}
@@ -222,23 +230,40 @@
       <h2 id="seriesTitle">企画の投稿案をつくる</h2>
       <div id="seriesStats" class="series-stats"></div>
 
-      <div id="seriesLogBox" class="hide" style="margin-top:10px">
-        <details>
-          <summary>売上を記録する</summary>
-          <div class="muted" style="margin-top:6px">1日1行。同じ日にもう一度入れると上書きします（足し算しません）。実際の売上だけを入れてください。</div>
-          <div class="row" style="margin-top:6px;align-items:flex-end">
-            <label style="margin:0">日付<input type="date" id="logDate"></label>
-            <label style="margin:0">売上（円）<input type="number" id="logAmount" min="0" step="1" style="width:140px"></label>
-            <label style="margin:0;flex:1">何で（任意）<input type="text" id="logNote" placeholder="ブログのアフィリエイト など"></label>
-            <button id="logSave">記録する</button>
-          </div>
-          <div class="err" id="logErr"></div>
-          <div id="logList" class="muted" style="margin-top:8px"></div>
-        </details>
-      </div>
-
-      <label for="seriesOn">投稿する日（DAY や残り日数はこの日で数えます）</label>
+      <label for="seriesOn">日付（この日の記録を入れ、この日の投稿案を作ります。DAY や残り日数もこの日で数えます）</label>
       <input type="date" id="seriesOn" style="max-width:200px">
+
+      <!-- その日の記録。1日1件で、保存し直すと上書き（足し算しない）。
+           数字はここに入れたものだけが投稿に出る。AI は数字を書かない。 -->
+      <details id="entryBox" class="entry" open>
+        <summary id="entrySummary">この日の記録</summary>
+        <div id="entryMoney">
+          <div class="entry-h">売上（円）</div>
+          <div id="entryIncome" class="row"></div>
+          <div class="entry-h">かかったお金</div>
+          <div id="entryExpenses"></div>
+          <button type="button" data-add="expenses">＋ 行を足す</button>
+        </div>
+        <div class="entry-h">やった作業と時間（分）</div>
+        <div id="entryTasks"></div>
+        <button type="button" data-add="tasks">＋ 行を足す</button>
+        <div class="entry-h">公開した「お金を稼げるサービス」</div>
+        <div id="entryServices"></div>
+        <button type="button" data-add="services">＋ 行を足す</button>
+        <label for="entryAccounts">作ったアカウント（1行に1つ）</label>
+        <textarea id="entryAccounts" style="min-height:60px" placeholder="A8.net&#10;note"></textarea>
+        <label for="entryLearnings">学び</label>
+        <textarea id="entryLearnings" style="min-height:60px"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="entrySave">この日の記録を保存</button>
+          <span class="muted" id="entryState"></span>
+        </div>
+        <div class="err" id="entryErr"></div>
+        <details style="margin-top:8px">
+          <summary>最近の記録</summary>
+          <div id="entryList" class="muted"></div>
+        </details>
+      </details>
       <div id="seriesFields"></div>
       <label for="seriesNote">今回の中身（メモでOK。ここに無いことは書かせません）</label>
       <textarea id="seriesNote" placeholder="作ったもの・やったこと・気づいたこと"></textarea>
@@ -531,7 +556,17 @@
     <label style="margin:0">期限（任意）<input type="date" id="sdEnd"></label>
     <label style="margin:0">目標金額（円・任意）<input type="number" id="sdGoal" min="1" step="1" style="width:160px"></label>
   </div>
-  <div class="muted">目標金額を入れると、売上の記録と「累計・あと○円・達成率・残り日数」が使えるようになります。</div>
+  <div class="muted">目標金額を入れると、お金の記録（売上の内訳・かかったお金）と「累計・利益・あと○円・達成率・残り日数」が使えるようになります。</div>
+
+  <div id="sdMoney">
+    <label for="sdCats">売上の内訳（1行に1つ）</label>
+    <textarea id="sdCats" style="min-height:60px" placeholder="アフィリエイト&#10;アプリ収益"></textarea>
+    <label>目標金額を何で数えるか</label>
+    <div class="row">
+      <label style="margin:0;display:flex;gap:6px;align-items:center"><input type="radio" name="sdBasis" value="revenue" checked> 売上（入ってきたお金の合計）</label>
+      <label style="margin:0;display:flex;gap:6px;align-items:center"><input type="radio" name="sdBasis" value="profit"> 利益（売上 − かかったお金）</label>
+    </div>
+  </div>
 
   <label style="display:flex;align-items:center;gap:6px;margin-top:10px">
     <input type="checkbox" id="sdScript"> 動画台本も一緒に作る
@@ -730,7 +765,9 @@ const PASTE_FIELDS = [
  * ★ 数字は画面でも計算しない。/api/series が記録から計算した値を出すだけ。
  *   画面とサーバーで別々に数えると、表示と投稿文の数字がずれる。
  */
-const SLOT_NAMES = ['DAY', '今日の売上', '累計', '目標', 'あと', '達成率', '残り日数'];
+// lib/series.js の RESERVED と同じ並び。お金の差し込み口は目標金額がある企画だけで使える。
+const SLOT_ALWAYS = ['DAY', '今日の作業', '今日の作業時間', '累計の作業時間'];
+const SLOT_MONEY = ['今日の売上', '今日の内訳', '累計', '累計の内訳', '今日かかったお金', 'かかったお金', '利益', '目標', 'あと', '達成率', '残り日数'];
 let seriesNow = null;   // いまの運用アカウントの企画の型（無ければ null）
 
 const jstTodayStr = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
@@ -754,8 +791,8 @@ async function loadSeries() {
     i.type = 'text'; i.dataset.field = f; i.value = keep[f] || '';
     $('seriesFields').append(l, i);
   }
-  $('seriesLogBox').classList.toggle('hide', !seriesNow.goalYen);
-  if (!$('logDate').value) $('logDate').value = jstTodayStr();
+  // お金の欄（売上の内訳・かかったお金）は、目標金額のある企画だけに出す。
+  $('entryMoney').classList.toggle('hide', !seriesNow.goalYen);
   await refreshSeriesStats();
 }
 
@@ -764,34 +801,120 @@ async function refreshSeriesStats() {
   try {
     const out = await api(`/api/series?group=${currentGroup}&on=${$('seriesOn').value}`);
     renderSeriesStats(out.stats);
-    renderLogs(out.logs || []);
+    fillEntry(out.entry);
+    renderRecent(out.recent || []);
   } catch (e) {
     $('seriesStats').innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
   }
 }
 
+const yenStr = (n) => (n < 0 ? '-' : '') + Math.abs(Number(n)).toLocaleString('ja-JP') + '円';
+const hmStr = (min) => {
+  const h = Math.floor(min / 60), m = min % 60;
+  return !h ? `${m}分` : m ? `${h}時間${m}分` : `${h}時間`;
+};
+
 function renderSeriesStats(st) {
   const box = $('seriesStats');
   box.innerHTML = '';
   if (!st) return;
-  const tile = (label, value) => `<div class="st"><span>${label}</span><b>${escapeHtml(value)}</b></div>`;
-  const yen = (n) => Number(n).toLocaleString('ja-JP') + '円';
+  const tile = (label, value, sub) =>
+    `<div class="st"><span>${label}</span><b>${escapeHtml(value)}</b>${sub ? `<span>${escapeHtml(sub)}</span>` : ''}</div>`;
   const parts = [];
-  if (st.day !== null && st.day !== undefined) parts.push(tile('投稿する日', 'DAY' + st.day));
+  if (st.day !== null && st.day !== undefined) parts.push(tile('この日', 'DAY' + st.day));
+  else if (st.startsIn) parts.push(tile('この日', '開始前', `開始まであと${st.startsIn}日`));
   if (st.goalYen) {
-    parts.push(tile('累計', yen(st.total)), tile('あと', yen(st.remainingYen)), tile('達成率', st.percent + '%'));
+    const by = Object.entries(st.total.byCategory || {}).map(([c, v]) => `${c} ${yenStr(v)}`).join(' ／ ');
+    parts.push(tile('売上の累計', yenStr(st.total.revenue), by));
+    parts.push(tile('かかったお金', yenStr(st.total.expenses)));
+    parts.push(tile('利益', yenStr(st.total.profit)));
+    parts.push(tile(`あと（${st.goalBasis === 'profit' ? '利益' : '売上'}で数える）`, yenStr(st.remainingYen)));
+    parts.push(tile('達成率', st.percent + '%'));
     if (st.daysLeft !== null && st.daysLeft !== undefined) parts.push(tile('残り日数', st.daysLeft + '日'));
   }
+  if (st.total && (st.total.humanMin || st.total.aiMin)) {
+    parts.push(tile('作業時間の累計', `人間${hmStr(st.total.humanMin)}`, `AI${hmStr(st.total.aiMin)}`));
+  }
+  if (st.total && st.total.services) parts.push(tile('公開したサービス', st.total.services + '個'));
   box.innerHTML = parts.join('');
 }
 
-function renderLogs(logs) {
-  if (!seriesNow || !seriesNow.goalYen) return;
-  if (!logs.length) { $('logList').textContent = 'まだ記録がありません。'; return; }
-  $('logList').innerHTML = logs.slice(0, 14).map((l) =>
-    `<div class="row" style="gap:10px">${escapeHtml(l.happened_on)}　<strong>${Number(l.amount_yen).toLocaleString('ja-JP')}円</strong>` +
-    `　${escapeHtml(l.note || '')}<button data-del="${escapeHtml(l.happened_on)}" style="margin-left:auto">消す</button></div>`).join('');
-  for (const b of $('logList').querySelectorAll('button[data-del]')) {
+// ---- その日の記録の入力欄
+const ENTRY_ROWS = {
+  tasks: { cols: [['name', '作業（例：LP作成）', 'text'], ['humanMin', '人間 分', 'number'], ['aiMin', 'AI 分', 'number']] },
+  expenses: { cols: [['item', '何に（例：ドメイン代）', 'text'], ['yen', '円', 'number']] },
+  services: { cols: [['name', 'サービス名', 'text'], ['earn', '稼ぎ方（例：月額課金・広告）', 'text']] },
+};
+
+function addEntryRow(kind, v) {
+  const row = document.createElement('div');
+  row.className = 'erow ' + kind;
+  for (const [key, ph, type] of ENTRY_ROWS[kind].cols) {
+    const i = document.createElement('input');
+    i.type = type; i.placeholder = ph; i.dataset.key = key;
+    if (type === 'number') { i.min = '0'; i.step = '1'; }
+    i.value = v && v[key] !== undefined && v[key] !== 0 ? v[key] : '';
+    row.appendChild(i);
+  }
+  const del = document.createElement('button');
+  del.type = 'button'; del.textContent = '×'; del.title = 'この行を消す';
+  del.onclick = () => row.remove();
+  row.appendChild(del);
+  $('entry' + kind[0].toUpperCase() + kind.slice(1)).appendChild(row);
+}
+
+function fillEntry(entry) {
+  const e = entry || {};
+  $('entrySummary').textContent = `${$('seriesOn').value} の記録` + (entry ? '（保存済み）' : '（まだありません）');
+  $('entryIncome').innerHTML = '';
+  for (const c of seriesNow.incomeCategories || []) {
+    const l = document.createElement('label');
+    l.textContent = c;
+    const i = document.createElement('input');
+    i.type = 'number'; i.min = '0'; i.step = '1'; i.dataset.cat = c; i.style.width = '140px';
+    const v = (e.income || {})[c];
+    i.value = v ? v : '';
+    l.appendChild(i);
+    $('entryIncome').appendChild(l);
+  }
+  for (const kind of Object.keys(ENTRY_ROWS)) {
+    const box = $('entry' + kind[0].toUpperCase() + kind.slice(1));
+    box.innerHTML = '';
+    const rows = e[kind] || [];
+    for (const r of rows) addEntryRow(kind, r);
+    if (!rows.length) addEntryRow(kind);
+  }
+  $('entryAccounts').value = (e.accounts || []).join('\n');
+  $('entryLearnings').value = e.learnings || '';
+  $('entryErr').textContent = '';
+  $('entryState').textContent = '';
+}
+
+function collectEntry() {
+  const income = {};
+  for (const i of document.querySelectorAll('#entryIncome input')) income[i.dataset.cat] = i.value === '' ? 0 : Number(i.value);
+  const rows = (kind) => [...$('entry' + kind[0].toUpperCase() + kind.slice(1)).querySelectorAll('.erow')].map((r) => {
+    const o = {};
+    for (const i of r.querySelectorAll('input')) o[i.dataset.key] = i.type === 'number' ? (i.value === '' ? 0 : Number(i.value)) : i.value;
+    return o;
+  });
+  return {
+    income, expenses: rows('expenses'), tasks: rows('tasks'), services: rows('services'),
+    accounts: $('entryAccounts').value.split(/\r?\n/), learnings: $('entryLearnings').value,
+  };
+}
+
+function renderRecent(recent) {
+  if (!recent.length) { $('entryList').textContent = 'まだ記録がありません。'; return; }
+  $('entryList').innerHTML = recent.map((r) =>
+    `<div class="row" style="gap:10px;padding:2px 0"><a href="#" data-open="${escapeHtml(r.happened_on)}">${escapeHtml(r.happened_on)}</a>` +
+    (seriesNow.goalYen ? `　売上 ${yenStr(r.revenue)}　かかったお金 ${yenStr(r.expenses)}` : '') +
+    `　${escapeHtml((r.tasks || []).join('、'))}` +
+    `<button data-del="${escapeHtml(r.happened_on)}" style="margin-left:auto">消す</button></div>`).join('');
+  for (const a of $('entryList').querySelectorAll('a[data-open]')) {
+    a.onclick = (ev) => { ev.preventDefault(); $('seriesOn').value = a.dataset.open; refreshSeriesStats(); };
+  }
+  for (const b of $('entryList').querySelectorAll('button[data-del]')) {
     b.onclick = async () => {
       if (!confirm(`${b.dataset.del} の記録を消しますか？`)) return;
       try { await api(`/api/series?group=${currentGroup}&date=${b.dataset.del}`, { method: 'DELETE' }); }
@@ -801,20 +924,24 @@ function renderLogs(logs) {
   }
 }
 
+for (const b of document.querySelectorAll('#entryBox button[data-add]')) b.onclick = () => addEntryRow(b.dataset.add);
+
 $('seriesOn').addEventListener('change', refreshSeriesStats);
 
-$('logSave').onclick = async () => {
-  $('logErr').textContent = '';
-  const amount = $('logAmount').value.trim();
-  if (amount === '') { $('logErr').textContent = '売上を入れてください（0円の日も記録になります）。'; return; }
+$('entrySave').onclick = async () => {
+  $('entryErr').textContent = '';
+  const btn = $('entrySave');
+  btn.disabled = true;
   try {
-    const out = await api('/api/series?action=log', { method: 'POST', body: {
-      group_id: currentGroup, date: $('logDate').value, amount_yen: Number(amount), note: $('logNote').value,
+    const out = await api('/api/series?action=entry', { method: 'POST', body: {
+      group_id: currentGroup, date: $('seriesOn').value, entry: collectEntry(),
     } });
-    $('logAmount').value = ''; $('logNote').value = '';
-    renderLogs(out.logs || []);
-    refreshSeriesStats();
-  } catch (e) { $('logErr').textContent = e.message + (e.hint ? '\n' + e.hint : ''); }
+    renderSeriesStats(out.stats);
+    fillEntry(out.entry);
+    renderRecent(out.recent || []);
+    $('entryState').textContent = '✅ 保存しました（数字は上に反映されています）';
+  } catch (e) { $('entryErr').textContent = e.message + (e.hint ? '\n' + e.hint : ''); }
+  btn.disabled = false;
 };
 
 /** 投稿案を各SNSの欄に入れる（まとめて貼るときと同じ欄）。空のものは触らない。 */
@@ -883,6 +1010,8 @@ function openSeriesDlg(g) {
   $('sdEnd').value = s.endDate || '';
   $('sdGoal').value = s.goalYen || '';
   $('sdScript').checked = !!s.script;
+  $('sdCats').value = (s.incomeCategories || []).join('\n');
+  document.querySelector(`input[name="sdBasis"][value="${s.goalBasis === 'profit' ? 'profit' : 'revenue'}"]`).checked = true;
   $('sdRemove').classList.toggle('hide', !g.series);
   $('sdErr').textContent = '';
   showSlots();
@@ -892,10 +1021,11 @@ function openSeriesDlg(g) {
 /** いまの設定で使える差し込み口を見せる。書き方の指示やハッシュタグで使える。 */
 function showSlots() {
   const goal = !!$('sdGoal').value;
-  const auto = SLOT_NAMES.filter((n) => n === 'DAY' || goal);
+  $('sdMoney').classList.toggle('hide', !goal);
+  const auto = SLOT_ALWAYS.concat(goal ? SLOT_MONEY : []);
   const own = $('sdFields').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   $('sdSlots').textContent = '使える差し込み口：' + auto.concat(own).map((n) => `{${n}}`).join(' ') +
-    (goal ? '' : '（目標金額を入れると {累計} {あと} {達成率} {残り日数} も使えます）');
+    (goal ? '' : '（目標金額を入れると {累計} {利益} {あと} {達成率} {残り日数} なども使えます）');
 }
 for (const id of ['sdGoal', 'sdFields']) $(id).addEventListener('input', showSlots);
 
@@ -907,6 +1037,8 @@ $('sdSave').onclick = async () => {
     name: $('sdName').value, style: $('sdStyle').value, fields: $('sdFields').value.split(/\r?\n/),
     closing: $('sdClosing').value, hashtags: $('sdTags').value, startDate: $('sdStart').value,
     endDate: $('sdEnd').value, goalYen: $('sdGoal').value === '' ? null : Number($('sdGoal').value),
+    incomeCategories: $('sdCats').value.split(/\r?\n/),
+    goalBasis: (document.querySelector('input[name="sdBasis"]:checked') || {}).value || 'revenue',
     script: $('sdScript').checked,
   } };
   try {
