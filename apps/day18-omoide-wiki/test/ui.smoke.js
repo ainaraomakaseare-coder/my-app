@@ -484,8 +484,27 @@ const TINY_PNG = Buffer.from(
 
   await page.click('[data-screen="view"] .back');
   await page.waitForSelector('[data-screen=dash].active');
+  // AIに送る前に同意を聞く（App Store 審査ガイドライン 5.1.2）。まず「使わない」を選ぶ
+  await page.click('#tileInterview');
+  await page.waitForSelector('#aiConsent:not([hidden])');
+  check('Worker設定時は、インタビューの前にAIへの送信の同意画面を出す', await page.isVisible('#aiConsent'));
+  check('同意画面には送る相手（Google・OpenAI）を書いてある', /Google/.test(await page.textContent('#aiConsent')) && /OpenAI/.test(await page.textContent('#aiConsent')));
+  check('同意する前は、まだ何も送っていない', ttsTexts.length === 0 && aiCallCount === 0);
+  await page.click('#aiConsentDecline');
+  await page.waitForSelector('[data-screen=interview].active');
+  await page.waitForTimeout(600);
+  check('「使わない」を選ぶと、AI深掘りはオフになる', !(await page.isChecked('#aiDeepenToggle')));
+  check('「使わない」を選ぶと、読み上げもGeminiに送らない（端末の声で読む）', ttsTexts.length === 0, JSON.stringify(ttsTexts));
+  await page.click('#aiDeepenToggle');
+  await page.waitForSelector('#aiConsent:not([hidden])');
+  check('あとからAI深掘りをオンにすると、もう一度同意画面を出す', await page.isVisible('#aiConsent'));
+  await page.click('#aiConsentAgree');
+  check('同意するとAI深掘りがオンになる', await page.isChecked('#aiDeepenToggle'));
+  await page.click('[data-screen="interview"] .back');
+  await page.waitForSelector('[data-screen=dash].active');
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
+  check('一度答えたら、同意画面は毎回は出さない', await page.isHidden('#aiConsent'));
   await page.waitForFunction(() => (document.getElementById('qMicStatus').textContent || '').indexOf('読み上げを準備しています') !== -1);
   check('音声ができるまでの間は「読み上げを準備しています…」と表示する', true);
   check('AIエンドポイント設定時はAI深掘りトグルが表示される', !(await page.isHidden('#aiDeepenBlock')));
@@ -631,6 +650,7 @@ const TINY_PNG = Buffer.from(
   // ---- 音声で答えて「次」と言ったあと、前の質問の聞き取り結果が遅れて届いても次の回答欄に書き込まない ----
   const micCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
   await micCtx.addInitScript(() => {
+    localStorage.setItem('omoide-wiki:aiConsent', 'granted');
     window.__srs = [];
     // iPhoneと同じく、動いている最中にもう一度startするとエラーになり、止めた合図（onend）は少し遅れて届く
     function FakeSR() { this.started = false; window.__srs.push(this); }

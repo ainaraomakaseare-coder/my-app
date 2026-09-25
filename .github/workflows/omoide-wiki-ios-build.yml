@@ -171,6 +171,9 @@ jobs:
           # 2027年春以降アップロードできなくなる(Appleが15.0以上を必須化)との警告が
           # 毎回届くため、ここで15.0に引き上げる。コマンドラインで渡すとApp・Podsの
           # 両ターゲットに反映される。
+          # TARGETED_DEVICE_FAMILY=1: iPhone専用にする。Capacitorの初期設定はiPhone・iPad両対応で、
+          # そのままだとApp Store申請時にiPad用のスクリーンショットも求められるため。
+          # （iPadでも「iPhone用アプリ」として動かすことはできる）
           xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
             -archivePath ../../build/App.xcarchive archive \
             -destination 'generic/platform=iOS' \
@@ -178,7 +181,8 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER=omoide-wiki-appstore \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            TARGETED_DEVICE_FAMILY=1
 
       - name: .ipaを書き出す
         working-directory: apps/day18-omoide-wiki-ios

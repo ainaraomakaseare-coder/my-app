@@ -1114,6 +1114,44 @@
     try { localStorage.setItem(AI_DEEPEN_PREF_KEY, on ? 'on' : 'off'); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
 
+  // 回答や質問の文章を外部のAI（OpenAI・Google）に送ってよいかの同意。
+  // App Store 審査ガイドライン 5.1.2 により、第三者のAIに個人のデータを送る前に、
+  // 送る相手と内容を示して本人の許可をもらう必要がある。
+  // 'granted'（同意）／'denied'（使わない）／''（まだ聞いていない）
+  var AI_CONSENT_KEY = 'omoide-wiki:aiConsent';
+  function loadAiConsent() {
+    try { return localStorage.getItem(AI_CONSENT_KEY) || ''; } catch (e) { return ''; }
+  }
+  function saveAiConsent(v) {
+    try { localStorage.setItem(AI_CONSENT_KEY, v); } catch (e) { /* 保存できなくても、その場の判断は使える */ }
+    aiConsentMemory = v;
+  }
+  var aiConsentMemory = '';
+  function hasAiConsent() { return (loadAiConsent() || aiConsentMemory) === 'granted'; }
+
+  // 同意画面を出して、選んだ結果（true＝同意）を cb に渡す
+  function askAiConsent(cb) {
+    var box = $('#aiConsent');
+    var done = function (ok) {
+      box.hidden = true;
+      $('#aiConsentAgree').onclick = null;
+      $('#aiConsentDecline').onclick = null;
+      saveAiConsent(ok ? 'granted' : 'denied');
+      if (!ok) resetSpeechCache();
+      cb(ok);
+    };
+    $('#aiConsentAgree').onclick = function () { done(true); };
+    $('#aiConsentDecline').onclick = function () { done(false); };
+    box.hidden = false;
+    $('#aiConsentAgree').focus();
+  }
+
+  // まだ聞いていなければ同意画面を出してから、聞いたことがあればすぐに cb を呼ぶ
+  function ensureAiConsent(cb) {
+    if (!getAiEndpoint() || loadAiConsent() || aiConsentMemory) { cb(hasAiConsent()); return; }
+    askAiConsent(cb);
+  }
+
   function supportsRecognition() {
     return !!(nativeSpeechPlugin() || window.SpeechRecognition || window.webkitSpeechRecognition);
   }
@@ -1466,7 +1504,7 @@
   }
 
   function fetchSpeech(text) {
-    if (!getAiEndpoint() || ttsUnavailable) return Promise.resolve(null);
+    if (!getAiEndpoint() || ttsUnavailable || !hasAiConsent()) return Promise.resolve(null);
     return fetchSpeechOnce(text).then(function (r) {
       // 一時的な失敗（混雑・通信の瞬断など）は、少し待って1回だけやり直す
       if (r.blob || r.error === 'tts_not_configured' || r.error === 'invalid_input') return r;
@@ -1493,6 +1531,7 @@
   // 作った音声は質問文ごとに覚えておき、同じ質問を読むときは作り直さない（待ち時間も費用も減る）
   var speechCache = {};
   var speechCacheOrder = [];
+  function resetSpeechCache() { speechCache = {}; speechCacheOrder = []; }
   var SPEECH_CACHE_MAX = 20;
 
   function getSpeech(text) {
@@ -1509,7 +1548,7 @@
 
   // 今の質問を読んでいる間に、次の質問の音声を先に作っておく
   function prefetchSpeech(text) {
-    if (!text || !getAiEndpoint() || ttsUnavailable || speechCache[text]) return;
+    if (!text || !getAiEndpoint() || ttsUnavailable || !hasAiConsent() || speechCache[text]) return;
     getSpeech(text);
   }
 
@@ -1518,7 +1557,7 @@
     var token = speakToken;
     var fallback = function (reason) {
       if (token !== speakToken) return;
-      if (getAiEndpoint()) showTtsNote(reason || lastTtsError);
+      if (getAiEndpoint() && hasAiConsent()) showTtsNote(reason || lastTtsError);
       speakWithBrowser(text, onend);
     };
     var pending = getSpeech(text);
@@ -1565,7 +1604,7 @@
 
   function fetchAiFollowUp(payload) {
     var endpoint = getAiEndpoint();
-    if (!endpoint) return Promise.resolve(null);
+    if (!endpoint || !hasAiConsent()) return Promise.resolve(null);
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 12000) : null;
     return fetch(endpoint, {
@@ -1601,6 +1640,7 @@
   function fetchAiCompose(payload) {
     var endpoint = getAiEndpoint();
     if (!endpoint) return Promise.resolve({ ok: false, reason: 'Workerが設定されていません' });
+    if (!hasAiConsent()) return Promise.resolve({ ok: false, reason: 'AIへの送信に同意していません' });
     var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 60000) : null;
     return fetch(endpoint, {
@@ -1631,6 +1671,10 @@
     var endpoint = getAiEndpoint();
     if (!endpoint) {
       alert('AIでまとめるには、先にWorkerを公開してください（worker/README.md を参照）。');
+      return;
+    }
+    if (!hasAiConsent()) {
+      askAiConsent(function (ok) { if (ok) composeWikiWithAi(w); });
       return;
     }
     var btn = $('#btnCompose');
@@ -1769,13 +1813,17 @@
       ? (supportsSynthesis() ? '' : '※ このブラウザは質問の読み上げに対応していません（音声入力はできます）')
       : '※ このブラウザは音声入力・読み上げに対応していないようです。文字で入力してください。';
 
-    var aiEndpoint = getAiEndpoint();
-    $('#aiDeepenBlock').hidden = !aiEndpoint;
-    $('#aiDeepenToggle').checked = aiEndpoint ? loadAiDeepenPref() : false;
-    $('#aiDeepenStatus').textContent = aiEndpoint ? AI_DEEPEN_STATUS_TEXT : '';
+    // 最初の質問を読み上げる前に、AIへの送信の同意を確かめる（まだ聞いていないときだけ画面が出る）
+    ensureAiConsent(function () {
+      var aiEndpoint = getAiEndpoint();
+      $('#aiDeepenBlock').hidden = !aiEndpoint;
+      $('#aiConsentLinkWrap').hidden = !aiEndpoint;
+      $('#aiDeepenToggle').checked = aiEndpoint && hasAiConsent() ? loadAiDeepenPref() : false;
+      $('#aiDeepenStatus').textContent = aiEndpoint ? AI_DEEPEN_STATUS_TEXT : '';
 
-    showScreen('interview');
-    advanceInterview();
+      showScreen('interview');
+      advanceInterview();
+    });
   }
 
   function renderInterviewQuestion(prefillText) {
@@ -2692,7 +2740,25 @@
     bindMicButton('interview', $('#qMicBtn'));
     bindMicButton('episode', $('#epMicBtn'));
     $('#voiceModeToggle').addEventListener('change', function (e) { saveVoicePref(e.target.checked); });
-    $('#aiDeepenToggle').addEventListener('change', function (e) { saveAiDeepenPref(e.target.checked); });
+    $('#aiDeepenToggle').addEventListener('change', function (e) {
+      var box = e.target;
+      if (box.checked && !hasAiConsent()) {
+        // 同意していないままAIをオンにしたら、先に同意画面を出す
+        box.checked = false;
+        askAiConsent(function (ok) {
+          box.checked = ok;
+          if (ok) saveAiDeepenPref(true);
+        });
+        return;
+      }
+      saveAiDeepenPref(box.checked);
+    });
+    $('#btnAiConsent').addEventListener('click', function () {
+      askAiConsent(function (ok) {
+        $('#aiDeepenToggle').checked = ok && loadAiDeepenPref();
+        $('#ttsNote').textContent = '';
+      });
+    });
     $('#paceSelect').value = String(loadPacePref());
     $('#paceSelect').addEventListener('change', function (e) { savePacePref(Number(e.target.value)); });
 

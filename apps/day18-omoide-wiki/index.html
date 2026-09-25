@@ -22,7 +22,7 @@
     <div class="wrap">
       <header class="hd">
         <h1>おもいでWiki</h1>
-        <p class="lead">ひとりの人生を、質問に答えたり、みんながエピソードを持ち寄ったりしながら、その人の「Wikipedia」として育てていくアプリです。</p>
+        <p class="lead">ひとりの人生を、質問に答えたり、みんながエピソードを持ち寄ったりしながら、その人だけの百科事典のページとして育てていくアプリです。</p>
       </header>
 
       <div id="wikiList" class="wiki-list"></div>
@@ -111,7 +111,7 @@
           <span class="tile-icon icon-slot" data-icon="book-open"></span>
           <span class="tile-text">
             <span class="tile-title">完成ページを見る</span>
-            <span class="tile-desc">Wikipedia風にまとめて表示・印刷。</span>
+            <span class="tile-desc">百科事典のような1ページにまとめて表示。</span>
           </span>
           <span class="tile-chevron icon-slot" data-icon="chevron-right"></span>
         </button>
@@ -178,6 +178,7 @@
         </label>
         <p class="voice-support" id="aiDeepenStatus"></p>
       </div>
+      <p class="ai-consent-link" id="aiConsentLinkWrap" hidden><button type="button" class="btn text small" id="btnAiConsent">AIへの送信について（同意の確認・変更）</button></p>
 
       <div class="interview-card">
         <p class="q-cat" id="qCategory"></p>
@@ -298,7 +299,7 @@
     </div>
   </section>
 
-  <!-- ============ 完成ページ（Wikipedia風） ============ -->
+  <!-- ============ 完成ページ（百科事典風） ============ -->
   <section class="screen" data-screen="view">
     <div class="view-toolbar no-print">
       <button class="btn text back" data-back="dash"><span class="icon-slot" data-icon="arrow-left"></span>戻る</button>
@@ -465,6 +466,25 @@
     </div>
   </section>
 
+</div>
+
+<!-- ============ AIへの送信の同意（App Store 審査ガイドライン 5.1.2 対応） ============ -->
+<div class="consent-overlay" id="aiConsent" hidden>
+  <div class="consent-card" role="dialog" aria-modal="true" aria-labelledby="aiConsentTitle">
+    <h2 id="aiConsentTitle">AIの機能を使う前に</h2>
+    <p>自然な声での読み上げと、AIによる深掘り質問・文章のまとめのために、次の内容を外部のAIサービスに送ります。</p>
+    <ul>
+      <li><strong>Google（Gemini）</strong>：読み上げる質問の文章（AIの質問には、それまでの回答の一部が入ることがあります）</li>
+      <li><strong>OpenAI</strong>：インタビューの回答やエピソードの文章、ページの名前（呼び名）</li>
+    </ul>
+    <p>写真や録音した音声そのものは送りません。送った内容は、読み上げ・質問づくり・文章のまとめにだけ使われ、各社の規約によりAIの学習には使われません。</p>
+    <p class="consent-sub">同意しない場合も、端末の標準の声での読み上げと、決まった質問でのインタビューはそのまま使えます。あとから、インタビュー画面の「AIへの送信について」で変更できます。</p>
+    <p class="consent-sub"><a href="https://ainaraomakaseare-coder.github.io/my-app/apps/day18-omoide-wiki/privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a></p>
+    <div class="consent-actions">
+      <button type="button" class="btn primary" id="aiConsentAgree">同意してAIを使う</button>
+      <button type="button" class="btn outline" id="aiConsentDecline">使わない</button>
+    </div>
+  </div>
 </div>
 
 <script src="app.js"></script>
