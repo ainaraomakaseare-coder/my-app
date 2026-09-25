@@ -569,6 +569,45 @@ const TINY_PNG = Buffer.from(
   check('削除すると一覧から消える', (await page.textContent('#wikiList')).indexOf('やまだ たろう') === -1);
 
   check('絵文字ではなくSVGアイコンが描かれている', await page.locator('svg.icon').count() > 0);
+  // ---- 音声で答えて「次」と言ったあと、前の質問の聞き取り結果が遅れて届いても次の回答欄に書き込まない ----
+  const micCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await micCtx.addInitScript(() => {
+    window.__srs = [];
+    function FakeSR() { this.started = false; window.__srs.push(this); }
+    FakeSR.prototype.start = function () { this.started = true; };
+    FakeSR.prototype.stop = function () { this.started = false; };
+    FakeSR.prototype.abort = function () { this.started = false; };
+    window.SpeechRecognition = FakeSR;
+    window.webkitSpeechRecognition = FakeSR;
+    window.__say = (sr, text) => sr.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: true })] });
+  });
+  const micPage = await micCtx.newPage();
+  micPage.on('pageerror', e => errors.push(e.message));
+  await micPage.goto(BASE);
+  // 接続できない先をWorkerとして設定し、AIにつながらないときの表示も確かめる
+  await micPage.evaluate(() => {
+    document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', 'http://127.0.0.1:9/');
+  });
+  await micPage.click('#btnNewWiki');
+  await micPage.fill('#newTitle', '声で答える人');
+  await micPage.click('#btnCreateWiki');
+  await micPage.waitForSelector('[data-screen=dash].active');
+  await micPage.click('#tileInterview');
+  await micPage.waitForSelector('[data-screen=interview].active');
+  const micFirstQ = await micPage.textContent('#qText');
+  await micPage.evaluate(() => { const b = document.getElementById('qMicBtn'); if (!b.classList.contains('on')) b.click(); });
+  await micPage.evaluate(() => window.__say(window.__srs[window.__srs.length - 1], '東京で生まれました 次'));
+  await micPage.waitForFunction((q) => document.getElementById('qText').textContent !== q, micFirstQ);
+  check('「次」と言うと、その前までの回答が記録されて次の質問に進む', true);
+  check('AIにつながらないときは、インタビュー画面に理由を出す',
+    (await micPage.textContent('#aiDeepenStatus')).indexOf('Workerに接続できませんでした') !== -1, await micPage.textContent('#aiDeepenStatus'));
+  check('次の質問の回答欄は空になっている', (await micPage.inputValue('#qAnswer')) === '');
+  const srCount = await micPage.evaluate(() => window.__srs.length);
+  await micPage.evaluate(() => { const old = window.__srs[0]; window.__say(old, '遅れて届いた前の回答'); old.onend(); });
+  check('前の質問の聞き取り結果が遅れて届いても、次の質問の回答欄には書き込まない', (await micPage.inputValue('#qAnswer')) === '');
+  check('質問が変わると、音声認識は作り直される', srCount >= 2);
+  await micCtx.close();
+
   // ---- iOSアプリ（Capacitor）の中：書き出しは共有シート、印刷ボタンは隠す ----
   const appCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
   await appCtx.addInitScript(() => {

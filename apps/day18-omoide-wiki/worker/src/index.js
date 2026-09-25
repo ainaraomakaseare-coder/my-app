@@ -7,9 +7,16 @@
 const OPENAI_URL = "https://api.openai.com/v1/responses";
 const MAX_HISTORY = 4;
 
+// Web版（GitHub Pages）・手元での確認（localhost）・iOSアプリ（Capacitor）の3つからの通信を受け付ける。
+// iOSアプリの中のページは、設定や版によって https://localhost か capacitor://localhost のどちらかになる。
+function isAllowedOrigin(origin, allowed) {
+  return origin === allowed
+    || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || "")
+    || /^(capacitor|ionic):\/\/localhost$/.test(origin || "");
+}
+
 function cors(origin, allowed) {
-  const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || "");
-  const ok = origin === allowed || local;
+  const ok = isAllowedOrigin(origin, allowed);
   return {
     "access-control-allow-origin": ok ? origin : allowed,
     "access-control-allow-methods": "POST, OPTIONS",
@@ -316,7 +323,8 @@ export default {
     const headers = cors(origin, env.ALLOWED_ORIGIN);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405, headers);
-    if (origin !== env.ALLOWED_ORIGIN && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    if (!isAllowedOrigin(origin, env.ALLOWED_ORIGIN)) {
+      console.error(JSON.stringify({ event: "origin_not_allowed", origin }));
       return json({ error: "origin_not_allowed" }, 403, headers);
     }
     let data;

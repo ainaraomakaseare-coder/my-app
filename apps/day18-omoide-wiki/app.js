@@ -1035,16 +1035,19 @@
     if (!SR) {
       btnEl.disabled = true;
       statusEl.textContent = 'このブラウザは音声入力に対応していません。文字で入力してください。';
-      return { start: function () {}, stop: function () {}, isOn: function () { return false; } };
+      return { start: function () {}, stop: function () {}, dispose: function () {}, isOn: function () { return false; } };
     }
     var recog = new SR();
     recog.lang = 'ja-JP';
     recog.interimResults = true;
     recog.continuous = true;
     var on = false;
+    var retired = false; // 次の質問に切り替わったあとは、この認識からの結果・状態変化をすべて無視する
     var baseText = '';
 
     recog.onresult = function (event) {
+      // 止めたあとに遅れて届いた結果を書き込むと、次の質問の回答欄に前の回答が残ってしまう
+      if (retired || !on) return;
       var finalChunk = '', interimChunk = '';
       for (var i = event.resultIndex; i < event.results.length; i++) {
         var res = event.results[i];
@@ -1070,11 +1073,13 @@
       }
     };
     recog.onerror = function (e) {
+      if (retired) return;
       statusEl.textContent = e.error === 'not-allowed' ? 'マイクの使用が許可されていません。' : '音声入力でエラーが発生しました（' + e.error + '）。';
       on = false;
       btnEl.classList.remove('on');
     };
     recog.onend = function () {
+      if (retired) return;
       if (on) {
         // 無音が続くとブラウザ側が自動終了することがあるため、続けたい場合は再開する
         try { recog.start(); } catch (e) { /* 既に開始中などは無視 */ }
@@ -1097,6 +1102,14 @@
         btnEl.classList.remove('on');
         statusEl.textContent = '';
       },
+      // 別の質問用に作り直すとき。聞き取り途中の結果も捨てる（abort）
+      dispose: function () {
+        on = false;
+        retired = true;
+        try { recog.abort(); } catch (e) {}
+        btnEl.classList.remove('on');
+        statusEl.textContent = '';
+      },
       isOn: function () { return on; }
     };
   }
@@ -1113,7 +1126,7 @@
   }
 
   function setMicController(key, textareaEl, btnEl, statusEl, onNext) {
-    if (micControllers[key]) micControllers[key].stop();
+    if (micControllers[key]) micControllers[key].dispose();
     var ctrl = createMicController(textareaEl, btnEl, statusEl, onNext);
     micControllers[key] = ctrl;
     return ctrl;
@@ -1272,6 +1285,17 @@
   // 回答内容を読んで、追加の深掘り質問を1つだけ作ってもらう。
   // Worker未設定・通信失敗・12秒以内に応答なしのいずれでも null を返し、
   // インタビュー自体は止めずに次の固定質問へ進める。
+  // AIの深掘りにつながらなかった理由（つながったときは空）。インタビュー画面に出して原因を切り分ける
+  var lastAiError = '';
+
+  function aiErrorReason(status, error) {
+    if (error === 'timeout') return 'AIの応答に時間がかかりすぎました';
+    if (error === 'network') return 'Workerに接続できませんでした';
+    if (status === 403) return 'このアプリからの接続がWorkerに許可されていません（コード403）';
+    if (status === 429) return 'AIを使う回数の上限に達しました（コード429）';
+    return 'AIでエラーが起きました（コード' + status + '）';
+  }
+
   function fetchAiFollowUp(payload) {
     var endpoint = getAiEndpoint();
     if (!endpoint) return Promise.resolve(null);
@@ -1284,13 +1308,23 @@
       signal: ctrl ? ctrl.signal : undefined
     }).then(function (res) {
       if (timer) clearTimeout(timer);
+      lastAiError = res.ok ? '' : aiErrorReason(res.status);
       return res.ok ? res.json() : null;
-    }).catch(function () {
+    }).catch(function (e) {
       if (timer) clearTimeout(timer);
+      lastAiError = aiErrorReason(0, e && e.name === 'AbortError' ? 'timeout' : 'network');
       return null;
     }).then(function (data) {
       return (data && typeof data.followUp === 'string') ? data : null;
     });
+  }
+
+  var AI_DEEPEN_STATUS_TEXT = '回答ごとにAIが次の質問を考えます（数秒かかることがあります・少額のAPI利用料が発生します）';
+
+  function showAiDeepenStatus() {
+    $('#aiDeepenStatus').textContent = lastAiError
+      ? ('AIにつながらなかったため、決まった質問で続けています。理由：' + lastAiError)
+      : AI_DEEPEN_STATUS_TEXT;
   }
 
   // 一問一答の生の回答を、AIにWikipedia記事のような自然な文章へ書き直してもらう。
@@ -1444,6 +1478,7 @@
       profile: buildProfileContext(w),
       askedQuestions: askedQuestionTexts(w, cat)
     }).then(function (result) {
+      showAiDeepenStatus();
       if (result && !result.done && result.followUp) {
         interviewQueue.push({ category: cat, question: result.followUp, depth: 0, dynamic: true, grown: true });
         return true;
@@ -1470,9 +1505,7 @@
     var aiEndpoint = getAiEndpoint();
     $('#aiDeepenBlock').hidden = !aiEndpoint;
     $('#aiDeepenToggle').checked = aiEndpoint ? loadAiDeepenPref() : false;
-    $('#aiDeepenStatus').textContent = aiEndpoint
-      ? '回答ごとにAIが次の質問を考えます（数秒かかることがあります・少額のAPI利用料が発生します）'
-      : '';
+    $('#aiDeepenStatus').textContent = aiEndpoint ? AI_DEEPEN_STATUS_TEXT : '';
 
     showScreen('interview');
     advanceInterview();
@@ -1550,6 +1583,7 @@
     if ($('#aiDeepenToggle').checked && getAiEndpoint()) {
       setInterviewBusy(true, 'AIが次に聞くことを考えています…');
       growQueueWithAi(currentWiki()).then(function (grew) {
+        showAiDeepenStatus();
         if (grew) { renderInterviewQuestion(); }
         else { finishInterview(); }
       });
@@ -1618,6 +1652,7 @@
       profile: buildProfileContext(w),
       askedQuestions: askedQuestionTexts(w, q.category)
     }).then(function (result) {
+      showAiDeepenStatus();
       if (result && !result.done && result.followUp) {
         interviewQueue.splice(interviewIndex + 1, 0, {
           category: q.category, question: result.followUp, depth: q.depth + 1, dynamic: true
