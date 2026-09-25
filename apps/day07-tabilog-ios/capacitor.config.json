@@ -2,8 +2,10 @@
   "appId": "com.hiroyaapps.tabilog",
   "appName": "旅の足跡",
   "webDir": "../day07-tabilog",
+  "backgroundColor": "#F5F6F8",
   "ios": {
-    "contentInset": "automatic"
+    "contentInset": "automatic",
+    "backgroundColor": "#F5F6F8"
   },
   "server": {
     "iosScheme": "https",

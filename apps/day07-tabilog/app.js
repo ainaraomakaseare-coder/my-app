@@ -1634,6 +1634,49 @@
     if (activeTab) activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }
 
+  // マイログ画面を右方向へスワイプするとホーム（旅の足跡）に戻る、iOSのエッジスワイプ相当の操作。
+  // 判定の考え方はinitDaySwipeと同じ（最初の指の動きが横方向かどうかで一度だけ決める）。
+  var mylogSwipeState = null;
+  function initMylogSwipeBack() {
+    var el = document.querySelector('[data-screen="mylog"]');
+    if (!el) return;
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { mylogSwipeState = null; return; }
+      if (e.target.closest('a, video, button, input, textarea, select')) {
+        mylogSwipeState = null;
+        return;
+      }
+      var t = e.touches[0];
+      mylogSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!mylogSwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - mylogSwipeState.startX;
+      var dy = t.clientY - mylogSwipeState.startY;
+      if (!mylogSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        mylogSwipeState.decided = true;
+        mylogSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (mylogSwipeState.decided && mylogSwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!mylogSwipeState) return;
+      var ms = mylogSwipeState;
+      mylogSwipeState = null;
+      if (!ms.decided || !ms.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - ms.startX;
+      if (dx < 60) return; // 左→右（戻る方向）に一定以上動いたときだけ
+      goHome();
+    });
+
+    el.addEventListener('touchcancel', function () { mylogSwipeState = null; });
+  }
+
   function renderDaySection() {
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
     renderTimeline(currentDayBlocks());
@@ -2888,6 +2931,7 @@
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
+    initMylogSwipeBack();
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });

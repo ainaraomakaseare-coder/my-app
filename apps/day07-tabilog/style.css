@@ -24,6 +24,10 @@
 
 * { box-sizing: border-box; }
 
+html {
+  background: var(--bg);
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -158,7 +162,9 @@ a:hover { text-decoration: underline; }
   flex: 1; min-width: 100px; border: none; border-radius: var(--radius-control);
   padding: 9px 9px; font-size: 12px; background: var(--card); color: var(--ink-muted); box-shadow: var(--card-shadow);
 }
-.trip-list { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+.trip-list { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 18px; }
+#btnClearTripHistory { display: block; margin: 0 0 14px; }
+.home-actions { margin-bottom: 8px; }
 .trip-card {
   background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow);
   text-align: left; padding: 14px 16px; width: 100%;
