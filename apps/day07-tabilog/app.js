@@ -410,39 +410,19 @@
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
   var REPLAY_UNTIMED_START_MIN = 9 * 60;
 
-  // GoogleマップのURL（?query=… や ?q=…）から地名を取り出す
-  function parseMapUrlQuery(url) {
-    var m = /[?&](?:query|q)=([^&#]+)/.exec(url || '');
-    if (!m) return '';
-    try { return decodeURIComponent(m[1].replace(/\+/g, ' ')).trim(); } catch (e) { return ''; }
-  }
-
-  var REPLAY_PARTICLES = ['から', 'に', 'で', 'へ', 'を'];
-  var REPLAY_ACTION_SUFFIXES = ['チェックイン', 'チェックアウト', '到着', '出発', '集合', '解散', '登頂', '散策', '観光', '見学', '宿泊', '乗車', '下車', '搭乗'];
-
-  // 予定の場所を、地図で探すための地名にする。記録に地図のURL（場所名から作ったGoogleマップの
-  // 検索URL）があればそれが一番確実。無ければ見出し（「那覇空港に到着」「かに道楽で夕食」
-  // 「ダイヤモンドヘッド登頂」）から、最後の助詞より前・末尾の動作名詞を除いた部分を地名とみなす。
-  // 「小西遅刻」のような地名ではない見出しはそのまま返り、地図で見つからなければ「出来事」として扱う。
+  // 予定の場所は、記録に入っている地図のURL（Googleマップの共有リンク maps.app.goo.gl/… や
+  // 検索URL）だけから決める。URLのままWorker（/geocode）に渡し、短縮URLの展開・座標や住所の
+  // 読み取りはWorker側で行う。地図の入っていない予定（「小西遅刻」など）は移動の目的地にせず、
+  // 空文字を返して「出来事」（その場で吹き出しだけ出す）として扱う。
+  // 以前は見出し（「那覇空港に到着」など）から地名を推測していたが、同名の別の場所に飛ぶなど
+  // 外れることがあったため、地図が入っている予定だけを使う方針にした。
   function replayPlaceQuery(block) {
     var entries = (block && block.entries) || [];
     for (var i = 0; i < entries.length; i++) {
-      var q = parseMapUrlQuery(entries[i].mapUrl);
-      if (q) return q;
+      var url = (entries[i].mapUrl || '').trim();
+      if (/^https?:\/\//i.test(url)) return url;
     }
-    var label = ((block && block.label) || '').trim();
-    var cut = -1;
-    REPLAY_PARTICLES.forEach(function (p) {
-      var idx = label.lastIndexOf(p);
-      var tailLen = idx > 0 ? label.length - idx - p.length : 0;
-      if (idx > cut && tailLen >= 1 && tailLen <= 8) cut = idx;
-    });
-    if (cut > 0) return label.slice(0, cut).trim();
-    for (var j = 0; j < REPLAY_ACTION_SUFFIXES.length; j++) {
-      var sfx = REPLAY_ACTION_SUFFIXES[j];
-      if (label.length > sfx.length && label.slice(-sfx.length) === sfx) return label.slice(0, -sfx.length).trim();
-    }
-    return label;
+    return '';
   }
 
   function hhmmToMinute(hhmm) {
@@ -3456,7 +3436,10 @@
   // 地名→座標は端末内にもキャッシュし、無いものだけWorker（/geocode）に1件ずつ聞く。Worker側の
   // Nominatimは1秒1回までの規約なので、Worker側のキャッシュにも無かった（cached:false）ときだけ1.1秒空ける。
   // 見つからなかった地名は7日間は聞き直さない（通信エラーのときは記録せず、次回また聞く）。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache';
+  // 聞く内容を「見出しから推測した地名」から「地図のURL」に変えたので、キーを-v2にして古い結果（同名の
+  // 別の場所になっていたものを含む）は使わず、読み込み時に消す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v2';
+  try { localStorage.removeItem('tabilog:geocode-cache'); } catch (e) {}
   var GEOCODE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
   function geocodeQueries(queries, onProgress) {
     var cache;
@@ -3517,7 +3500,7 @@
       if (replayToken !== token) return; // 準備中に閉じられた
       var tl = Core.buildReplayTimeline(stops, res[1]);
       if (!tl.stops.some(function (s) { return s.located; })) {
-        status.textContent = '地図に出せる場所が見つかりませんでした。予定の見出しを地名（例：新宿、首里城公園に到着）にするか、記録に地図のURLを入れてみてください。';
+        status.textContent = '地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。';
         return;
       }
       status.textContent = '';
