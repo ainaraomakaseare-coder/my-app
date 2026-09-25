@@ -119,3 +119,21 @@ npx wrangler deploy
 ```
 
 反映できたかは `npx wrangler d1 execute tabilog-db --remote --command "PRAGMA table_info(blocks);"` の結果に`transport`があるかで確認できる。
+
+## セッション・いいね・コメント（2026-09-25 追加）
+
+ログイン後の本人確認をセッショントークンにし（docs/adr/0005）、旅行・記録へのいいね・コメント・通報・ブロックを追加した（docs/adr/0006）。
+
+**反映手順（順番厳守）**：新しいテーブル（`sessions`・`likes`・`comments`・`user_blocks`・`comment_reports`）を**`wrangler deploy`より先に**作る。逆順だと、ログイン（コードの確認）がSQLエラーで失敗する。テーブルを足すだけなので既存データには影響しない。
+
+```
+git pull
+npx wrangler d1 execute tabilog-db --remote --file schema.sql
+npx wrangler deploy
+```
+
+`schema.sql`はすべて`CREATE TABLE IF NOT EXISTS`なので、全体を実行しても既存のテーブル・データは変わらない（v3のときのような`DROP TABLE`は残っていない）。
+
+**通報の通知先**：`wrangler.jsonc`の`vars`に`"REPORT_NOTIFY_EMAIL": "運営者のメールアドレス"`を足すと、コメントが通報されたときにResend経由でメールが届く（`RESEND_API_KEY`はログイン用に設定済みのものを使う）。
+
+**トークン必須への切り替え**：1.1.0以降のiOSアプリが行き渡ったら、`vars`に`"REQUIRE_SESSION": "1"`を足して`wrangler deploy`する。以後、トークンを送らない古いアプリからのアカウント操作は拒否される。

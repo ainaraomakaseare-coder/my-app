@@ -31,7 +31,7 @@ function cors(origin, allowed) {
   return {
     "access-control-allow-origin": ok ? origin : allowed,
     "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type, x-voice-meta",
+    "access-control-allow-headers": "content-type, x-voice-meta, authorization",
     "vary": "Origin",
   };
 }
@@ -49,6 +49,67 @@ function uid(prefix) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+/* ---------- セッション（ログインの本人確認。docs/adr/0005） ----------
+ * 以前はクライアントが送ってきたメールアドレスをそのまま信用していたため、他人のメールアドレスを
+ * 知っていればアカウント削除・支払い管理・評価ができてしまった。メールOTPの確認に成功したときに
+ * セッショントークン（推測できない乱数）を発行し、以後は Authorization: Bearer <token> で送ってもらう。
+ * DBにはトークンそのものではなくSHA-256のハッシュだけを置く（DBが漏れてもなりすませない）。
+ *
+ * 審査中・配布済みの古いiOSアプリはトークンを送らないため、当面は「トークンが無ければ従来どおり
+ * 送られてきたメールアドレスを使う」。wrangler.jsoncのvarsで REQUIRE_SESSION を "1" にすると
+ * トークン必須になる（古いアプリが使われなくなったら切り替える）。いいね・コメントは最初から必須。
+ */
+const SESSION_DAYS = 180;
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function issueSession(env, email) {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const token = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const t = nowIso();
+  const expires = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare("INSERT INTO sessions (token_hash, email, created_at, expires_at) VALUES (?,?,?,?)")
+    .bind(await sha256Hex(token), email, t, expires)
+    .run();
+  return token;
+}
+
+function bearerToken(request) {
+  const m = /^Bearer\s+([0-9a-f]{64})$/i.exec(request.headers.get("authorization") || "");
+  return m ? m[1].toLowerCase() : "";
+}
+
+// トークンが有効なら、その本人のメールアドレス。無い・期限切れなら空文字。
+async function sessionEmail(request, env) {
+  const token = bearerToken(request);
+  if (!token) return "";
+  const row = await env.DB.prepare("SELECT email, expires_at FROM sessions WHERE token_hash = ?")
+    .bind(await sha256Hex(token))
+    .first();
+  if (!row || new Date(row.expires_at).getTime() < Date.now()) return "";
+  return row.email;
+}
+
+// 操作する本人のメールアドレスを決める。トークンがあればそれが正（送られてきたメールアドレスと
+// 食い違えば拒否）。無ければ、strictでなく移行期間中なら送られてきたメールアドレスを使う。
+async function resolveEmail(request, env, claimed, strict) {
+  claimed = (claimed || "").trim().toLowerCase();
+  const email = await sessionEmail(request, env);
+  if (email) return claimed && claimed !== email ? { error: "forbidden", status: 403 } : { email };
+  if (strict || env.REQUIRE_SESSION === "1" || !claimed) return { error: "login_required", status: 401 };
+  return { email: claimed };
+}
+
+async function logout(request, env, headers) {
+  const token = bearerToken(request);
+  if (token) await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256Hex(token)).run();
+  return json({ ok: true }, 200, headers);
 }
 
 function isStr(x, max) {
@@ -232,6 +293,7 @@ async function deleteTrip(id, env, headers) {
   await env.DB.prepare("DELETE FROM blocks WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM day_infos WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE trip_id = ?").bind(id).run();
+  await deleteSocialForTrip(env, id);
   await env.DB.prepare("DELETE FROM trips WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
 }
@@ -322,6 +384,7 @@ async function deleteBlock(id, env, headers) {
   const { results: entryRows } = await env.DB.prepare("SELECT id FROM entries WHERE block_id = ?").bind(id).all();
   for (const e of entryRows) {
     await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(e.id).run();
+    await deleteSocialForTarget(env, "entry", e.id);
   }
   await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM blocks WHERE id = ?").bind(id).run();
@@ -477,6 +540,7 @@ async function updateEntry(id, request, env, headers) {
 
 async function deleteEntry(id, env, headers) {
   await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(id).run();
+  await deleteSocialForTarget(env, "entry", id);
   await env.DB.prepare("DELETE FROM entries WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
 }
@@ -549,7 +613,9 @@ async function setRating(entryId, request, env, headers) {
     return json({ error: "invalid_json" }, 400, headers);
   }
   if (!validRatingInput(data)) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.raterEmail.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.raterEmail);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
   const name = (data.raterName || "").trim();
   const existing = await env.DB.prepare("SELECT id FROM ratings WHERE entry_id = ? AND rater_email = ?")
     .bind(entryId, email)
@@ -578,7 +644,9 @@ async function deleteRating(entryId, request, env, headers) {
   } catch {
     data = {};
   }
-  const email = (data.raterEmail || "").trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.raterEmail);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
   if (!email) return json({ error: "invalid_input" }, 400, headers);
   await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ? AND rater_email = ?").bind(entryId, email).run();
   const { results } = await env.DB.prepare("SELECT * FROM ratings WHERE entry_id = ?").bind(entryId).all();
@@ -958,7 +1026,8 @@ async function verifyEmailOtp(request, env, headers) {
     return json({ error: "wrong_code" }, 401, headers);
   }
   await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
-  return json({ email, name: row.name }, 200, headers);
+  const token = await issueSession(env, email);
+  return json({ email, name: row.name, token }, 200, headers);
 }
 
 /* ---------- アカウント・参加者（アカウント参加者） ----------
@@ -1059,7 +1128,9 @@ async function ensureAccount(request, env, headers) {
   }
   if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
   if (!optStr(data.name, 100)) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
   const name = (data.name || "").trim();
   const account = await resetPeriodIfNeeded(env, await getOrCreateAccount(env, email, name));
   return json(rowToAccount(account), 200, headers);
@@ -1082,7 +1153,9 @@ async function deleteAccount(request, env, headers) {
     return json({ error: "invalid_json" }, 400, headers);
   }
   if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(email).first();
   if (!account) return json({ error: "not_found" }, 404, headers);
@@ -1101,6 +1174,8 @@ async function deleteAccount(request, env, headers) {
 
   await env.DB.prepare("DELETE FROM ratings WHERE rater_email = ?").bind(email).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
+  await deleteSocialForAccount(env, account.account_id);
+  await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
   // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
   // 「削除→再登録」を繰り返すだけで無料プランの月間上限(2回)が毎回復活してしまう
   // （新規登録特典の抜け道と同じ構図）。月が変わったときのリセットはresetPeriodIfNeeded()に
@@ -1154,7 +1229,9 @@ async function createCheckoutSession(request, env, headers) {
   if (!priceId) return json({ error: "invalid_plan" }, 400, headers);
   if (!optStr(data.successUrl, 500) || !data.successUrl) return json({ error: "invalid_input" }, 400, headers);
   if (!optStr(data.cancelUrl, 500) || !data.cancelUrl) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   // Checkout StudioでUI上固定された値（fixed_by_ui）は、そのまま使う
   const body = stripeFormBody({
@@ -1210,7 +1287,9 @@ async function createPortalSession(request, env, headers) {
   }
   if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
   if (!optStr(data.returnUrl, 500) || !data.returnUrl) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   const account = await env.DB.prepare("SELECT stripe_customer_id FROM accounts WHERE email = ?").bind(email).first();
   if (!account || !account.stripe_customer_id) return json({ error: "no_subscription" }, 404, headers);
@@ -1317,7 +1396,9 @@ async function joinTrip(tripId, request, env, headers) {
   }
   if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
   if (!optStr(data.name, 100)) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
   const name = (data.name || "").trim();
   const account = await getOrCreateAccount(env, email, name);
   const accountId = account.account_id;
@@ -1660,7 +1741,9 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
   const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
   const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
   const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
-  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(meta.email, 200) && meta.email ? String(meta.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   // プラン・回数券の確認（docs/adr/0004）。有料プランの範囲外なら、高くつくAI呼び出しの前に断る
   const quota = await checkVoiceQuota(env, email);
@@ -1707,7 +1790,9 @@ async function createBlocksFromText(tripId, date, request, env, headers) {
   if (!text) return json({ error: "empty_text" }, 422, headers);
   const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
   const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
-  const email = optStr(data.email, 200) && data.email ? String(data.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(data.email, 200) && data.email ? String(data.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   const quota = await checkVoiceQuota(env, email);
   if (!quota.ok) return json({ error: quota.reason }, 403, headers);
@@ -1751,7 +1836,9 @@ async function createBlocksFromVoiceMultiDay(tripId, request, env, headers) {
   const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
   const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
   const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
-  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(meta.email, 200) && meta.email ? String(meta.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   const quota = await checkVoiceQuota(env, email);
   if (!quota.ok) return json({ error: quota.reason }, 403, headers);
@@ -1792,7 +1879,9 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
   if (!text) return json({ error: "empty_text" }, 422, headers);
   const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
   const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
-  const email = optStr(data.email, 200) && data.email ? String(data.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(data.email, 200) && data.email ? String(data.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   const quota = await checkVoiceQuota(env, email);
   if (!quota.ok) return json({ error: quota.reason }, 403, headers);
@@ -1872,7 +1961,9 @@ async function scanReceipt(request, env, headers) {
   if (buf.byteLength === 0 || buf.byteLength > MAX_RECEIPT_IMAGE_BYTES) return json({ error: "invalid_size" }, 413, headers);
 
   const meta = decodeVoiceMeta(getHeader("x-receipt-meta"));
-  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(meta.email, 200) && meta.email ? String(meta.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
   const quota = await checkVoiceQuota(env, email);
@@ -2104,6 +2195,223 @@ async function getPhoto(id, env, headers) {
 
 /* ---------- routing ---------- */
 
+/* ---------- いいね・コメント（友達同士のSNS機能。docs/adr/0006） ----------
+ * 旅行（target_type='trip'）と記録（'entry'）の両方に、いいね・コメントをつけられる。
+ * 読むのは旅行のリンクを知っている人なら誰でも（旅行そのものと同じ）、書くのはログイン済みの人だけ
+ * （セッショントークン必須。メールアドレスだけの古い方式は受け付けない）。
+ * 書いた人はaccount_idで持ち、名前はaccountsから引く（メールアドレスは他人に見せない）。
+ *
+ * Appleの審査ガイドライン1.2（ユーザーが投稿したものを他の人が見られるアプリ）の要件：
+ * - 不適切な投稿を防ぐ仕組み：明らかな誹謗中傷・差別の語を含むコメントは保存しない（BANNED_WORDS）
+ * - 通報：通報した本人にはそのコメントが見えなくなり、運営者（REPORT_NOTIFY_EMAIL）にメールで知らせる
+ * - ブロック：ブロックした相手のコメントは、自分には見えなくなる
+ */
+const SOCIAL_TARGETS = ["trip", "entry"];
+const COMMENT_MAX_LENGTH = 500;
+// 完全な判定は無理なので、明らかなものだけを弾く（見逃しは通報・ブロックで補う）。
+const BANNED_WORDS = [
+  "死ね", "しね", "氏ね", "殺す", "ころす", "消えろ", "きもい", "キモい", "うざい", "ウザい", "ブス", "ガイジ",
+  "fuck", "shit", "bitch", "kill yourself", "nigger", "faggot", "retard",
+];
+
+function containsBannedWord(text) {
+  const t = text.normalize("NFKC").toLowerCase();
+  return BANNED_WORDS.some((w) => t.includes(w.normalize("NFKC").toLowerCase()));
+}
+
+// ログイン中の本人（セッション必須）のアカウント。無ければ作る（ensureを経ずに来た場合のため）。
+async function requireAccount(request, env) {
+  const auth = await resolveEmail(request, env, "", true);
+  if (auth.error) return auth;
+  const account = await getOrCreateAccount(env, auth.email, "");
+  return { account };
+}
+
+// 対象が本当にその旅行のものか確かめる（他の旅行の記録に書き込ませない）。
+async function targetBelongsToTrip(env, tripId, targetType, targetId) {
+  if (!SOCIAL_TARGETS.includes(targetType) || !isStr(targetId, 100) || !targetId) return false;
+  if (targetType === "trip") {
+    if (targetId !== tripId) return false;
+    return !!(await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first());
+  }
+  const row = await env.DB.prepare(
+    "SELECT b.trip_id FROM entries e JOIN blocks b ON b.id = e.block_id WHERE e.id = ?"
+  ).bind(targetId).first();
+  return !!(row && row.trip_id === tripId);
+}
+
+// 旅行1件分のいいね・コメントをまとめて返す（旅行を開いたときに1回だけ呼ぶ）。
+// ログイン中なら、自分がいいねしたか・自分のコメントか、も付ける。ブロックした相手・通報したコメントは除く。
+async function getTripSocial(tripId, request, env, headers) {
+  const email = await sessionEmail(request, env);
+  const me = email ? await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(email).first() : null;
+  const myId = me ? me.account_id : "";
+
+  const { results: likeRows } = await env.DB.prepare(
+    "SELECT target_type, target_id, account_id FROM likes WHERE trip_id = ?"
+  ).bind(tripId).all();
+  const likes = {};
+  for (const r of likeRows) {
+    const k = r.target_type + ":" + r.target_id;
+    if (!likes[k]) likes[k] = { count: 0, liked: false };
+    likes[k].count++;
+    if (myId && r.account_id === myId) likes[k].liked = true;
+  }
+
+  const { results: commentRows } = await env.DB.prepare(
+    `SELECT c.id, c.target_type, c.target_id, c.account_id, c.body, c.created_at, a.name
+     FROM comments c LEFT JOIN accounts a ON a.account_id = c.account_id
+     WHERE c.trip_id = ? ORDER BY c.created_at ASC`
+  ).bind(tripId).all();
+  let hiddenAccounts = new Set(), hiddenComments = new Set();
+  if (myId) {
+    const { results: blocked } = await env.DB.prepare(
+      "SELECT blocked_account_id FROM user_blocks WHERE blocker_account_id = ?"
+    ).bind(myId).all();
+    hiddenAccounts = new Set(blocked.map((r) => r.blocked_account_id));
+    const { results: reported } = await env.DB.prepare(
+      "SELECT comment_id FROM comment_reports WHERE reporter_account_id = ?"
+    ).bind(myId).all();
+    hiddenComments = new Set(reported.map((r) => r.comment_id));
+  }
+  const comments = commentRows
+    .filter((r) => !hiddenAccounts.has(r.account_id) && !hiddenComments.has(r.id))
+    .map((r) => ({
+      id: r.id, targetType: r.target_type, targetId: r.target_id, accountId: r.account_id,
+      name: r.name || "", body: r.body, createdAt: r.created_at, mine: !!myId && r.account_id === myId,
+    }));
+  return json({ likes, comments, accountId: myId }, 200, headers);
+}
+
+async function readSocialBody(request) {
+  try { return await request.json(); } catch { return null; }
+}
+
+async function setLike(tripId, request, env, headers, on) {
+  const data = await readSocialBody(request);
+  if (!data) return json({ error: "invalid_json" }, 400, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  if (!(await targetBelongsToTrip(env, tripId, data.targetType, data.targetId))) return json({ error: "not_found" }, 404, headers);
+  const accountId = who.account.account_id;
+  if (on) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO likes (id, trip_id, target_type, target_id, account_id, created_at) VALUES (?,?,?,?,?,?)"
+    ).bind(uid("lk"), tripId, data.targetType, data.targetId, accountId, nowIso()).run();
+  } else {
+    await env.DB.prepare("DELETE FROM likes WHERE target_type = ? AND target_id = ? AND account_id = ?")
+      .bind(data.targetType, data.targetId, accountId).run();
+  }
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM likes WHERE target_type = ? AND target_id = ?")
+    .bind(data.targetType, data.targetId).first();
+  return json({ count: row ? row.n : 0, liked: on }, 200, headers);
+}
+
+async function createComment(tripId, request, env, headers) {
+  const data = await readSocialBody(request);
+  if (!data) return json({ error: "invalid_json" }, 400, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const body = typeof data.body === "string" ? data.body.trim() : "";
+  if (!body || body.length > COMMENT_MAX_LENGTH) return json({ error: "invalid_body" }, 400, headers);
+  if (containsBannedWord(body)) return json({ error: "inappropriate" }, 422, headers);
+  if (!(await targetBelongsToTrip(env, tripId, data.targetType, data.targetId))) return json({ error: "not_found" }, 404, headers);
+  const c = {
+    id: uid("cm"), trip_id: tripId, target_type: data.targetType, target_id: data.targetId,
+    account_id: who.account.account_id, body, created_at: nowIso(),
+  };
+  await env.DB.prepare(
+    "INSERT INTO comments (id, trip_id, target_type, target_id, account_id, body, created_at) VALUES (?,?,?,?,?,?,?)"
+  ).bind(c.id, c.trip_id, c.target_type, c.target_id, c.account_id, c.body, c.created_at).run();
+  return json({
+    id: c.id, targetType: c.target_type, targetId: c.target_id, accountId: c.account_id,
+    name: who.account.name || "", body: c.body, createdAt: c.created_at, mine: true,
+  }, 201, headers);
+}
+
+// 自分のコメントだけ消せる
+async function deleteComment(commentId, request, env, headers) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const row = await env.DB.prepare("SELECT account_id FROM comments WHERE id = ?").bind(commentId).first();
+  if (!row) return json({ error: "not_found" }, 404, headers);
+  if (row.account_id !== who.account.account_id) return json({ error: "forbidden" }, 403, headers);
+  await env.DB.prepare("DELETE FROM comment_reports WHERE comment_id = ?").bind(commentId).run();
+  await env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(commentId).run();
+  return json({ ok: true }, 200, headers);
+}
+
+async function reportComment(commentId, request, env, headers, ctx) {
+  const data = (await readSocialBody(request)) || {};
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const c = await env.DB.prepare("SELECT id, trip_id, account_id, body FROM comments WHERE id = ?").bind(commentId).first();
+  if (!c) return json({ error: "not_found" }, 404, headers);
+  const reason = typeof data.reason === "string" ? data.reason.trim().slice(0, 200) : "";
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO comment_reports (id, comment_id, reporter_account_id, reason, created_at) VALUES (?,?,?,?,?)"
+  ).bind(uid("rp"), commentId, who.account.account_id, reason, nowIso()).run();
+  if (env.RESEND_API_KEY && env.REPORT_NOTIFY_EMAIL) {
+    ctx.waitUntil(fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        from: env.RESEND_FROM || "旅の足跡 <onboarding@resend.dev>",
+        to: [env.REPORT_NOTIFY_EMAIL],
+        subject: "旅の足跡：コメントが通報されました",
+        text: "コメントID: " + c.id + "\n旅行ID: " + c.trip_id + "\n書いた人のアカウントID: " + c.account_id
+          + "\n通報した人のアカウントID: " + who.account.account_id + "\n理由: " + (reason || "（未記入）")
+          + "\n\n本文:\n" + c.body + "\n\n24時間以内に内容を確認し、必要ならD1から削除してください。",
+      }),
+    }).catch(() => {}));
+  }
+  return json({ ok: true }, 200, headers);
+}
+
+async function setUserBlock(request, env, headers, on) {
+  const data = (await readSocialBody(request)) || {};
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const target = typeof data.accountId === "string" ? data.accountId.trim() : "";
+  if (!/^\d{6}$/.test(target) || target === who.account.account_id) return json({ error: "invalid_input" }, 400, headers);
+  if (on) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO user_blocks (blocker_account_id, blocked_account_id, created_at) VALUES (?,?,?)"
+    ).bind(who.account.account_id, target, nowIso()).run();
+  } else {
+    await env.DB.prepare("DELETE FROM user_blocks WHERE blocker_account_id = ? AND blocked_account_id = ?")
+      .bind(who.account.account_id, target).run();
+  }
+  return json({ ok: true }, 200, headers);
+}
+
+async function deleteSocialForTarget(env, targetType, targetId) {
+  await env.DB.prepare(
+    "DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE target_type = ? AND target_id = ?)"
+  ).bind(targetType, targetId).run();
+  await env.DB.prepare("DELETE FROM comments WHERE target_type = ? AND target_id = ?").bind(targetType, targetId).run();
+  await env.DB.prepare("DELETE FROM likes WHERE target_type = ? AND target_id = ?").bind(targetType, targetId).run();
+}
+
+async function deleteSocialForTrip(env, tripId) {
+  await env.DB.prepare(
+    "DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE trip_id = ?)"
+  ).bind(tripId).run();
+  await env.DB.prepare("DELETE FROM comments WHERE trip_id = ?").bind(tripId).run();
+  await env.DB.prepare("DELETE FROM likes WHERE trip_id = ?").bind(tripId).run();
+}
+
+async function deleteSocialForAccount(env, accountId) {
+  await env.DB.prepare(
+    "DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE account_id = ?)"
+  ).bind(accountId).run();
+  await env.DB.prepare("DELETE FROM comment_reports WHERE reporter_account_id = ?").bind(accountId).run();
+  await env.DB.prepare("DELETE FROM comments WHERE account_id = ?").bind(accountId).run();
+  await env.DB.prepare("DELETE FROM likes WHERE account_id = ?").bind(accountId).run();
+  await env.DB.prepare("DELETE FROM user_blocks WHERE blocker_account_id = ? OR blocked_account_id = ?")
+    .bind(accountId, accountId).run();
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get("origin") || "";
@@ -2153,9 +2461,19 @@ export default {
 
     if (method === "PUT" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return setRating(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return deleteRating(m[1], request, env, headers);
+    if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)\/social$/))) return getTripSocial(m[1], request, env, headers);
+    if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/likes$/))) return setLike(m[1], request, env, headers, true);
+    if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)\/likes$/))) return setLike(m[1], request, env, headers, false);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/comments$/))) return createComment(m[1], request, env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/comments\/([^/]+)$/))) return deleteComment(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/comments\/([^/]+)\/report$/))) return reportComment(m[1], request, env, headers, ctx);
+    if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
+    if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx);
     if (method === "GET" && path === "/mylog") {
-      return getMyLog((url.searchParams.get("email") || "").trim().toLowerCase(), env, headers);
+      const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
+      if (auth.error) return json({ error: auth.error }, auth.status, headers);
+      return getMyLog(auth.email, env, headers);
     }
 
     if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return setDayPlace(m[1], m[2], request, env, headers);
@@ -2164,6 +2482,7 @@ export default {
 
     if (method === "POST" && path === "/auth/email/send") return sendEmailOtp(request, env, headers);
     if (method === "POST" && path === "/auth/email/verify") return verifyEmailOtp(request, env, headers);
+    if (method === "POST" && path === "/auth/logout") return logout(request, env, headers);
 
     if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
     if (method === "POST" && path === "/accounts/delete") return deleteAccount(request, env, headers);

@@ -623,3 +623,48 @@ a:hover { text-decoration: underline; }
 }
 .replay-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
 .replay-dot.upcoming { background: #fff; border-color: var(--accent); }
+
+/* ---------- いいね・コメント（docs/adr/0006） ---------- */
+.social-bar { display: flex; gap: 6px; margin: 10px 0 4px; }
+.entry-social { display: flex; gap: 4px; margin-top: 8px; margin-left: -6px; }
+.social-btn {
+  display: inline-flex; align-items: center; gap: 4px; border: none; background: none; cursor: pointer;
+  padding: 6px 8px; border-radius: 999px; color: var(--ink-muted); font-size: 12.5px; font-weight: 700; min-height: 32px;
+}
+.social-btn:active { background: var(--border-soft); }
+.social-btn span:empty { display: none; }
+.social-btn.liked { color: var(--danger); }
+.social-btn.liked svg path { fill: currentColor; }
+
+body.sheet-open { overflow: hidden; }
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 60; background: rgba(20, 20, 30, 0.35);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.sheet-backdrop[hidden] { display: none; }
+.sheet {
+  width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column;
+  background: var(--card); border-radius: 20px 20px 0 0; padding: 14px 16px calc(12px + env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 20px rgba(20, 20, 30, 0.12);
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.sheet-title { font-weight: 700; font-size: 15px; }
+.sheet-close { border: none; background: none; font-size: 22px; color: var(--ink-soft); cursor: pointer; padding: 0 4px; }
+.comment-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 80px; }
+.comment-item { padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
+.comment-head { display: flex; align-items: baseline; gap: 8px; }
+.comment-name { font-weight: 700; font-size: 13px; }
+.comment-time { font-size: 11px; color: var(--ink-soft); }
+.comment-menu-btn { margin-left: auto; border: none; background: none; color: var(--ink-soft); font-size: 16px; cursor: pointer; padding: 0 4px; }
+.comment-body { font-size: 14px; white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+.comment-actions { display: flex; gap: 8px; margin-top: 4px; }
+.comment-actions[hidden] { display: none; }
+.comment-empty { padding: 18px 0; }
+.comment-form { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+.comment-form textarea {
+  flex: 1; resize: none; border: 1px solid var(--border); border-radius: var(--radius-control);
+  background: var(--input-bg); padding: 10px 12px; font: inherit; font-size: 16px; max-height: 120px;
+}
+.comment-form .btn { flex: none; padding: 10px 16px; }
+.comment-status { margin: 6px 0 0; min-height: 1em; }
+.comment-actions .btn.text.danger { color: var(--danger); }

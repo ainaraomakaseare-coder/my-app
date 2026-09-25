@@ -999,11 +999,18 @@
     return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
   }
 
+  // ログイン時にサーバーが発行したセッショントークン（docs/adr/0005）。あればすべての通信に付ける。
+  // サーバーはこれで本人を確かめる（以前は送ったメールアドレスをそのまま信用していた）。
+  function authHeaders() {
+    var user = loadCurrentUser();
+    return user && user.token ? { authorization: 'Bearer ' + user.token } : {};
+  }
+
   function nativeApi(path, method, body) {
     return window.Capacitor.Plugins.CapacitorHttp.request({
       url: API_BASE + path,
       method: method || 'GET',
-      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      headers: Object.assign(body !== undefined ? { 'content-type': 'application/json' } : {}, authHeaders()),
       data: body
     }).then(function (res) {
       if (res.status < 200 || res.status >= 300) {
@@ -1018,7 +1025,7 @@
     if (isNativeApp()) return nativeApi(path, method, body);
     return fetch(API_BASE + path, {
       method: method || 'GET',
-      headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+      headers: Object.assign(body !== undefined ? { 'content-type': 'application/json' } : {}, authHeaders()),
       body: body !== undefined ? JSON.stringify(body) : undefined
     }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
@@ -1054,7 +1061,7 @@
         });
       });
     }
-    var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {});
+    var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {}, authHeaders());
     return fetch(API_BASE + path, { method: 'POST', headers: headers, body: blob }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
         throw new Error(e.error || ('http_' + res.status));
@@ -1217,6 +1224,7 @@
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [] },
     homeFilters: { companion: '', year: '', tripType: '', sort: '' },
+    social: { likes: {}, comments: [], accountId: '' },
     myLogCategory: 'food',
     myLogSort: 'score',
     // 旅行のサムネイル画像。新規作成・編集どちらのフォームでも使い回す
@@ -1376,12 +1384,14 @@
       state.blocks = data.blocks;
       state.days = data.days || [];
       state.members = data.members || [];
+      state.social = emptySocial();
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       rememberTrip(state.trip);
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       showScreen('tripDetail');
       renderTripDetail();
+      loadSocial();
     }).catch(function () {
       forgetTrip(id);
       alert('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。');
@@ -1537,6 +1547,7 @@
     $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
     $('#btnOpenReplay').hidden = !(state.blocks || []).some(function (b) { return b.date; });
     renderTripJoin();
+    renderTripSocialBar();
 
     var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
     var total = Core.tripTotalCost(state.blocks);
@@ -1584,6 +1595,237 @@
       .catch(function () {
         $('#tripDetailStatus').textContent = '参加に失敗しました。もう一度お試しください。';
       });
+  }
+
+  // ---------- いいね・コメント（友達同士のSNS機能。docs/adr/0006） ----------
+  // 旅行と記録の両方に、いいね・コメントをつけられる。読むのは旅行のリンクを知っている人なら誰でも、
+  // 書くのはログイン済みの人だけ（サーバーはセッショントークンで本人を確かめる。docs/adr/0005）。
+  // 旅行を開いたときに /trips/:id/social を1回だけ呼び、state.socialに持っておく。
+  // Appleの審査ガイドライン1.2のため、他人のコメントには「通報」「ブロック」を用意し、
+  // 初めてコメントするときにルールへの同意を求める。
+  var HEART_ICON = '<svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10 16.5s-6.5-3.9-6.5-8.4A3.6 3.6 0 0 1 10 5.8a3.6 3.6 0 0 1 6.5 2.3c0 4.5-6.5 8.4-6.5 8.4z"/></svg>';
+  var COMMENT_ICON = '<svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 4.5h12a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-4 3v-3H4A1.5 1.5 0 0 1 2.5 13V6A1.5 1.5 0 0 1 4 4.5z"/></svg>';
+  var COMMENT_TERMS_KEY = 'tabilog:comment-terms-ok';
+  var commentTarget = null; // コメントシートで開いている対象 { type: 'trip'|'entry', id }
+
+  function emptySocial() { return { likes: {}, comments: [], accountId: '' }; }
+
+  function loadSocial() {
+    if (!state.trip || !API_BASE) return Promise.resolve();
+    var tripId = state.trip.id;
+    return api('/trips/' + encodeURIComponent(tripId) + '/social').then(function (res) {
+      if (!state.trip || state.trip.id !== tripId) return; // 読み込み中に別の旅行へ移った
+      state.social = { likes: res.likes || {}, comments: res.comments || [], accountId: res.accountId || '' };
+      renderSocial();
+    }).catch(function () { /* 読めなくても旅行自体は見られるようにする */ });
+  }
+
+  function likeInfo(type, id) {
+    return (state.social && state.social.likes[type + ':' + id]) || { count: 0, liked: false };
+  }
+
+  function commentsFor(type, id) {
+    return ((state.social && state.social.comments) || []).filter(function (c) {
+      return c.targetType === type && c.targetId === id;
+    });
+  }
+
+  function socialButtonsHtml(type, id) {
+    var like = likeInfo(type, id);
+    var n = commentsFor(type, id).length;
+    return '<button type="button" class="social-btn like-btn' + (like.liked ? ' liked' : '') + '" data-social-like="' + type +
+        '" data-target-id="' + escapeHtml(id) + '" aria-pressed="' + (like.liked ? 'true' : 'false') + '" aria-label="いいね">' +
+        HEART_ICON + '<span>' + (like.count || '') + '</span></button>' +
+      '<button type="button" class="social-btn" data-social-comment="' + type + '" data-target-id="' + escapeHtml(id) +
+        '" aria-label="コメント">' + COMMENT_ICON + '<span>' + (n || '') + '</span></button>';
+  }
+
+  function renderTripSocialBar() {
+    if (state.trip) $('#tripSocialBar').innerHTML = socialButtonsHtml('trip', state.trip.id);
+  }
+
+  function renderSocial() {
+    renderTripSocialBar();
+    $all('.entry-social').forEach(function (el) { el.innerHTML = socialButtonsHtml('entry', el.dataset.entryId); });
+    if (!$('#commentSheet').hidden) renderCommentSheet();
+  }
+
+  // いいね・コメントは本人確認済み（トークンあり）のときだけ。以前からログインしていてトークンを
+  // まだ持っていない人は、もう一度ログインしてもらう（ログイン後はこの旅行に戻る）。
+  function requireSocialLogin() {
+    var user = loadCurrentUser();
+    if (user && user.token) return true;
+    closeCommentSheet();
+    openLogin('tripDetail');
+    $('#loginLead').textContent = user
+      ? 'いいね・コメントするには、もう一度ログインしてください（本人確認のしくみを新しくしました）'
+      : 'ログインすると、いいねやコメントができます';
+    return false;
+  }
+
+  function toggleLike(type, id) {
+    if (!requireSocialLogin()) return;
+    var key = type + ':' + id;
+    var before = likeInfo(type, id);
+    var on = !before.liked;
+    // 押した瞬間に見た目を変え、失敗したら元に戻す
+    state.social.likes[key] = { count: Math.max(0, before.count + (on ? 1 : -1)), liked: on };
+    renderSocial();
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/likes', on ? 'PUT' : 'DELETE', { targetType: type, targetId: id })
+      .then(function (res) {
+        state.social.likes[key] = { count: res.count, liked: res.liked };
+        renderSocial();
+      })
+      .catch(function (e) {
+        state.social.likes[key] = before;
+        renderSocial();
+        if (e && e.message === 'login_required') requireSocialLoginAgain();
+      });
+  }
+
+  // サーバー側でトークンが無効（期限切れ・ログアウト済み）だった場合
+  function requireSocialLoginAgain() {
+    var user = loadCurrentUser();
+    if (user) saveCurrentUser(Object.assign({}, user, { token: '' }));
+    requireSocialLogin();
+  }
+
+  function openCommentSheet(type, id) {
+    commentTarget = { type: type, id: id };
+    $('#commentSheetTitle').textContent = type === 'trip' ? 'この旅行へのコメント' : 'この記録へのコメント';
+    $('#commentStatus').textContent = '';
+    $('#commentSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+    renderCommentSheet();
+  }
+
+  function closeCommentSheet() {
+    $('#commentSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+    commentTarget = null;
+  }
+
+  function formatCommentTime(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  function renderCommentSheet() {
+    if (!commentTarget) return;
+    var list = commentsFor(commentTarget.type, commentTarget.id);
+    $('#commentList').innerHTML = list.length
+      ? list.map(function (c) {
+          var actions = c.mine
+            ? '<button type="button" class="btn text danger" data-comment-delete="' + escapeHtml(c.id) + '">削除</button>'
+            : '<button type="button" class="btn text" data-comment-report="' + escapeHtml(c.id) + '">通報する</button>' +
+              '<button type="button" class="btn text danger" data-comment-block="' + escapeHtml(c.accountId) + '" data-name="' + escapeHtml(c.name || '') + '">この人をブロック</button>';
+          return '<div class="comment-item">' +
+            '<div class="comment-head">' +
+              '<span class="comment-name">' + escapeHtml(c.name || '名前未設定') + '</span>' +
+              '<span class="comment-time">' + escapeHtml(formatCommentTime(c.createdAt)) + '</span>' +
+              '<button type="button" class="comment-menu-btn" aria-label="メニュー" data-comment-menu>…</button>' +
+            '</div>' +
+            '<div class="comment-body">' + escapeHtml(c.body) + '</div>' +
+            '<div class="comment-actions" hidden>' + actions + '</div>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty comment-empty">まだコメントはありません。</div>';
+  }
+
+  function agreeToCommentTerms() {
+    try { if (localStorage.getItem(COMMENT_TERMS_KEY)) return true; } catch (e) { /* 読めなければ毎回聞く */ }
+    var ok = confirm('コメントのルール\n\n・誹謗中傷、差別、嫌がらせ、わいせつな内容など、不適切な投稿は禁止です\n' +
+      '・不適切なコメントは誰でも通報でき、運営者が確認して削除します。繰り返す場合は利用を停止することがあります\n\n' +
+      'このルールに同意してコメントしますか？');
+    if (ok) { try { localStorage.setItem(COMMENT_TERMS_KEY, '1'); } catch (e) { /* 次回また聞くだけ */ } }
+    return ok;
+  }
+
+  function submitComment(e) {
+    e.preventDefault();
+    if (!commentTarget) return;
+    var input = $('#commentInput');
+    var body = input.value.trim();
+    if (!body) return;
+    if (!requireSocialLogin() || !agreeToCommentTerms()) return;
+    var target = commentTarget;
+    var status = $('#commentStatus');
+    status.textContent = '送信中…';
+    $('#btnSendComment').disabled = true;
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/comments', 'POST', { targetType: target.type, targetId: target.id, body: body })
+      .then(function (c) {
+        state.social.comments.push(c);
+        input.value = '';
+        status.textContent = '';
+        renderSocial();
+      })
+      .catch(function (err) {
+        var msg = (err && err.message) || '';
+        if (msg === 'login_required') { requireSocialLoginAgain(); return; }
+        status.textContent = msg === 'inappropriate'
+          ? '不適切な表現が含まれているため投稿できません。'
+          : 'コメントを送れませんでした。もう一度お試しください。';
+      })
+      .then(function () { $('#btnSendComment').disabled = false; });
+  }
+
+  function handleCommentListClick(e) {
+    var menuBtn = e.target.closest('[data-comment-menu]');
+    if (menuBtn) {
+      var actions = menuBtn.closest('.comment-item').querySelector('.comment-actions');
+      actions.hidden = !actions.hidden;
+      return;
+    }
+    var del = e.target.closest('[data-comment-delete]');
+    if (del) {
+      if (!confirm('このコメントを削除しますか？')) return;
+      var delId = del.dataset.commentDelete;
+      api('/comments/' + encodeURIComponent(delId), 'DELETE').then(function () {
+        state.social.comments = state.social.comments.filter(function (c) { return c.id !== delId; });
+        renderSocial();
+      }).catch(function () { $('#commentStatus').textContent = '削除できませんでした。もう一度お試しください。'; });
+      return;
+    }
+    var rep = e.target.closest('[data-comment-report]');
+    if (rep) {
+      if (!requireSocialLogin()) return;
+      if (!confirm('このコメントを通報しますか？\n運営者が内容を確認し、必要なら削除します。通報したコメントは、あなたには表示されなくなります。')) return;
+      var repId = rep.dataset.commentReport;
+      api('/comments/' + encodeURIComponent(repId) + '/report', 'POST', {}).then(function () {
+        state.social.comments = state.social.comments.filter(function (c) { return c.id !== repId; });
+        renderSocial();
+        $('#commentStatus').textContent = '通報しました。ご協力ありがとうございます。';
+      }).catch(function () { $('#commentStatus').textContent = '通報できませんでした。もう一度お試しください。'; });
+      return;
+    }
+    var blk = e.target.closest('[data-comment-block]');
+    if (blk) {
+      if (!requireSocialLogin()) return;
+      var who = blk.dataset.name || 'この人';
+      if (!confirm(who + 'さんをブロックしますか？\nこの人のコメントは、あなたには表示されなくなります。')) return;
+      var accountId = blk.dataset.commentBlock;
+      api('/user-blocks', 'PUT', { accountId: accountId }).then(function () {
+        state.social.comments = state.social.comments.filter(function (c) { return c.accountId !== accountId; });
+        renderSocial();
+        $('#commentStatus').textContent = 'ブロックしました。';
+      }).catch(function () { $('#commentStatus').textContent = 'ブロックできませんでした。もう一度お試しください。'; });
+    }
+  }
+
+  function initSocial() {
+    // いいね・コメントのボタンは旅行の上部と各記録カードにあるので、まとめてdocumentで受ける
+    // （記録カード自体のクリック＝編集を開く処理は、.entry-social内のクリックを無視する）
+    document.addEventListener('click', function (e) {
+      var likeBtn = e.target.closest('[data-social-like]');
+      if (likeBtn) { toggleLike(likeBtn.dataset.socialLike, likeBtn.dataset.targetId); return; }
+      var commentBtn = e.target.closest('[data-social-comment]');
+      if (commentBtn) openCommentSheet(commentBtn.dataset.socialComment, commentBtn.dataset.targetId);
+    });
+    $('#btnCloseCommentSheet').addEventListener('click', closeCommentSheet);
+    $('#commentSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeCommentSheet(); });
+    $('#commentForm').addEventListener('submit', submitComment);
+    $('#commentList').addEventListener('click', handleCommentListClick);
   }
 
   // ---------- 音声でまとめて記録する（このアプリで唯一AIを呼び出す機能） ----------
@@ -2268,7 +2510,8 @@
       '<div class="entry-author">記録：' + escapeHtml(entry.author || '匿名') + '</div>' +
       ratingHtml +
       costHtml +
-      (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '');
+      (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '') +
+      '<div class="entry-social" data-entry-id="' + escapeHtml(entry.id) + '">' + socialButtonsHtml('entry', entry.id) + '</div>';
 
     // 写真・動画をタップしたときは編集画面へ行かず、拡大表示（ライトボックス）を開く。
     // 動画は（アルバムと同じく）タイルをタップしたときだけライトボックスを開く作りにしたので、
@@ -2289,7 +2532,7 @@
         openVideoLightbox(photoUrl(videoTile.dataset.videoId));
         return;
       }
-      if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
+      if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu') || e.target.closest('.entry-social')) return;
       openEntryForm(block.id, entry);
     });
     $('.entry-move-btn', card).addEventListener('click', function (e) {
@@ -3626,6 +3869,7 @@
     });
 
     $('#btnLogout').addEventListener('click', function () {
+      if (loadCurrentUser() && loadCurrentUser().token) api('/auth/logout', 'POST', {}).catch(function () {});
       clearCurrentUser();
       renderAccountRow();
       goHome();
@@ -3646,6 +3890,7 @@
     });
     $('#btnManageBilling').addEventListener('click', startBillingPortal);
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
+    initSocial();
 
     $('#mylogSort').addEventListener('click', function (e) {
       var btn = e.target.closest('.sort-btn');
@@ -3726,7 +3971,7 @@
     if (!code) { $('#loginStatus').textContent = 'コードを入力してください。'; return; }
     $('#loginStatus').textContent = '確認中…';
     api('/auth/email/verify', 'POST', { email: email, code: code }).then(function (res) {
-      ensureAccountAndProceed({ name: name || res.name || email, email: res.email, provider: 'email' });
+      ensureAccountAndProceed({ name: name || res.name || email, email: res.email, provider: 'email', token: res.token || '' });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
       if (msg === 'wrong_code') $('#loginStatus').textContent = 'コードが正しくありません。';
@@ -3764,6 +4009,7 @@
     } else if (target === 'tripDetail' && state.trip) {
       showScreen('tripDetail');
       renderTripDetail();
+      if (loggedIn) loadSocial();
     } else if (target === 'voiceEntryForm' && state.trip) {
       openVoiceEntryForm();
     } else if (target === 'mylog' && loggedIn) {

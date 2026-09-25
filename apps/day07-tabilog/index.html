@@ -275,6 +275,9 @@
 
       <div class="companions-names" id="tripMembers" hidden></div>
 
+      <!-- 旅行へのいいね・コメント（app.jsのrenderTripSocialBar）。記録ごとのものは各記録カードの下に出す -->
+      <div class="social-bar" id="tripSocialBar"></div>
+
       <div class="stats-row" id="tripStats"></div>
       <div class="cost-breakdown-panel" id="lodgingBreakdownPanel" hidden></div>
       <div class="cost-breakdown-panel" id="costBreakdownPanel" hidden></div>
@@ -613,6 +616,22 @@
     </div>
   </section>
 
+</div>
+
+<!-- ============ コメント（旅行・記録ごと。画面を切り替えず下から出すシート） ============ -->
+<div class="sheet-backdrop" id="commentSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="commentSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="commentSheetTitle">コメント</div>
+      <button class="sheet-close" id="btnCloseCommentSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div class="comment-list" id="commentList"></div>
+    <form class="comment-form" id="commentForm">
+      <textarea id="commentInput" rows="1" maxlength="500" placeholder="コメントを書く"></textarea>
+      <button class="btn primary" id="btnSendComment" type="submit">送信</button>
+    </form>
+    <p class="hint comment-status" id="commentStatus"></p>
+  </div>
 </div>
 
 <!-- ============ 写真の拡大表示 ============ -->
