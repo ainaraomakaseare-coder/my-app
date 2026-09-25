@@ -3049,12 +3049,18 @@
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
   // アカウント本体（名前・プラン・回数券・参加した旅行への紐付け）だけを消す。
   // メールアドレスは、削除→再登録を繰り返した無料枠の不正な繰り返し取得を防ぐため残す（worker側の実装を参照）。
+  // この端末に残しているデータ（旅行一覧・非表示にした旅行・AI送信の同意など、tabilog:で始まるキー）も
+  // 一緒に消す。消さないと削除後のホームに同じ旅行が並んだままになり、「削除できていない」ように見える
+  // （App Store審査で5.1.1(v)の指摘を受けた）。
   function deleteMyAccount() {
     var user = loadCurrentUser();
     if (!user) return;
-    if (!confirm('アカウントを削除しますか？\n（名前・プラン・回数券の情報が削除されます。旅行の記録自体は削除されません。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
+    if (!confirm('アカウントを削除しますか？\n（名前・プラン・回数券の情報と、この端末の旅行一覧が削除されます。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
     api('/accounts/delete', 'POST', { email: user.email }).then(function () {
-      clearCurrentUser();
+      Object.keys(localStorage).forEach(function (k) {
+        if (k.indexOf('tabilog:') === 0) localStorage.removeItem(k);
+      });
+      state.homeFilters = { companion: '', year: '', tripType: '', sort: '' };
       renderAccountRow();
       alert('アカウントを削除しました。');
       goHome();
