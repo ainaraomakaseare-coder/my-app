@@ -675,6 +675,31 @@
     return { point: { lat: lat, lng: lng }, prefix: path.slice(0, k).concat([[lat, lng]]) };
   }
 
+  // 「この日から見たい」ためのジャンプ先。日ごとの最初の予定の少し前（再生の実時間r）。
+  // 何日目かは予定の現地の日付（dayNumber）で数える。
+  var REPLAY_JUMP_LEAD_SEC = 0.4;
+  function replayDayStarts(tl) {
+    var out = [];
+    (tl.stops || []).forEach(function (s) {
+      if (out.length && out[out.length - 1].dayNumber === s.dayNumber) return;
+      if (out.some(function (d) { return d.dayNumber === s.dayNumber; })) return;
+      out.push({ dayNumber: s.dayNumber, date: s.date, r: Math.max(0, s.r - REPLAY_JUMP_LEAD_SEC) });
+    });
+    if (out.length) out[0].r = 0; // 1日目は最初から
+    return out;
+  }
+
+  // 前・次の予定へのジャンプ先。今のrより前（少し余裕を見る）／後で、いちばん近い予定の到着の少し前
+  function replayNeighborStop(tl, r, dir) {
+    var list = (tl.stops || []).map(function (s) { return Math.max(0, s.r - REPLAY_JUMP_LEAD_SEC); });
+    if (dir < 0) {
+      var prev = list.filter(function (x) { return x < r - 0.5; });
+      return prev.length ? prev[prev.length - 1] : 0;
+    }
+    var next = list.filter(function (x) { return x > r + 0.05; });
+    return next.length ? next[0] : tl.totalReal;
+  }
+
   function replayStateAt(tl, r) {
     r = Math.max(0, Math.min(r, tl.totalReal));
     var t = replayRealToTrip(tl.keyframes, r);
@@ -980,6 +1005,8 @@
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
+    replayDayStarts: replayDayStarts,
+    replayNeighborStop: replayNeighborStop,
     tzOffsetMinutes: tzOffsetMinutes,
     assignBlockZones: assignBlockZones,
     applyBlockZones: applyBlockZones,
@@ -4316,6 +4343,7 @@
       };
     });
     resetReplayCamera();
+    renderReplayDays();
     $('#replayClock').hidden = false;
     $('#replayControls').hidden = false;
     renderReplay();
@@ -4378,6 +4406,7 @@
     var st = Core.replayStateAt(tl, r);
 
     $('#replayDay').textContent = st.dayNumber + '日目　' + replayShortDate(replay.dates[st.dayNumber - 1]);
+    highlightReplayDay(st.dayNumber);
     $('#replayTime').textContent = st.hhmm;
     if (replay.lastOffsetDiff !== undefined && st.offsetDiff !== replay.lastOffsetDiff && replay.playing) {
       showReplayBanner('時差 ' + Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff) + '（ここから現地時間）');
@@ -4484,11 +4513,11 @@
     replay.raf = on ? requestAnimationFrame(replayTick) : null;
   }
 
-  function seekReplay(e) {
+  // 再生位置を r（秒）に移す。カメラは移った先の場所へ、アニメーションなしで寄せる
+  function seekReplayTo(r) {
     if (!replay) return;
-    var rect = $('#replayProgress').getBoundingClientRect();
-    var f = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    replay.r = f * replay.tl.totalReal;
+    replay.r = Math.max(0, Math.min(replay.tl.totalReal, r));
+    replay.lastOffsetDiff = undefined; // 飛んだ先で「時差」のバナーを出さない
     replay.lastLeg = -1;
     replay.lastStop = -2;
     replay.captionIndex = -2;
@@ -4496,6 +4525,58 @@
     var here = Core.replayStateAt(replay.tl, replay.r).here;
     if (here) replayMap.setView([here.lat, here.lng], replayMap.getZoom(), { animate: false });
     renderReplay();
+  }
+
+  function seekReplay(e) {
+    if (!replay) return;
+    var rect = $('#replayProgress').getBoundingClientRect();
+    var f = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    seekReplayTo(f * replay.tl.totalReal);
+  }
+
+  // シークバーは、タップだけでなく指でつまんで動かせるようにする（以前はタップしかできず、
+  // 「この日から見たい」ときに合わせにくかった）。動かしているあいだは一時停止し、離したら元に戻す。
+  function initReplaySeekDrag() {
+    var bar = $('#replayProgress'), dragging = false, wasPlaying = false;
+    bar.addEventListener('pointerdown', function (e) {
+      if (!replay) return;
+      dragging = true;
+      wasPlaying = replay.playing;
+      if (wasPlaying) setReplayPlaying(false);
+      bar.classList.add('dragging');
+      try { bar.setPointerCapture(e.pointerId); } catch (err) { /* 古いブラウザ */ }
+      seekReplay(e);
+      e.preventDefault();
+    });
+    bar.addEventListener('pointermove', function (e) { if (dragging) seekReplay(e); });
+    var end = function () {
+      if (!dragging) return;
+      dragging = false;
+      bar.classList.remove('dragging');
+      if (wasPlaying) setReplayPlaying(true);
+    };
+    bar.addEventListener('pointerup', end);
+    bar.addEventListener('pointercancel', end);
+  }
+
+  // 「1日目 12/12」…の日ボタン。押すとその日の最初の予定へ飛ぶ。今いる日を強調する
+  function renderReplayDays() {
+    var el = $('#replayDays');
+    var days = Core.replayDayStarts(replay.tl);
+    replay.dayStarts = days;
+    el.hidden = days.length < 2;
+    el.innerHTML = days.map(function (d) {
+      return '<button type="button" class="replay-day-chip" data-day="' + d.dayNumber + '">' + d.dayNumber + '日目' +
+        (d.date ? '<span>' + escapeHtml(replayShortDate(d.date)) + '</span>' : '') + '</button>';
+    }).join('');
+  }
+
+  function highlightReplayDay(dayNumber) {
+    $all('.replay-day-chip', $('#replayDays')).forEach(function (b) {
+      var on = Number(b.dataset.day) === dayNumber;
+      if (on && !b.classList.contains('on')) b.scrollIntoView({ block: 'nearest', inline: 'center' });
+      b.classList.toggle('on', on);
+    });
   }
 
   function stopReplay() {
@@ -4644,14 +4725,21 @@
     $('#btnOpenReplay').addEventListener('click', openReplay);
     $('#btnCloseReplay').addEventListener('click', closeReplay);
     $('#btnReplayToggle').addEventListener('click', function () { if (replay) setReplayPlaying(!replay.playing); });
-    $('#btnReplayRestart').addEventListener('click', function () {
-      if (!replay) return;
-      replay.r = 0;
-      resetReplayCamera();
-      renderReplay();
-      setReplayPlaying(true);
+    $('#btnReplayPrev').addEventListener('click', function () {
+      if (replay) seekReplayTo(Core.replayNeighborStop(replay.tl, replay.r, -1));
     });
-    $('#replayProgress').addEventListener('click', seekReplay);
+    $('#btnReplayNext').addEventListener('click', function () {
+      if (replay) seekReplayTo(Core.replayNeighborStop(replay.tl, replay.r, 1));
+    });
+    $('#replayDays').addEventListener('click', function (e) {
+      var chip = e.target.closest('.replay-day-chip');
+      if (!chip || !replay) return;
+      var d = (replay.dayStarts || []).filter(function (x) { return x.dayNumber === Number(chip.dataset.day); })[0];
+      if (!d) return;
+      seekReplayTo(d.r);
+      if (!replay.playing) setReplayPlaying(true);
+    });
+    initReplaySeekDrag();
     ['nt', 'te'].forEach(function (prefix) {
       $('#' + prefix + 'CoverPhotoPicker').addEventListener('click', function () { $('#' + prefix + 'CoverPhoto').click(); });
       $('#' + prefix + 'CoverPhoto').addEventListener('change', function (e) {

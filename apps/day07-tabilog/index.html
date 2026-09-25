@@ -447,10 +447,17 @@
           </div>
           <div class="replay-caption-lines" id="replayCaptionLines"></div>
         </div>
+        <!-- 日ボタン：押すとその日の最初の予定から（app.jsのrenderReplayDays） -->
+        <div class="replay-days" id="replayDays" hidden></div>
         <div class="replay-controls" id="replayControls" hidden>
           <button class="replay-play" id="btnReplayToggle" type="button" aria-label="一時停止"></button>
+          <button class="replay-step" id="btnReplayPrev" type="button" aria-label="前の予定へ">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="4" y="4.5" width="2.2" height="11" rx="1"/><path d="M16 4.5v11L7.5 10z"/></svg>
+          </button>
           <div class="replay-progress" id="replayProgress"><div class="replay-progress-bar" id="replayProgressBar"></div></div>
-          <button class="btn text replay-restart" id="btnReplayRestart" type="button">最初から</button>
+          <button class="replay-step" id="btnReplayNext" type="button" aria-label="次の予定へ">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="13.8" y="4.5" width="2.2" height="11" rx="1"/><path d="M4 4.5v11l8.5-5.5z"/></svg>
+          </button>
         </div>
       </div>
     </div>

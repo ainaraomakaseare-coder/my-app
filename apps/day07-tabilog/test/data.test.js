@@ -435,5 +435,13 @@ var tzAtArr = T.replayStateAt(tzTl, tzTl.stops[1].r + 0.01);
 eq('replayStateAt: 着いたら時計は現地時間（10:00）、時差は−19時間', [tzAtArr.hhmm, tzAtArr.offsetDiff], ['10:00', -1140]);
 eq('replayStateAt: 出発のときの時計は日本時間', T.replayStateAt(tzTl, tzTl.stops[0].r + 0.01).hhmm, '20:00');
 
+/* ---- 地図でふりかえる：日ごとのジャンプ・前後の予定 ---- */
+var jumpDays = T.replayDayStarts(tl);
+eq('replayDayStarts: 日ごとに1つ、1日目は最初から', jumpDays.map(function (d) { return [d.dayNumber, d.r === 0]; }), [[1, true], [2, false]]);
+ok('replayDayStarts: 2日目は2日目の最初の予定の少し前', jumpDays[1].r < tl.stops[3].r && jumpDays[1].r > tl.stops[2].r);
+ok('replayNeighborStop: 次の予定は今より後で一番近い予定', T.replayNeighborStop(tl, 0, 1) > 0 && T.replayNeighborStop(tl, 0, 1) <= tl.stops[1].r);
+eq('replayNeighborStop: 最初より前は0', T.replayNeighborStop(tl, 0.1, -1), 0);
+eq('replayNeighborStop: 最後の予定の後は終わりまで', T.replayNeighborStop(tl, tl.totalReal, 1), tl.totalReal);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
