@@ -42,6 +42,21 @@
   .side .sep{height:1px;background:var(--line);margin:14px 0 8px}
   .side button.quiet{color:var(--muted);font-size:13px}
   #viewTabs{margin-bottom:14px}
+  .entry{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-top:12px}
+  .entry .entry-h{font-size:13px;font-weight:600;margin:12px 0 4px}
+  .entry .erow{display:grid;gap:6px;margin-bottom:6px;align-items:center}
+  .entry .erow.tasks{grid-template-columns:1fr 90px 90px 32px}
+  .entry .erow.expenses{grid-template-columns:1fr 120px 32px}
+  .entry .erow.services{grid-template-columns:1fr 1fr 32px}
+  .entry .erow input{margin:0}
+  .entry #entryIncome label{margin:0}
+  .series-stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+  .series-stats .st{border:1px solid var(--line);border-radius:10px;padding:6px 12px;min-width:92px}
+  .series-stats .st b{display:block;font-size:18px}
+  .series-stats .st span{font-size:12px;color:var(--muted)}
+  #seriesDlg{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);
+    max-width:640px;width:calc(100% - 32px);padding:18px}
+  #seriesDlg::backdrop{background:rgba(0,0,0,.4)}
   .ttbox{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:14px}
   .ttbox label{display:flex;align-items:flex-start;gap:6px;font-weight:400}
   .ttbox .ttmode{margin-top:8px}
@@ -63,7 +78,7 @@
   .sub{color:var(--muted);font-size:12px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
   label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
-  input[type=text],input[type=password],input[type=datetime-local],textarea,select{
+  input[type=text],input[type=password],input[type=datetime-local],input[type=number],input[type=date],textarea,select{
     width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;
     background:var(--bg);color:var(--ink);font:inherit}
   textarea{min-height:74px;resize:vertical}
@@ -209,6 +224,61 @@
       </div>
 
       <div class="view hide" id="v-one">
+    <!-- 企画の投稿案をつくる（企画の型がある運用アカウントだけに出す）。
+         数字（DAY・累計・残り日数・達成率）は AI に書かせず、ここで計算して差し込む。 -->
+    <div class="card hide" id="seriesCard">
+      <h2 id="seriesTitle">企画の投稿案をつくる</h2>
+      <div id="seriesStats" class="series-stats"></div>
+
+      <label for="seriesOn">日付（この日の記録を入れ、この日の投稿案を作ります。DAY や残り日数もこの日で数えます）</label>
+      <input type="date" id="seriesOn" style="max-width:200px">
+
+      <!-- その日の記録。1日1件で、保存し直すと上書き（足し算しない）。
+           数字はここに入れたものだけが投稿に出る。AI は数字を書かない。 -->
+      <details id="entryBox" class="entry" open>
+        <summary id="entrySummary">この日の記録</summary>
+        <div id="entryMoney">
+          <div class="entry-h">売上（円）</div>
+          <div id="entryIncome" class="row"></div>
+          <div class="entry-h">かかったお金</div>
+          <div id="entryExpenses"></div>
+          <button type="button" data-add="expenses">＋ 行を足す</button>
+        </div>
+        <div class="entry-h">やった作業と時間（分）</div>
+        <div id="entryTasks"></div>
+        <button type="button" data-add="tasks">＋ 行を足す</button>
+        <div class="entry-h">公開した「お金を稼げるサービス」</div>
+        <div id="entryServices"></div>
+        <button type="button" data-add="services">＋ 行を足す</button>
+        <label for="entryAccounts">作ったアカウント（1行に1つ）</label>
+        <textarea id="entryAccounts" style="min-height:60px" placeholder="A8.net&#10;note"></textarea>
+        <label for="entryLearnings">学び</label>
+        <textarea id="entryLearnings" style="min-height:60px"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="entrySave">この日の記録を保存</button>
+          <span class="muted" id="entryState"></span>
+        </div>
+        <div class="err" id="entryErr"></div>
+        <details style="margin-top:8px">
+          <summary>最近の記録</summary>
+          <div id="entryList" class="muted"></div>
+        </details>
+      </details>
+      <div id="seriesFields"></div>
+      <label for="seriesNote">今回の中身（メモでOK。ここに無いことは書かせません）</label>
+      <textarea id="seriesNote" placeholder="作ったもの・やったこと・気づいたこと"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="seriesGen">投稿案をつくる</button>
+        <span class="muted" id="seriesState"></span>
+      </div>
+      <div id="seriesFindings" style="margin-top:8px"></div>
+      <div id="seriesScriptBox" class="hide" style="margin-top:10px">
+        <label for="seriesScript">動画台本</label>
+        <textarea id="seriesScript" style="min-height:220px"></textarea>
+        <button id="seriesScriptCopy" style="margin-top:6px">台本をコピー</button>
+      </div>
+    </div>
+
     <!-- 投稿文をつくる（文案を自動で書かないチャンネルでは隠す） -->
     <div id="v-gen">
     <div class="card">
@@ -460,6 +530,57 @@
      上げないと、動画まわりの直しがブラウザのキャッシュに阻まれて
      反映されないことがある（index.html 自体は毎回取り直されるが、
      reel.js は据え置きだと前のまま使われ続ける）。 -->
+<!-- 企画の型を編集する。運用アカウントの管理の「企画の型」ボタンから開く。 -->
+<dialog id="seriesDlg">
+  <h2 style="margin-top:0" id="sdTitle">企画の型</h2>
+  <div class="muted">投稿案をつくるときの「書き方」と「毎回入れる項目」を決めます。
+    DAY・累計・残り日数・達成率は、AI ではなく投稿卓が計算して入れます。</div>
+
+  <label for="sdName">企画名</label>
+  <input type="text" id="sdName" placeholder="半年で100万稼げなければパソコン捨てます">
+
+  <label for="sdStyle">書き方の指示（AI への指示。口調・構成・毎回のお約束など）</label>
+  <textarea id="sdStyle" placeholder="例：本人の正直な記録。うまくいかなかった日も隠さない。冒頭で今日の結果、最後に明日やること。"></textarea>
+
+  <label for="sdFields">毎回入れる項目（1行に1つ。本人しか知らない事実。例：アプリ名／人間の作業時間／AIの作業時間／追加費用）</label>
+  <textarea id="sdFields" style="min-height:80px"></textarea>
+
+  <label for="sdClosing">毎回最後に入れる一言（任意。{残り日数} {あと} などの差し込み口も使えます）</label>
+  <input type="text" id="sdClosing" placeholder="パソコンを捨てるまで、あと{残り日数}。">
+
+  <label for="sdTags">毎回付けるハッシュタグ（空白区切り。#DAY{DAY} のように差し込み口も使えます）</label>
+  <input type="text" id="sdTags" placeholder="#半年で100万 #DAY{DAY}">
+
+  <div class="row" style="align-items:flex-end;margin-top:6px">
+    <label style="margin:0">開始日（DAY1）<input type="date" id="sdStart"></label>
+    <label style="margin:0">期限（任意）<input type="date" id="sdEnd"></label>
+    <label style="margin:0">目標金額（円・任意）<input type="number" id="sdGoal" min="1" step="1" style="width:160px"></label>
+  </div>
+  <div class="muted">目標金額を入れると、お金の記録（売上の内訳・かかったお金）と「累計・利益・あと○円・達成率・残り日数」が使えるようになります。</div>
+
+  <div id="sdMoney">
+    <label for="sdCats">売上の内訳（1行に1つ）</label>
+    <textarea id="sdCats" style="min-height:60px" placeholder="アフィリエイト&#10;アプリ収益"></textarea>
+    <label>目標金額を何で数えるか</label>
+    <div class="row">
+      <label style="margin:0;display:flex;gap:6px;align-items:center"><input type="radio" name="sdBasis" value="revenue" checked> 売上（入ってきたお金の合計）</label>
+      <label style="margin:0;display:flex;gap:6px;align-items:center"><input type="radio" name="sdBasis" value="profit"> 利益（売上 − かかったお金）</label>
+    </div>
+  </div>
+
+  <label style="display:flex;align-items:center;gap:6px;margin-top:10px">
+    <input type="checkbox" id="sdScript"> 動画台本も一緒に作る
+  </label>
+
+  <div class="muted" style="margin-top:8px" id="sdSlots"></div>
+  <div class="row" style="margin-top:14px">
+    <button class="primary" id="sdSave">保存する</button>
+    <button id="sdCancel">閉じる</button>
+    <button id="sdRemove" style="margin-left:auto">企画をやめる</button>
+    <span class="err" id="sdErr"></span>
+  </div>
+</dialog>
+
 <script src="/reel.js?v=3"></script>
 <script src="/split-drafts.js?v=1"></script>
 <script>
@@ -638,6 +759,303 @@ const PASTE_FIELDS = [
   ['youtubeTitle', 'ytt', 'YouTube タイトル'], ['youtubeDescription', 'ytd', 'YouTube 概要欄'],
   ['x', 'xt', 'X'], ['threads', 'th', 'Threads'],
 ];
+
+// --------------------------------------------------------------- 企画（シリーズ）
+/**
+ * ★ 数字は画面でも計算しない。/api/series が記録から計算した値を出すだけ。
+ *   画面とサーバーで別々に数えると、表示と投稿文の数字がずれる。
+ */
+// lib/series.js の RESERVED と同じ並び。お金の差し込み口は目標金額がある企画だけで使える。
+const SLOT_ALWAYS = ['DAY', '今日の作業', '今日の作業時間', '累計の作業時間'];
+const SLOT_MONEY = ['今日の売上', '今日の内訳', '累計', '累計の内訳', '今日かかったお金', 'かかったお金', '利益', '目標', 'あと', '達成率', '残り日数'];
+let seriesNow = null;   // いまの運用アカウントの企画の型（無ければ null）
+
+const jstTodayStr = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+
+async function loadSeries() {
+  const g = groups.find((x) => x.id === currentGroup);
+  seriesNow = (g && g.series) || null;
+  $('seriesCard').classList.toggle('hide', !seriesNow);
+  if (!seriesNow) return;
+
+  $('seriesTitle').textContent = `「${seriesNow.name}」の投稿案をつくる`;
+  if (!$('seriesOn').value) $('seriesOn').value = ($('when').value || '').slice(0, 10) || jstTodayStr();
+  // 毎回入れる項目の欄。入れかけの値は、描き直しても残す。
+  const keep = {};
+  for (const el of document.querySelectorAll('#seriesFields input')) keep[el.dataset.field] = el.value;
+  $('seriesFields').innerHTML = '';
+  for (const f of seriesNow.fields || []) {
+    const l = document.createElement('label');
+    l.textContent = f;
+    const i = document.createElement('input');
+    i.type = 'text'; i.dataset.field = f; i.value = keep[f] || '';
+    $('seriesFields').append(l, i);
+  }
+  // お金の欄（売上の内訳・かかったお金）は、目標金額のある企画だけに出す。
+  $('entryMoney').classList.toggle('hide', !seriesNow.goalYen);
+  await refreshSeriesStats();
+}
+
+async function refreshSeriesStats() {
+  if (!seriesNow) return;
+  try {
+    const out = await api(`/api/series?group=${currentGroup}&on=${$('seriesOn').value}`);
+    renderSeriesStats(out.stats);
+    fillEntry(out.entry);
+    renderRecent(out.recent || []);
+  } catch (e) {
+    $('seriesStats').innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+const yenStr = (n) => (n < 0 ? '-' : '') + Math.abs(Number(n)).toLocaleString('ja-JP') + '円';
+const hmStr = (min) => {
+  const h = Math.floor(min / 60), m = min % 60;
+  return !h ? `${m}分` : m ? `${h}時間${m}分` : `${h}時間`;
+};
+
+function renderSeriesStats(st) {
+  const box = $('seriesStats');
+  box.innerHTML = '';
+  if (!st) return;
+  const tile = (label, value, sub) =>
+    `<div class="st"><span>${label}</span><b>${escapeHtml(value)}</b>${sub ? `<span>${escapeHtml(sub)}</span>` : ''}</div>`;
+  const parts = [];
+  if (st.day !== null && st.day !== undefined) parts.push(tile('この日', 'DAY' + st.day));
+  else if (st.startsIn) parts.push(tile('この日', '開始前', `開始まであと${st.startsIn}日`));
+  if (st.goalYen) {
+    const by = Object.entries(st.total.byCategory || {}).map(([c, v]) => `${c} ${yenStr(v)}`).join(' ／ ');
+    parts.push(tile('売上の累計', yenStr(st.total.revenue), by));
+    parts.push(tile('かかったお金', yenStr(st.total.expenses)));
+    parts.push(tile('利益', yenStr(st.total.profit)));
+    parts.push(tile(`あと（${st.goalBasis === 'profit' ? '利益' : '売上'}で数える）`, yenStr(st.remainingYen)));
+    parts.push(tile('達成率', st.percent + '%'));
+    if (st.daysLeft !== null && st.daysLeft !== undefined) parts.push(tile('残り日数', st.daysLeft + '日'));
+  }
+  if (st.total && (st.total.humanMin || st.total.aiMin)) {
+    parts.push(tile('作業時間の累計', `人間${hmStr(st.total.humanMin)}`, `AI${hmStr(st.total.aiMin)}`));
+  }
+  if (st.total && st.total.services) parts.push(tile('公開したサービス', st.total.services + '個'));
+  box.innerHTML = parts.join('');
+}
+
+// ---- その日の記録の入力欄
+const ENTRY_ROWS = {
+  tasks: { cols: [['name', '作業（例：LP作成）', 'text'], ['humanMin', '人間 分', 'number'], ['aiMin', 'AI 分', 'number']] },
+  expenses: { cols: [['item', '何に（例：ドメイン代）', 'text'], ['yen', '円', 'number']] },
+  services: { cols: [['name', 'サービス名', 'text'], ['earn', '稼ぎ方（例：月額課金・広告）', 'text']] },
+};
+
+function addEntryRow(kind, v) {
+  const row = document.createElement('div');
+  row.className = 'erow ' + kind;
+  for (const [key, ph, type] of ENTRY_ROWS[kind].cols) {
+    const i = document.createElement('input');
+    i.type = type; i.placeholder = ph; i.dataset.key = key;
+    if (type === 'number') { i.min = '0'; i.step = '1'; }
+    i.value = v && v[key] !== undefined && v[key] !== 0 ? v[key] : '';
+    row.appendChild(i);
+  }
+  const del = document.createElement('button');
+  del.type = 'button'; del.textContent = '×'; del.title = 'この行を消す';
+  del.onclick = () => row.remove();
+  row.appendChild(del);
+  $('entry' + kind[0].toUpperCase() + kind.slice(1)).appendChild(row);
+}
+
+function fillEntry(entry) {
+  const e = entry || {};
+  $('entrySummary').textContent = `${$('seriesOn').value} の記録` + (entry ? '（保存済み）' : '（まだありません）');
+  $('entryIncome').innerHTML = '';
+  for (const c of seriesNow.incomeCategories || []) {
+    const l = document.createElement('label');
+    l.textContent = c;
+    const i = document.createElement('input');
+    i.type = 'number'; i.min = '0'; i.step = '1'; i.dataset.cat = c; i.style.width = '140px';
+    const v = (e.income || {})[c];
+    i.value = v ? v : '';
+    l.appendChild(i);
+    $('entryIncome').appendChild(l);
+  }
+  for (const kind of Object.keys(ENTRY_ROWS)) {
+    const box = $('entry' + kind[0].toUpperCase() + kind.slice(1));
+    box.innerHTML = '';
+    const rows = e[kind] || [];
+    for (const r of rows) addEntryRow(kind, r);
+    if (!rows.length) addEntryRow(kind);
+  }
+  $('entryAccounts').value = (e.accounts || []).join('\n');
+  $('entryLearnings').value = e.learnings || '';
+  $('entryErr').textContent = '';
+  $('entryState').textContent = '';
+}
+
+function collectEntry() {
+  const income = {};
+  for (const i of document.querySelectorAll('#entryIncome input')) income[i.dataset.cat] = i.value === '' ? 0 : Number(i.value);
+  const rows = (kind) => [...$('entry' + kind[0].toUpperCase() + kind.slice(1)).querySelectorAll('.erow')].map((r) => {
+    const o = {};
+    for (const i of r.querySelectorAll('input')) o[i.dataset.key] = i.type === 'number' ? (i.value === '' ? 0 : Number(i.value)) : i.value;
+    return o;
+  });
+  return {
+    income, expenses: rows('expenses'), tasks: rows('tasks'), services: rows('services'),
+    accounts: $('entryAccounts').value.split(/\r?\n/), learnings: $('entryLearnings').value,
+  };
+}
+
+function renderRecent(recent) {
+  if (!recent.length) { $('entryList').textContent = 'まだ記録がありません。'; return; }
+  $('entryList').innerHTML = recent.map((r) =>
+    `<div class="row" style="gap:10px;padding:2px 0"><a href="#" data-open="${escapeHtml(r.happened_on)}">${escapeHtml(r.happened_on)}</a>` +
+    (seriesNow.goalYen ? `　売上 ${yenStr(r.revenue)}　かかったお金 ${yenStr(r.expenses)}` : '') +
+    `　${escapeHtml((r.tasks || []).join('、'))}` +
+    `<button data-del="${escapeHtml(r.happened_on)}" style="margin-left:auto">消す</button></div>`).join('');
+  for (const a of $('entryList').querySelectorAll('a[data-open]')) {
+    a.onclick = (ev) => { ev.preventDefault(); $('seriesOn').value = a.dataset.open; refreshSeriesStats(); };
+  }
+  for (const b of $('entryList').querySelectorAll('button[data-del]')) {
+    b.onclick = async () => {
+      if (!confirm(`${b.dataset.del} の記録を消しますか？`)) return;
+      try { await api(`/api/series?group=${currentGroup}&date=${b.dataset.del}`, { method: 'DELETE' }); }
+      catch (e) { alert(e.message); }
+      refreshSeriesStats();
+    };
+  }
+}
+
+for (const b of document.querySelectorAll('#entryBox button[data-add]')) b.onclick = () => addEntryRow(b.dataset.add);
+
+$('seriesOn').addEventListener('change', refreshSeriesStats);
+
+$('entrySave').onclick = async () => {
+  $('entryErr').textContent = '';
+  const btn = $('entrySave');
+  btn.disabled = true;
+  try {
+    const out = await api('/api/series?action=entry', { method: 'POST', body: {
+      group_id: currentGroup, date: $('seriesOn').value, entry: collectEntry(),
+    } });
+    renderSeriesStats(out.stats);
+    fillEntry(out.entry);
+    renderRecent(out.recent || []);
+    $('entryState').textContent = '✅ 保存しました（数字は上に反映されています）';
+  } catch (e) { $('entryErr').textContent = e.message + (e.hint ? '\n' + e.hint : ''); }
+  btn.disabled = false;
+};
+
+/** 投稿案を各SNSの欄に入れる（まとめて貼るときと同じ欄）。空のものは触らない。 */
+function fillPostFields(r) {
+  const filled = [];
+  for (const [key, id, label] of PASTE_FIELDS) {
+    if (r[key]) { $(id).value = r[key]; filled.push(label); }
+  }
+  if (!$('title').value.trim() && r.youtubeTitle) $('title').value = r.youtubeTitle;
+  const per = $('ig').closest('details');
+  if (per) per.open = true;
+  if (ttCreators) refreshTtControls();
+  return filled;
+}
+
+$('seriesGen').onclick = async () => {
+  const btn = $('seriesGen');
+  const inputs = {};
+  for (const el of document.querySelectorAll('#seriesFields input')) inputs[el.dataset.field] = el.value;
+  btn.disabled = true;
+  $('seriesState').textContent = '作っています…（点検に通らなければ書き直させるので、30秒ほどかかることがあります）';
+  $('seriesFindings').innerHTML = '';
+  try {
+    const out = await api('/api/series?action=generate', { method: 'POST', body: {
+      group_id: currentGroup, on_date: $('seriesOn').value, inputs,
+      note: $('seriesNote').value, has_affiliate_link: $('affiFlag').checked,
+    } });
+    fillPostFields(out.posts || {});
+    renderSeriesStats(out.stats);
+    $('seriesScriptBox').classList.toggle('hide', !out.script);
+    $('seriesScript').value = out.script || '';
+    const errs = (out.findings || []).filter((f) => f.severity === 'error');
+    const warns = (out.findings || []).filter((f) => f.severity !== 'error');
+    $('seriesState').textContent = out.ok
+      ? `✅ 下の各SNSの欄に入れました（${out.attempts}回目で点検を通過）。中身を確かめてから予約してください。`
+      : '⚠️ 点検に通りきりませんでした。下の指摘を直してから予約してください。';
+    $('seriesFindings').innerHTML = errs.concat(warns).map((f) =>
+      `<div class="${f.severity === 'error' ? 'err' : 'muted'}">${f.severity === 'error' ? '要修正' : '注意'}：` +
+      `${escapeHtml(f.field)} … ${escapeHtml(f.message)}${f.excerpt ? `（「${escapeHtml(f.excerpt)}」）` : ''}</div>`).join('');
+  } catch (e) {
+    $('seriesState').textContent = '';
+    $('seriesFindings').innerHTML = `<div class="err">${escapeHtml(e.message)}${e.hint ? '<br>' + escapeHtml(e.hint) : ''}</div>`;
+  }
+  btn.disabled = false;
+};
+
+$('seriesScriptCopy').onclick = async () => {
+  try { await copyText($('seriesScript').value); $('seriesScriptCopy').textContent = 'コピーしました'; }
+  catch (e) { alert(e.message); }
+  setTimeout(() => { $('seriesScriptCopy').textContent = '台本をコピー'; }, 1500);
+};
+
+// ---- 企画の型の編集
+let seriesDlgGroup = null;
+
+function openSeriesDlg(g) {
+  seriesDlgGroup = g;
+  const s = g.series || {};
+  $('sdTitle').textContent = `「${g.label}」の企画の型`;
+  $('sdName').value = s.name || '';
+  $('sdStyle').value = s.style || '';
+  $('sdFields').value = (s.fields || []).join('\n');
+  $('sdClosing').value = s.closing || '';
+  $('sdTags').value = (s.hashtags || []).join(' ');
+  $('sdStart').value = s.startDate || '';
+  $('sdEnd').value = s.endDate || '';
+  $('sdGoal').value = s.goalYen || '';
+  $('sdScript').checked = !!s.script;
+  $('sdCats').value = (s.incomeCategories || []).join('\n');
+  document.querySelector(`input[name="sdBasis"][value="${s.goalBasis === 'profit' ? 'profit' : 'revenue'}"]`).checked = true;
+  $('sdRemove').classList.toggle('hide', !g.series);
+  $('sdErr').textContent = '';
+  showSlots();
+  $('seriesDlg').showModal();
+}
+
+/** いまの設定で使える差し込み口を見せる。書き方の指示やハッシュタグで使える。 */
+function showSlots() {
+  const goal = !!$('sdGoal').value;
+  $('sdMoney').classList.toggle('hide', !goal);
+  const auto = SLOT_ALWAYS.concat(goal ? SLOT_MONEY : []);
+  const own = $('sdFields').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  $('sdSlots').textContent = '使える差し込み口：' + auto.concat(own).map((n) => `{${n}}`).join(' ') +
+    (goal ? '' : '（目標金額を入れると {累計} {利益} {あと} {達成率} {残り日数} なども使えます）');
+}
+for (const id of ['sdGoal', 'sdFields']) $(id).addEventListener('input', showSlots);
+
+$('sdCancel').onclick = () => $('seriesDlg').close();
+
+$('sdSave').onclick = async () => {
+  $('sdErr').textContent = '';
+  const body = { series: {
+    name: $('sdName').value, style: $('sdStyle').value, fields: $('sdFields').value.split(/\r?\n/),
+    closing: $('sdClosing').value, hashtags: $('sdTags').value, startDate: $('sdStart').value,
+    endDate: $('sdEnd').value, goalYen: $('sdGoal').value === '' ? null : Number($('sdGoal').value),
+    incomeCategories: $('sdCats').value.split(/\r?\n/),
+    goalBasis: (document.querySelector('input[name="sdBasis"]:checked') || {}).value || 'revenue',
+    script: $('sdScript').checked,
+  } };
+  try {
+    await api(`/api/groups?id=${seriesDlgGroup.id}`, { method: 'PATCH', body });
+    $('seriesDlg').close();
+    await loadGroups();
+  } catch (e) { $('sdErr').textContent = e.message + (e.hint ? '\n' + e.hint : ''); }
+};
+
+$('sdRemove').onclick = async () => {
+  if (!confirm('この運用アカウントの企画の型を消します（売上の記録は残ります）。よろしいですか？')) return;
+  try {
+    await api(`/api/groups?id=${seriesDlgGroup.id}`, { method: 'PATCH', body: { series: null } });
+    $('seriesDlg').close();
+    await loadGroups();
+  } catch (e) { $('sdErr').textContent = e.message; }
+};
 
 $('pasteSplit').onclick = () => {
   const r = splitDrafts.split($('pasteAll').value);
@@ -1064,6 +1482,11 @@ function renderGroups() {
       renderViewTabs();
     });
     actions.appendChild(featBox);
+
+    const ser = document.createElement('button');
+    ser.textContent = g.series ? `企画の型（${g.series.name}）` : '企画の型を作る';
+    ser.onclick = () => openSeriesDlg(g);
+    actions.appendChild(ser);
 
     const ren = document.createElement('button');
     ren.textContent = '名前を変える';
@@ -2202,6 +2625,8 @@ function renderViewTabs() {
   $('v-gen').classList.toggle('hide', !writes);
   const one = document.querySelector('#viewTabs button[data-view="one"]');
   if (one) one.textContent = writes ? '1本だけつくる' : '投稿を作る';
+  // 企画の型があるチャンネルだけ、企画の投稿案の欄を出す。
+  loadSeries();
   // 動画を作らないチャンネルでは、動画のボタンを隠す。
   const mk = $('genMake');
   if (mk) mk.classList.toggle('hide', !groupUses('videos'));

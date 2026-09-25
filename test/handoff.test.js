@@ -186,7 +186,7 @@ const post = (over) => Object.assign({
                      'schema_v4_handoff.sql', 'schema_v5_per_network.sql',
                      'schema_v6_features.sql', 'schema_v7_identity.sql',
                      'schema_v8_insights.sql', 'schema_v9_tiktok_direct.sql',
-                     'schema_v10_threads.sql']) {
+                     'schema_v10_threads.sql', 'schema_v11_series.sql']) {
       assert.ok(all.includes(fs.readFileSync(dir + f, 'utf8')), f + ' が古い');
     }
     // つなぐ順番も見る。順番が狂うと引き継ぎが効かない。
@@ -196,6 +196,7 @@ const post = (over) => Object.assign({
     assert.ok(at('schema_v7_identity.sql') < at('schema_v8_insights.sql'), 'v7 と v8 の順が逆');
     assert.ok(at('schema_v8_insights.sql') < at('schema_v9_tiktok_direct.sql'), 'v8 と v9 の順が逆');
     assert.ok(at('schema_v9_tiktok_direct.sql') < at('schema_v10_threads.sql'), 'v9 と v10 の順が逆');
+    assert.ok(at('schema_v10_threads.sql') < at('schema_v11_series.sql'), 'v10 と v11 の順が逆');
   });
   // ---------------------------------------------------------------- まとめて仕込む
   await check('ネタは20本そろっていて、重複が無い', () => {
