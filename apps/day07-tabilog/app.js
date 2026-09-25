@@ -3331,6 +3331,7 @@
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
+    $('#entMoreFields').open = !!(entry && (entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl));
     $('#entPlaceSearch').value = '';
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;

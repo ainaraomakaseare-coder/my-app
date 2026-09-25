@@ -510,11 +510,6 @@
           <input type="text" id="entComment" placeholder="例：最高だった！">
         </div>
 
-        <div class="field">
-          <label for="entDetail">詳細（任意）</label>
-          <textarea id="entDetail" rows="4" placeholder="持ち物・注意点・裏話など、もっと書きたいことがあれば"></textarea>
-        </div>
-
         <div class="field" id="entRatingField" hidden>
           <label>評価</label>
           <div class="rating-widget" id="entRatingWidget"></div>
@@ -552,11 +547,6 @@
           <div class="cost-total" id="entCostTotal"></div>
         </div>
 
-        <div class="field">
-          <label for="entWaitTime">待ち時間</label>
-          <input type="text" id="entWaitTime" placeholder="例：20分待ち">
-        </div>
-
         <!-- 地図の欄は、候補の地図を広く見せるため横並びにせず、横幅いっぱいに使う -->
           <div class="field">
             <label for="entMapUrl">地図のURL（任意）</label>
@@ -583,15 +573,31 @@
               <button type="button" class="btn ghost small" id="btnUseMapUrl">このURLを地図欄に入れる</button>
             </div>
           </div>
+
+        <!-- 記録の画面が長いので、ときどきしか使わない欄はたたんでおく。すでに入っている記録を開いたときは
+             開いた状態にする（app.jsのopenEntryForm） -->
+        <details class="more-fields" id="entMoreFields">
+          <summary>詳細・待ち時間・お店のHP・その他URL</summary>
+          <div class="field">
+            <label for="entDetail">詳細（任意）</label>
+            <textarea id="entDetail" rows="4" placeholder="持ち物・注意点・裏話など、もっと書きたいことがあれば"></textarea>
+          </div>
+
+          <div class="field">
+            <label for="entWaitTime">待ち時間</label>
+            <input type="text" id="entWaitTime" placeholder="例：20分待ち">
+          </div>
+
           <div class="field">
             <label for="entShopUrl">お店・施設のHP（任意）</label>
             <input type="url" id="entShopUrl" placeholder="https://...">
           </div>
 
-        <div class="field">
-          <label for="entOtherUrl">その他URL（任意）</label>
-          <input type="url" id="entOtherUrl" placeholder="https://...">
-        </div>
+          <div class="field">
+            <label for="entOtherUrl">その他URL（任意）</label>
+            <input type="url" id="entOtherUrl" placeholder="https://...">
+          </div>
+        </details>
 
         <div class="field">
           <label for="entAuthor">記録した人（任意、未入力なら「匿名」）</label>

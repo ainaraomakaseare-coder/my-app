@@ -773,3 +773,16 @@ input[type="text"], input[type="url"], input[type="search"], input[type="email"]
 .mv-slide video { max-width: 100%; max-height: 100%; background: #000; }
 /* ビューアを開いているあいだ、後ろのページを動かさない */
 body.viewer-open { overflow: hidden; }
+
+/* ---------- 記録の画面：たたんだ欄 ---------- */
+.more-fields { margin: 4px 0 14px; border-radius: var(--radius-control); background: var(--input-bg); }
+.more-fields > summary {
+  list-style: none; cursor: pointer; padding: 12px 14px; font-size: 13px; font-weight: 700; color: var(--ink-muted);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.more-fields > summary::-webkit-details-marker { display: none; }
+.more-fields > summary::after { content: '＋'; font-size: 16px; color: var(--ink-soft); }
+.more-fields[open] > summary::after { content: '－'; }
+.more-fields > .field { padding: 0 14px; }
+.more-fields > .field:last-child { padding-bottom: 12px; }
+.more-fields .field input, .more-fields .field textarea { background: var(--card); }
