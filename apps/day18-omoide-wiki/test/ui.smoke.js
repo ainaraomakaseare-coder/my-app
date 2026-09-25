@@ -62,7 +62,9 @@ const TINY_PNG = Buffer.from(
   let dismissNextConfirm = false;
   let lastDismissedMessage = '';
   let promptQueue = [];
+  let lastConfirmMessage = '';
   page.on('dialog', d => {
+    if (d.type() === 'confirm') lastConfirmMessage = d.message();
     if (dismissNextConfirm && d.type() === 'confirm') {
       dismissNextConfirm = false;
       lastDismissedMessage = d.message();
@@ -101,6 +103,8 @@ const TINY_PNG = Buffer.from(
   check('AIエンドポイント未設定時はAI深掘りトグルが隠れている', await page.isHidden('#aiDeepenBlock'));
   check('音声で会話するは初回からONになっている', await page.isChecked('#voiceModeToggle'));
   check('最初の質問は生い立ち・経歴カテゴリから始まる', (await page.textContent('#qCategory')).indexOf('生い立ち・経歴') !== -1);
+  check('1回に聞く数は、最初は5問（ちょっとずつ）', (await page.inputValue('#paceSelect')) === '5');
+  await page.selectOption('#paceSelect', '15');
   const firstQuestion = await page.textContent('#qText');
   await page.fill('#qAnswer', '几帳面で、誰にでも敬語で話す人でした');
   await page.setInputFiles('#qPhotos', [tmpPhoto]);
@@ -170,6 +174,21 @@ const TINY_PNG = Buffer.from(
   check('エピソードが記録に増える', (await page.textContent('#entryList')).indexOf('雨の遠足') !== -1);
   check('サムネイルが表示される', await page.locator('#entryList .thumbs img').count() > 0);
   check('旅行名がダッシュボードの記録に表示される', (await page.textContent('#entryList')).indexOf('秋の遠足') !== -1);
+
+  // ---- 過去の回答を編集する ----
+  await page.locator('#entryList .entry-item:has-text("几帳面で") .entry-edit').click();
+  check('編集を押すと、元の回答が入った入力欄が出る', (await page.inputValue('#entryList .edit-text')) === '几帳面で、誰にでも敬語で話す人でした');
+  await page.click('#entryList .edit-cancel');
+  check('キャンセルすると変わらない', (await page.textContent('#entryList')).indexOf('誰にでも敬語で') !== -1);
+  await page.locator('#entryList .entry-item:has-text("几帳面で") .entry-edit').click();
+  await page.fill('#entryList .edit-text', '几帳面で、誰にでも丁寧に話す人でした');
+  await page.click('#entryList .edit-save');
+  check('過去の回答を書き直して保存できる', (await page.textContent('#entryList')).indexOf('誰にでも丁寧に話す') !== -1 && (await page.textContent('#entryList')).indexOf('敬語で') === -1);
+  await page.locator('#entryList .entry-item:has-text("雨の遠足") .entry-edit').click();
+  check('エピソードはタイトルも編集できる', (await page.inputValue('#entryList .edit-title')) === '雨の遠足で全員ずぶ濡れになった話');
+  await page.fill('#entryList .edit-text', 'バスが来なくて、みんなで歌いながら駅まで歩いた');
+  await page.click('#entryList .edit-save');
+  check('エピソードの本文を書き直して保存できる', (await page.textContent('#entryList')).indexOf('駅まで歩いた') !== -1);
 
   // ---- 旅行・イベントでまとめる ----
   await page.click('#tileTrips');
@@ -537,7 +556,7 @@ const TINY_PNG = Buffer.from(
 
   aiServer.close();
 
-  // ---- 15問ごとの休憩確認（お年寄りなど、長く話すと疲れる人向け） ----
+  // ---- 1回に聞く数ごとの区切り（お年寄りなど、少しずつ聞いて何日もかけて増やしていく） ----
   await page.click('[data-screen="dash"] .back');
   await page.waitForSelector('[data-screen=home].active');
   await page.click('#btnNewWiki');
@@ -545,19 +564,32 @@ const TINY_PNG = Buffer.from(
   await page.click('#btnCreateWiki');
   await page.click('#tileInterview');
   await page.waitForSelector('[data-screen=interview].active');
-  for (let i = 0; i < 14; i++) {
+  check('選んだ「1回に聞く数」は次のインタビューでも覚えている', (await page.inputValue('#paceSelect')) === '15');
+  await page.selectOption('#paceSelect', '3');
+  for (let i = 0; i < 2; i++) {
     await page.fill('#qAnswer', 'テスト回答' + i);
     await page.click('#btnSaveQ');
     await page.waitForFunction(() => !document.getElementById('btnSaveQ').disabled);
   }
-  dismissNextConfirm = true;
-  await page.fill('#qAnswer', 'テスト回答14');
+  lastConfirmMessage = '';
+  dismissNextConfirm = true; // 「キャンセル」＝もう少し続ける
+  await page.fill('#qAnswer', 'テスト回答2');
   await page.click('#btnSaveQ');
+  await page.waitForFunction(() => !document.getElementById('btnSaveQ').disabled);
+  check('3問答えると一区切りの確認が出る', lastConfirmMessage.indexOf('今日は3問') !== -1 && lastConfirmMessage.indexOf('休憩') !== -1, lastConfirmMessage);
+  check('一区切りでは、Wikiにたまった思い出の件数も伝える', lastConfirmMessage.indexOf('全部で3件') !== -1, lastConfirmMessage);
+  check('「キャンセル」を選ぶと、そのままインタビューを続けられる', await page.locator('[data-screen=interview].active').count() === 1);
+  for (let i = 3; i < 5; i++) {
+    await page.fill('#qAnswer', 'テスト回答' + i);
+    await page.click('#btnSaveQ');
+    await page.waitForFunction(() => !document.getElementById('btnSaveQ').disabled);
+  }
+  await page.fill('#qAnswer', 'テスト回答5');
+  await page.click('#btnSaveQ'); // 6問目で2回目の区切り。「OK」＝今日はここまで
   await page.waitForSelector('[data-screen=dash].active');
-  check('15問ごとに休憩を確認するダイアログが出る', lastDismissedMessage.indexOf('休憩') !== -1);
-  check('休憩で「今日はここまで」を選ぶとダッシュボードに戻る（＝インタビューが終わる）', await page.locator('[data-screen=dash].active').count() === 1);
+  check('一区切りで「OK」を選ぶと、今日はここまでになる', lastConfirmMessage.indexOf('今日は6問') !== -1, lastConfirmMessage);
   const savedCount = ((await page.textContent('#entryList')).match(/テスト回答/g) || []).length;
-  check('休憩を挟んでも15問ぶんきちんと保存されている', savedCount === 15, 'savedCount=' + savedCount);
+  check('区切りを挟んでも、答えた6問ぶんきちんと保存されている', savedCount === 6, 'savedCount=' + savedCount);
   await page.click('#btnDeleteWiki');
   await page.waitForSelector('[data-screen=home].active');
   await page.click('.wiki-card:has-text("やまだ たろう")');

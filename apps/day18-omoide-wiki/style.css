@@ -272,6 +272,13 @@ input[type=file]::file-selector-button:hover { background: var(--muted); }
 .entry-item .foot button:hover { color: var(--destructive); background: var(--destructive-soft); }
 .entry-item .foot button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }
 
+.entry-item .foot-actions { display: flex; gap: 2px; flex: none; }
+.entry-item .foot .entry-edit:hover { color: var(--foreground); background: var(--muted); }
+.entry-item.editing { background: var(--subtle); margin: 0 -12px; padding: 14px 12px; border-radius: var(--radius-lg); }
+.entry-item .edit-prompt { font-size: 13px; font-weight: 500; color: var(--muted-foreground); margin-bottom: 6px; }
+.entry-item .edit-title { margin-bottom: 8px; }
+.entry-item .edit-actions { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+
 .dash-footer { display: flex; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 20px; }
 
 /* ---- インタビュー ---- */

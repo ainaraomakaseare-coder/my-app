@@ -263,6 +263,24 @@
 
   // ---------- マージ（複数人のJSONを1つに合体する） ----------
 
+  // 過去の回答・エピソードを書き直す。更新日時を新しくするので、複数人の記録を合体しても編集が優先される。
+  // 書き直した回答から作ったAIのまとめ文は古い内容のままになるため外す（もう一度「AIでまとめる」で作り直せる）。
+  function editEntry(wiki, cat, id, fields) {
+    var item = (wiki[cat] || []).filter(function (x) { return x.id === id; })[0];
+    if (!item) return null;
+    if (cat === 'episodes') {
+      if (fields.title != null) item.title = String(fields.title).trim();
+      if (fields.body != null) item.body = String(fields.body).trim();
+      delete item.composedBody;
+    } else {
+      item.text = String(fields.text == null ? item.text : fields.text).trim();
+      if (wiki.composed && wiki.composed[cat]) delete wiki.composed[cat];
+    }
+    item.updatedAt = nowIso();
+    wiki.updatedAt = item.updatedAt;
+    return item;
+  }
+
   function mergeEntryArrays(existing, incoming) {
     var byId = {};
     (existing || []).forEach(function (item) { byId[item.id] = item; });
@@ -713,6 +731,7 @@
     buildProfileContext: buildProfileContext,
     parseTags: parseTags,
     mergeEntryArrays: mergeEntryArrays,
+    editEntry: editEntry,
     mergeWiki: mergeWiki,
     mergeImport: mergeImport,
     parseImportPayload: parseImportPayload,
@@ -750,7 +769,9 @@
   var interviewIndex = 0;
   var sessionAnswered = 0;
   var lastBreakCheckpoint = 0;
-  var BREAK_EVERY = 15;
+  // 1回に聞く数。お年寄りなど長く話すと疲れる人のために、少しずつ聞いて何日もかけて増やしていけるようにする
+  var PACE_PREF_KEY = 'omoide-wiki:pace';
+  var DEFAULT_PACE = 5;
   var aiThreadHistory = [];
   var interviewHistory = []; // 「前の質問に戻る」用。各ステップで {index, category, entryId, text} を積む
   var pendingEpisodePhotos = [];
@@ -959,12 +980,38 @@
         '<div class="body">' + bodyHtml + '</div>' + thumbsHtml +
         '<div class="foot"><span>' + escapeHtml(L[r.cat]) + (r.item.author ? '・' + escapeHtml(r.item.author) : '') +
           (r.item.tripId ? '・' + escapeHtml(tripTitle(w, r.item.tripId)) : '') +
-          (r.item.period ? '・' + escapeHtml(r.item.period) : '') + '</span><button data-cat="' + r.cat + '" data-id="' + r.item.id + '">削除</button></div>';
-      el.querySelector('button').addEventListener('click', function () {
+          (r.item.period ? '・' + escapeHtml(r.item.period) : '') + '</span>' +
+          '<span class="foot-actions"><button class="entry-edit">編集</button><button class="entry-delete">削除</button></span></div>';
+      el.querySelector('.entry-edit').addEventListener('click', function () { openEntryEditor(el, w, r.cat, r.item); });
+      el.querySelector('.entry-delete').addEventListener('click', function () {
         if (!confirm('この記録を削除しますか？')) return;
         deleteEntry(r.cat, r.item.id);
       });
       listEl.appendChild(el);
+    });
+  }
+
+  // 集まった記録の1件を、その場で書き直す
+  function openEntryEditor(el, w, cat, item) {
+    var isEpisode = cat === 'episodes';
+    el.classList.add('editing');
+    el.innerHTML =
+      (item.prompt ? '<div class="edit-prompt">' + escapeHtml(item.prompt) + '</div>' : '') +
+      (isEpisode ? '<input type="text" class="edit-title" aria-label="タイトル" placeholder="タイトル">' : '') +
+      '<textarea class="edit-text" rows="5" aria-label="回答"></textarea>' +
+      '<div class="edit-actions"><button class="btn primary small edit-save">保存する</button><button class="btn text small edit-cancel">キャンセル</button></div>';
+    if (isEpisode) el.querySelector('.edit-title').value = item.title || '';
+    var ta = el.querySelector('.edit-text');
+    ta.value = isEpisode ? (item.body || '') : (item.text || '');
+    ta.focus();
+    el.querySelector('.edit-cancel').addEventListener('click', function () { renderDash(); });
+    el.querySelector('.edit-save').addEventListener('click', function () {
+      var text = ta.value.trim();
+      var title = isEpisode ? el.querySelector('.edit-title').value.trim() : '';
+      if (!text && !title) { alert('空にはできません。消したいときは「削除」を使ってください。'); return; }
+      editEntry(w, cat, item.id, isEpisode ? { title: title, body: text } : { text: text });
+      persist();
+      renderDash();
     });
   }
 
@@ -999,6 +1046,19 @@
       return true;
     }
   }
+  function loadPacePref() {
+    try {
+      var v = localStorage.getItem(PACE_PREF_KEY);
+      return v === null ? DEFAULT_PACE : Number(v);
+    } catch (e) {
+      return DEFAULT_PACE;
+    }
+  }
+
+  function savePacePref(n) {
+    try { localStorage.setItem(PACE_PREF_KEY, String(n)); } catch (e) { /* 保存できなくても致命的ではない */ }
+  }
+
   function saveVoicePref(on) {
     try { localStorage.setItem(VOICE_PREF_KEY, on ? 'on' : 'off'); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
@@ -1736,16 +1796,23 @@
   }
 
   function advanceInterview() {
-    // 何問か答えるごとに、続けるかどうかを聞く（お年寄りなど、長く話すと疲れる人のための一区切り）
-    if (sessionAnswered > 0 && sessionAnswered !== lastBreakCheckpoint && sessionAnswered % BREAK_EVERY === 0) {
+    // 「1回に聞く数」ごとに一区切りを入れる。押しやすいOKを「今日はここまで」にし、
+    // 何日もかけて少しずつ思い出が増えていく実感が持てるよう、たまった件数も伝える
+    var pace = Number($('#paceSelect').value) || 0;
+    if (pace > 0 && sessionAnswered > 0 && sessionAnswered !== lastBreakCheckpoint && sessionAnswered % pace === 0) {
       lastBreakCheckpoint = sessionAnswered;
       stopSpeaking();
-      var keepGoing = confirm(
-        'ここまでで' + sessionAnswered + '問お答えいただきました。少し休憩しますか？\n\n' +
-        '「OK」で続ける／「キャンセル」で今日はここまでにする（答えた内容はもう保存されているので、続きはまた今度できます）'
+      stopAllMics();
+      var total = countAll(currentWiki());
+      var stopHere = confirm(
+        '今日は' + sessionAnswered + '問答えていただきました。ありがとうございます！\n' +
+        'このWikiには、全部で' + total + '件の思い出がたまりました。\n\n' +
+        '少し休憩しますか？\n' +
+        '「OK」：今日はここまで（答えた内容は保存済み。続きはまた今度）\n' +
+        '「キャンセル」：もう少し続ける'
       );
-      if (!keepGoing) {
-        finishInterview('今日はここまでにしましょう。お疲れさまでした。続きはまた今度、「質問で深掘りする」から始められます。');
+      if (stopHere) {
+        finishInterview('お疲れさまでした。続きはまた今度、「質問で深掘りする」から始められます（答えた質問は二度と聞きません）。');
         return;
       }
     }
@@ -2572,6 +2639,8 @@
     bindMicButton('episode', $('#epMicBtn'));
     $('#voiceModeToggle').addEventListener('change', function (e) { saveVoicePref(e.target.checked); });
     $('#aiDeepenToggle').addEventListener('change', function (e) { saveAiDeepenPref(e.target.checked); });
+    $('#paceSelect').value = String(loadPacePref());
+    $('#paceSelect').addEventListener('change', function (e) { savePacePref(Number(e.target.value)); });
 
     $('#tileInterview').addEventListener('click', startInterview);
     $('#tileEpisode').addEventListener('click', function () { openEpisodeForm(); });
