@@ -8,8 +8,9 @@ const html = fs.readFileSync(htmlPath, 'utf8');
 const logic = html.slice(html.indexOf('var LOGIC_MARK_START'), html.indexOf('var LOGIC_MARK_END = 1;'));
 const box = {};
 vm.runInNewContext(logic, box);
-function createServer({key=process.env.OPENAI_API_KEY, model=process.env.OPENAI_MODEL || 'gpt-4o-mini', fetchImpl=fetch, publicURL=process.env.PUBLIC_APP_URL || ''}={}) {
+function createServer({key=process.env.OPENAI_API_KEY, model=process.env.OPENAI_MODEL || 'gpt-4o-mini', fetchImpl=fetch, publicURL=process.env.PUBLIC_APP_URL || '', deviceLimit=3}={}) {
   let busy=false, requests=[];
+  const deviceUses=new Map();
   const send=(res,status,data)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
   const server=http.createServer(async(req,res)=>{
     const port=server.address().port;
@@ -30,9 +31,12 @@ function createServer({key=process.env.OPENAI_API_KEY, model=process.env.OPENAI_
     if(req.method!=='POST')return send(res,405,{error:'POSTを使用してください。'});
     if(req.headers.origin!=='http://'+req.headers.host || !/^application\/json(?:;|$)/i.test(req.headers['content-type']||''))return send(res,403,{error:'アプリ画面から読み取りを実行してください。'});
     if(!key)return send(res,503,{error:'AI読み取りの接続設定がまだありません。サーバーにOPENAI_API_KEYを設定してください。別のAIで変換したJSONも利用できます。'});
+    const deviceId=String(req.headers['x-device-id']||'').slice(0,200)||'unknown';
+    const usedByDevice=deviceUses.get(deviceId)||0;
+    if(usedByDevice>=deviceLimit)return send(res,429,{error:'この端末での利用上限（'+deviceLimit+'回）を超えました。'});
     requests=requests.filter(t=>Date.now()-t<60000);
     if(busy || requests.length>=10)return send(res,429,{error:'読み取り中、または利用回数が多いため、少し待って再試行してください。'});
-    busy=true;requests.push(Date.now());
+    busy=true;requests.push(Date.now());deviceUses.set(deviceId,usedByDevice+1);
     const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),90000);
     res.on('close',()=>{if(!res.writableEnded)controller.abort();});
     try {
@@ -50,7 +54,7 @@ function createServer({key=process.env.OPENAI_API_KEY, model=process.env.OPENAI_
       if(content.some(c=>c.type==='refusal'))return send(res,422,{error:'このメモはAIで読み取れませんでした。内容を確認するかJSONを直接入力してください。'});
       if(result.status!=='completed')return send(res,422,{error:'読み取りが完了しませんでした。メモを分割して再試行してください。'});
       let parsed;try{parsed=JSON.parse(content.filter(c=>c.type==='output_text').map(c=>c.text).join(''));}catch{return send(res,502,{error:'AIの応答を読み取れませんでした。'});}
-      if(!parsed||!Array.isArray(parsed.games)||parsed.games.length>100)return send(res,422,{error:'一度に100試合までです。メモを分割してください。'});
+      if(!parsed||!Array.isArray(parsed.games)||parsed.games.length>200)return send(res,422,{error:'一度に200試合までです。メモを分割してください。'});
       send(res,200,{games:parsed.games});
     }catch(error){if(!res.writableEnded)send(res,error.name==='AbortError'||controller.signal.aborted?504:502,{error:controller.signal.aborted?'AI読み取りが時間切れになりました。メモを分割して再試行してください。':'AIサービスとの通信に失敗しました。メモは保存されていません。'});}
     finally{clearTimeout(timer);busy=false;}

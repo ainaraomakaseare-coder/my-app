@@ -10,15 +10,20 @@ if(Capacitor.isNativePlatform()) {
     const reader=new FileReader(); reader.onerror=()=>reject(new Error('ファイルを読み込めませんでした。'));
     reader.onload=()=>resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(blob);
   });
+  // The bundled app has no local dev server, so relative /api/... paths would
+  // resolve against the fake capacitor://localhost origin. Requests go to the
+  // public API deployment instead; CapacitorHttp (enabled in capacitor.config.json)
+  // intercepts fetch() natively, so this call is not subject to WKWebView CORS.
+  const API_BASE='https://baydiary-api.vercel.app';
   window.BayDiaryNative={
     shareFile:createFileSharer({filesystem:Filesystem,share:Share,cache:Directory.Cache,readBase64}),
-    // The local developer server cannot be reached from an installed app.
-    async extractMemo(){throw new Error('iOS版のAI読み取りは準備中です。現在はJSONの読み込みを利用できます。');}
+    async extractMemo(url,options){
+      const target=/^https?:\/\//.test(url)?url:API_BASE+url;
+      return fetch(target,options);
+    }
   };
   document.addEventListener('DOMContentLoaded',()=>{
     if(window.BayDiaryShell)document.documentElement.classList.add('bay-native-shell');
-    document.getElementById('memo-analyze').disabled=true;
-    document.getElementById('memo-status').textContent='iOSテスト版ではAI読み取りを準備中です。JSONの読み込みは利用できます。';
     document.getElementById('share-download').textContent='画像を共有・保存';
   });
 }
