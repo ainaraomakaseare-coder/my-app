@@ -1602,8 +1602,9 @@
     editingEntryId: null,
     editingEntry: null,       // 編集中の記録（評価の表示・更新に使う）
     entryBlockId: null,       // 記録を追加する先の大項目
-    formPhotoIds: [],         // 既存（サーバー上）の写真id
-    pendingPhotos: [],        // 新規に選んだ、まだアップロードしていない {blob, url}
+    // 記録フォームの写真。並べ替えられるよう、保存済み（{id}）と、まだアップロードしていない新しい写真
+    // （{blob, url}）を1つの並びで持つ（以前は別々に持ち、新しい写真は必ず後ろに付いていた）
+    formPhotos: [],
     formVideoIds: [],         // 既存（サーバー上）の動画id
     pendingVideos: [],        // 新規に選んだ、まだアップロードしていない {blob, name, size}
     formCostItems: [],        // {label, amount}
@@ -3265,8 +3266,7 @@
     state.entryBlockId = blockId;
     state.editingEntryId = entry ? entry.id : null;
     state.editingEntry = entry || null;
-    state.formPhotoIds = entry ? (entry.photoIds || []).slice() : [];
-    state.pendingPhotos = [];
+    state.formPhotos = entry ? (entry.photoIds || []).map(function (id) { return { id: id }; }) : [];
     state.formVideoIds = entry ? (entry.videoIds || []).slice() : [];
     state.pendingVideos = [];
     state.formCostItems = entry ? (entry.costItems || []).map(function (it) {
@@ -3501,55 +3501,114 @@
 
   var ROTATE_ICON = '<svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 8A6 6 0 1 0 16 11"/><path d="M16 4v4h-4"/></svg>';
 
+  // 写真の並びのプレビュー。長押ししてからドラッグすると並べ替えられる（先頭の写真が、マイログなどで
+  // 代表の写真になる）。すぐにドラッグにしないのは、スマホで写真の上から指でページをスクロールしたいときに
+  // 誤って動かさないため。回転・削除のボタンはこれまでどおり。
   function renderPhotoPreview() {
     var el = $('#entPhotoPreview');
     el.innerHTML = '';
-    state.formPhotoIds.forEach(function (id, idx) {
+    state.formPhotos.forEach(function (item, idx) {
       var ph = document.createElement('div');
       ph.className = 'ph';
-      ph.innerHTML = '<img src="' + escapeHtml(photoUrl(id)) + '">' +
+      ph.dataset.index = idx;
+      ph.innerHTML = '<img src="' + escapeHtml(item.id ? photoUrl(item.id) : item.url) + '" draggable="false">' +
+        (idx === 0 && state.formPhotos.length > 1 ? '<span class="ph-first">先頭</span>' : '') +
         '<button type="button" class="ph-rotate" aria-label="90度回す">' + ROTATE_ICON + '</button>' +
         '<button type="button" class="ph-remove" aria-label="削除">×</button>';
       ph.querySelector('.ph-remove').addEventListener('click', function () {
-        state.formPhotoIds.splice(idx, 1);
+        if (item.url) URL.revokeObjectURL(item.url);
+        state.formPhotos.splice(idx, 1);
         renderPhotoPreview();
       });
-      // 保存済みの写真の回転は、一度取得→回転→再アップロードしてidを差し替える
-      // （このアプリに写真の上書き更新APIが無いため、新しい写真として置き換える形）
       ph.querySelector('.ph-rotate').addEventListener('click', function () {
         var btn = ph.querySelector('.ph-rotate');
         btn.disabled = true;
-        fetch(photoUrl(id)).then(function (res) { return res.blob(); })
-          .then(function (blob) { return rotateImageBlob(blob, 90); })
-          .then(function (rotated) { return uploadPhotoBlob(rotated); })
-          .then(function (p) {
-            state.formPhotoIds[idx] = p.id;
+        if (item.id) {
+          // 保存済みの写真の回転は、一度取得→回転→再アップロードしてidを差し替える
+          // （このアプリに写真の上書き更新APIが無いため、新しい写真として置き換える形）
+          fetch(photoUrl(item.id)).then(function (res) { return res.blob(); })
+            .then(function (blob) { return rotateImageBlob(blob, 90); })
+            .then(function (rotated) { return uploadPhotoBlob(rotated); })
+            .then(function (up) { item.id = up.id; renderPhotoPreview(); })
+            .catch(function () { btn.disabled = false; alert('写真の回転に失敗しました。もう一度お試しください。'); });
+        } else {
+          rotateImageBlob(item.blob, 90).then(function (rotated) {
+            URL.revokeObjectURL(item.url);
+            item.blob = rotated;
+            item.url = URL.createObjectURL(rotated);
             renderPhotoPreview();
-          })
-          .catch(function () { btn.disabled = false; alert('写真の回転に失敗しました。もう一度お試しください。'); });
+          });
+        }
       });
       el.appendChild(ph);
     });
-    state.pendingPhotos.forEach(function (p, idx) {
-      var ph = document.createElement('div');
-      ph.className = 'ph';
-      ph.innerHTML = '<img src="' + p.url + '">' +
-        '<button type="button" class="ph-rotate" aria-label="90度回す">' + ROTATE_ICON + '</button>' +
-        '<button type="button" class="ph-remove" aria-label="削除">×</button>';
-      ph.querySelector('.ph-remove').addEventListener('click', function () {
-        URL.revokeObjectURL(state.pendingPhotos[idx].url);
-        state.pendingPhotos.splice(idx, 1);
+    $('#entPhotoOrderHint').hidden = state.formPhotos.length < 2;
+  }
+
+  // 長押し→ドラッグで並べ替え。指の下にある写真の位置へ、離したときに移す。
+  var PHOTO_DRAG_HOLD_MS = 280;
+  function initPhotoReorder() {
+    var el = $('#entPhotoPreview');
+    var drag = null; // { from, ph, startX, startY, timer, active, target }
+    function thumbAt(x, y) {
+      var hit = null;
+      $all('.ph', el).forEach(function (ph) {
+        if (drag && ph === drag.ph) return; // 動かしている写真自身は、指の下に来ているので数えない
+        var r = ph.getBoundingClientRect();
+        if (x >= r.left - 4 && x <= r.right + 4 && y >= r.top - 4 && y <= r.bottom + 4) hit = ph;
+      });
+      return hit;
+    }
+    function clearTargets() { $all('.ph.drop-target', el).forEach(function (p) { p.classList.remove('drop-target'); }); }
+    function finish(commit) {
+      if (!drag) return;
+      clearTimeout(drag.timer);
+      if (drag.active) {
+        drag.ph.classList.remove('dragging');
+        drag.ph.style.transform = '';
+        clearTargets();
+        if (commit && drag.target !== null && drag.target !== drag.from) {
+          var moved = state.formPhotos.splice(drag.from, 1)[0];
+          state.formPhotos.splice(drag.target, 0, moved);
+        }
         renderPhotoPreview();
-      });
-      ph.querySelector('.ph-rotate').addEventListener('click', function () {
-        rotateImageBlob(state.pendingPhotos[idx].blob, 90).then(function (rotated) {
-          URL.revokeObjectURL(state.pendingPhotos[idx].url);
-          state.pendingPhotos[idx] = { blob: rotated, url: URL.createObjectURL(rotated) };
-          renderPhotoPreview();
-        });
-      });
-      el.appendChild(ph);
+      }
+      drag = null;
+    }
+    el.addEventListener('pointerdown', function (e) {
+      var ph = e.target.closest('.ph');
+      if (!ph || e.target.closest('button') || state.formPhotos.length < 2) return;
+      drag = { from: Number(ph.dataset.index), ph: ph, startX: e.clientX, startY: e.clientY, active: false, target: null };
+      var start = function () {
+        if (!drag) return;
+        drag.active = true;
+        drag.target = drag.from;
+        ph.classList.add('dragging');
+        if (navigator.vibrate) navigator.vibrate(10);
+      };
+      // マウスはすぐ、指は長押ししてから
+      if (e.pointerType === 'mouse') start(); else drag.timer = setTimeout(start, PHOTO_DRAG_HOLD_MS);
+      try { el.setPointerCapture(e.pointerId); } catch (err) { /* 古いブラウザ */ }
     });
+    el.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
+      if (!drag.active) {
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) finish(false); // 長押しの前に動いた＝スクロールしたい
+        return;
+      }
+      drag.ph.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(1.08)';
+      clearTargets();
+      var over = thumbAt(e.clientX, e.clientY);
+      if (over && over !== drag.ph) { over.classList.add('drop-target'); drag.target = Number(over.dataset.index); }
+      else if (!over) drag.target = drag.from;
+    });
+    el.addEventListener('pointerup', function () { finish(true); });
+    el.addEventListener('pointercancel', function () { finish(false); });
+    // iOSでは、ドラッグ中にページがスクロールしないよう、タッチの移動を止める（長押しの後だけ）
+    el.addEventListener('touchmove', function (e) { if (drag && drag.active) e.preventDefault(); }, { passive: false });
+    // 長押しでiOSの「画像を保存」メニューが出ないように
+    el.addEventListener('contextmenu', function (e) { if (e.target.closest('.ph')) e.preventDefault(); });
   }
 
   function formatMB(bytes) {
@@ -3886,12 +3945,13 @@
     if (!$('#entTravelField').hidden) payload.travel = readTravelFields();
 
     Promise.all([
-      Promise.all(state.pendingPhotos.map(function (p) { return uploadPhotoBlob(p.blob); })),
+      // 並べた順のまま、新しい写真だけアップロードしてidにする
+      Promise.all(state.formPhotos.map(function (p) { return p.id ? Promise.resolve({ id: p.id }) : uploadPhotoBlob(p.blob); })),
       Promise.all(state.pendingVideos.map(function (v) { return uploadPhotoBlob(v.blob); }))
     ])
       .then(function (results) {
         var uploaded = results[0], uploadedVideos = results[1];
-        payload.photoIds = state.formPhotoIds.concat(uploaded.map(function (u) { return u.id; }));
+        payload.photoIds = uploaded.map(function (u) { return u.id; });
         payload.videoIds = state.formVideoIds.concat(uploadedVideos.map(function (u) { return u.id; }));
         var req = state.editingEntryId
           ? api('/entries/' + encodeURIComponent(state.editingEntryId), 'PATCH', payload)
@@ -4765,10 +4825,11 @@
     });
 
     $('#entPhotoPicker').addEventListener('click', function () { $('#entPhoto').click(); });
+    initPhotoReorder();
     $('#entPhoto').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
       Promise.all(files.map(function (f) { return fileToCompressedBlob(f, 1280, 0.72); })).then(function (blobs) {
-        blobs.forEach(function (blob) { state.pendingPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
+        blobs.forEach(function (blob) { state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
         renderPhotoPreview();
       });
       e.target.value = '';
