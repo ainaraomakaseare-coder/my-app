@@ -137,3 +137,11 @@ npx wrangler deploy
 **通報の通知先**：`npx wrangler secret put REPORT_NOTIFY_EMAIL`で運営者のメールアドレスを登録すると、コメントが通報されたときにResend経由でメールが届く（`RESEND_API_KEY`はログイン用に設定済みのものを使う）。`wrangler.jsonc`は公開リポジトリに入っているので、メールアドレスはそこに書かずsecretにする。
 
 **トークン必須への切り替え**：1.1.0以降のiOSアプリが行き渡ったら、`vars`に`"REQUIRE_SESSION": "1"`を足して`wrangler deploy`する。以後、トークンを送らない古いアプリからのアカウント操作は拒否される。
+
+## 紹介文のレビュー項目・移動の情報（2026-09-25 追加）
+
+評価にレビュー項目（ratings.review）、記録に移動の情報（entries.travel）の列を足した（docs/adr/0007）。**wrangler deployより先に** migrations/0017_review_travel.sql を本番で1回だけ実行する（逆順だと評価・記録の保存がSQLエラーになる）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel.sql
+```

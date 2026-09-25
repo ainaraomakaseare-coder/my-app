@@ -286,6 +286,11 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3.5 6v14L9 18l6 2 5.5-2V4L15 6z"/><path d="M9 4v14M15 6v14"/></svg>
         <span>地図でふりかえる</span>
       </button>
+      <!-- 紹介文（ホテログ・レクログ・飯ログ。docs/adr/0007）。自分の★レビューから、SNSに貼れる文章を作る -->
+      <button class="replay-entry-btn post-entry-btn" id="btnOpenPost" type="button">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4"/></svg>
+        <span>紹介文を作る</span>
+      </button>
 
       <div class="day-tabs" id="dayTabs"></div>
 
@@ -506,6 +511,25 @@
           <label>評価</label>
           <div class="rating-widget" id="entRatingWidget"></div>
           <p class="hint" id="entRatingSummary"></p>
+          <!-- 紹介文（ホテログ・レクログ・飯ログ）用の、自分のレビュー項目（app.jsのrenderReviewFields。docs/adr/0007） -->
+          <div class="review-fields" id="entReviewFields" hidden></div>
+        </div>
+
+        <!-- 移動の予定の記録だけに出す、紹介文用の移動の情報（★はつけない） -->
+        <div class="field" id="entTravelField" hidden>
+          <label>移動の情報（紹介文に使います）</label>
+          <div class="travel-grid">
+            <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地（例：ローマ）">
+            <span class="travel-arrow">→</span>
+            <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地（例：ロンドン）">
+          </div>
+          <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：ブエリング航空 VY6203）">
+          <div class="travel-grid">
+            <label class="travel-time">出発<input type="time" id="entTravelDepart"></label>
+            <label class="travel-time">到着<input type="time" id="entTravelArrive"></label>
+          </div>
+          <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）。費用の明細があればそちらを使います">
+          <p class="hint" id="entTravelDuration"></p>
         </div>
 
         <div class="field">
@@ -631,6 +655,23 @@
       <button class="btn primary" id="btnSendComment" type="submit">送信</button>
     </form>
     <p class="hint comment-status" id="commentStatus"></p>
+  </div>
+</div>
+
+<!-- ============ 紹介文（コピーしてSNSに貼る） ============ -->
+<div class="sheet-backdrop" id="postSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="postSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="postSheetTitle">紹介文</div>
+      <button class="sheet-close" id="btnClosePostSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint" id="postSheetNote"></p>
+    <textarea class="post-text" id="postText" rows="14"></textarea>
+    <div class="post-actions">
+      <button class="btn primary" id="btnCopyPost" type="button">コピーする</button>
+      <button class="btn ghost" id="btnSharePost" type="button" hidden>共有する</button>
+    </div>
+    <p class="hint comment-status" id="postStatus"></p>
   </div>
 </div>
 

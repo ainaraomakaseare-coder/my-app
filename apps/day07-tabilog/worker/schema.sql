@@ -262,3 +262,8 @@ CREATE TABLE IF NOT EXISTS comment_reports (
   created_at TEXT NOT NULL,
   UNIQUE(comment_id, reporter_account_id)
 );
+
+-- v18：ratingsに review（人ごとのレビュー項目、JSON）、entriesに travel（移動の情報、JSON）を追加する
+-- 一度きりの文。本番環境へ反映するまでは migrations/0017_review_travel.sql を1回だけ実行すること。
+-- ALTER TABLE ratings ADD COLUMN review TEXT NOT NULL DEFAULT '{}';
+-- ALTER TABLE entries ADD COLUMN travel TEXT NOT NULL DEFAULT '{}';

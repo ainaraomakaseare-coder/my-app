@@ -301,7 +301,7 @@ async function deleteTrip(id, env, headers) {
 /* ---------- blocks（大項目） ---------- */
 
 // この予定の場所まで、どうやって移動したか（地図でふりかえる演出で使う。v15）。空文字は「未設定＝演出なし」。
-const TRANSPORTS = ["", "plane", "taxi", "walk", "train", "bus", "bicycle"];
+const TRANSPORTS = ["", "plane", "car", "taxi", "walk", "train", "bus", "bicycle"];
 
 function validBlockInput(x) {
   if (!x || typeof x !== "object") return false;
@@ -426,6 +426,29 @@ async function reorderBlocks(tripId, date, request, env, headers) {
 
 /* ---------- entries（小項目） ---------- */
 
+// 移動の予定の記録に持たせる、紹介文（docs/adr/0007）用の事実情報。★の評価とは違い、誰が見ても同じ
+// 内容なので、人ごとのレビューではなく記録そのものに持つ。全部任意。
+// from/to：区間（ローマ→ロンドン）、company：会社・便名、depart/arrive：出発・到着時刻（HH:MM）、
+// amount：金額（円）。所要時間は出発・到着から計算するので持たない。
+function validTravel(x) {
+  if (x === undefined) return true;
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  if (!optStr(x.from, 60) || !optStr(x.to, 60) || !optStr(x.company, 60)) return false;
+  for (const k of ["depart", "arrive"]) {
+    if (x[k] !== undefined && x[k] !== "" && !TIME_RE.test(x[k])) return false;
+  }
+  if (x.amount !== undefined && x.amount !== null && !(Number.isInteger(x.amount) && x.amount >= 0 && x.amount <= 100000000)) return false;
+  return true;
+}
+
+function cleanTravel(x) {
+  if (!x) return {};
+  const out = {};
+  for (const k of ["from", "to", "company", "depart", "arrive"]) if (x[k]) out[k] = String(x[k]).trim();
+  if (Number.isInteger(x.amount)) out.amount = x.amount;
+  return out;
+}
+
 function validEntryInput(x) {
   if (!x || typeof x !== "object") return false;
   if (!optStr(x.episode, 4000)) return false;
@@ -438,6 +461,7 @@ function validEntryInput(x) {
   if (!optUrl(x.shopUrl, 500)) return false;
   if (!optUrl(x.otherUrl, 500)) return false;
   if (!optStr(x.author, 50)) return false;
+  if (!validTravel(x.travel)) return false;
   if (x.photoIds !== undefined) {
     if (!Array.isArray(x.photoIds) || x.photoIds.length > 20) return false;
     if (!x.photoIds.every((p) => typeof p === "string" && p.length <= 80)) return false;
@@ -465,9 +489,19 @@ function rowToEntry(row) {
     shopUrl: row.shop_url,
     otherUrl: row.other_url,
     author: row.author,
+    travel: parseJsonObject(row.travel),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseJsonObject(text) {
+  try {
+    const v = JSON.parse(text || "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
 }
 
 async function createEntry(blockId, request, env, headers) {
@@ -496,16 +530,17 @@ async function createEntry(blockId, request, env, headers) {
     shop_url: data.shopUrl || "",
     other_url: data.otherUrl || "",
     author: (data.author || "").trim(),
+    travel: JSON.stringify(cleanTravel(data.travel)),
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, travel, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   )
     .bind(
       row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
-      row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.created_at, row.updated_at
+      row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
     )
     .run();
   return json(rowToEntry(row), 201, headers);
@@ -525,13 +560,14 @@ async function updateEntry(id, request, env, headers) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   await env.DB.prepare(
-    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, updated_at=? WHERE id=?`
+    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
   )
     .bind(
       (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
       JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
       JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
-      merged.mapUrl || "", merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(), t, id
+      merged.mapUrl || "", merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
+      JSON.stringify(cleanTravel(merged.travel)), t, id
     )
     .run();
   const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
@@ -577,8 +613,41 @@ async function moveEntry(id, request, env, headers) {
  * 1つのentryに、raterEmailごとに1件だけ評価を持てる（UNIQUE制約でupsert）。
  */
 
+// 評価（★）に添える、人ごとのレビュー項目（紹介文用。docs/adr/0007）。全部任意。
+// ◎〇△×の4段階（GRADE）と、選択肢（予約・混雑）、短い文章、金額・数（泊数・回数）。
+// どの項目を出すかは予定の種類（宿泊・食事・観光）で画面側が決めるが、サーバーは種類を問わず受け付ける。
+const REVIEW_GRADES = ["◎", "〇", "△", "×"];
+const REVIEW_GRADE_KEYS = ["price", "location", "value", "hospitality", "amenity", "cleanliness", "breakfast", "taste"];
+const REVIEW_CHOICES = { reservation: ["不要", "推奨", "必須"], crowd: ["空いている", "普通", "混んでいる"] };
+const REVIEW_TEXT_KEYS = { access: 60, roomType: 60, duration: 30, bestTime: 30, menu: 200, other: 300 };
+
+function validReview(x) {
+  if (x === undefined) return true;
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  for (const [k, v] of Object.entries(x)) {
+    if (v === "" || v === null) continue;
+    if (REVIEW_GRADE_KEYS.includes(k)) { if (!REVIEW_GRADES.includes(v)) return false; }
+    else if (REVIEW_CHOICES[k]) { if (!REVIEW_CHOICES[k].includes(v)) return false; }
+    else if (REVIEW_TEXT_KEYS[k]) { if (!isStr(v, REVIEW_TEXT_KEYS[k])) return false; }
+    else if (k === "amount") { if (!(Number.isInteger(v) && v >= 0 && v <= 100000000)) return false; }
+    else if (k === "units") { if (!(Number.isInteger(v) && v >= 1 && v <= 365)) return false; }
+    else return false;
+  }
+  return true;
+}
+
+function cleanReview(x) {
+  const out = {};
+  for (const [k, v] of Object.entries(x || {})) {
+    if (v === "" || v === null || v === undefined) continue;
+    out[k] = typeof v === "string" ? v.trim() : v;
+  }
+  return out;
+}
+
 function validRatingInput(x) {
   if (!x || typeof x !== "object") return false;
+  if (!validReview(x.review)) return false;
   if (!isStr(x.raterEmail, 200) || x.raterEmail.trim().length < 3) return false;
   if (!optStr(x.raterName, 100)) return false;
   // 基本は★1〜5の整数だが、0.1刻みの細かい評価も許可する（例: 3.7）
@@ -599,6 +668,7 @@ function rowToRating(row) {
     raterEmail: row.rater_email,
     raterName: row.rater_name,
     score: row.score,
+    review: parseJsonObject(row.review),
     updatedAt: row.updated_at,
   };
 }
@@ -622,15 +692,23 @@ async function setRating(entryId, request, env, headers) {
     .first();
   const score = roundScore(data.score);
   const t = nowIso();
+  // reviewを送ってこない古いアプリからの★だけの更新では、書いてあるレビュー項目を消さない
+  const review = data.review === undefined ? null : JSON.stringify(cleanReview(data.review));
   if (existing) {
-    await env.DB.prepare("UPDATE ratings SET score=?, rater_name=?, updated_at=? WHERE id=?")
-      .bind(score, name, t, existing.id)
-      .run();
+    if (review === null) {
+      await env.DB.prepare("UPDATE ratings SET score=?, rater_name=?, updated_at=? WHERE id=?")
+        .bind(score, name, t, existing.id)
+        .run();
+    } else {
+      await env.DB.prepare("UPDATE ratings SET score=?, rater_name=?, review=?, updated_at=? WHERE id=?")
+        .bind(score, name, review, t, existing.id)
+        .run();
+    }
   } else {
     await env.DB.prepare(
-      "INSERT INTO ratings (id, entry_id, rater_email, rater_name, score, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO ratings (id, entry_id, rater_email, rater_name, score, review, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
     )
-      .bind(uid("rat"), entryId, email, name, score, t, t)
+      .bind(uid("rat"), entryId, email, name, score, review || "{}", t, t)
       .run();
   }
   const { results } = await env.DB.prepare("SELECT * FROM ratings WHERE entry_id = ?").bind(entryId).all();

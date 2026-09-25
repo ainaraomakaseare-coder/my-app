@@ -642,13 +642,15 @@ body.sheet-open { overflow: hidden; }
   display: flex; align-items: flex-end; justify-content: center;
 }
 .sheet-backdrop[hidden] { display: none; }
-.sheet {
-  width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column;
+/* 下から出すシート。.sheet・.sheet-head・.sheet-titleは記録フォームなど既存の画面でも使っている
+   クラス名なので、必ず.sheet-backdropの中だけに効かせる（上書きすると記録フォームの表示が崩れる） */
+.sheet-backdrop .sheet {
+  width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; margin-top: 0;
   background: var(--card); border-radius: 20px 20px 0 0; padding: 14px 16px calc(12px + env(safe-area-inset-bottom));
   box-shadow: 0 -4px 20px rgba(20, 20, 30, 0.12);
 }
-.sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.sheet-title { font-weight: 700; font-size: 15px; }
+.sheet-backdrop .sheet-head { margin-bottom: 8px; }
+.sheet-backdrop .sheet-title { font-size: 15px; }
 .sheet-close { border: none; background: none; font-size: 22px; color: var(--ink-soft); cursor: pointer; padding: 0 4px; }
 .comment-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 80px; }
 .comment-item { padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
@@ -668,3 +670,31 @@ body.sheet-open { overflow: hidden; }
 .comment-form .btn { flex: none; padding: 10px 16px; }
 .comment-status { margin: 6px 0 0; min-height: 1em; }
 .comment-actions .btn.text.danger { color: var(--danger); }
+
+/* ---------- 紹介文・レビュー項目（docs/adr/0007） ---------- */
+.post-entry-btn { background: var(--card); border: 1px solid var(--border); color: var(--ink); }
+.post-text {
+  width: 100%; flex: 1; min-height: 200px; resize: none; border: 1px solid var(--border); border-radius: var(--radius-control);
+  background: var(--input-bg); padding: 12px; font: inherit; font-size: 14px; line-height: 1.55;
+}
+.post-actions { display: flex; gap: 8px; margin-top: 10px; }
+.post-actions .btn { flex: 1; }
+.rating-widget { flex-wrap: wrap; column-gap: 12px; }
+.rating-level { flex-basis: 100%; margin-top: 6px; font-size: 13px; font-weight: 700; color: var(--accent-deep); }
+.rating-level.private { color: var(--ink-muted); font-weight: 500; }
+.review-fields { margin-top: 12px; padding: 12px; border-radius: var(--radius-control); background: var(--input-bg); }
+.review-fields[hidden] { display: none; }
+.review-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-bottom: 8px; }
+.review-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.review-row select, .review-row input, .review-row textarea { font-size: 16px; min-width: 0; }
+.review-row select { width: 64px; }
+.review-grid .review-row input { width: 90px; }
+.review-row-wide { flex-direction: column; align-items: stretch; margin-bottom: 8px; }
+.review-row-wide input, .review-row-wide textarea { width: 100%; }
+.review-status { margin-left: 8px; }
+.travel-grid { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.travel-grid input[type="text"] { flex: 1; min-width: 0; }
+.travel-arrow { color: var(--ink-muted); }
+.travel-time { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 13px; }
+#entTravelField > input { width: 100%; margin-bottom: 8px; }

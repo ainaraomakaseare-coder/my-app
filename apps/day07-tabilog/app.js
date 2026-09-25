@@ -20,7 +20,8 @@
   var TRANSPORTS = [
     { key: '', label: 'なし' },
     { key: 'plane', label: '飛行機' },
-    { key: 'taxi', label: 'タクシー' },
+    { key: 'car', label: '車（レンタカー）' },
+    { key: 'taxi', label: 'タクシー（Uber）' },
     { key: 'train', label: '電車' },
     { key: 'bus', label: 'バス' },
     { key: 'walk', label: '徒歩' },
@@ -588,6 +589,205 @@
     };
   }
 
+  // ---------- 紹介文（ホテログ・レクログ・飯ログ。docs/adr/0007） ----------
+  // 旅の紹介動画（「5泊7日の総額公開」のような投稿）の文字の部分を、記録から作る。
+  // 評価（★）に添える人ごとのレビュー項目と、移動の記録の情報（travel）を使う。
+  // 予定の種類でログの種類が決まる：宿泊→ホテログ、食事→飯ログ、観光・その他→レクログ、移動→移動（★なし）。
+  var REVIEW_PUBLIC_MIN = 3.0; // これ未満（3.0ちょうどは出す）の評価は紹介文に出さない
+  var REVIEW_GRADES = ['◎', '〇', '△', '×'];
+  var REVIEW_KINDS = {
+    hotel: {
+      label: 'ホテログ', emoji: '🏨', unit: '泊',
+      levels: ['絶対また泊まりたい', 'また泊まりたい', 'また泊まってもいい', '機会があれば泊まる', 'もう泊まらない'],
+      grades: [['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ'], ['amenity', 'アメニティ'], ['cleanliness', '清潔さ'], ['breakfast', '朝食']],
+      texts: [['roomType', '部屋タイプ']]
+    },
+    activity: {
+      label: 'レクログ', emoji: '🎡', unit: '回',
+      levels: ['2回目もまた行きたい', '初めてなら絶対行くべき', '初めてなら行くべき', '時間があれば行く', '行かなくてもいいかな'],
+      grades: [['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ']],
+      choices: [['crowd', '混雑'], ['reservation', '予約']],
+      texts: [['duration', '所要時間'], ['bestTime', 'おすすめの時間帯']]
+    },
+    food: {
+      label: '飯ログ', emoji: '🍴', unit: '人',
+      levels: ['絶対また行きたい', 'また行きたい', '近くに来たらまた行きたい', '機会があれば行く', 'もう行かなくてもいいかな'],
+      grades: [['taste', '美味しさ'], ['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ']],
+      choices: [['reservation', '予約']],
+      texts: [['menu', 'おすすめメニュー']]
+    }
+  };
+  var REVIEW_CHOICE_OPTIONS = { reservation: ['不要', '推奨', '必須'], crowd: ['空いている', '普通', '混んでいる'] };
+
+  function reviewKindForCategory(category) {
+    if (category === 'lodging') return 'hotel';
+    if (category === 'food') return 'food';
+    if (category === 'transport') return '';
+    return 'activity';
+  }
+
+  // ★の数値を、その種類の言葉にする（4.5以上／4.0以上／3.5以上／3.0以上／それ未満）
+  function reviewLevelLabel(kind, score) {
+    var k = REVIEW_KINDS[kind];
+    if (!k || !(score > 0)) return '';
+    var s = Math.round(score * 10) / 10;
+    if (s >= 4.5) return k.levels[0];
+    if (s >= 4.0) return k.levels[1];
+    if (s >= 3.5) return k.levels[2];
+    if (s >= REVIEW_PUBLIC_MIN) return k.levels[3];
+    return k.levels[4];
+  }
+
+  function isReviewPublic(score) {
+    return Math.round(score * 10) / 10 >= REVIEW_PUBLIC_MIN;
+  }
+
+  // 出発・到着（HH:MM）から所要時間。到着が出発より前なら日をまたいだとみなす
+  function travelDurationText(depart, arrive) {
+    var d = /^(\d{1,2}):(\d{2})$/.exec(depart || ''), a = /^(\d{1,2}):(\d{2})$/.exec(arrive || '');
+    if (!d || !a) return '';
+    var min = (Number(a[1]) * 60 + Number(a[2])) - (Number(d[1]) * 60 + Number(d[2]));
+    if (min <= 0) min += 1440;
+    var h = Math.floor(min / 60), m = min % 60;
+    return (h ? h + '時間' : '') + (m ? m + '分' : '');
+  }
+
+  function findMyRating(ratings, email) {
+    if (!email) return null;
+    return (ratings || []).filter(function (r) { return (r.raterEmail || '').toLowerCase() === email.toLowerCase(); })[0] || null;
+  }
+
+  function yen(n) { return Number(n).toLocaleString('ja-JP') + '円'; }
+
+  // 1件分のログ（ホテログなど）の文章。表示しないもの（評価なし・3.0未満）は''。
+  function reviewLogText(block, entry, rating) {
+    var kind = reviewKindForCategory(block.category);
+    var k = REVIEW_KINDS[kind];
+    if (!k || !rating || !(rating.score > 0) || !isReviewPublic(rating.score)) return '';
+    var r = rating.review || {};
+    var lines = [k.emoji + ' ' + k.label + ' ⭐' + (Math.round(rating.score * 10) / 10).toFixed(1), block.label || '（名前なし）'];
+    var amount = typeof r.amount === 'number' ? r.amount : entryCostTotal(entry);
+    k.grades.forEach(function (g) {
+      var key = g[0], name = g[1];
+      var grade = r[key] || '';
+      var extra = '';
+      if (key === 'price' && amount > 0) {
+        var units = r.units > 1 ? r.units : 0;
+        extra = units ? '1' + k.unit + 'あたり' + yen(Math.round(amount / units)) + '／' + units + k.unit + '合計' + yen(amount) : yen(amount);
+      }
+      if (key === 'location' && r.access) extra = r.access;
+      if (!grade && !extra) return;
+      lines.push(name + '：' + (grade || '') + (extra ? (grade ? '（' + extra + '）' : extra) : ''));
+    });
+    (k.choices || []).forEach(function (c) { if (r[c[0]]) lines.push(c[1] + '：' + r[c[0]]); });
+    (k.texts || []).forEach(function (t) { if (r[t[0]]) lines.push(t[1] + '：' + r[t[0]]); });
+    if (kind === 'food') {
+      var menu = (entry.costItems || []).filter(function (it) { return it.label && typeof it.amount === 'number'; })
+        .map(function (it) { return it.label + ' ' + yen(it.amount); });
+      if (menu.length) lines.push('メニュー：' + menu.join('／'));
+      if (entry.waitTime) lines.push('待ち時間：' + entry.waitTime);
+    }
+    if (r.other) lines.push('その他：' + r.other);
+    lines.push('→ ' + reviewLevelLabel(kind, rating.score));
+    return lines.join('\n');
+  }
+
+  // 移動の記録の文章（★なし）。区間も会社も時刻も金額も無ければ''。
+  function travelLogText(block, entry) {
+    var t = entry.travel || {};
+    var mode = transportLabel(block.transport);
+    var amount = typeof t.amount === 'number' ? t.amount : entryCostTotal(entry);
+    var route = t.from || t.to ? (t.from || '') + '→' + (t.to || '') : '';
+    if (!route && !t.company && !t.depart && !t.arrive && !amount) return '';
+    var emoji = { plane: '✈️', car: '🚗', taxi: '🚕', train: '🚃', bus: '🚌', walk: '🚶', bicycle: '🚲' }[block.transport] || '🚃';
+    var lines = [emoji + ' 移動' + (mode ? '｜' + mode : ''), route || block.label || ''];
+    if (t.company) lines.push('会社：' + t.company);
+    if (t.depart || t.arrive) {
+      var dur = travelDurationText(t.depart, t.arrive);
+      lines.push((t.depart ? t.depart + '発' : '') + (t.depart && t.arrive ? ' → ' : '') + (t.arrive ? t.arrive + '着' : '') + (dur ? '（' + dur + '）' : ''));
+    }
+    if (amount > 0) lines.push('料金：' + yen(amount));
+    return lines.join('\n');
+  }
+
+  function transportLabel(key) {
+    var t = TRANSPORTS.filter(function (x) { return x.key === key; })[0];
+    return t && t.key ? t.label : '';
+  }
+
+  // 費用を「移動・ホテル・食事と観光」に分けて合計する（紹介文の最後の「総額公開」用）
+  function tripCostByGroup(blocks) {
+    var out = { transport: 0, lodging: 0, other: 0 };
+    (blocks || []).forEach(function (b) {
+      var group = b.category === 'transport' ? 'transport' : b.category === 'lodging' ? 'lodging' : 'other';
+      (b.entries || []).forEach(function (e) {
+        var cost = entryCostTotal(e);
+        if (!cost && e.travel && typeof e.travel.amount === 'number') cost = e.travel.amount;
+        out[group] += cost;
+      });
+    });
+    return out;
+  }
+
+  // 旅行の行き先（天気のために入れた「日ごとの場所」の国・都道府県）。海外があれば国、国内だけなら都道府県。
+  function tripPlaceNames(days) {
+    var countries = [], prefs = [];
+    (days || []).forEach(function (d) {
+      if (d.country && countries.indexOf(d.country) === -1) countries.push(d.country);
+      if (d.country === '日本' && d.admin1 && prefs.indexOf(d.admin1) === -1) prefs.push(d.admin1);
+    });
+    var abroad = countries.filter(function (c) { return c !== '日本'; });
+    return abroad.length ? countries : prefs;
+  }
+
+  // 紹介文の全体：表紙 → 評価の基準 → 時系列のログ → 総額。自分（email）の評価だけを使う。
+  function buildTripPostText(trip, blocks, days, email) {
+    var parts = [];
+    var head = ['【' + (trip.title || '旅の記録') + '】'];
+    var start = parseDate(trip.startDate), end = parseDate(trip.endDate);
+    if (start) {
+      var range = start.getFullYear() + ' ' + (start.getMonth() + 1) + '/' + start.getDate() +
+        (end && trip.endDate !== trip.startDate ? '〜' + (end.getMonth() + 1) + '/' + end.getDate() : '');
+      head.push(range + (tripNights(trip) ? '（' + tripNights(trip) + '）' : ''));
+    }
+    var places = tripPlaceNames(days);
+    head.push((places.length ? places.join('・') + ' ' : '') + (tripNights(trip) || '旅') + 'の総額公開！');
+    parts.push(head.join('\n'));
+
+    var logs = [], usedKinds = [];
+    sortBlocks(blocks).forEach(function (b) {
+      (b.entries || []).forEach(function (e) {
+        var text = '';
+        if (b.category === 'transport') text = travelLogText(b, e);
+        else {
+          text = reviewLogText(b, e, findMyRating(e.ratings, email));
+          var kind = reviewKindForCategory(b.category);
+          if (text && usedKinds.indexOf(kind) === -1) usedKinds.push(kind);
+        }
+        if (text) logs.push(text);
+      });
+    });
+    if (usedKinds.length) {
+      parts.push('＼評価の基準／\n' + usedKinds.map(function (kind) {
+        var k = REVIEW_KINDS[kind];
+        return k.label + '：4.5〜 ' + k.levels[0] + '／4.0〜 ' + k.levels[1] + '／3.5〜 ' + k.levels[2] + '／3.0〜 ' + k.levels[3];
+      }).join('\n'));
+    }
+    parts = parts.concat(logs);
+
+    var cost = tripCostByGroup(blocks);
+    var total = cost.transport + cost.lodging + cost.other;
+    if (total > 0) {
+      var lines = ['💰 合計金額は' + yen(total)];
+      if (cost.transport) lines.push('移動 ' + yen(cost.transport));
+      if (cost.lodging) lines.push('ホテル ' + yen(cost.lodging));
+      if (cost.other) lines.push('食事と観光 ' + yen(cost.other));
+      parts.push(lines.join('\n'));
+    }
+    parts.push('#旅の足跡');
+    return parts.join('\n\n');
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
     TRANSPORTS: TRANSPORTS,
@@ -627,7 +827,20 @@
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
     replayStateAt: replayStateAt,
-    arcLatLng: arcLatLng
+    arcLatLng: arcLatLng,
+    REVIEW_KINDS: REVIEW_KINDS,
+    REVIEW_GRADES: REVIEW_GRADES,
+    REVIEW_CHOICE_OPTIONS: REVIEW_CHOICE_OPTIONS,
+    reviewKindForCategory: reviewKindForCategory,
+    reviewLevelLabel: reviewLevelLabel,
+    isReviewPublic: isReviewPublic,
+    travelDurationText: travelDurationText,
+    findMyRating: findMyRating,
+    reviewLogText: reviewLogText,
+    travelLogText: travelLogText,
+    tripCostByGroup: tripCostByGroup,
+    tripPlaceNames: tripPlaceNames,
+    buildTripPostText: buildTripPostText
   };
 
   root.TabiLog = Core;
@@ -1793,7 +2006,46 @@
     }
   }
 
+  // ---------- 紹介文（ホテログ・レクログ・飯ログ。docs/adr/0007） ----------
+  // 自分がつけた★とレビュー項目から、表紙→評価の基準→時系列のログ→総額の文章を作り、コピーしてSNSに貼れるようにする。
+  // ★3.0未満の記録は入らない（Core.buildTripPostText）。文章はその場で直してからコピーできる。
+  function openPostSheet() {
+    if (!state.trip) return;
+    var user = loadCurrentUser();
+    var text = Core.buildTripPostText(state.trip, state.blocks, state.days, user ? user.email : '');
+    $('#postText').value = text;
+    $('#postSheetNote').textContent = user
+      ? 'あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。'
+      : 'ログインして記録に★とレビューをつけると、ホテログ・飯ログなどが入ります。';
+    $('#postStatus').textContent = '';
+    $('#btnSharePost').hidden = !navigator.share;
+    $('#postSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+
+  function closePostSheet() {
+    $('#postSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+  }
+
+  function copyPostText() {
+    var text = $('#postText').value;
+    var done = function () { $('#postStatus').textContent = 'コピーしました。SNSの投稿に貼り付けてください。'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () { $('#postText').select(); document.execCommand('copy'); done(); });
+    } else {
+      $('#postText').select(); document.execCommand('copy'); done();
+    }
+  }
+
   function initSocial() {
+    $('#btnOpenPost').addEventListener('click', openPostSheet);
+    $('#btnClosePostSheet').addEventListener('click', closePostSheet);
+    $('#postSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closePostSheet(); });
+    $('#btnCopyPost').addEventListener('click', copyPostText);
+    $('#btnSharePost').addEventListener('click', function () {
+      navigator.share({ text: $('#postText').value }).catch(function () {});
+    });
     // いいね・コメントのボタンは旅行の上部と各記録カードにあるので、まとめてdocumentで受ける
     // （記録カード自体のクリック＝編集を開く処理は、.entry-social内のクリックを無視する）
     document.addEventListener('click', function (e) {
@@ -2627,6 +2879,7 @@
   // 飛行機だけは進行方向に回転させるので、上（北）向きの塗りつぶしシルエットにしてある。
   var TRANSPORT_ICON_PATHS = {
     plane: '<path fill="currentColor" stroke="none" d="M12 2c.8 0 1.4.7 1.4 1.6V9l7.6 4.4v2.1l-7.6-2.3v4.5l2.2 1.7V21L12 20l-3.6 1v-1.6l2.2-1.7v-4.5L3 15.5v-2.1L10.6 9V3.6C10.6 2.7 11.2 2 12 2z"/>',
+    car: '<path d="M4 12l1.8-4.6A2 2 0 0 1 7.7 6h8.6a2 2 0 0 1 1.9 1.4L20 12"/><rect x="3" y="12" width="18" height="5.5" rx="1.2"/><circle cx="7.5" cy="14.8" r="1"/><circle cx="16.5" cy="14.8" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
     taxi: '<path d="M5.5 11l1.4-4a2 2 0 0 1 1.9-1.3h6.4a2 2 0 0 1 1.9 1.3l1.4 4"/><path d="M3.5 11h17v5.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M10 5.7V3.5h4v2.2"/><circle cx="7.5" cy="14.3" r="1"/><circle cx="16.5" cy="14.3" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
     train: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 10h14"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/><path d="M8.5 17l-2.5 4M15.5 17l2.5 4"/>',
     bus: '<rect x="4" y="3.5" width="16" height="14" rx="2.5"/><path d="M4 11h16M12 3.5V11"/><path d="M7 17.5V20M17 17.5V20"/><circle cx="8" cy="14.3" r="1"/><circle cx="16" cy="14.3" r="1"/>',
@@ -2756,7 +3009,47 @@
     renderVideoPreview();
     renderCostItems();
     renderEntryRatingSection();
+    renderTravelFields(entry);
     showScreen('entryForm');
+  }
+
+  function entryFormBlock() {
+    return (state.blocks || []).filter(function (b) { return b.id === state.entryBlockId; })[0] || null;
+  }
+
+  // ---------- 移動の情報（紹介文用。docs/adr/0007） ----------
+  // 移動の予定の記録だけに出す。★はつけない（誰が見ても同じ事実なので、記録そのものに持つ）。
+  function renderTravelFields(entry) {
+    var block = entryFormBlock();
+    var isMove = !!(block && block.category === 'transport');
+    $('#entTravelField').hidden = !isMove;
+    if (!isMove) return;
+    var t = (entry && entry.travel) || {};
+    $('#entTravelFrom').value = t.from || '';
+    $('#entTravelTo').value = t.to || '';
+    $('#entTravelCompany').value = t.company || '';
+    $('#entTravelDepart').value = t.depart || '';
+    $('#entTravelArrive').value = t.arrive || '';
+    $('#entTravelAmount').value = typeof t.amount === 'number' ? t.amount : '';
+    updateTravelDuration();
+  }
+
+  function updateTravelDuration() {
+    var d = Core.travelDurationText($('#entTravelDepart').value, $('#entTravelArrive').value);
+    $('#entTravelDuration').textContent = d ? '所要時間：' + d : '';
+  }
+
+  function readTravelFields() {
+    var amount = $('#entTravelAmount').value.trim();
+    var out = {
+      from: $('#entTravelFrom').value.trim(),
+      to: $('#entTravelTo').value.trim(),
+      company: $('#entTravelCompany').value.trim(),
+      depart: $('#entTravelDepart').value || '',
+      arrive: $('#entTravelArrive').value || ''
+    };
+    if (amount !== '' && /^\d+$/.test(amount)) out.amount = Number(amount);
+    return out;
   }
 
   // ---------- 評価（★1〜5） ----------
@@ -2765,7 +3058,10 @@
   function renderEntryRatingSection() {
     var field = $('#entRatingField');
     var entry = state.editingEntry;
-    if (!loginEnabled() || !entry) { field.hidden = true; return; }
+    var block = entryFormBlock();
+    var kind = Core.reviewKindForCategory(block ? block.category : '');
+    $('#entReviewFields').hidden = true;
+    if (!loginEnabled() || !entry || !kind) { field.hidden = true; return; }
     field.hidden = false;
     var user = loadCurrentUser();
     var widget = $('#entRatingWidget');
@@ -2785,12 +3081,15 @@
     for (var i = 1; i <= 5; i++) {
       stars += '<button type="button" class="star-btn' + (i <= mineWhole ? ' on' : '') + '" data-score="' + i + '" aria-label="★' + i + '">★</button>';
     }
+    var level = Core.reviewLevelLabel(kind, mine);
     var fine = mine > 0
       ? '<div class="rating-fine">' +
         '<button type="button" class="btn ghost small" id="ratingFineMinus">－0.1</button>' +
         '<span class="rating-fine-value">★' + mine.toFixed(1) + '</span>' +
         '<button type="button" class="btn ghost small" id="ratingFinePlus">＋0.1</button>' +
-        '</div>'
+        '</div>' +
+        '<div class="rating-level' + (Core.isReviewPublic(mine) ? '' : ' private') + '">' + escapeHtml(level) +
+        (Core.isReviewPublic(mine) ? '' : '（★3.0未満なので紹介文には出ません）') + '</div>'
       : '';
     widget.innerHTML = '<div class="stars">' + stars + '</div>' + fine;
     $all('.star-btn', widget).forEach(function (btn) {
@@ -2808,6 +3107,80 @@
       });
     }
     $('#entRatingSummary').textContent = summaryText;
+    renderReviewFields(kind, mine > 0 ? (Core.findMyRating(entry.ratings, user.email) || {}).review || {} : null);
+  }
+
+  // ---------- レビュー項目（紹介文用。docs/adr/0007） ----------
+  // ★をつけた人だけが、自分のレビュー項目（◎〇△×・金額・立地など）を書ける。どの項目を出すかは
+  // 予定の種類（ホテログ・レクログ・飯ログ）で変わる。★は押した瞬間に保存されるが、レビュー項目は
+  // 「レビューを保存」を押したときに★と一緒に保存する。
+  function renderReviewFields(kind, review) {
+    var el = $('#entReviewFields');
+    var k = Core.REVIEW_KINDS[kind];
+    if (!k || !review) { el.hidden = true; return; }
+    el.hidden = false;
+    var gradeSelect = function (key, label) {
+      return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
+        '<option value="">―</option>' +
+        Core.REVIEW_GRADES.map(function (g) { return '<option' + (review[key] === g ? ' selected' : '') + '>' + g + '</option>'; }).join('') +
+        '</select></label>';
+    };
+    var choiceSelect = function (key, label) {
+      return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
+        '<option value="">―</option>' +
+        Core.REVIEW_CHOICE_OPTIONS[key].map(function (o) { return '<option' + (review[key] === o ? ' selected' : '') + '>' + o + '</option>'; }).join('') +
+        '</select></label>';
+    };
+    var textInput = function (key, label, placeholder, max) {
+      return '<label class="review-row review-row-wide"><span>' + label + '</span><input type="text" data-review-key="' + key + '" maxlength="' + max +
+        '" placeholder="' + escapeHtml(placeholder) + '" value="' + escapeHtml(review[key] || '') + '"></label>';
+    };
+    var unitLabel = { hotel: '泊数', activity: '回数', food: '人数' }[kind];
+    var html = '<div class="review-title">' + escapeHtml(k.label) + 'のレビュー（紹介文に使います）</div>';
+    html += '<div class="review-grid">' + k.grades.map(function (g) { return gradeSelect(g[0], g[1]); }).join('') +
+      (k.choices || []).map(function (c) { return choiceSelect(c[0], c[1]); }).join('') + '</div>';
+    html += '<div class="review-grid">' +
+      '<label class="review-row"><span>金額（円）</span><input type="number" min="0" inputmode="numeric" data-review-key="amount" data-number placeholder="明細の合計" value="' + (typeof review.amount === 'number' ? review.amount : '') + '"></label>' +
+      '<label class="review-row"><span>' + unitLabel + '</span><input type="number" min="1" max="365" inputmode="numeric" data-review-key="units" data-number value="' + (review.units || '') + '"></label>' +
+      '</div>';
+    html += textInput('access', '立地（行き方）', '例：〇〇駅から徒歩5分', 60);
+    (k.texts || []).forEach(function (t) {
+      var ph = { roomType: '例：ダブル・オーシャンビュー', duration: '例：2時間', bestTime: '例：夕方（夕日がきれい）', menu: '例：クロワッサン' }[t[0]] || '';
+      html += textInput(t[0], t[1], ph, t[0] === 'menu' ? 200 : 60);
+    });
+    html += '<label class="review-row review-row-wide"><span>その他</span><textarea data-review-key="other" maxlength="300" rows="2" placeholder="例：ベッドがふかふか、浴槽あり">' + escapeHtml(review.other || '') + '</textarea></label>';
+    html += '<button type="button" class="btn ghost small" id="btnSaveReview">レビューを保存</button><span class="hint review-status" id="reviewStatus"></span>';
+    el.innerHTML = html;
+    $('#btnSaveReview').addEventListener('click', saveMyReview);
+  }
+
+  function readReviewFields() {
+    var out = {};
+    $all('[data-review-key]', $('#entReviewFields')).forEach(function (input) {
+      var v = input.value.trim();
+      if (!v) return;
+      if (input.hasAttribute('data-number')) { if (/^\d+$/.test(v)) out[input.dataset.reviewKey] = Number(v); }
+      else out[input.dataset.reviewKey] = v;
+    });
+    return out;
+  }
+
+  function saveMyReview() {
+    var user = loadCurrentUser();
+    var entry = state.editingEntry;
+    if (!user || !entry) return;
+    var score = Core.myRatingScore(entry.ratings, user.email);
+    if (!(score > 0)) return;
+    var status = $('#reviewStatus');
+    status.textContent = '保存中…';
+    api('/entries/' + encodeURIComponent(entry.id) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: score, review: readReviewFields() })
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        state.editingEntry = findEntryById(entry.id);
+        renderEntryRatingSection();
+        $('#reviewStatus').textContent = '保存しました';
+      })
+      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
   }
 
   function setMyRating(score) {
@@ -3119,6 +3492,7 @@
       otherUrl: $('#entOtherUrl').value.trim(),
       author: author
     };
+    if (!$('#entTravelField').hidden) payload.travel = readTravelFields();
 
     Promise.all([
       Promise.all(state.pendingPhotos.map(function (p) { return uploadPhotoBlob(p.blob); })),
@@ -3814,6 +4188,8 @@
 
     $('#btnSaveEntry').addEventListener('click', saveEntry);
     $('#btnDeleteEntry').addEventListener('click', deleteEntry);
+    $('#entTravelDepart').addEventListener('input', updateTravelDuration);
+    $('#entTravelArrive').addEventListener('input', updateTravelDuration);
     $('#btnAddCostItem').addEventListener('click', function () {
       state.formCostItems.push({ label: '', amount: 0 });
       renderCostItems();
