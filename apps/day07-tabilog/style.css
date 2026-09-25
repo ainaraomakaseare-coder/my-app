@@ -700,3 +700,12 @@ body.sheet-open { overflow: hidden; }
 #entTravelField > input { width: 100%; margin-bottom: 8px; }
 
 .place-candidates { width: 100%; margin-top: 8px; font-size: 16px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--card); }
+
+/* ---------- 入力欄の×ボタン（app.jsのinitClearButtons） ---------- */
+/* ×が文字に重ならないよう、対象の1行入力欄は右側を空けておく */
+input[type="text"], input[type="url"], input[type="search"], input[type="email"], input[type="number"] { padding-right: 36px !important; }
+.input-clear-btn {
+  position: fixed; z-index: 80; width: 28px; height: 28px; border-radius: 999px; border: none; cursor: pointer;
+  background: var(--ink-soft); color: #fff; font-size: 16px; line-height: 28px; padding: 0; text-align: center;
+}
+.input-clear-btn[hidden] { display: none; }

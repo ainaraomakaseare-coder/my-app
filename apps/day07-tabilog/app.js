@@ -4138,7 +4138,65 @@
   }
 
   // ---------- 初期化 ----------
+  // ---------- 入力欄の×（中身を消す）ボタン ----------
+  // URLなどを入れたあと消すのが面倒、という要望より。1行の入力欄（テキスト・URL・検索・メール・数字）を
+  // 編集しているあいだ、中身があれば右端に×を1つだけ出す（iOS標準の「編集中だけ出る消去ボタン」と同じ考え方）。
+  // 入力欄ごとに要素を足すと、親の並び（検索欄の横並び・レビューの2列など）の幅が崩れるので、
+  // 画面に1つだけ置いたボタンを、編集中の欄の上に重ねて動かす。後から描く欄（レビュー項目など）にも効く。
+  // 複数行の欄（エピソードなど）は、長文を一度に消してしまうと困るので対象にしない。
+  var CLEARABLE_TYPES = ['text', 'url', 'search', 'email', 'number'];
+  var clearTarget = null;
+
+  function isClearable(el) {
+    return !!(el && el.tagName === 'INPUT' && CLEARABLE_TYPES.indexOf(el.type) !== -1 &&
+      !el.readOnly && !el.disabled && !el.hasAttribute('data-no-clear'));
+  }
+
+  function placeClearButton() {
+    var btn = $('#inputClearBtn');
+    if (!clearTarget || !clearTarget.value || !document.body.contains(clearTarget)) { btn.hidden = true; return; }
+    var r = clearTarget.getBoundingClientRect();
+    if (!r.width) { btn.hidden = true; return; }
+    btn.style.top = (r.top + r.height / 2 - 14) + 'px';
+    btn.style.left = (r.right - 32) + 'px';
+    btn.hidden = false;
+  }
+
+  function initClearButtons() {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'inputClearBtn';
+    btn.className = 'input-clear-btn';
+    btn.setAttribute('aria-label', '入力を消す');
+    btn.textContent = '×';
+    btn.hidden = true;
+    document.body.appendChild(btn);
+    // 押したときに入力欄からフォーカスが外れる（＝ボタンが消える）前に処理する
+    btn.addEventListener('pointerdown', function (e) { e.preventDefault(); });
+    btn.addEventListener('click', function () {
+      if (!clearTarget) return;
+      clearTarget.value = '';
+      clearTarget.dispatchEvent(new Event('input', { bubbles: true }));
+      clearTarget.dispatchEvent(new Event('change', { bubbles: true }));
+      clearTarget.focus();
+      placeClearButton();
+    });
+    document.addEventListener('focusin', function (e) {
+      clearTarget = isClearable(e.target) ? e.target : null;
+      placeClearButton();
+    });
+    document.addEventListener('focusout', function () {
+      setTimeout(function () {
+        if (!isClearable(document.activeElement)) { clearTarget = null; placeClearButton(); }
+      }, 0);
+    });
+    document.addEventListener('input', function (e) { if (e.target === clearTarget) placeClearButton(); });
+    window.addEventListener('scroll', placeClearButton, true);
+    window.addEventListener('resize', placeClearButton);
+  }
+
   function init() {
+    initClearButtons();
     $('#btnCloseLightbox').addEventListener('click', closePhotoLightbox);
     $('#photoLightbox').addEventListener('click', function (e) {
       if (e.target === e.currentTarget) closePhotoLightbox();
