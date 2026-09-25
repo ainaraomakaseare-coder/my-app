@@ -1,0 +1,16 @@
+{
+  "appId": "com.hiroyaapps.baydiary",
+  "appName": "観戦日記",
+  "webDir": "../day23-baydiary",
+  "ios": {
+    "contentInset": "automatic"
+  },
+  "server": {
+    "iosScheme": "https"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

@@ -8,16 +8,23 @@
   "preview_urls": false,
   "vars": {
     "OPENAI_MODEL": "gpt-5.6-sol",
+    "GEMINI_TTS_MODEL": "gemini-3.8-flash-lite-tts",
+    "GEMINI_TTS_VOICE": "Sulafat",
     "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io"
   },
   "secrets": {
-    "required": ["OPENAI_API_KEY"]
+    "required": ["OPENAI_API_KEY", "GEMINI_API_KEY"]
   },
   "ratelimits": [
     {
       "name": "AI_RATE_LIMITER",
       "namespace_id": "51018",
       "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "TTS_RATE_LIMITER",
+      "namespace_id": "51019",
+      "simple": { "limit": 30, "period": 60 }
     }
   ],
   "observability": {

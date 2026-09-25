@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ベイ日記</title>
+<title>観戦日記</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Shippori+Mincho:wght@600;800&family=Space+Mono:wght@400;700&display=swap">
@@ -184,8 +184,8 @@ legend{font-family:var(--font-num);font-size:10.5px;letter-spacing:.1em;color:va
 <div class="wrap">
   <header class="masthead">
     <div class="mast-top">
-      <div class="eyebrow">YOKOHAMA DeNA BAYSTARS</div>
-      <h1 class="logo">ベイ日記</h1>
+      <div class="eyebrow">NPB ADMISSION LOG</div>
+      <h1 class="logo">観戦日記</h1>
       <div class="header-summary" id="header-summary"></div>
     </div>
     <nav class="tabs">
@@ -309,10 +309,10 @@ legend{font-family:var(--font-num);font-size:10.5px;letter-spacing:.1em;color:va
     <section id="scr-settings" hidden>
       <div class="card">
         <p class="settings-help">
-          (任意) 試合結果の自動取得には <b>api-sports.io</b>（API-BASEBALL）の無料APIキーを使います。
-          お持ちのキーを貼り付けると、試合日と対戦相手・スコアの自動取得を試せます。
-          <b>無料プランは2022〜2024年シーズンのみ対応で、今シーズンの試合は自動取得できません。</b>
-          未対応の日や取得できない場合は、そのまま手入力してください。キーはこの端末のブラウザにのみ保存され、他所へ送信されることはありません。
+          (任意) 試合結果の自動取得には <b>api-sports.io</b>（API-BASEBALL）の無料APIキーを使えます。
+          ただし検証の結果、<b>無料プランでは試合結果（/games）の取得が実行日の前後数日ほどに限られ、
+          後から過去の観戦記録をつけるという使い方にはほぼ対応していません</b>（有料プランなら解消する可能性があります）。
+          基本的には手入力を前提に使ってください。キーを登録した場合も、この端末のブラウザにのみ保存され、他所へ送信されることはありません。
         </p>
         <div class="settings-row">
           <input id="settings-api-key" placeholder="APIキーを貼り付け">
@@ -328,7 +328,7 @@ legend{font-family:var(--font-num);font-size:10.5px;letter-spacing:.1em;color:va
         </div>
       </div>
       <div class="card">
-        <p class="settings-help">この端末に保存されている、すべてのベイ日記の記録と写真を削除します。元に戻せません。</p>
+        <p class="settings-help">この端末に保存されている、すべての観戦日記の記録と写真を削除します。元に戻せません。</p>
         <div class="settings-row">
           <button class="btn btn-danger" id="reset-all-btn">すべての記録を削除</button>
         </div>

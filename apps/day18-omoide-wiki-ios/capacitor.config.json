@@ -1,0 +1,11 @@
+{
+  "appId": "com.hiroyaapps.omoidewiki",
+  "appName": "おもいでWiki",
+  "webDir": "../day18-omoide-wiki",
+  "ios": {
+    "contentInset": "automatic"
+  },
+  "server": {
+    "iosScheme": "https"
+  }
+}
