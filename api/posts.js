@@ -13,6 +13,8 @@ const db = require('../lib/db');
 const scope = require('../lib/account-scope');
 const handoff = require('../lib/handoff');
 const ttRules = require('../lib/tiktok-settings');
+// 画面と同じ数え方を使う（ブラウザとサーバーで共通のファイル）
+const drafts = require('../public/split-drafts.js');
 
 const NETWORKS = ['instagram', 'youtube', 'x', 'tiktok', 'threads'];
 
@@ -134,6 +136,13 @@ async function save(req, id) {
   }
   // ★ Threads は500文字と短い。空欄なら共通本文が入るので、共通本文が長いと
   //   Threads を選んでいない投稿まで断ることになる。Threads を選んだときだけ見る。
+  // ★ X は日本語1文字を2と数えて280まで（日本語だけなら140文字）。上の LIMITS は
+  //   JavaScript の文字数なので、日本語だと倍まで通してしまい、X に送った時点で弾かれる。
+  const toX = targets.some((t) => byId.get(t).network === 'x');
+  const xLen = drafts.xLength(body.x_text || '');
+  if (toX && xLen > 280) {
+    throw bad(`X の本文が長すぎます（X の数え方で ${xLen}／280。日本語は1文字＝2として数えます）。`);
+  }
   const toThreads = targets.some((t) => byId.get(t).network === 'threads');
   const thText = String(body.th_text || '');
   if (toThreads && thText.length > THREADS_MAX) {
