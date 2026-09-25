@@ -142,7 +142,8 @@ async function runOne(target) {
 
     await db.updateById('post_targets', target.id, {
       status: 'success',
-      stage: 'published',
+      // 送り方で終着点が違うSNS（TikTok の直接投稿と下書き）は、自分で名前を付ける。
+      stage: out.stage || 'published',
       external_id: out.externalId || target.external_id,
       permalink: out.permalink || null,
       posted_at: new Date().toISOString(),

@@ -12,6 +12,7 @@ const auth = require('../lib/auth');
 const db = require('../lib/db');
 const scope = require('../lib/account-scope');
 const handoff = require('../lib/handoff');
+const ttRules = require('../lib/tiktok-settings');
 
 const NETWORKS = ['instagram', 'youtube', 'x', 'tiktok'];
 
@@ -131,6 +132,16 @@ async function save(req, id) {
     }
   }
 
+  // ★ TikTok の直接投稿の設定。null なら下書き送信（いままでどおり）。
+  //   直接投稿できる連携が選ばれていないのに設定だけ残すと、あとで連携を
+  //   差し替えたときに本人の知らない設定で公開されうるので、持たない。
+  const directTiktok = targets.some((t) => byId.get(t).network === 'tiktok' && byId.get(t).can_direct_post);
+  const ttSettings = directTiktok ? ttRules.normalize(body.tt_settings) : null;
+  if (wantsSchedule && ttSettings) {
+    const issues = ttRules.problems(ttSettings, { hasAffiliateLink: choice.hasAffiliateLink });
+    if (issues.length) throw bad(issues[0]);
+  }
+
   const row = {
     title: (body.title || '').slice(0, 200),
     body_common: body.body_common || '',
@@ -139,6 +150,9 @@ async function save(req, id) {
     yt_description: body.yt_description || '',
     x_text: body.x_text || '',
     tt_caption: body.tt_caption || '',
+    // ★ 直接投稿を選んだときだけ書く。schema_v9 を流す前に本番へ出ても、
+    //   いままでどおりの投稿（下書き送信）は「列が無い」で壊れないようにする。
+    ...(ttSettings || id ? { tt_settings: ttSettings } : {}),
     draft: body.draft || null,
     media_path: body.media_path || null,
     media_kind: body.media_kind || null,
