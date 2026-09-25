@@ -149,3 +149,7 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel
 ## 場所の候補検索（2026-09-25 追加）
 
 記録フォームの「場所名で検索」は、以前はGoogleマップが一番上に出した場所しか選べなかった。`GET /places/search?q=`でNominatimから最大8件（重要度の高い順）を返し、プルダウンで選べるようにした。どれも小さな同名地区なら、Open-Meteoの市区町村を先に出す。選んだ候補は座標入りの地図URL（`?api=1&query=緯度,経度`）になるので、地図でふりかえるでもその場所へぴったり移動する。DBの変更は無い。
+
+## 道のり（青い線）と、場所の準備の高速化（2026-09-25 追加）
+
+`GET /route?profile=car|foot|bike&from=緯度,経度&to=緯度,経度` で、OpenStreetMapのルート検索（routing.openstreetmap.de、無料・APIキー不要）から道路に沿った道のりを返す（30日キャッシュ、1500km超は調べない）。`GET /geocode?quick=1` はNominatimを使わないと分からないものを `{ pending: true }` で返す。どちらもDBの変更は無い（docs/adr/0008）。

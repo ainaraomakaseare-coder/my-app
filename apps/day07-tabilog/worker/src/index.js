@@ -974,12 +974,16 @@ function mapTextCandidates(text) {
   return [...new Set(list.filter((s) => s && s.length >= 2))].slice(0, 4);
 }
 
-async function geocodeMapUrl(raw) {
+// quick=true：Nominatim（1秒に1回まで）を使わないと分からないものは調べず、{ pending: true } を返す。
+// アプリは座標がすぐ分かるものを先に全部同時に聞き、pendingだったものだけを1.1秒ずつ空けて聞き直す
+// （以前は全部を1.1秒ずつ空けていたので、「地図で場所を探しています」が長かった）。
+async function geocodeMapUrl(raw, quick) {
   const u = await resolveMapUrl(raw).catch(() => null);
   if (!u) return null;
   const parsed = parseMapUrl(u);
   if (!parsed) return null;
   if (parsed.coords) return parsed.coords;
+  if (quick) return { pending: true };
   // お店や住所は具体的な場所なので、重要度が低くても見つかったNominatimの結果を使う
   const candidates = mapTextCandidates(parsed.text);
   for (let i = 0; i < candidates.length; i++) {
@@ -1054,7 +1058,69 @@ async function searchPlaces(q, headers, ctx) {
   return json(body, 200, headers);
 }
 
-async function geocodeForReplay(q, headers, ctx) {
+// 「地図でふりかえる」の移動を、直線ではなく実際の道路に沿った道のり（Googleマップの青い線のようなもの）で
+// 見せるためのルート検索（docs/adr/0008）。OpenStreetMapのルート検索（FOSSGISが運営する無料のOSRM、
+// routing.openstreetmap.de）を使う。共用の無料サービスなので、アプリを識別できるUser-Agentを付け、
+// 同じルートはCache APIに30日置いて問い合わせを減らす。遠すぎる移動（1500km超）は調べない。
+const ROUTE_PROFILES = {
+  car: "routed-car/route/v1/driving",
+  foot: "routed-foot/route/v1/foot",
+  bike: "routed-bike/route/v1/bike",
+};
+const ROUTE_MAX_KM = 1500;
+const ROUTE_MAX_POINTS = 400;
+
+function parseLatLng(text) {
+  const m = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(text || "");
+  return m ? validLatLng(m[1], m[2]) : null;
+}
+
+function distanceKm(a, b) {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+}
+
+async function getRoute(url, headers, ctx) {
+  const profile = url.searchParams.get("profile") || "";
+  const from = parseLatLng(url.searchParams.get("from"));
+  const to = parseLatLng(url.searchParams.get("to"));
+  if (!ROUTE_PROFILES[profile] || !from || !to) return json({ error: "invalid_input" }, 400, headers);
+  if (distanceKm(from, to) > ROUTE_MAX_KM) return json({ found: false }, 200, headers);
+  const key = [profile, from.lat.toFixed(5), from.lng.toFixed(5), to.lat.toFixed(5), to.lng.toFixed(5)].join(",");
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-route.cache/v1?k=" + encodeURIComponent(key));
+  const hit = await cache.match(cacheKey);
+  if (hit) return json(await hit.json(), 200, headers);
+
+  let body = { found: false };
+  try {
+    const res = await fetch(
+      "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
+        from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
+      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+    );
+    const data = res.ok ? await res.json() : null;
+    const route = data && data.routes && data.routes[0];
+    const coords = route && route.geometry && route.geometry.coordinates;
+    if (Array.isArray(coords) && coords.length > 1) {
+      // 点が多すぎると重いので間引く（最後の点は必ず残す）
+      const step = Math.ceil(coords.length / ROUTE_MAX_POINTS);
+      const pts = coords.filter((_, i) => i % step === 0 || i === coords.length - 1)
+        .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
+      body = { found: true, path: pts, distance: Math.round(route.distance || 0), duration: Math.round(route.duration || 0) };
+    }
+  } catch {
+    return json({ error: "route_failed" }, 502, headers); // 一時的な失敗はキャッシュしない
+  }
+  ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+  })));
+  return json(body, 200, headers);
+}
+
+async function geocodeForReplay(q, headers, ctx, quick) {
   q = (q || "").trim();
   const isUrl = /^https?:\/\//i.test(q);
   if (!q || q.length > (isUrl ? 2000 : 100)) return json({ error: "invalid_input" }, 400, headers);
@@ -1063,7 +1129,9 @@ async function geocodeForReplay(q, headers, ctx) {
   const hit = await cache.match(cacheKey);
   if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
 
-  const result = isUrl ? await geocodeMapUrl(q) : await geocodeText(q);
+  if (quick && !isUrl) return json({ pending: true }, 200, headers);
+  const result = isUrl ? await geocodeMapUrl(q, quick) : await geocodeText(q);
+  if (result && result.pending) return json({ pending: true }, 200, headers); // まだ調べていないのでキャッシュしない
   const body = result ? { found: true, lat: result.lat, lng: result.lng } : { found: false };
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
@@ -2729,7 +2797,8 @@ export default {
     if (method === "POST" && (m = path.match(/^\/comments\/([^/]+)\/report$/))) return reportComment(m[1], request, env, headers, ctx);
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
-    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx);
+    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1");
+    if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
     if (method === "GET" && path === "/places/search") return searchPlaces(url.searchParams.get("q"), headers, ctx);
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");

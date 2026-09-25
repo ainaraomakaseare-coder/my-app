@@ -402,9 +402,9 @@
   // 地図の描画（Leaflet）は画面側の仕事で、ここでは「どの順で・いつ・どこにいるか」だけを決める。
   // 時間の単位は2つある：t＝旅の中の時刻（1日目0時からの経過分）、r＝再生の実時間（秒）。
 
-  var REPLAY_SEC_PER_MIN = 0.6;      // 100倍速（旅の1分＝実時間0.6秒）
+  var REPLAY_SEC_PER_MIN = 0.12;     // 500倍速（旅の1分＝実時間0.12秒）。100倍速では遅いという声で変更
   var REPLAY_LEAD_MIN = 5;           // 最初の予定の少し前から時計を動かし始める
-  var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら100倍速で進める旅の時間（分）
+  var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら500倍速で進める旅の時間（分）
   var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
   var REPLAY_MOVE_MIN_SEC = 2;       // 移動の演出は最低この秒数
   var REPLAY_MOVE_CAP_SEC = 6;       // 長い移動（数時間のフライトなど）もこの秒数に早送りする
@@ -485,7 +485,7 @@
   // - 移動の演出は「移動手段がある予定」へ、直前に地図上にいた地点から向かうときだけ
   // - 移動は到着する予定の1つ前の地点での滞在が終わってから始める（途中で夕食など場所不明の出来事が
   //   挟まっても、アイコンはそれまで最後にいた場所で待つ）
-  // - 旅の時間は基本100倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
+  // - 旅の時間は基本500倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
   function buildReplayTimeline(stops, coordsByQuery) {
     coordsByQuery = coordsByQuery || {};
     var s = (stops || []).map(function (st) {
@@ -555,6 +555,39 @@
 
   // 再生開始からr秒の時点の状態：時計（何日目・何時何分）、吹き出しを出す地点、移動中のアイコンの位置、
   // いま地図上でいる場所（here：カメラを合わせる位置）。
+  // ---- 道のり（実際の道路に沿ったルート。docs/adr/0008）----
+  // 移動手段ごとに、どのルート検索を使うか。電車は線路のルートを出せる無料サービスが無いので直線、
+  // 飛行機は弧（どちらも''＝ルート検索しない）。
+  function routeProfileFor(transport) {
+    if (transport === 'car' || transport === 'taxi' || transport === 'bus') return 'car';
+    if (transport === 'walk') return 'foot';
+    if (transport === 'bicycle') return 'bike';
+    return '';
+  }
+
+  // 道のり（[[緯度,経度], ...]）の、出発からの割合fの位置と、そこまでの折れ線。
+  // 距離は短い区間なので緯度で経度を補正した平面近似で十分（見た目の進み方を均一にするためだけ）。
+  function pathAt(path, f) {
+    if (!path._cum) {
+      var cum = [0];
+      for (var i = 1; i < path.length; i++) {
+        var dy = path[i][0] - path[i - 1][0];
+        var dx = (path[i][1] - path[i - 1][1]) * Math.cos(path[i][0] * Math.PI / 180);
+        cum.push(cum[i - 1] + Math.sqrt(dx * dx + dy * dy));
+      }
+      path._cum = cum;
+    }
+    var c = path._cum, total = c[c.length - 1];
+    f = Math.max(0, Math.min(1, f));
+    if (!total) return { point: { lat: path[0][0], lng: path[0][1] }, prefix: [path[0]] };
+    var target = total * f, k = 1;
+    while (k < c.length - 1 && c[k] < target) k++;
+    var seg = c[k] - c[k - 1], t = seg ? (target - c[k - 1]) / seg : 0;
+    var lat = path[k - 1][0] + (path[k][0] - path[k - 1][0]) * t;
+    var lng = path[k - 1][1] + (path[k][1] - path[k - 1][1]) * t;
+    return { point: { lat: lat, lng: lng }, prefix: path.slice(0, k).concat([[lat, lng]]) };
+  }
+
   function replayStateAt(tl, r) {
     r = Math.max(0, Math.min(r, tl.totalReal));
     var t = replayRealToTrip(tl.keyframes, r);
@@ -570,8 +603,15 @@
       if (r >= l.r0 && r <= l.r1) {
         var f = l.r1 > l.r0 ? (r - l.r0) / (l.r1 - l.r0) : 1;
         var arc = l.transport === 'plane';
-        var pos = arcLatLng(s[l.from], s[l.to], f, arc);
-        var ahead = arcLatLng(s[l.from], s[l.to], Math.min(1, f + 0.02), arc);
+        var pos, ahead;
+        if (l.path && l.path.length > 1) {
+          // 道のりが分かっている移動は、道路に沿って進む
+          pos = pathAt(l.path, f).point;
+          ahead = pathAt(l.path, Math.min(1, f + 0.02)).point;
+        } else {
+          pos = arcLatLng(s[l.from], s[l.to], f, arc);
+          ahead = arcLatLng(s[l.from], s[l.to], Math.min(1, f + 0.02), arc);
+        }
         icon = { lat: pos.lat, lng: pos.lng, transport: l.transport, bearing: f < 1 ? bearingDeg(pos, ahead) : bearingDeg(s[l.from], s[l.to]), legIndex: k };
         break;
       }
@@ -828,6 +868,8 @@
     buildReplayTimeline: buildReplayTimeline,
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
+    routeProfileFor: routeProfileFor,
+    pathAt: pathAt,
     REVIEW_KINDS: REVIEW_KINDS,
     REVIEW_GRADES: REVIEW_GRADES,
     REVIEW_CHOICE_OPTIONS: REVIEW_CHOICE_OPTIONS,
@@ -3920,24 +3962,50 @@
       else todo.push(q);
     });
     var done = 0;
-    return todo.reduce(function (p, q) {
-      return p.then(function (needWait) {
-        return (needWait ? new Promise(function (ok) { setTimeout(ok, 1100); }) : Promise.resolve()).then(function () {
-          return api('/geocode?q=' + encodeURIComponent(q)).then(function (res) {
-            if (res && res.found) { result[q] = { lat: res.lat, lng: res.lng }; cache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; }
-            else { result[q] = null; cache[q] = { at: Date.now() }; }
-            return !(res && res.cached);
-          }).catch(function () { result[q] = null; return false; });
-        }).then(function (nextNeedsWait) {
-          done++;
-          if (onProgress) onProgress(done, todo.length);
-          return nextNeedsWait;
+    function record(q, res) {
+      if (res && res.found) { result[q] = { lat: res.lat, lng: res.lng }; cache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; }
+      else { result[q] = null; cache[q] = { at: Date.now() }; }
+      done++;
+      if (onProgress) onProgress(done, todo.length);
+    }
+    // 1回目：座標入りのリンクなど、Nominatim（1秒に1回まで）を使わずに分かるものを、全部同時に聞く（quick=1）。
+    // 以前は全部を1.1秒ずつ空けて1件ずつ聞いていたので、場所が多い旅行ほど準備に時間がかかっていた。
+    var pending = [];
+    return Promise.all(todo.map(function (q) {
+      return api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
+        if (res && res.pending) pending.push(q); else record(q, res);
+      }).catch(function () { result[q] = null; done++; });
+    })).then(function () {
+      // 2回目：住所・店名から探す必要があるものだけ、1件ずつ（Worker側のキャッシュに無かったときだけ1.1秒空ける）
+      return pending.reduce(function (p, q) {
+        return p.then(function (needWait) {
+          return (needWait ? new Promise(function (ok) { setTimeout(ok, 1100); }) : Promise.resolve()).then(function () {
+            return api('/geocode?q=' + encodeURIComponent(q)).then(function (res) {
+              record(q, res);
+              return !(res && res.cached);
+            }).catch(function () { result[q] = null; done++; return false; });
+          });
         });
-      });
-    }, Promise.resolve(false)).then(function () {
+      }, Promise.resolve(false));
+    }).then(function () {
       try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(cache)); } catch (e) {}
       return result;
     });
+  }
+
+  // 移動手段が車・タクシー・バス・徒歩・自転車の区間は、実際の道路に沿った道のりをWorker（/route）に聞き、
+  // その区間の path にする（Core.replayStateAt と線の描画が、直線の代わりにこれをたどる。docs/adr/0008）。
+  // 取れなかった区間は、これまでどおり直線のまま。
+  function fetchReplayRoutes(tl) {
+    var jobs = tl.legs.filter(function (l) { return Core.routeProfileFor(l.transport); });
+    return Promise.all(jobs.map(function (l) {
+      var a = tl.stops[l.from], b = tl.stops[l.to];
+      var q = '/route?profile=' + Core.routeProfileFor(l.transport) +
+        '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
+      return api(q).then(function (res) {
+        if (res && res.found && res.path && res.path.length > 1) l.path = res.path;
+      }).catch(function () {});
+    }));
   }
 
   var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
@@ -3970,8 +4038,12 @@
         status.textContent = '地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。';
         return;
       }
-      status.textContent = '';
-      startReplay(res[0], tl);
+      status.textContent = '道のりを調べています…';
+      return fetchReplayRoutes(tl).then(function () {
+        if (replayToken !== token) return;
+        status.textContent = '';
+        startReplay(res[0], tl);
+      });
     }).catch(function () {
       if (replayToken === token) status.textContent = '地図を読み込めませんでした。通信環境を確認してください。';
     });
@@ -3979,7 +4051,8 @@
 
   function startReplay(L, tl) {
     if (!replayMap) {
-      replayMap = L.map($('#replayMap'), { zoomControl: false });
+      // 線を描く範囲を画面の外まで広げておく（カメラが次の区間へ動くあいだに、道のりの端が切れて見えないように）
+      replayMap = L.map($('#replayMap'), { zoomControl: false, renderer: L.svg({ padding: 1 }) });
       replayMap.attributionControl.setPrefix(false);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
@@ -4002,11 +4075,16 @@
         icon: L.divIcon({ className: '', html: '<div class="replay-dot"></div>', iconSize: [14, 14], iconAnchor: [7, 7] })
       });
     });
+    // 移動の線はGoogleマップの道のりのような青（白い縁取り付き）。区間に入ったら、これから通る道のりを
+    // 薄い青で先に見せ、進んだところまでを濃い青で伸ばしていく。飛行機は弧の点線。
     tl.legs.forEach(function (l, k) {
-      replay.lines[k] = L.polyline([], {
-        color: '#00BF8F', weight: 4, opacity: 0.85, interactive: false,
-        dashArray: l.transport === 'plane' ? '8 8' : null
-      });
+      var plane = l.transport === 'plane';
+      var full = l.path || null;
+      replay.lines[k] = {
+        plan: full ? L.polyline(full, { color: ROUTE_BLUE, weight: 6, opacity: 0.3, interactive: false, lineCap: 'round', lineJoin: 'round' }) : null,
+        casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
+        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '8 10' : null })
+      };
     });
     resetReplayCamera();
     $('#replayClock').hidden = false;
@@ -4024,7 +4102,10 @@
     replay.lastDay = 0;
   }
 
+  var ROUTE_BLUE = '#1A73E8';
+
   function replayLegPoints(l, f) {
+    if (l.path && l.path.length > 1) return Core.pathAt(l.path, f).prefix;
     var s = replay.tl.stops, a = s[l.from], b = s[l.to];
     if (l.transport !== 'plane') {
       var p = Core.arcLatLng(a, b, f, false);
@@ -4082,8 +4163,15 @@
     });
     tl.legs.forEach(function (l, k) {
       var f = r >= l.r1 ? 1 : (r <= l.r0 ? 0 : (r - l.r0) / (l.r1 - l.r0));
-      if (f > 0) replay.lines[k].setLatLngs(replayLegPoints(l, f));
-      setLayerVisible(replay.lines[k], f > 0);
+      var set = replay.lines[k];
+      if (f > 0) {
+        var pts = replayLegPoints(l, f);
+        set.line.setLatLngs(pts);
+        if (set.casing) set.casing.setLatLngs(pts);
+      }
+      if (set.plan) setLayerVisible(set.plan, f > 0 && f < 1);
+      if (set.casing) setLayerVisible(set.casing, f > 0);
+      setLayerVisible(set.line, f > 0);
     });
 
     if (st.icon) {
@@ -4106,7 +4194,9 @@
     // カメラ：移動が始まったら出発地と到着地が両方入るように、移動なしで別の場所に着いたらそこへ寄せる
     if (st.icon && st.icon.legIndex !== replay.lastLeg) {
       var leg = tl.legs[st.icon.legIndex];
-      replayMap.flyToBounds([[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]], { padding: [70, 70], maxZoom: 14, duration: 0.8 });
+      var legBounds = leg.path && leg.path.length > 1 ? leg.path
+        : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
+      replayMap.flyToBounds(legBounds, { padding: [70, 70], maxZoom: 15, duration: 0.8 });
       replay.lastLeg = st.icon.legIndex;
     } else if (!st.icon && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];

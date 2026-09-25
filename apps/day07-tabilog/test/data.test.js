@@ -368,5 +368,18 @@ ok('buildTripPostText: 最後に総額と内訳', post.indexOf('💰 合計金�
 ok('buildTripPostText: 友達のアカウントで作ると、3.0未満のホテルは入らない',
   T.buildTripPostText({ title: 'x' }, rvBlocks, [], 'friend@example.com').indexOf('ホテログ') === -1);
 
+/* ---- 地図でふりかえる：道のりに沿って進む（docs/adr/0008） ---- */
+eq('routeProfileFor: 車・タクシー・バスは車道、徒歩・自転車はそれぞれ、電車・飛行機はルート検索しない',
+  ['car', 'taxi', 'bus', 'walk', 'bicycle', 'train', 'plane', ''].map(T.routeProfileFor), ['car', 'car', 'car', 'foot', 'bike', '', '', '']);
+var rtPath = [[35.0, 139.0], [35.0, 139.1], [35.1, 139.1]];
+var rtHalf = T.pathAt(rtPath, 0.5);
+ok('pathAt: 半分の位置は、長さで見た道のりの真ん中（1本目の終わり付近）', Math.abs(rtHalf.point.lng - 139.1) < 0.01 && Math.abs(rtHalf.point.lat - 35.0) < 0.01);
+eq('pathAt: 半分までの折れ線は、通った角を含む', rtHalf.prefix.length >= 2, true);
+eq('pathAt: 0は出発地、1は到着地', [T.pathAt(rtPath, 0).point, T.pathAt(rtPath, 1).point], [{ lat: 35.0, lng: 139.0 }, { lat: 35.1, lng: 139.1 }]);
+var rtTl = T.buildReplayTimeline(rpStops, rpCoords);
+rtTl.legs[0].path = [[35.69, 139.70], [35.69, 138.57], [35.66, 138.57]];
+var rtMid = T.replayStateAt(rtTl, (rtTl.legs[0].r0 + rtTl.legs[0].r1) / 2);
+ok('replayStateAt: 道のりがある移動は、直線ではなく道のりの上を進む（途中で西へ大きく回る）', Math.abs(rtMid.icon.lat - 35.69) < 0.02 && rtMid.icon.lng < 139.2);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
