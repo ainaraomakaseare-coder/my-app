@@ -1082,6 +1082,32 @@ function distanceKm(a, b) {
   return 12742 * Math.asin(Math.sqrt(h));
 }
 
+// 場所（緯度・経度）のタイムゾーン名（例：Europe/London）。時差のある旅行で、現地時間の時刻を
+// 世界共通の時刻に直して並べるために使う（docs/adr/0009）。天気と同じOpen-Meteo（無料・APIキー不要）の
+// timezone=autoで求め、30日キャッシュする。時差そのもの（サマータイム込み）はアプリ側でIntlが計算する。
+async function getTimezone(url, headers, ctx) {
+  const at = parseLatLng((url.searchParams.get("lat") || "") + "," + (url.searchParams.get("lng") || ""));
+  if (!at) return json({ error: "invalid_input" }, 400, headers);
+  const key = at.lat.toFixed(2) + "," + at.lng.toFixed(2);
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-tz.cache/v1?k=" + key);
+  const hit = await cache.match(cacheKey);
+  if (hit) return json(await hit.json(), 200, headers);
+  let body;
+  try {
+    const res = await fetch("https://api.open-meteo.com/v1/forecast?timezone=auto&forecast_days=1&latitude=" + at.lat + "&longitude=" + at.lng);
+    const data = res.ok ? await res.json() : null;
+    if (!data || !data.timezone) return json({ error: "timezone_failed" }, 502, headers);
+    body = { timezone: String(data.timezone) };
+  } catch {
+    return json({ error: "timezone_failed" }, 502, headers);
+  }
+  ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+  })));
+  return json(body, 200, headers);
+}
+
 async function getRoute(url, headers, ctx) {
   const profile = url.searchParams.get("profile") || "";
   const from = parseLatLng(url.searchParams.get("from"));
@@ -2799,6 +2825,7 @@ export default {
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1");
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
+    if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
     if (method === "GET" && path === "/places/search") return searchPlaces(url.searchParams.get("q"), headers, ctx);
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");

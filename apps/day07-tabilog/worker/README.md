@@ -153,3 +153,7 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel
 ## 道のり（青い線）と、場所の準備の高速化（2026-09-25 追加）
 
 `GET /route?profile=car|foot|bike&from=緯度,経度&to=緯度,経度` で、OpenStreetMapのルート検索（routing.openstreetmap.de、無料・APIキー不要）から道路に沿った道のりを返す（30日キャッシュ、1500km超は調べない）。`GET /geocode?quick=1` はNominatimを使わないと分からないものを `{ pending: true }` で返す。どちらもDBの変更は無い（docs/adr/0008）。
+
+## 時差（2026-09-25 追加）
+
+`GET /timezone?lat=&lng=` で場所のタイムゾーン名（例：Europe/London）を返す（Open-Meteo、無料・APIキー不要、30日キャッシュ）。DBの変更は無い（docs/adr/0009）。

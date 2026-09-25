@@ -110,8 +110,85 @@
   // 実際に9時の予定が10時の予定より後ろに表示される不具合として発覚）。
   // 「時刻ありは常に時刻順が先頭グループ、時刻なしは後ろグループ」という1本のキーに正規化
   // することで、一貫性のある比較にしている。
+  // 同じ日の中の並び。時刻は現地時間のまま持ち、時差（_offset、分。applyBlockZonesが付ける）が分かっていれば
+  // 世界共通の時刻（現地の分 − 時差）で比べる（docs/adr/0009）。日本20:00発→ハワイ同日10:00着のような移動で、
+  // 現地時間のまま並べると着が発より前に来てしまっていたため。時差が分からなければ今までどおり現地時間で並べる。
   function blockSortKey(b) {
-    return b.time ? '0:' + b.time : '1:' + (b.createdAt || '');
+    if (!b.time) return '1:' + (b.createdAt || '');
+    var m = /^(\d{1,2}):(\d{2})$/.exec(b.time);
+    if (m && typeof b._offset === 'number') {
+      return '0:' + String(Number(m[1]) * 60 + Number(m[2]) - b._offset + 2000).padStart(5, '0');
+    }
+    return '0:' + (m ? String(Number(m[1]) * 60 + Number(m[2]) + 2000).padStart(5, '0') : b.time);
+  }
+
+  // ---------- 時差（docs/adr/0009） ----------
+  // 時刻は「その場所の現地時間」で入力・表示する（チケットや現地の時計に書いてある時刻のまま）。
+  // 場所ごとのタイムゾーン（IANA名、例：Europe/London）から、その日その時刻の時差を求める。
+  // サマータイムもIntlが正しく扱う。
+
+  // tzの、utcMs（世界共通の時刻）における時差（分、東が正。日本は+540）
+  var tzFormatters = {};
+  function tzOffsetAt(tz, utcMs) {
+    var fmt = tzFormatters[tz] || (tzFormatters[tz] = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    }));
+    var parts = fmt.formatToParts(new Date(utcMs));
+    var get = function (t) { return Number(parts.filter(function (x) { return x.type === t; })[0].value); };
+    return Math.round((Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute')) - utcMs) / 60000);
+  }
+
+  // tzでの現地時間 ymd hhmm の時差（分）。時刻が無ければその日の正午で考える。tzが無い・不正ならnull
+  function tzOffsetMinutes(tz, ymd, hhmm) {
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || ''), t = /^(\d{1,2}):(\d{2})$/.exec(hhmm || '12:00');
+    if (!tz || !d || !t) return null;
+    try {
+      var local = Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3]), Number(t[1]), Number(t[2]));
+      var off = tzOffsetAt(tz, local);
+      return tzOffsetAt(tz, local - off * 60000); // 切り替わり直前後でずれないよう、もう一度求め直す
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 予定ごとのタイムゾーンを決める。優先順：その予定の場所（記録の地図）→ その日の場所（天気の場所）→
+  // 直前の予定 → 端末のタイムゾーン。移動の予定の時刻は「出発の時刻」なので、出発地（直前の予定）の
+  // タイムゾーンで読む（移動の予定自体の地図は到着地のことが多いため、次の予定へはそちらを引き継ぐ）。
+  // 「直前の予定」は時差を考えた順でないと決まらない（現地時間の順だと、日付変更線をまたぐ移動で着が発より
+  // 前に来る）ので、まず移動の決まりを使わずに仮に決めて時差を付けて並べ、その順でもう一度決める。
+  function assignBlockZones(blocks, byBlock, byDate, fallback) {
+    byBlock = byBlock || {}; byDate = byDate || {};
+    function pass(list, useTransportRule) {
+      var out = {}, prev = '';
+      list.forEach(function (b) {
+        var own = byBlock[b.id] || '';
+        var tz = useTransportRule && b.category === 'transport' && prev ? prev : (own || byDate[b.date] || prev || fallback || '');
+        out[b.id] = tz;
+        prev = useTransportRule && b.category === 'transport' ? (own || byDate[b.date] || tz) : tz;
+      });
+      return out;
+    }
+    var copies = (blocks || []).map(function (b) { return Object.assign({}, b); });
+    var first = pass(sortBlocks(copies), false);
+    applyBlockZones(copies, first);
+    return pass(sortBlocks(copies), true);
+  }
+
+  // 予定に _tz・_offset（分）を付ける（画面の中だけの値で、保存はしない）。zonesが無ければ外す。
+  function applyBlockZones(blocks, zones) {
+    (blocks || []).forEach(function (b) {
+      var tz = zones && zones[b.id];
+      var off = tz ? tzOffsetMinutes(tz, b.date, b.time) : null;
+      if (typeof off === 'number') { b._tz = tz; b._offset = off; }
+      else { delete b._tz; delete b._offset; }
+    });
+    return blocks;
+  }
+
+  // 時差の差（分）を「+1時間」「−8時間」「+5時間30分」にする
+  function offsetDiffText(diffMin) {
+    var sign = diffMin < 0 ? '−' : '+', a = Math.abs(diffMin), h = Math.floor(a / 60), m = a % 60;
+    return sign + (h ? h + '時間' : '') + (m ? m + '分' : '') + (!h && !m ? '0時間' : '');
   }
 
   function sortBlocks(blocks) {
@@ -442,7 +519,7 @@
   // 各地点の記録（エピソード・ひとこと）は、到着したときに出す吹き出しの中身にする。
   function replayStops(trip, blocks) {
     var dates = allDatesForTrip(trip, blocks).filter(function (d) { return d; });
-    var lastMinute = {}, hasTimed = {};
+    var lastMinute = {}, hasTimed = {}, lastOffset = null;
     (blocks || []).forEach(function (b) { if (b.date && hhmmToMinute(b.time) !== null) hasTimed[b.date] = true; });
     return sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; }).map(function (b) {
       var minute = hhmmToMinute(b.time);
@@ -452,15 +529,17 @@
         minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + (hasTimed[b.date] ? 30 : 60), 23 * 60 + 59);
       }
       lastMinute[b.date] = minute;
+      if (typeof b._offset === 'number') lastOffset = b._offset;
       var dayIndex = dates.indexOf(b.date);
       var captions = (b.entries || []).map(function (e) {
         // 以前は40文字で切っていたため、スマホでは1.5行ほどで途切れていた。全文を出す（見せる時間は文字数で延ばす）
-      return (e.episode || '').trim() || (e.comment || '').trim();
+        return (e.episode || '').trim() || (e.comment || '').trim();
       }).filter(Boolean).slice(0, 3);
       return {
         blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions,
-        transport: b.transport || '', query: replayPlaceQuery(b)
+        transport: b.transport || '', query: replayPlaceQuery(b),
+        offset: lastOffset // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
       };
     });
   }
@@ -491,15 +570,18 @@
   // - 旅の時間は基本500倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
   function buildReplayTimeline(stops, coordsByQuery) {
     coordsByQuery = coordsByQuery || {};
+    var withOffset = (stops || []).filter(function (st) { return typeof st.offset === 'number'; })[0];
+    var baseOffset = withOffset ? withOffset.offset : 0;
     var s = (stops || []).map(function (st) {
       var c = st.query ? coordsByQuery[st.query] : null;
       var located = !!(c && typeof c.lat === 'number' && typeof c.lng === 'number');
       return Object.assign({}, st, {
-        t: st.dayIndex * 1440 + st.minute, located: located,
+        // 時差がある旅行では、現地の分から「最初の場所の時差との差」を引き、並びと移動の長さを世界共通の時刻にする
+        t: st.dayIndex * 1440 + st.minute - (typeof st.offset === 'number' ? st.offset - baseOffset : 0), located: located,
         lat: located ? c.lat : null, lng: located ? c.lng : null
       });
     });
-    if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0 };
+    if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
 
     var legs = [], lastLoc = -1;
     s.forEach(function (st, i) {
@@ -543,7 +625,7 @@
       l.r0 = s[l.to - 1].rDwellEnd;
       l.r1 = s[l.to].r;
     });
-    return { stops: s, legs: legs, keyframes: kf, totalReal: r };
+    return { stops: s, legs: legs, keyframes: kf, totalReal: r , baseOffset: baseOffset };
   }
 
   function replayRealToTrip(kf, r) {
@@ -596,7 +678,6 @@
   function replayStateAt(tl, r) {
     r = Math.max(0, Math.min(r, tl.totalReal));
     var t = replayRealToTrip(tl.keyframes, r);
-    var dayIndex = Math.floor(t / 1440);
     var s = tl.stops;
     var idx = -1;
     for (var i = 0; i < s.length; i++) { if (s[i].r <= r + 1e-9) idx = i; }
@@ -628,9 +709,14 @@
     if (!here) {
       for (var n = 0; n < s.length; n++) { if (s[n].located) { here = { lat: s[n].lat, lng: s[n].lng }; break; } }
     }
+    // 時計は今いる場所（最後に着いた予定。移動中は出発地）の現地時間で出す
+    var cur = idx >= 0 ? s[idx] : s[0];
+    var offsetDiff = cur && typeof cur.offset === 'number' ? cur.offset - (tl.baseOffset || 0) : 0;
+    var localT = t + offsetDiff;
+    var localDay = Math.floor(localT / 1440);
     return {
-      t: t, dayNumber: dayIndex + 1, hhmm: minuteToHHMM(t - dayIndex * 1440),
-      stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here
+      t: t, dayNumber: localDay + 1, hhmm: minuteToHHMM(localT - localDay * 1440),
+      stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here, offsetDiff: offsetDiff
     };
   }
 
@@ -687,14 +773,28 @@
     return Math.round(score * 10) / 10 >= REVIEW_PUBLIC_MIN;
   }
 
-  // 出発・到着（HH:MM）から所要時間。到着が出発より前なら日をまたいだとみなす
-  function travelDurationText(depart, arrive) {
+  // 出発・到着（どちらも現地時間のHH:MM）から、所要時間（分）と、到着が出発の何日後か（現地の日付で）。
+  // 出発地・到着地の時差（分）が分かれば時差を考える（日本20:00発→ロンドン翌04:00着＝14時間）。
+  // 到着が出発より前（に見える）なら日をまたいだとみなす。
+  function travelDuration(depart, arrive, depOffset, arrOffset) {
     var d = /^(\d{1,2}):(\d{2})$/.exec(depart || ''), a = /^(\d{1,2}):(\d{2})$/.exec(arrive || '');
-    if (!d || !a) return '';
-    var min = (Number(a[1]) * 60 + Number(a[2])) - (Number(d[1]) * 60 + Number(d[2]));
-    if (min <= 0) min += 1440;
-    var h = Math.floor(min / 60), m = min % 60;
+    if (!d || !a) return null;
+    var dm = Number(d[1]) * 60 + Number(d[2]), am = Number(a[1]) * 60 + Number(a[2]);
+    var shift = typeof depOffset === 'number' && typeof arrOffset === 'number' ? arrOffset - depOffset : 0;
+    var min = (am - shift) - dm;
+    while (min <= 0) min += 1440;
+    return { minutes: min, dayShift: Math.floor((dm + min + shift) / 1440) };
+  }
+
+  function travelDurationText(depart, arrive, depOffset, arrOffset) {
+    var r = travelDuration(depart, arrive, depOffset, arrOffset);
+    if (!r) return '';
+    var h = Math.floor(r.minutes / 60), m = r.minutes % 60;
     return (h ? h + '時間' : '') + (m ? m + '分' : '');
+  }
+
+  function dayShiftPrefix(n) {
+    return n === 1 ? '翌' : n === 2 ? '翌々日' : n > 2 ? n + '日後' : n === -1 ? '前日' : '';
   }
 
   function findMyRating(ratings, email) {
@@ -738,7 +838,7 @@
   }
 
   // 移動の記録の文章（★なし）。区間も会社も時刻も金額も無ければ''。
-  function travelLogText(block, entry) {
+  function travelLogText(block, entry, arrOffset) {
     var t = entry.travel || {};
     var mode = transportLabel(block.transport);
     var amount = typeof t.amount === 'number' ? t.amount : entryCostTotal(entry);
@@ -748,8 +848,12 @@
     var lines = [emoji + ' 移動' + (mode ? '｜' + mode : ''), route || block.label || ''];
     if (t.company) lines.push('会社：' + t.company);
     if (t.depart || t.arrive) {
-      var dur = travelDurationText(t.depart, t.arrive);
-      lines.push((t.depart ? t.depart + '発' : '') + (t.depart && t.arrive ? ' → ' : '') + (t.arrive ? t.arrive + '着' : '') + (dur ? '（' + dur + '）' : ''));
+      var info = travelDuration(t.depart, t.arrive, block._offset, arrOffset);
+      var dur = travelDurationText(t.depart, t.arrive, block._offset, arrOffset);
+      var zoneNote = typeof block._offset === 'number' && typeof arrOffset === 'number' && arrOffset !== block._offset
+        ? '・時差' + offsetDiffText(arrOffset - block._offset) : '';
+      lines.push((t.depart ? t.depart + '発' : '') + (t.depart && t.arrive ? ' → ' : '') +
+        (t.arrive ? (info ? dayShiftPrefix(info.dayShift) : '') + t.arrive + '着' : '') + (dur ? '（' + dur + zoneNote + '）' : ''));
     }
     if (amount > 0) lines.push('料金：' + yen(amount));
     return lines.join('\n');
@@ -800,10 +904,12 @@
     parts.push(head.join('\n'));
 
     var logs = [], usedKinds = [];
-    sortBlocks(blocks).forEach(function (b) {
+    var sortedForPost = sortBlocks(blocks);
+    sortedForPost.forEach(function (b, bi) {
       (b.entries || []).forEach(function (e) {
         var text = '';
-        if (b.category === 'transport') text = travelLogText(b, e);
+        var nextBlock = sortedForPost[bi + 1];
+        if (b.category === 'transport') text = travelLogText(b, e, nextBlock ? nextBlock._offset : undefined);
         else {
           text = reviewLogText(b, e, findMyRating(e.ratings, email));
           var kind = reviewKindForCategory(b.category);
@@ -874,6 +980,12 @@
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
+    tzOffsetMinutes: tzOffsetMinutes,
+    assignBlockZones: assignBlockZones,
+    applyBlockZones: applyBlockZones,
+    offsetDiffText: offsetDiffText,
+    travelDuration: travelDuration,
+    dayShiftPrefix: dayShiftPrefix,
     pathAt: pathAt,
     REVIEW_KINDS: REVIEW_KINDS,
     REVIEW_GRADES: REVIEW_GRADES,
@@ -923,9 +1035,18 @@
     });
   }
 
+  // 画面ごとのスクロール位置。記録・予定の編集から旅行の画面に戻ったとき、毎回いちばん上に戻ってしまい
+  // 編集していた記録を探し直す必要があったため、旅行の画面だけは離れたときの位置に戻す。
+  // 別の旅行を開いたとき（openTrip）はいちばん上から。
+  var screenScroll = {};
   function showScreen(name) {
+    var leaving = $('.screen.active');
+    if (leaving && leaving.dataset.screen !== name) screenScroll[leaving.dataset.screen] = window.scrollY;
     $all('.screen').forEach(function (s) { s.classList.toggle('active', s.dataset.screen === name); });
-    window.scrollTo(0, 0);
+    var y = name === 'tripDetail' ? (screenScroll.tripDetail || 0) : 0;
+    window.scrollTo(0, y);
+    // 呼び出し元がこのあと画面を描き直すので、描き終わった後にもう一度合わせる
+    if (y) setTimeout(function () { if ($('.screen.active') && $('.screen.active').dataset.screen === name) window.scrollTo(0, y); }, 0);
   }
 
   // ---------- Googleログイン ----------
@@ -1629,9 +1750,12 @@
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       rememberTrip(state.trip);
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
+      state.zoneInfo = { byBlock: {}, byDate: {} };
+      screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
       showScreen('tripDetail');
       renderTripDetail();
       loadSocial();
+      loadTripZones();
     }).catch(function () {
       forgetTrip(id);
       alert('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。');
@@ -1776,6 +1900,7 @@
 
   // ---------- 旅行詳細 ----------
   function renderTripDetail() {
+    applyTripZones();
     var trip = state.trip;
     var coverEl = $('#tripCoverPhoto');
     coverEl.hidden = !trip.coverPhotoId;
@@ -2465,6 +2590,7 @@
   }
 
   function renderDaySection() {
+    applyTripZones();
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
     renderTimeline(currentDayBlocks());
     renderDayWeather();
@@ -2558,6 +2684,81 @@
       });
   }
 
+  // タイムゾーンの日本語名（例：「英国夏時間」「ハワイ・アリューシャン標準時」）
+  function zoneDisplayName(tz, ymd) {
+    try {
+      var d = Core.parseDate(ymd) || new Date();
+      var part = new Intl.DateTimeFormat('ja-JP', { timeZone: tz, timeZoneName: 'long' }).formatToParts(d)
+        .filter(function (x) { return x.type === 'timeZoneName'; })[0];
+      return part ? part.value : tz;
+    } catch (e) { return tz; }
+  }
+
+  function renderZoneDivider(block, base) {
+    var div = document.createElement('div');
+    div.className = 'zone-divider';
+    var from = base._tz === 'Asia/Tokyo' ? '日本' : '出発地';
+    div.textContent = '🕒 ここから現地時間（' + zoneDisplayName(block._tz, block.date) + '・' + from + 'との時差 ' +
+      Core.offsetDiffText(block._offset - base._offset) + '）';
+    return div;
+  }
+
+  // ---------- 時差（docs/adr/0009） ----------
+  // 予定ごとのタイムゾーンは、記録の地図の場所（座標がすぐ分かるものだけ）と、日ごとの場所（天気の場所）から
+  // Worker（/timezone）に聞いて決める。旅行を開いたあと裏で調べ、分かったら並びと区切りを描き直す。
+  // 結果は端末にも保存するので、2回目からは通信しない。
+  var TZ_CACHE_KEY = 'tabilog:tz-cache';
+  var DEVICE_TZ = (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; } })();
+
+  function applyTripZones() {
+    if (!state.trip) return;
+    var info = state.zoneInfo || { byBlock: {}, byDate: {} };
+    Core.applyBlockZones(state.blocks, Core.assignBlockZones(state.blocks, info.byBlock, info.byDate, DEVICE_TZ));
+  }
+
+  function timezoneAt(lat, lng, cache) {
+    var key = lat.toFixed(2) + ',' + lng.toFixed(2);
+    if (cache[key]) return Promise.resolve(cache[key]);
+    return api('/timezone?lat=' + lat.toFixed(4) + '&lng=' + lng.toFixed(4)).then(function (res) {
+      if (res && res.timezone) cache[key] = res.timezone;
+      return cache[key] || '';
+    }).catch(function () { return ''; });
+  }
+
+  function loadTripZones() {
+    if (!state.trip || !API_BASE) return Promise.resolve();
+    var tripId = state.trip.id;
+    var tzCache, geoCache;
+    try { tzCache = JSON.parse(localStorage.getItem(TZ_CACHE_KEY) || '{}'); } catch (e) { tzCache = {}; }
+    try { geoCache = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch (e) { geoCache = {}; }
+    var byBlock = {}, byDate = {};
+    var dayJobs = (state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
+      .map(function (d) { return timezoneAt(d.lat, d.lon, tzCache).then(function (tz) { if (tz) byDate[d.date] = tz; }); });
+    var blockJobs = (state.blocks || []).map(function (b) {
+      var q = Core.replayPlaceQuery(b);
+      if (!q) return null;
+      var c = geoCache[q];
+      var coords = c && c.lat !== undefined ? Promise.resolve(c)
+        : api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
+            if (res && res.found) { geoCache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; return geoCache[q]; }
+            return null;
+          }).catch(function () { return null; });
+      return coords.then(function (p) {
+        if (!p) return;
+        return timezoneAt(p.lat, p.lng, tzCache).then(function (tz) { if (tz) byBlock[b.id] = tz; });
+      });
+    }).filter(Boolean);
+    return Promise.all(dayJobs.concat(blockJobs)).then(function () {
+      try { localStorage.setItem(TZ_CACHE_KEY, JSON.stringify(tzCache)); } catch (e) {}
+      try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(geoCache)); } catch (e) {}
+      if (!state.trip || state.trip.id !== tripId) return;
+      var next = { byBlock: byBlock, byDate: byDate };
+      if (JSON.stringify(next) === JSON.stringify(state.zoneInfo)) return;
+      state.zoneInfo = next;
+      if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
+    });
+  }
+
   function renderTimeline(blocks) {
     var el = $('#timeline');
     el.innerHTML = '';
@@ -2567,7 +2768,20 @@
       empty.textContent = 'この日の記録はまだありません。下のボタンから追加できます。';
       el.appendChild(empty);
     }
+    // 時差の違う場所に移ったところに「ここから現地時間（時差）」の区切りを入れる（docs/adr/0009）。
+    // この日の最初の予定は、旅行全体の並びで直前の予定と比べる（前の日から続く移動のため）。
+    var all = Core.sortBlocks(state.blocks);
+    var base = all.filter(function (b) { return typeof b._offset === 'number'; })[0];
+    var prevOffset = null;
+    if (blocks.length) {
+      var at = all.indexOf(blocks[0]);
+      for (var i = at - 1; i >= 0; i--) { if (typeof all[i]._offset === 'number') { prevOffset = all[i]._offset; break; } }
+    }
     blocks.forEach(function (block) {
+      if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
+        el.appendChild(renderZoneDivider(block, base));
+      }
+      if (typeof block._offset === 'number') prevOffset = block._offset;
       el.appendChild(renderBlockEl(block));
     });
     var addBtn = document.createElement('button');
@@ -3084,8 +3298,18 @@
   }
 
   function updateTravelDuration() {
-    var d = Core.travelDurationText($('#entTravelDepart').value, $('#entTravelArrive').value);
-    $('#entTravelDuration').textContent = d ? '所要時間：' + d : '';
+    var block = entryFormBlock();
+    var all = Core.sortBlocks(state.blocks);
+    var next = block ? all[all.indexOf(block) + 1] : null;
+    var depOff = block ? block._offset : undefined, arrOff = next ? next._offset : undefined;
+    var dep = $('#entTravelDepart').value, arr = $('#entTravelArrive').value;
+    var d = Core.travelDurationText(dep, arr, depOff, arrOff);
+    var info = Core.travelDuration(dep, arr, depOff, arrOff);
+    var notes = [];
+    if (typeof depOff === 'number' && typeof arrOff === 'number' && depOff !== arrOff) notes.push('時差' + Core.offsetDiffText(arrOff - depOff));
+    if (info && info.dayShift) notes.push('到着は現地の' + (Core.dayShiftPrefix(info.dayShift) === '翌' ? '翌日' : Core.dayShiftPrefix(info.dayShift)));
+    $('#entTravelDuration').textContent = d ? '所要時間：' + d + (notes.length ? '（' + notes.join('・') + '）' : '') +
+      '。時刻はどちらも現地時間で入れてください。' : '時刻はどちらも現地時間で入れてください。';
   }
 
   function readTravelFields() {
@@ -4130,13 +4354,17 @@
   }
 
   function showReplayDayBanner(dayNumber) {
+    showReplayBanner(dayNumber + '日目');
+  }
+
+  function showReplayBanner(text) {
     var el = $('#replayDayBanner');
     el.hidden = true;
     void el.offsetWidth; // アニメーションを最初から再生し直すため
-    el.textContent = dayNumber + '日目';
+    el.textContent = text;
     el.hidden = false;
-    clearTimeout(showReplayDayBanner.timer);
-    showReplayDayBanner.timer = setTimeout(function () { el.hidden = true; }, 1600);
+    clearTimeout(showReplayBanner.timer);
+    showReplayBanner.timer = setTimeout(function () { el.hidden = true; }, 1600);
   }
 
   function setLayerVisible(layer, visible) {
@@ -4151,6 +4379,10 @@
 
     $('#replayDay').textContent = st.dayNumber + '日目　' + replayShortDate(replay.dates[st.dayNumber - 1]);
     $('#replayTime').textContent = st.hhmm;
+    if (replay.lastOffsetDiff !== undefined && st.offsetDiff !== replay.lastOffsetDiff && replay.playing) {
+      showReplayBanner('時差 ' + Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff) + '（ここから現地時間）');
+    }
+    replay.lastOffsetDiff = st.offsetDiff;
     if (st.dayNumber !== replay.lastDay) {
       if (replay.lastDay && st.dayNumber > replay.lastDay && replay.playing) showReplayDayBanner(st.dayNumber);
       replay.lastDay = st.dayNumber;
