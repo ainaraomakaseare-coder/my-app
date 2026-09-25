@@ -2,7 +2,7 @@ import {createPrivateKey, sign} from 'node:crypto';
 
 const appId = '6815641976';
 const groupId = 'c4a9e7a0-bf0c-49f5-84b8-6d570ce8386c';
-const expectedGroupName = 'HI hiro';
+const expectedGroupName = 'hiro';
 const keyId = process.env.APP_STORE_CONNECT_API_KEY_ID;
 const issuerId = process.env.APP_STORE_CONNECT_API_ISSUER_ID;
 const privateKey = process.env.APP_STORE_CONNECT_API_PRIVATE_KEY;
