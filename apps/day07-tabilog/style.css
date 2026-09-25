@@ -760,3 +760,16 @@ input[type="text"], input[type="url"], input[type="search"], input[type="email"]
   position: absolute; left: 3px; bottom: 3px; padding: 1px 5px; border-radius: 6px;
   background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 10px; font-weight: 700; pointer-events: none;
 }
+
+/* ---------- 写真・動画のビューア（LINEのような見方） ---------- */
+#photoLightbox { padding: 0; overflow: hidden; touch-action: none; background: rgba(10, 12, 16, 0.96); }
+#photoLightbox .lightbox-close, #photoLightbox .lightbox-save, #photoLightbox .lightbox-nav, #photoLightbox .lightbox-count { z-index: 2; transition: opacity 0.15s ease; }
+#photoLightbox .lightbox-close, #photoLightbox .lightbox-save { top: calc(16px + env(safe-area-inset-top)); }
+#photoLightbox.mv-chrome-hidden .lightbox-close, #photoLightbox.mv-chrome-hidden .lightbox-save,
+#photoLightbox.mv-chrome-hidden .lightbox-nav, #photoLightbox.mv-chrome-hidden .lightbox-count { opacity: 0; pointer-events: none; }
+.mv-track { display: flex; width: 100%; height: 100%; will-change: transform; }
+.mv-slide { flex: 0 0 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 60px 0 56px; box-sizing: border-box; }
+.mv-slide img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 0; -webkit-user-drag: none; user-select: none; }
+.mv-slide video { max-width: 100%; max-height: 100%; background: #000; }
+/* ビューアを開いているあいだ、後ろのページを動かさない */
+body.viewer-open { overflow: hidden; }

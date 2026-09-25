@@ -1171,86 +1171,135 @@
     return API_BASE + '/photos/' + id;
   }
 
-  // ---------- 写真の拡大表示（ライトボックス） ----------
-  // 同じ記録（Entry）に複数枚あるときは、左右スワイプ・矢印ボタンで次・前の写真に移れる。
-  // photoIdsは1枚だけのとき（アルバムなど）も配列で渡し、常に同じ仕組みで動かす。
-  var lightboxState = { photoIds: [], index: 0 };
-  function openPhotoLightbox(photoIds, index) {
-    lightboxState.photoIds = photoIds || [];
-    lightboxState.index = index || 0;
-    renderLightboxPhoto();
-    $('#photoLightbox').hidden = false;
-  }
-  function renderLightboxPhoto() {
-    var ids = lightboxState.photoIds;
-    $('#lightboxImg').src = photoUrl(ids[lightboxState.index]);
-    var multi = ids.length > 1;
-    $('#lightboxPrev').hidden = !multi;
-    $('#lightboxNext').hidden = !multi;
-    $('#lightboxCount').hidden = !multi;
-    $('#lightboxCount').textContent = (lightboxState.index + 1) + ' / ' + ids.length;
-  }
-  function showLightboxPhoto(delta) {
-    var ids = lightboxState.photoIds;
-    var next = lightboxState.index + delta;
-    if (next < 0 || next >= ids.length) return; // 最初・最後の写真ではそれ以上進めない
-    lightboxState.index = next;
-    renderLightboxPhoto();
-  }
-  function closePhotoLightbox() {
-    $('#photoLightbox').hidden = true;
-    $('#lightboxImg').src = '';
-    lightboxState = { photoIds: [], index: 0 };
-  }
+  // ---------- 写真・動画のビューア（LINEのような見方） ----------
+  // 記録の写真と動画（またはアルバム全体）を1つの並びで開き、左右スワイプで前後へ（指に付いて動く）、
+  // 下（上）へスワイプで閉じる、タップでボタンを出し入れする。開いているあいだは後ろのページが
+  // 動かないようにする（以前は写真を開いたまま上下に動かすと、後ろのスケジュールがスクロールしていた）。
+  // 以前は写真と動画が別々の拡大表示で、写真から動画へスワイプで移れなかった。
+  // items：[{ type: 'photo' | 'video', id }]
+  var viewer = { items: [], index: 0 };
 
-  // 日タブのスワイプ（initDaySwipe）と同じ考え方：最初にどちらの向きに大きく動いたかを
-  // 一度だけ判定し、横方向のときだけ次・前の写真に切り替える（縦方向はライトボックスの
-  // 閉じる操作などと衝突しないよう、何もしない）。
-  var lightboxSwipeState = null;
-  function initLightboxSwipe() {
+  function openMediaViewer(items, index) {
+    viewer.items = items || [];
+    viewer.index = Math.max(0, Math.min(index || 0, viewer.items.length - 1));
+    $('#mvTrack').innerHTML = viewer.items.map(function (it, i) {
+      var url = escapeHtml(photoUrl(it.id));
+      return '<div class="mv-slide" data-i="' + i + '">' + (it.type === 'video'
+        ? '<video data-src="' + url + '" controls playsinline preload="none"></video>'
+        : '<img data-src="' + url + '" alt="" draggable="false">') + '</div>';
+    }).join('');
     var el = $('#photoLightbox');
+    el.classList.remove('mv-chrome-hidden');
+    el.style.backgroundColor = '';
+    el.hidden = false;
+    document.body.classList.add('viewer-open');
+    goToMedia(viewer.index, false);
+  }
 
-    el.addEventListener('touchstart', function (e) {
-      if (e.touches.length !== 1 || e.target.closest('.lightbox-nav, .lightbox-close')) { lightboxSwipeState = null; return; }
-      var t = e.touches[0];
-      lightboxSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
-    }, { passive: true });
+  function mediaSlide(i) { return $('#mvTrack').querySelector('.mv-slide[data-i="' + i + '"]'); }
 
-    el.addEventListener('touchmove', function (e) {
-      if (!lightboxSwipeState || e.touches.length !== 1) return;
-      var t = e.touches[0];
-      var dx = t.clientX - lightboxSwipeState.startX;
-      var dy = t.clientY - lightboxSwipeState.startY;
-      if (!lightboxSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-        lightboxSwipeState.decided = true;
-        lightboxSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
-      }
-      if (lightboxSwipeState.decided && lightboxSwipeState.horizontal) e.preventDefault();
-    }, { passive: false });
+  // 今の前後1枚だけ読み込む（アルバム全体を開いても、見る分しか通信しない）
+  function loadNearbyMedia() {
+    for (var i = viewer.index - 1; i <= viewer.index + 1; i++) {
+      var slide = mediaSlide(i);
+      var media = slide && slide.querySelector('[data-src]');
+      if (media && !media.getAttribute('src')) media.setAttribute('src', media.dataset.src);
+    }
+  }
 
-    el.addEventListener('touchend', function (e) {
-      if (!lightboxSwipeState) return;
-      var ds = lightboxSwipeState;
-      lightboxSwipeState = null;
-      if (!ds.decided || !ds.horizontal) return;
-      var t = e.changedTouches[0];
-      var dx = t.clientX - ds.startX;
-      if (Math.abs(dx) < 50) return;
-      showLightboxPhoto(dx < 0 ? 1 : -1);
+  function goToMedia(i, animate) {
+    i = Math.max(0, Math.min(i, viewer.items.length - 1));
+    $all('#mvTrack video').forEach(function (v, k) { if (!v.paused) v.pause(); });
+    viewer.index = i;
+    var track = $('#mvTrack');
+    track.style.transition = animate ? 'transform 0.25s ease' : 'none';
+    track.style.transform = 'translateX(' + (-i * 100) + '%)';
+    var cur = mediaSlide(i);
+    if (cur) { cur.style.transition = animate ? 'transform 0.2s ease' : 'none'; cur.style.transform = ''; }
+    $('#photoLightbox').style.backgroundColor = '';
+    loadNearbyMedia();
+    var multi = viewer.items.length > 1;
+    $('#lightboxPrev').hidden = !multi || i === 0;
+    $('#lightboxNext').hidden = !multi || i === viewer.items.length - 1;
+    $('#lightboxCount').hidden = !multi;
+    $('#lightboxCount').textContent = (i + 1) + ' / ' + viewer.items.length;
+  }
+
+  function closeMediaViewer() {
+    $all('#mvTrack video').forEach(function (v) { v.pause(); });
+    var el = $('#photoLightbox');
+    el.hidden = true;
+    el.style.backgroundColor = '';
+    $('#mvTrack').innerHTML = '';
+    $('#mvTrack').style.transform = '';
+    document.body.classList.remove('viewer-open');
+    viewer = { items: [], index: 0 };
+  }
+
+  // 指（マウス）の動きで、左右なら前後の写真へ、上下なら閉じる。最初に大きく動いた向きで決める。
+  // 動画の再生バー（下の方）から始めた操作は、動画の操作に任せる。
+  function initMediaViewerGestures() {
+    var el = $('#photoLightbox'), track = $('#mvTrack'), g = null;
+    el.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('button')) return;
+      var v = e.target.closest('video');
+      if (v && e.clientY > v.getBoundingClientRect().bottom - 64) return;
+      g = { x: e.clientX, y: e.clientY, t: Date.now(), dir: null, dx: 0, dy: 0, onVideo: !!v };
     });
-
-    el.addEventListener('touchcancel', function () { lightboxSwipeState = null; });
+    el.addEventListener('pointermove', function (e) {
+      if (!g) return;
+      g.dx = e.clientX - g.x; g.dy = e.clientY - g.y;
+      if (!g.dir && (Math.abs(g.dx) > 10 || Math.abs(g.dy) > 10)) g.dir = Math.abs(g.dx) > Math.abs(g.dy) ? 'h' : 'v';
+      if (g.dir === 'h') {
+        var last = viewer.items.length - 1;
+        var dx = (viewer.index === 0 && g.dx > 0) || (viewer.index === last && g.dx < 0) ? g.dx / 3 : g.dx; // 端では重く
+        track.style.transition = 'none';
+        track.style.transform = 'translateX(calc(' + (-viewer.index * 100) + '% + ' + dx + 'px))';
+      } else if (g.dir === 'v') {
+        var slide = mediaSlide(viewer.index);
+        var k = Math.min(Math.abs(g.dy) / 400, 0.9);
+        if (slide) { slide.style.transition = 'none'; slide.style.transform = 'translateY(' + g.dy + 'px) scale(' + (1 - k * 0.15) + ')'; }
+        el.style.backgroundColor = 'rgba(10, 12, 16, ' + (0.96 * (1 - k)) + ')';
+      }
+    });
+    var end = function (cancel) {
+      if (!g) return;
+      var s = g; g = null;
+      var fast = (Date.now() - s.t) < 250;
+      if (cancel) { goToMedia(viewer.index, true); return; }
+      if (s.dir === 'h') {
+        var step = Math.abs(s.dx) > 60 || (fast && Math.abs(s.dx) > 25) ? (s.dx < 0 ? 1 : -1) : 0;
+        goToMedia(viewer.index + step, true);
+      } else if (s.dir === 'v') {
+        if (Math.abs(s.dy) > 110 || (fast && Math.abs(s.dy) > 40)) {
+          var slide = mediaSlide(viewer.index);
+          if (slide) { slide.style.transition = 'transform 0.18s ease'; slide.style.transform = 'translateY(' + (s.dy > 0 ? '' : '-') + '100vh)'; }
+          el.style.transition = 'background-color 0.18s ease';
+          el.style.backgroundColor = 'rgba(10, 12, 16, 0)';
+          setTimeout(function () { el.style.transition = ''; closeMediaViewer(); }, 180);
+        } else {
+          goToMedia(viewer.index, true);
+        }
+      } else if (!s.onVideo) {
+        el.classList.toggle('mv-chrome-hidden'); // タップ：ボタンを隠す／出す
+      }
+    };
+    el.addEventListener('pointerup', function () { end(false); });
+    el.addEventListener('pointercancel', function () { end(true); });
+    // 後ろのページが動かないように（iOSではoverflow: hiddenだけでは止まらないことがある）
+    el.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('keydown', function (e) {
+      if (el.hidden) return;
+      if (e.key === 'Escape') closeMediaViewer();
+      else if (e.key === 'ArrowLeft') goToMedia(viewer.index - 1, true);
+      else if (e.key === 'ArrowRight') goToMedia(viewer.index + 1, true);
+    });
   }
 
-  function openVideoLightbox(url) {
-    $('#lightboxVideo').src = url;
-    $('#videoLightbox').hidden = false;
-  }
-  function closeVideoLightbox() {
-    var v = $('#lightboxVideo');
-    v.pause();
-    v.src = '';
-    $('#videoLightbox').hidden = true;
+  // 記録（Entry）の写真→動画の順の並び
+  function entryMediaItems(entry) {
+    return (entry.photoIds || []).map(function (id) { return { type: 'photo', id: id }; })
+      .concat((entry.videoIds || []).map(function (id) { return { type: 'video', id: id }; }));
   }
 
   // 写真・動画の保存（アルバムから開いたライトボックスの「保存」ボタン、DAY30〜）。
@@ -1313,23 +1362,20 @@
 
     var grid = $('#albumGrid');
     $('#albumEmpty').hidden = items.length > 0;
-    grid.innerHTML = items.map(function (it) {
+    grid.innerHTML = items.map(function (it, idx) {
       var dateBadge = it.date ? '<span class="album-date">' + escapeHtml(it.date.slice(5).replace('-', '/')) + '</span>' : '';
       if (it.type === 'photo') {
-        return '<div class="album-tile" data-type="photo" data-id="' + escapeHtml(it.id) + '" style="background-image:url(\'' + escapeHtml(photoUrl(it.id)) + '\')">' + dateBadge + '</div>';
+        return '<div class="album-tile" data-index="' + idx + '" data-type="photo" data-id="' + escapeHtml(it.id) + '" style="background-image:url(\'' + escapeHtml(photoUrl(it.id)) + '\')">' + dateBadge + '</div>';
       }
-      return '<div class="album-tile" data-type="video" data-id="' + escapeHtml(it.id) + '">' +
+      return '<div class="album-tile" data-index="' + idx + '" data-type="video" data-id="' + escapeHtml(it.id) + '">' +
         '<video src="' + escapeHtml(photoUrl(it.id)) + '#t=0.1" preload="metadata" muted playsinline></video>' +
         '<div class="album-play">' + ALBUM_PLAY_ICON + '</div>' + dateBadge +
         '</div>';
     }).join('');
 
     $all('.album-tile', grid).forEach(function (tile) {
-      tile.addEventListener('click', function () {
-        var url = photoUrl(tile.dataset.id);
-        if (tile.dataset.type === 'video') openVideoLightbox(url);
-        else openPhotoLightbox([tile.dataset.id], 0);
-      });
+      // アルバム全体を1つの並びで開き、スワイプで次々に見られるようにする
+      tile.addEventListener('click', function () { openMediaViewer(items, Number(tile.dataset.index)); });
     });
   }
 
@@ -3043,14 +3089,13 @@
       var photoEl = e.target.closest('.entry-photo');
       if (photoEl) {
         e.stopPropagation();
-        var photoIds = entry.photoIds || [];
-        openPhotoLightbox(photoIds, Math.max(0, photoIds.indexOf(photoEl.dataset.photoId)));
+        openMediaViewer(entryMediaItems(entry), Math.max(0, (entry.photoIds || []).indexOf(photoEl.dataset.photoId)));
         return;
       }
       var videoTile = e.target.closest('.entry-video-tile');
       if (videoTile) {
         e.stopPropagation();
-        openVideoLightbox(photoUrl(videoTile.dataset.videoId));
+        openMediaViewer(entryMediaItems(entry), (entry.photoIds || []).length + Math.max(0, (entry.videoIds || []).indexOf(videoTile.dataset.videoId)));
         return;
       }
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu') || e.target.closest('.entry-social')) return;
@@ -4714,28 +4759,15 @@
 
   function init() {
     initClearButtons();
-    $('#btnCloseLightbox').addEventListener('click', closePhotoLightbox);
-    $('#photoLightbox').addEventListener('click', function (e) {
-      if (e.target === e.currentTarget) closePhotoLightbox();
-    });
-    $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(-1); });
-    $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(1); });
+    $('#btnCloseLightbox').addEventListener('click', closeMediaViewer);
+    $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); goToMedia(viewer.index - 1, true); });
+    $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); goToMedia(viewer.index + 1, true); });
     $('#btnSaveLightboxPhoto').addEventListener('click', function (e) {
       e.stopPropagation();
-      var id = lightboxState.photoIds[lightboxState.index];
-      if (id) saveMediaFromUrl(photoUrl(id), id, e.currentTarget);
+      var it = viewer.items[viewer.index];
+      if (it) saveMediaFromUrl(photoUrl(it.id), it.id, e.currentTarget);
     });
-    initLightboxSwipe();
-    $('#btnCloseVideoLightbox').addEventListener('click', closeVideoLightbox);
-    $('#btnSaveLightboxVideo').addEventListener('click', function (e) {
-      e.stopPropagation();
-      var src = $('#lightboxVideo').src;
-      var filename = (src.split('/').pop() || 'video.mp4').split('#')[0].split('?')[0];
-      saveMediaFromUrl(src, filename, e.currentTarget);
-    });
-    $('#videoLightbox').addEventListener('click', function (e) {
-      if (e.target === e.currentTarget) closeVideoLightbox();
-    });
+    initMediaViewerGestures();
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
     $('#btnOpenSettlement').addEventListener('click', openSettlement);
     $('#filterCompanion').addEventListener('change', function (e) { state.homeFilters.companion = e.target.value; renderHomeTripList(); });
