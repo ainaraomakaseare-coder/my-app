@@ -238,6 +238,19 @@
     <div class="card">
       <h2>投稿を作る</h2>
 
+      <!-- AI が書いた SNSごとの投稿案を、まとめて貼って振り分ける。
+           振り分けは見出し（## Instagram など）で切るだけ。文章は書き換えない。 -->
+      <details id="pasteBox" style="margin-bottom:10px">
+        <summary>AI の投稿案をまとめて貼る（SNSごとの欄に自動で振り分け）</summary>
+        <div class="muted" style="margin-top:6px">「## Instagram」「## TikTok」「## YouTube Shorts（タイトル／概要欄）」「## X」「## Threads」のような見出しごとに分けて、下の各SNSの欄に入れます。文章は書き換えません。</div>
+        <textarea id="pasteAll" style="min-height:140px" placeholder="## Instagram&#10;…&#10;&#10;## TikTok&#10;…"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="pasteSplit">SNSごとに振り分ける</button>
+          <span class="muted" id="pasteState"></span>
+        </div>
+        <div id="pasteWarn" class="err" style="margin-top:4px"></div>
+      </details>
+
       <label for="title">管理用タイトル（自分が見分けるため。SNSには出ません）</label>
       <input type="text" id="title" placeholder="DAY11 の告知">
 
@@ -448,6 +461,7 @@
      反映されないことがある（index.html 自体は毎回取り直されるが、
      reel.js は据え置きだと前のまま使われ続ける）。 -->
 <script src="/reel.js?v=3"></script>
+<script src="/split-drafts.js?v=1"></script>
 <script>
 'use strict';
 
@@ -613,6 +627,48 @@ async function save(status) {
 }
 $('scheduleBtn').onclick = () => save('scheduled');
 $('draftBtn').onclick = () => save('draft');
+
+// --------------------------------------------------------------- 投稿案をまとめて貼る
+/**
+ * 見出しごとに切って、SNSごとの欄に入れる（public/split-drafts.js）。
+ * ★ 見つからなかったSNSの欄は触らない。前に入れたものを黙って消さないため。
+ */
+const PASTE_FIELDS = [
+  ['instagram', 'ig', 'Instagram'], ['tiktok', 'tt', 'TikTok'],
+  ['youtubeTitle', 'ytt', 'YouTube タイトル'], ['youtubeDescription', 'ytd', 'YouTube 概要欄'],
+  ['x', 'xt', 'X'], ['threads', 'th', 'Threads'],
+];
+
+$('pasteSplit').onclick = () => {
+  const r = splitDrafts.split($('pasteAll').value);
+  $('pasteWarn').textContent = '';
+  if (!r.found.length) {
+    $('pasteState').textContent = '';
+    $('pasteWarn').textContent = '見出しが見つかりませんでした。「## Instagram」のように、SNS名の見出しを付けて貼ってください。';
+    return;
+  }
+  const filled = [], missing = [];
+  for (const [key, id, label] of PASTE_FIELDS) {
+    if (r[key]) { $(id).value = r[key]; filled.push(label); }
+    else missing.push(label);
+  }
+  // 管理用タイトルが空なら、YouTube のタイトルを借りる（自分が見分けるためだけの欄）
+  if (!$('title').value.trim() && r.youtubeTitle) $('title').value = r.youtubeTitle;
+  // 入った中身を確かめられるよう、SNSごとの欄を開く
+  const per = $('ig').closest('details');
+  if (per) per.open = true;
+
+  $('pasteState').textContent = '✅ ' + filled.join('・') + ' に入れました';
+  const warn = [];
+  if (missing.length) warn.push('見つからなかった欄：' + missing.join('・') + '（そのままにしています）');
+  // ★ X は日本語1文字を2と数える。JavaScript の文字数では半分に見えてしまう。
+  if (r.x && splitDrafts.xLength(r.x) > 280) {
+    warn.push(`X の本文が長すぎます（X の数え方で ${splitDrafts.xLength(r.x)}／280。日本語は1文字＝2）。短くしてください。`);
+  }
+  if (r.threads && r.threads.length > 500) warn.push(`Threads の本文が長すぎます（${r.threads.length}／500文字）。`);
+  $('pasteWarn').textContent = warn.join('\n');
+  if (ttCreators) refreshTtControls();   // TikTok の本文プレビューも入れ直す
+};
 
 // --------------------------------------------------------------- TikTok 直接投稿の設定
 /**
