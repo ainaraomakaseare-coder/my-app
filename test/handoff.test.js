@@ -155,8 +155,9 @@ const post = (over) => Object.assign({
 
   // ---------------------------------------------------------------- 取り決めの一致
   // ★ SQL 側（schema_v4_handoff.sql）と同じ値でなければ、片方だけ緩む。
+  // ★ いちばん新しい定義（v10 で Threads を足した）と比べる。
   await check('公開系SNSの一覧が、SQL の publishing_networks() と一致する', () => {
-    const sql = require('fs').readFileSync(__dirname + '/../supabase/schema_v5_per_network.sql', 'utf8');
+    const sql = require('fs').readFileSync(__dirname + '/../supabase/schema_v10_threads.sql', 'utf8');
     const m = sql.match(/select array\[([^\]]+)\]\s*\$\$/);
     assert.ok(m, 'publishing_networks() が見つからない');
     const inSql = m[1].split(',').map((s) => s.trim().replace(/'/g, ''));
@@ -184,7 +185,8 @@ const post = (over) => Object.assign({
     for (const f of ['schema.sql', 'schema_v2_accounts.sql', 'schema_v3_groups.sql',
                      'schema_v4_handoff.sql', 'schema_v5_per_network.sql',
                      'schema_v6_features.sql', 'schema_v7_identity.sql',
-                     'schema_v8_insights.sql', 'schema_v9_tiktok_direct.sql']) {
+                     'schema_v8_insights.sql', 'schema_v9_tiktok_direct.sql',
+                     'schema_v10_threads.sql']) {
       assert.ok(all.includes(fs.readFileSync(dir + f, 'utf8')), f + ' が古い');
     }
     // つなぐ順番も見る。順番が狂うと引き継ぎが効かない。
@@ -193,8 +195,8 @@ const post = (over) => Object.assign({
     assert.ok(at('schema_v6_features.sql') < at('schema_v7_identity.sql'), 'v6 と v7 の順が逆');
     assert.ok(at('schema_v7_identity.sql') < at('schema_v8_insights.sql'), 'v7 と v8 の順が逆');
     assert.ok(at('schema_v8_insights.sql') < at('schema_v9_tiktok_direct.sql'), 'v8 と v9 の順が逆');
+    assert.ok(at('schema_v9_tiktok_direct.sql') < at('schema_v10_threads.sql'), 'v9 と v10 の順が逆');
   });
-
   // ---------------------------------------------------------------- まとめて仕込む
   await check('ネタは20本そろっていて、重複が無い', () => {
     const t = require('../public/topics.json').topics;

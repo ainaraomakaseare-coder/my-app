@@ -14,13 +14,14 @@ const scope = require('../lib/account-scope');
 const handoff = require('../lib/handoff');
 const ttRules = require('../lib/tiktok-settings');
 
-const NETWORKS = ['instagram', 'youtube', 'x', 'tiktok'];
+const NETWORKS = ['instagram', 'youtube', 'x', 'tiktok', 'threads'];
 
 // 画面から来るのは「SNS名」ではなく「連携アカウントのid」。
 // 同じSNSに企画用とアフィリエイト用を繋げるようにしたため。
 
 // 各SNSの文字数上限
 const LIMITS = { ig_caption: 2200, yt_title: 100, yt_description: 5000, x_text: 280, tt_caption: 2200 };
+const THREADS_MAX = 500;
 
 module.exports = async function handler(req, res) {
   if (!auth.guard(req, res)) return;
@@ -131,6 +132,13 @@ async function save(req, id) {
       throw bad(`${labelOf(key)}が長すぎます（${String(body[key]).length}文字／上限${max}文字）。`);
     }
   }
+  // ★ Threads は500文字と短い。空欄なら共通本文が入るので、共通本文が長いと
+  //   Threads を選んでいない投稿まで断ることになる。Threads を選んだときだけ見る。
+  const toThreads = targets.some((t) => byId.get(t).network === 'threads');
+  const thText = String(body.th_text || '');
+  if (toThreads && thText.length > THREADS_MAX) {
+    throw bad(`Threads の本文が長すぎます（${thText.length}文字／上限${THREADS_MAX}文字）。Threads 用の本文を短くしてください。`);
+  }
 
   // ★ TikTok の直接投稿の設定。null なら下書き送信（いままでどおり）。
   //   直接投稿できる連携が選ばれていないのに設定だけ残すと、あとで連携を
@@ -150,6 +158,9 @@ async function save(req, id) {
     yt_description: body.yt_description || '',
     x_text: body.x_text || '',
     tt_caption: body.tt_caption || '',
+    // ★ Threads を選んだときだけ書く。schema_v10 を流す前に本番へ出ても、
+    //   Threads を使わない投稿は「列が無い」で壊れないようにする。
+    ...(toThreads || id ? { th_text: toThreads ? thText : '' } : {}),
     // ★ 直接投稿を選んだときだけ書く。schema_v9 を流す前に本番へ出ても、
     //   いままでどおりの投稿（下書き送信）は「列が無い」で壊れないようにする。
     ...(ttSettings || id ? { tt_settings: ttSettings } : {}),
@@ -214,7 +225,7 @@ async function syncTargets(postId, targets, byId, group) {
 /** 画面やログに出す、アカウントの呼び名。 */
 function nameOf(a) {
   if (!a) return '不明なアカウント';
-  const net = { instagram: 'Instagram', youtube: 'YouTube', x: 'X', tiktok: 'TikTok' }[a.network] || a.network;
+  const net = { instagram: 'Instagram', youtube: 'YouTube', x: 'X', tiktok: 'TikTok', threads: 'Threads' }[a.network] || a.network;
   const who = a.label || a.account_name;
   return who ? `${net}（${who}）` : net;
 }

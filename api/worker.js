@@ -28,6 +28,7 @@ const NETWORKS = {
   youtube:   require('../lib/networks/youtube'),
   x:         require('../lib/networks/x'),
   tiktok:    require('../lib/networks/tiktok'),
+  threads:   require('../lib/networks/threads'),
 };
 
 // 1回の呼び出しで扱う件数と、使ってよい時間の上限。
