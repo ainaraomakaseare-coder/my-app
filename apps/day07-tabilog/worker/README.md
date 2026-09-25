@@ -128,11 +128,11 @@ npx wrangler deploy
 
 ```
 git pull
-npx wrangler d1 execute tabilog-db --remote --file schema.sql
+npx wrangler d1 execute tabilog-db --remote --file migrations/0016_sessions_social.sql
 npx wrangler deploy
 ```
 
-`schema.sql`はすべて`CREATE TABLE IF NOT EXISTS`なので、全体を実行しても既存のテーブル・データは変わらない（v3のときのような`DROP TABLE`は残っていない）。
+`migrations/0016_sessions_social.sql`は今回の5つのテーブルの`CREATE TABLE IF NOT EXISTS`だけを抜き出したもの（`schema.sql`の先頭には古い`DROP TABLE IF EXISTS episodes`が残っているので、本番では全体を実行しない）。何度実行しても既存データは変わらない。
 
 **通報の通知先**：`npx wrangler secret put REPORT_NOTIFY_EMAIL`で運営者のメールアドレスを登録すると、コメントが通報されたときにResend経由でメールが届く（`RESEND_API_KEY`はログイン用に設定済みのものを使う）。`wrangler.jsonc`は公開リポジトリに入っているので、メールアドレスはそこに書かずsecretにする。
 
