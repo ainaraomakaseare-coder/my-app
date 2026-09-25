@@ -406,6 +406,8 @@
   var REPLAY_LEAD_MIN = 5;           // 最初の予定の少し前から時計を動かし始める
   var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら500倍速で進める旅の時間（分）
   var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
+  var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
+  var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
   var REPLAY_MOVE_MIN_SEC = 2;       // 移動の演出は最低この秒数
   var REPLAY_MOVE_CAP_SEC = 6;       // 長い移動（数時間のフライトなど）もこの秒数に早送りする
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
@@ -452,7 +454,8 @@
       lastMinute[b.date] = minute;
       var dayIndex = dates.indexOf(b.date);
       var captions = (b.entries || []).map(function (e) {
-        return ((e.episode || '').trim() || (e.comment || '').trim()).slice(0, 40);
+        // 以前は40文字で切っていたため、スマホでは1.5行ほどで途切れていた。全文を出す（見せる時間は文字数で延ばす）
+      return (e.episode || '').trim() || (e.comment || '').trim();
       }).filter(Boolean).slice(0, 3);
       return {
         blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
@@ -523,8 +526,10 @@
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
       r += dwell * REPLAY_SEC_PER_MIN;
       kf.push({ t: st.t + dwell, r: r });
-      if (dwell * REPLAY_SEC_PER_MIN < REPLAY_MIN_CAPTION_SEC) {
-        r += REPLAY_MIN_CAPTION_SEC - dwell * REPLAY_SEC_PER_MIN;
+      var chars = (st.captions || []).join('').length + (st.label || '').length;
+      var minSec = Math.min(REPLAY_MAX_CAPTION_SEC, Math.max(REPLAY_MIN_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC));
+      if (dwell * REPLAY_SEC_PER_MIN < minSec) {
+        r += minSec - dwell * REPLAY_SEC_PER_MIN;
         kf.push({ t: st.t + dwell, r: r });
       }
       st.rDwellEnd = r;

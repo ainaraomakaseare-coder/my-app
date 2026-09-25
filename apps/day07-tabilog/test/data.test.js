@@ -381,5 +381,16 @@ rtTl.legs[0].path = [[35.69, 139.70], [35.69, 138.57], [35.66, 138.57]];
 var rtMid = T.replayStateAt(rtTl, (rtTl.legs[0].r0 + rtTl.legs[0].r1) / 2);
 ok('replayStateAt: 道のりがある移動は、直線ではなく道のりの上を進む（途中で西へ大きく回る）', Math.abs(rtMid.icon.lat - 35.69) < 0.02 && rtMid.icon.lng < 139.2);
 
+/* ---- 地図でふりかえる：吹き出しは全文、長いほど長く見せる ---- */
+var capLong = 'あ'.repeat(60);
+var capStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'x1', date: '2026-04-01', time: '10:00', label: 'A', entries: [{ episode: capLong }] },
+  { id: 'x2', date: '2026-04-01', time: '10:01', label: 'B', entries: [{ episode: '短い' }] },
+  { id: 'x3', date: '2026-04-01', time: '10:02', label: 'C', entries: [] }]);
+eq('replayStops: 吹き出しは40文字で切らず全文', capStops[0].captions[0].length, 60);
+var capTl = T.buildReplayTimeline(capStops, {});
+ok('buildReplayTimeline: 長い吹き出し（60文字）は、短いものより長く見せる（1秒12文字の目安）',
+  capTl.stops[0].rDwellEnd - capTl.stops[0].r > capTl.stops[1].rDwellEnd - capTl.stops[1].r + 1.5);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
