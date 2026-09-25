@@ -615,6 +615,72 @@ const TINY_PNG = Buffer.from(
   check('2問目以降も、話した言葉が回答欄に入る', (await micPage.inputValue('#qAnswer')) === '二つ目の答えです', await micPage.inputValue('#qAnswer'));
   await micCtx.close();
 
+  // ---- iOSアプリの中では、iPhone本体の音声認識（プラグイン）を使い、2問目以降も聞き取れる ----
+  const nativeCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await nativeCtx.addInitScript(() => {
+    const listeners = {};
+    const emit = (name, data) => (listeners[name] || []).forEach(f => f(data));
+    let running = false;
+    window.__nativeStarts = 0;
+    window.__partial = (t) => emit('partialResults', { matches: [t] });
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: {
+        SpeechRecognition: {
+          checkPermissions: () => Promise.resolve({ speechRecognition: 'granted' }),
+          requestPermissions: () => Promise.resolve({ speechRecognition: 'granted' }),
+          // 本物と同じく、聞き取り中にもう一度startすると断られ、stoppedは少し遅れて届く
+          start: () => {
+            if (running) return Promise.reject(new Error('Ongoing speech recognition'));
+            running = true; window.__nativeStarts++;
+            setTimeout(() => emit('listeningState', { status: 'started' }), 10);
+            return Promise.resolve();
+          },
+          stop: () => { setTimeout(() => { running = false; emit('listeningState', { status: 'stopped' }); }, 100); return Promise.resolve(); },
+          addListener: (name, f) => { (listeners[name] = listeners[name] || []).push(f); return Promise.resolve({ remove() {} }); }
+        }
+      }
+    };
+  });
+  const nativePage = await nativeCtx.newPage();
+  nativePage.on('pageerror', e => errors.push(e.message));
+  await nativePage.goto(BASE);
+  await nativePage.evaluate(() => { document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', ''); });
+  await nativePage.click('#btnNewWiki');
+  await nativePage.fill('#newTitle', 'iPhoneで答える人');
+  await nativePage.click('#btnCreateWiki');
+  await nativePage.waitForSelector('[data-screen=dash].active');
+  await nativePage.click('#tileInterview');
+  await nativePage.waitForSelector('[data-screen=interview].active');
+  check('iOSアプリではiPhone本体の音声認識が使えるので、マイクボタンが押せる', !(await nativePage.isDisabled('#qMicBtn')));
+  const nq1 = await nativePage.textContent('#qText');
+  await nativePage.click('#qMicBtn');
+  await nativePage.waitForFunction(() => window.__nativeStarts === 1);
+  await nativePage.evaluate(() => window.__partial('東京で生まれました'));
+  check('iPhone本体の音声認識の途中経過が、回答欄に入る', (await nativePage.inputValue('#qAnswer')) === '東京で生まれました');
+  // 「次の日に…」と話している途中で一瞬「次」で終わっても、次の質問には進まない
+  await nativePage.evaluate(() => { window.__partial('東京で生まれました 次'); setTimeout(() => window.__partial('東京で生まれました 次の日に引っ越しました'), 300); });
+  await nativePage.waitForTimeout(1600);
+  check('話の途中で一瞬「次」で終わっただけでは、次の質問に進まない', (await nativePage.textContent('#qText')) === nq1);
+  await nativePage.evaluate(() => window.__partial('東京で生まれました 次の日に引っ越しました 次'));
+  await nativePage.waitForFunction((q) => document.getElementById('qText').textContent !== q, nq1);
+  check('最後に「次」と言って1.2秒続きがなければ、次の質問に進む', true);
+  check('次の質問の回答欄は空（iPhone版）', (await nativePage.inputValue('#qAnswer')) === '');
+  await nativePage.evaluate(() => window.__partial('遅れて届いた前の回答'));
+  check('止めたあとに届いた前の質問の聞き取り結果は、次の回答欄に書き込まない（iPhone版）', (await nativePage.inputValue('#qAnswer')) === '');
+  await nativePage.waitForTimeout(200);
+  await nativePage.click('#qMicBtn');
+  await nativePage.waitForFunction(() => window.__nativeStarts === 2);
+  await nativePage.evaluate(() => window.__partial('二つ目の答えです'));
+  check('2問目以降も、iPhone本体の音声認識で聞き取れる', (await nativePage.inputValue('#qAnswer')) === '二つ目の答えです', await nativePage.inputValue('#qAnswer'));
+  const firstAnswer = await nativePage.evaluate(() => {
+    const W = window.OmoideWiki; const store = JSON.parse(localStorage.getItem(W.STORAGE_KEY));
+    const w = Object.values(store.wikis).find(x => x.title === 'iPhoneで答える人');
+    return w.history.map(e => e.text);
+  });
+  check('「次」の手前までが1問目の回答として保存される', firstAnswer[0] === '東京で生まれました\n次の日に引っ越しました' || firstAnswer[0] === '東京で生まれました 次の日に引っ越しました', JSON.stringify(firstAnswer));
+  await nativeCtx.close();
+
   // ---- iOSアプリ（Capacitor）の中：書き出しは共有シート、印刷ボタンは隠す ----
   const appCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
   await appCtx.addInitScript(() => {

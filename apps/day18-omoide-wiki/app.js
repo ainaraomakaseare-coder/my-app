@@ -1020,7 +1020,7 @@
   }
 
   function supportsRecognition() {
-    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    return !!(nativeSpeechPlugin() || window.SpeechRecognition || window.webkitSpeechRecognition);
   }
   function supportsSynthesis() {
     return !!window.speechSynthesis;
@@ -1144,6 +1144,139 @@
     };
   }
 
+  // iPhoneアプリの中では、ブラウザ標準の音声認識が1回目のあと聞き取らなくなるため、
+  // iPhone本体の音声認識（@capacitor-community/speech-recognition）を使う。
+  // このプラグインは画面ごとではなく1つだけなので、インタビュー・エピソードで1つの操作役を使い回す。
+  var sharedNativeMic = null;
+
+  function nativeSpeechPlugin() {
+    var plugins = nativePlugins();
+    return plugins && plugins.SpeechRecognition ? plugins.SpeechRecognition : null;
+  }
+
+  function createNativeMicController(plugin, textareaEl, btnEl, statusEl, onNext) {
+    var on = false;        // 聞き取りたい状態か
+    var running = false;   // 聞き取りが実際に動いているか（start から stopped まで）
+    var stopping = false;  // 止めるよう頼んだが、まだ stopped が来ていない
+    var baseText = '';     // 回答欄にすでに確定している文字
+    var current = '';      // 今の聞き取りで認識している文字（聞き取りが続く間に何度も更新される）
+    var idleWaiters = [];
+    var nextTimer = null;
+    var permissionOk = false;
+    var retries = 0;
+
+    function render() { textareaEl.value = baseText + (baseText && current ? '\n' : '') + current; }
+    function commit() {
+      if (current) { baseText = baseText + (baseText ? '\n' : '') + current; current = ''; }
+    }
+    function flushIdleWaiters() {
+      var waiters = idleWaiters;
+      idleWaiters = [];
+      waiters.forEach(function (cb) { cb(); });
+    }
+    function fail(message) {
+      on = false;
+      running = false;
+      btnEl.classList.remove('on');
+      statusEl.textContent = message;
+      flushIdleWaiters();
+    }
+    function ensurePermission() {
+      if (permissionOk) return Promise.resolve(true);
+      return plugin.checkPermissions().then(function (r) {
+        if (r.speechRecognition === 'granted') return r;
+        return plugin.requestPermissions();
+      }).then(function (r) {
+        permissionOk = r.speechRecognition === 'granted';
+        return permissionOk;
+      });
+    }
+    function begin() {
+      if (running) return;
+      running = true;
+      ensurePermission().then(function (ok) {
+        if (!ok) { fail('マイクまたは音声認識の使用が許可されていません。iPhoneの「設定」アプリから、おもいでWikiに許可してください。'); return; }
+        if (!on) { running = false; flushIdleWaiters(); return; }
+        return plugin.start({ language: 'ja-JP', partialResults: true, popup: false, maxResults: 1 }).then(function () { retries = 0; });
+      }).catch(function (e) {
+        running = false;
+        var msg = String((e && e.message) || e);
+        // 前の聞き取りの後片付けがまだ終わっていない。少し待ってからやり直す
+        if (/ongoing/i.test(msg) && retries < 6) {
+          retries++;
+          setTimeout(function () { if (on) begin(); }, 500);
+          return;
+        }
+        fail('音声入力でエラーが発生しました（' + msg + '）。');
+      });
+    }
+
+    plugin.addListener('partialResults', function (data) {
+      if (!on || stopping) return; // 止めたあとに遅れて届いた結果は、次の回答欄に書き込まない
+      var text = (data && data.matches && data.matches[0]) || '';
+      current = text;
+      if (nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
+      var m = onNext ? text.match(NEXT_COMMAND_RE) : null;
+      if (m) {
+        // 「次の日に…」の途中で一瞬「次」で終わることがあるため、1.2秒続きが来なければ「次」とみなす
+        nextTimer = setTimeout(function () {
+          nextTimer = null;
+          if (!on || stopping || current !== text) return;
+          current = text.slice(0, m.index).trim();
+          render();
+          commit();
+          statusEl.textContent = '「次」と聞こえたので次へ進みます…';
+          onNext();
+        }, 1200);
+      }
+      render();
+      statusEl.textContent = '聞き取り中…';
+    });
+    plugin.addListener('listeningState', function (data) {
+      if (data && data.status === 'started') { running = true; return; }
+      running = false;
+      stopping = false;
+      // 無音や時間切れで区切られた／前の後片付けで止められた場合は、続きを聞き直す
+      if (on) { commit(); begin(); return; }
+      btnEl.classList.remove('on');
+      flushIdleWaiters();
+    });
+
+    return {
+      start: function () {
+        baseText = textareaEl.value;
+        current = '';
+        on = true;
+        btnEl.classList.add('on');
+        statusEl.textContent = '聞き取り中…';
+        begin(); // 止めている途中なら、stopped のあとに始まる
+      },
+      stop: function () {
+        on = false;
+        if (nextTimer) { clearTimeout(nextTimer); nextTimer = null; }
+        btnEl.classList.remove('on');
+        statusEl.textContent = '';
+        if (running && !stopping) {
+          stopping = true;
+          plugin.stop().catch(function () {});
+        }
+      },
+      retarget: function (t, b, st, next) {
+        this.stop();
+        textareaEl = t; btnEl = b; statusEl = st; onNext = next;
+        baseText = ''; current = '';
+      },
+      whenIdle: function (cb) {
+        if (!running) { cb(); return; }
+        var done = false;
+        var once = function () { if (done) return; done = true; setTimeout(cb, 300); };
+        idleWaiters.push(once);
+        setTimeout(once, 2000);
+      },
+      isOn: function () { return on; }
+    };
+  }
+
   // マイクボタンのクリック監視は画面初期化時に一度だけ登録し、
   // 質問が変わるたびに micControllers[key] の中身だけ差し替える
   // （毎回 addEventListener し直すとボタンにリスナーが積み重なってしまうため）
@@ -1156,6 +1289,14 @@
   }
 
   function setMicController(key, textareaEl, btnEl, statusEl, onNext) {
+    var plugin = nativeSpeechPlugin();
+    if (plugin) {
+      if (sharedNativeMic) sharedNativeMic.retarget(textareaEl, btnEl, statusEl, onNext);
+      else sharedNativeMic = createNativeMicController(plugin, textareaEl, btnEl, statusEl, onNext);
+      btnEl.disabled = false;
+      micControllers[key] = sharedNativeMic;
+      return sharedNativeMic;
+    }
     var ctrl = micControllers[key];
     if (ctrl) { ctrl.retarget(textareaEl, btnEl, statusEl, onNext); return ctrl; }
     ctrl = createMicController(textareaEl, btnEl, statusEl, onNext);
