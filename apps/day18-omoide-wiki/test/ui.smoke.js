@@ -366,6 +366,33 @@ const TINY_PNG = Buffer.from(
   check('目次に生い立ち・経歴が出る', (await page.textContent('.wp-toc')).indexOf('生い立ち・経歴') !== -1);
   check('人物像・性格の回答に、答えた質問文がラベルとして表示される', (await page.textContent('.wp-main')).indexOf('几帳面で') !== -1 && (await page.locator('.wp-list .q').count()) > 0);
 
+  // ---- 完成ページを「ファイルで送る」：見た目のまま読めて、別の端末で読み込めば続きを書ける ----
+  const [shareDl] = await Promise.all([page.waitForEvent('download'), page.click('#btnShareFile')]);
+  // ファイル名はテスト用の画面なしChromiumだと日本語がすべて「download」になるため、中身で確かめる
+  const sharePath = path.join(os.tmpdir(), 'omoide-share.html');
+  await shareDl.saveAs(sharePath);
+  const shareHtml = fs.readFileSync(sharePath, 'utf8');
+  check('共有用ファイルにWikiのデータが埋め込まれている', shareHtml.indexOf('id="omoide-wiki-data"') !== -1);
+  const viewer = await browser.newPage();
+  await viewer.goto('file://' + sharePath);
+  check('受け取った人は、アプリがなくてもWikiの形で読める', (await viewer.textContent('.wp-head h1')) === 'やまだ たろう' && (await viewer.locator('.wp-toc').count()) === 1);
+  check('見た目（スタイル）も一緒に入っている', (await viewer.evaluate(() => getComputedStyle(document.querySelector('.wp-toc')).borderTopStyle)) === 'solid');
+  check('続きを書き足す方法の案内が入っている', (await viewer.textContent('.shared-note')).indexOf('ファイルを読み込んで合体する') !== -1);
+  await viewer.close();
+  // 別の端末（まっさらな状態）で読み込むと、そのWikiが入って続きが書ける
+  const otherCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const other = await otherCtx.newPage();
+  other.on('pageerror', e => errors.push(e.message));
+  await other.goto(BASE);
+  await other.setInputFiles('#fileImport', sharePath);
+  await other.waitForFunction(() => (document.getElementById('homeStatus').textContent || '').indexOf('読み込み完了') !== -1);
+  check('別の端末で共有用ファイルを読み込むと、そのWikiが入る', (await other.textContent('#wikiList')).indexOf('やまだ たろう') !== -1);
+  await other.click('.wiki-card:has-text("やまだ たろう")');
+  await other.waitForSelector('[data-screen=dash].active');
+  check('読み込んだWikiの記録が、別の端末でも見られる（続きを書き足せる）', (await other.textContent('#entryList')).indexOf('几帳面で') !== -1);
+  await otherCtx.close();
+  fs.unlinkSync(sharePath);
+
   // ---- 書き出し ----
   const [download] = await Promise.all([
     page.waitForEvent('download'),

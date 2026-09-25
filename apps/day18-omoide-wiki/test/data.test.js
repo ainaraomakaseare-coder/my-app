@@ -333,5 +333,19 @@ var older = JSON.parse(JSON.stringify(editWiki));
 older.history[0].text = '京都です'; older.history[0].updatedAt = '2020-01-01T00:00:00.000Z';
 eq('編集前の古いコピーと合体しても、編集後の回答が残る', W.mergeEntryArrays(editWiki.history, older.history)[0].text, '大阪です');
 
+/* ---- 共有用ファイル（HTML）：見た目のまま読めて、読み込めば続きを書ける ---- */
+var shareWiki = W.newWiki('person', 'タイトル</script><b>', '');
+shareWiki.history.push(W.newEntry('本文に</script>が入っても壊れない', '本人', '質問'));
+var shareHtml = W.buildShareHtml(shareWiki.title, '<div class="wp-head"><h1>見出し</h1></div>', '.wp-head{color:red}', W.exportPayload([shareWiki]));
+ok('共有用ファイルは完成ページの見た目を含む', shareHtml.indexOf('<div class="wp-head"><h1>見出し</h1></div>') !== -1 && shareHtml.indexOf('.wp-head{color:red}') !== -1);
+ok('データの中の「</script>」でページが壊れない（埋め込み部分に生の < を書かない）', shareHtml.split('</script>').length === 2);
+ok('タイトルの記号は画面に文字として出る', shareHtml.indexOf('<title>タイトル&lt;/script&gt;&lt;b&gt; - おもいでWiki</title>') !== -1);
+var sharedBack = W.parseImportPayload(shareHtml);
+eq('共有用ファイルを読み込むと、元のWikiに戻る', sharedBack[0].history[0].text, '本文に</script>が入っても壊れない');
+eq('共有用ファイルのタイトルも元どおり', sharedBack[0].title, 'タイトル</script><b>');
+var threw = false;
+try { W.parseImportPayload('<html><body>ただのページ</body></html>'); } catch (e) { threw = true; }
+ok('データの入っていないHTMLは読み込まない', threw);
+
 console.log('\n' + pass + ' 件 通過 / ' + fail + ' 件 失敗');
 process.exit(fail ? 1 : 0);

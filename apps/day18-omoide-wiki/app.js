@@ -341,7 +341,40 @@
     return { store: next, added: addedCount, merged: mergedCount };
   }
 
-  function parseImportPayload(jsonText) {
+  // 「ファイルで送る」で作る共有用HTML。見た目のまま読めるページの中に、Wikiのデータも埋め込んでおき、
+  // 受け取った人が「ファイルを読み込んで合体する」で選べば、別の端末でも続きを書き足せるようにする。
+  var SHARE_DATA_ID = 'omoide-wiki-data';
+  var APP_PUBLIC_URL = 'https://ainaraomakaseare-coder.github.io/my-app/apps/day18-omoide-wiki/';
+
+  function buildShareHtml(title, pageHtml, cssText, payload) {
+    // データの中に「</script>」などが含まれていてもページが壊れないよう、< を文字コードで書く
+    var json = JSON.stringify(payload).replace(/</g, '\\u003c');
+    var safeTitle = String(title || 'おもいでWiki').replace(/[<>&"]/g, function (c) {
+      return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c];
+    });
+    return '<!DOCTYPE html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+      '<title>' + safeTitle + ' - おもいでWiki</title>\n' +
+      '<style>\n' + (cssText || '') + '\n' +
+      'body { background: #fff; padding: 16px 12px 40px; }\n' +
+      '.wiki-page { margin: 0 auto 24px; }\n' +
+      '.shared-note { max-width: 900px; margin: 0 auto; font-size: 13px; line-height: 1.8; color: #54595d; }\n' +
+      '.shared-note a { color: #0645ad; }\n' +
+      '</style>\n</head>\n<body>\n' +
+      '<div class="wiki-page">' + pageHtml + '</div>\n' +
+      '<p class="shared-note">この記事は「おもいでWiki」で作りました。続きを書き足したいときは、' +
+      '<a href="' + APP_PUBLIC_URL + '">おもいでWiki</a>を開いて「ファイルを読み込んで合体する」でこのファイルを選んでください。</p>\n' +
+      '<script type="application/json" id="' + SHARE_DATA_ID + '">' + json + '</script>\n' +
+      '</body>\n</html>\n';
+  }
+
+  function parseImportPayload(fileText) {
+    var jsonText = String(fileText || '');
+    if (/^\s*</.test(jsonText)) {
+      var m = jsonText.match(new RegExp('<script type="application/json" id="' + SHARE_DATA_ID + '">([\\s\\S]*?)</script>'));
+      if (!m) throw new Error('このファイルにはおもいでWikiのデータが入っていないようです');
+      jsonText = m[1];
+    }
     var data = JSON.parse(jsonText);
     if (Array.isArray(data)) return data;
     if (data && Array.isArray(data.wikis)) return data.wikis;
@@ -735,6 +768,7 @@
     mergeWiki: mergeWiki,
     mergeImport: mergeImport,
     parseImportPayload: parseImportPayload,
+    buildShareHtml: buildShareHtml,
     exportPayload: exportPayload,
     addContributor: addContributor,
     estimateBytes: estimateBytes,
@@ -802,6 +836,7 @@
     'external-link': '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
     'download': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
     'upload': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+    'share': '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m16 6-4-4-4 4"/><path d="M12 2v13"/>',
     'trash': '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>'
   };
 
@@ -2568,15 +2603,34 @@
       });
   }
 
-  function download(filename, text) {
+  function download(filename, text, mimeType) {
     var plugins = nativePlugins();
     if (plugins && plugins.Filesystem && plugins.Share) { shareFileInApp(plugins, filename, text); return; }
-    var blob = new Blob([text], { type: 'application/json' });
+    var blob = new Blob([text], { type: mimeType || 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  // 完成ページの見た目に使っているCSSを、そのまま共有用ファイルに入れる
+  function appStyleText() {
+    var out = [];
+    Array.prototype.forEach.call(document.styleSheets, function (sheet) {
+      if (!sheet.href || !/style\.css(\?|$)/.test(sheet.href)) return;
+      try {
+        Array.prototype.forEach.call(sheet.cssRules, function (rule) { out.push(rule.cssText); });
+      } catch (e) { /* 読めないスタイルは飛ばす */ }
+    });
+    return out.join('\n');
+  }
+
+  function shareWikiAsFile() {
+    var w = currentWiki();
+    renderWikiPage(w);
+    var html = buildShareHtml(w.title, $('#wikiPage').innerHTML, appStyleText(), exportPayload([w]));
+    download((w.title || 'おもいでWiki') + '.html', html, 'text/html');
   }
 
   function exportCurrentWiki() {
@@ -2733,6 +2787,7 @@
     $('#btnExportWiki').addEventListener('click', exportCurrentWiki);
     $('#btnDeleteWiki').addEventListener('click', deleteCurrentWiki);
     $('#btnPrint').addEventListener('click', function () { window.print(); });
+    $('#btnShareFile').addEventListener('click', shareWikiAsFile);
     $('#btnCompose').addEventListener('click', function () { composeWikiWithAi(currentWiki()); });
 
     $all('.back').forEach(function (b) {

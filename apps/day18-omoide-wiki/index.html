@@ -29,15 +29,15 @@
 
       <div class="home-actions">
         <button class="btn primary" id="btnNewWiki"><span class="icon-slot" data-icon="plus"></span>新しく作る</button>
-        <button class="btn outline" id="btnImport"><span class="icon-slot" data-icon="upload"></span>JSONを読み込んで合体する</button>
-        <input type="file" id="fileImport" accept="application/json" hidden multiple>
+        <button class="btn outline" id="btnImport"><span class="icon-slot" data-icon="upload"></span>ファイルを読み込んで合体する</button>
+        <input type="file" id="fileImport" accept=".json,.html,.htm,application/json,text/html" hidden multiple>
       </div>
 
       <p class="hint" id="homeStatus"></p>
 
       <p class="hint">
         サーバーは使っていません。すべてこの端末のブラウザの中だけに保存されます。<br>
-        誰かと一緒にまとめたいときは、書き出したJSONファイルを送り合って「読み込んで合体する」で1つにできます。
+        誰かと一緒にまとめたいときは、完成ページの「ファイルで送る」（またはJSONの書き出し）で作ったファイルを送り合って、「ファイルを読み込んで合体する」で1つにできます。
       </p>
     </div>
   </section>
@@ -304,6 +304,7 @@
       <button class="btn text back" data-back="dash"><span class="icon-slot" data-icon="arrow-left"></span>戻る</button>
       <div class="view-toolbar-actions">
         <button class="btn outline" id="btnCompose" hidden>AIでまとめる</button>
+        <button class="btn outline" id="btnShareFile"><span class="icon-slot" data-icon="share"></span>ファイルで送る</button>
         <button class="btn outline" id="btnPrint"><span class="icon-slot" data-icon="printer"></span>印刷 / PDFで保存</button>
       </div>
     </div>
