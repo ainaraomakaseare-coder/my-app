@@ -238,12 +238,16 @@ async function deleteTrip(id, env, headers) {
 
 /* ---------- blocks（大項目） ---------- */
 
+// この予定の場所まで、どうやって移動したか（地図でふりかえる演出で使う。v15）。空文字は「未設定＝演出なし」。
+const TRANSPORTS = ["", "plane", "taxi", "walk", "train", "bus", "bicycle"];
+
 function validBlockInput(x) {
   if (!x || typeof x !== "object") return false;
   if (x.date !== undefined && x.date !== "" && !DATE_RE.test(x.date)) return false;
   if (x.time !== undefined && x.time !== "" && !TIME_RE.test(x.time)) return false;
   if (!optStr(x.label, 200)) return false;
   if (x.category !== undefined && !CATEGORIES.includes(x.category)) return false;
+  if (x.transport !== undefined && !TRANSPORTS.includes(x.transport)) return false;
   return true;
 }
 
@@ -255,6 +259,7 @@ function rowToBlock(row) {
     time: row.time,
     label: row.label,
     category: row.category,
+    transport: row.transport || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -278,13 +283,14 @@ async function createBlock(tripId, request, env, headers) {
     time: data.time || "",
     label: (data.label || "").trim(),
     category: data.category || "sightseeing",
+    transport: data.transport || "",
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    "INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+    "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
   )
-    .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.created_at, row.updated_at)
+    .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.created_at, row.updated_at)
     .run();
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, tripId).run();
   return json({ ...rowToBlock(row), entries: [] }, 201, headers);
@@ -304,9 +310,9 @@ async function updateBlock(id, request, env, headers) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   await env.DB.prepare(
-    "UPDATE blocks SET date=?, time=?, label=?, category=?, updated_at=? WHERE id=?"
+    "UPDATE blocks SET date=?, time=?, label=?, category=?, transport=?, updated_at=? WHERE id=?"
   )
-    .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", t, id)
+    .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", merged.transport || "", t, id)
     .run();
   const updated = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   return json(rowToBlock(updated), 200, headers);
@@ -696,6 +702,45 @@ async function geocodePlace(place) {
   // admin1（都道府県・州など）・country（国）は、天気取得と同じこのジオコーディング結果から
   // ついでに取れる。「訪れた都道府県・国」の集計（v13）専用に別の入力・別のAPI呼び出しは要らない。
   return { lat: first.latitude, lon: first.longitude, admin1: first.admin1 || "", country: first.country || "" };
+}
+
+// 「地図でふりかえる」用に、予定の地名を緯度経度にする。首里城公園・那覇空港のような日本語の
+// 施設名はOpenStreetMapのNominatimの方が見つかりやすいので先に試し、見つからなければ天気と同じ
+// Open-Meteo（市区町村レベル）で探す。Nominatimの利用規約（アプリを識別できるUser-Agent・
+// 結果のキャッシュ・1秒1回まで）に従い、結果はCache APIに30日置き、連続呼び出しの間隔は
+// クライアント側で空ける（cached:falseのときだけ待つ）。
+const GEOCODE_CACHE_SECONDS = 60 * 60 * 24 * 30;
+
+async function geocodeForReplay(q, headers, ctx) {
+  q = (q || "").trim();
+  if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-geocode.cache/?q=" + encodeURIComponent(q));
+  const hit = await cache.match(cacheKey);
+  if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
+
+  let result = null;
+  try {
+    const res = await fetch(
+      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ja&q=" + encodeURIComponent(q),
+      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+    );
+    if (res.ok) {
+      const arr = await res.json();
+      if (Array.isArray(arr) && arr[0]) result = { lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon) };
+    }
+  } catch {
+    // Nominatimが落ちている・遅いときはOpen-Meteoに任せる
+  }
+  if (!result) {
+    const g = await geocodePlace(q).catch(() => null);
+    if (g) result = { lat: g.lat, lng: g.lon };
+  }
+  const body = result ? { found: true, lat: result.lat, lng: result.lng } : { found: false };
+  ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+  })));
+  return json({ ...body, cached: false }, 200, headers);
 }
 
 async function fetchDailyWeather(lat, lon, date) {
@@ -2108,6 +2153,7 @@ export default {
 
     if (method === "PUT" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return setRating(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return deleteRating(m[1], request, env, headers);
+    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx);
     if (method === "GET" && path === "/mylog") {
       return getMyLog((url.searchParams.get("email") || "").trim().toLowerCase(), env, headers);
     }

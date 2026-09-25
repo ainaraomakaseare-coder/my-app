@@ -54,6 +54,8 @@ async function launch() {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  // AIへの送信の同意確認（confirmAiDataSharing）には同意して進める
+  page.on('dialog', (d) => d.accept());
 
   // 音声入力は有料プラン専用（docs/adr/0004）になったため、テストでも
   // ログイン済み・プレミア＋プラン契約中のアカウントとして進める。
@@ -138,8 +140,8 @@ async function launch() {
   await page.click('#btnCreateTrip');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
 
-  check('日タイムラインに「音声でまとめて記録する」ボタンが出る', await page.isVisible('.block-add >> text=音声でまとめて記録する'));
-  await page.click('.block-add >> text=音声でまとめて記録する');
+  check('日タイムラインに「音声でまとめて記録する」ボタンが出る', await page.isVisible('.block-add >> text=音声・メモでまとめて記録する'));
+  await page.click('.block-add >> text=音声・メモでまとめて記録する');
   await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
 
   check('録音していないうちは「この内容で予定を作る」が押せない', await page.isHidden('#btnCreateVoiceEntries'));
@@ -178,7 +180,7 @@ async function launch() {
   check('ログイン中のメールアドレスもx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.email === TEST_USER.email);
 
   // ---- 同じ日にもう一度録音して送れる（1回目の成功後に「この内容で予定を作る」が無効のまま残らないか） ----
-  await page.click('.block-add >> text=音声でまとめて記録する');
+  await page.click('.block-add >> text=音声・メモでまとめて記録する');
   await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
   check('2回目もボタンが押せる状態で開く', !(await page.isDisabled('#btnCreateVoiceEntries')));
   await page.click('#btnVoiceRecord');
@@ -197,7 +199,7 @@ async function launch() {
   check('2回目の送信もタイムラインに積み増される（3件→6件）', (await page.$$('.block')).length === 6);
 
   // ---- 1回の録音は3分まで（プレミアムプランの上限に合わせて、時間そのものをアプリ側で強制する） ----
-  await page.click('.block-add >> text=音声でまとめて記録する');
+  await page.click('.block-add >> text=音声・メモでまとめて記録する');
   await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
   await page.clock.install();
   await page.click('#btnVoiceRecord');

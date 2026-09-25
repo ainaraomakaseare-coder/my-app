@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS blocks (
   time TEXT NOT NULL DEFAULT '',
   label TEXT NOT NULL DEFAULT '',
   category TEXT NOT NULL DEFAULT 'sightseeing',
+  -- transport：この予定の場所までの移動手段（'' | plane | taxi | walk | train | bus | bicycle）。
+  -- 「地図でふりかえる」の演出専用（v15）。空文字は未設定＝移動の演出なし。
+  transport TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -195,3 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- v14：tripsに trip_type（旅行区分。サークルの友達／バイト先／家族など、自由入力）を
 -- 追加する一度きりの文。本番環境へ反映するまでは、下記を1回だけ実行すること。
 -- ALTER TABLE trips ADD COLUMN trip_type TEXT NOT NULL DEFAULT '';
+
+-- v15：blocksに transport（移動手段）を追加する一度きりの文。
+-- **wrangler deployより先に**本番環境で下記を1回だけ実行すること（逆順だと予定の保存がSQLエラーになる）。
+-- ALTER TABLE blocks ADD COLUMN transport TEXT NOT NULL DEFAULT '';

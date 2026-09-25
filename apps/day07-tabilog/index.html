@@ -190,6 +190,7 @@
 
       <p class="hint" id="tripEditStatus"></p>
       <button class="btn primary wide" id="btnSaveTripEdit">保存する</button>
+      <button class="btn danger ghost wide forget-trip-btn" id="btnForgetTrip" type="button">この旅行を履歴から消す</button>
     </div>
   </section>
 
@@ -277,6 +278,11 @@
       <div class="stats-row" id="tripStats"></div>
       <div class="cost-breakdown-panel" id="lodgingBreakdownPanel" hidden></div>
       <div class="cost-breakdown-panel" id="costBreakdownPanel" hidden></div>
+
+      <button class="replay-entry-btn" id="btnOpenReplay" type="button" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3.5 6v14L9 18l6 2 5.5-2V4L15 6z"/><path d="M9 4v14M15 6v14"/></svg>
+        <span>地図でふりかえる</span>
+      </button>
 
       <div class="day-tabs" id="dayTabs"></div>
 
@@ -395,10 +401,48 @@
           <div class="cat-chips" id="blkCategoryChips"></div>
         </div>
 
+        <div class="field">
+          <label>ここまでの移動手段（任意・「地図でふりかえる」で使います）</label>
+          <div class="cat-chips transport-chips" id="blkTransportChips"></div>
+        </div>
+
         <p class="hint" id="blkFormStatus"></p>
         <div class="sheet-actions">
           <button class="btn danger ghost" id="btnDeleteBlock" hidden>この予定を削除</button>
           <button class="btn primary wide" id="btnSaveBlock">保存する</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 地図でふりかえる（予定を地図の上で時刻どおりに再生する） ============ -->
+  <section class="screen" data-screen="replay">
+    <div class="replay">
+      <div class="replay-map" id="replayMap"></div>
+
+      <div class="replay-clock" id="replayClock" hidden>
+        <div class="replay-day" id="replayDay"></div>
+        <div class="replay-time" id="replayTime"></div>
+      </div>
+      <button class="icon-btn replay-close" id="btnCloseReplay" aria-label="閉じる">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+      </button>
+
+      <div class="replay-daybanner" id="replayDayBanner" hidden></div>
+      <p class="replay-status" id="replayStatus"></p>
+
+      <div class="replay-bottom">
+        <div class="replay-caption" id="replayCaption" hidden>
+          <div class="replay-caption-head">
+            <span class="replay-caption-time" id="replayCaptionTime"></span>
+            <span class="replay-caption-title" id="replayCaptionTitle"></span>
+          </div>
+          <div class="replay-caption-lines" id="replayCaptionLines"></div>
+        </div>
+        <div class="replay-controls" id="replayControls" hidden>
+          <button class="replay-play" id="btnReplayToggle" type="button" aria-label="一時停止"></button>
+          <div class="replay-progress" id="replayProgress"><div class="replay-progress-bar" id="replayProgressBar"></div></div>
+          <button class="btn text replay-restart" id="btnReplayRestart" type="button">最初から</button>
         </div>
       </div>
     </div>

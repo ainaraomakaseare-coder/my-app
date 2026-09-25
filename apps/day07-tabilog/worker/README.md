@@ -105,3 +105,17 @@ npx wrangler secret put OPENAI_API_KEY
 ## APIキーについて
 
 保存・共有・評価・天気取得・メールログインといった基本機能は、外部のAI APIを呼ばずに動きます。**「音声でまとめて記録する」機能だけ**、`OPENAI_API_KEY`（OpenAIのAPIキー）をシークレットとして必要とします（設定方法は上の「音声でまとめて記録する機能の設定」を参照）。設定しなくても、他の機能には一切影響しません。
+
+## 地図でふりかえる（2026-09-25 追加）
+
+予定に「移動手段」（`blocks.transport`）を持たせ、`GET /geocode?q=<地名>`（地名→緯度経度。Nominatim→Open-Meteoの順に探し、結果はCache APIに30日キャッシュ）を追加した。どちらもAPIキー不要・無料。
+
+**反映手順（順番厳守）**：列を追加する一度きりのマイグレーションを、**`wrangler deploy`より先に**実行する。逆順だと予定の作成・保存がSQLエラーで失敗する。
+
+```
+git pull
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD COLUMN transport TEXT NOT NULL DEFAULT '';"
+npx wrangler deploy
+```
+
+反映できたかは `npx wrangler d1 execute tabilog-db --remote --command "PRAGMA table_info(blocks);"` の結果に`transport`があるかで確認できる。

@@ -15,6 +15,18 @@
     { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' }
   ];
 
+  // 予定（Block）の場所までの移動手段。「地図でふりかえる」で、どのアイコンがどう動くかに使う。
+  // key=''は未設定＝移動の演出なし（Worker側のTRANSPORTSと同じ並び）。
+  var TRANSPORTS = [
+    { key: '', label: 'なし' },
+    { key: 'plane', label: '飛行機' },
+    { key: 'taxi', label: 'タクシー' },
+    { key: 'train', label: '電車' },
+    { key: 'bus', label: 'バス' },
+    { key: 'walk', label: '徒歩' },
+    { key: 'bicycle', label: '自転車' }
+  ];
+
   var WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
 
   function categoryLabel(key) {
@@ -384,8 +396,221 @@
     return '';
   }
 
+  // ---------- 地図でふりかえる（replay） ----------
+  // 予定（Block）を「地図の上を時刻どおりに移動していく演出」に変換する純粋関数。
+  // 地図の描画（Leaflet）は画面側の仕事で、ここでは「どの順で・いつ・どこにいるか」だけを決める。
+  // 時間の単位は2つある：t＝旅の中の時刻（1日目0時からの経過分）、r＝再生の実時間（秒）。
+
+  var REPLAY_SEC_PER_MIN = 0.6;      // 100倍速（旅の1分＝実時間0.6秒）
+  var REPLAY_LEAD_MIN = 5;           // 最初の予定の少し前から時計を動かし始める
+  var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら100倍速で進める旅の時間（分）
+  var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
+  var REPLAY_MOVE_MIN_SEC = 2;       // 移動の演出は最低この秒数
+  var REPLAY_MOVE_CAP_SEC = 6;       // 長い移動（数時間のフライトなど）もこの秒数に早送りする
+  var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
+  var REPLAY_UNTIMED_START_MIN = 9 * 60;
+
+  // GoogleマップのURL（?query=… や ?q=…）から地名を取り出す
+  function parseMapUrlQuery(url) {
+    var m = /[?&](?:query|q)=([^&#]+)/.exec(url || '');
+    if (!m) return '';
+    try { return decodeURIComponent(m[1].replace(/\+/g, ' ')).trim(); } catch (e) { return ''; }
+  }
+
+  var REPLAY_PARTICLES = ['から', 'に', 'で', 'へ', 'を'];
+  var REPLAY_ACTION_SUFFIXES = ['チェックイン', 'チェックアウト', '到着', '出発', '集合', '解散', '登頂', '散策', '観光', '見学', '宿泊', '乗車', '下車', '搭乗'];
+
+  // 予定の場所を、地図で探すための地名にする。記録に地図のURL（場所名から作ったGoogleマップの
+  // 検索URL）があればそれが一番確実。無ければ見出し（「那覇空港に到着」「かに道楽で夕食」
+  // 「ダイヤモンドヘッド登頂」）から、最後の助詞より前・末尾の動作名詞を除いた部分を地名とみなす。
+  // 「小西遅刻」のような地名ではない見出しはそのまま返り、地図で見つからなければ「出来事」として扱う。
+  function replayPlaceQuery(block) {
+    var entries = (block && block.entries) || [];
+    for (var i = 0; i < entries.length; i++) {
+      var q = parseMapUrlQuery(entries[i].mapUrl);
+      if (q) return q;
+    }
+    var label = ((block && block.label) || '').trim();
+    var cut = -1;
+    REPLAY_PARTICLES.forEach(function (p) {
+      var idx = label.lastIndexOf(p);
+      var tailLen = idx > 0 ? label.length - idx - p.length : 0;
+      if (idx > cut && tailLen >= 1 && tailLen <= 8) cut = idx;
+    });
+    if (cut > 0) return label.slice(0, cut).trim();
+    for (var j = 0; j < REPLAY_ACTION_SUFFIXES.length; j++) {
+      var sfx = REPLAY_ACTION_SUFFIXES[j];
+      if (label.length > sfx.length && label.slice(-sfx.length) === sfx) return label.slice(0, -sfx.length).trim();
+    }
+    return label;
+  }
+
+  function hhmmToMinute(hhmm) {
+    var m = /^(\d{1,2}):(\d{2})$/.exec(hhmm || '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  }
+  function minuteToHHMM(min) {
+    var h = Math.floor(min / 60), m = Math.floor(min % 60);
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  }
+
+  // タイムラインと同じ並び（sortBlocks：時刻ありが時刻順で先、時刻なしは後ろ）で、再生する地点を作る。
+  // 時刻なしの予定は、その日の直前の予定の30分後（その日に時刻ありが1つも無ければ9時から1時間おき）と推定する。
+  // 各地点の記録（エピソード・ひとこと）は、到着したときに出す吹き出しの中身にする。
+  function replayStops(trip, blocks) {
+    var dates = allDatesForTrip(trip, blocks).filter(function (d) { return d; });
+    var lastMinute = {}, hasTimed = {};
+    (blocks || []).forEach(function (b) { if (b.date && hhmmToMinute(b.time) !== null) hasTimed[b.date] = true; });
+    return sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; }).map(function (b) {
+      var minute = hhmmToMinute(b.time);
+      var estimated = minute === null;
+      if (estimated) {
+        var prev = lastMinute[b.date];
+        minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + (hasTimed[b.date] ? 30 : 60), 23 * 60 + 59);
+      }
+      lastMinute[b.date] = minute;
+      var dayIndex = dates.indexOf(b.date);
+      var captions = (b.entries || []).map(function (e) {
+        return ((e.episode || '').trim() || (e.comment || '').trim()).slice(0, 40);
+      }).filter(Boolean).slice(0, 3);
+      return {
+        blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
+        minute: minute, estimated: estimated, label: b.label || '', captions: captions,
+        transport: b.transport || '', query: replayPlaceQuery(b)
+      };
+    });
+  }
+
+  // 2点の間の位置（f=0〜1）。飛行機（arc=true）は進行方向の左へ弧を描くようにふくらませる。
+  function arcLatLng(from, to, f, arc) {
+    var dLat = to.lat - from.lat, dLng = to.lng - from.lng;
+    var lat = from.lat + dLat * f, lng = from.lng + dLng * f;
+    if (arc) {
+      var bulge = Math.sin(Math.PI * f) * 0.18;
+      lat += -dLng * bulge;
+      lng += dLat * bulge;
+    }
+    return { lat: lat, lng: lng };
+  }
+
+  // 真北を0度とした時計回りの向き（飛行機アイコンを進行方向へ回すのに使う）
+  function bearingDeg(a, b) {
+    var dy = b.lat - a.lat, dx = (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180);
+    return (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+  }
+
+  // 地点（replayStops）と地名→座標の対応から、再生の時間割を作る。
+  // - 地図上の地点になるのは、座標が分かった予定だけ（分からなければ吹き出しだけの「出来事」）
+  // - 移動の演出は「移動手段がある予定」へ、直前に地図上にいた地点から向かうときだけ
+  // - 移動は到着する予定の1つ前の地点での滞在が終わってから始める（途中で夕食など場所不明の出来事が
+  //   挟まっても、アイコンはそれまで最後にいた場所で待つ）
+  // - 旅の時間は基本100倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
+  function buildReplayTimeline(stops, coordsByQuery) {
+    coordsByQuery = coordsByQuery || {};
+    var s = (stops || []).map(function (st) {
+      var c = st.query ? coordsByQuery[st.query] : null;
+      var located = !!(c && typeof c.lat === 'number' && typeof c.lng === 'number');
+      return Object.assign({}, st, {
+        t: st.dayIndex * 1440 + st.minute, located: located,
+        lat: located ? c.lat : null, lng: located ? c.lng : null
+      });
+    });
+    if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0 };
+
+    var legs = [], lastLoc = -1;
+    s.forEach(function (st, i) {
+      if (!st.located) return;
+      if (lastLoc >= 0 && st.transport && (s[lastLoc].lat !== st.lat || s[lastLoc].lng !== st.lng)) {
+        legs.push({ from: lastLoc, to: i, transport: st.transport });
+      }
+      lastLoc = i;
+    });
+    var legArrivingAt = {};
+    legs.forEach(function (l) { legArrivingAt[l.to] = l; });
+
+    var kf = [], r = 0;
+    var tStart = Math.max(s[0].t - REPLAY_LEAD_MIN, s[0].dayIndex * 1440);
+    kf.push({ t: tStart, r: 0 });
+    r += (s[0].t - tStart) * REPLAY_SEC_PER_MIN;
+    s.forEach(function (st, i) {
+      st.r = r;
+      kf.push({ t: st.t, r: r });
+      var next = s[i + 1];
+      // 最後の予定は、深夜でも時計が翌日（存在しない日）にはみ出さないよう、その日の23:59までにとどめる
+      var gap = next ? Math.max(0, next.t - st.t) : Math.max(0, Math.min(REPLAY_DWELL_MIN, (st.dayIndex + 1) * 1440 - 1 - st.t));
+      var moving = !!(next && legArrivingAt[i + 1]);
+      var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
+      r += dwell * REPLAY_SEC_PER_MIN;
+      kf.push({ t: st.t + dwell, r: r });
+      if (dwell * REPLAY_SEC_PER_MIN < REPLAY_MIN_CAPTION_SEC) {
+        r += REPLAY_MIN_CAPTION_SEC - dwell * REPLAY_SEC_PER_MIN;
+        kf.push({ t: st.t + dwell, r: r });
+      }
+      st.rDwellEnd = r;
+      if (!next) return;
+      var rest = gap - dwell;
+      r += moving
+        ? Math.min(Math.max(rest * REPLAY_SEC_PER_MIN, REPLAY_MOVE_MIN_SEC), REPLAY_MOVE_CAP_SEC)
+        : Math.min(rest * REPLAY_SEC_PER_MIN, REPLAY_IDLE_CAP_SEC);
+    });
+    legs.forEach(function (l) {
+      l.r0 = s[l.to - 1].rDwellEnd;
+      l.r1 = s[l.to].r;
+    });
+    return { stops: s, legs: legs, keyframes: kf, totalReal: r };
+  }
+
+  function replayRealToTrip(kf, r) {
+    if (r <= kf[0].r) return kf[0].t;
+    for (var j = 0; j < kf.length - 1; j++) {
+      var a = kf[j], b = kf[j + 1];
+      if (r <= b.r) {
+        var span = b.r - a.r;
+        return span > 0 ? a.t + (b.t - a.t) * (r - a.r) / span : b.t;
+      }
+    }
+    return kf[kf.length - 1].t;
+  }
+
+  // 再生開始からr秒の時点の状態：時計（何日目・何時何分）、吹き出しを出す地点、移動中のアイコンの位置、
+  // いま地図上でいる場所（here：カメラを合わせる位置）。
+  function replayStateAt(tl, r) {
+    r = Math.max(0, Math.min(r, tl.totalReal));
+    var t = replayRealToTrip(tl.keyframes, r);
+    var dayIndex = Math.floor(t / 1440);
+    var s = tl.stops;
+    var idx = -1;
+    for (var i = 0; i < s.length; i++) { if (s[i].r <= r + 1e-9) idx = i; }
+    var captionIndex = idx >= 0 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
+
+    var icon = null;
+    for (var k = 0; k < tl.legs.length; k++) {
+      var l = tl.legs[k];
+      if (r >= l.r0 && r <= l.r1) {
+        var f = l.r1 > l.r0 ? (r - l.r0) / (l.r1 - l.r0) : 1;
+        var arc = l.transport === 'plane';
+        var pos = arcLatLng(s[l.from], s[l.to], f, arc);
+        var ahead = arcLatLng(s[l.from], s[l.to], Math.min(1, f + 0.02), arc);
+        icon = { lat: pos.lat, lng: pos.lng, transport: l.transport, bearing: f < 1 ? bearingDeg(pos, ahead) : bearingDeg(s[l.from], s[l.to]), legIndex: k };
+        break;
+      }
+    }
+    var here = icon ? { lat: icon.lat, lng: icon.lng } : null;
+    if (!here) {
+      for (var j = Math.max(idx, 0); j >= 0; j--) { if (s[j].located) { here = { lat: s[j].lat, lng: s[j].lng }; break; } }
+    }
+    if (!here) {
+      for (var n = 0; n < s.length; n++) { if (s[n].located) { here = { lat: s[n].lat, lng: s[n].lng }; break; } }
+    }
+    return {
+      t: t, dayNumber: dayIndex + 1, hhmm: minuteToHHMM(t - dayIndex * 1440),
+      stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here
+    };
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
+    TRANSPORTS: TRANSPORTS,
     categoryLabel: categoryLabel,
     categoryColor: categoryColor,
     formatYen: formatYen,
@@ -417,7 +642,12 @@
     ratingSummary: ratingSummary,
     myRatingScore: myRatingScore,
     sortMyLogItems: sortMyLogItems,
-    weatherLabel: weatherLabel
+    weatherLabel: weatherLabel,
+    replayPlaceQuery: replayPlaceQuery,
+    replayStops: replayStops,
+    buildReplayTimeline: buildReplayTimeline,
+    replayStateAt: replayStateAt,
+    arcLatLng: arcLatLng
   };
 
   root.TabiLog = Core;
@@ -441,6 +671,7 @@
     return meta ? meta.getAttribute('content').trim() : '';
   })();
   var MY_TRIPS_KEY = 'tabilog:my-trips';
+  var HIDDEN_TRIPS_KEY = 'tabilog:hidden-trips';
   var CURRENT_USER_KEY = 'tabilog:user';
 
   function $(sel, root2) { return (root2 || document).querySelector(sel); }
@@ -511,9 +742,31 @@
       tripType: trip.tripType || '', coverPhotoId: trip.coverPhotoId || ''
     });
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(list));
+    var hidden = loadHiddenTripIds();
+    if (hidden.indexOf(trip.id) !== -1) saveHiddenTripIds(hidden.filter(function (h) { return h !== trip.id; }));
   }
   function forgetTrip(id) {
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(Core.removeTripIndexEntry(loadMyTrips(), id)));
+  }
+
+  // 利用者が自分で「履歴から消した」旅行のID。ログイン中はsyncAccountTripsIntoHomeが
+  // 参加済みの旅行を索引へ自動で足し直すため、ここに載っているものは足し直さない。
+  // その旅行をURLなどから再び開いたとき（rememberTrip）に一覧へ戻す。
+  function loadHiddenTripIds() {
+    try { return JSON.parse(localStorage.getItem(HIDDEN_TRIPS_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function saveHiddenTripIds(ids) {
+    localStorage.setItem(HIDDEN_TRIPS_KEY, JSON.stringify(ids));
+  }
+  function hideTripFromHistory() {
+    if (!state.trip) return;
+    if (!confirm('この旅行をホームの一覧（この端末の履歴）から消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。共有URLを開けば、また一覧に戻ります）')) return;
+    var id = state.trip.id;
+    forgetTrip(id);
+    var hidden = loadHiddenTripIds().filter(function (h) { return h !== id; });
+    hidden.push(id);
+    saveHiddenTripIds(hidden);
+    goHome();
   }
   // 「この端末の旅行の履歴を削除」。tabilog:my-tripsはログイン状態と無関係の端末ローカルな
   // 索引（ログアウトしても消えない）なので、別アカウントに切り替えて試すときなどに前の
@@ -1092,6 +1345,7 @@
       var known = loadMyTrips();
       var knownIds = {};
       known.forEach(function (t) { knownIds[t.id] = true; });
+      loadHiddenTripIds().forEach(function (id) { knownIds[id] = true; }); // 本人が履歴から消したものは足し直さない
       var added = false;
       (data.trips || []).forEach(function (t) {
         if (knownIds[t.id]) return;
@@ -1281,6 +1535,7 @@
     var nights = Core.tripNights(trip);
     $('#tripDates').textContent = range + (nights ? '・' + nights : '');
     $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
+    $('#btnOpenReplay').hidden = !(state.blocks || []).some(function (b) { return b.date; });
     renderTripJoin();
 
     var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
@@ -2145,10 +2400,28 @@
     return '<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>';
   }
 
+  // 移動手段のアイコン（予定フォームのチップと、地図でふりかえるの移動アイコンで共用）。
+  // 飛行機だけは進行方向に回転させるので、上（北）向きの塗りつぶしシルエットにしてある。
+  var TRANSPORT_ICON_PATHS = {
+    plane: '<path fill="currentColor" stroke="none" d="M12 2c.8 0 1.4.7 1.4 1.6V9l7.6 4.4v2.1l-7.6-2.3v4.5l2.2 1.7V21L12 20l-3.6 1v-1.6l2.2-1.7v-4.5L3 15.5v-2.1L10.6 9V3.6C10.6 2.7 11.2 2 12 2z"/>',
+    taxi: '<path d="M5.5 11l1.4-4a2 2 0 0 1 1.9-1.3h6.4a2 2 0 0 1 1.9 1.3l1.4 4"/><path d="M3.5 11h17v5.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M10 5.7V3.5h4v2.2"/><circle cx="7.5" cy="14.3" r="1"/><circle cx="16.5" cy="14.3" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
+    train: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 10h14"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/><path d="M8.5 17l-2.5 4M15.5 17l2.5 4"/>',
+    bus: '<rect x="4" y="3.5" width="16" height="14" rx="2.5"/><path d="M4 11h16M12 3.5V11"/><path d="M7 17.5V20M17 17.5V20"/><circle cx="8" cy="14.3" r="1"/><circle cx="16" cy="14.3" r="1"/>',
+    walk: '<circle cx="13" cy="4.3" r="1.8"/><path d="M13 8.5 11.2 14l-2.7 7"/><path d="M11.2 14l3.3 2.6.8 4.4"/><path d="M12.6 10.2l3.6 2.6M12.6 10.2l-4 1.6"/>',
+    bicycle: '<circle cx="6" cy="16" r="3.5"/><circle cx="18" cy="16" r="3.5"/><path d="M6 16l3.8-7h5.7L18 16"/><path d="M9.8 9 12.5 16H6"/><path d="M15.5 9l-1-3h-2.2"/>'
+  };
+  function transportIconSvg(key, size) {
+    var paths = TRANSPORT_ICON_PATHS[key];
+    if (!paths) return '';
+    size = size || 18;
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
+  }
+
   // ---------- 大項目（予定）の追加・編集 ----------
   function openBlockForm(block) {
     state.editingBlockId = block ? block.id : null;
     state.formCategory = block ? block.category : 'sightseeing';
+    state.formTransport = block ? (block.transport || '') : '';
     $('#blkFormTitle').textContent = block ? '予定を編集' : '予定を追加';
     $('#blkDate').value = block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10));
     $('#blkTime').value = block ? block.time : '';
@@ -2156,6 +2429,7 @@
     $('#blkFormStatus').textContent = '';
     $('#btnDeleteBlock').hidden = !block;
     renderCategoryChips();
+    renderTransportChips();
     showScreen('blockForm');
   }
 
@@ -2169,6 +2443,17 @@
     });
   }
 
+  function renderTransportChips() {
+    var el = $('#blkTransportChips');
+    el.innerHTML = Core.TRANSPORTS.map(function (t) {
+      return '<button type="button" class="cat-chip' + (t.key === state.formTransport ? ' on' : '') + '" data-transport="' + t.key + '">' +
+        (t.key ? transportIconSvg(t.key, 14) : '') + '<span>' + escapeHtml(t.label) + '</span></button>';
+    }).join('');
+    $all('.cat-chip', el).forEach(function (b) {
+      b.addEventListener('click', function () { state.formTransport = b.dataset.transport; renderTransportChips(); });
+    });
+  }
+
   function saveBlock() {
     var status = $('#blkFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
@@ -2179,7 +2464,8 @@
       date: $('#blkDate').value || '',
       time: $('#blkTime').value || '',
       label: label,
-      category: state.formCategory
+      category: state.formCategory,
+      transport: state.formTransport || ''
     };
     var req = state.editingBlockId
       ? api('/blocks/' + encodeURIComponent(state.editingBlockId), 'PATCH', payload)
@@ -2895,6 +3181,312 @@
     });
   }
 
+  // ---------- 地図でふりかえる（replay） ----------
+  // 地図はLeaflet（vendor/leaflet、BSD-2）＋OpenStreetMapのタイル（無料・APIキー不要。帰属表示が必須で、
+  // 大量アクセスは利用規約上不可）。Leafletは地図を開いたときだけ読み込み、普段の起動を重くしない。
+  // 何を・いつ・どこに出すかは全部Core（replayStops / buildReplayTimeline / replayStateAt）が決め、
+  // ここは「r秒時点の状態を地図に描く」だけにしている（シークや巻き戻しもrを変えて描き直すだけで済む）。
+  var leafletLoading = null;
+  function loadLeaflet() {
+    if (window.L) return Promise.resolve(window.L);
+    if (leafletLoading) return leafletLoading;
+    leafletLoading = new Promise(function (resolve, reject) {
+      var css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = 'vendor/leaflet/leaflet.css';
+      document.head.appendChild(css);
+      var js = document.createElement('script');
+      js.src = 'vendor/leaflet/leaflet.js';
+      js.onload = function () { resolve(window.L); };
+      js.onerror = function () { leafletLoading = null; reject(new Error('leaflet_load_failed')); };
+      document.head.appendChild(js);
+    });
+    return leafletLoading;
+  }
+
+  // 地名→座標は端末内にもキャッシュし、無いものだけWorker（/geocode）に1件ずつ聞く。Worker側の
+  // Nominatimは1秒1回までの規約なので、Worker側のキャッシュにも無かった（cached:false）ときだけ1.1秒空ける。
+  // 見つからなかった地名は7日間は聞き直さない（通信エラーのときは記録せず、次回また聞く）。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache';
+  var GEOCODE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  function geocodeQueries(queries, onProgress) {
+    var cache;
+    try { cache = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch (e) { cache = {}; }
+    var now = Date.now(), result = {}, todo = [];
+    queries.forEach(function (q) {
+      if (!q || Object.prototype.hasOwnProperty.call(result, q) || todo.indexOf(q) !== -1) return;
+      var c = cache[q];
+      if (c && c.lat !== undefined) result[q] = { lat: c.lat, lng: c.lng };
+      else if (c && now - c.at < GEOCODE_MISS_TTL_MS) result[q] = null;
+      else todo.push(q);
+    });
+    var done = 0;
+    return todo.reduce(function (p, q) {
+      return p.then(function (needWait) {
+        return (needWait ? new Promise(function (ok) { setTimeout(ok, 1100); }) : Promise.resolve()).then(function () {
+          return api('/geocode?q=' + encodeURIComponent(q)).then(function (res) {
+            if (res && res.found) { result[q] = { lat: res.lat, lng: res.lng }; cache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; }
+            else { result[q] = null; cache[q] = { at: Date.now() }; }
+            return !(res && res.cached);
+          }).catch(function () { result[q] = null; return false; });
+        }).then(function (nextNeedsWait) {
+          done++;
+          if (onProgress) onProgress(done, todo.length);
+          return nextNeedsWait;
+        });
+      });
+    }, Promise.resolve(false)).then(function () {
+      try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(cache)); } catch (e) {}
+      return result;
+    });
+  }
+
+  var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
+  var PAUSE_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4.5" width="3.5" height="11" rx="1"/><rect x="11.5" y="4.5" width="3.5" height="11" rx="1"/></svg>';
+  var replayMap = null, replayLayer = null, replay = null, replayToken = null;
+
+  function openReplay() {
+    if (!state.trip) return;
+    stopReplay();
+    showScreen('replay');
+    $('#replayClock').hidden = true;
+    $('#replayControls').hidden = true;
+    $('#replayCaption').hidden = true;
+    $('#replayDayBanner').hidden = true;
+    var stops = Core.replayStops(state.trip, state.blocks);
+    var status = $('#replayStatus');
+    if (!stops.length) { status.textContent = '日付の入った予定がまだありません。'; return; }
+    status.textContent = '地図を準備しています…';
+    var token = {};
+    replayToken = token;
+    Promise.all([
+      loadLeaflet(),
+      geocodeQueries(stops.map(function (s) { return s.query; }), function (done, total) {
+        if (replayToken === token) status.textContent = '地図で場所を探しています…（' + done + '/' + total + '）';
+      })
+    ]).then(function (res) {
+      if (replayToken !== token) return; // 準備中に閉じられた
+      var tl = Core.buildReplayTimeline(stops, res[1]);
+      if (!tl.stops.some(function (s) { return s.located; })) {
+        status.textContent = '地図に出せる場所が見つかりませんでした。予定の見出しを地名（例：新宿、首里城公園に到着）にするか、記録に地図のURLを入れてみてください。';
+        return;
+      }
+      status.textContent = '';
+      startReplay(res[0], tl);
+    }).catch(function () {
+      if (replayToken === token) status.textContent = '地図を読み込めませんでした。通信環境を確認してください。';
+    });
+  }
+
+  function startReplay(L, tl) {
+    if (!replayMap) {
+      replayMap = L.map($('#replayMap'), { zoomControl: false });
+      replayMap.attributionControl.setPrefix(false);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(replayMap);
+    }
+    replayMap.invalidateSize();
+    if (replayLayer) replayLayer.remove();
+    replayLayer = L.layerGroup().addTo(replayMap);
+    replay = {
+      L: L, tl: tl, r: 0, playing: false, lastTs: null, raf: null,
+      dots: {}, lines: [], vehicle: null, vehicleTransport: '',
+      lastDay: 0, lastLeg: -1, lastStop: -2, captionIndex: -2,
+      dates: Core.allDatesForTrip(state.trip, state.blocks).filter(function (d) { return d; })
+    };
+    tl.stops.forEach(function (s, i) {
+      if (!s.located) return;
+      replay.dots[i] = L.marker([s.lat, s.lng], {
+        interactive: false,
+        icon: L.divIcon({ className: '', html: '<div class="replay-dot"></div>', iconSize: [14, 14], iconAnchor: [7, 7] })
+      });
+    });
+    tl.legs.forEach(function (l, k) {
+      replay.lines[k] = L.polyline([], {
+        color: '#00BF8F', weight: 4, opacity: 0.85, interactive: false,
+        dashArray: l.transport === 'plane' ? '8 8' : null
+      });
+    });
+    resetReplayCamera();
+    $('#replayClock').hidden = false;
+    $('#replayControls').hidden = false;
+    renderReplay();
+    setReplayPlaying(true);
+  }
+
+  function resetReplayCamera() {
+    var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
+    replayMap.setView([first.lat, first.lng], 13, { animate: false });
+    replay.lastLeg = -1;
+    replay.lastStop = -2;
+    replay.captionIndex = -2;
+    replay.lastDay = 0;
+  }
+
+  function replayLegPoints(l, f) {
+    var s = replay.tl.stops, a = s[l.from], b = s[l.to];
+    if (l.transport !== 'plane') {
+      var p = Core.arcLatLng(a, b, f, false);
+      return [[a.lat, a.lng], [p.lat, p.lng]];
+    }
+    var pts = [], n = Math.max(2, Math.ceil(32 * f));
+    for (var i = 0; i <= n; i++) {
+      var q = Core.arcLatLng(a, b, f * i / n, true);
+      pts.push([q.lat, q.lng]);
+    }
+    return pts;
+  }
+
+  function replayShortDate(ymd) {
+    var d = parseDate(ymd);
+    return d ? (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '（' + WEEKDAYS_JA[d.getUTCDay()] + '）' : '';
+  }
+
+  function showReplayDayBanner(dayNumber) {
+    var el = $('#replayDayBanner');
+    el.hidden = true;
+    void el.offsetWidth; // アニメーションを最初から再生し直すため
+    el.textContent = dayNumber + '日目';
+    el.hidden = false;
+    clearTimeout(showReplayDayBanner.timer);
+    showReplayDayBanner.timer = setTimeout(function () { el.hidden = true; }, 1600);
+  }
+
+  function setLayerVisible(layer, visible) {
+    var has = replayLayer.hasLayer(layer);
+    if (visible && !has) replayLayer.addLayer(layer);
+    else if (!visible && has) replayLayer.removeLayer(layer);
+  }
+
+  function renderReplay() {
+    var L = replay.L, tl = replay.tl, r = replay.r;
+    var st = Core.replayStateAt(tl, r);
+
+    $('#replayDay').textContent = st.dayNumber + '日目　' + replayShortDate(replay.dates[st.dayNumber - 1]);
+    $('#replayTime').textContent = st.hhmm;
+    if (st.dayNumber !== replay.lastDay) {
+      if (replay.lastDay && st.dayNumber > replay.lastDay && replay.playing) showReplayDayBanner(st.dayNumber);
+      replay.lastDay = st.dayNumber;
+    }
+
+    // 到着済みの地点は塗りつぶしの点、移動中の行き先は白抜きの点で先に見せる
+    var headingTo = st.icon ? tl.legs[st.icon.legIndex].to : -1;
+    tl.stops.forEach(function (s, i) {
+      var dot = replay.dots[i];
+      if (!dot) return;
+      var arrived = s.r <= r + 1e-9;
+      setLayerVisible(dot, arrived || i === headingTo);
+      var el = dot.getElement();
+      if (el && el.firstChild) el.firstChild.classList.toggle('upcoming', !arrived);
+    });
+    tl.legs.forEach(function (l, k) {
+      var f = r >= l.r1 ? 1 : (r <= l.r0 ? 0 : (r - l.r0) / (l.r1 - l.r0));
+      if (f > 0) replay.lines[k].setLatLngs(replayLegPoints(l, f));
+      setLayerVisible(replay.lines[k], f > 0);
+    });
+
+    if (st.icon) {
+      if (!replay.vehicle || replay.vehicleTransport !== st.icon.transport) {
+        if (replay.vehicle) replayLayer.removeLayer(replay.vehicle);
+        replay.vehicle = L.marker([st.icon.lat, st.icon.lng], {
+          interactive: false, zIndexOffset: 1000,
+          icon: L.divIcon({ className: '', html: '<div class="replay-vehicle">' + transportIconSvg(st.icon.transport, 20) + '</div>', iconSize: [38, 38], iconAnchor: [19, 19] })
+        });
+        replay.vehicleTransport = st.icon.transport;
+      }
+      replay.vehicle.setLatLng([st.icon.lat, st.icon.lng]);
+      setLayerVisible(replay.vehicle, true);
+      var svg = replay.vehicle.getElement() && replay.vehicle.getElement().querySelector('svg');
+      if (svg && st.icon.transport === 'plane') svg.style.transform = 'rotate(' + Math.round(st.icon.bearing) + 'deg)';
+    } else if (replay.vehicle) {
+      setLayerVisible(replay.vehicle, false);
+    }
+
+    // カメラ：移動が始まったら出発地と到着地が両方入るように、移動なしで別の場所に着いたらそこへ寄せる
+    if (st.icon && st.icon.legIndex !== replay.lastLeg) {
+      var leg = tl.legs[st.icon.legIndex];
+      replayMap.flyToBounds([[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]], { padding: [70, 70], maxZoom: 14, duration: 0.8 });
+      replay.lastLeg = st.icon.legIndex;
+    } else if (!st.icon && st.stopIndex !== replay.lastStop) {
+      var arrived = tl.stops[st.stopIndex];
+      var cameFromLeg = tl.legs.some(function (l) { return l.to === st.stopIndex; });
+      if (arrived && arrived.located && !cameFromLeg && replay.lastStop !== -2) {
+        replayMap.flyTo([arrived.lat, arrived.lng], Math.max(replayMap.getZoom(), 12), { duration: 0.8 });
+      }
+      replay.lastStop = st.stopIndex;
+    }
+
+    if (st.captionIndex !== replay.captionIndex) {
+      replay.captionIndex = st.captionIndex;
+      var cap = $('#replayCaption');
+      var s = tl.stops[st.captionIndex];
+      if (!s) {
+        cap.hidden = true;
+      } else {
+        $('#replayCaptionTime').textContent = s.estimated ? '' : minuteToHHMM(s.minute);
+        $('#replayCaptionTitle').textContent = s.label;
+        $('#replayCaptionLines').innerHTML = s.captions.map(function (c) { return '<div>' + escapeHtml(c) + '</div>'; }).join('');
+        cap.hidden = true;
+        void cap.offsetWidth;
+        cap.hidden = false;
+      }
+    }
+
+    $('#replayProgressBar').style.width = (tl.totalReal ? Math.min(100, r / tl.totalReal * 100) : 100) + '%';
+  }
+
+  function replayTick(ts) {
+    if (!replay || !replay.playing) return;
+    if (replay.lastTs !== null) replay.r = Math.min(replay.tl.totalReal, replay.r + (ts - replay.lastTs) / 1000);
+    replay.lastTs = ts;
+    renderReplay();
+    if (replay.r >= replay.tl.totalReal) { setReplayPlaying(false); return; }
+    replay.raf = requestAnimationFrame(replayTick);
+  }
+
+  function setReplayPlaying(on) {
+    if (!replay) return;
+    if (on && replay.r >= replay.tl.totalReal) { replay.r = 0; resetReplayCamera(); }
+    replay.playing = on;
+    replay.lastTs = null;
+    var btn = $('#btnReplayToggle');
+    btn.innerHTML = on ? PAUSE_ICON : PLAY_ICON;
+    btn.setAttribute('aria-label', on ? '一時停止' : '再生');
+    if (replay.raf) cancelAnimationFrame(replay.raf);
+    replay.raf = on ? requestAnimationFrame(replayTick) : null;
+  }
+
+  function seekReplay(e) {
+    if (!replay) return;
+    var rect = $('#replayProgress').getBoundingClientRect();
+    var f = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    replay.r = f * replay.tl.totalReal;
+    replay.lastLeg = -1;
+    replay.lastStop = -2;
+    replay.captionIndex = -2;
+    replay.lastDay = 0;
+    var here = Core.replayStateAt(replay.tl, replay.r).here;
+    if (here) replayMap.setView([here.lat, here.lng], replayMap.getZoom(), { animate: false });
+    renderReplay();
+  }
+
+  function stopReplay() {
+    replayToken = null;
+    if (replay) {
+      replay.playing = false;
+      if (replay.raf) cancelAnimationFrame(replay.raf);
+    }
+    replay = null;
+  }
+
+  function closeReplay() {
+    stopReplay();
+    showScreen('tripDetail');
+    renderTripDetail();
+  }
+
   // ---------- 初期化 ----------
   function init() {
     $('#btnCloseLightbox').addEventListener('click', closePhotoLightbox);
@@ -2961,6 +3553,18 @@
     $('#btnJoinTrip').addEventListener('click', handleJoinTrip);
     $('#btnEditTrip').addEventListener('click', openTripEditForm);
     $('#btnSaveTripEdit').addEventListener('click', saveTripEdit);
+    $('#btnForgetTrip').addEventListener('click', hideTripFromHistory);
+    $('#btnOpenReplay').addEventListener('click', openReplay);
+    $('#btnCloseReplay').addEventListener('click', closeReplay);
+    $('#btnReplayToggle').addEventListener('click', function () { if (replay) setReplayPlaying(!replay.playing); });
+    $('#btnReplayRestart').addEventListener('click', function () {
+      if (!replay) return;
+      replay.r = 0;
+      resetReplayCamera();
+      renderReplay();
+      setReplayPlaying(true);
+    });
+    $('#replayProgress').addEventListener('click', seekReplay);
     ['nt', 'te'].forEach(function (prefix) {
       $('#' + prefix + 'CoverPhotoPicker').addEventListener('click', function () { $('#' + prefix + 'CoverPhoto').click(); });
       $('#' + prefix + 'CoverPhoto').addEventListener('change', function (e) {
