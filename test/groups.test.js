@@ -339,6 +339,9 @@ function load(modPath, db, stubs) {
       open_id: openId, access_token: 'a', refresh_token: 'r', expires_in: 86400,
     }),
     _displayName: displayName,
+    // 権限の読み取りは通信しないので、本物をそのまま使う。
+    parseScopes: require('../lib/tiktok.js').parseScopes,
+    withScopes: require('../lib/tiktok.js').withScopes,
   });
 
   /** TikTok の帰り道を1回通す。表示名を取りに行くところは fetch ごと差し替える。 */

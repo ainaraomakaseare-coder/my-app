@@ -184,7 +184,7 @@ const post = (over) => Object.assign({
     for (const f of ['schema.sql', 'schema_v2_accounts.sql', 'schema_v3_groups.sql',
                      'schema_v4_handoff.sql', 'schema_v5_per_network.sql',
                      'schema_v6_features.sql', 'schema_v7_identity.sql',
-                     'schema_v8_insights.sql']) {
+                     'schema_v8_insights.sql', 'schema_v9_tiktok_direct.sql']) {
       assert.ok(all.includes(fs.readFileSync(dir + f, 'utf8')), f + ' が古い');
     }
     // つなぐ順番も見る。順番が狂うと引き継ぎが効かない。
@@ -192,6 +192,7 @@ const post = (over) => Object.assign({
     assert.ok(at('schema_v4_handoff.sql') < at('schema_v5_per_network.sql'), 'v4 と v5 の順が逆');
     assert.ok(at('schema_v6_features.sql') < at('schema_v7_identity.sql'), 'v6 と v7 の順が逆');
     assert.ok(at('schema_v7_identity.sql') < at('schema_v8_insights.sql'), 'v7 と v8 の順が逆');
+    assert.ok(at('schema_v8_insights.sql') < at('schema_v9_tiktok_direct.sql'), 'v8 と v9 の順が逆');
   });
 
   // ---------------------------------------------------------------- まとめて仕込む

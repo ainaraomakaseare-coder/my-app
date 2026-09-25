@@ -42,6 +42,13 @@
   .side .sep{height:1px;background:var(--line);margin:14px 0 8px}
   .side button.quiet{color:var(--muted);font-size:13px}
   #viewTabs{margin-bottom:14px}
+  .ttbox{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:14px}
+  .ttbox label{display:flex;align-items:flex-start;gap:6px;font-weight:400}
+  .ttbox .ttmode{margin-top:8px}
+  .ttbox .ttgroup{margin-top:12px}
+  .ttbox label.off{opacity:.5}
+  .ttpreview{white-space:pre-wrap;border:1px dashed var(--line);border-radius:8px;padding:8px 10px;
+    font-size:14px;min-height:2.5em;overflow-wrap:anywhere}
   @media (max-width:760px){
     .shell{grid-template-columns:1fr}
     .side{position:static;flex-direction:row;overflow-x:auto;gap:6px;
@@ -272,7 +279,58 @@
       </div>
       <div class="muted" style="margin-top:6px">
         同じSNSでも、アカウントごとに出し分けられます。
-        YouTube は非公開でアップロード、TikTok は<strong>アプリの下書き</strong>に届きます（どちらも審査前のため）。
+        YouTube は非公開でアップロードされます（審査前のため）。TikTok は、直接投稿の権限がある連携なら
+        下の設定で直接投稿でき、それ以外は<strong>アプリの下書き</strong>に届きます。
+      </div>
+
+      <!-- TikTok 直接投稿の設定。直接投稿できる TikTok を選んだときだけ出す。
+           TikTok の決まり（公開範囲に既定値を置かない・操作は最初は外す・
+           商用申告は最初は OFF・同意文は指定の文言）どおりに作る。 -->
+      <div id="ttBox" class="ttbox hide">
+        <h3 style="margin:0 0 4px">TikTok の投稿設定</h3>
+        <div class="muted" id="ttWho">投稿先を読み込み中…</div>
+
+        <div class="ttmode">
+          <label><input type="radio" name="ttMode" value="inbox" checked> 下書きに送る（公開は TikTok アプリで。本文は手で貼る）</label>
+          <label><input type="radio" name="ttMode" value="direct"> 直接投稿する（本文も一緒に送り、そのまま公開）</label>
+        </div>
+
+        <div id="ttDirect" class="hide">
+          <label for="ttPrivacy">公開範囲（必ず選んでください）</label>
+          <select id="ttPrivacy"></select>
+          <div class="muted" id="ttPrivacyNote"></div>
+
+          <div class="ttgroup">
+            <div>ほかの人に許可する操作</div>
+            <label><input type="checkbox" id="ttComment"> コメント</label>
+            <label><input type="checkbox" id="ttDuet"> デュエット</label>
+            <label><input type="checkbox" id="ttStitch"> スティッチ</label>
+          </div>
+
+          <div class="ttgroup">
+            <label><input type="checkbox" id="ttCommercial"> 商用コンテンツを申告する（ブランドや商品の宣伝を含む）</label>
+            <div id="ttCommercialBox" class="hide" style="margin-left:22px">
+              <label><input type="checkbox" id="ttYourBrand"> 自分のブランド（自分や自分の事業の宣伝）</label>
+              <label><input type="checkbox" id="ttBranded"> ブランドコンテンツ（報酬を受けて他社を紹介。アフィリエイトはこちら）</label>
+              <div class="muted" id="ttLabel"></div>
+            </div>
+            <div class="err" id="ttAffiNote"></div>
+          </div>
+
+          <div class="ttgroup">
+            <label><input type="checkbox" id="ttAigc"> AI で生成した映像を含む（TikTok がラベルを付けます）</label>
+          </div>
+
+          <label style="margin-top:10px">送られる本文のプレビュー</label>
+          <div class="ttpreview" id="ttPreview"></div>
+          <div class="err" id="ttDuration"></div>
+
+          <div class="ttgroup">
+            <label><input type="checkbox" id="ttConsent"> <span id="ttConsentText"></span></label>
+            <div class="muted">公開したあと、処理されてプロフィールに出るまで数分かかることがあります。
+              審査前のアプリは公開アカウントへ直接投稿できないため、そのときは自動で下書きに送ります。</div>
+          </div>
+        </div>
       </div>
 
       <div class="row" style="margin-top:16px">
@@ -522,6 +580,7 @@ function collect(status) {
     media_kind: uploaded && uploaded.kind,
     media_bytes: uploaded && uploaded.bytes,
     targets: [...document.querySelectorAll('#targets input:checked')].map((c) => c.value),
+    tt_settings: ttSettings(),
   };
 }
 
@@ -542,6 +601,8 @@ async function save(status) {
     await api('/api/posts', { method:'POST', body: collect(status) });
     ['title','common','ig','ytt','ytd','xt','tt','when'].forEach((id) => { $(id).value = ''; });
     $('file').value = ''; uploaded = null; appliedDraft = null; $('fileInfo').textContent = '';
+    renderTargets();   // 選んだ投稿先を外すので、TikTok の投稿設定も閉じて最初からにする
+    resetTt();
     loadPosts();
   } catch (e) {
     $('formErr').textContent = e.message + (e.hint ? '\n' + e.hint : '');
@@ -550,12 +611,187 @@ async function save(status) {
 $('scheduleBtn').onclick = () => save('scheduled');
 $('draftBtn').onclick = () => save('draft');
 
+// --------------------------------------------------------------- TikTok 直接投稿の設定
+/**
+ * ★ TikTok の決まり（content-sharing-guidelines）どおりに組む。
+ *   ・投稿者の名前を出す。設定を出すたびに最新の情報を取り直す
+ *   ・公開範囲は選択肢を TikTok の返事から作り、既定値を置かない
+ *   ・コメント／デュエット／スティッチは最初は外す。閉じられていれば灰色にして選ばせない
+ *   ・商用申告は最初は OFF。ラベルと同意文は TikTok 指定の文言
+ *   ・ブランドコンテンツのときは「自分のみ」を選べなくする
+ *   サーバー（lib/tiktok-settings.js）でも同じ点検をするので、ここは案内役。
+ */
+const TT_PRIVACY_LABEL = {
+  PUBLIC_TO_EVERYONE: '全員', MUTUAL_FOLLOW_FRIENDS: '相互フォローの友達',
+  FOLLOWER_OF_CREATOR: 'フォロワー', SELF_ONLY: '自分のみ',
+};
+let ttCreators = null;   // 直接投稿する TikTok の投稿者情報（まとめたもの）
+let ttLoadedFor = '';    // どの組み合わせの情報を持っているか
+
+/** 選んだ投稿先のうち、直接投稿できる TikTok。 */
+function ttDirectTargets() {
+  return [...document.querySelectorAll('#targets input:checked')]
+    .map((c) => accounts.find((a) => a.id === c.value))
+    .filter((a) => a && a.network === 'tiktok' && a.can_direct_post);
+}
+
+const ttDirectChosen = () =>
+  !$('ttBox').classList.contains('hide') &&
+  (document.querySelector('input[name="ttMode"]:checked') || {}).value === 'direct';
+
+/** 送る設定。直接投稿を選んでいなければ null（＝下書き送信）。 */
+function ttSettings() {
+  if (!ttDirectChosen()) return null;
+  return {
+    privacy_level: $('ttPrivacy').value,
+    allow_comment: $('ttComment').checked,
+    allow_duet: $('ttDuet').checked,
+    allow_stitch: $('ttStitch').checked,
+    commercial: $('ttCommercial').checked,
+    your_brand: $('ttCommercial').checked && $('ttYourBrand').checked,
+    branded_content: $('ttCommercial').checked && $('ttBranded').checked,
+    is_aigc: $('ttAigc').checked,
+    consent: $('ttConsent').checked,
+  };
+}
+
+function resetTt() {
+  document.querySelector('input[name="ttMode"][value="inbox"]').checked = true;
+  for (const id of ['ttComment', 'ttDuet', 'ttStitch', 'ttCommercial', 'ttYourBrand', 'ttBranded', 'ttAigc', 'ttConsent']) {
+    $(id).checked = false;
+  }
+  $('ttPrivacy').value = '';
+  ttLoadedFor = '';
+  updateTtBox();
+}
+
+async function updateTtBox() {
+  const list = ttDirectTargets();
+  $('ttBox').classList.toggle('hide', list.length === 0);
+  if (!list.length) return;
+
+  $('ttDirect').classList.toggle('hide', !ttDirectChosen());
+  if (!ttDirectChosen()) return;
+
+  // 組み合わせが変わったとき、または開き直したときに取り直す。
+  const key = list.map((a) => a.id).join(',');
+  if (key !== ttLoadedFor) {
+    ttLoadedFor = key;
+    ttCreators = null;
+    $('ttWho').textContent = '投稿先を読み込み中…';
+    try {
+      const got = await Promise.all(list.map((a) =>
+        api('/api/connect?creator=' + encodeURIComponent(a.id)).then((r) => r.creator)));
+      if (ttLoadedFor !== key) return;   // 待っている間に選び直された
+      // 2つ以上の TikTok に出すときは、全部で選べるものだけを残す。
+      ttCreators = {
+        names: got.map((c) => c.nickname + (c.username ? ` (@${c.username})` : '')),
+        privacyOptions: got.map((c) => c.privacyOptions)
+          .reduce((a, b) => a.filter((x) => b.includes(x))),
+        commentDisabled: got.some((c) => c.commentDisabled),
+        duetDisabled: got.some((c) => c.duetDisabled),
+        stitchDisabled: got.some((c) => c.stitchDisabled),
+        maxDurationSec: Math.min(...got.map((c) => c.maxDurationSec || Infinity)),
+      };
+    } catch (e) {
+      $('ttWho').innerHTML = `<span class="err">${escapeHtml(e.message)}${e.hint ? '<br>' + escapeHtml(e.hint) : ''}</span>`;
+      return;
+    }
+    fillTtPrivacy();
+  }
+  if (!ttCreators) return;
+  $('ttWho').textContent = '投稿先：' + ttCreators.names.join(' / ');
+  refreshTtControls();
+}
+
+function fillTtPrivacy() {
+  const sel = $('ttPrivacy');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">選んでください</option>';
+  for (const p of ttCreators.privacyOptions) {
+    const o = document.createElement('option');
+    o.value = p;
+    o.textContent = TT_PRIVACY_LABEL[p] || p;
+    sel.appendChild(o);
+  }
+  sel.value = ttCreators.privacyOptions.includes(keep) ? keep : '';
+}
+
+/** 選び方に合わせて、灰色にするもの・出す文言を変える。 */
+function refreshTtControls() {
+  const c = ttCreators;
+  for (const [id, off] of [['ttComment', c.commentDisabled], ['ttDuet', c.duetDisabled], ['ttStitch', c.stitchDisabled]]) {
+    $(id).disabled = off;
+    if (off) $(id).checked = false;
+    $(id).parentElement.classList.toggle('off', off);
+  }
+
+  const commercial = $('ttCommercial').checked;
+  $('ttCommercialBox').classList.toggle('hide', !commercial);
+  const brand = commercial && $('ttYourBrand').checked;
+  const branded = commercial && $('ttBranded').checked;
+
+  // ブランドコンテンツは「自分のみ」に出せない。選べなくして、理由を出す。
+  const selfOnly = $('ttPrivacy').querySelector('option[value="SELF_ONLY"]');
+  if (selfOnly) {
+    selfOnly.disabled = branded;
+    if (branded && $('ttPrivacy').value === 'SELF_ONLY') $('ttPrivacy').value = '';
+  }
+  $('ttPrivacyNote').textContent = branded
+    ? 'ブランドコンテンツは「自分のみ」にできません（Branded content visibility cannot be set to private）。'
+    : '';
+
+  $('ttLabel').textContent = branded
+    ? "TikTok 上で「Paid partnership」と表示されます（Your photo/video will be labeled as 'Paid partnership'）"
+    : brand
+    ? "TikTok 上で「Promotional content」と表示されます（Your photo/video will be labeled as 'Promotional content'）"
+    : commercial ? 'どちらかを選んでください。' : '';
+
+  $('ttConsentText').textContent = branded
+    ? "By posting, you agree to TikTok's Branded Content Policy and Music Usage Confirmation"
+    : "By posting, you agree to TikTok's Music Usage Confirmation";
+
+  $('ttAffiNote').textContent = $('affiFlag').checked && !branded
+    ? '案件リンクを含む投稿なので、「商用コンテンツ」→「ブランドコンテンツ」の申告が必要です（ステマ規制）。'
+    : '';
+
+  $('ttPreview').textContent = ($('tt').value || $('common').value || '').trim() || '（本文が空です）';
+  checkTtDuration();
+}
+
+/** 手元の動画の長さを、このアカウントの上限と比べる。読めなければ黙る（サーバーでも見る）。 */
+function checkTtDuration() {
+  $('ttDuration').textContent = '';
+  const file = $('file').files[0];
+  const max = ttCreators && ttCreators.maxDurationSec;
+  if (!file || !/^video\//.test(file.type) || !isFinite(max)) return;
+  const v = document.createElement('video');
+  v.preload = 'metadata';
+  v.onloadedmetadata = () => {
+    URL.revokeObjectURL(v.src);
+    if (v.duration > max) {
+      $('ttDuration').textContent = `動画が長すぎます（${Math.ceil(v.duration)}秒／このアカウントの上限${max}秒）。`;
+    }
+  };
+  v.src = URL.createObjectURL(file);
+}
+
+$('targets').addEventListener('change', updateTtBox);
+for (const r of document.querySelectorAll('input[name="ttMode"]')) r.addEventListener('change', updateTtBox);
+for (const id of ['ttPrivacy', 'ttCommercial', 'ttYourBrand', 'ttBranded', 'affiFlag']) {
+  $(id).addEventListener('change', () => { if (ttCreators) refreshTtControls(); });
+}
+for (const id of ['tt', 'common']) {
+  $(id).addEventListener('input', () => { if (ttCreators) refreshTtControls(); });
+}
+
 // --------------------------------------------------------------- 連携設定
 const NET_NOTE = {
   instagram: '公開投稿までできます',
   youtube: '審査前のため、非公開でアップロードされます',
   x: '投稿1件あたり約2.3円（リンク付きは約30円）',
-  tiktok: '審査前のため、TikTokアプリの下書きに届きます（本文はアプリ側で入力）',
+  tiktok: 'TikTokアプリの下書きに届きます（本文はアプリ側で入力）。直接投稿の権限はありません',
+  tiktokDirect: '直接投稿できます（投稿ごとに公開範囲などを選びます）。審査前は非公開アカウントのみ',
 };
 
 let accounts = [];   // 繋がっているアカウント
@@ -852,7 +1088,16 @@ function renderConn() {
     // 引換券を持っている連携は、入場券が1時間で切れても自動で取り直せる。
     // ここを区別しないと「あと1時間で切れる」と誤解させてしまう。
     let expiry;
-    if (a.auto_refresh) {
+    if (a.auth_error) {
+      // ★ 自動更新に失敗した連携。「自動更新」と出したままだと、切れていることに気づけない。
+      //   SNS 側が返した理由をそのまま見せる（こちらの推測より確か）。
+      expiry = `<span class="badge b-failed">切れています（${jst(a.auth_error.at)}）</span>` +
+        `<div class="err" style="font-size:13px">${escapeHtml(a.auth_error.message)}` +
+        (a.network === 'youtube'
+          ? '<br>何度も切れる場合：Google Cloud の「OAuth同意画面」が「テスト中」だと7日で切れます。「本番」に公開してください。'
+          : '') +
+        '<br>「繋ぐ」からもう一度連携すると直ります。</div>';
+    } else if (a.auto_refresh) {
       expiry = '<span class="badge">自動更新</span>';
     } else if (a.expires_at) {
       const soon = new Date(a.expires_at).getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000;
@@ -878,7 +1123,7 @@ function renderConn() {
         <span class="badge b-success">接続済み</span>
         ${expiry}
         ${belong}
-        <div class="muted">${a.account_name || ''}　${NET_NOTE[a.network]}</div>
+        <div class="muted">${a.account_name || ''}　${a.can_direct_post ? NET_NOTE.tiktokDirect : NET_NOTE[a.network]}</div>
       </div>
       <div class="row"></div>`;
 
@@ -1245,6 +1490,8 @@ function renderGrowTiktok(videos) {
 /** 投稿先の選択肢を、繋いだアカウントから作る。単発の欄と束の欄の両方。 */
 function renderTargets() {
   for (const id of ['targets', 'bulkTargets']) fillTargets($(id));
+  // 選び直しになるので、TikTok の投稿設定も合わせる（選んだものが消えたら閉じる）。
+  updateTtBox();
 }
 
 function fillTargets(box) {
