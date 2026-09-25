@@ -250,24 +250,22 @@ eq('weatherLabel: にわか雨コードでも同様に曇り扱い', T.weatherLa
 eq('weatherLabel: 雷雨は降水量が少なくても雷雨のまま', T.weatherLabel(96, 0.2), '雷雨');
 eq('weatherLabel: 降水量が渡されなければ従来どおり', T.weatherLabel(63), '雨');
 
-/* ---- 地図でふりかえる：予定から地名を取り出す（replayPlaceQuery） ---- */
-eq('replayPlaceQuery: 地図URLのqueryを最優先',
-  T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('首里そば') }] }), '首里そば');
-eq('replayPlaceQuery: 地図URLのq=も読む',
-  T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: 'https://maps.google.com/maps?q=' + encodeURIComponent('国際通り') + '&output=embed' }] }), '国際通り');
-eq('replayPlaceQuery: 「〇〇に到着」は地名だけ', T.replayPlaceQuery({ label: '那覇空港に到着', entries: [] }), '那覇空港');
-eq('replayPlaceQuery: 地名にひらがなの助詞が含まれても最後の助詞で切る', T.replayPlaceQuery({ label: 'かに道楽で夕食', entries: [] }), 'かに道楽');
-eq('replayPlaceQuery: 地名だけの見出しはそのまま', T.replayPlaceQuery({ label: '新宿', entries: [] }), '新宿');
-eq('replayPlaceQuery: 体言止めの動作名詞を外す', T.replayPlaceQuery({ label: 'ダイヤモンドヘッド登頂', entries: [] }), 'ダイヤモンドヘッド');
-eq('replayPlaceQuery: 見出しが空なら空文字', T.replayPlaceQuery({ label: '', entries: [] }), '');
+/* ---- 地図でふりかえる：予定の場所は記録の地図URLだけから決める（replayPlaceQuery） ---- */
+eq('replayPlaceQuery: Googleマップの共有リンクをそのまま返す（展開・座標の読み取りはWorker側）',
+  T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: ' https://maps.app.goo.gl/PzmSEdBvWvfK1AW87?g_st=ic ' }] }), 'https://maps.app.goo.gl/PzmSEdBvWvfK1AW87?g_st=ic');
+eq('replayPlaceQuery: 地図の入った最初の記録を使う',
+  T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: '' }, { mapUrl: 'https://www.google.com/maps/search/?api=1&query=x' }] }), 'https://www.google.com/maps/search/?api=1&query=x');
+eq('replayPlaceQuery: 地図が無ければ見出しが地名でも空（移動の目的地にしない）', T.replayPlaceQuery({ label: '那覇空港に到着', entries: [] }), '');
+eq('replayPlaceQuery: 「小西遅刻」のような出来事も空', T.replayPlaceQuery({ label: '小西遅刻', entries: [{ episode: '寝坊' }] }), '');
+eq('replayPlaceQuery: URLでない文字列は使わない', T.replayPlaceQuery({ label: '新宿', entries: [{ mapUrl: '新宿駅' }] }), '');
 
 /* ---- 地図でふりかえる：再生する地点の並び（replayStops） ---- */
 var rpTrip = { startDate: '2026-04-01', endDate: '2026-04-02' };
 var rpBlocks = [
-  { id: 'a', date: '2026-04-01', time: '10:00', label: '新宿', transport: '', entries: [{ episode: '小西遅刻' }, { comment: '松藤寝坊' }] },
-  { id: 'b', date: '2026-04-01', time: '12:00', label: '山梨', transport: 'train', entries: [] },
+  { id: 'a', date: '2026-04-01', time: '10:00', label: '新宿', transport: '', entries: [{ episode: '小西遅刻', mapUrl: 'https://maps.app.goo.gl/shinjuku' }, { comment: '松藤寝坊' }] },
+  { id: 'b', date: '2026-04-01', time: '12:00', label: '山梨', transport: 'train', entries: [{ mapUrl: 'https://maps.app.goo.gl/yamanashi' }] },
   { id: 'c', date: '2026-04-01', time: '', label: 'ほうとう屋で夕食', transport: 'walk', entries: [], createdAt: '1' },
-  { id: 'd', date: '2026-04-02', time: '09:00', label: '河口湖', transport: 'bus', entries: [] },
+  { id: 'd', date: '2026-04-02', time: '09:00', label: '河口湖', transport: 'bus', entries: [{ mapUrl: 'https://maps.app.goo.gl/kawaguchiko' }] },
   { id: 'e', date: '', time: '', label: '日付なし', transport: '', entries: [] }
 ];
 var rpStops = T.replayStops(rpTrip, rpBlocks);
@@ -282,7 +280,7 @@ eq('replayStops: 時刻が1つも無い日は9時から1時間おき',
   [540, 600]);
 
 /* ---- 地図でふりかえる：再生の時間割（buildReplayTimeline / replayStateAt） ---- */
-var rpCoords = { '新宿': { lat: 35.69, lng: 139.70 }, '山梨': { lat: 35.66, lng: 138.57 }, 'ほうとう屋': null, '河口湖': { lat: 35.50, lng: 138.76 } };
+var rpCoords = { 'https://maps.app.goo.gl/shinjuku': { lat: 35.69, lng: 139.70 }, 'https://maps.app.goo.gl/yamanashi': { lat: 35.66, lng: 138.57 }, 'https://maps.app.goo.gl/kawaguchiko': { lat: 35.50, lng: 138.76 } };
 var tl = T.buildReplayTimeline(rpStops, rpCoords);
 eq('buildReplayTimeline: 場所が分かった予定だけ地図上の地点になる', tl.stops.map(function (s) { return s.located; }), [true, true, false, true]);
 eq('buildReplayTimeline: 移動手段があり両端の場所が分かる区間だけ移動する',
@@ -305,7 +303,7 @@ var stEnd = T.replayStateAt(tl, tl.totalReal);
 eq('replayStateAt: 最後は2日目', stEnd.dayNumber, 2);
 eq('replayStateAt: 最後にいる場所は最後の地点', [stEnd.here.lat, stEnd.here.lng], [35.50, 138.76]);
 var lateTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' },
-  [{ id: 'z', date: '2026-04-01', time: '23:55', label: '新宿', entries: [] }]), { '新宿': { lat: 35.69, lng: 139.70 } });
+  [{ id: 'z', date: '2026-04-01', time: '23:55', label: '新宿', entries: [{ mapUrl: 'https://maps.app.goo.gl/shinjuku' }] }]), { 'https://maps.app.goo.gl/shinjuku': { lat: 35.69, lng: 139.70 } });
 var lateEnd = T.replayStateAt(lateTl, lateTl.totalReal);
 eq('replayStateAt: 最後の予定が深夜でも、最後の時計は翌日にはみ出さない', [lateEnd.dayNumber, lateEnd.hhmm], [1, '23:59']);
 ok('arcLatLng: 飛行機は直線より外側にふくらむ', (function () {

@@ -709,33 +709,153 @@ async function geocodePlace(place) {
 // Open-Meteo（市区町村レベル）で探す。Nominatimの利用規約（アプリを識別できるUser-Agent・
 // 結果のキャッシュ・1秒1回まで）に従い、結果はCache APIに30日置き、連続呼び出しの間隔は
 // クライアント側で空ける（cached:falseのときだけ待つ）。
+//
+// Nominatimの先頭の候補をそのまま使うと、「山梨」が千葉県四街道市の同名の地区になるなど、
+// 県・市より小さな同名の地名が選ばれることがあった。海外旅行でも使うので国内に絞ることはせず、
+// 世界全体から数件もらって重要度（importance、有名さの目安）が一番高いものを選ぶ
+// （ソウル→ソウル駅ではなくソウル特別市）。それでも重要度が低い候補しか無いときは、
+// 小さな同名地区の可能性が高いので、人口の多い市区町村を返すOpen-Meteoの結果を優先する
+// （「山梨」はNominatimには「山梨県」の名前でしか無く、Open-Meteoなら山梨市が返る）。
+// 選び方を変えたとき、古い結果を使い続けないようキャッシュのキーに版（v2）を付けた。
 const GEOCODE_CACHE_SECONDS = 60 * 60 * 24 * 30;
+// この重要度より低い候補しか無ければOpen-Meteoを優先する（小さな同名地区は0.2未満、
+// 駅・観光地・都市は0.4以上になることが多い）。
+const GEOCODE_MIN_IMPORTANCE = 0.3;
 
-async function geocodeForReplay(q, headers, ctx) {
-  q = (q || "").trim();
-  if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
-  const cache = caches.default;
-  const cacheKey = new Request("https://tabilog-geocode.cache/?q=" + encodeURIComponent(q));
-  const hit = await cache.match(cacheKey);
-  if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
+function pickNominatimCandidate(list) {
+  if (!Array.isArray(list)) return null;
+  let best = null;
+  for (const c of list) {
+    const lat = parseFloat(c.lat), lng = parseFloat(c.lon);
+    if (!isFinite(lat) || !isFinite(lng)) continue;
+    const importance = Number(c.importance) || 0;
+    if (!best || importance > best.importance) best = { lat, lng, importance };
+  }
+  return best;
+}
 
-  let result = null;
+async function nominatimSearch(q) {
   try {
     const res = await fetch(
-      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ja&q=" + encodeURIComponent(q),
+      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=ja&q=" + encodeURIComponent(q),
       { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
     );
-    if (res.ok) {
-      const arr = await res.json();
-      if (Array.isArray(arr) && arr[0]) result = { lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon) };
-    }
+    return res.ok ? pickNominatimCandidate(await res.json()) : null;
   } catch {
-    // Nominatimが落ちている・遅いときはOpen-Meteoに任せる
+    return null; // Nominatimが落ちている・遅いときはOpen-Meteoに任せる
   }
-  if (!result) {
+}
+
+// 地名（「新宿」「山梨」など）を緯度経度にする。
+async function geocodeText(q) {
+  let result = await nominatimSearch(q);
+  if (!result || result.importance < GEOCODE_MIN_IMPORTANCE) {
     const g = await geocodePlace(q).catch(() => null);
     if (g) result = { lat: g.lat, lng: g.lon };
   }
+  return result;
+}
+
+// ---- 記録の「地図」に入っているGoogleマップのURLから場所を得る ----
+// 実際の記録の地図はほとんどがGoogleマップの共有リンク（maps.app.goo.gl/…）で、展開すると
+// maps.google.com/?q=34.69,135.50（座標）か ?q=〒542-0075 大阪府…ビル 5F 店名（住所）になる。
+// 短縮URLの展開で任意のURLへ通信しないよう、GoogleマップのドメインだけをHTTPSで辿る。
+const MAP_URL_HOSTS = [
+  "maps.app.goo.gl", "goo.gl", "maps.google.com", "www.google.com", "google.com",
+  "maps.google.co.jp", "www.google.co.jp", "google.co.jp",
+];
+
+async function resolveMapUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return null; }
+  for (let hop = 0; hop < 4; hop++) {
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    if (!MAP_URL_HOSTS.includes(u.hostname)) return null;
+    if (u.hostname !== "maps.app.goo.gl" && u.hostname !== "goo.gl") return u;
+    u.protocol = "https:";
+    const res = await fetch(u.toString(), { redirect: "manual" });
+    const loc = res.headers.get("location");
+    if (!loc) return null;
+    try { u = new URL(loc, u); } catch { return null; }
+  }
+  return null;
+}
+
+function validLatLng(lat, lng) {
+  lat = parseFloat(lat); lng = parseFloat(lng);
+  return isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+}
+
+// 展開後のURLから、座標（そのまま使う）か、検索する文字列（店名・住所）を取り出す。
+// 精度の高い順：場所ページの!3d…!4d…（そのお店の座標）→ ?q=座標 → /@座標（画面の中心）→ 文字列。
+function parseMapUrl(u) {
+  const href = u.href;
+  let m = /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/.exec(href);
+  if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
+  const q = (u.searchParams.get("q") || u.searchParams.get("query") || "").trim();
+  m = /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.exec(q);
+  if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
+  m = /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/.exec(u.pathname);
+  if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
+  m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
+  let text = q;
+  if (!text && m) {
+    try { text = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { text = ""; }
+  }
+  return text ? { text } : null;
+}
+
+// 住所つきの文字列はそのままだと見つからないことが多いので、郵便番号（〒・米国ZIP・ブラジルCEP）を
+// 外して全角→半角にし、段階的に粗くして探す（実際の記録のリンクで確かめた順）。
+// - 日本：「大阪府大阪市中央区難波千日前１２−７ Yes・Namba ビル 5F 店名」→ 全文 → 住所部分 → 番地より前（町名まで）
+// - 海外：「店名 - 住所, 市 - 州, 国」「店名, 住所, 市, 州 国」→ 全文 → 店名を外した住所 → 最後の3区切り → 最後の2区切り（市のあたり）
+// 店名だけでは探さない（チェーン店だと別の都市の店舗が当たるため）。どれでも見つからなければ
+// 見つからない扱いにし、その予定は移動の目的地にしない（国の中心のような大ざっぱな位置に飛ぶよりよい）。
+function mapTextCandidates(text) {
+  const t = text.normalize("NFKC")
+    .replace(/〒\s*\d{3}-\d{4}/g, " ")
+    .replace(/\b\d{5}(?:-\d{3,4})?\b/g, " ")
+    .replace(/\s+/g, " ").trim();
+  const list = [t];
+  const jp = /\S*[都道府県]\S*/.exec(t);
+  if (jp) {
+    list.push(jp[0], jp[0].replace(/\d.*$/, "")); // 最初の数字（番地・丁目）から後ろを落とす
+  } else {
+    const parts = t.split(/\s+-\s+|,\s*/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length >= 2) list.push(parts.slice(1).join(", "));
+    if (parts.length >= 3) list.push(parts.slice(-3).join(", "), parts.slice(-2).join(", "));
+  }
+  return [...new Set(list.filter((s) => s && s.length >= 2))].slice(0, 4);
+}
+
+async function geocodeMapUrl(raw) {
+  const u = await resolveMapUrl(raw).catch(() => null);
+  if (!u) return null;
+  const parsed = parseMapUrl(u);
+  if (!parsed) return null;
+  if (parsed.coords) return parsed.coords;
+  // お店や住所は具体的な場所なので、重要度が低くても見つかったNominatimの結果を使う
+  const candidates = mapTextCandidates(parsed.text);
+  for (let i = 0; i < candidates.length; i++) {
+    if (i > 0) await new Promise((ok) => setTimeout(ok, 1100)); // Nominatimは1秒1回まで
+    const r = await nominatimSearch(candidates[i]);
+    if (r) return r;
+  }
+  return null;
+}
+
+// q：記録の地図のURL（今のアプリ）か、地名（見出しから推測していた以前のアプリ。審査中・配布済みの
+// iOSアプリのために残す）。
+async function geocodeForReplay(q, headers, ctx) {
+  q = (q || "").trim();
+  const isUrl = /^https?:\/\//i.test(q);
+  if (!q || q.length > (isUrl ? 2000 : 100)) return json({ error: "invalid_input" }, 400, headers);
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-geocode.cache/v2?q=" + encodeURIComponent(q));
+  const hit = await cache.match(cacheKey);
+  if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
+
+  const result = isUrl ? await geocodeMapUrl(q) : await geocodeText(q);
   const body = result ? { found: true, lat: result.lat, lng: result.lng } : { found: false };
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
