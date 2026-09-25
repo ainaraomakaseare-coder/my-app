@@ -310,6 +310,8 @@ function validBlockInput(x) {
   if (!optStr(x.label, 200)) return false;
   if (x.category !== undefined && !CATEGORIES.includes(x.category)) return false;
   if (x.transport !== undefined && !TRANSPORTS.includes(x.transport)) return false;
+  // moveMinutes：移動の予定の移動時間（分）。0は未入力（v19）
+  if (x.moveMinutes !== undefined && !(Number.isInteger(x.moveMinutes) && x.moveMinutes >= 0 && x.moveMinutes <= 14400)) return false;
   return true;
 }
 
@@ -322,6 +324,7 @@ function rowToBlock(row) {
     label: row.label,
     category: row.category,
     transport: row.transport || "",
+    moveMinutes: row.move_minutes || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -346,13 +349,14 @@ async function createBlock(tripId, request, env, headers) {
     label: (data.label || "").trim(),
     category: data.category || "sightseeing",
     transport: data.transport || "",
+    move_minutes: data.moveMinutes || 0,
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, move_minutes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
   )
-    .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.created_at, row.updated_at)
+    .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.move_minutes, row.created_at, row.updated_at)
     .run();
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, tripId).run();
   return json({ ...rowToBlock(row), entries: [] }, 201, headers);
@@ -372,9 +376,9 @@ async function updateBlock(id, request, env, headers) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   await env.DB.prepare(
-    "UPDATE blocks SET date=?, time=?, label=?, category=?, transport=?, updated_at=? WHERE id=?"
+    "UPDATE blocks SET date=?, time=?, label=?, category=?, transport=?, move_minutes=?, updated_at=? WHERE id=?"
   )
-    .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", merged.transport || "", t, id)
+    .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", merged.transport || "", merged.moveMinutes || 0, t, id)
     .run();
   const updated = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   return json(rowToBlock(updated), 200, headers);

@@ -157,3 +157,11 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel
 ## 時差（2026-09-25 追加）
 
 `GET /timezone?lat=&lng=` で場所のタイムゾーン名（例：Europe/London）を返す（Open-Meteo、無料・APIキー不要、30日キャッシュ）。DBの変更は無い（docs/adr/0009）。
+
+## 移動の予定の移動時間（2026-09-26 追加）
+
+予定に移動時間（blocks.move_minutes、分）の列を足した。予定の種類が「移動」のときだけ、移動手段と一緒に入力する。**wrangler deployより先に** migrations/0018_block_move_minutes.sql を本番で1回だけ実行する（逆順だと予定の作成・保存がSQLエラーになる）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --file migrations/0018_block_move_minutes.sql
+```

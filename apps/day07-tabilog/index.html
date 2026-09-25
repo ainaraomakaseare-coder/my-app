@@ -409,9 +409,15 @@
           <div class="cat-chips" id="blkCategoryChips"></div>
         </div>
 
-        <div class="field">
-          <label>ここまでの移動手段（任意・「地図でふりかえる」で使います）</label>
+        <!-- 種類が「移動」のときだけ出す（app.jsのrenderCategoryChips）。この予定から次の場所への移動 -->
+        <div class="field move-fields" id="blkMoveFields" hidden>
+          <label>移動手段（「地図でふりかえる」で使います）</label>
           <div class="cat-chips transport-chips" id="blkTransportChips"></div>
+          <label class="move-time-label">移動時間（任意）</label>
+          <div class="move-time">
+            <input type="number" id="blkMoveHours" min="0" max="240" inputmode="numeric" placeholder="0"><span>時間</span>
+            <input type="number" id="blkMoveMins" min="0" max="59" inputmode="numeric" placeholder="0"><span>分</span>
+          </div>
         </div>
 
         <p class="hint" id="blkFormStatus"></p>

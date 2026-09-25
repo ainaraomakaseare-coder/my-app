@@ -267,3 +267,7 @@ CREATE TABLE IF NOT EXISTS comment_reports (
 -- 一度きりの文。本番環境へ反映するまでは migrations/0017_review_travel.sql を1回だけ実行すること。
 -- ALTER TABLE ratings ADD COLUMN review TEXT NOT NULL DEFAULT '{}';
 -- ALTER TABLE entries ADD COLUMN travel TEXT NOT NULL DEFAULT '{}';
+
+-- v19：blocksに move_minutes（移動の予定の移動時間、分）を追加する一度きりの文。
+-- 本番環境へ反映するまでは migrations/0018_block_move_minutes.sql を1回だけ実行すること。
+-- ALTER TABLE blocks ADD COLUMN move_minutes INTEGER NOT NULL DEFAULT 0;

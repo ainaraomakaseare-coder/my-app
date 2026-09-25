@@ -521,13 +521,21 @@
     var dates = allDatesForTrip(trip, blocks).filter(function (d) { return d; });
     var lastMinute = {}, hasTimed = {}, lastOffset = null;
     (blocks || []).forEach(function (b) { if (b.date && hhmmToMinute(b.time) !== null) hasTimed[b.date] = true; });
+    // 移動の予定（種類が「移動」）の移動手段・移動時間は、その予定から次の場所への移動として、次の地点に渡す。
+    // 以前のデータ（移動以外の予定に「ここまでの移動手段」が付いているもの）は、その予定自身の値を使う。
+    var pendingTransport = '', pendingMove = 0;
     return sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; }).map(function (b) {
       var minute = hhmmToMinute(b.time);
       var estimated = minute === null;
       if (estimated) {
         var prev = lastMinute[b.date];
-        minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + (hasTimed[b.date] ? 30 : 60), 23 * 60 + 59);
+        // 時刻の無い予定でも、直前の移動に移動時間があれば、その分だけ後と見積もる
+        var step = pendingMove || (hasTimed[b.date] ? 30 : 60);
+        minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + step, 23 * 60 + 59);
       }
+      var arriving = b.category === 'transport' ? '' : (b.transport || pendingTransport);
+      if (b.category === 'transport') { pendingTransport = b.transport || ''; pendingMove = b.moveMinutes || 0; }
+      else if (replayPlaceQuery(b)) { pendingTransport = ''; pendingMove = 0; }
       lastMinute[b.date] = minute;
       if (typeof b._offset === 'number') lastOffset = b._offset;
       var dayIndex = dates.indexOf(b.date);
@@ -538,7 +546,7 @@
       return {
         blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions,
-        transport: b.transport || '', query: replayPlaceQuery(b),
+        transport: arriving, query: replayPlaceQuery(b),
         offset: lastOffset // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
       };
     });
@@ -818,6 +826,12 @@
     return (h ? h + '時間' : '') + (m ? m + '分' : '');
   }
 
+  // 分を「14時間」「1時間30分」「45分」にする
+  function minutesText(min) {
+    var h = Math.floor(min / 60), m = min % 60;
+    return (h ? h + '時間' : '') + (m ? m + '分' : '') || '0分';
+  }
+
   function dayShiftPrefix(n) {
     return n === 1 ? '翌' : n === 2 ? '翌々日' : n > 2 ? n + '日後' : n === -1 ? '前日' : '';
   }
@@ -868,7 +882,7 @@
     var mode = transportLabel(block.transport);
     var amount = typeof t.amount === 'number' ? t.amount : entryCostTotal(entry);
     var route = t.from || t.to ? (t.from || '') + '→' + (t.to || '') : '';
-    if (!route && !t.company && !t.depart && !t.arrive && !amount) return '';
+    if (!route && !t.company && !t.depart && !t.arrive && !amount && !block.moveMinutes) return '';
     var emoji = { plane: '✈️', car: '🚗', taxi: '🚕', train: '🚃', bus: '🚌', walk: '🚶', bicycle: '🚲' }[block.transport] || '🚃';
     var lines = [emoji + ' 移動' + (mode ? '｜' + mode : ''), route || block.label || ''];
     if (t.company) lines.push('会社：' + t.company);
@@ -880,6 +894,7 @@
       lines.push((t.depart ? t.depart + '発' : '') + (t.depart && t.arrive ? ' → ' : '') +
         (t.arrive ? (info ? dayShiftPrefix(info.dayShift) : '') + t.arrive + '着' : '') + (dur ? '（' + dur + zoneNote + '）' : ''));
     }
+    if (!t.depart && !t.arrive && block.moveMinutes) lines.push('所要時間：約' + minutesText(block.moveMinutes));
     if (amount > 0) lines.push('料金：' + yen(amount));
     return lines.join('\n');
   }
@@ -1005,6 +1020,8 @@
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
+    transportLabel: transportLabel,
+    minutesText: minutesText,
     replayDayStarts: replayDayStarts,
     replayNeighborStop: replayNeighborStop,
     tzOffsetMinutes: tzOffsetMinutes,
@@ -2899,7 +2916,11 @@
       (!block.time ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
-      '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>';
+      '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>' +
+      (block.category === 'transport' && (block.transport || block.moveMinutes)
+        ? '<span class="block-move">' + (block.transport ? transportIconSvg(block.transport, 13) : '') +
+          escapeHtml([Core.transportLabel(block.transport), block.moveMinutes ? '約' + Core.minutesText(block.moveMinutes) : ''].filter(Boolean).join('・')) + '</span>'
+        : '');
     head.addEventListener('click', function (e) {
       if (e.target.closest('.block-drag-handle')) return;
       openBlockForm(block);
@@ -3232,6 +3253,9 @@
     state.editingBlockId = block ? block.id : null;
     state.formCategory = block ? block.category : 'sightseeing';
     state.formTransport = block ? (block.transport || '') : '';
+    var mm = block ? (block.moveMinutes || 0) : 0;
+    $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
+    $('#blkMoveMins').value = mm ? mm % 60 : '';
     $('#blkFormTitle').textContent = block ? '予定を編集' : '予定を追加';
     $('#blkDate').value = block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10));
     $('#blkTime').value = block ? block.time : '';
@@ -3251,6 +3275,9 @@
     $all('.cat-chip', el).forEach(function (b) {
       b.addEventListener('click', function () { state.formCategory = b.dataset.cat; renderCategoryChips(); });
     });
+    // 移動手段・移動時間は、種類が「移動」のときだけ出す（以前は種類に関係なく「ここまでの移動手段」を出していた）。
+    // 以前のデータで、移動以外の予定に移動手段が付いているものは、見えないまま残らないよう出しておく
+    $('#blkMoveFields').hidden = !(state.formCategory === 'transport' || state.formTransport);
   }
 
   function renderTransportChips() {
@@ -3264,6 +3291,12 @@
     });
   }
 
+  function readMoveMinutes() {
+    var h = parseInt($('#blkMoveHours').value, 10), m = parseInt($('#blkMoveMins').value, 10);
+    var total = (isNaN(h) ? 0 : Math.max(0, h)) * 60 + (isNaN(m) ? 0 : Math.max(0, Math.min(59, m)));
+    return Math.min(total, 14400);
+  }
+
   function saveBlock() {
     var status = $('#blkFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
@@ -3275,7 +3308,8 @@
       time: $('#blkTime').value || '',
       label: label,
       category: state.formCategory,
-      transport: state.formTransport || ''
+      transport: $('#blkMoveFields').hidden ? '' : (state.formTransport || ''),
+      moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
     };
     var req = state.editingBlockId
       ? api('/blocks/' + encodeURIComponent(state.editingBlockId), 'PATCH', payload)

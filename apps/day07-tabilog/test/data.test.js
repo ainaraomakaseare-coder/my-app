@@ -443,5 +443,19 @@ ok('replayNeighborStop: 次の予定は今より後で一番近い予定', T.rep
 eq('replayNeighborStop: 最初より前は0', T.replayNeighborStop(tl, 0.1, -1), 0);
 eq('replayNeighborStop: 最後の予定の後は終わりまで', T.replayNeighborStop(tl, tl.totalReal, 1), tl.totalReal);
 
+eq('minutesText', [T.minutesText(840), T.minutesText(90), T.minutesText(45)], ['14時間', '1時間30分', '45分']);
+/* ---- 移動の予定：移動手段・移動時間（その予定から次の場所へ） ---- */
+var mvBlocks = [
+  { id: 'm1', date: '2026-04-01', time: '09:00', category: 'sightseeing', label: '羽田空港', entries: [{ mapUrl: 'https://maps.app.goo.gl/haneda' }] },
+  { id: 'm2', date: '2026-04-01', time: '10:00', category: 'transport', transport: 'plane', moveMinutes: 90, label: '那覇へ', entries: [] },
+  { id: 'm3', date: '2026-04-01', time: '', category: 'sightseeing', label: '那覇空港', entries: [{ mapUrl: 'https://maps.app.goo.gl/naha' }], createdAt: '1' },
+  { id: 'm4', date: '2026-04-01', time: '', category: 'food', label: '首里そば', entries: [{ mapUrl: 'https://maps.app.goo.gl/soba' }], createdAt: '2' }
+];
+var mvStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, mvBlocks);
+eq('replayStops: 移動の予定の移動手段は、次の場所への移動になる（移動の予定自身には付けない）', mvStops.map(function (s) { return s.transport; }), ['', '', 'plane', '']);
+eq('replayStops: 時刻の無い次の予定は、移動時間の分だけ後と見積もる（10:00＋90分）', mvStops[2].minute, 11 * 60 + 30);
+eq('travelLogText: 出発・到着が無くても移動時間があれば出す',
+  T.travelLogText({ category: 'transport', transport: 'plane', moveMinutes: 90, label: '那覇へ' }, { costItems: [] }).split(String.fromCharCode(10)).slice(-1)[0], '所要時間：約1時間30分');
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
