@@ -26,6 +26,7 @@
 
 html {
   background: var(--bg);
+  overscroll-behavior-x: none;
 }
 
 body {
@@ -34,6 +35,7 @@ body {
   color: var(--ink);
   font-family: var(--font-body);
   line-height: 1.6;
+  overscroll-behavior-x: none;
   -webkit-text-size-adjust: 100%;
 }
 
