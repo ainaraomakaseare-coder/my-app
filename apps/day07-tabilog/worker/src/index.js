@@ -17,6 +17,9 @@ import {
 } from "./geo-decode.js";
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
+// 精算の端数（丸め）単位。Walicaにならい1円／10円／100円から選べる（trips.settle_unit、v21）。
+// 旅行メンバー全員で共有する設定なので、旅行本体に持たせる。
+const SETTLE_UNITS = [1, 10, 100];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const URL_RE = /^https?:\/\/\S+$/;
@@ -159,6 +162,7 @@ function validTripInput(x) {
   }
   if (!optStr(x.coverPhotoId, 300)) return false;
   if (!optStr(x.tripType, 50)) return false;
+  if (x.settleUnit !== undefined && !SETTLE_UNITS.includes(x.settleUnit)) return false;
   return true;
 }
 
@@ -171,6 +175,7 @@ function rowToTrip(row) {
     companions: JSON.parse(row.companions || "[]"),
     tripType: row.trip_type || "",
     coverPhotoId: row.cover_photo_id || "",
+    settleUnit: SETTLE_UNITS.includes(row.settle_unit) ? row.settle_unit : 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -193,13 +198,14 @@ async function createTrip(request, env, headers) {
     companions: JSON.stringify(data.companions || []),
     cover_photo_id: data.coverPhotoId || "",
     trip_type: data.tripType || "",
+    settle_unit: SETTLE_UNITS.includes(data.settleUnit) ? data.settleUnit : 1,
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    "INSERT INTO trips (id, title, start_date, end_date, companions, cover_photo_id, trip_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO trips (id, title, start_date, end_date, companions, cover_photo_id, trip_type, settle_unit, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   )
-    .bind(trip.id, trip.title, trip.start_date, trip.end_date, trip.companions, trip.cover_photo_id, trip.trip_type, trip.created_at, trip.updated_at)
+    .bind(trip.id, trip.title, trip.start_date, trip.end_date, trip.companions, trip.cover_photo_id, trip.trip_type, trip.settle_unit, trip.created_at, trip.updated_at)
     .run();
   return json(rowToTrip(trip), 201, headers);
 }
@@ -286,11 +292,12 @@ async function updateTrip(id, request, env, headers, ctx) {
     companions: data.companions !== undefined ? JSON.stringify(data.companions) : existing.companions,
     cover_photo_id: data.coverPhotoId !== undefined ? String(data.coverPhotoId) : existing.cover_photo_id,
     trip_type: data.tripType !== undefined ? String(data.tripType) : existing.trip_type,
+    settle_unit: data.settleUnit !== undefined ? data.settleUnit : (SETTLE_UNITS.includes(existing.settle_unit) ? existing.settle_unit : 1),
     updated_at: nowIso(),
   };
   const tripUpdate = env.DB.prepare(
-    "UPDATE trips SET title=?, start_date=?, end_date=?, companions=?, cover_photo_id=?, trip_type=?, updated_at=? WHERE id=?"
-  ).bind(next.title, next.start_date, next.end_date, next.companions, next.cover_photo_id, next.trip_type, next.updated_at, id);
+    "UPDATE trips SET title=?, start_date=?, end_date=?, companions=?, cover_photo_id=?, trip_type=?, settle_unit=?, updated_at=? WHERE id=?"
+  ).bind(next.title, next.start_date, next.end_date, next.companions, next.cover_photo_id, next.trip_type, next.settle_unit, next.updated_at, id);
   if (shiftDays) {
     // 旅行の更新と日付の移動を1つのbatch（D1では1トランザクション）で行い、途中で止まって
     // 予定の半分だけがずれた状態を残さない。

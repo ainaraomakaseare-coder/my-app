@@ -354,6 +354,15 @@
         <p class="lead">記録の費用明細で「立て替え」を設定した分だけを集計します。設定していない費用（個人の分だけの記録）は含みません。</p>
       </header>
 
+      <div class="settle-unit-row">
+        <span class="settle-unit-label">端数</span>
+        <div class="settle-unit-picker" id="settleUnitPicker">
+          <button type="button" class="settle-unit-opt" data-unit="1">1円</button>
+          <button type="button" class="settle-unit-opt" data-unit="10">10円</button>
+          <button type="button" class="settle-unit-opt" data-unit="100">100円</button>
+        </div>
+      </div>
+
       <p class="empty" id="settlementEmpty" hidden>立て替えが設定された費用がまだありません。記録の費用明細から「立て替えを設定」で追加できます。</p>
 
       <div id="settlementBody" hidden>
@@ -362,6 +371,7 @@
 
         <div class="section-label"><div class="section-title">精算方法</div></div>
         <div class="settle-plan-list" id="settlementPlanList"></div>
+        <p class="settle-round-note" id="settlementRoundNote" hidden></p>
 
         <div class="section-label"><div class="section-title">支出一覧</div></div>
         <div class="expense-list" id="settlementExpenses"></div>

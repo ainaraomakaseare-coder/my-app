@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS trips (
   cover_photo_id TEXT NOT NULL DEFAULT '',
   -- trip_type：旅行区分（サークルの友達、バイト先、家族など）。自由入力、絞り込み用（v14）。
   trip_type TEXT NOT NULL DEFAULT '',
+  -- settle_unit：精算（割り勘）の丸め単位（1｜10｜100円）。参加者全員で共有する設定（v21）。
+  settle_unit INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -275,3 +277,8 @@ CREATE TABLE IF NOT EXISTS comment_reports (
 -- v20：accountsに memo_uses_this_period（メモをAIで整理した今月の回数）を追加する一度きりの文。
 -- 本番環境へ反映するまでは migrations/0019_memo_uses.sql を1回だけ実行すること。
 -- ALTER TABLE accounts ADD COLUMN memo_uses_this_period INTEGER NOT NULL DEFAULT 0;
+
+-- v21：tripsに settle_unit（精算＝割り勘の丸め単位。1｜10｜100円、Walicaにならう）を追加する
+-- 一度きりの文。参加者全員で共有する設定なので旅行本体に持たせる。既存の旅行は1円のまま変わらない。
+-- 本番環境へ反映するまでは migrations/0021_trip_settle_unit.sql を1回だけ実行すること。
+-- ALTER TABLE trips ADD COLUMN settle_unit INTEGER NOT NULL DEFAULT 1;

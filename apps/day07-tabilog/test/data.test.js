@@ -113,6 +113,53 @@ plan.forEach(function (p) { ok('settlementPlan: 宛先は必ず貸している�
 
 eq('settlementPlan: 全員ゼロなら精算不要', T.settlementPlan({ a: 0, b: 0 }), []);
 
+/* ---- settlementPlan: 精算の端数（丸め）単位（Walicaと実際に突き合わせて検証、2026-09-27） ----
+ * 8人・17件の実データ（Walicaの実際のグループ）。ひろが全部立て替え、他の7人が払う側。
+ * Walicaの実際の送金額は「各人の厳密な貸し借りを100円単位で丸めた額」と一致し（例：
+ * 22,977.5円→23,000円）、受け取る人（ひろ）の合計は153,200円で厳密な153,147.5円とはズレる
+ * （各送金を独立に丸めるため）。マッチングを先に丸めてしまうとこの数字と合わなくなるため、
+ * 「マッチングは端数のない実残高のまま行い、送金額だけを最後に丸める」実装を検証する。 */
+var walicaMembers = ['ひろ', '小西', 'まさ', 'あつ', 'きく', 'さくら', 'こなつ', 'おその'];
+var walicaBlocks = [{
+  date: '2024-01-01', entries: [{ costItems: [
+    { label: 'こーひー', paidBy: 'あつ', amount: 2100, splitAmong: ['あつ', 'こなつ', 'おその'] },
+    { label: '薪', paidBy: 'きく', amount: 1000, splitAmong: walicaMembers },
+    { label: 'コロッケ', paidBy: 'きく', amount: 500, splitAmong: ['まさ'] },
+    { label: 'ラーメン', paidBy: 'あつ', amount: 1200, splitAmong: ['きく'] },
+    { label: 'ラーメン', paidBy: 'まさ', amount: 1200, splitAmong: ['小西'] },
+    { label: 'ラーメン', paidBy: 'ひろ', amount: 1200, splitAmong: ['小西'] },
+    { label: 'モルック負けお茶', paidBy: 'ひろ', amount: 780, splitAmong: ['ひろ', '小西', 'きく', 'こなつ'] },
+    { label: 'ラーメンつけ麺', paidBy: 'おその', amount: 10500, splitAmong: walicaMembers },
+    { label: '高速', paidBy: 'ひろ', amount: 6800, splitAmong: walicaMembers },
+    { label: '山本屋牛串', paidBy: 'きく', amount: 330, splitAmong: ['小西'] },
+    { label: '山本屋', paidBy: 'きく', amount: 1980, splitAmong: ['まさ'] },
+    { label: '駐車場', paidBy: 'きく', amount: 1000, splitAmong: walicaMembers },
+    { label: '山本屋', paidBy: 'ひろ', amount: 2310, splitAmong: ['こなつ'] },
+    { label: '山本屋', paidBy: 'ひろ', amount: 2915, splitAmong: ['あつ'] },
+    { label: '買い出し', paidBy: 'ひろ', amount: 35000, splitAmong: walicaMembers },
+    { label: 'タイムズ', paidBy: 'ひろ', amount: 19000, splitAmong: walicaMembers },
+    { label: '宿代', paidBy: 'ひろ', amount: 108000, splitAmong: walicaMembers },
+  ] }]
+}];
+var walicaBalance = T.tripBalances({ companions: walicaMembers }, walicaBlocks);
+function planByFrom(plan) {
+  var out = {};
+  plan.forEach(function (p) { out[p.from] = p.amount; });
+  return out;
+}
+// planByFromはfor...inの列挙順（挿入順）で比較するので、期待値もキーの並びをそろえておく
+// （中身の値そのものは順不同で正しい。JSON.stringifyでの比較のため）。
+eq('settlementPlan: Walica実データ・単位100円（実際の送金額と一致）', planByFrom(T.settlementPlan(walicaBalance, 100)), {
+  'こなつ': 25900, '小西': 25600, 'まさ': 23900, 'あつ': 23000, 'さくら': 22700, 'きく': 19200, 'おその': 12900
+});
+eq('settlementPlan: Walica実データ・単位1円（.5は0から遠い方へ丸める）', planByFrom(T.settlementPlan(walicaBalance, 1)), {
+  'こなつ': 25868, '小西': 25588, 'まさ': 23943, 'あつ': 22978, 'さくら': 22663, 'きく': 19248, 'おその': 12863
+});
+eq('settlementPlan: Walica実データ・単位10円', planByFrom(T.settlementPlan(walicaBalance, 10)), {
+  'こなつ': 25870, '小西': 25590, 'まさ': 23940, 'あつ': 22980, 'さくら': 22660, 'きく': 19250, 'おその': 12860
+});
+T.settlementPlan(walicaBalance, 100).forEach(function (p) { ok('settlementPlan: Walica・宛先は必ずひろ', p.to === 'ひろ'); });
+
 var expenses = T.tripExpenseList(blocksForBalance);
 eq('tripExpenseList: paidByがある費用行だけを新しい日付順で一覧する', expenses.map(function (e) { return e.label; }), ['入場料', '夕食']);
 eq('tripExpenseList: splitAmong省略時はpaidBy本人だけとして補う', expenses[0].splitAmong, ['私']);

@@ -484,6 +484,17 @@ a:hover { text-decoration: underline; }
 .cost-item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ---------- 精算（割り勘） ---------- */
+.settle-unit-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.settle-unit-label { font-size: 12.5px; font-weight: 700; color: var(--ink-muted); }
+.settle-unit-picker {
+  display: flex; gap: 4px; padding: 3px; background: var(--input-bg); border-radius: 999px;
+}
+.settle-unit-opt {
+  padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+  color: var(--ink-muted);
+}
+.settle-unit-opt.on { background: var(--card); color: var(--accent-deep); box-shadow: var(--card-shadow); }
+.settle-round-note { font-size: 12px; color: var(--ink-muted); margin: -6px 0 18px; }
 .balance-list, .settle-plan-list, .expense-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
 .balance-row {
   display: flex; justify-content: space-between; align-items: center; padding: 11px 13px;

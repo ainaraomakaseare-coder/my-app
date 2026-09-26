@@ -384,29 +384,52 @@
     return balance;
   }
 
+  // 精算の端数（丸め）単位。Walicaにならい、旅行ごとに1円／10円／100円から選べる
+  // （trips.settle_unit、2026-09-27）。全員で共有する設定なので、trip側に持たせる。
+  var SETTLE_UNITS = [1, 10, 100];
+
+  // xをunit単位の最も近い値に丸める。半端（ちょうど半分）は0から遠い方へ丸める
+  // （四捨五入の対称版。JSのMath.roundは常に+Infinity方向へ丸めるため、
+  // 例えば-22977.5は-22977になってしまい、「23,000円送る」つもりが「22,977円」になる
+  // ような食い違いが起きる。それを避けるため符号を先に取り出してから丸める）。
+  function roundToUnit(x, unit) {
+    var u = (unit === 10 || unit === 100) ? unit : 1;
+    if (!x) return 0;
+    return Math.sign(x) * Math.round(Math.abs(x) / u) * u;
+  }
+
   // 貸し借り残高（tripBalancesの結果）から、送金の回数が最小になるような精算方法を作る
   // （最も多くもらう人と最も多く払う人を順にマッチさせる、よく知られた貪欲法）。
-  // 端数（1円未満）は四捨五入し、集計誤差で1円未満だけ残るケースは無視する。
-  function settlementPlan(balance) {
+  // unit（1／10／100円、省略時は1円）は、マッチング自体は端数のない実残高のまま行い、
+  // 最後に送金額だけをunit単位に丸める（Walicaと同じ挙動。マッチング前に丸めてしまうと、
+  // 各人の丸め誤差が積み上がって「受け取る人の合計」が実際の残高より数円ずれて送金し
+  // 損ねるケースがあった）。丸めた結果0円になった送金は一覧から外す。
+  function settlementPlan(balance, unit) {
+    var u = SETTLE_UNITS.indexOf(unit) !== -1 ? unit : 1;
     var creditors = [];
     var debtors = [];
     Object.keys(balance || {}).forEach(function (name) {
-      var yen = Math.round(balance[name]);
-      if (yen > 0) creditors.push({ name: name, amount: yen });
-      else if (yen < 0) debtors.push({ name: name, amount: -yen });
+      var yen = balance[name] || 0;
+      if (yen > 0.005) creditors.push({ name: name, amount: yen });
+      else if (yen < -0.005) debtors.push({ name: name, amount: -yen });
     });
     creditors.sort(function (a, b) { return b.amount - a.amount; });
     debtors.sort(function (a, b) { return b.amount - a.amount; });
-    var plan = [];
+    var raw = [];
     var i = 0, j = 0;
     while (i < debtors.length && j < creditors.length) {
       var pay = Math.min(debtors[i].amount, creditors[j].amount);
-      if (pay >= 1) plan.push({ from: debtors[i].name, to: creditors[j].name, amount: pay });
+      if (pay > 0.005) raw.push({ from: debtors[i].name, to: creditors[j].name, amount: pay });
       debtors[i].amount -= pay;
       creditors[j].amount -= pay;
-      if (debtors[i].amount < 1) i++;
-      if (creditors[j].amount < 1) j++;
+      if (debtors[i].amount <= 0.005) i++;
+      if (creditors[j].amount <= 0.005) j++;
     }
+    var plan = [];
+    raw.forEach(function (p) {
+      var amount = roundToUnit(p.amount, u);
+      if (amount !== 0) plan.push({ from: p.from, to: p.to, amount: amount });
+    });
     return plan;
   }
 
@@ -1347,6 +1370,8 @@
     tripTotalCost: tripTotalCost,
     tripBalances: tripBalances,
     settlementPlan: settlementPlan,
+    roundToUnit: roundToUnit,
+    SETTLE_UNITS: SETTLE_UNITS,
     tripExpenseList: tripExpenseList,
     primaryLodgingName: primaryLodgingName,
     lodgingByNight: lodgingByNight,
@@ -1759,26 +1784,59 @@
     showScreen('settlement');
   }
 
+  // 精算の端数（丸め）単位は旅行ごとの設定（trip.settleUnit）で、参加者全員で共有する
+  // （Walicaにならい1円／10円／100円から選べる。2026-09-27）。古い旅行データにはまだ
+  // フィールドが無いことがあるので、無ければ1円扱いにする。
+  function currentSettleUnit() {
+    var u = state.trip && state.trip.settleUnit;
+    return Core.SETTLE_UNITS.indexOf(u) !== -1 ? u : 1;
+  }
+
+  function renderSettleUnitPicker() {
+    var unit = currentSettleUnit();
+    $all('.settle-unit-opt', $('#settleUnitPicker')).forEach(function (btn) {
+      btn.classList.toggle('on', Number(btn.dataset.unit) === unit);
+    });
+  }
+
+  function saveSettleUnit(unit) {
+    if (!state.trip || currentSettleUnit() === unit) return;
+    var prevUnit = state.trip.settleUnit;
+    state.trip.settleUnit = unit; // 保存前に反映し、タップの反応を速くする（失敗したら戻す）
+    renderSettleUnitPicker();
+    renderSettlement();
+    api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', { settleUnit: unit })
+      .then(function (trip) { state.trip = trip; rememberTrip(trip); })
+      .catch(function () {
+        state.trip.settleUnit = prevUnit;
+        renderSettleUnitPicker();
+        renderSettlement();
+        alert('端数の単位を保存できませんでした。もう一度お試しください。');
+      });
+  }
+
   function renderSettlement() {
     var expenses = Core.tripExpenseList(state.blocks);
     var hasExpenses = expenses.length > 0;
     $('#settlementEmpty').hidden = hasExpenses;
     $('#settlementBody').hidden = !hasExpenses;
+    renderSettleUnitPicker();
     if (!hasExpenses) return;
 
+    var unit = currentSettleUnit();
     var balance = Core.tripBalances(state.trip, state.blocks);
-    var names = Object.keys(balance).filter(function (n) { return Math.round(balance[n]) !== 0; });
+    var names = Object.keys(balance).filter(function (n) { return Core.roundToUnit(balance[n], 1) !== 0; });
     // 貸し借りが無い（＝0円の）参加者も、参加していることが分かるよう一覧には残す
     (state.trip.companions || []).forEach(function (n) { if (names.indexOf(n) === -1) names.push(n); });
 
     $('#settlementBalances').innerHTML = names.map(function (name) {
-      var yen = Math.round(balance[name] || 0);
+      var yen = Core.roundToUnit(balance[name] || 0, 1);
       var cls = yen > 0 ? 'plus' : (yen < 0 ? 'minus' : '');
       var text = yen > 0 ? '+' + Core.formatYen(yen) + '（もらう）' : (yen < 0 ? '－' + Core.formatYen(-yen) + '（払う）' : '±¥0');
       return '<div class="balance-row ' + cls + '"><span class="name">' + escapeHtml(name) + '</span><span class="amount">' + escapeHtml(text) + '</span></div>';
     }).join('');
 
-    var plan = Core.settlementPlan(balance);
+    var plan = Core.settlementPlan(balance, unit);
     var planEl = $('#settlementPlanList');
     if (!plan.length) {
       planEl.innerHTML = '<p class="empty">貸し借りはありません。</p>';
@@ -1787,6 +1845,11 @@
         return '<div class="settle-plan-row"><span class="from">' + escapeHtml(p.from) + '</span>' + SETTLE_ARROW_ICON
           + '<span class="to">' + escapeHtml(p.to) + '</span><span class="amount">' + escapeHtml(Core.formatYen(p.amount)) + '</span></div>';
       }).join('');
+    }
+    var roundNote = $('#settlementRoundNote');
+    roundNote.hidden = !(unit > 1 && plan.length);
+    if (unit > 1 && plan.length) {
+      roundNote.textContent = unit + '円単位に丸めています（受け取る人の合計が実際と少しずれることがあります）。';
     }
 
     $('#settlementExpenses').innerHTML = expenses.map(function (e) {
@@ -5636,6 +5699,10 @@
     initMediaViewerGestures();
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
     $('#btnOpenSettlement').addEventListener('click', openSettlement);
+    $('#settleUnitPicker').addEventListener('click', function (e) {
+      var b = e.target.closest('.settle-unit-opt');
+      if (b) saveSettleUnit(Number(b.dataset.unit));
+    });
     $('#filterCompanion').addEventListener('change', function (e) { state.homeFilters.companion = e.target.value; renderHomeTripList(); });
     $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });

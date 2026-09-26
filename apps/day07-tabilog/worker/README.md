@@ -391,3 +391,23 @@ docs/adr/0008参照）。
 - クライアント（`app.js`）：`Core.routeProfileFor`が`train`・`shinkansen`・`subway`を`'rail'`に対応させ、
   `fetchReplayRoutes`の「車で大回りしすぎたら徒歩で調べ直す」ロジックは`profile === 'car'`のときだけに
   絞った（`rail`はWorker側の線路長ガードで代わりに担保する）。DBのスキーマ変更は無い（docs/adr/0008）。
+
+## 精算の端数（丸め）単位を選べるようにする（2026-09-27 追加）
+
+Walicaのように、精算画面で丸め単位を1円／10円／100円から選べるようにした。旅行メンバー全員で共有する
+設定なので、`trips.settle_unit`（`migrations/0021_trip_settle_unit.sql`）として旅行本体に持たせる
+（既存の旅行はDEFAULT 1のまま変わらない）。**wrangler deployより先に**本番環境で1回だけ実行すること
+（逆順だと旅行の更新がSQLエラーになる）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --file migrations/0021_trip_settle_unit.sql
+```
+
+- `validTripInput`：`settleUnit`を渡す場合は`[1, 10, 100]`のいずれかのみ許可（それ以外は`400`）。
+- `GET /trips/:id`・`PATCH /trips/:id`のレスポンスに`settleUnit`を追加（未設定・旧データは`1`）。
+- 既存の`PATCH /trips/:id`（旅行の編集）で、他のフィールドと同様に`settleUnit`だけを送っても更新できる
+  （編集できる人＝旅行のリンクを知っている人なら誰でも変更できる。従来の権限と同じ）。
+- 精算方法そのもの（`Core.settlementPlan(balance, unit)`）は、貸し借りのマッチング自体は端数のない
+  実残高のまま行い、**最後に送金額だけをunit単位に丸める**（Walicaの実際の送金額と突き合わせて確認済み。
+  詳しくは`CONTEXT.md`の「割り勘」節を参照）。マッチング前に丸めてしまうと、各人の丸め誤差が積み上がり、
+  受け取る人の合計が実際の残高と数円ずれるだけでなく、送金の組み合わせによっては送金漏れが起きていた。
