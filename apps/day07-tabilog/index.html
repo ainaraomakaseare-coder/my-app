@@ -241,9 +241,13 @@
 
         <div class="field">
           <label for="textMemoInput">スケジュールやメモをそのまま貼り付ける</label>
-          <textarea id="textMemoInput" rows="8" placeholder="例：10時 那覇空港集合／12時 沖縄そば https://maps.google.com/.../ 15時 首里城公園"></textarea>
+          <textarea id="textMemoInput" rows="8" placeholder="例：&#10;10時 新宿&#10;小西遅刻&#10;松藤寝坊&#10;12時 山梨&#10;ほうとう食べた"></textarea>
+          <!-- 決まった形ならAIを使わず無料で分ける（app.jsのCore.parseMemo） -->
+          <p class="hint memo-help">「10時 新宿」のように<strong>時刻で始まる行</strong>が予定、その下の行が記録になります。この形なら<strong>AIを使わず無料・何回でも</strong>取り込めます。「2日目」「4/2」の行で日付を変えられます。</p>
         </div>
         <button class="btn primary wide" id="btnCreateTextEntries">この内容で予定を作る</button>
+        <button class="btn text memo-ai-btn" id="btnOrganizeMemoAi" type="button">形が崩れていてうまく分かれないときは → AIで整理する</button>
+        <p class="hint" id="memoAiInfo"></p>
         <p class="hint" id="textEntryStatus"></p>
       </div>
     </div>
@@ -292,6 +296,9 @@
 
       <div class="companions-names" id="tripMembers" hidden></div>
 
+      <!-- 旅行へのいいね・コメント（app.jsのrenderTripSocialBar）。記録ごとのものは各記録カードの下に出す -->
+      <div class="social-bar" id="tripSocialBar"></div>
+
       <div class="stats-row" id="tripStats"></div>
       <div class="cost-breakdown-panel" id="lodgingBreakdownPanel" hidden></div>
       <div class="cost-breakdown-panel" id="costBreakdownPanel" hidden></div>
@@ -299,6 +306,11 @@
       <button class="replay-entry-btn" id="btnOpenReplay" type="button" hidden>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3.5 6v14L9 18l6 2 5.5-2V4L15 6z"/><path d="M9 4v14M15 6v14"/></svg>
         <span>地図でふりかえる</span>
+      </button>
+      <!-- 紹介文（ホテログ・レクログ・飯ログ。docs/adr/0007）。自分の★レビューから、SNSに貼れる文章を作る -->
+      <button class="replay-entry-btn post-entry-btn" id="btnOpenPost" type="button">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4"/></svg>
+        <span>紹介文を作る</span>
       </button>
 
       <div class="day-tabs" id="dayTabs"></div>
@@ -418,9 +430,15 @@
           <div class="cat-chips" id="blkCategoryChips"></div>
         </div>
 
-        <div class="field">
-          <label>ここまでの移動手段（任意・「地図でふりかえる」で使います）</label>
+        <!-- 種類が「移動」のときだけ出す（app.jsのrenderCategoryChips）。この予定から次の場所への移動 -->
+        <div class="field move-fields" id="blkMoveFields" hidden>
+          <label>移動手段（「地図でふりかえる」で使います）</label>
           <div class="cat-chips transport-chips" id="blkTransportChips"></div>
+          <label class="move-time-label">移動時間（任意）</label>
+          <div class="move-time">
+            <input type="number" id="blkMoveHours" min="0" max="240" inputmode="numeric" placeholder="0"><span>時間</span>
+            <input type="number" id="blkMoveMins" min="0" max="59" inputmode="numeric" placeholder="0"><span>分</span>
+          </div>
         </div>
 
         <p class="hint" id="blkFormStatus"></p>
@@ -456,10 +474,17 @@
           </div>
           <div class="replay-caption-lines" id="replayCaptionLines"></div>
         </div>
+        <!-- 日ボタン：押すとその日の最初の予定から（app.jsのrenderReplayDays） -->
+        <div class="replay-days" id="replayDays" hidden></div>
         <div class="replay-controls" id="replayControls" hidden>
           <button class="replay-play" id="btnReplayToggle" type="button" aria-label="一時停止"></button>
+          <button class="replay-step" id="btnReplayPrev" type="button" aria-label="前の予定へ">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="4" y="4.5" width="2.2" height="11" rx="1"/><path d="M16 4.5v11L7.5 10z"/></svg>
+          </button>
           <div class="replay-progress" id="replayProgress"><div class="replay-progress-bar" id="replayProgressBar"></div></div>
-          <button class="btn text replay-restart" id="btnReplayRestart" type="button">最初から</button>
+          <button class="replay-step" id="btnReplayNext" type="button" aria-label="次の予定へ">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="13.8" y="4.5" width="2.2" height="11" rx="1"/><path d="M4 4.5v11l8.5-5.5z"/></svg>
+          </button>
         </div>
       </div>
     </div>
@@ -484,6 +509,7 @@
             <span>写真を追加する</span>
           </div>
           <div class="photo-preview" id="entPhotoPreview"></div>
+          <p class="hint" id="entPhotoOrderHint" hidden>写真を長押しして動かすと、順番を入れ替えられます（先頭の写真が代表の写真になります）</p>
         </div>
 
         <div class="field">
@@ -511,15 +537,29 @@
           <input type="text" id="entComment" placeholder="例：最高だった！">
         </div>
 
-        <div class="field">
-          <label for="entDetail">詳細（任意）</label>
-          <textarea id="entDetail" rows="4" placeholder="持ち物・注意点・裏話など、もっと書きたいことがあれば"></textarea>
-        </div>
-
         <div class="field" id="entRatingField" hidden>
           <label>評価</label>
           <div class="rating-widget" id="entRatingWidget"></div>
           <p class="hint" id="entRatingSummary"></p>
+          <!-- 紹介文（ホテログ・レクログ・飯ログ）用の、自分のレビュー項目（app.jsのrenderReviewFields。docs/adr/0007） -->
+          <div class="review-fields" id="entReviewFields" hidden></div>
+        </div>
+
+        <!-- 移動の予定の記録だけに出す、紹介文用の移動の情報（★はつけない） -->
+        <div class="field" id="entTravelField" hidden>
+          <label>移動の情報（紹介文に使います）</label>
+          <div class="travel-grid">
+            <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地（例：ローマ）">
+            <span class="travel-arrow">→</span>
+            <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地（例：ロンドン）">
+          </div>
+          <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：ブエリング航空 VY6203）">
+          <div class="travel-grid">
+            <label class="travel-time">出発<input type="time" id="entTravelDepart"></label>
+            <label class="travel-time">到着<input type="time" id="entTravelArrive"></label>
+          </div>
+          <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）。費用の明細があればそちらを使います">
+          <p class="hint" id="entTravelDuration"></p>
         </div>
 
         <div class="field">
@@ -534,12 +574,7 @@
           <div class="cost-total" id="entCostTotal"></div>
         </div>
 
-        <div class="field">
-          <label for="entWaitTime">待ち時間</label>
-          <input type="text" id="entWaitTime" placeholder="例：20分待ち">
-        </div>
-
-        <div class="field-row">
+        <!-- 地図の欄は、候補の地図を広く見せるため横並びにせず、横幅いっぱいに使う -->
           <div class="field">
             <label for="entMapUrl">地図のURL（任意）</label>
             <input type="url" id="entMapUrl" placeholder="https://maps.google.com/...">
@@ -547,21 +582,49 @@
               <input type="text" id="entPlaceSearch" placeholder="場所名で検索（例：ユニバ）">
               <button type="button" class="btn ghost small" id="btnPlaceSearch">地図を検索</button>
             </div>
+            <!-- 検索の候補（先頭が違う場所だったときに選び直せるように。app.jsのsearchPlaceCandidates） -->
+            <select class="place-candidates" id="entPlaceCandidates" hidden aria-label="場所の候補"></select>
+            <p class="hint" id="entPlaceStatus"></p>
             <div class="map-preview" id="entMapPreview" hidden>
-              <iframe id="entMapPreviewFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+              <!-- 候補を選んだとき：指で拡大・縮小でき、ピンを動かして位置を直せる地図（Leaflet） -->
+              <div class="place-map" id="entPlaceMap" hidden></div>
+              <p class="hint" id="entPlaceMapHint" hidden>指で拡大・縮小できます。ピンを動かすか地図をタップすると、位置を細かく直せます。</p>
+              <!-- 「Googleマップで検索」を選んだとき：Googleの埋め込み地図＋拡大・縮小ボタン -->
+              <div class="map-frame-wrap" id="entMapFrameWrap">
+                <iframe id="entMapPreviewFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                <div class="map-zoom">
+                  <button type="button" id="btnMapZoomIn" aria-label="拡大">＋</button>
+                  <button type="button" id="btnMapZoomOut" aria-label="縮小">－</button>
+                </div>
+              </div>
               <button type="button" class="btn ghost small" id="btnUseMapUrl">このURLを地図欄に入れる</button>
             </div>
           </div>
+
+        <!-- 記録の画面が長いので、ときどきしか使わない欄はたたんでおく。すでに入っている記録を開いたときは
+             開いた状態にする（app.jsのopenEntryForm） -->
+        <details class="more-fields" id="entMoreFields">
+          <summary>詳細・待ち時間・お店のHP・その他URL</summary>
+          <div class="field">
+            <label for="entDetail">詳細（任意）</label>
+            <textarea id="entDetail" rows="4" placeholder="持ち物・注意点・裏話など、もっと書きたいことがあれば"></textarea>
+          </div>
+
+          <div class="field">
+            <label for="entWaitTime">待ち時間</label>
+            <input type="text" id="entWaitTime" placeholder="例：20分待ち">
+          </div>
+
           <div class="field">
             <label for="entShopUrl">お店・施設のHP（任意）</label>
             <input type="url" id="entShopUrl" placeholder="https://...">
           </div>
-        </div>
 
-        <div class="field">
-          <label for="entOtherUrl">その他URL（任意）</label>
-          <input type="url" id="entOtherUrl" placeholder="https://...">
-        </div>
+          <div class="field">
+            <label for="entOtherUrl">その他URL（任意）</label>
+            <input type="url" id="entOtherUrl" placeholder="https://...">
+          </div>
+        </details>
 
         <div class="field">
           <label for="entAuthor">記録した人（任意、未入力なら「匿名」）</label>
@@ -632,6 +695,39 @@
 
 </div>
 
+<!-- ============ コメント（旅行・記録ごと。画面を切り替えず下から出すシート） ============ -->
+<div class="sheet-backdrop" id="commentSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="commentSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="commentSheetTitle">コメント</div>
+      <button class="sheet-close" id="btnCloseCommentSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div class="comment-list" id="commentList"></div>
+    <form class="comment-form" id="commentForm">
+      <textarea id="commentInput" rows="1" maxlength="500" placeholder="コメントを書く"></textarea>
+      <button class="btn primary" id="btnSendComment" type="submit">送信</button>
+    </form>
+    <p class="hint comment-status" id="commentStatus"></p>
+  </div>
+</div>
+
+<!-- ============ 紹介文（コピーしてSNSに貼る） ============ -->
+<div class="sheet-backdrop" id="postSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="postSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="postSheetTitle">紹介文</div>
+      <button class="sheet-close" id="btnClosePostSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint" id="postSheetNote"></p>
+    <textarea class="post-text" id="postText" rows="14"></textarea>
+    <div class="post-actions">
+      <button class="btn primary" id="btnCopyPost" type="button">コピーする</button>
+      <button class="btn ghost" id="btnSharePost" type="button" hidden>共有する</button>
+    </div>
+    <p class="hint comment-status" id="postStatus"></p>
+  </div>
+</div>
+
 <!-- ============ 写真の拡大表示 ============ -->
 <div class="lightbox" id="photoLightbox" hidden>
   <button class="lightbox-close" id="btnCloseLightbox" aria-label="閉じる">
@@ -640,7 +736,8 @@
   <button class="lightbox-save" id="btnSaveLightboxPhoto" aria-label="保存">
     <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v10M6 9l4 4 4-4"/><path d="M3.5 14.5v1.3a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7v-1.3"/></svg>
   </button>
-  <img id="lightboxImg" src="" alt="">
+  <!-- 写真・動画を横に並べた帯。左右スワイプでずらす（app.jsのopenMediaViewer） -->
+  <div class="mv-track" id="mvTrack"></div>
   <button class="lightbox-nav lightbox-nav-prev" id="lightboxPrev" aria-label="前の写真" hidden>
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4.5L7 10l5.5 5.5"/></svg>
   </button>
@@ -648,17 +745,6 @@
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
   </button>
   <div class="lightbox-count" id="lightboxCount" hidden></div>
-</div>
-
-<!-- ============ 動画の拡大再生（アルバムから） ============ -->
-<div class="lightbox" id="videoLightbox" hidden>
-  <button class="lightbox-close" id="btnCloseVideoLightbox" aria-label="閉じる">
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
-  </button>
-  <button class="lightbox-save" id="btnSaveLightboxVideo" aria-label="保存">
-    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v10M6 9l4 4 4-4"/><path d="M3.5 14.5v1.3a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7v-1.3"/></svg>
-  </button>
-  <video id="lightboxVideo" src="" controls playsinline></video>
 </div>
 
 <script src="app.js"></script>

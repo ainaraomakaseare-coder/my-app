@@ -250,24 +250,22 @@ eq('weatherLabel: にわか雨コードでも同様に曇り扱い', T.weatherLa
 eq('weatherLabel: 雷雨は降水量が少なくても雷雨のまま', T.weatherLabel(96, 0.2), '雷雨');
 eq('weatherLabel: 降水量が渡されなければ従来どおり', T.weatherLabel(63), '雨');
 
-/* ---- 地図でふりかえる：予定から地名を取り出す（replayPlaceQuery） ---- */
-eq('replayPlaceQuery: 地図URLのqueryを最優先',
-  T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('首里そば') }] }), '首里そば');
-eq('replayPlaceQuery: 地図URLのq=も読む',
-  T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: 'https://maps.google.com/maps?q=' + encodeURIComponent('国際通り') + '&output=embed' }] }), '国際通り');
-eq('replayPlaceQuery: 「〇〇に到着」は地名だけ', T.replayPlaceQuery({ label: '那覇空港に到着', entries: [] }), '那覇空港');
-eq('replayPlaceQuery: 地名にひらがなの助詞が含まれても最後の助詞で切る', T.replayPlaceQuery({ label: 'かに道楽で夕食', entries: [] }), 'かに道楽');
-eq('replayPlaceQuery: 地名だけの見出しはそのまま', T.replayPlaceQuery({ label: '新宿', entries: [] }), '新宿');
-eq('replayPlaceQuery: 体言止めの動作名詞を外す', T.replayPlaceQuery({ label: 'ダイヤモンドヘッド登頂', entries: [] }), 'ダイヤモンドヘッド');
-eq('replayPlaceQuery: 見出しが空なら空文字', T.replayPlaceQuery({ label: '', entries: [] }), '');
+/* ---- 地図でふりかえる：予定の場所は記録の地図URLだけから決める（replayPlaceQuery） ---- */
+eq('replayPlaceQuery: Googleマップの共有リンクをそのまま返す（展開・座標の読み取りはWorker側）',
+  T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: ' https://maps.app.goo.gl/PzmSEdBvWvfK1AW87?g_st=ic ' }] }), 'https://maps.app.goo.gl/PzmSEdBvWvfK1AW87?g_st=ic');
+eq('replayPlaceQuery: 地図の入った最初の記録を使う',
+  T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: '' }, { mapUrl: 'https://www.google.com/maps/search/?api=1&query=x' }] }), 'https://www.google.com/maps/search/?api=1&query=x');
+eq('replayPlaceQuery: 地図が無ければ見出しが地名でも空（移動の目的地にしない）', T.replayPlaceQuery({ label: '那覇空港に到着', entries: [] }), '');
+eq('replayPlaceQuery: 「小西遅刻」のような出来事も空', T.replayPlaceQuery({ label: '小西遅刻', entries: [{ episode: '寝坊' }] }), '');
+eq('replayPlaceQuery: URLでない文字列は使わない', T.replayPlaceQuery({ label: '新宿', entries: [{ mapUrl: '新宿駅' }] }), '');
 
 /* ---- 地図でふりかえる：再生する地点の並び（replayStops） ---- */
 var rpTrip = { startDate: '2026-04-01', endDate: '2026-04-02' };
 var rpBlocks = [
-  { id: 'a', date: '2026-04-01', time: '10:00', label: '新宿', transport: '', entries: [{ episode: '小西遅刻' }, { comment: '松藤寝坊' }] },
-  { id: 'b', date: '2026-04-01', time: '12:00', label: '山梨', transport: 'train', entries: [] },
+  { id: 'a', date: '2026-04-01', time: '10:00', label: '新宿', transport: '', entries: [{ episode: '小西遅刻', mapUrl: 'https://maps.app.goo.gl/shinjuku' }, { comment: '松藤寝坊' }] },
+  { id: 'b', date: '2026-04-01', time: '12:00', label: '山梨', transport: 'train', entries: [{ mapUrl: 'https://maps.app.goo.gl/yamanashi' }] },
   { id: 'c', date: '2026-04-01', time: '', label: 'ほうとう屋で夕食', transport: 'walk', entries: [], createdAt: '1' },
-  { id: 'd', date: '2026-04-02', time: '09:00', label: '河口湖', transport: 'bus', entries: [] },
+  { id: 'd', date: '2026-04-02', time: '09:00', label: '河口湖', transport: 'bus', entries: [{ mapUrl: 'https://maps.app.goo.gl/kawaguchiko' }] },
   { id: 'e', date: '', time: '', label: '日付なし', transport: '', entries: [] }
 ];
 var rpStops = T.replayStops(rpTrip, rpBlocks);
@@ -282,7 +280,7 @@ eq('replayStops: 時刻が1つも無い日は9時から1時間おき',
   [540, 600]);
 
 /* ---- 地図でふりかえる：再生の時間割（buildReplayTimeline / replayStateAt） ---- */
-var rpCoords = { '新宿': { lat: 35.69, lng: 139.70 }, '山梨': { lat: 35.66, lng: 138.57 }, 'ほうとう屋': null, '河口湖': { lat: 35.50, lng: 138.76 } };
+var rpCoords = { 'https://maps.app.goo.gl/shinjuku': { lat: 35.69, lng: 139.70 }, 'https://maps.app.goo.gl/yamanashi': { lat: 35.66, lng: 138.57 }, 'https://maps.app.goo.gl/kawaguchiko': { lat: 35.50, lng: 138.76 } };
 var tl = T.buildReplayTimeline(rpStops, rpCoords);
 eq('buildReplayTimeline: 場所が分かった予定だけ地図上の地点になる', tl.stops.map(function (s) { return s.located; }), [true, true, false, true]);
 eq('buildReplayTimeline: 移動手段があり両端の場所が分かる区間だけ移動する',
@@ -305,7 +303,7 @@ var stEnd = T.replayStateAt(tl, tl.totalReal);
 eq('replayStateAt: 最後は2日目', stEnd.dayNumber, 2);
 eq('replayStateAt: 最後にいる場所は最後の地点', [stEnd.here.lat, stEnd.here.lng], [35.50, 138.76]);
 var lateTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' },
-  [{ id: 'z', date: '2026-04-01', time: '23:55', label: '新宿', entries: [] }]), { '新宿': { lat: 35.69, lng: 139.70 } });
+  [{ id: 'z', date: '2026-04-01', time: '23:55', label: '新宿', entries: [{ mapUrl: 'https://maps.app.goo.gl/shinjuku' }] }]), { 'https://maps.app.goo.gl/shinjuku': { lat: 35.69, lng: 139.70 } });
 var lateEnd = T.replayStateAt(lateTl, lateTl.totalReal);
 eq('replayStateAt: 最後の予定が深夜でも、最後の時計は翌日にはみ出さない', [lateEnd.dayNumber, lateEnd.hhmm], [1, '23:59']);
 ok('arcLatLng: 飛行機は直線より外側にふくらむ', (function () {
@@ -313,6 +311,172 @@ ok('arcLatLng: 飛行機は直線より外側にふくらむ', (function () {
   return Math.abs(mid.lat - 35) > 0.3;
 })());
 eq('arcLatLng: 弧でなければ直線の中点', T.arcLatLng({ lat: 30, lng: 130 }, { lat: 40, lng: 140 }, 0.5, false), { lat: 35, lng: 135 });
+
+/* ---- 紹介文（ホテログ・レクログ・飯ログ。docs/adr/0007） ---- */
+eq('reviewKindForCategory: 宿泊→ホテログ・食事→飯ログ・観光とその他→レクログ・移動→なし',
+  ['lodging', 'food', 'sightseeing', 'other', 'transport'].map(T.reviewKindForCategory), ['hotel', 'food', 'activity', 'activity', '']);
+eq('reviewLevelLabel: 4.5以上／4.0以上／3.5以上／3.0以上／3.0未満',
+  [4.5, 4.4, 4.0, 3.9, 3.5, 3.0, 2.9].map(function (s) { return T.reviewLevelLabel('hotel', s); }),
+  ['絶対また泊まりたい', 'また泊まりたい', 'また泊まりたい', 'また泊まってもいい', 'また泊まってもいい', '機会があれば泊まる', 'もう泊まらない']);
+eq('reviewLevelLabel: 種類ごとに言葉が変わる', [T.reviewLevelLabel('activity', 4.7), T.reviewLevelLabel('food', 4.0)], ['2回目もまた行きたい', 'また行きたい']);
+eq('isReviewPublic: 3.0ちょうどは出す・3.0未満は出さない', [3.0, 2.9, 4.2].map(T.isReviewPublic), [true, false, true]);
+eq('travelDurationText: 出発・到着から所要時間', T.travelDurationText('10:00', '12:30'), '2時間30分');
+eq('travelDurationText: 日をまたぐ夜行便', T.travelDurationText('22:00', '06:15'), '8時間15分');
+eq('travelDurationText: 時刻が片方なければ空', T.travelDurationText('10:00', ''), '');
+
+var rvHotelBlock = { id: 'h', date: '2026-04-01', time: '15:00', category: 'lodging', label: 'THE TOWER HOTEL', entries: [] };
+var rvHotelEntry = { id: 'he', costItems: [{ label: '宿泊', amount: 51582 }], ratings: [
+  { raterEmail: 'me@example.com', score: 3.9, review: { price: '〇', units: 2, location: '△', access: '最寄り駅まで徒歩10分以上', value: '◎', hospitality: '〇', amenity: '△', other: 'ベッドがふかふか' } },
+  { raterEmail: 'friend@example.com', score: 2.0, review: {} }
+] };
+var hotelText = T.reviewLogText(rvHotelBlock, rvHotelEntry, T.findMyRating(rvHotelEntry.ratings, 'me@example.com'));
+ok('reviewLogText: 見出しに種類と★', hotelText.indexOf('🏨 ホテログ ⭐3.9\nTHE TOWER HOTEL') === 0);
+ok('reviewLogText: 価格は1泊あたりと合計（費用の明細から）', hotelText.indexOf('価格：〇（1泊あたり25,791円／2泊合計51,582円）') !== -1);
+ok('reviewLogText: 立地は行き方を添える', hotelText.indexOf('立地：△（最寄り駅まで徒歩10分以上）') !== -1);
+ok('reviewLogText: 評価の言葉で締める', /→ また泊まってもいい$/.test(hotelText));
+ok('reviewLogText: 入れていない項目は出さない', hotelText.indexOf('清潔さ') === -1);
+eq('reviewLogText: 3.0未満（友達の2.0）は出さない', T.reviewLogText(rvHotelBlock, rvHotelEntry, T.findMyRating(rvHotelEntry.ratings, 'friend@example.com')), '');
+eq('reviewLogText: 評価していなければ出さない', T.reviewLogText(rvHotelBlock, rvHotelEntry, null), '');
+
+var rvFoodBlock = { id: 'f', date: '2026-04-01', time: '12:00', category: 'food', label: 'ほうとう不動', entries: [] };
+var rvFoodEntry = { id: 'fe', waitTime: '20分', costItems: [{ label: 'ほうとう', amount: 1500 }, { label: '馬刺し', amount: 800 }],
+  ratings: [{ raterEmail: 'me@example.com', score: 4.6, review: { taste: '◎', reservation: '不要' } }] };
+var foodText = T.reviewLogText(rvFoodBlock, rvFoodEntry, rvFoodEntry.ratings[0]);
+ok('reviewLogText(飯): メニューは費用の明細から金額つきで', foodText.indexOf('メニュー：ほうとう 1,500円／馬刺し 800円') !== -1);
+ok('reviewLogText(飯): 美味しさ・予約・待ち時間', foodText.indexOf('美味しさ：◎') !== -1 && foodText.indexOf('予約：不要') !== -1 && foodText.indexOf('待ち時間：20分') !== -1);
+
+var rvMoveBlock = { id: 'm', date: '2026-04-01', time: '08:00', category: 'transport', transport: 'plane', label: 'ロンドンへ', entries: [] };
+var rvMoveEntry = { id: 'me', costItems: [], travel: { from: 'ローマ', to: 'ロンドン', company: 'ブエリング航空', depart: '08:00', arrive: '09:45', amount: 21840 } };
+eq('travelLogText: 移動は★なしで区間・会社・時刻・料金',
+  T.travelLogText(rvMoveBlock, rvMoveEntry),
+  '✈️ 移動｜飛行機\nローマ→ロンドン\n会社：ブエリング航空\n08:00発 → 09:45着（1時間45分）\n料金：21,840円');
+eq('travelLogText: 情報が何もなければ出さない', T.travelLogText({ category: 'transport', transport: '', label: '' }, { costItems: [] }), '');
+
+rvHotelBlock.entries = [rvHotelEntry]; rvFoodBlock.entries = [rvFoodEntry]; rvMoveBlock.entries = [rvMoveEntry];
+var rvBlocks = [rvHotelBlock, rvFoodBlock, rvMoveBlock];
+eq('tripCostByGroup: 移動・ホテル・食事と観光に分ける（移動は明細が無ければtravelの金額）', T.tripCostByGroup(rvBlocks), { transport: 21840, lodging: 51582, other: 2300 });
+eq('tripPlaceNames: 海外があれば国', T.tripPlaceNames([{ country: 'イタリア', admin1: 'ラツィオ州' }, { country: 'イギリス' }, { country: 'イタリア' }]), ['イタリア', 'イギリス']);
+eq('tripPlaceNames: 国内だけなら都道府県', T.tripPlaceNames([{ country: '日本', admin1: '山梨県' }, { country: '日本', admin1: '東京都' }]), ['山梨県', '東京都']);
+
+var post = T.buildTripPostText({ title: '山梨旅', startDate: '2026-04-01', endDate: '2026-04-02' }, rvBlocks,
+  [{ country: '日本', admin1: '山梨県' }], 'me@example.com');
+ok('buildTripPostText: 表紙に日程・泊数・行き先', post.indexOf('【山梨旅】\n2026 4/1〜4/2（1泊2日）\n山梨県 1泊2日の総額公開！') === 0);
+ok('buildTripPostText: 使った種類の評価の基準だけ出す', post.indexOf('ホテログ：4.5〜') !== -1 && post.indexOf('飯ログ：4.5〜') !== -1 && post.indexOf('レクログ：') === -1);
+ok('buildTripPostText: 時刻順（移動8時→飯12時→ホテル15時）',
+  post.indexOf('✈️ 移動') < post.indexOf('🍴 飯ログ') && post.indexOf('🍴 飯ログ') < post.indexOf('🏨 ホテログ'));
+ok('buildTripPostText: 最後に総額と内訳', post.indexOf('💰 合計金額は75,722円\n移動 21,840円\nホテル 51,582円\n食事と観光 2,300円') !== -1);
+ok('buildTripPostText: 友達のアカウントで作ると、3.0未満のホテルは入らない',
+  T.buildTripPostText({ title: 'x' }, rvBlocks, [], 'friend@example.com').indexOf('ホテログ') === -1);
+
+/* ---- 地図でふりかえる：道のりに沿って進む（docs/adr/0008） ---- */
+eq('routeProfileFor: 車・タクシー・バスは車道、徒歩・自転車はそれぞれ、電車・飛行機はルート検索しない',
+  ['car', 'taxi', 'bus', 'walk', 'bicycle', 'train', 'plane', ''].map(T.routeProfileFor), ['car', 'car', 'car', 'foot', 'bike', '', '', '']);
+var rtPath = [[35.0, 139.0], [35.0, 139.1], [35.1, 139.1]];
+var rtHalf = T.pathAt(rtPath, 0.5);
+ok('pathAt: 半分の位置は、長さで見た道のりの真ん中（1本目の終わり付近）', Math.abs(rtHalf.point.lng - 139.1) < 0.01 && Math.abs(rtHalf.point.lat - 35.0) < 0.01);
+eq('pathAt: 半分までの折れ線は、通った角を含む', rtHalf.prefix.length >= 2, true);
+eq('pathAt: 0は出発地、1は到着地', [T.pathAt(rtPath, 0).point, T.pathAt(rtPath, 1).point], [{ lat: 35.0, lng: 139.0 }, { lat: 35.1, lng: 139.1 }]);
+var rtTl = T.buildReplayTimeline(rpStops, rpCoords);
+rtTl.legs[0].path = [[35.69, 139.70], [35.69, 138.57], [35.66, 138.57]];
+var rtMid = T.replayStateAt(rtTl, (rtTl.legs[0].r0 + rtTl.legs[0].r1) / 2);
+ok('replayStateAt: 道のりがある移動は、直線ではなく道のりの上を進む（途中で西へ大きく回る）', Math.abs(rtMid.icon.lat - 35.69) < 0.02 && rtMid.icon.lng < 139.2);
+
+/* ---- 地図でふりかえる：吹き出しは全文、長いほど長く見せる ---- */
+var capLong = 'あ'.repeat(60);
+var capStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'x1', date: '2026-04-01', time: '10:00', label: 'A', entries: [{ episode: capLong }] },
+  { id: 'x2', date: '2026-04-01', time: '10:01', label: 'B', entries: [{ episode: '短い' }] },
+  { id: 'x3', date: '2026-04-01', time: '10:02', label: 'C', entries: [] }]);
+eq('replayStops: 吹き出しは40文字で切らず全文', capStops[0].captions[0].length, 60);
+var capTl = T.buildReplayTimeline(capStops, {});
+ok('buildReplayTimeline: 長い吹き出し（60文字）は、短いものより長く見せる（1秒12文字の目安）',
+  capTl.stops[0].rDwellEnd - capTl.stops[0].r > capTl.stops[1].rDwellEnd - capTl.stops[1].r + 1.5);
+
+/* ---- 時差（docs/adr/0009） ---- */
+eq('tzOffsetMinutes: 日本は+9時間', T.tzOffsetMinutes('Asia/Tokyo', '2026-12-12', '20:00'), 540);
+eq('tzOffsetMinutes: ロンドンは冬は+0・夏は+1（サマータイム）',
+  [T.tzOffsetMinutes('Europe/London', '2026-12-12', '10:00'), T.tzOffsetMinutes('Europe/London', '2026-07-01', '10:00')], [0, 60]);
+eq('tzOffsetMinutes: ハワイは−10時間', T.tzOffsetMinutes('Pacific/Honolulu', '2026-12-12', '10:00'), -600);
+eq('tzOffsetMinutes: タイムゾーンが無ければnull', T.tzOffsetMinutes('', '2026-12-12', '10:00'), null);
+
+// 日本20:00発 → ハワイ同じ日の10:00着（日付変更線をまたぐ）。現地時間のままだと着が先に並んでしまっていた
+var tzBlocks = [
+  { id: 'dep', date: '2026-12-12', time: '20:00', category: 'transport', transport: 'plane', label: '羽田から出発', entries: [] },
+  { id: 'arr', date: '2026-12-12', time: '10:00', category: 'sightseeing', transport: 'plane', label: 'ホノルル到着', entries: [] }
+];
+eq('sortBlocks: 時差が分からないうちは現地時間の順（着が先に来てしまう）', T.sortBlocks(tzBlocks).map(function (b) { return b.id; }), ['arr', 'dep']);
+var tzZones = T.assignBlockZones(tzBlocks, { dep: 'Asia/Tokyo', arr: 'Pacific/Honolulu' }, {}, 'Asia/Tokyo');
+T.applyBlockZones(tzBlocks, tzZones);
+eq('applyBlockZones: 予定ごとの時差', [tzBlocks[0]._offset, tzBlocks[1]._offset], [540, -600]);
+eq('sortBlocks: 時差が分かれば世界共通の時刻の順（発→着）', T.sortBlocks(tzBlocks).map(function (b) { return b.id; }), ['dep', 'arr']);
+
+eq('assignBlockZones: 移動の予定は出発地（直前の予定）の時差で読み、次の予定へは到着地を引き継ぐ',
+  T.assignBlockZones([
+    { id: 'a', date: '2026-12-12', time: '15:00', category: 'sightseeing' },
+    { id: 'b', date: '2026-12-12', time: '20:00', category: 'transport' },
+    { id: 'c', date: '2026-12-13', time: '09:00', category: 'food' }
+  ], { a: 'Asia/Tokyo', b: 'Europe/London' }, {}, 'Asia/Tokyo'),
+  { a: 'Asia/Tokyo', b: 'Asia/Tokyo', c: 'Europe/London' });
+eq('assignBlockZones: 予定に場所が無ければ、その日の場所の時差', T.assignBlockZones([{ id: 'x', date: '2026-12-14', time: '10:00', category: 'food' }], {}, { '2026-12-14': 'Europe/Paris' }, 'Asia/Tokyo'), { x: 'Europe/Paris' });
+
+eq('travelDuration: 日本20:00発→ロンドン翌01:00着（冬・時差−9時間）は14時間、到着は翌日', T.travelDuration('20:00', '01:00', 540, 0), { minutes: 840, dayShift: 1 });
+eq('travelDuration: 日本20:00発→ハワイ同日10:00着は9時間、到着は同じ日付', T.travelDuration('20:00', '10:00', 540, -600), { minutes: 540, dayShift: 0 });
+eq('travelDuration: 時差が分からなければ今までどおり', T.travelDuration('22:00', '06:15'), { minutes: 495, dayShift: 1 });
+eq('travelLogText: 時差と「翌」を出す',
+  T.travelLogText({ category: 'transport', transport: 'plane', label: 'ロンドンへ', _offset: 540 }, { costItems: [], travel: { from: '羽田', to: 'ヒースロー', depart: '20:00', arrive: '01:00' } }, 0).split('\n')[2],
+  '20:00発 → 翌01:00着（14時間・時差−9時間）');
+eq('offsetDiffText', [T.offsetDiffText(-540), T.offsetDiffText(60), T.offsetDiffText(330)], ['−9時間', '+1時間', '+5時間30分']);
+
+// 地図でふりかえる：着の方が現地時間では早くても、時間軸では発の後。時計は現地時間
+var tzStops = T.replayStops({ startDate: '2026-12-12', endDate: '2026-12-12' }, tzBlocks);
+var tzTl = T.buildReplayTimeline(tzStops, {});
+ok('buildReplayTimeline: 時差を考えた時間軸で、着(10:00ハワイ)は発(20:00日本)の後', tzTl.stops[1].t > tzTl.stops[0].t);
+var tzAtArr = T.replayStateAt(tzTl, tzTl.stops[1].r + 0.01);
+eq('replayStateAt: 着いたら時計は現地時間（10:00）、時差は−19時間', [tzAtArr.hhmm, tzAtArr.offsetDiff], ['10:00', -1140]);
+eq('replayStateAt: 出発のときの時計は日本時間', T.replayStateAt(tzTl, tzTl.stops[0].r + 0.01).hhmm, '20:00');
+
+/* ---- 地図でふりかえる：日ごとのジャンプ・前後の予定 ---- */
+var jumpDays = T.replayDayStarts(tl);
+eq('replayDayStarts: 日ごとに1つ、1日目は最初から', jumpDays.map(function (d) { return [d.dayNumber, d.r === 0]; }), [[1, true], [2, false]]);
+ok('replayDayStarts: 2日目は2日目の最初の予定の少し前', jumpDays[1].r < tl.stops[3].r && jumpDays[1].r > tl.stops[2].r);
+ok('replayNeighborStop: 次の予定は今より後で一番近い予定', T.replayNeighborStop(tl, 0, 1) > 0 && T.replayNeighborStop(tl, 0, 1) <= tl.stops[1].r);
+eq('replayNeighborStop: 最初より前は0', T.replayNeighborStop(tl, 0.1, -1), 0);
+eq('replayNeighborStop: 最後の予定の後は終わりまで', T.replayNeighborStop(tl, tl.totalReal, 1), tl.totalReal);
+
+eq('minutesText', [T.minutesText(840), T.minutesText(90), T.minutesText(45)], ['14時間', '1時間30分', '45分']);
+/* ---- 移動の予定：移動手段・移動時間（その予定から次の場所へ） ---- */
+var mvBlocks = [
+  { id: 'm1', date: '2026-04-01', time: '09:00', category: 'sightseeing', label: '羽田空港', entries: [{ mapUrl: 'https://maps.app.goo.gl/haneda' }] },
+  { id: 'm2', date: '2026-04-01', time: '10:00', category: 'transport', transport: 'plane', moveMinutes: 90, label: '那覇へ', entries: [] },
+  { id: 'm3', date: '2026-04-01', time: '', category: 'sightseeing', label: '那覇空港', entries: [{ mapUrl: 'https://maps.app.goo.gl/naha' }], createdAt: '1' },
+  { id: 'm4', date: '2026-04-01', time: '', category: 'food', label: '首里そば', entries: [{ mapUrl: 'https://maps.app.goo.gl/soba' }], createdAt: '2' }
+];
+var mvStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, mvBlocks);
+eq('replayStops: 移動の予定の移動手段は、次の場所への移動になる（移動の予定自身には付けない）', mvStops.map(function (s) { return s.transport; }), ['', '', 'plane', '']);
+eq('replayStops: 時刻の無い次の予定は、移動時間の分だけ後と見積もる（10:00＋90分）', mvStops[2].minute, 11 * 60 + 30);
+eq('travelLogText: 出発・到着が無くても移動時間があれば出す',
+  T.travelLogText({ category: 'transport', transport: 'plane', moveMinutes: 90, label: '那覇へ' }, { costItems: [] }).split(String.fromCharCode(10)).slice(-1)[0], '所要時間：約1時間30分');
+
+/* ---- メモをAIなしで分ける（parseMemo） ---- */
+var memoDates = ['2026-04-01', '2026-04-02'];
+var memo1 = T.parseMemo('10時 新宿\n小西遅刻\n松藤寝坊\n12時山梨\nほうとう食べた', memoDates, '2026-04-01');
+eq('parseMemo: 時刻の行が予定、下の行が記録', memo1.blocks.map(function (b) { return [b.time, b.label, b.entry.episode]; }),
+  [['10:00', '新宿', '小西遅刻\n松藤寝坊'], ['12:00', '山梨', 'ほうとう食べた']]);
+eq('parseMemo: 決まった形ならok', memo1.ok, true);
+eq('parseMemo: 全角・10時半・10時30分・区切り',
+  T.parseMemo('１０：１５ 羽田\n10時半 出発\n11時05分に到着', memoDates, '2026-04-01').blocks.map(function (b) { return b.time + ' ' + b.label; }),
+  ['10:15 羽田', '10:30 出発', '11:05 到着']);
+eq('parseMemo: 1行に並んだ予定も分ける（／と空白）',
+  T.parseMemo('10時 那覇空港集合／12時 沖縄そば https://maps.app.goo.gl/abc 15時 首里城公園', memoDates, '2026-04-01').blocks.map(function (b) { return [b.label, b.entry.mapUrl, b.category]; }),
+  [['那覇空港集合', '', 'sightseeing'], ['沖縄そば', 'https://maps.app.goo.gl/abc', 'food'], ['首里城公園', '', 'sightseeing']]);
+eq('parseMemo: 「2日目」「4/2」で日付が変わる',
+  T.parseMemo('1日目\n10:00 A\n2日目\n9:00 B\n4/1（水）\n20:00 C', memoDates, '2026-04-01').blocks.map(function (b) { return b.date + ' ' + b.label; }),
+  ['2026-04-01 A', '2026-04-02 B', '2026-04-01 C']);
+eq('parseMemo: 最初の予定より前に文章があれば、決まった形ではない（AIへ）', T.parseMemo('今日は楽しかった\n10時 新宿', memoDates, '2026-04-01').ok, false);
+eq('parseMemo: 時刻の行が無ければ、決まった形ではない', T.parseMemo('朝から那覇空港に集合して、そのあとそばを食べた', memoDates, '2026-04-01').ok, false);
+eq('parseMemo: 種類の推定（ホテル・移動）', T.parseMemo('15時 ホテルにチェックイン\n8時 那覇へ', memoDates).blocks.map(function (b) { return b.category; }), ['lodging', 'transport']);
+eq('parseMemo: 箇条書きの「・」は外す', T.parseMemo('10時 新宿\n・集合した', memoDates).blocks[0].entry.episode, '集合した');
+eq('parseMemo: 25時のような時刻は予定にしない', T.parseMemo('25時 どこか', memoDates).ok, false);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

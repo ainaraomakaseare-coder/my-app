@@ -20,7 +20,8 @@
   var TRANSPORTS = [
     { key: '', label: 'なし' },
     { key: 'plane', label: '飛行機' },
-    { key: 'taxi', label: 'タクシー' },
+    { key: 'car', label: '車（レンタカー）' },
+    { key: 'taxi', label: 'タクシー（Uber）' },
     { key: 'train', label: '電車' },
     { key: 'bus', label: 'バス' },
     { key: 'walk', label: '徒歩' },
@@ -109,8 +110,85 @@
   // 実際に9時の予定が10時の予定より後ろに表示される不具合として発覚）。
   // 「時刻ありは常に時刻順が先頭グループ、時刻なしは後ろグループ」という1本のキーに正規化
   // することで、一貫性のある比較にしている。
+  // 同じ日の中の並び。時刻は現地時間のまま持ち、時差（_offset、分。applyBlockZonesが付ける）が分かっていれば
+  // 世界共通の時刻（現地の分 − 時差）で比べる（docs/adr/0009）。日本20:00発→ハワイ同日10:00着のような移動で、
+  // 現地時間のまま並べると着が発より前に来てしまっていたため。時差が分からなければ今までどおり現地時間で並べる。
   function blockSortKey(b) {
-    return b.time ? '0:' + b.time : '1:' + (b.createdAt || '');
+    if (!b.time) return '1:' + (b.createdAt || '');
+    var m = /^(\d{1,2}):(\d{2})$/.exec(b.time);
+    if (m && typeof b._offset === 'number') {
+      return '0:' + String(Number(m[1]) * 60 + Number(m[2]) - b._offset + 2000).padStart(5, '0');
+    }
+    return '0:' + (m ? String(Number(m[1]) * 60 + Number(m[2]) + 2000).padStart(5, '0') : b.time);
+  }
+
+  // ---------- 時差（docs/adr/0009） ----------
+  // 時刻は「その場所の現地時間」で入力・表示する（チケットや現地の時計に書いてある時刻のまま）。
+  // 場所ごとのタイムゾーン（IANA名、例：Europe/London）から、その日その時刻の時差を求める。
+  // サマータイムもIntlが正しく扱う。
+
+  // tzの、utcMs（世界共通の時刻）における時差（分、東が正。日本は+540）
+  var tzFormatters = {};
+  function tzOffsetAt(tz, utcMs) {
+    var fmt = tzFormatters[tz] || (tzFormatters[tz] = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    }));
+    var parts = fmt.formatToParts(new Date(utcMs));
+    var get = function (t) { return Number(parts.filter(function (x) { return x.type === t; })[0].value); };
+    return Math.round((Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute')) - utcMs) / 60000);
+  }
+
+  // tzでの現地時間 ymd hhmm の時差（分）。時刻が無ければその日の正午で考える。tzが無い・不正ならnull
+  function tzOffsetMinutes(tz, ymd, hhmm) {
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || ''), t = /^(\d{1,2}):(\d{2})$/.exec(hhmm || '12:00');
+    if (!tz || !d || !t) return null;
+    try {
+      var local = Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3]), Number(t[1]), Number(t[2]));
+      var off = tzOffsetAt(tz, local);
+      return tzOffsetAt(tz, local - off * 60000); // 切り替わり直前後でずれないよう、もう一度求め直す
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 予定ごとのタイムゾーンを決める。優先順：その予定の場所（記録の地図）→ その日の場所（天気の場所）→
+  // 直前の予定 → 端末のタイムゾーン。移動の予定の時刻は「出発の時刻」なので、出発地（直前の予定）の
+  // タイムゾーンで読む（移動の予定自体の地図は到着地のことが多いため、次の予定へはそちらを引き継ぐ）。
+  // 「直前の予定」は時差を考えた順でないと決まらない（現地時間の順だと、日付変更線をまたぐ移動で着が発より
+  // 前に来る）ので、まず移動の決まりを使わずに仮に決めて時差を付けて並べ、その順でもう一度決める。
+  function assignBlockZones(blocks, byBlock, byDate, fallback) {
+    byBlock = byBlock || {}; byDate = byDate || {};
+    function pass(list, useTransportRule) {
+      var out = {}, prev = '';
+      list.forEach(function (b) {
+        var own = byBlock[b.id] || '';
+        var tz = useTransportRule && b.category === 'transport' && prev ? prev : (own || byDate[b.date] || prev || fallback || '');
+        out[b.id] = tz;
+        prev = useTransportRule && b.category === 'transport' ? (own || byDate[b.date] || tz) : tz;
+      });
+      return out;
+    }
+    var copies = (blocks || []).map(function (b) { return Object.assign({}, b); });
+    var first = pass(sortBlocks(copies), false);
+    applyBlockZones(copies, first);
+    return pass(sortBlocks(copies), true);
+  }
+
+  // 予定に _tz・_offset（分）を付ける（画面の中だけの値で、保存はしない）。zonesが無ければ外す。
+  function applyBlockZones(blocks, zones) {
+    (blocks || []).forEach(function (b) {
+      var tz = zones && zones[b.id];
+      var off = tz ? tzOffsetMinutes(tz, b.date, b.time) : null;
+      if (typeof off === 'number') { b._tz = tz; b._offset = off; }
+      else { delete b._tz; delete b._offset; }
+    });
+    return blocks;
+  }
+
+  // 時差の差（分）を「+1時間」「−8時間」「+5時間30分」にする
+  function offsetDiffText(diffMin) {
+    var sign = diffMin < 0 ? '−' : '+', a = Math.abs(diffMin), h = Math.floor(a / 60), m = a % 60;
+    return sign + (h ? h + '時間' : '') + (m ? m + '分' : '') + (!h && !m ? '0時間' : '');
   }
 
   function sortBlocks(blocks) {
@@ -401,48 +479,30 @@
   // 地図の描画（Leaflet）は画面側の仕事で、ここでは「どの順で・いつ・どこにいるか」だけを決める。
   // 時間の単位は2つある：t＝旅の中の時刻（1日目0時からの経過分）、r＝再生の実時間（秒）。
 
-  var REPLAY_SEC_PER_MIN = 0.6;      // 100倍速（旅の1分＝実時間0.6秒）
+  var REPLAY_SEC_PER_MIN = 0.06;     // 1000倍速（旅の1分＝実時間0.06秒）。100倍速・500倍速でも遅いという声で変更
   var REPLAY_LEAD_MIN = 5;           // 最初の予定の少し前から時計を動かし始める
-  var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら100倍速で進める旅の時間（分）
+  var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら1000倍速で進める旅の時間（分）
   var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
+  var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
+  var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
   var REPLAY_MOVE_MIN_SEC = 2;       // 移動の演出は最低この秒数
   var REPLAY_MOVE_CAP_SEC = 6;       // 長い移動（数時間のフライトなど）もこの秒数に早送りする
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
   var REPLAY_UNTIMED_START_MIN = 9 * 60;
 
-  // GoogleマップのURL（?query=… や ?q=…）から地名を取り出す
-  function parseMapUrlQuery(url) {
-    var m = /[?&](?:query|q)=([^&#]+)/.exec(url || '');
-    if (!m) return '';
-    try { return decodeURIComponent(m[1].replace(/\+/g, ' ')).trim(); } catch (e) { return ''; }
-  }
-
-  var REPLAY_PARTICLES = ['から', 'に', 'で', 'へ', 'を'];
-  var REPLAY_ACTION_SUFFIXES = ['チェックイン', 'チェックアウト', '到着', '出発', '集合', '解散', '登頂', '散策', '観光', '見学', '宿泊', '乗車', '下車', '搭乗'];
-
-  // 予定の場所を、地図で探すための地名にする。記録に地図のURL（場所名から作ったGoogleマップの
-  // 検索URL）があればそれが一番確実。無ければ見出し（「那覇空港に到着」「かに道楽で夕食」
-  // 「ダイヤモンドヘッド登頂」）から、最後の助詞より前・末尾の動作名詞を除いた部分を地名とみなす。
-  // 「小西遅刻」のような地名ではない見出しはそのまま返り、地図で見つからなければ「出来事」として扱う。
+  // 予定の場所は、記録に入っている地図のURL（Googleマップの共有リンク maps.app.goo.gl/… や
+  // 検索URL）だけから決める。URLのままWorker（/geocode）に渡し、短縮URLの展開・座標や住所の
+  // 読み取りはWorker側で行う。地図の入っていない予定（「小西遅刻」など）は移動の目的地にせず、
+  // 空文字を返して「出来事」（その場で吹き出しだけ出す）として扱う。
+  // 以前は見出し（「那覇空港に到着」など）から地名を推測していたが、同名の別の場所に飛ぶなど
+  // 外れることがあったため、地図が入っている予定だけを使う方針にした。
   function replayPlaceQuery(block) {
     var entries = (block && block.entries) || [];
     for (var i = 0; i < entries.length; i++) {
-      var q = parseMapUrlQuery(entries[i].mapUrl);
-      if (q) return q;
+      var url = (entries[i].mapUrl || '').trim();
+      if (/^https?:\/\//i.test(url)) return url;
     }
-    var label = ((block && block.label) || '').trim();
-    var cut = -1;
-    REPLAY_PARTICLES.forEach(function (p) {
-      var idx = label.lastIndexOf(p);
-      var tailLen = idx > 0 ? label.length - idx - p.length : 0;
-      if (idx > cut && tailLen >= 1 && tailLen <= 8) cut = idx;
-    });
-    if (cut > 0) return label.slice(0, cut).trim();
-    for (var j = 0; j < REPLAY_ACTION_SUFFIXES.length; j++) {
-      var sfx = REPLAY_ACTION_SUFFIXES[j];
-      if (label.length > sfx.length && label.slice(-sfx.length) === sfx) return label.slice(0, -sfx.length).trim();
-    }
-    return label;
+    return '';
   }
 
   function hhmmToMinute(hhmm) {
@@ -459,24 +519,35 @@
   // 各地点の記録（エピソード・ひとこと）は、到着したときに出す吹き出しの中身にする。
   function replayStops(trip, blocks) {
     var dates = allDatesForTrip(trip, blocks).filter(function (d) { return d; });
-    var lastMinute = {}, hasTimed = {};
+    var lastMinute = {}, hasTimed = {}, lastOffset = null;
     (blocks || []).forEach(function (b) { if (b.date && hhmmToMinute(b.time) !== null) hasTimed[b.date] = true; });
+    // 移動の予定（種類が「移動」）の移動手段・移動時間は、その予定から次の場所への移動として、次の地点に渡す。
+    // 以前のデータ（移動以外の予定に「ここまでの移動手段」が付いているもの）は、その予定自身の値を使う。
+    var pendingTransport = '', pendingMove = 0;
     return sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; }).map(function (b) {
       var minute = hhmmToMinute(b.time);
       var estimated = minute === null;
       if (estimated) {
         var prev = lastMinute[b.date];
-        minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + (hasTimed[b.date] ? 30 : 60), 23 * 60 + 59);
+        // 時刻の無い予定でも、直前の移動に移動時間があれば、その分だけ後と見積もる
+        var step = pendingMove || (hasTimed[b.date] ? 30 : 60);
+        minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + step, 23 * 60 + 59);
       }
+      var arriving = b.category === 'transport' ? '' : (b.transport || pendingTransport);
+      if (b.category === 'transport') { pendingTransport = b.transport || ''; pendingMove = b.moveMinutes || 0; }
+      else if (replayPlaceQuery(b)) { pendingTransport = ''; pendingMove = 0; }
       lastMinute[b.date] = minute;
+      if (typeof b._offset === 'number') lastOffset = b._offset;
       var dayIndex = dates.indexOf(b.date);
       var captions = (b.entries || []).map(function (e) {
-        return ((e.episode || '').trim() || (e.comment || '').trim()).slice(0, 40);
+        // 以前は40文字で切っていたため、スマホでは1.5行ほどで途切れていた。全文を出す（見せる時間は文字数で延ばす）
+        return (e.episode || '').trim() || (e.comment || '').trim();
       }).filter(Boolean).slice(0, 3);
       return {
         blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions,
-        transport: b.transport || '', query: replayPlaceQuery(b)
+        transport: arriving, query: replayPlaceQuery(b),
+        offset: lastOffset // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
       };
     });
   }
@@ -504,18 +575,21 @@
   // - 移動の演出は「移動手段がある予定」へ、直前に地図上にいた地点から向かうときだけ
   // - 移動は到着する予定の1つ前の地点での滞在が終わってから始める（途中で夕食など場所不明の出来事が
   //   挟まっても、アイコンはそれまで最後にいた場所で待つ）
-  // - 旅の時間は基本100倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
+  // - 旅の時間は基本1000倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
   function buildReplayTimeline(stops, coordsByQuery) {
     coordsByQuery = coordsByQuery || {};
+    var withOffset = (stops || []).filter(function (st) { return typeof st.offset === 'number'; })[0];
+    var baseOffset = withOffset ? withOffset.offset : 0;
     var s = (stops || []).map(function (st) {
       var c = st.query ? coordsByQuery[st.query] : null;
       var located = !!(c && typeof c.lat === 'number' && typeof c.lng === 'number');
       return Object.assign({}, st, {
-        t: st.dayIndex * 1440 + st.minute, located: located,
+        // 時差がある旅行では、現地の分から「最初の場所の時差との差」を引き、並びと移動の長さを世界共通の時刻にする
+        t: st.dayIndex * 1440 + st.minute - (typeof st.offset === 'number' ? st.offset - baseOffset : 0), located: located,
         lat: located ? c.lat : null, lng: located ? c.lng : null
       });
     });
-    if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0 };
+    if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
 
     var legs = [], lastLoc = -1;
     s.forEach(function (st, i) {
@@ -542,8 +616,10 @@
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
       r += dwell * REPLAY_SEC_PER_MIN;
       kf.push({ t: st.t + dwell, r: r });
-      if (dwell * REPLAY_SEC_PER_MIN < REPLAY_MIN_CAPTION_SEC) {
-        r += REPLAY_MIN_CAPTION_SEC - dwell * REPLAY_SEC_PER_MIN;
+      var chars = (st.captions || []).join('').length + (st.label || '').length;
+      var minSec = Math.min(REPLAY_MAX_CAPTION_SEC, Math.max(REPLAY_MIN_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC));
+      if (dwell * REPLAY_SEC_PER_MIN < minSec) {
+        r += minSec - dwell * REPLAY_SEC_PER_MIN;
         kf.push({ t: st.t + dwell, r: r });
       }
       st.rDwellEnd = r;
@@ -557,7 +633,7 @@
       l.r0 = s[l.to - 1].rDwellEnd;
       l.r1 = s[l.to].r;
     });
-    return { stops: s, legs: legs, keyframes: kf, totalReal: r };
+    return { stops: s, legs: legs, keyframes: kf, totalReal: r , baseOffset: baseOffset };
   }
 
   function replayRealToTrip(kf, r) {
@@ -574,10 +650,67 @@
 
   // 再生開始からr秒の時点の状態：時計（何日目・何時何分）、吹き出しを出す地点、移動中のアイコンの位置、
   // いま地図上でいる場所（here：カメラを合わせる位置）。
+  // ---- 道のり（実際の道路に沿ったルート。docs/adr/0008）----
+  // 移動手段ごとに、どのルート検索を使うか。電車は線路のルートを出せる無料サービスが無いので直線、
+  // 飛行機は弧（どちらも''＝ルート検索しない）。
+  function routeProfileFor(transport) {
+    if (transport === 'car' || transport === 'taxi' || transport === 'bus') return 'car';
+    if (transport === 'walk') return 'foot';
+    if (transport === 'bicycle') return 'bike';
+    return '';
+  }
+
+  // 道のり（[[緯度,経度], ...]）の、出発からの割合fの位置と、そこまでの折れ線。
+  // 距離は短い区間なので緯度で経度を補正した平面近似で十分（見た目の進み方を均一にするためだけ）。
+  function pathAt(path, f) {
+    if (!path._cum) {
+      var cum = [0];
+      for (var i = 1; i < path.length; i++) {
+        var dy = path[i][0] - path[i - 1][0];
+        var dx = (path[i][1] - path[i - 1][1]) * Math.cos(path[i][0] * Math.PI / 180);
+        cum.push(cum[i - 1] + Math.sqrt(dx * dx + dy * dy));
+      }
+      path._cum = cum;
+    }
+    var c = path._cum, total = c[c.length - 1];
+    f = Math.max(0, Math.min(1, f));
+    if (!total) return { point: { lat: path[0][0], lng: path[0][1] }, prefix: [path[0]] };
+    var target = total * f, k = 1;
+    while (k < c.length - 1 && c[k] < target) k++;
+    var seg = c[k] - c[k - 1], t = seg ? (target - c[k - 1]) / seg : 0;
+    var lat = path[k - 1][0] + (path[k][0] - path[k - 1][0]) * t;
+    var lng = path[k - 1][1] + (path[k][1] - path[k - 1][1]) * t;
+    return { point: { lat: lat, lng: lng }, prefix: path.slice(0, k).concat([[lat, lng]]) };
+  }
+
+  // 「この日から見たい」ためのジャンプ先。日ごとの最初の予定の少し前（再生の実時間r）。
+  // 何日目かは予定の現地の日付（dayNumber）で数える。
+  var REPLAY_JUMP_LEAD_SEC = 0.4;
+  function replayDayStarts(tl) {
+    var out = [];
+    (tl.stops || []).forEach(function (s) {
+      if (out.length && out[out.length - 1].dayNumber === s.dayNumber) return;
+      if (out.some(function (d) { return d.dayNumber === s.dayNumber; })) return;
+      out.push({ dayNumber: s.dayNumber, date: s.date, r: Math.max(0, s.r - REPLAY_JUMP_LEAD_SEC) });
+    });
+    if (out.length) out[0].r = 0; // 1日目は最初から
+    return out;
+  }
+
+  // 前・次の予定へのジャンプ先。今のrより前（少し余裕を見る）／後で、いちばん近い予定の到着の少し前
+  function replayNeighborStop(tl, r, dir) {
+    var list = (tl.stops || []).map(function (s) { return Math.max(0, s.r - REPLAY_JUMP_LEAD_SEC); });
+    if (dir < 0) {
+      var prev = list.filter(function (x) { return x < r - 0.5; });
+      return prev.length ? prev[prev.length - 1] : 0;
+    }
+    var next = list.filter(function (x) { return x > r + 0.05; });
+    return next.length ? next[0] : tl.totalReal;
+  }
+
   function replayStateAt(tl, r) {
     r = Math.max(0, Math.min(r, tl.totalReal));
     var t = replayRealToTrip(tl.keyframes, r);
-    var dayIndex = Math.floor(t / 1440);
     var s = tl.stops;
     var idx = -1;
     for (var i = 0; i < s.length; i++) { if (s[i].r <= r + 1e-9) idx = i; }
@@ -589,8 +722,15 @@
       if (r >= l.r0 && r <= l.r1) {
         var f = l.r1 > l.r0 ? (r - l.r0) / (l.r1 - l.r0) : 1;
         var arc = l.transport === 'plane';
-        var pos = arcLatLng(s[l.from], s[l.to], f, arc);
-        var ahead = arcLatLng(s[l.from], s[l.to], Math.min(1, f + 0.02), arc);
+        var pos, ahead;
+        if (l.path && l.path.length > 1) {
+          // 道のりが分かっている移動は、道路に沿って進む
+          pos = pathAt(l.path, f).point;
+          ahead = pathAt(l.path, Math.min(1, f + 0.02)).point;
+        } else {
+          pos = arcLatLng(s[l.from], s[l.to], f, arc);
+          ahead = arcLatLng(s[l.from], s[l.to], Math.min(1, f + 0.02), arc);
+        }
         icon = { lat: pos.lat, lng: pos.lng, transport: l.transport, bearing: f < 1 ? bearingDeg(pos, ahead) : bearingDeg(s[l.from], s[l.to]), legIndex: k };
         break;
       }
@@ -602,9 +742,300 @@
     if (!here) {
       for (var n = 0; n < s.length; n++) { if (s[n].located) { here = { lat: s[n].lat, lng: s[n].lng }; break; } }
     }
+    // 時計は今いる場所（最後に着いた予定。移動中は出発地）の現地時間で出す
+    var cur = idx >= 0 ? s[idx] : s[0];
+    var offsetDiff = cur && typeof cur.offset === 'number' ? cur.offset - (tl.baseOffset || 0) : 0;
+    var localT = t + offsetDiff;
+    var localDay = Math.floor(localT / 1440);
     return {
-      t: t, dayNumber: dayIndex + 1, hhmm: minuteToHHMM(t - dayIndex * 1440),
-      stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here
+      t: t, dayNumber: localDay + 1, hhmm: minuteToHHMM(localT - localDay * 1440),
+      stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here, offsetDiff: offsetDiff
+    };
+  }
+
+  // ---------- 紹介文（ホテログ・レクログ・飯ログ。docs/adr/0007） ----------
+  // 旅の紹介動画（「5泊7日の総額公開」のような投稿）の文字の部分を、記録から作る。
+  // 評価（★）に添える人ごとのレビュー項目と、移動の記録の情報（travel）を使う。
+  // 予定の種類でログの種類が決まる：宿泊→ホテログ、食事→飯ログ、観光・その他→レクログ、移動→移動（★なし）。
+  var REVIEW_PUBLIC_MIN = 3.0; // これ未満（3.0ちょうどは出す）の評価は紹介文に出さない
+  var REVIEW_GRADES = ['◎', '〇', '△', '×'];
+  var REVIEW_KINDS = {
+    hotel: {
+      label: 'ホテログ', emoji: '🏨', unit: '泊',
+      levels: ['絶対また泊まりたい', 'また泊まりたい', 'また泊まってもいい', '機会があれば泊まる', 'もう泊まらない'],
+      grades: [['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ'], ['amenity', 'アメニティ'], ['cleanliness', '清潔さ'], ['breakfast', '朝食']],
+      texts: [['roomType', '部屋タイプ']]
+    },
+    activity: {
+      label: 'レクログ', emoji: '🎡', unit: '回',
+      levels: ['2回目もまた行きたい', '初めてなら絶対行くべき', '初めてなら行くべき', '時間があれば行く', '行かなくてもいいかな'],
+      grades: [['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ']],
+      choices: [['crowd', '混雑'], ['reservation', '予約']],
+      texts: [['duration', '所要時間'], ['bestTime', 'おすすめの時間帯']]
+    },
+    food: {
+      label: '飯ログ', emoji: '🍴', unit: '人',
+      levels: ['絶対また行きたい', 'また行きたい', '近くに来たらまた行きたい', '機会があれば行く', 'もう行かなくてもいいかな'],
+      grades: [['taste', '美味しさ'], ['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ']],
+      choices: [['reservation', '予約']],
+      texts: [['menu', 'おすすめメニュー']]
+    }
+  };
+  var REVIEW_CHOICE_OPTIONS = { reservation: ['不要', '推奨', '必須'], crowd: ['空いている', '普通', '混んでいる'] };
+
+  function reviewKindForCategory(category) {
+    if (category === 'lodging') return 'hotel';
+    if (category === 'food') return 'food';
+    if (category === 'transport') return '';
+    return 'activity';
+  }
+
+  // ★の数値を、その種類の言葉にする（4.5以上／4.0以上／3.5以上／3.0以上／それ未満）
+  function reviewLevelLabel(kind, score) {
+    var k = REVIEW_KINDS[kind];
+    if (!k || !(score > 0)) return '';
+    var s = Math.round(score * 10) / 10;
+    if (s >= 4.5) return k.levels[0];
+    if (s >= 4.0) return k.levels[1];
+    if (s >= 3.5) return k.levels[2];
+    if (s >= REVIEW_PUBLIC_MIN) return k.levels[3];
+    return k.levels[4];
+  }
+
+  function isReviewPublic(score) {
+    return Math.round(score * 10) / 10 >= REVIEW_PUBLIC_MIN;
+  }
+
+  // 出発・到着（どちらも現地時間のHH:MM）から、所要時間（分）と、到着が出発の何日後か（現地の日付で）。
+  // 出発地・到着地の時差（分）が分かれば時差を考える（日本20:00発→ロンドン翌04:00着＝14時間）。
+  // 到着が出発より前（に見える）なら日をまたいだとみなす。
+  function travelDuration(depart, arrive, depOffset, arrOffset) {
+    var d = /^(\d{1,2}):(\d{2})$/.exec(depart || ''), a = /^(\d{1,2}):(\d{2})$/.exec(arrive || '');
+    if (!d || !a) return null;
+    var dm = Number(d[1]) * 60 + Number(d[2]), am = Number(a[1]) * 60 + Number(a[2]);
+    var shift = typeof depOffset === 'number' && typeof arrOffset === 'number' ? arrOffset - depOffset : 0;
+    var min = (am - shift) - dm;
+    while (min <= 0) min += 1440;
+    return { minutes: min, dayShift: Math.floor((dm + min + shift) / 1440) };
+  }
+
+  function travelDurationText(depart, arrive, depOffset, arrOffset) {
+    var r = travelDuration(depart, arrive, depOffset, arrOffset);
+    if (!r) return '';
+    var h = Math.floor(r.minutes / 60), m = r.minutes % 60;
+    return (h ? h + '時間' : '') + (m ? m + '分' : '');
+  }
+
+  // 分を「14時間」「1時間30分」「45分」にする
+  function minutesText(min) {
+    var h = Math.floor(min / 60), m = min % 60;
+    return (h ? h + '時間' : '') + (m ? m + '分' : '') || '0分';
+  }
+
+  function dayShiftPrefix(n) {
+    return n === 1 ? '翌' : n === 2 ? '翌々日' : n > 2 ? n + '日後' : n === -1 ? '前日' : '';
+  }
+
+  function findMyRating(ratings, email) {
+    if (!email) return null;
+    return (ratings || []).filter(function (r) { return (r.raterEmail || '').toLowerCase() === email.toLowerCase(); })[0] || null;
+  }
+
+  function yen(n) { return Number(n).toLocaleString('ja-JP') + '円'; }
+
+  // 1件分のログ（ホテログなど）の文章。表示しないもの（評価なし・3.0未満）は''。
+  function reviewLogText(block, entry, rating) {
+    var kind = reviewKindForCategory(block.category);
+    var k = REVIEW_KINDS[kind];
+    if (!k || !rating || !(rating.score > 0) || !isReviewPublic(rating.score)) return '';
+    var r = rating.review || {};
+    var lines = [k.emoji + ' ' + k.label + ' ⭐' + (Math.round(rating.score * 10) / 10).toFixed(1), block.label || '（名前なし）'];
+    var amount = typeof r.amount === 'number' ? r.amount : entryCostTotal(entry);
+    k.grades.forEach(function (g) {
+      var key = g[0], name = g[1];
+      var grade = r[key] || '';
+      var extra = '';
+      if (key === 'price' && amount > 0) {
+        var units = r.units > 1 ? r.units : 0;
+        extra = units ? '1' + k.unit + 'あたり' + yen(Math.round(amount / units)) + '／' + units + k.unit + '合計' + yen(amount) : yen(amount);
+      }
+      if (key === 'location' && r.access) extra = r.access;
+      if (!grade && !extra) return;
+      lines.push(name + '：' + (grade || '') + (extra ? (grade ? '（' + extra + '）' : extra) : ''));
+    });
+    (k.choices || []).forEach(function (c) { if (r[c[0]]) lines.push(c[1] + '：' + r[c[0]]); });
+    (k.texts || []).forEach(function (t) { if (r[t[0]]) lines.push(t[1] + '：' + r[t[0]]); });
+    if (kind === 'food') {
+      var menu = (entry.costItems || []).filter(function (it) { return it.label && typeof it.amount === 'number'; })
+        .map(function (it) { return it.label + ' ' + yen(it.amount); });
+      if (menu.length) lines.push('メニュー：' + menu.join('／'));
+      if (entry.waitTime) lines.push('待ち時間：' + entry.waitTime);
+    }
+    if (r.other) lines.push('その他：' + r.other);
+    lines.push('→ ' + reviewLevelLabel(kind, rating.score));
+    return lines.join('\n');
+  }
+
+  // 移動の記録の文章（★なし）。区間も会社も時刻も金額も無ければ''。
+  function travelLogText(block, entry, arrOffset) {
+    var t = entry.travel || {};
+    var mode = transportLabel(block.transport);
+    var amount = typeof t.amount === 'number' ? t.amount : entryCostTotal(entry);
+    var route = t.from || t.to ? (t.from || '') + '→' + (t.to || '') : '';
+    if (!route && !t.company && !t.depart && !t.arrive && !amount && !block.moveMinutes) return '';
+    var emoji = { plane: '✈️', car: '🚗', taxi: '🚕', train: '🚃', bus: '🚌', walk: '🚶', bicycle: '🚲' }[block.transport] || '🚃';
+    var lines = [emoji + ' 移動' + (mode ? '｜' + mode : ''), route || block.label || ''];
+    if (t.company) lines.push('会社：' + t.company);
+    if (t.depart || t.arrive) {
+      var info = travelDuration(t.depart, t.arrive, block._offset, arrOffset);
+      var dur = travelDurationText(t.depart, t.arrive, block._offset, arrOffset);
+      var zoneNote = typeof block._offset === 'number' && typeof arrOffset === 'number' && arrOffset !== block._offset
+        ? '・時差' + offsetDiffText(arrOffset - block._offset) : '';
+      lines.push((t.depart ? t.depart + '発' : '') + (t.depart && t.arrive ? ' → ' : '') +
+        (t.arrive ? (info ? dayShiftPrefix(info.dayShift) : '') + t.arrive + '着' : '') + (dur ? '（' + dur + zoneNote + '）' : ''));
+    }
+    if (!t.depart && !t.arrive && block.moveMinutes) lines.push('所要時間：約' + minutesText(block.moveMinutes));
+    if (amount > 0) lines.push('料金：' + yen(amount));
+    return lines.join('\n');
+  }
+
+  function transportLabel(key) {
+    var t = TRANSPORTS.filter(function (x) { return x.key === key; })[0];
+    return t && t.key ? t.label : '';
+  }
+
+  // 費用を「移動・ホテル・食事と観光」に分けて合計する（紹介文の最後の「総額公開」用）
+  function tripCostByGroup(blocks) {
+    var out = { transport: 0, lodging: 0, other: 0 };
+    (blocks || []).forEach(function (b) {
+      var group = b.category === 'transport' ? 'transport' : b.category === 'lodging' ? 'lodging' : 'other';
+      (b.entries || []).forEach(function (e) {
+        var cost = entryCostTotal(e);
+        if (!cost && e.travel && typeof e.travel.amount === 'number') cost = e.travel.amount;
+        out[group] += cost;
+      });
+    });
+    return out;
+  }
+
+  // 旅行の行き先（天気のために入れた「日ごとの場所」の国・都道府県）。海外があれば国、国内だけなら都道府県。
+  function tripPlaceNames(days) {
+    var countries = [], prefs = [];
+    (days || []).forEach(function (d) {
+      if (d.country && countries.indexOf(d.country) === -1) countries.push(d.country);
+      if (d.country === '日本' && d.admin1 && prefs.indexOf(d.admin1) === -1) prefs.push(d.admin1);
+    });
+    var abroad = countries.filter(function (c) { return c !== '日本'; });
+    return abroad.length ? countries : prefs;
+  }
+
+  // 紹介文の全体：表紙 → 評価の基準 → 時系列のログ → 総額。自分（email）の評価だけを使う。
+  function buildTripPostText(trip, blocks, days, email) {
+    var parts = [];
+    var head = ['【' + (trip.title || '旅の記録') + '】'];
+    var start = parseDate(trip.startDate), end = parseDate(trip.endDate);
+    if (start) {
+      var range = start.getFullYear() + ' ' + (start.getMonth() + 1) + '/' + start.getDate() +
+        (end && trip.endDate !== trip.startDate ? '〜' + (end.getMonth() + 1) + '/' + end.getDate() : '');
+      head.push(range + (tripNights(trip) ? '（' + tripNights(trip) + '）' : ''));
+    }
+    var places = tripPlaceNames(days);
+    head.push((places.length ? places.join('・') + ' ' : '') + (tripNights(trip) || '旅') + 'の総額公開！');
+    parts.push(head.join('\n'));
+
+    var logs = [], usedKinds = [];
+    var sortedForPost = sortBlocks(blocks);
+    sortedForPost.forEach(function (b, bi) {
+      (b.entries || []).forEach(function (e) {
+        var text = '';
+        var nextBlock = sortedForPost[bi + 1];
+        if (b.category === 'transport') text = travelLogText(b, e, nextBlock ? nextBlock._offset : undefined);
+        else {
+          text = reviewLogText(b, e, findMyRating(e.ratings, email));
+          var kind = reviewKindForCategory(b.category);
+          if (text && usedKinds.indexOf(kind) === -1) usedKinds.push(kind);
+        }
+        if (text) logs.push(text);
+      });
+    });
+    if (usedKinds.length) {
+      parts.push('＼評価の基準／\n' + usedKinds.map(function (kind) {
+        var k = REVIEW_KINDS[kind];
+        return k.label + '：4.5〜 ' + k.levels[0] + '／4.0〜 ' + k.levels[1] + '／3.5〜 ' + k.levels[2] + '／3.0〜 ' + k.levels[3];
+      }).join('\n'));
+    }
+    parts = parts.concat(logs);
+
+    var cost = tripCostByGroup(blocks);
+    var total = cost.transport + cost.lodging + cost.other;
+    if (total > 0) {
+      var lines = ['💰 合計金額は' + yen(total)];
+      if (cost.transport) lines.push('移動 ' + yen(cost.transport));
+      if (cost.lodging) lines.push('ホテル ' + yen(cost.lodging));
+      if (cost.other) lines.push('食事と観光 ' + yen(cost.other));
+      parts.push(lines.join('\n'));
+    }
+    parts.push('#旅の足跡');
+    return parts.join('\n\n');
+  }
+
+  // ---------- メモをAIなしで分ける（無料・回数を使わない。2026-09-26〜） ----------
+  // 決まった形のメモなら、AIに頼らずアプリ側で予定と記録に分ける。形は：
+  //   ・時刻で始まる行（10:00 / 10時 / 10時半 / 10時30分、全角でも可）→ 予定。時刻のあとが見出し
+  //   ・その下の行 → その予定の記録（1行ずつ改行でつなぐ）
+  //   ・「1日目」「4/1」「4月1日」だけの行 → それ以降の予定の日付
+  //   ・予定の行にGoogleマップなどのURLがあれば、その記録の地図にする
+  // 1行に「10時 那覇空港／12時 沖縄そば」のように並んでいても分ける。最初の予定より前に文章があるときは
+  // 決まった形ではない（ok=false）として、AIでの整理をすすめる。
+  var MEMO_TIME_RE = /^(\d{1,2})(?::(\d{2})|時(?:(\d{1,2})分|(半))?)\s*[〜~\-ー]?\s*(.*)$/;
+  var MEMO_TIME_SPLIT_RE = /(?:[／\/]|\s+)(?=\d{1,2}(?::\d{2}|時))/g; // 全角の／は正規化で/になる
+
+  function memoDayHeader(line, tripDates) {
+    var m = /^(\d{1,2})日目$/.exec(line);
+    if (m) return tripDates[Number(m[1]) - 1] || null;
+    m = /^(?:(\d{4})[-\/年])?(\d{1,2})[\/月](\d{1,2})日?(?:\s*[(（][^)）]*[)）])?$/.exec(line);
+    if (!m) return null;
+    var md = String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
+    return tripDates.filter(function (d) { return d.slice(5) === md && (!m[1] || d.slice(0, 4) === m[1]); })[0] || null;
+  }
+
+  function guessMemoCategory(label) {
+    if (/ホテル|旅館|宿|チェックイン|チェックアウト|泊/.test(label)) return 'lodging';
+    if (/ランチ|昼食|夕食|朝食|朝ごはん|昼ごはん|夜ごはん|ご飯|ごはん|ディナー|カフェ|そば|ラーメン|寿司|すし|焼肉|居酒屋|レストラン|食べ|飲み/.test(label)) return 'food';
+    if (/移動|新幹線|飛行機|フライト|便|バス|電車|タクシー|レンタカー|ドライブ/.test(label) || /へ$/.test(label)) return 'transport';
+    return 'sightseeing';
+  }
+
+  function parseMemo(text, tripDates, defaultDate) {
+    tripDates = tripDates || [];
+    var normalized = String(text || '').normalize('NFKC').replace(/\r\n?/g, '\n');
+    var lines = [];
+    normalized.split('\n').forEach(function (line) {
+      line.replace(MEMO_TIME_SPLIT_RE, '\n').split('\n').forEach(function (l) { lines.push(l.trim()); });
+    });
+    var blocks = [], cur = null, curDate = defaultDate || tripDates[0] || '', preamble = 0;
+    lines.forEach(function (line) {
+      if (!line) return;
+      var day = memoDayHeader(line, tripDates);
+      if (day) { curDate = day; cur = null; return; }
+      var m = MEMO_TIME_RE.exec(line);
+      var h = m ? Number(m[1]) : -1, min = m ? Number(m[2] || m[3] || (m[4] ? 30 : 0)) : -1;
+      if (m && h <= 23 && min <= 59) {
+        var rest = m[5] || '';
+        var url = (/https?:\/\/\S+/.exec(rest) || [''])[0];
+        var label = rest.replace(url, '').replace(/^[にからで、,：:\s]+/, '').trim();
+        cur = { date: curDate, time: String(h).padStart(2, '0') + ':' + String(min).padStart(2, '0'), label: label || '予定', mapUrl: url, lines: [] };
+        blocks.push(cur);
+        return;
+      }
+      if (cur) cur.lines.push(line.replace(/^[・\-*●○]\s*/, ''));
+      else preamble++;
+    });
+    return {
+      ok: blocks.length > 0 && preamble === 0,
+      blocks: blocks.map(function (b) {
+        return { date: b.date, time: b.time, label: b.label, category: guessMemoCategory(b.label), entry: { episode: b.lines.join('\n'), mapUrl: b.mapUrl } };
+      })
     };
   }
 
@@ -647,7 +1078,33 @@
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
     replayStateAt: replayStateAt,
-    arcLatLng: arcLatLng
+    arcLatLng: arcLatLng,
+    routeProfileFor: routeProfileFor,
+    parseMemo: parseMemo,
+    transportLabel: transportLabel,
+    minutesText: minutesText,
+    replayDayStarts: replayDayStarts,
+    replayNeighborStop: replayNeighborStop,
+    tzOffsetMinutes: tzOffsetMinutes,
+    assignBlockZones: assignBlockZones,
+    applyBlockZones: applyBlockZones,
+    offsetDiffText: offsetDiffText,
+    travelDuration: travelDuration,
+    dayShiftPrefix: dayShiftPrefix,
+    pathAt: pathAt,
+    REVIEW_KINDS: REVIEW_KINDS,
+    REVIEW_GRADES: REVIEW_GRADES,
+    REVIEW_CHOICE_OPTIONS: REVIEW_CHOICE_OPTIONS,
+    reviewKindForCategory: reviewKindForCategory,
+    reviewLevelLabel: reviewLevelLabel,
+    isReviewPublic: isReviewPublic,
+    travelDurationText: travelDurationText,
+    findMyRating: findMyRating,
+    reviewLogText: reviewLogText,
+    travelLogText: travelLogText,
+    tripCostByGroup: tripCostByGroup,
+    tripPlaceNames: tripPlaceNames,
+    buildTripPostText: buildTripPostText
   };
 
   root.TabiLog = Core;
@@ -683,9 +1140,18 @@
     });
   }
 
+  // 画面ごとのスクロール位置。記録・予定の編集から旅行の画面に戻ったとき、毎回いちばん上に戻ってしまい
+  // 編集していた記録を探し直す必要があったため、旅行の画面だけは離れたときの位置に戻す。
+  // 別の旅行を開いたとき（openTrip）はいちばん上から。
+  var screenScroll = {};
   function showScreen(name) {
+    var leaving = $('.screen.active');
+    if (leaving && leaving.dataset.screen !== name) screenScroll[leaving.dataset.screen] = window.scrollY;
     $all('.screen').forEach(function (s) { s.classList.toggle('active', s.dataset.screen === name); });
-    window.scrollTo(0, 0);
+    var y = name === 'tripDetail' ? (screenScroll.tripDetail || 0) : 0;
+    window.scrollTo(0, y);
+    // 呼び出し元がこのあと画面を描き直すので、描き終わった後にもう一度合わせる
+    if (y) setTimeout(function () { if ($('.screen.active') && $('.screen.active').dataset.screen === name) window.scrollTo(0, y); }, 0);
   }
 
   // ---------- Googleログイン ----------
@@ -783,86 +1249,135 @@
     return API_BASE + '/photos/' + id;
   }
 
-  // ---------- 写真の拡大表示（ライトボックス） ----------
-  // 同じ記録（Entry）に複数枚あるときは、左右スワイプ・矢印ボタンで次・前の写真に移れる。
-  // photoIdsは1枚だけのとき（アルバムなど）も配列で渡し、常に同じ仕組みで動かす。
-  var lightboxState = { photoIds: [], index: 0 };
-  function openPhotoLightbox(photoIds, index) {
-    lightboxState.photoIds = photoIds || [];
-    lightboxState.index = index || 0;
-    renderLightboxPhoto();
-    $('#photoLightbox').hidden = false;
-  }
-  function renderLightboxPhoto() {
-    var ids = lightboxState.photoIds;
-    $('#lightboxImg').src = photoUrl(ids[lightboxState.index]);
-    var multi = ids.length > 1;
-    $('#lightboxPrev').hidden = !multi;
-    $('#lightboxNext').hidden = !multi;
-    $('#lightboxCount').hidden = !multi;
-    $('#lightboxCount').textContent = (lightboxState.index + 1) + ' / ' + ids.length;
-  }
-  function showLightboxPhoto(delta) {
-    var ids = lightboxState.photoIds;
-    var next = lightboxState.index + delta;
-    if (next < 0 || next >= ids.length) return; // 最初・最後の写真ではそれ以上進めない
-    lightboxState.index = next;
-    renderLightboxPhoto();
-  }
-  function closePhotoLightbox() {
-    $('#photoLightbox').hidden = true;
-    $('#lightboxImg').src = '';
-    lightboxState = { photoIds: [], index: 0 };
-  }
+  // ---------- 写真・動画のビューア（LINEのような見方） ----------
+  // 記録の写真と動画（またはアルバム全体）を1つの並びで開き、左右スワイプで前後へ（指に付いて動く）、
+  // 下（上）へスワイプで閉じる、タップでボタンを出し入れする。開いているあいだは後ろのページが
+  // 動かないようにする（以前は写真を開いたまま上下に動かすと、後ろのスケジュールがスクロールしていた）。
+  // 以前は写真と動画が別々の拡大表示で、写真から動画へスワイプで移れなかった。
+  // items：[{ type: 'photo' | 'video', id }]
+  var viewer = { items: [], index: 0 };
 
-  // 日タブのスワイプ（initDaySwipe）と同じ考え方：最初にどちらの向きに大きく動いたかを
-  // 一度だけ判定し、横方向のときだけ次・前の写真に切り替える（縦方向はライトボックスの
-  // 閉じる操作などと衝突しないよう、何もしない）。
-  var lightboxSwipeState = null;
-  function initLightboxSwipe() {
+  function openMediaViewer(items, index) {
+    viewer.items = items || [];
+    viewer.index = Math.max(0, Math.min(index || 0, viewer.items.length - 1));
+    $('#mvTrack').innerHTML = viewer.items.map(function (it, i) {
+      var url = escapeHtml(photoUrl(it.id));
+      return '<div class="mv-slide" data-i="' + i + '">' + (it.type === 'video'
+        ? '<video data-src="' + url + '" controls playsinline preload="none"></video>'
+        : '<img data-src="' + url + '" alt="" draggable="false">') + '</div>';
+    }).join('');
     var el = $('#photoLightbox');
+    el.classList.remove('mv-chrome-hidden');
+    el.style.backgroundColor = '';
+    el.hidden = false;
+    document.body.classList.add('viewer-open');
+    goToMedia(viewer.index, false);
+  }
 
-    el.addEventListener('touchstart', function (e) {
-      if (e.touches.length !== 1 || e.target.closest('.lightbox-nav, .lightbox-close')) { lightboxSwipeState = null; return; }
-      var t = e.touches[0];
-      lightboxSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
-    }, { passive: true });
+  function mediaSlide(i) { return $('#mvTrack').querySelector('.mv-slide[data-i="' + i + '"]'); }
 
-    el.addEventListener('touchmove', function (e) {
-      if (!lightboxSwipeState || e.touches.length !== 1) return;
-      var t = e.touches[0];
-      var dx = t.clientX - lightboxSwipeState.startX;
-      var dy = t.clientY - lightboxSwipeState.startY;
-      if (!lightboxSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-        lightboxSwipeState.decided = true;
-        lightboxSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
-      }
-      if (lightboxSwipeState.decided && lightboxSwipeState.horizontal) e.preventDefault();
-    }, { passive: false });
+  // 今の前後1枚だけ読み込む（アルバム全体を開いても、見る分しか通信しない）
+  function loadNearbyMedia() {
+    for (var i = viewer.index - 1; i <= viewer.index + 1; i++) {
+      var slide = mediaSlide(i);
+      var media = slide && slide.querySelector('[data-src]');
+      if (media && !media.getAttribute('src')) media.setAttribute('src', media.dataset.src);
+    }
+  }
 
-    el.addEventListener('touchend', function (e) {
-      if (!lightboxSwipeState) return;
-      var ds = lightboxSwipeState;
-      lightboxSwipeState = null;
-      if (!ds.decided || !ds.horizontal) return;
-      var t = e.changedTouches[0];
-      var dx = t.clientX - ds.startX;
-      if (Math.abs(dx) < 50) return;
-      showLightboxPhoto(dx < 0 ? 1 : -1);
+  function goToMedia(i, animate) {
+    i = Math.max(0, Math.min(i, viewer.items.length - 1));
+    $all('#mvTrack video').forEach(function (v, k) { if (!v.paused) v.pause(); });
+    viewer.index = i;
+    var track = $('#mvTrack');
+    track.style.transition = animate ? 'transform 0.25s ease' : 'none';
+    track.style.transform = 'translateX(' + (-i * 100) + '%)';
+    var cur = mediaSlide(i);
+    if (cur) { cur.style.transition = animate ? 'transform 0.2s ease' : 'none'; cur.style.transform = ''; }
+    $('#photoLightbox').style.backgroundColor = '';
+    loadNearbyMedia();
+    var multi = viewer.items.length > 1;
+    $('#lightboxPrev').hidden = !multi || i === 0;
+    $('#lightboxNext').hidden = !multi || i === viewer.items.length - 1;
+    $('#lightboxCount').hidden = !multi;
+    $('#lightboxCount').textContent = (i + 1) + ' / ' + viewer.items.length;
+  }
+
+  function closeMediaViewer() {
+    $all('#mvTrack video').forEach(function (v) { v.pause(); });
+    var el = $('#photoLightbox');
+    el.hidden = true;
+    el.style.backgroundColor = '';
+    $('#mvTrack').innerHTML = '';
+    $('#mvTrack').style.transform = '';
+    document.body.classList.remove('viewer-open');
+    viewer = { items: [], index: 0 };
+  }
+
+  // 指（マウス）の動きで、左右なら前後の写真へ、上下なら閉じる。最初に大きく動いた向きで決める。
+  // 動画の再生バー（下の方）から始めた操作は、動画の操作に任せる。
+  function initMediaViewerGestures() {
+    var el = $('#photoLightbox'), track = $('#mvTrack'), g = null;
+    el.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('button')) return;
+      var v = e.target.closest('video');
+      if (v && e.clientY > v.getBoundingClientRect().bottom - 64) return;
+      g = { x: e.clientX, y: e.clientY, t: Date.now(), dir: null, dx: 0, dy: 0, onVideo: !!v };
     });
-
-    el.addEventListener('touchcancel', function () { lightboxSwipeState = null; });
+    el.addEventListener('pointermove', function (e) {
+      if (!g) return;
+      g.dx = e.clientX - g.x; g.dy = e.clientY - g.y;
+      if (!g.dir && (Math.abs(g.dx) > 10 || Math.abs(g.dy) > 10)) g.dir = Math.abs(g.dx) > Math.abs(g.dy) ? 'h' : 'v';
+      if (g.dir === 'h') {
+        var last = viewer.items.length - 1;
+        var dx = (viewer.index === 0 && g.dx > 0) || (viewer.index === last && g.dx < 0) ? g.dx / 3 : g.dx; // 端では重く
+        track.style.transition = 'none';
+        track.style.transform = 'translateX(calc(' + (-viewer.index * 100) + '% + ' + dx + 'px))';
+      } else if (g.dir === 'v') {
+        var slide = mediaSlide(viewer.index);
+        var k = Math.min(Math.abs(g.dy) / 400, 0.9);
+        if (slide) { slide.style.transition = 'none'; slide.style.transform = 'translateY(' + g.dy + 'px) scale(' + (1 - k * 0.15) + ')'; }
+        el.style.backgroundColor = 'rgba(10, 12, 16, ' + (0.96 * (1 - k)) + ')';
+      }
+    });
+    var end = function (cancel) {
+      if (!g) return;
+      var s = g; g = null;
+      var fast = (Date.now() - s.t) < 250;
+      if (cancel) { goToMedia(viewer.index, true); return; }
+      if (s.dir === 'h') {
+        var step = Math.abs(s.dx) > 60 || (fast && Math.abs(s.dx) > 25) ? (s.dx < 0 ? 1 : -1) : 0;
+        goToMedia(viewer.index + step, true);
+      } else if (s.dir === 'v') {
+        if (Math.abs(s.dy) > 110 || (fast && Math.abs(s.dy) > 40)) {
+          var slide = mediaSlide(viewer.index);
+          if (slide) { slide.style.transition = 'transform 0.18s ease'; slide.style.transform = 'translateY(' + (s.dy > 0 ? '' : '-') + '100vh)'; }
+          el.style.transition = 'background-color 0.18s ease';
+          el.style.backgroundColor = 'rgba(10, 12, 16, 0)';
+          setTimeout(function () { el.style.transition = ''; closeMediaViewer(); }, 180);
+        } else {
+          goToMedia(viewer.index, true);
+        }
+      } else if (!s.onVideo) {
+        el.classList.toggle('mv-chrome-hidden'); // タップ：ボタンを隠す／出す
+      }
+    };
+    el.addEventListener('pointerup', function () { end(false); });
+    el.addEventListener('pointercancel', function () { end(true); });
+    // 後ろのページが動かないように（iOSではoverflow: hiddenだけでは止まらないことがある）
+    el.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('keydown', function (e) {
+      if (el.hidden) return;
+      if (e.key === 'Escape') closeMediaViewer();
+      else if (e.key === 'ArrowLeft') goToMedia(viewer.index - 1, true);
+      else if (e.key === 'ArrowRight') goToMedia(viewer.index + 1, true);
+    });
   }
 
-  function openVideoLightbox(url) {
-    $('#lightboxVideo').src = url;
-    $('#videoLightbox').hidden = false;
-  }
-  function closeVideoLightbox() {
-    var v = $('#lightboxVideo');
-    v.pause();
-    v.src = '';
-    $('#videoLightbox').hidden = true;
+  // 記録（Entry）の写真→動画の順の並び
+  function entryMediaItems(entry) {
+    return (entry.photoIds || []).map(function (id) { return { type: 'photo', id: id }; })
+      .concat((entry.videoIds || []).map(function (id) { return { type: 'video', id: id }; }));
   }
 
   // 写真・動画の保存（アルバムから開いたライトボックスの「保存」ボタン、DAY30〜）。
@@ -925,23 +1440,20 @@
 
     var grid = $('#albumGrid');
     $('#albumEmpty').hidden = items.length > 0;
-    grid.innerHTML = items.map(function (it) {
+    grid.innerHTML = items.map(function (it, idx) {
       var dateBadge = it.date ? '<span class="album-date">' + escapeHtml(it.date.slice(5).replace('-', '/')) + '</span>' : '';
       if (it.type === 'photo') {
-        return '<div class="album-tile" data-type="photo" data-id="' + escapeHtml(it.id) + '" style="background-image:url(\'' + escapeHtml(photoUrl(it.id)) + '\')">' + dateBadge + '</div>';
+        return '<div class="album-tile" data-index="' + idx + '" data-type="photo" data-id="' + escapeHtml(it.id) + '" style="background-image:url(\'' + escapeHtml(photoUrl(it.id)) + '\')">' + dateBadge + '</div>';
       }
-      return '<div class="album-tile" data-type="video" data-id="' + escapeHtml(it.id) + '">' +
+      return '<div class="album-tile" data-index="' + idx + '" data-type="video" data-id="' + escapeHtml(it.id) + '">' +
         '<video src="' + escapeHtml(photoUrl(it.id)) + '#t=0.1" preload="metadata" muted playsinline></video>' +
         '<div class="album-play">' + ALBUM_PLAY_ICON + '</div>' + dateBadge +
         '</div>';
     }).join('');
 
     $all('.album-tile', grid).forEach(function (tile) {
-      tile.addEventListener('click', function () {
-        var url = photoUrl(tile.dataset.id);
-        if (tile.dataset.type === 'video') openVideoLightbox(url);
-        else openPhotoLightbox([tile.dataset.id], 0);
-      });
+      // アルバム全体を1つの並びで開き、スワイプで次々に見られるようにする
+      tile.addEventListener('click', function () { openMediaViewer(items, Number(tile.dataset.index)); });
     });
   }
 
@@ -999,11 +1511,18 @@
     return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
   }
 
+  // ログイン時にサーバーが発行したセッショントークン（docs/adr/0005）。あればすべての通信に付ける。
+  // サーバーはこれで本人を確かめる（以前は送ったメールアドレスをそのまま信用していた）。
+  function authHeaders() {
+    var user = loadCurrentUser();
+    return user && user.token ? { authorization: 'Bearer ' + user.token } : {};
+  }
+
   function nativeApi(path, method, body) {
     return window.Capacitor.Plugins.CapacitorHttp.request({
       url: API_BASE + path,
       method: method || 'GET',
-      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      headers: Object.assign(body !== undefined ? { 'content-type': 'application/json' } : {}, authHeaders()),
       data: body
     }).then(function (res) {
       if (res.status < 200 || res.status >= 300) {
@@ -1018,7 +1537,7 @@
     if (isNativeApp()) return nativeApi(path, method, body);
     return fetch(API_BASE + path, {
       method: method || 'GET',
-      headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+      headers: Object.assign(body !== undefined ? { 'content-type': 'application/json' } : {}, authHeaders()),
       body: body !== undefined ? JSON.stringify(body) : undefined
     }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
@@ -1054,7 +1573,7 @@
         });
       });
     }
-    var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {});
+    var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {}, authHeaders());
     return fetch(API_BASE + path, { method: 'POST', headers: headers, body: blob }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
         throw new Error(e.error || ('http_' + res.status));
@@ -1207,8 +1726,9 @@
     editingEntryId: null,
     editingEntry: null,       // 編集中の記録（評価の表示・更新に使う）
     entryBlockId: null,       // 記録を追加する先の大項目
-    formPhotoIds: [],         // 既存（サーバー上）の写真id
-    pendingPhotos: [],        // 新規に選んだ、まだアップロードしていない {blob, url}
+    // 記録フォームの写真。並べ替えられるよう、保存済み（{id}）と、まだアップロードしていない新しい写真
+    // （{blob, url}）を1つの並びで持つ（以前は別々に持ち、新しい写真は必ず後ろに付いていた）
+    formPhotos: [],
     formVideoIds: [],         // 既存（サーバー上）の動画id
     pendingVideos: [],        // 新規に選んだ、まだアップロードしていない {blob, name, size}
     formCostItems: [],        // {label, amount}
@@ -1217,6 +1737,7 @@
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [] },
     homeFilters: { companion: '', year: '', tripType: '', sort: '' },
+    social: { likes: {}, comments: [], accountId: '' },
     myLogCategory: 'food',
     myLogSort: 'score',
     // 旅行のサムネイル画像。新規作成・編集どちらのフォームでも使い回す
@@ -1376,12 +1897,17 @@
       state.blocks = data.blocks;
       state.days = data.days || [];
       state.members = data.members || [];
+      state.social = emptySocial();
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       rememberTrip(state.trip);
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
+      state.zoneInfo = { byBlock: {}, byDate: {} };
+      screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
       showScreen('tripDetail');
       renderTripDetail();
+      loadSocial();
+      loadTripZones();
     }).catch(function () {
       forgetTrip(id);
       alert('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。');
@@ -1526,6 +2052,7 @@
 
   // ---------- 旅行詳細 ----------
   function renderTripDetail() {
+    applyTripZones();
     var trip = state.trip;
     var coverEl = $('#tripCoverPhoto');
     coverEl.hidden = !trip.coverPhotoId;
@@ -1537,6 +2064,7 @@
     $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
     $('#btnOpenReplay').hidden = !(state.blocks || []).some(function (b) { return b.date; });
     renderTripJoin();
+    renderTripSocialBar();
 
     var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
     var total = Core.tripTotalCost(state.blocks);
@@ -1584,6 +2112,276 @@
       .catch(function () {
         $('#tripDetailStatus').textContent = '参加に失敗しました。もう一度お試しください。';
       });
+  }
+
+  // ---------- いいね・コメント（友達同士のSNS機能。docs/adr/0006） ----------
+  // 旅行と記録の両方に、いいね・コメントをつけられる。読むのは旅行のリンクを知っている人なら誰でも、
+  // 書くのはログイン済みの人だけ（サーバーはセッショントークンで本人を確かめる。docs/adr/0005）。
+  // 旅行を開いたときに /trips/:id/social を1回だけ呼び、state.socialに持っておく。
+  // Appleの審査ガイドライン1.2のため、他人のコメントには「通報」「ブロック」を用意し、
+  // 初めてコメントするときにルールへの同意を求める。
+  var HEART_ICON = '<svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10 16.5s-6.5-3.9-6.5-8.4A3.6 3.6 0 0 1 10 5.8a3.6 3.6 0 0 1 6.5 2.3c0 4.5-6.5 8.4-6.5 8.4z"/></svg>';
+  var COMMENT_ICON = '<svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 4.5h12a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-4 3v-3H4A1.5 1.5 0 0 1 2.5 13V6A1.5 1.5 0 0 1 4 4.5z"/></svg>';
+  var COMMENT_TERMS_KEY = 'tabilog:comment-terms-ok';
+  var commentTarget = null; // コメントシートで開いている対象 { type: 'trip'|'entry', id }
+
+  function emptySocial() { return { likes: {}, comments: [], accountId: '' }; }
+
+  function loadSocial() {
+    if (!state.trip || !API_BASE) return Promise.resolve();
+    var tripId = state.trip.id;
+    return api('/trips/' + encodeURIComponent(tripId) + '/social').then(function (res) {
+      if (!state.trip || state.trip.id !== tripId) return; // 読み込み中に別の旅行へ移った
+      state.social = { likes: res.likes || {}, comments: res.comments || [], accountId: res.accountId || '' };
+      renderSocial();
+    }).catch(function () { /* 読めなくても旅行自体は見られるようにする */ });
+  }
+
+  function likeInfo(type, id) {
+    return (state.social && state.social.likes[type + ':' + id]) || { count: 0, liked: false };
+  }
+
+  function commentsFor(type, id) {
+    return ((state.social && state.social.comments) || []).filter(function (c) {
+      return c.targetType === type && c.targetId === id;
+    });
+  }
+
+  function socialButtonsHtml(type, id) {
+    var like = likeInfo(type, id);
+    var n = commentsFor(type, id).length;
+    return '<button type="button" class="social-btn like-btn' + (like.liked ? ' liked' : '') + '" data-social-like="' + type +
+        '" data-target-id="' + escapeHtml(id) + '" aria-pressed="' + (like.liked ? 'true' : 'false') + '" aria-label="いいね">' +
+        HEART_ICON + '<span>' + (like.count || '') + '</span></button>' +
+      '<button type="button" class="social-btn" data-social-comment="' + type + '" data-target-id="' + escapeHtml(id) +
+        '" aria-label="コメント">' + COMMENT_ICON + '<span>' + (n || '') + '</span></button>';
+  }
+
+  function renderTripSocialBar() {
+    if (state.trip) $('#tripSocialBar').innerHTML = socialButtonsHtml('trip', state.trip.id);
+  }
+
+  function renderSocial() {
+    renderTripSocialBar();
+    $all('.entry-social').forEach(function (el) { el.innerHTML = socialButtonsHtml('entry', el.dataset.entryId); });
+    if (!$('#commentSheet').hidden) renderCommentSheet();
+  }
+
+  // いいね・コメントは本人確認済み（トークンあり）のときだけ。以前からログインしていてトークンを
+  // まだ持っていない人は、もう一度ログインしてもらう（ログイン後はこの旅行に戻る）。
+  function requireSocialLogin() {
+    var user = loadCurrentUser();
+    if (user && user.token) return true;
+    closeCommentSheet();
+    openLogin('tripDetail');
+    $('#loginLead').textContent = user
+      ? 'いいね・コメントするには、もう一度ログインしてください（本人確認のしくみを新しくしました）'
+      : 'ログインすると、いいねやコメントができます';
+    return false;
+  }
+
+  function toggleLike(type, id) {
+    if (!requireSocialLogin()) return;
+    var key = type + ':' + id;
+    var before = likeInfo(type, id);
+    var on = !before.liked;
+    // 押した瞬間に見た目を変え、失敗したら元に戻す
+    state.social.likes[key] = { count: Math.max(0, before.count + (on ? 1 : -1)), liked: on };
+    renderSocial();
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/likes', on ? 'PUT' : 'DELETE', { targetType: type, targetId: id })
+      .then(function (res) {
+        state.social.likes[key] = { count: res.count, liked: res.liked };
+        renderSocial();
+      })
+      .catch(function (e) {
+        state.social.likes[key] = before;
+        renderSocial();
+        if (e && e.message === 'login_required') requireSocialLoginAgain();
+      });
+  }
+
+  // サーバー側でトークンが無効（期限切れ・ログアウト済み）だった場合
+  function requireSocialLoginAgain() {
+    var user = loadCurrentUser();
+    if (user) saveCurrentUser(Object.assign({}, user, { token: '' }));
+    requireSocialLogin();
+  }
+
+  function openCommentSheet(type, id) {
+    commentTarget = { type: type, id: id };
+    $('#commentSheetTitle').textContent = type === 'trip' ? 'この旅行へのコメント' : 'この記録へのコメント';
+    $('#commentStatus').textContent = '';
+    $('#commentSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+    renderCommentSheet();
+  }
+
+  function closeCommentSheet() {
+    $('#commentSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+    commentTarget = null;
+  }
+
+  function formatCommentTime(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  function renderCommentSheet() {
+    if (!commentTarget) return;
+    var list = commentsFor(commentTarget.type, commentTarget.id);
+    $('#commentList').innerHTML = list.length
+      ? list.map(function (c) {
+          var actions = c.mine
+            ? '<button type="button" class="btn text danger" data-comment-delete="' + escapeHtml(c.id) + '">削除</button>'
+            : '<button type="button" class="btn text" data-comment-report="' + escapeHtml(c.id) + '">通報する</button>' +
+              '<button type="button" class="btn text danger" data-comment-block="' + escapeHtml(c.accountId) + '" data-name="' + escapeHtml(c.name || '') + '">この人をブロック</button>';
+          return '<div class="comment-item">' +
+            '<div class="comment-head">' +
+              '<span class="comment-name">' + escapeHtml(c.name || '名前未設定') + '</span>' +
+              '<span class="comment-time">' + escapeHtml(formatCommentTime(c.createdAt)) + '</span>' +
+              '<button type="button" class="comment-menu-btn" aria-label="メニュー" data-comment-menu>…</button>' +
+            '</div>' +
+            '<div class="comment-body">' + escapeHtml(c.body) + '</div>' +
+            '<div class="comment-actions" hidden>' + actions + '</div>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty comment-empty">まだコメントはありません。</div>';
+  }
+
+  function agreeToCommentTerms() {
+    try { if (localStorage.getItem(COMMENT_TERMS_KEY)) return true; } catch (e) { /* 読めなければ毎回聞く */ }
+    var ok = confirm('コメントのルール\n\n・誹謗中傷、差別、嫌がらせ、わいせつな内容など、不適切な投稿は禁止です\n' +
+      '・不適切なコメントは誰でも通報でき、運営者が確認して削除します。繰り返す場合は利用を停止することがあります\n\n' +
+      'このルールに同意してコメントしますか？');
+    if (ok) { try { localStorage.setItem(COMMENT_TERMS_KEY, '1'); } catch (e) { /* 次回また聞くだけ */ } }
+    return ok;
+  }
+
+  function submitComment(e) {
+    e.preventDefault();
+    if (!commentTarget) return;
+    var input = $('#commentInput');
+    var body = input.value.trim();
+    if (!body) return;
+    if (!requireSocialLogin() || !agreeToCommentTerms()) return;
+    var target = commentTarget;
+    var status = $('#commentStatus');
+    status.textContent = '送信中…';
+    $('#btnSendComment').disabled = true;
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/comments', 'POST', { targetType: target.type, targetId: target.id, body: body })
+      .then(function (c) {
+        state.social.comments.push(c);
+        input.value = '';
+        status.textContent = '';
+        renderSocial();
+      })
+      .catch(function (err) {
+        var msg = (err && err.message) || '';
+        if (msg === 'login_required') { requireSocialLoginAgain(); return; }
+        status.textContent = msg === 'inappropriate'
+          ? '不適切な表現が含まれているため投稿できません。'
+          : 'コメントを送れませんでした。もう一度お試しください。';
+      })
+      .then(function () { $('#btnSendComment').disabled = false; });
+  }
+
+  function handleCommentListClick(e) {
+    var menuBtn = e.target.closest('[data-comment-menu]');
+    if (menuBtn) {
+      var actions = menuBtn.closest('.comment-item').querySelector('.comment-actions');
+      actions.hidden = !actions.hidden;
+      return;
+    }
+    var del = e.target.closest('[data-comment-delete]');
+    if (del) {
+      if (!confirm('このコメントを削除しますか？')) return;
+      var delId = del.dataset.commentDelete;
+      api('/comments/' + encodeURIComponent(delId), 'DELETE').then(function () {
+        state.social.comments = state.social.comments.filter(function (c) { return c.id !== delId; });
+        renderSocial();
+      }).catch(function () { $('#commentStatus').textContent = '削除できませんでした。もう一度お試しください。'; });
+      return;
+    }
+    var rep = e.target.closest('[data-comment-report]');
+    if (rep) {
+      if (!requireSocialLogin()) return;
+      if (!confirm('このコメントを通報しますか？\n運営者が内容を確認し、必要なら削除します。通報したコメントは、あなたには表示されなくなります。')) return;
+      var repId = rep.dataset.commentReport;
+      api('/comments/' + encodeURIComponent(repId) + '/report', 'POST', {}).then(function () {
+        state.social.comments = state.social.comments.filter(function (c) { return c.id !== repId; });
+        renderSocial();
+        $('#commentStatus').textContent = '通報しました。ご協力ありがとうございます。';
+      }).catch(function () { $('#commentStatus').textContent = '通報できませんでした。もう一度お試しください。'; });
+      return;
+    }
+    var blk = e.target.closest('[data-comment-block]');
+    if (blk) {
+      if (!requireSocialLogin()) return;
+      var who = blk.dataset.name || 'この人';
+      if (!confirm(who + 'さんをブロックしますか？\nこの人のコメントは、あなたには表示されなくなります。')) return;
+      var accountId = blk.dataset.commentBlock;
+      api('/user-blocks', 'PUT', { accountId: accountId }).then(function () {
+        state.social.comments = state.social.comments.filter(function (c) { return c.accountId !== accountId; });
+        renderSocial();
+        $('#commentStatus').textContent = 'ブロックしました。';
+      }).catch(function () { $('#commentStatus').textContent = 'ブロックできませんでした。もう一度お試しください。'; });
+    }
+  }
+
+  // ---------- 紹介文（ホテログ・レクログ・飯ログ。docs/adr/0007） ----------
+  // 自分がつけた★とレビュー項目から、表紙→評価の基準→時系列のログ→総額の文章を作り、コピーしてSNSに貼れるようにする。
+  // ★3.0未満の記録は入らない（Core.buildTripPostText）。文章はその場で直してからコピーできる。
+  function openPostSheet() {
+    if (!state.trip) return;
+    var user = loadCurrentUser();
+    var text = Core.buildTripPostText(state.trip, state.blocks, state.days, user ? user.email : '');
+    $('#postText').value = text;
+    $('#postSheetNote').textContent = user
+      ? 'あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。'
+      : 'ログインして記録に★とレビューをつけると、ホテログ・飯ログなどが入ります。';
+    $('#postStatus').textContent = '';
+    $('#btnSharePost').hidden = !navigator.share;
+    $('#postSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+
+  function closePostSheet() {
+    $('#postSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+  }
+
+  function copyPostText() {
+    var text = $('#postText').value;
+    var done = function () { $('#postStatus').textContent = 'コピーしました。SNSの投稿に貼り付けてください。'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () { $('#postText').select(); document.execCommand('copy'); done(); });
+    } else {
+      $('#postText').select(); document.execCommand('copy'); done();
+    }
+  }
+
+  function initSocial() {
+    $('#btnOpenPost').addEventListener('click', openPostSheet);
+    $('#btnClosePostSheet').addEventListener('click', closePostSheet);
+    $('#postSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closePostSheet(); });
+    $('#btnCopyPost').addEventListener('click', copyPostText);
+    $('#btnSharePost').addEventListener('click', function () {
+      navigator.share({ text: $('#postText').value }).catch(function () {});
+    });
+    // いいね・コメントのボタンは旅行の上部と各記録カードにあるので、まとめてdocumentで受ける
+    // （記録カード自体のクリック＝編集を開く処理は、.entry-social内のクリックを無視する）
+    document.addEventListener('click', function (e) {
+      var likeBtn = e.target.closest('[data-social-like]');
+      if (likeBtn) { toggleLike(likeBtn.dataset.socialLike, likeBtn.dataset.targetId); return; }
+      var commentBtn = e.target.closest('[data-social-comment]');
+      if (commentBtn) openCommentSheet(commentBtn.dataset.socialComment, commentBtn.dataset.targetId);
+    });
+    $('#btnCloseCommentSheet').addEventListener('click', closeCommentSheet);
+    $('#commentSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeCommentSheet(); });
+    $('#commentForm').addEventListener('submit', submitComment);
+    $('#commentList').addEventListener('click', handleCommentListClick);
   }
 
   // ---------- 音声でまとめて記録する（このアプリで唯一AIを呼び出す機能） ----------
@@ -1657,45 +2455,62 @@
   // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
   // 旅行の日程全体に対してAIが各予定の日も判定する（state.voiceEntryMultiDayで保持し、
   // 保存時にcreateVoiceEntries/createTextEntriesへ渡すdateをnullにする分岐に使う）。
+  // 音声・メモでまとめて記録する画面。メモの「決まった形」の取り込みはAIを使わず無料なので、ログインや
+  // 回数に関係なく誰でも開ける（以前はログインとAIの残り回数が無いと、画面ごと使えなかった）。
+  // 音声入力とAIでの整理は、使うときにログイン・AIへの送信の同意・月の回数を確かめる。
   function openVoiceEntryForm(multiDay) {
-    var user = loadCurrentUser();
-    if (!user) { openLogin('voiceEntryForm'); return; }
-    if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから音声入力を始めてください。'); return; }
-    if (!confirmAiDataSharing()) return;
+    if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから記録を始めてください。'); return; }
     state.voiceEntryMultiDay = !!multiDay;
     $('#voiceEntryTitle').textContent = multiDay ? '複数日をまとめて記録する' : '音声・メモでまとめて記録する';
     $('#voiceEntryLead').textContent = multiDay
-      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、AIが「1日目は〜」のような話し方から日を判定して予定・記録に分けて保存します（評価や費用はあとで入力してください）'
-      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）';
+      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、予定・記録に分けて保存します（評価や費用はあとで入力してください）'
+      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定・記録に分けて保存します（評価や費用はあとで入力してください）';
     showScreen('voiceEntryForm');
+    voiceBlob = null;
+    $('#voiceNotes').value = '';
+    setVoiceRecordLabel(MIC_ICON, '話しはじめる');
+    $('#btnVoiceRecord').disabled = false;
+    $('#btnCreateVoiceEntries').hidden = true;
+    $('#btnCreateVoiceEntries').disabled = false;
+    $('#voiceRecordStatus').textContent = '';
+    $('#voiceRecordStatus').classList.remove('is-recording');
+    $('#voiceEntryStatus').textContent = '';
+    $('#textMemoInput').value = state.pendingMemoText || ''; // ログインを挟んだときは書きかけのメモを戻す
+    state.pendingMemoText = '';
+    $('#btnCreateTextEntries').disabled = false;
+    $('#btnOrganizeMemoAi').disabled = false;
+    $('#textEntryStatus').textContent = '';
     $('#voicePremiumRequired').hidden = true;
-    $('#voiceRecordArea').hidden = true;
-    $('#voicePremiumMessage').textContent = '確認しています…';
+    $('#voiceRecordArea').hidden = false;
+    var user = loadCurrentUser();
+    if (!user) {
+      $('#memoAiInfo').textContent = 'AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月10回まで無料）。';
+      return;
+    }
+    $('#memoAiInfo').textContent = '';
     fetchAccountStatus().then(function (account) {
-      var ok = account && (account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0);
-      if (!ok) {
+      if (!account) return;
+      var tickets = account.ticketCredits ? '（回数券の残り' + account.ticketCredits + '回）' : '';
+      $('#memoAiInfo').textContent = 'AIでの整理：今月あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで無料）' + tickets;
+      var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
+      if (!voiceOk) {
+        // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
         $('#voicePremiumRequired').hidden = false;
-        $('#voiceRecordArea').hidden = true;
-        $('#voicePremiumMessage').textContent = !account
-          ? '音声入力はログインすると使えます。'
-          : '今月の音声入力の回数を使い切りました。プランのアップグレードや回数券をご検討ください。';
-        return;
+        $('#voicePremiumMessage').textContent = '今月の音声入力の回数を使い切りました。メモの取り込みはこのまま使えます。';
+        $('#btnVoiceRecord').disabled = true;
       }
-      voiceBlob = null;
-      $('#voiceNotes').value = '';
-      setVoiceRecordLabel(MIC_ICON, '話しはじめる');
-      $('#btnVoiceRecord').disabled = false;
-      $('#btnCreateVoiceEntries').hidden = true;
-      $('#btnCreateVoiceEntries').disabled = false;
-      $('#voiceRecordStatus').textContent = '';
-      $('#voiceRecordStatus').classList.remove('is-recording');
-      $('#voiceEntryStatus').textContent = '';
-      $('#textMemoInput').value = '';
-      $('#btnCreateTextEntries').disabled = false;
-      $('#textEntryStatus').textContent = '';
-      $('#voicePremiumRequired').hidden = true;
-      $('#voiceRecordArea').hidden = false;
     });
+  }
+
+  // 音声・AIを使う前の確認。ログインしていなければログインへ（書きかけのメモは残す）
+  function requireAiReady() {
+    if (!loadCurrentUser()) {
+      state.pendingMemoText = $('#textMemoInput').value;
+      openLogin('voiceEntryForm');
+      $('#loginLead').textContent = 'ログインすると、音声入力やAIでの整理が使えます';
+      return false;
+    }
+    return confirmAiDataSharing();
   }
 
   function handleVoiceRecordToggle() {
@@ -1703,6 +2518,7 @@
       voiceRecorder.stop();
       return;
     }
+    if (!requireAiReady()) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
       $('#voiceRecordStatus').textContent = 'このブラウザは音声の録音に対応していません。';
       return;
@@ -1778,30 +2594,66 @@
     });
   }
 
+  // 「この内容で予定を作る」：決まった形ならAIを使わず無料で取り込み、そうでなければAIで整理する
   function handleCreateTextEntries() {
     var text = $('#textMemoInput').value.trim();
     if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
+    var dates = Core.allDatesForTrip(state.trip, state.blocks).filter(function (d) { return d; });
+    var parsed = Core.parseMemo(text, dates, state.voiceEntryMultiDay ? '' : state.selectedDate);
+    if (parsed.ok) { importMemoWithoutAi(parsed); return; }
+    if (!confirm('決まった形（「10時 新宿」のように時刻で始まる行）になっていないので、AIで整理します（今月のAIの回数を1回使います）。よろしいですか？')) {
+      $('#textEntryStatus').textContent = '時刻で始まる行の形に直すと、AIを使わず無料で取り込めます。';
+      return;
+    }
+    organizeMemoWithAi(text);
+  }
+
+  function importMemoWithoutAi(parsed) {
+    var user = loadCurrentUser();
+    $('#btnCreateTextEntries').disabled = true;
+    $('#textEntryStatus').textContent = 'AIを使わずに取り込んでいます…（無料）';
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/memo-blocks', 'POST', { blocks: parsed.blocks, author: (user && user.name) || '' })
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        $('#btnCreateTextEntries').disabled = false;
+        if (parsed.blocks[0] && parsed.blocks[0].date) state.selectedDate = parsed.blocks[0].date;
+        showScreen('tripDetail');
+        renderTripDetail();
+      })
+      .catch(function () {
+        $('#btnCreateTextEntries').disabled = false;
+        $('#textEntryStatus').textContent = '取り込みに失敗しました。もう一度お試しください。';
+      });
+  }
+
+  function organizeMemoWithAi(text) {
+    text = text || $('#textMemoInput').value.trim();
+    if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
+    if (!requireAiReady()) return;
     var user = loadCurrentUser();
     var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
     $('#btnCreateTextEntries').disabled = true;
+    $('#btnOrganizeMemoAi').disabled = true;
     $('#textEntryStatus').textContent = 'AIが内容を確認しています…';
     createTextEntries(state.trip.id, state.voiceEntryMultiDay ? null : state.selectedDate, text, meta).then(function () {
       return refreshTrip();
     }).then(function () {
       $('#btnCreateTextEntries').disabled = false;
+      $('#btnOrganizeMemoAi').disabled = false;
       showScreen('tripDetail');
       renderDaySection();
     }).catch(function (e) {
       var msg = (e && e.message) || '';
       $('#btnCreateTextEntries').disabled = false;
+      $('#btnOrganizeMemoAi').disabled = false;
       if (msg === 'server_not_configured') $('#textEntryStatus').textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'trip_dates_required') $('#textEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
       else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
-      else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
-        $('#textEntryStatus').textContent = '';
-        openVoiceEntryForm(state.voiceEntryMultiDay);
+      else if (msg === 'premium_required' || msg === 'quota_exceeded') {
+        $('#textEntryStatus').textContent = '今月のAIでの整理の回数を使い切りました。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
       }
+      else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
   }
@@ -1944,6 +2796,7 @@
   }
 
   function renderDaySection() {
+    applyTripZones();
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
     renderTimeline(currentDayBlocks());
     renderDayWeather();
@@ -2037,6 +2890,81 @@
       });
   }
 
+  // タイムゾーンの日本語名（例：「英国夏時間」「ハワイ・アリューシャン標準時」）
+  function zoneDisplayName(tz, ymd) {
+    try {
+      var d = Core.parseDate(ymd) || new Date();
+      var part = new Intl.DateTimeFormat('ja-JP', { timeZone: tz, timeZoneName: 'long' }).formatToParts(d)
+        .filter(function (x) { return x.type === 'timeZoneName'; })[0];
+      return part ? part.value : tz;
+    } catch (e) { return tz; }
+  }
+
+  function renderZoneDivider(block, base) {
+    var div = document.createElement('div');
+    div.className = 'zone-divider';
+    var from = base._tz === 'Asia/Tokyo' ? '日本' : '出発地';
+    div.textContent = '🕒 ここから現地時間（' + zoneDisplayName(block._tz, block.date) + '・' + from + 'との時差 ' +
+      Core.offsetDiffText(block._offset - base._offset) + '）';
+    return div;
+  }
+
+  // ---------- 時差（docs/adr/0009） ----------
+  // 予定ごとのタイムゾーンは、記録の地図の場所（座標がすぐ分かるものだけ）と、日ごとの場所（天気の場所）から
+  // Worker（/timezone）に聞いて決める。旅行を開いたあと裏で調べ、分かったら並びと区切りを描き直す。
+  // 結果は端末にも保存するので、2回目からは通信しない。
+  var TZ_CACHE_KEY = 'tabilog:tz-cache';
+  var DEVICE_TZ = (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; } })();
+
+  function applyTripZones() {
+    if (!state.trip) return;
+    var info = state.zoneInfo || { byBlock: {}, byDate: {} };
+    Core.applyBlockZones(state.blocks, Core.assignBlockZones(state.blocks, info.byBlock, info.byDate, DEVICE_TZ));
+  }
+
+  function timezoneAt(lat, lng, cache) {
+    var key = lat.toFixed(2) + ',' + lng.toFixed(2);
+    if (cache[key]) return Promise.resolve(cache[key]);
+    return api('/timezone?lat=' + lat.toFixed(4) + '&lng=' + lng.toFixed(4)).then(function (res) {
+      if (res && res.timezone) cache[key] = res.timezone;
+      return cache[key] || '';
+    }).catch(function () { return ''; });
+  }
+
+  function loadTripZones() {
+    if (!state.trip || !API_BASE) return Promise.resolve();
+    var tripId = state.trip.id;
+    var tzCache, geoCache;
+    try { tzCache = JSON.parse(localStorage.getItem(TZ_CACHE_KEY) || '{}'); } catch (e) { tzCache = {}; }
+    try { geoCache = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch (e) { geoCache = {}; }
+    var byBlock = {}, byDate = {};
+    var dayJobs = (state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
+      .map(function (d) { return timezoneAt(d.lat, d.lon, tzCache).then(function (tz) { if (tz) byDate[d.date] = tz; }); });
+    var blockJobs = (state.blocks || []).map(function (b) {
+      var q = Core.replayPlaceQuery(b);
+      if (!q) return null;
+      var c = geoCache[q];
+      var coords = c && c.lat !== undefined ? Promise.resolve(c)
+        : api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
+            if (res && res.found) { geoCache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; return geoCache[q]; }
+            return null;
+          }).catch(function () { return null; });
+      return coords.then(function (p) {
+        if (!p) return;
+        return timezoneAt(p.lat, p.lng, tzCache).then(function (tz) { if (tz) byBlock[b.id] = tz; });
+      });
+    }).filter(Boolean);
+    return Promise.all(dayJobs.concat(blockJobs)).then(function () {
+      try { localStorage.setItem(TZ_CACHE_KEY, JSON.stringify(tzCache)); } catch (e) {}
+      try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(geoCache)); } catch (e) {}
+      if (!state.trip || state.trip.id !== tripId) return;
+      var next = { byBlock: byBlock, byDate: byDate };
+      if (JSON.stringify(next) === JSON.stringify(state.zoneInfo)) return;
+      state.zoneInfo = next;
+      if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
+    });
+  }
+
   function renderTimeline(blocks) {
     var el = $('#timeline');
     el.innerHTML = '';
@@ -2046,7 +2974,20 @@
       empty.textContent = 'この日の記録はまだありません。下のボタンから追加できます。';
       el.appendChild(empty);
     }
+    // 時差の違う場所に移ったところに「ここから現地時間（時差）」の区切りを入れる（docs/adr/0009）。
+    // この日の最初の予定は、旅行全体の並びで直前の予定と比べる（前の日から続く移動のため）。
+    var all = Core.sortBlocks(state.blocks);
+    var base = all.filter(function (b) { return typeof b._offset === 'number'; })[0];
+    var prevOffset = null;
+    if (blocks.length) {
+      var at = all.indexOf(blocks[0]);
+      for (var i = at - 1; i >= 0; i--) { if (typeof all[i]._offset === 'number') { prevOffset = all[i]._offset; break; } }
+    }
     blocks.forEach(function (block) {
+      if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
+        el.appendChild(renderZoneDivider(block, base));
+      }
+      if (typeof block._offset === 'number') prevOffset = block._offset;
       el.appendChild(renderBlockEl(block));
     });
     var addBtn = document.createElement('button');
@@ -2090,7 +3031,11 @@
       (!block.time ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
-      '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>';
+      '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>' +
+      (block.category === 'transport' && (block.transport || block.moveMinutes)
+        ? '<span class="block-move">' + (block.transport ? transportIconSvg(block.transport, 13) : '') +
+          escapeHtml([Core.transportLabel(block.transport), block.moveMinutes ? '約' + Core.minutesText(block.moveMinutes) : ''].filter(Boolean).join('・')) + '</span>'
+        : '');
     head.addEventListener('click', function (e) {
       if (e.target.closest('.block-drag-handle')) return;
       openBlockForm(block);
@@ -2268,7 +3213,8 @@
       '<div class="entry-author">記録：' + escapeHtml(entry.author || '匿名') + '</div>' +
       ratingHtml +
       costHtml +
-      (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '');
+      (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '') +
+      '<div class="entry-social" data-entry-id="' + escapeHtml(entry.id) + '">' + socialButtonsHtml('entry', entry.id) + '</div>';
 
     // 写真・動画をタップしたときは編集画面へ行かず、拡大表示（ライトボックス）を開く。
     // 動画は（アルバムと同じく）タイルをタップしたときだけライトボックスを開く作りにしたので、
@@ -2279,17 +3225,16 @@
       var photoEl = e.target.closest('.entry-photo');
       if (photoEl) {
         e.stopPropagation();
-        var photoIds = entry.photoIds || [];
-        openPhotoLightbox(photoIds, Math.max(0, photoIds.indexOf(photoEl.dataset.photoId)));
+        openMediaViewer(entryMediaItems(entry), Math.max(0, (entry.photoIds || []).indexOf(photoEl.dataset.photoId)));
         return;
       }
       var videoTile = e.target.closest('.entry-video-tile');
       if (videoTile) {
         e.stopPropagation();
-        openVideoLightbox(photoUrl(videoTile.dataset.videoId));
+        openMediaViewer(entryMediaItems(entry), (entry.photoIds || []).length + Math.max(0, (entry.videoIds || []).indexOf(videoTile.dataset.videoId)));
         return;
       }
-      if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
+      if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu') || e.target.closest('.entry-social')) return;
       openEntryForm(block.id, entry);
     });
     $('.entry-move-btn', card).addEventListener('click', function (e) {
@@ -2404,6 +3349,7 @@
   // 飛行機だけは進行方向に回転させるので、上（北）向きの塗りつぶしシルエットにしてある。
   var TRANSPORT_ICON_PATHS = {
     plane: '<path fill="currentColor" stroke="none" d="M12 2c.8 0 1.4.7 1.4 1.6V9l7.6 4.4v2.1l-7.6-2.3v4.5l2.2 1.7V21L12 20l-3.6 1v-1.6l2.2-1.7v-4.5L3 15.5v-2.1L10.6 9V3.6C10.6 2.7 11.2 2 12 2z"/>',
+    car: '<path d="M4 12l1.8-4.6A2 2 0 0 1 7.7 6h8.6a2 2 0 0 1 1.9 1.4L20 12"/><rect x="3" y="12" width="18" height="5.5" rx="1.2"/><circle cx="7.5" cy="14.8" r="1"/><circle cx="16.5" cy="14.8" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
     taxi: '<path d="M5.5 11l1.4-4a2 2 0 0 1 1.9-1.3h6.4a2 2 0 0 1 1.9 1.3l1.4 4"/><path d="M3.5 11h17v5.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M10 5.7V3.5h4v2.2"/><circle cx="7.5" cy="14.3" r="1"/><circle cx="16.5" cy="14.3" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
     train: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 10h14"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/><path d="M8.5 17l-2.5 4M15.5 17l2.5 4"/>',
     bus: '<rect x="4" y="3.5" width="16" height="14" rx="2.5"/><path d="M4 11h16M12 3.5V11"/><path d="M7 17.5V20M17 17.5V20"/><circle cx="8" cy="14.3" r="1"/><circle cx="16" cy="14.3" r="1"/>',
@@ -2422,6 +3368,9 @@
     state.editingBlockId = block ? block.id : null;
     state.formCategory = block ? block.category : 'sightseeing';
     state.formTransport = block ? (block.transport || '') : '';
+    var mm = block ? (block.moveMinutes || 0) : 0;
+    $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
+    $('#blkMoveMins').value = mm ? mm % 60 : '';
     $('#blkFormTitle').textContent = block ? '予定を編集' : '予定を追加';
     $('#blkDate').value = block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10));
     $('#blkTime').value = block ? block.time : '';
@@ -2441,6 +3390,9 @@
     $all('.cat-chip', el).forEach(function (b) {
       b.addEventListener('click', function () { state.formCategory = b.dataset.cat; renderCategoryChips(); });
     });
+    // 移動手段・移動時間は、種類が「移動」のときだけ出す（以前は種類に関係なく「ここまでの移動手段」を出していた）。
+    // 以前のデータで、移動以外の予定に移動手段が付いているものは、見えないまま残らないよう出しておく
+    $('#blkMoveFields').hidden = !(state.formCategory === 'transport' || state.formTransport);
   }
 
   function renderTransportChips() {
@@ -2454,6 +3406,12 @@
     });
   }
 
+  function readMoveMinutes() {
+    var h = parseInt($('#blkMoveHours').value, 10), m = parseInt($('#blkMoveMins').value, 10);
+    var total = (isNaN(h) ? 0 : Math.max(0, h)) * 60 + (isNaN(m) ? 0 : Math.max(0, Math.min(59, m)));
+    return Math.min(total, 14400);
+  }
+
   function saveBlock() {
     var status = $('#blkFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
@@ -2465,7 +3423,8 @@
       time: $('#blkTime').value || '',
       label: label,
       category: state.formCategory,
-      transport: state.formTransport || ''
+      transport: $('#blkMoveFields').hidden ? '' : (state.formTransport || ''),
+      moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
     };
     var req = state.editingBlockId
       ? api('/blocks/' + encodeURIComponent(state.editingBlockId), 'PATCH', payload)
@@ -2501,8 +3460,7 @@
     state.entryBlockId = blockId;
     state.editingEntryId = entry ? entry.id : null;
     state.editingEntry = entry || null;
-    state.formPhotoIds = entry ? (entry.photoIds || []).slice() : [];
-    state.pendingPhotos = [];
+    state.formPhotos = entry ? (entry.photoIds || []).map(function (id) { return { id: id }; }) : [];
     state.formVideoIds = entry ? (entry.videoIds || []).slice() : [];
     state.pendingVideos = [];
     state.formCostItems = entry ? (entry.costItems || []).map(function (it) {
@@ -2522,8 +3480,11 @@
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
+    $('#entMoreFields').open = !!(entry && (entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl));
     $('#entPlaceSearch').value = '';
     $('#entMapPreview').hidden = true;
+    $('#entPlaceCandidates').hidden = true;
+    $('#entPlaceStatus').textContent = '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
@@ -2533,7 +3494,57 @@
     renderVideoPreview();
     renderCostItems();
     renderEntryRatingSection();
+    renderTravelFields(entry);
     showScreen('entryForm');
+  }
+
+  function entryFormBlock() {
+    return (state.blocks || []).filter(function (b) { return b.id === state.entryBlockId; })[0] || null;
+  }
+
+  // ---------- 移動の情報（紹介文用。docs/adr/0007） ----------
+  // 移動の予定の記録だけに出す。★はつけない（誰が見ても同じ事実なので、記録そのものに持つ）。
+  function renderTravelFields(entry) {
+    var block = entryFormBlock();
+    var isMove = !!(block && block.category === 'transport');
+    $('#entTravelField').hidden = !isMove;
+    if (!isMove) return;
+    var t = (entry && entry.travel) || {};
+    $('#entTravelFrom').value = t.from || '';
+    $('#entTravelTo').value = t.to || '';
+    $('#entTravelCompany').value = t.company || '';
+    $('#entTravelDepart').value = t.depart || '';
+    $('#entTravelArrive').value = t.arrive || '';
+    $('#entTravelAmount').value = typeof t.amount === 'number' ? t.amount : '';
+    updateTravelDuration();
+  }
+
+  function updateTravelDuration() {
+    var block = entryFormBlock();
+    var all = Core.sortBlocks(state.blocks);
+    var next = block ? all[all.indexOf(block) + 1] : null;
+    var depOff = block ? block._offset : undefined, arrOff = next ? next._offset : undefined;
+    var dep = $('#entTravelDepart').value, arr = $('#entTravelArrive').value;
+    var d = Core.travelDurationText(dep, arr, depOff, arrOff);
+    var info = Core.travelDuration(dep, arr, depOff, arrOff);
+    var notes = [];
+    if (typeof depOff === 'number' && typeof arrOff === 'number' && depOff !== arrOff) notes.push('時差' + Core.offsetDiffText(arrOff - depOff));
+    if (info && info.dayShift) notes.push('到着は現地の' + (Core.dayShiftPrefix(info.dayShift) === '翌' ? '翌日' : Core.dayShiftPrefix(info.dayShift)));
+    $('#entTravelDuration').textContent = d ? '所要時間：' + d + (notes.length ? '（' + notes.join('・') + '）' : '') +
+      '。時刻はどちらも現地時間で入れてください。' : '時刻はどちらも現地時間で入れてください。';
+  }
+
+  function readTravelFields() {
+    var amount = $('#entTravelAmount').value.trim();
+    var out = {
+      from: $('#entTravelFrom').value.trim(),
+      to: $('#entTravelTo').value.trim(),
+      company: $('#entTravelCompany').value.trim(),
+      depart: $('#entTravelDepart').value || '',
+      arrive: $('#entTravelArrive').value || ''
+    };
+    if (amount !== '' && /^\d+$/.test(amount)) out.amount = Number(amount);
+    return out;
   }
 
   // ---------- 評価（★1〜5） ----------
@@ -2542,7 +3553,10 @@
   function renderEntryRatingSection() {
     var field = $('#entRatingField');
     var entry = state.editingEntry;
-    if (!loginEnabled() || !entry) { field.hidden = true; return; }
+    var block = entryFormBlock();
+    var kind = Core.reviewKindForCategory(block ? block.category : '');
+    $('#entReviewFields').hidden = true;
+    if (!loginEnabled() || !entry || !kind) { field.hidden = true; return; }
     field.hidden = false;
     var user = loadCurrentUser();
     var widget = $('#entRatingWidget');
@@ -2562,12 +3576,15 @@
     for (var i = 1; i <= 5; i++) {
       stars += '<button type="button" class="star-btn' + (i <= mineWhole ? ' on' : '') + '" data-score="' + i + '" aria-label="★' + i + '">★</button>';
     }
+    var level = Core.reviewLevelLabel(kind, mine);
     var fine = mine > 0
       ? '<div class="rating-fine">' +
         '<button type="button" class="btn ghost small" id="ratingFineMinus">－0.1</button>' +
         '<span class="rating-fine-value">★' + mine.toFixed(1) + '</span>' +
         '<button type="button" class="btn ghost small" id="ratingFinePlus">＋0.1</button>' +
-        '</div>'
+        '</div>' +
+        '<div class="rating-level' + (Core.isReviewPublic(mine) ? '' : ' private') + '">' + escapeHtml(level) +
+        (Core.isReviewPublic(mine) ? '' : '（★3.0未満なので紹介文には出ません）') + '</div>'
       : '';
     widget.innerHTML = '<div class="stars">' + stars + '</div>' + fine;
     $all('.star-btn', widget).forEach(function (btn) {
@@ -2585,6 +3602,80 @@
       });
     }
     $('#entRatingSummary').textContent = summaryText;
+    renderReviewFields(kind, mine > 0 ? (Core.findMyRating(entry.ratings, user.email) || {}).review || {} : null);
+  }
+
+  // ---------- レビュー項目（紹介文用。docs/adr/0007） ----------
+  // ★をつけた人だけが、自分のレビュー項目（◎〇△×・金額・立地など）を書ける。どの項目を出すかは
+  // 予定の種類（ホテログ・レクログ・飯ログ）で変わる。★は押した瞬間に保存されるが、レビュー項目は
+  // 「レビューを保存」を押したときに★と一緒に保存する。
+  function renderReviewFields(kind, review) {
+    var el = $('#entReviewFields');
+    var k = Core.REVIEW_KINDS[kind];
+    if (!k || !review) { el.hidden = true; return; }
+    el.hidden = false;
+    var gradeSelect = function (key, label) {
+      return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
+        '<option value="">―</option>' +
+        Core.REVIEW_GRADES.map(function (g) { return '<option' + (review[key] === g ? ' selected' : '') + '>' + g + '</option>'; }).join('') +
+        '</select></label>';
+    };
+    var choiceSelect = function (key, label) {
+      return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
+        '<option value="">―</option>' +
+        Core.REVIEW_CHOICE_OPTIONS[key].map(function (o) { return '<option' + (review[key] === o ? ' selected' : '') + '>' + o + '</option>'; }).join('') +
+        '</select></label>';
+    };
+    var textInput = function (key, label, placeholder, max) {
+      return '<label class="review-row review-row-wide"><span>' + label + '</span><input type="text" data-review-key="' + key + '" maxlength="' + max +
+        '" placeholder="' + escapeHtml(placeholder) + '" value="' + escapeHtml(review[key] || '') + '"></label>';
+    };
+    var unitLabel = { hotel: '泊数', activity: '回数', food: '人数' }[kind];
+    var html = '<div class="review-title">' + escapeHtml(k.label) + 'のレビュー（紹介文に使います）</div>';
+    html += '<div class="review-grid">' + k.grades.map(function (g) { return gradeSelect(g[0], g[1]); }).join('') +
+      (k.choices || []).map(function (c) { return choiceSelect(c[0], c[1]); }).join('') + '</div>';
+    html += '<div class="review-grid">' +
+      '<label class="review-row"><span>金額（円）</span><input type="number" min="0" inputmode="numeric" data-review-key="amount" data-number placeholder="明細の合計" value="' + (typeof review.amount === 'number' ? review.amount : '') + '"></label>' +
+      '<label class="review-row"><span>' + unitLabel + '</span><input type="number" min="1" max="365" inputmode="numeric" data-review-key="units" data-number value="' + (review.units || '') + '"></label>' +
+      '</div>';
+    html += textInput('access', '立地（行き方）', '例：〇〇駅から徒歩5分', 60);
+    (k.texts || []).forEach(function (t) {
+      var ph = { roomType: '例：ダブル・オーシャンビュー', duration: '例：2時間', bestTime: '例：夕方（夕日がきれい）', menu: '例：クロワッサン' }[t[0]] || '';
+      html += textInput(t[0], t[1], ph, t[0] === 'menu' ? 200 : 60);
+    });
+    html += '<label class="review-row review-row-wide"><span>その他</span><textarea data-review-key="other" maxlength="300" rows="2" placeholder="例：ベッドがふかふか、浴槽あり">' + escapeHtml(review.other || '') + '</textarea></label>';
+    html += '<button type="button" class="btn ghost small" id="btnSaveReview">レビューを保存</button><span class="hint review-status" id="reviewStatus"></span>';
+    el.innerHTML = html;
+    $('#btnSaveReview').addEventListener('click', saveMyReview);
+  }
+
+  function readReviewFields() {
+    var out = {};
+    $all('[data-review-key]', $('#entReviewFields')).forEach(function (input) {
+      var v = input.value.trim();
+      if (!v) return;
+      if (input.hasAttribute('data-number')) { if (/^\d+$/.test(v)) out[input.dataset.reviewKey] = Number(v); }
+      else out[input.dataset.reviewKey] = v;
+    });
+    return out;
+  }
+
+  function saveMyReview() {
+    var user = loadCurrentUser();
+    var entry = state.editingEntry;
+    if (!user || !entry) return;
+    var score = Core.myRatingScore(entry.ratings, user.email);
+    if (!(score > 0)) return;
+    var status = $('#reviewStatus');
+    status.textContent = '保存中…';
+    api('/entries/' + encodeURIComponent(entry.id) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: score, review: readReviewFields() })
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        state.editingEntry = findEntryById(entry.id);
+        renderEntryRatingSection();
+        $('#reviewStatus').textContent = '保存しました';
+      })
+      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
   }
 
   function setMyRating(score) {
@@ -2605,55 +3696,114 @@
 
   var ROTATE_ICON = '<svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 8A6 6 0 1 0 16 11"/><path d="M16 4v4h-4"/></svg>';
 
+  // 写真の並びのプレビュー。長押ししてからドラッグすると並べ替えられる（先頭の写真が、マイログなどで
+  // 代表の写真になる）。すぐにドラッグにしないのは、スマホで写真の上から指でページをスクロールしたいときに
+  // 誤って動かさないため。回転・削除のボタンはこれまでどおり。
   function renderPhotoPreview() {
     var el = $('#entPhotoPreview');
     el.innerHTML = '';
-    state.formPhotoIds.forEach(function (id, idx) {
+    state.formPhotos.forEach(function (item, idx) {
       var ph = document.createElement('div');
       ph.className = 'ph';
-      ph.innerHTML = '<img src="' + escapeHtml(photoUrl(id)) + '">' +
+      ph.dataset.index = idx;
+      ph.innerHTML = '<img src="' + escapeHtml(item.id ? photoUrl(item.id) : item.url) + '" draggable="false">' +
+        (idx === 0 && state.formPhotos.length > 1 ? '<span class="ph-first">先頭</span>' : '') +
         '<button type="button" class="ph-rotate" aria-label="90度回す">' + ROTATE_ICON + '</button>' +
         '<button type="button" class="ph-remove" aria-label="削除">×</button>';
       ph.querySelector('.ph-remove').addEventListener('click', function () {
-        state.formPhotoIds.splice(idx, 1);
+        if (item.url) URL.revokeObjectURL(item.url);
+        state.formPhotos.splice(idx, 1);
         renderPhotoPreview();
       });
-      // 保存済みの写真の回転は、一度取得→回転→再アップロードしてidを差し替える
-      // （このアプリに写真の上書き更新APIが無いため、新しい写真として置き換える形）
       ph.querySelector('.ph-rotate').addEventListener('click', function () {
         var btn = ph.querySelector('.ph-rotate');
         btn.disabled = true;
-        fetch(photoUrl(id)).then(function (res) { return res.blob(); })
-          .then(function (blob) { return rotateImageBlob(blob, 90); })
-          .then(function (rotated) { return uploadPhotoBlob(rotated); })
-          .then(function (p) {
-            state.formPhotoIds[idx] = p.id;
+        if (item.id) {
+          // 保存済みの写真の回転は、一度取得→回転→再アップロードしてidを差し替える
+          // （このアプリに写真の上書き更新APIが無いため、新しい写真として置き換える形）
+          fetch(photoUrl(item.id)).then(function (res) { return res.blob(); })
+            .then(function (blob) { return rotateImageBlob(blob, 90); })
+            .then(function (rotated) { return uploadPhotoBlob(rotated); })
+            .then(function (up) { item.id = up.id; renderPhotoPreview(); })
+            .catch(function () { btn.disabled = false; alert('写真の回転に失敗しました。もう一度お試しください。'); });
+        } else {
+          rotateImageBlob(item.blob, 90).then(function (rotated) {
+            URL.revokeObjectURL(item.url);
+            item.blob = rotated;
+            item.url = URL.createObjectURL(rotated);
             renderPhotoPreview();
-          })
-          .catch(function () { btn.disabled = false; alert('写真の回転に失敗しました。もう一度お試しください。'); });
+          });
+        }
       });
       el.appendChild(ph);
     });
-    state.pendingPhotos.forEach(function (p, idx) {
-      var ph = document.createElement('div');
-      ph.className = 'ph';
-      ph.innerHTML = '<img src="' + p.url + '">' +
-        '<button type="button" class="ph-rotate" aria-label="90度回す">' + ROTATE_ICON + '</button>' +
-        '<button type="button" class="ph-remove" aria-label="削除">×</button>';
-      ph.querySelector('.ph-remove').addEventListener('click', function () {
-        URL.revokeObjectURL(state.pendingPhotos[idx].url);
-        state.pendingPhotos.splice(idx, 1);
+    $('#entPhotoOrderHint').hidden = state.formPhotos.length < 2;
+  }
+
+  // 長押し→ドラッグで並べ替え。指の下にある写真の位置へ、離したときに移す。
+  var PHOTO_DRAG_HOLD_MS = 280;
+  function initPhotoReorder() {
+    var el = $('#entPhotoPreview');
+    var drag = null; // { from, ph, startX, startY, timer, active, target }
+    function thumbAt(x, y) {
+      var hit = null;
+      $all('.ph', el).forEach(function (ph) {
+        if (drag && ph === drag.ph) return; // 動かしている写真自身は、指の下に来ているので数えない
+        var r = ph.getBoundingClientRect();
+        if (x >= r.left - 4 && x <= r.right + 4 && y >= r.top - 4 && y <= r.bottom + 4) hit = ph;
+      });
+      return hit;
+    }
+    function clearTargets() { $all('.ph.drop-target', el).forEach(function (p) { p.classList.remove('drop-target'); }); }
+    function finish(commit) {
+      if (!drag) return;
+      clearTimeout(drag.timer);
+      if (drag.active) {
+        drag.ph.classList.remove('dragging');
+        drag.ph.style.transform = '';
+        clearTargets();
+        if (commit && drag.target !== null && drag.target !== drag.from) {
+          var moved = state.formPhotos.splice(drag.from, 1)[0];
+          state.formPhotos.splice(drag.target, 0, moved);
+        }
         renderPhotoPreview();
-      });
-      ph.querySelector('.ph-rotate').addEventListener('click', function () {
-        rotateImageBlob(state.pendingPhotos[idx].blob, 90).then(function (rotated) {
-          URL.revokeObjectURL(state.pendingPhotos[idx].url);
-          state.pendingPhotos[idx] = { blob: rotated, url: URL.createObjectURL(rotated) };
-          renderPhotoPreview();
-        });
-      });
-      el.appendChild(ph);
+      }
+      drag = null;
+    }
+    el.addEventListener('pointerdown', function (e) {
+      var ph = e.target.closest('.ph');
+      if (!ph || e.target.closest('button') || state.formPhotos.length < 2) return;
+      drag = { from: Number(ph.dataset.index), ph: ph, startX: e.clientX, startY: e.clientY, active: false, target: null };
+      var start = function () {
+        if (!drag) return;
+        drag.active = true;
+        drag.target = drag.from;
+        ph.classList.add('dragging');
+        if (navigator.vibrate) navigator.vibrate(10);
+      };
+      // マウスはすぐ、指は長押ししてから
+      if (e.pointerType === 'mouse') start(); else drag.timer = setTimeout(start, PHOTO_DRAG_HOLD_MS);
+      try { el.setPointerCapture(e.pointerId); } catch (err) { /* 古いブラウザ */ }
     });
+    el.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      var dx = e.clientX - drag.startX, dy = e.clientY - drag.startY;
+      if (!drag.active) {
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) finish(false); // 長押しの前に動いた＝スクロールしたい
+        return;
+      }
+      drag.ph.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(1.08)';
+      clearTargets();
+      var over = thumbAt(e.clientX, e.clientY);
+      if (over && over !== drag.ph) { over.classList.add('drop-target'); drag.target = Number(over.dataset.index); }
+      else if (!over) drag.target = drag.from;
+    });
+    el.addEventListener('pointerup', function () { finish(true); });
+    el.addEventListener('pointercancel', function () { finish(false); });
+    // iOSでは、ドラッグ中にページがスクロールしないよう、タッチの移動を止める（長押しの後だけ）
+    el.addEventListener('touchmove', function (e) { if (drag && drag.active) e.preventDefault(); }, { passive: false });
+    // 長押しでiOSの「画像を保存」メニューが出ないように
+    el.addEventListener('contextmenu', function (e) { if (e.target.closest('.ph')) e.preventDefault(); });
   }
 
   function formatMB(bytes) {
@@ -2858,18 +4008,109 @@
   // ---------- 場所名からの地図検索（「地図のURL」欄の入力補助） ----------
   // Google Maps Embed API（APIキーが要る）は使わず、キー不要の地図表示・検索URLの
   // 形式（.../maps?q=...&output=embed、.../maps/search/?api=1&query=...）だけを使う。
-  // どちらもGoogle側が場所名をその場で解決してくれるので、こちらでジオコーディングは行わない。
+  // 以前はGoogleがいちばん上に出した場所しか選べず、違う場所だったときに選び直せなかったため、
+  // Worker（/places/search）から候補を最大8件もらってプルダウンで選べるようにした。候補を選ぶと
+  // その座標の地図URLを入れる（地図でふりかえるでも、その場所へぴったり移動する）。
+  // 候補に無い小さなお店などのために、最後に「Googleマップで名前のまま検索」も残す。
+  var placeCandidates = [];
+  var PLACE_GOOGLE = 'google';
+
   function showPlaceMapPreview() {
     var place = $('#entPlaceSearch').value.trim();
     if (!place) return;
-    $('#entMapPreviewFrame').src = 'https://maps.google.com/maps?q=' + encodeURIComponent(place) + '&output=embed';
+    var select = $('#entPlaceCandidates');
+    var status = $('#entPlaceStatus');
+    status.textContent = '候補を探しています…';
+    select.hidden = true;
+    api('/places/search?q=' + encodeURIComponent(place)).then(function (res) {
+      placeCandidates = (res && res.places) || [];
+      select.innerHTML = placeCandidates.map(function (p, i) {
+        return '<option value="' + i + '">' + escapeHtml(p.name + (p.address ? '（' + p.address + '）' : '')) + '</option>';
+      }).join('') + '<option value="' + PLACE_GOOGLE + '">候補にない場合：「' + escapeHtml(place) + '」をGoogleマップで検索</option>';
+      select.hidden = false;
+      status.textContent = placeCandidates.length
+        ? '候補が' + placeCandidates.length + '件見つかりました。違う場所なら、上のリストから選び直してください。'
+        : '候補が見つかりませんでした。Googleマップの検索結果を表示しています。';
+      select.value = placeCandidates.length ? '0' : PLACE_GOOGLE;
+      previewSelectedPlace();
+    }).catch(function () {
+      // 候補が取れなくても、これまでどおりGoogleマップの検索結果は見られるようにする
+      placeCandidates = [];
+      select.innerHTML = '<option value="' + PLACE_GOOGLE + '">「' + escapeHtml(place) + '」をGoogleマップで検索</option>';
+      select.value = PLACE_GOOGLE;
+      select.hidden = true;
+      status.textContent = '';
+      previewSelectedPlace();
+    });
+  }
+
+  function selectedPlace() {
+    var v = $('#entPlaceCandidates').value;
+    return v === PLACE_GOOGLE || v === '' ? null : placeCandidates[Number(v)] || null;
+  }
+
+  // 候補を選んだときのプレビューは、地図でふりかえると同じLeaflet（OpenStreetMap）の地図にする。
+  // Googleの埋め込み地図はアプリ内では指で拡大・縮小しにくかったため。ピンはドラッグでき、地図をタップしても
+  // そこへ動く（候補の座標を細かく直せる。直した座標がそのまま地図URLに入る）。
+  // 「Googleマップで検索」のときだけは座標が無いのでGoogleの埋め込み地図のままにし、＋/－ボタンで拡大・縮小する。
+  var placeMap = null, placeMarker = null, placeFrameZoom = 16;
+
+  function movePlacePin(latlng) {
+    placeMarker.setLatLng(latlng);
+    var cur = selectedPlace();
+    if (cur) {
+      cur.lat = Math.round(latlng.lat * 1e6) / 1e6;
+      cur.lng = Math.round(latlng.lng * 1e6) / 1e6;
+    }
+  }
+
+  function showPlaceFrame() {
+    $('#entPlaceMap').hidden = true;
+    $('#entPlaceMapHint').hidden = true;
+    $('#entMapFrameWrap').hidden = false;
+    var q = $('#entPlaceSearch').value.trim();
+    if (q) $('#entMapPreviewFrame').src = 'https://maps.google.com/maps?q=' + encodeURIComponent(q) + '&z=' + placeFrameZoom + '&output=embed';
+  }
+
+  function zoomPlaceFrame(delta) {
+    placeFrameZoom = Math.max(3, Math.min(20, placeFrameZoom + delta));
+    showPlaceFrame();
+  }
+
+  function previewSelectedPlace() {
+    var p = selectedPlace();
+    if (!p && !$('#entPlaceSearch').value.trim()) return;
     $('#entMapPreview').hidden = false;
+    if (!p) { placeFrameZoom = 16; showPlaceFrame(); return; }
+    $('#entMapFrameWrap').hidden = true;
+    $('#entPlaceMap').hidden = false;
+    $('#entPlaceMapHint').hidden = false;
+    loadLeaflet().then(function (L) {
+      if (!placeMap) {
+        placeMap = L.map($('#entPlaceMap'));
+        placeMap.attributionControl.setPrefix(false);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(placeMap);
+        placeMarker = L.marker([p.lat, p.lng], {
+          draggable: true,
+          icon: L.divIcon({ className: '', html: '<div class="place-pin"></div>', iconSize: [26, 26], iconAnchor: [13, 26] })
+        }).addTo(placeMap);
+        placeMarker.on('dragend', function () { movePlacePin(placeMarker.getLatLng()); });
+        placeMap.on('click', function (e) { movePlacePin(e.latlng); });
+      }
+      placeMap.invalidateSize(); // 隠れていた要素に作った・表示し直した地図は、大きさを測り直さないと崩れる
+      placeMap.setView([p.lat, p.lng], 16);
+      placeMarker.setLatLng([p.lat, p.lng]);
+    }).catch(function () { placeFrameZoom = 16; showPlaceFrame(); });
   }
 
   function useSearchedPlaceAsMapUrl() {
-    var place = $('#entPlaceSearch').value.trim();
-    if (!place) return;
-    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(place);
+    var p = selectedPlace();
+    var q = p ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
+    if (!q) return;
+    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
 
   function saveEntry() {
@@ -2896,14 +4137,16 @@
       otherUrl: $('#entOtherUrl').value.trim(),
       author: author
     };
+    if (!$('#entTravelField').hidden) payload.travel = readTravelFields();
 
     Promise.all([
-      Promise.all(state.pendingPhotos.map(function (p) { return uploadPhotoBlob(p.blob); })),
+      // 並べた順のまま、新しい写真だけアップロードしてidにする
+      Promise.all(state.formPhotos.map(function (p) { return p.id ? Promise.resolve({ id: p.id }) : uploadPhotoBlob(p.blob); })),
       Promise.all(state.pendingVideos.map(function (v) { return uploadPhotoBlob(v.blob); }))
     ])
       .then(function (results) {
         var uploaded = results[0], uploadedVideos = results[1];
-        payload.photoIds = state.formPhotoIds.concat(uploaded.map(function (u) { return u.id; }));
+        payload.photoIds = uploaded.map(function (u) { return u.id; });
         payload.videoIds = state.formVideoIds.concat(uploadedVideos.map(function (u) { return u.id; }));
         var req = state.editingEntryId
           ? api('/entries/' + encodeURIComponent(state.editingEntryId), 'PATCH', payload)
@@ -2976,7 +4219,8 @@
     }
     manageBtn.hidden = account.plan === 'free';
     var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
-    var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
+    var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）' +
+      (typeof account.memoRemainingThisPeriod === 'number' ? '・メモのAI整理：残り' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' : '');
 
     badgeEl.hidden = false;
     badgeEl.classList.toggle('is-free', account.plan === 'free');
@@ -3213,7 +4457,10 @@
   // 地名→座標は端末内にもキャッシュし、無いものだけWorker（/geocode）に1件ずつ聞く。Worker側の
   // Nominatimは1秒1回までの規約なので、Worker側のキャッシュにも無かった（cached:false）ときだけ1.1秒空ける。
   // 見つからなかった地名は7日間は聞き直さない（通信エラーのときは記録せず、次回また聞く）。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache';
+  // 聞く内容を「見出しから推測した地名」から「地図のURL」に変えたので、キーを-v2にして古い結果（同名の
+  // 別の場所になっていたものを含む）は使わず、読み込み時に消す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v2';
+  try { localStorage.removeItem('tabilog:geocode-cache'); } catch (e) {}
   var GEOCODE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
   function geocodeQueries(queries, onProgress) {
     var cache;
@@ -3227,24 +4474,50 @@
       else todo.push(q);
     });
     var done = 0;
-    return todo.reduce(function (p, q) {
-      return p.then(function (needWait) {
-        return (needWait ? new Promise(function (ok) { setTimeout(ok, 1100); }) : Promise.resolve()).then(function () {
-          return api('/geocode?q=' + encodeURIComponent(q)).then(function (res) {
-            if (res && res.found) { result[q] = { lat: res.lat, lng: res.lng }; cache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; }
-            else { result[q] = null; cache[q] = { at: Date.now() }; }
-            return !(res && res.cached);
-          }).catch(function () { result[q] = null; return false; });
-        }).then(function (nextNeedsWait) {
-          done++;
-          if (onProgress) onProgress(done, todo.length);
-          return nextNeedsWait;
+    function record(q, res) {
+      if (res && res.found) { result[q] = { lat: res.lat, lng: res.lng }; cache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; }
+      else { result[q] = null; cache[q] = { at: Date.now() }; }
+      done++;
+      if (onProgress) onProgress(done, todo.length);
+    }
+    // 1回目：座標入りのリンクなど、Nominatim（1秒に1回まで）を使わずに分かるものを、全部同時に聞く（quick=1）。
+    // 以前は全部を1.1秒ずつ空けて1件ずつ聞いていたので、場所が多い旅行ほど準備に時間がかかっていた。
+    var pending = [];
+    return Promise.all(todo.map(function (q) {
+      return api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
+        if (res && res.pending) pending.push(q); else record(q, res);
+      }).catch(function () { result[q] = null; done++; });
+    })).then(function () {
+      // 2回目：住所・店名から探す必要があるものだけ、1件ずつ（Worker側のキャッシュに無かったときだけ1.1秒空ける）
+      return pending.reduce(function (p, q) {
+        return p.then(function (needWait) {
+          return (needWait ? new Promise(function (ok) { setTimeout(ok, 1100); }) : Promise.resolve()).then(function () {
+            return api('/geocode?q=' + encodeURIComponent(q)).then(function (res) {
+              record(q, res);
+              return !(res && res.cached);
+            }).catch(function () { result[q] = null; done++; return false; });
+          });
         });
-      });
-    }, Promise.resolve(false)).then(function () {
+      }, Promise.resolve(false));
+    }).then(function () {
       try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(cache)); } catch (e) {}
       return result;
     });
+  }
+
+  // 移動手段が車・タクシー・バス・徒歩・自転車の区間は、実際の道路に沿った道のりをWorker（/route）に聞き、
+  // その区間の path にする（Core.replayStateAt と線の描画が、直線の代わりにこれをたどる。docs/adr/0008）。
+  // 取れなかった区間は、これまでどおり直線のまま。
+  function fetchReplayRoutes(tl) {
+    var jobs = tl.legs.filter(function (l) { return Core.routeProfileFor(l.transport); });
+    return Promise.all(jobs.map(function (l) {
+      var a = tl.stops[l.from], b = tl.stops[l.to];
+      var q = '/route?profile=' + Core.routeProfileFor(l.transport) +
+        '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
+      return api(q).then(function (res) {
+        if (res && res.found && res.path && res.path.length > 1) l.path = res.path;
+      }).catch(function () {});
+    }));
   }
 
   var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
@@ -3274,11 +4547,15 @@
       if (replayToken !== token) return; // 準備中に閉じられた
       var tl = Core.buildReplayTimeline(stops, res[1]);
       if (!tl.stops.some(function (s) { return s.located; })) {
-        status.textContent = '地図に出せる場所が見つかりませんでした。予定の見出しを地名（例：新宿、首里城公園に到着）にするか、記録に地図のURLを入れてみてください。';
+        status.textContent = '地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。';
         return;
       }
-      status.textContent = '';
-      startReplay(res[0], tl);
+      status.textContent = '道のりを調べています…';
+      return fetchReplayRoutes(tl).then(function () {
+        if (replayToken !== token) return;
+        status.textContent = '';
+        startReplay(res[0], tl);
+      });
     }).catch(function () {
       if (replayToken === token) status.textContent = '地図を読み込めませんでした。通信環境を確認してください。';
     });
@@ -3286,7 +4563,8 @@
 
   function startReplay(L, tl) {
     if (!replayMap) {
-      replayMap = L.map($('#replayMap'), { zoomControl: false });
+      // 線を描く範囲を画面の外まで広げておく（カメラが次の区間へ動くあいだに、道のりの端が切れて見えないように）
+      replayMap = L.map($('#replayMap'), { zoomControl: false, renderer: L.svg({ padding: 1 }) });
       replayMap.attributionControl.setPrefix(false);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
@@ -3309,13 +4587,19 @@
         icon: L.divIcon({ className: '', html: '<div class="replay-dot"></div>', iconSize: [14, 14], iconAnchor: [7, 7] })
       });
     });
+    // 移動の線はGoogleマップの道のりのような青（白い縁取り付き）。区間に入ったら、これから通る道のりを
+    // 薄い青で先に見せ、進んだところまでを濃い青で伸ばしていく。飛行機は弧の点線。
     tl.legs.forEach(function (l, k) {
-      replay.lines[k] = L.polyline([], {
-        color: '#00BF8F', weight: 4, opacity: 0.85, interactive: false,
-        dashArray: l.transport === 'plane' ? '8 8' : null
-      });
+      var plane = l.transport === 'plane';
+      var full = l.path || null;
+      replay.lines[k] = {
+        plan: full ? L.polyline(full, { color: ROUTE_BLUE, weight: 6, opacity: 0.3, interactive: false, lineCap: 'round', lineJoin: 'round' }) : null,
+        casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
+        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '8 10' : null })
+      };
     });
     resetReplayCamera();
+    renderReplayDays();
     $('#replayClock').hidden = false;
     $('#replayControls').hidden = false;
     renderReplay();
@@ -3331,7 +4615,10 @@
     replay.lastDay = 0;
   }
 
+  var ROUTE_BLUE = '#1A73E8';
+
   function replayLegPoints(l, f) {
+    if (l.path && l.path.length > 1) return Core.pathAt(l.path, f).prefix;
     var s = replay.tl.stops, a = s[l.from], b = s[l.to];
     if (l.transport !== 'plane') {
       var p = Core.arcLatLng(a, b, f, false);
@@ -3351,13 +4638,17 @@
   }
 
   function showReplayDayBanner(dayNumber) {
+    showReplayBanner(dayNumber + '日目');
+  }
+
+  function showReplayBanner(text) {
     var el = $('#replayDayBanner');
     el.hidden = true;
     void el.offsetWidth; // アニメーションを最初から再生し直すため
-    el.textContent = dayNumber + '日目';
+    el.textContent = text;
     el.hidden = false;
-    clearTimeout(showReplayDayBanner.timer);
-    showReplayDayBanner.timer = setTimeout(function () { el.hidden = true; }, 1600);
+    clearTimeout(showReplayBanner.timer);
+    showReplayBanner.timer = setTimeout(function () { el.hidden = true; }, 1600);
   }
 
   function setLayerVisible(layer, visible) {
@@ -3371,7 +4662,12 @@
     var st = Core.replayStateAt(tl, r);
 
     $('#replayDay').textContent = st.dayNumber + '日目　' + replayShortDate(replay.dates[st.dayNumber - 1]);
+    highlightReplayDay(st.dayNumber);
     $('#replayTime').textContent = st.hhmm;
+    if (replay.lastOffsetDiff !== undefined && st.offsetDiff !== replay.lastOffsetDiff && replay.playing) {
+      showReplayBanner('時差 ' + Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff) + '（ここから現地時間）');
+    }
+    replay.lastOffsetDiff = st.offsetDiff;
     if (st.dayNumber !== replay.lastDay) {
       if (replay.lastDay && st.dayNumber > replay.lastDay && replay.playing) showReplayDayBanner(st.dayNumber);
       replay.lastDay = st.dayNumber;
@@ -3389,8 +4685,15 @@
     });
     tl.legs.forEach(function (l, k) {
       var f = r >= l.r1 ? 1 : (r <= l.r0 ? 0 : (r - l.r0) / (l.r1 - l.r0));
-      if (f > 0) replay.lines[k].setLatLngs(replayLegPoints(l, f));
-      setLayerVisible(replay.lines[k], f > 0);
+      var set = replay.lines[k];
+      if (f > 0) {
+        var pts = replayLegPoints(l, f);
+        set.line.setLatLngs(pts);
+        if (set.casing) set.casing.setLatLngs(pts);
+      }
+      if (set.plan) setLayerVisible(set.plan, f > 0 && f < 1);
+      if (set.casing) setLayerVisible(set.casing, f > 0);
+      setLayerVisible(set.line, f > 0);
     });
 
     if (st.icon) {
@@ -3413,7 +4716,9 @@
     // カメラ：移動が始まったら出発地と到着地が両方入るように、移動なしで別の場所に着いたらそこへ寄せる
     if (st.icon && st.icon.legIndex !== replay.lastLeg) {
       var leg = tl.legs[st.icon.legIndex];
-      replayMap.flyToBounds([[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]], { padding: [70, 70], maxZoom: 14, duration: 0.8 });
+      var legBounds = leg.path && leg.path.length > 1 ? leg.path
+        : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
+      replayMap.flyToBounds(legBounds, { padding: [70, 70], maxZoom: 15, duration: 0.8 });
       replay.lastLeg = st.icon.legIndex;
     } else if (!st.icon && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];
@@ -3464,11 +4769,11 @@
     replay.raf = on ? requestAnimationFrame(replayTick) : null;
   }
 
-  function seekReplay(e) {
+  // 再生位置を r（秒）に移す。カメラは移った先の場所へ、アニメーションなしで寄せる
+  function seekReplayTo(r) {
     if (!replay) return;
-    var rect = $('#replayProgress').getBoundingClientRect();
-    var f = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    replay.r = f * replay.tl.totalReal;
+    replay.r = Math.max(0, Math.min(replay.tl.totalReal, r));
+    replay.lastOffsetDiff = undefined; // 飛んだ先で「時差」のバナーを出さない
     replay.lastLeg = -1;
     replay.lastStop = -2;
     replay.captionIndex = -2;
@@ -3476,6 +4781,58 @@
     var here = Core.replayStateAt(replay.tl, replay.r).here;
     if (here) replayMap.setView([here.lat, here.lng], replayMap.getZoom(), { animate: false });
     renderReplay();
+  }
+
+  function seekReplay(e) {
+    if (!replay) return;
+    var rect = $('#replayProgress').getBoundingClientRect();
+    var f = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    seekReplayTo(f * replay.tl.totalReal);
+  }
+
+  // シークバーは、タップだけでなく指でつまんで動かせるようにする（以前はタップしかできず、
+  // 「この日から見たい」ときに合わせにくかった）。動かしているあいだは一時停止し、離したら元に戻す。
+  function initReplaySeekDrag() {
+    var bar = $('#replayProgress'), dragging = false, wasPlaying = false;
+    bar.addEventListener('pointerdown', function (e) {
+      if (!replay) return;
+      dragging = true;
+      wasPlaying = replay.playing;
+      if (wasPlaying) setReplayPlaying(false);
+      bar.classList.add('dragging');
+      try { bar.setPointerCapture(e.pointerId); } catch (err) { /* 古いブラウザ */ }
+      seekReplay(e);
+      e.preventDefault();
+    });
+    bar.addEventListener('pointermove', function (e) { if (dragging) seekReplay(e); });
+    var end = function () {
+      if (!dragging) return;
+      dragging = false;
+      bar.classList.remove('dragging');
+      if (wasPlaying) setReplayPlaying(true);
+    };
+    bar.addEventListener('pointerup', end);
+    bar.addEventListener('pointercancel', end);
+  }
+
+  // 「1日目 12/12」…の日ボタン。押すとその日の最初の予定へ飛ぶ。今いる日を強調する
+  function renderReplayDays() {
+    var el = $('#replayDays');
+    var days = Core.replayDayStarts(replay.tl);
+    replay.dayStarts = days;
+    el.hidden = days.length < 2;
+    el.innerHTML = days.map(function (d) {
+      return '<button type="button" class="replay-day-chip" data-day="' + d.dayNumber + '">' + d.dayNumber + '日目' +
+        (d.date ? '<span>' + escapeHtml(replayShortDate(d.date)) + '</span>' : '') + '</button>';
+    }).join('');
+  }
+
+  function highlightReplayDay(dayNumber) {
+    $all('.replay-day-chip', $('#replayDays')).forEach(function (b) {
+      var on = Number(b.dataset.day) === dayNumber;
+      if (on && !b.classList.contains('on')) b.scrollIntoView({ block: 'nearest', inline: 'center' });
+      b.classList.toggle('on', on);
+    });
   }
 
   function stopReplay() {
@@ -3494,29 +4851,74 @@
   }
 
   // ---------- 初期化 ----------
-  function init() {
-    $('#btnCloseLightbox').addEventListener('click', closePhotoLightbox);
-    $('#photoLightbox').addEventListener('click', function (e) {
-      if (e.target === e.currentTarget) closePhotoLightbox();
+  // ---------- 入力欄の×（中身を消す）ボタン ----------
+  // URLなどを入れたあと消すのが面倒、という要望より。1行の入力欄（テキスト・URL・検索・メール・数字）を
+  // 編集しているあいだ、中身があれば右端に×を1つだけ出す（iOS標準の「編集中だけ出る消去ボタン」と同じ考え方）。
+  // 入力欄ごとに要素を足すと、親の並び（検索欄の横並び・レビューの2列など）の幅が崩れるので、
+  // 画面に1つだけ置いたボタンを、編集中の欄の上に重ねて動かす。後から描く欄（レビュー項目など）にも効く。
+  // 複数行の欄（エピソードなど）は、長文を一度に消してしまうと困るので対象にしない。
+  var CLEARABLE_TYPES = ['text', 'url', 'search', 'email', 'number'];
+  var clearTarget = null;
+
+  function isClearable(el) {
+    return !!(el && el.tagName === 'INPUT' && CLEARABLE_TYPES.indexOf(el.type) !== -1 &&
+      !el.readOnly && !el.disabled && !el.hasAttribute('data-no-clear'));
+  }
+
+  function placeClearButton() {
+    var btn = $('#inputClearBtn');
+    if (!clearTarget || !clearTarget.value || !document.body.contains(clearTarget)) { btn.hidden = true; return; }
+    var r = clearTarget.getBoundingClientRect();
+    if (!r.width) { btn.hidden = true; return; }
+    btn.style.top = (r.top + r.height / 2 - 14) + 'px';
+    btn.style.left = (r.right - 32) + 'px';
+    btn.hidden = false;
+  }
+
+  function initClearButtons() {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'inputClearBtn';
+    btn.className = 'input-clear-btn';
+    btn.setAttribute('aria-label', '入力を消す');
+    btn.textContent = '×';
+    btn.hidden = true;
+    document.body.appendChild(btn);
+    // 押したときに入力欄からフォーカスが外れる（＝ボタンが消える）前に処理する
+    btn.addEventListener('pointerdown', function (e) { e.preventDefault(); });
+    btn.addEventListener('click', function () {
+      if (!clearTarget) return;
+      clearTarget.value = '';
+      clearTarget.dispatchEvent(new Event('input', { bubbles: true }));
+      clearTarget.dispatchEvent(new Event('change', { bubbles: true }));
+      clearTarget.focus();
+      placeClearButton();
     });
-    $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(-1); });
-    $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); showLightboxPhoto(1); });
+    document.addEventListener('focusin', function (e) {
+      clearTarget = isClearable(e.target) ? e.target : null;
+      placeClearButton();
+    });
+    document.addEventListener('focusout', function () {
+      setTimeout(function () {
+        if (!isClearable(document.activeElement)) { clearTarget = null; placeClearButton(); }
+      }, 0);
+    });
+    document.addEventListener('input', function (e) { if (e.target === clearTarget) placeClearButton(); });
+    window.addEventListener('scroll', placeClearButton, true);
+    window.addEventListener('resize', placeClearButton);
+  }
+
+  function init() {
+    initClearButtons();
+    $('#btnCloseLightbox').addEventListener('click', closeMediaViewer);
+    $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); goToMedia(viewer.index - 1, true); });
+    $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); goToMedia(viewer.index + 1, true); });
     $('#btnSaveLightboxPhoto').addEventListener('click', function (e) {
       e.stopPropagation();
-      var id = lightboxState.photoIds[lightboxState.index];
-      if (id) saveMediaFromUrl(photoUrl(id), id, e.currentTarget);
+      var it = viewer.items[viewer.index];
+      if (it) saveMediaFromUrl(photoUrl(it.id), it.id, e.currentTarget);
     });
-    initLightboxSwipe();
-    $('#btnCloseVideoLightbox').addEventListener('click', closeVideoLightbox);
-    $('#btnSaveLightboxVideo').addEventListener('click', function (e) {
-      e.stopPropagation();
-      var src = $('#lightboxVideo').src;
-      var filename = (src.split('/').pop() || 'video.mp4').split('#')[0].split('?')[0];
-      saveMediaFromUrl(src, filename, e.currentTarget);
-    });
-    $('#videoLightbox').addEventListener('click', function (e) {
-      if (e.target === e.currentTarget) closeVideoLightbox();
-    });
+    initMediaViewerGestures();
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
     $('#btnOpenSettlement').addEventListener('click', openSettlement);
     $('#filterCompanion').addEventListener('change', function (e) { state.homeFilters.companion = e.target.value; renderHomeTripList(); });
@@ -3526,6 +4928,9 @@
     $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
+    $('#entPlaceCandidates').addEventListener('change', previewSelectedPlace);
+    $('#btnMapZoomIn').addEventListener('click', function () { zoomPlaceFrame(1); });
+    $('#btnMapZoomOut').addEventListener('click', function () { zoomPlaceFrame(-1); });
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); showPlaceMapPreview(); }
     });
@@ -3563,14 +4968,21 @@
     $('#btnOpenReplay').addEventListener('click', openReplay);
     $('#btnCloseReplay').addEventListener('click', closeReplay);
     $('#btnReplayToggle').addEventListener('click', function () { if (replay) setReplayPlaying(!replay.playing); });
-    $('#btnReplayRestart').addEventListener('click', function () {
-      if (!replay) return;
-      replay.r = 0;
-      resetReplayCamera();
-      renderReplay();
-      setReplayPlaying(true);
+    $('#btnReplayPrev').addEventListener('click', function () {
+      if (replay) seekReplayTo(Core.replayNeighborStop(replay.tl, replay.r, -1));
     });
-    $('#replayProgress').addEventListener('click', seekReplay);
+    $('#btnReplayNext').addEventListener('click', function () {
+      if (replay) seekReplayTo(Core.replayNeighborStop(replay.tl, replay.r, 1));
+    });
+    $('#replayDays').addEventListener('click', function (e) {
+      var chip = e.target.closest('.replay-day-chip');
+      if (!chip || !replay) return;
+      var d = (replay.dayStarts || []).filter(function (x) { return x.dayNumber === Number(chip.dataset.day); })[0];
+      if (!d) return;
+      seekReplayTo(d.r);
+      if (!replay.playing) setReplayPlaying(true);
+    });
+    initReplaySeekDrag();
     ['nt', 'te'].forEach(function (prefix) {
       $('#' + prefix + 'CoverPhotoPicker').addEventListener('click', function () { $('#' + prefix + 'CoverPhoto').click(); });
       $('#' + prefix + 'CoverPhoto').addEventListener('change', function (e) {
@@ -3582,22 +4994,26 @@
     $('#btnVoiceRecord').addEventListener('click', handleVoiceRecordToggle);
     $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
     $('#btnCreateTextEntries').addEventListener('click', handleCreateTextEntries);
+    $('#btnOrganizeMemoAi').addEventListener('click', function () { organizeMemoWithAi(); });
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);
 
     $('#btnSaveEntry').addEventListener('click', saveEntry);
     $('#btnDeleteEntry').addEventListener('click', deleteEntry);
+    $('#entTravelDepart').addEventListener('input', updateTravelDuration);
+    $('#entTravelArrive').addEventListener('input', updateTravelDuration);
     $('#btnAddCostItem').addEventListener('click', function () {
       state.formCostItems.push({ label: '', amount: 0 });
       renderCostItems();
     });
 
     $('#entPhotoPicker').addEventListener('click', function () { $('#entPhoto').click(); });
+    initPhotoReorder();
     $('#entPhoto').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
       Promise.all(files.map(function (f) { return fileToCompressedBlob(f, 1280, 0.72); })).then(function (blobs) {
-        blobs.forEach(function (blob) { state.pendingPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
+        blobs.forEach(function (blob) { state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
         renderPhotoPreview();
       });
       e.target.value = '';
@@ -3626,6 +5042,7 @@
     });
 
     $('#btnLogout').addEventListener('click', function () {
+      if (loadCurrentUser() && loadCurrentUser().token) api('/auth/logout', 'POST', {}).catch(function () {});
       clearCurrentUser();
       renderAccountRow();
       goHome();
@@ -3646,6 +5063,7 @@
     });
     $('#btnManageBilling').addEventListener('click', startBillingPortal);
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
+    initSocial();
 
     $('#mylogSort').addEventListener('click', function (e) {
       var btn = e.target.closest('.sort-btn');
@@ -3726,7 +5144,7 @@
     if (!code) { $('#loginStatus').textContent = 'コードを入力してください。'; return; }
     $('#loginStatus').textContent = '確認中…';
     api('/auth/email/verify', 'POST', { email: email, code: code }).then(function (res) {
-      ensureAccountAndProceed({ name: name || res.name || email, email: res.email, provider: 'email' });
+      ensureAccountAndProceed({ name: name || res.name || email, email: res.email, provider: 'email', token: res.token || '' });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
       if (msg === 'wrong_code') $('#loginStatus').textContent = 'コードが正しくありません。';
@@ -3764,6 +5182,7 @@
     } else if (target === 'tripDetail' && state.trip) {
       showScreen('tripDetail');
       renderTripDetail();
+      if (loggedIn) loadSocial();
     } else if (target === 'voiceEntryForm' && state.trip) {
       openVoiceEntryForm();
     } else if (target === 'mylog' && loggedIn) {

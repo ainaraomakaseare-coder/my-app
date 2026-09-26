@@ -119,3 +119,57 @@ npx wrangler deploy
 ```
 
 反映できたかは `npx wrangler d1 execute tabilog-db --remote --command "PRAGMA table_info(blocks);"` の結果に`transport`があるかで確認できる。
+
+## セッション・いいね・コメント（2026-09-25 追加）
+
+ログイン後の本人確認をセッショントークンにし（docs/adr/0005）、旅行・記録へのいいね・コメント・通報・ブロックを追加した（docs/adr/0006）。
+
+**反映手順（順番厳守）**：新しいテーブル（`sessions`・`likes`・`comments`・`user_blocks`・`comment_reports`）を**`wrangler deploy`より先に**作る。逆順だと、ログイン（コードの確認）がSQLエラーで失敗する。テーブルを足すだけなので既存データには影響しない。
+
+```
+git pull
+npx wrangler d1 execute tabilog-db --remote --file migrations/0016_sessions_social.sql
+npx wrangler deploy
+```
+
+`migrations/0016_sessions_social.sql`は今回の5つのテーブルの`CREATE TABLE IF NOT EXISTS`だけを抜き出したもの（`schema.sql`の先頭には古い`DROP TABLE IF EXISTS episodes`が残っているので、本番では全体を実行しない）。何度実行しても既存データは変わらない。
+
+**通報の通知先**：`npx wrangler secret put REPORT_NOTIFY_EMAIL`で運営者のメールアドレスを登録すると、コメントが通報されたときにResend経由でメールが届く（`RESEND_API_KEY`はログイン用に設定済みのものを使う）。`wrangler.jsonc`は公開リポジトリに入っているので、メールアドレスはそこに書かずsecretにする。
+
+**トークン必須への切り替え**：1.1.0以降のiOSアプリが行き渡ったら、`vars`に`"REQUIRE_SESSION": "1"`を足して`wrangler deploy`する。以後、トークンを送らない古いアプリからのアカウント操作は拒否される。
+
+## 紹介文のレビュー項目・移動の情報（2026-09-25 追加）
+
+評価にレビュー項目（ratings.review）、記録に移動の情報（entries.travel）の列を足した（docs/adr/0007）。**wrangler deployより先に** migrations/0017_review_travel.sql を本番で1回だけ実行する（逆順だと評価・記録の保存がSQLエラーになる）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel.sql
+```
+
+## 場所の候補検索（2026-09-25 追加）
+
+記録フォームの「場所名で検索」は、以前はGoogleマップが一番上に出した場所しか選べなかった。`GET /places/search?q=`でNominatimから最大8件（重要度の高い順）を返し、プルダウンで選べるようにした。どれも小さな同名地区なら、Open-Meteoの市区町村を先に出す。選んだ候補は座標入りの地図URL（`?api=1&query=緯度,経度`）になるので、地図でふりかえるでもその場所へぴったり移動する。DBの変更は無い。
+
+## 道のり（青い線）と、場所の準備の高速化（2026-09-25 追加）
+
+`GET /route?profile=car|foot|bike&from=緯度,経度&to=緯度,経度` で、OpenStreetMapのルート検索（routing.openstreetmap.de、無料・APIキー不要）から道路に沿った道のりを返す（30日キャッシュ、1500km超は調べない）。`GET /geocode?quick=1` はNominatimを使わないと分からないものを `{ pending: true }` で返す。どちらもDBの変更は無い（docs/adr/0008）。
+
+## 時差（2026-09-25 追加）
+
+`GET /timezone?lat=&lng=` で場所のタイムゾーン名（例：Europe/London）を返す（Open-Meteo、無料・APIキー不要、30日キャッシュ）。DBの変更は無い（docs/adr/0009）。
+
+## 移動の予定の移動時間（2026-09-26 追加）
+
+予定に移動時間（blocks.move_minutes、分）の列を足した。予定の種類が「移動」のときだけ、移動手段と一緒に入力する。**wrangler deployより先に** migrations/0018_block_move_minutes.sql を本番で1回だけ実行する（逆順だと予定の作成・保存がSQLエラーになる）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --file migrations/0018_block_move_minutes.sql
+```
+
+## メモの取り込み（2026-09-26 追加）
+
+AIを使わない取り込み（`POST /trips/:id/memo-blocks`）と、メモをAIで整理した回数の列（accounts.memo_uses_this_period）を足した。**wrangler deployより先に** migrations/0019_memo_uses.sql を本番で1回だけ実行する（逆順だとアカウントの確認・メモの整理がSQLエラーになる）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --file migrations/0019_memo_uses.sql
+```

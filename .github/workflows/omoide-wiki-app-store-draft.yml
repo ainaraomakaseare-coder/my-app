@@ -1,0 +1,30 @@
+name: おもいでWiki App Store 申請の下書きを入力
+# App Store Connect に、説明文・キーワード・スクリーンショット・審査メモ・ビルドなどを入力する。
+# 「審査へ提出」は押さない。入力する中身は apps/day18-omoide-wiki-ios/store-metadata.json。
+# check：いまの状態を読むだけ（何も書き換えない）／apply：下書きを入力する
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check＝確認だけ / apply＝入力する'
+        type: choice
+        options: [apply, check]
+        default: apply
+permissions:
+  contents: read
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: App Store Connect に下書きを入力
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+          MODE: ${{ inputs.mode }}
+        run: node apps/day18-omoide-wiki-ios/scripts/prepare-app-store-draft.mjs "$MODE"

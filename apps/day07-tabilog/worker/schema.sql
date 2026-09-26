@@ -202,3 +202,76 @@ CREATE INDEX IF NOT EXISTS idx_trip_members_account ON trip_members(account_id);
 -- v15：blocksに transport（移動手段）を追加する一度きりの文。
 -- **wrangler deployより先に**本番環境で下記を1回だけ実行すること（逆順だと予定の保存がSQLエラーになる）。
 -- ALTER TABLE blocks ADD COLUMN transport TEXT NOT NULL DEFAULT '';
+
+-- v16：セッション（ログインの本人確認。docs/adr/0005）。メールOTPの確認に成功したときに発行する
+-- トークンのSHA-256ハッシュだけを置く（トークンそのものは置かない）。新しいテーブルを足すだけなので
+-- 既存データには影響しない。wrangler deployより先に、本番環境でこのCREATE TABLE/INDEXを実行すること。
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_email ON sessions(email);
+
+-- v17：いいね・コメント（友達同士のSNS機能。docs/adr/0006）。旅行（target_type='trip'）と
+-- 記録（target_type='entry'）の両方が対象。書いた人はメールアドレスではなくaccount_idで持つ
+-- （名前はaccountsから引く。他人にメールアドレスを見せない）。trip_idは一覧をまとめて引くため・
+-- 旅行を消したときにまとめて消すために持つ。新しいテーブルを足すだけなので既存データには影響しない。
+CREATE TABLE IF NOT EXISTS likes (
+  id TEXT PRIMARY KEY,
+  trip_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(target_type, target_id, account_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_likes_trip ON likes(trip_id);
+CREATE INDEX IF NOT EXISTS idx_likes_account ON likes(account_id);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id TEXT PRIMARY KEY,
+  trip_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_trip ON comments(trip_id);
+CREATE INDEX IF NOT EXISTS idx_comments_account ON comments(account_id);
+
+-- ブロック：blockerには、blockedのコメントが見えなくなる（Appleの審査ガイドライン1.2の要件）。
+CREATE TABLE IF NOT EXISTS user_blocks (
+  blocker_account_id TEXT NOT NULL,
+  blocked_account_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (blocker_account_id, blocked_account_id)
+);
+
+-- 通報：通報した本人にはそのコメントが見えなくなり、運営者にメールで知らせる（ガイドライン1.2）。
+CREATE TABLE IF NOT EXISTS comment_reports (
+  id TEXT PRIMARY KEY,
+  comment_id TEXT NOT NULL,
+  reporter_account_id TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  UNIQUE(comment_id, reporter_account_id)
+);
+
+-- v18：ratingsに review（人ごとのレビュー項目、JSON）、entriesに travel（移動の情報、JSON）を追加する
+-- 一度きりの文。本番環境へ反映するまでは migrations/0017_review_travel.sql を1回だけ実行すること。
+-- ALTER TABLE ratings ADD COLUMN review TEXT NOT NULL DEFAULT '{}';
+-- ALTER TABLE entries ADD COLUMN travel TEXT NOT NULL DEFAULT '{}';
+
+-- v19：blocksに move_minutes（移動の予定の移動時間、分）を追加する一度きりの文。
+-- 本番環境へ反映するまでは migrations/0018_block_move_minutes.sql を1回だけ実行すること。
+-- ALTER TABLE blocks ADD COLUMN move_minutes INTEGER NOT NULL DEFAULT 0;
+
+-- v20：accountsに memo_uses_this_period（メモをAIで整理した今月の回数）を追加する一度きりの文。
+-- 本番環境へ反映するまでは migrations/0019_memo_uses.sql を1回だけ実行すること。
+-- ALTER TABLE accounts ADD COLUMN memo_uses_this_period INTEGER NOT NULL DEFAULT 0;

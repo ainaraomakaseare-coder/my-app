@@ -31,7 +31,7 @@ function cors(origin, allowed) {
   return {
     "access-control-allow-origin": ok ? origin : allowed,
     "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type, x-voice-meta",
+    "access-control-allow-headers": "content-type, x-voice-meta, authorization",
     "vary": "Origin",
   };
 }
@@ -49,6 +49,67 @@ function uid(prefix) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+/* ---------- セッション（ログインの本人確認。docs/adr/0005） ----------
+ * 以前はクライアントが送ってきたメールアドレスをそのまま信用していたため、他人のメールアドレスを
+ * 知っていればアカウント削除・支払い管理・評価ができてしまった。メールOTPの確認に成功したときに
+ * セッショントークン（推測できない乱数）を発行し、以後は Authorization: Bearer <token> で送ってもらう。
+ * DBにはトークンそのものではなくSHA-256のハッシュだけを置く（DBが漏れてもなりすませない）。
+ *
+ * 審査中・配布済みの古いiOSアプリはトークンを送らないため、当面は「トークンが無ければ従来どおり
+ * 送られてきたメールアドレスを使う」。wrangler.jsoncのvarsで REQUIRE_SESSION を "1" にすると
+ * トークン必須になる（古いアプリが使われなくなったら切り替える）。いいね・コメントは最初から必須。
+ */
+const SESSION_DAYS = 180;
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function issueSession(env, email) {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const token = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const t = nowIso();
+  const expires = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare("INSERT INTO sessions (token_hash, email, created_at, expires_at) VALUES (?,?,?,?)")
+    .bind(await sha256Hex(token), email, t, expires)
+    .run();
+  return token;
+}
+
+function bearerToken(request) {
+  const m = /^Bearer\s+([0-9a-f]{64})$/i.exec(request.headers.get("authorization") || "");
+  return m ? m[1].toLowerCase() : "";
+}
+
+// トークンが有効なら、その本人のメールアドレス。無い・期限切れなら空文字。
+async function sessionEmail(request, env) {
+  const token = bearerToken(request);
+  if (!token) return "";
+  const row = await env.DB.prepare("SELECT email, expires_at FROM sessions WHERE token_hash = ?")
+    .bind(await sha256Hex(token))
+    .first();
+  if (!row || new Date(row.expires_at).getTime() < Date.now()) return "";
+  return row.email;
+}
+
+// 操作する本人のメールアドレスを決める。トークンがあればそれが正（送られてきたメールアドレスと
+// 食い違えば拒否）。無ければ、strictでなく移行期間中なら送られてきたメールアドレスを使う。
+async function resolveEmail(request, env, claimed, strict) {
+  claimed = (claimed || "").trim().toLowerCase();
+  const email = await sessionEmail(request, env);
+  if (email) return claimed && claimed !== email ? { error: "forbidden", status: 403 } : { email };
+  if (strict || env.REQUIRE_SESSION === "1" || !claimed) return { error: "login_required", status: 401 };
+  return { email: claimed };
+}
+
+async function logout(request, env, headers) {
+  const token = bearerToken(request);
+  if (token) await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256Hex(token)).run();
+  return json({ ok: true }, 200, headers);
 }
 
 function isStr(x, max) {
@@ -232,6 +293,7 @@ async function deleteTrip(id, env, headers) {
   await env.DB.prepare("DELETE FROM blocks WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM day_infos WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE trip_id = ?").bind(id).run();
+  await deleteSocialForTrip(env, id);
   await env.DB.prepare("DELETE FROM trips WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
 }
@@ -239,7 +301,7 @@ async function deleteTrip(id, env, headers) {
 /* ---------- blocks（大項目） ---------- */
 
 // この予定の場所まで、どうやって移動したか（地図でふりかえる演出で使う。v15）。空文字は「未設定＝演出なし」。
-const TRANSPORTS = ["", "plane", "taxi", "walk", "train", "bus", "bicycle"];
+const TRANSPORTS = ["", "plane", "car", "taxi", "walk", "train", "bus", "bicycle"];
 
 function validBlockInput(x) {
   if (!x || typeof x !== "object") return false;
@@ -248,6 +310,8 @@ function validBlockInput(x) {
   if (!optStr(x.label, 200)) return false;
   if (x.category !== undefined && !CATEGORIES.includes(x.category)) return false;
   if (x.transport !== undefined && !TRANSPORTS.includes(x.transport)) return false;
+  // moveMinutes：移動の予定の移動時間（分）。0は未入力（v19）
+  if (x.moveMinutes !== undefined && !(Number.isInteger(x.moveMinutes) && x.moveMinutes >= 0 && x.moveMinutes <= 14400)) return false;
   return true;
 }
 
@@ -260,6 +324,7 @@ function rowToBlock(row) {
     label: row.label,
     category: row.category,
     transport: row.transport || "",
+    moveMinutes: row.move_minutes || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -284,13 +349,14 @@ async function createBlock(tripId, request, env, headers) {
     label: (data.label || "").trim(),
     category: data.category || "sightseeing",
     transport: data.transport || "",
+    move_minutes: data.moveMinutes || 0,
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, move_minutes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
   )
-    .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.created_at, row.updated_at)
+    .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.move_minutes, row.created_at, row.updated_at)
     .run();
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, tripId).run();
   return json({ ...rowToBlock(row), entries: [] }, 201, headers);
@@ -310,9 +376,9 @@ async function updateBlock(id, request, env, headers) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   await env.DB.prepare(
-    "UPDATE blocks SET date=?, time=?, label=?, category=?, transport=?, updated_at=? WHERE id=?"
+    "UPDATE blocks SET date=?, time=?, label=?, category=?, transport=?, move_minutes=?, updated_at=? WHERE id=?"
   )
-    .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", merged.transport || "", t, id)
+    .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", merged.transport || "", merged.moveMinutes || 0, t, id)
     .run();
   const updated = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   return json(rowToBlock(updated), 200, headers);
@@ -322,6 +388,7 @@ async function deleteBlock(id, env, headers) {
   const { results: entryRows } = await env.DB.prepare("SELECT id FROM entries WHERE block_id = ?").bind(id).all();
   for (const e of entryRows) {
     await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(e.id).run();
+    await deleteSocialForTarget(env, "entry", e.id);
   }
   await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM blocks WHERE id = ?").bind(id).run();
@@ -363,6 +430,29 @@ async function reorderBlocks(tripId, date, request, env, headers) {
 
 /* ---------- entries（小項目） ---------- */
 
+// 移動の予定の記録に持たせる、紹介文（docs/adr/0007）用の事実情報。★の評価とは違い、誰が見ても同じ
+// 内容なので、人ごとのレビューではなく記録そのものに持つ。全部任意。
+// from/to：区間（ローマ→ロンドン）、company：会社・便名、depart/arrive：出発・到着時刻（HH:MM）、
+// amount：金額（円）。所要時間は出発・到着から計算するので持たない。
+function validTravel(x) {
+  if (x === undefined) return true;
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  if (!optStr(x.from, 60) || !optStr(x.to, 60) || !optStr(x.company, 60)) return false;
+  for (const k of ["depart", "arrive"]) {
+    if (x[k] !== undefined && x[k] !== "" && !TIME_RE.test(x[k])) return false;
+  }
+  if (x.amount !== undefined && x.amount !== null && !(Number.isInteger(x.amount) && x.amount >= 0 && x.amount <= 100000000)) return false;
+  return true;
+}
+
+function cleanTravel(x) {
+  if (!x) return {};
+  const out = {};
+  for (const k of ["from", "to", "company", "depart", "arrive"]) if (x[k]) out[k] = String(x[k]).trim();
+  if (Number.isInteger(x.amount)) out.amount = x.amount;
+  return out;
+}
+
 function validEntryInput(x) {
   if (!x || typeof x !== "object") return false;
   if (!optStr(x.episode, 4000)) return false;
@@ -375,6 +465,7 @@ function validEntryInput(x) {
   if (!optUrl(x.shopUrl, 500)) return false;
   if (!optUrl(x.otherUrl, 500)) return false;
   if (!optStr(x.author, 50)) return false;
+  if (!validTravel(x.travel)) return false;
   if (x.photoIds !== undefined) {
     if (!Array.isArray(x.photoIds) || x.photoIds.length > 20) return false;
     if (!x.photoIds.every((p) => typeof p === "string" && p.length <= 80)) return false;
@@ -402,9 +493,19 @@ function rowToEntry(row) {
     shopUrl: row.shop_url,
     otherUrl: row.other_url,
     author: row.author,
+    travel: parseJsonObject(row.travel),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseJsonObject(text) {
+  try {
+    const v = JSON.parse(text || "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
 }
 
 async function createEntry(blockId, request, env, headers) {
@@ -433,16 +534,17 @@ async function createEntry(blockId, request, env, headers) {
     shop_url: data.shopUrl || "",
     other_url: data.otherUrl || "",
     author: (data.author || "").trim(),
+    travel: JSON.stringify(cleanTravel(data.travel)),
     created_at: t,
     updated_at: t,
   };
   await env.DB.prepare(
-    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, travel, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   )
     .bind(
       row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
-      row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.created_at, row.updated_at
+      row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
     )
     .run();
   return json(rowToEntry(row), 201, headers);
@@ -462,13 +564,14 @@ async function updateEntry(id, request, env, headers) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   await env.DB.prepare(
-    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, updated_at=? WHERE id=?`
+    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
   )
     .bind(
       (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
       JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
       JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
-      merged.mapUrl || "", merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(), t, id
+      merged.mapUrl || "", merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
+      JSON.stringify(cleanTravel(merged.travel)), t, id
     )
     .run();
   const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
@@ -477,6 +580,7 @@ async function updateEntry(id, request, env, headers) {
 
 async function deleteEntry(id, env, headers) {
   await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(id).run();
+  await deleteSocialForTarget(env, "entry", id);
   await env.DB.prepare("DELETE FROM entries WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, headers);
 }
@@ -513,8 +617,41 @@ async function moveEntry(id, request, env, headers) {
  * 1つのentryに、raterEmailごとに1件だけ評価を持てる（UNIQUE制約でupsert）。
  */
 
+// 評価（★）に添える、人ごとのレビュー項目（紹介文用。docs/adr/0007）。全部任意。
+// ◎〇△×の4段階（GRADE）と、選択肢（予約・混雑）、短い文章、金額・数（泊数・回数）。
+// どの項目を出すかは予定の種類（宿泊・食事・観光）で画面側が決めるが、サーバーは種類を問わず受け付ける。
+const REVIEW_GRADES = ["◎", "〇", "△", "×"];
+const REVIEW_GRADE_KEYS = ["price", "location", "value", "hospitality", "amenity", "cleanliness", "breakfast", "taste"];
+const REVIEW_CHOICES = { reservation: ["不要", "推奨", "必須"], crowd: ["空いている", "普通", "混んでいる"] };
+const REVIEW_TEXT_KEYS = { access: 60, roomType: 60, duration: 30, bestTime: 30, menu: 200, other: 300 };
+
+function validReview(x) {
+  if (x === undefined) return true;
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  for (const [k, v] of Object.entries(x)) {
+    if (v === "" || v === null) continue;
+    if (REVIEW_GRADE_KEYS.includes(k)) { if (!REVIEW_GRADES.includes(v)) return false; }
+    else if (REVIEW_CHOICES[k]) { if (!REVIEW_CHOICES[k].includes(v)) return false; }
+    else if (REVIEW_TEXT_KEYS[k]) { if (!isStr(v, REVIEW_TEXT_KEYS[k])) return false; }
+    else if (k === "amount") { if (!(Number.isInteger(v) && v >= 0 && v <= 100000000)) return false; }
+    else if (k === "units") { if (!(Number.isInteger(v) && v >= 1 && v <= 365)) return false; }
+    else return false;
+  }
+  return true;
+}
+
+function cleanReview(x) {
+  const out = {};
+  for (const [k, v] of Object.entries(x || {})) {
+    if (v === "" || v === null || v === undefined) continue;
+    out[k] = typeof v === "string" ? v.trim() : v;
+  }
+  return out;
+}
+
 function validRatingInput(x) {
   if (!x || typeof x !== "object") return false;
+  if (!validReview(x.review)) return false;
   if (!isStr(x.raterEmail, 200) || x.raterEmail.trim().length < 3) return false;
   if (!optStr(x.raterName, 100)) return false;
   // 基本は★1〜5の整数だが、0.1刻みの細かい評価も許可する（例: 3.7）
@@ -535,6 +672,7 @@ function rowToRating(row) {
     raterEmail: row.rater_email,
     raterName: row.rater_name,
     score: row.score,
+    review: parseJsonObject(row.review),
     updatedAt: row.updated_at,
   };
 }
@@ -549,22 +687,32 @@ async function setRating(entryId, request, env, headers) {
     return json({ error: "invalid_json" }, 400, headers);
   }
   if (!validRatingInput(data)) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.raterEmail.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.raterEmail);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
   const name = (data.raterName || "").trim();
   const existing = await env.DB.prepare("SELECT id FROM ratings WHERE entry_id = ? AND rater_email = ?")
     .bind(entryId, email)
     .first();
   const score = roundScore(data.score);
   const t = nowIso();
+  // reviewを送ってこない古いアプリからの★だけの更新では、書いてあるレビュー項目を消さない
+  const review = data.review === undefined ? null : JSON.stringify(cleanReview(data.review));
   if (existing) {
-    await env.DB.prepare("UPDATE ratings SET score=?, rater_name=?, updated_at=? WHERE id=?")
-      .bind(score, name, t, existing.id)
-      .run();
+    if (review === null) {
+      await env.DB.prepare("UPDATE ratings SET score=?, rater_name=?, updated_at=? WHERE id=?")
+        .bind(score, name, t, existing.id)
+        .run();
+    } else {
+      await env.DB.prepare("UPDATE ratings SET score=?, rater_name=?, review=?, updated_at=? WHERE id=?")
+        .bind(score, name, review, t, existing.id)
+        .run();
+    }
   } else {
     await env.DB.prepare(
-      "INSERT INTO ratings (id, entry_id, rater_email, rater_name, score, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO ratings (id, entry_id, rater_email, rater_name, score, review, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
     )
-      .bind(uid("rat"), entryId, email, name, score, t, t)
+      .bind(uid("rat"), entryId, email, name, score, review || "{}", t, t)
       .run();
   }
   const { results } = await env.DB.prepare("SELECT * FROM ratings WHERE entry_id = ?").bind(entryId).all();
@@ -578,7 +726,9 @@ async function deleteRating(entryId, request, env, headers) {
   } catch {
     data = {};
   }
-  const email = (data.raterEmail || "").trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.raterEmail);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
   if (!email) return json({ error: "invalid_input" }, 400, headers);
   await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ? AND rater_email = ?").bind(entryId, email).run();
   const { results } = await env.DB.prepare("SELECT * FROM ratings WHERE entry_id = ?").bind(entryId).all();
@@ -709,33 +859,309 @@ async function geocodePlace(place) {
 // Open-Meteo（市区町村レベル）で探す。Nominatimの利用規約（アプリを識別できるUser-Agent・
 // 結果のキャッシュ・1秒1回まで）に従い、結果はCache APIに30日置き、連続呼び出しの間隔は
 // クライアント側で空ける（cached:falseのときだけ待つ）。
+//
+// Nominatimの先頭の候補をそのまま使うと、「山梨」が千葉県四街道市の同名の地区になるなど、
+// 県・市より小さな同名の地名が選ばれることがあった。海外旅行でも使うので国内に絞ることはせず、
+// 世界全体から数件もらって重要度（importance、有名さの目安）が一番高いものを選ぶ
+// （ソウル→ソウル駅ではなくソウル特別市）。それでも重要度が低い候補しか無いときは、
+// 小さな同名地区の可能性が高いので、人口の多い市区町村を返すOpen-Meteoの結果を優先する
+// （「山梨」はNominatimには「山梨県」の名前でしか無く、Open-Meteoなら山梨市が返る）。
+// 選び方を変えたとき、古い結果を使い続けないようキャッシュのキーに版（v2）を付けた。
 const GEOCODE_CACHE_SECONDS = 60 * 60 * 24 * 30;
+// この重要度より低い候補しか無ければOpen-Meteoを優先する（小さな同名地区は0.2未満、
+// 駅・観光地・都市は0.4以上になることが多い）。
+const GEOCODE_MIN_IMPORTANCE = 0.3;
 
-async function geocodeForReplay(q, headers, ctx) {
-  q = (q || "").trim();
-  if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
-  const cache = caches.default;
-  const cacheKey = new Request("https://tabilog-geocode.cache/?q=" + encodeURIComponent(q));
-  const hit = await cache.match(cacheKey);
-  if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
+function pickNominatimCandidate(list) {
+  if (!Array.isArray(list)) return null;
+  let best = null;
+  for (const c of list) {
+    const lat = parseFloat(c.lat), lng = parseFloat(c.lon);
+    if (!isFinite(lat) || !isFinite(lng)) continue;
+    const importance = Number(c.importance) || 0;
+    if (!best || importance > best.importance) best = { lat, lng, importance };
+  }
+  return best;
+}
 
-  let result = null;
+async function nominatimSearch(q) {
   try {
     const res = await fetch(
-      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ja&q=" + encodeURIComponent(q),
+      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=ja&q=" + encodeURIComponent(q),
       { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
     );
-    if (res.ok) {
-      const arr = await res.json();
-      if (Array.isArray(arr) && arr[0]) result = { lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon) };
-    }
+    return res.ok ? pickNominatimCandidate(await res.json()) : null;
   } catch {
-    // Nominatimが落ちている・遅いときはOpen-Meteoに任せる
+    return null; // Nominatimが落ちている・遅いときはOpen-Meteoに任せる
   }
-  if (!result) {
+}
+
+// 地名（「新宿」「山梨」など）を緯度経度にする。
+async function geocodeText(q) {
+  let result = await nominatimSearch(q);
+  if (!result || result.importance < GEOCODE_MIN_IMPORTANCE) {
     const g = await geocodePlace(q).catch(() => null);
     if (g) result = { lat: g.lat, lng: g.lon };
   }
+  return result;
+}
+
+// ---- 記録の「地図」に入っているGoogleマップのURLから場所を得る ----
+// 実際の記録の地図はほとんどがGoogleマップの共有リンク（maps.app.goo.gl/…）で、展開すると
+// maps.google.com/?q=34.69,135.50（座標）か ?q=〒542-0075 大阪府…ビル 5F 店名（住所）になる。
+// 短縮URLの展開で任意のURLへ通信しないよう、GoogleマップのドメインだけをHTTPSで辿る。
+const MAP_URL_HOSTS = [
+  "maps.app.goo.gl", "goo.gl", "maps.google.com", "www.google.com", "google.com",
+  "maps.google.co.jp", "www.google.co.jp", "google.co.jp",
+];
+
+async function resolveMapUrl(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return null; }
+  for (let hop = 0; hop < 4; hop++) {
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    if (!MAP_URL_HOSTS.includes(u.hostname)) return null;
+    if (u.hostname !== "maps.app.goo.gl" && u.hostname !== "goo.gl") return u;
+    u.protocol = "https:";
+    const res = await fetch(u.toString(), { redirect: "manual" });
+    const loc = res.headers.get("location");
+    if (!loc) return null;
+    try { u = new URL(loc, u); } catch { return null; }
+  }
+  return null;
+}
+
+function validLatLng(lat, lng) {
+  lat = parseFloat(lat); lng = parseFloat(lng);
+  return isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+}
+
+// 展開後のURLから、座標（そのまま使う）か、検索する文字列（店名・住所）を取り出す。
+// 精度の高い順：場所ページの!3d…!4d…（そのお店の座標）→ ?q=座標 → /@座標（画面の中心）→ 文字列。
+function parseMapUrl(u) {
+  const href = u.href;
+  let m = /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/.exec(href);
+  if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
+  const q = (u.searchParams.get("q") || u.searchParams.get("query") || "").trim();
+  m = /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.exec(q);
+  if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
+  m = /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/.exec(u.pathname);
+  if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
+  m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
+  let text = q;
+  if (!text && m) {
+    try { text = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { text = ""; }
+  }
+  return text ? { text } : null;
+}
+
+// 住所つきの文字列はそのままだと見つからないことが多いので、郵便番号（〒・米国ZIP・ブラジルCEP）を
+// 外して全角→半角にし、段階的に粗くして探す（実際の記録のリンクで確かめた順）。
+// - 日本：「大阪府大阪市中央区難波千日前１２−７ Yes・Namba ビル 5F 店名」→ 全文 → 住所部分 → 番地より前（町名まで）
+// - 海外：「店名 - 住所, 市 - 州, 国」「店名, 住所, 市, 州 国」→ 全文 → 店名を外した住所 → 最後の3区切り → 最後の2区切り（市のあたり）
+// 店名だけでは探さない（チェーン店だと別の都市の店舗が当たるため）。どれでも見つからなければ
+// 見つからない扱いにし、その予定は移動の目的地にしない（国の中心のような大ざっぱな位置に飛ぶよりよい）。
+function mapTextCandidates(text) {
+  const t = text.normalize("NFKC")
+    .replace(/〒\s*\d{3}-\d{4}/g, " ")
+    .replace(/\b\d{5}(?:-\d{3,4})?\b/g, " ")
+    .replace(/\s+/g, " ").trim();
+  const list = [t];
+  const jp = /\S*[都道府県]\S*/.exec(t);
+  if (jp) {
+    list.push(jp[0], jp[0].replace(/\d.*$/, "")); // 最初の数字（番地・丁目）から後ろを落とす
+  } else {
+    const parts = t.split(/\s+-\s+|,\s*/).map((s) => s.trim()).filter(Boolean);
+    if (parts.length >= 2) list.push(parts.slice(1).join(", "));
+    if (parts.length >= 3) list.push(parts.slice(-3).join(", "), parts.slice(-2).join(", "));
+  }
+  return [...new Set(list.filter((s) => s && s.length >= 2))].slice(0, 4);
+}
+
+// quick=true：Nominatim（1秒に1回まで）を使わないと分からないものは調べず、{ pending: true } を返す。
+// アプリは座標がすぐ分かるものを先に全部同時に聞き、pendingだったものだけを1.1秒ずつ空けて聞き直す
+// （以前は全部を1.1秒ずつ空けていたので、「地図で場所を探しています」が長かった）。
+async function geocodeMapUrl(raw, quick) {
+  const u = await resolveMapUrl(raw).catch(() => null);
+  if (!u) return null;
+  const parsed = parseMapUrl(u);
+  if (!parsed) return null;
+  if (parsed.coords) return parsed.coords;
+  if (quick) return { pending: true };
+  // お店や住所は具体的な場所なので、重要度が低くても見つかったNominatimの結果を使う
+  const candidates = mapTextCandidates(parsed.text);
+  for (let i = 0; i < candidates.length; i++) {
+    if (i > 0) await new Promise((ok) => setTimeout(ok, 1100)); // Nominatimは1秒1回まで
+    const r = await nominatimSearch(candidates[i]);
+    if (r) return r;
+  }
+  return null;
+}
+
+// q：記録の地図のURL（今のアプリ）か、地名（見出しから推測していた以前のアプリ。審査中・配布済みの
+// iOSアプリのために残す）。
+// 記録フォームの「場所名で検索」用に、候補を複数返す（先頭が違う場所だったときに選び直せるように）。
+// 地図でふりかえると同じNominatimを使い、世界中を対象に最大8件。結果はCache APIに30日置く。
+async function searchPlaces(q, headers, ctx) {
+  q = (q || "").trim();
+  if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-places.cache/v2?q=" + encodeURIComponent(q));
+  const hit = await cache.match(cacheKey);
+  if (hit) return json(await hit.json(), 200, headers);
+  let list = [];
+  try {
+    const res = await fetch(
+      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&accept-language=ja&q=" + encodeURIComponent(q),
+      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+    );
+    if (res.ok) list = await res.json();
+  } catch {
+    list = [];
+  }
+  list = (Array.isArray(list) ? list : []).slice().sort((a, b) => (Number(b.importance) || 0) - (Number(a.importance) || 0));
+  // 地図でふりかえると同じく、小さな同名地区しか無い（重要度が低い）ときは、市区町村を返すOpen-Meteoの
+  // 候補を先に出す（「山梨」はNominatimだと千葉県・北海道の同名地区ばかりで、山梨県が出てこない）
+  let cities = [];
+  if (!list.length || (Number(list[0].importance) || 0) < GEOCODE_MIN_IMPORTANCE) {
+    try {
+      const res = await fetch("https://geocoding-api.open-meteo.com/v1/search?count=5&language=ja&format=json&name=" + encodeURIComponent(q));
+      const data = res.ok ? await res.json() : null;
+      cities = ((data && data.results) || []).map((r) => ({
+        name: r.name,
+        address: (r.country === "日本" ? [r.admin1, r.admin2] : [r.country, r.admin1]).filter(Boolean).join(" "),
+        lat: r.latitude, lng: r.longitude,
+      }));
+    } catch {
+      cities = [];
+    }
+  }
+  if (!list.length && !cities.length) return json({ places: [] }, 200, headers);
+  const seen = new Set();
+  const places = cities.concat(list
+    .map((r) => {
+      const full = String(r.display_name || "");
+      const name = String(r.name || full.split(",")[0] || "").trim();
+      // display_nameは「番地, 町, 市, 県, 郵便番号, 国」のように細かい順に並ぶので、郵便番号を除き、
+      // 大きい方から3つ（県 市 区）を見せる。海外は国名を先頭に添える（日本国内なら国名は省く）。
+      const parts = full.split(",").map((x) => x.trim()).filter((x) => x && x !== name && !/^[\d\-\s]{3,10}$/.test(x));
+      const country = parts[parts.length - 1] || "";
+      const big = parts.slice(0, -1).slice(-3).reverse();
+      return {
+        name,
+        address: (country === "日本" ? big : [country].concat(big)).join(" "),
+        lat: parseFloat(r.lat), lng: parseFloat(r.lon),
+      };
+    }))
+    .filter((x) => x.name && isFinite(x.lat) && isFinite(x.lng))
+    .filter((x) => { const k = x.name + "|" + x.lat.toFixed(3) + "," + x.lng.toFixed(3); if (seen.has(k)) return false; seen.add(k); return true; });
+  const body = { places };
+  ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+  })));
+  return json(body, 200, headers);
+}
+
+// 「地図でふりかえる」の移動を、直線ではなく実際の道路に沿った道のり（Googleマップの青い線のようなもの）で
+// 見せるためのルート検索（docs/adr/0008）。OpenStreetMapのルート検索（FOSSGISが運営する無料のOSRM、
+// routing.openstreetmap.de）を使う。共用の無料サービスなので、アプリを識別できるUser-Agentを付け、
+// 同じルートはCache APIに30日置いて問い合わせを減らす。遠すぎる移動（1500km超）は調べない。
+const ROUTE_PROFILES = {
+  car: "routed-car/route/v1/driving",
+  foot: "routed-foot/route/v1/foot",
+  bike: "routed-bike/route/v1/bike",
+};
+const ROUTE_MAX_KM = 1500;
+const ROUTE_MAX_POINTS = 400;
+
+function parseLatLng(text) {
+  const m = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(text || "");
+  return m ? validLatLng(m[1], m[2]) : null;
+}
+
+function distanceKm(a, b) {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
+}
+
+// 場所（緯度・経度）のタイムゾーン名（例：Europe/London）。時差のある旅行で、現地時間の時刻を
+// 世界共通の時刻に直して並べるために使う（docs/adr/0009）。天気と同じOpen-Meteo（無料・APIキー不要）の
+// timezone=autoで求め、30日キャッシュする。時差そのもの（サマータイム込み）はアプリ側でIntlが計算する。
+async function getTimezone(url, headers, ctx) {
+  const at = parseLatLng((url.searchParams.get("lat") || "") + "," + (url.searchParams.get("lng") || ""));
+  if (!at) return json({ error: "invalid_input" }, 400, headers);
+  const key = at.lat.toFixed(2) + "," + at.lng.toFixed(2);
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-tz.cache/v1?k=" + key);
+  const hit = await cache.match(cacheKey);
+  if (hit) return json(await hit.json(), 200, headers);
+  let body;
+  try {
+    const res = await fetch("https://api.open-meteo.com/v1/forecast?timezone=auto&forecast_days=1&latitude=" + at.lat + "&longitude=" + at.lng);
+    const data = res.ok ? await res.json() : null;
+    if (!data || !data.timezone) return json({ error: "timezone_failed" }, 502, headers);
+    body = { timezone: String(data.timezone) };
+  } catch {
+    return json({ error: "timezone_failed" }, 502, headers);
+  }
+  ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+  })));
+  return json(body, 200, headers);
+}
+
+async function getRoute(url, headers, ctx) {
+  const profile = url.searchParams.get("profile") || "";
+  const from = parseLatLng(url.searchParams.get("from"));
+  const to = parseLatLng(url.searchParams.get("to"));
+  if (!ROUTE_PROFILES[profile] || !from || !to) return json({ error: "invalid_input" }, 400, headers);
+  if (distanceKm(from, to) > ROUTE_MAX_KM) return json({ found: false }, 200, headers);
+  const key = [profile, from.lat.toFixed(5), from.lng.toFixed(5), to.lat.toFixed(5), to.lng.toFixed(5)].join(",");
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-route.cache/v1?k=" + encodeURIComponent(key));
+  const hit = await cache.match(cacheKey);
+  if (hit) return json(await hit.json(), 200, headers);
+
+  let body = { found: false };
+  try {
+    const res = await fetch(
+      "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
+        from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
+      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+    );
+    const data = res.ok ? await res.json() : null;
+    const route = data && data.routes && data.routes[0];
+    const coords = route && route.geometry && route.geometry.coordinates;
+    if (Array.isArray(coords) && coords.length > 1) {
+      // 点が多すぎると重いので間引く（最後の点は必ず残す）
+      const step = Math.ceil(coords.length / ROUTE_MAX_POINTS);
+      const pts = coords.filter((_, i) => i % step === 0 || i === coords.length - 1)
+        .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
+      body = { found: true, path: pts, distance: Math.round(route.distance || 0), duration: Math.round(route.duration || 0) };
+    }
+  } catch {
+    return json({ error: "route_failed" }, 502, headers); // 一時的な失敗はキャッシュしない
+  }
+  ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+  })));
+  return json(body, 200, headers);
+}
+
+async function geocodeForReplay(q, headers, ctx, quick) {
+  q = (q || "").trim();
+  const isUrl = /^https?:\/\//i.test(q);
+  if (!q || q.length > (isUrl ? 2000 : 100)) return json({ error: "invalid_input" }, 400, headers);
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-geocode.cache/v2?q=" + encodeURIComponent(q));
+  const hit = await cache.match(cacheKey);
+  if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
+
+  if (quick && !isUrl) return json({ pending: true }, 200, headers);
+  const result = isUrl ? await geocodeMapUrl(q, quick) : await geocodeText(q);
+  if (result && result.pending) return json({ pending: true }, 200, headers); // まだ調べていないのでキャッシュしない
   const body = result ? { found: true, lat: result.lat, lng: result.lng } : { found: false };
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
@@ -958,7 +1384,8 @@ async function verifyEmailOtp(request, env, headers) {
     return json({ error: "wrong_code" }, 401, headers);
   }
   await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
-  return json({ email, name: row.name }, 200, headers);
+  const token = await issueSession(env, email);
+  return json({ email, name: row.name, token }, 200, headers);
 }
 
 /* ---------- アカウント・参加者（アカウント参加者） ----------
@@ -978,6 +1405,10 @@ function generateAccountId() {
 // 月間の音声入力の上限（docs/adr/0004）。free（無料）は月2回まで
 // （新規登録時にticket_creditsへ3回分のボーナスを付与するため、登録した最初の月だけ実質5回）。
 var PLAN_MONTHLY_LIMIT = { free: 2, basic: 10, premium_plus: 50 };
+// メモをAIで整理する回数（音声とは別の枠、2026-09-26〜）。メモは文字起こしが要らないぶん音声より安いので、
+// 無料でも月10回まで使えるようにした。有料プランは、以前（音声と共通の枠）より減らないようにしている。
+// 決まった形（「10:00 新宿」のような行）のメモは、AIを使わずアプリ側で分けるので回数を使わない。
+var MEMO_MONTHLY_LIMIT = { free: 10, basic: 30, premium_plus: 100 };
 
 function currentPeriodStart() {
   var now = new Date();
@@ -988,10 +1419,10 @@ function currentPeriodStart() {
 async function resetPeriodIfNeeded(env, row) {
   var period = currentPeriodStart();
   if (row.plan_period_start === period) return row;
-  await env.DB.prepare("UPDATE accounts SET plan_period_start=?, voice_uses_this_period=0, updated_at=? WHERE email=?")
+  await env.DB.prepare("UPDATE accounts SET plan_period_start=?, voice_uses_this_period=0, memo_uses_this_period=0, updated_at=? WHERE email=?")
     .bind(period, nowIso(), row.email)
     .run();
-  return { ...row, plan_period_start: period, voice_uses_this_period: 0 };
+  return { ...row, plan_period_start: period, voice_uses_this_period: 0, memo_uses_this_period: 0 };
 }
 
 function rowToAccount(row) {
@@ -1004,6 +1435,8 @@ function rowToAccount(row) {
     voiceUsesThisPeriod: row.voice_uses_this_period || 0,
     voiceMonthlyLimit: limit,
     voiceRemainingThisPeriod: Math.max(0, limit - (row.voice_uses_this_period || 0)),
+    memoMonthlyLimit: MEMO_MONTHLY_LIMIT[row.plan] || MEMO_MONTHLY_LIMIT.free,
+    memoRemainingThisPeriod: Math.max(0, (MEMO_MONTHLY_LIMIT[row.plan] || MEMO_MONTHLY_LIMIT.free) - (row.memo_uses_this_period || 0)),
     ticketCredits: row.ticket_credits || 0,
   };
 }
@@ -1059,7 +1492,9 @@ async function ensureAccount(request, env, headers) {
   }
   if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
   if (!optStr(data.name, 100)) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
   const name = (data.name || "").trim();
   const account = await resetPeriodIfNeeded(env, await getOrCreateAccount(env, email, name));
   return json(rowToAccount(account), 200, headers);
@@ -1082,7 +1517,9 @@ async function deleteAccount(request, env, headers) {
     return json({ error: "invalid_json" }, 400, headers);
   }
   if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(email).first();
   if (!account) return json({ error: "not_found" }, 404, headers);
@@ -1101,6 +1538,8 @@ async function deleteAccount(request, env, headers) {
 
   await env.DB.prepare("DELETE FROM ratings WHERE rater_email = ?").bind(email).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
+  await deleteSocialForAccount(env, account.account_id);
+  await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
   // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
   // 「削除→再登録」を繰り返すだけで無料プランの月間上限(2回)が毎回復活してしまう
   // （新規登録特典の抜け道と同じ構図）。月が変わったときのリセットはresetPeriodIfNeeded()に
@@ -1154,7 +1593,9 @@ async function createCheckoutSession(request, env, headers) {
   if (!priceId) return json({ error: "invalid_plan" }, 400, headers);
   if (!optStr(data.successUrl, 500) || !data.successUrl) return json({ error: "invalid_input" }, 400, headers);
   if (!optStr(data.cancelUrl, 500) || !data.cancelUrl) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   // Checkout StudioでUI上固定された値（fixed_by_ui）は、そのまま使う
   const body = stripeFormBody({
@@ -1210,7 +1651,9 @@ async function createPortalSession(request, env, headers) {
   }
   if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
   if (!optStr(data.returnUrl, 500) || !data.returnUrl) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   const account = await env.DB.prepare("SELECT stripe_customer_id FROM accounts WHERE email = ?").bind(email).first();
   if (!account || !account.stripe_customer_id) return json({ error: "no_subscription" }, 404, headers);
@@ -1317,7 +1760,9 @@ async function joinTrip(tripId, request, env, headers) {
   }
   if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
   if (!optStr(data.name, 100)) return json({ error: "invalid_input" }, 400, headers);
-  const email = data.email.trim().toLowerCase();
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
   const name = (data.name || "").trim();
   const account = await getOrCreateAccount(env, email, name);
   const accountId = account.account_id;
@@ -1522,22 +1967,27 @@ function decodeVoiceMeta(header) {
 
 // 音声入力を使う権利があるか確認する（docs/adr/0004）。実際の消費（回数を減らす）は
 // AI呼び出しが成功した後に行う（失敗した録音でユーザーの枠を消費しないため）。
-async function checkVoiceQuota(env, email) {
+// kind：'voice'（音声入力・レシート。既定）か 'memo'（メモをAIで整理）。枠を使い切ったら回数券を使う。
+async function checkVoiceQuota(env, email, kind) {
   if (!isValidEmailFormat(email)) return { ok: false, reason: "login_required" };
   const normalized = email.trim().toLowerCase();
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(normalized).first();
   if (!account) return { ok: false, reason: "login_required" };
   const reset = await resetPeriodIfNeeded(env, account);
-  const limit = PLAN_MONTHLY_LIMIT[reset.plan] || 0;
-  if (reset.voice_uses_this_period < limit) return { ok: true, via: "plan", email: normalized };
-  if ((reset.ticket_credits || 0) > 0) return { ok: true, via: "ticket", email: normalized };
+  const memo = kind === "memo";
+  const limit = memo ? (MEMO_MONTHLY_LIMIT[reset.plan] || MEMO_MONTHLY_LIMIT.free) : (PLAN_MONTHLY_LIMIT[reset.plan] || 0);
+  const used = memo ? (reset.memo_uses_this_period || 0) : reset.voice_uses_this_period;
+  if (used < limit) return { ok: true, via: "plan", email: normalized, kind: memo ? "memo" : "voice" };
+  if ((reset.ticket_credits || 0) > 0) return { ok: true, via: "ticket", email: normalized, kind: memo ? "memo" : "voice" };
   return { ok: false, reason: reset.plan === "free" ? "premium_required" : "quota_exceeded" };
 }
 
-async function consumeVoiceQuota(env, email, via) {
+async function consumeVoiceQuota(env, email, via, kind) {
   const t = nowIso();
   if (via === "ticket") {
     await env.DB.prepare("UPDATE accounts SET ticket_credits = MAX(0, ticket_credits - 1), updated_at=? WHERE email=?").bind(t, email).run();
+  } else if (kind === "memo") {
+    await env.DB.prepare("UPDATE accounts SET memo_uses_this_period = memo_uses_this_period + 1, updated_at=? WHERE email=?").bind(t, email).run();
   } else {
     await env.DB.prepare("UPDATE accounts SET voice_uses_this_period = voice_uses_this_period + 1, updated_at=? WHERE email=?").bind(t, email).run();
   }
@@ -1660,7 +2110,9 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
   const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
   const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
   const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
-  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(meta.email, 200) && meta.email ? String(meta.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   // プラン・回数券の確認（docs/adr/0004）。有料プランの範囲外なら、高くつくAI呼び出しの前に断る
   const quota = await checkVoiceQuota(env, email);
@@ -1691,6 +2143,29 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
 // （docs/adr/0004）。
 const MAX_TEXT_MEMO_CHARS = 4000;
 
+// 決まった形のメモ（「10:00 新宿」のような時刻で始まる行＝予定、その下の行＝記録）を、アプリ側で分けたものを
+// そのまま保存する。AIを使わないので、ログインも回数も要らない（手で1件ずつ記録を足すのと同じ扱い）。
+// 保存の仕方はAIで整理したときと同じ（saveOrganizedBlocks）。
+const MEMO_MAX_BLOCKS = 100;
+async function createBlocksFromMemo(tripId, request, env, headers) {
+  const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!Array.isArray(data.blocks) || !data.blocks.length || data.blocks.length > MEMO_MAX_BLOCKS) return json({ error: "invalid_input" }, 400, headers);
+  const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
+  const tripDates = tripDateList(trip.start_date, trip.end_date);
+  const dates = tripDates.length ? tripDates : [...new Set(data.blocks.map((b) => b && b.date).filter((d) => isStr(d, 10) && DATE_RE.test(d)))];
+  if (!dates.length) return json({ error: "invalid_date" }, 400, headers);
+  const created = await saveOrganizedBlocks(env, tripId, dates, data.blocks, author);
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  return json({ blocks: created }, 200, headers);
+}
+
 async function createBlocksFromText(tripId, date, request, env, headers) {
   if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
   if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
@@ -1707,9 +2182,11 @@ async function createBlocksFromText(tripId, date, request, env, headers) {
   if (!text) return json({ error: "empty_text" }, 422, headers);
   const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
   const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
-  const email = optStr(data.email, 200) && data.email ? String(data.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(data.email, 200) && data.email ? String(data.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
-  const quota = await checkVoiceQuota(env, email);
+  const quota = await checkVoiceQuota(env, email, "memo");
   if (!quota.ok) return json({ error: quota.reason }, 403, headers);
 
   if (env.AI_RATE_LIMITER) {
@@ -1724,7 +2201,7 @@ async function createBlocksFromText(tripId, date, request, env, headers) {
 
   await saveVoiceTranscript(env, tripId, date, text);
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
-  await consumeVoiceQuota(env, quota.email, quota.via);
+  await consumeVoiceQuota(env, quota.email, quota.via, "memo");
   return json({ blocks: created, transcript: text }, 200, headers);
 }
 
@@ -1751,7 +2228,9 @@ async function createBlocksFromVoiceMultiDay(tripId, request, env, headers) {
   const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
   const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
   const author = optStr(meta.author, 50) && meta.author ? String(meta.author).trim() : "";
-  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(meta.email, 200) && meta.email ? String(meta.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   const quota = await checkVoiceQuota(env, email);
   if (!quota.ok) return json({ error: quota.reason }, 403, headers);
@@ -1792,9 +2271,11 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
   if (!text) return json({ error: "empty_text" }, 422, headers);
   const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
   const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
-  const email = optStr(data.email, 200) && data.email ? String(data.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(data.email, 200) && data.email ? String(data.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
-  const quota = await checkVoiceQuota(env, email);
+  const quota = await checkVoiceQuota(env, email, "memo");
   if (!quota.ok) return json({ error: quota.reason }, 403, headers);
 
   if (env.AI_RATE_LIMITER) {
@@ -1808,7 +2289,7 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
   const created = await saveOrganizedBlocks(env, tripId, dates, result.blocks, author);
 
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
-  await consumeVoiceQuota(env, quota.email, quota.via);
+  await consumeVoiceQuota(env, quota.email, quota.via, "memo");
   return json({ blocks: created, transcript: text }, 200, headers);
 }
 
@@ -1872,7 +2353,9 @@ async function scanReceipt(request, env, headers) {
   if (buf.byteLength === 0 || buf.byteLength > MAX_RECEIPT_IMAGE_BYTES) return json({ error: "invalid_size" }, 413, headers);
 
   const meta = decodeVoiceMeta(getHeader("x-receipt-meta"));
-  const email = optStr(meta.email, 200) && meta.email ? String(meta.email).trim() : "";
+  const auth = await resolveEmail(request, env, optStr(meta.email, 200) && meta.email ? String(meta.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const email = auth.email;
 
   // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
   const quota = await checkVoiceQuota(env, email);
@@ -2104,6 +2587,223 @@ async function getPhoto(id, env, headers) {
 
 /* ---------- routing ---------- */
 
+/* ---------- いいね・コメント（友達同士のSNS機能。docs/adr/0006） ----------
+ * 旅行（target_type='trip'）と記録（'entry'）の両方に、いいね・コメントをつけられる。
+ * 読むのは旅行のリンクを知っている人なら誰でも（旅行そのものと同じ）、書くのはログイン済みの人だけ
+ * （セッショントークン必須。メールアドレスだけの古い方式は受け付けない）。
+ * 書いた人はaccount_idで持ち、名前はaccountsから引く（メールアドレスは他人に見せない）。
+ *
+ * Appleの審査ガイドライン1.2（ユーザーが投稿したものを他の人が見られるアプリ）の要件：
+ * - 不適切な投稿を防ぐ仕組み：明らかな誹謗中傷・差別の語を含むコメントは保存しない（BANNED_WORDS）
+ * - 通報：通報した本人にはそのコメントが見えなくなり、運営者（REPORT_NOTIFY_EMAIL）にメールで知らせる
+ * - ブロック：ブロックした相手のコメントは、自分には見えなくなる
+ */
+const SOCIAL_TARGETS = ["trip", "entry"];
+const COMMENT_MAX_LENGTH = 500;
+// 完全な判定は無理なので、明らかなものだけを弾く（見逃しは通報・ブロックで補う）。
+const BANNED_WORDS = [
+  "死ね", "しね", "氏ね", "殺す", "ころす", "消えろ", "きもい", "キモい", "うざい", "ウザい", "ブス", "ガイジ",
+  "fuck", "shit", "bitch", "kill yourself", "nigger", "faggot", "retard",
+];
+
+function containsBannedWord(text) {
+  const t = text.normalize("NFKC").toLowerCase();
+  return BANNED_WORDS.some((w) => t.includes(w.normalize("NFKC").toLowerCase()));
+}
+
+// ログイン中の本人（セッション必須）のアカウント。無ければ作る（ensureを経ずに来た場合のため）。
+async function requireAccount(request, env) {
+  const auth = await resolveEmail(request, env, "", true);
+  if (auth.error) return auth;
+  const account = await getOrCreateAccount(env, auth.email, "");
+  return { account };
+}
+
+// 対象が本当にその旅行のものか確かめる（他の旅行の記録に書き込ませない）。
+async function targetBelongsToTrip(env, tripId, targetType, targetId) {
+  if (!SOCIAL_TARGETS.includes(targetType) || !isStr(targetId, 100) || !targetId) return false;
+  if (targetType === "trip") {
+    if (targetId !== tripId) return false;
+    return !!(await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first());
+  }
+  const row = await env.DB.prepare(
+    "SELECT b.trip_id FROM entries e JOIN blocks b ON b.id = e.block_id WHERE e.id = ?"
+  ).bind(targetId).first();
+  return !!(row && row.trip_id === tripId);
+}
+
+// 旅行1件分のいいね・コメントをまとめて返す（旅行を開いたときに1回だけ呼ぶ）。
+// ログイン中なら、自分がいいねしたか・自分のコメントか、も付ける。ブロックした相手・通報したコメントは除く。
+async function getTripSocial(tripId, request, env, headers) {
+  const email = await sessionEmail(request, env);
+  const me = email ? await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(email).first() : null;
+  const myId = me ? me.account_id : "";
+
+  const { results: likeRows } = await env.DB.prepare(
+    "SELECT target_type, target_id, account_id FROM likes WHERE trip_id = ?"
+  ).bind(tripId).all();
+  const likes = {};
+  for (const r of likeRows) {
+    const k = r.target_type + ":" + r.target_id;
+    if (!likes[k]) likes[k] = { count: 0, liked: false };
+    likes[k].count++;
+    if (myId && r.account_id === myId) likes[k].liked = true;
+  }
+
+  const { results: commentRows } = await env.DB.prepare(
+    `SELECT c.id, c.target_type, c.target_id, c.account_id, c.body, c.created_at, a.name
+     FROM comments c LEFT JOIN accounts a ON a.account_id = c.account_id
+     WHERE c.trip_id = ? ORDER BY c.created_at ASC`
+  ).bind(tripId).all();
+  let hiddenAccounts = new Set(), hiddenComments = new Set();
+  if (myId) {
+    const { results: blocked } = await env.DB.prepare(
+      "SELECT blocked_account_id FROM user_blocks WHERE blocker_account_id = ?"
+    ).bind(myId).all();
+    hiddenAccounts = new Set(blocked.map((r) => r.blocked_account_id));
+    const { results: reported } = await env.DB.prepare(
+      "SELECT comment_id FROM comment_reports WHERE reporter_account_id = ?"
+    ).bind(myId).all();
+    hiddenComments = new Set(reported.map((r) => r.comment_id));
+  }
+  const comments = commentRows
+    .filter((r) => !hiddenAccounts.has(r.account_id) && !hiddenComments.has(r.id))
+    .map((r) => ({
+      id: r.id, targetType: r.target_type, targetId: r.target_id, accountId: r.account_id,
+      name: r.name || "", body: r.body, createdAt: r.created_at, mine: !!myId && r.account_id === myId,
+    }));
+  return json({ likes, comments, accountId: myId }, 200, headers);
+}
+
+async function readSocialBody(request) {
+  try { return await request.json(); } catch { return null; }
+}
+
+async function setLike(tripId, request, env, headers, on) {
+  const data = await readSocialBody(request);
+  if (!data) return json({ error: "invalid_json" }, 400, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  if (!(await targetBelongsToTrip(env, tripId, data.targetType, data.targetId))) return json({ error: "not_found" }, 404, headers);
+  const accountId = who.account.account_id;
+  if (on) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO likes (id, trip_id, target_type, target_id, account_id, created_at) VALUES (?,?,?,?,?,?)"
+    ).bind(uid("lk"), tripId, data.targetType, data.targetId, accountId, nowIso()).run();
+  } else {
+    await env.DB.prepare("DELETE FROM likes WHERE target_type = ? AND target_id = ? AND account_id = ?")
+      .bind(data.targetType, data.targetId, accountId).run();
+  }
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM likes WHERE target_type = ? AND target_id = ?")
+    .bind(data.targetType, data.targetId).first();
+  return json({ count: row ? row.n : 0, liked: on }, 200, headers);
+}
+
+async function createComment(tripId, request, env, headers) {
+  const data = await readSocialBody(request);
+  if (!data) return json({ error: "invalid_json" }, 400, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const body = typeof data.body === "string" ? data.body.trim() : "";
+  if (!body || body.length > COMMENT_MAX_LENGTH) return json({ error: "invalid_body" }, 400, headers);
+  if (containsBannedWord(body)) return json({ error: "inappropriate" }, 422, headers);
+  if (!(await targetBelongsToTrip(env, tripId, data.targetType, data.targetId))) return json({ error: "not_found" }, 404, headers);
+  const c = {
+    id: uid("cm"), trip_id: tripId, target_type: data.targetType, target_id: data.targetId,
+    account_id: who.account.account_id, body, created_at: nowIso(),
+  };
+  await env.DB.prepare(
+    "INSERT INTO comments (id, trip_id, target_type, target_id, account_id, body, created_at) VALUES (?,?,?,?,?,?,?)"
+  ).bind(c.id, c.trip_id, c.target_type, c.target_id, c.account_id, c.body, c.created_at).run();
+  return json({
+    id: c.id, targetType: c.target_type, targetId: c.target_id, accountId: c.account_id,
+    name: who.account.name || "", body: c.body, createdAt: c.created_at, mine: true,
+  }, 201, headers);
+}
+
+// 自分のコメントだけ消せる
+async function deleteComment(commentId, request, env, headers) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const row = await env.DB.prepare("SELECT account_id FROM comments WHERE id = ?").bind(commentId).first();
+  if (!row) return json({ error: "not_found" }, 404, headers);
+  if (row.account_id !== who.account.account_id) return json({ error: "forbidden" }, 403, headers);
+  await env.DB.prepare("DELETE FROM comment_reports WHERE comment_id = ?").bind(commentId).run();
+  await env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(commentId).run();
+  return json({ ok: true }, 200, headers);
+}
+
+async function reportComment(commentId, request, env, headers, ctx) {
+  const data = (await readSocialBody(request)) || {};
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const c = await env.DB.prepare("SELECT id, trip_id, account_id, body FROM comments WHERE id = ?").bind(commentId).first();
+  if (!c) return json({ error: "not_found" }, 404, headers);
+  const reason = typeof data.reason === "string" ? data.reason.trim().slice(0, 200) : "";
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO comment_reports (id, comment_id, reporter_account_id, reason, created_at) VALUES (?,?,?,?,?)"
+  ).bind(uid("rp"), commentId, who.account.account_id, reason, nowIso()).run();
+  if (env.RESEND_API_KEY && env.REPORT_NOTIFY_EMAIL) {
+    ctx.waitUntil(fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        from: env.RESEND_FROM || "旅の足跡 <onboarding@resend.dev>",
+        to: [env.REPORT_NOTIFY_EMAIL],
+        subject: "旅の足跡：コメントが通報されました",
+        text: "コメントID: " + c.id + "\n旅行ID: " + c.trip_id + "\n書いた人のアカウントID: " + c.account_id
+          + "\n通報した人のアカウントID: " + who.account.account_id + "\n理由: " + (reason || "（未記入）")
+          + "\n\n本文:\n" + c.body + "\n\n24時間以内に内容を確認し、必要ならD1から削除してください。",
+      }),
+    }).catch(() => {}));
+  }
+  return json({ ok: true }, 200, headers);
+}
+
+async function setUserBlock(request, env, headers, on) {
+  const data = (await readSocialBody(request)) || {};
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const target = typeof data.accountId === "string" ? data.accountId.trim() : "";
+  if (!/^\d{6}$/.test(target) || target === who.account.account_id) return json({ error: "invalid_input" }, 400, headers);
+  if (on) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO user_blocks (blocker_account_id, blocked_account_id, created_at) VALUES (?,?,?)"
+    ).bind(who.account.account_id, target, nowIso()).run();
+  } else {
+    await env.DB.prepare("DELETE FROM user_blocks WHERE blocker_account_id = ? AND blocked_account_id = ?")
+      .bind(who.account.account_id, target).run();
+  }
+  return json({ ok: true }, 200, headers);
+}
+
+async function deleteSocialForTarget(env, targetType, targetId) {
+  await env.DB.prepare(
+    "DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE target_type = ? AND target_id = ?)"
+  ).bind(targetType, targetId).run();
+  await env.DB.prepare("DELETE FROM comments WHERE target_type = ? AND target_id = ?").bind(targetType, targetId).run();
+  await env.DB.prepare("DELETE FROM likes WHERE target_type = ? AND target_id = ?").bind(targetType, targetId).run();
+}
+
+async function deleteSocialForTrip(env, tripId) {
+  await env.DB.prepare(
+    "DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE trip_id = ?)"
+  ).bind(tripId).run();
+  await env.DB.prepare("DELETE FROM comments WHERE trip_id = ?").bind(tripId).run();
+  await env.DB.prepare("DELETE FROM likes WHERE trip_id = ?").bind(tripId).run();
+}
+
+async function deleteSocialForAccount(env, accountId) {
+  await env.DB.prepare(
+    "DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE account_id = ?)"
+  ).bind(accountId).run();
+  await env.DB.prepare("DELETE FROM comment_reports WHERE reporter_account_id = ?").bind(accountId).run();
+  await env.DB.prepare("DELETE FROM comments WHERE account_id = ?").bind(accountId).run();
+  await env.DB.prepare("DELETE FROM likes WHERE account_id = ?").bind(accountId).run();
+  await env.DB.prepare("DELETE FROM user_blocks WHERE blocker_account_id = ? OR blocked_account_id = ?")
+    .bind(accountId, accountId).run();
+}
+
 export default {
   async fetch(request, env, ctx) {
     const origin = request.headers.get("origin") || "";
@@ -2153,9 +2853,22 @@ export default {
 
     if (method === "PUT" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return setRating(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return deleteRating(m[1], request, env, headers);
-    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx);
+    if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)\/social$/))) return getTripSocial(m[1], request, env, headers);
+    if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/likes$/))) return setLike(m[1], request, env, headers, true);
+    if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)\/likes$/))) return setLike(m[1], request, env, headers, false);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/comments$/))) return createComment(m[1], request, env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/comments\/([^/]+)$/))) return deleteComment(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/comments\/([^/]+)\/report$/))) return reportComment(m[1], request, env, headers, ctx);
+    if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
+    if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
+    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1");
+    if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
+    if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
+    if (method === "GET" && path === "/places/search") return searchPlaces(url.searchParams.get("q"), headers, ctx);
     if (method === "GET" && path === "/mylog") {
-      return getMyLog((url.searchParams.get("email") || "").trim().toLowerCase(), env, headers);
+      const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
+      if (auth.error) return json({ error: auth.error }, auth.status, headers);
+      return getMyLog(auth.email, env, headers);
     }
 
     if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return setDayPlace(m[1], m[2], request, env, headers);
@@ -2164,6 +2877,7 @@ export default {
 
     if (method === "POST" && path === "/auth/email/send") return sendEmailOtp(request, env, headers);
     if (method === "POST" && path === "/auth/email/verify") return verifyEmailOtp(request, env, headers);
+    if (method === "POST" && path === "/auth/logout") return logout(request, env, headers);
 
     if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
     if (method === "POST" && path === "/accounts/delete") return deleteAccount(request, env, headers);
@@ -2185,6 +2899,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/voice-entries$/))) {
       return createBlocksFromVoiceMultiDay(m[1], request, env, headers);
     }
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/memo-blocks$/))) return createBlocksFromMemo(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/text-entries$/))) {
       return createBlocksFromTextMultiDay(m[1], request, env, headers);
     }
