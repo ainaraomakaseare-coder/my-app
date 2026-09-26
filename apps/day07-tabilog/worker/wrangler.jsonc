@@ -21,6 +21,9 @@
       "bucket_name": "tabilog-photos"
     }
   ],
+  // Workers AIとOpenAIを比べる試作（docs/adr/0012）用。バインディングを追加するだけで
+  // 費用は発生しない（呼び出したときだけNeuronsを消費する）。
+  "ai": { "binding": "AI" },
   "ratelimits": [
     {
       "name": "WRITE_RATE_LIMITER",

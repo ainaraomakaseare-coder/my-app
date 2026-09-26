@@ -566,7 +566,7 @@
             <div class="map-preview" id="entMapPreview" hidden>
               <!-- 候補を選んだとき：指で拡大・縮小でき、ピンを動かして位置を直せる地図（Leaflet） -->
               <div class="place-map" id="entPlaceMap" hidden></div>
-              <p class="hint" id="entPlaceMapHint" hidden>指で拡大・縮小できます。ピンを動かすか地図をタップすると、位置を細かく直せます。</p>
+              <p class="hint" id="entPlaceMapHint" hidden>選んだ場所が地図のURLに入ります。ピンを動かすと位置を直せます。指で拡大・縮小もできます。</p>
               <!-- 「Googleマップで検索」を選んだとき：Googleの埋め込み地図＋拡大・縮小ボタン -->
               <div class="map-frame-wrap" id="entMapFrameWrap">
                 <iframe id="entMapPreviewFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
@@ -575,7 +575,6 @@
                   <button type="button" id="btnMapZoomOut" aria-label="縮小">－</button>
                 </div>
               </div>
-              <button type="button" class="btn ghost small" id="btnUseMapUrl">このURLを地図欄に入れる</button>
             </div>
           </div>
 

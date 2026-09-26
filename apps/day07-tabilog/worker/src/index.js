@@ -9,6 +9,9 @@
  * 「音声でまとめて記録する」機能だけ、唯一OpenAIを呼び出す（他の機能はAI不使用）。
  */
 
+import { parseReceiptText } from "./receipt-parse.js";
+import { s2ToLatLng, extractFeatureS2 } from "./geo-decode.js";
+
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -938,7 +941,8 @@ function validLatLng(lat, lng) {
 }
 
 // 展開後のURLから、座標（そのまま使う）か、検索する文字列（店名・住所）を取り出す。
-// 精度の高い順：場所ページの!3d…!4d…（そのお店の座標）→ ?q=座標 → /@座標（画面の中心）→ 文字列。
+// 精度の高い順：場所ページの!3d…!4d…（そのお店の座標）→ ?q=座標 → /@座標（画面の中心）→
+// 場所を示す内部番号（S2セルID。ftid=や!1s0x…:0x…。店名も座標も無い共有リンクで使われる）→ 文字列。
 function parseMapUrl(u) {
   const href = u.href;
   let m = /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/.exec(href);
@@ -949,9 +953,17 @@ function parseMapUrl(u) {
   m = /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/.exec(u.pathname);
   if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
   m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
-  let text = q;
+  // 壊れた地図URL（「undefined,undefined」など）を地名として探さない（エチオピアに飛んだことがある）
+  let text = /^(undefined|null|NaN)(\s*,\s*(undefined|null|NaN))?$/i.test(q) ? "" : q;
   if (!text && m) {
     try { text = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { text = ""; }
+  }
+  if (!text) {
+    // 「ユニオンステーション」「ステーキの夕食」のように、店名も座標も入らない共有リンク
+    // （data=!4m2!3m1!1s0x…:0x… や ftid=0x…:0x…）は、コロン前の16進数がその場所のS2セルID
+    const s2 = extractFeatureS2(href);
+    const pt = s2 ? s2ToLatLng(s2) : null;
+    if (pt) { const v = validLatLng(pt.lat, pt.lng); if (v) return { coords: v }; }
   }
   return text ? { text } : null;
 }
@@ -1135,13 +1147,81 @@ async function geocodeMapUrl(raw, quick, nears, hint) {
   return null;
 }
 
+// Places API (New) のAutocomplete（docs/adr/0011）。座標は返らないので、選ばれてから
+// /places/details（placeDetails）で取る。sessionは検索の開始ごとにクライアントが1つ作って
+// 一連の呼び出しに使い回すことで、Autocomplete分は無料枠を消費しない
+// （Session Usageの範囲。1検索＝1セッションになるよう、検索し直すたびに新しいsessionを作ってもらう）。
+// キーが無い・呼び出しが失敗した・0件だったときはnullを返し、呼び出し側でNominatim等の予備に回す。
+async function googleAutocomplete(q, session, env) {
+  try {
+    const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+      method: "POST",
+      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({ input: q, languageCode: "ja", sessionToken: session || undefined }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+    const places = suggestions
+      .map((s) => s && s.placePrediction)
+      .filter(Boolean)
+      .map((p) => ({
+        name: (p.structuredFormat && p.structuredFormat.mainText && p.structuredFormat.mainText.text) || "",
+        address: (p.structuredFormat && p.structuredFormat.secondaryText && p.structuredFormat.secondaryText.text) || "",
+        placeId: p.placeId || "",
+      }))
+      .filter((p) => p.name && p.placeId);
+    return places.length ? places : null;
+  } catch {
+    return null;
+  }
+}
+
+const PLACE_ID_RE = /^[A-Za-z0-9_-]{10,300}$/;
+
+// Autocompleteは座標を返さないので、候補を「選択」したタイミングで呼ぶ（GET /places/details）。
+// Place Details Essentials（location・displayName・formattedAddress）だけを聞く。
+// Pro以上のフィールド（評価・営業時間など）を足すと無料枠の単価が変わるので、増やさないこと。
+async function placeDetails(id, session, env, headers) {
+  if (!env.GOOGLE_API_KEY || !PLACE_ID_RE.test(id || "")) return json({ found: false }, 200, headers);
+  try {
+    const params = new URLSearchParams({ languageCode: "ja" });
+    if (session) params.set("sessionToken", session);
+    const res = await fetch("https://places.googleapis.com/v1/places/" + encodeURIComponent(id) + "?" + params.toString(), {
+      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "location,displayName,formattedAddress" },
+    });
+    if (!res.ok) return json({ found: false }, 200, headers);
+    const data = await res.json();
+    const pt = data.location && validLatLng(data.location.latitude, data.location.longitude);
+    if (!pt) return json({ found: false }, 200, headers);
+    return json({
+      found: true,
+      name: (data.displayName && data.displayName.text) || "",
+      address: data.formattedAddress || "",
+      lat: pt.lat,
+      lng: pt.lng,
+    }, 200, headers);
+  } catch {
+    return json({ found: false }, 200, headers);
+  }
+}
+
 // q：記録の地図のURL（今のアプリ）か、地名（見出しから推測していた以前のアプリ。審査中・配布済みの
 // iOSアプリのために残す）。
 // 記録フォームの「場所名で検索」用に、候補を複数返す（先頭が違う場所だったときに選び直せるように）。
-// 地図でふりかえると同じNominatimを使い、世界中を対象に最大8件。結果はCache APIに30日置く。
-async function searchPlaces(q, headers, ctx) {
+// GOOGLE_API_KEYがある間はPlaces API (New)のAutocompleteを先に試す（docs/adr/0011）。失敗・0件の
+// ときだけ、これまでどおりNominatim・ウィキペディア・空港の予備に回る。Googleの結果はCache APIに
+// 置かない（利用規約が長期間のキャッシュを推奨していないため、無理にキャッシュしない）。
+async function searchPlaces(q, headers, ctx, env, session) {
   q = (q || "").trim();
   if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
+  // Googleの候補は座標を持たない（選んでから /places/details で取る）。それを知らない古いアプリ（1.1.0の
+  // ビルド47まで・session を送らない）に返すと「query=undefined,undefined」の地図URLが保存されてしまった
+  // （2026-09-26、大阪旅行で発生）ので、session を送ってくる新しいアプリにだけGoogleの候補を返す。
+  if (env && env.GOOGLE_API_KEY && session) {
+    const google = await googleAutocomplete(q, session, env);
+    if (google) return json({ places: google }, 200, headers);
+  }
   const cache = caches.default;
   const cacheKey = new Request("https://tabilog-places.cache/v4?q=" + encodeURIComponent(q));
   const hit = await cache.match(cacheKey);
@@ -1308,8 +1388,9 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam) {
   const nears = String(nearParam || "").split(";").map(parseLatLng).filter(Boolean).slice(0, 2);
   const hint = isStr(hintParam || "", 100) ? String(hintParam || "").trim() : "";
   const cache = caches.default;
-  // 近くの場所・見出しで結果が変わるので、キャッシュの鍵に含める（v4：探し方を変えたので作り直し）
-  const cacheKey = new Request("https://tabilog-geocode.cache/v4?q=" + encodeURIComponent(q) +
+  // 近くの場所・見出しで結果が変わるので、キャッシュの鍵に含める
+  // （v5：S2セルIDからの座標デコードを追加したので、それまでの「見つからない」を作り直す）
+  const cacheKey = new Request("https://tabilog-geocode.cache/v5?q=" + encodeURIComponent(q) +
     "&near=" + nears.map((n) => n.lat.toFixed(0) + "," + n.lng.toFixed(0)).join(";") + "&hint=" + encodeURIComponent(hint));
   const hit = await cache.match(cacheKey);
   if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
@@ -2023,6 +2104,14 @@ const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions
 const MAX_VOICE_AUDIO_BYTES = 15 * 1024 * 1024; // 数分の音声を想定した上限
 const VOICE_AUDIO_FORMATS = { "audio/webm": "webm", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/ogg": "ogg" };
 
+// Cloudflare Workers AIへの切り替えを検討するための試作（docs/adr/0012）で使うモデルID。
+// 本番の処理はまだ一切これらを使わない（/ai-compareでの比較専用）。
+const WORKERS_AI_WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
+const WORKERS_AI_LLM_MODELS = {
+  qwen3_30b: "@cf/qwen/qwen3-30b-a3b-fp8",
+  gpt_oss_120b: "@cf/openai/gpt-oss-120b",
+};
+
 // 使っているモデルは音声を直接聞く方式（audio input）に対応していなかったため、
 // 先にWhisper（音声認識専用API）で文字起こしし、そのテキストを元に予定・記録へ
 // 分割する2段階にしている。文字起こし自体もその日のDayInfoに保存する。
@@ -2043,6 +2132,16 @@ async function transcribeAudio(env, buf, contentType, format) {
   }
   const data = await res.json();
   return typeof data.text === "string" ? data.text.trim() : null;
+}
+
+// /ai-compare専用。OpenAIのtranscribeAudioと同じ入力から、Workers AIのWhisperで
+// 文字起こしを試す（本番の処理からは呼ばない）。audioは音声ファイルそのもののバイト列を
+// 数値の配列にして渡す（Workers AIの音声認識モデルの入力形式）。
+async function transcribeAudioWithWorkersAi(env, buf) {
+  const audio = [...new Uint8Array(buf)];
+  const result = await env.AI.run(WORKERS_AI_WHISPER_MODEL, { audio, language: "ja" });
+  const text = result && typeof result.text === "string" ? result.text : (typeof result === "string" ? result : "");
+  return text.trim();
 }
 
 function outputText(response) {
@@ -2264,6 +2363,63 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
       outputTextLength: outputText(response).length,
     }));
     return { error: "invalid_model_output" };
+  }
+  if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
+  return { blocks: parsed.blocks };
+}
+
+// /ai-compare専用。organizeTextIntoBlocksと同じプロンプト・スキーマ（voicePrompt/
+// multiDayPrompt・voiceBlocksSchema/multiDayBlocksSchema）を使い、OpenAIの代わりに
+// Workers AIのLLMで試す（本番の処理からは呼ばない）。モデルによってresponse_format
+// （json_schemaでの構造化出力）の対応状況が違う可能性があるため、まずresponse_format
+// 付きで呼び、レスポンスのJSONパースに失敗した場合は「JSON以外を返さないこと」という
+// 指示を足したプロンプトだけで再試行する（それでも失敗したらエラーを返すだけで、
+// 本番のデータには一切触れない）。
+async function organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates) {
+  const multiDay = Array.isArray(dates) && dates.length > 1;
+  const schema = multiDay ? multiDayBlocksSchema() : voiceBlocksSchema();
+  const schemaName = multiDay ? "voice_blocks_multi_day" : "voice_blocks";
+  const basePrompt = multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes);
+
+  function parseModelOutput(raw) {
+    if (raw == null) return null;
+    if (typeof raw === "object" && !Array.isArray(raw)) return raw; // すでにJSONとして返るモデルもある
+    const s = String(raw).trim();
+    // ```json ... ``` のようなコードブロックで返してくるモデルにも備える
+    const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const candidate = fenced ? fenced[1].trim() : s;
+    try { return JSON.parse(candidate); } catch { return null; }
+  }
+
+  async function callOnce(prompt, withResponseFormat) {
+    const input = {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: multiDay ? 12000 : 2000,
+    };
+    if (withResponseFormat) {
+      input.response_format = { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } };
+    }
+    const result = await env.AI.run(model, input);
+    const raw = result && (result.response ?? result);
+    return parseModelOutput(raw);
+  }
+
+  let parsed;
+  try {
+    parsed = await callOnce(basePrompt, true);
+  } catch (e) {
+    // response_format自体に対応していないモデルの可能性があるため、指示だけの
+    // プロンプトで1回だけ再試行する
+    try {
+      const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
+      parsed = await callOnce(jsonOnlyPrompt, false);
+    } catch (e2) {
+      return { error: "workers_ai_error", detail: String((e2 && e2.message) || e2).slice(0, 300) };
+    }
+  }
+  if (!parsed) {
+    const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
+    try { parsed = await callOnce(jsonOnlyPrompt, false); } catch { /* 下のinvalid_model_outputに落ちる */ }
   }
   if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
   return { blocks: parsed.blocks };
@@ -2522,6 +2678,101 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
   return json({ blocks: created, transcript: text }, 200, headers);
 }
 
+/* ---------- OpenAI→Workers AIの切り替え比較（試作、docs/adr/0012） ----------
+ * 管理者だけが使う `POST /ai-compare`。Workerのシークレット`AI_COMPARE_TOKEN`を
+ * 設定していないと常に404（機能自体が存在しないように見せる）。設定していても、
+ * ヘッダー`x-compare-token`が一致しないと同じく404にする（403にして「有効なエンドポイントが
+ * ある」ことを教えない）。何も保存せず、利用者の音声・メモの内容はログにも一切出さない。
+ */
+function timingSafeEqualStrings(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function aiCompareMemo(request, env, headers) {
+  let data;
+  try { data = await request.json(); } catch { return json({ error: "invalid_json" }, 400, headers); }
+  const text = isStr(data.text, MAX_MULTI_DAY_TEXT_CHARS) ? data.text.trim() : "";
+  if (!text) return json({ error: "empty_text" }, 422, headers);
+  const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
+  const dates = Array.isArray(data.dates) ? data.dates.filter((d) => isStr(d, 10) && DATE_RE.test(d)) : undefined;
+
+  const openaiResult = { result: null, ms: 0, error: undefined };
+  if (env.OPENAI_API_KEY) {
+    const t0 = Date.now();
+    const r = await organizeTextIntoBlocks(env, text, notes, dates);
+    openaiResult.ms = Date.now() - t0;
+    if (r.error) openaiResult.error = r.error; else openaiResult.result = r;
+  } else {
+    openaiResult.error = "server_not_configured";
+  }
+
+  const workersAi = {};
+  await Promise.all(
+    Object.entries(WORKERS_AI_LLM_MODELS).map(async ([key, model]) => {
+      const t0 = Date.now();
+      try {
+        const r = await organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates);
+        const ms = Date.now() - t0;
+        if (r.error) workersAi[key] = { result: null, ms, error: r.error };
+        else workersAi[key] = { result: r, ms };
+      } catch (e) {
+        workersAi[key] = { result: null, ms: Date.now() - t0, error: String((e && e.message) || e).slice(0, 300) };
+      }
+    })
+  );
+
+  return json({ openai: openaiResult, workersAi }, 200, headers);
+}
+
+async function aiCompareVoice(request, env, headers) {
+  const { buf, contentType, format: providedFormat } = await (async () => {
+    const b = await readBinaryBody(request);
+    return { ...b, format: VOICE_AUDIO_FORMATS[b.contentType] };
+  })();
+  if (!providedFormat) return json({ error: "unsupported_type" }, 415, headers);
+  if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
+
+  const openaiResult = { result: null, ms: 0, error: undefined };
+  if (env.OPENAI_API_KEY) {
+    const t0 = Date.now();
+    const transcript = await transcribeAudio(env, buf, contentType, providedFormat);
+    openaiResult.ms = Date.now() - t0;
+    if (transcript == null) openaiResult.error = "transcription_failed";
+    else openaiResult.result = transcript;
+  } else {
+    openaiResult.error = "server_not_configured";
+  }
+
+  const workersAiResult = { result: null, ms: 0, error: undefined };
+  {
+    const t0 = Date.now();
+    try {
+      const transcript = await transcribeAudioWithWorkersAi(env, buf);
+      workersAiResult.ms = Date.now() - t0;
+      workersAiResult.result = transcript;
+    } catch (e) {
+      workersAiResult.ms = Date.now() - t0;
+      workersAiResult.error = String((e && e.message) || e).slice(0, 300);
+    }
+  }
+
+  return json({ openai: openaiResult, workersAi: { [WORKERS_AI_WHISPER_MODEL]: workersAiResult } }, 200, headers);
+}
+
+async function aiCompare(request, env, headers, url) {
+  if (!env.AI_COMPARE_TOKEN || !timingSafeEqualStrings(request.headers.get("x-compare-token") || "", env.AI_COMPARE_TOKEN)) {
+    return json({ error: "not_found" }, 404, headers);
+  }
+  if (!env.AI) return json({ error: "server_not_configured" }, 503, headers);
+  const mode = url.searchParams.get("mode");
+  if (mode === "memo") return aiCompareMemo(request, env, headers);
+  if (mode === "voice") return aiCompareVoice(request, env, headers);
+  return json({ error: "invalid_mode" }, 400, headers);
+}
+
 // ---------- レシート読み取り（AI/Vision） ----------
 // レシート・領収書の写真をAIに読み取らせ、費用明細（品目名・金額）の候補を返すだけの
 // エンドポイント。何も保存はせず、返した内訳は記録編集画面の費用明細欄にそのまま追加され、
@@ -2575,8 +2826,38 @@ function receiptItemsSchema() {
   };
 }
 
+// Cloud Vision（DOCUMENT_TEXT_DETECTION）でレシートの文字を読み取り、ルールベースの
+// parseReceiptText（receipt-parse.js）で品目に分ける（docs/adr/0011）。無料枠は月1,000枚。
+// 読み取れなかった・0件だったとき、またはVision呼び出し自体が失敗したときはnullを返し、
+// 呼び出し側（scanReceipt）が今までどおりOpenAIに回せるようにする。
+async function scanReceiptWithVision(base64, env) {
+  try {
+    const res = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + encodeURIComponent(env.GOOGLE_API_KEY), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requests: [{
+          image: { content: base64 },
+          features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+          imageContext: { languageHints: ["ja"] },
+        }],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const result = data && Array.isArray(data.responses) && data.responses[0];
+    if (!result || result.error) return null;
+    const text = result.fullTextAnnotation && result.fullTextAnnotation.text;
+    if (!text) return null;
+    const parsed = parseReceiptText(text);
+    return parsed.items.length ? parsed.items : null;
+  } catch {
+    return null;
+  }
+}
+
 async function scanReceipt(request, env, headers) {
-  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  if (!env.GOOGLE_API_KEY && !env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
   const { buf, contentType, getHeader } = await readBinaryBody(request);
   if (!Object.prototype.hasOwnProperty.call(IMAGE_EXT, contentType)) return json({ error: "unsupported_type" }, 415, headers);
   if (buf.byteLength === 0 || buf.byteLength > MAX_RECEIPT_IMAGE_BYTES) return json({ error: "invalid_size" }, 413, headers);
@@ -2586,10 +2867,6 @@ async function scanReceipt(request, env, headers) {
   if (auth.error) return json({ error: auth.error }, auth.status, headers);
   const email = auth.email;
 
-  // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
-  const quota = await checkVoiceQuota(env, email);
-  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
-
   if (env.AI_RATE_LIMITER) {
     const actor = request.headers.get("cf-connecting-ip") || "anonymous";
     const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
@@ -2597,6 +2874,21 @@ async function scanReceipt(request, env, headers) {
   }
 
   const base64 = arrayBufferToBase64(buf);
+
+  // Visionが使えるときはこちらを先に試す。回数の枠（checkVoiceQuota）を使わないため、
+  // 無料プランでもレシート読み取りが使えるようになる。失敗したときだけOpenAIに回す
+  // （そのときは今までどおり音声入力と共通の枠を使う）。
+  if (env.GOOGLE_API_KEY) {
+    const visionItems = await scanReceiptWithVision(base64, env);
+    if (visionItems) return json({ items: visionItems }, 200, headers);
+  }
+
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+
+  // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
+  const quota = await checkVoiceQuota(env, email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -3093,7 +3385,12 @@ export default {
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"));
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
     if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
-    if (method === "GET" && path === "/places/search") return searchPlaces(url.searchParams.get("q"), headers, ctx);
+    if (method === "GET" && path === "/places/search") {
+      return searchPlaces(url.searchParams.get("q"), headers, ctx, env, url.searchParams.get("session"));
+    }
+    if (method === "GET" && path === "/places/details") {
+      return placeDetails(url.searchParams.get("id"), url.searchParams.get("session"), env, headers);
+    }
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
       if (auth.error) return json({ error: auth.error }, auth.status, headers);
@@ -3138,6 +3435,8 @@ export default {
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);
 
     if (method === "POST" && path === "/receipts/scan") return scanReceipt(request, env, headers);
+
+    if (method === "POST" && path === "/ai-compare") return aiCompare(request, env, headers, url);
 
     return json({ error: "not_found" }, 404, headers);
   },
