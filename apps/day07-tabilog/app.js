@@ -485,7 +485,7 @@
   var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
   var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
   var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
-  var REPLAY_MAX_PHOTOS = 6;          // 1つの地点で見せる写真の上限
+  var REPLAY_MAX_PHOTOS = 4;          // 1つの地点で見せる写真の上限（6枚だと1地点15秒止まり長かったので4枚＝10秒に）
   var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
   var REPLAY_MOVE_SEC = 2;           // 移動の演出は、距離や時間にかかわらずこの秒数（以前は1000倍速で2〜6秒。香港→ニューヨークの飛行機が長すぎた）
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
@@ -544,7 +544,7 @@
         // 以前は40文字で切っていたため、スマホでは1.5行ほどで途切れていた。全文を出す（見せる時間は文字数で延ばす）
         return (e.episode || '').trim() || (e.comment || '').trim();
       }).filter(Boolean).slice(0, 3);
-      // Reliveのように、着いたところで写真もエピソードと一緒に見せる（予定の記録の写真を最大6枚）
+      // Reliveのように、着いたところで写真もエピソードと一緒に見せる（予定の記録の写真を最大4枚）
       var photos = [];
       (b.entries || []).forEach(function (e) { (e.photoIds || []).forEach(function (id) { if (photos.length < REPLAY_MAX_PHOTOS) photos.push(id); }); });
       return {
