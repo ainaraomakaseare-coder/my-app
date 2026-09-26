@@ -4736,11 +4736,13 @@
     showReplayBanner(dayNumber + '日目');
   }
 
-  function showReplayBanner(text) {
+  // sub：下に小さく添える一言（時差のときの「ここから現地時間」など）。1行ずつ途中で折り返さない
+  function showReplayBanner(text, sub) {
     var el = $('#replayDayBanner');
     el.hidden = true;
     void el.offsetWidth; // アニメーションを最初から再生し直すため
-    el.textContent = text;
+    el.innerHTML = '<div class="replay-banner-main">' + escapeHtml(text) + '</div>' +
+      (sub ? '<div class="replay-banner-sub">' + escapeHtml(sub) + '</div>' : '');
     el.hidden = false;
     clearTimeout(showReplayBanner.timer);
     showReplayBanner.timer = setTimeout(function () { el.hidden = true; }, 1600);
@@ -4788,7 +4790,7 @@
     highlightReplayDay(st.dayNumber);
     $('#replayTime').textContent = st.hhmm;
     if (replay.lastOffsetDiff !== undefined && st.offsetDiff !== replay.lastOffsetDiff && replay.playing) {
-      showReplayBanner('時差 ' + Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff) + '（ここから現地時間）');
+      showReplayBanner('時差 ' + Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff), 'ここから現地時間');
     }
     replay.lastOffsetDiff = st.offsetDiff;
     if (st.dayNumber !== replay.lastDay) {
