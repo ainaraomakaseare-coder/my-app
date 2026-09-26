@@ -1405,6 +1405,10 @@ function generateAccountId() {
 // 月間の音声入力の上限（docs/adr/0004）。free（無料）は月2回まで
 // （新規登録時にticket_creditsへ3回分のボーナスを付与するため、登録した最初の月だけ実質5回）。
 var PLAN_MONTHLY_LIMIT = { free: 2, basic: 10, premium_plus: 50 };
+// メモをAIで整理する回数（音声とは別の枠、2026-09-26〜）。メモは文字起こしが要らないぶん音声より安いので、
+// 無料でも月10回まで使えるようにした。有料プランは、以前（音声と共通の枠）より減らないようにしている。
+// 決まった形（「10:00 新宿」のような行）のメモは、AIを使わずアプリ側で分けるので回数を使わない。
+var MEMO_MONTHLY_LIMIT = { free: 10, basic: 30, premium_plus: 100 };
 
 function currentPeriodStart() {
   var now = new Date();
@@ -1415,10 +1419,10 @@ function currentPeriodStart() {
 async function resetPeriodIfNeeded(env, row) {
   var period = currentPeriodStart();
   if (row.plan_period_start === period) return row;
-  await env.DB.prepare("UPDATE accounts SET plan_period_start=?, voice_uses_this_period=0, updated_at=? WHERE email=?")
+  await env.DB.prepare("UPDATE accounts SET plan_period_start=?, voice_uses_this_period=0, memo_uses_this_period=0, updated_at=? WHERE email=?")
     .bind(period, nowIso(), row.email)
     .run();
-  return { ...row, plan_period_start: period, voice_uses_this_period: 0 };
+  return { ...row, plan_period_start: period, voice_uses_this_period: 0, memo_uses_this_period: 0 };
 }
 
 function rowToAccount(row) {
@@ -1431,6 +1435,8 @@ function rowToAccount(row) {
     voiceUsesThisPeriod: row.voice_uses_this_period || 0,
     voiceMonthlyLimit: limit,
     voiceRemainingThisPeriod: Math.max(0, limit - (row.voice_uses_this_period || 0)),
+    memoMonthlyLimit: MEMO_MONTHLY_LIMIT[row.plan] || MEMO_MONTHLY_LIMIT.free,
+    memoRemainingThisPeriod: Math.max(0, (MEMO_MONTHLY_LIMIT[row.plan] || MEMO_MONTHLY_LIMIT.free) - (row.memo_uses_this_period || 0)),
     ticketCredits: row.ticket_credits || 0,
   };
 }
@@ -1961,22 +1967,27 @@ function decodeVoiceMeta(header) {
 
 // 音声入力を使う権利があるか確認する（docs/adr/0004）。実際の消費（回数を減らす）は
 // AI呼び出しが成功した後に行う（失敗した録音でユーザーの枠を消費しないため）。
-async function checkVoiceQuota(env, email) {
+// kind：'voice'（音声入力・レシート。既定）か 'memo'（メモをAIで整理）。枠を使い切ったら回数券を使う。
+async function checkVoiceQuota(env, email, kind) {
   if (!isValidEmailFormat(email)) return { ok: false, reason: "login_required" };
   const normalized = email.trim().toLowerCase();
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(normalized).first();
   if (!account) return { ok: false, reason: "login_required" };
   const reset = await resetPeriodIfNeeded(env, account);
-  const limit = PLAN_MONTHLY_LIMIT[reset.plan] || 0;
-  if (reset.voice_uses_this_period < limit) return { ok: true, via: "plan", email: normalized };
-  if ((reset.ticket_credits || 0) > 0) return { ok: true, via: "ticket", email: normalized };
+  const memo = kind === "memo";
+  const limit = memo ? (MEMO_MONTHLY_LIMIT[reset.plan] || MEMO_MONTHLY_LIMIT.free) : (PLAN_MONTHLY_LIMIT[reset.plan] || 0);
+  const used = memo ? (reset.memo_uses_this_period || 0) : reset.voice_uses_this_period;
+  if (used < limit) return { ok: true, via: "plan", email: normalized, kind: memo ? "memo" : "voice" };
+  if ((reset.ticket_credits || 0) > 0) return { ok: true, via: "ticket", email: normalized, kind: memo ? "memo" : "voice" };
   return { ok: false, reason: reset.plan === "free" ? "premium_required" : "quota_exceeded" };
 }
 
-async function consumeVoiceQuota(env, email, via) {
+async function consumeVoiceQuota(env, email, via, kind) {
   const t = nowIso();
   if (via === "ticket") {
     await env.DB.prepare("UPDATE accounts SET ticket_credits = MAX(0, ticket_credits - 1), updated_at=? WHERE email=?").bind(t, email).run();
+  } else if (kind === "memo") {
+    await env.DB.prepare("UPDATE accounts SET memo_uses_this_period = memo_uses_this_period + 1, updated_at=? WHERE email=?").bind(t, email).run();
   } else {
     await env.DB.prepare("UPDATE accounts SET voice_uses_this_period = voice_uses_this_period + 1, updated_at=? WHERE email=?").bind(t, email).run();
   }
@@ -2132,6 +2143,29 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
 // （docs/adr/0004）。
 const MAX_TEXT_MEMO_CHARS = 4000;
 
+// 決まった形のメモ（「10:00 新宿」のような時刻で始まる行＝予定、その下の行＝記録）を、アプリ側で分けたものを
+// そのまま保存する。AIを使わないので、ログインも回数も要らない（手で1件ずつ記録を足すのと同じ扱い）。
+// 保存の仕方はAIで整理したときと同じ（saveOrganizedBlocks）。
+const MEMO_MAX_BLOCKS = 100;
+async function createBlocksFromMemo(tripId, request, env, headers) {
+  const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!Array.isArray(data.blocks) || !data.blocks.length || data.blocks.length > MEMO_MAX_BLOCKS) return json({ error: "invalid_input" }, 400, headers);
+  const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
+  const tripDates = tripDateList(trip.start_date, trip.end_date);
+  const dates = tripDates.length ? tripDates : [...new Set(data.blocks.map((b) => b && b.date).filter((d) => isStr(d, 10) && DATE_RE.test(d)))];
+  if (!dates.length) return json({ error: "invalid_date" }, 400, headers);
+  const created = await saveOrganizedBlocks(env, tripId, dates, data.blocks, author);
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  return json({ blocks: created }, 200, headers);
+}
+
 async function createBlocksFromText(tripId, date, request, env, headers) {
   if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
   if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
@@ -2152,7 +2186,7 @@ async function createBlocksFromText(tripId, date, request, env, headers) {
   if (auth.error) return json({ error: auth.error }, auth.status, headers);
   const email = auth.email;
 
-  const quota = await checkVoiceQuota(env, email);
+  const quota = await checkVoiceQuota(env, email, "memo");
   if (!quota.ok) return json({ error: quota.reason }, 403, headers);
 
   if (env.AI_RATE_LIMITER) {
@@ -2167,7 +2201,7 @@ async function createBlocksFromText(tripId, date, request, env, headers) {
 
   await saveVoiceTranscript(env, tripId, date, text);
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
-  await consumeVoiceQuota(env, quota.email, quota.via);
+  await consumeVoiceQuota(env, quota.email, quota.via, "memo");
   return json({ blocks: created, transcript: text }, 200, headers);
 }
 
@@ -2241,7 +2275,7 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
   if (auth.error) return json({ error: auth.error }, auth.status, headers);
   const email = auth.email;
 
-  const quota = await checkVoiceQuota(env, email);
+  const quota = await checkVoiceQuota(env, email, "memo");
   if (!quota.ok) return json({ error: quota.reason }, 403, headers);
 
   if (env.AI_RATE_LIMITER) {
@@ -2255,7 +2289,7 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
   const created = await saveOrganizedBlocks(env, tripId, dates, result.blocks, author);
 
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
-  await consumeVoiceQuota(env, quota.email, quota.via);
+  await consumeVoiceQuota(env, quota.email, quota.via, "memo");
   return json({ blocks: created, transcript: text }, 200, headers);
 }
 
@@ -2865,6 +2899,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/voice-entries$/))) {
       return createBlocksFromVoiceMultiDay(m[1], request, env, headers);
     }
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/memo-blocks$/))) return createBlocksFromMemo(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/text-entries$/))) {
       return createBlocksFromTextMultiDay(m[1], request, env, headers);
     }

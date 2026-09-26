@@ -271,3 +271,7 @@ CREATE TABLE IF NOT EXISTS comment_reports (
 -- v19：blocksに move_minutes（移動の予定の移動時間、分）を追加する一度きりの文。
 -- 本番環境へ反映するまでは migrations/0018_block_move_minutes.sql を1回だけ実行すること。
 -- ALTER TABLE blocks ADD COLUMN move_minutes INTEGER NOT NULL DEFAULT 0;
+
+-- v20：accountsに memo_uses_this_period（メモをAIで整理した今月の回数）を追加する一度きりの文。
+-- 本番環境へ反映するまでは migrations/0019_memo_uses.sql を1回だけ実行すること。
+-- ALTER TABLE accounts ADD COLUMN memo_uses_this_period INTEGER NOT NULL DEFAULT 0;

@@ -979,6 +979,66 @@
     return parts.join('\n\n');
   }
 
+  // ---------- メモをAIなしで分ける（無料・回数を使わない。2026-09-26〜） ----------
+  // 決まった形のメモなら、AIに頼らずアプリ側で予定と記録に分ける。形は：
+  //   ・時刻で始まる行（10:00 / 10時 / 10時半 / 10時30分、全角でも可）→ 予定。時刻のあとが見出し
+  //   ・その下の行 → その予定の記録（1行ずつ改行でつなぐ）
+  //   ・「1日目」「4/1」「4月1日」だけの行 → それ以降の予定の日付
+  //   ・予定の行にGoogleマップなどのURLがあれば、その記録の地図にする
+  // 1行に「10時 那覇空港／12時 沖縄そば」のように並んでいても分ける。最初の予定より前に文章があるときは
+  // 決まった形ではない（ok=false）として、AIでの整理をすすめる。
+  var MEMO_TIME_RE = /^(\d{1,2})(?::(\d{2})|時(?:(\d{1,2})分|(半))?)\s*[〜~\-ー]?\s*(.*)$/;
+  var MEMO_TIME_SPLIT_RE = /(?:[／\/]|\s+)(?=\d{1,2}(?::\d{2}|時))/g; // 全角の／は正規化で/になる
+
+  function memoDayHeader(line, tripDates) {
+    var m = /^(\d{1,2})日目$/.exec(line);
+    if (m) return tripDates[Number(m[1]) - 1] || null;
+    m = /^(?:(\d{4})[-\/年])?(\d{1,2})[\/月](\d{1,2})日?(?:\s*[(（][^)）]*[)）])?$/.exec(line);
+    if (!m) return null;
+    var md = String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
+    return tripDates.filter(function (d) { return d.slice(5) === md && (!m[1] || d.slice(0, 4) === m[1]); })[0] || null;
+  }
+
+  function guessMemoCategory(label) {
+    if (/ホテル|旅館|宿|チェックイン|チェックアウト|泊/.test(label)) return 'lodging';
+    if (/ランチ|昼食|夕食|朝食|朝ごはん|昼ごはん|夜ごはん|ご飯|ごはん|ディナー|カフェ|そば|ラーメン|寿司|すし|焼肉|居酒屋|レストラン|食べ|飲み/.test(label)) return 'food';
+    if (/移動|新幹線|飛行機|フライト|便|バス|電車|タクシー|レンタカー|ドライブ/.test(label) || /へ$/.test(label)) return 'transport';
+    return 'sightseeing';
+  }
+
+  function parseMemo(text, tripDates, defaultDate) {
+    tripDates = tripDates || [];
+    var normalized = String(text || '').normalize('NFKC').replace(/\r\n?/g, '\n');
+    var lines = [];
+    normalized.split('\n').forEach(function (line) {
+      line.replace(MEMO_TIME_SPLIT_RE, '\n').split('\n').forEach(function (l) { lines.push(l.trim()); });
+    });
+    var blocks = [], cur = null, curDate = defaultDate || tripDates[0] || '', preamble = 0;
+    lines.forEach(function (line) {
+      if (!line) return;
+      var day = memoDayHeader(line, tripDates);
+      if (day) { curDate = day; cur = null; return; }
+      var m = MEMO_TIME_RE.exec(line);
+      var h = m ? Number(m[1]) : -1, min = m ? Number(m[2] || m[3] || (m[4] ? 30 : 0)) : -1;
+      if (m && h <= 23 && min <= 59) {
+        var rest = m[5] || '';
+        var url = (/https?:\/\/\S+/.exec(rest) || [''])[0];
+        var label = rest.replace(url, '').replace(/^[にからで、,：:\s]+/, '').trim();
+        cur = { date: curDate, time: String(h).padStart(2, '0') + ':' + String(min).padStart(2, '0'), label: label || '予定', mapUrl: url, lines: [] };
+        blocks.push(cur);
+        return;
+      }
+      if (cur) cur.lines.push(line.replace(/^[・\-*●○]\s*/, ''));
+      else preamble++;
+    });
+    return {
+      ok: blocks.length > 0 && preamble === 0,
+      blocks: blocks.map(function (b) {
+        return { date: b.date, time: b.time, label: b.label, category: guessMemoCategory(b.label), entry: { episode: b.lines.join('\n'), mapUrl: b.mapUrl } };
+      })
+    };
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
     TRANSPORTS: TRANSPORTS,
@@ -1020,6 +1080,7 @@
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
+    parseMemo: parseMemo,
     transportLabel: transportLabel,
     minutesText: minutesText,
     replayDayStarts: replayDayStarts,
@@ -2394,45 +2455,62 @@
   // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
   // 旅行の日程全体に対してAIが各予定の日も判定する（state.voiceEntryMultiDayで保持し、
   // 保存時にcreateVoiceEntries/createTextEntriesへ渡すdateをnullにする分岐に使う）。
+  // 音声・メモでまとめて記録する画面。メモの「決まった形」の取り込みはAIを使わず無料なので、ログインや
+  // 回数に関係なく誰でも開ける（以前はログインとAIの残り回数が無いと、画面ごと使えなかった）。
+  // 音声入力とAIでの整理は、使うときにログイン・AIへの送信の同意・月の回数を確かめる。
   function openVoiceEntryForm(multiDay) {
-    var user = loadCurrentUser();
-    if (!user) { openLogin('voiceEntryForm'); return; }
-    if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから音声入力を始めてください。'); return; }
-    if (!confirmAiDataSharing()) return;
+    if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから記録を始めてください。'); return; }
     state.voiceEntryMultiDay = !!multiDay;
     $('#voiceEntryTitle').textContent = multiDay ? '複数日をまとめて記録する' : '音声・メモでまとめて記録する';
     $('#voiceEntryLead').textContent = multiDay
-      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、AIが「1日目は〜」のような話し方から日を判定して予定・記録に分けて保存します（評価や費用はあとで入力してください）'
-      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）';
+      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、予定・記録に分けて保存します（評価や費用はあとで入力してください）'
+      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定・記録に分けて保存します（評価や費用はあとで入力してください）';
     showScreen('voiceEntryForm');
+    voiceBlob = null;
+    $('#voiceNotes').value = '';
+    setVoiceRecordLabel(MIC_ICON, '話しはじめる');
+    $('#btnVoiceRecord').disabled = false;
+    $('#btnCreateVoiceEntries').hidden = true;
+    $('#btnCreateVoiceEntries').disabled = false;
+    $('#voiceRecordStatus').textContent = '';
+    $('#voiceRecordStatus').classList.remove('is-recording');
+    $('#voiceEntryStatus').textContent = '';
+    $('#textMemoInput').value = state.pendingMemoText || ''; // ログインを挟んだときは書きかけのメモを戻す
+    state.pendingMemoText = '';
+    $('#btnCreateTextEntries').disabled = false;
+    $('#btnOrganizeMemoAi').disabled = false;
+    $('#textEntryStatus').textContent = '';
     $('#voicePremiumRequired').hidden = true;
-    $('#voiceRecordArea').hidden = true;
-    $('#voicePremiumMessage').textContent = '確認しています…';
+    $('#voiceRecordArea').hidden = false;
+    var user = loadCurrentUser();
+    if (!user) {
+      $('#memoAiInfo').textContent = 'AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月10回まで無料）。';
+      return;
+    }
+    $('#memoAiInfo').textContent = '';
     fetchAccountStatus().then(function (account) {
-      var ok = account && (account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0);
-      if (!ok) {
+      if (!account) return;
+      var tickets = account.ticketCredits ? '（回数券の残り' + account.ticketCredits + '回）' : '';
+      $('#memoAiInfo').textContent = 'AIでの整理：今月あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで無料）' + tickets;
+      var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
+      if (!voiceOk) {
+        // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
         $('#voicePremiumRequired').hidden = false;
-        $('#voiceRecordArea').hidden = true;
-        $('#voicePremiumMessage').textContent = !account
-          ? '音声入力はログインすると使えます。'
-          : '今月の音声入力の回数を使い切りました。プランのアップグレードや回数券をご検討ください。';
-        return;
+        $('#voicePremiumMessage').textContent = '今月の音声入力の回数を使い切りました。メモの取り込みはこのまま使えます。';
+        $('#btnVoiceRecord').disabled = true;
       }
-      voiceBlob = null;
-      $('#voiceNotes').value = '';
-      setVoiceRecordLabel(MIC_ICON, '話しはじめる');
-      $('#btnVoiceRecord').disabled = false;
-      $('#btnCreateVoiceEntries').hidden = true;
-      $('#btnCreateVoiceEntries').disabled = false;
-      $('#voiceRecordStatus').textContent = '';
-      $('#voiceRecordStatus').classList.remove('is-recording');
-      $('#voiceEntryStatus').textContent = '';
-      $('#textMemoInput').value = '';
-      $('#btnCreateTextEntries').disabled = false;
-      $('#textEntryStatus').textContent = '';
-      $('#voicePremiumRequired').hidden = true;
-      $('#voiceRecordArea').hidden = false;
     });
+  }
+
+  // 音声・AIを使う前の確認。ログインしていなければログインへ（書きかけのメモは残す）
+  function requireAiReady() {
+    if (!loadCurrentUser()) {
+      state.pendingMemoText = $('#textMemoInput').value;
+      openLogin('voiceEntryForm');
+      $('#loginLead').textContent = 'ログインすると、音声入力やAIでの整理が使えます';
+      return false;
+    }
+    return confirmAiDataSharing();
   }
 
   function handleVoiceRecordToggle() {
@@ -2440,6 +2518,7 @@
       voiceRecorder.stop();
       return;
     }
+    if (!requireAiReady()) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
       $('#voiceRecordStatus').textContent = 'このブラウザは音声の録音に対応していません。';
       return;
@@ -2515,30 +2594,66 @@
     });
   }
 
+  // 「この内容で予定を作る」：決まった形ならAIを使わず無料で取り込み、そうでなければAIで整理する
   function handleCreateTextEntries() {
     var text = $('#textMemoInput').value.trim();
     if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
+    var dates = Core.allDatesForTrip(state.trip, state.blocks).filter(function (d) { return d; });
+    var parsed = Core.parseMemo(text, dates, state.voiceEntryMultiDay ? '' : state.selectedDate);
+    if (parsed.ok) { importMemoWithoutAi(parsed); return; }
+    if (!confirm('決まった形（「10時 新宿」のように時刻で始まる行）になっていないので、AIで整理します（今月のAIの回数を1回使います）。よろしいですか？')) {
+      $('#textEntryStatus').textContent = '時刻で始まる行の形に直すと、AIを使わず無料で取り込めます。';
+      return;
+    }
+    organizeMemoWithAi(text);
+  }
+
+  function importMemoWithoutAi(parsed) {
+    var user = loadCurrentUser();
+    $('#btnCreateTextEntries').disabled = true;
+    $('#textEntryStatus').textContent = 'AIを使わずに取り込んでいます…（無料）';
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/memo-blocks', 'POST', { blocks: parsed.blocks, author: (user && user.name) || '' })
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        $('#btnCreateTextEntries').disabled = false;
+        if (parsed.blocks[0] && parsed.blocks[0].date) state.selectedDate = parsed.blocks[0].date;
+        showScreen('tripDetail');
+        renderTripDetail();
+      })
+      .catch(function () {
+        $('#btnCreateTextEntries').disabled = false;
+        $('#textEntryStatus').textContent = '取り込みに失敗しました。もう一度お試しください。';
+      });
+  }
+
+  function organizeMemoWithAi(text) {
+    text = text || $('#textMemoInput').value.trim();
+    if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
+    if (!requireAiReady()) return;
     var user = loadCurrentUser();
     var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
     $('#btnCreateTextEntries').disabled = true;
+    $('#btnOrganizeMemoAi').disabled = true;
     $('#textEntryStatus').textContent = 'AIが内容を確認しています…';
     createTextEntries(state.trip.id, state.voiceEntryMultiDay ? null : state.selectedDate, text, meta).then(function () {
       return refreshTrip();
     }).then(function () {
       $('#btnCreateTextEntries').disabled = false;
+      $('#btnOrganizeMemoAi').disabled = false;
       showScreen('tripDetail');
       renderDaySection();
     }).catch(function (e) {
       var msg = (e && e.message) || '';
       $('#btnCreateTextEntries').disabled = false;
+      $('#btnOrganizeMemoAi').disabled = false;
       if (msg === 'server_not_configured') $('#textEntryStatus').textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'trip_dates_required') $('#textEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
       else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
-      else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
-        $('#textEntryStatus').textContent = '';
-        openVoiceEntryForm(state.voiceEntryMultiDay);
+      else if (msg === 'premium_required' || msg === 'quota_exceeded') {
+        $('#textEntryStatus').textContent = '今月のAIでの整理の回数を使い切りました。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
       }
+      else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
   }
@@ -4104,7 +4219,8 @@
     }
     manageBtn.hidden = account.plan === 'free';
     var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
-    var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）';
+    var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）' +
+      (typeof account.memoRemainingThisPeriod === 'number' ? '・メモのAI整理：残り' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' : '');
 
     badgeEl.hidden = false;
     badgeEl.classList.toggle('is-free', account.plan === 'free');
@@ -4878,6 +4994,7 @@
     $('#btnVoiceRecord').addEventListener('click', handleVoiceRecordToggle);
     $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
     $('#btnCreateTextEntries').addEventListener('click', handleCreateTextEntries);
+    $('#btnOrganizeMemoAi').addEventListener('click', function () { organizeMemoWithAi(); });
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);

@@ -457,5 +457,26 @@ eq('replayStops: 時刻の無い次の予定は、移動時間の分だけ後と
 eq('travelLogText: 出発・到着が無くても移動時間があれば出す',
   T.travelLogText({ category: 'transport', transport: 'plane', moveMinutes: 90, label: '那覇へ' }, { costItems: [] }).split(String.fromCharCode(10)).slice(-1)[0], '所要時間：約1時間30分');
 
+/* ---- メモをAIなしで分ける（parseMemo） ---- */
+var memoDates = ['2026-04-01', '2026-04-02'];
+var memo1 = T.parseMemo('10時 新宿\n小西遅刻\n松藤寝坊\n12時山梨\nほうとう食べた', memoDates, '2026-04-01');
+eq('parseMemo: 時刻の行が予定、下の行が記録', memo1.blocks.map(function (b) { return [b.time, b.label, b.entry.episode]; }),
+  [['10:00', '新宿', '小西遅刻\n松藤寝坊'], ['12:00', '山梨', 'ほうとう食べた']]);
+eq('parseMemo: 決まった形ならok', memo1.ok, true);
+eq('parseMemo: 全角・10時半・10時30分・区切り',
+  T.parseMemo('１０：１５ 羽田\n10時半 出発\n11時05分に到着', memoDates, '2026-04-01').blocks.map(function (b) { return b.time + ' ' + b.label; }),
+  ['10:15 羽田', '10:30 出発', '11:05 到着']);
+eq('parseMemo: 1行に並んだ予定も分ける（／と空白）',
+  T.parseMemo('10時 那覇空港集合／12時 沖縄そば https://maps.app.goo.gl/abc 15時 首里城公園', memoDates, '2026-04-01').blocks.map(function (b) { return [b.label, b.entry.mapUrl, b.category]; }),
+  [['那覇空港集合', '', 'sightseeing'], ['沖縄そば', 'https://maps.app.goo.gl/abc', 'food'], ['首里城公園', '', 'sightseeing']]);
+eq('parseMemo: 「2日目」「4/2」で日付が変わる',
+  T.parseMemo('1日目\n10:00 A\n2日目\n9:00 B\n4/1（水）\n20:00 C', memoDates, '2026-04-01').blocks.map(function (b) { return b.date + ' ' + b.label; }),
+  ['2026-04-01 A', '2026-04-02 B', '2026-04-01 C']);
+eq('parseMemo: 最初の予定より前に文章があれば、決まった形ではない（AIへ）', T.parseMemo('今日は楽しかった\n10時 新宿', memoDates, '2026-04-01').ok, false);
+eq('parseMemo: 時刻の行が無ければ、決まった形ではない', T.parseMemo('朝から那覇空港に集合して、そのあとそばを食べた', memoDates, '2026-04-01').ok, false);
+eq('parseMemo: 種類の推定（ホテル・移動）', T.parseMemo('15時 ホテルにチェックイン\n8時 那覇へ', memoDates).blocks.map(function (b) { return b.category; }), ['lodging', 'transport']);
+eq('parseMemo: 箇条書きの「・」は外す', T.parseMemo('10時 新宿\n・集合した', memoDates).blocks[0].entry.episode, '集合した');
+eq('parseMemo: 25時のような時刻は予定にしない', T.parseMemo('25時 どこか', memoDates).ok, false);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

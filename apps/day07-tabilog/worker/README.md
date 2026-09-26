@@ -165,3 +165,11 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel
 ```
 npx wrangler d1 execute tabilog-db --remote --file migrations/0018_block_move_minutes.sql
 ```
+
+## メモの取り込み（2026-09-26 追加）
+
+AIを使わない取り込み（`POST /trips/:id/memo-blocks`）と、メモをAIで整理した回数の列（accounts.memo_uses_this_period）を足した。**wrangler deployより先に** migrations/0019_memo_uses.sql を本番で1回だけ実行する（逆順だとアカウントの確認・メモの整理がSQLエラーになる）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --file migrations/0019_memo_uses.sql
+```

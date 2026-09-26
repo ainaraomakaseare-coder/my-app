@@ -224,9 +224,13 @@
 
         <div class="field">
           <label for="textMemoInput">スケジュールやメモをそのまま貼り付ける</label>
-          <textarea id="textMemoInput" rows="8" placeholder="例：10時 那覇空港集合／12時 沖縄そば https://maps.google.com/.../ 15時 首里城公園"></textarea>
+          <textarea id="textMemoInput" rows="8" placeholder="例：&#10;10時 新宿&#10;小西遅刻&#10;松藤寝坊&#10;12時 山梨&#10;ほうとう食べた"></textarea>
+          <!-- 決まった形ならAIを使わず無料で分ける（app.jsのCore.parseMemo） -->
+          <p class="hint memo-help">「10時 新宿」のように<strong>時刻で始まる行</strong>が予定、その下の行が記録になります。この形なら<strong>AIを使わず無料・何回でも</strong>取り込めます。「2日目」「4/2」の行で日付を変えられます。</p>
         </div>
         <button class="btn primary wide" id="btnCreateTextEntries">この内容で予定を作る</button>
+        <button class="btn text memo-ai-btn" id="btnOrganizeMemoAi" type="button">形が崩れていてうまく分かれないときは → AIで整理する</button>
+        <p class="hint" id="memoAiInfo"></p>
         <p class="hint" id="textEntryStatus"></p>
       </div>
     </div>
