@@ -38,15 +38,17 @@ final class BayDiaryViewController: UIViewController, UITabBarDelegate {
         contentBottom = content.view.bottomAnchor.constraint(equalTo: tabs.topAnchor)
         fullBottom = content.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         NSLayoutConstraint.activate([
-            content.view.topAnchor.constraint(equalTo: view.topAnchor),
+            content.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             content.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             content.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             contentBottom,
             tabs.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tabs.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tabs.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            tabs.heightAnchor.constraint(equalToConstant: 49)
+            tabs.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         ])
+        // Let UITabBar size itself (intrinsicContentSize) instead of forcing a fixed
+        // 49pt height: a hardcoded height clipped the icon+label pair on current iOS,
+        // which renders the standard tab bar taller than the old fixed value.
     }
 
     func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {

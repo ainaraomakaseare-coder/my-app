@@ -30,7 +30,7 @@ const {chromium}=require('playwright');const fs=require('fs'),path=require('path
  await page.selectOption('#analysis-team','baystars');check('comparison restored',await page.inputValue('#actual-win')==='60');
  await page.selectOption('#analysis-year','2024');check('year records isolated',await page.inputValue('#actual-win')==='');
  await page.click('#nav-settings');await page.selectOption('#settings-team','tigers');await page.click('#nav-dashboard');check('home follows settings',(await page.locator('#header-summary').textContent()).includes('阪神'));
- await page.click('#home-add');check('new record team',await page.inputValue('#f-team')==='tigers');await page.fill('#f-date','2026-06-01');await page.fill('#f-opponent','DeNA');await page.selectOption('#f-result','draw');await page.click('#f-save');await page.waitForSelector('#scr-list:not([hidden])');
+ await page.click('#home-add');check('new record team',await page.inputValue('#f-team')==='tigers');await page.fill('#f-date','2026-06-01');await page.selectOption('#f-opponent-select',{label:'DeNA'});await page.selectOption('#f-result','draw');await page.click('#f-save');await page.waitForSelector('#scr-list:not([hidden])');
  check('snapshot saved',await page.evaluate(()=>state.games.at(-1).myTeam==='tigers'));
  await page.click('[data-edit="g0"]');check('old record team preserved',await page.inputValue('#f-team')==='baystars');await page.fill('#f-highlight','編集後も球団を保持');await page.click('#f-save');await page.waitForSelector('#scr-list:not([hidden])');check('edit preserves team',await page.evaluate(()=>state.games.find(g=>g.id==='g0').myTeam==='baystars'));
  await page.reload();await page.click('#nav-settings');check('settings persist',await page.inputValue('#settings-team')==='tigers');
