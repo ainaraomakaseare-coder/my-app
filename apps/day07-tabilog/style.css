@@ -756,8 +756,13 @@ body.sheet-open { overflow: hidden; }
 /* ---------- 入力欄の×ボタン（app.jsのinitClearButtons） ---------- */
 /* ×が文字に重ならないよう、対象の1行入力欄は右側を空けておく */
 input[type="text"], input[type="url"], input[type="search"], input[type="email"], input[type="number"] { padding-right: 36px !important; }
+/* 欄を幅0のラッパー（span）で包み、元の欄が持っていたflexのサイズ指定はラッパーに移す（app.jsのwrapForClearButton）。
+   ラッパー自身はレイアウトに参加するだけの器なので、幅・高さは中身（input）に合わせる */
+.ipt-clear-wrap { position: relative; display: inline-block; vertical-align: top; min-width: 0; }
+.ipt-clear-wrap input { display: block; }
 .input-clear-btn {
-  position: fixed; z-index: 80; width: 28px; height: 28px; border-radius: 999px; border: none; cursor: pointer;
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  z-index: 2; width: 28px; height: 28px; border-radius: 999px; border: none; cursor: pointer;
   background: var(--ink-soft); color: #fff; font-size: 16px; line-height: 28px; padding: 0; text-align: center;
 }
 .input-clear-btn[hidden] { display: none; }

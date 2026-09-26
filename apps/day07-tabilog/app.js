@@ -4902,7 +4902,11 @@
   // -v7（2026-09-26〜）：地図のリンクから場所が分からないとき、見出し（hint）から場所を当てずっぽうに
   // 探すのをやめた（無関係な場所に飛ぶことがあったため。docs/adr/0008）。hintに影響されていたかもしれない
   // 以前の結果（見つかった・見つからなかったのどちらも）を捨てて調べ直す。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v7';
+  // -v8（2026-09-27〜）：Google Text Searchに「近くの予定」をヒントとして渡す（locationBias）のを
+  // やめ、near（近くの予定）による絞り込みも外した。同じ日に離れた場所（同名の別施設）があると、
+  // そちらに引っ張られて間違った場所を選んでしまうことがあったため（docs/adr/0008・0011）。
+  // それに影響されていたかもしれない以前の結果を捨てて調べ直す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v8';
   try {
     localStorage.removeItem('tabilog:geocode-cache');
     localStorage.removeItem('tabilog:geocode-cache-v2');
@@ -4910,6 +4914,7 @@
     localStorage.removeItem('tabilog:geocode-cache-v4');
     localStorage.removeItem('tabilog:geocode-cache-v5');
     localStorage.removeItem('tabilog:geocode-cache-v6');
+    localStorage.removeItem('tabilog:geocode-cache-v7');
   } catch (e) {}
   // 住所・店名から探すときに添える「同じ旅行の前後の場所」の座標を、旅程順で並んだstops
   // （{ date, transport, coords }）から選ぶ（選び方自体はCore.geocodeNearIndexes、docs/adr/0008）。
@@ -5485,60 +5490,93 @@
 
   // ---------- 初期化 ----------
   // ---------- 入力欄の×（中身を消す）ボタン ----------
-  // URLなどを入れたあと消すのが面倒、という要望より。1行の入力欄（テキスト・URL・検索・メール・数字）を
-  // 編集しているあいだ、中身があれば右端に×を1つだけ出す（iOS標準の「編集中だけ出る消去ボタン」と同じ考え方）。
-  // 入力欄ごとに要素を足すと、親の並び（検索欄の横並び・レビューの2列など）の幅が崩れるので、
-  // 画面に1つだけ置いたボタンを、編集中の欄の上に重ねて動かす。後から描く欄（レビュー項目など）にも効く。
+  // URLなどを入れたあと消すのが面倒、という要望より。1行の入力欄（テキスト・URL・検索・メール・数字）は、
+  // 中身があるあいだ常に右端に×を出す（フォーカスの有無に関係なく見える。iOS標準の消去ボタンと違い、
+  // 「入っているかどうか」が離れた場所からでもひと目で分かるようにする狙い）。
   // 複数行の欄（エピソードなど）は、長文を一度に消してしまうと困るので対象にしない。
+  //
+  // 以前は画面に1つだけ置いたボタンをフォーカス中の欄の上に重ねて動かす方式だったが、
+  // ・フォーカスが外れると消えてしまい、複数の欄を一括で見比べて消す、という本来の要望に合わなかった
+  // ・iOSのキーボード表示でレイアウトが動いたあとに再計算されず、位置がずれることがあった
+  // ため、欄ごとに×を埋め込む方式にした。ただし要素を直接足すと親の並び（検索欄の横並び・
+  // 費用明細の2列など）の幅が崩れるので、入力欄を幅0のラッパーで包み、元の欄が持っていた
+  // flexのサイズ指定（flex-grow/shrink/basis・min-width）をラッパー側に移してから、
+  // 欄自体は width:100% でラッパーいっぱいに広げる（どのレイアウトの親でも崩れないようにするため）。
   var CLEARABLE_TYPES = ['text', 'url', 'search', 'email', 'number'];
-  var clearTarget = null;
+  var CLEAR_WRAP_CLASS = 'ipt-clear-wrap';
 
   function isClearable(el) {
     return !!(el && el.tagName === 'INPUT' && CLEARABLE_TYPES.indexOf(el.type) !== -1 &&
       !el.readOnly && !el.disabled && !el.hasAttribute('data-no-clear'));
   }
 
-  function placeClearButton() {
-    var btn = $('#inputClearBtn');
-    if (!clearTarget || !clearTarget.value || !document.body.contains(clearTarget)) { btn.hidden = true; return; }
-    var r = clearTarget.getBoundingClientRect();
-    if (!r.width) { btn.hidden = true; return; }
-    btn.style.top = (r.top + r.height / 2 - 14) + 'px';
-    btn.style.left = (r.right - 32) + 'px';
-    btn.hidden = false;
-  }
+  function wrapForClearButton(input) {
+    if (!isClearable(input)) return;
+    if (input.parentNode && input.parentNode.classList && input.parentNode.classList.contains(CLEAR_WRAP_CLASS)) return; // 対応済み
+    var cs = window.getComputedStyle(input);
+    var wrap = document.createElement('span');
+    wrap.className = CLEAR_WRAP_CLASS;
+    // 元の欄が親（flexの並び・グリッドなど）から受け取っていたサイズ指定を、そのままラッパーに引き継ぐ。
+    wrap.style.flexGrow = cs.flexGrow;
+    wrap.style.flexShrink = cs.flexShrink;
+    wrap.style.flexBasis = cs.flexBasis;
+    wrap.style.minWidth = cs.minWidth;
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    input.style.width = '100%';
+    input.style.minWidth = '0';
 
-  function initClearButtons() {
     var btn = document.createElement('button');
     btn.type = 'button';
-    btn.id = 'inputClearBtn';
     btn.className = 'input-clear-btn';
     btn.setAttribute('aria-label', '入力を消す');
     btn.textContent = '×';
-    btn.hidden = true;
-    document.body.appendChild(btn);
-    // 押したときに入力欄からフォーカスが外れる（＝ボタンが消える）前に処理する
+    btn.hidden = !input.value;
+    // 押したときに入力欄からフォーカスが外れる前に処理する
     btn.addEventListener('pointerdown', function (e) { e.preventDefault(); });
     btn.addEventListener('click', function () {
-      if (!clearTarget) return;
-      clearTarget.value = '';
-      clearTarget.dispatchEvent(new Event('input', { bubbles: true }));
-      clearTarget.dispatchEvent(new Event('change', { bubbles: true }));
-      clearTarget.focus();
-      placeClearButton();
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.focus();
+      btn.hidden = true;
     });
-    document.addEventListener('focusin', function (e) {
-      clearTarget = isClearable(e.target) ? e.target : null;
-      placeClearButton();
+    input.addEventListener('input', function () { btn.hidden = !input.value; });
+    wrap.appendChild(btn);
+  }
+
+  function wrapClearableInputsIn(root) {
+    if (!root || (root.nodeType !== 1 && root.nodeType !== 9)) return;
+    if (root.nodeType === 1 && root.matches && root.matches('input')) wrapForClearButton(root);
+    var inputs = root.querySelectorAll ? root.querySelectorAll('input') : [];
+    for (var i = 0; i < inputs.length; i++) wrapForClearButton(inputs[i]);
+  }
+
+  // 欄の値を、フォームを開いたときの初期化などで input イベントを出さずに直接書き換えている箇所が
+  // いくつかある（例：openEntryForm での #entPlaceSearch のリセット）。そうした変更を漏れなく拾うため、
+  // 軽い間隔でも全欄の表示・非表示を値と突き合わせて直す（欄の数は多くないので負荷は無視できる）。
+  function syncAllClearButtons() {
+    var wraps = document.getElementsByClassName(CLEAR_WRAP_CLASS);
+    for (var i = 0; i < wraps.length; i++) {
+      var input = wraps[i].querySelector('input');
+      var btn = wraps[i].querySelector('.input-clear-btn');
+      if (input && btn) btn.hidden = !input.value;
+    }
+  }
+
+  function initClearButtons() {
+    wrapClearableInputsIn(document);
+    // 費用明細・レビュー項目・移動の情報など、あとから描き足される欄にも効かせる
+    var mo = new MutationObserver(function (mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var added = mutations[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          if (added[j].nodeType === 1) wrapClearableInputsIn(added[j]);
+        }
+      }
     });
-    document.addEventListener('focusout', function () {
-      setTimeout(function () {
-        if (!isClearable(document.activeElement)) { clearTarget = null; placeClearButton(); }
-      }, 0);
-    });
-    document.addEventListener('input', function (e) { if (e.target === clearTarget) placeClearButton(); });
-    window.addEventListener('scroll', placeClearButton, true);
-    window.addEventListener('resize', placeClearButton);
+    mo.observe(document.body, { childList: true, subtree: true });
+    setInterval(syncAllClearButtons, 300);
   }
 
   function init() {

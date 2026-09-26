@@ -13,7 +13,7 @@ import { parseReceiptText } from "./receipt-parse.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
-  isValidEntryId, entryNeedsGeocode,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE,
 } from "./geo-decode.js";
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
@@ -559,7 +559,13 @@ function rowToEntry(row) {
   // 地図の座標（Part A、2026-09-26〜）：map_geocoded_urlが今のmap_urlと同じときだけ返す。
   // 地図のリンクを編集したら一致しなくなり、クライアントは古い座標を使わず調べ直す
   // （entryNeedsGeocodeが同じ判定をサーバー側の裏の再計算のトリガーにも使っている）。
-  if (row.map_url && row.map_geocoded_url === row.map_url && typeof row.map_lat === "number" && typeof row.map_lng === "number") {
+  // map_geocoded_atがMAP_COORDS_VALID_SINCEより前（ジオコーダーの精度が上がる前に求めた座標）なら
+  // 返さない。entryNeedsGeocodeも同じ基準で「要再取得」と判定するので、次の保存で上書きされる。
+  if (
+    row.map_url && row.map_geocoded_url === row.map_url &&
+    typeof row.map_lat === "number" && typeof row.map_lng === "number" &&
+    row.map_geocoded_at && row.map_geocoded_at >= MAP_COORDS_VALID_SINCE
+  ) {
     entry.mapLat = row.map_lat;
     entry.mapLng = row.map_lng;
   }
@@ -664,7 +670,7 @@ async function updateEntry(id, request, env, headers, ctx) {
     )
     .run();
   // 地図URLが変わった、またはまだ座標を求めていないときだけ、裏で座標を求め直す（Part A）。
-  if (ctx && entryNeedsGeocode(existing.map_url, existing.map_geocoded_url, newMapUrl)) {
+  if (ctx && entryNeedsGeocode(existing.map_url, existing.map_geocoded_url, newMapUrl, existing.map_geocoded_at)) {
     ctx.waitUntil(backgroundGeocodeEntry(env, id, newMapUrl));
   }
   const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
@@ -1225,16 +1231,21 @@ function nearOk(pt, nears, km) {
 // Places API (New) の Text Search Essentials（IDのみ。無料・無制限のSKU、docs/adr/0011）→
 // Place Details Essentials（座標のみ）の順で、施設名・住所から座標を探す（Part B、2026-09-26〜）。
 // Nominatim（1秒1回まで）より先に試すことで、海外の施設名などの初回の準備を速くする。
-// 候補が複数返っても、詳細（Place Details）を聞くのは先頭の1件だけ（locationBiasで絞り込み済みのものを
-// 信用する。複数件の詳細を聞くと無料枠を余計に消費するため）。GOOGLE_API_KEYが無い・失敗した・0件
-// だったときはnullを返し、呼び出し側でこれまでどおりNominatim等の予備チェーンに回す。
-async function googleTextSearchPlace(text, nears, env) {
+// 候補が複数返っても、詳細（Place Details）を聞くのは先頭の1件だけ（Text Searchの並び＝Googleの
+// 知名度・関連度ランキングを信用する。複数件の詳細を聞くと無料枠を余計に消費するため）。
+// GOOGLE_API_KEYが無い・失敗した・0件だったときはnullを返し、呼び出し側でこれまでどおり
+// Nominatim等の予備チェーンに回す。
+//
+// 【locationBiasを送るのをやめた経緯、2026-09-27】以前は近く（同じ旅行の前後の予定）の座標を
+// locationBiasとして送っていたが、実例（大阪旅行）で「みなとみらい発」ブロック（横浜、新幹線で
+// 大阪へ移動する日）の地図URL `query=赤レンガ倉庫` が、同じ日に大阪のホテルがある（＝nearsに
+// 大阪の座標が入る）せいで、有名な横浜赤レンガ倉庫ではなく大阪の同名の建物を検索結果の1位に
+// してしまっていた。Googleの通常の検索結果（知名度などを加味した既定のランキング）は
+// 有名なほうを正しく1位にするため、biasはかけずTop1件をそのまま信用する（ADR 0008/0011）。
+async function googleTextSearchPlace(text, env) {
   if (!env || !env.GOOGLE_API_KEY) return null;
   try {
     const body = { textQuery: text, languageCode: "ja", maxResultCount: 5 };
-    if (nears && nears.length) {
-      body.locationBias = { circle: { center: { latitude: nears[0].lat, longitude: nears[0].lng }, radius: 50000 } };
-    }
     const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
       method: "POST",
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "places.id", "content-type": "application/json" },
@@ -1259,10 +1270,14 @@ async function googleTextSearchPlace(text, nears, env) {
 // 名前（施設名・住所）から場所を探す：①（GOOGLE_API_KEYがあれば）Google Text Search→②Nominatim
 // （住所の段階的な簡略化つき）→③日本語版ウィキペディア→④「町＋空港」→⑤空白で区切った一部
 // （長い順。近くの場所が分かっているときだけ。町の名前だけが合えば町の座標）
+//
+// Google Text Searchの結果にはnearOk（近くの予定との距離）を適用しない：Googleの知名度・関連度
+// ランキングによる1位を、遠くの予定と離れているという理由で捨てない（2026-09-27、上記の実例のとおり）。
+// nearによる絞り込み・タイブレークは、②以降のNominatim/ウィキペディアの予備チェーンにだけ残す。
 async function geocodePlaceName(text, nears, env) {
   if (env && env.GOOGLE_API_KEY) {
-    const g = await googleTextSearchPlace(text, nears, env).catch(() => null);
-    if (g && nearOk(g, nears)) return g;
+    const g = await googleTextSearchPlace(text, env).catch(() => null);
+    if (g) return g;
   }
   const near = nears && nears[0];
   const pause = () => new Promise((ok) => setTimeout(ok, 1100)); // Nominatimは1秒1回まで
@@ -1557,7 +1572,10 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam, en
   // 近くの場所で結果が変わるので、キャッシュの鍵に含める（hintはもう結果に影響しないので鍵から外した）。
   // v7：見出し（hint）からの当てずっぽうをやめた（無関係な場所に飛ぶことがあったため）ので、
   // それに影響されていたかもしれない以前の結果を作り直す。
-  const cacheKey = new Request("https://tabilog-geocode.cache/v7?q=" + encodeURIComponent(q) +
+  // v8（2026-09-27）：Google Text SearchにlocationBiasをかけない・near guardを外したので、
+  // 以前near（同じ日の別の場所）に引っ張られて間違った同名の場所を選んでいたかもしれないキャッシュを
+  // 作り直す（実例：「みなとみらい発」の赤レンガ倉庫が大阪の同名施設になっていた件）。
+  const cacheKey = new Request("https://tabilog-geocode.cache/v8?q=" + encodeURIComponent(q) +
     "&near=" + nears.map((n) => n.lat.toFixed(0) + "," + n.lng.toFixed(0)).join(";"));
   const storeForEntry = (body) => {
     if (!entryId || !env || !env.DB || !body || !body.found) return;

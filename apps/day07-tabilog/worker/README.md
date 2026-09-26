@@ -290,10 +290,34 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0020_entry_map_coo
 - `GOOGLE_API_KEY`があるときは、座標もS2セルIDも無い、名前・住所だけの地図リンクをNominatimより先に
   Google Places API (New)のText Search Essentials（`POST /v1/places:searchText`、
   `X-Goog-FieldMask: places.id`のみ＝IDだけを返す無料・無制限のSKU）→候補の先頭1件だけPlace Details
-  Essentials（`X-Goog-FieldMask: location`のみ）で探す（`googleTextSearchPlace`）。近くの場所（`nears`）が
-  あれば`locationBias`（半径50km）で絞り込み、既存の`nearOk`ガードにも通す。キーが無い・失敗・0件のときは
-  これまでどおりNominatim等のチェーンに回る（`geocodePlaceName`の先頭に追加）。Googleの結果はCache APIに
-  置かず、D1（entryの行）に保存する。
+  Essentials（`X-Goog-FieldMask: location`のみ）で探す（`googleTextSearchPlace`）。キーが無い・失敗・0件
+  のときはこれまでどおりNominatim等のチェーンに回る（`geocodePlaceName`の先頭に追加）。Googleの結果は
+  Cache APIに置かず、D1（entryの行）に保存する。
+  **2026-09-27訂正**：以前はここで近くの場所（`nears`）を`locationBias`として送り、結果を`nearOk`
+  ガードにも通していたが、誤動作が見つかったため外した（下の追記を参照）。
+
+## Google Text Searchに近くの場所のヒントを渡すのをやめる・古い座標を自動でやり直す（2026-09-27 追加）
+
+実例（大阪旅行）：「みなとみらい発」ブロック（横浜、その日は新幹線で大阪へ移動する行程）の地図URL
+`https://www.google.com/maps/search/?api=1&query=赤レンガ倉庫`が、本番のDBに大阪の同名施設の座標
+（34.6517, 135.4366）として保存されていた。原因は`googleTextSearchPlace`が近くの場所（`nears`。
+この日は大阪のホテル）を`locationBias`としてGoogleに送っていたため、Text Searchが「近くにある」
+大阪の赤レンガ倉庫を1位にしてしまい、`nearOk`ガード（近いので通ってしまう）もそれを弾けなかったこと。
+
+- `googleTextSearchPlace`から`locationBias`を送るのをやめた（`nears`引数自体を廃止）。Googleの既定の
+  ランキング（知名度・関連度）は、有名なほう（横浜の赤レンガ倉庫）を正しく1位にするため、素直に
+  Top1件を信用する。
+- `geocodePlaceName`のGoogle Text Searchの結果には`nearOk`（近くの予定との距離ガード）を適用しない。
+  near guard・タイブレークは、Nominatim・ウィキペディアの予備チェーンにだけ残す。
+- 既存の誤った座標を自動的にやり直すため、`geo-decode.js`に`MAP_COORDS_VALID_SINCE =
+  "2026-09-27T00:00:00Z"`を追加した。`entryNeedsGeocode`に第4引数`geocodedAt`を足し、それが
+  `MAP_COORDS_VALID_SINCE`より前（またはまだ無い）なら、地図URLが変わっていなくても再取得が必要と
+  判定する。`rowToEntry`も同じ基準で、`map_geocoded_at >= MAP_COORDS_VALID_SINCE`のときだけ
+  `mapLat`/`mapLng`を返す（それより前のものは「まだ座標が無い」扱いにし、次の保存・再取得で
+  上書きされるまで古い座標をクライアントに渡さない）。単体テスト：`worker/test/geo-decode.test.mjs`。
+- `/geocode`のCache APIの鍵をv7→v8に、クライアントのlocalStorageのキャッシュキーも`-v7`→`-v8`に
+  上げた（以前nearに引っ張られていたかもしれない結果を捨てて調べ直す）。DBのスキーマ変更は無い。
+- 詳しくはdocs/adr/0011（本編）・docs/adr/0008（実例の記録）を参照。
 
 ## 見出し（hint）からの当てずっぽうをやめた（2026-09-26 追加）
 
