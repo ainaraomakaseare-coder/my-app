@@ -173,3 +173,7 @@ AIを使わない取り込み（`POST /trips/:id/memo-blocks`）と、メモをA
 ```
 npx wrangler d1 execute tabilog-db --remote --file migrations/0019_memo_uses.sql
 ```
+
+## 日ごとの場所の自動入力（2026-09-26 追加）
+
+`POST /trips/:id/days/:date/auto-place`（{lat, lng}）で、日ごとの場所が空いている日に、位置から町・都道府県・国と天気を入れる。DBの変更は無い（wrangler deployだけでよい）。

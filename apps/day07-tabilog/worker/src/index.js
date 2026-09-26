@@ -1192,6 +1192,80 @@ async function fetchDailyWeather(lat, lon, date) {
   };
 }
 
+// 日ごとの場所が空いている日に、その日の記録の地図の位置（緯度・経度）から場所を入れる（2026-09-26〜）。
+// 日ごとの場所は、天気・マイログの「訪れた国・都道府県」・時差の判定に使うが、手で入れていない日が多く、
+// ブラジルに行った旅行がマイログに出ない・時差が分からない、ということがあった。
+// 位置から町・都道府県（州）・国の名前を調べる（NominatimのReverse、日本語。1秒1回までなので
+// アプリ側で間隔を空けて1日ずつ呼ぶ）。すでに場所が入っている日は変えない（手で入れたものを優先）。
+const JP_PREFECTURES = ["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
+
+async function reverseGeocode(lat, lng) {
+  try {
+    const res = await fetch(
+      "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&accept-language=ja&lat=" + lat + "&lon=" + lng,
+      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const a = (data && data.address) || {};
+    // 東京都などは、都道府県名が返らずISOのコード（JP-13）だけのことがあるので、コードから引く
+    const jpCode = /^JP-(\d{2})$/.exec(a["ISO3166-2-lvl4"] || "");
+    const admin1 = a.province || a.state || a.region || (jpCode ? JP_PREFECTURES[Number(jpCode[1]) - 1] || "" : "");
+    const place = a.city || a.town || a.village || a.municipality || a.county || admin1 || a.country || "";
+    if (!place) return null;
+    return { place: String(place).slice(0, 100), admin1: String(admin1), country: String(a.country || "") };
+  } catch {
+    return null;
+  }
+}
+
+async function autoSetDayPlace(tripId, date, request, env, headers) {
+  if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  const at = validLatLng(data.lat, data.lng);
+  if (!at) return json({ error: "invalid_input" }, 400, headers);
+  const id = tripId + "_" + date;
+  const existing = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
+  if (existing && existing.place) return json({ skipped: true, day: rowToDayInfo(existing) }, 200, headers);
+
+  const geo = await reverseGeocode(at.lat, at.lng);
+  if (!geo) return json({ error: "place_not_found" }, 422, headers);
+  const weather = await fetchDailyWeather(at.lat, at.lng, date).catch(() => null);
+  const t = nowIso();
+  const row = {
+    place: geo.place, lat: at.lat, lon: at.lng, admin1: geo.admin1, country: geo.country,
+    weather_code: weather ? weather.weatherCode : null,
+    temp_max: weather ? weather.tempMax : null,
+    temp_min: weather ? weather.tempMin : null,
+    precip_sum: weather ? weather.precipSum : null,
+    is_forecast: weather && weather.isForecast ? 1 : 0,
+    fetched_at: weather ? t : "",
+  };
+  if (existing) {
+    // 文字起こし（voice_transcript）だけがある行など。場所と天気だけを入れる
+    await env.DB.prepare(
+      "UPDATE day_infos SET place=?, lat=?, lon=?, admin1=?, country=?, weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=? AND place=''"
+    )
+      .bind(row.place, row.lat, row.lon, row.admin1, row.country, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, id)
+      .run();
+  } else {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO day_infos (id, trip_id, date, place, lat, lon, admin1, country, weather_code, temp_max, temp_min, precip_sum, is_forecast, fetched_at, weather_manual, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)"
+    )
+      .bind(id, tripId, date, row.place, row.lat, row.lon, row.admin1, row.country, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, t)
+      .run();
+  }
+  const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
+  return json({ day: rowToDayInfo(updated) }, 200, headers);
+}
+
 async function setDayPlace(tripId, date, request, env, headers) {
   if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
   const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
@@ -2872,6 +2946,7 @@ export default {
     }
 
     if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return setDayPlace(m[1], m[2], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/auto-place$/))) return autoSetDayPlace(m[1], m[2], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return deleteDayPlace(m[1], m[2], env, headers);
     if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/weather$/))) return setDayWeatherManual(m[1], m[2], request, env, headers);
 

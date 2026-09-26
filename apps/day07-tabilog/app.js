@@ -893,7 +893,16 @@
       if (entry.waitTime) lines.push('待ち時間：' + entry.waitTime);
     }
     if (r.other) lines.push('その他：' + r.other);
+    appendEntryExtras(lines, entry);
     return lines.join('\n');
+  }
+
+  // 紹介文に、記録の「ひとこと」とURL（地図・お店のHP・その他）を添える（入っているものだけ）
+  function appendEntryExtras(lines, entry) {
+    if (entry.comment) lines.push('ひとこと：「' + entry.comment + '」');
+    if (entry.mapUrl) lines.push('📍 ' + entry.mapUrl);
+    if (entry.shopUrl) lines.push('🔗 ' + entry.shopUrl);
+    if (entry.otherUrl) lines.push('🔗 ' + entry.otherUrl);
   }
 
   // 移動の記録の文章（★なし）。区間も会社も時刻も金額も無ければ''。
@@ -916,6 +925,7 @@
     }
     if (!t.depart && !t.arrive && block.moveMinutes) lines.push('所要時間：約' + minutesText(block.moveMinutes));
     if (amount > 0) lines.push('料金：' + yen(amount));
+    appendEntryExtras(lines, entry);
     return lines.join('\n');
   }
 
@@ -2954,37 +2964,91 @@
     }).catch(function () { return ''; });
   }
 
+  // 旅行を開いたあと裏で、①記録の地図の位置を調べ（座標入りはすぐ、住所・店名は1件ずつ）、
+  // ②日ごとの場所が空いている日は、その日の最初の地図の位置から場所を自動で入れ（天気・マイログの
+  // 訪れた国・時差のため。2026-09-26〜）、③予定・日ごとのタイムゾーンを決めて描き直す。
+  // Nominatim（1秒1回まで）を使うものは、まとめて1件ずつ1.1秒空けて呼ぶ。
+  var autoPlaceTried = {}; // この端末でこの画面を開いているあいだ、失敗した日を何度も試さない
   function loadTripZones() {
     if (!state.trip || !API_BASE) return Promise.resolve();
     var tripId = state.trip.id;
     var tzCache, geoCache;
     try { tzCache = JSON.parse(localStorage.getItem(TZ_CACHE_KEY) || '{}'); } catch (e) { tzCache = {}; }
     try { geoCache = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch (e) { geoCache = {}; }
-    var byBlock = {}, byDate = {};
-    var dayJobs = (state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
-      .map(function (d) { return timezoneAt(d.lat, d.lon, tzCache).then(function (tz) { if (tz) byDate[d.date] = tz; }); });
-    var blockJobs = (state.blocks || []).map(function (b) {
+    var coordsByBlock = {}, pending = [];
+    var stillHere = function () { return state.trip && state.trip.id === tripId; };
+    var remember = function (q, res) {
+      if (res && res.found) geoCache[q] = { lat: res.lat, lng: res.lng, at: Date.now() };
+      return geoCache[q] && geoCache[q].lat !== undefined ? geoCache[q] : null;
+    };
+    // ① 座標がすぐ分かるものは同時に
+    var quick = (state.blocks || []).map(function (b) {
       var q = Core.replayPlaceQuery(b);
       if (!q) return null;
-      var c = geoCache[q];
-      var coords = c && c.lat !== undefined ? Promise.resolve(c)
-        : api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
-            if (res && res.found) { geoCache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; return geoCache[q]; }
-            return null;
-          }).catch(function () { return null; });
-      return coords.then(function (p) {
-        if (!p) return;
-        return timezoneAt(p.lat, p.lng, tzCache).then(function (tz) { if (tz) byBlock[b.id] = tz; });
-      });
+      if (geoCache[q] && geoCache[q].lat !== undefined) { coordsByBlock[b.id] = geoCache[q]; return null; }
+      return api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
+        if (res && res.pending) pending.push({ b: b, q: q });
+        else { var c = remember(q, res); if (c) coordsByBlock[b.id] = c; }
+      }).catch(function () {});
     }).filter(Boolean);
-    return Promise.all(dayJobs.concat(blockJobs)).then(function () {
+    var wait = function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); };
+    var saveCaches = function () {
       try { localStorage.setItem(TZ_CACHE_KEY, JSON.stringify(tzCache)); } catch (e) {}
       try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(geoCache)); } catch (e) {}
-      if (!state.trip || state.trip.id !== tripId) return;
-      var next = { byBlock: byBlock, byDate: byDate };
-      if (JSON.stringify(next) === JSON.stringify(state.zoneInfo)) return;
-      state.zoneInfo = next;
-      if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
+    };
+    return Promise.all(quick).then(function () {
+      // ①' 住所・店名だけのリンクは1件ずつ（以前はここを調べておらず、ロサンゼルスの時差が分からなかった）
+      return pending.reduce(function (p, it) {
+        return p.then(function (needWait) {
+          if (!stillHere()) return false;
+          return (needWait ? wait(1100) : Promise.resolve()).then(function () {
+            return api('/geocode?q=' + encodeURIComponent(it.q)).then(function (res) {
+              var c = remember(it.q, res); if (c) coordsByBlock[it.b.id] = c;
+              return !(res && res.cached);
+            }).catch(function () { return false; });
+          });
+        });
+      }, Promise.resolve(false));
+    }).then(function () {
+      // ② 日ごとの場所が空いている日を、その日の最初の地図の位置で埋める
+      if (!stillHere()) return;
+      var hasPlace = {};
+      (state.days || []).forEach(function (d) { if (d.place) hasPlace[d.date] = true; });
+      var firstByDate = {};
+      Core.sortBlocks(state.blocks).forEach(function (b) {
+        if (b.date && !firstByDate[b.date] && coordsByBlock[b.id]) firstByDate[b.date] = coordsByBlock[b.id];
+      });
+      var dates = Object.keys(firstByDate).filter(function (d) { return !hasPlace[d] && !autoPlaceTried[tripId + d]; });
+      return dates.reduce(function (p, date, i) {
+        return p.then(function () {
+          if (!stillHere()) return;
+          autoPlaceTried[tripId + date] = true;
+          return (i ? wait(1100) : Promise.resolve()).then(function () {
+            var c = firstByDate[date];
+            return api('/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/auto-place', 'POST', { lat: c.lat, lng: c.lng })
+              .then(function (res) {
+                if (!res || !res.day || !stillHere()) return;
+                state.days = (state.days || []).filter(function (d) { return d.date !== date; }).concat([res.day]);
+              }).catch(function () {});
+          });
+        });
+      }, Promise.resolve());
+    }).then(function () {
+      // ③ タイムゾーン
+      if (!stillHere()) return;
+      var byBlock = {}, byDate = {};
+      var jobs = (state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
+        .map(function (d) { return timezoneAt(d.lat, d.lon, tzCache).then(function (tz) { if (tz) byDate[d.date] = tz; }); })
+        .concat(Object.keys(coordsByBlock).map(function (id) {
+          var c = coordsByBlock[id];
+          return timezoneAt(c.lat, c.lng, tzCache).then(function (tz) { if (tz) byBlock[id] = tz; });
+        }));
+      return Promise.all(jobs).then(function () {
+        saveCaches();
+        if (!stillHere()) return;
+        state.zoneInfo = { byBlock: byBlock, byDate: byDate };
+        if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
+      });
     });
   }
 

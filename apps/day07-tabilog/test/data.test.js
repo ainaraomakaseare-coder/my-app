@@ -499,5 +499,10 @@ var carTl = T.buildReplayTimeline(carStops, { 'https://x/shinjuku': { lat: 35.69
 eq('buildReplayTimeline: 移動手段が無くても移動にする。近ければ車、遠ければ（400km超）飛行機', carTl.legs.map(function (l) { return l.transport; }), ['car', 'plane']);
 ok('distanceKm: 新宿→那覇はおよそ1550km', Math.abs(T.distanceKm({ lat: 35.69, lng: 139.70 }, { lat: 26.21, lng: 127.68 }) - 1550) < 60);
 
+/* ---- 紹介文：ひとこと・URL ---- */
+var exText = T.reviewLogText({ category: 'food', label: '首里そば' }, { comment: 'また来たい', mapUrl: 'https://maps.app.goo.gl/x', shopUrl: 'https://shop.example', costItems: [] }, { score: 4.2, review: {} });
+ok('reviewLogText: ひとこととURLを添える', exText.indexOf('ひとこと：「また来たい」') !== -1 && exText.indexOf('📍 https://maps.app.goo.gl/x') !== -1 && exText.indexOf('🔗 https://shop.example') !== -1);
+ok('travelLogText: 移動にもURLを添える', T.travelLogText({ category: 'transport', transport: 'train', label: '京都へ' }, { costItems: [], travel: { from: '東京', to: '京都' }, otherUrl: 'https://jr.example' }).indexOf('🔗 https://jr.example') !== -1);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
