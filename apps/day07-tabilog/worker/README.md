@@ -329,3 +329,11 @@ DBのスキーマ変更は無い（migrationは不要）。
 - 自動で取った天気は元の日付のものなので消し、`ctx.waitUntil`で新しい日付の天気を取り直す（`refetchShiftedWeather`）。
   手で直した天気・場所・音声の文字起こしは、その旅の「○日目」の記録としてそのまま移す。
 - 古いWorkerは`shiftDays`を無視する。そのときは返事に`shiftedDays`が無いので、アプリは「予定はずらせませんでした」と出す。
+
+## 日ごとの天気を本人が選ぶだけにし、場所の入力欄をなくす（2026-09-26 追加）
+
+「場所（市区町村名など）を入力→Open-Meteoで自動取得」だった天気を、天気アイコン（☀️晴れ／🌤️晴れ時々くもり／☁️くもり／🌧️雨／⛈️雷雨／❄️雪／なし）を選ぶだけの操作に変えた。「ユニバーサル」がオーランドの天気になる、といった「どの粒度で地名を入れればいいか分からない」問題を、入力欄自体を無くすことで解消した（docs/adr/0013）。
+
+- **DBの変更は無い**。既存の`day_infos.weather_code`・`weather_manual`列をそのまま使う。`MANUAL_WEATHER_CODES`を旧来の10種（快晴／晴れ／曇り／霧／霧雨／雨／雪／にわか雨／にわか雪／雷雨）から、アプリの6アイコンに対応する`[1, 2, 3, 61, 71, 95]`に絞った。気温（temp_max/temp_min）はもう手動入力では受け付けない（送られてきても無視してNULLにする）。
+- `PATCH /trips/:id/days/:date/weather`：`weatherCode`に上の6種以外の整数を渡すと`400`。**`weatherCode: null`を渡すと「なし」＝選択解除**（`weather_code=NULL, weather_manual=0`に戻す）。呼び出し時に`day_infos`行が無ければ（まだ地図つきの記録が無い日）、場所は空のまま新しく行を作る。
+- `autoSetDayPlace`（`POST /trips/:id/days/:date/auto-place`）・`refetchShiftedWeather`（日程を変えたときの天気の取り直し）は、**もうOpen-Meteoの天気取得を呼ばない**。天気を表示に使わなくなったので、裏で取りに行く意味が無くなったため。`fetchDailyWeather`関数自体と、旧`PUT /trips/:id/days/:date`（`setDayPlace`、場所を手入力する昔のエンドポイント）は消さずに残してある（古いクライアント互換・他機能からの参照のため）。

@@ -250,6 +250,22 @@ eq('weatherLabel: にわか雨コードでも同様に曇り扱い', T.weatherLa
 eq('weatherLabel: 雷雨は降水量が少なくても雷雨のまま', T.weatherLabel(96, 0.2), '雷雨');
 eq('weatherLabel: 降水量が渡されなければ従来どおり', T.weatherLabel(63), '雨');
 
+/* ---- manualWeatherDisplay（手動で選ぶ天気アイコン。場所の入力欄の代わりに2026-09-26〜） ---- */
+eq('manualWeatherDisplay: 晴れ(1)', T.manualWeatherDisplay(1), { code: 1, icon: '☀️', label: '晴れ' });
+eq('manualWeatherDisplay: 晴れ時々くもり(2)', T.manualWeatherDisplay(2), { code: 2, icon: '🌤️', label: '晴れ時々くもり' });
+eq('manualWeatherDisplay: くもり(3)', T.manualWeatherDisplay(3), { code: 3, icon: '☁️', label: 'くもり' });
+eq('manualWeatherDisplay: 雨(61)', T.manualWeatherDisplay(61), { code: 61, icon: '🌧️', label: '雨' });
+eq('manualWeatherDisplay: 雷雨(95)', T.manualWeatherDisplay(95), { code: 95, icon: '⛈️', label: '雷雨' });
+eq('manualWeatherDisplay: 雪(71)', T.manualWeatherDisplay(71), { code: 71, icon: '❄️', label: '雪' });
+eq('manualWeatherDisplay: nullはnull（選んでいない）', T.manualWeatherDisplay(null), null);
+eq('manualWeatherDisplay: undefinedもnull', T.manualWeatherDisplay(undefined), null);
+eq('manualWeatherDisplay: 古い快晴(0)は晴れに寄せる', T.manualWeatherDisplay(0), { code: 1, icon: '☀️', label: '晴れ' });
+eq('manualWeatherDisplay: 古い霧(45)はくもりに寄せる', T.manualWeatherDisplay(45), { code: 3, icon: '☁️', label: 'くもり' });
+eq('manualWeatherDisplay: 古い霧雨(51)は雨に寄せる', T.manualWeatherDisplay(51), { code: 61, icon: '🌧️', label: '雨' });
+eq('manualWeatherDisplay: 古いにわか雨(80)は雨に寄せる', T.manualWeatherDisplay(80), { code: 61, icon: '🌧️', label: '雨' });
+eq('manualWeatherDisplay: 古いにわか雪(85)は雪に寄せる', T.manualWeatherDisplay(85), { code: 71, icon: '❄️', label: '雪' });
+eq('manualWeatherDisplay: 未知のコードはnull', T.manualWeatherDisplay(30), null);
+
 /* ---- 地図でふりかえる：予定の場所は記録の地図URLだけから決める（replayPlaceQuery） ---- */
 eq('replayPlaceQuery: Googleマップの共有リンクをそのまま返す（展開・座標の読み取りはWorker側）',
   T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: ' https://maps.app.goo.gl/PzmSEdBvWvfK1AW87?g_st=ic ' }] }), 'https://maps.app.goo.gl/PzmSEdBvWvfK1AW87?g_st=ic');

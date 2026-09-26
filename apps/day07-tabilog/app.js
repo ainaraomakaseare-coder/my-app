@@ -605,6 +605,33 @@
     return '';
   }
 
+  // 手動で選べる天気（2026-09-26〜）。場所の入力欄は分かりづらい（「ユニバーサル」がオーランドの
+  // 天気になった等）ため廃止し、本人がアイコンで選ぶだけにした。温度は持たない。
+  // コードはWMO weather codeの代表値を流用しているだけで、weatherLabel()の分類とは別物
+  // （「晴れ時々くもり」はweatherLabel()には無い区分）。
+  var MANUAL_WEATHER_OPTIONS = [
+    { code: 1, icon: '☀️', label: '晴れ' },
+    { code: 2, icon: '🌤️', label: '晴れ時々くもり' },
+    { code: 3, icon: '☁️', label: 'くもり' },
+    { code: 61, icon: '🌧️', label: '雨' },
+    { code: 95, icon: '⛈️', label: '雷雨' },
+    { code: 71, icon: '❄️', label: '雪' },
+  ];
+
+  // 昔の自動取得・旧手動修正機能（0/45/48/51〜57/80〜82/85〜86など）で入っていたWMOコードも、
+  // 上の6種のどれかに寄せて表示する（古いデータを消さずに済むように。2026-09-26）。
+  function manualWeatherDisplay(code) {
+    if (code === null || code === undefined) return null;
+    var exact = MANUAL_WEATHER_OPTIONS.filter(function (o) { return o.code === code; })[0];
+    if (exact) return exact;
+    if (code === 0) return MANUAL_WEATHER_OPTIONS[0]; // 快晴→晴れ
+    if (code === 3 || code === 45 || code === 48) return MANUAL_WEATHER_OPTIONS[2]; // 曇り・霧→くもり
+    if ((code >= 51 && code <= 57) || (code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return MANUAL_WEATHER_OPTIONS[3]; // 霧雨・雨・にわか雨→雨
+    if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) return MANUAL_WEATHER_OPTIONS[5]; // 雪・にわか雪→雪
+    if (code >= 95) return MANUAL_WEATHER_OPTIONS[4]; // 雷雨
+    return null;
+  }
+
   // ---------- 地図でふりかえる（replay） ----------
   // 予定（Block）を「地図の上を時刻どおりに移動していく演出」に変換する純粋関数。
   // 地図の描画（Leaflet）は画面側の仕事で、ここでは「どの順で・いつ・どこにいるか」だけを決める。
@@ -1336,6 +1363,8 @@
     myRatingScore: myRatingScore,
     sortMyLogItems: sortMyLogItems,
     weatherLabel: weatherLabel,
+    MANUAL_WEATHER_OPTIONS: MANUAL_WEATHER_OPTIONS,
+    manualWeatherDisplay: manualWeatherDisplay,
     replayPlaceQuery: replayPlaceQuery,
     replayPlaceEntry: replayPlaceEntry,
     replayStops: replayStops,
@@ -3109,52 +3138,40 @@
     return (state.days || []).filter(function (d) { return d.date === date; })[0] || null;
   }
 
+  // 場所（地名）はもう本人には入力させない。時差・マイログの訪れた国・自動配置のためだけに
+  // 裏で使う（loadTripZonesのauto-place）。ここで見せるのは天気アイコンだけ（2026-09-26）。
   function renderDayWeather() {
     var btn = $('#dayWeather');
-    var editBtn = $('#btnEditWeather');
     $('#weatherEditPanel').hidden = true;
-    if (!state.selectedDate) { btn.hidden = true; editBtn.hidden = true; return; }
+    if (!state.selectedDate) { btn.hidden = true; return; }
     btn.hidden = false;
     var info = findDayInfo(state.selectedDate);
-    var hasWeather = info && info.weatherCode !== null && info.weatherCode !== undefined;
-    if (hasWeather) {
+    var manual = info && info.weatherManual ? Core.manualWeatherDisplay(info.weatherCode) : null;
+    if (manual) {
       btn.classList.add('has-weather');
-      var label = Core.weatherLabel(info.weatherCode, info.precipSum);
-      var temps = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) + '℃/' + Math.round(info.tempMin) + '℃' : '';
-      btn.innerHTML = escapeHtml(info.place) + '　' + escapeHtml(label) + ' ' + escapeHtml(temps)
-        + (info.isForecast ? ' <span class="forecast-mark">（予報）</span>' : '')
-        + (info.weatherManual ? ' <span class="forecast-mark">（手動修正）</span>' : '');
-    } else if (info && info.place) {
-      btn.classList.remove('has-weather');
-      btn.textContent = escapeHtml(info.place) + '（天気取得中…）';
+      btn.innerHTML = '<span aria-hidden="true">' + manual.icon + '</span> ' + escapeHtml(manual.label);
     } else {
       btn.classList.remove('has-weather');
-      btn.textContent = '＋ 場所を設定';
+      btn.textContent = '天気を選ぶ';
     }
-    btn.onclick = function () { promptDayPlace(); };
-    // 天気が取れている日だけ、手動修正ボタンを出す（場所未設定の日は修正のしようがない）
-    editBtn.hidden = !hasWeather;
-    editBtn.onclick = function () { openWeatherEditPanel(info); };
+    btn.onclick = function () { openWeatherEditPanel(info); };
   }
 
   function openWeatherEditPanel(info) {
     var panel = $('#weatherEditPanel');
-    $('#weatherEditCode').value = String(info.weatherCode);
-    $('#weatherEditMax').value = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) : '';
-    $('#weatherEditMin').value = (info.tempMin !== null && info.tempMin !== undefined) ? Math.round(info.tempMin) : '';
+    var manual = info && info.weatherManual ? Core.manualWeatherDisplay(info.weatherCode) : null;
+    var picker = $('#weatherPicker');
+    picker.querySelectorAll('.weather-picker-opt').forEach(function (el) {
+      el.classList.toggle('on', manual ? el.dataset.code === String(manual.code) : el.dataset.code === '');
+    });
     $('#weatherEditStatus').textContent = '';
     panel.hidden = false;
   }
 
-  function saveWeatherEdit() {
+  function saveWeatherEdit(codeStr) {
     if (!state.trip || !state.selectedDate) return;
     var status = $('#weatherEditStatus');
-    var weatherCode = Number($('#weatherEditCode').value);
-    var maxVal = $('#weatherEditMax').value.trim();
-    var minVal = $('#weatherEditMin').value.trim();
-    var payload = { weatherCode: weatherCode };
-    if (maxVal !== '') payload.tempMax = Number(maxVal);
-    if (minVal !== '') payload.tempMin = Number(minVal);
+    var payload = { weatherCode: codeStr === '' ? null : Number(codeStr) };
     status.textContent = '保存中…';
     api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/weather', 'PATCH', payload)
       .then(function () { return refreshTrip(); })
@@ -3163,24 +3180,6 @@
         renderDayWeather();
       })
       .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
-  }
-
-  function promptDayPlace() {
-    if (!state.trip || !state.selectedDate) return;
-    var existing = findDayInfo(state.selectedDate);
-    var place = prompt('この日の場所（市区町村名など）を入力してください。天気・気温を自動で取得します。', existing ? existing.place : '');
-    if (place === null) return;
-    place = place.trim();
-    if (!place) return;
-    var btn = $('#dayWeather');
-    btn.textContent = '取得中…';
-    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate), 'PUT', { place: place })
-      .then(function () { return refreshTrip(); })
-      .then(function () { renderDayWeather(); })
-      .catch(function () {
-        alert('場所が見つからなかったか、天気の取得に失敗しました。地名を変えて試してください。');
-        renderDayWeather();
-      });
   }
 
   // タイムゾーンの日本語名（例：「英国夏時間」「ハワイ・アリューシャン標準時」）
@@ -5584,7 +5583,10 @@
       if (file) handleScanReceipt(file);
     });
     $('#btnCancelWeatherEdit').addEventListener('click', function () { $('#weatherEditPanel').hidden = true; });
-    $('#btnSaveWeatherEdit').addEventListener('click', saveWeatherEdit);
+    $('#weatherPicker').addEventListener('click', function (e) {
+      var opt = e.target.closest('.weather-picker-opt');
+      if (opt) saveWeatherEdit(opt.dataset.code);
+    });
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();

@@ -332,18 +332,12 @@ function shiftTripDateStatements(env, tripId, shiftDays, t) {
   ];
 }
 
-// 日付をずらした日の天気を、新しい日付で取り直す（保存の返事は待たせない。失敗しても天気が空のままになるだけ）。
+// 日付をずらした日の天気を、新しい日付で取り直す……という処理だったが、天気は本人が選んだもの
+// （weather_manual=1）しかもう画面に出さないため、weather_manual=0の行を裏でOpen-Meteoに取りに
+// 行く意味が無くなった（2026-09-26）。fetchDailyWeather自体はほかの経路（setDayPlace等）で
+// まだ使うので残し、ここは何もしない関数として呼び出し元との互換だけ保つ。
 async function refetchShiftedWeather(env, tripId) {
-  const { results } = await env.DB.prepare(
-    "SELECT id, date, lat, lon FROM day_infos WHERE trip_id = ? AND weather_manual = 0 AND fetched_at = '' AND lat IS NOT NULL AND lon IS NOT NULL"
-  ).bind(tripId).all();
-  for (const row of results) {
-    const weather = await fetchDailyWeather(row.lat, row.lon, row.date).catch(() => null);
-    if (!weather) continue;
-    await env.DB.prepare(
-      "UPDATE day_infos SET weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=? AND weather_manual = 0 AND fetched_at = ''"
-    ).bind(weather.weatherCode, weather.tempMax, weather.tempMin, weather.precipSum, weather.isForecast ? 1 : 0, nowIso(), nowIso(), row.id).run();
-  }
+  void env; void tripId;
 }
 
 async function deleteTrip(id, env, headers) {
@@ -937,9 +931,11 @@ function rowToDayInfo(row) {
   };
 }
 
-// 手動で選べる天気の種類。weatherLabel()の表示区分（快晴／晴れ／曇り／霧／霧雨／雨／雪／
-// にわか雨／にわか雪／雷雨）それぞれの代表的なWMOコードだけを許可する。
-const MANUAL_WEATHER_CODES = [0, 1, 3, 45, 51, 61, 71, 80, 85, 95];
+// 手動で選べる天気の種類（2026-09-26〜。場所の入力欄をやめ、天気アイコンを選ぶだけにしたため、
+// アプリ側の6種類のアイコン（晴れ／晴れ時々くもり／くもり／雨／雷雨／雪）に対応するWMOコードだけを許可する。
+// 気温は持たない。古い手動修正（0/45/51/80/85など）で保存済みの行はそのまま残るが、新しく選べるのは
+// この6つだけ（app.js側のCore.MANUAL_WEATHER_OPTIONSと合わせること）。
+const MANUAL_WEATHER_CODES = [1, 2, 3, 61, 71, 95];
 
 // Open-Meteoのジオコーディング（市区町村・行政区分レベル。POI・施設名は持たない）の生の候補一覧。
 async function geocodeOpenMeteoCandidates(place) {
@@ -1654,29 +1650,23 @@ async function autoSetDayPlace(tripId, date, request, env, headers) {
 
   const geo = await reverseGeocode(at.lat, at.lng);
   if (!geo) return json({ error: "place_not_found" }, 422, headers);
-  const weather = await fetchDailyWeather(at.lat, at.lng, date).catch(() => null);
+  // 天気はもう画面に出さない（本人がweatherPickerで選ぶだけ）ので、ここでOpen-Meteoには
+  // 取りに行かない（2026-09-26）。場所（時差・マイログの訪れた国用）だけを入れる。すでに本人が
+  // 天気を選んでいれば（weather_manual=1）、その選択には触れない。
   const t = nowIso();
-  const row = {
-    place: geo.place, lat: at.lat, lon: at.lng, admin1: geo.admin1, country: geo.country,
-    weather_code: weather ? weather.weatherCode : null,
-    temp_max: weather ? weather.tempMax : null,
-    temp_min: weather ? weather.tempMin : null,
-    precip_sum: weather ? weather.precipSum : null,
-    is_forecast: weather && weather.isForecast ? 1 : 0,
-    fetched_at: weather ? t : "",
-  };
+  const row = { place: geo.place, lat: at.lat, lon: at.lng, admin1: geo.admin1, country: geo.country };
   if (existing) {
-    // 文字起こし（voice_transcript）だけがある行など。場所と天気だけを入れる
+    // 文字起こし（voice_transcript）だけがある行など。場所だけを入れる
     await env.DB.prepare(
-      "UPDATE day_infos SET place=?, lat=?, lon=?, admin1=?, country=?, weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=? AND place=''"
+      "UPDATE day_infos SET place=?, lat=?, lon=?, admin1=?, country=?, updated_at=? WHERE id=? AND place=''"
     )
-      .bind(row.place, row.lat, row.lon, row.admin1, row.country, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, id)
+      .bind(row.place, row.lat, row.lon, row.admin1, row.country, t, id)
       .run();
   } else {
     await env.DB.prepare(
-      "INSERT OR IGNORE INTO day_infos (id, trip_id, date, place, lat, lon, admin1, country, weather_code, temp_max, temp_min, precip_sum, is_forecast, fetched_at, weather_manual, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)"
+      "INSERT OR IGNORE INTO day_infos (id, trip_id, date, place, lat, lon, admin1, country, weather_manual, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,0,?,?)"
     )
-      .bind(id, tripId, date, row.place, row.lat, row.lon, row.admin1, row.country, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, t)
+      .bind(id, tripId, date, row.place, row.lat, row.lon, row.admin1, row.country, t, t)
       .run();
   }
   const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
@@ -1746,32 +1736,42 @@ async function setDayPlace(tripId, date, request, env, headers) {
   return json(rowToDayInfo(updated), 200, headers);
 }
 
-// 自動取得した天気が実際と違うときに、本人が手動で修正するためのエンドポイント。
-// 場所（place）は変えず、天気アイコン・気温だけを上書きする。降水量（precip_sum）は
-// 手動入力では持たないためクリアする（weatherLabel()の「1mm以下なら曇り扱い」判定は
-// precipSumがnumberのときだけ働くので、nullなら選んだ天気コードの表示がそのまま出る）。
+// 本人がその日の天気アイコンを選ぶ・選び直す・「なし」に戻すためのエンドポイント（2026-09-26〜）。
+// 場所の入力欄をやめたため、その日の記録（day_infos行）がまだ無いことがある（地図つきの記録が
+// 1件もない日など）。その場合はここで空の場所のまま行を作る。気温・降水量は手動入力では持たない
+// （weatherLabel()向けの古いフィールドはNULLのまま。weather_codeがnullなら「なし」＝選んでいない）。
 async function setDayWeatherManual(tripId, date, request, env, headers) {
   if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
   const id = tripId + "_" + date;
-  const existing = await env.DB.prepare("SELECT id FROM day_infos WHERE id = ?").bind(id).first();
-  if (!existing) return json({ error: "day_not_found" }, 404, headers);
   let data;
   try {
     data = await request.json();
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
-  if (!Number.isInteger(data.weatherCode) || MANUAL_WEATHER_CODES.indexOf(data.weatherCode) === -1) {
+  const clearing = data.weatherCode === null;
+  if (!clearing && (!Number.isInteger(data.weatherCode) || MANUAL_WEATHER_CODES.indexOf(data.weatherCode) === -1)) {
     return json({ error: "invalid_input" }, 400, headers);
   }
-  const tempMax = typeof data.tempMax === "number" && isFinite(data.tempMax) && data.tempMax >= -80 && data.tempMax <= 80 ? data.tempMax : null;
-  const tempMin = typeof data.tempMin === "number" && isFinite(data.tempMin) && data.tempMin >= -80 && data.tempMin <= 80 ? data.tempMin : null;
   const t = nowIso();
-  await env.DB.prepare(
-    "UPDATE day_infos SET weather_code=?, temp_max=?, temp_min=?, precip_sum=NULL, is_forecast=0, weather_manual=1, fetched_at=?, updated_at=? WHERE id=?"
-  )
-    .bind(data.weatherCode, tempMax, tempMin, t, t, id)
-    .run();
+  const weatherCode = clearing ? null : data.weatherCode;
+  const weatherManual = clearing ? 0 : 1;
+  const existing = await env.DB.prepare("SELECT id FROM day_infos WHERE id = ?").bind(id).first();
+  if (existing) {
+    await env.DB.prepare(
+      "UPDATE day_infos SET weather_code=?, temp_max=NULL, temp_min=NULL, precip_sum=NULL, is_forecast=0, weather_manual=?, fetched_at=?, updated_at=? WHERE id=?"
+    )
+      .bind(weatherCode, weatherManual, weatherCode !== null ? t : "", t, id)
+      .run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO day_infos (id, trip_id, date, place, weather_code, weather_manual, fetched_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    )
+      .bind(id, tripId, date, "", weatherCode, weatherManual, weatherCode !== null ? t : "", t, t)
+      .run();
+  }
   const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
   return json(rowToDayInfo(updated), 200, headers);
 }
