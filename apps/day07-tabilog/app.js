@@ -4112,6 +4112,39 @@
   var placeCandidates = [];
   var PLACE_GOOGLE = 'google';
   var placeChoice = ''; // 選んでいる候補の番号（文字列）か PLACE_GOOGLE
+  var placeSessionToken = ''; // Places API (New) のAutocomplete〜Details一連の呼び出しをまとめる印（docs/adr/0011）
+
+  // 検索を始めるたびに新しく作る（1検索＝1セッションのほうが、Autocompleteの無料枠の数え方に合うため）。
+  // crypto.randomUUIDが無い古いWebViewのための保険であって、暗号的な強さは求めていない。
+  function newPlaceSession() {
+    placeSessionToken = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'pl-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    return placeSessionToken;
+  }
+
+  // Places API (New) のAutocomplete候補は座標を持たない（placeIdだけ）ことがある。
+  // 選ばれている候補にまだ座標が無ければ、選ばれた時点でだけ/places/detailsを呼んで座標を足す
+  // （候補を並べる時点で全件のdetailsを呼ぶと、選ばれなかった分の無料枠を無駄に使ってしまうため）。
+  function ensureSelectedPlaceCoords() {
+    var p = selectedPlace();
+    if (!p || (isFinite(p.lat) && isFinite(p.lng)) || !p.placeId) return Promise.resolve(p);
+    var status = $('#entPlaceStatus');
+    status.textContent = '場所を確かめています…';
+    return api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(placeSessionToken))
+      .then(function (res) {
+        if (res && res.found) {
+          p.lat = res.lat;
+          p.lng = res.lng;
+          if (res.address && !p.address) p.address = res.address;
+        }
+        status.textContent = '';
+        return p;
+      }).catch(function () {
+        status.textContent = '場所の座標を取得できませんでした。';
+        return p;
+      });
+  }
 
   function renderPlaceCandidates(place) {
     var list = $('#entPlaceCandidates');
@@ -4136,13 +4169,16 @@
     var status = $('#entPlaceStatus');
     status.textContent = '候補を探しています…';
     list.hidden = true;
-    api('/places/search?q=' + encodeURIComponent(place)).then(function (res) {
+    var session = newPlaceSession(); // 検索し直すたびに新しいセッション（Autocomplete〜Detailsの一連）にする
+    api('/places/search?q=' + encodeURIComponent(place) + '&session=' + encodeURIComponent(session)).then(function (res) {
       placeCandidates = (res && res.places) || [];
       placeChoice = placeCandidates.length ? '0' : PLACE_GOOGLE;
       renderPlaceCandidates(place);
       status.textContent = placeCandidates.length
         ? '1番目の場所を地図に出しています。違う場所なら、候補から選び直してください。'
         : '候補が見つかりませんでした。Googleマップの検索結果を表示しています。';
+      return ensureSelectedPlaceCoords();
+    }).then(function () {
       previewSelectedPlace();
     }).catch(function () {
       // 候補が取れなくても、これまでどおりGoogleマップの検索結果は見られるようにする
@@ -4157,9 +4193,11 @@
   function choosePlaceCandidate(value) {
     placeChoice = value;
     renderPlaceCandidates($('#entPlaceSearch').value.trim());
-    previewSelectedPlace();
-    var preview = $('#entMapPreview');
-    if (preview && preview.scrollIntoView) preview.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    ensureSelectedPlaceCoords().then(function () {
+      previewSelectedPlace();
+      var preview = $('#entMapPreview');
+      if (preview && preview.scrollIntoView) preview.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
   }
 
   function selectedPlace() {
@@ -4224,10 +4262,14 @@
   }
 
   function useSearchedPlaceAsMapUrl() {
-    var p = selectedPlace();
-    var q = p ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
-    if (!q) return;
-    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+    // 選んでいる候補がplaceIdだけ（座標未取得）のことがあるので、地図URLに入れる直前にも確かめる
+    // （選んだ直後に素早く押された場合の保険。通常は選んだ時点で既に取得済み）。
+    ensureSelectedPlaceCoords().then(function () {
+      var p = selectedPlace();
+      var q = (p && isFinite(p.lat) && isFinite(p.lng)) ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
+      if (!q) return;
+      $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+    });
   }
 
   function saveEntry() {

@@ -183,3 +183,17 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0019_memo_uses.sql
 本番の地図リンク57件のうち18件で場所が分からなかった（「ドジャースタジアム」「リオデジャネイロ空港」などカタカナの施設名。OpenStreetMapは海外の施設を日本語名で探すのが苦手）。`GET /geocode` に `hint=<予定の見出し>`・`near=緯度,経度;緯度,経度`（同じ旅行の前後の場所）を足し、住所・店名だけのリンクは次の順で探す：①Nominatim（前後の場所の近くを優先）→②日本語版ウィキペディアで題名（転送元を含む）が合う記事の座標（記事に無ければウィキデータの位置）→③「町＋空港」は町のまわりでいちばん大きな空港→④空白で区切った一部。前後の場所から2000km（名前全体が題名と合ったときは5000km）以上離れた結果は使わない。リンクに名前が無いとき（Googleの内部番号だけ）は見出しで同じように探す。キャッシュの鍵は `v4`（hint・nearを含む）。DBの変更は無い。無料・APIキー不要。
 
 `GET /places/search`（記録フォームの「場所名で検索」の候補）も、Nominatimの候補が3件未満のときはウィキペディアの記事の場所、「町＋空港」ならそのまわりでいちばん大きな空港を候補の先頭に足す（キャッシュの鍵は `v4`）。候補は番号・名前・住所・「選択」ボタンのカードで並べる。
+
+## 場所の候補検索・レシート読み取りをGoogleに切り替え（2026-09-26 追加）
+
+`GOOGLE_API_KEY`（Places API (New)とCloud Vision APIの2つだけに制限したキー）を設定すると、以下の2つの機能がGoogleを使うようになる。**無い・失敗した・0件だったときは今までどおりの仕組みに自動で戻る**ので、`wrangler deploy`だけで反映でき、DBの変更は無い（docs/adr/0011）。
+
+```sh
+npx wrangler secret put GOOGLE_API_KEY
+```
+
+- `GET /places/search`：Places API (New)のAutocompleteを先に試す。座標を返さないため、候補に`placeId`だけが入ることがある。クライアントは検索し直すたびに`session=`（`crypto.randomUUID()`）を付けて送る。Googleの結果はCache APIに置いていない（利用規約が長期間のキャッシュを推奨していないため）。
+- `GET /places/details?id=<placeId>&session=<token>`（新規）：座標の無い候補を「選択」したときに呼ぶ。Place Details Essentials（`location, displayName, formattedAddress`のみ。Pro以上のフィールドは足していない）を聞き、`{found, name, address, lat, lng}`を返す。`id`は`^[A-Za-z0-9_-]{10,300}$`で検証する。
+- `POST /receipts/scan`：Cloud Vision（`DOCUMENT_TEXT_DETECTION`）でレシートの文字を読み取り、`src/receipt-parse.js`の`parseReceiptText`（ルールベース。`node worker/test/receipt-parse.test.mjs`で単体テストできる）で品目に分ける。**音声入力・テキストメモと共有する利用回数の枠（`checkVoiceQuota`）は消費しない**（無料プランでも使える）。失敗したときだけ今までどおりOpenAIに回す（そのときは枠を消費する）。ログイン必須・`AI_RATE_LIMITER`はどちらの経路でも変えていない。
+
+無料枠・費用の目安は docs/adr/0011 に記載。オーナーがGCP側のクォータで1日の上限（Autocomplete/Place Details/Visionそれぞれ）と予算アラートを設定済み。

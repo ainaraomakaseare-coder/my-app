@@ -9,6 +9,8 @@
  * 「音声でまとめて記録する」機能だけ、唯一OpenAIを呼び出す（他の機能はAI不使用）。
  */
 
+import { parseReceiptText } from "./receipt-parse.js";
+
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -1135,13 +1137,78 @@ async function geocodeMapUrl(raw, quick, nears, hint) {
   return null;
 }
 
+// Places API (New) のAutocomplete（docs/adr/0011）。座標は返らないので、選ばれてから
+// /places/details（placeDetails）で取る。sessionは検索の開始ごとにクライアントが1つ作って
+// 一連の呼び出しに使い回すことで、Autocomplete分は無料枠を消費しない
+// （Session Usageの範囲。1検索＝1セッションになるよう、検索し直すたびに新しいsessionを作ってもらう）。
+// キーが無い・呼び出しが失敗した・0件だったときはnullを返し、呼び出し側でNominatim等の予備に回す。
+async function googleAutocomplete(q, session, env) {
+  try {
+    const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+      method: "POST",
+      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({ input: q, languageCode: "ja", sessionToken: session || undefined }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+    const places = suggestions
+      .map((s) => s && s.placePrediction)
+      .filter(Boolean)
+      .map((p) => ({
+        name: (p.structuredFormat && p.structuredFormat.mainText && p.structuredFormat.mainText.text) || "",
+        address: (p.structuredFormat && p.structuredFormat.secondaryText && p.structuredFormat.secondaryText.text) || "",
+        placeId: p.placeId || "",
+      }))
+      .filter((p) => p.name && p.placeId);
+    return places.length ? places : null;
+  } catch {
+    return null;
+  }
+}
+
+const PLACE_ID_RE = /^[A-Za-z0-9_-]{10,300}$/;
+
+// Autocompleteは座標を返さないので、候補を「選択」したタイミングで呼ぶ（GET /places/details）。
+// Place Details Essentials（location・displayName・formattedAddress）だけを聞く。
+// Pro以上のフィールド（評価・営業時間など）を足すと無料枠の単価が変わるので、増やさないこと。
+async function placeDetails(id, session, env, headers) {
+  if (!env.GOOGLE_API_KEY || !PLACE_ID_RE.test(id || "")) return json({ found: false }, 200, headers);
+  try {
+    const params = new URLSearchParams({ languageCode: "ja" });
+    if (session) params.set("sessionToken", session);
+    const res = await fetch("https://places.googleapis.com/v1/places/" + encodeURIComponent(id) + "?" + params.toString(), {
+      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "location,displayName,formattedAddress" },
+    });
+    if (!res.ok) return json({ found: false }, 200, headers);
+    const data = await res.json();
+    const pt = data.location && validLatLng(data.location.latitude, data.location.longitude);
+    if (!pt) return json({ found: false }, 200, headers);
+    return json({
+      found: true,
+      name: (data.displayName && data.displayName.text) || "",
+      address: data.formattedAddress || "",
+      lat: pt.lat,
+      lng: pt.lng,
+    }, 200, headers);
+  } catch {
+    return json({ found: false }, 200, headers);
+  }
+}
+
 // q：記録の地図のURL（今のアプリ）か、地名（見出しから推測していた以前のアプリ。審査中・配布済みの
 // iOSアプリのために残す）。
 // 記録フォームの「場所名で検索」用に、候補を複数返す（先頭が違う場所だったときに選び直せるように）。
-// 地図でふりかえると同じNominatimを使い、世界中を対象に最大8件。結果はCache APIに30日置く。
-async function searchPlaces(q, headers, ctx) {
+// GOOGLE_API_KEYがある間はPlaces API (New)のAutocompleteを先に試す（docs/adr/0011）。失敗・0件の
+// ときだけ、これまでどおりNominatim・ウィキペディア・空港の予備に回る。Googleの結果はCache APIに
+// 置かない（利用規約が長期間のキャッシュを推奨していないため、無理にキャッシュしない）。
+async function searchPlaces(q, headers, ctx, env, session) {
   q = (q || "").trim();
   if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
+  if (env && env.GOOGLE_API_KEY) {
+    const google = await googleAutocomplete(q, session, env);
+    if (google) return json({ places: google }, 200, headers);
+  }
   const cache = caches.default;
   const cacheKey = new Request("https://tabilog-places.cache/v4?q=" + encodeURIComponent(q));
   const hit = await cache.match(cacheKey);
@@ -2575,8 +2642,38 @@ function receiptItemsSchema() {
   };
 }
 
+// Cloud Vision（DOCUMENT_TEXT_DETECTION）でレシートの文字を読み取り、ルールベースの
+// parseReceiptText（receipt-parse.js）で品目に分ける（docs/adr/0011）。無料枠は月1,000枚。
+// 読み取れなかった・0件だったとき、またはVision呼び出し自体が失敗したときはnullを返し、
+// 呼び出し側（scanReceipt）が今までどおりOpenAIに回せるようにする。
+async function scanReceiptWithVision(base64, env) {
+  try {
+    const res = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + encodeURIComponent(env.GOOGLE_API_KEY), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requests: [{
+          image: { content: base64 },
+          features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+          imageContext: { languageHints: ["ja"] },
+        }],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const result = data && Array.isArray(data.responses) && data.responses[0];
+    if (!result || result.error) return null;
+    const text = result.fullTextAnnotation && result.fullTextAnnotation.text;
+    if (!text) return null;
+    const parsed = parseReceiptText(text);
+    return parsed.items.length ? parsed.items : null;
+  } catch {
+    return null;
+  }
+}
+
 async function scanReceipt(request, env, headers) {
-  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  if (!env.GOOGLE_API_KEY && !env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
   const { buf, contentType, getHeader } = await readBinaryBody(request);
   if (!Object.prototype.hasOwnProperty.call(IMAGE_EXT, contentType)) return json({ error: "unsupported_type" }, 415, headers);
   if (buf.byteLength === 0 || buf.byteLength > MAX_RECEIPT_IMAGE_BYTES) return json({ error: "invalid_size" }, 413, headers);
@@ -2586,10 +2683,6 @@ async function scanReceipt(request, env, headers) {
   if (auth.error) return json({ error: auth.error }, auth.status, headers);
   const email = auth.email;
 
-  // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
-  const quota = await checkVoiceQuota(env, email);
-  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
-
   if (env.AI_RATE_LIMITER) {
     const actor = request.headers.get("cf-connecting-ip") || "anonymous";
     const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
@@ -2597,6 +2690,21 @@ async function scanReceipt(request, env, headers) {
   }
 
   const base64 = arrayBufferToBase64(buf);
+
+  // Visionが使えるときはこちらを先に試す。回数の枠（checkVoiceQuota）を使わないため、
+  // 無料プランでもレシート読み取りが使えるようになる。失敗したときだけOpenAIに回す
+  // （そのときは今までどおり音声入力と共通の枠を使う）。
+  if (env.GOOGLE_API_KEY) {
+    const visionItems = await scanReceiptWithVision(base64, env);
+    if (visionItems) return json({ items: visionItems }, 200, headers);
+  }
+
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+
+  // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
+  const quota = await checkVoiceQuota(env, email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -3093,7 +3201,12 @@ export default {
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"));
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
     if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
-    if (method === "GET" && path === "/places/search") return searchPlaces(url.searchParams.get("q"), headers, ctx);
+    if (method === "GET" && path === "/places/search") {
+      return searchPlaces(url.searchParams.get("q"), headers, ctx, env, url.searchParams.get("session"));
+    }
+    if (method === "GET" && path === "/places/details") {
+      return placeDetails(url.searchParams.get("id"), url.searchParams.get("session"), env, headers);
+    }
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
       if (auth.error) return json({ error: auth.error }, auth.status, headers);
