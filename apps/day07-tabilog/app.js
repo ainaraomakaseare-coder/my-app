@@ -2497,6 +2497,7 @@
         // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
         $('#voicePremiumRequired').hidden = false;
         $('#voicePremiumMessage').textContent = '今月の音声入力の回数を使い切りました。メモの取り込みはこのまま使えます。';
+        $('#btnGoToPlans').hidden = isNativeApp(); // iOSアプリでは購入の画面へ案内しない（3.1.1）
         $('#btnVoiceRecord').disabled = true;
       }
     });
@@ -4232,6 +4233,13 @@
       (account.ticketCredits ? '・回数券の残り' + account.ticketCredits + '回' : '') + '</div>';
 
     optionsEl.innerHTML = '';
+    // iOSアプリの中では、有料プラン・回数券の購入（Stripe）を出さない。アプリ内で使うデジタルの機能を
+    // 売るときはAppleのアプリ内課金を使う決まり（審査ガイドライン3.1.1）があるため。残りの回数だけ見せる。
+    if (isNativeApp()) {
+      manageBtn.hidden = true;
+      msgEl.textContent = '';
+      return;
+    }
     PLAN_OPTIONS.forEach(function (opt) {
       if (account.plan === opt.plan) return;
       var card = document.createElement('div');
