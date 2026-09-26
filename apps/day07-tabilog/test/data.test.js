@@ -542,5 +542,66 @@ var nextDayZones = T.assignBlockZones([
 eq('assignBlockZones: 翌日最初の地図の無い予定は前日を引き継がず、その日の場所を使う',
   nextDayZones, { d1a: 'Asia/Tokyo', d2a: 'America/Los_Angeles' });
 
+/* ---- 地図でふりかえる：飛行機の道のり（アイコンと線を同じ弧にする。docs/adr/0008） ---- */
+var flyLeg = flyTl.legs[0];
+ok('buildReplayTimeline: 飛行機の区間は道のりが届くのを待たず、弧の道のりをCore側で先に作る',
+  flyLeg.path && flyLeg.path.length > 2);
+var flyMidR = flyLeg.r0 + (flyLeg.r1 - flyLeg.r0) * 0.5;
+var flyIcon = T.replayStateAt(flyTl, flyMidR).icon;
+var flyLinePoint = T.pathAt(flyLeg.path, 0.5).point;
+ok('replayStateAt: 飛行機のアイコンは、線と同じ道のり（弧）の同じ点をたどる（アイコンと線がずれない）',
+  Math.abs(flyIcon.lat - flyLinePoint.lat) < 1e-6 && Math.abs(flyIcon.lng - flyLinePoint.lng) < 1e-6);
+
+// 日付変更線をまたぐ移動（ハワイ→東京）でも、経度が連続する短い方の回り方をたどる（逆回りの長い弧にならない）
+var wrapPath = T.planeArcPath({ lat: 21.3, lng: -157.86 }, { lat: 35.68, lng: 139.77 }, 8);
+var wrapLngChange = wrapPath[wrapPath.length - 1][1] - wrapPath[0][1];
+ok('planeArcPath: 日付変更線をまたぐ移動は、経度の変化が短い方（180度以内）の回り方になる', Math.abs(wrapLngChange) <= 180 + 1e-6);
+ok('planeArcPath: 経度が1点ごとに大きく飛ばず、連続して変わる', wrapPath.every(function (p, i) {
+  return i === 0 || Math.abs(p[1] - wrapPath[i - 1][1]) < 30;
+}));
+
+/* ---- 地図でふりかえる：時差バナーは着陸時だけ（飛行中・出発時には出さない） ---- */
+// 日本20:00発 → ハワイ同日10:00着（tzBlocksと同じ移動）に、地図でふりかえる用の座標を持たせて実際に飛ばす
+var tzLocBlocks = [
+  { id: 'dep', date: '2026-12-12', time: '20:00', category: 'transport', transport: 'plane', label: '羽田から出発', entries: [{ mapUrl: 'https://x/haneda' }] },
+  { id: 'arr', date: '2026-12-12', time: '10:00', category: 'sightseeing', transport: 'plane', label: 'ホノルル到着', entries: [{ mapUrl: 'https://x/honolulu' }] }
+];
+var tzLocZones = T.assignBlockZones(tzLocBlocks, { dep: 'Asia/Tokyo', arr: 'Pacific/Honolulu' }, {}, 'Asia/Tokyo');
+T.applyBlockZones(tzLocBlocks, tzLocZones);
+var tzLocStops = T.replayStops({ startDate: '2026-12-12', endDate: '2026-12-12' }, tzLocBlocks);
+var tzLocTl = T.buildReplayTimeline(tzLocStops, { 'https://x/haneda': { lat: 35.55, lng: 139.78 }, 'https://x/honolulu': { lat: 21.32, lng: -157.92 } });
+var tzMid = T.replayStateAt(tzLocTl, (tzLocTl.legs[0].r0 + tzLocTl.legs[0].r1) / 2);
+eq('replayStateAt: 飛行中は時差がまだ発地のまま（到着まで時差バナーを出さない）', tzMid.offsetDiff, 0);
+var tzJustBefore = T.replayStateAt(tzLocTl, tzLocTl.legs[0].r1 - 0.001);
+eq('replayStateAt: 着陸の直前もまだ発地の時差のまま', tzJustBefore.offsetDiff, 0);
+var tzJustAfter = T.replayStateAt(tzLocTl, tzLocTl.legs[0].r1 + 0.001);
+eq('replayStateAt: 着陸した瞬間に時差バナーの元になる値が変わる（-19時間）', tzJustAfter.offsetDiff, -1140);
+
+/* ---- 地図でふりかえる：ルート検索が無い移動手段でも、区間の間ずっと道のりをたどりきる ---- */
+var trainSamples = [0.1, 0.5, 0.9].map(function (frac) {
+  var r = legAB.r0 + (legAB.r1 - legAB.r0) * frac;
+  return T.replayStateAt(tl, r).icon;
+});
+ok('replayStateAt: OSRMのルートが無い移動手段（電車など）でも、区間の間ずっと座標が求まる（途中で経路が消えない）',
+  trainSamples.every(function (ic) { return ic && isFinite(ic.lat) && isFinite(ic.lng); }));
+
+/* ---- 地図でふりかえる：OSRMの大回り判定（歩行者専用の目的地への迂回対策。docs/adr/0008） ---- */
+eq('isRouteDetourTooLong: 直線の2.5倍以内・+1.5km以内なら大回りではない', T.isRouteDetourTooLong(1, 2.4), false);
+eq('isRouteDetourTooLong: 2.5倍を超えて+1.5km以上長ければ大回り', T.isRouteDetourTooLong(1, 5), true);
+eq('isRouteDetourTooLong: 長距離では2.5倍未満なら（高速道路の迂回など）大回り扱いしない', T.isRouteDetourTooLong(100, 200), false);
+eq('isRouteDetourTooLong: 直線距離が0・不正な値なら大回り扱いしない', [T.isRouteDetourTooLong(0, 5), T.isRouteDetourTooLong(NaN, 5)], [false, false]);
+
+/* ---- 地図でふりかえる：移動手段が無く、とても近い移動（1.5km未満）は徒歩とみなす ---- */
+// リオデジャネイロ大聖堂→セラロン階段（約1km）。車で調べると歩行者専用の階段まで大回りすることがあるため、
+// 移動手段が未設定の短い移動は最初から徒歩で調べる（isRouteDetourTooLongの大回り判定と合わせて対策）
+var walkStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'w1', date: '2026-04-01', time: '13:00', label: 'リオデジャネイロ大聖堂', entries: [{ mapUrl: 'https://x/cathedral' }] },
+  { id: 'w2', date: '2026-04-01', time: '13:30', label: 'セラロン階段', entries: [{ mapUrl: 'https://x/selaron' }] }
+]);
+var walkTl = T.buildReplayTimeline(walkStops, {
+  'https://x/cathedral': { lat: -22.9105, lng: -43.1774 }, 'https://x/selaron': { lat: -22.9147, lng: -43.1808 }
+});
+eq('buildReplayTimeline: 移動手段が無く、とても近い移動（1.5km未満）は徒歩とみなす', walkTl.legs.map(function (l) { return l.transport; }), ['walk']);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

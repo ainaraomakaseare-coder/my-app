@@ -10,6 +10,7 @@
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
+import { s2ToLatLng, extractFeatureS2 } from "./geo-decode.js";
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -940,7 +941,8 @@ function validLatLng(lat, lng) {
 }
 
 // 展開後のURLから、座標（そのまま使う）か、検索する文字列（店名・住所）を取り出す。
-// 精度の高い順：場所ページの!3d…!4d…（そのお店の座標）→ ?q=座標 → /@座標（画面の中心）→ 文字列。
+// 精度の高い順：場所ページの!3d…!4d…（そのお店の座標）→ ?q=座標 → /@座標（画面の中心）→
+// 場所を示す内部番号（S2セルID。ftid=や!1s0x…:0x…。店名も座標も無い共有リンクで使われる）→ 文字列。
 function parseMapUrl(u) {
   const href = u.href;
   let m = /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/.exec(href);
@@ -954,6 +956,13 @@ function parseMapUrl(u) {
   let text = q;
   if (!text && m) {
     try { text = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { text = ""; }
+  }
+  if (!text) {
+    // 「ユニオンステーション」「ステーキの夕食」のように、店名も座標も入らない共有リンク
+    // （data=!4m2!3m1!1s0x…:0x… や ftid=0x…:0x…）は、コロン前の16進数がその場所のS2セルID
+    const s2 = extractFeatureS2(href);
+    const pt = s2 ? s2ToLatLng(s2) : null;
+    if (pt) { const v = validLatLng(pt.lat, pt.lng); if (v) return { coords: v }; }
   }
   return text ? { text } : null;
 }
@@ -1375,8 +1384,9 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam) {
   const nears = String(nearParam || "").split(";").map(parseLatLng).filter(Boolean).slice(0, 2);
   const hint = isStr(hintParam || "", 100) ? String(hintParam || "").trim() : "";
   const cache = caches.default;
-  // 近くの場所・見出しで結果が変わるので、キャッシュの鍵に含める（v4：探し方を変えたので作り直し）
-  const cacheKey = new Request("https://tabilog-geocode.cache/v4?q=" + encodeURIComponent(q) +
+  // 近くの場所・見出しで結果が変わるので、キャッシュの鍵に含める
+  // （v5：S2セルIDからの座標デコードを追加したので、それまでの「見つからない」を作り直す）
+  const cacheKey = new Request("https://tabilog-geocode.cache/v5?q=" + encodeURIComponent(q) +
     "&near=" + nears.map((n) => n.lat.toFixed(0) + "," + n.lng.toFixed(0)).join(";") + "&hint=" + encodeURIComponent(hint));
   const hit = await cache.match(cacheKey);
   if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);

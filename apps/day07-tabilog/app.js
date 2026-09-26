@@ -598,12 +598,40 @@
   //   挟まっても、アイコンはそれまで最後にいた場所で待つ）
   // - 旅の時間は基本1000倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
   var REPLAY_PLANE_KM = 400;
+  var REPLAY_WALK_KM = 1.5; // 移動手段が入っていない、とても近い移動（1.5km未満）は徒歩とみなす（2026-09-26）
 
   // 2地点の距離（km）
   function distanceKm(a, b) {
     var rad = Math.PI / 180, dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
     var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
     return 12742 * Math.asin(Math.sqrt(h));
+  }
+
+  // OSRMの車ルートが、たどり着けない目的地（歩行者専用の階段など）を遠い道に迂回させることがある
+  // （リオデジャネイロ大聖堂→セラロン階段、約1kmの徒歩圏なのに車で大回りするなど）。
+  // 直線距離よりずっと長い道のり（2.5倍を超え、かつ+1.5km以上長い）は「たどり着けていない」とみなし、
+  // 呼び出し側で徒歩ルートを調べ直す・それでも長ければ直線に戻す判断に使う。
+  function isRouteDetourTooLong(straightKm, routeKm) {
+    if (!(straightKm > 0) || !(routeKm >= 0)) return false;
+    return routeKm > straightKm * 2.5 && routeKm > straightKm + 1.5;
+  }
+
+  // 飛行機の弧（arcLatLng、arc=true）を、移動アイコンが実際にたどる密な折れ線にする。
+  // これにより「アイコンの位置」と「線の描画」が常に同じ点を通る（docs/adr/0008）。
+  // 経度が日付変更線をまたぐ移動（ハワイ⇄東京など）は、そのまま引くと逆回りの長い経路になってしまうため、
+  // 出発地から見て連続した経度（180度を超えてもよい）に直してから弧を作る。
+  var REPLAY_PLANE_ARC_POINTS = 32;
+  function planeArcPath(a, b, n) {
+    n = Math.max(2, n || REPLAY_PLANE_ARC_POINTS);
+    var dLng = b.lng - a.lng;
+    if (dLng > 180) dLng -= 360; else if (dLng < -180) dLng += 360;
+    var to = { lat: b.lat, lng: a.lng + dLng };
+    var pts = [];
+    for (var i = 0; i <= n; i++) {
+      var p = arcLatLng(a, to, i / n, true);
+      pts.push([p.lat, p.lng]);
+    }
+    return pts;
   }
 
   function buildReplayTimeline(stops, coordsByQuery) {
@@ -625,11 +653,17 @@
     // 場所が変わったら移動にする。移動手段が入っていなければ車とみなす（ほとんどの移動は車、という声より。
     // 以前は移動手段が入っている区間だけを移動にしていたので、入れていないと青い道のりが出なかった）。
     // ただし遠い移動（REPLAY_PLANE_KM超、東京→沖縄など）は、車の道が無い・現実的でないので飛行機とみなす。
+    // ごく近い移動（REPLAY_WALK_KM未満、大聖堂から近くの階段など）は徒歩とみなす（2026-09-26）。
     s.forEach(function (st, i) {
       if (!st.located) return;
       if (lastLoc >= 0 && (s[lastLoc].lat !== st.lat || s[lastLoc].lng !== st.lng)) {
-        var transport = st.transport || (distanceKm(s[lastLoc], st) > REPLAY_PLANE_KM ? 'plane' : 'car');
-        legs.push({ from: lastLoc, to: i, transport: transport, assumed: !st.transport });
+        var d = distanceKm(s[lastLoc], st);
+        var transport = st.transport || (d > REPLAY_PLANE_KM ? 'plane' : (d < REPLAY_WALK_KM ? 'walk' : 'car'));
+        var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport };
+        // 飛行機の道のりは道路検索をしないので、アイコンと同じ弧をここで作っておく
+        // （道のりが分かるのを待たずに、区間に入った瞬間から全体を青く見せられる。docs/adr/0008）。
+        if (transport === 'plane') leg.path = planeArcPath(s[lastLoc], st);
+        legs.push(leg);
       }
       lastLoc = i;
     });
@@ -1129,6 +1163,8 @@
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
     distanceKm: distanceKm,
+    isRouteDetourTooLong: isRouteDetourTooLong,
+    planeArcPath: planeArcPath,
     parseMemo: parseMemo,
     transportLabel: transportLabel,
     minutesText: minutesText,
@@ -4165,13 +4201,15 @@
 
   function renderPlaceCandidates(place) {
     var list = $('#entPlaceCandidates');
+    // カード全体をタップして選べるように、data-place-choiceはカード自身に付ける（ボタンは見た目のラベルとして残す）。
+    // 以前はボタンだけがタップの対象で、名前や住所の文字をタップしても選択が1番目のままだったため。
     var card = function (value, num, name, sub) {
       var on = placeChoice === value;
-      return '<div class="place-card' + (on ? ' on' : '') + '">' +
+      return '<div class="place-card' + (on ? ' on' : '') + '" data-place-choice="' + value + '" role="button" tabindex="0">' +
         '<span class="place-num">' + num + '</span>' +
         '<div class="place-text"><div class="place-name">' + escapeHtml(name) + '</div>' +
         (sub ? '<div class="place-address">' + escapeHtml(sub) + '</div>' : '') + '</div>' +
-        '<button type="button" class="place-pick" data-place-choice="' + value + '">' + (on ? '選択中' : '選択') + '</button></div>';
+        '<span class="place-pick">' + (on ? '選択中' : '選択') + '</span></div>';
     };
     list.innerHTML = '<div class="place-list-head"><span>候補から選ぶ</span><span class="place-count">' + placeCandidates.length + '件</span></div>' +
       placeCandidates.map(function (p, i) { return card(String(i), i + 1, p.name, p.address); }).join('') +
@@ -4197,6 +4235,7 @@
       return ensureSelectedPlaceCoords();
     }).then(function () {
       previewSelectedPlace();
+      applySelectedPlaceToMapUrl();
     }).catch(function () {
       // 候補が取れなくても、これまでどおりGoogleマップの検索結果は見られるようにする
       placeCandidates = [];
@@ -4204,6 +4243,7 @@
       list.hidden = true;
       status.textContent = '';
       previewSelectedPlace();
+      applySelectedPlaceToMapUrl();
     });
   }
 
@@ -4212,6 +4252,7 @@
     renderPlaceCandidates($('#entPlaceSearch').value.trim());
     ensureSelectedPlaceCoords().then(function () {
       previewSelectedPlace();
+      applySelectedPlaceToMapUrl();
       var preview = $('#entMapPreview');
       if (preview && preview.scrollIntoView) preview.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
@@ -4233,6 +4274,7 @@
     if (cur) {
       cur.lat = Math.round(latlng.lat * 1e6) / 1e6;
       cur.lng = Math.round(latlng.lng * 1e6) / 1e6;
+      applySelectedPlaceToMapUrl(); // ピンで位置を直したら、地図欄のURLもその位置に更新する
     }
   }
 
@@ -4278,20 +4320,22 @@
     }).catch(function () { placeFrameZoom = 16; showPlaceFrame(); });
   }
 
-  function useSearchedPlaceAsMapUrl() {
-    // 選んでいる候補がplaceIdだけ（座標未取得）のことがあるので、地図URLに入れる直前にも確かめる
-    // （選んだ直後に素早く押された場合の保険。通常は選んだ時点で既に取得済み）。
-    ensureSelectedPlaceCoords().then(function () {
-      var p = selectedPlace();
-      var q = (p && isFinite(p.lat) && isFinite(p.lng)) ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
-      if (!q) return;
-      $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
-    });
+  // 候補が選ばれるたび（検索直後の1番目の自動選択・候補カードのタップ・座標取得後・ピンを動かしたとき）に、
+  // 自動で地図欄のURLを埋める（以前は「このURLを地図欄に入れる」ボタンを押す手順が要ったが、
+  // 押し忘れて地図欄が空のまま保存されることがあったため、2026-09-26に自動化した）。
+  // 座標がまだ無ければ（「Googleマップで検索」を選んでいるときなど）検索した文字列そのままで検索するURLにする。
+  function applySelectedPlaceToMapUrl() {
+    var p = selectedPlace();
+    var q = (p && isFinite(p.lat) && isFinite(p.lng)) ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
+    if (!q) return;
+    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
 
   function saveEntry() {
     var status = $('#entFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
+    // 保険：候補を選んだのに地図欄が空のまま保存されそうなら、ここで埋める
+    if (!$('#entMapUrl').value.trim() && selectedPlace()) applySelectedPlaceToMapUrl();
     var author = $('#entAuthor').value.trim();
     status.textContent = '保存中…';
 
@@ -4637,8 +4681,10 @@
   // 別の場所になっていたものを含む）は使わず、読み込み時に消す。
   // -v3（2026-09-26〜）：Worker側で海外の施設名（カタカナ）もウィキペディアで探せるようにしたので、
   // 以前「見つからない」と覚えた結果を捨てて調べ直す。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v3';
-  try { localStorage.removeItem('tabilog:geocode-cache'); localStorage.removeItem('tabilog:geocode-cache-v2'); } catch (e) {}
+  // -v4（2026-09-26〜）：店名も座標も入らない共有リンク（内部番号のS2セルIDから座標を求める）に対応したので、
+  // それまで「見つからない」だったものを調べ直す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v4';
+  try { localStorage.removeItem('tabilog:geocode-cache'); localStorage.removeItem('tabilog:geocode-cache-v2'); localStorage.removeItem('tabilog:geocode-cache-v3'); } catch (e) {}
   // 住所・店名から探すときに添える「同じ旅行の前後の場所」（旅行の順で、直前と直後に分かっている場所）。
   // Worker はこの近くを優先し、2000km以上離れた結果（同名の別の場所）は使わない。
   function geocodeNearParam(coords, i) {
@@ -4702,16 +4748,32 @@
   // 移動手段が車・タクシー・バス・徒歩・自転車の区間は、実際の道路に沿った道のりをWorker（/route）に聞き、
   // その区間の path にする（Core.replayStateAt と線の描画が、直線の代わりにこれをたどる。docs/adr/0008）。
   // 取れなかった区間は、これまでどおり直線のまま。
+  // 車ルートが直線距離よりずっと長い（Core.isRouteDetourTooLong）ときは、歩行者専用の目的地（階段など）に
+  // 車で大回りしている疑いがあるので、徒歩で調べ直す。それでも長ければ直線に戻す（2026-09-26）。
+  function routeQuery(profile, a, b) {
+    return '/route?profile=' + profile +
+      '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
+  }
   function fetchReplayRoutes(tl, onRoute) {
     var jobs = tl.legs.filter(function (l) { return Core.routeProfileFor(l.transport); });
     // 近い区間から順に届くよう、再生の順番（区間の並び）のまま同時に聞く
     return Promise.all(jobs.map(function (l) {
       var a = tl.stops[l.from], b = tl.stops[l.to];
-      var q = '/route?profile=' + Core.routeProfileFor(l.transport) +
-        '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
-      return api(q).then(function (res) {
+      var straightKm = Core.distanceKm(a, b);
+      var profile = Core.routeProfileFor(l.transport);
+      return api(routeQuery(profile, a, b)).catch(function () { return null; }).then(function (res) {
+        var km = res && res.found ? (res.distance || 0) / 1000 : null;
+        if (res && res.found && profile !== 'foot' && Core.isRouteDetourTooLong(straightKm, km)) {
+          // 車で大回りしている疑い。徒歩で調べ直す
+          return api(routeQuery('foot', a, b)).catch(function () { return null; }).then(function (res2) {
+            var km2 = res2 && res2.found ? (res2.distance || 0) / 1000 : null;
+            return (res2 && res2.found && !Core.isRouteDetourTooLong(straightKm, km2)) ? res2 : null;
+          });
+        }
+        return res;
+      }).then(function (res) {
         if (res && res.found && res.path && res.path.length > 1) { l.path = res.path; if (onRoute) onRoute(l); }
-      }).catch(function () {});
+      });
     }));
   }
 
@@ -4789,16 +4851,33 @@
       });
     });
     // 移動の線はGoogleマップの道のりのような青（白い縁取り付き）。区間に入ったら、これから通る道のりを
-    // 薄い青で先に見せ、進んだところまでを濃い青で伸ばしていく。飛行機は弧の点線。
+    // 薄い青で先に見せ、進んだところまでを濃い青で伸ばしていく。飛行機は弧の点線（道のりはCore側で
+    // 弧の点をあらかじめ作ってあるので、車などの実際の道のりと同じ仕組みで「これから通る道」を出せる。
+    // 「飛び立った瞬間から全体を青く見せてほしい」という声より、2026-09-26に車と同じ扱いに揃えた）。
     tl.legs.forEach(function (l, k) {
       var plane = l.transport === 'plane';
       var full = l.path || null;
       replay.lines[k] = {
-        plan: plane ? null : L.polyline(full || [], { color: ROUTE_BLUE, weight: 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round' }),
+        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '6 8' : null }),
         casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
         line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '8 10' : null })
       };
     });
+    replay.mapAnimating = false;
+    if (!replayMap._replayAnimGuard) {
+      replayMap._replayAnimGuard = true;
+      // Leaflet（SVGレンダラー）は、ズームのアニメーション中に線の座標を更新すると、
+      // アニメーションが終わる（moveend/zoomend）までタイルとずれた位置に描いてしまう
+      // （地図全体が動いている最中に setLatLngs すると、そのフレームのズーム換算がまだ
+      // 反映されていないため）。「区間の変わり目で地図がずれ、青い線が追いつかない」の原因。
+      // アニメーション中は線の更新を止め（アイコンは動かし続ける）、終わったら1回だけ描き直す。
+      replayMap.on('zoomstart movestart', function () { if (replay) replay.mapAnimating = true; });
+      replayMap.on('zoomend moveend', function () {
+        if (!replay) return;
+        replay.mapAnimating = false;
+        renderReplay();
+      });
+    }
     resetReplayCamera();
     renderReplayDays();
     preloadNextReplayPhotos(-1);
@@ -4946,7 +5025,9 @@
     tl.legs.forEach(function (l, k) {
       var f = r >= l.r1 ? 1 : (r <= l.r0 ? 0 : (r - l.r0) / (l.r1 - l.r0));
       var set = replay.lines[k];
-      if (f > 0) {
+      // 地図がズーム・移動アニメ中は、線（SVGの座標）を更新すると地図とずれて見えるため更新を止める
+      // （終わったら zoomend/moveend で1回描き直す。乗り物のアイコンは通常のマーカーなので動かし続けてよい）
+      if (f > 0 && !replay.mapAnimating) {
         var pts = replayLegPoints(l, f);
         set.line.setLatLngs(pts);
         if (set.casing) set.casing.setLatLngs(pts);
@@ -4985,7 +5066,12 @@
     } else if (!st.icon && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];
       var cameFromLeg = tl.legs.some(function (l) { return l.to === st.stopIndex; });
-      if (arrived && arrived.located && !cameFromLeg && replay.lastStop !== -2) {
+      // 長い移動（飛行機で日本→アメリカなど）のflyToBoundsは、両端が入るよう地図を大きく引いたまま。
+      // その先の予定が地図の無い（座標が分からない）予定続きだと次の区間が作られず、広域のまま止まって
+      // 見えてしまうため、着いた地点のズームが街を見る大きさ（目安10）より広いままなら、着いた地点へ寄せ直す
+      // （次の区間があるかどうかによらない。2026-09-26）。
+      var zoomedOut = replayMap.getZoom() < 10;
+      if (arrived && arrived.located && replay.lastStop !== -2 && (!cameFromLeg || zoomedOut)) {
         replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
       }
       replay.lastStop = st.stopIndex;
@@ -5197,12 +5283,18 @@
       var b = e.target.closest('[data-place-choice]');
       if (b) choosePlaceCandidate(b.dataset.placeChoice);
     });
+    $('#entPlaceCandidates').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var b = e.target.closest('[data-place-choice]');
+      if (!b) return;
+      e.preventDefault();
+      choosePlaceCandidate(b.dataset.placeChoice);
+    });
     $('#btnMapZoomIn').addEventListener('click', function () { zoomPlaceFrame(1); });
     $('#btnMapZoomOut').addEventListener('click', function () { zoomPlaceFrame(-1); });
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); showPlaceMapPreview(); }
     });
-    $('#btnUseMapUrl').addEventListener('click', useSearchedPlaceAsMapUrl);
     $('#receiptFileInput').addEventListener('change', function (e) {
       var file = e.target.files[0];
       e.target.value = '';

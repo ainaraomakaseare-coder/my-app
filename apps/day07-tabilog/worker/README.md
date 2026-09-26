@@ -226,3 +226,12 @@ node scripts/ai-compare.mjs voice ./sample-voice.webm
 ```
 
 比較対象のモデルはWorkers AIの`@cf/openai/whisper-large-v3-turbo`（音声認識）・`@cf/qwen/qwen3-30b-a3b-fp8`・`@cf/openai/gpt-oss-120b`（メモの整理）。無料枠・単価の目安はdocs/adr/0012に記載。何も保存せず、利用者の音声・テキストの内容はログにも出さない。ローカルの`wrangler dev --local`ではCloudflareへのログインが無いとWorkers AIの呼び出し自体が失敗することがあるが、その場合`workersAi`側がエラーになるだけで、`/ai-compare`自体が404にならないことは確認できる。
+
+（2026-09-26 追記・地図のURLのS2セルID対応）テーブルの変更は無し。GoogleマップのURLの中には、
+「共有」からの短縮リンクを展開すると店名も座標も入らず`data=!4m2!3m1!1s0x…:0x…`や`ftid=0x…:0x…`だけが
+残るものがある（例：ユニオンステーション、ステーキの夕食）。コロンの前の16進数がその場所のS2セルIDに
+なっていることが多いと分かったため、`worker/src/geo-decode.js`に`s2ToLatLng`（S2セルID→緯度経度）・
+`extractFeatureS2`（URLからそのIDを取り出す）を追加し、`parseMapUrl`で座標が直接読めないときの手がかりとして
+使うようにした（単体テスト：`node worker/test/geo-decode.test.mjs`）。これに伴い`/geocode`のキャッシュの鍵を
+v4→v5に、クライアント（`app.js`）のlocalStorageのキャッシュキーもv3→v4に上げてあり、以前「見つからない」と
+覚えた結果は自動的に調べ直される。
