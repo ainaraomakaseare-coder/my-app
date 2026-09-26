@@ -1043,7 +1043,7 @@ async function wikipediaCoords(titles) {
 async function wikipediaPlace(name) {
   try {
     const direct = await wikipediaCoords([name]);
-    if (direct[name]) return direct[name];
+    if (direct[name]) return Object.assign({ title: name }, direct[name]);
     const res = await fetch("https://ja.wikipedia.org/w/api.php?action=query&format=json&list=search&srlimit=10&srprop=redirecttitle&srsearch=" + encodeURIComponent(name), { headers: WIKI_UA });
     const data = res.ok ? await res.json() : null;
     const hits = ((data && data.query && data.query.search) || [])
@@ -1051,7 +1051,7 @@ async function wikipediaPlace(name) {
       .filter((h) => h.rank).sort((a, b) => b.rank - a.rank).slice(0, 5);
     if (!hits.length) return null;
     const cs = await wikipediaCoords(hits.map((h) => h.title));
-    for (const h of hits) if (cs[h.title]) return cs[h.title];
+    for (const h of hits) if (cs[h.title]) return Object.assign({ title: h.title }, cs[h.title]);
     return null;
   } catch {
     return null;
@@ -1143,7 +1143,7 @@ async function searchPlaces(q, headers, ctx) {
   q = (q || "").trim();
   if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
   const cache = caches.default;
-  const cacheKey = new Request("https://tabilog-places.cache/v2?q=" + encodeURIComponent(q));
+  const cacheKey = new Request("https://tabilog-places.cache/v4?q=" + encodeURIComponent(q));
   const hit = await cache.match(cacheKey);
   if (hit) return json(await hit.json(), 200, headers);
   let list = [];
@@ -1173,9 +1173,22 @@ async function searchPlaces(q, headers, ctx) {
       cities = [];
     }
   }
-  if (!list.length && !cities.length) return json({ places: [] }, 200, headers);
+  // 海外の施設をカタカナで探したとき（「ドジャースタジアム」など）はNominatimの候補が少ないので、
+  // 題名が合うウィキペディアの記事の場所も候補に足す（地図でふりかえると同じ探し方。2026-09-26〜）
+  let wiki = [];
+  if (list.length < 3) {
+    const w = await wikipediaPlace(q);
+    if (w) wiki = [{ name: String(w.title || q).replace(/\s*\([^)]*\)$/, ""), address: "ウィキペディアの記事の場所", lat: w.lat, lng: w.lng }];
+    // 「リオデジャネイロ空港」のような「町＋空港」は、町のまわりでいちばん大きな空港
+    if (!wiki.length && /空港$/.test(q)) {
+      await new Promise((ok) => setTimeout(ok, 1100)); // Nominatimは1秒1回まで
+      const air = await cityAirport(q.replace(/\s+/g, ""), []);
+      if (air) wiki = [{ name: q, address: "町のまわりでいちばん大きな空港", lat: air.lat, lng: air.lng }];
+    }
+  }
+  if (!list.length && !cities.length && !wiki.length) return json({ places: [] }, 200, headers);
   const seen = new Set();
-  const places = cities.concat(list
+  const places = wiki.concat(cities).concat(list
     .map((r) => {
       const full = String(r.display_name || "");
       const name = String(r.name || full.split(",")[0] || "").trim();

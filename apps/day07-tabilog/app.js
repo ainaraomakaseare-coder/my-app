@@ -3573,6 +3573,7 @@
     $('#entPlaceSearch').value = '';
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
+    placeCandidates = []; placeChoice = '';
     $('#entPlaceStatus').textContent = '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
@@ -4106,41 +4107,62 @@
   // Worker（/places/search）から候補を最大8件もらってプルダウンで選べるようにした。候補を選ぶと
   // その座標の地図URLを入れる（地図でふりかえるでも、その場所へぴったり移動する）。
   // 候補に無い小さなお店などのために、最後に「Googleマップで名前のまま検索」も残す。
+  // 候補は、プルダウンだと中身が見えず選びにくかったので、番号・名前・住所・「選択」ボタンのカードで並べる。
   var placeCandidates = [];
   var PLACE_GOOGLE = 'google';
+  var placeChoice = ''; // 選んでいる候補の番号（文字列）か PLACE_GOOGLE
+
+  function renderPlaceCandidates(place) {
+    var list = $('#entPlaceCandidates');
+    var card = function (value, num, name, sub) {
+      var on = placeChoice === value;
+      return '<div class="place-card' + (on ? ' on' : '') + '">' +
+        '<span class="place-num">' + num + '</span>' +
+        '<div class="place-text"><div class="place-name">' + escapeHtml(name) + '</div>' +
+        (sub ? '<div class="place-address">' + escapeHtml(sub) + '</div>' : '') + '</div>' +
+        '<button type="button" class="place-pick" data-place-choice="' + value + '">' + (on ? '選択中' : '選択') + '</button></div>';
+    };
+    list.innerHTML = '<div class="place-list-head"><span>候補から選ぶ</span><span class="place-count">' + placeCandidates.length + '件</span></div>' +
+      placeCandidates.map(function (p, i) { return card(String(i), i + 1, p.name, p.address); }).join('') +
+      card(PLACE_GOOGLE, '?', '候補にない場合', '「' + place + '」をGoogleマップで検索');
+    list.hidden = false;
+  }
 
   function showPlaceMapPreview() {
     var place = $('#entPlaceSearch').value.trim();
     if (!place) return;
-    var select = $('#entPlaceCandidates');
+    var list = $('#entPlaceCandidates');
     var status = $('#entPlaceStatus');
     status.textContent = '候補を探しています…';
-    select.hidden = true;
+    list.hidden = true;
     api('/places/search?q=' + encodeURIComponent(place)).then(function (res) {
       placeCandidates = (res && res.places) || [];
-      select.innerHTML = placeCandidates.map(function (p, i) {
-        return '<option value="' + i + '">' + escapeHtml(p.name + (p.address ? '（' + p.address + '）' : '')) + '</option>';
-      }).join('') + '<option value="' + PLACE_GOOGLE + '">候補にない場合：「' + escapeHtml(place) + '」をGoogleマップで検索</option>';
-      select.hidden = false;
+      placeChoice = placeCandidates.length ? '0' : PLACE_GOOGLE;
+      renderPlaceCandidates(place);
       status.textContent = placeCandidates.length
-        ? '候補が' + placeCandidates.length + '件見つかりました。違う場所なら、上のリストから選び直してください。'
+        ? '1番目の場所を地図に出しています。違う場所なら、候補から選び直してください。'
         : '候補が見つかりませんでした。Googleマップの検索結果を表示しています。';
-      select.value = placeCandidates.length ? '0' : PLACE_GOOGLE;
       previewSelectedPlace();
     }).catch(function () {
       // 候補が取れなくても、これまでどおりGoogleマップの検索結果は見られるようにする
       placeCandidates = [];
-      select.innerHTML = '<option value="' + PLACE_GOOGLE + '">「' + escapeHtml(place) + '」をGoogleマップで検索</option>';
-      select.value = PLACE_GOOGLE;
-      select.hidden = true;
+      placeChoice = PLACE_GOOGLE;
+      list.hidden = true;
       status.textContent = '';
       previewSelectedPlace();
     });
   }
 
+  function choosePlaceCandidate(value) {
+    placeChoice = value;
+    renderPlaceCandidates($('#entPlaceSearch').value.trim());
+    previewSelectedPlace();
+    var preview = $('#entMapPreview');
+    if (preview && preview.scrollIntoView) preview.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
   function selectedPlace() {
-    var v = $('#entPlaceCandidates').value;
-    return v === PLACE_GOOGLE || v === '' ? null : placeCandidates[Number(v)] || null;
+    return placeChoice === PLACE_GOOGLE || placeChoice === '' ? null : placeCandidates[Number(placeChoice)] || null;
   }
 
   // 候補を選んだときのプレビューは、地図でふりかえると同じLeaflet（OpenStreetMap）の地図にする。
@@ -5111,7 +5133,10 @@
     $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
-    $('#entPlaceCandidates').addEventListener('change', previewSelectedPlace);
+    $('#entPlaceCandidates').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-place-choice]');
+      if (b) choosePlaceCandidate(b.dataset.placeChoice);
+    });
     $('#btnMapZoomIn').addEventListener('click', function () { zoomPlaceFrame(1); });
     $('#btnMapZoomOut').addEventListener('click', function () { zoomPlaceFrame(-1); });
     $('#entPlaceSearch').addEventListener('keydown', function (e) {
