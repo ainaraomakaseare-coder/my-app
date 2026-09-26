@@ -15,6 +15,10 @@ import {
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
   isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
 } from "./geo-decode.js";
+import {
+  isValidCurrency, isValidDate, frankfurterUrl, parseFrankfurterResponse,
+  dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
+} from "./rates.js";
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
 // 精算の端数（丸め）単位。Walicaにならい1円／10円／100円から選べる（trips.settle_unit、v21）。
@@ -137,16 +141,29 @@ function optUrl(x, max) {
 // paidBy（実際に払った人。省略時はEntryのauthorとみなす）・splitAmong（割り勘の対象者。
 // 省略時はpaidBy本人だけとみなし＝割り勘なしの個人費用という、これまでどおりの意味になる）は
 // どちらも任意項目。既存データ（この2つを持たない古いcostItems）との後方互換のため。
+//
+// currency（ISO 4217、例："USD"）・rate（1<currency>あたりの円。GET /ratesで取得しつつ
+// 本人が直せる値）も任意項目（DAY31〜、docs/adr/0014）。両方省略なら、これまでどおり
+// amountがそのまま円（整数）という意味のまま変わらない＝旧バージョンのアプリからの
+// リクエストもそのまま通る。currencyを持つ行は、amountがその通貨での金額になるため、
+// 円のような整数縛りをせず小数第2位までを許す（カード明細の実際の金額に合わせられるように）。
 function validCostItems(x) {
   if (x === undefined) return true;
   if (!Array.isArray(x) || x.length > 30) return false;
-  return x.every((it) =>
-    it && typeof it === "object"
-    && isStr(it.label, 60)
-    && Number.isInteger(it.amount) && it.amount >= 0 && it.amount <= 1000000
-    && optStr(it.paidBy, 50)
-    && (it.splitAmong === undefined || (Array.isArray(it.splitAmong) && it.splitAmong.length <= 20 && it.splitAmong.every((n) => typeof n === "string" && n.length <= 50)))
-  );
+  return x.every((it) => {
+    if (!it || typeof it !== "object" || !isStr(it.label, 60)) return false;
+    if (!optStr(it.paidBy, 50)) return false;
+    if (it.splitAmong !== undefined && !(Array.isArray(it.splitAmong) && it.splitAmong.length <= 20 && it.splitAmong.every((n) => typeof n === "string" && n.length <= 50))) return false;
+    if (it.currency === undefined) {
+      return Number.isInteger(it.amount) && it.amount >= 0 && it.amount <= 1000000;
+    }
+    if (!isValidCurrency(it.currency)) return false;
+    if (!Number.isFinite(it.amount) || it.amount < 0 || it.amount > 1000000) return false;
+    // 小数第2位まで（カード明細の実際の金額に合わせられる程度の精度で十分なため）
+    if (Math.abs(it.amount * 100 - Math.round(it.amount * 100)) > 1e-6) return false;
+    if (!Number.isFinite(it.rate) || it.rate <= 0 || it.rate >= 1000000) return false;
+    return true;
+  });
 }
 
 /* ---------- trips ---------- */
@@ -1509,6 +1526,65 @@ function parseLatLng(text) {
 }
 
 // distanceKmはgeo-decode.jsのpure関数（node単体テストできるよう移動した。worker/test/geo-decode.test.mjs）。
+
+const RATE_TIMEOUT_MS = 8000;
+const RATE_USER_AGENT = "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;"
+  + " 費用の外貨換算でFrankfurter(ECB)・fawazahmed0/currency-apiを利用しています。日付・通貨ごとに結果をキャッシュします)";
+
+async function fetchJsonWithTimeout(url, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { "user-agent": RATE_USER_AGENT } });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 費用の明細（costItems）に付けた外貨を円に換算するための、その日のレート（GET /rates、DAY31〜、
+// docs/adr/0014）。Frankfurter（ECB基準レート、約30通貨）でまず引き、対応していない通貨（ARSなど）
+// はfawazahmed0/currency-apiにフォールバックする（そちらも日付指定→無ければ@latestの順）。
+// 結果はcaches.defaultに日付・通貨ごとにキャッシュする（過去日は長め、今日の日付は短め）。
+async function getRates(url, headers, ctx) {
+  const date = url.searchParams.get("date") || "";
+  const currency = (url.searchParams.get("currency") || "").toUpperCase();
+  if (!isValidDate(date) || !isValidCurrency(currency)) return json({ error: "invalid_input" }, 400, headers);
+  if (currency === "JPY") return json({ currency: "JPY", date, rate: 1, source: "jpy" }, 200, headers);
+
+  const cache = caches.default;
+  const cacheKey = new Request(cacheKeyUrl(date, currency));
+  const hit = await cache.match(cacheKey);
+  if (hit) return json(await hit.json(), 200, headers);
+
+  let body = null;
+  const ecbData = await fetchJsonWithTimeout(frankfurterUrl(date, currency), RATE_TIMEOUT_MS);
+  const ecb = parseFrankfurterResponse(ecbData);
+  if (ecb) {
+    body = { currency, date: ecb.date || date, rate: ecb.rate, source: "ecb" };
+  } else {
+    const version = dateToNpmVersion(date);
+    let fbData = version ? await fetchJsonWithTimeout(fallbackUrl(version, currency), RATE_TIMEOUT_MS) : null;
+    let source = "currency-api";
+    if (!fbData) {
+      fbData = await fetchJsonWithTimeout(fallbackUrl("@latest", currency), RATE_TIMEOUT_MS);
+      source = "currency-api-latest";
+    }
+    const fb = parseFallbackResponse(fbData, currency);
+    if (fb) body = { currency, date: fb.date || date, rate: fb.rate, source };
+  }
+
+  if (!body) return json({ error: "rate_not_found" }, 502, headers);
+
+  const todayDate = new Date().toISOString().slice(0, 10);
+  const ttl = cacheTtlSeconds(date, todayDate);
+  ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + ttl },
+  })));
+  return json(body, 200, headers);
+}
 
 // 場所（緯度・経度）のタイムゾーン名（例：Europe/London）。時差のある旅行で、現地時間の時刻を
 // 世界共通の時刻に直して並べるために使う（docs/adr/0009）。天気と同じOpen-Meteo（無料・APIキー不要）の
@@ -3674,6 +3750,7 @@ export default {
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"), url.searchParams.get("entry"), env);
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
     if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
+    if (method === "GET" && path === "/rates") return getRates(url, headers, ctx);
     if (method === "GET" && path === "/places/search") {
       return searchPlaces(url.searchParams.get("q"), headers, ctx, env, url.searchParams.get("session"));
     }

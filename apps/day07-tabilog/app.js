@@ -36,6 +36,19 @@
 
   var WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
 
+  // 費用の明細（costItems）に選べる通貨（DAY31〜、docs/adr/0014）。一覧に無い通貨は
+  // 「その他」から3文字コード（ISO 4217）を自由入力できるので、ここは「よく使う」ものだけに絞る。
+  // currencyが無い（省略）costItemはこれまでどおり円（JPY）として扱う＝後方互換。
+  var COST_CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'KRW', 'TWD', 'CNY', 'HKD', 'THB', 'SGD',
+    'AUD', 'BRL', 'ARS', 'MXN', 'CAD', 'CHF', 'VND', 'PHP', 'IDR', 'MYR'];
+  // 表示用の通貨記号。無い通貨（「その他」で入力した3文字コード）はコードそのままを頭に出す。
+  var COST_CURRENCY_SYMBOLS = {
+    USD: 'US$', EUR: '€', GBP: '£', KRW: '₩', TWD: 'NT$', CNY: 'CN¥', HKD: 'HK$', THB: '฿',
+    SGD: 'S$', AUD: 'A$', BRL: 'R$', ARS: 'AR$', MXN: 'MX$', CAD: 'C$', CHF: 'CHF', VND: '₫',
+    PHP: '₱', IDR: 'Rp', MYR: 'RM'
+  };
+  function costCurrencySymbol(code) { return COST_CURRENCY_SYMBOLS[code] || (code + ' '); }
+
   function categoryLabel(key) {
     var c = CATEGORIES.filter(function (c) { return c.key === key; })[0];
     return c ? c.label : key;
@@ -340,9 +353,31 @@
     return map;
   }
 
+  // costItem 1件分の金額を円に換算する（DAY31〜、docs/adr/0014）。currencyが無い・'JPY'なら
+  // amountがそのまま円（これまでどおり）。それ以外は、rate（1単位あたりの円。/ratesで自動取得しつつ
+  // 本人が直せる値）を掛けて円に丸める。合計・貸し借り（tripBalances）はこの丸めた円をそのまま
+  // 積み上げる（為替の端数まで追いかけても実用上の意味が薄く、精算の丸め＝settlementPlanと
+  // 同じ「多少はまとめて丸める」考え方に揃えた）。
+  function costItemJpy(item) {
+    if (!item) return 0;
+    var amount = typeof item.amount === 'number' ? item.amount : 0;
+    if (!item.currency || item.currency === 'JPY') return amount;
+    var rate = typeof item.rate === 'number' ? item.rate : 0;
+    return Math.round(amount * rate);
+  }
+
+  // 費用明細1件の表示用文字列。円ならこれまでどおり`formatYen`と同じ「¥1,200」、外貨なら
+  // 元の金額と円換算の両方を見せる（例：「US$25.00（¥3,737）」）。精算はすべて円で行うため、
+  // 元の金額だけだと精算画面の内訳（円）と一致しているか本人には分からなくなるため。
+  function formatCostItemAmount(item) {
+    if (!item || typeof item.amount !== 'number') return '';
+    if (!item.currency || item.currency === 'JPY') return formatYen(item.amount);
+    return costCurrencySymbol(item.currency) + item.amount.toFixed(2) + '（' + formatYen(costItemJpy(item)) + '）';
+  }
+
   function entryCostTotal(entry) {
     return ((entry && entry.costItems) || []).reduce(function (sum, it) {
-      return sum + (typeof it.amount === 'number' ? it.amount : 0);
+      return sum + costItemJpy(it);
     }, 0);
   }
 
@@ -373,10 +408,11 @@
       (block.entries || []).forEach(function (entry) {
         (entry.costItems || []).forEach(function (item) {
           var paidBy = item.paidBy || '';
-          if (!paidBy || !(item.amount > 0)) return;
+          var jpy = costItemJpy(item);
+          if (!paidBy || !(jpy > 0)) return;
           var splitAmong = (item.splitAmong && item.splitAmong.length) ? item.splitAmong : [paidBy];
-          add(paidBy, item.amount);
-          var share = item.amount / splitAmong.length;
+          add(paidBy, jpy);
+          var share = jpy / splitAmong.length;
           splitAmong.forEach(function (name) { add(name, -share); });
         });
       });
@@ -442,6 +478,7 @@
           if (!item.paidBy || !(item.amount > 0)) return;
           out.push({
             date: block.date, label: item.label, amount: item.amount,
+            currency: item.currency, rate: item.rate,
             paidBy: item.paidBy, splitAmong: (item.splitAmong && item.splitAmong.length) ? item.splitAmong : [item.paidBy],
             blockLabel: block.label,
           });
@@ -502,10 +539,11 @@
     (blocks || []).forEach(function (block) {
       (block.entries || []).forEach(function (entry) {
         (entry.costItems || []).forEach(function (item) {
-          if (!(item.amount > 0)) return;
+          var jpy = costItemJpy(item);
+          if (!(jpy > 0)) return;
           var payer = item.paidBy || entry.author || '';
           if (!payer) return;
-          totals[payer] = (totals[payer] || 0) + item.amount;
+          totals[payer] = (totals[payer] || 0) + jpy;
         });
       });
     });
@@ -1167,7 +1205,11 @@
     (k.texts || []).forEach(function (t) { if (r[t[0]]) lines.push(t[1] + '：' + r[t[0]]); });
     if (kind === 'food') {
       var menu = (entry.costItems || []).filter(function (it) { return it.label && typeof it.amount === 'number'; })
-        .map(function (it) { return it.label + ' ' + yen(it.amount); });
+        .map(function (it) {
+          return it.label + ' ' + (it.currency && it.currency !== 'JPY'
+            ? costCurrencySymbol(it.currency) + it.amount.toFixed(2) + '（' + yen(costItemJpy(it)) + '）'
+            : yen(it.amount));
+        });
       if (menu.length) lines.push('メニュー：' + menu.join('／'));
       if (entry.waitTime) lines.push('待ち時間：' + entry.waitTime);
     }
@@ -1368,6 +1410,10 @@
     entryCostTotal: entryCostTotal,
     blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
+    costItemJpy: costItemJpy,
+    formatCostItemAmount: formatCostItemAmount,
+    COST_CURRENCIES: COST_CURRENCIES,
+    COST_CURRENCY_SYMBOLS: COST_CURRENCY_SYMBOLS,
     tripBalances: tripBalances,
     settlementPlan: settlementPlan,
     roundToUnit: roundToUnit,
@@ -1856,7 +1902,7 @@
       var splitText = e.splitAmong.length > 1 ? e.splitAmong.join('・') + 'で割り勘' : e.paidBy + 'の分';
       var dateText = e.date ? e.date.slice(5).replace('-', '/') : '';
       return '<div class="expense-row">' +
-        '<div class="expense-main"><span class="label">' + escapeHtml(e.label || '（内容未入力）') + '</span><span class="amount">' + escapeHtml(Core.formatYen(e.amount)) + '</span></div>' +
+        '<div class="expense-main"><span class="label">' + escapeHtml(e.label || '（内容未入力）') + '</span><span class="amount">' + escapeHtml(Core.formatCostItemAmount(e)) + '</span></div>' +
         '<div class="expense-sub">' + escapeHtml(dateText) + '　' + escapeHtml(e.paidBy) + 'が立替・' + escapeHtml(splitText) + '</div>' +
         '</div>';
     }).join('');
@@ -3592,7 +3638,7 @@
     var costHtml = costItems.length
       ? '<div class="cost-lines">' +
         costItems.map(function (it) {
-          return '<div class="cost-line"><span>' + escapeHtml(it.label) + '</span><span>' + escapeHtml(Core.formatYen(it.amount)) + '</span></div>';
+          return '<div class="cost-line"><span>' + escapeHtml(it.label) + '</span><span>' + escapeHtml(Core.formatCostItemAmount(it)) + '</span></div>';
         }).join('') +
         '<div class="cost-line total"><span>計</span><span>' + escapeHtml(Core.formatYen(Core.entryCostTotal(entry))) + '</span></div>' +
         '</div>'
@@ -3881,6 +3927,8 @@
     state.pendingVideos = [];
     state.formCostItems = entry ? (entry.costItems || []).map(function (it) {
       var copy = { label: it.label, amount: it.amount };
+      if (it.currency) copy.currency = it.currency;
+      if (typeof it.rate === 'number') copy.rate = it.rate;
       if (it.paidBy) copy.paidBy = it.paidBy;
       if (it.splitAmong && it.splitAmong.length) copy.splitAmong = it.splitAmong.slice();
       return copy;
@@ -4353,27 +4401,108 @@
   // どちらか曖昧になり、立て替え機能と併用すると二重に割ってしまう事故のもとだったため廃止した）。
   // 「立て替え」（誰が払った・誰と割るか）は任意項目。触らなければ、これまでどおり
   // 「本人の個人費用」として扱われ、割り勘の精算画面（貸し借り）には出てこない。
+  // 旅行ごとに「最後に選んだ通貨」を覚えておき、次の明細行の初期値にする（同じ旅行では
+  // 同じ通貨の支払いが続くことが多いため。トリップをまたいだ使い回しはしない）。
+  var LAST_COST_CURRENCY_PREFIX = 'tabilog:last-currency:';
+  function lastCostCurrencyForTrip() {
+    if (!state.trip) return '';
+    try { return localStorage.getItem(LAST_COST_CURRENCY_PREFIX + state.trip.id) || ''; } catch (e) { return ''; }
+  }
+  function rememberLastCostCurrency(code) {
+    if (!state.trip) return;
+    try { localStorage.setItem(LAST_COST_CURRENCY_PREFIX + state.trip.id, code); } catch (e) { /* 保存できなくても致命的ではない */ }
+  }
+
+  // 明細1行の.cost-rate-row（外貨のときだけ出す、レート表示・手直し欄）の要素参照。
+  // renderCostItems()のたびに作り直す（立て替えパネルが行の間に挟まるため、
+  // 「#entCostItemsの何番目の子か」では数えられない。行を作った時点の参照を直接持っておく）。
+  var costRateRowEls = [];
+
+  // 費用の明細（costItems）は、基本は「個人（またはそのサブグループ）が実際に払った金額」を
+  // そのまま入れる（CONTEXT.md参照）。駐車場代など全体でまとめて払ったものを人数で割りたい
+  // ときは、下記「立て替え」機能で全体の金額をそのまま入れ、払った人・割る人を選ぶ
+  // （以前あった「全体費用÷人数」電卓は、金額欄の意味が「個人費用」と「全体の金額」の
+  // どちらか曖昧になり、立て替え機能と併用すると二重に割ってしまう事故のもとだったため廃止した）。
+  // 「立て替え」（誰が払った・誰と割るか）は任意項目。触らなければ、これまでどおり
+  // 「本人の個人費用」として扱われ、割り勘の精算画面（貸し借り）には出てこない。
+  //
+  // 円以外の通貨（DAY31〜）：行ごとにcurrencyを選べる。円以外を選ぶと、その日（Blockの日付）の
+  // レートを/ratesから自動取得し（本人が金額を直せるのと同様、レートも直せる。カード明細の
+  // 実際のレートに合わせられるように）、精算はすべて円換算後の金額（costItemJpy）で行う。
   function renderCostItems() {
     var el = $('#entCostItems');
     el.innerHTML = '';
+    costRateRowEls = [];
+    var block = entryFormBlock();
+    var blockDate = (block && block.date) || '';
     state.formCostItems.forEach(function (item, idx) {
       var row = document.createElement('div');
       row.className = 'cost-item-row';
       var payerLabel = item.paidBy ? (item.paidBy + 'が立替') : '立て替えを設定';
+      var currency = item.currency || 'JPY';
+      var isForeign = currency !== 'JPY';
+      var isKnown = Core.COST_CURRENCIES.indexOf(currency) !== -1;
+      var showOther = item._customCurrency || !isKnown;
+      var selectVal = showOther ? '__other' : currency;
+      var options = Core.COST_CURRENCIES.map(function (c) {
+        return '<option value="' + c + '"' + (c === selectVal ? ' selected' : '') + '>' + (c === 'JPY' ? '円' : c) + '</option>';
+      }).join('') + '<option value="__other"' + (selectVal === '__other' ? ' selected' : '') + '>その他</option>';
       row.innerHTML =
         '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
-        '<input type="number" min="0" step="1" placeholder="円" value="' + (item.amount || '') + '">' +
+        '<input type="number" min="0" step="' + (isForeign ? '0.01' : '1') + '" placeholder="' + (isForeign ? '金額' : '円') + '" value="' + (typeof item.amount === 'number' && item.amount ? item.amount : '') + '">' +
+        '<select class="cost-currency-select">' + options + '</select>' +
+        '<input type="text" class="cost-currency-other" placeholder="例：ISK" maxlength="3" value="' + ((showOther && currency !== 'JPY') ? escapeHtml(currency) : '') + '"' + (showOther ? '' : ' hidden') + '>' +
         '<button type="button" aria-label="削除">×</button>' +
         '<div class="cost-item-row-actions">' +
           '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
-        '</div>';
+        '</div>' +
+        '<div class="cost-rate-row" hidden></div>';
       var inputs = row.querySelectorAll('input');
-      var amountInput = inputs[1];
-      inputs[0].addEventListener('input', function (e) { state.formCostItems[idx].label = e.target.value; });
+      var textInput = inputs[0], amountInput = inputs[1], otherInput = row.querySelector('.cost-currency-other');
+      var currencySelect = row.querySelector('.cost-currency-select');
+      var rateRow = row.querySelector('.cost-rate-row');
+      costRateRowEls[idx] = rateRow;
+
+      textInput.addEventListener('input', function (e) { state.formCostItems[idx].label = e.target.value; });
       amountInput.addEventListener('input', function (e) {
-        state.formCostItems[idx].amount = Math.max(0, parseInt(e.target.value, 10) || 0);
+        var cur = state.formCostItems[idx];
+        if ((cur.currency || 'JPY') === 'JPY') {
+          cur.amount = Math.max(0, parseInt(e.target.value, 10) || 0);
+        } else {
+          var v = parseFloat(e.target.value);
+          cur.amount = (isFinite(v) && v >= 0) ? v : 0;
+        }
         renderCostTotal();
+        updateRateRowConverted(idx);
       });
+
+      function applyCurrency(code) {
+        var cur = state.formCostItems[idx];
+        var prev = cur.currency || 'JPY';
+        delete cur._customCurrency;
+        if (code === prev) { renderCostItems(); return; }
+        cur.currency = code === 'JPY' ? undefined : code;
+        delete cur.rate; delete cur._rateDate; delete cur._rateSource;
+        cur.amount = code === 'JPY' ? Math.round(cur.amount || 0) : Math.round((cur.amount || 0) * 100) / 100;
+        if (code !== 'JPY') rememberLastCostCurrency(code);
+        renderCostItems();
+      }
+
+      currencySelect.addEventListener('change', function (e) {
+        var v = e.target.value;
+        if (v === '__other') {
+          state.formCostItems[idx]._customCurrency = true;
+          renderCostItems();
+          return;
+        }
+        applyCurrency(v);
+      });
+      otherInput.addEventListener('input', function (e) {
+        var code = e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+        if (e.target.value !== code) e.target.value = code;
+        if (code.length === 3) applyCurrency(code);
+      });
+
       row.querySelector('.cost-payer-toggle').addEventListener('click', function () {
         var existing = row.nextElementSibling;
         if (existing && existing.classList.contains('cost-payer-row')) { existing.remove(); return; }
@@ -4384,12 +4513,73 @@
         renderCostItems();
       });
       el.appendChild(row);
+      ensureRateForItem(idx, blockDate);
     });
     renderCostTotal();
   }
 
+  // rate入力欄以外は毎回作り直す（レート取得結果が変わったときだけ）が、換算後の金額（円）は
+  // 金額欄・レート欄の入力のたびに変わるので、フォーカスを奪わないようテキストだけ差し替える。
+  function updateRateRowConverted(idx) {
+    var rateRow = costRateRowEls[idx];
+    if (!rateRow) return;
+    var el = rateRow.querySelector('.cost-rate-converted');
+    if (el) el.textContent = '→ ' + Core.formatYen(Core.costItemJpy(state.formCostItems[idx]));
+  }
+
+  // 外貨の行だけ、その日（Blockの日付）のレートを/ratesから自動取得する。すでにrateを
+  // 持っていれば（保存済みの記録を編集中、など）取り直さない＝本人が直した値を尊重する。
+  function ensureRateForItem(idx, blockDate) {
+    var item = state.formCostItems[idx];
+    if (!item || !item.currency || item.currency === 'JPY') { buildRateRow(idx); return; }
+    if (typeof item.rate === 'number' && item.rate > 0) { buildRateRow(idx); return; }
+    buildRateRow(idx, { loading: true });
+    api('/rates?date=' + encodeURIComponent(blockDate || '') + '&currency=' + encodeURIComponent(item.currency))
+      .then(function (res) {
+        var cur = state.formCostItems[idx];
+        if (!cur || cur.currency !== item.currency) return; // その間に通貨を変え直していたら古い結果は捨てる
+        cur.rate = res.rate;
+        cur._rateDate = res.date;
+        cur._rateSource = res.source;
+        buildRateRow(idx);
+        renderCostTotal();
+      })
+      .catch(function () { buildRateRow(idx, { failed: true }); });
+  }
+
+  // レート行の中身を（レート欄の入力中を除いて）丸ごと作り直す。
+  function buildRateRow(idx, opts) {
+    opts = opts || {};
+    var rateRow = costRateRowEls[idx];
+    if (!rateRow) return;
+    var item = state.formCostItems[idx];
+    var currency = item && item.currency;
+    if (!item || !currency || currency === 'JPY') { rateRow.hidden = true; rateRow.innerHTML = ''; return; }
+    rateRow.hidden = false;
+    if (opts.loading) { rateRow.innerHTML = '<p class="hint">レートを取得中…</p>'; return; }
+    var hasRate = typeof item.rate === 'number' && item.rate > 0;
+    var warn = '';
+    if (opts.failed || !hasRate) warn = 'レートを取得できませんでした。手入力してください。';
+    else if (item._rateSource === 'currency-api-latest') warn = 'この日のレートが無いため最新のレートです。明細に合わせて直してください。';
+    var dateText = item._rateDate ? item._rateDate.slice(0, 4) + '/' + item._rateDate.slice(5, 7) + '/' + item._rateDate.slice(8, 10) : '';
+    var rateLine = hasRate
+      ? ('1 ' + currency + ' = ' + item.rate.toLocaleString('ja-JP', { maximumFractionDigits: 4 }) + '円' + (dateText ? '（' + dateText + 'のレート）' : ''))
+      : ('1 ' + currency + ' のレートを入力してください');
+    rateRow.innerHTML =
+      '<div class="cost-rate-line">' + escapeHtml(rateLine) + '</div>' +
+      '<div class="cost-rate-edit"><span>1 ' + escapeHtml(currency) + ' =</span>' +
+      '<input type="number" class="cost-rate-input" step="0.0001" min="0" value="' + (hasRate ? item.rate : '') + '"><span>円</span></div>' +
+      '<div class="cost-rate-converted">→ ' + escapeHtml(Core.formatYen(Core.costItemJpy(item))) + '</div>' +
+      (warn ? '<p class="hint cost-rate-warn">' + escapeHtml(warn) + '</p>' : '');
+    rateRow.querySelector('.cost-rate-input').addEventListener('input', function (e) {
+      item.rate = parseFloat(e.target.value) || 0;
+      updateRateRowConverted(idx);
+      renderCostTotal();
+    });
+  }
+
   function renderCostTotal() {
-    var total = state.formCostItems.reduce(function (s, it) { return s + (it.amount || 0); }, 0);
+    var total = state.formCostItems.reduce(function (s, it) { return s + Core.costItemJpy(it); }, 0);
     $('#entCostTotal').textContent = state.formCostItems.length ? '計 ' + Core.formatYen(total) : '';
   }
 
@@ -4411,8 +4601,18 @@
       $('#btnScanReceipt').disabled = false;
       var items = (res && res.items) || [];
       if (!items.length) { status.textContent = '品目を読み取れませんでした。写真を変えてお試しください。'; return; }
+      // レシート読み取り結果の通貨は、今このフォームで使っている通貨（この旅行で最後に選んだ
+      // 通貨。無ければ円）に合わせる（読み取り自体はまだ通貨を判定していないため）。
+      var scanCurrency = lastCostCurrencyForTrip();
       items.forEach(function (it) {
-        state.formCostItems.push({ label: (it.label || '').trim(), amount: Math.max(0, Math.round(it.amount || 0)) });
+        var newItem = { label: (it.label || '').trim() };
+        if (scanCurrency && scanCurrency !== 'JPY') {
+          newItem.currency = scanCurrency;
+          newItem.amount = Math.max(0, Math.round((it.amount || 0) * 100) / 100);
+        } else {
+          newItem.amount = Math.max(0, Math.round(it.amount || 0));
+        }
+        state.formCostItems.push(newItem);
       });
       renderCostItems();
       status.textContent = items.length + '件の明細を追加しました。内容を確認してください。';
@@ -4619,7 +4819,11 @@
       detail: $('#entDetail').value.trim(),
       costItems: state.formCostItems.filter(function (it) { return it.label.trim() || it.amount; })
         .map(function (it) {
-          var out = { label: it.label.trim() || '費用', amount: it.amount || 0 };
+          var currency = (it.currency && it.currency !== 'JPY') ? it.currency : undefined;
+          var amount = currency ? Math.round((it.amount || 0) * 100) / 100 : Math.round(it.amount || 0);
+          var out = { label: it.label.trim() || '費用', amount: amount };
+          if (currency) out.currency = currency;
+          if (currency && typeof it.rate === 'number' && it.rate > 0) out.rate = Math.round(it.rate * 10000) / 10000;
           if (it.paidBy) out.paidBy = it.paidBy;
           if (it.splitAmong && it.splitAmong.length) out.splitAmong = it.splitAmong;
           return out;
@@ -5798,7 +6002,10 @@
     $('#entTravelDepart').addEventListener('input', updateTravelDuration);
     $('#entTravelArrive').addEventListener('input', updateTravelDuration);
     $('#btnAddCostItem').addEventListener('click', function () {
-      state.formCostItems.push({ label: '', amount: 0 });
+      var newItem = { label: '', amount: 0 };
+      var lastCur = lastCostCurrencyForTrip();
+      if (lastCur && lastCur !== 'JPY') newItem.currency = lastCur;
+      state.formCostItems.push(newItem);
       renderCostItems();
     });
 

@@ -73,6 +73,35 @@ eq('entryCostTotal: 明細を合計する', T.entryCostTotal({ costItems: [{ lab
 eq('entryCostTotal: 明細が無ければ0', T.entryCostTotal({ costItems: [] }), 0);
 eq('entryCostTotal: entry自体が無くても0', T.entryCostTotal(null), 0);
 
+/* ---- costItemJpy / formatCostItemAmount（外貨の費用明細、DAY31〜、docs/adr/0014） ---- */
+eq('costItemJpy: currency省略はamountがそのまま円', T.costItemJpy({ amount: 1200 }), 1200);
+eq('costItemJpy: currency:JPYもamountがそのまま円', T.costItemJpy({ amount: 1200, currency: 'JPY' }), 1200);
+eq('costItemJpy: 外貨はamount×rateを円の整数に丸める', T.costItemJpy({ amount: 25, currency: 'USD', rate: 149.46 }), 3737 /* 25*149.46=3736.5→3737 */);
+eq('costItemJpy: rateが無い外貨は0円扱い（未取得・未入力）', T.costItemJpy({ amount: 25, currency: 'USD' }), 0);
+eq('costItemJpy: itemが無ければ0', T.costItemJpy(null), 0);
+eq('formatCostItemAmount: 円はformatYenと同じ', T.formatCostItemAmount({ amount: 1200 }), '¥1,200');
+eq('formatCostItemAmount: 外貨は元の金額と円換算を両方見せる', T.formatCostItemAmount({ amount: 25, currency: 'USD', rate: 149.46 }), 'US$25.00（¥3,737）');
+eq('formatCostItemAmount: 記号表が無い通貨（その他）はコードをそのまま出す', T.formatCostItemAmount({ amount: 100, currency: 'ISK', rate: 0.87 }), 'ISK 100.00（¥87）');
+
+/* ---- tripBalances / settlementPlan：外貨が混ざった費用の貸し借り（円換算後で計算する） ---- */
+var mixedCurrencyBlocks = [{
+  date: '2024-08-10', entries: [{ costItems: [
+    { label: 'ホテル', amount: 100, currency: 'USD', rate: 150, paidBy: 'A', splitAmong: ['A', 'B'] }
+  ] }]
+}];
+var mixedBalance = T.tripBalances({ companions: ['A', 'B'] }, mixedCurrencyBlocks);
+eq('tripBalances: 外貨（USD100@150→15000円）を払った側はプラス', mixedBalance['A'], 7500);
+eq('tripBalances: 外貨（USD100@150→15000円）を割った側はマイナス', mixedBalance['B'], -7500);
+var mixedPlan = T.settlementPlan(mixedBalance, 100);
+eq('settlementPlan: 外貨換算後の残高から精算方法を作る（100円単位）', mixedPlan, [{ from: 'B', to: 'A', amount: 7500 }]);
+
+/* ---- tripExpenseList：外貨のcurrency・rateも一覧に残す（精算画面の表示用） ---- */
+var mixedExpenses = T.tripExpenseList(mixedCurrencyBlocks);
+eq('tripExpenseList: currency・rateも保持する', { currency: mixedExpenses[0].currency, rate: mixedExpenses[0].rate }, { currency: 'USD', rate: 150 });
+
+/* ---- costBreakdownByPerson：外貨も円換算して計上する ---- */
+eq('costBreakdownByPerson: 外貨はcostItemJpyで計上する', T.costBreakdownByPerson(mixedCurrencyBlocks), { A: 15000 });
+
 var blockWithEntries = {
   entries: [
     { costItems: [{ label: 'a', amount: 600 }] },

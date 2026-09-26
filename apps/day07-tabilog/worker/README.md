@@ -411,3 +411,31 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0021_trip_settle_u
   実残高のまま行い、**最後に送金額だけをunit単位に丸める**（Walicaの実際の送金額と突き合わせて確認済み。
   詳しくは`CONTEXT.md`の「割り勘」節を参照）。マッチング前に丸めてしまうと、各人の丸め誤差が積み上がり、
   受け取る人の合計が実際の残高と数円ずれるだけでなく、送金の組み合わせによっては送金漏れが起きていた。
+
+## 費用の明細に外貨を入れられるようにする（2026-09-27 追加）
+
+海外旅行で現地通貨のまま費用を入れられるようにした（`docs/adr/0014-multi-currency.md`）。costItemに
+`currency`（ISO 4217、例："USD"）・`rate`（1`currency`あたりの円）を追加できる（どちらも任意。省略時は
+これまでどおり円）。**精算はすべて円で行う**（`Core.costItemJpy`で円換算してから合計・貸し借りを計算する。
+`CONTEXT.md`の「費用の明細の通貨・レート」節を参照）。DBのスキーマ変更は無い（`cost_items`列は元々
+JSON文字列なので、新しいフィールドを持つcostItemもそのまま保存できる。マイグレーション不要）。
+
+- `validCostItems`：`currency`を渡す場合は`/^[A-Z]{3}$/`（ISO 4217の3文字コード）、`amount`は0以上
+  1,000,000以下で小数第2位まで（円の費用行はこれまでどおり整数のみ）、`rate`は`0 < rate < 1,000,000`
+  を必須にした。`currency`を渡さない（省略）costItemは、これまでどおり`amount`が整数円のみ（後方互換）。
+- `GET /rates?date=YYYY-MM-DD&currency=XXX` → `{ currency, date, rate, source }`。ログイン不要（他の
+  読み取り系エンドポイントと同じ）。レートは2段構えで取得する：
+  1. **Frankfurter**（ECB基準レート、`https://api.frankfurter.dev/`、APIキー不要）。約30通貨・過去日にも
+     対応。週末・休場日を指定すると直前の営業日のレートが返る（レスポンスの`date`で分かる。`source: "ecb"`）。
+  2. Frankfurterが対応していない通貨（ARSなど）は、フォールバックとして**fawazahmed0/currency-api**
+     （jsDelivr配信、`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api`）を使う。日付ごとのバージョン
+     （`@YYYY.M.D`、先頭ゼロなし。2024-03-02以降のみ存在）でまず試し（`source: "currency-api"`）、
+     無ければ`@latest`を使う（`source: "currency-api-latest"`。この場合だけアプリ側で
+     「この日のレートが無いため最新のレートです。明細に合わせて直してください」と警告を出す）。
+  - `currency === "JPY"`は`rate: 1`を即返す（換算不要）。
+  - 結果は`caches.default`に日付・通貨ごとにキャッシュする（過去日は30日、今日の日付はまだ更新され得る
+    ので6時間）。外部APIへのfetchは8秒でタイムアウトする。ソースの組み立て・レスポンスの解釈・
+    キャッシュキー計算は純粋関数として`src/rates.js`に切り出し、nodeで単体テストできる
+    （`node worker/test/rates.test.mjs`）。
+- レートは、フォームで本人が編集できる（カード会社の実際の決済レートに合わせられるように）。
+  一度取得・入力した`rate`はアプリ側で覚えておき、通貨を変えない限り取り直さない。
