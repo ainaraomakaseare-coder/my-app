@@ -526,8 +526,6 @@
           <label>評価</label>
           <div class="rating-widget" id="entRatingWidget"></div>
           <p class="hint" id="entRatingSummary"></p>
-          <!-- 紹介文（ホテログ・レクログ・飯ログ）用の、自分のレビュー項目（app.jsのrenderReviewFields。docs/adr/0007） -->
-          <div class="review-fields" id="entReviewFields" hidden></div>
         </div>
 
         <!-- 移動の予定の記録だけに出す、紹介文用の移動の情報（★はつけない） -->
@@ -589,7 +587,10 @@
         <!-- 記録の画面が長いので、ときどきしか使わない欄はたたんでおく。すでに入っている記録を開いたときは
              開いた状態にする（app.jsのopenEntryForm） -->
         <details class="more-fields" id="entMoreFields">
-          <summary>詳細・待ち時間・お店のHP・その他URL</summary>
+          <summary id="entMoreSummary">詳細・待ち時間・お店のHP・その他URL</summary>
+          <!-- 紹介文（ホテログ・レクログ・飯ログ）用の、自分のレビュー項目（app.jsのrenderReviewFields。docs/adr/0007）。
+               記録の画面では★だけを見せ、細かい項目はここ（たたんだ欄）に入れる -->
+          <div class="review-fields" id="entReviewFields" hidden></div>
           <div class="field">
             <label for="entDetail">詳細（任意）</label>
             <textarea id="entDetail" rows="4" placeholder="持ち物・注意点・裏話など、もっと書きたいことがあれば"></textarea>

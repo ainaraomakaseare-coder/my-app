@@ -3645,6 +3645,7 @@
     var block = entryFormBlock();
     var kind = Core.reviewKindForCategory(block ? block.category : '');
     $('#entReviewFields').hidden = true;
+    $('#entMoreSummary').textContent = '詳細・待ち時間・お店のHP・その他URL';
     if (!loginEnabled() || !entry || !kind) { field.hidden = true; return; }
     field.hidden = false;
     var user = loadCurrentUser();
@@ -3701,8 +3702,12 @@
   function renderReviewFields(kind, review) {
     var el = $('#entReviewFields');
     var k = Core.REVIEW_KINDS[kind];
-    if (!k || !review) { el.hidden = true; return; }
+    var summary = $('#entMoreSummary');
+    if (!k || !review) { el.hidden = true; summary.textContent = '詳細・待ち時間・お店のHP・その他URL'; return; }
     el.hidden = false;
+    // ★以外の細かいレビュー項目は、たたんだ「詳細」の欄の中に出す。すでに書いてあれば開いておく
+    summary.textContent = k.label + 'のレビュー・詳細・待ち時間・URL';
+    if (Object.keys(review).length) $('#entMoreFields').open = true;
     var gradeSelect = function (key, label) {
       return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
         '<option value="">―</option>' +
@@ -4679,7 +4684,7 @@
       replayMap = L.map($('#replayMap'), { zoomControl: false, renderer: L.svg({ padding: 1 }) });
       replayMap.attributionControl.setPrefix(false);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
+        maxZoom: 19, keepBuffer: 6, // カメラが動いた先の地図を多めに読んでおく（端が灰色のまま見えないように）
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
       }).addTo(replayMap);
     }
@@ -4721,9 +4726,37 @@
     setReplayPlaying(true);
   }
 
+  // 地図のうち、上の時計と下の吹き出し・日ボタン・操作ボタンに隠れていない部分に収まるようにする余白。
+  // 以前は画面全体の真ん中に合わせていたので、移動中の車や道のりが下のボタンの裏に隠れ、区間が変わるたびに
+  // 地図が大きくずれて見えた。吹き出しは移動中は消えるので、下は日ボタン・操作ボタンの上端までを使う。
+  function replayViewPadding() {
+    var mapRect = $('#replayMap').getBoundingClientRect();
+    var visibleRect = function (el) { return el && !el.hidden && el.offsetParent ? el.getBoundingClientRect() : null; };
+    var clock = visibleRect($('#replayClock'));
+    var top = clock ? clock.bottom - mapRect.top : 80;
+    var bottomEdge = mapRect.bottom;
+    [$('#replayDays'), $('#replayControls')].forEach(function (el) {
+      var r = visibleRect(el);
+      if (r) bottomEdge = Math.min(bottomEdge, r.top);
+    });
+    var bottom = mapRect.bottom - bottomEdge;
+    if (bottom < 1) bottom = 130;
+    // 地図が小さい端末でも、見える部分が高さの半分より狭くならないように
+    var room = mapRect.height * 0.5;
+    if (top + bottom > room) { var k = room / (top + bottom); top *= k; bottom *= k; }
+    return { paddingTopLeft: [36, Math.round(top + 24)], paddingBottomRight: [36, Math.round(bottom + 24)] };
+  }
+  // 1点を見える部分の真ん中に出す（ズームは zoom のまま）
+  function replayCenterOn(lat, lng, zoom, animate) {
+    var opts = replayViewPadding();
+    opts.maxZoom = zoom;
+    if (animate) { opts.duration = 0.8; replayMap.flyToBounds([[lat, lng], [lat, lng]], opts); }
+    else { opts.animate = false; replayMap.fitBounds([[lat, lng], [lat, lng]], opts); }
+  }
+
   function resetReplayCamera() {
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
-    replayMap.setView([first.lat, first.lng], 13, { animate: false });
+    replayCenterOn(first.lat, first.lng, 13, false);
     replay.lastLeg = -1;
     replay.lastStop = -2;
     replay.captionIndex = -2;
@@ -4863,13 +4896,15 @@
       var leg = tl.legs[st.icon.legIndex];
       var legBounds = leg.path && leg.path.length > 1 ? leg.path
         : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
-      replayMap.flyToBounds(legBounds, { padding: [70, 70], maxZoom: 15, duration: 0.8 });
+      var legView = replayViewPadding();
+      legView.maxZoom = 15; legView.duration = 0.8;
+      replayMap.flyToBounds(legBounds, legView);
       replay.lastLeg = st.icon.legIndex;
     } else if (!st.icon && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];
       var cameFromLeg = tl.legs.some(function (l) { return l.to === st.stopIndex; });
       if (arrived && arrived.located && !cameFromLeg && replay.lastStop !== -2) {
-        replayMap.flyTo([arrived.lat, arrived.lng], Math.max(replayMap.getZoom(), 12), { duration: 0.8 });
+        replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
       }
       replay.lastStop = st.stopIndex;
     }
@@ -4927,7 +4962,7 @@
     replay.captionIndex = -2;
     replay.lastDay = 0;
     var here = Core.replayStateAt(replay.tl, replay.r).here;
-    if (here) replayMap.setView([here.lat, here.lng], replayMap.getZoom(), { animate: false });
+    if (here) replayCenterOn(here.lat, here.lng, replayMap.getZoom(), false);
     renderReplay();
   }
 

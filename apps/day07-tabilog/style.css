@@ -713,12 +713,11 @@ body.sheet-open { overflow: hidden; }
 .review-fields[hidden] { display: none; }
 .review-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
 .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-bottom: 8px; }
-.review-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
-.review-row select, .review-row input, .review-row textarea { font-size: 16px; min-width: 0; }
-.review-row select { width: 64px; }
-.review-grid .review-row input { width: 90px; }
-.review-row-wide { flex-direction: column; align-items: stretch; margin-bottom: 8px; }
-.review-row-wide input, .review-row-wide textarea { width: 100%; }
+/* 項目名を上、入力を下にする（横並びだと「金額（円）」「ホスピタリティ」が折り返し、「明細の合計」の例が切れていた） */
+.review-row { display: flex; flex-direction: column; align-items: stretch; gap: 4px; font-size: 13px; min-width: 0; }
+.review-row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review-row select, .review-row input, .review-row textarea { font-size: 16px; min-width: 0; width: 100%; }
+.review-row-wide { margin-bottom: 8px; }
 .review-status { margin-left: 8px; }
 .travel-grid { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .travel-grid input[type="text"] { flex: 1; min-width: 0; }
@@ -786,6 +785,7 @@ body.viewer-open { overflow: hidden; }
 .more-fields > .field { padding: 0 14px; }
 .more-fields > .field:last-child { padding-bottom: 12px; }
 .more-fields .field input, .more-fields .field textarea { background: var(--card); }
+.more-fields > .review-fields { margin: 0 14px 12px; background: var(--card); }
 
 /* ---------- 移動の予定：移動手段・移動時間 ---------- */
 .move-time-label { display: block; margin-top: 12px; }
