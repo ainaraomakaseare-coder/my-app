@@ -581,6 +581,15 @@
   // - 移動は到着する予定の1つ前の地点での滞在が終わってから始める（途中で夕食など場所不明の出来事が
   //   挟まっても、アイコンはそれまで最後にいた場所で待つ）
   // - 旅の時間は基本1000倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
+  var REPLAY_PLANE_KM = 400;
+
+  // 2地点の距離（km）
+  function distanceKm(a, b) {
+    var rad = Math.PI / 180, dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 12742 * Math.asin(Math.sqrt(h));
+  }
+
   function buildReplayTimeline(stops, coordsByQuery) {
     coordsByQuery = coordsByQuery || {};
     var withOffset = (stops || []).filter(function (st) { return typeof st.offset === 'number'; })[0];
@@ -597,10 +606,14 @@
     if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
 
     var legs = [], lastLoc = -1;
+    // 場所が変わったら移動にする。移動手段が入っていなければ車とみなす（ほとんどの移動は車、という声より。
+    // 以前は移動手段が入っている区間だけを移動にしていたので、入れていないと青い道のりが出なかった）。
+    // ただし遠い移動（REPLAY_PLANE_KM超、東京→沖縄など）は、車の道が無い・現実的でないので飛行機とみなす。
     s.forEach(function (st, i) {
       if (!st.located) return;
-      if (lastLoc >= 0 && st.transport && (s[lastLoc].lat !== st.lat || s[lastLoc].lng !== st.lng)) {
-        legs.push({ from: lastLoc, to: i, transport: st.transport });
+      if (lastLoc >= 0 && (s[lastLoc].lat !== st.lat || s[lastLoc].lng !== st.lng)) {
+        var transport = st.transport || (distanceKm(s[lastLoc], st) > REPLAY_PLANE_KM ? 'plane' : 'car');
+        legs.push({ from: lastLoc, to: i, transport: transport, assumed: !st.transport });
       }
       lastLoc = i;
     });
@@ -1086,6 +1099,7 @@
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
+    distanceKm: distanceKm,
     parseMemo: parseMemo,
     transportLabel: transportLabel,
     minutesText: minutesText,
@@ -4522,14 +4536,15 @@
   // 移動手段が車・タクシー・バス・徒歩・自転車の区間は、実際の道路に沿った道のりをWorker（/route）に聞き、
   // その区間の path にする（Core.replayStateAt と線の描画が、直線の代わりにこれをたどる。docs/adr/0008）。
   // 取れなかった区間は、これまでどおり直線のまま。
-  function fetchReplayRoutes(tl) {
+  function fetchReplayRoutes(tl, onRoute) {
     var jobs = tl.legs.filter(function (l) { return Core.routeProfileFor(l.transport); });
+    // 近い区間から順に届くよう、再生の順番（区間の並び）のまま同時に聞く
     return Promise.all(jobs.map(function (l) {
       var a = tl.stops[l.from], b = tl.stops[l.to];
       var q = '/route?profile=' + Core.routeProfileFor(l.transport) +
         '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
       return api(q).then(function (res) {
-        if (res && res.found && res.path && res.path.length > 1) l.path = res.path;
+        if (res && res.found && res.path && res.path.length > 1) { l.path = res.path; if (onRoute) onRoute(l); }
       }).catch(function () {});
     }));
   }
@@ -4564,11 +4579,15 @@
         status.textContent = '地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。';
         return;
       }
-      status.textContent = '道のりを調べています…';
-      return fetchReplayRoutes(tl).then(function () {
-        if (replayToken !== token) return;
-        status.textContent = '';
-        startReplay(res[0], tl);
+      // 道のりがそろうのを待たずに始める（以前は全区間の道のりを待ってから始めていて、準備が長かった）。
+      // 道のりは裏で調べ、届いた区間から直線を道路に沿った青い線に切り替える
+      status.textContent = '';
+      startReplay(res[0], tl);
+      fetchReplayRoutes(tl, function (l) {
+        if (replayToken !== token || !replay || replay.tl !== tl) return;
+        var set = replay.lines[tl.legs.indexOf(l)];
+        if (set && set.plan) set.plan.setLatLngs(l.path);
+        renderReplay();
       });
     }).catch(function () {
       if (replayToken === token) status.textContent = '地図を読み込めませんでした。通信環境を確認してください。';
@@ -4609,7 +4628,7 @@
       var plane = l.transport === 'plane';
       var full = l.path || null;
       replay.lines[k] = {
-        plan: full ? L.polyline(full, { color: ROUTE_BLUE, weight: 6, opacity: 0.3, interactive: false, lineCap: 'round', lineJoin: 'round' }) : null,
+        plan: plane ? null : L.polyline(full || [], { color: ROUTE_BLUE, weight: 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round' }),
         casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
         line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '8 10' : null })
       };
