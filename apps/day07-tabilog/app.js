@@ -185,9 +185,9 @@
     return blocks;
   }
 
-  // 時差の差（分）を「+1時間」「−8時間」「+5時間30分」にする
+  // 時差の差（分）を「+1時間」「-8時間」「+5時間30分」にする（+に合わせて-も半角）
   function offsetDiffText(diffMin) {
-    var sign = diffMin < 0 ? '−' : '+', a = Math.abs(diffMin), h = Math.floor(a / 60), m = a % 60;
+    var sign = diffMin < 0 ? '-' : '+', a = Math.abs(diffMin), h = Math.floor(a / 60), m = a % 60;
     return sign + (h ? h + '時間' : '') + (m ? m + '分' : '') + (!h && !m ? '0時間' : '');
   }
 
@@ -485,10 +485,9 @@
   var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
   var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
   var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
-  var REPLAY_MAX_PHOTOS = 6;          // 1つの地点で見せる写真の上限
-  var REPLAY_SEC_PER_PHOTO = 1.4;     // 写真1枚あたり、この秒数ぶん吹き出しを長く見せる（写真は順に切り替わる）
-  var REPLAY_MOVE_MIN_SEC = 2;       // 移動の演出は最低この秒数
-  var REPLAY_MOVE_CAP_SEC = 6;       // 長い移動（数時間のフライトなど）もこの秒数に早送りする
+  var REPLAY_MAX_PHOTOS = 4;          // 1つの地点で見せる写真の上限（6枚だと1地点15秒止まり長かったので4枚＝10秒に）
+  var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
+  var REPLAY_MOVE_SEC = 2;           // 移動の演出は、距離や時間にかかわらずこの秒数（以前は1000倍速で2〜6秒。香港→ニューヨークの飛行機が長すぎた）
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
   var REPLAY_UNTIMED_START_MIN = 9 * 60;
 
@@ -545,7 +544,7 @@
         // 以前は40文字で切っていたため、スマホでは1.5行ほどで途切れていた。全文を出す（見せる時間は文字数で延ばす）
         return (e.episode || '').trim() || (e.comment || '').trim();
       }).filter(Boolean).slice(0, 3);
-      // Reliveのように、着いたところで写真もエピソードと一緒に見せる（予定の記録の写真を最大6枚）
+      // Reliveのように、着いたところで写真もエピソードと一緒に見せる（予定の記録の写真を最大4枚）
       var photos = [];
       (b.entries || []).forEach(function (e) { (e.photoIds || []).forEach(function (id) { if (photos.length < REPLAY_MAX_PHOTOS) photos.push(id); }); });
       return {
@@ -636,7 +635,8 @@
       kf.push({ t: st.t + dwell, r: r });
       var chars = (st.captions || []).join('').length + (st.label || '').length;
       var photoSec = (st.photos || []).length * REPLAY_SEC_PER_PHOTO;
-      var minSec = Math.min(REPLAY_MAX_CAPTION_SEC + (photoSec ? 2 : 0), Math.max(REPLAY_MIN_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC + photoSec));
+      // 文章を読む時間（上限あり）と写真を全部見せる時間の長いほう。写真と文章は同時に見られる
+      var minSec = Math.max(REPLAY_MIN_CAPTION_SEC, Math.min(REPLAY_MAX_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC), photoSec);
       if (dwell * REPLAY_SEC_PER_MIN < minSec) {
         r += minSec - dwell * REPLAY_SEC_PER_MIN;
         kf.push({ t: st.t + dwell, r: r });
@@ -645,7 +645,7 @@
       if (!next) return;
       var rest = gap - dwell;
       r += moving
-        ? Math.min(Math.max(rest * REPLAY_SEC_PER_MIN, REPLAY_MOVE_MIN_SEC), REPLAY_MOVE_CAP_SEC)
+        ? REPLAY_MOVE_SEC
         : Math.min(rest * REPLAY_SEC_PER_MIN, REPLAY_IDLE_CAP_SEC);
     });
     legs.forEach(function (l) {
@@ -893,7 +893,16 @@
       if (entry.waitTime) lines.push('待ち時間：' + entry.waitTime);
     }
     if (r.other) lines.push('その他：' + r.other);
+    appendEntryExtras(lines, entry);
     return lines.join('\n');
+  }
+
+  // 紹介文に、記録の「ひとこと」とURL（地図・お店のHP・その他）を添える（入っているものだけ）
+  function appendEntryExtras(lines, entry) {
+    if (entry.comment) lines.push('ひとこと：「' + entry.comment + '」');
+    if (entry.mapUrl) lines.push('📍 ' + entry.mapUrl);
+    if (entry.shopUrl) lines.push('🔗 ' + entry.shopUrl);
+    if (entry.otherUrl) lines.push('🔗 ' + entry.otherUrl);
   }
 
   // 移動の記録の文章（★なし）。区間も会社も時刻も金額も無ければ''。
@@ -916,6 +925,7 @@
     }
     if (!t.depart && !t.arrive && block.moveMinutes) lines.push('所要時間：約' + minutesText(block.moveMinutes));
     if (amount > 0) lines.push('料金：' + yen(amount));
+    appendEntryExtras(lines, entry);
     return lines.join('\n');
   }
 
@@ -2955,37 +2965,93 @@
     }).catch(function () { return ''; });
   }
 
+  // 旅行を開いたあと裏で、①記録の地図の位置を調べ（座標入りはすぐ、住所・店名は1件ずつ）、
+  // ②日ごとの場所が空いている日は、その日の最初の地図の位置から場所を自動で入れ（天気・マイログの
+  // 訪れた国・時差のため。2026-09-26〜）、③予定・日ごとのタイムゾーンを決めて描き直す。
+  // Nominatim（1秒1回まで）を使うものは、まとめて1件ずつ1.1秒空けて呼ぶ。
+  var autoPlaceTried = {}; // この端末でこの画面を開いているあいだ、失敗した日を何度も試さない
   function loadTripZones() {
     if (!state.trip || !API_BASE) return Promise.resolve();
     var tripId = state.trip.id;
     var tzCache, geoCache;
     try { tzCache = JSON.parse(localStorage.getItem(TZ_CACHE_KEY) || '{}'); } catch (e) { tzCache = {}; }
     try { geoCache = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch (e) { geoCache = {}; }
-    var byBlock = {}, byDate = {};
-    var dayJobs = (state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
-      .map(function (d) { return timezoneAt(d.lat, d.lon, tzCache).then(function (tz) { if (tz) byDate[d.date] = tz; }); });
-    var blockJobs = (state.blocks || []).map(function (b) {
+    var coordsByBlock = {}, pending = [];
+    var stillHere = function () { return state.trip && state.trip.id === tripId; };
+    var remember = function (q, res) {
+      if (res && res.found) geoCache[q] = { lat: res.lat, lng: res.lng, at: Date.now() };
+      return geoCache[q] && geoCache[q].lat !== undefined ? geoCache[q] : null;
+    };
+    // ① 座標がすぐ分かるものは同時に
+    var quick = (state.blocks || []).map(function (b) {
       var q = Core.replayPlaceQuery(b);
       if (!q) return null;
-      var c = geoCache[q];
-      var coords = c && c.lat !== undefined ? Promise.resolve(c)
-        : api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
-            if (res && res.found) { geoCache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; return geoCache[q]; }
-            return null;
-          }).catch(function () { return null; });
-      return coords.then(function (p) {
-        if (!p) return;
-        return timezoneAt(p.lat, p.lng, tzCache).then(function (tz) { if (tz) byBlock[b.id] = tz; });
-      });
+      if (geoCache[q] && geoCache[q].lat !== undefined) { coordsByBlock[b.id] = geoCache[q]; return null; }
+      return api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
+        if (res && res.pending) pending.push({ b: b, q: q });
+        else { var c = remember(q, res); if (c) coordsByBlock[b.id] = c; }
+      }).catch(function () {});
     }).filter(Boolean);
-    return Promise.all(dayJobs.concat(blockJobs)).then(function () {
+    var wait = function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); };
+    var saveCaches = function () {
       try { localStorage.setItem(TZ_CACHE_KEY, JSON.stringify(tzCache)); } catch (e) {}
       try { localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(geoCache)); } catch (e) {}
-      if (!state.trip || state.trip.id !== tripId) return;
-      var next = { byBlock: byBlock, byDate: byDate };
-      if (JSON.stringify(next) === JSON.stringify(state.zoneInfo)) return;
-      state.zoneInfo = next;
-      if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
+    };
+    return Promise.all(quick).then(function () {
+      // ①' 住所・店名だけのリンクは1件ずつ（以前はここを調べておらず、ロサンゼルスの時差が分からなかった）
+      return pending.reduce(function (p, it) {
+        return p.then(function (needWait) {
+          if (!stillHere()) return false;
+          return (needWait ? wait(1100) : Promise.resolve()).then(function () {
+            var order = Core.sortBlocks(state.blocks);
+            var coords = order.map(function (b) { return coordsByBlock[b.id] || null; });
+            return api(geocodeFullPath(it.q, it.b.label || '', coords, order.indexOf(it.b))).then(function (res) {
+              var c = remember(it.q, res); if (c) coordsByBlock[it.b.id] = c;
+              return !(res && res.cached);
+            }).catch(function () { return false; });
+          });
+        });
+      }, Promise.resolve(false));
+    }).then(function () {
+      // ② 日ごとの場所が空いている日を、その日の最初の地図の位置で埋める
+      if (!stillHere()) return;
+      var hasPlace = {};
+      (state.days || []).forEach(function (d) { if (d.place) hasPlace[d.date] = true; });
+      var firstByDate = {};
+      Core.sortBlocks(state.blocks).forEach(function (b) {
+        if (b.date && !firstByDate[b.date] && coordsByBlock[b.id]) firstByDate[b.date] = coordsByBlock[b.id];
+      });
+      var dates = Object.keys(firstByDate).filter(function (d) { return !hasPlace[d] && !autoPlaceTried[tripId + d]; });
+      return dates.reduce(function (p, date, i) {
+        return p.then(function () {
+          if (!stillHere()) return;
+          autoPlaceTried[tripId + date] = true;
+          return (i ? wait(1100) : Promise.resolve()).then(function () {
+            var c = firstByDate[date];
+            return api('/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/auto-place', 'POST', { lat: c.lat, lng: c.lng })
+              .then(function (res) {
+                if (!res || !res.day || !stillHere()) return;
+                state.days = (state.days || []).filter(function (d) { return d.date !== date; }).concat([res.day]);
+              }).catch(function () {});
+          });
+        });
+      }, Promise.resolve());
+    }).then(function () {
+      // ③ タイムゾーン
+      if (!stillHere()) return;
+      var byBlock = {}, byDate = {};
+      var jobs = (state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
+        .map(function (d) { return timezoneAt(d.lat, d.lon, tzCache).then(function (tz) { if (tz) byDate[d.date] = tz; }); })
+        .concat(Object.keys(coordsByBlock).map(function (id) {
+          var c = coordsByBlock[id];
+          return timezoneAt(c.lat, c.lng, tzCache).then(function (tz) { if (tz) byBlock[id] = tz; });
+        }));
+      return Promise.all(jobs).then(function () {
+        saveCaches();
+        if (!stillHere()) return;
+        state.zoneInfo = { byBlock: byBlock, byDate: byDate };
+        if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
+      });
     });
   }
 
@@ -3504,10 +3570,12 @@
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
-    $('#entMoreFields').open = !!(entry && (entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl));
+    $('#entMoreFields').open = !!(entry && (entry.comment || entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl ||
+      (entry.travel && Object.keys(entry.travel).length)));
     $('#entPlaceSearch').value = '';
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
+    placeCandidates = []; placeChoice = '';
     $('#entPlaceStatus').textContent = '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
@@ -3580,6 +3648,7 @@
     var block = entryFormBlock();
     var kind = Core.reviewKindForCategory(block ? block.category : '');
     $('#entReviewFields').hidden = true;
+    $('#entMoreSummary').textContent = 'もっと書く（ひとこと・詳細・URLなど）';
     if (!loginEnabled() || !entry || !kind) { field.hidden = true; return; }
     field.hidden = false;
     var user = loadCurrentUser();
@@ -3636,8 +3705,12 @@
   function renderReviewFields(kind, review) {
     var el = $('#entReviewFields');
     var k = Core.REVIEW_KINDS[kind];
-    if (!k || !review) { el.hidden = true; return; }
+    var summary = $('#entMoreSummary');
+    if (!k || !review) { el.hidden = true; summary.textContent = 'もっと書く（ひとこと・詳細・URLなど）'; return; }
     el.hidden = false;
+    // ★以外の細かいレビュー項目は、たたんだ「詳細」の欄の中に出す。すでに書いてあれば開いておく
+    summary.textContent = 'もっと書く（' + k.label + 'のレビュー・ひとこと・詳細など）';
+    if (Object.keys(review).length) $('#entMoreFields').open = true;
     var gradeSelect = function (key, label) {
       return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
         '<option value="">―</option>' +
@@ -4036,41 +4109,62 @@
   // Worker（/places/search）から候補を最大8件もらってプルダウンで選べるようにした。候補を選ぶと
   // その座標の地図URLを入れる（地図でふりかえるでも、その場所へぴったり移動する）。
   // 候補に無い小さなお店などのために、最後に「Googleマップで名前のまま検索」も残す。
+  // 候補は、プルダウンだと中身が見えず選びにくかったので、番号・名前・住所・「選択」ボタンのカードで並べる。
   var placeCandidates = [];
   var PLACE_GOOGLE = 'google';
+  var placeChoice = ''; // 選んでいる候補の番号（文字列）か PLACE_GOOGLE
+
+  function renderPlaceCandidates(place) {
+    var list = $('#entPlaceCandidates');
+    var card = function (value, num, name, sub) {
+      var on = placeChoice === value;
+      return '<div class="place-card' + (on ? ' on' : '') + '">' +
+        '<span class="place-num">' + num + '</span>' +
+        '<div class="place-text"><div class="place-name">' + escapeHtml(name) + '</div>' +
+        (sub ? '<div class="place-address">' + escapeHtml(sub) + '</div>' : '') + '</div>' +
+        '<button type="button" class="place-pick" data-place-choice="' + value + '">' + (on ? '選択中' : '選択') + '</button></div>';
+    };
+    list.innerHTML = '<div class="place-list-head"><span>候補から選ぶ</span><span class="place-count">' + placeCandidates.length + '件</span></div>' +
+      placeCandidates.map(function (p, i) { return card(String(i), i + 1, p.name, p.address); }).join('') +
+      card(PLACE_GOOGLE, '?', '候補にない場合', '「' + place + '」をGoogleマップで検索');
+    list.hidden = false;
+  }
 
   function showPlaceMapPreview() {
     var place = $('#entPlaceSearch').value.trim();
     if (!place) return;
-    var select = $('#entPlaceCandidates');
+    var list = $('#entPlaceCandidates');
     var status = $('#entPlaceStatus');
     status.textContent = '候補を探しています…';
-    select.hidden = true;
+    list.hidden = true;
     api('/places/search?q=' + encodeURIComponent(place)).then(function (res) {
       placeCandidates = (res && res.places) || [];
-      select.innerHTML = placeCandidates.map(function (p, i) {
-        return '<option value="' + i + '">' + escapeHtml(p.name + (p.address ? '（' + p.address + '）' : '')) + '</option>';
-      }).join('') + '<option value="' + PLACE_GOOGLE + '">候補にない場合：「' + escapeHtml(place) + '」をGoogleマップで検索</option>';
-      select.hidden = false;
+      placeChoice = placeCandidates.length ? '0' : PLACE_GOOGLE;
+      renderPlaceCandidates(place);
       status.textContent = placeCandidates.length
-        ? '候補が' + placeCandidates.length + '件見つかりました。違う場所なら、上のリストから選び直してください。'
+        ? '1番目の場所を地図に出しています。違う場所なら、候補から選び直してください。'
         : '候補が見つかりませんでした。Googleマップの検索結果を表示しています。';
-      select.value = placeCandidates.length ? '0' : PLACE_GOOGLE;
       previewSelectedPlace();
     }).catch(function () {
       // 候補が取れなくても、これまでどおりGoogleマップの検索結果は見られるようにする
       placeCandidates = [];
-      select.innerHTML = '<option value="' + PLACE_GOOGLE + '">「' + escapeHtml(place) + '」をGoogleマップで検索</option>';
-      select.value = PLACE_GOOGLE;
-      select.hidden = true;
+      placeChoice = PLACE_GOOGLE;
+      list.hidden = true;
       status.textContent = '';
       previewSelectedPlace();
     });
   }
 
+  function choosePlaceCandidate(value) {
+    placeChoice = value;
+    renderPlaceCandidates($('#entPlaceSearch').value.trim());
+    previewSelectedPlace();
+    var preview = $('#entMapPreview');
+    if (preview && preview.scrollIntoView) preview.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
   function selectedPlace() {
-    var v = $('#entPlaceCandidates').value;
-    return v === PLACE_GOOGLE || v === '' ? null : placeCandidates[Number(v)] || null;
+    return placeChoice === PLACE_GOOGLE || placeChoice === '' ? null : placeCandidates[Number(placeChoice)] || null;
   }
 
   // 候補を選んだときのプレビューは、地図でふりかえると同じLeaflet（OpenStreetMap）の地図にする。
@@ -4490,10 +4584,25 @@
   // 見つからなかった地名は7日間は聞き直さない（通信エラーのときは記録せず、次回また聞く）。
   // 聞く内容を「見出しから推測した地名」から「地図のURL」に変えたので、キーを-v2にして古い結果（同名の
   // 別の場所になっていたものを含む）は使わず、読み込み時に消す。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v2';
-  try { localStorage.removeItem('tabilog:geocode-cache'); } catch (e) {}
+  // -v3（2026-09-26〜）：Worker側で海外の施設名（カタカナ）もウィキペディアで探せるようにしたので、
+  // 以前「見つからない」と覚えた結果を捨てて調べ直す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v3';
+  try { localStorage.removeItem('tabilog:geocode-cache'); localStorage.removeItem('tabilog:geocode-cache-v2'); } catch (e) {}
+  // 住所・店名から探すときに添える「同じ旅行の前後の場所」（旅行の順で、直前と直後に分かっている場所）。
+  // Worker はこの近くを優先し、2000km以上離れた結果（同名の別の場所）は使わない。
+  function geocodeNearParam(coords, i) {
+    var near = [];
+    for (var a = i - 1; a >= 0; a--) if (coords[a]) { near.push(coords[a]); break; }
+    for (var b = i + 1; b < coords.length; b++) if (coords[b]) { near.push(coords[b]); break; }
+    return near.length ? '&near=' + near.map(function (c) { return c.lat.toFixed(4) + ',' + c.lng.toFixed(4); }).join(';') : '';
+  }
+  function geocodeFullPath(q, hint, coords, i) {
+    return '/geocode?q=' + encodeURIComponent(q) + (hint ? '&hint=' + encodeURIComponent(hint.slice(0, 100)) : '') + geocodeNearParam(coords, i);
+  }
   var GEOCODE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-  function geocodeQueries(queries, onProgress) {
+  // items：[{ q: 地図のURL, hint: 予定の見出し }]（旅行の順）。返り値は { URL: {lat,lng} | null }
+  function geocodeQueries(items, onProgress) {
+    var queries = items.map(function (it) { return it.q; });
     var cache;
     try { cache = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch (e) { cache = {}; }
     var now = Date.now(), result = {}, todo = [];
@@ -4523,7 +4632,10 @@
       return pending.reduce(function (p, q) {
         return p.then(function (needWait) {
           return (needWait ? new Promise(function (ok) { setTimeout(ok, 1100); }) : Promise.resolve()).then(function () {
-            return api('/geocode?q=' + encodeURIComponent(q)).then(function (res) {
+            // 前後の場所：1回目と、ここまでの2回目で分かった場所
+            var coords = queries.map(function (x) { return result[x] || null; });
+            var i = queries.indexOf(q), hint = (items[i] && items[i].hint) || '';
+            return api(geocodeFullPath(q, hint, coords, i)).then(function (res) {
               record(q, res);
               return !(res && res.cached);
             }).catch(function () { result[q] = null; done++; return false; });
@@ -4572,7 +4684,7 @@
     replayToken = token;
     Promise.all([
       loadLeaflet(),
-      geocodeQueries(stops.map(function (s) { return s.query; }), function (done, total) {
+      geocodeQueries(stops.map(function (s) { return { q: s.query, hint: s.label }; }), function (done, total) {
         if (replayToken === token) status.textContent = '地図で場所を探しています…（' + done + '/' + total + '）';
       })
     ]).then(function (res) {
@@ -4603,7 +4715,7 @@
       replayMap = L.map($('#replayMap'), { zoomControl: false, renderer: L.svg({ padding: 1 }) });
       replayMap.attributionControl.setPrefix(false);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
+        maxZoom: 19, keepBuffer: 6, // カメラが動いた先の地図を多めに読んでおく（端が灰色のまま見えないように）
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
       }).addTo(replayMap);
     }
@@ -4645,9 +4757,37 @@
     setReplayPlaying(true);
   }
 
+  // 地図のうち、上の時計と下の吹き出し・日ボタン・操作ボタンに隠れていない部分に収まるようにする余白。
+  // 以前は画面全体の真ん中に合わせていたので、移動中の車や道のりが下のボタンの裏に隠れ、区間が変わるたびに
+  // 地図が大きくずれて見えた。吹き出しは移動中は消えるので、下は日ボタン・操作ボタンの上端までを使う。
+  function replayViewPadding() {
+    var mapRect = $('#replayMap').getBoundingClientRect();
+    var visibleRect = function (el) { return el && !el.hidden && el.offsetParent ? el.getBoundingClientRect() : null; };
+    var clock = visibleRect($('#replayClock'));
+    var top = clock ? clock.bottom - mapRect.top : 80;
+    var bottomEdge = mapRect.bottom;
+    [$('#replayDays'), $('#replayControls')].forEach(function (el) {
+      var r = visibleRect(el);
+      if (r) bottomEdge = Math.min(bottomEdge, r.top);
+    });
+    var bottom = mapRect.bottom - bottomEdge;
+    if (bottom < 1) bottom = 130;
+    // 地図が小さい端末でも、見える部分が高さの半分より狭くならないように
+    var room = mapRect.height * 0.5;
+    if (top + bottom > room) { var k = room / (top + bottom); top *= k; bottom *= k; }
+    return { paddingTopLeft: [36, Math.round(top + 24)], paddingBottomRight: [36, Math.round(bottom + 24)] };
+  }
+  // 1点を見える部分の真ん中に出す（ズームは zoom のまま）
+  function replayCenterOn(lat, lng, zoom, animate) {
+    var opts = replayViewPadding();
+    opts.maxZoom = zoom;
+    if (animate) { opts.duration = 0.8; replayMap.flyToBounds([[lat, lng], [lat, lng]], opts); }
+    else { opts.animate = false; replayMap.fitBounds([[lat, lng], [lat, lng]], opts); }
+  }
+
   function resetReplayCamera() {
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
-    replayMap.setView([first.lat, first.lng], 13, { animate: false });
+    replayCenterOn(first.lat, first.lng, 13, false);
     replay.lastLeg = -1;
     replay.lastStop = -2;
     replay.captionIndex = -2;
@@ -4680,11 +4820,13 @@
     showReplayBanner(dayNumber + '日目');
   }
 
-  function showReplayBanner(text) {
+  // sub：下に小さく添える一言（時差のときの「ここから現地時間」など）。1行ずつ途中で折り返さない
+  function showReplayBanner(text, sub) {
     var el = $('#replayDayBanner');
     el.hidden = true;
     void el.offsetWidth; // アニメーションを最初から再生し直すため
-    el.textContent = text;
+    el.innerHTML = '<div class="replay-banner-main">' + escapeHtml(text) + '</div>' +
+      (sub ? '<div class="replay-banner-sub">' + escapeHtml(sub) + '</div>' : '');
     el.hidden = false;
     clearTimeout(showReplayBanner.timer);
     showReplayBanner.timer = setTimeout(function () { el.hidden = true; }, 1600);
@@ -4716,7 +4858,7 @@
       imgs[k].classList.add('on'); dots[k].classList.add('on');
     }, REPLAY_PHOTO_SWITCH_MS);
   }
-  var REPLAY_PHOTO_SWITCH_MS = 1400;
+  var REPLAY_PHOTO_SWITCH_MS = 2500; // Core の REPLAY_SEC_PER_PHOTO と同じ
 
   // 次の地点の写真を先に読み込んでおく（着いた瞬間に写真が真っ白にならないように）
   function preloadNextReplayPhotos(index) {
@@ -4732,7 +4874,7 @@
     highlightReplayDay(st.dayNumber);
     $('#replayTime').textContent = st.hhmm;
     if (replay.lastOffsetDiff !== undefined && st.offsetDiff !== replay.lastOffsetDiff && replay.playing) {
-      showReplayBanner('時差 ' + Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff) + '（ここから現地時間）');
+      showReplayBanner('時差 ' + Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff), 'ここから現地時間');
     }
     replay.lastOffsetDiff = st.offsetDiff;
     if (st.dayNumber !== replay.lastDay) {
@@ -4785,13 +4927,15 @@
       var leg = tl.legs[st.icon.legIndex];
       var legBounds = leg.path && leg.path.length > 1 ? leg.path
         : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
-      replayMap.flyToBounds(legBounds, { padding: [70, 70], maxZoom: 15, duration: 0.8 });
+      var legView = replayViewPadding();
+      legView.maxZoom = 15; legView.duration = 0.8;
+      replayMap.flyToBounds(legBounds, legView);
       replay.lastLeg = st.icon.legIndex;
     } else if (!st.icon && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];
       var cameFromLeg = tl.legs.some(function (l) { return l.to === st.stopIndex; });
       if (arrived && arrived.located && !cameFromLeg && replay.lastStop !== -2) {
-        replayMap.flyTo([arrived.lat, arrived.lng], Math.max(replayMap.getZoom(), 12), { duration: 0.8 });
+        replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
       }
       replay.lastStop = st.stopIndex;
     }
@@ -4849,7 +4993,7 @@
     replay.captionIndex = -2;
     replay.lastDay = 0;
     var here = Core.replayStateAt(replay.tl, replay.r).here;
-    if (here) replayMap.setView([here.lat, here.lng], replayMap.getZoom(), { animate: false });
+    if (here) replayCenterOn(here.lat, here.lng, replayMap.getZoom(), false);
     renderReplay();
   }
 
@@ -4998,7 +5142,10 @@
     $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
-    $('#entPlaceCandidates').addEventListener('change', previewSelectedPlace);
+    $('#entPlaceCandidates').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-place-choice]');
+      if (b) choosePlaceCandidate(b.dataset.placeChoice);
+    });
     $('#btnMapZoomIn').addEventListener('click', function () { zoomPlaceFrame(1); });
     $('#btnMapZoomOut').addEventListener('click', function () { zoomPlaceFrame(-1); });
     $('#entPlaceSearch').addEventListener('keydown', function (e) {

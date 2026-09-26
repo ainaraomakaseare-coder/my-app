@@ -736,12 +736,11 @@ body.sheet-open { overflow: hidden; }
 .review-fields[hidden] { display: none; }
 .review-title { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
 .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-bottom: 8px; }
-.review-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
-.review-row select, .review-row input, .review-row textarea { font-size: 16px; min-width: 0; }
-.review-row select { width: 64px; }
-.review-grid .review-row input { width: 90px; }
-.review-row-wide { flex-direction: column; align-items: stretch; margin-bottom: 8px; }
-.review-row-wide input, .review-row-wide textarea { width: 100%; }
+/* 項目名を上、入力を下にする（横並びだと「金額（円）」「ホスピタリティ」が折り返し、「明細の合計」の例が切れていた） */
+.review-row { display: flex; flex-direction: column; align-items: stretch; gap: 4px; font-size: 13px; min-width: 0; }
+.review-row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review-row select, .review-row input, .review-row textarea { font-size: 16px; min-width: 0; width: 100%; }
+.review-row-wide { margin-bottom: 8px; }
 .review-status { margin-left: 8px; }
 .travel-grid { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .travel-grid input[type="text"] { flex: 1; min-width: 0; }
@@ -749,7 +748,20 @@ body.sheet-open { overflow: hidden; }
 .travel-time { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 13px; }
 #entTravelField > input { width: 100%; margin-bottom: 8px; }
 
-.place-candidates { width: 100%; margin-top: 8px; font-size: 16px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--card); }
+/* 場所の候補：番号・名前・住所・「選択」ボタンのカード */
+.place-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.place-list[hidden] { display: none; }
+.place-list-head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; color: var(--ink-muted); }
+.place-count { color: var(--accent); }
+.place-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--card); }
+.place-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.place-num { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; background: var(--input-bg); color: var(--ink-muted); }
+.place-card.on .place-num { background: var(--accent); color: #fff; }
+.place-text { flex: 1; min-width: 0; }
+.place-name { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.place-address { font-size: 12px; color: var(--ink-muted); margin-top: 2px; overflow-wrap: anywhere; }
+.place-pick { flex: none; font-size: 13px; font-weight: 700; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--ink); }
+.place-card.on .place-pick { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* ---------- 入力欄の×ボタン（app.jsのinitClearButtons） ---------- */
 /* ×が文字に重ならないよう、対象の1行入力欄は右側を空けておく */
@@ -809,6 +821,7 @@ body.viewer-open { overflow: hidden; }
 .more-fields > .field { padding: 0 14px; }
 .more-fields > .field:last-child { padding-bottom: 12px; }
 .more-fields .field input, .more-fields .field textarea { background: var(--card); }
+.more-fields > .review-fields { margin: 0 14px 12px; background: var(--card); }
 
 /* ---------- 移動の予定：移動手段・移動時間 ---------- */
 .move-time-label { display: block; margin-top: 12px; }
@@ -847,3 +860,9 @@ body.viewer-open { overflow: hidden; }
 
 .post-option { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-muted); margin: 2px 0 8px; }
 .post-option input { width: 18px; height: 18px; }
+
+/* 地図でふりかえるのバナー（「2日目」「時差 −13時間」）。以前は長い文が変な位置で折り返していたので、
+   大きい1行＋小さい1行に分け、どちらも途中で折り返さない */
+.replay-daybanner { text-align: center; max-width: calc(100% - 32px); padding: 12px 26px; }
+.replay-banner-main { font-size: 26px; font-weight: 800; line-height: 1.25; white-space: nowrap; }
+.replay-banner-sub { margin-top: 4px; font-size: 13.5px; font-weight: 700; line-height: 1.3; opacity: 0.85; white-space: nowrap; }
