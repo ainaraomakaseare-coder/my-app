@@ -310,8 +310,8 @@
 
       <!-- AI が書いた SNSごとの投稿案を、まとめて貼って振り分ける。
            振り分けは見出し（## Instagram など）で切るだけ。文章は書き換えない。 -->
-      <details id="pasteBox" style="margin-bottom:10px">
-        <summary>AI の投稿案をまとめて貼る（SNSごとの欄に自動で振り分け）</summary>
+      <details id="pasteBox" open style="margin-bottom:14px;border:1px solid var(--line);border-radius:10px;padding:10px 14px">
+        <summary style="font-weight:600;cursor:pointer">AI の投稿案をまとめて貼る（SNSごとの欄に自動で振り分け）</summary>
         <div class="muted" style="margin-top:6px">「## Instagram」「## TikTok」「## YouTube Shorts（タイトル／概要欄）」「## X」「## Threads」のような見出しごとに分けて、下の各SNSの欄に入れます。文章は書き換えません。</div>
         <textarea id="pasteAll" style="min-height:140px" placeholder="## Instagram&#10;…&#10;&#10;## TikTok&#10;…"></textarea>
         <div class="row" style="margin-top:8px">
@@ -537,7 +537,7 @@
     DAY・累計・残り日数・達成率は、AI ではなく投稿卓が計算して入れます。</div>
 
   <label for="sdName">企画名</label>
-  <input type="text" id="sdName" placeholder="半年で100万稼げなければパソコン捨てます">
+  <input type="text" id="sdName" placeholder="例：1年で100本の記事を書く">
 
   <label for="sdStyle">書き方の指示（AI への指示。口調・構成・毎回のお約束など）</label>
   <textarea id="sdStyle" placeholder="例：本人の正直な記録。うまくいかなかった日も隠さない。冒頭で今日の結果、最後に明日やること。"></textarea>
@@ -546,10 +546,10 @@
   <textarea id="sdFields" style="min-height:80px"></textarea>
 
   <label for="sdClosing">毎回最後に入れる一言（任意。{残り日数} {あと} などの差し込み口も使えます）</label>
-  <input type="text" id="sdClosing" placeholder="パソコンを捨てるまで、あと{残り日数}。">
+  <input type="text" id="sdClosing" placeholder="ゴールまで、あと{残り日数}。">
 
   <label for="sdTags">毎回付けるハッシュタグ（空白区切り。#DAY{DAY} のように差し込み口も使えます）</label>
-  <input type="text" id="sdTags" placeholder="#半年で100万 #DAY{DAY}">
+  <input type="text" id="sdTags" placeholder="#企画名 #DAY{DAY}">
 
   <div class="row" style="align-items:flex-end;margin-top:6px">
     <label style="margin:0">開始日（DAY1）<input type="date" id="sdStart"></label>
@@ -582,7 +582,7 @@
 </dialog>
 
 <script src="/reel.js?v=3"></script>
-<script src="/split-drafts.js?v=1"></script>
+<script src="/split-drafts.js?v=2"></script>
 <script>
 'use strict';
 
