@@ -478,5 +478,15 @@ eq('parseMemo: 種類の推定（ホテル・移動）', T.parseMemo('15時 ホ�
 eq('parseMemo: 箇条書きの「・」は外す', T.parseMemo('10時 新宿\n・集合した', memoDates).blocks[0].entry.episode, '集合した');
 eq('parseMemo: 25時のような時刻は予定にしない', T.parseMemo('25時 どこか', memoDates).ok, false);
 
+/* ---- 地図でふりかえる：写真（Reliveのように） ---- */
+var phStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'p1', date: '2026-04-01', time: '10:00', label: 'A', entries: [{ episode: '短い', photoIds: ['x1', 'x2'] }, { photoIds: ['x3'] }] },
+  { id: 'p2', date: '2026-04-01', time: '10:01', label: 'B', entries: [{ episode: '短い' }] },
+  { id: 'p3', date: '2026-04-01', time: '10:02', label: 'C', entries: [] }]);
+eq('replayStops: 予定の記録の写真を地点に持たせる', [phStops[0].photos, phStops[1].photos], [['x1', 'x2', 'x3'], []]);
+var phTl = T.buildReplayTimeline(phStops, {});
+ok('buildReplayTimeline: 写真がある地点は長めに見せる（写真3枚×1.4秒。写真なしも最低2.5秒あるので差は約2秒）',
+  phTl.stops[0].rDwellEnd - phTl.stops[0].r > phTl.stops[1].rDwellEnd - phTl.stops[1].r + 1.5);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

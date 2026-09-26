@@ -485,6 +485,8 @@
   var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
   var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
   var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
+  var REPLAY_MAX_PHOTOS = 6;          // 1つの地点で見せる写真の上限
+  var REPLAY_SEC_PER_PHOTO = 1.4;     // 写真1枚あたり、この秒数ぶん吹き出しを長く見せる（写真は順に切り替わる）
   var REPLAY_MOVE_MIN_SEC = 2;       // 移動の演出は最低この秒数
   var REPLAY_MOVE_CAP_SEC = 6;       // 長い移動（数時間のフライトなど）もこの秒数に早送りする
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
@@ -543,9 +545,12 @@
         // 以前は40文字で切っていたため、スマホでは1.5行ほどで途切れていた。全文を出す（見せる時間は文字数で延ばす）
         return (e.episode || '').trim() || (e.comment || '').trim();
       }).filter(Boolean).slice(0, 3);
+      // Reliveのように、着いたところで写真もエピソードと一緒に見せる（予定の記録の写真を最大6枚）
+      var photos = [];
+      (b.entries || []).forEach(function (e) { (e.photoIds || []).forEach(function (id) { if (photos.length < REPLAY_MAX_PHOTOS) photos.push(id); }); });
       return {
         blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
-        minute: minute, estimated: estimated, label: b.label || '', captions: captions,
+        minute: minute, estimated: estimated, label: b.label || '', captions: captions, photos: photos,
         transport: arriving, query: replayPlaceQuery(b),
         offset: lastOffset // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
       };
@@ -617,7 +622,8 @@
       r += dwell * REPLAY_SEC_PER_MIN;
       kf.push({ t: st.t + dwell, r: r });
       var chars = (st.captions || []).join('').length + (st.label || '').length;
-      var minSec = Math.min(REPLAY_MAX_CAPTION_SEC, Math.max(REPLAY_MIN_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC));
+      var photoSec = (st.photos || []).length * REPLAY_SEC_PER_PHOTO;
+      var minSec = Math.min(REPLAY_MAX_CAPTION_SEC + (photoSec ? 2 : 0), Math.max(REPLAY_MIN_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC + photoSec));
       if (dwell * REPLAY_SEC_PER_MIN < minSec) {
         r += minSec - dwell * REPLAY_SEC_PER_MIN;
         kf.push({ t: st.t + dwell, r: r });
@@ -4592,7 +4598,9 @@
       if (!s.located) return;
       replay.dots[i] = L.marker([s.lat, s.lng], {
         interactive: false,
-        icon: L.divIcon({ className: '', html: '<div class="replay-dot"></div>', iconSize: [14, 14], iconAnchor: [7, 7] })
+        icon: s.photos && s.photos.length
+          ? L.divIcon({ className: '', html: '<div class="replay-photo-pin" style="background-image:url(\'' + escapeHtml(photoUrl(s.photos[0])) + '\')"></div>', iconSize: [40, 40], iconAnchor: [20, 20] })
+          : L.divIcon({ className: '', html: '<div class="replay-dot"></div>', iconSize: [14, 14], iconAnchor: [7, 7] })
       });
     });
     // 移動の線はGoogleマップの道のりのような青（白い縁取り付き）。区間に入ったら、これから通る道のりを
@@ -4608,6 +4616,7 @@
     });
     resetReplayCamera();
     renderReplayDays();
+    preloadNextReplayPhotos(-1);
     $('#replayClock').hidden = false;
     $('#replayControls').hidden = false;
     renderReplay();
@@ -4663,6 +4672,34 @@
     var has = replayLayer.hasLayer(layer);
     if (visible && !has) replayLayer.addLayer(layer);
     else if (!visible && has) replayLayer.removeLayer(layer);
+  }
+
+  // 着いた地点の写真を吹き出しの上に出す。複数枚なら、吹き出しを出しているあいだに順に切り替える
+  function showReplayCaptionPhotos(photos) {
+    var el = $('#replayCaptionPhotos');
+    clearInterval(showReplayCaptionPhotos.timer);
+    if (!photos.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = photos.map(function (id, i) {
+      return '<img src="' + escapeHtml(photoUrl(id)) + '" alt="" class="' + (i === 0 ? 'on' : '') + '" draggable="false">';
+    }).join('') + (photos.length > 1 ? '<div class="replay-photo-dots">' + photos.map(function (_, i) { return '<span class="' + (i === 0 ? 'on' : '') + '"></span>'; }).join('') + '</div>' : '');
+    if (photos.length < 2) return;
+    var k = 0;
+    showReplayCaptionPhotos.timer = setInterval(function () {
+      if (!replay || !replay.playing) return;
+      var imgs = $all('img', el), dots = $all('.replay-photo-dots span', el);
+      if (!imgs.length) { clearInterval(showReplayCaptionPhotos.timer); return; }
+      imgs[k].classList.remove('on'); dots[k].classList.remove('on');
+      k = (k + 1) % imgs.length;
+      imgs[k].classList.add('on'); dots[k].classList.add('on');
+    }, REPLAY_PHOTO_SWITCH_MS);
+  }
+  var REPLAY_PHOTO_SWITCH_MS = 1400;
+
+  // 次の地点の写真を先に読み込んでおく（着いた瞬間に写真が真っ白にならないように）
+  function preloadNextReplayPhotos(index) {
+    var next = replay && replay.tl.stops[index + 1];
+    (next && next.photos || []).forEach(function (id) { var im = new Image(); im.src = photoUrl(id); });
   }
 
   function renderReplay() {
@@ -4743,10 +4780,13 @@
       var s = tl.stops[st.captionIndex];
       if (!s) {
         cap.hidden = true;
+        showReplayCaptionPhotos([]);
       } else {
         $('#replayCaptionTime').textContent = s.estimated ? '' : minuteToHHMM(s.minute);
         $('#replayCaptionTitle').textContent = s.label;
         $('#replayCaptionLines').innerHTML = s.captions.map(function (c) { return '<div>' + escapeHtml(c) + '</div>'; }).join('');
+        showReplayCaptionPhotos(s.photos || []);
+        preloadNextReplayPhotos(st.captionIndex);
         cap.hidden = true;
         void cap.offsetWidth;
         cap.hidden = false;
