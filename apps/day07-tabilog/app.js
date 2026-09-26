@@ -611,9 +611,38 @@
   // （リオデジャネイロ大聖堂→セラロン階段、約1kmの徒歩圏なのに車で大回りするなど）。
   // 直線距離よりずっと長い道のり（2.5倍を超え、かつ+1.5km以上長い）は「たどり着けていない」とみなし、
   // 呼び出し側で徒歩ルートを調べ直す・それでも長ければ直線に戻す判断に使う。
+  // ただしこれは近距離（直線2km未満）に限る。コルコバードの丘のように直線は数kmでも、山道で実際に
+  // 大回りになる道路ルートは正しい経路なので、直線に戻さない（2026-09-26）。
+  var ROUTE_DETOUR_MAX_STRAIGHT_KM = 2;
   function isRouteDetourTooLong(straightKm, routeKm) {
     if (!(straightKm > 0) || !(routeKm >= 0)) return false;
+    if (straightKm >= ROUTE_DETOUR_MAX_STRAIGHT_KM) return false;
     return routeKm > straightKm * 2.5 && routeKm > straightKm + 1.5;
+  }
+
+  // 住所・店名から探すとき、Workerに「この近く」として渡してよい旅行内の前後の場所を選ぶ。
+  // 単に旅程順で前後にある「すでに座標が分かった場所」を渡すと、成田空港の出発（飛行機で最初の記録）に
+  // 対して、遠く離れたリオデジャネイロのホテル（すでに座標が分かっていた）を「近く」として渡してしまい、
+  // Worker側の距離ガードで正しい成田の結果を弾いてしまっていた（2026-09-26）。
+  // 前後の場所は、①同じ日付で、②間（両端を含む）に飛行機（transport === 'plane'）の区間が無いときだけ使う。
+  // stops：[{ date, transport, coords }]（旅程順、coordsは座標が分かっていればlat/lng、まだなら null/undefined）
+  function geocodeNearIndexes(stops, i) {
+    stops = stops || [];
+    function hasPlaneBetween(a, b) {
+      var lo = Math.min(a, b), hi = Math.max(a, b);
+      for (var k = lo; k <= hi; k++) if (stops[k] && stops[k].transport === 'plane') return true;
+      return false;
+    }
+    function validNeighbor(a) {
+      var s = stops[a], cur = stops[i];
+      if (!s || !s.coords || !cur) return false;
+      if (s.date !== cur.date) return false;
+      return !hasPlaneBetween(a, i);
+    }
+    var near = [];
+    for (var a = i - 1; a >= 0; a--) if (stops[a] && stops[a].coords) { if (validNeighbor(a)) near.push(stops[a].coords); break; }
+    for (var b = i + 1; b < stops.length; b++) if (stops[b] && stops[b].coords) { if (validNeighbor(b)) near.push(stops[b].coords); break; }
+    return near;
   }
 
   // 飛行機の弧（arcLatLng、arc=true）を、移動アイコンが実際にたどる密な折れ線にする。
@@ -1164,6 +1193,7 @@
     routeProfileFor: routeProfileFor,
     distanceKm: distanceKm,
     isRouteDetourTooLong: isRouteDetourTooLong,
+    geocodeNearIndexes: geocodeNearIndexes,
     planeArcPath: planeArcPath,
     parseMemo: parseMemo,
     transportLabel: transportLabel,
@@ -3057,8 +3087,8 @@
           if (!stillHere()) return false;
           return (needWait ? wait(1100) : Promise.resolve()).then(function () {
             var order = Core.sortBlocks(state.blocks);
-            var coords = order.map(function (b) { return coordsByBlock[b.id] || null; });
-            return api(geocodeFullPath(it.q, it.b.label || '', coords, order.indexOf(it.b))).then(function (res) {
+            var stops = order.map(function (b) { return { date: b.date, transport: b.transport, coords: coordsByBlock[b.id] || null }; });
+            return api(geocodeFullPath(it.q, it.b.label || '', stops, order.indexOf(it.b))).then(function (res) {
               var c = remember(it.q, res); if (c) coordsByBlock[it.b.id] = c;
               return !(res && res.cached);
             }).catch(function () { return false; });
@@ -4691,21 +4721,33 @@
   // 以前「見つからない」と覚えた結果を捨てて調べ直す。
   // -v4（2026-09-26〜）：店名も座標も入らない共有リンク（内部番号のS2セルIDから座標を求める）に対応したので、
   // それまで「見つからない」だったものを調べ直す。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v4';
-  try { localStorage.removeItem('tabilog:geocode-cache'); localStorage.removeItem('tabilog:geocode-cache-v2'); localStorage.removeItem('tabilog:geocode-cache-v3'); } catch (e) {}
-  // 住所・店名から探すときに添える「同じ旅行の前後の場所」（旅行の順で、直前と直後に分かっている場所）。
+  // -v5（2026-09-26〜）：同じ名前の候補が複数あるとき、旅行のほかの場所に近いものを選ぶよう選び方を
+  // 変えたので（「ユニバーサル」がユニバーサル・オーランド・リゾートになる、「赤レンガ倉庫」が敦賀になる、
+  // といった取り違えの修正）、それまでの結果は捨てて調べ直す。
+  // -v6（2026-09-26〜）：「近く」に飛行機をまたいだ先の場所（成田空港の出発に対して、すでに座標の分かって
+  // いた海外のホテルなど）を渡してしまい、Worker側の距離ガードで正しい結果を弾いていた不具合を直したので
+  // （docs/adr/0008）、その誤りが原因で「見つからない」と覚えていた結果を捨てて調べ直す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v6';
+  try {
+    localStorage.removeItem('tabilog:geocode-cache');
+    localStorage.removeItem('tabilog:geocode-cache-v2');
+    localStorage.removeItem('tabilog:geocode-cache-v3');
+    localStorage.removeItem('tabilog:geocode-cache-v4');
+    localStorage.removeItem('tabilog:geocode-cache-v5');
+  } catch (e) {}
+  // 住所・店名から探すときに添える「同じ旅行の前後の場所」の座標を、旅程順で並んだstops
+  // （{ date, transport, coords }）から選ぶ（選び方自体はCore.geocodeNearIndexes、docs/adr/0008）。
   // Worker はこの近くを優先し、2000km以上離れた結果（同名の別の場所）は使わない。
-  function geocodeNearParam(coords, i) {
-    var near = [];
-    for (var a = i - 1; a >= 0; a--) if (coords[a]) { near.push(coords[a]); break; }
-    for (var b = i + 1; b < coords.length; b++) if (coords[b]) { near.push(coords[b]); break; }
+  function geocodeNearParam(stops, i) {
+    var near = Core.geocodeNearIndexes(stops, i);
     return near.length ? '&near=' + near.map(function (c) { return c.lat.toFixed(4) + ',' + c.lng.toFixed(4); }).join(';') : '';
   }
-  function geocodeFullPath(q, hint, coords, i) {
-    return '/geocode?q=' + encodeURIComponent(q) + (hint ? '&hint=' + encodeURIComponent(hint.slice(0, 100)) : '') + geocodeNearParam(coords, i);
+  function geocodeFullPath(q, hint, stops, i) {
+    return '/geocode?q=' + encodeURIComponent(q) + (hint ? '&hint=' + encodeURIComponent(hint.slice(0, 100)) : '') + geocodeNearParam(stops, i);
   }
   var GEOCODE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-  // items：[{ q: 地図のURL, hint: 予定の見出し }]（旅行の順）。返り値は { URL: {lat,lng} | null }
+  // items：[{ q: 地図のURL, hint: 予定の見出し, date: 日付, transport: 予定自身の移動手段 }]（旅行の順）。
+  // 返り値は { URL: {lat,lng} | null }
   function geocodeQueries(items, onProgress) {
     var queries = items.map(function (it) { return it.q; });
     var cache;
@@ -4738,9 +4780,11 @@
         return p.then(function (needWait) {
           return (needWait ? new Promise(function (ok) { setTimeout(ok, 1100); }) : Promise.resolve()).then(function () {
             // 前後の場所：1回目と、ここまでの2回目で分かった場所
-            var coords = queries.map(function (x) { return result[x] || null; });
+            var stops = queries.map(function (x, idx) {
+              return { date: items[idx] && items[idx].date, transport: items[idx] && items[idx].transport, coords: result[x] || null };
+            });
             var i = queries.indexOf(q), hint = (items[i] && items[i].hint) || '';
-            return api(geocodeFullPath(q, hint, coords, i)).then(function (res) {
+            return api(geocodeFullPath(q, hint, stops, i)).then(function (res) {
               record(q, res);
               return !(res && res.cached);
             }).catch(function () { result[q] = null; done++; return false; });
@@ -4797,15 +4841,28 @@
     $('#replayControls').hidden = true;
     $('#replayCaption').hidden = true;
     $('#replayDayBanner').hidden = true;
+    $('#replayDays').hidden = true;
+    // 前の旅行の再生を開いたあと、この旅行の場所を探し終える（数秒かかりうる）までのあいだ、
+    // 地図そのもの（stopReplayで線・マーカーは消しているが、タイルの表示位置＝カメラは前の旅行のまま）
+    // が一瞬でも見えてしまわないよう、新しい旅行の地図ができるまで隠す（2026-09-26）。
+    var mapEl = $('#replayMap');
+    if (mapEl) mapEl.style.visibility = 'hidden';
     var stops = Core.replayStops(state.trip, state.blocks);
     var status = $('#replayStatus');
     if (!stops.length) { status.textContent = '日付の入った予定がまだありません。'; return; }
     status.textContent = '地図を準備しています…';
     var token = {};
     replayToken = token;
+    // 「近く」の判定（Core.geocodeNearIndexes）に使う予定自身の移動手段は、replayStopsが持つ
+    // 「到着した移動手段」（前の移動区間から引き継いだもの）ではなく、予定そのものの値を見る
+    // （成田空港出発の区間＝飛行機を、間に挟まっているかどうかの判定に使うため。docs/adr/0008）。
+    var blockById = {};
+    (state.blocks || []).forEach(function (b) { blockById[b.id] = b; });
     Promise.all([
       loadLeaflet(),
-      geocodeQueries(stops.map(function (s) { return { q: s.query, hint: s.label }; }), function (done, total) {
+      geocodeQueries(stops.map(function (s) {
+        return { q: s.query, hint: s.label, date: s.date, transport: (blockById[s.blockId] || {}).transport };
+      }), function (done, total) {
         if (replayToken === token) status.textContent = '地図で場所を探しています…（' + done + '/' + total + '）';
       })
     ]).then(function (res) {
@@ -4840,6 +4897,9 @@
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
       }).addTo(replayMap);
     }
+    // openReplayで隠した地図を、この旅行の中身（線・マーカー）ができた今、表示する（2026-09-26）
+    var mapEl = $('#replayMap');
+    if (mapEl) mapEl.style.visibility = '';
     replayMap.invalidateSize();
     if (replayLayer) replayLayer.remove();
     replayLayer = L.layerGroup().addTo(replayMap);
@@ -5195,12 +5255,16 @@
   }
 
   function stopReplay() {
-    replayToken = null;
+    replayToken = null; // これより後に届く/routeの返事（前の旅行の分）は無視させる
     if (replay) {
       replay.playing = false;
       if (replay.raf) cancelAnimationFrame(replay.raf);
     }
     replay = null;
+    // 閉じる・戻る・別の旅行の再生を開くときは、前の旅行の線・マーカー・乗り物アイコンを地図から消す
+    // （再生中の状態＝replayはnullにするだけでは、Leafletの地図に足した線・マーカー自体は残ってしまい、
+    // 次に開いたときに一瞬前の旅行の地図に見えていた。2026-09-26）
+    if (replayLayer) replayLayer.clearLayers();
   }
 
   function closeReplay() {

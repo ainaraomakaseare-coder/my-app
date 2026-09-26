@@ -590,6 +590,11 @@ eq('isRouteDetourTooLong: 直線の2.5倍以内・+1.5km以内なら大回りで
 eq('isRouteDetourTooLong: 2.5倍を超えて+1.5km以上長ければ大回り', T.isRouteDetourTooLong(1, 5), true);
 eq('isRouteDetourTooLong: 長距離では2.5倍未満なら（高速道路の迂回など）大回り扱いしない', T.isRouteDetourTooLong(100, 200), false);
 eq('isRouteDetourTooLong: 直線距離が0・不正な値なら大回り扱いしない', [T.isRouteDetourTooLong(0, 5), T.isRouteDetourTooLong(NaN, 5)], [false, false]);
+// 判定は直線2km未満の近距離だけに絞る（コルコバードの丘のように、直線は数kmでも山道で実際に大回りに
+// なる道路ルートは正しい経路なので、直線に戻さない。2026-09-26）
+eq('isRouteDetourTooLong: 直線3km・道のり12kmの山道は、直線2km以上なので大回り扱いしない', T.isRouteDetourTooLong(3, 12), false);
+eq('isRouteDetourTooLong: 直線2km（境界）は大回り扱いしない', T.isRouteDetourTooLong(2, 10), false);
+eq('isRouteDetourTooLong: 直線2km未満なら、これまでどおり2.5倍・+1.5km超えで大回り', T.isRouteDetourTooLong(1.9, 5), true);
 
 /* ---- 地図でふりかえる：移動手段が無く、とても近い移動（1.5km未満）は徒歩とみなす ---- */
 // リオデジャネイロ大聖堂→セラロン階段（約1km）。車で調べると歩行者専用の階段まで大回りすることがあるため、
@@ -602,6 +607,29 @@ var walkTl = T.buildReplayTimeline(walkStops, {
   'https://x/cathedral': { lat: -22.9105, lng: -43.1774 }, 'https://x/selaron': { lat: -22.9147, lng: -43.1808 }
 });
 eq('buildReplayTimeline: 移動手段が無く、とても近い移動（1.5km未満）は徒歩とみなす', walkTl.legs.map(function (l) { return l.transport; }), ['walk']);
+
+/* ---- 地図でふりかえる：Worker「/geocode」に渡す「近く」は、飛行機をまたいだ先の場所を選ばない（docs/adr/0008） ---- */
+// ブラジル・アルゼンチン旅行：成田空港出発（飛行機）→香港到着→ニューヨーク到着→リオデジャネイロ到着→
+// リオのホテル（座標が先に分かっている）→コルコバードの丘。座標が分かっているのはリオのホテル以降だけ。
+var naritaStops = [
+  { date: '2024-02-10', transport: 'plane', coords: null },   // 0: 成田空港出発（この区間自体が飛行機）
+  { date: '2024-02-10', transport: undefined, coords: null }, // 1: 香港到着
+  { date: '2024-02-10', transport: undefined, coords: null }, // 2: ニューヨーク到着
+  { date: '2024-02-11', transport: undefined, coords: null }, // 3: リオデジャネイロ到着
+  { date: '2024-02-11', transport: undefined, coords: { lat: -22.97, lng: -43.19 } }, // 4: リオのホテル
+  { date: '2024-02-11', transport: undefined, coords: { lat: -22.95, lng: -43.21 } }  // 5: コルコバードの丘
+];
+eq('geocodeNearIndexes: 成田空港出発は、間に飛行機の区間があるので18000km先のリオのホテルを近くにしない',
+  T.geocodeNearIndexes(naritaStops, 0), []);
+eq('geocodeNearIndexes: リオのホテル→コルコバードの丘は、同じ日付・間に飛行機が無いので近くに使う',
+  T.geocodeNearIndexes(naritaStops, 5), [{ lat: -22.97, lng: -43.19 }]);
+// 同じ日のロサンゼルスの2地点は、飛行機をまたいでいないので前の場所を近くとして使う
+var laStops = [
+  { date: '2024-02-20', transport: undefined, coords: { lat: 34.05, lng: -118.24 } }, // 0: ロサンゼルスの1地点目
+  { date: '2024-02-20', transport: undefined, coords: null }                          // 1: 同じ日の2地点目（探したい場所）
+];
+eq('geocodeNearIndexes: 同じ日のロサンゼルスの2地点目は、同じ日の前の場所を近くにする',
+  T.geocodeNearIndexes(laStops, 1), [{ lat: 34.05, lng: -118.24 }]);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

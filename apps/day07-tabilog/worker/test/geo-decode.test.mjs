@@ -4,7 +4,10 @@
  * 実行: node worker/test/geo-decode.test.mjs
  */
 import assert from "node:assert/strict";
-import { s2ToLatLng, extractFeatureS2 } from "../src/geo-decode.js";
+import {
+  s2ToLatLng, extractFeatureS2,
+  distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
+} from "../src/geo-decode.js";
 
 let pass = 0, fail = 0;
 function check(label, got, want) {
@@ -52,6 +55,73 @@ check("extractFeatureS2: ftid=0x…:0x…（内部リンク）",
   "0x80c2c64160adbc4b");
 check("extractFeatureS2: どちらも無ければnull", extractFeatureS2("https://maps.google.com/maps/place/新宿"), null);
 check("extractFeatureS2: 空文字はnull", extractFeatureS2(""), null);
+
+/* ---- distanceKm：2点間のおおよその距離 ---- */
+{
+  const osakaToTokyo = distanceKm({ lat: 34.6937, lng: 135.5023 }, { lat: 35.6812, lng: 139.7671 });
+  if (osakaToTokyo > 390 && osakaToTokyo < 410) pass++;
+  else { fail++; console.log("NG  distanceKm: 大阪→東京は約400km\n    got  " + osakaToTokyo); }
+}
+check("distanceKm: 同じ点は0km", Math.round(distanceKm({ lat: 34.6937, lng: 135.5023 }, { lat: 34.6937, lng: 135.5023 })), 0);
+
+/* ---- nearestCandidate：候補の中からnearsにいちばん近いものを選ぶ ---- */
+{
+  const osaka = { lat: 34.6656, lng: 135.4325, id: "osaka" };
+  const orlando = { lat: 28.4744, lng: -81.4683, id: "orlando" };
+  const nearOsaka = [{ lat: 34.70, lng: 135.50 }];
+  check("nearestCandidate: 大阪の近くのnearsなら大阪の候補を選ぶ（ユニバーサル問題）",
+    (nearestCandidate([orlando, osaka], nearOsaka) || {}).id, "osaka");
+  check("nearestCandidate: nearsが空ならnull（呼び出し側でフォールバック）", nearestCandidate([orlando, osaka], []), null);
+  check("nearestCandidate: 候補が空ならnull", nearestCandidate([], nearOsaka), null);
+}
+
+/* ---- pickNominatimCandidate：nearsがあれば近い方、無ければ重要度がいちばん高いもの ---- */
+{
+  // 「赤レンガ倉庫」：敦賀（重要度高い）と横浜（重要度は低いが実在の場所）が並ぶケース
+  const tsuruga = { lat: "35.6619607", lon: "136.0745531", importance: 0.218 };
+  const yokohama = { lat: "35.4518491", lon: "139.6419320", importance: 0.0000748 };
+  check("pickNominatimCandidate: nearsが無ければ重要度がいちばん高い候補（敦賀）",
+    (pickNominatimCandidate([tsuruga, yokohama]) || {}).lat, 35.6619607);
+  const nearYokohama = [{ lat: 35.44, lng: 139.64 }]; // みなとみらい発（同じ旅行のほかの場所）
+  check("pickNominatimCandidate: nearsがあれば重要度が低くても近い候補（横浜）を選ぶ",
+    (pickNominatimCandidate([tsuruga, yokohama], nearYokohama) || {}).lat, 35.4518491);
+  check("pickNominatimCandidate: 座標が不正な要素は無視する",
+    (pickNominatimCandidate([{ lat: "NaN", lon: "x", importance: 0.9 }, yokohama]) || {}).lat, 35.4518491);
+  check("pickNominatimCandidate: 配列でなければnull", pickNominatimCandidate(null), null);
+}
+
+/* ---- placeNameRank：名前と記事の題名の合い方 ---- */
+check("placeNameRank: 完全一致は3", placeNameRank("ドジャースタジアム", "ドジャースタジアム"), 3);
+check("placeNameRank: 表記ゆれ（ヴ→ブ・空白・かっこ）を吸収して3", placeNameRank("ラスヴェガス", "ラス ベガス（アメリカ）"), 3);
+check("placeNameRank: 題名が名前を含む部分一致は2", placeNameRank("赤レンガ倉庫", "横浜赤レンガ倉庫"), 2);
+check("placeNameRank: 名前が題名を含む（逆）は0（町全体になるため使わない）", placeNameRank("フラミンゴ ラスベガス", "ラスベガス"), 0);
+check("placeNameRank: 合わない名前は0", placeNameRank("ドジャースタジアム", "エンゼル・スタジアム"), 0);
+
+/* ---- pickWikiHit：同じ順位の候補からnearsで選ぶ（敦賀赤レンガ倉庫 vs 横浜赤レンガ倉庫） ---- */
+{
+  const tsurugaHit = { title: "敦賀赤レンガ倉庫", rank: 2, lat: 35.6619607, lng: 136.0745531 };
+  const yokohamaHit = { title: "横浜赤レンガ倉庫", rank: 2, lat: 35.4518491, lng: 139.6419320 };
+  const exactHit = { title: "赤レンガ倉庫", rank: 3, lat: 0, lng: 0 };
+  check("pickWikiHit: 同順位（rank 2）どうしはnearsで近い方（横浜）",
+    (pickWikiHit([tsurugaHit, yokohamaHit], [{ lat: 35.44, lng: 139.64 }]) || {}).title, "横浜赤レンガ倉庫");
+  check("pickWikiHit: nearsが無ければ先頭（従来どおり）",
+    (pickWikiHit([tsurugaHit, yokohamaHit]) || {}).title, "敦賀赤レンガ倉庫");
+  check("pickWikiHit: 完全一致（rank 3）はnearsを見ずに常に優先",
+    (pickWikiHit([tsurugaHit, yokohamaHit, exactHit], [{ lat: 35.44, lng: 139.64 }]) || {}).title, "赤レンガ倉庫");
+  check("pickWikiHit: 空配列はnull", pickWikiHit([]), null);
+}
+
+/* ---- pickGeoNamesCandidate：Open-Meteoの結果からnearsで選ぶ ---- */
+{
+  const orlando = { name: "ユニバーサル・オーランド・リゾート", latitude: 28.4744, longitude: -81.4683 };
+  const universalCityWalkOsaka = { name: "ユニバーサル・シティウォーク大阪", latitude: 34.66828, longitude: 135.4375939 };
+  check("pickGeoNamesCandidate: nearsがあれば近い方（大阪）を選ぶ",
+    (pickGeoNamesCandidate([orlando, universalCityWalkOsaka], [{ lat: 34.70, lng: 135.50 }]) || {}).name,
+    "ユニバーサル・シティウォーク大阪");
+  check("pickGeoNamesCandidate: nearsが無ければ先頭（従来どおり、人口順などAPIの並び順）",
+    (pickGeoNamesCandidate([orlando, universalCityWalkOsaka]) || {}).name, "ユニバーサル・オーランド・リゾート");
+  check("pickGeoNamesCandidate: 空配列はnull", pickGeoNamesCandidate([]), null);
+}
 
 console.log(pass + " passed, " + fail + " failed");
 if (fail) process.exitCode = 1;
