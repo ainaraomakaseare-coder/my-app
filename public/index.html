@@ -310,8 +310,8 @@
 
       <!-- AI が書いた SNSごとの投稿案を、まとめて貼って振り分ける。
            振り分けは見出し（## Instagram など）で切るだけ。文章は書き換えない。 -->
-      <details id="pasteBox" style="margin-bottom:10px">
-        <summary>AI の投稿案をまとめて貼る（SNSごとの欄に自動で振り分け）</summary>
+      <details id="pasteBox" open style="margin-bottom:14px;border:1px solid var(--line);border-radius:10px;padding:10px 14px">
+        <summary style="font-weight:600;cursor:pointer">AI の投稿案をまとめて貼る（SNSごとの欄に自動で振り分け）</summary>
         <div class="muted" style="margin-top:6px">「## Instagram」「## TikTok」「## YouTube Shorts（タイトル／概要欄）」「## X」「## Threads」のような見出しごとに分けて、下の各SNSの欄に入れます。文章は書き換えません。</div>
         <textarea id="pasteAll" style="min-height:140px" placeholder="## Instagram&#10;…&#10;&#10;## TikTok&#10;…"></textarea>
         <div class="row" style="margin-top:8px">
@@ -582,7 +582,7 @@
 </dialog>
 
 <script src="/reel.js?v=3"></script>
-<script src="/split-drafts.js?v=1"></script>
+<script src="/split-drafts.js?v=2"></script>
 <script>
 'use strict';
 

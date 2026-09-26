@@ -48,7 +48,12 @@
     if (!name) return null;
     const hit = NAMES[name];
     if (hit) return hit;
-    // 印つきの見出しで、名前の後ろに補足がある形（「## Instagram（リール）」）も拾う
+    // 名前の後ろにかっこ書きの補足がある形（「YouTube Shorts（タイトル／概要欄）」）も拾う。
+    // ★ AI のチャット画面からコピーすると「##」が落ちるので、印が無くても拾う。
+    //   ただし、かっこの後ろに文が続く行（「X（旧Twitter）で話題」）は本文なので拾わない。
+    const paren = name.match(/^(.+?)[（(][^（()）]*[）)]$/);
+    if (paren && NAMES[paren[1]]) return NAMES[paren[1]];
+    // 印つきの見出しは、かっこが閉じていなくても名前で拾う（「## Instagram（リール」の書き損じ）
     if (hasMark) {
       const head = name.replace(/[（(].*$/, '');
       if (NAMES[head]) return NAMES[head];
