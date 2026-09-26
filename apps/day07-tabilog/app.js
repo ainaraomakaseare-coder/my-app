@@ -200,33 +200,109 @@
   // （移動の予定自体の地図は到着地のことが多いため、次の予定へはそちらを引き継ぐ）。
   // 「直前の予定」は時差を考えた順でないと決まらない（現地時間の順だと、日付変更線をまたぐ移動で着が発より
   // 前に来る）ので、まず移動の決まりを使わずに仮に決めて時差を付けて並べ、その順でもう一度決める。
+  //
+  // ただし「直前の予定」を仮の順で決める方法は、日付変更線を東へ越える移動日（成田6/26 20:00発 →
+  // ロサンゼルス6/26 18:00着）で壊れていた（2026-09-26）。現地時間の順では着(18:00)が発(20:00)より前に来るので、
+  // 発の「直前の予定」が着になり、発もロサンゼルス時間で読まれて、着→発の順のまま固まってしまう。
+  // そこで移動の予定がある日は、出発地のタイムゾーンの候補（前の日の最後のタイムゾーン、その日に出てくる
+  // タイムゾーン）を全部試し、①「移動の予定の出発地＝時差を考えた順で直前の予定のタイムゾーン」がいちばん
+  // 多く成り立つもの、②その中で、予定を入れた（または並べ替えた）順（createdAt）といちばん食い違わないもの、
+  // ③それでも決まらなければ前の日から続くタイムゾーンを選ぶ。成田発・ロサンゼルス着のどちらも①は成り立つが、
+  // ②で「発を先に入れた」旅行としての順が選ばれる。
   function assignBlockZones(blocks, byBlock, byDate, fallback) {
     byBlock = byBlock || {}; byDate = byDate || {};
-    function pass(list, useTransportRule) {
-      var out = {}, prevZone = '', prevDate = null;
+    var copies = (blocks || []).map(function (b) { return Object.assign({}, b); });
+    var byDay = {}, days = [];
+    sortBlocks(copies).forEach(function (b) {
+      var d = b.date || '';
+      if (!byDay[d]) { byDay[d] = []; days.push(d); }
+      byDay[d].push(b);
+    });
+    var out = {}, carry = '';
+    // 1日ぶんのタイムゾーンを決める。forced：移動の予定のid→出発地のタイムゾーン（無ければ直前の予定を引き継ぐ）
+    function walkDay(list, date, prevIn, forced) {
+      var zones = {}, prevZone = prevIn, first = true, consistent = 0, prevTransport = false;
       list.forEach(function (b) {
         var own = byBlock[b.id] || '';
-        var isFirstOfDate = prevDate === null || prevDate !== b.date;
+        var isTransport = b.category === 'transport';
         var tz;
-        if (useTransportRule && b.category === 'transport' && prevZone) {
+        if (isTransport && forced && forced[b.id]) {
+          tz = forced[b.id];
+          // 直前が移動の予定なら、その地図が出発地か到着地か分からない（どこにいるか不明）ので矛盾とはみなさない
+          if (prevTransport || tz === (prevZone || fallback || '')) consistent++;
+        } else if (isTransport && prevZone) {
           tz = prevZone;
         } else if (own) {
           tz = own;
-        } else if (isFirstOfDate) {
-          tz = byDate[b.date] || prevZone || fallback || '';
+        } else if (first) {
+          tz = byDate[date] || prevZone || fallback || '';
         } else {
-          tz = prevZone || byDate[b.date] || fallback || '';
+          tz = prevZone || byDate[date] || fallback || '';
         }
-        out[b.id] = tz;
-        prevZone = useTransportRule && b.category === 'transport' ? (own || byDate[b.date] || tz) : tz;
-        prevDate = b.date;
+        zones[b.id] = tz;
+        prevZone = isTransport ? (own || byDate[date] || tz) : tz;
+        prevTransport = isTransport;
+        first = false;
       });
-      return out;
+      return { zones: zones, end: prevZone, consistent: consistent };
     }
-    var copies = (blocks || []).map(function (b) { return Object.assign({}, b); });
-    var first = pass(sortBlocks(copies), false);
-    applyBlockZones(copies, first);
-    return pass(sortBlocks(copies), true);
+    // タイムゾーンを付けて時差を考えた順に並べ直し、その順でもう一度決める（順とタイムゾーンを落ち着かせる）
+    function settleDay(list, date, prevIn, forced) {
+      var res = walkDay(list, date, prevIn, forced), order = list;
+      for (var i = 0; i < 3; i++) {
+        var tmp = list.map(function (b) { return Object.assign({}, b); });
+        applyBlockZones(tmp, res.zones);
+        var next = sortBlocks(tmp);
+        var same = next.every(function (b, k) { return b.id === order[k].id; });
+        order = next;
+        res = walkDay(order, date, prevIn, forced);
+        if (same) break;
+      }
+      res.order = order;
+      return res;
+    }
+    function inversions(order) {
+      var n = 0;
+      for (var i = 0; i < order.length; i++) {
+        for (var j = i + 1; j < order.length; j++) {
+          if ((order[i].createdAt || '') > (order[j].createdAt || '')) n++;
+        }
+      }
+      return n;
+    }
+    days.forEach(function (date) {
+      var list = byDay[date];
+      var transports = list.filter(function (b) { return b.category === 'transport'; });
+      var best = null;
+      if (date && transports.length && transports.length <= 3) {
+        var start = carry || fallback || '';
+        var cands = [start];
+        list.forEach(function (b) { if (byBlock[b.id] && cands.indexOf(byBlock[b.id]) === -1) cands.push(byBlock[b.id]); });
+        if (byDate[date] && cands.indexOf(byDate[date]) === -1) cands.push(byDate[date]);
+        cands = cands.filter(Boolean);
+        var combos = [{}];
+        transports.forEach(function (t) {
+          var nextCombos = [];
+          combos.forEach(function (c) {
+            cands.forEach(function (z) { var o = Object.assign({}, c); o[t.id] = z; nextCombos.push(o); });
+          });
+          combos = nextCombos;
+        });
+        combos.forEach(function (forced) {
+          var res = settleDay(list, date, carry, forced);
+          var startHits = transports.filter(function (t) { return forced[t.id] === start; }).length;
+          var score = [res.consistent, -inversions(res.order), startHits];
+          if (!best || score[0] > best.score[0] || (score[0] === best.score[0] && (score[1] > best.score[1] ||
+            (score[1] === best.score[1] && score[2] > best.score[2])))) {
+            best = { res: res, score: score };
+          }
+        });
+      }
+      var res = best ? best.res : settleDay(list, date, carry, null);
+      Object.assign(out, res.zones);
+      carry = res.end;
+    });
+    return out;
   }
 
   // 予定に _tz・_offset（分）を付ける（画面の中だけの値で、保存はしない）。zonesが無ければ外す。

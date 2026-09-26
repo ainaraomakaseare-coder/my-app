@@ -682,5 +682,33 @@ eq('tripScheduleShift: 開始日を空にしたときは何もしない',
 eq('tripScheduleShift: もともと開始日が無かった旅行に開始日を入れ、予定がその前にあるなら1日目にそろえる',
   T.tripScheduleShift({ startDate: '', endDate: '' }, '2026-07-05', '', laBlocks).days, 2);
 
+/* ---- 時差：日付変更線を東へ越える移動日（成田6/26 20:00発 → ロサンゼルス6/26 18:00着） ---- */
+// 現地時間の順だと着(18:00)が発(20:00)より前に来て、発もロサンゼルス時間で読まれ、着→発のまま固まっていた（2026-09-26）
+function laDepartureOrder(flightZone, arrivalCategory, dayZone) {
+  var bs = [
+    { createdAt: '1', id: 'f', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: '成田から出発' },
+    { createdAt: '2', id: 'a', date: '2026-06-26', time: '18:00', category: arrivalCategory, label: 'ロサンゼルス空港に到着' },
+    { createdAt: '3', id: 'u', date: '2026-06-26', time: '20:30', category: 'sightseeing', label: 'ユニオンステーション' }
+  ];
+  var own = { a: 'America/Los_Angeles', u: 'America/Los_Angeles' };
+  if (flightZone) own.f = flightZone;
+  T.applyBlockZones(bs, T.assignBlockZones(bs, own, dayZone ? { '2026-06-26': dayZone } : {}, 'Asia/Tokyo'));
+  return T.sortBlocks(bs).map(function (b) { return b.id + ':' + b._tz; });
+}
+var laWant = ['f:Asia/Tokyo', 'a:America/Los_Angeles', 'u:America/Los_Angeles'];
+eq('assignBlockZones: 成田発(地図はLAX)→LA着は、発を日本時間で読んで発→着の順', laDepartureOrder('America/Los_Angeles', 'sightseeing', 'America/Los_Angeles'), laWant);
+eq('assignBlockZones: 成田発(地図は成田)→LA着(移動の予定)も発→着の順', laDepartureOrder('Asia/Tokyo', 'transport', 'America/Los_Angeles'), laWant);
+eq('assignBlockZones: 成田発(地図なし)→LA着(移動の予定)も発→着の順', laDepartureOrder('', 'transport', 'Asia/Tokyo'), laWant);
+// 同じ日に日付変更線をまたがない移動は、入れた順が逆でも時差を考えた順のまま（前の日から続くタイムゾーンで読む）
+var laNy = [
+  { createdAt: '0', id: 'p', date: '2026-07-01', time: '19:00', category: 'food' },
+  { createdAt: '3', id: 'b', date: '2026-07-02', time: '07:00', category: 'food' },
+  { createdAt: '1', id: 'f', date: '2026-07-02', time: '09:00', category: 'transport' },
+  { createdAt: '2', id: 'a', date: '2026-07-02', time: '17:30', category: 'sightseeing' }
+];
+eq('assignBlockZones: LA→ニューヨークの日は、入れた順が逆でも朝食→LA発→NY着',
+  T.assignBlockZones(laNy, { p: 'America/Los_Angeles', b: 'America/Los_Angeles', f: 'America/New_York', a: 'America/New_York' }, {}, 'Asia/Tokyo'),
+  { p: 'America/Los_Angeles', b: 'America/Los_Angeles', f: 'America/Los_Angeles', a: 'America/New_York' });
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
