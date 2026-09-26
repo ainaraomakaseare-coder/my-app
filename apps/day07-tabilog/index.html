@@ -517,32 +517,10 @@
           <textarea id="entEpisode" rows="3" placeholder="どんなことがあった？"></textarea>
         </div>
 
-        <div class="field">
-          <label for="entComment">ひとこと</label>
-          <input type="text" id="entComment" placeholder="例：最高だった！">
-        </div>
-
         <div class="field" id="entRatingField" hidden>
           <label>評価</label>
           <div class="rating-widget" id="entRatingWidget"></div>
           <p class="hint" id="entRatingSummary"></p>
-        </div>
-
-        <!-- 移動の予定の記録だけに出す、紹介文用の移動の情報（★はつけない） -->
-        <div class="field" id="entTravelField" hidden>
-          <label>移動の情報（紹介文に使います）</label>
-          <div class="travel-grid">
-            <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地（例：ローマ）">
-            <span class="travel-arrow">→</span>
-            <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地（例：ロンドン）">
-          </div>
-          <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：ブエリング航空 VY6203）">
-          <div class="travel-grid">
-            <label class="travel-time">出発<input type="time" id="entTravelDepart"></label>
-            <label class="travel-time">到着<input type="time" id="entTravelArrive"></label>
-          </div>
-          <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）。費用の明細があればそちらを使います">
-          <p class="hint" id="entTravelDuration"></p>
         </div>
 
         <div class="field">
@@ -587,7 +565,30 @@
         <!-- 記録の画面が長いので、ときどきしか使わない欄はたたんでおく。すでに入っている記録を開いたときは
              開いた状態にする（app.jsのopenEntryForm） -->
         <details class="more-fields" id="entMoreFields">
-          <summary id="entMoreSummary">詳細・待ち時間・お店のHP・その他URL</summary>
+          <summary id="entMoreSummary">もっと書く（ひとこと・詳細・URLなど）</summary>
+          <!-- 記録の画面をシンプルにするため、★・費用・地図以外の欄はここにたたむ（2026-09-26〜） -->
+          <div class="field">
+            <label for="entComment">ひとこと</label>
+            <input type="text" id="entComment" placeholder="例：最高だった！">
+          </div>
+
+          <!-- 移動の予定の記録だけに出す、紹介文用の移動の情報（★はつけない） -->
+          <div class="field" id="entTravelField" hidden>
+            <label>移動の情報（紹介文に使います）</label>
+            <div class="travel-grid">
+              <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地（例：ローマ）">
+              <span class="travel-arrow">→</span>
+              <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地（例：ロンドン）">
+            </div>
+            <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：ブエリング航空 VY6203）">
+            <div class="travel-grid">
+              <label class="travel-time">出発<input type="time" id="entTravelDepart"></label>
+              <label class="travel-time">到着<input type="time" id="entTravelArrive"></label>
+            </div>
+            <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）。費用の明細があればそちらを使います">
+            <p class="hint" id="entTravelDuration"></p>
+          </div>
+
           <!-- 紹介文（ホテログ・レクログ・飯ログ）用の、自分のレビュー項目（app.jsのrenderReviewFields。docs/adr/0007）。
                記録の画面では★だけを見せ、細かい項目はここ（たたんだ欄）に入れる -->
           <div class="review-fields" id="entReviewFields" hidden></div>
@@ -610,12 +611,11 @@
             <label for="entOtherUrl">その他URL（任意）</label>
             <input type="url" id="entOtherUrl" placeholder="https://...">
           </div>
+          <div class="field">
+            <label for="entAuthor">記録した人（任意、未入力なら「匿名」）</label>
+            <input type="text" id="entAuthor" placeholder="例：わたし">
+          </div>
         </details>
-
-        <div class="field">
-          <label for="entAuthor">記録した人（任意、未入力なら「匿名」）</label>
-          <input type="text" id="entAuthor" placeholder="例：わたし">
-        </div>
 
         <p class="hint" id="entFormStatus"></p>
         <div class="sheet-actions">

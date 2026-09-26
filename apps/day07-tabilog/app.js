@@ -3569,7 +3569,8 @@
     $('#entMapUrl').value = entry ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
-    $('#entMoreFields').open = !!(entry && (entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl));
+    $('#entMoreFields').open = !!(entry && (entry.comment || entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl ||
+      (entry.travel && Object.keys(entry.travel).length)));
     $('#entPlaceSearch').value = '';
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
@@ -3646,7 +3647,7 @@
     var block = entryFormBlock();
     var kind = Core.reviewKindForCategory(block ? block.category : '');
     $('#entReviewFields').hidden = true;
-    $('#entMoreSummary').textContent = '詳細・待ち時間・お店のHP・その他URL';
+    $('#entMoreSummary').textContent = 'もっと書く（ひとこと・詳細・URLなど）';
     if (!loginEnabled() || !entry || !kind) { field.hidden = true; return; }
     field.hidden = false;
     var user = loadCurrentUser();
@@ -3704,10 +3705,10 @@
     var el = $('#entReviewFields');
     var k = Core.REVIEW_KINDS[kind];
     var summary = $('#entMoreSummary');
-    if (!k || !review) { el.hidden = true; summary.textContent = '詳細・待ち時間・お店のHP・その他URL'; return; }
+    if (!k || !review) { el.hidden = true; summary.textContent = 'もっと書く（ひとこと・詳細・URLなど）'; return; }
     el.hidden = false;
     // ★以外の細かいレビュー項目は、たたんだ「詳細」の欄の中に出す。すでに書いてあれば開いておく
-    summary.textContent = k.label + 'のレビュー・詳細・待ち時間・URL';
+    summary.textContent = 'もっと書く（' + k.label + 'のレビュー・ひとこと・詳細など）';
     if (Object.keys(review).length) $('#entMoreFields').open = true;
     var gradeSelect = function (key, label) {
       return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
