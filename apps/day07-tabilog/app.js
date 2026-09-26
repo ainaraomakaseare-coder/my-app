@@ -479,9 +479,9 @@
   // 地図の描画（Leaflet）は画面側の仕事で、ここでは「どの順で・いつ・どこにいるか」だけを決める。
   // 時間の単位は2つある：t＝旅の中の時刻（1日目0時からの経過分）、r＝再生の実時間（秒）。
 
-  var REPLAY_SEC_PER_MIN = 0.12;     // 500倍速（旅の1分＝実時間0.12秒）。100倍速では遅いという声で変更
+  var REPLAY_SEC_PER_MIN = 0.06;     // 1000倍速（旅の1分＝実時間0.06秒）。100倍速・500倍速でも遅いという声で変更
   var REPLAY_LEAD_MIN = 5;           // 最初の予定の少し前から時計を動かし始める
-  var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら500倍速で進める旅の時間（分）
+  var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら1000倍速で進める旅の時間（分）
   var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
   var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
   var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
@@ -575,7 +575,7 @@
   // - 移動の演出は「移動手段がある予定」へ、直前に地図上にいた地点から向かうときだけ
   // - 移動は到着する予定の1つ前の地点での滞在が終わってから始める（途中で夕食など場所不明の出来事が
   //   挟まっても、アイコンはそれまで最後にいた場所で待つ）
-  // - 旅の時間は基本500倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
+  // - 旅の時間は基本1000倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
   function buildReplayTimeline(stops, coordsByQuery) {
     coordsByQuery = coordsByQuery || {};
     var withOffset = (stops || []).filter(function (st) { return typeof st.offset === 'number'; })[0];
