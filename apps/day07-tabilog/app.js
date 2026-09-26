@@ -5152,6 +5152,11 @@
       };
     });
     replay.mapAnimating = false;
+    // 前の旅行の再生を閉じたときに透明のままになっていないよう、開くたびに必ず見える状態へ戻す
+    (function () {
+      var pane = replayOverlayPane();
+      if (pane) { pane.style.transition = 'none'; pane.style.opacity = '1'; }
+    })();
     if (!replayMap._replayAnimGuard) {
       replayMap._replayAnimGuard = true;
       // Leaflet（SVGレンダラー）は、ズームのアニメーション中に線の座標を更新すると、
@@ -5159,11 +5164,23 @@
       // （地図全体が動いている最中に setLatLngs すると、そのフレームのズーム換算がまだ
       // 反映されていないため）。「区間の変わり目で地図がずれ、青い線が追いつかない」の原因。
       // アニメーション中は線の更新を止め（アイコンは動かし続ける）、終わったら1回だけ描き直す。
-      replayMap.on('zoomstart movestart', function () { if (replay) replay.mapAnimating = true; });
+      //
+      // それでも、アニメ中は線（overlayPaneのSVG）自体をLeafletがCSSのtransformで拡大縮小し続けるため、
+      // 大きくズームするとき（例：飛行機で日本→アメリカのような広いflyToBounds）は線の太さもいっしょに
+      // 拡大されてしまい、太い青の塊が地図を覆う「ゴースト」に見える不具合があった（利用者からの
+      // スクリーンショットで確認）。対策として、アニメ開始（zoomstart/movestart）で線の入っている
+      // overlayPane自体を一瞬透明にして隠し、終わった（zoomend/moveend）ら描き直してからフェードイン
+      // する（2026-09-27）。乗り物のアイコン（マーカー）はmarkerPane側なので影響を受けず、そのまま
+      // 動かし続けられる。
+      replayMap.on('zoomstart movestart', function () {
+        if (replay) replay.mapAnimating = true;
+        hideReplayOverlayPane();
+      });
       replayMap.on('zoomend moveend', function () {
         if (!replay) return;
         replay.mapAnimating = false;
         renderReplay();
+        fadeInReplayOverlayPane();
       });
     }
     resetReplayCamera();
@@ -5254,6 +5271,28 @@
     var has = replayLayer.hasLayer(layer);
     if (visible && !has) replayLayer.addLayer(layer);
     else if (!visible && has) replayLayer.removeLayer(layer);
+  }
+
+  // 道のり（線・到着済みの点）はぜんぶ既定のoverlayPane（Leafletの標準）に入っている。乗り物のアイコンは
+  // markerPane（別のpane）なので、overlayPaneだけ隠してもアイコンは動かし続けられる。
+  // ズームや移動のアニメ中に線の太さがCSSのtransformで拡大されて見える「ゴースト」対策（2026-09-27）。
+  function replayOverlayPane() {
+    return replayMap && replayMap.getPane ? replayMap.getPane('overlayPane') : null;
+  }
+  function hideReplayOverlayPane() {
+    var pane = replayOverlayPane();
+    if (!pane) return;
+    pane.style.transition = 'none';
+    pane.style.opacity = '0';
+  }
+  function fadeInReplayOverlayPane() {
+    var pane = replayOverlayPane();
+    if (!pane) return;
+    // 直前にopacity:0のまま描き直しているので、ここで一度レイアウトを強制してから
+    // transitionを付けないと、0→1が一瞬で切り替わってしまい（アニメにならない）
+    pane.getBoundingClientRect();
+    pane.style.transition = 'opacity 150ms linear';
+    pane.style.opacity = '1';
   }
 
   // 着いた地点の写真を吹き出しの上に出す。複数枚なら、吹き出しを出しているあいだに順に切り替える
