@@ -261,7 +261,9 @@
         <button class="icon-btn back-btn" data-back="home" aria-label="戻る">
           <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M12.5 4.5L7 10l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <button class="icon-btn share-btn" id="btnShareTrip" aria-label="共有">
+        <!-- 「メンバーを招待」（#btnInvite）と同じcopyShareLinkを呼ぶだけの重複ボタンだったため、
+             どちらかだけ残す方針で非表示にした（コードは残す。2026-09-26） -->
+        <button class="icon-btn share-btn" id="btnShareTrip" aria-label="共有" hidden>
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="15.5" cy="4.5" r="2.3"/><circle cx="4.5" cy="10" r="2.3"/><circle cx="15.5" cy="15.5" r="2.3"/><path d="M6.5 8.8l7-3.3"/><path d="M6.5 11.2l7 3.3"/></svg>
         </button>
         <button class="icon-btn edit-btn" id="btnEditTrip" aria-label="旅行を編集">
@@ -464,7 +466,11 @@
       </button>
 
       <div class="replay-daybanner" id="replayDayBanner" hidden></div>
-      <p class="replay-status" id="replayStatus"></p>
+      <div class="replay-status-wrap">
+        <p class="replay-status" id="replayStatus"></p>
+        <!-- 初めて開く旅行（座標をまだ1つも覚えていない）ときだけ出す補足（app.jsのopenReplay。2026-09-26〜） -->
+        <p class="replay-status-sub" id="replayStatusSub" hidden></p>
+      </div>
 
       <div class="replay-bottom">
         <div class="replay-caption" id="replayCaption" hidden>
@@ -749,6 +755,9 @@
   </button>
   <div class="lightbox-count" id="lightboxCount" hidden></div>
 </div>
+
+<!-- 小さな通知（app.jsのshowToast）。画面下中央にフェードイン・アウトする -->
+<div class="toast" id="toast" hidden aria-live="polite"></div>
 
 <script src="app.js"></script>
 </body>

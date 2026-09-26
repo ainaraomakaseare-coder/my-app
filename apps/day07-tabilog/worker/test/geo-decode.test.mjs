@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
+  isValidEntryId, entryNeedsGeocode,
 } from "../src/geo-decode.js";
 
 let pass = 0, fail = 0;
@@ -122,6 +123,23 @@ check("placeNameRank: 合わない名前は0", placeNameRank("ドジャースタ
     (pickGeoNamesCandidate([orlando, universalCityWalkOsaka]) || {}).name, "ユニバーサル・オーランド・リゾート");
   check("pickGeoNamesCandidate: 空配列はnull", pickGeoNamesCandidate([]), null);
 }
+
+/* ---- isValidEntryId：/geocode?entry=の値検証（Part A、2026-09-26〜） ---- */
+check("isValidEntryId: 正しい形式（ent_+32桁16進）はtrue", isValidEntryId("ent_" + "a".repeat(32)), true);
+check("isValidEntryId: プレフィックス違いはfalse", isValidEntryId("blk_" + "a".repeat(32)), false);
+check("isValidEntryId: 桁数が違うとfalse", isValidEntryId("ent_abc"), false);
+check("isValidEntryId: SQLインジェクションを試みる文字列はfalse", isValidEntryId("ent_' OR '1'='1"), false);
+check("isValidEntryId: undefinedはfalse", isValidEntryId(undefined), false);
+
+/* ---- entryNeedsGeocode：記録の保存で裏の座標計算を走らせるか（Part A） ---- */
+check("entryNeedsGeocode: 地図なしは求めない", entryNeedsGeocode("", "", ""), false);
+check("entryNeedsGeocode: 新規で地図URLを付けたら求める", entryNeedsGeocode("", "", "https://maps.example/a"), true);
+check("entryNeedsGeocode: 地図URLを別のものに変えたら求め直す",
+  entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/b"), true);
+check("entryNeedsGeocode: 同じURLのままで、すでに求めてあれば求めない",
+  entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/a"), false);
+check("entryNeedsGeocode: 同じURLのままでも、まだ一度も求めていなければ求める",
+  entryNeedsGeocode("https://maps.example/a", "", "https://maps.example/a"), true);
 
 console.log(pass + " passed, " + fail + " failed");
 if (fail) process.exitCode = 1;

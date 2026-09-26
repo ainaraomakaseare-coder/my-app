@@ -258,6 +258,24 @@ eq('replayPlaceQuery: 地図の入った最初の記録を使う',
 eq('replayPlaceQuery: 地図が無ければ見出しが地名でも空（移動の目的地にしない）', T.replayPlaceQuery({ label: '那覇空港に到着', entries: [] }), '');
 eq('replayPlaceQuery: 「小西遅刻」のような出来事も空', T.replayPlaceQuery({ label: '小西遅刻', entries: [{ episode: '寝坊' }] }), '');
 eq('replayPlaceQuery: URLでない文字列は使わない', T.replayPlaceQuery({ label: '新宿', entries: [{ mapUrl: '新宿駅' }] }), '');
+eq('replayPlaceQuery: query=undefined,undefinedのように壊れたリンクは地図が無いのと同じに扱う（見出しからも探させない）',
+  T.replayPlaceQuery({ label: 'ユニバーサル', entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=undefined,undefined' }] }), '');
+eq('replayPlaceQuery: q=nullのように壊れたリンクも同様',
+  T.replayPlaceQuery({ label: '空港', entries: [{ mapUrl: 'https://www.google.com/maps?q=null' }] }), '');
+eq('replayPlaceQuery: 壊れたリンクの記録の後ろに正しい地図があれば、そちらを使う',
+  T.replayPlaceQuery({ label: 'A', entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=undefined,undefined' }, { mapUrl: 'https://maps.app.goo.gl/ok' }] }), 'https://maps.app.goo.gl/ok');
+
+/* ---- 地図でふりかえる：座標入りの記録を直接使い、無ければサーバーに保存させる（replayPlaceEntry、Part A） ---- */
+eq('replayPlaceEntry: 地図が無ければnull', T.replayPlaceEntry({ label: '那覇空港に到着', entries: [] }), null);
+eq('replayPlaceEntry: サーバーがすでに座標を求めてある記録はlat/lngを持つ',
+  T.replayPlaceEntry({ entries: [{ id: 'ent_1', mapUrl: 'https://maps.app.goo.gl/x', mapLat: 35.1, mapLng: 139.1 }] }),
+  { url: 'https://maps.app.goo.gl/x', entryId: 'ent_1', lat: 35.1, lng: 139.1 });
+eq('replayPlaceEntry: 座標がまだ無い記録はlat/lngがnull（idは返す）',
+  T.replayPlaceEntry({ entries: [{ id: 'ent_2', mapUrl: 'https://maps.app.goo.gl/y' }] }),
+  { url: 'https://maps.app.goo.gl/y', entryId: 'ent_2', lat: null, lng: null });
+eq('replayPlaceEntry: mapLat/mapLngが数値でなければ無視する（NaN・文字列など）',
+  T.replayPlaceEntry({ entries: [{ id: 'ent_3', mapUrl: 'https://maps.app.goo.gl/z', mapLat: 'x', mapLng: null }] }),
+  { url: 'https://maps.app.goo.gl/z', entryId: 'ent_3', lat: null, lng: null });
 
 /* ---- 地図でふりかえる：再生する地点の並び（replayStops） ---- */
 var rpTrip = { startDate: '2026-04-01', endDate: '2026-04-02' };
@@ -275,6 +293,17 @@ eq('replayStops: 時刻なしの予定は直前の時刻の30分後と推定す�
 eq('replayStops: 推定時刻かどうか', rpStops.map(function (s) { return s.estimated; }), [false, false, true, false]);
 eq('replayStops: 記録のエピソード・ひとことを吹き出しにする', rpStops[0].captions, ['小西遅刻', '松藤寝坊']);
 eq('replayStops: 移動手段を引き継ぐ', rpStops.map(function (s) { return s.transport; }), ['', 'train', 'walk', 'bus']);
+eq('replayStops: 記録のid・サーバー座標をentryId/knownLat/knownLngへ引き継ぐ（Part A、座標未設定はnull）',
+  rpStops.map(function (s) { return { entryId: s.entryId, knownLat: s.knownLat, knownLng: s.knownLng }; }),
+  [{ entryId: '', knownLat: null, knownLng: null }, { entryId: '', knownLat: null, knownLng: null },
+   { entryId: '', knownLat: null, knownLng: null }, { entryId: '', knownLat: null, knownLng: null }]);
+{
+  var rpStopsWithCoords = T.replayStops(rpTrip, [
+    { id: 'a', date: '2026-04-01', time: '10:00', label: '新宿', transport: '', entries: [{ id: 'ent_9', mapUrl: 'https://maps.app.goo.gl/shinjuku', mapLat: 35.69, mapLng: 139.7 }] }
+  ]);
+  eq('replayStops: entry.mapLat/mapLngがあればknownLat/knownLngに入る', { knownLat: rpStopsWithCoords[0].knownLat, knownLng: rpStopsWithCoords[0].knownLng }, { knownLat: 35.69, knownLng: 139.7 });
+  eq('replayStops: entryIdもそのまま入る', rpStopsWithCoords[0].entryId, 'ent_9');
+}
 eq('replayStops: 時刻が1つも無い日は9時から1時間おき',
   T.replayStops(rpTrip, [{ id: 'x', date: '2026-04-01', time: '', label: 'A', entries: [], createdAt: '1' }, { id: 'y', date: '2026-04-01', time: '', label: 'B', entries: [], createdAt: '2' }]).map(function (s) { return s.minute; }),
   [540, 600]);
@@ -630,6 +659,56 @@ var laStops = [
 ];
 eq('geocodeNearIndexes: 同じ日のロサンゼルスの2地点目は、同じ日の前の場所を近くにする',
   T.geocodeNearIndexes(laStops, 1), [{ lat: 34.05, lng: -118.24 }]);
+
+/* ---- tripScheduleShift（日程を変えたら予定もずらす） ---- */
+var laBlocks = [{ date: '2026-07-03' }, { date: '2026-07-05' }, { date: '2026-07-10' }, { date: '' }];
+eq('addDaysToDate: 月をまたいで7日前', T.addDaysToDate('2026-07-03', -7), '2026-06-26');
+eq('tripScheduleShift: 開始日を7/3→6/26に変えたら、予定も7日前にずらす',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-06-26', '2026-07-03', laBlocks),
+  { days: -7, reason: 'start', count: 3, firstFrom: '2026-07-03', firstTo: '2026-06-26' });
+eq('tripScheduleShift: 開始日を変えたら、1日目が空の旅行でも日と日の間隔を保つ（最初の予定7/5→6/28）',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-06-26', '2026-07-03', [{ date: '2026-07-05' }]).firstTo, '2026-06-28');
+eq('tripScheduleShift: 開始日だけ先に変えて予定が日程の外に残った旅行は、最初の予定を1日目にそろえる',
+  T.tripScheduleShift({ startDate: '2026-06-26', endDate: '2026-07-03' }, '2026-06-26', '2026-07-03', laBlocks),
+  { days: -7, reason: 'blocks', count: 3, firstFrom: '2026-07-03', firstTo: '2026-06-26' });
+eq('tripScheduleShift: 予定が日程の中に収まっていれば、1日目が空でも何もしない',
+  T.tripScheduleShift({ startDate: '2026-07-01', endDate: '2026-07-10' }, '2026-07-01', '2026-07-10', laBlocks), null);
+eq('tripScheduleShift: 終了日だけ変えたときは何もしない',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-07-03', '2026-07-12', laBlocks), null);
+eq('tripScheduleShift: 日付のある予定が無ければ何もしない',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-06-26', '2026-07-03', [{ date: '' }]), null);
+eq('tripScheduleShift: 開始日を空にしたときは何もしない',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '', '', laBlocks), null);
+eq('tripScheduleShift: もともと開始日が無かった旅行に開始日を入れ、予定がその前にあるなら1日目にそろえる',
+  T.tripScheduleShift({ startDate: '', endDate: '' }, '2026-07-05', '', laBlocks).days, 2);
+
+/* ---- 時差：日付変更線を東へ越える移動日（成田6/26 20:00発 → ロサンゼルス6/26 18:00着） ---- */
+// 現地時間の順だと着(18:00)が発(20:00)より前に来て、発もロサンゼルス時間で読まれ、着→発のまま固まっていた（2026-09-26）
+function laDepartureOrder(flightZone, arrivalCategory, dayZone) {
+  var bs = [
+    { createdAt: '1', id: 'f', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: '成田から出発' },
+    { createdAt: '2', id: 'a', date: '2026-06-26', time: '18:00', category: arrivalCategory, label: 'ロサンゼルス空港に到着' },
+    { createdAt: '3', id: 'u', date: '2026-06-26', time: '20:30', category: 'sightseeing', label: 'ユニオンステーション' }
+  ];
+  var own = { a: 'America/Los_Angeles', u: 'America/Los_Angeles' };
+  if (flightZone) own.f = flightZone;
+  T.applyBlockZones(bs, T.assignBlockZones(bs, own, dayZone ? { '2026-06-26': dayZone } : {}, 'Asia/Tokyo'));
+  return T.sortBlocks(bs).map(function (b) { return b.id + ':' + b._tz; });
+}
+var laWant = ['f:Asia/Tokyo', 'a:America/Los_Angeles', 'u:America/Los_Angeles'];
+eq('assignBlockZones: 成田発(地図はLAX)→LA着は、発を日本時間で読んで発→着の順', laDepartureOrder('America/Los_Angeles', 'sightseeing', 'America/Los_Angeles'), laWant);
+eq('assignBlockZones: 成田発(地図は成田)→LA着(移動の予定)も発→着の順', laDepartureOrder('Asia/Tokyo', 'transport', 'America/Los_Angeles'), laWant);
+eq('assignBlockZones: 成田発(地図なし)→LA着(移動の予定)も発→着の順', laDepartureOrder('', 'transport', 'Asia/Tokyo'), laWant);
+// 同じ日に日付変更線をまたがない移動は、入れた順が逆でも時差を考えた順のまま（前の日から続くタイムゾーンで読む）
+var laNy = [
+  { createdAt: '0', id: 'p', date: '2026-07-01', time: '19:00', category: 'food' },
+  { createdAt: '3', id: 'b', date: '2026-07-02', time: '07:00', category: 'food' },
+  { createdAt: '1', id: 'f', date: '2026-07-02', time: '09:00', category: 'transport' },
+  { createdAt: '2', id: 'a', date: '2026-07-02', time: '17:30', category: 'sightseeing' }
+];
+eq('assignBlockZones: LA→ニューヨークの日は、入れた順が逆でも朝食→LA発→NY着',
+  T.assignBlockZones(laNy, { p: 'America/Los_Angeles', b: 'America/Los_Angeles', f: 'America/New_York', a: 'America/New_York' }, {}, 'Asia/Tokyo'),
+  { p: 'America/Los_Angeles', b: 'America/Los_Angeles', f: 'America/Los_Angeles', a: 'America/New_York' });
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
