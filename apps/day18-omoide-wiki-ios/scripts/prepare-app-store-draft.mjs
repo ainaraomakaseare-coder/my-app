@@ -203,7 +203,7 @@ const AGE_NONE = ['alcoholTobaccoOrDrugUseOrReferences', 'contests', 'gamblingSi
   'matureOrSuggestiveThemes', 'medicalOrTreatmentInformation', 'profanityOrCrudeHumor', 'sexualContentGraphicAndNudity',
   'sexualContentOrNudity', 'violenceCartoonOrFantasy', 'violenceRealistic', 'violenceRealisticProlongedGraphicOrSadistic'];
 const AGE_FALSE = ['gambling', 'unrestrictedWebAccess', 'lootBox', 'messagingAndChat', 'parentalControls', 'ageAssurance',
-  'userGeneratedContent', 'advertising', 'healthOrWellnessTopics', 'seventeenPlus'];
+  'userGeneratedContent', 'advertising', 'healthOrWellnessTopics', 'socialMedia', 'seventeenPlus'];
 await step('年齢制限（すべて「なし」）', async () => {
   const age = (await get(`/v1/appInfos/${appInfo.id}/ageRatingDeclaration`)).data;
   const keys = Object.keys(age.attributes || {});
@@ -212,7 +212,7 @@ await step('年齢制限（すべて「なし」）', async () => {
     if (AGE_NONE.includes(k)) answers[k] = 'NONE';
     else if (AGE_FALSE.includes(k)) answers[k] = false;
   }
-  const unknown = keys.filter((k) => !(k in answers) && age.attributes[k] === null && !/override|kidsAgeBand|Url/i.test(k));
+  const unknown = keys.filter((k) => !(k in answers) && age.attributes[k] === null && !/override|kidsAgeBand|Url|gracRating|socialMediaAgeRestricted/i.test(k));
   try {
     await patch(`/v1/ageRatingDeclarations/${age.id}`, {type: 'ageRatingDeclarations', id: age.id, attributes: answers});
   } catch (e) {
