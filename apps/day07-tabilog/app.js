@@ -4683,8 +4683,16 @@
   // 以前「見つからない」と覚えた結果を捨てて調べ直す。
   // -v4（2026-09-26〜）：店名も座標も入らない共有リンク（内部番号のS2セルIDから座標を求める）に対応したので、
   // それまで「見つからない」だったものを調べ直す。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v4';
-  try { localStorage.removeItem('tabilog:geocode-cache'); localStorage.removeItem('tabilog:geocode-cache-v2'); localStorage.removeItem('tabilog:geocode-cache-v3'); } catch (e) {}
+  // -v5（2026-09-26〜）：同じ名前の候補が複数あるとき、旅行のほかの場所に近いものを選ぶよう選び方を
+  // 変えたので（「ユニバーサル」がユニバーサル・オーランド・リゾートになる、「赤レンガ倉庫」が敦賀になる、
+  // といった取り違えの修正）、それまでの結果は捨てて調べ直す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v5';
+  try {
+    localStorage.removeItem('tabilog:geocode-cache');
+    localStorage.removeItem('tabilog:geocode-cache-v2');
+    localStorage.removeItem('tabilog:geocode-cache-v3');
+    localStorage.removeItem('tabilog:geocode-cache-v4');
+  } catch (e) {}
   // 住所・店名から探すときに添える「同じ旅行の前後の場所」（旅行の順で、直前と直後に分かっている場所）。
   // Worker はこの近くを優先し、2000km以上離れた結果（同名の別の場所）は使わない。
   function geocodeNearParam(coords, i) {

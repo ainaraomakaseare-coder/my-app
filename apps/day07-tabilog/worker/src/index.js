@@ -10,7 +10,10 @@
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
-import { s2ToLatLng, extractFeatureS2 } from "./geo-decode.js";
+import {
+  s2ToLatLng, extractFeatureS2,
+  distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
+} from "./geo-decode.js";
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -845,16 +848,17 @@ function rowToDayInfo(row) {
 // にわか雨／にわか雪／雷雨）それぞれの代表的なWMOコードだけを許可する。
 const MANUAL_WEATHER_CODES = [0, 1, 3, 45, 51, 61, 71, 80, 85, 95];
 
-async function geocodePlace(place) {
-  const url = "https://geocoding-api.open-meteo.com/v1/search?count=1&language=ja&format=json&name=" + encodeURIComponent(place);
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = await res.json();
-  const first = data && data.results && data.results[0];
-  if (!first) return null;
-  // admin1（都道府県・州など）・country（国）は、天気取得と同じこのジオコーディング結果から
-  // ついでに取れる。「訪れた都道府県・国」の集計（v13）専用に別の入力・別のAPI呼び出しは要らない。
-  return { lat: first.latitude, lon: first.longitude, admin1: first.admin1 || "", country: first.country || "" };
+// Open-Meteoのジオコーディング（市区町村・行政区分レベル。POI・施設名は持たない）の生の候補一覧。
+async function geocodeOpenMeteoCandidates(place) {
+  try {
+    const url = "https://geocoding-api.open-meteo.com/v1/search?count=10&language=ja&format=json&name=" + encodeURIComponent(place);
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data && data.results) || [];
+  } catch {
+    return [];
+  }
 }
 
 // 「地図でふりかえる」用に、予定の地名を緯度経度にする。首里城公園・那覇空港のような日本語の
@@ -875,39 +879,73 @@ const GEOCODE_CACHE_SECONDS = 60 * 60 * 24 * 30;
 // 駅・観光地・都市は0.4以上になることが多い）。
 const GEOCODE_MIN_IMPORTANCE = 0.3;
 
-function pickNominatimCandidate(list) {
-  if (!Array.isArray(list)) return null;
-  let best = null;
-  for (const c of list) {
-    const lat = parseFloat(c.lat), lng = parseFloat(c.lon);
-    if (!isFinite(lat) || !isFinite(lng)) continue;
-    const importance = Number(c.importance) || 0;
-    if (!best || importance > best.importance) best = { lat, lng, importance };
-  }
-  return best;
-}
-
-async function nominatimSearch(q, near) {
+async function nominatimSearch(q, near, nears) {
   try {
     const view = near ? "&viewbox=" + (near.lng - 3) + "," + (near.lat + 3) + "," + (near.lng + 3) + "," + (near.lat - 3) : "";
     const res = await fetch(
       "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=ja" + view + "&q=" + encodeURIComponent(q),
       { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
     );
-    return res.ok ? pickNominatimCandidate(await res.json()) : null;
+    return res.ok ? pickNominatimCandidate(await res.json(), nears) : null;
   } catch {
     return null; // Nominatimが落ちている・遅いときはOpen-Meteoに任せる
   }
 }
 
+// nears（旅行のほかの場所）があるときは、そのどれかから近い（GEOCODE_NEAR_KM以内）だけで信用する
+// （「赤レンガ倉庫」の横浜側候補のように、重要度が低いだけの正しい候補も拾えるようにするため）。
+// 無いときは、これまでどおり重要度で信用できるかを決める（「山梨」の小さな同名地区を弾く）。
+function trustNominatim(result, nears) {
+  if (!result) return false;
+  return (nears && nears.length) ? nearOk(result, nears, GEOCODE_NEAR_KM) : result.importance >= GEOCODE_MIN_IMPORTANCE;
+}
+
 // 地名（「新宿」「山梨」など）を緯度経度にする。
-async function geocodeText(q) {
-  let result = await nominatimSearch(q);
-  if (!result || result.importance < GEOCODE_MIN_IMPORTANCE) {
-    const g = await geocodePlace(q).catch(() => null);
+async function geocodeText(q, nears) {
+  let result = await nominatimSearch(q, nears && nears[0], nears);
+  if (!trustNominatim(result, nears)) {
+    const g = await geocodePlace(q, nears).catch(() => null);
     if (g) result = { lat: g.lat, lng: g.lon };
   }
   return result;
+}
+
+// 「日ごとの場所」（天気取得用の地名入力）を緯度経度・都道府県（州）・国にする。
+// 「ユニバーサル」のように略した施設名だと、Open-Meteoの地名データ（自治体・行政区分中心。
+// POI・施設は持たない）には目的の場所が無く、同じ名前の海外の地名（ユニバーサル・オーランド・
+// リゾート）だけが返ってきて、国内旅行なのに時差が入ってしまうことがあった（2026-09-26、大阪旅行）。
+// 「地図でふりかえる」と同じくNominatim（施設名にも強い）を先に試し、旅行のほかの日の場所
+// （nears）があれば、Nominatim・Open-Meteoを合わせた候補の中からいちばん近いものを選ぶ
+// （近い候補が無いときだけ、これまでどおりNominatimの重要度→Open-Meteoの順で選ぶ）。
+// 都道府県・国は、Nominatim経由で決まった座標だけreverseGeocode()で引き直して合わせる
+// （Open-Meteo経由は結果にadmin1・countryが最初から入っている）。
+async function geocodePlace(place, nears) {
+  const near = nears && nears[0];
+  const [nom, geoList] = await Promise.all([
+    nominatimSearch(place, near, nears),
+    geocodeOpenMeteoCandidates(place),
+  ]);
+  const candidates = [];
+  if (trustNominatim(nom, nears)) {
+    candidates.push({ lat: nom.lat, lng: nom.lng, admin1: "", country: "", source: "nominatim" });
+  }
+  geoList.forEach((r) => {
+    if (isFinite(r.latitude) && isFinite(r.longitude)) {
+      candidates.push({ lat: r.latitude, lng: r.longitude, admin1: r.admin1 || "", country: r.country || "", source: "openmeteo" });
+    }
+  });
+  if (!candidates.length) return null;
+  // nearsがあれば、その旅行のほかの場所にいちばん近い候補（Nominatim・Open-Meteoどちらでも）を選ぶ。
+  // 無ければ、これまでどおりNominatim（施設名に強い）を優先し、無ければOpen-Meteoの先頭。
+  const pick = (nears && nears.length && nearestCandidate(candidates, nears))
+    || candidates.find((c) => c.source === "nominatim")
+    || candidates[0];
+  if (pick.source === "nominatim") {
+    const rg = await reverseGeocode(pick.lat, pick.lng).catch(() => null);
+    pick.admin1 = (rg && rg.admin1) || "";
+    pick.country = (rg && rg.country) || "";
+  }
+  return { lat: pick.lat, lon: pick.lng, admin1: pick.admin1, country: pick.country };
 }
 
 // ---- 記録の「地図」に入っているGoogleマップのURLから場所を得る ----
@@ -1000,23 +1038,8 @@ function mapTextCandidates(text) {
 // 探すのが苦手なため。日本語版ウィキペディアで、題名（または転送元の題名）が名前と合う記事の座標を使う。
 // 「・」空白・かっこ・ヴ/ブなどの違いは同じとみなす。題名が合わない記事は使わない（「ドジャースタジアム」で
 // エンゼル・スタジアムが出るような取り違えを防ぐ）。
-function normPlaceName(s, keepParen) {
-  let t = String(s || "").normalize("NFKC");
-  if (!keepParen) t = t.replace(/\s*[(（][^)）]*[)）]\s*$/, "");
-  return t.replace(/ヴァ/g, "バ").replace(/ヴィ/g, "ビ").replace(/ヴェ/g, "ベ").replace(/ヴォ/g, "ボ").replace(/ヴ/g, "ブ")
-    .replace(/国際/g, "") // 「ロサンゼルス空港」→「ロサンゼルス国際空港」
-    .replace(/[\s・･\-‐ー_「」()（）=＝]/g, "").toLowerCase();
-}
-
-// 名前と記事の題名の合い方：3＝同じ、2＝題名が名前を含む、0＝合わない。
-// 「名前が題名を含む」（「フラミンゴ ラスベガス」と「ラスベガス」）は町全体の座標になってしまうので使わない。
-function placeNameRank(query, title) {
-  const q = normPlaceName(query), t = normPlaceName(title), tp = normPlaceName(title, true);
-  if (!q || !t) return 0;
-  if (q === t || q === tp) return 3;
-  if (q.length >= 3 && t.includes(q)) return 2;
-  return 0;
-}
+// normPlaceName・placeNameRankはgeo-decode.jsのpure関数（node単体テストできるよう移動した。
+// worker/test/geo-decode.test.mjs）。
 
 const WIKI_UA = { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" };
 
@@ -1052,7 +1075,9 @@ async function wikipediaCoords(titles) {
 
 // 日本語版ウィキペディアで、題名（または転送元の題名）が名前と合う記事の座標。
 // ①名前そのものの題名・転送（「NRGスタジアム」→「リライアント・スタジアム」）②検索して題名が合う記事
-async function wikipediaPlace(name) {
+// 部分一致（rank 2）の候補が複数あって同じ順位のとき（「赤レンガ倉庫」で敦賀・横浜の両方が引っかかるなど）
+// は、nears（旅行のほかの場所）があればいちばん近いものを選ぶ（pickWikiHit）。完全一致（rank 3）は常に優先。
+async function wikipediaPlace(name, nears) {
   try {
     const direct = await wikipediaCoords([name]);
     if (direct[name]) return Object.assign({ title: name }, direct[name]);
@@ -1063,8 +1088,9 @@ async function wikipediaPlace(name) {
       .filter((h) => h.rank).sort((a, b) => b.rank - a.rank).slice(0, 5);
     if (!hits.length) return null;
     const cs = await wikipediaCoords(hits.map((h) => h.title));
-    for (const h of hits) if (cs[h.title]) return Object.assign({ title: h.title }, cs[h.title]);
-    return null;
+    const found = hits.filter((h) => cs[h.title]).map((h) => Object.assign({ title: h.title, rank: h.rank }, cs[h.title]));
+    const picked = pickWikiHit(found, nears);
+    return picked ? { title: picked.title, lat: picked.lat, lng: picked.lng } : null;
   } catch {
     return null;
   }
@@ -1075,7 +1101,7 @@ async function wikipediaPlace(name) {
 async function cityAirport(text, nears) {
   const m = /^(.+?)(国際)?空港$/.exec(text.replace(/\s+/g, ""));
   if (!m) return null;
-  const city = (await wikipediaPlace(m[1])) || (await nominatimSearch(m[1], nears && nears[0]));
+  const city = (await wikipediaPlace(m[1], nears)) || (await nominatimSearch(m[1], nears && nears[0], nears));
   if (!city || !nearOk(city, nears, GEOCODE_NAME_KM)) return null;
   const d = 0.4;
   try {
@@ -1112,11 +1138,11 @@ async function geocodePlaceName(text, nears) {
   const candidates = mapTextCandidates(text);
   for (let i = 0; i < candidates.length; i++) {
     if (i > 0) await pause();
-    const r = await nominatimSearch(candidates[i], near);
+    const r = await nominatimSearch(candidates[i], near, nears);
     if (r && nearOk(r, nears)) return r;
   }
   const clean = String(text).normalize("NFKC").replace(/〒\s*\d{3}-\d{4}/g, " ").replace(/\s+/g, " ").trim();
-  const w = await wikipediaPlace(clean);
+  const w = await wikipediaPlace(clean, nears);
   if (w && nearOk(w, nears, GEOCODE_NAME_KM)) return w;
   await pause();
   const air = await cityAirport(clean, nears);
@@ -1125,7 +1151,7 @@ async function geocodePlaceName(text, nears) {
     const parts = [...new Set(clean.split(" ").filter((x) => x.length >= 2))].sort((a, b) => b.length - a.length);
     for (const part of parts.slice(0, 3)) {
       if (part === clean) continue;
-      const wp = await wikipediaPlace(part);
+      const wp = await wikipediaPlace(part, nears);
       if (wp && nearOk(wp, nears)) return wp;
     }
   }
@@ -1309,12 +1335,7 @@ function parseLatLng(text) {
   return m ? validLatLng(m[1], m[2]) : null;
 }
 
-function distanceKm(a, b) {
-  const rad = Math.PI / 180;
-  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
-  return 12742 * Math.asin(Math.sqrt(h));
-}
+// distanceKmはgeo-decode.jsのpure関数（node単体テストできるよう移動した。worker/test/geo-decode.test.mjs）。
 
 // 場所（緯度・経度）のタイムゾーン名（例：Europe/London）。時差のある旅行で、現地時間の時刻を
 // 世界共通の時刻に直して並べるために使う（docs/adr/0009）。天気と同じOpen-Meteo（無料・APIキー不要）の
@@ -1389,14 +1410,15 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam) {
   const hint = isStr(hintParam || "", 100) ? String(hintParam || "").trim() : "";
   const cache = caches.default;
   // 近くの場所・見出しで結果が変わるので、キャッシュの鍵に含める
-  // （v5：S2セルIDからの座標デコードを追加したので、それまでの「見つからない」を作り直す）
-  const cacheKey = new Request("https://tabilog-geocode.cache/v5?q=" + encodeURIComponent(q) +
+  // （v6：同じ名前の候補が複数あるとき、旅行のほかの場所に近いものを選ぶよう選び方を変えたので、
+  // それまでの結果（「赤レンガ倉庫」→敦賀、など）を作り直す）
+  const cacheKey = new Request("https://tabilog-geocode.cache/v6?q=" + encodeURIComponent(q) +
     "&near=" + nears.map((n) => n.lat.toFixed(0) + "," + n.lng.toFixed(0)).join(";") + "&hint=" + encodeURIComponent(hint));
   const hit = await cache.match(cacheKey);
   if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
 
   if (quick && !isUrl) return json({ pending: true }, 200, headers);
-  const result = isUrl ? await geocodeMapUrl(q, quick, nears, hint) : await geocodeText(q);
+  const result = isUrl ? await geocodeMapUrl(q, quick, nears, hint) : await geocodeText(q, nears);
   if (result && result.pending) return json({ pending: true }, 200, headers); // まだ調べていないのでキャッシュしない
   const body = result ? { found: true, lat: result.lat, lng: result.lng } : { found: false };
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
@@ -1515,7 +1537,18 @@ async function setDayPlace(tripId, date, request, env, headers) {
   if (!isStr(data.place, 100) || !data.place.trim()) return json({ error: "invalid_input" }, 400, headers);
   const place = data.place.trim();
 
-  const geo = await geocodePlace(place);
+  // 「ユニバーサル」のような略した施設名は、地名以外の候補（海外の同名地名など）に化けることが
+  // あるため、旅行のほかの日にすでに分かっている場所を手掛かり（near）にして、近い候補を選ぶ
+  // （2026-09-26、大阪旅行で「ユニバーサル」がユニバーサル・オーランド・リゾートになった件）。
+  const otherDays = await env.DB.prepare(
+    "SELECT lat, lon FROM day_infos WHERE trip_id = ? AND date != ? AND lat IS NOT NULL AND lon IS NOT NULL"
+  ).bind(tripId, date).all();
+  const nears = ((otherDays && otherDays.results) || [])
+    .map((r) => ({ lat: Number(r.lat), lng: Number(r.lon) }))
+    .filter((p) => isFinite(p.lat) && isFinite(p.lng))
+    .slice(0, 5);
+
+  const geo = await geocodePlace(place, nears);
   if (!geo) return json({ error: "place_not_found" }, 422, headers);
   const weather = await fetchDailyWeather(geo.lat, geo.lon, date);
 
