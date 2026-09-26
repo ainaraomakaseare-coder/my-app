@@ -512,5 +512,35 @@ var flyTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDa
 ok('buildReplayTimeline: 長いフライトも移動は2秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 2) < 0.01);
 ok('buildReplayTimeline: 写真4枚なら吹き出しを10秒以上見せる', flyTl.stops[0].rDwellEnd - flyTl.stops[0].r > 9.99);
 
+/* ---- 時差：地図の無い予定は直前の予定を引き継ぐ（行ったり来たり防止） ---- */
+// 10:00 成田（地図・東京）→12:00 LA到着（地図・LA）→15:00 ホテルで休憩（地図なし）→18:00 夕食（地図・LA）
+// その日の場所（byDate）は東京。地図の無い15:00が東京に巻き戻らず、LAを引き継ぐことを確認する
+var flipFlopBlocks = [
+  { id: 'narita', date: '2026-08-01', time: '10:00', category: 'transport', label: '成田から出発', entries: [] },
+  { id: 'laArr', date: '2026-08-01', time: '12:00', category: 'sightseeing', label: 'LA到着', entries: [] },
+  { id: 'hotel', date: '2026-08-01', time: '15:00', category: 'lodging', label: 'ホテルで休憩', entries: [] },
+  { id: 'dinner', date: '2026-08-01', time: '18:00', category: 'food', label: '夕食', entries: [] }
+];
+var flipFlopZones = T.assignBlockZones(flipFlopBlocks,
+  { narita: 'Asia/Tokyo', laArr: 'America/Los_Angeles', dinner: 'America/Los_Angeles' },
+  { '2026-08-01': 'Asia/Tokyo' }, 'Asia/Tokyo');
+eq('assignBlockZones: 地図の無い予定は直前の予定のタイムゾーンを引き継ぐ（その日の場所には戻らない）',
+  flipFlopZones, { narita: 'Asia/Tokyo', laArr: 'America/Los_Angeles', hotel: 'America/Los_Angeles', dinner: 'America/Los_Angeles' });
+T.applyBlockZones(flipFlopBlocks, flipFlopZones);
+var flipFlopSorted = T.sortBlocks(flipFlopBlocks);
+var flipFlopChanges = 0;
+for (var ffi = 1; ffi < flipFlopSorted.length; ffi++) {
+  if (flipFlopSorted[ffi]._offset !== flipFlopSorted[ffi - 1]._offset) flipFlopChanges++;
+}
+eq('assignBlockZones: 「ここから現地時間」の切り替えは1回だけ（3回に増えない）', flipFlopChanges, 1);
+
+// 翌日最初の予定に地図が無ければ、前日最後の予定ではなく「その日の場所」を使う
+var nextDayZones = T.assignBlockZones([
+  { id: 'd1a', date: '2026-01-01', time: '20:00', category: 'food' },
+  { id: 'd2a', date: '2026-01-02', time: '09:00', category: 'food' }
+], { d1a: 'Asia/Tokyo' }, { '2026-01-02': 'America/Los_Angeles' }, 'Asia/Tokyo');
+eq('assignBlockZones: 翌日最初の地図の無い予定は前日を引き継がず、その日の場所を使う',
+  nextDayZones, { d1a: 'Asia/Tokyo', d2a: 'America/Los_Angeles' });
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -151,20 +151,37 @@
     }
   }
 
-  // 予定ごとのタイムゾーンを決める。優先順：その予定の場所（記録の地図）→ その日の場所（天気の場所）→
-  // 直前の予定 → 端末のタイムゾーン。移動の予定の時刻は「出発の時刻」なので、出発地（直前の予定）の
-  // タイムゾーンで読む（移動の予定自体の地図は到着地のことが多いため、次の予定へはそちらを引き継ぐ）。
+  // 予定ごとのタイムゾーンを決める。優先順：その予定の場所（記録の地図）→
+  // 地図が無ければ「直前の予定」のタイムゾーンを引き継ぐ（ただし、その日の最初の予定は
+  // 直前の予定が別の日なので引き継がず、その日の場所＝天気の場所を使う）→ それも無ければ端末のタイムゾーン。
+  // 地図の無い予定を毎回その日の場所（byDate）に戻してしまうと、「10:00 成田（地図）→12:00 LA到着（地図）→
+  // 15:00 ホテルで休憩（地図なし）→18:00 夕食（地図）」のような移動日に、地図の無い15:00の予定だけ
+  // その日の場所（東京）に巻き戻ってしまい、「ここから現地時間」の表示が行ったり来たりする。
+  // 直前の予定を引き継げば、移動後は移動後のタイムゾーンのまま保たれる。
+  // 移動の予定の時刻は「出発の時刻」なので、出発地（直前の予定）のタイムゾーンで読む
+  // （移動の予定自体の地図は到着地のことが多いため、次の予定へはそちらを引き継ぐ）。
   // 「直前の予定」は時差を考えた順でないと決まらない（現地時間の順だと、日付変更線をまたぐ移動で着が発より
   // 前に来る）ので、まず移動の決まりを使わずに仮に決めて時差を付けて並べ、その順でもう一度決める。
   function assignBlockZones(blocks, byBlock, byDate, fallback) {
     byBlock = byBlock || {}; byDate = byDate || {};
     function pass(list, useTransportRule) {
-      var out = {}, prev = '';
+      var out = {}, prevZone = '', prevDate = null;
       list.forEach(function (b) {
         var own = byBlock[b.id] || '';
-        var tz = useTransportRule && b.category === 'transport' && prev ? prev : (own || byDate[b.date] || prev || fallback || '');
+        var isFirstOfDate = prevDate === null || prevDate !== b.date;
+        var tz;
+        if (useTransportRule && b.category === 'transport' && prevZone) {
+          tz = prevZone;
+        } else if (own) {
+          tz = own;
+        } else if (isFirstOfDate) {
+          tz = byDate[b.date] || prevZone || fallback || '';
+        } else {
+          tz = prevZone || byDate[b.date] || fallback || '';
+        }
         out[b.id] = tz;
-        prev = useTransportRule && b.category === 'transport' ? (own || byDate[b.date] || tz) : tz;
+        prevZone = useTransportRule && b.category === 'transport' ? (own || byDate[b.date] || tz) : tz;
+        prevDate = b.date;
       });
       return out;
     }
