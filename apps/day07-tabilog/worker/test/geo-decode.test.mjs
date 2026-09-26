@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
-  isValidEntryId, entryNeedsGeocode,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
 } from "../src/geo-decode.js";
 
 let pass = 0, fail = 0;
@@ -132,14 +132,36 @@ check("isValidEntryId: SQLインジェクションを試みる文字列はfalse"
 check("isValidEntryId: undefinedはfalse", isValidEntryId(undefined), false);
 
 /* ---- entryNeedsGeocode：記録の保存で裏の座標計算を走らせるか（Part A） ---- */
-check("entryNeedsGeocode: 地図なしは求めない", entryNeedsGeocode("", "", ""), false);
+// 「すでに求めてある」ケースは、MAP_COORDS_VALID_SINCE以降に求め直した想定の新しい日時を渡す。
+const FRESH_AT = "2026-09-27T12:00:00.000Z";
+const STALE_AT = "2026-01-01T00:00:00.000Z"; // MAP_COORDS_VALID_SINCEより前（旧ロジックで求めた座標）
+check("entryNeedsGeocode: 地図なしは求めない", entryNeedsGeocode("", "", "", FRESH_AT), false);
 check("entryNeedsGeocode: 新規で地図URLを付けたら求める", entryNeedsGeocode("", "", "https://maps.example/a"), true);
 check("entryNeedsGeocode: 地図URLを別のものに変えたら求め直す",
-  entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/b"), true);
-check("entryNeedsGeocode: 同じURLのままで、すでに求めてあれば求めない",
-  entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/a"), false);
+  entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/b", FRESH_AT), true);
+check("entryNeedsGeocode: 同じURLのままで、MAP_COORDS_VALID_SINCE以降に求めてあれば求めない",
+  entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/a", FRESH_AT), false);
 check("entryNeedsGeocode: 同じURLのままでも、まだ一度も求めていなければ求める",
-  entryNeedsGeocode("https://maps.example/a", "", "https://maps.example/a"), true);
+  entryNeedsGeocode("https://maps.example/a", "", "https://maps.example/a", FRESH_AT), true);
+check("entryNeedsGeocode: 同じURLのままでも、MAP_COORDS_VALID_SINCEより前に求めたものは求め直す（実例：赤レンガ倉庫の取り違え）",
+  entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/a", STALE_AT), true);
+check("entryNeedsGeocode: geocodedAtが無い（未設定）ときも求め直す",
+  entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/a", ""), true);
+check("MAP_COORDS_VALID_SINCE: 2026-09-27T00:00:00Zに設定されている", MAP_COORDS_VALID_SINCE, "2026-09-27T00:00:00Z");
+
+/* ---- downsamplePoints：ルート検索（OSRM・BRouterのrail）の座標を間引く（2026-09-27、railルート追加） ---- */
+check("downsamplePoints: 上限以下ならそのまま", downsamplePoints([[0, 0], [1, 1]], 400), [[0, 0], [1, 1]]);
+check("downsamplePoints: 配列でなければ空配列", downsamplePoints(null, 400), []);
+check("downsamplePoints: maxPointsが0や未指定ならそのまま", downsamplePoints([[0, 0], [1, 1]], 0), [[0, 0], [1, 1]]);
+{
+  const many = Array.from({ length: 1000 }, (_, i) => [i, i]);
+  const thinned = downsamplePoints(many, 100);
+  // 最後の点を必ず残す都合上、上限をわずかに超えることがある（間引きの間隔+1点まで）ので、
+  // 「大きく減っている」ことだけ確認する（1000点→200点未満）。
+  check("downsamplePoints: 上限を超えたら大きく間引かれる", thinned.length < 200, true);
+  check("downsamplePoints: 最初の点は必ず残る", thinned[0], [0, 0]);
+  check("downsamplePoints: 最後の点は必ず残る", thinned[thinned.length - 1], [999, 999]);
+}
 
 console.log(pass + " passed, " + fail + " failed");
 if (fail) process.exitCode = 1;

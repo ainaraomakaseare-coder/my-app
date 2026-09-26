@@ -31,7 +31,18 @@
 - **座標をD1に保存する**（`worker/migrations/0020_entry_map_coords.sql`）：`entries`に`map_lat`・`map_lng`・`map_geocoded_url`（その座標がどの`map_url`に対するものか）・`map_geocoded_at`を追加した。トリップ・記録のAPIは、`map_geocoded_url`が今の`map_url`と一致するときだけ`mapLat`/`mapLng`を返す（リンクを編集したら一致しなくなり、古い座標を返さず調べ直す）。
 - **記録の保存時に裏で計算**（`createEntry`/`updateEntry`）：地図URLが新規に付いた・変わった・まだ座標を求めていないときだけ、`ctx.waitUntil`で座標を裏計算してD1に書く（保存の返事は待たせない。予定の見出し=labelをヒントに使う）。判定は純粋関数`entryNeedsGeocode`（`worker/src/geo-decode.js`、`worker/test/geo-decode.test.mjs`で単体テスト）。
 - **既存データの後追い保存**：`GET /geocode`に`entry=<entryId>`を付けて呼ぶと、座標が求まったとき、そのentryの`map_url`が今回のクエリ（`q`）と一致する場合だけD1に保存する（`entry`は`ent_`+32桁16進の形式でなければ無視。`isValidEntryId`で検証）。クライアント（`app.js`の`geocodeQueries`・`loadTripZones`）は、記録に`mapLat`/`mapLng`があればそれを直接使って`/geocode`を呼ばず、無ければ`&entry=`を付けて呼ぶ。端末のlocalStorageキャッシュはその次の層として残す。
-- **Google Text Search（`GOOGLE_API_KEY`があるときだけ）**：座標もS2セルIDも無い、名前・住所だけの地図リンクは、Nominatimより先にPlaces API (New)のText Search Essentials（`POST /v1/places:searchText`、`X-Goog-FieldMask: places.id`のみ＝IDのみ・無料無制限のSKU）→ 候補の先頭1件だけPlace Details Essentials（`X-Goog-FieldMask: location`のみ）で座標を取る（`googleTextSearchPlace`）。近くの場所（`nears`）があれば`locationBias`（半径50km）で絞り込み、結果は既存の`nearOk`ガードに通す。キーが無い・失敗・quotaエラー・0件のときは、これまでどおりNominatim等のチェーンに回る。予定の見出し（hint）をたよりに探すときも同じ経路を使う。Googleの結果はCache APIに置かず、D1（entryの行）に保存する。
+- **Google Text Search（`GOOGLE_API_KEY`があるときだけ）**：座標もS2セルIDも無い、名前・住所だけの地図リンクは、Nominatimより先にPlaces API (New)のText Search Essentials（`POST /v1/places:searchText`、`X-Goog-FieldMask: places.id`のみ＝IDのみ・無料無制限のSKU）→ 候補の先頭1件だけPlace Details Essentials（`X-Goog-FieldMask: location`のみ）で座標を取る（`googleTextSearchPlace`）。キーが無い・失敗・quotaエラー・0件のときは、これまでどおりNominatim等のチェーンに回る。予定の見出し（hint）をたよりに探すときも同じ経路を使う。Googleの結果はCache APIに置かず、D1（entryの行）に保存する。
+  **2026-09-27訂正**：以前はここに近くの場所（`nears`）による`locationBias`（半径50km）と`nearOk`ガードをかけていたが、実例（大阪旅行）で誤動作を確認したため外した。詳細は下の追記を参照。
+
+**2026-09-27 追記（Google Text SearchのlocationBias/near guardを外す・古い座標の自動やり直し）**：
+
+実例（大阪旅行）：「みなとみらい発」ブロック（横浜、その日は新幹線で大阪へ移動する行程）の地図URLが`https://www.google.com/maps/search/?api=1&query=赤レンガ倉庫`だったが、本番のDBには`mapLat/mapLng`として34.6517, 135.4366（大阪の同名の赤レンガ倉庫）が入っていた。原因は`geocodePlaceName`→`googleTextSearchPlace`が、near（同じ日の大阪のホテルなど）を`locationBias`としてGoogleに送っていたため、Text Searchが「近くにある」大阪の赤レンガ倉庫を1位にしてしまい、それを`nearOk`ガードが（近いので）そのまま通していたこと。
+
+**決めたこと**：
+- `googleTextSearchPlace`は`locationBias`を送らない（`nears`引数自体を廃止）。Googleの既定のランキング（知名度・関連度）は、有名なほう（横浜の赤レンガ倉庫）を正しく1位にするため、素直にTop1件を信用する。
+- `geocodePlaceName`のGoogle Text Searchの結果には`nearOk`（近くの予定との距離ガード）を適用しない。near guard・タイブレークは、②以降のNominatim/ウィキペディアの予備チェーンにだけ残す（そちらは施設名の曖昧さがGoogleより大きく、近さによる足切りが引き続き有効なため）。
+- **既存の誤った座標を自動的にやり直す**：`geo-decode.js`に`MAP_COORDS_VALID_SINCE = "2026-09-27T00:00:00Z"`を追加。`entryNeedsGeocode(oldMapUrl, geocodedUrl, newMapUrl, geocodedAt)`に第4引数`geocodedAt`を足し、`geocodedAt`が無い・`MAP_COORDS_VALID_SINCE`より前なら（URLが変わっていなくても）再取得が必要と判定する。`rowToEntry`（`worker/src/index.js`）も同じ基準で、`map_geocoded_at >= MAP_COORDS_VALID_SINCE`のときだけ`mapLat/mapLng`を返す（それより前のものは「まだ座標が無い」扱いにして、次の保存・再取得で上書きされるまでクライアントに古い座標を渡さない）。単体テストは`worker/test/geo-decode.test.mjs`。
+- キャッシュキーを1つ進めた：サーバーの`/geocode`のCache APIキーを`v7`→`v8`、クライアントの`GEOCODE_CACHE_KEY`（localStorage）を`tabilog:geocode-cache-v7`→`-v8`にし、古いバージョンのキーは読み込み時に削除する。
 
 反映手順（**wrangler deployより先に**本番環境で1回だけ実行すること。逆順だと記録の保存がSQLエラーになる）：
 

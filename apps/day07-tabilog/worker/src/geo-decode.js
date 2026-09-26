@@ -153,14 +153,35 @@ function isValidEntryId(id) {
 // （map_geocoded_urlが今のmap_urlと違う＝一度も求めていない、または前回のURLがもう古い）ときだけ、
 // 裏で座標を求め直す（Part A：記録の保存のたびに毎回re-geocodeしないための判定）。
 // mapUrlが空（地図なし）なら求めない。純粋関数なのでnodeで単体テストできる。
-function entryNeedsGeocode(oldMapUrl, geocodedUrl, newMapUrl) {
+//
+// MAP_COORDS_VALID_SINCE（2026-09-27〜）：これより前に求めた座標は「ジオコーダーの精度が上がる前の
+// 結果」とみなし、URLが変わっていなくても求め直す。実例（大阪旅行）：「みなとみらい発」ブロック
+// （横浜）の地図URLが `query=赤レンガ倉庫` で、同じ日にホテルが大阪にあったせいで、Google Text Searchに
+// locationBias（近くの場所を優先するヒント）をかけていた旧ロジックが横浜ではなく大阪の同名の
+// 赤レンガ倉庫を選んで保存してしまっていた（ADR 0008/0011参照）。ロジックを直した後もDBには
+// 誤った座標が残ったままになるため、この時刻より前に求めた座標は自動的に「要再取得」にする。
+const MAP_COORDS_VALID_SINCE = "2026-09-27T00:00:00Z";
+
+function entryNeedsGeocode(oldMapUrl, geocodedUrl, newMapUrl, geocodedAt) {
   if (!newMapUrl) return false;
   if (newMapUrl !== (oldMapUrl || "")) return true;
-  return (geocodedUrl || "") !== newMapUrl;
+  if ((geocodedUrl || "") !== newMapUrl) return true;
+  return !geocodedAt || geocodedAt < MAP_COORDS_VALID_SINCE;
+}
+
+// ルート検索（OSRM・BRouter）が返す座標の並びを、地図に描くのに十分な粒度を保ったまま間引く
+// （点が多すぎるとクライアントの地図描画が重くなるため）。先頭・末尾は必ず残す単純な間隔引き
+// （Douglas-Peuckerほど厳密ではないが、道のりの見た目にはこれで十分。2026-09-27、railルート追加のため
+// worker/src/index.jsのgetRouteから抜き出した。純粋関数なのでnodeで単体テストできる）。
+function downsamplePoints(points, maxPoints) {
+  if (!Array.isArray(points)) return [];
+  if (!maxPoints || points.length <= maxPoints) return points.slice();
+  const step = Math.ceil(points.length / maxPoints);
+  return points.filter((_, i) => i % step === 0 || i === points.length - 1);
 }
 
 export {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, normPlaceName, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
-  isValidEntryId, entryNeedsGeocode,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
 };

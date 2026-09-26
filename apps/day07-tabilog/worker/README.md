@@ -154,6 +154,12 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel
 
 `GET /route?profile=car|foot|bike&from=緯度,経度&to=緯度,経度` で、OpenStreetMapのルート検索（routing.openstreetmap.de、無料・APIキー不要）から道路に沿った道のりを返す（30日キャッシュ、1500km超は調べない）。`GET /geocode?quick=1` はNominatimを使わないと分からないものを `{ pending: true }` で返す。どちらもDBの変更は無い（docs/adr/0008）。
 
+### 電車・新幹線・地下鉄の道のり（2026-09-27 追加）
+
+`profile=rail`（電車・新幹線・地下鉄用）は、道路専用のOSRMではなく[BRouter](https://brouter.de/)の公開サーバー（`https://brouter.de/brouter?lonlats=経度,緯度|経度,緯度&profile=rail&alternativeidx=0&format=geojson`）を使う（`getRoute`内の`brouterToBody`）。アプリを識別できるUser-Agentを付け、12秒でタイムアウト（`AbortController`）。返す形（`{ found, path, distance }`）と30日キャッシュは他のprofileと同じ。座標の間引き（`downsamplePoints`）は`worker/src/geo-decode.js`に切り出してあり、`worker/test/geo-decode.test.mjs`で単体テストできる。
+
+BRouterの公開サーバーへの問い合わせは1区間1回・結果はキャッシュのみ（他の旅行の先読みはしない）というフェアユースを守る。応答が失敗・タイムアウトした、線路の長さ（`properties["track-length"]`）が直線距離の3倍を超えた、または始点・終点がBRouterの返す座標から5km以上ずれた（駅が遠い＝候補違いの疑い）ときは`found:false`にして、クライアント側の直線（または優しい弧）に任せる。距離の上限（1500km超は調べない）は他のprofileと共通。詳しくはdocs/adr/0008の2026-09-27追記を参照。
+
 ## 時差（2026-09-25 追加）
 
 `GET /timezone?lat=&lng=` で場所のタイムゾーン名（例：Europe/London）を返す（Open-Meteo、無料・APIキー不要、30日キャッシュ）。DBの変更は無い（docs/adr/0009）。
@@ -290,10 +296,34 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0020_entry_map_coo
 - `GOOGLE_API_KEY`があるときは、座標もS2セルIDも無い、名前・住所だけの地図リンクをNominatimより先に
   Google Places API (New)のText Search Essentials（`POST /v1/places:searchText`、
   `X-Goog-FieldMask: places.id`のみ＝IDだけを返す無料・無制限のSKU）→候補の先頭1件だけPlace Details
-  Essentials（`X-Goog-FieldMask: location`のみ）で探す（`googleTextSearchPlace`）。近くの場所（`nears`）が
-  あれば`locationBias`（半径50km）で絞り込み、既存の`nearOk`ガードにも通す。キーが無い・失敗・0件のときは
-  これまでどおりNominatim等のチェーンに回る（`geocodePlaceName`の先頭に追加）。Googleの結果はCache APIに
-  置かず、D1（entryの行）に保存する。
+  Essentials（`X-Goog-FieldMask: location`のみ）で探す（`googleTextSearchPlace`）。キーが無い・失敗・0件
+  のときはこれまでどおりNominatim等のチェーンに回る（`geocodePlaceName`の先頭に追加）。Googleの結果は
+  Cache APIに置かず、D1（entryの行）に保存する。
+  **2026-09-27訂正**：以前はここで近くの場所（`nears`）を`locationBias`として送り、結果を`nearOk`
+  ガードにも通していたが、誤動作が見つかったため外した（下の追記を参照）。
+
+## Google Text Searchに近くの場所のヒントを渡すのをやめる・古い座標を自動でやり直す（2026-09-27 追加）
+
+実例（大阪旅行）：「みなとみらい発」ブロック（横浜、その日は新幹線で大阪へ移動する行程）の地図URL
+`https://www.google.com/maps/search/?api=1&query=赤レンガ倉庫`が、本番のDBに大阪の同名施設の座標
+（34.6517, 135.4366）として保存されていた。原因は`googleTextSearchPlace`が近くの場所（`nears`。
+この日は大阪のホテル）を`locationBias`としてGoogleに送っていたため、Text Searchが「近くにある」
+大阪の赤レンガ倉庫を1位にしてしまい、`nearOk`ガード（近いので通ってしまう）もそれを弾けなかったこと。
+
+- `googleTextSearchPlace`から`locationBias`を送るのをやめた（`nears`引数自体を廃止）。Googleの既定の
+  ランキング（知名度・関連度）は、有名なほう（横浜の赤レンガ倉庫）を正しく1位にするため、素直に
+  Top1件を信用する。
+- `geocodePlaceName`のGoogle Text Searchの結果には`nearOk`（近くの予定との距離ガード）を適用しない。
+  near guard・タイブレークは、Nominatim・ウィキペディアの予備チェーンにだけ残す。
+- 既存の誤った座標を自動的にやり直すため、`geo-decode.js`に`MAP_COORDS_VALID_SINCE =
+  "2026-09-27T00:00:00Z"`を追加した。`entryNeedsGeocode`に第4引数`geocodedAt`を足し、それが
+  `MAP_COORDS_VALID_SINCE`より前（またはまだ無い）なら、地図URLが変わっていなくても再取得が必要と
+  判定する。`rowToEntry`も同じ基準で、`map_geocoded_at >= MAP_COORDS_VALID_SINCE`のときだけ
+  `mapLat`/`mapLng`を返す（それより前のものは「まだ座標が無い」扱いにし、次の保存・再取得で
+  上書きされるまで古い座標をクライアントに渡さない）。単体テスト：`worker/test/geo-decode.test.mjs`。
+- `/geocode`のCache APIの鍵をv7→v8に、クライアントのlocalStorageのキャッシュキーも`-v7`→`-v8`に
+  上げた（以前nearに引っ張られていたかもしれない結果を捨てて調べ直す）。DBのスキーマ変更は無い。
+- 詳しくはdocs/adr/0011（本編）・docs/adr/0008（実例の記録）を参照。
 
 ## 見出し（hint）からの当てずっぽうをやめた（2026-09-26 追加）
 
@@ -329,3 +359,35 @@ DBのスキーマ変更は無い（migrationは不要）。
 - 自動で取った天気は元の日付のものなので消し、`ctx.waitUntil`で新しい日付の天気を取り直す（`refetchShiftedWeather`）。
   手で直した天気・場所・音声の文字起こしは、その旅の「○日目」の記録としてそのまま移す。
 - 古いWorkerは`shiftDays`を無視する。そのときは返事に`shiftedDays`が無いので、アプリは「予定はずらせませんでした」と出す。
+
+## 日ごとの天気を本人が選ぶだけにし、場所の入力欄をなくす（2026-09-26 追加）
+
+「場所（市区町村名など）を入力→Open-Meteoで自動取得」だった天気を、天気アイコン（☀️晴れ／🌤️晴れ時々くもり／☁️くもり／🌧️雨／⛈️雷雨／❄️雪／なし）を選ぶだけの操作に変えた。「ユニバーサル」がオーランドの天気になる、といった「どの粒度で地名を入れればいいか分からない」問題を、入力欄自体を無くすことで解消した（docs/adr/0013）。
+
+- **DBの変更は無い**。既存の`day_infos.weather_code`・`weather_manual`列をそのまま使う。`MANUAL_WEATHER_CODES`を旧来の10種（快晴／晴れ／曇り／霧／霧雨／雨／雪／にわか雨／にわか雪／雷雨）から、アプリの6アイコンに対応する`[1, 2, 3, 61, 71, 95]`に絞った。気温（temp_max/temp_min）はもう手動入力では受け付けない（送られてきても無視してNULLにする）。
+- `PATCH /trips/:id/days/:date/weather`：`weatherCode`に上の6種以外の整数を渡すと`400`。**`weatherCode: null`を渡すと「なし」＝選択解除**（`weather_code=NULL, weather_manual=0`に戻す）。呼び出し時に`day_infos`行が無ければ（まだ地図つきの記録が無い日）、場所は空のまま新しく行を作る。
+- `autoSetDayPlace`（`POST /trips/:id/days/:date/auto-place`）・`refetchShiftedWeather`（日程を変えたときの天気の取り直し）は、**もうOpen-Meteoの天気取得を呼ばない**。天気を表示に使わなくなったので、裏で取りに行く意味が無くなったため。`fetchDailyWeather`関数自体と、旧`PUT /trips/:id/days/:date`（`setDayPlace`、場所を手入力する昔のエンドポイント）は消さずに残してある（古いクライアント互換・他機能からの参照のため）。
+
+## 電車・新幹線・地下鉄も線路に沿った道のりで見せる：BRouterのrailプロファイル（2026-09-27 追加）
+
+これまで電車・新幹線は「線路のルートを出せる無料サービスが無い」という理由で、地図でふりかえるでは直線
+のままだった。[BRouter](https://brouter.de/)の公開サーバーがrailプロファイル（線路優先のルーティング）を
+提供していることを確認した（新横浜(139.6173,35.5075)→新大阪(135.5003,34.7334)で200・約3.5秒・4950点・
+`track-length` 489772mを確認済み）ため、`GET /route`に`profile=rail`を追加した（他のプロファイルは
+docs/adr/0008参照）。
+
+- `getRoute`は`profile=rail`のときOSRM（道路専用）ではなく
+  `https://brouter.de/brouter?lonlats=<経度>,<緯度>|<経度>,<緯度>&profile=rail&alternativeidx=0&format=geojson`
+  を呼ぶ（`brouterToBody`）。10秒でタイムアウト（`AbortController`）、アプリを識別できるUser-Agentを
+  付け、結果は既存と同じCache API・30日キャッシュ、同じ`{found, path, distance}`の形で返す。点の間引き
+  （最大約400点、最後の点は必ず残す）はOSRM用のロジックと共通化し、`downsamplePoints`として
+  `geo-decode.js`に切り出した（純粋関数、`worker/test/geo-decode.test.mjs`で単体テスト）。
+- ガード：始点・終点がBRouterの返す座標から5km以上離れている（駅が遠い＝候補違いの疑い）、または
+  線路の長さ（`properties["track-length"]`。無ければ座標列から自前で積算）が直線距離の3倍を超えている
+  （駅すら無い場所に無理にスナップした疑い）ときは`found:false`にする。距離の上限（1500km）は他の
+  プロファイルと共通。
+- BRouterは無料の公開サービスで、フェアユースを守るため1区間1回だけ問い合わせ、結果は上記のとおり
+  Cache APIに30日置く。他の旅行の先読み（prefetch）はしない。
+- クライアント（`app.js`）：`Core.routeProfileFor`が`train`・`shinkansen`・`subway`を`'rail'`に対応させ、
+  `fetchReplayRoutes`の「車で大回りしすぎたら徒歩で調べ直す」ロジックは`profile === 'car'`のときだけに
+  絞った（`rail`はWorker側の線路長ガードで代わりに担保する）。DBのスキーマ変更は無い（docs/adr/0008）。

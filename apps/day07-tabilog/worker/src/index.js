@@ -13,7 +13,7 @@ import { parseReceiptText } from "./receipt-parse.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
-  isValidEntryId, entryNeedsGeocode,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
 } from "./geo-decode.js";
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
@@ -332,18 +332,12 @@ function shiftTripDateStatements(env, tripId, shiftDays, t) {
   ];
 }
 
-// 日付をずらした日の天気を、新しい日付で取り直す（保存の返事は待たせない。失敗しても天気が空のままになるだけ）。
+// 日付をずらした日の天気を、新しい日付で取り直す……という処理だったが、天気は本人が選んだもの
+// （weather_manual=1）しかもう画面に出さないため、weather_manual=0の行を裏でOpen-Meteoに取りに
+// 行く意味が無くなった（2026-09-26）。fetchDailyWeather自体はほかの経路（setDayPlace等）で
+// まだ使うので残し、ここは何もしない関数として呼び出し元との互換だけ保つ。
 async function refetchShiftedWeather(env, tripId) {
-  const { results } = await env.DB.prepare(
-    "SELECT id, date, lat, lon FROM day_infos WHERE trip_id = ? AND weather_manual = 0 AND fetched_at = '' AND lat IS NOT NULL AND lon IS NOT NULL"
-  ).bind(tripId).all();
-  for (const row of results) {
-    const weather = await fetchDailyWeather(row.lat, row.lon, row.date).catch(() => null);
-    if (!weather) continue;
-    await env.DB.prepare(
-      "UPDATE day_infos SET weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=? AND weather_manual = 0 AND fetched_at = ''"
-    ).bind(weather.weatherCode, weather.tempMax, weather.tempMin, weather.precipSum, weather.isForecast ? 1 : 0, nowIso(), nowIso(), row.id).run();
-  }
+  void env; void tripId;
 }
 
 async function deleteTrip(id, env, headers) {
@@ -366,7 +360,7 @@ async function deleteTrip(id, env, headers) {
 /* ---------- blocks（大項目） ---------- */
 
 // この予定の場所まで、どうやって移動したか（地図でふりかえる演出で使う。v15）。空文字は「未設定＝演出なし」。
-const TRANSPORTS = ["", "plane", "car", "taxi", "walk", "train", "bus", "bicycle"];
+const TRANSPORTS = ["", "plane", "car", "taxi", "walk", "train", "shinkansen", "bus", "bicycle"];
 
 function validBlockInput(x) {
   if (!x || typeof x !== "object") return false;
@@ -565,7 +559,13 @@ function rowToEntry(row) {
   // 地図の座標（Part A、2026-09-26〜）：map_geocoded_urlが今のmap_urlと同じときだけ返す。
   // 地図のリンクを編集したら一致しなくなり、クライアントは古い座標を使わず調べ直す
   // （entryNeedsGeocodeが同じ判定をサーバー側の裏の再計算のトリガーにも使っている）。
-  if (row.map_url && row.map_geocoded_url === row.map_url && typeof row.map_lat === "number" && typeof row.map_lng === "number") {
+  // map_geocoded_atがMAP_COORDS_VALID_SINCEより前（ジオコーダーの精度が上がる前に求めた座標）なら
+  // 返さない。entryNeedsGeocodeも同じ基準で「要再取得」と判定するので、次の保存で上書きされる。
+  if (
+    row.map_url && row.map_geocoded_url === row.map_url &&
+    typeof row.map_lat === "number" && typeof row.map_lng === "number" &&
+    row.map_geocoded_at && row.map_geocoded_at >= MAP_COORDS_VALID_SINCE
+  ) {
     entry.mapLat = row.map_lat;
     entry.mapLng = row.map_lng;
   }
@@ -670,7 +670,7 @@ async function updateEntry(id, request, env, headers, ctx) {
     )
     .run();
   // 地図URLが変わった、またはまだ座標を求めていないときだけ、裏で座標を求め直す（Part A）。
-  if (ctx && entryNeedsGeocode(existing.map_url, existing.map_geocoded_url, newMapUrl)) {
+  if (ctx && entryNeedsGeocode(existing.map_url, existing.map_geocoded_url, newMapUrl, existing.map_geocoded_at)) {
     ctx.waitUntil(backgroundGeocodeEntry(env, id, newMapUrl));
   }
   const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
@@ -937,9 +937,13 @@ function rowToDayInfo(row) {
   };
 }
 
-// 手動で選べる天気の種類。weatherLabel()の表示区分（快晴／晴れ／曇り／霧／霧雨／雨／雪／
-// にわか雨／にわか雪／雷雨）それぞれの代表的なWMOコードだけを許可する。
-const MANUAL_WEATHER_CODES = [0, 1, 3, 45, 51, 61, 71, 80, 85, 95];
+// 手動で選べる天気の種類（2026-09-26〜。場所の入力欄をやめ、天気アイコンを選ぶだけにしたため、
+// アプリ側の6種類のアイコン（晴れ／晴れ時々くもり／くもり／雨／雷雨／雪）に対応するWMOコードだけを許可する。
+// 気温は持たない。古い手動修正（0/45/51/80/85など）で保存済みの行はそのまま残るが、新しく選べるのは
+// この6つだけ（app.js側のCore.MANUAL_WEATHER_OPTIONSと合わせること）。
+// ただし配布済みの古いアプリ（ビルド50まで）は以前の10種類（0/45/51/80/85など）を送ってくるので、
+// それも受け付ける（表示はCore.manualWeatherDisplayが6種類のどれかに読み替える）。
+const MANUAL_WEATHER_CODES = [0, 1, 2, 3, 45, 51, 61, 71, 80, 85, 95];
 
 // Open-Meteoのジオコーディング（市区町村・行政区分レベル。POI・施設名は持たない）の生の候補一覧。
 async function geocodeOpenMeteoCandidates(place) {
@@ -1227,16 +1231,21 @@ function nearOk(pt, nears, km) {
 // Places API (New) の Text Search Essentials（IDのみ。無料・無制限のSKU、docs/adr/0011）→
 // Place Details Essentials（座標のみ）の順で、施設名・住所から座標を探す（Part B、2026-09-26〜）。
 // Nominatim（1秒1回まで）より先に試すことで、海外の施設名などの初回の準備を速くする。
-// 候補が複数返っても、詳細（Place Details）を聞くのは先頭の1件だけ（locationBiasで絞り込み済みのものを
-// 信用する。複数件の詳細を聞くと無料枠を余計に消費するため）。GOOGLE_API_KEYが無い・失敗した・0件
-// だったときはnullを返し、呼び出し側でこれまでどおりNominatim等の予備チェーンに回す。
-async function googleTextSearchPlace(text, nears, env) {
+// 候補が複数返っても、詳細（Place Details）を聞くのは先頭の1件だけ（Text Searchの並び＝Googleの
+// 知名度・関連度ランキングを信用する。複数件の詳細を聞くと無料枠を余計に消費するため）。
+// GOOGLE_API_KEYが無い・失敗した・0件だったときはnullを返し、呼び出し側でこれまでどおり
+// Nominatim等の予備チェーンに回す。
+//
+// 【locationBiasを送るのをやめた経緯、2026-09-27】以前は近く（同じ旅行の前後の予定）の座標を
+// locationBiasとして送っていたが、実例（大阪旅行）で「みなとみらい発」ブロック（横浜、新幹線で
+// 大阪へ移動する日）の地図URL `query=赤レンガ倉庫` が、同じ日に大阪のホテルがある（＝nearsに
+// 大阪の座標が入る）せいで、有名な横浜赤レンガ倉庫ではなく大阪の同名の建物を検索結果の1位に
+// してしまっていた。Googleの通常の検索結果（知名度などを加味した既定のランキング）は
+// 有名なほうを正しく1位にするため、biasはかけずTop1件をそのまま信用する（ADR 0008/0011）。
+async function googleTextSearchPlace(text, env) {
   if (!env || !env.GOOGLE_API_KEY) return null;
   try {
     const body = { textQuery: text, languageCode: "ja", maxResultCount: 5 };
-    if (nears && nears.length) {
-      body.locationBias = { circle: { center: { latitude: nears[0].lat, longitude: nears[0].lng }, radius: 50000 } };
-    }
     const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
       method: "POST",
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "places.id", "content-type": "application/json" },
@@ -1261,10 +1270,14 @@ async function googleTextSearchPlace(text, nears, env) {
 // 名前（施設名・住所）から場所を探す：①（GOOGLE_API_KEYがあれば）Google Text Search→②Nominatim
 // （住所の段階的な簡略化つき）→③日本語版ウィキペディア→④「町＋空港」→⑤空白で区切った一部
 // （長い順。近くの場所が分かっているときだけ。町の名前だけが合えば町の座標）
+//
+// Google Text Searchの結果にはnearOk（近くの予定との距離）を適用しない：Googleの知名度・関連度
+// ランキングによる1位を、遠くの予定と離れているという理由で捨てない（2026-09-27、上記の実例のとおり）。
+// nearによる絞り込み・タイブレークは、②以降のNominatim/ウィキペディアの予備チェーンにだけ残す。
 async function geocodePlaceName(text, nears, env) {
   if (env && env.GOOGLE_API_KEY) {
-    const g = await googleTextSearchPlace(text, nears, env).catch(() => null);
-    if (g && nearOk(g, nears)) return g;
+    const g = await googleTextSearchPlace(text, env).catch(() => null);
+    if (g) return g;
   }
   const near = nears && nears[0];
   const pause = () => new Promise((ok) => setTimeout(ok, 1100)); // Nominatimは1秒1回まで
@@ -1471,6 +1484,18 @@ const ROUTE_PROFILES = {
 const ROUTE_MAX_KM = 1500;
 const ROUTE_MAX_POINTS = 400;
 
+// 電車・新幹線・地下鉄（profile=rail）は道路ではなく線路をたどるので、OSRM（道路専用）ではなく
+// BRouterの公開サーバー（brouter.de、railプロファイル）を使う（2026-09-27〜、docs/adr/0008）。
+// 無料の公開サービスで利用規約上の明示的な制限は緩いが、フェアユースを守るため1区間1回だけ・
+// 結果はCache APIに30日置いて問い合わせを増やさない（他の旅行のprefetchはしない）。
+// 応答が失敗・タイムアウト（12秒）した、線路の長さが直線距離の3倍を超えた（駅すら無い場所を
+// 無理にスナップした疑い）、または始点・終点が求めた座標から5km以上ずれた（駅が遠い＝候補違いの疑い）
+// ときは、見つからない扱いにしてクライアントには直線（or優しい弧）のままにしてもらう。
+const RAIL_PROFILE_NAME = "rail";
+const RAIL_MAX_DETOUR_RATIO = 3;
+const RAIL_MAX_SNAP_KM = 5;
+const RAIL_TIMEOUT_MS = 12000;
+
 function parseLatLng(text) {
   const m = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(text || "");
   return m ? validLatLng(m[1], m[2]) : null;
@@ -1504,11 +1529,51 @@ async function getTimezone(url, headers, ctx) {
   return json(body, 200, headers);
 }
 
+// OSRM（道路：car/foot/bike）のgeojsonの座標（[lng,lat]の並び）から、返す形（found/path/distance/duration）
+// を作る。座標が無ければfound:falseのまま。
+function osrmToBody(route) {
+  const coords = route && route.geometry && route.geometry.coordinates;
+  if (!Array.isArray(coords) || coords.length < 2) return { found: false };
+  const pts = downsamplePoints(coords, ROUTE_MAX_POINTS)
+    .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
+  return { found: true, path: pts, distance: Math.round(route.distance || 0), duration: Math.round(route.duration || 0) };
+}
+
+// BRouterのrailプロファイル（GeoJSON）から、上と同じ形を作る。
+// ガード：始点・終点が求めた座標からRAIL_MAX_SNAP_KMより離れている、または線路の長さが
+// 直線距離のRAIL_MAX_DETOUR_RATIO倍を超えているときはfound:falseにする（駅が無い場所に
+// 無理にスナップした・候補違いの疑い。実際のtrack-length（BRouterのproperties）が使えないときは
+// 座標の並びから自前で長さを積算する）。
+function brouterToBody(coords, properties, from, to) {
+  if (!Array.isArray(coords) || coords.length < 2) return { found: false };
+  const first = coords[0], last = coords[coords.length - 1];
+  const snapStartKm = distanceKm(from, { lat: first[1], lng: first[0] });
+  const snapEndKm = distanceKm(to, { lat: last[1], lng: last[0] });
+  if (snapStartKm > RAIL_MAX_SNAP_KM || snapEndKm > RAIL_MAX_SNAP_KM) return { found: false };
+  const trackM = properties && Number(properties["track-length"]);
+  let trackKm;
+  if (Number.isFinite(trackM) && trackM > 0) {
+    trackKm = trackM / 1000;
+  } else {
+    // BRouterのproperties["track-length"]が無いときの保険：座標の並びから自前で積算する
+    trackKm = 0;
+    for (let i = 1; i < coords.length; i++) {
+      trackKm += distanceKm({ lat: coords[i - 1][1], lng: coords[i - 1][0] }, { lat: coords[i][1], lng: coords[i][0] });
+    }
+  }
+  const straightKm = distanceKm(from, to);
+  if (straightKm > 0 && trackKm > straightKm * RAIL_MAX_DETOUR_RATIO) return { found: false };
+  const pts = downsamplePoints(coords, ROUTE_MAX_POINTS)
+    .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
+  return { found: true, path: pts, distance: Math.round(trackKm * 1000) };
+}
+
 async function getRoute(url, headers, ctx) {
   const profile = url.searchParams.get("profile") || "";
   const from = parseLatLng(url.searchParams.get("from"));
   const to = parseLatLng(url.searchParams.get("to"));
-  if (!ROUTE_PROFILES[profile] || !from || !to) return json({ error: "invalid_input" }, 400, headers);
+  const isRail = profile === RAIL_PROFILE_NAME;
+  if ((!ROUTE_PROFILES[profile] && !isRail) || !from || !to) return json({ error: "invalid_input" }, 400, headers);
   if (distanceKm(from, to) > ROUTE_MAX_KM) return json({ found: false }, 200, headers);
   const key = [profile, from.lat.toFixed(5), from.lng.toFixed(5), to.lat.toFixed(5), to.lng.toFixed(5)].join(",");
   const cache = caches.default;
@@ -1518,23 +1583,41 @@ async function getRoute(url, headers, ctx) {
 
   let body = { found: false };
   try {
-    const res = await fetch(
-      "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
-        from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
-      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
-    );
-    const data = res.ok ? await res.json() : null;
-    const route = data && data.routes && data.routes[0];
-    const coords = route && route.geometry && route.geometry.coordinates;
-    if (Array.isArray(coords) && coords.length > 1) {
-      // 点が多すぎると重いので間引く（最後の点は必ず残す）
-      const step = Math.ceil(coords.length / ROUTE_MAX_POINTS);
-      const pts = coords.filter((_, i) => i % step === 0 || i === coords.length - 1)
-        .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
-      body = { found: true, path: pts, distance: Math.round(route.distance || 0), duration: Math.round(route.duration || 0) };
+    if (isRail) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), RAIL_TIMEOUT_MS);
+      let data;
+      try {
+        const res = await fetch(
+          "https://brouter.de/brouter?lonlats=" + from.lng + "," + from.lat + "|" + to.lng + "," + to.lat +
+            "&profile=rail&alternativeidx=0&format=geojson",
+          {
+            headers: {
+              "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;" +
+                " 電車の道のり検索でBRouterの公開サーバーを利用しています。1区間1回・結果は30日キャッシュします)",
+            },
+            signal: controller.signal,
+          }
+        );
+        data = res.ok ? await res.json() : null;
+      } finally {
+        clearTimeout(timer);
+      }
+      const feature = data && Array.isArray(data.features) && data.features[0];
+      const coords = feature && feature.geometry && feature.geometry.coordinates;
+      body = brouterToBody(coords, feature && feature.properties, from, to);
+    } else {
+      const res = await fetch(
+        "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
+          from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
+        { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+      );
+      const data = res.ok ? await res.json() : null;
+      const route = data && data.routes && data.routes[0];
+      body = osrmToBody(route);
     }
   } catch {
-    return json({ error: "route_failed" }, 502, headers); // 一時的な失敗はキャッシュしない
+    return json({ error: "route_failed" }, 502, headers); // 一時的な失敗・タイムアウトはキャッシュしない
   }
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
@@ -1559,7 +1642,10 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam, en
   // 近くの場所で結果が変わるので、キャッシュの鍵に含める（hintはもう結果に影響しないので鍵から外した）。
   // v7：見出し（hint）からの当てずっぽうをやめた（無関係な場所に飛ぶことがあったため）ので、
   // それに影響されていたかもしれない以前の結果を作り直す。
-  const cacheKey = new Request("https://tabilog-geocode.cache/v7?q=" + encodeURIComponent(q) +
+  // v8（2026-09-27）：Google Text SearchにlocationBiasをかけない・near guardを外したので、
+  // 以前near（同じ日の別の場所）に引っ張られて間違った同名の場所を選んでいたかもしれないキャッシュを
+  // 作り直す（実例：「みなとみらい発」の赤レンガ倉庫が大阪の同名施設になっていた件）。
+  const cacheKey = new Request("https://tabilog-geocode.cache/v8?q=" + encodeURIComponent(q) +
     "&near=" + nears.map((n) => n.lat.toFixed(0) + "," + n.lng.toFixed(0)).join(";"));
   const storeForEntry = (body) => {
     if (!entryId || !env || !env.DB || !body || !body.found) return;
@@ -1654,29 +1740,23 @@ async function autoSetDayPlace(tripId, date, request, env, headers) {
 
   const geo = await reverseGeocode(at.lat, at.lng);
   if (!geo) return json({ error: "place_not_found" }, 422, headers);
-  const weather = await fetchDailyWeather(at.lat, at.lng, date).catch(() => null);
+  // 天気はもう画面に出さない（本人がweatherPickerで選ぶだけ）ので、ここでOpen-Meteoには
+  // 取りに行かない（2026-09-26）。場所（時差・マイログの訪れた国用）だけを入れる。すでに本人が
+  // 天気を選んでいれば（weather_manual=1）、その選択には触れない。
   const t = nowIso();
-  const row = {
-    place: geo.place, lat: at.lat, lon: at.lng, admin1: geo.admin1, country: geo.country,
-    weather_code: weather ? weather.weatherCode : null,
-    temp_max: weather ? weather.tempMax : null,
-    temp_min: weather ? weather.tempMin : null,
-    precip_sum: weather ? weather.precipSum : null,
-    is_forecast: weather && weather.isForecast ? 1 : 0,
-    fetched_at: weather ? t : "",
-  };
+  const row = { place: geo.place, lat: at.lat, lon: at.lng, admin1: geo.admin1, country: geo.country };
   if (existing) {
-    // 文字起こし（voice_transcript）だけがある行など。場所と天気だけを入れる
+    // 文字起こし（voice_transcript）だけがある行など。場所だけを入れる
     await env.DB.prepare(
-      "UPDATE day_infos SET place=?, lat=?, lon=?, admin1=?, country=?, weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=? AND place=''"
+      "UPDATE day_infos SET place=?, lat=?, lon=?, admin1=?, country=?, updated_at=? WHERE id=? AND place=''"
     )
-      .bind(row.place, row.lat, row.lon, row.admin1, row.country, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, id)
+      .bind(row.place, row.lat, row.lon, row.admin1, row.country, t, id)
       .run();
   } else {
     await env.DB.prepare(
-      "INSERT OR IGNORE INTO day_infos (id, trip_id, date, place, lat, lon, admin1, country, weather_code, temp_max, temp_min, precip_sum, is_forecast, fetched_at, weather_manual, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)"
+      "INSERT OR IGNORE INTO day_infos (id, trip_id, date, place, lat, lon, admin1, country, weather_manual, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,0,?,?)"
     )
-      .bind(id, tripId, date, row.place, row.lat, row.lon, row.admin1, row.country, row.weather_code, row.temp_max, row.temp_min, row.precip_sum, row.is_forecast, row.fetched_at, t, t)
+      .bind(id, tripId, date, row.place, row.lat, row.lon, row.admin1, row.country, t, t)
       .run();
   }
   const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
@@ -1746,32 +1826,42 @@ async function setDayPlace(tripId, date, request, env, headers) {
   return json(rowToDayInfo(updated), 200, headers);
 }
 
-// 自動取得した天気が実際と違うときに、本人が手動で修正するためのエンドポイント。
-// 場所（place）は変えず、天気アイコン・気温だけを上書きする。降水量（precip_sum）は
-// 手動入力では持たないためクリアする（weatherLabel()の「1mm以下なら曇り扱い」判定は
-// precipSumがnumberのときだけ働くので、nullなら選んだ天気コードの表示がそのまま出る）。
+// 本人がその日の天気アイコンを選ぶ・選び直す・「なし」に戻すためのエンドポイント（2026-09-26〜）。
+// 場所の入力欄をやめたため、その日の記録（day_infos行）がまだ無いことがある（地図つきの記録が
+// 1件もない日など）。その場合はここで空の場所のまま行を作る。気温・降水量は手動入力では持たない
+// （weatherLabel()向けの古いフィールドはNULLのまま。weather_codeがnullなら「なし」＝選んでいない）。
 async function setDayWeatherManual(tripId, date, request, env, headers) {
   if (!DATE_RE.test(date)) return json({ error: "invalid_date" }, 400, headers);
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
   const id = tripId + "_" + date;
-  const existing = await env.DB.prepare("SELECT id FROM day_infos WHERE id = ?").bind(id).first();
-  if (!existing) return json({ error: "day_not_found" }, 404, headers);
   let data;
   try {
     data = await request.json();
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
-  if (!Number.isInteger(data.weatherCode) || MANUAL_WEATHER_CODES.indexOf(data.weatherCode) === -1) {
+  const clearing = data.weatherCode === null;
+  if (!clearing && (!Number.isInteger(data.weatherCode) || MANUAL_WEATHER_CODES.indexOf(data.weatherCode) === -1)) {
     return json({ error: "invalid_input" }, 400, headers);
   }
-  const tempMax = typeof data.tempMax === "number" && isFinite(data.tempMax) && data.tempMax >= -80 && data.tempMax <= 80 ? data.tempMax : null;
-  const tempMin = typeof data.tempMin === "number" && isFinite(data.tempMin) && data.tempMin >= -80 && data.tempMin <= 80 ? data.tempMin : null;
   const t = nowIso();
-  await env.DB.prepare(
-    "UPDATE day_infos SET weather_code=?, temp_max=?, temp_min=?, precip_sum=NULL, is_forecast=0, weather_manual=1, fetched_at=?, updated_at=? WHERE id=?"
-  )
-    .bind(data.weatherCode, tempMax, tempMin, t, t, id)
-    .run();
+  const weatherCode = clearing ? null : data.weatherCode;
+  const weatherManual = clearing ? 0 : 1;
+  const existing = await env.DB.prepare("SELECT id FROM day_infos WHERE id = ?").bind(id).first();
+  if (existing) {
+    await env.DB.prepare(
+      "UPDATE day_infos SET weather_code=?, temp_max=NULL, temp_min=NULL, precip_sum=NULL, is_forecast=0, weather_manual=?, fetched_at=?, updated_at=? WHERE id=?"
+    )
+      .bind(weatherCode, weatherManual, weatherCode !== null ? t : "", t, id)
+      .run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO day_infos (id, trip_id, date, place, weather_code, weather_manual, fetched_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    )
+      .bind(id, tripId, date, "", weatherCode, weatherManual, weatherCode !== null ? t : "", t, t)
+      .run();
+  }
   const updated = await env.DB.prepare("SELECT * FROM day_infos WHERE id = ?").bind(id).first();
   return json(rowToDayInfo(updated), 200, headers);
 }

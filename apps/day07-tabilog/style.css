@@ -306,17 +306,18 @@ a:hover { text-decoration: underline; }
 }
 .day-weather.has-weather { color: var(--accent-deep); background: var(--accent-soft-bg); }
 .day-weather .forecast-mark { font-weight: 500; color: var(--ink-soft); }
-.weather-edit-btn { width: 26px; height: 26px; flex-shrink: 0; }
 
 .weather-edit-panel {
   background: var(--card); border-radius: var(--radius-control); box-shadow: var(--card-shadow);
-  padding: 14px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px;
+  padding: 14px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px;
 }
-.weather-edit-panel label { font-size: 12.5px; color: var(--ink-muted); font-weight: 600; display: flex; align-items: center; gap: 6px; }
-.weather-edit-panel select, .weather-edit-panel input { border: none; border-radius: 10px; padding: 8px 9px; font-size: 14px; background: var(--input-bg); color: var(--ink); }
-.weather-edit-temps { display: flex; gap: 12px; }
-.weather-edit-temps label { flex: 1; }
-.weather-edit-temps input { width: 100%; }
+.weather-picker { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.weather-picker-opt {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px;
+  border-radius: 12px; background: var(--input-bg); color: var(--ink-muted); font-size: 11.5px; font-weight: 600;
+}
+.weather-picker-icon { font-size: 22px; line-height: 1; }
+.weather-picker-opt.on { background: var(--accent-soft-bg); color: var(--accent-deep); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .weather-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 .voice-transcript { margin-bottom: 10px; }
@@ -778,8 +779,13 @@ body.sheet-open { overflow: hidden; }
 /* ---------- 入力欄の×ボタン（app.jsのinitClearButtons） ---------- */
 /* ×が文字に重ならないよう、対象の1行入力欄は右側を空けておく */
 input[type="text"], input[type="url"], input[type="search"], input[type="email"], input[type="number"] { padding-right: 36px !important; }
+/* 欄を幅0のラッパー（span）で包み、元の欄が持っていたflexのサイズ指定はラッパーに移す（app.jsのwrapForClearButton）。
+   ラッパー自身はレイアウトに参加するだけの器なので、幅・高さは中身（input）に合わせる */
+.ipt-clear-wrap { position: relative; display: inline-block; vertical-align: top; min-width: 0; }
+.ipt-clear-wrap input { display: block; }
 .input-clear-btn {
-  position: fixed; z-index: 80; width: 28px; height: 28px; border-radius: 999px; border: none; cursor: pointer;
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  z-index: 2; width: 28px; height: 28px; border-radius: 999px; border: none; cursor: pointer;
   background: var(--ink-soft); color: #fff; font-size: 16px; line-height: 28px; padding: 0; text-align: center;
 }
 .input-clear-btn[hidden] { display: none; }

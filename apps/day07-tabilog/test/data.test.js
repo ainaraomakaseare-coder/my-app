@@ -250,6 +250,22 @@ eq('weatherLabel: にわか雨コードでも同様に曇り扱い', T.weatherLa
 eq('weatherLabel: 雷雨は降水量が少なくても雷雨のまま', T.weatherLabel(96, 0.2), '雷雨');
 eq('weatherLabel: 降水量が渡されなければ従来どおり', T.weatherLabel(63), '雨');
 
+/* ---- manualWeatherDisplay（手動で選ぶ天気アイコン。場所の入力欄の代わりに2026-09-26〜） ---- */
+eq('manualWeatherDisplay: 晴れ(1)', T.manualWeatherDisplay(1), { code: 1, icon: '☀️', label: '晴れ' });
+eq('manualWeatherDisplay: 晴れ時々くもり(2)', T.manualWeatherDisplay(2), { code: 2, icon: '🌤️', label: '晴れ時々くもり' });
+eq('manualWeatherDisplay: くもり(3)', T.manualWeatherDisplay(3), { code: 3, icon: '☁️', label: 'くもり' });
+eq('manualWeatherDisplay: 雨(61)', T.manualWeatherDisplay(61), { code: 61, icon: '🌧️', label: '雨' });
+eq('manualWeatherDisplay: 雷雨(95)', T.manualWeatherDisplay(95), { code: 95, icon: '⛈️', label: '雷雨' });
+eq('manualWeatherDisplay: 雪(71)', T.manualWeatherDisplay(71), { code: 71, icon: '❄️', label: '雪' });
+eq('manualWeatherDisplay: nullはnull（選んでいない）', T.manualWeatherDisplay(null), null);
+eq('manualWeatherDisplay: undefinedもnull', T.manualWeatherDisplay(undefined), null);
+eq('manualWeatherDisplay: 古い快晴(0)は晴れに寄せる', T.manualWeatherDisplay(0), { code: 1, icon: '☀️', label: '晴れ' });
+eq('manualWeatherDisplay: 古い霧(45)はくもりに寄せる', T.manualWeatherDisplay(45), { code: 3, icon: '☁️', label: 'くもり' });
+eq('manualWeatherDisplay: 古い霧雨(51)は雨に寄せる', T.manualWeatherDisplay(51), { code: 61, icon: '🌧️', label: '雨' });
+eq('manualWeatherDisplay: 古いにわか雨(80)は雨に寄せる', T.manualWeatherDisplay(80), { code: 61, icon: '🌧️', label: '雨' });
+eq('manualWeatherDisplay: 古いにわか雪(85)は雪に寄せる', T.manualWeatherDisplay(85), { code: 71, icon: '❄️', label: '雪' });
+eq('manualWeatherDisplay: 未知のコードはnull', T.manualWeatherDisplay(30), null);
+
 /* ---- 地図でふりかえる：予定の場所は記録の地図URLだけから決める（replayPlaceQuery） ---- */
 eq('replayPlaceQuery: Googleマップの共有リンクをそのまま返す（展開・座標の読み取りはWorker側）',
   T.replayPlaceQuery({ label: 'ランチ', entries: [{ mapUrl: ' https://maps.app.goo.gl/PzmSEdBvWvfK1AW87?g_st=ic ' }] }), 'https://maps.app.goo.gl/PzmSEdBvWvfK1AW87?g_st=ic');
@@ -400,8 +416,9 @@ ok('buildTripPostText: 友達のアカウントで作ると、3.0未満のホテ
   T.buildTripPostText({ title: 'x' }, rvBlocks, [], 'friend@example.com').indexOf('ホテログ') === -1);
 
 /* ---- 地図でふりかえる：道のりに沿って進む（docs/adr/0008） ---- */
-eq('routeProfileFor: 車・タクシー・バスは車道、徒歩・自転車はそれぞれ、電車・飛行機はルート検索しない',
-  ['car', 'taxi', 'bus', 'walk', 'bicycle', 'train', 'plane', ''].map(T.routeProfileFor), ['car', 'car', 'car', 'foot', 'bike', '', '', '']);
+eq('routeProfileFor: 車・タクシー・バスは車道、徒歩・自転車はそれぞれ、電車・新幹線・地下鉄は線路（railプロファイル。道路プロファイルではない）、飛行機はルート検索しない',
+  ['car', 'taxi', 'bus', 'walk', 'bicycle', 'train', 'shinkansen', 'subway', 'plane', ''].map(T.routeProfileFor),
+  ['car', 'car', 'car', 'foot', 'bike', 'rail', 'rail', 'rail', '', '']);
 var rtPath = [[35.0, 139.0], [35.0, 139.1], [35.1, 139.1]];
 var rtHalf = T.pathAt(rtPath, 0.5);
 ok('pathAt: 半分の位置は、長さで見た道のりの真ん中（1本目の終わり付近）', Math.abs(rtHalf.point.lng - 139.1) < 0.01 && Math.abs(rtHalf.point.lat - 35.0) < 0.01);
@@ -412,7 +429,7 @@ rtTl.legs[0].path = [[35.69, 139.70], [35.69, 138.57], [35.66, 138.57]];
 var rtMid = T.replayStateAt(rtTl, (rtTl.legs[0].r0 + rtTl.legs[0].r1) / 2);
 ok('replayStateAt: 道のりがある移動は、直線ではなく道のりの上を進む（途中で西へ大きく回る）', Math.abs(rtMid.icon.lat - 35.69) < 0.02 && rtMid.icon.lng < 139.2);
 
-/* ---- 地図でふりかえる：吹き出しは全文、長いほど長く見せる ---- */
+/* ---- 地図でふりかえる：吹き出しは全文（長さで表示時間は変えない・写真の枚数で決まる） ---- */
 var capLong = 'あ'.repeat(60);
 var capStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
   { id: 'x1', date: '2026-04-01', time: '10:00', label: 'A', entries: [{ episode: capLong }] },
@@ -420,8 +437,8 @@ var capStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' },
   { id: 'x3', date: '2026-04-01', time: '10:02', label: 'C', entries: [] }]);
 eq('replayStops: 吹き出しは40文字で切らず全文', capStops[0].captions[0].length, 60);
 var capTl = T.buildReplayTimeline(capStops, {});
-ok('buildReplayTimeline: 長い吹き出し（60文字）は、短いものより長く見せる（1秒12文字の目安）',
-  capTl.stops[0].rDwellEnd - capTl.stops[0].r > capTl.stops[1].rDwellEnd - capTl.stops[1].r + 1.5);
+ok('buildReplayTimeline: 長い吹き出し（60文字）でも写真が無ければ短い吹き出しと同じ長さ（3秒）',
+  Math.abs((capTl.stops[0].rDwellEnd - capTl.stops[0].r) - (capTl.stops[1].rDwellEnd - capTl.stops[1].r)) < 0.01);
 
 /* ---- 時差（docs/adr/0009） ---- */
 eq('tzOffsetMinutes: 日本は+9時間', T.tzOffsetMinutes('Asia/Tokyo', '2026-12-12', '20:00'), 540);
@@ -516,8 +533,8 @@ var phStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, 
   { id: 'p3', date: '2026-04-01', time: '10:02', label: 'C', entries: [] }]);
 eq('replayStops: 予定の記録の写真を地点に持たせる', [phStops[0].photos, phStops[1].photos], [['x1', 'x2', 'x3'], []]);
 var phTl = T.buildReplayTimeline(phStops, {});
-ok('buildReplayTimeline: 写真がある地点は長めに見せる（写真3枚×1.4秒。写真なしも最低2.5秒あるので差は約2秒）',
-  phTl.stops[0].rDwellEnd - phTl.stops[0].r > phTl.stops[1].rDwellEnd - phTl.stops[1].r + 1.5);
+ok('buildReplayTimeline: 写真なしの地点は固定3秒', Math.abs((phTl.stops[1].rDwellEnd - phTl.stops[1].r) - 3) < 0.01);
+ok('buildReplayTimeline: 写真3枚の地点は1枚2.5秒×3＝7.5秒', Math.abs((phTl.stops[0].rDwellEnd - phTl.stops[0].r) - 7.5) < 0.01);
 
 /* ---- 地図でふりかえる：移動手段が無い移動は車（遠ければ飛行機） ---- */
 var carStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
@@ -539,7 +556,17 @@ var flyTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDa
   { id: 'n', date: '2026-04-02', time: '06:00', label: 'ニューヨーク', transport: 'plane', entries: [{ mapUrl: 'https://m/ny' }] }]),
   { 'https://m/hk': { lat: 22.3, lng: 114.2 }, 'https://m/ny': { lat: 40.7, lng: -74.0 } });
 ok('buildReplayTimeline: 長いフライトも移動は2秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 2) < 0.01);
-ok('buildReplayTimeline: 写真4枚なら吹き出しを10秒以上見せる', flyTl.stops[0].rDwellEnd - flyTl.stops[0].r > 9.99);
+ok('buildReplayTimeline: 写真4枚なら吹き出しは10秒（1枚2.5秒×4）', Math.abs((flyTl.stops[0].rDwellEnd - flyTl.stops[0].r) - 10) < 0.01);
+
+/* ---- 地図でふりかえる：吹き出しの秒数は写真の枚数だけで決まる（2026-09-27） ---- */
+var capSecStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'nop', date: '2026-04-01', time: '10:00', label: '写真なし', entries: [{ episode: '写真なし' }] },
+  { id: 'two', date: '2026-04-01', time: '10:30', label: '写真2枚', entries: [{ photoIds: ['a', 'b'] }] },
+  { id: 'six', date: '2026-04-01', time: '11:00', label: '写真6枚', entries: [{ photoIds: ['a', 'b', 'c', 'd', 'e', 'f'] }] }]);
+var capSecTl = T.buildReplayTimeline(capSecStops, {});
+ok('buildReplayTimeline: 写真なしは約3秒', Math.abs((capSecTl.stops[0].rDwellEnd - capSecTl.stops[0].r) - 3) < 0.01);
+ok('buildReplayTimeline: 写真2枚は約5秒（2.5秒×2）', Math.abs((capSecTl.stops[1].rDwellEnd - capSecTl.stops[1].r) - 5) < 0.01);
+ok('buildReplayTimeline: 写真6枚でも4枚分の10秒で頭打ち', Math.abs((capSecTl.stops[2].rDwellEnd - capSecTl.stops[2].r) - 10) < 0.01);
 
 /* ---- 時差：地図の無い予定は直前の予定を引き継ぐ（行ったり来たり防止） ---- */
 // 10:00 成田（地図・東京）→12:00 LA到着（地図・LA）→15:00 ホテルで休憩（地図なし）→18:00 夕食（地図・LA）

@@ -28,6 +28,7 @@
     { key: 'car', label: '車（レンタカー）' },
     { key: 'taxi', label: 'タクシー（Uber）' },
     { key: 'train', label: '電車' },
+    { key: 'shinkansen', label: '新幹線' },
     { key: 'bus', label: 'バス' },
     { key: 'walk', label: '徒歩' },
     { key: 'bicycle', label: '自転車' }
@@ -605,6 +606,33 @@
     return '';
   }
 
+  // 手動で選べる天気（2026-09-26〜）。場所の入力欄は分かりづらい（「ユニバーサル」がオーランドの
+  // 天気になった等）ため廃止し、本人がアイコンで選ぶだけにした。温度は持たない。
+  // コードはWMO weather codeの代表値を流用しているだけで、weatherLabel()の分類とは別物
+  // （「晴れ時々くもり」はweatherLabel()には無い区分）。
+  var MANUAL_WEATHER_OPTIONS = [
+    { code: 1, icon: '☀️', label: '晴れ' },
+    { code: 2, icon: '🌤️', label: '晴れ時々くもり' },
+    { code: 3, icon: '☁️', label: 'くもり' },
+    { code: 61, icon: '🌧️', label: '雨' },
+    { code: 95, icon: '⛈️', label: '雷雨' },
+    { code: 71, icon: '❄️', label: '雪' },
+  ];
+
+  // 昔の自動取得・旧手動修正機能（0/45/48/51〜57/80〜82/85〜86など）で入っていたWMOコードも、
+  // 上の6種のどれかに寄せて表示する（古いデータを消さずに済むように。2026-09-26）。
+  function manualWeatherDisplay(code) {
+    if (code === null || code === undefined) return null;
+    var exact = MANUAL_WEATHER_OPTIONS.filter(function (o) { return o.code === code; })[0];
+    if (exact) return exact;
+    if (code === 0) return MANUAL_WEATHER_OPTIONS[0]; // 快晴→晴れ
+    if (code === 3 || code === 45 || code === 48) return MANUAL_WEATHER_OPTIONS[2]; // 曇り・霧→くもり
+    if ((code >= 51 && code <= 57) || (code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return MANUAL_WEATHER_OPTIONS[3]; // 霧雨・雨・にわか雨→雨
+    if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) return MANUAL_WEATHER_OPTIONS[5]; // 雪・にわか雪→雪
+    if (code >= 95) return MANUAL_WEATHER_OPTIONS[4]; // 雷雨
+    return null;
+  }
+
   // ---------- 地図でふりかえる（replay） ----------
   // 予定（Block）を「地図の上を時刻どおりに移動していく演出」に変換する純粋関数。
   // 地図の描画（Leaflet）は画面側の仕事で、ここでは「どの順で・いつ・どこにいるか」だけを決める。
@@ -613,9 +641,8 @@
   var REPLAY_SEC_PER_MIN = 0.06;     // 1000倍速（旅の1分＝実時間0.06秒）。100倍速・500倍速でも遅いという声で変更
   var REPLAY_LEAD_MIN = 5;           // 最初の予定の少し前から時計を動かし始める
   var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら1000倍速で進める旅の時間（分）
-  var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
-  var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
-  var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
+  var REPLAY_MIN_CAPTION_SEC = 3;     // 写真が無い地点は、文章の長さに関わらずこの秒数だけ吹き出しを見せる（2026-09-27: 文章が長いほど延ばす仕組みは廃止）
+  var REPLAY_MAX_CAPTION_SEC = 10;    // 写真がある地点でも、これ以上は止めない（写真4枚分の秒数）
   var REPLAY_MAX_PHOTOS = 4;          // 1つの地点で見せる写真の上限（6枚だと1地点15秒止まり長かったので4枚＝10秒に）
   var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
   var REPLAY_MOVE_SEC = 2;           // 移動の演出は、距離や時間にかかわらずこの秒数（以前は1000倍速で2〜6秒。香港→ニューヨークの飛行機が長すぎた）
@@ -862,10 +889,9 @@
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
       r += dwell * REPLAY_SEC_PER_MIN;
       kf.push({ t: st.t + dwell, r: r });
-      var chars = (st.captions || []).join('').length + (st.label || '').length;
-      var photoSec = (st.photos || []).length * REPLAY_SEC_PER_PHOTO;
-      // 文章を読む時間（上限あり）と写真を全部見せる時間の長いほう。写真と文章は同時に見られる
-      var minSec = Math.max(REPLAY_MIN_CAPTION_SEC, Math.min(REPLAY_MAX_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC), photoSec);
+      var photoCount = Math.min((st.photos || []).length, REPLAY_MAX_PHOTOS);
+      // 写真が無ければ固定3秒、写真があれば1枚2.5秒（最大4枚＝10秒）。文章の長さでは変えない（2026-09-27）
+      var minSec = photoCount > 0 ? Math.min(photoCount * REPLAY_SEC_PER_PHOTO, REPLAY_MAX_CAPTION_SEC) : REPLAY_MIN_CAPTION_SEC;
       if (dwell * REPLAY_SEC_PER_MIN < minSec) {
         r += minSec - dwell * REPLAY_SEC_PER_MIN;
         kf.push({ t: st.t + dwell, r: r });
@@ -899,12 +925,13 @@
   // 再生開始からr秒の時点の状態：時計（何日目・何時何分）、吹き出しを出す地点、移動中のアイコンの位置、
   // いま地図上でいる場所（here：カメラを合わせる位置）。
   // ---- 道のり（実際の道路に沿ったルート。docs/adr/0008）----
-  // 移動手段ごとに、どのルート検索を使うか。電車は線路のルートを出せる無料サービスが無いので直線、
-  // 飛行機は弧（どちらも''＝ルート検索しない）。
+  // 移動手段ごとに、どのルート検索を使うか。電車・新幹線・地下鉄は線路のルート（BRouterのrailプロファイル、
+  // 2026-09-27〜）、飛行機は弧（''＝ルート検索しない）。
   function routeProfileFor(transport) {
     if (transport === 'car' || transport === 'taxi' || transport === 'bus') return 'car';
     if (transport === 'walk') return 'foot';
     if (transport === 'bicycle') return 'bike';
+    if (transport === 'train' || transport === 'shinkansen' || transport === 'subway') return 'rail';
     return '';
   }
 
@@ -1141,7 +1168,7 @@
     var amount = typeof t.amount === 'number' ? t.amount : entryCostTotal(entry);
     var route = t.from || t.to ? (t.from || '') + '→' + (t.to || '') : '';
     if (!route && !t.company && !t.depart && !t.arrive && !amount && !block.moveMinutes) return '';
-    var emoji = { plane: '✈️', car: '🚗', taxi: '🚕', train: '🚃', bus: '🚌', walk: '🚶', bicycle: '🚲' }[block.transport] || '🚃';
+    var emoji = { plane: '✈️', car: '🚗', taxi: '🚕', train: '🚃', shinkansen: '🚅', bus: '🚌', walk: '🚶', bicycle: '🚲' }[block.transport] || '🚃';
     var lines = [emoji + ' 移動' + (mode ? '｜' + mode : ''), route || block.label || ''];
     if (t.company) lines.push('会社：' + t.company);
     if (t.depart || t.arrive) {
@@ -1336,6 +1363,8 @@
     myRatingScore: myRatingScore,
     sortMyLogItems: sortMyLogItems,
     weatherLabel: weatherLabel,
+    MANUAL_WEATHER_OPTIONS: MANUAL_WEATHER_OPTIONS,
+    manualWeatherDisplay: manualWeatherDisplay,
     replayPlaceQuery: replayPlaceQuery,
     replayPlaceEntry: replayPlaceEntry,
     replayStops: replayStops,
@@ -3110,52 +3139,40 @@
     return (state.days || []).filter(function (d) { return d.date === date; })[0] || null;
   }
 
+  // 場所（地名）はもう本人には入力させない。時差・マイログの訪れた国・自動配置のためだけに
+  // 裏で使う（loadTripZonesのauto-place）。ここで見せるのは天気アイコンだけ（2026-09-26）。
   function renderDayWeather() {
     var btn = $('#dayWeather');
-    var editBtn = $('#btnEditWeather');
     $('#weatherEditPanel').hidden = true;
-    if (!state.selectedDate) { btn.hidden = true; editBtn.hidden = true; return; }
+    if (!state.selectedDate) { btn.hidden = true; return; }
     btn.hidden = false;
     var info = findDayInfo(state.selectedDate);
-    var hasWeather = info && info.weatherCode !== null && info.weatherCode !== undefined;
-    if (hasWeather) {
+    var manual = info && info.weatherManual ? Core.manualWeatherDisplay(info.weatherCode) : null;
+    if (manual) {
       btn.classList.add('has-weather');
-      var label = Core.weatherLabel(info.weatherCode, info.precipSum);
-      var temps = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) + '℃/' + Math.round(info.tempMin) + '℃' : '';
-      btn.innerHTML = escapeHtml(info.place) + '　' + escapeHtml(label) + ' ' + escapeHtml(temps)
-        + (info.isForecast ? ' <span class="forecast-mark">（予報）</span>' : '')
-        + (info.weatherManual ? ' <span class="forecast-mark">（手動修正）</span>' : '');
-    } else if (info && info.place) {
-      btn.classList.remove('has-weather');
-      btn.textContent = escapeHtml(info.place) + '（天気取得中…）';
+      btn.innerHTML = '<span aria-hidden="true">' + manual.icon + '</span> ' + escapeHtml(manual.label);
     } else {
       btn.classList.remove('has-weather');
-      btn.textContent = '＋ 場所を設定';
+      btn.textContent = '天気を選ぶ';
     }
-    btn.onclick = function () { promptDayPlace(); };
-    // 天気が取れている日だけ、手動修正ボタンを出す（場所未設定の日は修正のしようがない）
-    editBtn.hidden = !hasWeather;
-    editBtn.onclick = function () { openWeatherEditPanel(info); };
+    btn.onclick = function () { openWeatherEditPanel(info); };
   }
 
   function openWeatherEditPanel(info) {
     var panel = $('#weatherEditPanel');
-    $('#weatherEditCode').value = String(info.weatherCode);
-    $('#weatherEditMax').value = (info.tempMax !== null && info.tempMax !== undefined) ? Math.round(info.tempMax) : '';
-    $('#weatherEditMin').value = (info.tempMin !== null && info.tempMin !== undefined) ? Math.round(info.tempMin) : '';
+    var manual = info && info.weatherManual ? Core.manualWeatherDisplay(info.weatherCode) : null;
+    var picker = $('#weatherPicker');
+    picker.querySelectorAll('.weather-picker-opt').forEach(function (el) {
+      el.classList.toggle('on', manual ? el.dataset.code === String(manual.code) : el.dataset.code === '');
+    });
     $('#weatherEditStatus').textContent = '';
     panel.hidden = false;
   }
 
-  function saveWeatherEdit() {
+  function saveWeatherEdit(codeStr) {
     if (!state.trip || !state.selectedDate) return;
     var status = $('#weatherEditStatus');
-    var weatherCode = Number($('#weatherEditCode').value);
-    var maxVal = $('#weatherEditMax').value.trim();
-    var minVal = $('#weatherEditMin').value.trim();
-    var payload = { weatherCode: weatherCode };
-    if (maxVal !== '') payload.tempMax = Number(maxVal);
-    if (minVal !== '') payload.tempMin = Number(minVal);
+    var payload = { weatherCode: codeStr === '' ? null : Number(codeStr) };
     status.textContent = '保存中…';
     api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/weather', 'PATCH', payload)
       .then(function () { return refreshTrip(); })
@@ -3164,24 +3181,6 @@
         renderDayWeather();
       })
       .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
-  }
-
-  function promptDayPlace() {
-    if (!state.trip || !state.selectedDate) return;
-    var existing = findDayInfo(state.selectedDate);
-    var place = prompt('この日の場所（市区町村名など）を入力してください。天気・気温を自動で取得します。', existing ? existing.place : '');
-    if (place === null) return;
-    place = place.trim();
-    if (!place) return;
-    var btn = $('#dayWeather');
-    btn.textContent = '取得中…';
-    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate), 'PUT', { place: place })
-      .then(function () { return refreshTrip(); })
-      .then(function () { renderDayWeather(); })
-      .catch(function () {
-        alert('場所が見つからなかったか、天気の取得に失敗しました。地名を変えて試してください。');
-        renderDayWeather();
-      });
   }
 
   // タイムゾーンの日本語名（例：「英国夏時間」「ハワイ・アリューシャン標準時」）
@@ -3706,6 +3705,7 @@
     car: '<path d="M4 12l1.8-4.6A2 2 0 0 1 7.7 6h8.6a2 2 0 0 1 1.9 1.4L20 12"/><rect x="3" y="12" width="18" height="5.5" rx="1.2"/><circle cx="7.5" cy="14.8" r="1"/><circle cx="16.5" cy="14.8" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
     taxi: '<path d="M5.5 11l1.4-4a2 2 0 0 1 1.9-1.3h6.4a2 2 0 0 1 1.9 1.3l1.4 4"/><path d="M3.5 11h17v5.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M10 5.7V3.5h4v2.2"/><circle cx="7.5" cy="14.3" r="1"/><circle cx="16.5" cy="14.3" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
     train: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 10h14"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/><path d="M8.5 17l-2.5 4M15.5 17l2.5 4"/>',
+    shinkansen: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 10h14"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/><path d="M8.5 17l-2.5 4M15.5 17l2.5 4"/>',
     bus: '<rect x="4" y="3.5" width="16" height="14" rx="2.5"/><path d="M4 11h16M12 3.5V11"/><path d="M7 17.5V20M17 17.5V20"/><circle cx="8" cy="14.3" r="1"/><circle cx="16" cy="14.3" r="1"/>',
     walk: '<circle cx="13" cy="4.3" r="1.8"/><path d="M13 8.5 11.2 14l-2.7 7"/><path d="M11.2 14l3.3 2.6.8 4.4"/><path d="M12.6 10.2l3.6 2.6M12.6 10.2l-4 1.6"/>',
     bicycle: '<circle cx="6" cy="16" r="3.5"/><circle cx="18" cy="16" r="3.5"/><path d="M6 16l3.8-7h5.7L18 16"/><path d="M9.8 9 12.5 16H6"/><path d="M15.5 9l-1-3h-2.2"/>'
@@ -4911,7 +4911,11 @@
   // -v7（2026-09-26〜）：地図のリンクから場所が分からないとき、見出し（hint）から場所を当てずっぽうに
   // 探すのをやめた（無関係な場所に飛ぶことがあったため。docs/adr/0008）。hintに影響されていたかもしれない
   // 以前の結果（見つかった・見つからなかったのどちらも）を捨てて調べ直す。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v7';
+  // -v8（2026-09-27〜）：Google Text Searchに「近くの予定」をヒントとして渡す（locationBias）のを
+  // やめ、near（近くの予定）による絞り込みも外した。同じ日に離れた場所（同名の別施設）があると、
+  // そちらに引っ張られて間違った場所を選んでしまうことがあったため（docs/adr/0008・0011）。
+  // それに影響されていたかもしれない以前の結果を捨てて調べ直す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v8';
   try {
     localStorage.removeItem('tabilog:geocode-cache');
     localStorage.removeItem('tabilog:geocode-cache-v2');
@@ -4919,6 +4923,7 @@
     localStorage.removeItem('tabilog:geocode-cache-v4');
     localStorage.removeItem('tabilog:geocode-cache-v5');
     localStorage.removeItem('tabilog:geocode-cache-v6');
+    localStorage.removeItem('tabilog:geocode-cache-v7');
   } catch (e) {}
   // 住所・店名から探すときに添える「同じ旅行の前後の場所」の座標を、旅程順で並んだstops
   // （{ date, transport, coords }）から選ぶ（選び方自体はCore.geocodeNearIndexes、docs/adr/0008）。
@@ -5022,7 +5027,11 @@
       var profile = Core.routeProfileFor(l.transport);
       return api(routeQuery(profile, a, b)).catch(function () { return null; }).then(function (res) {
         var km = res && res.found ? (res.distance || 0) / 1000 : null;
-        if (res && res.found && profile !== 'foot' && Core.isRouteDetourTooLong(straightKm, km)) {
+        // 車で大回りしている疑いのときの徒歩での調べ直しは、foot自身とrail（電車・新幹線・地下鉄）には
+        // 行わない：footはもともと徒歩の道のりなので該当なし、railは徒歩で置き換える意味が無い上、
+        // Worker側のgetRouteがすでに「線路の長さが直線距離の3倍を超えたら見つからない扱い」にしている
+        // （BRouterの公開サーバーへの問い合わせを1区間1回に抑えるため。docs/adr/0008）。
+        if (res && res.found && profile !== 'foot' && profile !== 'rail' && Core.isRouteDetourTooLong(straightKm, km)) {
           // 車で大回りしている疑い。徒歩で調べ直す
           return api(routeQuery('foot', a, b)).catch(function () { return null; }).then(function (res2) {
             var km2 = res2 && res2.found ? (res2.distance || 0) / 1000 : null;
@@ -5151,6 +5160,11 @@
       };
     });
     replay.mapAnimating = false;
+    // 前の旅行の再生を閉じたときに透明のままになっていないよう、開くたびに必ず見える状態へ戻す
+    (function () {
+      var pane = replayOverlayPane();
+      if (pane) { pane.style.transition = 'none'; pane.style.opacity = '1'; }
+    })();
     if (!replayMap._replayAnimGuard) {
       replayMap._replayAnimGuard = true;
       // Leaflet（SVGレンダラー）は、ズームのアニメーション中に線の座標を更新すると、
@@ -5158,11 +5172,23 @@
       // （地図全体が動いている最中に setLatLngs すると、そのフレームのズーム換算がまだ
       // 反映されていないため）。「区間の変わり目で地図がずれ、青い線が追いつかない」の原因。
       // アニメーション中は線の更新を止め（アイコンは動かし続ける）、終わったら1回だけ描き直す。
-      replayMap.on('zoomstart movestart', function () { if (replay) replay.mapAnimating = true; });
+      //
+      // それでも、アニメ中は線（overlayPaneのSVG）自体をLeafletがCSSのtransformで拡大縮小し続けるため、
+      // 大きくズームするとき（例：飛行機で日本→アメリカのような広いflyToBounds）は線の太さもいっしょに
+      // 拡大されてしまい、太い青の塊が地図を覆う「ゴースト」に見える不具合があった（利用者からの
+      // スクリーンショットで確認）。対策として、アニメ開始（zoomstart/movestart）で線の入っている
+      // overlayPane自体を一瞬透明にして隠し、終わった（zoomend/moveend）ら描き直してからフェードイン
+      // する（2026-09-27）。乗り物のアイコン（マーカー）はmarkerPane側なので影響を受けず、そのまま
+      // 動かし続けられる。
+      replayMap.on('zoomstart movestart', function () {
+        if (replay) replay.mapAnimating = true;
+        hideReplayOverlayPane();
+      });
       replayMap.on('zoomend moveend', function () {
         if (!replay) return;
         replay.mapAnimating = false;
         renderReplay();
+        fadeInReplayOverlayPane();
       });
     }
     resetReplayCamera();
@@ -5253,6 +5279,28 @@
     var has = replayLayer.hasLayer(layer);
     if (visible && !has) replayLayer.addLayer(layer);
     else if (!visible && has) replayLayer.removeLayer(layer);
+  }
+
+  // 道のり（線・到着済みの点）はぜんぶ既定のoverlayPane（Leafletの標準）に入っている。乗り物のアイコンは
+  // markerPane（別のpane）なので、overlayPaneだけ隠してもアイコンは動かし続けられる。
+  // ズームや移動のアニメ中に線の太さがCSSのtransformで拡大されて見える「ゴースト」対策（2026-09-27）。
+  function replayOverlayPane() {
+    return replayMap && replayMap.getPane ? replayMap.getPane('overlayPane') : null;
+  }
+  function hideReplayOverlayPane() {
+    var pane = replayOverlayPane();
+    if (!pane) return;
+    pane.style.transition = 'none';
+    pane.style.opacity = '0';
+  }
+  function fadeInReplayOverlayPane() {
+    var pane = replayOverlayPane();
+    if (!pane) return;
+    // 直前にopacity:0のまま描き直しているので、ここで一度レイアウトを強制してから
+    // transitionを付けないと、0→1が一瞬で切り替わってしまい（アニメにならない）
+    pane.getBoundingClientRect();
+    pane.style.transition = 'opacity 150ms linear';
+    pane.style.opacity = '1';
   }
 
   // 着いた地点の写真を吹き出しの上に出す。複数枚なら、吹き出しを出しているあいだに順に切り替える
@@ -5494,60 +5542,93 @@
 
   // ---------- 初期化 ----------
   // ---------- 入力欄の×（中身を消す）ボタン ----------
-  // URLなどを入れたあと消すのが面倒、という要望より。1行の入力欄（テキスト・URL・検索・メール・数字）を
-  // 編集しているあいだ、中身があれば右端に×を1つだけ出す（iOS標準の「編集中だけ出る消去ボタン」と同じ考え方）。
-  // 入力欄ごとに要素を足すと、親の並び（検索欄の横並び・レビューの2列など）の幅が崩れるので、
-  // 画面に1つだけ置いたボタンを、編集中の欄の上に重ねて動かす。後から描く欄（レビュー項目など）にも効く。
+  // URLなどを入れたあと消すのが面倒、という要望より。1行の入力欄（テキスト・URL・検索・メール・数字）は、
+  // 中身があるあいだ常に右端に×を出す（フォーカスの有無に関係なく見える。iOS標準の消去ボタンと違い、
+  // 「入っているかどうか」が離れた場所からでもひと目で分かるようにする狙い）。
   // 複数行の欄（エピソードなど）は、長文を一度に消してしまうと困るので対象にしない。
+  //
+  // 以前は画面に1つだけ置いたボタンをフォーカス中の欄の上に重ねて動かす方式だったが、
+  // ・フォーカスが外れると消えてしまい、複数の欄を一括で見比べて消す、という本来の要望に合わなかった
+  // ・iOSのキーボード表示でレイアウトが動いたあとに再計算されず、位置がずれることがあった
+  // ため、欄ごとに×を埋め込む方式にした。ただし要素を直接足すと親の並び（検索欄の横並び・
+  // 費用明細の2列など）の幅が崩れるので、入力欄を幅0のラッパーで包み、元の欄が持っていた
+  // flexのサイズ指定（flex-grow/shrink/basis・min-width）をラッパー側に移してから、
+  // 欄自体は width:100% でラッパーいっぱいに広げる（どのレイアウトの親でも崩れないようにするため）。
   var CLEARABLE_TYPES = ['text', 'url', 'search', 'email', 'number'];
-  var clearTarget = null;
+  var CLEAR_WRAP_CLASS = 'ipt-clear-wrap';
 
   function isClearable(el) {
     return !!(el && el.tagName === 'INPUT' && CLEARABLE_TYPES.indexOf(el.type) !== -1 &&
       !el.readOnly && !el.disabled && !el.hasAttribute('data-no-clear'));
   }
 
-  function placeClearButton() {
-    var btn = $('#inputClearBtn');
-    if (!clearTarget || !clearTarget.value || !document.body.contains(clearTarget)) { btn.hidden = true; return; }
-    var r = clearTarget.getBoundingClientRect();
-    if (!r.width) { btn.hidden = true; return; }
-    btn.style.top = (r.top + r.height / 2 - 14) + 'px';
-    btn.style.left = (r.right - 32) + 'px';
-    btn.hidden = false;
-  }
+  function wrapForClearButton(input) {
+    if (!isClearable(input)) return;
+    if (input.parentNode && input.parentNode.classList && input.parentNode.classList.contains(CLEAR_WRAP_CLASS)) return; // 対応済み
+    var cs = window.getComputedStyle(input);
+    var wrap = document.createElement('span');
+    wrap.className = CLEAR_WRAP_CLASS;
+    // 元の欄が親（flexの並び・グリッドなど）から受け取っていたサイズ指定を、そのままラッパーに引き継ぐ。
+    wrap.style.flexGrow = cs.flexGrow;
+    wrap.style.flexShrink = cs.flexShrink;
+    wrap.style.flexBasis = cs.flexBasis;
+    wrap.style.minWidth = cs.minWidth;
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    input.style.width = '100%';
+    input.style.minWidth = '0';
 
-  function initClearButtons() {
     var btn = document.createElement('button');
     btn.type = 'button';
-    btn.id = 'inputClearBtn';
     btn.className = 'input-clear-btn';
     btn.setAttribute('aria-label', '入力を消す');
     btn.textContent = '×';
-    btn.hidden = true;
-    document.body.appendChild(btn);
-    // 押したときに入力欄からフォーカスが外れる（＝ボタンが消える）前に処理する
+    btn.hidden = !input.value;
+    // 押したときに入力欄からフォーカスが外れる前に処理する
     btn.addEventListener('pointerdown', function (e) { e.preventDefault(); });
     btn.addEventListener('click', function () {
-      if (!clearTarget) return;
-      clearTarget.value = '';
-      clearTarget.dispatchEvent(new Event('input', { bubbles: true }));
-      clearTarget.dispatchEvent(new Event('change', { bubbles: true }));
-      clearTarget.focus();
-      placeClearButton();
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      input.focus();
+      btn.hidden = true;
     });
-    document.addEventListener('focusin', function (e) {
-      clearTarget = isClearable(e.target) ? e.target : null;
-      placeClearButton();
+    input.addEventListener('input', function () { btn.hidden = !input.value; });
+    wrap.appendChild(btn);
+  }
+
+  function wrapClearableInputsIn(root) {
+    if (!root || (root.nodeType !== 1 && root.nodeType !== 9)) return;
+    if (root.nodeType === 1 && root.matches && root.matches('input')) wrapForClearButton(root);
+    var inputs = root.querySelectorAll ? root.querySelectorAll('input') : [];
+    for (var i = 0; i < inputs.length; i++) wrapForClearButton(inputs[i]);
+  }
+
+  // 欄の値を、フォームを開いたときの初期化などで input イベントを出さずに直接書き換えている箇所が
+  // いくつかある（例：openEntryForm での #entPlaceSearch のリセット）。そうした変更を漏れなく拾うため、
+  // 軽い間隔でも全欄の表示・非表示を値と突き合わせて直す（欄の数は多くないので負荷は無視できる）。
+  function syncAllClearButtons() {
+    var wraps = document.getElementsByClassName(CLEAR_WRAP_CLASS);
+    for (var i = 0; i < wraps.length; i++) {
+      var input = wraps[i].querySelector('input');
+      var btn = wraps[i].querySelector('.input-clear-btn');
+      if (input && btn) btn.hidden = !input.value;
+    }
+  }
+
+  function initClearButtons() {
+    wrapClearableInputsIn(document);
+    // 費用明細・レビュー項目・移動の情報など、あとから描き足される欄にも効かせる
+    var mo = new MutationObserver(function (mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var added = mutations[i].addedNodes;
+        for (var j = 0; j < added.length; j++) {
+          if (added[j].nodeType === 1) wrapClearableInputsIn(added[j]);
+        }
+      }
     });
-    document.addEventListener('focusout', function () {
-      setTimeout(function () {
-        if (!isClearable(document.activeElement)) { clearTarget = null; placeClearButton(); }
-      }, 0);
-    });
-    document.addEventListener('input', function (e) { if (e.target === clearTarget) placeClearButton(); });
-    window.addEventListener('scroll', placeClearButton, true);
-    window.addEventListener('resize', placeClearButton);
+    mo.observe(document.body, { childList: true, subtree: true });
+    setInterval(syncAllClearButtons, 300);
   }
 
   function init() {
@@ -5592,7 +5673,10 @@
       if (file) handleScanReceipt(file);
     });
     $('#btnCancelWeatherEdit').addEventListener('click', function () { $('#weatherEditPanel').hidden = true; });
-    $('#btnSaveWeatherEdit').addEventListener('click', saveWeatherEdit);
+    $('#weatherPicker').addEventListener('click', function (e) {
+      var opt = e.target.closest('.weather-picker-opt');
+      if (opt) saveWeatherEdit(opt.dataset.code);
+    });
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
