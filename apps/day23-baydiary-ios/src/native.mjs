@@ -19,7 +19,12 @@ if(Capacitor.isNativePlatform()) {
     shareFile:createFileSharer({filesystem:Filesystem,share:Share,cache:Directory.Cache,readBase64}),
     async extractMemo(url,options){
       const target=/^https?:\/\//.test(url)?url:API_BASE+url;
-      return fetch(target,options);
+      try{
+        return await fetch(target,options);
+      }catch(e){
+        if(e.name==='AbortError')throw e;
+        throw new Error('AI接続サーバーに接続できませんでした。デプロイがまだの可能性があります。別のAIで変換したJSONも読み込めます。');
+      }
     }
   };
   document.addEventListener('DOMContentLoaded',()=>{
