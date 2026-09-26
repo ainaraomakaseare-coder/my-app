@@ -884,10 +884,11 @@ function pickNominatimCandidate(list) {
   return best;
 }
 
-async function nominatimSearch(q) {
+async function nominatimSearch(q, near) {
   try {
+    const view = near ? "&viewbox=" + (near.lng - 3) + "," + (near.lat + 3) + "," + (near.lng + 3) + "," + (near.lat - 3) : "";
     const res = await fetch(
-      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=ja&q=" + encodeURIComponent(q),
+      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=ja" + view + "&q=" + encodeURIComponent(q),
       { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
     );
     return res.ok ? pickNominatimCandidate(await res.json()) : null;
@@ -981,20 +982,156 @@ function mapTextCandidates(text) {
 // quick=true：Nominatim（1秒に1回まで）を使わないと分からないものは調べず、{ pending: true } を返す。
 // アプリは座標がすぐ分かるものを先に全部同時に聞き、pendingだったものだけを1.1秒ずつ空けて聞き直す
 // （以前は全部を1.1秒ずつ空けていたので、「地図で場所を探しています」が長かった）。
-async function geocodeMapUrl(raw, quick) {
-  const u = await resolveMapUrl(raw).catch(() => null);
-  if (!u) return null;
-  const parsed = parseMapUrl(u);
-  if (!parsed) return null;
-  if (parsed.coords) return parsed.coords;
-  if (quick) return { pending: true };
-  // お店や住所は具体的な場所なので、重要度が低くても見つかったNominatimの結果を使う
-  const candidates = mapTextCandidates(parsed.text);
+// ---- 海外の施設を日本語の名前で探す（2026-09-26〜） ----
+// 本番の地図リンク57件を調べたら18件で場所が分からなかった。多くは「ドジャースタジアム」「ペトコパーク」
+// 「リオデジャネイロ空港」のようなカタカナの施設名で、OpenStreetMap（Nominatim）は海外の施設を日本語名で
+// 探すのが苦手なため。日本語版ウィキペディアで、題名（または転送元の題名）が名前と合う記事の座標を使う。
+// 「・」空白・かっこ・ヴ/ブなどの違いは同じとみなす。題名が合わない記事は使わない（「ドジャースタジアム」で
+// エンゼル・スタジアムが出るような取り違えを防ぐ）。
+function normPlaceName(s, keepParen) {
+  let t = String(s || "").normalize("NFKC");
+  if (!keepParen) t = t.replace(/\s*[(（][^)）]*[)）]\s*$/, "");
+  return t.replace(/ヴァ/g, "バ").replace(/ヴィ/g, "ビ").replace(/ヴェ/g, "ベ").replace(/ヴォ/g, "ボ").replace(/ヴ/g, "ブ")
+    .replace(/国際/g, "") // 「ロサンゼルス空港」→「ロサンゼルス国際空港」
+    .replace(/[\s・･\-‐ー_「」()（）=＝]/g, "").toLowerCase();
+}
+
+// 名前と記事の題名の合い方：3＝同じ、2＝題名が名前を含む、0＝合わない。
+// 「名前が題名を含む」（「フラミンゴ ラスベガス」と「ラスベガス」）は町全体の座標になってしまうので使わない。
+function placeNameRank(query, title) {
+  const q = normPlaceName(query), t = normPlaceName(title), tp = normPlaceName(title, true);
+  if (!q || !t) return 0;
+  if (q === t || q === tp) return 3;
+  if (q.length >= 3 && t.includes(q)) return 2;
+  return 0;
+}
+
+const WIKI_UA = { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" };
+
+// 記事（転送元の題名でもよい）の座標。日本語版の記事に座標が無いとき（「フラミンゴ・ラスベガス」など）は、
+// 記事につながったウィキデータの「位置」を使う。返り値は { 題名: {lat,lng} }
+async function wikipediaCoords(titles) {
+  const res = await fetch("https://ja.wikipedia.org/w/api.php?action=query&format=json&redirects=1&prop=coordinates|pageprops&ppprop=wikibase_item&coprimary=all&titles=" + encodeURIComponent(titles.join("|")), { headers: WIKI_UA });
+  const data = res.ok ? await res.json() : null;
+  const q = (data && data.query) || {};
+  const from = {}; // 最終的な題名 → 聞いた題名たち
+  titles.forEach((t) => { from[t] = [t]; });
+  (q.normalized || []).concat(q.redirects || []).forEach((r) => { from[r.to] = (from[r.to] || []).concat(from[r.from] || [r.from]); });
+  const out = {}, needData = {};
+  Object.values(q.pages || {}).forEach((pg) => {
+    const c = pg.coordinates && pg.coordinates[0];
+    const pt = c ? validLatLng(c.lat, c.lon) : null;
+    if (pt) (from[pg.title] || [pg.title]).forEach((t) => { out[t] = pt; });
+    else if (pg.pageprops && pg.pageprops.wikibase_item) needData[pg.pageprops.wikibase_item] = from[pg.title] || [pg.title];
+  });
+  const ids = Object.keys(needData);
+  if (ids.length) {
+    const r2 = await fetch("https://www.wikidata.org/w/api.php?action=wbgetentities&format=json&props=claims&ids=" + ids.join("|"), { headers: WIKI_UA });
+    const d2 = r2.ok ? await r2.json() : null;
+    ids.forEach((id) => {
+      const e = d2 && d2.entities && d2.entities[id];
+      const v = e && e.claims && e.claims.P625 && e.claims.P625[0].mainsnak.datavalue && e.claims.P625[0].mainsnak.datavalue.value;
+      const pt = v ? validLatLng(v.latitude, v.longitude) : null;
+      if (pt) needData[id].forEach((t) => { if (!out[t]) out[t] = pt; });
+    });
+  }
+  return out;
+}
+
+// 日本語版ウィキペディアで、題名（または転送元の題名）が名前と合う記事の座標。
+// ①名前そのものの題名・転送（「NRGスタジアム」→「リライアント・スタジアム」）②検索して題名が合う記事
+async function wikipediaPlace(name) {
+  try {
+    const direct = await wikipediaCoords([name]);
+    if (direct[name]) return direct[name];
+    const res = await fetch("https://ja.wikipedia.org/w/api.php?action=query&format=json&list=search&srlimit=10&srprop=redirecttitle&srsearch=" + encodeURIComponent(name), { headers: WIKI_UA });
+    const data = res.ok ? await res.json() : null;
+    const hits = ((data && data.query && data.query.search) || [])
+      .map((h) => ({ title: h.title, rank: Math.max(placeNameRank(name, h.title), h.redirecttitle ? placeNameRank(name, h.redirecttitle) : 0) }))
+      .filter((h) => h.rank).sort((a, b) => b.rank - a.rank).slice(0, 5);
+    if (!hits.length) return null;
+    const cs = await wikipediaCoords(hits.map((h) => h.title));
+    for (const h of hits) if (cs[h.title]) return cs[h.title];
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// 「リオデジャネイロ空港」のように「町の名前＋空港」で、空港の正式名と違うとき：
+// 町の場所を探し、そのまわり（約40km）でいちばん大きな空港（OpenStreetMapの重要度が最大）を使う
+async function cityAirport(text, nears) {
+  const m = /^(.+?)(国際)?空港$/.exec(text.replace(/\s+/g, ""));
+  if (!m) return null;
+  const city = (await wikipediaPlace(m[1])) || (await nominatimSearch(m[1], nears && nears[0]));
+  if (!city || !nearOk(city, nears, GEOCODE_NAME_KM)) return null;
+  const d = 0.4;
+  try {
+    const res = await fetch(
+      "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=10&bounded=1&q=airport&viewbox=" +
+        (city.lng - d) + "," + (city.lat + d) + "," + (city.lng + d) + "," + (city.lat - d),
+      { headers: WIKI_UA }
+    );
+    const list = res.ok ? await res.json() : [];
+    const best = (Array.isArray(list) ? list : [])
+      .filter((x) => x.category === "aeroway" && x.type === "aerodrome")
+      .sort((a, b) => (b.importance || 0) - (a.importance || 0))[0];
+    return best ? validLatLng(Number(best.lat), Number(best.lon)) : null;
+  } catch {
+    return null;
+  }
+}
+
+// near：同じ旅行の前後の場所（最大2つ）。どれかから km 以内の結果だけを使う
+// （「シェラトン」で広島のホテルが出るような、チェーン店・同名の別の場所を防ぐ）。
+// 名前全体が記事の題名と合ったときは信頼できるので、国内線の距離（ロサンゼルス→ヒューストンの約2200km）も許す。
+const GEOCODE_NEAR_KM = 2000;
+const GEOCODE_NAME_KM = 5000;
+function nearOk(pt, nears, km) {
+  if (!pt || !nears || !nears.length) return !!pt;
+  return nears.some((n) => distanceKm(n, pt) <= (km || GEOCODE_NEAR_KM));
+}
+
+// 名前（施設名・住所）から場所を探す：①Nominatim（住所の段階的な簡略化つき）→②日本語版ウィキペディア
+// →③「町＋空港」→④空白で区切った一部（長い順。近くの場所が分かっているときだけ。町の名前だけが合えば町の座標）
+async function geocodePlaceName(text, nears) {
+  const near = nears && nears[0];
+  const pause = () => new Promise((ok) => setTimeout(ok, 1100)); // Nominatimは1秒1回まで
+  const candidates = mapTextCandidates(text);
   for (let i = 0; i < candidates.length; i++) {
-    if (i > 0) await new Promise((ok) => setTimeout(ok, 1100)); // Nominatimは1秒1回まで
-    const r = await nominatimSearch(candidates[i]);
+    if (i > 0) await pause();
+    const r = await nominatimSearch(candidates[i], near);
+    if (r && nearOk(r, nears)) return r;
+  }
+  const clean = String(text).normalize("NFKC").replace(/〒\s*\d{3}-\d{4}/g, " ").replace(/\s+/g, " ").trim();
+  const w = await wikipediaPlace(clean);
+  if (w && nearOk(w, nears, GEOCODE_NAME_KM)) return w;
+  await pause();
+  const air = await cityAirport(clean, nears);
+  if (air) return air;
+  if (nears && nears.length) {
+    const parts = [...new Set(clean.split(" ").filter((x) => x.length >= 2))].sort((a, b) => b.length - a.length);
+    for (const part of parts.slice(0, 3)) {
+      if (part === clean) continue;
+      const wp = await wikipediaPlace(part);
+      if (wp && nearOk(wp, nears)) return wp;
+    }
+  }
+  return null;
+}
+
+
+// hint：予定の見出し。地図のリンクに座標も名前も無い（Googleの内部番号だけの）ときの手がかり
+async function geocodeMapUrl(raw, quick, nears, hint) {
+  const u = await resolveMapUrl(raw).catch(() => null);
+  const parsed = u ? parseMapUrl(u) : null;
+  if (parsed && parsed.coords) return parsed.coords;
+  if (quick) return { pending: true };
+  if (parsed && parsed.text) {
+    const r = await geocodePlaceName(parsed.text, nears);
     if (r) return r;
   }
+  if (hint) return geocodePlaceName(hint, nears);
   return null;
 }
 
@@ -1150,17 +1287,22 @@ async function getRoute(url, headers, ctx) {
   return json(body, 200, headers);
 }
 
-async function geocodeForReplay(q, headers, ctx, quick) {
+// near：「緯度,経度;緯度,経度」（同じ旅行の前後の場所）、hint：予定の見出し
+async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam) {
   q = (q || "").trim();
   const isUrl = /^https?:\/\//i.test(q);
   if (!q || q.length > (isUrl ? 2000 : 100)) return json({ error: "invalid_input" }, 400, headers);
+  const nears = String(nearParam || "").split(";").map(parseLatLng).filter(Boolean).slice(0, 2);
+  const hint = isStr(hintParam || "", 100) ? String(hintParam || "").trim() : "";
   const cache = caches.default;
-  const cacheKey = new Request("https://tabilog-geocode.cache/v2?q=" + encodeURIComponent(q));
+  // 近くの場所・見出しで結果が変わるので、キャッシュの鍵に含める（v4：探し方を変えたので作り直し）
+  const cacheKey = new Request("https://tabilog-geocode.cache/v4?q=" + encodeURIComponent(q) +
+    "&near=" + nears.map((n) => n.lat.toFixed(0) + "," + n.lng.toFixed(0)).join(";") + "&hint=" + encodeURIComponent(hint));
   const hit = await cache.match(cacheKey);
   if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
 
   if (quick && !isUrl) return json({ pending: true }, 200, headers);
-  const result = isUrl ? await geocodeMapUrl(q, quick) : await geocodeText(q);
+  const result = isUrl ? await geocodeMapUrl(q, quick, nears, hint) : await geocodeText(q);
   if (result && result.pending) return json({ pending: true }, 200, headers); // まだ調べていないのでキャッシュしない
   const body = result ? { found: true, lat: result.lat, lng: result.lng } : { found: false };
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
@@ -2935,7 +3077,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/comments\/([^/]+)\/report$/))) return reportComment(m[1], request, env, headers, ctx);
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
-    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1");
+    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"));
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
     if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
     if (method === "GET" && path === "/places/search") return searchPlaces(url.searchParams.get("q"), headers, ctx);

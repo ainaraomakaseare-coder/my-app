@@ -398,7 +398,7 @@ ok('buildReplayTimeline: 長い吹き出し（60文字）は、短いものよ�
 eq('tzOffsetMinutes: 日本は+9時間', T.tzOffsetMinutes('Asia/Tokyo', '2026-12-12', '20:00'), 540);
 eq('tzOffsetMinutes: ロンドンは冬は+0・夏は+1（サマータイム）',
   [T.tzOffsetMinutes('Europe/London', '2026-12-12', '10:00'), T.tzOffsetMinutes('Europe/London', '2026-07-01', '10:00')], [0, 60]);
-eq('tzOffsetMinutes: ハワイは−10時間', T.tzOffsetMinutes('Pacific/Honolulu', '2026-12-12', '10:00'), -600);
+eq('tzOffsetMinutes: ハワイは-10時間', T.tzOffsetMinutes('Pacific/Honolulu', '2026-12-12', '10:00'), -600);
 eq('tzOffsetMinutes: タイムゾーンが無ければnull', T.tzOffsetMinutes('', '2026-12-12', '10:00'), null);
 
 // 日本20:00発 → ハワイ同じ日の10:00着（日付変更線をまたぐ）。現地時間のままだと着が先に並んでしまっていた
@@ -421,20 +421,20 @@ eq('assignBlockZones: 移動の予定は出発地（直前の予定）の時差�
   { a: 'Asia/Tokyo', b: 'Asia/Tokyo', c: 'Europe/London' });
 eq('assignBlockZones: 予定に場所が無ければ、その日の場所の時差', T.assignBlockZones([{ id: 'x', date: '2026-12-14', time: '10:00', category: 'food' }], {}, { '2026-12-14': 'Europe/Paris' }, 'Asia/Tokyo'), { x: 'Europe/Paris' });
 
-eq('travelDuration: 日本20:00発→ロンドン翌01:00着（冬・時差−9時間）は14時間、到着は翌日', T.travelDuration('20:00', '01:00', 540, 0), { minutes: 840, dayShift: 1 });
+eq('travelDuration: 日本20:00発→ロンドン翌01:00着（冬・時差-9時間）は14時間、到着は翌日', T.travelDuration('20:00', '01:00', 540, 0), { minutes: 840, dayShift: 1 });
 eq('travelDuration: 日本20:00発→ハワイ同日10:00着は9時間、到着は同じ日付', T.travelDuration('20:00', '10:00', 540, -600), { minutes: 540, dayShift: 0 });
 eq('travelDuration: 時差が分からなければ今までどおり', T.travelDuration('22:00', '06:15'), { minutes: 495, dayShift: 1 });
 eq('travelLogText: 時差と「翌」を出す',
   T.travelLogText({ category: 'transport', transport: 'plane', label: 'ロンドンへ', _offset: 540 }, { costItems: [], travel: { from: '羽田', to: 'ヒースロー', depart: '20:00', arrive: '01:00' } }, 0).split('\n')[2],
-  '20:00発 → 翌01:00着（14時間・時差−9時間）');
-eq('offsetDiffText', [T.offsetDiffText(-540), T.offsetDiffText(60), T.offsetDiffText(330)], ['−9時間', '+1時間', '+5時間30分']);
+  '20:00発 → 翌01:00着（14時間・時差-9時間）');
+eq('offsetDiffText', [T.offsetDiffText(-540), T.offsetDiffText(60), T.offsetDiffText(330)], ['-9時間', '+1時間', '+5時間30分']);
 
 // 地図でふりかえる：着の方が現地時間では早くても、時間軸では発の後。時計は現地時間
 var tzStops = T.replayStops({ startDate: '2026-12-12', endDate: '2026-12-12' }, tzBlocks);
 var tzTl = T.buildReplayTimeline(tzStops, {});
 ok('buildReplayTimeline: 時差を考えた時間軸で、着(10:00ハワイ)は発(20:00日本)の後', tzTl.stops[1].t > tzTl.stops[0].t);
 var tzAtArr = T.replayStateAt(tzTl, tzTl.stops[1].r + 0.01);
-eq('replayStateAt: 着いたら時計は現地時間（10:00）、時差は−19時間', [tzAtArr.hhmm, tzAtArr.offsetDiff], ['10:00', -1140]);
+eq('replayStateAt: 着いたら時計は現地時間（10:00）、時差は-19時間', [tzAtArr.hhmm, tzAtArr.offsetDiff], ['10:00', -1140]);
 eq('replayStateAt: 出発のときの時計は日本時間', T.replayStateAt(tzTl, tzTl.stops[0].r + 0.01).hhmm, '20:00');
 
 /* ---- 地図でふりかえる：日ごとのジャンプ・前後の予定 ---- */

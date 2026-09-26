@@ -185,9 +185,9 @@
     return blocks;
   }
 
-  // 時差の差（分）を「+1時間」「−8時間」「+5時間30分」にする
+  // 時差の差（分）を「+1時間」「-8時間」「+5時間30分」にする（+に合わせて-も半角）
   function offsetDiffText(diffMin) {
-    var sign = diffMin < 0 ? '−' : '+', a = Math.abs(diffMin), h = Math.floor(a / 60), m = a % 60;
+    var sign = diffMin < 0 ? '-' : '+', a = Math.abs(diffMin), h = Math.floor(a / 60), m = a % 60;
     return sign + (h ? h + '時間' : '') + (m ? m + '分' : '') + (!h && !m ? '0時間' : '');
   }
 
@@ -3002,7 +3002,9 @@
         return p.then(function (needWait) {
           if (!stillHere()) return false;
           return (needWait ? wait(1100) : Promise.resolve()).then(function () {
-            return api('/geocode?q=' + encodeURIComponent(it.q)).then(function (res) {
+            var order = Core.sortBlocks(state.blocks);
+            var coords = order.map(function (b) { return coordsByBlock[b.id] || null; });
+            return api(geocodeFullPath(it.q, it.b.label || '', coords, order.indexOf(it.b))).then(function (res) {
               var c = remember(it.q, res); if (c) coordsByBlock[it.b.id] = c;
               return !(res && res.cached);
             }).catch(function () { return false; });
@@ -4546,10 +4548,25 @@
   // 見つからなかった地名は7日間は聞き直さない（通信エラーのときは記録せず、次回また聞く）。
   // 聞く内容を「見出しから推測した地名」から「地図のURL」に変えたので、キーを-v2にして古い結果（同名の
   // 別の場所になっていたものを含む）は使わず、読み込み時に消す。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v2';
-  try { localStorage.removeItem('tabilog:geocode-cache'); } catch (e) {}
+  // -v3（2026-09-26〜）：Worker側で海外の施設名（カタカナ）もウィキペディアで探せるようにしたので、
+  // 以前「見つからない」と覚えた結果を捨てて調べ直す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v3';
+  try { localStorage.removeItem('tabilog:geocode-cache'); localStorage.removeItem('tabilog:geocode-cache-v2'); } catch (e) {}
+  // 住所・店名から探すときに添える「同じ旅行の前後の場所」（旅行の順で、直前と直後に分かっている場所）。
+  // Worker はこの近くを優先し、2000km以上離れた結果（同名の別の場所）は使わない。
+  function geocodeNearParam(coords, i) {
+    var near = [];
+    for (var a = i - 1; a >= 0; a--) if (coords[a]) { near.push(coords[a]); break; }
+    for (var b = i + 1; b < coords.length; b++) if (coords[b]) { near.push(coords[b]); break; }
+    return near.length ? '&near=' + near.map(function (c) { return c.lat.toFixed(4) + ',' + c.lng.toFixed(4); }).join(';') : '';
+  }
+  function geocodeFullPath(q, hint, coords, i) {
+    return '/geocode?q=' + encodeURIComponent(q) + (hint ? '&hint=' + encodeURIComponent(hint.slice(0, 100)) : '') + geocodeNearParam(coords, i);
+  }
   var GEOCODE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-  function geocodeQueries(queries, onProgress) {
+  // items：[{ q: 地図のURL, hint: 予定の見出し }]（旅行の順）。返り値は { URL: {lat,lng} | null }
+  function geocodeQueries(items, onProgress) {
+    var queries = items.map(function (it) { return it.q; });
     var cache;
     try { cache = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch (e) { cache = {}; }
     var now = Date.now(), result = {}, todo = [];
@@ -4579,7 +4596,10 @@
       return pending.reduce(function (p, q) {
         return p.then(function (needWait) {
           return (needWait ? new Promise(function (ok) { setTimeout(ok, 1100); }) : Promise.resolve()).then(function () {
-            return api('/geocode?q=' + encodeURIComponent(q)).then(function (res) {
+            // 前後の場所：1回目と、ここまでの2回目で分かった場所
+            var coords = queries.map(function (x) { return result[x] || null; });
+            var i = queries.indexOf(q), hint = (items[i] && items[i].hint) || '';
+            return api(geocodeFullPath(q, hint, coords, i)).then(function (res) {
               record(q, res);
               return !(res && res.cached);
             }).catch(function () { result[q] = null; done++; return false; });
@@ -4628,7 +4648,7 @@
     replayToken = token;
     Promise.all([
       loadLeaflet(),
-      geocodeQueries(stops.map(function (s) { return s.query; }), function (done, total) {
+      geocodeQueries(stops.map(function (s) { return { q: s.query, hint: s.label }; }), function (done, total) {
         if (replayToken === token) status.textContent = '地図で場所を探しています…（' + done + '/' + total + '）';
       })
     ]).then(function (res) {
