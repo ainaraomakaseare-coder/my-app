@@ -261,3 +261,57 @@ v4→v5に、クライアント（`app.js`）のlocalStorageのキャッシュ�
   ようにした（`node worker/test/geo-decode.test.mjs`）。
 - 選び方を変えたので、`/geocode`のキャッシュの鍵をv5→v6に、クライアントのlocalStorageのキャッシュキーも
   v4→v5に上げてあり、以前の結果（取り違えていたものを含む）は自動的に調べ直される。DBのスキーマ変更は無い。
+
+## 地図でふりかえるの準備を速くする：座標のD1保存＋Google Text Search（2026-09-26 追加）
+
+「地図でふりかえる」を開くたびに、記録の地図URLを毎回Nominatim・ウィキペディア等でre-geocodeしていた
+（Cache APIは無料だがcoloごとに別で、キャッシュの鍵も探し方を変えるたびに上げ直していたため、実質
+毎回に近かった）のを、1回だけで済むようにした（docs/adr/0011）。**wrangler deployより先に**本番環境で
+1回だけ実行すること（逆順だと記録の保存がSQLエラーになる）。
+
+```sh
+npx wrangler d1 execute tabilog-db --remote --file migrations/0020_entry_map_coords.sql
+```
+
+- `entries`に`map_lat`・`map_lng`・`map_geocoded_url`（その座標がどの`map_url`に対するものか）・
+  `map_geocoded_at`を追加した（`migrations/0020_entry_map_coords.sql`）。トリップ・記録のAPIは、
+  `map_geocoded_url`が今の`map_url`と一致するときだけ`mapLat`/`mapLng`を返す（地図のリンクを編集したら
+  一致しなくなり、古い座標を返さず調べ直させる）。
+- 記録の保存（`createEntry`/`updateEntry`）は、地図URLが新規に付いた・変わった・まだ座標を求めていない
+  ときだけ、`ctx.waitUntil`で座標を裏計算してD1に書く（保存の返事は待たせない。`backgroundGeocodeEntry`）。
+  この判定は純粋関数`entryNeedsGeocode`（`worker/src/geo-decode.js`）に切り出し、
+  `worker/test/geo-decode.test.mjs`で単体テストできる。
+- 既存データ（作成済みの記録）の座標も後追いで埋まるよう、`GET /geocode`に`entry=<entryId>`を付けて呼ぶと、
+  座標が求まったとき、そのentryの`map_url`が今回のクエリ（`q`）と一致するときだけD1に保存する。`entry`は
+  `ent_`+32桁16進の形式でなければ無視する（`isValidEntryId`。他人の行を書き換えられないよう、形式検証＋
+  `map_url`一致の両方を見る）。クライアント（`app.js`の`geocodeQueries`・`loadTripZones`）は、記録に
+  `mapLat`/`mapLng`があればそれを直接使って`/geocode`を呼ばず、無ければ`&entry=`を付けて呼ぶ。端末の
+  localStorageキャッシュは、サーバー保存済み座標の次の層として残している。
+- `GOOGLE_API_KEY`があるときは、座標もS2セルIDも無い、名前・住所だけの地図リンクをNominatimより先に
+  Google Places API (New)のText Search Essentials（`POST /v1/places:searchText`、
+  `X-Goog-FieldMask: places.id`のみ＝IDだけを返す無料・無制限のSKU）→候補の先頭1件だけPlace Details
+  Essentials（`X-Goog-FieldMask: location`のみ）で探す（`googleTextSearchPlace`）。近くの場所（`nears`）が
+  あれば`locationBias`（半径50km）で絞り込み、既存の`nearOk`ガードにも通す。キーが無い・失敗・0件のときは
+  これまでどおりNominatim等のチェーンに回る（`geocodePlaceName`の先頭に追加）。Googleの結果はCache APIに
+  置かず、D1（entryの行）に保存する。
+
+## 見出し（hint）からの当てずっぽうをやめた（2026-09-26 追加）
+
+地図のリンクに座標も店名も入らない（Googleの内部番号だけの共有リンク、`query=undefined,undefined`の
+ように壊れて保存されたリンクなど）とき、これまでは予定の見出し（`hint`。例：「ユニバーサル」）を手がかりに
+場所を推測していた（`geocodeMapUrl`）。しかしこれは「リンクの中身」ではなく「見出しの文字列だけからの
+当てずっぽう」で、ありふれた見出しだと無関係な場所に化けることがあったため、ユーザーの方針で
+やめた（docs/adr/0008）。
+
+- `geocodeMapUrl`から、`hint`を使った`geocodePlaceName`呼び出しを削除した。リンクの中の文字列（店名・
+  住所）からの検索（Google Text Search・Nominatim・ウィキペディア）はこれまでどおり使う。
+- `GET /geocode`の`hint=`パラメータ自体は、古いクライアントが送ってきても壊れないよう受け取るが、
+  もう使わない（`geocodeForReplay`）。`backgroundGeocodeEntry`・`createEntry`/`updateEntry`も
+  予定の見出し（block.label）を渡さなくなった。
+- リンクから場所が分からない予定は「場所の分からない出来事」のまま扱い、地図でふりかえるの乗り物は
+  直前の地点にとどまる（`Core.buildReplayTimeline`は元から`located: false`をそのまま扱えるので変更なし）。
+- 結果が変わりうるので、`/geocode`のCache APIの鍵をv6→v7に、クライアントのlocalStorageのキャッシュ
+  キーもv6→v7に上げた。
+- クライアント側（`app.js`の`replayPlaceEntry`）で、`query=undefined,undefined`のように壊れた地図
+  リンクは地図が無いのと同じに扱うようにし（そのブロックには`/geocode`自体を呼ばない）、`replayPlaceQuery`
+  にテストを足した（`test/data.test.js`）。DBのスキーマ変更は無い。

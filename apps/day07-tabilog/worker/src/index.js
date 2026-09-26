@@ -13,6 +13,7 @@ import { parseReceiptText } from "./receipt-parse.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
+  isValidEntryId, entryNeedsGeocode,
 } from "./geo-decode.js";
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
@@ -484,7 +485,7 @@ function validEntryInput(x) {
 }
 
 function rowToEntry(row) {
-  return {
+  const entry = {
     id: row.id,
     blockId: row.block_id,
     episode: row.episode,
@@ -503,6 +504,31 @@ function rowToEntry(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+  // 地図の座標（Part A、2026-09-26〜）：map_geocoded_urlが今のmap_urlと同じときだけ返す。
+  // 地図のリンクを編集したら一致しなくなり、クライアントは古い座標を使わず調べ直す
+  // （entryNeedsGeocodeが同じ判定をサーバー側の裏の再計算のトリガーにも使っている）。
+  if (row.map_url && row.map_geocoded_url === row.map_url && typeof row.map_lat === "number" && typeof row.map_lng === "number") {
+    entry.mapLat = row.map_lat;
+    entry.mapLng = row.map_lng;
+  }
+  return entry;
+}
+
+// 記録の地図URLの座標を裏で求めてD1に保存する（保存の返事を遅らせないため、呼び出し側はctx.waitUntilで包む）。
+// 保存が終わった時点でmap_urlがまだ渡した値と同じときだけ書き込む
+// （書いている間に別の値へ編集されていたら、古い座標を新しいURLに紐付けてしまわないよう何もしない）。
+// 見出し（block.label）は手がかりに使わない（2026-09-26、geocodeMapUrlの注記のとおり）。
+async function backgroundGeocodeEntry(env, entryId, mapUrl) {
+  if (!mapUrl) return;
+  try {
+    const result = await geocodeMapUrl(mapUrl, false, [], env);
+    if (!result || result.pending || typeof result.lat !== "number" || typeof result.lng !== "number") return;
+    await env.DB.prepare(
+      "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=? WHERE id=? AND map_url=?"
+    ).bind(result.lat, result.lng, mapUrl, nowIso(), entryId, mapUrl).run();
+  } catch {
+    // 裏の処理なので、失敗しても記録の保存自体には影響させない（次の開くタイミングでまた試す）
+  }
 }
 
 function parseJsonObject(text) {
@@ -514,7 +540,7 @@ function parseJsonObject(text) {
   }
 }
 
-async function createEntry(blockId, request, env, headers) {
+async function createEntry(blockId, request, env, headers, ctx) {
   const block = await env.DB.prepare("SELECT id FROM blocks WHERE id = ?").bind(blockId).first();
   if (!block) return json({ error: "block_not_found" }, 404, headers);
   let data;
@@ -553,10 +579,14 @@ async function createEntry(blockId, request, env, headers) {
       row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
     )
     .run();
+  // 地図URLが付いていたら、返事を待たせず裏で座標を求めてD1に保存しておく（Part A、2026-09-26〜。
+  // 次に「地図でふりかえる」を開いたときはもう探しに行かなくてよい）。
+  const newMapUrl = (row.map_url || "").trim();
+  if (ctx && newMapUrl) ctx.waitUntil(backgroundGeocodeEntry(env, row.id, newMapUrl));
   return json(rowToEntry(row), 201, headers);
 }
 
-async function updateEntry(id, request, env, headers) {
+async function updateEntry(id, request, env, headers, ctx) {
   const existing = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
   if (!existing) return json({ error: "not_found" }, 404, headers);
   let data;
@@ -569,6 +599,7 @@ async function updateEntry(id, request, env, headers) {
   const cur = rowToEntry(existing);
   const merged = { ...cur, ...data };
   const t = nowIso();
+  const newMapUrl = (merged.mapUrl || "").trim();
   await env.DB.prepare(
     `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
   )
@@ -576,10 +607,14 @@ async function updateEntry(id, request, env, headers) {
       (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
       JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
       JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
-      merged.mapUrl || "", merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
+      newMapUrl, merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
       JSON.stringify(cleanTravel(merged.travel)), t, id
     )
     .run();
+  // 地図URLが変わった、またはまだ座標を求めていないときだけ、裏で座標を求め直す（Part A）。
+  if (ctx && entryNeedsGeocode(existing.map_url, existing.map_geocoded_url, newMapUrl)) {
+    ctx.waitUntil(backgroundGeocodeEntry(env, id, newMapUrl));
+  }
   const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
   return json(rowToEntry(updated), 200, headers);
 }
@@ -991,7 +1026,8 @@ function parseMapUrl(u) {
   m = /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/.exec(u.pathname);
   if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
   m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
-  // 壊れた地図URL（「undefined,undefined」など）を地名として探さない（エチオピアに飛んだことがある）
+  // 壊れた地図URL（「undefined,undefined」など。クライアント側の不具合で保存されてしまうことがある）を
+  // 地名として探さない（エチオピアに飛んだことがある）
   let text = /^(undefined|null|NaN)(\s*,\s*(undefined|null|NaN))?$/i.test(q) ? "" : q;
   if (!text && m) {
     try { text = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { text = ""; }
@@ -1130,9 +1166,48 @@ function nearOk(pt, nears, km) {
   return nears.some((n) => distanceKm(n, pt) <= (km || GEOCODE_NEAR_KM));
 }
 
-// 名前（施設名・住所）から場所を探す：①Nominatim（住所の段階的な簡略化つき）→②日本語版ウィキペディア
-// →③「町＋空港」→④空白で区切った一部（長い順。近くの場所が分かっているときだけ。町の名前だけが合えば町の座標）
-async function geocodePlaceName(text, nears) {
+// Places API (New) の Text Search Essentials（IDのみ。無料・無制限のSKU、docs/adr/0011）→
+// Place Details Essentials（座標のみ）の順で、施設名・住所から座標を探す（Part B、2026-09-26〜）。
+// Nominatim（1秒1回まで）より先に試すことで、海外の施設名などの初回の準備を速くする。
+// 候補が複数返っても、詳細（Place Details）を聞くのは先頭の1件だけ（locationBiasで絞り込み済みのものを
+// 信用する。複数件の詳細を聞くと無料枠を余計に消費するため）。GOOGLE_API_KEYが無い・失敗した・0件
+// だったときはnullを返し、呼び出し側でこれまでどおりNominatim等の予備チェーンに回す。
+async function googleTextSearchPlace(text, nears, env) {
+  if (!env || !env.GOOGLE_API_KEY) return null;
+  try {
+    const body = { textQuery: text, languageCode: "ja", maxResultCount: 5 };
+    if (nears && nears.length) {
+      body.locationBias = { circle: { center: { latitude: nears[0].lat, longitude: nears[0].lng }, radius: 50000 } };
+    }
+    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "places.id", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const places = Array.isArray(data.places) ? data.places : [];
+    const id = places[0] && places[0].id;
+    if (!id) return null;
+    const res2 = await fetch("https://places.googleapis.com/v1/places/" + encodeURIComponent(id) + "?languageCode=ja", {
+      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "location" },
+    });
+    if (!res2.ok) return null;
+    const data2 = await res2.json();
+    return (data2.location && validLatLng(data2.location.latitude, data2.location.longitude)) || null;
+  } catch {
+    return null;
+  }
+}
+
+// 名前（施設名・住所）から場所を探す：①（GOOGLE_API_KEYがあれば）Google Text Search→②Nominatim
+// （住所の段階的な簡略化つき）→③日本語版ウィキペディア→④「町＋空港」→⑤空白で区切った一部
+// （長い順。近くの場所が分かっているときだけ。町の名前だけが合えば町の座標）
+async function geocodePlaceName(text, nears, env) {
+  if (env && env.GOOGLE_API_KEY) {
+    const g = await googleTextSearchPlace(text, nears, env).catch(() => null);
+    if (g && nearOk(g, nears)) return g;
+  }
   const near = nears && nears[0];
   const pause = () => new Promise((ok) => setTimeout(ok, 1100)); // Nominatimは1秒1回まで
   const candidates = mapTextCandidates(text);
@@ -1159,17 +1234,25 @@ async function geocodePlaceName(text, nears) {
 }
 
 
-// hint：予定の見出し。地図のリンクに座標も名前も無い（Googleの内部番号だけの）ときの手がかり
-async function geocodeMapUrl(raw, quick, nears, hint) {
+// env：GOOGLE_API_KEYがあればgeocodePlaceName内でGoogle Text Search（Part B）を先に試す。
+//
+// 【hint（予定の見出し）を手がかりに使うのをやめた経緯、2026-09-26】以前は、地図のリンクに座標も名前も
+// 無い（Googleの内部番号だけの）ときの最後の手がかりとして見出し（hint）から場所を推測していた。
+// しかしこれは「リンクの中の情報」ではなく「見出しの文字列だけからの当てずっぽう」で、見出しがありふれた
+// 言葉（「ユニバーサル」など）だと無関係な場所（海外の同名施設など）に化けることがあった。ユーザーの方針
+// により、「リンクから場所が分からないときは、無理に当てず、前の地点にとどまらせる」ことにした
+// （地図でふりかえるの`Core.buildReplayTimeline`は、located=falseの地点をそのまま「場所の分からない
+// 出来事」として扱い、直前の地点に居続けるようになっている）。リンクの中の文字列（店名・住所）からの
+// 検索（Google Text Search・Nominatim・ウィキペディア）はこれまでどおり使う。
+async function geocodeMapUrl(raw, quick, nears, env) {
   const u = await resolveMapUrl(raw).catch(() => null);
   const parsed = u ? parseMapUrl(u) : null;
   if (parsed && parsed.coords) return parsed.coords;
   if (quick) return { pending: true };
   if (parsed && parsed.text) {
-    const r = await geocodePlaceName(parsed.text, nears);
+    const r = await geocodePlaceName(parsed.text, nears, env);
     if (r) return r;
   }
-  if (hint) return geocodePlaceName(hint, nears);
   return null;
 }
 
@@ -1401,26 +1484,44 @@ async function getRoute(url, headers, ctx) {
   return json(body, 200, headers);
 }
 
-// near：「緯度,経度;緯度,経度」（同じ旅行の前後の場所）、hint：予定の見出し
-async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam) {
+// near：「緯度,経度;緯度,経度」（同じ旅行の前後の場所）、hint：予定の見出し、
+// entry：呼び出し元の記録(entry)のid（Part A、2026-09-26〜）。付いていて、見つかった座標がある
+// ときは、そのentryの行のmap_url（=このqと一致するときだけ）に座標を保存し、次回このAPIを
+// 呼ばなくてよいようにする（既存データのための後追い保存。entry create/updateの裏処理が対象外の
+// ものにも効く）。他人の行を書き換えられないよう、entry idの形式検証＋map_url一致の両方を見る。
+async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam, entryParam, env) {
   q = (q || "").trim();
   const isUrl = /^https?:\/\//i.test(q);
   if (!q || q.length > (isUrl ? 2000 : 100)) return json({ error: "invalid_input" }, 400, headers);
   const nears = String(nearParam || "").split(";").map(parseLatLng).filter(Boolean).slice(0, 2);
-  const hint = isStr(hintParam || "", 100) ? String(hintParam || "").trim() : "";
+  // hintParam（予定の見出し）は古いクライアントのために受け取るだけで、もう使わない
+  // （2026-09-26、下のgeocodeMapUrlの注記のとおり見出しからの当てずっぽうをやめたため）。
+  const entryId = isValidEntryId(entryParam) ? entryParam : "";
   const cache = caches.default;
-  // 近くの場所・見出しで結果が変わるので、キャッシュの鍵に含める
-  // （v6：同じ名前の候補が複数あるとき、旅行のほかの場所に近いものを選ぶよう選び方を変えたので、
-  // それまでの結果（「赤レンガ倉庫」→敦賀、など）を作り直す）
-  const cacheKey = new Request("https://tabilog-geocode.cache/v6?q=" + encodeURIComponent(q) +
-    "&near=" + nears.map((n) => n.lat.toFixed(0) + "," + n.lng.toFixed(0)).join(";") + "&hint=" + encodeURIComponent(hint));
+  // 近くの場所で結果が変わるので、キャッシュの鍵に含める（hintはもう結果に影響しないので鍵から外した）。
+  // v7：見出し（hint）からの当てずっぽうをやめた（無関係な場所に飛ぶことがあったため）ので、
+  // それに影響されていたかもしれない以前の結果を作り直す。
+  const cacheKey = new Request("https://tabilog-geocode.cache/v7?q=" + encodeURIComponent(q) +
+    "&near=" + nears.map((n) => n.lat.toFixed(0) + "," + n.lng.toFixed(0)).join(";"));
+  const storeForEntry = (body) => {
+    if (!entryId || !env || !env.DB || !body || !body.found) return;
+    if (typeof body.lat !== "number" || typeof body.lng !== "number") return;
+    ctx.waitUntil(env.DB.prepare(
+      "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=? WHERE id=? AND map_url=?"
+    ).bind(body.lat, body.lng, q, nowIso(), entryId, q).run());
+  };
   const hit = await cache.match(cacheKey);
-  if (hit) return json({ ...(await hit.json()), cached: true }, 200, headers);
+  if (hit) {
+    const body = await hit.json();
+    storeForEntry(body);
+    return json({ ...body, cached: true }, 200, headers);
+  }
 
   if (quick && !isUrl) return json({ pending: true }, 200, headers);
-  const result = isUrl ? await geocodeMapUrl(q, quick, nears, hint) : await geocodeText(q, nears);
+  const result = isUrl ? await geocodeMapUrl(q, quick, nears, env) : await geocodeText(q, nears);
   if (result && result.pending) return json({ pending: true }, 200, headers); // まだ調べていないのでキャッシュしない
   const body = result ? { found: true, lat: result.lat, lng: result.lng } : { found: false };
+  storeForEntry(body);
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
   })));
@@ -3400,8 +3501,8 @@ export default {
       return reorderBlocks(m[1], m[2], request, env, headers);
     }
 
-    if (method === "POST" && (m = path.match(/^\/blocks\/([^/]+)\/entries$/))) return createEntry(m[1], request, env, headers);
-    if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)$/))) return updateEntry(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/blocks\/([^/]+)\/entries$/))) return createEntry(m[1], request, env, headers, ctx);
+    if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)$/))) return updateEntry(m[1], request, env, headers, ctx);
     if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)\/move$/))) return moveEntry(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)$/))) return deleteEntry(m[1], env, headers);
 
@@ -3415,7 +3516,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/comments\/([^/]+)\/report$/))) return reportComment(m[1], request, env, headers, ctx);
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
-    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"));
+    if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"), url.searchParams.get("entry"), env);
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
     if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
     if (method === "GET" && path === "/places/search") {

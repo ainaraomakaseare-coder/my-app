@@ -7,6 +7,11 @@
 (function (root) {
   'use strict';
 
+  // 機能フラグ（2026-09-26〜）：ユーザーの希望で「紹介文を作る」「いいね・コメント」の入り口を
+  // 一時的に隠す。サーバー側のAPI・データはそのまま残しており、trueに戻すだけで元通り出せる。
+  // コード自体は削らず、呼び出し側でこのフラグを見て出し分ける。
+  var FEATURES = { post: false, social: false };
+
   var CATEGORIES = [
     { key: 'sightseeing', label: '観光', color: 'oklch(60% 0.13 150)' },
     { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
@@ -514,13 +519,42 @@
   // 空文字を返して「出来事」（その場で吹き出しだけ出す）として扱う。
   // 以前は見出し（「那覇空港に到着」など）から地名を推測していたが、同名の別の場所に飛ぶなど
   // 外れることがあったため、地図が入っている予定だけを使う方針にした。
-  function replayPlaceQuery(block) {
+  // 地図のURLだけでなく、その元になった記録(entry)のid・サーバーがすでに求めてある座標
+  // （entry.mapLat/mapLng。entry.mapGeocodedUrlが今のmap_urlと同じときだけAPIが返す。Part A、
+  // 2026-09-26〜）も一緒に返す。座標があれば/geocodeを呼ばずに使え、無ければ&entry=<id>を付けて
+  // 呼ぶことでサーバー側に保存してもらい、次回からは呼ばなくてよくなる。
+  // Googleマップの検索リンクのquery（またはq）が「undefined」「null」「NaN」（カンマ区切りの2つ含む）
+  // だけのときは、クライアント側の不具合で壊れて保存されたリンクとみなし、地図が無いのと同じに扱う
+  // （地図の目的地にしない・地名の手がかり探しにも使わない）。以前はこの手のリンクの見出し（hint）から
+  // 場所を推測しようとして、無関係な場所（例：エチオピア）に飛ぶことがあった（2026-09-26、大阪旅行）。
+  function hasBrokenMapQuery(url) {
+    try {
+      var u = new URL(url);
+      var q = (u.searchParams.get('query') || u.searchParams.get('q') || '').trim();
+      return /^(undefined|null|nan)(\s*,\s*(undefined|null|nan))?$/i.test(q);
+    } catch (e) {
+      return false;
+    }
+  }
+  function replayPlaceEntry(block) {
     var entries = (block && block.entries) || [];
     for (var i = 0; i < entries.length; i++) {
-      var url = (entries[i].mapUrl || '').trim();
-      if (/^https?:\/\//i.test(url)) return url;
+      var e = entries[i];
+      var url = (e.mapUrl || '').trim();
+      if (/^https?:\/\//i.test(url) && !hasBrokenMapQuery(url)) {
+        return {
+          url: url,
+          entryId: e.id || '',
+          lat: typeof e.mapLat === 'number' ? e.mapLat : null,
+          lng: typeof e.mapLng === 'number' ? e.mapLng : null
+        };
+      }
     }
-    return '';
+    return null;
+  }
+  function replayPlaceQuery(block) {
+    var e = replayPlaceEntry(block);
+    return e ? e.url : '';
   }
 
   function hhmmToMinute(hhmm) {
@@ -551,9 +585,10 @@
         var step = pendingMove || (hasTimed[b.date] ? 30 : 60);
         minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + step, 23 * 60 + 59);
       }
+      var placeEntry = replayPlaceEntry(b);
       var arriving = b.category === 'transport' ? '' : (b.transport || pendingTransport);
       if (b.category === 'transport') { pendingTransport = b.transport || ''; pendingMove = b.moveMinutes || 0; }
-      else if (replayPlaceQuery(b)) { pendingTransport = ''; pendingMove = 0; }
+      else if (placeEntry) { pendingTransport = ''; pendingMove = 0; }
       lastMinute[b.date] = minute;
       if (typeof b._offset === 'number') lastOffset = b._offset;
       var dayIndex = dates.indexOf(b.date);
@@ -567,7 +602,12 @@
       return {
         blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions, photos: photos,
-        transport: arriving, query: replayPlaceQuery(b),
+        transport: arriving, query: placeEntry ? placeEntry.url : '',
+        // 記録のid・サーバーがすでに求めてある座標（Part A）。geocodeQueriesがこれを見て、
+        // 分かっていれば/geocodeを呼ばずに使い、無ければ&entry=を付けて呼ぶ
+        entryId: placeEntry ? placeEntry.entryId : '',
+        knownLat: placeEntry ? placeEntry.lat : null,
+        knownLng: placeEntry ? placeEntry.lng : null,
         offset: lastOffset // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
       };
     });
@@ -1186,6 +1226,7 @@
     sortMyLogItems: sortMyLogItems,
     weatherLabel: weatherLabel,
     replayPlaceQuery: replayPlaceQuery,
+    replayPlaceEntry: replayPlaceEntry,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
     replayStateAt: replayStateAt,
@@ -2178,6 +2219,8 @@
     $('#tripDates').textContent = range + (nights ? '・' + nights : '');
     $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
     $('#btnOpenReplay').hidden = !(state.blocks || []).some(function (b) { return b.date; });
+    // 「紹介文を作る」の入り口は一時的に隠す（FEATURES.post、2026-09-26〜。サーバー機能は残す）
+    $('#btnOpenPost').hidden = !FEATURES.post;
     renderTripJoin();
     renderTripSocialBar();
 
@@ -2273,12 +2316,14 @@
   }
 
   function renderTripSocialBar() {
+    // いいね・コメントの入り口は一時的に隠す（FEATURES.social、2026-09-26〜。サーバー機能は残す）
+    if (!FEATURES.social) { $('#tripSocialBar').innerHTML = ''; return; }
     if (state.trip) $('#tripSocialBar').innerHTML = socialButtonsHtml('trip', state.trip.id);
   }
 
   function renderSocial() {
     renderTripSocialBar();
-    $all('.entry-social').forEach(function (el) { el.innerHTML = socialButtonsHtml('entry', el.dataset.entryId); });
+    if (FEATURES.social) $all('.entry-social').forEach(function (el) { el.innerHTML = socialButtonsHtml('entry', el.dataset.entryId); });
     if (!$('#commentSheet').hidden) renderCommentSheet();
   }
 
@@ -3064,13 +3109,16 @@
       if (res && res.found) geoCache[q] = { lat: res.lat, lng: res.lng, at: Date.now() };
       return geoCache[q] && geoCache[q].lat !== undefined ? geoCache[q] : null;
     };
-    // ① 座標がすぐ分かるものは同時に
+    // ① 座標がすぐ分かるものは同時に。entry.mapLat/mapLng（サーバーがすでに求めてある座標、Part A）が
+    // あれば最優先で使い、/geocodeを呼ばない
     var quick = (state.blocks || []).map(function (b) {
-      var q = Core.replayPlaceQuery(b);
-      if (!q) return null;
+      var pe = Core.replayPlaceEntry(b);
+      if (!pe) return null;
+      var q = pe.url;
+      if (typeof pe.lat === 'number' && typeof pe.lng === 'number') { coordsByBlock[b.id] = { lat: pe.lat, lng: pe.lng }; return null; }
       if (geoCache[q] && geoCache[q].lat !== undefined) { coordsByBlock[b.id] = geoCache[q]; return null; }
-      return api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
-        if (res && res.pending) pending.push({ b: b, q: q });
+      return api('/geocode?quick=1&q=' + encodeURIComponent(q) + geocodeEntryParam(pe.entryId)).then(function (res) {
+        if (res && res.pending) pending.push({ b: b, q: q, entryId: pe.entryId });
         else { var c = remember(q, res); if (c) coordsByBlock[b.id] = c; }
       }).catch(function () {});
     }).filter(Boolean);
@@ -3087,7 +3135,7 @@
           return (needWait ? wait(1100) : Promise.resolve()).then(function () {
             var order = Core.sortBlocks(state.blocks);
             var stops = order.map(function (b) { return { date: b.date, transport: b.transport, coords: coordsByBlock[b.id] || null }; });
-            return api(geocodeFullPath(it.q, it.b.label || '', stops, order.indexOf(it.b))).then(function (res) {
+            return api(geocodeFullPath(it.q, it.b.label || '', stops, order.indexOf(it.b)) + geocodeEntryParam(it.entryId)).then(function (res) {
               var c = remember(it.q, res); if (c) coordsByBlock[it.b.id] = c;
               return !(res && res.cached);
             }).catch(function () { return false; });
@@ -3386,7 +3434,8 @@
       ratingHtml +
       costHtml +
       (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '') +
-      '<div class="entry-social" data-entry-id="' + escapeHtml(entry.id) + '">' + socialButtonsHtml('entry', entry.id) + '</div>';
+      // いいね・コメントの行は一時的に隠す（FEATURES.social、2026-09-26〜。サーバー機能は残す）
+      (FEATURES.social ? '<div class="entry-social" data-entry-id="' + escapeHtml(entry.id) + '">' + socialButtonsHtml('entry', entry.id) + '</div>' : '');
 
     // 写真・動画をタップしたときは編集画面へ行かず、拡大表示（ライトボックス）を開く。
     // 動画は（アルバムと同じく）タイルをタップしたときだけライトボックスを開く作りにしたので、
@@ -4719,13 +4768,17 @@
   // -v6（2026-09-26〜）：「近く」に飛行機をまたいだ先の場所（成田空港の出発に対して、すでに座標の分かって
   // いた海外のホテルなど）を渡してしまい、Worker側の距離ガードで正しい結果を弾いていた不具合を直したので
   // （docs/adr/0008）、その誤りが原因で「見つからない」と覚えていた結果を捨てて調べ直す。
-  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v6';
+  // -v7（2026-09-26〜）：地図のリンクから場所が分からないとき、見出し（hint）から場所を当てずっぽうに
+  // 探すのをやめた（無関係な場所に飛ぶことがあったため。docs/adr/0008）。hintに影響されていたかもしれない
+  // 以前の結果（見つかった・見つからなかったのどちらも）を捨てて調べ直す。
+  var GEOCODE_CACHE_KEY = 'tabilog:geocode-cache-v7';
   try {
     localStorage.removeItem('tabilog:geocode-cache');
     localStorage.removeItem('tabilog:geocode-cache-v2');
     localStorage.removeItem('tabilog:geocode-cache-v3');
     localStorage.removeItem('tabilog:geocode-cache-v4');
     localStorage.removeItem('tabilog:geocode-cache-v5');
+    localStorage.removeItem('tabilog:geocode-cache-v6');
   } catch (e) {}
   // 住所・店名から探すときに添える「同じ旅行の前後の場所」の座標を、旅程順で並んだstops
   // （{ date, transport, coords }）から選ぶ（選び方自体はCore.geocodeNearIndexes、docs/adr/0008）。
@@ -4737,21 +4790,43 @@
   function geocodeFullPath(q, hint, stops, i) {
     return '/geocode?q=' + encodeURIComponent(q) + (hint ? '&hint=' + encodeURIComponent(hint.slice(0, 100)) : '') + geocodeNearParam(stops, i);
   }
+  // サーバーに座標を計算させた行き先(entry)を伝える。entryが分かるqだけ渡すと、サーバー側で
+  // そのentryのmap_urlがqと一致するときだけ座標をD1に保存し、次回は/geocode自体呼ばなくてよくなる
+  // （Part A、2026-09-26〜。docs/adr/0008・worker/README参照）。
+  function geocodeEntryParam(entryId) {
+    return entryId ? '&entry=' + encodeURIComponent(entryId) : '';
+  }
   var GEOCODE_MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-  // items：[{ q: 地図のURL, hint: 予定の見出し, date: 日付, transport: 予定自身の移動手段 }]（旅行の順）。
-  // 返り値は { URL: {lat,lng} | null }
-  function geocodeQueries(items, onProgress) {
+  // items：[{ q: 地図のURL, hint: 予定の見出し, date: 日付, transport: 予定自身の移動手段,
+  //   entryId: その地図URLの元になった記録のid, lat/lng: サーバーがすでに求めてある座標（無ければnull） }]
+  // （旅行の順）。返り値は { URL: {lat,lng} | null }。
+  // onStart(todoCount)：サーバー保存済み座標にも端末キャッシュにも無く、これから実際に調べに行く件数を
+  // 呼び出し側へ同期的に知らせる（0件なら呼び出し側は「初めて開くときは…」の補足を出さずに済む）。
+  function geocodeQueries(items, onProgress, onStart) {
     var queries = items.map(function (it) { return it.q; });
+    // 同じURLに対応するentryId・サーバー計算済み座標（複数箇所で同じリンクを使っていたら先勝ち）
+    var entryByQuery = {}, knownByQuery = {};
+    items.forEach(function (it) {
+      if (!it.q) return;
+      if (it.entryId && !entryByQuery[it.q]) entryByQuery[it.q] = it.entryId;
+      if (typeof it.lat === 'number' && typeof it.lng === 'number' && !(it.q in knownByQuery)) {
+        knownByQuery[it.q] = { lat: it.lat, lng: it.lng };
+      }
+    });
     var cache;
     try { cache = JSON.parse(localStorage.getItem(GEOCODE_CACHE_KEY) || '{}'); } catch (e) { cache = {}; }
     var now = Date.now(), result = {}, todo = [];
     queries.forEach(function (q) {
       if (!q || Object.prototype.hasOwnProperty.call(result, q) || todo.indexOf(q) !== -1) return;
+      // サーバーにすでに保存された座標（entry.mapLat/mapLng）があれば最優先で使い、探しに行かない
+      // （Part A：localStorageのキャッシュはあくまで2番目の層）
+      if (knownByQuery[q]) { result[q] = knownByQuery[q]; cache[q] = { lat: knownByQuery[q].lat, lng: knownByQuery[q].lng, at: now }; return; }
       var c = cache[q];
       if (c && c.lat !== undefined) result[q] = { lat: c.lat, lng: c.lng };
       else if (c && now - c.at < GEOCODE_MISS_TTL_MS) result[q] = null;
       else todo.push(q);
     });
+    if (onStart) onStart(todo.length);
     var done = 0;
     function record(q, res) {
       if (res && res.found) { result[q] = { lat: res.lat, lng: res.lng }; cache[q] = { lat: res.lat, lng: res.lng, at: Date.now() }; }
@@ -4763,7 +4838,7 @@
     // 以前は全部を1.1秒ずつ空けて1件ずつ聞いていたので、場所が多い旅行ほど準備に時間がかかっていた。
     var pending = [];
     return Promise.all(todo.map(function (q) {
-      return api('/geocode?quick=1&q=' + encodeURIComponent(q)).then(function (res) {
+      return api('/geocode?quick=1&q=' + encodeURIComponent(q) + geocodeEntryParam(entryByQuery[q])).then(function (res) {
         if (res && res.pending) pending.push(q); else record(q, res);
       }).catch(function () { result[q] = null; done++; });
     })).then(function () {
@@ -4776,7 +4851,7 @@
               return { date: items[idx] && items[idx].date, transport: items[idx] && items[idx].transport, coords: result[x] || null };
             });
             var i = queries.indexOf(q), hint = (items[i] && items[i].hint) || '';
-            return api(geocodeFullPath(q, hint, stops, i)).then(function (res) {
+            return api(geocodeFullPath(q, hint, stops, i) + geocodeEntryParam(entryByQuery[q])).then(function (res) {
               record(q, res);
               return !(res && res.cached);
             }).catch(function () { result[q] = null; done++; return false; });
@@ -4841,6 +4916,9 @@
     if (mapEl) mapEl.style.visibility = 'hidden';
     var stops = Core.replayStops(state.trip, state.blocks);
     var status = $('#replayStatus');
+    var statusSub = $('#replayStatusSub');
+    statusSub.hidden = true;
+    statusSub.textContent = '';
     if (!stops.length) { status.textContent = '日付の入った予定がまだありません。'; return; }
     status.textContent = '地図を準備しています…';
     var token = {};
@@ -4853,12 +4931,21 @@
     Promise.all([
       loadLeaflet(),
       geocodeQueries(stops.map(function (s) {
-        return { q: s.query, hint: s.label, date: s.date, transport: (blockById[s.blockId] || {}).transport };
+        return {
+          q: s.query, hint: s.label, date: s.date, transport: (blockById[s.blockId] || {}).transport,
+          entryId: s.entryId, lat: s.knownLat, lng: s.knownLng
+        };
       }), function (done, total) {
         if (replayToken === token) status.textContent = '地図で場所を探しています…（' + done + '/' + total + '）';
+      }, function (todoCount) {
+        // まだ座標を1つも覚えていない（サーバー保存済み・端末キャッシュのどちらにも無い）場所が
+        // 1つでもあるときだけ、初回だけ時間がかかることの補足を出す（全部わかっていれば出さない＝
+        // 次回からはこの補足なしですぐ始まる）
+        if (replayToken === token) { statusSub.hidden = !todoCount; statusSub.textContent = todoCount ? '初めて開くときは、場所を調べて覚えるので少し時間がかかります。次からはすぐに始まります。' : ''; }
       })
     ]).then(function (res) {
       if (replayToken !== token) return; // 準備中に閉じられた
+      statusSub.hidden = true;
       var tl = Core.buildReplayTimeline(stops, res[1]);
       if (!tl.stops.some(function (s) { return s.located; })) {
         status.textContent = '地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。';
@@ -4875,7 +4962,7 @@
         renderReplay();
       });
     }).catch(function () {
-      if (replayToken === token) status.textContent = '地図を読み込めませんでした。通信環境を確認してください。';
+      if (replayToken === token) { status.textContent = '地図を読み込めませんでした。通信環境を確認してください。'; statusSub.hidden = true; }
     });
   }
 
@@ -5657,6 +5744,26 @@
     else { showScreen('home'); renderHome(); }
   }
 
+  // 画面下中央に出す小さな通知。約2.5秒でフェードして消える（トップ右のアイコンとの重複を
+  // やめ、#tripDetailStatusのように気づかれにくい場所ではなく、必ず目に入る場所に出す。2026-09-26）。
+  var toastTimer = null;
+  function showToast(text) {
+    var el = $('#toast');
+    if (!el) return;
+    clearTimeout(toastTimer);
+    el.textContent = text;
+    el.hidden = false;
+    // 直前のフェードアウト中にもう一度呼ばれても、確実に表示状態からやり直す
+    el.classList.remove('toast-hide');
+    // 次のフレームで見た目のクラスを付け直し、フェードインをやり直せるようにする
+    requestAnimationFrame(function () { el.classList.add('toast-show'); });
+    toastTimer = setTimeout(function () {
+      el.classList.remove('toast-show');
+      el.classList.add('toast-hide');
+      setTimeout(function () { el.hidden = true; el.classList.remove('toast-hide'); }, 300);
+    }, 2500);
+  }
+
   function copyShareLink() {
     if (!state.trip) return;
     // iOSアプリ内ではlocation.hrefがcapacitor://localhost/...になり、
@@ -5665,11 +5772,15 @@
     var url = isNativeApp()
       ? Core.buildShareUrl(publicPageUrl(), '', state.trip.id)
       : location.href;
-    var done = function () {
-      var status = $('#tripDetailStatus');
-      status.textContent = 'リンクをコピーしました。共有した相手も見たり書き足したりできます。';
-      setTimeout(function () { status.textContent = ''; }, 4000);
-    };
+    // iOSアプリ・対応ブラウザではネイティブの共有シートを開く。それ以外（未対応ブラウザ）は
+    // クリップボードにコピーする。どちらも必ずトースト（showToast）で結果を知らせる
+    // （以前は#tripDetailStatusという気づかれにくい場所にだけ出していた。2026-09-26）。
+    if (navigator.share) {
+      navigator.share({ title: state.trip.title || '旅の足跡', text: '旅の足跡で旅行を一緒に記録しよう', url: url })
+        .catch(function () { /* 共有シートをキャンセルしても何もしない */ });
+      return;
+    }
+    var done = function () { showToast('リンクをコピーしました'); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(done).catch(function () { prompt('このURLを共有してください', url); });
     } else {

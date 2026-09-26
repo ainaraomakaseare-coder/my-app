@@ -258,6 +258,24 @@ eq('replayPlaceQuery: 地図の入った最初の記録を使う',
 eq('replayPlaceQuery: 地図が無ければ見出しが地名でも空（移動の目的地にしない）', T.replayPlaceQuery({ label: '那覇空港に到着', entries: [] }), '');
 eq('replayPlaceQuery: 「小西遅刻」のような出来事も空', T.replayPlaceQuery({ label: '小西遅刻', entries: [{ episode: '寝坊' }] }), '');
 eq('replayPlaceQuery: URLでない文字列は使わない', T.replayPlaceQuery({ label: '新宿', entries: [{ mapUrl: '新宿駅' }] }), '');
+eq('replayPlaceQuery: query=undefined,undefinedのように壊れたリンクは地図が無いのと同じに扱う（見出しからも探させない）',
+  T.replayPlaceQuery({ label: 'ユニバーサル', entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=undefined,undefined' }] }), '');
+eq('replayPlaceQuery: q=nullのように壊れたリンクも同様',
+  T.replayPlaceQuery({ label: '空港', entries: [{ mapUrl: 'https://www.google.com/maps?q=null' }] }), '');
+eq('replayPlaceQuery: 壊れたリンクの記録の後ろに正しい地図があれば、そちらを使う',
+  T.replayPlaceQuery({ label: 'A', entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=undefined,undefined' }, { mapUrl: 'https://maps.app.goo.gl/ok' }] }), 'https://maps.app.goo.gl/ok');
+
+/* ---- 地図でふりかえる：座標入りの記録を直接使い、無ければサーバーに保存させる（replayPlaceEntry、Part A） ---- */
+eq('replayPlaceEntry: 地図が無ければnull', T.replayPlaceEntry({ label: '那覇空港に到着', entries: [] }), null);
+eq('replayPlaceEntry: サーバーがすでに座標を求めてある記録はlat/lngを持つ',
+  T.replayPlaceEntry({ entries: [{ id: 'ent_1', mapUrl: 'https://maps.app.goo.gl/x', mapLat: 35.1, mapLng: 139.1 }] }),
+  { url: 'https://maps.app.goo.gl/x', entryId: 'ent_1', lat: 35.1, lng: 139.1 });
+eq('replayPlaceEntry: 座標がまだ無い記録はlat/lngがnull（idは返す）',
+  T.replayPlaceEntry({ entries: [{ id: 'ent_2', mapUrl: 'https://maps.app.goo.gl/y' }] }),
+  { url: 'https://maps.app.goo.gl/y', entryId: 'ent_2', lat: null, lng: null });
+eq('replayPlaceEntry: mapLat/mapLngが数値でなければ無視する（NaN・文字列など）',
+  T.replayPlaceEntry({ entries: [{ id: 'ent_3', mapUrl: 'https://maps.app.goo.gl/z', mapLat: 'x', mapLng: null }] }),
+  { url: 'https://maps.app.goo.gl/z', entryId: 'ent_3', lat: null, lng: null });
 
 /* ---- 地図でふりかえる：再生する地点の並び（replayStops） ---- */
 var rpTrip = { startDate: '2026-04-01', endDate: '2026-04-02' };
@@ -275,6 +293,17 @@ eq('replayStops: 時刻なしの予定は直前の時刻の30分後と推定す�
 eq('replayStops: 推定時刻かどうか', rpStops.map(function (s) { return s.estimated; }), [false, false, true, false]);
 eq('replayStops: 記録のエピソード・ひとことを吹き出しにする', rpStops[0].captions, ['小西遅刻', '松藤寝坊']);
 eq('replayStops: 移動手段を引き継ぐ', rpStops.map(function (s) { return s.transport; }), ['', 'train', 'walk', 'bus']);
+eq('replayStops: 記録のid・サーバー座標をentryId/knownLat/knownLngへ引き継ぐ（Part A、座標未設定はnull）',
+  rpStops.map(function (s) { return { entryId: s.entryId, knownLat: s.knownLat, knownLng: s.knownLng }; }),
+  [{ entryId: '', knownLat: null, knownLng: null }, { entryId: '', knownLat: null, knownLng: null },
+   { entryId: '', knownLat: null, knownLng: null }, { entryId: '', knownLat: null, knownLng: null }]);
+{
+  var rpStopsWithCoords = T.replayStops(rpTrip, [
+    { id: 'a', date: '2026-04-01', time: '10:00', label: '新宿', transport: '', entries: [{ id: 'ent_9', mapUrl: 'https://maps.app.goo.gl/shinjuku', mapLat: 35.69, mapLng: 139.7 }] }
+  ]);
+  eq('replayStops: entry.mapLat/mapLngがあればknownLat/knownLngに入る', { knownLat: rpStopsWithCoords[0].knownLat, knownLng: rpStopsWithCoords[0].knownLng }, { knownLat: 35.69, knownLng: 139.7 });
+  eq('replayStops: entryIdもそのまま入る', rpStopsWithCoords[0].entryId, 'ent_9');
+}
 eq('replayStops: 時刻が1つも無い日は9時から1時間おき',
   T.replayStops(rpTrip, [{ id: 'x', date: '2026-04-01', time: '', label: 'A', entries: [], createdAt: '1' }, { id: 'y', date: '2026-04-01', time: '', label: 'B', entries: [], createdAt: '2' }]).map(function (s) { return s.minute; }),
   [540, 600]);

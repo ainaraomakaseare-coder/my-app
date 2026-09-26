@@ -142,7 +142,25 @@ function pickGeoNamesCandidate(results, nears) {
   return near ? near.ref : results[0];
 }
 
+// 記録のentry.id（uid("ent")の形式、"ent_"+32桁の16進）だけを受け付ける。/geocode?entry=に来た値を
+// そのままSQLのWHERE id=?に使う前の検証で、これに合わないものは無視する（Part A、2026-09-26〜）。
+const ENTRY_ID_RE = /^ent_[0-9a-f]{32}$/;
+function isValidEntryId(id) {
+  return typeof id === "string" && ENTRY_ID_RE.test(id);
+}
+
+// entryのmap_url（記録の地図のURL）が変わった、またはまだその内容で座標を求めていない
+// （map_geocoded_urlが今のmap_urlと違う＝一度も求めていない、または前回のURLがもう古い）ときだけ、
+// 裏で座標を求め直す（Part A：記録の保存のたびに毎回re-geocodeしないための判定）。
+// mapUrlが空（地図なし）なら求めない。純粋関数なのでnodeで単体テストできる。
+function entryNeedsGeocode(oldMapUrl, geocodedUrl, newMapUrl) {
+  if (!newMapUrl) return false;
+  if (newMapUrl !== (oldMapUrl || "")) return true;
+  return (geocodedUrl || "") !== newMapUrl;
+}
+
 export {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, normPlaceName, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
+  isValidEntryId, entryNeedsGeocode,
 };
