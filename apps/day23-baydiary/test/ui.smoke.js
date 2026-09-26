@@ -47,7 +47,7 @@ function check(label, cond, extra){
   await page.click("#add-game");
   check("フォーム画面に切り替わる", await vis("#scr-form"));
   await page.fill("#f-date", "2025-04-12");
-  await page.fill("#f-opponent", "阪神");
+  await page.selectOption("#f-opponent-select", { label: "阪神" });
   await page.fill("#f-venue", "横浜スタジアム");
   await page.fill("#f-bay-score", "5");
   await page.fill("#f-opp-score", "3");
@@ -79,7 +79,7 @@ function check(label, cond, extra){
   /* ───────── もう1件、負け試合を記録する ───────── */
   await page.click("#add-game");
   await page.fill("#f-date", "2025-04-13");
-  await page.fill("#f-opponent", "広島");
+  await page.selectOption("#f-opponent-select", { label: "広島" });
   await page.fill("#f-bay-score", "2");
   await page.fill("#f-opp-score", "6");
   await page.click("#f-save");
