@@ -486,9 +486,8 @@
   var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
   var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
   var REPLAY_MAX_PHOTOS = 6;          // 1つの地点で見せる写真の上限
-  var REPLAY_SEC_PER_PHOTO = 1.4;     // 写真1枚あたり、この秒数ぶん吹き出しを長く見せる（写真は順に切り替わる）
-  var REPLAY_MOVE_MIN_SEC = 2;       // 移動の演出は最低この秒数
-  var REPLAY_MOVE_CAP_SEC = 6;       // 長い移動（数時間のフライトなど）もこの秒数に早送りする
+  var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
+  var REPLAY_MOVE_SEC = 2;           // 移動の演出は、距離や時間にかかわらずこの秒数（以前は1000倍速で2〜6秒。香港→ニューヨークの飛行機が長すぎた）
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
   var REPLAY_UNTIMED_START_MIN = 9 * 60;
 
@@ -636,7 +635,8 @@
       kf.push({ t: st.t + dwell, r: r });
       var chars = (st.captions || []).join('').length + (st.label || '').length;
       var photoSec = (st.photos || []).length * REPLAY_SEC_PER_PHOTO;
-      var minSec = Math.min(REPLAY_MAX_CAPTION_SEC + (photoSec ? 2 : 0), Math.max(REPLAY_MIN_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC + photoSec));
+      // 文章を読む時間（上限あり）と写真を全部見せる時間の長いほう。写真と文章は同時に見られる
+      var minSec = Math.max(REPLAY_MIN_CAPTION_SEC, Math.min(REPLAY_MAX_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC), photoSec);
       if (dwell * REPLAY_SEC_PER_MIN < minSec) {
         r += minSec - dwell * REPLAY_SEC_PER_MIN;
         kf.push({ t: st.t + dwell, r: r });
@@ -645,7 +645,7 @@
       if (!next) return;
       var rest = gap - dwell;
       r += moving
-        ? Math.min(Math.max(rest * REPLAY_SEC_PER_MIN, REPLAY_MOVE_MIN_SEC), REPLAY_MOVE_CAP_SEC)
+        ? REPLAY_MOVE_SEC
         : Math.min(rest * REPLAY_SEC_PER_MIN, REPLAY_IDLE_CAP_SEC);
     });
     legs.forEach(function (l) {
@@ -4794,7 +4794,7 @@
       imgs[k].classList.add('on'); dots[k].classList.add('on');
     }, REPLAY_PHOTO_SWITCH_MS);
   }
-  var REPLAY_PHOTO_SWITCH_MS = 1400;
+  var REPLAY_PHOTO_SWITCH_MS = 2500; // Core の REPLAY_SEC_PER_PHOTO と同じ
 
   // 次の地点の写真を先に読み込んでおく（着いた瞬間に写真が真っ白にならないように）
   function preloadNextReplayPhotos(index) {

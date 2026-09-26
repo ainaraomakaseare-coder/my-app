@@ -504,5 +504,13 @@ var exText = T.reviewLogText({ category: 'food', label: '首里そば' }, { comm
 ok('reviewLogText: ひとこととURLを添える', exText.indexOf('ひとこと：「また来たい」') !== -1 && exText.indexOf('📍 https://maps.app.goo.gl/x') !== -1 && exText.indexOf('🔗 https://shop.example') !== -1);
 ok('travelLogText: 移動にもURLを添える', T.travelLogText({ category: 'transport', transport: 'train', label: '京都へ' }, { costItems: [], travel: { from: '東京', to: '京都' }, otherUrl: 'https://jr.example' }).indexOf('🔗 https://jr.example') !== -1);
 
+/* ---- 地図でふりかえる：移動は2秒・写真は1枚2.5秒 ---- */
+var flyTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-02' }, [
+  { id: 'h', date: '2026-04-01', time: '10:00', label: '香港', entries: [{ mapUrl: 'https://m/hk', photoIds: ['p1', 'p2', 'p3', 'p4'] }] },
+  { id: 'n', date: '2026-04-02', time: '06:00', label: 'ニューヨーク', transport: 'plane', entries: [{ mapUrl: 'https://m/ny' }] }]),
+  { 'https://m/hk': { lat: 22.3, lng: 114.2 }, 'https://m/ny': { lat: 40.7, lng: -74.0 } });
+ok('buildReplayTimeline: 長いフライトも移動は2秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 2) < 0.01);
+ok('buildReplayTimeline: 写真4枚なら吹き出しを10秒以上見せる', flyTl.stops[0].rDwellEnd - flyTl.stops[0].r > 9.99);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
