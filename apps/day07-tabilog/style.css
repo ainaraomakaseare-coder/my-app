@@ -821,3 +821,6 @@ body.viewer-open { overflow: hidden; }
   border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 .replay-photo-pin.upcoming { opacity: 0.55; }
+
+.post-option { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-muted); margin: 2px 0 8px; }
+.post-option input { width: 18px; height: 18px; }

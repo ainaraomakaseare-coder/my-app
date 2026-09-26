@@ -868,7 +868,9 @@
     var k = REVIEW_KINDS[kind];
     if (!k || !rating || !(rating.score > 0) || !isReviewPublic(rating.score)) return '';
     var r = rating.review || {};
-    var lines = [k.emoji + ' ' + k.label + ' ⭐' + (Math.round(rating.score * 10) / 10).toFixed(1), block.label || '（名前なし）'];
+    // ★の横に評価の言葉を添える（以前は最後に「→ 〇〇」の行と、冒頭に評価の基準のまとまりを出していて、
+    // 見た目がくどかった）
+    var lines = [k.emoji + ' ' + k.label + ' ⭐' + (Math.round(rating.score * 10) / 10).toFixed(1) + '（' + reviewLevelLabel(kind, rating.score) + '）', block.label || '（名前なし）'];
     var amount = typeof r.amount === 'number' ? r.amount : entryCostTotal(entry);
     k.grades.forEach(function (g) {
       var key = g[0], name = g[1];
@@ -891,7 +893,6 @@
       if (entry.waitTime) lines.push('待ち時間：' + entry.waitTime);
     }
     if (r.other) lines.push('その他：' + r.other);
-    lines.push('→ ' + reviewLevelLabel(kind, rating.score));
     return lines.join('\n');
   }
 
@@ -949,7 +950,8 @@
   }
 
   // 紹介文の全体：表紙 → 評価の基準 → 時系列のログ → 総額。自分（email）の評価だけを使う。
-  function buildTripPostText(trip, blocks, days, email) {
+  // opts.legend：trueなら、最後に評価の目安を注釈として付ける（既定は付けない）
+  function buildTripPostText(trip, blocks, days, email, opts) {
     var parts = [];
     var head = ['【' + (trip.title || '旅の記録') + '】'];
     var start = parseDate(trip.startDate), end = parseDate(trip.endDate);
@@ -977,12 +979,6 @@
         if (text) logs.push(text);
       });
     });
-    if (usedKinds.length) {
-      parts.push('＼評価の基準／\n' + usedKinds.map(function (kind) {
-        var k = REVIEW_KINDS[kind];
-        return k.label + '：4.5〜 ' + k.levels[0] + '／4.0〜 ' + k.levels[1] + '／3.5〜 ' + k.levels[2] + '／3.0〜 ' + k.levels[3];
-      }).join('\n'));
-    }
     parts = parts.concat(logs);
 
     var cost = tripCostByGroup(blocks);
@@ -993,6 +989,12 @@
       if (cost.lodging) lines.push('ホテル ' + yen(cost.lodging));
       if (cost.other) lines.push('食事と観光 ' + yen(cost.other));
       parts.push(lines.join('\n'));
+    }
+    if (opts && opts.legend && usedKinds.length) {
+      parts.push('※⭐の目安\n' + usedKinds.map(function (kind) {
+        var k = REVIEW_KINDS[kind];
+        return k.label + '　4.5〜' + k.levels[0] + '／4.0〜' + k.levels[1] + '／3.5〜' + k.levels[2] + '／3.0〜' + k.levels[3];
+      }).join('\n'));
     }
     parts.push('#旅の足跡');
     return parts.join('\n\n');
@@ -2356,7 +2358,7 @@
   function openPostSheet() {
     if (!state.trip) return;
     var user = loadCurrentUser();
-    var text = Core.buildTripPostText(state.trip, state.blocks, state.days, user ? user.email : '');
+    var text = Core.buildTripPostText(state.trip, state.blocks, state.days, user ? user.email : '', { legend: $('#postLegend').checked });
     $('#postText').value = text;
     $('#postSheetNote').textContent = user
       ? 'あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。'
@@ -2384,6 +2386,7 @@
 
   function initSocial() {
     $('#btnOpenPost').addEventListener('click', openPostSheet);
+    $('#postLegend').addEventListener('change', openPostSheet); // 付ける・外すで作り直す（手で直した分は作り直しになる）
     $('#btnClosePostSheet').addEventListener('click', closePostSheet);
     $('#postSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closePostSheet(); });
     $('#btnCopyPost').addEventListener('click', copyPostText);

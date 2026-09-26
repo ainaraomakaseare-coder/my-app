@@ -330,10 +330,10 @@ var rvHotelEntry = { id: 'he', costItems: [{ label: '宿泊', amount: 51582 }], 
   { raterEmail: 'friend@example.com', score: 2.0, review: {} }
 ] };
 var hotelText = T.reviewLogText(rvHotelBlock, rvHotelEntry, T.findMyRating(rvHotelEntry.ratings, 'me@example.com'));
-ok('reviewLogText: 見出しに種類と★', hotelText.indexOf('🏨 ホテログ ⭐3.9\nTHE TOWER HOTEL') === 0);
+ok('reviewLogText: 見出しに種類と★、★の横に評価の言葉', hotelText.indexOf('🏨 ホテログ ⭐3.9（また泊まってもいい）\nTHE TOWER HOTEL') === 0);
 ok('reviewLogText: 価格は1泊あたりと合計（費用の明細から）', hotelText.indexOf('価格：〇（1泊あたり25,791円／2泊合計51,582円）') !== -1);
 ok('reviewLogText: 立地は行き方を添える', hotelText.indexOf('立地：△（最寄り駅まで徒歩10分以上）') !== -1);
-ok('reviewLogText: 評価の言葉で締める', /→ また泊まってもいい$/.test(hotelText));
+ok('reviewLogText: 最後に「→ 評価の言葉」の行は付けない', hotelText.indexOf('→') === -1);
 ok('reviewLogText: 入れていない項目は出さない', hotelText.indexOf('清潔さ') === -1);
 eq('reviewLogText: 3.0未満（友達の2.0）は出さない', T.reviewLogText(rvHotelBlock, rvHotelEntry, T.findMyRating(rvHotelEntry.ratings, 'friend@example.com')), '');
 eq('reviewLogText: 評価していなければ出さない', T.reviewLogText(rvHotelBlock, rvHotelEntry, null), '');
@@ -361,7 +361,9 @@ eq('tripPlaceNames: 国内だけなら都道府県', T.tripPlaceNames([{ country
 var post = T.buildTripPostText({ title: '山梨旅', startDate: '2026-04-01', endDate: '2026-04-02' }, rvBlocks,
   [{ country: '日本', admin1: '山梨県' }], 'me@example.com');
 ok('buildTripPostText: 表紙に日程・泊数・行き先', post.indexOf('【山梨旅】\n2026 4/1〜4/2（1泊2日）\n山梨県 1泊2日の総額公開！') === 0);
-ok('buildTripPostText: 使った種類の評価の基準だけ出す', post.indexOf('ホテログ：4.5〜') !== -1 && post.indexOf('飯ログ：4.5〜') !== -1 && post.indexOf('レクログ：') === -1);
+ok('buildTripPostText: 評価の目安は既定では付けない', post.indexOf('目安') === -1 && post.indexOf('評価の基準') === -1);
+var postWithLegend = T.buildTripPostText({ title: '山梨旅', startDate: '2026-04-01', endDate: '2026-04-02' }, rvBlocks, [{ country: '日本', admin1: '山梨県' }], 'me@example.com', { legend: true });
+ok('buildTripPostText: 選んだときは、使った種類の目安だけを最後（ハッシュタグの前）に付ける', postWithLegend.indexOf('※⭐の目安') > postWithLegend.indexOf('💰') && postWithLegend.indexOf('ホテログ　4.5〜') !== -1 && postWithLegend.indexOf('レクログ　') === -1);
 ok('buildTripPostText: 時刻順（移動8時→飯12時→ホテル15時）',
   post.indexOf('✈️ 移動') < post.indexOf('🍴 飯ログ') && post.indexOf('🍴 飯ログ') < post.indexOf('🏨 ホテログ'));
 ok('buildTripPostText: 最後に総額と内訳', post.indexOf('💰 合計金額は75,722円\n移動 21,840円\nホテル 51,582円\n食事と観光 2,300円') !== -1);
