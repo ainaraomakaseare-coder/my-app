@@ -488,5 +488,14 @@ var phTl = T.buildReplayTimeline(phStops, {});
 ok('buildReplayTimeline: 写真がある地点は長めに見せる（写真3枚×1.4秒。写真なしも最低2.5秒あるので差は約2秒）',
   phTl.stops[0].rDwellEnd - phTl.stops[0].r > phTl.stops[1].rDwellEnd - phTl.stops[1].r + 1.5);
 
+/* ---- 地図でふりかえる：移動手段が無い移動は車（遠ければ飛行機） ---- */
+var carStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'c1', date: '2026-04-01', time: '09:00', label: '新宿', entries: [{ mapUrl: 'https://x/shinjuku' }] },
+  { id: 'c2', date: '2026-04-01', time: '11:00', label: '河口湖', entries: [{ mapUrl: 'https://x/kawaguchi' }] },
+  { id: 'c3', date: '2026-04-01', time: '18:00', label: '那覇', entries: [{ mapUrl: 'https://x/naha' }] }]);
+var carTl = T.buildReplayTimeline(carStops, { 'https://x/shinjuku': { lat: 35.69, lng: 139.70 }, 'https://x/kawaguchi': { lat: 35.50, lng: 138.76 }, 'https://x/naha': { lat: 26.21, lng: 127.68 } });
+eq('buildReplayTimeline: 移動手段が無くても移動にする。近ければ車、遠ければ（400km超）飛行機', carTl.legs.map(function (l) { return l.transport; }), ['car', 'plane']);
+ok('distanceKm: 新宿→那覇はおよそ1550km', Math.abs(T.distanceKm({ lat: 35.69, lng: 139.70 }, { lat: 26.21, lng: 127.68 }) - 1550) < 60);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
