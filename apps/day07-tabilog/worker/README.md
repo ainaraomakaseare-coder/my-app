@@ -197,3 +197,32 @@ npx wrangler secret put GOOGLE_API_KEY
 - `POST /receipts/scan`：Cloud Vision（`DOCUMENT_TEXT_DETECTION`）でレシートの文字を読み取り、`src/receipt-parse.js`の`parseReceiptText`（ルールベース。`node worker/test/receipt-parse.test.mjs`で単体テストできる）で品目に分ける。**音声入力・テキストメモと共有する利用回数の枠（`checkVoiceQuota`）は消費しない**（無料プランでも使える）。失敗したときだけ今までどおりOpenAIに回す（そのときは枠を消費する）。ログイン必須・`AI_RATE_LIMITER`はどちらの経路でも変えていない。
 
 無料枠・費用の目安は docs/adr/0011 に記載。オーナーがGCP側のクォータで1日の上限（Autocomplete/Place Details/Visionそれぞれ）と予算アラートを設定済み。
+
+## OpenAI→Cloudflare Workers AIの切り替えを比べる試作（2026-09-26 追加）
+
+音声の文字起こし・メモの整理で使っているOpenAIを、同じCloudflare上で使えるWorkers AIに切り替えられないか比べるための、**管理者だけが使えるエンドポイント**を追加した（docs/adr/0012）。本番の処理（音声入力・メモの整理・レシート読み取り）は一切変更していない。
+
+**設定（このエンドポイントを使うにはトークンの登録が必須。未設定だと`/ai-compare`は常に404で、存在しないのと同じに見える）**：
+
+```sh
+npx wrangler secret put AI_COMPARE_TOKEN
+npx wrangler deploy
+```
+
+`wrangler.jsonc`に`"ai": { "binding": "AI" }`を追加済み（Workers AIバインディング自体は追加しただけでは費用が発生しない）。
+
+**比較スクリプトの使い方**（`worker/scripts/ai-compare.mjs`。秘密情報はスクリプトに書かず環境変数から渡す）：
+
+```sh
+# メモの整理を比べる（textFilePathはUTF-8のテキストファイル）
+COMPARE_URL=https://tabilog-api.hiroya-apps.workers.dev/ai-compare \
+COMPARE_TOKEN=（wrangler secret putで設定した値）\
+node scripts/ai-compare.mjs memo ./sample-memo.txt
+
+# 音声の文字起こしを比べる（webm/mp4/mp3/wav/oggのいずれか）
+COMPARE_URL=https://tabilog-api.hiroya-apps.workers.dev/ai-compare \
+COMPARE_TOKEN=（wrangler secret putで設定した値）\
+node scripts/ai-compare.mjs voice ./sample-voice.webm
+```
+
+比較対象のモデルはWorkers AIの`@cf/openai/whisper-large-v3-turbo`（音声認識）・`@cf/qwen/qwen3-30b-a3b-fp8`・`@cf/openai/gpt-oss-120b`（メモの整理）。無料枠・単価の目安はdocs/adr/0012に記載。何も保存せず、利用者の音声・テキストの内容はログにも出さない。ローカルの`wrangler dev --local`ではCloudflareへのログインが無いとWorkers AIの呼び出し自体が失敗することがあるが、その場合`workersAi`側がエラーになるだけで、`/ai-compare`自体が404にならないことは確認できる。

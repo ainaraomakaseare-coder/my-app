@@ -2090,6 +2090,14 @@ const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions
 const MAX_VOICE_AUDIO_BYTES = 15 * 1024 * 1024; // 数分の音声を想定した上限
 const VOICE_AUDIO_FORMATS = { "audio/webm": "webm", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/ogg": "ogg" };
 
+// Cloudflare Workers AIへの切り替えを検討するための試作（docs/adr/0012）で使うモデルID。
+// 本番の処理はまだ一切これらを使わない（/ai-compareでの比較専用）。
+const WORKERS_AI_WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
+const WORKERS_AI_LLM_MODELS = {
+  qwen3_30b: "@cf/qwen/qwen3-30b-a3b-fp8",
+  gpt_oss_120b: "@cf/openai/gpt-oss-120b",
+};
+
 // 使っているモデルは音声を直接聞く方式（audio input）に対応していなかったため、
 // 先にWhisper（音声認識専用API）で文字起こしし、そのテキストを元に予定・記録へ
 // 分割する2段階にしている。文字起こし自体もその日のDayInfoに保存する。
@@ -2110,6 +2118,16 @@ async function transcribeAudio(env, buf, contentType, format) {
   }
   const data = await res.json();
   return typeof data.text === "string" ? data.text.trim() : null;
+}
+
+// /ai-compare専用。OpenAIのtranscribeAudioと同じ入力から、Workers AIのWhisperで
+// 文字起こしを試す（本番の処理からは呼ばない）。audioは音声ファイルそのもののバイト列を
+// 数値の配列にして渡す（Workers AIの音声認識モデルの入力形式）。
+async function transcribeAudioWithWorkersAi(env, buf) {
+  const audio = [...new Uint8Array(buf)];
+  const result = await env.AI.run(WORKERS_AI_WHISPER_MODEL, { audio, language: "ja" });
+  const text = result && typeof result.text === "string" ? result.text : (typeof result === "string" ? result : "");
+  return text.trim();
 }
 
 function outputText(response) {
@@ -2331,6 +2349,63 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
       outputTextLength: outputText(response).length,
     }));
     return { error: "invalid_model_output" };
+  }
+  if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
+  return { blocks: parsed.blocks };
+}
+
+// /ai-compare専用。organizeTextIntoBlocksと同じプロンプト・スキーマ（voicePrompt/
+// multiDayPrompt・voiceBlocksSchema/multiDayBlocksSchema）を使い、OpenAIの代わりに
+// Workers AIのLLMで試す（本番の処理からは呼ばない）。モデルによってresponse_format
+// （json_schemaでの構造化出力）の対応状況が違う可能性があるため、まずresponse_format
+// 付きで呼び、レスポンスのJSONパースに失敗した場合は「JSON以外を返さないこと」という
+// 指示を足したプロンプトだけで再試行する（それでも失敗したらエラーを返すだけで、
+// 本番のデータには一切触れない）。
+async function organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates) {
+  const multiDay = Array.isArray(dates) && dates.length > 1;
+  const schema = multiDay ? multiDayBlocksSchema() : voiceBlocksSchema();
+  const schemaName = multiDay ? "voice_blocks_multi_day" : "voice_blocks";
+  const basePrompt = multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes);
+
+  function parseModelOutput(raw) {
+    if (raw == null) return null;
+    if (typeof raw === "object" && !Array.isArray(raw)) return raw; // すでにJSONとして返るモデルもある
+    const s = String(raw).trim();
+    // ```json ... ``` のようなコードブロックで返してくるモデルにも備える
+    const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const candidate = fenced ? fenced[1].trim() : s;
+    try { return JSON.parse(candidate); } catch { return null; }
+  }
+
+  async function callOnce(prompt, withResponseFormat) {
+    const input = {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: multiDay ? 12000 : 2000,
+    };
+    if (withResponseFormat) {
+      input.response_format = { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } };
+    }
+    const result = await env.AI.run(model, input);
+    const raw = result && (result.response ?? result);
+    return parseModelOutput(raw);
+  }
+
+  let parsed;
+  try {
+    parsed = await callOnce(basePrompt, true);
+  } catch (e) {
+    // response_format自体に対応していないモデルの可能性があるため、指示だけの
+    // プロンプトで1回だけ再試行する
+    try {
+      const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
+      parsed = await callOnce(jsonOnlyPrompt, false);
+    } catch (e2) {
+      return { error: "workers_ai_error", detail: String((e2 && e2.message) || e2).slice(0, 300) };
+    }
+  }
+  if (!parsed) {
+    const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
+    try { parsed = await callOnce(jsonOnlyPrompt, false); } catch { /* 下のinvalid_model_outputに落ちる */ }
   }
   if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
   return { blocks: parsed.blocks };
@@ -2587,6 +2662,101 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
   await consumeVoiceQuota(env, quota.email, quota.via, "memo");
   return json({ blocks: created, transcript: text }, 200, headers);
+}
+
+/* ---------- OpenAI→Workers AIの切り替え比較（試作、docs/adr/0012） ----------
+ * 管理者だけが使う `POST /ai-compare`。Workerのシークレット`AI_COMPARE_TOKEN`を
+ * 設定していないと常に404（機能自体が存在しないように見せる）。設定していても、
+ * ヘッダー`x-compare-token`が一致しないと同じく404にする（403にして「有効なエンドポイントが
+ * ある」ことを教えない）。何も保存せず、利用者の音声・メモの内容はログにも一切出さない。
+ */
+function timingSafeEqualStrings(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function aiCompareMemo(request, env, headers) {
+  let data;
+  try { data = await request.json(); } catch { return json({ error: "invalid_json" }, 400, headers); }
+  const text = isStr(data.text, MAX_MULTI_DAY_TEXT_CHARS) ? data.text.trim() : "";
+  if (!text) return json({ error: "empty_text" }, 422, headers);
+  const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
+  const dates = Array.isArray(data.dates) ? data.dates.filter((d) => isStr(d, 10) && DATE_RE.test(d)) : undefined;
+
+  const openaiResult = { result: null, ms: 0, error: undefined };
+  if (env.OPENAI_API_KEY) {
+    const t0 = Date.now();
+    const r = await organizeTextIntoBlocks(env, text, notes, dates);
+    openaiResult.ms = Date.now() - t0;
+    if (r.error) openaiResult.error = r.error; else openaiResult.result = r;
+  } else {
+    openaiResult.error = "server_not_configured";
+  }
+
+  const workersAi = {};
+  await Promise.all(
+    Object.entries(WORKERS_AI_LLM_MODELS).map(async ([key, model]) => {
+      const t0 = Date.now();
+      try {
+        const r = await organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates);
+        const ms = Date.now() - t0;
+        if (r.error) workersAi[key] = { result: null, ms, error: r.error };
+        else workersAi[key] = { result: r, ms };
+      } catch (e) {
+        workersAi[key] = { result: null, ms: Date.now() - t0, error: String((e && e.message) || e).slice(0, 300) };
+      }
+    })
+  );
+
+  return json({ openai: openaiResult, workersAi }, 200, headers);
+}
+
+async function aiCompareVoice(request, env, headers) {
+  const { buf, contentType, format: providedFormat } = await (async () => {
+    const b = await readBinaryBody(request);
+    return { ...b, format: VOICE_AUDIO_FORMATS[b.contentType] };
+  })();
+  if (!providedFormat) return json({ error: "unsupported_type" }, 415, headers);
+  if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
+
+  const openaiResult = { result: null, ms: 0, error: undefined };
+  if (env.OPENAI_API_KEY) {
+    const t0 = Date.now();
+    const transcript = await transcribeAudio(env, buf, contentType, providedFormat);
+    openaiResult.ms = Date.now() - t0;
+    if (transcript == null) openaiResult.error = "transcription_failed";
+    else openaiResult.result = transcript;
+  } else {
+    openaiResult.error = "server_not_configured";
+  }
+
+  const workersAiResult = { result: null, ms: 0, error: undefined };
+  {
+    const t0 = Date.now();
+    try {
+      const transcript = await transcribeAudioWithWorkersAi(env, buf);
+      workersAiResult.ms = Date.now() - t0;
+      workersAiResult.result = transcript;
+    } catch (e) {
+      workersAiResult.ms = Date.now() - t0;
+      workersAiResult.error = String((e && e.message) || e).slice(0, 300);
+    }
+  }
+
+  return json({ openai: openaiResult, workersAi: { [WORKERS_AI_WHISPER_MODEL]: workersAiResult } }, 200, headers);
+}
+
+async function aiCompare(request, env, headers, url) {
+  if (!env.AI_COMPARE_TOKEN || !timingSafeEqualStrings(request.headers.get("x-compare-token") || "", env.AI_COMPARE_TOKEN)) {
+    return json({ error: "not_found" }, 404, headers);
+  }
+  if (!env.AI) return json({ error: "server_not_configured" }, 503, headers);
+  const mode = url.searchParams.get("mode");
+  if (mode === "memo") return aiCompareMemo(request, env, headers);
+  if (mode === "voice") return aiCompareVoice(request, env, headers);
+  return json({ error: "invalid_mode" }, 400, headers);
 }
 
 // ---------- レシート読み取り（AI/Vision） ----------
@@ -3251,6 +3421,8 @@ export default {
     if (method === "GET" && (m = path.match(/^\/photos\/([^/]+)$/))) return getPhoto(m[1], env, headers);
 
     if (method === "POST" && path === "/receipts/scan") return scanReceipt(request, env, headers);
+
+    if (method === "POST" && path === "/ai-compare") return aiCompare(request, env, headers, url);
 
     return json({ error: "not_found" }, 404, headers);
   },
