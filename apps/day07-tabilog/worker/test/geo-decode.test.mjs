@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
 } from "../src/geo-decode.js";
 
 let pass = 0, fail = 0;
@@ -148,6 +148,20 @@ check("entryNeedsGeocode: 同じURLのままでも、MAP_COORDS_VALID_SINCEよ�
 check("entryNeedsGeocode: geocodedAtが無い（未設定）ときも求め直す",
   entryNeedsGeocode("https://maps.example/a", "https://maps.example/a", "https://maps.example/a", ""), true);
 check("MAP_COORDS_VALID_SINCE: 2026-09-27T00:00:00Zに設定されている", MAP_COORDS_VALID_SINCE, "2026-09-27T00:00:00Z");
+
+/* ---- downsamplePoints：ルート検索（OSRM・BRouterのrail）の座標を間引く（2026-09-27、railルート追加） ---- */
+check("downsamplePoints: 上限以下ならそのまま", downsamplePoints([[0, 0], [1, 1]], 400), [[0, 0], [1, 1]]);
+check("downsamplePoints: 配列でなければ空配列", downsamplePoints(null, 400), []);
+check("downsamplePoints: maxPointsが0や未指定ならそのまま", downsamplePoints([[0, 0], [1, 1]], 0), [[0, 0], [1, 1]]);
+{
+  const many = Array.from({ length: 1000 }, (_, i) => [i, i]);
+  const thinned = downsamplePoints(many, 100);
+  // 最後の点を必ず残す都合上、上限をわずかに超えることがある（間引きの間隔+1点まで）ので、
+  // 「大きく減っている」ことだけ確認する（1000点→200点未満）。
+  check("downsamplePoints: 上限を超えたら大きく間引かれる", thinned.length < 200, true);
+  check("downsamplePoints: 最初の点は必ず残る", thinned[0], [0, 0]);
+  check("downsamplePoints: 最後の点は必ず残る", thinned[thinned.length - 1], [999, 999]);
+}
 
 console.log(pass + " passed, " + fail + " failed");
 if (fail) process.exitCode = 1;

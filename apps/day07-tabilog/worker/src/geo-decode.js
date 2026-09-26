@@ -169,8 +169,19 @@ function entryNeedsGeocode(oldMapUrl, geocodedUrl, newMapUrl, geocodedAt) {
   return !geocodedAt || geocodedAt < MAP_COORDS_VALID_SINCE;
 }
 
+// ルート検索（OSRM・BRouter）が返す座標の並びを、地図に描くのに十分な粒度を保ったまま間引く
+// （点が多すぎるとクライアントの地図描画が重くなるため）。先頭・末尾は必ず残す単純な間隔引き
+// （Douglas-Peuckerほど厳密ではないが、道のりの見た目にはこれで十分。2026-09-27、railルート追加のため
+// worker/src/index.jsのgetRouteから抜き出した。純粋関数なのでnodeで単体テストできる）。
+function downsamplePoints(points, maxPoints) {
+  if (!Array.isArray(points)) return [];
+  if (!maxPoints || points.length <= maxPoints) return points.slice();
+  const step = Math.ceil(points.length / maxPoints);
+  return points.filter((_, i) => i % step === 0 || i === points.length - 1);
+}
+
 export {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, normPlaceName, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
 };

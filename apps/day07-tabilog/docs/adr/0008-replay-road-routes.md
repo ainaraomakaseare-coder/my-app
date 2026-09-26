@@ -99,3 +99,29 @@
 原因はGoogle Text Searchに「近くの予定」（この日は大阪のホテル）を`locationBias`として送っていたため。
 修正内容と、既存の誤った座標を自動的にやり直す仕組み（`MAP_COORDS_VALID_SINCE`）はdocs/adr/0011に
 まとめてある。「地図でふりかえる」自体（`Core.buildReplayTimeline`・ルート表示）に変更は無い。
+
+**2026-09-27 追記（電車・新幹線・地下鉄も、線路に沿った道のりで見せる：BRouterのrailプロファイル）**：
+
+これまで電車・新幹線は「線路のルートを出せる無料サービスが無い」という理由で直線のままだった。
+[BRouter](https://brouter.de/)の公開サーバーがrailプロファイル（線路優先のルーティング）を提供している
+ことを確認した（例：新横浜(139.6173,35.5075)→新大阪(135.5003,34.7334)で200・約3.5秒・4950点・
+track-length 489772mを確認済み）ため、車・徒歩・自転車と同じ`GET /route`に`profile=rail`を追加した。
+
+- Worker（`worker/src/index.js`の`getRoute`）：`profile=rail`のときはOSRM（道路専用）ではなく
+  `https://brouter.de/brouter?lonlats=<経度>,<緯度>|<経度>,<緯度>&profile=rail&alternativeidx=0&format=geojson`
+  を呼ぶ（`brouterToBody`）。アプリを識別できるUser-Agentを付け、12秒でタイムアウト
+  （`AbortController`）、結果は既存と同じCache API・30日キャッシュ、同じ`{found, path, distance}`の形
+  で返す（点はOSRMと同じ間引き＝`downsamplePoints`、`geo-decode.js`に切り出して単体テスト可能にした：
+  `worker/test/geo-decode.test.mjs`）。
+- ガード（BRouterの公開サーバーへの依存・誤スナップ対策）：始点・終点がBRouterの返す座標から5km以上
+  離れている（駅が遠い＝候補違いの疑い）、または線路の長さ（`properties["track-length"]`。無ければ
+  座標列から自前で積算）が直線距離の3倍を超えている（駅すら無い場所に無理にスナップした疑い）ときは
+  `found:false`にして、クライアントには直線（またはこれまでどおりの優しい弧）のままにしてもらう。
+  距離の上限（1500km）は既存のOSRM系プロファイルと共通。
+- フェアユース：BRouterは無料の公開サービスで、明示的な利用規約上の細かい制限はないが、1区間1回だけ
+  問い合わせ、結果は上記のとおりCache APIに30日置く。他の旅行の先読み（prefetch）はしない。
+- クライアント（`app.js`）：`Core.routeProfileFor`が`train`・`shinkansen`・`subway`を`'rail'`に対応させる
+  （元々あった「電車は無料サービスが無いので直線」というコメントは削除）。`fetchReplayRoutes`の
+  「車で大回りしすぎたら徒歩で調べ直す」ロジックは`profile === 'car'`のときだけに絞った（`rail`は
+  Worker側の線路長ガードで代わりに担保し、BRouterへの問い合わせを1区間1回に抑える）。
+  `Core`のテスト（`test/data.test.js`）に`routeProfileFor`のrailマッピングを追加した。

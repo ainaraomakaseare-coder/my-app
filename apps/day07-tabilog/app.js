@@ -28,6 +28,7 @@
     { key: 'car', label: '車（レンタカー）' },
     { key: 'taxi', label: 'タクシー（Uber）' },
     { key: 'train', label: '電車' },
+    { key: 'shinkansen', label: '新幹線' },
     { key: 'bus', label: 'バス' },
     { key: 'walk', label: '徒歩' },
     { key: 'bicycle', label: '自転車' }
@@ -640,9 +641,8 @@
   var REPLAY_SEC_PER_MIN = 0.06;     // 1000倍速（旅の1分＝実時間0.06秒）。100倍速・500倍速でも遅いという声で変更
   var REPLAY_LEAD_MIN = 5;           // 最初の予定の少し前から時計を動かし始める
   var REPLAY_DWELL_MIN = 8;          // 到着後、吹き出しを見せながら1000倍速で進める旅の時間（分）
-  var REPLAY_MIN_CAPTION_SEC = 2.5;  // 時刻が詰まっている予定でも、吹き出しは最低この秒数見せる
-  var REPLAY_MAX_CAPTION_SEC = 8;    // 長い吹き出しでも、これ以上は止めない
-  var REPLAY_READ_CHARS_PER_SEC = 12; // 吹き出しを読み切れるよう、1秒にこの文字数を目安に見せる時間を延ばす
+  var REPLAY_MIN_CAPTION_SEC = 3;     // 写真が無い地点は、文章の長さに関わらずこの秒数だけ吹き出しを見せる（2026-09-27: 文章が長いほど延ばす仕組みは廃止）
+  var REPLAY_MAX_CAPTION_SEC = 10;    // 写真がある地点でも、これ以上は止めない（写真4枚分の秒数）
   var REPLAY_MAX_PHOTOS = 4;          // 1つの地点で見せる写真の上限（6枚だと1地点15秒止まり長かったので4枚＝10秒に）
   var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
   var REPLAY_MOVE_SEC = 2;           // 移動の演出は、距離や時間にかかわらずこの秒数（以前は1000倍速で2〜6秒。香港→ニューヨークの飛行機が長すぎた）
@@ -889,10 +889,9 @@
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
       r += dwell * REPLAY_SEC_PER_MIN;
       kf.push({ t: st.t + dwell, r: r });
-      var chars = (st.captions || []).join('').length + (st.label || '').length;
-      var photoSec = (st.photos || []).length * REPLAY_SEC_PER_PHOTO;
-      // 文章を読む時間（上限あり）と写真を全部見せる時間の長いほう。写真と文章は同時に見られる
-      var minSec = Math.max(REPLAY_MIN_CAPTION_SEC, Math.min(REPLAY_MAX_CAPTION_SEC, chars / REPLAY_READ_CHARS_PER_SEC), photoSec);
+      var photoCount = Math.min((st.photos || []).length, REPLAY_MAX_PHOTOS);
+      // 写真が無ければ固定3秒、写真があれば1枚2.5秒（最大4枚＝10秒）。文章の長さでは変えない（2026-09-27）
+      var minSec = photoCount > 0 ? Math.min(photoCount * REPLAY_SEC_PER_PHOTO, REPLAY_MAX_CAPTION_SEC) : REPLAY_MIN_CAPTION_SEC;
       if (dwell * REPLAY_SEC_PER_MIN < minSec) {
         r += minSec - dwell * REPLAY_SEC_PER_MIN;
         kf.push({ t: st.t + dwell, r: r });
@@ -926,12 +925,13 @@
   // 再生開始からr秒の時点の状態：時計（何日目・何時何分）、吹き出しを出す地点、移動中のアイコンの位置、
   // いま地図上でいる場所（here：カメラを合わせる位置）。
   // ---- 道のり（実際の道路に沿ったルート。docs/adr/0008）----
-  // 移動手段ごとに、どのルート検索を使うか。電車は線路のルートを出せる無料サービスが無いので直線、
-  // 飛行機は弧（どちらも''＝ルート検索しない）。
+  // 移動手段ごとに、どのルート検索を使うか。電車・新幹線・地下鉄は線路のルート（BRouterのrailプロファイル、
+  // 2026-09-27〜）、飛行機は弧（''＝ルート検索しない）。
   function routeProfileFor(transport) {
     if (transport === 'car' || transport === 'taxi' || transport === 'bus') return 'car';
     if (transport === 'walk') return 'foot';
     if (transport === 'bicycle') return 'bike';
+    if (transport === 'train' || transport === 'shinkansen' || transport === 'subway') return 'rail';
     return '';
   }
 
@@ -1168,7 +1168,7 @@
     var amount = typeof t.amount === 'number' ? t.amount : entryCostTotal(entry);
     var route = t.from || t.to ? (t.from || '') + '→' + (t.to || '') : '';
     if (!route && !t.company && !t.depart && !t.arrive && !amount && !block.moveMinutes) return '';
-    var emoji = { plane: '✈️', car: '🚗', taxi: '🚕', train: '🚃', bus: '🚌', walk: '🚶', bicycle: '🚲' }[block.transport] || '🚃';
+    var emoji = { plane: '✈️', car: '🚗', taxi: '🚕', train: '🚃', shinkansen: '🚅', bus: '🚌', walk: '🚶', bicycle: '🚲' }[block.transport] || '🚃';
     var lines = [emoji + ' 移動' + (mode ? '｜' + mode : ''), route || block.label || ''];
     if (t.company) lines.push('会社：' + t.company);
     if (t.depart || t.arrive) {
@@ -3704,6 +3704,7 @@
     car: '<path d="M4 12l1.8-4.6A2 2 0 0 1 7.7 6h8.6a2 2 0 0 1 1.9 1.4L20 12"/><rect x="3" y="12" width="18" height="5.5" rx="1.2"/><circle cx="7.5" cy="14.8" r="1"/><circle cx="16.5" cy="14.8" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
     taxi: '<path d="M5.5 11l1.4-4a2 2 0 0 1 1.9-1.3h6.4a2 2 0 0 1 1.9 1.3l1.4 4"/><path d="M3.5 11h17v5.5a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M10 5.7V3.5h4v2.2"/><circle cx="7.5" cy="14.3" r="1"/><circle cx="16.5" cy="14.3" r="1"/><path d="M5.5 17.5V20M18.5 17.5V20"/>',
     train: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 10h14"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/><path d="M8.5 17l-2.5 4M15.5 17l2.5 4"/>',
+    shinkansen: '<rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 10h14"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/><path d="M8.5 17l-2.5 4M15.5 17l2.5 4"/>',
     bus: '<rect x="4" y="3.5" width="16" height="14" rx="2.5"/><path d="M4 11h16M12 3.5V11"/><path d="M7 17.5V20M17 17.5V20"/><circle cx="8" cy="14.3" r="1"/><circle cx="16" cy="14.3" r="1"/>',
     walk: '<circle cx="13" cy="4.3" r="1.8"/><path d="M13 8.5 11.2 14l-2.7 7"/><path d="M11.2 14l3.3 2.6.8 4.4"/><path d="M12.6 10.2l3.6 2.6M12.6 10.2l-4 1.6"/>',
     bicycle: '<circle cx="6" cy="16" r="3.5"/><circle cx="18" cy="16" r="3.5"/><path d="M6 16l3.8-7h5.7L18 16"/><path d="M9.8 9 12.5 16H6"/><path d="M15.5 9l-1-3h-2.2"/>'
@@ -5018,7 +5019,11 @@
       var profile = Core.routeProfileFor(l.transport);
       return api(routeQuery(profile, a, b)).catch(function () { return null; }).then(function (res) {
         var km = res && res.found ? (res.distance || 0) / 1000 : null;
-        if (res && res.found && profile !== 'foot' && Core.isRouteDetourTooLong(straightKm, km)) {
+        // 車で大回りしている疑いのときの徒歩での調べ直しは、foot自身とrail（電車・新幹線・地下鉄）には
+        // 行わない：footはもともと徒歩の道のりなので該当なし、railは徒歩で置き換える意味が無い上、
+        // Worker側のgetRouteがすでに「線路の長さが直線距離の3倍を超えたら見つからない扱い」にしている
+        // （BRouterの公開サーバーへの問い合わせを1区間1回に抑えるため。docs/adr/0008）。
+        if (res && res.found && profile !== 'foot' && profile !== 'rail' && Core.isRouteDetourTooLong(straightKm, km)) {
           // 車で大回りしている疑い。徒歩で調べ直す
           return api(routeQuery('foot', a, b)).catch(function () { return null; }).then(function (res2) {
             var km2 = res2 && res2.found ? (res2.distance || 0) / 1000 : null;

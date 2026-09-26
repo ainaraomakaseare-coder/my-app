@@ -13,7 +13,7 @@ import { parseReceiptText } from "./receipt-parse.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
 } from "./geo-decode.js";
 
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
@@ -360,7 +360,7 @@ async function deleteTrip(id, env, headers) {
 /* ---------- blocks（大項目） ---------- */
 
 // この予定の場所まで、どうやって移動したか（地図でふりかえる演出で使う。v15）。空文字は「未設定＝演出なし」。
-const TRANSPORTS = ["", "plane", "car", "taxi", "walk", "train", "bus", "bicycle"];
+const TRANSPORTS = ["", "plane", "car", "taxi", "walk", "train", "shinkansen", "bus", "bicycle"];
 
 function validBlockInput(x) {
   if (!x || typeof x !== "object") return false;
@@ -1484,6 +1484,18 @@ const ROUTE_PROFILES = {
 const ROUTE_MAX_KM = 1500;
 const ROUTE_MAX_POINTS = 400;
 
+// 電車・新幹線・地下鉄（profile=rail）は道路ではなく線路をたどるので、OSRM（道路専用）ではなく
+// BRouterの公開サーバー（brouter.de、railプロファイル）を使う（2026-09-27〜、docs/adr/0008）。
+// 無料の公開サービスで利用規約上の明示的な制限は緩いが、フェアユースを守るため1区間1回だけ・
+// 結果はCache APIに30日置いて問い合わせを増やさない（他の旅行のprefetchはしない）。
+// 応答が失敗・タイムアウト（12秒）した、線路の長さが直線距離の3倍を超えた（駅すら無い場所を
+// 無理にスナップした疑い）、または始点・終点が求めた座標から5km以上ずれた（駅が遠い＝候補違いの疑い）
+// ときは、見つからない扱いにしてクライアントには直線（or優しい弧）のままにしてもらう。
+const RAIL_PROFILE_NAME = "rail";
+const RAIL_MAX_DETOUR_RATIO = 3;
+const RAIL_MAX_SNAP_KM = 5;
+const RAIL_TIMEOUT_MS = 12000;
+
 function parseLatLng(text) {
   const m = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec(text || "");
   return m ? validLatLng(m[1], m[2]) : null;
@@ -1517,11 +1529,51 @@ async function getTimezone(url, headers, ctx) {
   return json(body, 200, headers);
 }
 
+// OSRM（道路：car/foot/bike）のgeojsonの座標（[lng,lat]の並び）から、返す形（found/path/distance/duration）
+// を作る。座標が無ければfound:falseのまま。
+function osrmToBody(route) {
+  const coords = route && route.geometry && route.geometry.coordinates;
+  if (!Array.isArray(coords) || coords.length < 2) return { found: false };
+  const pts = downsamplePoints(coords, ROUTE_MAX_POINTS)
+    .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
+  return { found: true, path: pts, distance: Math.round(route.distance || 0), duration: Math.round(route.duration || 0) };
+}
+
+// BRouterのrailプロファイル（GeoJSON）から、上と同じ形を作る。
+// ガード：始点・終点が求めた座標からRAIL_MAX_SNAP_KMより離れている、または線路の長さが
+// 直線距離のRAIL_MAX_DETOUR_RATIO倍を超えているときはfound:falseにする（駅が無い場所に
+// 無理にスナップした・候補違いの疑い。実際のtrack-length（BRouterのproperties）が使えないときは
+// 座標の並びから自前で長さを積算する）。
+function brouterToBody(coords, properties, from, to) {
+  if (!Array.isArray(coords) || coords.length < 2) return { found: false };
+  const first = coords[0], last = coords[coords.length - 1];
+  const snapStartKm = distanceKm(from, { lat: first[1], lng: first[0] });
+  const snapEndKm = distanceKm(to, { lat: last[1], lng: last[0] });
+  if (snapStartKm > RAIL_MAX_SNAP_KM || snapEndKm > RAIL_MAX_SNAP_KM) return { found: false };
+  const trackM = properties && Number(properties["track-length"]);
+  let trackKm;
+  if (Number.isFinite(trackM) && trackM > 0) {
+    trackKm = trackM / 1000;
+  } else {
+    // BRouterのproperties["track-length"]が無いときの保険：座標の並びから自前で積算する
+    trackKm = 0;
+    for (let i = 1; i < coords.length; i++) {
+      trackKm += distanceKm({ lat: coords[i - 1][1], lng: coords[i - 1][0] }, { lat: coords[i][1], lng: coords[i][0] });
+    }
+  }
+  const straightKm = distanceKm(from, to);
+  if (straightKm > 0 && trackKm > straightKm * RAIL_MAX_DETOUR_RATIO) return { found: false };
+  const pts = downsamplePoints(coords, ROUTE_MAX_POINTS)
+    .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
+  return { found: true, path: pts, distance: Math.round(trackKm * 1000) };
+}
+
 async function getRoute(url, headers, ctx) {
   const profile = url.searchParams.get("profile") || "";
   const from = parseLatLng(url.searchParams.get("from"));
   const to = parseLatLng(url.searchParams.get("to"));
-  if (!ROUTE_PROFILES[profile] || !from || !to) return json({ error: "invalid_input" }, 400, headers);
+  const isRail = profile === RAIL_PROFILE_NAME;
+  if ((!ROUTE_PROFILES[profile] && !isRail) || !from || !to) return json({ error: "invalid_input" }, 400, headers);
   if (distanceKm(from, to) > ROUTE_MAX_KM) return json({ found: false }, 200, headers);
   const key = [profile, from.lat.toFixed(5), from.lng.toFixed(5), to.lat.toFixed(5), to.lng.toFixed(5)].join(",");
   const cache = caches.default;
@@ -1531,23 +1583,41 @@ async function getRoute(url, headers, ctx) {
 
   let body = { found: false };
   try {
-    const res = await fetch(
-      "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
-        from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
-      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
-    );
-    const data = res.ok ? await res.json() : null;
-    const route = data && data.routes && data.routes[0];
-    const coords = route && route.geometry && route.geometry.coordinates;
-    if (Array.isArray(coords) && coords.length > 1) {
-      // 点が多すぎると重いので間引く（最後の点は必ず残す）
-      const step = Math.ceil(coords.length / ROUTE_MAX_POINTS);
-      const pts = coords.filter((_, i) => i % step === 0 || i === coords.length - 1)
-        .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
-      body = { found: true, path: pts, distance: Math.round(route.distance || 0), duration: Math.round(route.duration || 0) };
+    if (isRail) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), RAIL_TIMEOUT_MS);
+      let data;
+      try {
+        const res = await fetch(
+          "https://brouter.de/brouter?lonlats=" + from.lng + "," + from.lat + "|" + to.lng + "," + to.lat +
+            "&profile=rail&alternativeidx=0&format=geojson",
+          {
+            headers: {
+              "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;" +
+                " 電車の道のり検索でBRouterの公開サーバーを利用しています。1区間1回・結果は30日キャッシュします)",
+            },
+            signal: controller.signal,
+          }
+        );
+        data = res.ok ? await res.json() : null;
+      } finally {
+        clearTimeout(timer);
+      }
+      const feature = data && Array.isArray(data.features) && data.features[0];
+      const coords = feature && feature.geometry && feature.geometry.coordinates;
+      body = brouterToBody(coords, feature && feature.properties, from, to);
+    } else {
+      const res = await fetch(
+        "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
+          from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
+        { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+      );
+      const data = res.ok ? await res.json() : null;
+      const route = data && data.routes && data.routes[0];
+      body = osrmToBody(route);
     }
   } catch {
-    return json({ error: "route_failed" }, 502, headers); // 一時的な失敗はキャッシュしない
+    return json({ error: "route_failed" }, 502, headers); // 一時的な失敗・タイムアウトはキャッシュしない
   }
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },

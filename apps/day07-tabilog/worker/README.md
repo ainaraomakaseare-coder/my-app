@@ -154,6 +154,12 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0017_review_travel
 
 `GET /route?profile=car|foot|bike&from=緯度,経度&to=緯度,経度` で、OpenStreetMapのルート検索（routing.openstreetmap.de、無料・APIキー不要）から道路に沿った道のりを返す（30日キャッシュ、1500km超は調べない）。`GET /geocode?quick=1` はNominatimを使わないと分からないものを `{ pending: true }` で返す。どちらもDBの変更は無い（docs/adr/0008）。
 
+### 電車・新幹線・地下鉄の道のり（2026-09-27 追加）
+
+`profile=rail`（電車・新幹線・地下鉄用）は、道路専用のOSRMではなく[BRouter](https://brouter.de/)の公開サーバー（`https://brouter.de/brouter?lonlats=経度,緯度|経度,緯度&profile=rail&alternativeidx=0&format=geojson`）を使う（`getRoute`内の`brouterToBody`）。アプリを識別できるUser-Agentを付け、12秒でタイムアウト（`AbortController`）。返す形（`{ found, path, distance }`）と30日キャッシュは他のprofileと同じ。座標の間引き（`downsamplePoints`）は`worker/src/geo-decode.js`に切り出してあり、`worker/test/geo-decode.test.mjs`で単体テストできる。
+
+BRouterの公開サーバーへの問い合わせは1区間1回・結果はキャッシュのみ（他の旅行の先読みはしない）というフェアユースを守る。応答が失敗・タイムアウトした、線路の長さ（`properties["track-length"]`）が直線距離の3倍を超えた、または始点・終点がBRouterの返す座標から5km以上ずれた（駅が遠い＝候補違いの疑い）ときは`found:false`にして、クライアント側の直線（または優しい弧）に任せる。距離の上限（1500km超は調べない）は他のprofileと共通。詳しくはdocs/adr/0008の2026-09-27追記を参照。
+
 ## 時差（2026-09-25 追加）
 
 `GET /timezone?lat=&lng=` で場所のタイムゾーン名（例：Europe/London）を返す（Open-Meteo、無料・APIキー不要、30日キャッシュ）。DBの変更は無い（docs/adr/0009）。
@@ -361,3 +367,27 @@ DBのスキーマ変更は無い（migrationは不要）。
 - **DBの変更は無い**。既存の`day_infos.weather_code`・`weather_manual`列をそのまま使う。`MANUAL_WEATHER_CODES`を旧来の10種（快晴／晴れ／曇り／霧／霧雨／雨／雪／にわか雨／にわか雪／雷雨）から、アプリの6アイコンに対応する`[1, 2, 3, 61, 71, 95]`に絞った。気温（temp_max/temp_min）はもう手動入力では受け付けない（送られてきても無視してNULLにする）。
 - `PATCH /trips/:id/days/:date/weather`：`weatherCode`に上の6種以外の整数を渡すと`400`。**`weatherCode: null`を渡すと「なし」＝選択解除**（`weather_code=NULL, weather_manual=0`に戻す）。呼び出し時に`day_infos`行が無ければ（まだ地図つきの記録が無い日）、場所は空のまま新しく行を作る。
 - `autoSetDayPlace`（`POST /trips/:id/days/:date/auto-place`）・`refetchShiftedWeather`（日程を変えたときの天気の取り直し）は、**もうOpen-Meteoの天気取得を呼ばない**。天気を表示に使わなくなったので、裏で取りに行く意味が無くなったため。`fetchDailyWeather`関数自体と、旧`PUT /trips/:id/days/:date`（`setDayPlace`、場所を手入力する昔のエンドポイント）は消さずに残してある（古いクライアント互換・他機能からの参照のため）。
+
+## 電車・新幹線・地下鉄も線路に沿った道のりで見せる：BRouterのrailプロファイル（2026-09-27 追加）
+
+これまで電車・新幹線は「線路のルートを出せる無料サービスが無い」という理由で、地図でふりかえるでは直線
+のままだった。[BRouter](https://brouter.de/)の公開サーバーがrailプロファイル（線路優先のルーティング）を
+提供していることを確認した（新横浜(139.6173,35.5075)→新大阪(135.5003,34.7334)で200・約3.5秒・4950点・
+`track-length` 489772mを確認済み）ため、`GET /route`に`profile=rail`を追加した（他のプロファイルは
+docs/adr/0008参照）。
+
+- `getRoute`は`profile=rail`のときOSRM（道路専用）ではなく
+  `https://brouter.de/brouter?lonlats=<経度>,<緯度>|<経度>,<緯度>&profile=rail&alternativeidx=0&format=geojson`
+  を呼ぶ（`brouterToBody`）。10秒でタイムアウト（`AbortController`）、アプリを識別できるUser-Agentを
+  付け、結果は既存と同じCache API・30日キャッシュ、同じ`{found, path, distance}`の形で返す。点の間引き
+  （最大約400点、最後の点は必ず残す）はOSRM用のロジックと共通化し、`downsamplePoints`として
+  `geo-decode.js`に切り出した（純粋関数、`worker/test/geo-decode.test.mjs`で単体テスト）。
+- ガード：始点・終点がBRouterの返す座標から5km以上離れている（駅が遠い＝候補違いの疑い）、または
+  線路の長さ（`properties["track-length"]`。無ければ座標列から自前で積算）が直線距離の3倍を超えている
+  （駅すら無い場所に無理にスナップした疑い）ときは`found:false`にする。距離の上限（1500km）は他の
+  プロファイルと共通。
+- BRouterは無料の公開サービスで、フェアユースを守るため1区間1回だけ問い合わせ、結果は上記のとおり
+  Cache APIに30日置く。他の旅行の先読み（prefetch）はしない。
+- クライアント（`app.js`）：`Core.routeProfileFor`が`train`・`shinkansen`・`subway`を`'rail'`に対応させ、
+  `fetchReplayRoutes`の「車で大回りしすぎたら徒歩で調べ直す」ロジックは`profile === 'car'`のときだけに
+  絞った（`rail`はWorker側の線路長ガードで代わりに担保する）。DBのスキーマ変更は無い（docs/adr/0008）。
