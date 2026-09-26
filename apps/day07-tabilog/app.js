@@ -63,6 +63,39 @@
     return Math.round((db.getTime() - da.getTime()) / 86400000);
   }
 
+  function addDaysToDate(dateStr, days) {
+    var d = parseDate(dateStr);
+    if (!d) return '';
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+  }
+
+  // 旅行の日程を編集したとき、予定（blocks）をいっしょに何日ずらすかを決める（2026-09-26）。
+  // - 開始日を変えた（'start'）：予定も同じ日数だけずらす。1日目が空の旅行でも、日と日の間隔を保つ
+  // - 開始日は変えていないが、予定が日程の外にはみ出していて、しかも最初の予定が1日目と違う（'blocks'）：
+  //   以前に開始日だけを変えて予定が取り残された旅行（ロサンゼルス旅など）。最初の予定を1日目にそろえる
+  // ずらす必要が無ければnull。実際にずらすかどうかは、画面側で本人に確かめてから決める。
+  function tripScheduleShift(oldTrip, newStart, newEnd, blocks) {
+    if (!parseDate(newStart)) return null;
+    var dates = (blocks || []).map(function (b) { return b.date; }).filter(function (d) { return !!parseDate(d); }).sort();
+    if (!dates.length) return null;
+    var first = dates[0], last = dates[dates.length - 1];
+    var oldStart = oldTrip && parseDate(oldTrip.startDate) ? oldTrip.startDate : '';
+    var days, reason;
+    if (oldStart && oldStart !== newStart) {
+      days = dateDiffDays(oldStart, newStart);
+      reason = 'start';
+    } else {
+      var hasEnd = !!parseDate(newEnd);
+      var outside = first < newStart || (hasEnd && last > newEnd);
+      if (!outside || first === newStart) return null;
+      days = dateDiffDays(first, newStart);
+      reason = 'blocks';
+    }
+    if (!days) return null;
+    return { days: days, reason: reason, count: dates.length, firstFrom: first, firstTo: addDaysToDate(first, days) };
+  }
+
   function formatDateJp(dateStr) {
     var d = parseDate(dateStr);
     if (!d) return '';
@@ -1199,6 +1232,8 @@
     parseDate: parseDate,
     dateDiffDays: dateDiffDays,
     formatDateJp: formatDateJp,
+    addDaysToDate: addDaysToDate,
+    tripScheduleShift: tripScheduleShift,
     dayLabel: dayLabel,
     tripNights: tripNights,
     allDatesForTrip: allDatesForTrip,
@@ -2134,19 +2169,40 @@
     var title = $('#teTitle').value.trim();
     var status = $('#tripEditStatus');
     if (!title) { status.textContent = 'タイトルを入力してください。'; return; }
+    var newStart = $('#teStart').value, newEnd = $('#teEnd').value;
+    // 日程を変えたら、予定もいっしょにずらすかを確かめる（2026-09-26。Core.tripScheduleShift）
+    var shift = Core.tripScheduleShift(state.trip, newStart, newEnd, state.blocks);
+    var shiftDays = 0;
+    if (shift) {
+      var dir = shift.days > 0 ? Math.abs(shift.days) + '日後' : Math.abs(shift.days) + '日前';
+      var move = Core.formatDateJp(shift.firstFrom) + ' → ' + Core.formatDateJp(shift.firstTo);
+      var msg = shift.reason === 'start'
+        ? '開始日を変えました。予定（' + shift.count + '件）も同じだけ' + dir + 'にずらしますか？\n最初の予定：' + move
+        : '予定が日程の外に残っています。予定（' + shift.count + '件）をまとめて' + dir + 'にずらして、1日目からにそろえますか？\n最初の予定：' + move;
+      if (confirm(msg + '\n\n「キャンセル」を選ぶと、日程だけを保存します。')) shiftDays = shift.days;
+    }
     status.textContent = '保存中…';
     resolveCoverPhotoId().then(function (coverPhotoId) {
-      return api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', {
+      var body = {
         title: title,
-        startDate: $('#teStart').value,
-        endDate: $('#teEnd').value,
+        startDate: newStart,
+        endDate: newEnd,
         companions: Core.parseTags($('#teCompanions').value),
         tripType: $('#teTripType').value.trim(),
         coverPhotoId: coverPhotoId
-      });
+      };
+      if (shiftDays) body.shiftDays = shiftDays;
+      return api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', body);
     }).then(function (trip) {
+      // サーバーが実際にずらした日数（古いWorkerはshiftDaysを知らないので返さない）
+      var shifted = trip.shiftedDays || 0;
+      delete trip.shiftedDays;
       state.trip = trip;
       rememberTrip(trip);
+      if (shiftDays && !shifted) alert('日程は保存しましたが、予定はずらせませんでした。少し時間をおいて、もう一度日程を保存してください。');
+      // 予定・日ごとの情報の日付が変わったので、旅行ごと読み直す
+      return shifted ? refreshTrip() : null;
+    }).then(function () {
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       if (dates.indexOf(state.selectedDate) === -1) state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       showScreen('tripDetail');

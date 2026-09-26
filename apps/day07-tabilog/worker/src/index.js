@@ -258,7 +258,7 @@ async function getTrip(id, env, headers) {
   return json({ trip: rowToTrip(tripRow), blocks, days, members }, 200, headers);
 }
 
-async function updateTrip(id, request, env, headers) {
+async function updateTrip(id, request, env, headers, ctx) {
   const existing = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
   if (!existing) return json({ error: "not_found" }, 404, headers);
   let data;
@@ -270,6 +270,15 @@ async function updateTrip(id, request, env, headers) {
   if (!validTripInput({ ...rowToTrip(existing), ...data, title: data.title ?? existing.title })) {
     return json({ error: "invalid_input" }, 400, headers);
   }
+  // 日程の変更に合わせて予定（blocks）と日ごとの情報（day_infos）を何日ずらすか（2026-09-26）。
+  // 何日ずらすかはクライアント（Core.tripScheduleShift）が決め、本人に確かめてから送ってくる。
+  let shiftDays = 0;
+  if (data.shiftDays !== undefined) {
+    if (!Number.isInteger(data.shiftDays) || data.shiftDays === 0 || Math.abs(data.shiftDays) > MAX_SHIFT_DAYS) {
+      return json({ error: "invalid_input" }, 400, headers);
+    }
+    shiftDays = data.shiftDays;
+  }
   const next = {
     title: data.title !== undefined ? String(data.title).trim() : existing.title,
     start_date: data.startDate !== undefined ? data.startDate : existing.start_date,
@@ -279,13 +288,62 @@ async function updateTrip(id, request, env, headers) {
     trip_type: data.tripType !== undefined ? String(data.tripType) : existing.trip_type,
     updated_at: nowIso(),
   };
-  await env.DB.prepare(
+  const tripUpdate = env.DB.prepare(
     "UPDATE trips SET title=?, start_date=?, end_date=?, companions=?, cover_photo_id=?, trip_type=?, updated_at=? WHERE id=?"
-  )
-    .bind(next.title, next.start_date, next.end_date, next.companions, next.cover_photo_id, next.trip_type, next.updated_at, id)
-    .run();
+  ).bind(next.title, next.start_date, next.end_date, next.companions, next.cover_photo_id, next.trip_type, next.updated_at, id);
+  if (shiftDays) {
+    // 旅行の更新と日付の移動を1つのbatch（D1では1トランザクション）で行い、途中で止まって
+    // 予定の半分だけがずれた状態を残さない。
+    await env.DB.batch([tripUpdate, ...shiftTripDateStatements(env, id, shiftDays, next.updated_at)]);
+    if (ctx) ctx.waitUntil(refetchShiftedWeather(env, id));
+  } else {
+    await tripUpdate.run();
+  }
   const updated = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
-  return json(rowToTrip(updated), 200, headers);
+  const out = rowToTrip(updated);
+  if (shiftDays) out.shiftedDays = shiftDays;
+  return json(out, 200, headers);
+}
+
+const MAX_SHIFT_DAYS = 3660;
+
+// 予定（blocks）と日ごとの情報（day_infos）の日付を、まとめてshiftDays日ずらすSQL文の列。
+// day_infosはUNIQUE(trip_id, date)・id＝trip_id+"_"+dateなので、そのまま1文でずらすと途中で
+// 別の日の行とぶつかる（7日ずらすと、8日目の行が1日目の行の日付に先に入ろうとする）。いったん
+// 全行の日付に"#"を付けて退避してから、正しい日付に入れ直す。
+// 自動で取った天気は元の日付のものなので消し（refetchShiftedWeatherで取り直す）、本人が手で
+// 直した天気（weather_manual=1）・場所・音声の文字起こしは、その旅の「○日目」についてきた記録として残す。
+function shiftTripDateStatements(env, tripId, shiftDays, t) {
+  const mod = (shiftDays > 0 ? "+" : "") + shiftDays + " days";
+  return [
+    env.DB.prepare("UPDATE blocks SET date = date(date, ?), updated_at = ? WHERE trip_id = ? AND date != ''")
+      .bind(mod, t, tripId),
+    env.DB.prepare("UPDATE day_infos SET date = '#' || date, id = id || '#' WHERE trip_id = ?").bind(tripId),
+    env.DB.prepare(
+      "UPDATE day_infos SET date = date(substr(date, 2), ?), id = trip_id || '_' || date(substr(date, 2), ?), " +
+      "weather_code = CASE WHEN weather_manual = 1 THEN weather_code ELSE NULL END, " +
+      "temp_max = CASE WHEN weather_manual = 1 THEN temp_max ELSE NULL END, " +
+      "temp_min = CASE WHEN weather_manual = 1 THEN temp_min ELSE NULL END, " +
+      "precip_sum = CASE WHEN weather_manual = 1 THEN precip_sum ELSE NULL END, " +
+      "is_forecast = CASE WHEN weather_manual = 1 THEN is_forecast ELSE 0 END, " +
+      "fetched_at = CASE WHEN weather_manual = 1 THEN fetched_at ELSE '' END, " +
+      "updated_at = ? WHERE trip_id = ? AND date LIKE '#%'"
+    ).bind(mod, mod, t, tripId),
+  ];
+}
+
+// 日付をずらした日の天気を、新しい日付で取り直す（保存の返事は待たせない。失敗しても天気が空のままになるだけ）。
+async function refetchShiftedWeather(env, tripId) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, date, lat, lon FROM day_infos WHERE trip_id = ? AND weather_manual = 0 AND fetched_at = '' AND lat IS NOT NULL AND lon IS NOT NULL"
+  ).bind(tripId).all();
+  for (const row of results) {
+    const weather = await fetchDailyWeather(row.lat, row.lon, row.date).catch(() => null);
+    if (!weather) continue;
+    await env.DB.prepare(
+      "UPDATE day_infos SET weather_code=?, temp_max=?, temp_min=?, precip_sum=?, is_forecast=?, fetched_at=?, updated_at=? WHERE id=? AND weather_manual = 0 AND fetched_at = ''"
+    ).bind(weather.weatherCode, weather.tempMax, weather.tempMin, weather.precipSum, weather.isForecast ? 1 : 0, nowIso(), nowIso(), row.id).run();
+  }
 }
 
 async function deleteTrip(id, env, headers) {
@@ -3491,7 +3549,7 @@ export default {
     let m;
     if (method === "POST" && path === "/trips") return createTrip(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)$/))) return getTrip(m[1], env, headers);
-    if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)$/))) return updateTrip(m[1], request, env, headers);
+    if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)$/))) return updateTrip(m[1], request, env, headers, ctx);
     if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)$/))) return deleteTrip(m[1], env, headers);
 
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/blocks$/))) return createBlock(m[1], request, env, headers);

@@ -660,5 +660,27 @@ var laStops = [
 eq('geocodeNearIndexes: 同じ日のロサンゼルスの2地点目は、同じ日の前の場所を近くにする',
   T.geocodeNearIndexes(laStops, 1), [{ lat: 34.05, lng: -118.24 }]);
 
+/* ---- tripScheduleShift（日程を変えたら予定もずらす） ---- */
+var laBlocks = [{ date: '2026-07-03' }, { date: '2026-07-05' }, { date: '2026-07-10' }, { date: '' }];
+eq('addDaysToDate: 月をまたいで7日前', T.addDaysToDate('2026-07-03', -7), '2026-06-26');
+eq('tripScheduleShift: 開始日を7/3→6/26に変えたら、予定も7日前にずらす',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-06-26', '2026-07-03', laBlocks),
+  { days: -7, reason: 'start', count: 3, firstFrom: '2026-07-03', firstTo: '2026-06-26' });
+eq('tripScheduleShift: 開始日を変えたら、1日目が空の旅行でも日と日の間隔を保つ（最初の予定7/5→6/28）',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-06-26', '2026-07-03', [{ date: '2026-07-05' }]).firstTo, '2026-06-28');
+eq('tripScheduleShift: 開始日だけ先に変えて予定が日程の外に残った旅行は、最初の予定を1日目にそろえる',
+  T.tripScheduleShift({ startDate: '2026-06-26', endDate: '2026-07-03' }, '2026-06-26', '2026-07-03', laBlocks),
+  { days: -7, reason: 'blocks', count: 3, firstFrom: '2026-07-03', firstTo: '2026-06-26' });
+eq('tripScheduleShift: 予定が日程の中に収まっていれば、1日目が空でも何もしない',
+  T.tripScheduleShift({ startDate: '2026-07-01', endDate: '2026-07-10' }, '2026-07-01', '2026-07-10', laBlocks), null);
+eq('tripScheduleShift: 終了日だけ変えたときは何もしない',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-07-03', '2026-07-12', laBlocks), null);
+eq('tripScheduleShift: 日付のある予定が無ければ何もしない',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-06-26', '2026-07-03', [{ date: '' }]), null);
+eq('tripScheduleShift: 開始日を空にしたときは何もしない',
+  T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '', '', laBlocks), null);
+eq('tripScheduleShift: もともと開始日が無かった旅行に開始日を入れ、予定がその前にあるなら1日目にそろえる',
+  T.tripScheduleShift({ startDate: '', endDate: '' }, '2026-07-05', '', laBlocks).days, 2);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

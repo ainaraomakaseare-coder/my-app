@@ -315,3 +315,17 @@ npx wrangler d1 execute tabilog-db --remote --file migrations/0020_entry_map_coo
 - クライアント側（`app.js`の`replayPlaceEntry`）で、`query=undefined,undefined`のように壊れた地図
   リンクは地図が無いのと同じに扱うようにし（そのブロックには`/geocode`自体を呼ばない）、`replayPlaceQuery`
   にテストを足した（`test/data.test.js`）。DBのスキーマ変更は無い。
+
+## 日程を変えたら予定もいっしょにずらす（2026-09-26 追加）
+
+旅行の開始日を変えても、予定（blocks）の日付は元のままで、日程の外に取り残されていた（ロサンゼルス旅で
+7/3開始→6/26開始に変えたとき）。`PATCH /trips/:id`に`shiftDays`（整数、±3660日まで）を付けると、
+旅行の更新と同じbatchで、その旅行の予定と日ごとの情報（day_infos）の日付をまとめてずらす（`shiftTripDateStatements`）。
+DBのスキーマ変更は無い（migrationは不要）。
+
+- 何日ずらすかはクライアントの`Core.tripScheduleShift`が決め、`confirm`で本人に確かめてから送る。
+  開始日を変えたときは同じ日数だけ、開始日は同じでも予定が日程の外にはみ出しているときは最初の予定を1日目にそろえる。
+- day_infosは`UNIQUE(trip_id, date)`・`id = trip_id + "_" + date`なので、いったん日付に`#`を付けて退避してから入れ直す。
+- 自動で取った天気は元の日付のものなので消し、`ctx.waitUntil`で新しい日付の天気を取り直す（`refetchShiftedWeather`）。
+  手で直した天気・場所・音声の文字起こしは、その旅の「○日目」の記録としてそのまま移す。
+- 古いWorkerは`shiftDays`を無視する。そのときは返事に`shiftedDays`が無いので、アプリは「予定はずらせませんでした」と出す。
