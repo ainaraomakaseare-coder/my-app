@@ -935,7 +935,9 @@ function rowToDayInfo(row) {
 // アプリ側の6種類のアイコン（晴れ／晴れ時々くもり／くもり／雨／雷雨／雪）に対応するWMOコードだけを許可する。
 // 気温は持たない。古い手動修正（0/45/51/80/85など）で保存済みの行はそのまま残るが、新しく選べるのは
 // この6つだけ（app.js側のCore.MANUAL_WEATHER_OPTIONSと合わせること）。
-const MANUAL_WEATHER_CODES = [1, 2, 3, 61, 71, 95];
+// ただし配布済みの古いアプリ（ビルド50まで）は以前の10種類（0/45/51/80/85など）を送ってくるので、
+// それも受け付ける（表示はCore.manualWeatherDisplayが6種類のどれかに読み替える）。
+const MANUAL_WEATHER_CODES = [0, 1, 2, 3, 45, 51, 61, 71, 80, 85, 95];
 
 // Open-Meteoのジオコーディング（市区町村・行政区分レベル。POI・施設名は持たない）の生の候補一覧。
 async function geocodeOpenMeteoCandidates(place) {
