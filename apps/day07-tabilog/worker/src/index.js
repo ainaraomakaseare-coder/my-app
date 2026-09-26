@@ -953,7 +953,8 @@ function parseMapUrl(u) {
   m = /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/.exec(u.pathname);
   if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
   m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
-  let text = q;
+  // 壊れた地図URL（「undefined,undefined」など）を地名として探さない（エチオピアに飛んだことがある）
+  let text = /^(undefined|null|NaN)(\s*,\s*(undefined|null|NaN))?$/i.test(q) ? "" : q;
   if (!text && m) {
     try { text = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { text = ""; }
   }
@@ -1214,7 +1215,10 @@ async function placeDetails(id, session, env, headers) {
 async function searchPlaces(q, headers, ctx, env, session) {
   q = (q || "").trim();
   if (!q || q.length > 100) return json({ error: "invalid_input" }, 400, headers);
-  if (env && env.GOOGLE_API_KEY) {
+  // Googleの候補は座標を持たない（選んでから /places/details で取る）。それを知らない古いアプリ（1.1.0の
+  // ビルド47まで・session を送らない）に返すと「query=undefined,undefined」の地図URLが保存されてしまった
+  // （2026-09-26、大阪旅行で発生）ので、session を送ってくる新しいアプリにだけGoogleの候補を返す。
+  if (env && env.GOOGLE_API_KEY && session) {
     const google = await googleAutocomplete(q, session, env);
     if (google) return json({ places: google }, 200, headers);
   }
