@@ -115,3 +115,4 @@ body{margin:0;background:var(--background);color:var(--foreground);font-family:I
 @media(max-width:750px){.score-body,.large .score-body{flex-direction:column;gap:18px}.score-people,.large .score-people{width:100%;max-width:100%;grid-template-columns:repeat(auto-fit,minmax(min(100%,110px),1fr));gap:16px}.score-people>div{min-width:0}}
 @media(max-width:380px){.score-people,.large .score-people{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.score-people>div>span:nth-child(2){font-size:.8rem}}
 @media(max-width:700px){.shell{padding-top:env(safe-area-inset-top,0px)}}
+html,body{max-width:100%;overflow-x:clip}.shell{width:100%;box-sizing:border-box}@media(max-width:700px){.shell{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}header{min-width:0;flex-wrap:nowrap;gap:8px}.brand{min-width:0;white-space:nowrap}header>.row{min-width:0;flex-wrap:nowrap;gap:6px}header>.row .sub{display:none}}
