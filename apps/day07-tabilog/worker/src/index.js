@@ -2651,6 +2651,28 @@ async function joinTrip(tripId, request, env, headers) {
   return json({ members: results.map(rowToMember), accountId }, 200, headers);
 }
 
+// 「参加済み」を押して参加をやめる（2026-09-27）。trip_membersの自分の1件だけを消す。
+// 旅行や自分が書いた記録は消さない。本人確認は参加するときと同じ（resolveEmail）
+async function leaveTrip(tripId, request, env, headers) {
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(auth.email).first();
+  if (account) {
+    await env.DB.prepare("DELETE FROM trip_members WHERE trip_id = ? AND account_id = ?").bind(tripId, account.account_id).run();
+  }
+  const { results } = await env.DB.prepare("SELECT * FROM trip_members WHERE trip_id = ?").bind(tripId).all();
+  return json({ members: results.map(rowToMember) }, 200, headers);
+}
+
 /* ---------- 音声からの記録作成（このアプリで唯一AIを呼び出す機能） ----------
  * その日にあったことをまとめて話した音声（＋任意でURL・店名の雑多なメモ）を
  * OpenAIに渡し、話した順番どおりに複数のBlock（予定）・Entry（記録）へ分割して
@@ -3971,6 +3993,7 @@ export default {
     if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
     if (method === "POST" && path === "/accounts/delete") return deleteAccount(request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/leave$/))) return leaveTrip(m[1], request, env, headers);
 
     if (method === "POST" && path === "/billing/checkout") return createCheckoutSession(request, env, headers);
     if (method === "POST" && path === "/billing/portal") return createPortalSession(request, env, headers);
