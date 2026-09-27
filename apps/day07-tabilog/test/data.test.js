@@ -845,8 +845,13 @@ eq('tripScheduleShift: 開始日を変えたら、1日目が空の旅行でも�
 eq('tripScheduleShift: 開始日だけ先に変えて予定が日程の外に残った旅行は、最初の予定を1日目にそろえる',
   T.tripScheduleShift({ startDate: '2026-06-26', endDate: '2026-07-03' }, '2026-06-26', '2026-07-03', laBlocks),
   { days: -7, reason: 'blocks', count: 3, firstFrom: '2026-07-03', firstTo: '2026-06-26' });
-eq('tripScheduleShift: 予定が日程の中に収まっていれば、1日目が空でも何もしない',
+eq('tripScheduleShift: 予定が日程の中に収まっていて、最初の空きが2日までなら何もしない（到着日に予定が無い旅など）',
   T.tripScheduleShift({ startDate: '2026-07-01', endDate: '2026-07-10' }, '2026-07-01', '2026-07-10', laBlocks), null);
+eq('tripScheduleShift: 開始日だけ前に動かして最初の7日が空いたままの旅（ワールドカップ旅）は、最初の予定を1日目にそろえる',
+  T.tripScheduleShift({ startDate: '2026-06-26', endDate: '2026-07-12' }, '2026-06-26', '2026-07-12', laBlocks),
+  { days: -7, reason: 'blocks', count: 3, firstFrom: '2026-07-03', firstTo: '2026-06-26' });
+eq('tripScheduleShift: 最初の空きがちょうど3日なら聞く',
+  T.tripScheduleShift({ startDate: '2026-06-30', endDate: '2026-07-12' }, '2026-06-30', '2026-07-12', laBlocks).days, -3);
 eq('tripScheduleShift: 終了日だけ変えたときは何もしない',
   T.tripScheduleShift({ startDate: '2026-07-03', endDate: '2026-07-10' }, '2026-07-03', '2026-07-12', laBlocks), null);
 eq('tripScheduleShift: 日付のある予定が無ければ何もしない',
