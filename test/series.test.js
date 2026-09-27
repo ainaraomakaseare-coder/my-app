@@ -20,10 +20,10 @@ async function check(name, fn) {
 }
 
 const MONEY = series.normalizeSeries({
-  name: '半年で100万稼げなければパソコン捨てます',
+  name: '売上目標チャレンジ',
   style: '毎日の記録。淡々と、正直に。',
-  closing: 'パソコンを捨てるまで、あと{残り日数}。',
-  hashtags: '#半年で100万 #DAY{DAY}',
+  closing: 'ゴールまで、あと{残り日数}。',
+  hashtags: '#売上目標チャレンジ #DAY{DAY}',
   startDate: '2026-10-01', endDate: '2027-03-31', goalYen: 1000000,
   incomeCategories: 'アフィリエイト\nアプリ収益',
   script: true,
@@ -194,12 +194,12 @@ const ENTRIES = [
   const good = {
     instagram: 'DAY{DAY}。今日は{今日の作業}。売上は{今日の売上}（{今日の内訳}）、累計{累計}。家事分担アプリを公開しました。',
     tiktok: 'DAY{DAY}、累計{累計}！',
-    youtubeTitle: '半年で100万 DAY{DAY}｜累計{累計}',
+    youtubeTitle: '売上目標チャレンジ DAY{DAY}｜累計{累計}',
     youtubeDescription: '今日の作業：{今日の作業}\n学び：課金導線は最初に作るべき',
     x: 'DAY{DAY}：累計{累計}（{累計の内訳}）',
     threads: '家事分担アプリを公開しました。皆さんならどう売りますか？',
     hashtags: ['#副業', '#記録'],
-    script: '【冒頭2秒のひと言】パソコンを捨てるまで、あと{残り日数}\n【本編】場面1：読み上げ：…',
+    script: '【冒頭2秒のひと言】ゴールまで、あと{残り日数}\n【本編】場面1：読み上げ：…',
   };
   const input = { series: MONEY, entries: ENTRIES, onDate: '2026-10-03', inputs: {} };
 
@@ -207,8 +207,8 @@ const ENTRIES = [
     const out = await gen.generate(input, { json: async () => good });
     assert.ok(out.ok, JSON.stringify(out.findings));
     assert.ok(out.posts.instagram.startsWith('DAY3。今日はLP作成（人間1時間／AI30分）、投稿（人間15分）。売上は3,200円（アフィリエイト800円／アプリ収益2,400円）、累計4,400円。'));
-    assert.ok(out.posts.instagram.includes('パソコンを捨てるまで、あと179日。'));
-    assert.ok(out.posts.instagram.includes('#半年で100万 #DAY3 #副業 #記録'));
+    assert.ok(out.posts.instagram.includes('ゴールまで、あと179日。'));
+    assert.ok(out.posts.instagram.includes('#売上目標チャレンジ #DAY3 #副業 #記録'));
     assert.ok(!/\{/.test(out.posts.x), '差し込み口が残っている');
     assert.strictEqual((out.posts.x.match(/#/g) || []).length, 2, 'X のタグは2個まで');
     assert.strictEqual((out.posts.threads.match(/#/g) || []).length, 1, 'Threads のタグは1個');

@@ -107,8 +107,16 @@ check('いろいろな書き方の見出しを拾う', () => {
   ]) assert.strictEqual(headingOf(line), net, line);
 });
 
+check('チャット画面からコピーして「##」が落ちた見出しも拾う（DAY32 で実際に起きた）', () => {
+  const r = split('Instagram\nあ\n\nTikTok\nい\n\nYouTube Shorts（タイトル／概要欄）\n\nタイトル\n\n作った4アプリ\n\n概要欄\n\n概要です\n\nX\nx');
+  assert.deepStrictEqual(r.found, ['instagram', 'tiktok', 'youtube', 'x']);
+  assert.strictEqual(r.youtubeTitle, '作った4アプリ');
+  assert.strictEqual(r.youtubeDescription, '概要です');
+  assert.strictEqual(r.tiktok, 'い', 'YouTube の文が TikTok に混ざっている');
+});
+
 check('本文の行は見出しにしない', () => {
-  for (const line of ['X でも話題に', '【今回の記録】', 'Instagram で見てね', '#30日で30アプリ']) {
+  for (const line of ['X でも話題に', '【今回の記録】', 'Instagram で見てね', '#30日で30アプリ', 'X（旧Twitter）で話題']) {
     assert.strictEqual(headingOf(line), null, line);
   }
 });

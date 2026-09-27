@@ -104,6 +104,26 @@ function fakeTokenApi(reply) {
     assert.strictEqual(sent.length, 0);
   });
 
+  console.log('\nX');
+  process.env.X_CLIENT_ID = 'x';
+  process.env.X_CLIENT_SECRET = 'xs';
+  const x = require('../lib/x');
+
+  await check('X も取り直す前に DB の最新の引換券を使う（1回使うと古い券は無効になるため）', async () => {
+    const db = fakeDb({ id: 'x1', refresh_token: 'XR2', access_token: 'old', expires_at: past(), meta: {} });
+    const sent = fakeTokenApi({ access_token: 'XA3', refresh_token: 'XR3', expires_in: 7200 });
+    await x.accessTokenFor({ id: 'x1', refresh_token: 'XR1', access_token: 'old', expires_at: past(), meta: {} }, db);
+    assert.deepStrictEqual(sent, ['XR2']);
+    assert.strictEqual(db.state.row.refresh_token, 'XR3');
+  });
+
+  await check('X の取り直しに失敗したら、理由を残す', async () => {
+    const db = fakeDb({ id: 'x1', refresh_token: 'XR1', access_token: 'old', expires_at: past(), meta: {} });
+    fakeTokenApi({ error: 'invalid_request', error_description: 'Value passed for the token was invalid.' });
+    await assert.rejects(() => x.accessTokenFor(Object.assign({}, db.state.row), db));
+    assert.ok(db.state.row.meta.auth_error && /invalid_request/.test(db.state.row.meta.auth_error.message));
+  });
+
   global.fetch = realFetch;
   console.log(`\n${passed} 件成功 / ${failed} 件失敗`);
   if (failed) process.exit(1);
