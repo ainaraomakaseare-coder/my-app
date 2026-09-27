@@ -1161,5 +1161,22 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
   eq('見出しが「〜フライト」なら移動手段が空欄でも飛行機', [(T.isPlaneMove||function(){return true;})({ transport: '', label: 'ロサンゼルスへのフライト' }), (T.isPlaneMove||function(){return false;})({ transport: '', label: 'ロサンゼルス国際空港' }), (T.isPlaneMove||function(){return false;})({ transport: 'car', label: 'フライト後の送迎' })], [true, false, false]);
 })();
 
+/* ---- 地図でふりかえる：日付変更線をまたいだら、そのあとの地点の経度を±360度して続ける（香港→ニューヨークで、
+   ニューヨークまでの足跡が別の周回に描かれて見えなくなっていた。2026-09-27） ---- */
+(function () {
+  var stops = [
+    { blockId: 'tk', dayIndex: 0, minute: 600, query: 'tk', transport: '' },
+    { blockId: 'hk', dayIndex: 0, minute: 900, query: 'hk', transport: 'plane' },
+    { blockId: 'ny', dayIndex: 1, minute: 600, query: 'ny', transport: 'plane' },
+    { blockId: 'rio', dayIndex: 3, minute: 600, query: 'rio', transport: 'plane' }];
+  var tl = T.buildReplayTimeline(stops, { tk: { lat: 35.68, lng: 139.77 }, hk: { lat: 22.31, lng: 113.92 }, ny: { lat: 40.64, lng: -73.78 }, rio: { lat: -22.81, lng: -43.25 } });
+  eq('日付変更線：ニューヨーク・リオは経度+360度で続く', tl.stops.map(function (s) { return Math.round(s.lng); }), [140, 114, 286, 317]);
+  var hkNy = tl.legs[1];
+  var end = hkNy.path[hkNy.path.length - 1];
+  eq('日付変更線：香港→ニューヨークの弧の終わりがニューヨークの地点と同じ経度', Math.round(end[1]), 286);
+  eq('日付変更線：距離は経度をずらしても変わらない', Math.round(T.distanceKm(tl.stops[2], tl.stops[3])), Math.round(T.distanceKm({ lat: 40.64, lng: -73.78 }, { lat: -22.81, lng: -43.25 })));
+  eq('wrapLng：-180〜180度に戻す', [T.wrapLng(286.22), T.wrapLng(-200), T.wrapLng(139.77), T.wrapLng(180)].map(function (x) { return Math.round(x * 100) / 100; }), [-73.78, 160, 139.77, 180]);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

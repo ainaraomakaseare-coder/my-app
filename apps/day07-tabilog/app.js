@@ -1235,6 +1235,19 @@
       });
     });
     if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
+    // 日付変更線（経度180度）をまたいだら、そのあとの地点の経度を±360度して前の地点から続ける。
+    // 香港→ニューヨークのように太平洋を越える飛行機は、弧を太平洋回りで引くので終わりが経度+286度になる。
+    // ニューヨーク（-74度）をそのままにすると、そこから先は地図の「別の周回」に描かれ、カメラがニューヨークへ
+    // 動くと、東京→香港→ニューヨークまでの足跡が見えなくなっていた（2026-09-27）
+    var prevLng = null;
+    s.forEach(function (st) {
+      if (!st.located) return;
+      if (prevLng !== null) {
+        while (st.lng - prevLng > 180) st.lng -= 360;
+        while (st.lng - prevLng < -180) st.lng += 360;
+      }
+      prevLng = st.lng;
+    });
 
     var legs = [], lastLoc = -1;
     // 場所が変わったら移動にする。移動手段が入っていなければ車とみなす（ほとんどの移動は車、という声より。
@@ -1452,6 +1465,11 @@
   // 「最初の部分が見えない」ように見えていた（2026-09-27）。道のりの両端がピンから離れていれば、ピンとの
   // 間を線でつなぐ（アイコンもピンから動き出す）。
   var PATH_JOIN_MIN_KM = 0.02;
+  // 経度を-180〜180度に戻す
+  function wrapLng(lng) {
+    var x = ((lng + 180) % 360 + 360) % 360 - 180;
+    return x === -180 && lng > 0 ? 180 : x;
+  }
   function joinPathEnds(path, a, b) {
     if (!Array.isArray(path) || path.length < 2 || !a || !b) return path;
     var out = path.slice();
@@ -1943,6 +1961,7 @@
     tzOffsetMinutes: tzOffsetMinutes,
     assignBlockZones: assignBlockZones,
     isPlaneMove: isPlaneMove,
+    wrapLng: wrapLng,
     applyBlockZones: applyBlockZones,
     offsetDiffText: offsetDiffText,
     travelDuration: travelDuration,
@@ -5957,7 +5976,7 @@
   // 車の道のりを見た目の近似として使う（オーナー承認、2026-09-27）。それも見つからなければやわらかい曲線のまま。
   function routeQuery(profile, a, b) {
     return '/route?profile=' + profile +
-      '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
+      '&from=' + a.lat.toFixed(5) + ',' + Core.wrapLng(a.lng).toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + Core.wrapLng(b.lng).toFixed(5);
   }
   // 線路データ（OpenStreetMap、Overpass API）を取って、端末の中で線路の上の最短経路を求める。
   // 求めた線はこの端末に覚えておき、次からは線路データを取りに行かない。取れなければnull。
@@ -5984,7 +6003,11 @@
     var jobs = tl.legs.filter(function (l) { return Core.routeProfileFor(l.transport); });
     // 近い区間から順に届くよう、再生の順番（区間の並び）のまま同時に聞く
     return Promise.all(jobs.map(function (l) {
-      var a = tl.stops[l.from], b = tl.stops[l.to];
+      // 地点の経度は日付変更線をまたぐと±360度されている（buildReplayTimeline）。道のりは普通の経度で調べ、
+      // 届いた道のりを同じだけずらして地点につなぐ
+      var sa = tl.stops[l.from], sb = tl.stops[l.to];
+      var shift = sa.lng - Core.wrapLng(sa.lng);
+      var a = { lat: sa.lat, lng: sa.lng - shift }, b = { lat: sb.lat, lng: sb.lng - shift };
       var straightKm = Core.distanceKm(a, b);
       var profile = Core.routeProfileFor(l.transport);
       return api(routeQuery(profile, a, b)).catch(function () { return null; }).then(function (res) {
@@ -6012,7 +6035,8 @@
         return res;
       }).then(function (res) {
         if (res && res.found && res.path && res.path.length > 1) {
-          l.path = Core.joinPathEnds(res.path, tl.stops[l.from], tl.stops[l.to]);
+          var path = shift ? res.path.map(function (p) { return [p[0], p[1] + shift]; }) : res.path;
+          l.path = Core.joinPathEnds(path, tl.stops[l.from], tl.stops[l.to]);
           if (onRoute) onRoute(l);
         }
       });
