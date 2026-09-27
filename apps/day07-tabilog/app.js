@@ -6195,9 +6195,16 @@
     $('#replayProgressBar').style.width = (tl.totalReal ? Math.min(100, r / tl.totalReal * 100) : 100) + '%';
   }
 
+  var REPLAY_MAX_FRAME_SEC = 0.1;
   function replayTick(ts) {
     if (!replay || !replay.playing) return;
-    if (replay.lastTs !== null) replay.r = Math.min(replay.tl.totalReal, replay.r + (ts - replay.lastTs) / 1000);
+    // 1コマで進める時間は最大REPLAY_MAX_FRAME_SEC。端末が一瞬固まる（初めて開いたときに線路の道のりを
+    // 計算する、写真を読み込む、など）と、以前はその時間ぶん再生が一気に飛び、吹き出しや写真が「一瞬出て
+    // すぐ消える」ように見えていた（大阪旅の新大阪・ユニバ、2026-09-27）。固まった分は飛ばさず、続きから再生する
+    if (replay.lastTs !== null) {
+      var dt = Math.min(Math.max(0, (ts - replay.lastTs) / 1000), REPLAY_MAX_FRAME_SEC);
+      replay.r = Math.min(replay.tl.totalReal, replay.r + dt);
+    }
     replay.lastTs = ts;
     renderReplay();
     if (replay.r >= replay.tl.totalReal) { setReplayPlaying(false); return; }
