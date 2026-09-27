@@ -1141,5 +1141,25 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
   eq('「〜へのフライト」は行き先の地図でも出発の予定：東京（地震・フライト）→ LA（空港・ユニオンステーション・ファンゾーン）', ng, []);
 })();
 
+/* ---- 実データ（ワールドカップ旅1日目、「時差の並びを調べる」で取得。2026-09-27）：移動手段が空欄の移動の予定が3つ。
+   ロサンゼルス国際空港（地図LA）・ユニオンステーション（地図なし）はLA、フライト（地図は羽田・到着地LA 18:00）は日本 ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';
+  var arrive = [{ id: 'e', travel: { arrive: '18:00', arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=33.94,-118.40', arriveLat: 33.94, arriveLng: -118.40 } }];
+  var bs = [
+    { id: 'lax', date: '2026-06-26', time: '18:50', category: 'transport', transport: '', label: 'ロサンゼルス国際空港', createdAt: '2026-09-23T13:34:00' },
+    { id: 'eq', date: '2026-06-26', time: '20:00', category: 'other', label: '羽田空港の地震', createdAt: '2026-09-23T14:01:00' },
+    { id: 'uni', date: '2026-06-26', time: '20:20', category: 'transport', transport: '', label: 'ユニオンステーション', createdAt: '2026-09-23T13:34:01' },
+    { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: '', label: 'ロサンゼルスへのフライト', createdAt: '2026-09-23T14:01:01', entries: arrive },
+    { id: 'fan', date: '2026-06-26', time: '21:00', category: 'sightseeing', label: 'ファンゾーン', createdAt: '2026-09-23T14:01:02' },
+    { id: 'inn', date: '2026-06-26', time: '21:30', category: 'food', label: 'In-N-Out Burger', createdAt: '2026-09-23T13:34:02' },
+    { id: 'kiku', date: '2026-06-26', time: '22:30', category: 'lodging', label: '菊の家', createdAt: '2026-09-23T13:34:03' }];
+  var z = T.assignBlockZones(bs, { lax: LA, eq: TK, fl: TK, kiku: LA }, { '2026-06-26': LA }, TK, { fl: LA });
+  var order = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; });
+  eq('実データ：羽田の地震・フライト（日本）→ LAX・ユニオンステーション・ファンゾーン・In-N-Out・菊の家（LA）', order, ['eq', 'fl', 'lax', 'uni', 'fan', 'inn', 'kiku']);
+  eq('実データ：時差', [z.eq, z.fl, z.lax, z.uni, z.fan, z.inn, z.kiku], [TK, TK, LA, LA, LA, LA, LA]);
+  eq('見出しが「〜フライト」なら移動手段が空欄でも飛行機', [(T.isPlaneMove||function(){return true;})({ transport: '', label: 'ロサンゼルスへのフライト' }), (T.isPlaneMove||function(){return false;})({ transport: '', label: 'ロサンゼルス国際空港' }), (T.isPlaneMove||function(){return false;})({ transport: 'car', label: 'フライト後の送迎' })], [true, false, false]);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
