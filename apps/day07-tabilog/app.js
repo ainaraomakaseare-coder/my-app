@@ -5612,6 +5612,7 @@
 
   var REPLAY_PLANE_DASH = '8 10';
   var REPLAY_CAMERA_LEAD_SEC = 0.9; // カメラの移動（0.8秒）が、区間の動き出しまでに終わるように
+  var REPLAY_CAPTION_HIDE_LEAD_SEC = 1.15; // 写真の吹き出しは、カメラが動き出す少し前に消しておく
   var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
   var PAUSE_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4.5" width="3.5" height="11" rx="1"/><rect x="11.5" y="4.5" width="3.5" height="11" rx="1"/></svg>';
   var replayMap = null, replayLayer = null, replay = null, replayToken = null;
@@ -6038,6 +6039,20 @@
         cap.hidden = false;
       }
     }
+
+    // 地図が動いている（ズーム・移動のアニメ中）あいだと、次の移動のためにカメラが動き出す少し前
+    // （REPLAY_CAPTION_HIDE_LEAD_SEC）からは、写真つきの吹き出しを隠す。写真が大きく地図を覆ったまま
+    // ズームすると、乗り物や線の動きが見えなかった（2026-09-27）。先に写真を消してから地図を動かし、
+    // 着いた先でカメラが止まってから（moveendで描き直したとき）もう一度出す。
+    var aboutToMove = false;
+    if (!st.icon && replay.playing) {
+      for (var hi = 0; hi < tl.legs.length; hi++) {
+        var until = tl.legs[hi].r0 - r;
+        if (until > 0 && until <= REPLAY_CAPTION_HIDE_LEAD_SEC) { aboutToMove = true; break; }
+        if (until > REPLAY_CAPTION_HIDE_LEAD_SEC) break;
+      }
+    }
+    $('#replayCaption').classList.toggle('hide-for-move', !!(replay.mapAnimating || aboutToMove));
 
     $('#replayProgressBar').style.width = (tl.totalReal ? Math.min(100, r / tl.totalReal * 100) : 100) + '%';
   }
