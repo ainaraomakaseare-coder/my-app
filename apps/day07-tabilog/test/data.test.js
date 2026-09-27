@@ -703,7 +703,10 @@ var flyTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDa
   { 'https://m/hk': { lat: 22.3, lng: 114.2 }, 'https://m/ny': { lat: 40.7, lng: -74.0 } });
 // 香港→ニューヨークは500km超（実際は1万km超）なので、以前の一律2秒から上限の4秒になる
 ok('buildReplayTimeline: 長いフライト（500km超）は移動4秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 4) < 0.01);
-ok('buildReplayTimeline: 写真4枚なら吹き出しは10秒（1枚2.5秒×4、＋一呼吸0.5秒）', Math.abs((flyTl.stops[0].rDwellEnd - flyTl.stops[0].r) - 10.5) < 0.01);
+// 次へ移動する地点は、カメラが動き出す少し前（REPLAY_CAPTION_HIDE_LEAD_SEC）に吹き出しを消すので、その分を足す
+// （見えている時間は1枚2.5秒×4＋一呼吸0.5秒のまま。2026-09-27）
+ok('buildReplayTimeline: 写真4枚なら吹き出しは見えている時間で10秒（1枚2.5秒×4、＋一呼吸0.5秒）',
+  Math.abs((flyTl.stops[0].rDwellEnd - flyTl.stops[0].r) - (10.5 + T.REPLAY_CAPTION_HIDE_LEAD_SEC)) < 0.01);
 
 /* ---- 地図でふりかえる：吹き出しの秒数は写真の枚数だけで決まる（2026-09-27） ---- */
 var capSecStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
@@ -995,6 +998,16 @@ var trip5Stops = T.replayStops({ startDate: '2026-03-01', endDate: '2026-03-02' 
 eq('地図でふりかえる（到着も飛行機の予定）：香港に到着・ニューヨークに到着の時点で現地の時差（分）になる',
   trip5Stops.filter(function (st) { return st.blockId === 'hkA' || st.blockId === 'nyA' || st.blockId === 'nrtD'; }).map(function (st) { return st.offset; }),
   [540, 480, -300]);
+
+/* ---- 吹き出し：写真1枚・エピソードだけでも3秒は見える（2026-09-27） ---- */
+var capTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'p1', date: '2026-04-01', time: '10:00', label: '写真1枚', entries: [{ mapUrl: 'https://m/a', photoIds: ['x'] }] },
+  { id: 'ep', date: '2026-04-01', time: '10:05', label: 'エピソードだけ', entries: [{ mapUrl: 'https://m/b', episode: 'たのしかった' }] },
+  { id: 'end', date: '2026-04-01', time: '10:10', label: '最後', entries: [{ mapUrl: 'https://m/c' }] }]),
+  { 'https://m/a': { lat: 35.0, lng: 135.0 }, 'https://m/b': { lat: 35.01, lng: 135.0 }, 'https://m/c': { lat: 35.02, lng: 135.0 } });
+var visibleSec = function (st) { return st.rDwellEnd - st.rCaptionStart - T.REPLAY_CAPTION_HIDE_LEAD_SEC; };
+ok('buildReplayTimeline: 写真1枚の地点も、吹き出しが見えている時間は3秒以上', visibleSec(capTl.stops[0]) >= 3 - 1e-6);
+ok('buildReplayTimeline: エピソードだけの地点も、吹き出しが見えている時間は3秒以上', visibleSec(capTl.stops[1]) >= 3 - 1e-6);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -831,6 +831,7 @@
   var REPLAY_MIN_CAPTION_SEC = 3;     // 写真が無い地点は、文章の長さに関わらずこの秒数だけ吹き出しを見せる（2026-09-27: 文章が長いほど延ばす仕組みは廃止）
   var REPLAY_MAX_CAPTION_SEC = 10;    // 写真がある地点でも、これ以上は止めない（写真4枚分の秒数）
   var REPLAY_MAX_PHOTOS = 4;          // 1つの地点で見せる写真の上限（6枚だと1地点15秒止まり長かったので4枚＝10秒に）
+  var REPLAY_CAPTION_HIDE_LEAD_SEC = 1.15; // 次の移動でカメラが動き出す少し前に吹き出しを消す秒数（画面側と共通）
   var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
   // 移動の演出の長さ（秒）。以前はどれだけ遠くても一律2秒だったが、「短い移動と同じ速さだと、
   // 長距離の移動が味気ない」という声より、遠い移動は少しだけ長く見せる（2026-09-27）。
@@ -1157,11 +1158,18 @@
       st.rCaptionStart = r;
       var photoCount = Math.min((st.photos || []).length, REPLAY_MAX_PHOTOS);
       // 写真が無ければ固定3秒、写真があれば1枚2.5秒（最大4枚＝10秒）。文章の長さでは変えない（2026-09-27）
-      var minSec = photoCount > 0 ? Math.min(photoCount * REPLAY_SEC_PER_PHOTO, REPLAY_MAX_CAPTION_SEC) : REPLAY_MIN_CAPTION_SEC;
+      // 写真1枚でも、写真が無いときと同じ3秒は見せる（2.5秒では短いという声より。2026-09-27）
+      var minSec = photoCount > 0
+        ? Math.max(REPLAY_MIN_CAPTION_SEC, Math.min(photoCount * REPLAY_SEC_PER_PHOTO, REPLAY_MAX_CAPTION_SEC))
+        : REPLAY_MIN_CAPTION_SEC;
       // 吹き出しを見せている間（一時停止＋滞在）は、時計をこの予定の時刻のまま止める。以前はこの間も
       // 旅の時計が数分進んで見えていた（例：13:00の予定なのに13:08と表示）。吹き出しが消えたら、
       // 旅の時計をdwell分だけ一気に進めてから続きに移る（2026-09-27）。
       var captionSec = Math.max(dwell * REPLAY_SEC_PER_MIN, minSec);
+      // 次へ移動するときは、カメラが動き出す少し前（REPLAY_CAPTION_HIDE_LEAD_SEC）に吹き出しを消すので、
+      // その分を足して、見えている時間がminSecより短くならないようにする（58で消すのを早めたら、写真1枚・
+      // エピソードだけの地点が1〜2秒で消えていた。2026-09-27）
+      if (moving) captionSec += REPLAY_CAPTION_HIDE_LEAD_SEC;
       r += captionSec;
       kf.push({ t: st.t, r: r });
       // 吹き出しが消えた直後に、旅の時計をdwell分だけ一気に進める。同じrに2つの時刻（止まっていたst.tと、
@@ -1772,6 +1780,7 @@
     placeMapUrl: placeMapUrl,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
+    REPLAY_CAPTION_HIDE_LEAD_SEC: REPLAY_CAPTION_HIDE_LEAD_SEC,
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
@@ -5733,7 +5742,7 @@
 
   var REPLAY_PLANE_DASH = '8 10';
   var REPLAY_CAMERA_LEAD_SEC = 0.9; // カメラの移動（0.8秒）が、区間の動き出しまでに終わるように
-  var REPLAY_CAPTION_HIDE_LEAD_SEC = 1.15; // 写真の吹き出しは、カメラが動き出す少し前に消しておく
+  var REPLAY_CAPTION_HIDE_LEAD_SEC = Core.REPLAY_CAPTION_HIDE_LEAD_SEC; // 写真の吹き出しは、カメラが動き出す少し前に消しておく
   var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
   var PAUSE_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4.5" width="3.5" height="11" rx="1"/><rect x="11.5" y="4.5" width="3.5" height="11" rx="1"/></svg>';
   var replayMap = null, replayLayer = null, replay = null, replayToken = null;
@@ -5888,6 +5897,7 @@
       replayMap.on('zoomend moveend', function () {
         if (!replay) return;
         replay.mapAnimating = false;
+        replay.cameraMoving = false;
         renderReplay();
         if (replay.hideLinesOnMove) { replay.hideLinesOnMove = false; fadeInReplayOverlayPane(); }
       });
@@ -5934,6 +5944,7 @@
     if (replay) {
       replay.hideLinesOnMove = typeof target === 'number' && isFinite(target) &&
         Math.abs(target - replayMap.getZoom()) >= REPLAY_HIDE_LINES_ZOOM_DELTA;
+      replay.cameraMoving = true; // 写真の吹き出しを隠す（moveendで戻す）
     }
     replayMap.flyToBounds(bounds, opts);
   }
@@ -5950,7 +5961,10 @@
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
     replayCenterOn(first.lat, first.lng, 13, false);
     replay.lastLeg = -1;
-    replay.lastStop = -2;
+    // 最初の地点にはもうカメラを合わせてあるので、着いたときにもう一度カメラを動かさない。以前は再生の
+    // はじめに最初の地点へもう一度カメラが動き、吹き出しが「出て、一瞬消えて、また出る」ように見えていた
+    // （大阪旅の「みなとみらい発」、2026-09-27）
+    replay.lastStop = replay.tl.stops.indexOf(first);
     replay.captionIndex = -2;
     replay.lastDay = 0;
   }
@@ -6128,7 +6142,7 @@
       replay.lastLeg = legIndexForCamera;
       // 着いた地点に寄せる処理（下）が次のフレームで走ってこのカメラ移動を打ち消さないよう、着いた地点も済みにする
       if (!st.icon) replay.lastStop = st.stopIndex;
-    } else if (!st.icon && st.stopIndex !== replay.lastStop) {
+    } else if (!st.icon && st.stopIndex >= 0 && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];
       var cameFromLeg = tl.legs.some(function (l) { return l.to === st.stopIndex; });
       // 長い移動（飛行機で日本→アメリカなど）のflyToBoundsは、両端が入るよう地図を大きく引いたまま。
@@ -6173,7 +6187,10 @@
         if (until > REPLAY_CAPTION_HIDE_LEAD_SEC) break;
       }
     }
-    $('#replayCaption').classList.toggle('hide-for-move', !!(replay.mapAnimating || aboutToMove));
+    // 隠すのは、ふりかえりの再生が自分で動かしたカメラ（replayFlyToBounds）の間だけ。Leafletのmovestartは
+    // 画面の大きさが変わったとき（時計や操作ボタンが出て地図の大きさが変わる、など）にも一瞬出るため、
+    // それで隠すと「吹き出しが出て、一瞬消えて、また出る」ように見えていた（大阪旅の最初、2026-09-27）
+    $('#replayCaption').classList.toggle('hide-for-move', !!(replay.cameraMoving || aboutToMove));
 
     $('#replayProgressBar').style.width = (tl.totalReal ? Math.min(100, r / tl.totalReal * 100) : 100) + '%';
   }
