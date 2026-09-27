@@ -910,11 +910,19 @@ body.viewer-open { overflow: hidden; }
 .zone-diag { position: fixed; inset: 0; z-index: 3000; background: var(--bg, #F5F6F8); padding: calc(env(safe-area-inset-top) + 16px) 16px 16px; display: flex; flex-direction: column; gap: 10px; }
 .zone-diag textarea { flex: 1; width: 100%; font: 11px/1.5 ui-monospace, Menlo, monospace; padding: 10px; border-radius: 10px; border: 1px solid #ddd; }
 
-/* 宿泊先を手で足す（2026-09-27） */
-.lodging-add-open { align-self: flex-start; }
+/* 宿泊先を手で足す・直す（2026-09-27）。ほかの入力画面（.field）と同じ見た目にそろえる */
+.lodging-row { width: 100%; border: none; text-align: left; color: var(--ink); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.lodging-row .amount { display: flex; align-items: center; gap: 8px; }
+.lodging-row-edit { font-size: 11px; font-weight: 700; color: var(--accent-deep); }
+.lodging-row.on { outline: 2px solid var(--accent); }
 .lodging-add[hidden] { display: none; }
-.lodging-add { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--card); }
-.lodging-add-night { display: flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
-.lodging-add-night select { flex: 1; min-width: 0; }
-.lodging-add-search { display: flex; gap: 8px; }
-.lodging-add-search input { flex: 1; min-width: 0; }
+.lodging-add { background: var(--card); border-radius: var(--radius-control); box-shadow: var(--card-shadow); padding: 14px 13px 10px; }
+.lodging-add-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+.lodging-add .field { margin-bottom: 12px; }
+.lodging-select {
+  width: 100%; height: 46px; border: none; border-radius: var(--radius-control); padding: 0 13px;
+  background: var(--input-bg); color: var(--ink); font: inherit; font-size: 16px;
+}
+.lodging-add .place-list { margin-top: 8px; }
+.lodging-add .hint { margin: 0 0 10px; }
+.lodging-add-actions { display: flex; justify-content: flex-end; align-items: center; gap: 14px; }
