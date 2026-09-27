@@ -6625,6 +6625,7 @@
   }
   // アニメーションつきでboundsへ寄せる。ズームが大きく変わる（3段以上）ときだけ、線のゴースト対策で
   // アニメ中の線を隠す（replay.hideLinesOnMove。上のzoomstart/movestartの説明を参照）。
+  var REPLAY_ARRIVAL_ZOOM_DELAY_SEC = 0.25; // 着陸してから着いた地点へズームし直すまでの間
   var REPLAY_HIDE_LINES_ZOOM_DELTA = 3;
   // keepCaption：着いた地点へ寄せ直すときは、いま出したばかりの写真の吹き出しを隠さない。隠すと
   // 「出る→消える→また出る」で、同じ写真が2回出たように見えていた（イグアス到着、2026-09-27）
@@ -6852,10 +6853,16 @@
       // 見えてしまうため、着いた地点のズームが街を見る大きさ（目安10）より広いままなら、着いた地点へ寄せ直す
       // （次の区間があるかどうかによらない。2026-09-26）。
       var zoomedOut = replayMap.getZoom() < 10;
-      if (arrived && arrived.located && replay.lastStop !== -2 && (!cameFromLeg || zoomedOut)) {
-        replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
+      var needZoom = arrived && arrived.located && replay.lastStop !== -2 && (!cameFromLeg || zoomedOut);
+      // 飛行機などで引いた地図から寄せ直すときは、着いてすぐではなく少し（REPLAY_ARRIVAL_ZOOM_DELAY_SEC）
+      // 間を空けてからズームする。着陸した瞬間にズームが始まり、早すぎると感じられたため（2026-09-27）。
+      // 間を空けるあいだは lastStop を進めず、次のフレームでもう一度ここに来る
+      if (needZoom && cameFromLeg && replay.playing && typeof arrived.r === 'number' && r - arrived.r < REPLAY_ARRIVAL_ZOOM_DELAY_SEC) {
+        // まだ待つ
+      } else {
+        if (needZoom) replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
+        replay.lastStop = st.stopIndex;
       }
-      replay.lastStop = st.stopIndex;
     }
 
     if (st.captionIndex !== replay.captionIndex) {
