@@ -807,6 +807,24 @@
     return { rename: later.map(function (b) { return b.id; }), move: null, create: startsThere ? null : newStart };
   }
 
+  // 宿泊先カードの短い表し方（2026-09-27）。以前は「1〜2泊目：菊の家／3泊目：マリオット／…」を全部並べ、
+  // カードの中で途中から切れていた。いちばん長く泊まった宿（同じなら先の宿）＋「ほか○か所」にし、
+  // 詳しくはカードを押したときの1泊1行の内訳で見る。未定の夜は数えない
+  function lodgingSummary(groups) {
+    var p = lodgingSummaryParts(groups);
+    return !p ? '' : p.others ? p.main + ' ほか' + p.others + 'か所' : p.main;
+  }
+  function lodgingSummaryParts(groups) {
+    var nightsBy = {}, order = [];
+    (groups || []).forEach(function (g) {
+      if (!g.label) return;
+      if (!(g.label in nightsBy)) { nightsBy[g.label] = 0; order.push(g.label); }
+      nightsBy[g.label] += g.to - g.from + 1;
+    });
+    if (!order.length) return null;
+    var main = order.reduce(function (best, l) { return nightsBy[l] > nightsBy[best] ? l : best; }, order[0]);
+    return { main: main, others: order.length - 1 };
+  }
   // 泊ごとの宿（1泊目から順に）。{ night, date, label, blockId }（宿が無ければlabel=''・blockId=null）
   function lodgingNights(trip, blocks) {
     var dates = allDatesForTrip(trip, blocks).filter(Boolean);
@@ -2088,6 +2106,8 @@
     lodgingGroupBlocks: lodgingGroupBlocks,
     lodgingEditPlan: lodgingEditPlan,
     lodgingNights: lodgingNights,
+    lodgingSummary: lodgingSummary,
+    lodgingSummaryParts: lodgingSummaryParts,
     lodgingRangePlan: lodgingRangePlan,
     applyBlockZones: applyBlockZones,
     offsetDiffText: offsetDiffText,
@@ -3069,12 +3089,7 @@
   // 同じ宿が続く夜はまとめる（lodgingByNight）。宿泊が1か所だけの旅行では、これまでどおり
   // 宿の名前だけをシンプルに出す（範囲表記を付けない）。
   function formatLodgingStat(groups) {
-    if (!groups.length) return Core.primaryLodgingName(state.blocks) || '未設定';
-    if (groups.length === 1) return groups[0].label || '未設定';
-    return groups.map(function (g) {
-      var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
-      return range + '：' + (g.label || '未定');
-    }).join('／');
+    return Core.lodgingSummary(groups) || Core.primaryLodgingName(state.blocks) || '未設定';
   }
 
   // 宿泊先の内訳（何泊目にどこへ泊まったか、全件）。統計カードの表示文字列（formatLodgingStat）は
@@ -3307,9 +3322,14 @@
     renderTripSocialBar();
 
     var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
+    // 名前が長くても「ほか○か所」が切れないよう、別の行に出す（名前は2行まで）
+    var lodgingParts = Core.lodgingSummaryParts(Core.lodgingByNight(trip, state.blocks));
     var total = Core.tripTotalCost(state.blocks);
     $('#tripStats').innerHTML =
-      '<button type="button" class="stat-card stat-card-btn" id="btnShowLodgingBreakdown"><div class="lbl">宿泊先</div><div class="val">' + escapeHtml(lodging) + '</div></button>' +
+      '<button type="button" class="stat-card stat-card-btn" id="btnShowLodgingBreakdown"><div class="lbl">宿泊先</div>' +
+        (lodgingParts
+          ? '<div class="val lodging-val">' + escapeHtml(lodgingParts.main) + '</div>' + (lodgingParts.others ? '<div class="lodging-more">ほか' + lodgingParts.others + 'か所</div>' : '')
+          : '<div class="val">' + escapeHtml(lodging) + '</div>') + '</button>' +
       '<button type="button" class="stat-card stat-card-btn" id="btnShowCostBreakdown"><div class="lbl">総費用</div><div class="val">' + escapeHtml(Core.formatYen(total) || '¥0') + '</div></button>' +
       statCard('日程', nights || (Core.allDatesForTrip(trip, state.blocks).length + '日'));
     $('#lodgingBreakdownPanel').hidden = true;
