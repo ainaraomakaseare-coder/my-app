@@ -17,7 +17,7 @@ GitHub の Actions →「おもいでWiki App Store 申請の下書きを入力�
 | `APP_STORE_COPYRIGHT` | 著作権（ストアに表示される） | `2026 屋号や名前` |
 | `APP_REVIEW_CONTACT_FIRST_NAME` | 審査の連絡先：名 | `Taro` |
 | `APP_REVIEW_CONTACT_LAST_NAME` | 審査の連絡先：姓 | `Yamada` |
-| `APP_REVIEW_CONTACT_PHONE` | 審査の連絡先：電話番号（国番号から） | `+81 90 1234 5678` |
+| `APP_REVIEW_CONTACT_PHONE` | 審査の連絡先：電話番号（「+81」から始め、先頭の0は取る） | `+81 90 1234 5678` |
 | `APP_REVIEW_CONTACT_EMAIL` | 審査の連絡先：メール | `you@example.com` |
 
 - 何度実行しても同じ結果になります。スクリーンショット・価格・配信地域は、すでに決まっていたら上書きしません

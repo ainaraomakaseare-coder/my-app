@@ -274,6 +274,8 @@ await step('審査メモ（ログイン不要・試し方）と連絡先', async
     if (e.status !== 404) throw e;
   }
   if (detail) {
+    // 一度作ったあとは、更新のたびに連絡先4つがそろっていないとAppleに断られる
+    if (missingContact.length) return '審査メモは入力済み。連絡先はSecretsを登録してから入力';
     await patch(`/v1/appStoreReviewDetails/${detail.id}`, {type: 'appStoreReviewDetails', id: detail.id, attributes});
     return '更新';
   }
