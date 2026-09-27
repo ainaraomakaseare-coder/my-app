@@ -1116,5 +1116,30 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
   eq('ワールドカップ旅1日目：36通りすべてで 地震・フライト（東京）→ LAX・ユニオンステーション・ファンゾーン（LA）', ng, []);
 })();
 
+/* ---- 「ロサンゼルスへのフライト」（地図は行き先のLAX）＋「ロサンゼルス国際空港」（移動・飛行機）の2つの飛行機の予定：
+   到着地の地図が無くても、見出しの「〜へ」で出発の予定と分かり、東京→LAの順になる（2026-09-27、ビルド65で直っていなかった形） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  [['eq', 'fl', 'lax', 'uni', 'fan'], ['lax', 'uni', 'fan', 'eq', 'fl']].forEach(function (ord, oi) {
+    [LA, null].forEach(function (laxMap) {
+      [TK, LA, null].forEach(function (day) {
+        var bs = [
+          { id: 'lax', date: '2026-06-26', time: '18:50', category: 'transport', transport: 'plane', label: 'ロサンゼルス国際空港' },
+          { id: 'eq', date: '2026-06-26', time: '20:00', category: 'other', label: '羽田空港の地震' },
+          { id: 'uni', date: '2026-06-26', time: '20:20', category: 'transport', transport: '', label: 'ユニオンステーション' },
+          { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへのフライト' },
+          { id: 'fan', date: '2026-06-26', time: '21:00', category: 'sightseeing', label: 'ファンゾーン' }];
+        bs.forEach(function (b) { b.createdAt = String(ord.indexOf(b.id)); });
+        var own = { eq: TK, fl: LA, uni: LA, fan: LA };
+        if (laxMap) own.lax = laxMap;
+        var z = T.assignBlockZones(bs, own, day ? { '2026-06-26': day } : {}, TK);
+        var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).join(',');
+        if (got !== 'eq,fl,lax,uni,fan' || z.fl !== TK || z.lax !== LA) ng.push(oi + '/' + laxMap + '/' + day + ' → ' + got);
+      });
+    });
+  });
+  eq('「〜へのフライト」は行き先の地図でも出発の予定：東京（地震・フライト）→ LA（空港・ユニオンステーション・ファンゾーン）', ng, []);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
