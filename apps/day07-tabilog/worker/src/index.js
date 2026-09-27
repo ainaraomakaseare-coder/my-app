@@ -1662,7 +1662,8 @@ async function getRoute(url, headers, ctx, env) {
   const cache = caches.default;
   // v2：found:falseを30日キャッシュしていたv1を捨てる（2026-09-27。下のキャッシュ期間の説明を参照）
   // v3：電車をGoogleの乗り換え案内で先に調べるようにした（2026-09-27）。v2に残った「遠回りしすぎ」を捨てる
-  const cacheKey = new Request("https://tabilog-route.cache/v3?k=" + encodeURIComponent(key));
+  // v4：googleReason（Googleが使えなかった理由）を返すようにした。v3に残った結果を捨てる
+  const cacheKey = new Request("https://tabilog-route.cache/v4?k=" + encodeURIComponent(key));
   const hit = await cache.match(cacheKey);
   if (hit) return json(await hit.json(), 200, headers);
 
@@ -1672,9 +1673,9 @@ async function getRoute(url, headers, ctx, env) {
     // （2026-09-27、オーナー承認）。BRouter（線路をつなぐだけで、どの路線に乗るかを知らない）は、
     // 新大阪→USJ（直線9km）で新幹線の線路に吸い寄せられて約174kmの遠回りを返すなど、よく外れるため。
     // キーが無い・Routes APIがキーで許可されていない・1日の上限（GCPのクォータ）を超えた・経路が無い
-    // ときはnullが返り、これまでどおりBRouter→（アプリ側で）やわらかい曲線に回る。
+    // ときは{ skip: 理由 }が返り、これまでどおりBRouter→（アプリ側で）やわらかい曲線に回る。
     const google = isRail ? await googleTransitRoute(env, from, to) : null;
-    if (google) {
+    if (google && google.found) {
       body = google;
     } else if (isRail) {
       let railStatus = 0;
@@ -1707,6 +1708,7 @@ async function getRoute(url, headers, ctx, env) {
       const coords = feature && feature.geometry && feature.geometry.coordinates;
       body = brouterToBody(coords, feature && feature.properties, from, to);
       if (!body.found && !body.reason) body.reason = data ? "rail_no_track" : "brouter_http_" + railStatus;
+      if (google && google.skip) body.googleReason = google.skip;
     } else {
       const res = await fetch(
         "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
@@ -1733,7 +1735,8 @@ const ROUTE_NOT_FOUND_CACHE_SECONDS = 60 * 60 * 6;
 // Googleの乗り換え案内（Routes API computeRoutes、travelMode: TRANSIT）で、電車（RAIL＝電車・地下鉄・
 // 路面電車）だけを使う経路の線を取る。FieldMaskは線と距離だけ（課金はリクエスト単位）。
 // 乗り換え前後の徒歩も線に含まれる（駅までの数百mなので見た目には問題ない）。
-// 返すのは getRoute と同じ形（found・path・distance・source）か、使えなければnull。
+// 返すのは getRoute と同じ形（found・path・distance・source）か、使えなければ { skip: 理由 }
+// （理由は /route の googleReason に載せ、本番でなぜGoogleが使えなかったかを1行で確かめられるようにする）。
 const GOOGLE_TRANSIT_TIMEOUT_MS = 8000;
 function nextTransitProbeTime(now) {
   const t = new Date(now || Date.now());
@@ -1742,7 +1745,7 @@ function nextTransitProbeTime(now) {
   return probe.toISOString();
 }
 async function googleTransitRoute(env, from, to) {
-  if (!env || !env.GOOGLE_API_KEY) return null;
+  if (!env || !env.GOOGLE_API_KEY) return { skip: "no_key" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GOOGLE_TRANSIT_TIMEOUT_MS);
   try {
@@ -1765,20 +1768,25 @@ async function googleTransitRoute(env, from, to) {
       }),
       signal: controller.signal,
     });
-    if (!res.ok) return null; // 403（Routes APIがキーで許可されていない）・429（上限）など
+    if (!res.ok) {
+      // 403（Routes APIがキーで許可されていない）・429（上限）など。Googleのエラーの種類だけ添える
+      let status = "";
+      try { const err = await res.json(); status = err && err.error && err.error.status ? "_" + err.error.status : ""; } catch { /* 本文なし */ }
+      return { skip: "http_" + res.status + status };
+    }
     const data = await res.json();
     const route = data && Array.isArray(data.routes) && data.routes[0];
     const pts = route && route.polyline ? decodePolyline(route.polyline.encodedPolyline) : [];
-    if (pts.length < 2) return null;
+    if (pts.length < 2) return { skip: route ? "no_polyline" : "no_routes" };
     const distanceM = Number(route.distanceMeters) || 0;
     const straightKm = distanceKm(from, to);
     // 乗り換え案内でも、直線距離の3倍を超える大回りは候補違いの疑いとして使わない（BRouterと同じ基準）
-    if (straightKm > 0 && distanceM / 1000 > straightKm * RAIL_MAX_DETOUR_RATIO) return null;
+    if (straightKm > 0 && distanceM / 1000 > straightKm * RAIL_MAX_DETOUR_RATIO) return { skip: "detour_too_long" };
     const path = downsamplePoints(pts, ROUTE_MAX_POINTS)
       .map((p) => [Math.round(p[0] * 1e5) / 1e5, Math.round(p[1] * 1e5) / 1e5]);
     return { found: true, path, distance: Math.round(distanceM), source: "google_transit" };
   } catch {
-    return null;
+    return { skip: "fetch_failed" };
   } finally {
     clearTimeout(timer);
   }
