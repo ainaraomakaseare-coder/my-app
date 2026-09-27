@@ -89,6 +89,7 @@
   // - 開始日は変えていないが、予定が日程の外にはみ出していて、しかも最初の予定が1日目と違う（'blocks'）：
   //   以前に開始日だけを変えて予定が取り残された旅行（ロサンゼルス旅など）。最初の予定を1日目にそろえる
   // ずらす必要が無ければnull。実際にずらすかどうかは、画面側で本人に確かめてから決める。
+  var LEFT_BEHIND_EMPTY_DAYS = 3;
   function tripScheduleShift(oldTrip, newStart, newEnd, blocks) {
     if (!parseDate(newStart)) return null;
     var dates = (blocks || []).map(function (b) { return b.date; }).filter(function (d) { return !!parseDate(d); }).sort();
@@ -102,7 +103,11 @@
     } else {
       var hasEnd = !!parseDate(newEnd);
       var outside = first < newStart || (hasEnd && last > newEnd);
-      if (!outside || first === newStart) return null;
+      // 開始日だけを前に動かした旅行（ワールドカップ旅：7/3→6/26）は、予定が日程の中に収まったまま最初の
+      // 7日が空になり、上の判定では拾えなかった（2026-09-27）。最初の3日以上が空なら取り残されたとみなす
+      // （到着日だけ予定が無い、のような1〜2日の空きでは聞かない）。
+      var leadingEmpty = dateDiffDays(newStart, first) >= LEFT_BEHIND_EMPTY_DAYS;
+      if ((!outside && !leadingEmpty) || first === newStart) return null;
       days = dateDiffDays(first, newStart);
       reason = 'blocks';
     }
@@ -2464,7 +2469,7 @@
       var move = Core.formatDateJp(shift.firstFrom) + ' → ' + Core.formatDateJp(shift.firstTo);
       var msg = shift.reason === 'start'
         ? '開始日を変えました。予定（' + shift.count + '件）も同じだけ' + dir + 'にずらしますか？\n最初の予定：' + move
-        : '予定が日程の外に残っています。予定（' + shift.count + '件）をまとめて' + dir + 'にずらして、1日目からにそろえますか？\n最初の予定：' + move;
+        : '予定が1日目（' + Core.formatDateJp(newStart) + '）からずれています。予定（' + shift.count + '件）をまとめて' + dir + 'にずらして、1日目からにそろえますか？\n最初の予定：' + move;
       if (confirm(msg + '\n\n「キャンセル」を選ぶと、日程だけを保存します。')) shiftDays = shift.days;
     }
     status.textContent = '保存中…';
@@ -5429,11 +5434,9 @@
             return (res2 && res2.found && !Core.isRouteDetourTooLong(straightKm, km2)) ? res2 : null;
           });
         }
-        // 線路の道のりが見つからなければ、車の道のりを見た目の近似として調べ直す（それでも見つからなければ
-        // やわらかい曲線のまま。距離1本のBRouter公開サーバー問い合わせに、車1本を足すだけなので許容範囲）
-        if (profile === 'rail' && !(res && res.found)) {
-          return api(routeQuery('car', a, b)).catch(function () { return null; });
-        }
+        // 線路の道のりが見つからないときは、車の道のり（道路）では代わりにしない。電車なのに道路を
+        // 走るように見えて「動きが全部車っぽい」と言われたため（2026-09-27）。やわらかい曲線のまま見せ、
+        // Worker側は見つからなかった結果を6時間しか覚えないので、あとで開き直せば線路で調べ直す。
         return res;
       }).then(function (res) {
         if (res && res.found && res.path && res.path.length > 1) { l.path = res.path; if (onRoute) onRoute(l); }
@@ -5576,15 +5579,20 @@
       // overlayPane自体を一瞬透明にして隠し、終わった（zoomend/moveend）ら描き直してからフェードイン
       // する（2026-09-27）。乗り物のアイコン（マーカー）はmarkerPane側なので影響を受けず、そのまま
       // 動かし続けられる。
+      // ただし、どの移動でも隠すと、区間が始まるたびのカメラ移動（0.8秒）のあいだ、これまでの道のりが
+      // 全部消えて見えていた（「移動の開始の時に青い経路が全体的にうまく表示されない」2026-09-27）。
+      // ゴーストが目立つのはズームが大きく変わるときだけなので、replayFlyToBoundsが「ズームが3段以上
+      // 変わる」と判断したときだけ隠す（replay.hideLinesOnMove）。
       replayMap.on('zoomstart movestart', function () {
-        if (replay) replay.mapAnimating = true;
-        hideReplayOverlayPane();
+        if (!replay) return;
+        replay.mapAnimating = true;
+        if (replay.hideLinesOnMove) hideReplayOverlayPane();
       });
       replayMap.on('zoomend moveend', function () {
         if (!replay) return;
         replay.mapAnimating = false;
         renderReplay();
-        fadeInReplayOverlayPane();
+        if (replay.hideLinesOnMove) { replay.hideLinesOnMove = false; fadeInReplayOverlayPane(); }
       });
     }
     resetReplayCamera();
@@ -5616,11 +5624,28 @@
     if (top + bottom > room) { var k = room / (top + bottom); top *= k; bottom *= k; }
     return { paddingTopLeft: [36, Math.round(top + 24)], paddingBottomRight: [36, Math.round(bottom + 24)] };
   }
+  // アニメーションつきでboundsへ寄せる。ズームが大きく変わる（3段以上）ときだけ、線のゴースト対策で
+  // アニメ中の線を隠す（replay.hideLinesOnMove。上のzoomstart/movestartの説明を参照）。
+  var REPLAY_HIDE_LINES_ZOOM_DELTA = 3;
+  function replayFlyToBounds(bounds, opts) {
+    var target = null;
+    try {
+      var pad = window.L.point(opts.paddingTopLeft).add(window.L.point(opts.paddingBottomRight));
+      target = Math.min(opts.maxZoom !== undefined ? opts.maxZoom : Infinity,
+        replayMap.getBoundsZoom(window.L.latLngBounds(bounds), false, pad));
+    } catch (e) { target = null; }
+    if (replay) {
+      replay.hideLinesOnMove = typeof target === 'number' && isFinite(target) &&
+        Math.abs(target - replayMap.getZoom()) >= REPLAY_HIDE_LINES_ZOOM_DELTA;
+    }
+    replayMap.flyToBounds(bounds, opts);
+  }
+
   // 1点を見える部分の真ん中に出す（ズームは zoom のまま）
   function replayCenterOn(lat, lng, zoom, animate) {
     var opts = replayViewPadding();
     opts.maxZoom = zoom;
-    if (animate) { opts.duration = 0.8; replayMap.flyToBounds([[lat, lng], [lat, lng]], opts); }
+    if (animate) { opts.duration = 0.8; replayFlyToBounds([[lat, lng], [lat, lng]], opts); }
     else { opts.animate = false; replayMap.fitBounds([[lat, lng], [lat, lng]], opts); }
   }
 
@@ -5792,7 +5817,7 @@
         : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
       var legView = replayViewPadding();
       legView.maxZoom = 15; legView.duration = 0.8;
-      replayMap.flyToBounds(legBounds, legView);
+      replayFlyToBounds(legBounds, legView);
       replay.lastLeg = st.icon.legIndex;
     } else if (!st.icon && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];
