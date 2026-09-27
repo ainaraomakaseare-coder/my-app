@@ -6834,6 +6834,19 @@
   // アニメ中の線を隠す（replay.hideLinesOnMove。上のzoomstart/movestartの説明を参照）。
   var REPLAY_ARRIVAL_ZOOM_DELAY_SEC = 0.25; // 着陸してから着いた地点へズームし直すまでの間
   var REPLAY_HIDE_LINES_ZOOM_DELTA = 3;
+  var REPLAY_TINY_LEG_KM = 0.4; // これより近い区間は、両端が見えていればカメラを動かさない（空港の中など）
+  var REPLAY_SHORT_STAY_SEC = 1.2; // 着いてからこれ以内に次の遠い移動が始まるなら、着いた地点へ寄せない
+  // 点がすべて、見える部分（吹き出し・操作ボタンを除いた部分）に入っているか
+  function replayPointsInView(points, padOpts) {
+    try {
+      var size = replayMap.getSize();
+      var tl = window.L.point(padOpts.paddingTopLeft), br = window.L.point(padOpts.paddingBottomRight);
+      return points.every(function (p) {
+        var c = replayMap.latLngToContainerPoint(p);
+        return c.x >= tl.x && c.y >= tl.y && c.x <= size.x - br.x && c.y <= size.y - br.y;
+      });
+    } catch (e) { return false; }
+  }
   // keepCaption：着いた地点へ寄せ直すときは、いま出したばかりの写真の吹き出しを隠さない。隠すと
   // 「出る→消える→また出る」で、同じ写真が2回出たように見えていた（イグアス到着、2026-09-27）
   function replayFlyToBounds(bounds, opts, keepCaption) {
@@ -7048,7 +7061,20 @@
         : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
       var legView = replayViewPadding();
       legView.maxZoom = 15; legView.duration = 0.8;
-      replayFlyToBounds(legBounds, legView);
+      // 空港の中など、ごく近い区間（REPLAY_TINY_LEG_KM未満）で両端がもう見えているなら、カメラを動かさない。
+      // 乗り継ぎの空港（インチョン・チューリッヒ）で、ほぼ同じ場所の予定が続くたびに少しずつ寄せ直し、
+      // 地図が手振れのように揺れていた（2026-09-27）
+      var legFrom = tl.stops[leg.from], legTo = tl.stops[leg.to];
+      var tinyLeg = legFrom && legTo && Core.distanceKm(legFrom, legTo) < REPLAY_TINY_LEG_KM;
+      if (tinyLeg) {
+        // 飛行機のあとで大きく引いたままなら、街を見る大きさ（12）までは寄せる。以後の近い区間では動かさない
+        legView.maxZoom = Math.max(12, Math.min(15, replayMap.getZoom()));
+        if (replayMap.getZoom() < 10 || !replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legView)) {
+          replayFlyToBounds(legBounds, legView);
+        }
+      } else {
+        replayFlyToBounds(legBounds, legView);
+      }
       replay.lastLeg = legIndexForCamera;
       // 着いた地点に寄せる処理（下）が次のフレームで走ってこのカメラ移動を打ち消さないよう、着いた地点も済みにする
       if (!st.icon) replay.lastStop = st.stopIndex;
@@ -7061,6 +7087,15 @@
       // （次の区間があるかどうかによらない。2026-09-26）。
       var zoomedOut = replayMap.getZoom() < 10;
       var needZoom = arrived && arrived.located && replay.lastStop !== -2 && (!cameFromLeg || zoomedOut);
+      // 乗り継ぎのように、着いてすぐ次の遠い移動（飛行機など）に出るなら、寄せずに引いたままにする。
+      // 寄せた直後にまた大きく引くことになり、地図が揺れて見えていた（2026-09-27）
+      if (needZoom && cameFromLeg && replay.playing) {
+        var nextLeg = tl.legs.filter(function (l) { return l.from === st.stopIndex && l.r0 >= r; })[0];
+        if (nextLeg && nextLeg.r0 - r < REPLAY_CAMERA_LEAD_SEC + REPLAY_SHORT_STAY_SEC) {
+          var nextTo = tl.stops[nextLeg.to];
+          if (nextTo && nextTo.located && Core.distanceKm(arrived, nextTo) >= 50) needZoom = false;
+        }
+      }
       // 飛行機などで引いた地図から寄せ直すときは、着いてすぐではなく少し（REPLAY_ARRIVAL_ZOOM_DELAY_SEC）
       // 間を空けてからズームする。着陸した瞬間にズームが始まり、早すぎると感じられたため（2026-09-27）。
       // 間を空けるあいだは lastStop を進めず、次のフレームでもう一度ここに来る
