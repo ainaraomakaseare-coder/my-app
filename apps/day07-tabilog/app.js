@@ -5611,6 +5611,7 @@
   }
 
   var REPLAY_PLANE_DASH = '8 10';
+  var REPLAY_CAMERA_LEAD_SEC = 0.9; // カメラの移動（0.8秒）が、区間の動き出しまでに終わるように
   var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
   var PAUSE_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4.5" width="3.5" height="11" rx="1"/><rect x="11.5" y="4.5" width="3.5" height="11" rx="1"/></svg>';
   var replayMap = null, replayLayer = null, replay = null, replayToken = null;
@@ -5723,9 +5724,13 @@
         // 飛行機の点線は、薄い青（これから通る道）と濃い青（進んだところ）で点線の間隔をそろえる。以前は
         // '6 8' と '8 10' で違っていたため、濃い青の点が薄い青の点からずれて見えていた（2026-09-27）。
         // 線の形（l.path）は両方同じなので、間隔がそろえば濃い青がぴったり重なる。
-        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null }),
+        // さらに、Leafletは線を描くときに画面の大きさに合わせて点を間引き（smoothFactor）、画面の外を
+        // 切り落とす（clip）。全体の線と途中までの線とで間引き方・切り落とし方が変わると、点線の位置がずれて
+        // 「薄い青の上に少しずれて濃い青が乗る」ように見えていた（56で間隔をそろえても残った。2026-09-27）。
+        // 飛行機の線は点が少ない（弧の32点ほど）ので、間引きも切り落としもしない。
+        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
         casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
-        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null })
+        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane })
       };
     });
     replay.mapAnimating = false;
@@ -5980,15 +5985,27 @@
       setLayerVisible(replay.vehicle, false);
     }
 
-    // カメラ：移動が始まったら出発地と到着地が両方入るように、移動なしで別の場所に着いたらそこへ寄せる
-    if (st.icon && st.icon.legIndex !== replay.lastLeg) {
-      var leg = tl.legs[st.icon.legIndex];
+    // カメラ：移動が始まる少し前（REPLAY_CAMERA_LEAD_SEC）に、出発地と到着地が両方入るように動かし始める。
+    // 移動が始まった瞬間に動かすと、カメラが動く0.8秒のあいだは線（SVG）を伸ばせない（地図とずれるため
+    // 止めている）ので、動き出しの青い線が出ていないように見えていた（2026-09-27）。
+    var legIndexForCamera = st.icon ? st.icon.legIndex : -1;
+    if (legIndexForCamera < 0 && replay.playing) {
+      for (var li = 0; li < tl.legs.length; li++) {
+        var lead = tl.legs[li].r0 - r;
+        if (lead > 0 && lead <= REPLAY_CAMERA_LEAD_SEC) { legIndexForCamera = li; break; }
+        if (lead > REPLAY_CAMERA_LEAD_SEC) break;
+      }
+    }
+    if (legIndexForCamera >= 0 && legIndexForCamera !== replay.lastLeg) {
+      var leg = tl.legs[legIndexForCamera];
       var legBounds = leg.path && leg.path.length > 1 ? leg.path
         : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
       var legView = replayViewPadding();
       legView.maxZoom = 15; legView.duration = 0.8;
       replayFlyToBounds(legBounds, legView);
-      replay.lastLeg = st.icon.legIndex;
+      replay.lastLeg = legIndexForCamera;
+      // 着いた地点に寄せる処理（下）が次のフレームで走ってこのカメラ移動を打ち消さないよう、着いた地点も済みにする
+      if (!st.icon) replay.lastStop = st.stopIndex;
     } else if (!st.icon && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];
       var cameFromLeg = tl.legs.some(function (l) { return l.to === st.stopIndex; });
