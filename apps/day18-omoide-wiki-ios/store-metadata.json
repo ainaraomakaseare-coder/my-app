@@ -1,10 +1,16 @@
 {
   "appId": "6815641976",
+  "bundleId": "com.hiroyaapps.omoidewiki",
   "locale": "ja",
   "versionString": "1.0.0",
   "minBuildNumber": 9,
   "primaryCategory": "LIFESTYLE",
   "secondaryCategory": "PRODUCTIVITY",
+  "baseTerritory": "JPN",
+  "territories": ["JPN"],
+  "appPrivacy": [
+    {"category": "OTHER_USER_CONTENT", "purposes": ["APP_FUNCTIONALITY"], "protections": ["DATA_NOT_LINKED_TO_YOU"]}
+  ],
   "name": "おもいでWiki",
   "subtitle": "家族の人生を、百科事典の1ページに",
   "privacyPolicyUrl": "https://ainaraomakaseare-coder.github.io/my-app/apps/day18-omoide-wiki/privacy.html",
