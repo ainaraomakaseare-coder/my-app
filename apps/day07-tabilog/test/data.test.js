@@ -1086,5 +1086,35 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
   eq('到着時刻なし：移動時間90分の後・見積もり扱い・ラベルは「到着」', [st3[1].minute, st3[1].estimated, st3[1].label], [11 * 60 + 30, true, '到着']);
 })();
 
+/* ---- ワールドカップ旅1日目（実データの形）：車の移動の予定「ロサンゼルス国際空港」「ユニオンステーション」は、その地図の
+   土地の時間。東京の「羽田空港の地震」とロサンゼルスの出来事は、入れた順・フライトの地図・到着地の地図によらず東京→LAの順（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  [null, TK, LA].forEach(function (flMap) {
+    [false, true].forEach(function (pre) {
+      [false, true].forEach(function (arrive) {
+        [['home', 'eq', 'fl', 'lax', 'uni', 'fan'], ['home', 'lax', 'uni', 'fan', 'eq', 'fl'], ['fan', 'uni', 'lax', 'fl', 'eq', 'home']].forEach(function (ord, oi) {
+          var bs = [
+            pre && { id: 'home', date: '2026-06-26', time: '15:00', category: 'sightseeing', label: '家' },
+            { id: 'lax', date: '2026-06-26', time: '18:50', category: 'transport', transport: 'car', label: 'ロサンゼルス国際空港' },
+            { id: 'eq', date: '2026-06-26', time: '20:00', category: 'other', label: '羽田空港の地震' },
+            { id: 'uni', date: '2026-06-26', time: '20:20', category: 'transport', transport: 'car', label: 'ユニオンステーション' },
+            { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへのフライト' },
+            { id: 'fan', date: '2026-06-26', time: '21:00', category: 'sightseeing', label: 'ファンゾーン' }].filter(Boolean);
+          bs.forEach(function (b) { b.createdAt = String(ord.indexOf(b.id)); });
+          var own = { lax: LA, eq: TK, uni: LA, fan: LA };
+          if (pre) own.home = TK;
+          if (flMap) own.fl = flMap;
+          var z = T.assignBlockZones(bs, own, {}, TK, arrive ? { fl: LA } : {});
+          var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).filter(function (id) { return id !== 'home'; }).join(',');
+          var zs = [z.eq, z.fl, z.lax, z.uni, z.fan].join(',');
+          if (got !== 'eq,fl,lax,uni,fan' || zs !== [TK, TK, LA, LA, LA].join(',')) ng.push(flMap + '/' + pre + '/' + arrive + '/' + oi + ' → ' + got);
+        });
+      });
+    });
+  });
+  eq('ワールドカップ旅1日目：36通りすべてで 地震・フライト（東京）→ LAX・ユニオンステーション・ファンゾーン（LA）', ng, []);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
