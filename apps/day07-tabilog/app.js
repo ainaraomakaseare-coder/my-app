@@ -3386,13 +3386,18 @@
       : '';
     var btn = $('#btnJoinTrip');
     var joined = user && user.accountId && members.some(function (m) { return m.accountId === user.accountId; });
-    btn.disabled = !!joined;
+    // 参加済みでも押せるようにし、押すと参加をやめられる（2026-09-27。以前は押せず、やめられなかった）
+    btn.disabled = false;
     btn.textContent = joined ? '参加済み' : '参加する';
+    btn.classList.toggle('is-joined', !!joined);
+    btn.setAttribute('aria-pressed', String(!!joined));
   }
 
   function handleJoinTrip() {
     var user = loadCurrentUser();
     if (!user) { openLogin('tripDetail'); return; }
+    var joined = user.accountId && (state.members || []).some(function (m) { return m.accountId === user.accountId; });
+    if (joined) { handleLeaveTrip(user); return; }
     api('/trips/' + encodeURIComponent(state.trip.id) + '/join', 'POST', { email: user.email, name: user.name || '' })
       .then(function (res) {
         state.members = res.members || [];
@@ -3403,6 +3408,18 @@
       })
       .catch(function () {
         $('#tripDetailStatus').textContent = '参加に失敗しました。もう一度お試しください。';
+      });
+  }
+
+  function handleLeaveTrip(user) {
+    if (!confirm('この旅行への参加をやめますか？\n\nアカウント参加の一覧から外れます。旅行や、あなたが書いた記録は消えません。あとからもう一度「参加する」を押せば戻れます。')) return;
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/leave', 'POST', { email: user.email })
+      .then(function (res) {
+        state.members = res.members || [];
+        renderTripJoin();
+      })
+      .catch(function () {
+        $('#tripDetailStatus').textContent = '参加をやめられませんでした。もう一度お試しください。';
       });
   }
 

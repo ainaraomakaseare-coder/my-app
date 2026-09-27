@@ -957,3 +957,6 @@ body.viewer-open { overflow: hidden; }
 .stat-row-chev { flex: none; color: var(--ink-muted); transition: transform 0.2s ease; }
 .stat-row[aria-expanded="true"] .stat-row-chev { transform: rotate(180deg); }
 .stats-row .cost-breakdown-panel { margin-top: 0; }
+
+/* 参加済み：押すと参加をやめられる（2026-09-27） */
+.chip-btn.is-joined { background: var(--accent-soft-bg); color: var(--accent-deep); }
