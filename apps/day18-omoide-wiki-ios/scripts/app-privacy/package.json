@@ -1,0 +1,12 @@
+{
+  "name": "omoide-wiki-app-privacy",
+  "private": true,
+  "type": "module",
+  "description": "App Store Connect の「Appのプライバシー」を、ログインしたブラウザから入力する",
+  "scripts": {
+    "start": "node set-app-privacy.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

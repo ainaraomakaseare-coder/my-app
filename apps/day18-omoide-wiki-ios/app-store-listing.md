@@ -2,15 +2,40 @@
 
 App Store Connect の入力画面で、ここからコピーして使ってください。画面の項目名は変わることがあるので、近い項目に当てはめてください。
 
-## 自動入力（GitHub Actions）
+## 自動入力（GitHub Actions ＋ パソコンで1回）
+
+### 1. GitHub Actions（ほぼ全部）
 
 GitHub の Actions →「おもいでWiki App Store 申請の下書きを入力」→ Run workflow（mode：apply）で、次の内容を App Store Connect に入力できます。「審査へ提出」は押しません。
 
-- 入力できるもの：バージョン（1.0.0）、名前・サブタイトル・プライバシーポリシーURL、カテゴリ、年齢制限（すべて「なし」）、説明文・キーワード・プロモーション用テキスト・サポートURL、審査メモ、申請に使うビルド、スクリーンショット5枚
+- 入力できるもの：バージョン（1.0.0）、名前・サブタイトル・プライバシーポリシーURL、カテゴリ、年齢制限（すべて「なし」）、説明文・キーワード・プロモーション用テキスト・サポートURL、審査メモと連絡先、著作権、価格（無料）、配信地域（日本）、申請に使うビルド、スクリーンショット5枚
 - 入力する中身：`store-metadata.json`（文章を直すときはここと、このファイルの両方を直す）
-- 何度実行しても同じ結果になります。スクリーンショットは、すでに別の画像が入っていたら上書きしません
+- 公開したくない情報は GitHub の Secrets（Settings → Secrets and variables → Actions）に入れる：
+
+| Secret の名前 | 入れるもの | 例 |
+|---|---|---|
+| `APP_STORE_COPYRIGHT` | 著作権（ストアに表示される） | `2026 屋号や名前` |
+| `APP_REVIEW_CONTACT_FIRST_NAME` | 審査の連絡先：名 | `Taro` |
+| `APP_REVIEW_CONTACT_LAST_NAME` | 審査の連絡先：姓 | `Yamada` |
+| `APP_REVIEW_CONTACT_PHONE` | 審査の連絡先：電話番号（国番号から） | `+81 90 1234 5678` |
+| `APP_REVIEW_CONTACT_EMAIL` | 審査の連絡先：メール | `you@example.com` |
+
+- 何度実行しても同じ結果になります。スクリーンショット・価格・配信地域は、すでに決まっていたら上書きしません
 - mode を check にすると、いまの状態を読むだけで何も書き換えません
-- APIで入力できないもの（手で入力）：Appのプライバシー、価格と配信地域、審査の連絡先、著作権
+
+### 2. 「Appのプライバシー」だけはパソコンで（APIキーでは入力できないため）
+
+Apple ID でログインした画面からしか変えられないので、パソコンでブラウザ（Edge）を開き、ログインしたあとをスクリプトが入力・公開します。パスワードや確認コードは自分でブラウザに入れるだけで、スクリプトは読みません。
+
+```
+cd "$HOME\my-app-main"
+git pull
+cd apps\day18-omoide-wiki-ios\scripts\app-privacy
+npm install
+node set-app-privacy.mjs
+```
+
+入力する内容は `store-metadata.json` の `appPrivacy`（その他のユーザーコンテンツ／アプリの機能／ユーザーに紐づかない）。
 
 ## 申請の前に済ませること
 
