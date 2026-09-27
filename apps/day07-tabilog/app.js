@@ -379,6 +379,7 @@
       if (cur.blocks.length) { segs.push(cur); if (cur.zone) lastZone = cur.zone; }
       cur = { blocks: [], zone: '' };
     };
+    var prevWasPlaneMove = false;
     order.forEach(function (b, i) {
       if (!isMove(b) && b.transport === 'plane' && cur.blocks.length) close();
       var z = evidence[i];
@@ -400,7 +401,12 @@
       cur.blocks.push(b);
       if (isMove(b)) {
         var own = byBlock[b.id] || '';
-        if (b.transport === 'plane') {
+        if (b.transport === 'plane' && prevWasPlaneMove && cur.blocks.length === 1 && own && own !== lastZone) {
+          // 出発と到着をどちらも「飛行機」の移動の予定で入れる形（「香港から出発」→「ニューヨークに到着」）。
+          // 飛行機の予定のすぐあとの飛行機の予定で、地図が行き先のタイムゾーンなら到着の予定。新しいかたまりの
+          // 先頭にして、「ここから現地時間」を到着の予定の前に出す（以前は後ろのホテルの前に出ていた。2026-09-27）
+          cur.zone = own;
+        } else if (b.transport === 'plane') {
           // 飛行機の予定の地図が、いまいる場所（出発地）と同じタイムゾーンなら出発地の地図。違えば到着地の地図
           var from = cur.zone || lastZone;
           close(); // ①
@@ -412,6 +418,7 @@
           cur.zone = own;
         }
       }
+      prevWasPlaneMove = isMove(b) && b.transport === 'plane';
     });
     close();
     var out = {}, prevZone = '';
