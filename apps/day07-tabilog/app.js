@@ -390,6 +390,22 @@
       applyBlockZones(copies, zones);
       zones = segmentZones(sortBlocks(copies), byBlock, byDate, fallback, byArrive);
     }
+    // 地図の無い予定が、前後の予定（同じ時差）に挟まれて1つだけ別の時差になっていたら、前後に合わせる。
+    // 「ニューヨーク到着」と「ニューヨーク出発」の間の地図の無い予定が、次のかたまり（リオ）の時差で読まれ、
+    // リオの22:00＝ニューヨークの20:00として出発より前に並んでいた（2026-09-27）
+    for (var fix = 0; fix < 2; fix++) {
+      applyBlockZones(copies, zones);
+      var sorted = sortBlocks(copies), changed = false;
+      sorted.forEach(function (b, i) {
+        var prev = sorted[i - 1], next = sorted[i + 1];
+        if (!prev || !next || byBlock[b.id] || b.category === 'transport' || byArrive[prev.id]) return;
+        if (zones[prev.id] && zones[prev.id] === zones[next.id] && zones[b.id] !== zones[prev.id]) {
+          zones[b.id] = zones[prev.id];
+          changed = true;
+        }
+      });
+      if (!changed) break;
+    }
     // 到着地の地図がある移動の予定は、到着地のタイムゾーンも「<id>#arrive」で返す（地図でふりかえるの到着地点用）
     Object.keys(byArrive).forEach(function (id) { if (byArrive[id]) zones[id + '#arrive'] = byArrive[id]; });
     return zones;
@@ -2834,6 +2850,10 @@
       state.blocks = data.blocks;
       state.days = data.days || [];
       state.members = data.members || [];
+      // 地図を足した・日程を変えたあとも時差を調べ直す。以前は旅行を開いたときにしか調べず、あとから入れた
+      // 地図（ニューヨークの「英語表現の疑問」）が前の時差（ブラジル）のままだった（2026-09-27）。
+      // 調べ終わったら並びと区切りを描き直す（loadTripZones）。調べた結果は端末に覚えているので通信は少ない
+      loadTripZones();
     });
   }
 
