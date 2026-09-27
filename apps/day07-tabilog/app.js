@@ -4593,7 +4593,12 @@
 
     var metaBits = [];
     if (entry.waitTime) metaBits.push('<span>待ち時間 ' + escapeHtml(entry.waitTime) + '</span>');
-    if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
+    // 地図のリンクが壊れている（以前の不具合で query=undefined,undefined になった等）・URLでないときは、
+    // 普通の「地図」リンクに見せず、直すよう案内する。押すと記録の編集が開き、見出しで場所を探し直せる。
+    // 壊れた地図は、地図でふりかえる・時差でも使えない（場所が分からない）ため（2026-09-27）
+    var mapUnusable = entry.mapUrl && (!/^https?:\/\//i.test(entry.mapUrl.trim()) || Core.hasBrokenMapQuery(entry.mapUrl.trim()));
+    if (mapUnusable) metaBits.push('<span class="map-broken">地図の場所が読み取れません・押して直す</span>');
+    else if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
     if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
     if (entry.otherUrl) metaBits.push('<a href="' + escapeHtml(entry.otherUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">リンク</a>');
 
@@ -4897,7 +4902,9 @@
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
     $('#entMoreFields').open = !!(entry && (entry.comment || entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl ||
       (entry.travel && Object.keys(entry.travel).length)));
-    $('#entPlaceSearch').value = '';
+    // 壊れた地図を直しに来たときは、予定の見出しで探せるよう検索欄に入れておく
+    var formBlock = brokenMapUrl ? (state.blocks || []).filter(function (b) { return b.id === blockId; })[0] : null;
+    $('#entPlaceSearch').value = formBlock && formBlock.category !== 'transport' ? (formBlock.label || '') : '';
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
     placeCandidates = []; placeChoice = '';
