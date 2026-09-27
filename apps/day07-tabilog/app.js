@@ -2862,6 +2862,8 @@
     myLogItems: [],
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [] },
+    myLogPlaceSel: null,
+    myLogOthersOpen: false,
     homeFilters: { companion: '', year: '', tripType: '', sort: '' },
     social: { likes: {}, comments: [], accountId: '' },
     myLogCategory: 'food',
@@ -6234,27 +6236,112 @@
     renderMyLogList();
   }
 
-  // 「訪れた都道府県・国」：参加した旅行の「日ごとの場所」（天気取得のときに入力した地名）から
-  // サーバー側で自動集計されたものを、そのままチップで並べるだけ（フロント側では集計しない）。
+  // 「訪れた都道府県・国」：参加した旅行の「日ごとの場所」からサーバー側で集計したもの。
+  // 国名の表記ゆれ（アメリカ／アメリカ合衆国）はサーバーでまとめ、乗り継ぎだけの国は数えない。
+  // チップをタップすると、どの旅の何日から入ったかを出し、そこから外せる（2026-09-27）。
   function renderMyLogPlaces() {
     var el = $('#mylogPlaces');
     var places = state.myLogPlaces || { prefectures: [], countries: [] };
-    var prefectures = places.prefectures || [];
-    var countries = places.countries || [];
-    if (!prefectures.length && !countries.length) {
-      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行の日タブで「＋場所を設定」すると、ここに自動で集計されます。</div>';
+    var details = places.details;
+    if (!details) {
+      // サーバーが古い（details を返さない）ときは、今までどおり名前だけを並べる
+      details = {
+        prefectures: (places.prefectures || []).map(function (n) { return { name: n, status: 'visible', sources: [] }; }),
+        countries: (places.countries || []).map(function (n) { return { name: n, status: 'visible', sources: [] }; })
+      };
+    }
+    var visPref = details.prefectures.filter(function (x) { return x.status === 'visible'; });
+    var visCountry = details.countries.filter(function (x) { return x.status === 'visible'; });
+    var others = details.countries.filter(function (x) { return x.status !== 'visible'; }).map(function (x) { return { kind: 'country', item: x }; })
+      .concat(details.prefectures.filter(function (x) { return x.status !== 'visible'; }).map(function (x) { return { kind: 'prefecture', item: x }; }));
+    if (!visPref.length && !visCountry.length && !others.length) {
+      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
       return;
     }
+    var sel = state.myLogPlaceSel;
+    var chip = function (kind, x) {
+      var on = sel && sel.kind === kind && sel.name === x.name;
+      var cls = 'visited-chip' + (x.status !== 'visible' ? ' is-muted' : '') + (on ? ' on' : '');
+      return '<button type="button" class="' + cls + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' + escapeHtml(x.name) +
+        (x.status === 'transit' ? '<span class="visited-chip-note">乗り継ぎ</span>' : x.status === 'hidden' ? '<span class="visited-chip-note">外した</span>' : '') + '</button>';
+    };
+    var detailFor = function (kind, list) {
+      if (!sel || sel.kind !== kind) return '';
+      var x = list.filter(function (i) { return i.name === sel.name; })[0];
+      return x ? myLogPlaceDetailHtml(kind, x) : '';
+    };
     var html = '';
-    if (prefectures.length) {
-      html += '<div class="visited-group"><span class="visited-group-label">都道府県（' + prefectures.length + '）</span><div class="visited-chips">'
-        + prefectures.map(function (p) { return '<span class="visited-chip">' + escapeHtml(p) + '</span>'; }).join('') + '</div></div>';
+    if (visPref.length) {
+      html += '<div class="visited-group"><span class="visited-group-label">都道府県（' + visPref.length + '）</span><div class="visited-chips">' +
+        visPref.map(function (x) { return chip('prefecture', x); }).join('') + '</div>' + detailFor('prefecture', visPref) + '</div>';
     }
-    if (countries.length) {
-      html += '<div class="visited-group"><span class="visited-group-label">海外（' + countries.length + 'か国）</span><div class="visited-chips">'
-        + countries.map(function (c) { return '<span class="visited-chip">' + escapeHtml(c) + '</span>'; }).join('') + '</div></div>';
+    if (visCountry.length) {
+      html += '<div class="visited-group"><span class="visited-group-label">海外（' + visCountry.length + 'か国）</span><div class="visited-chips">' +
+        visCountry.map(function (x) { return chip('country', x); }).join('') + '</div>' + detailFor('country', visCountry) + '</div>';
+    }
+    if (others.length) {
+      var open = state.myLogOthersOpen || (sel && others.some(function (o) { return o.kind === sel.kind && o.item.name === sel.name; }));
+      var selOther = sel ? others.filter(function (o) { return o.kind === sel.kind && o.item.name === sel.name; })[0] : null;
+      html += '<div class="visited-group visited-others">' +
+        '<button type="button" class="visited-others-toggle" aria-expanded="' + (open ? 'true' : 'false') + '">数えていない場所（' + others.length + '）<span class="visited-others-hint">乗り継ぎだけ・外したもの</span></button>' +
+        (open ? '<div class="visited-chips">' + others.map(function (o) { return chip(o.kind, o.item); }).join('') + '</div>' +
+          (selOther ? myLogPlaceDetailHtml(selOther.kind, selOther.item) : '') : '') +
+        '</div>';
     }
     el.innerHTML = html;
+    $all('.visited-chip', el).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var same = sel && sel.kind === btn.dataset.kind && sel.name === btn.dataset.name;
+        state.myLogPlaceSel = same ? null : { kind: btn.dataset.kind, name: btn.dataset.name };
+        renderMyLogPlaces();
+      });
+    });
+    var toggle = $('.visited-others-toggle', el);
+    if (toggle) toggle.addEventListener('click', function () {
+      state.myLogOthersOpen = toggle.getAttribute('aria-expanded') !== 'true';
+      if (!state.myLogOthersOpen && sel && others.some(function (o) { return o.kind === sel.kind && o.item.name === sel.name; })) state.myLogPlaceSel = null;
+      renderMyLogPlaces();
+    });
+    $all('.visited-src-trip', el).forEach(function (btn) {
+      btn.addEventListener('click', function () { openTrip(btn.dataset.trip); });
+    });
+    $all('.visited-action', el).forEach(function (btn) {
+      btn.addEventListener('click', function () { setMyLogPlaceMode(btn.dataset.kind, btn.dataset.name, btn.dataset.mode, btn); });
+    });
+  }
+
+  function myLogPlaceDetailHtml(kind, x) {
+    var srcs = (x.sources || []).map(function (s) {
+      var dates = (s.dates || []).map(function (d) { var p = d.split('-'); return Number(p[1]) + '/' + Number(p[2]); }).join('・');
+      return '<li class="visited-src"><button type="button" class="visited-src-trip" data-trip="' + escapeHtml(s.tripId) + '">' + escapeHtml(s.tripTitle || '（無題の旅）') + '</button>' +
+        (dates ? '<span class="visited-src-dates">' + escapeHtml(dates) + (s.transit ? '（乗り継ぎ）' : '') + '</span>' : '') + '</li>';
+    }).join('');
+    var action;
+    if (x.status === 'visible') action = { mode: 'hide', label: 'マイログから外す' };
+    else if (x.status === 'hidden') action = { mode: 'clear', label: '外すのをやめる' };
+    else action = { mode: 'show', label: '行った場所として数える' };
+    var note = x.status === 'transit' ? '<p class="visited-detail-note">空港・乗り継ぎの記録しか無いので、数えていません。</p>' : '';
+    return '<div class="visited-detail">' +
+      (srcs ? '<div class="visited-detail-label">この記録から入りました</div><ul class="visited-srcs">' + srcs + '</ul>' : '') + note +
+      '<div class="visited-detail-actions"><button type="button" class="visited-action' + (action.mode === 'hide' ? ' is-danger' : '') + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '" data-mode="' + action.mode + '">' + action.label + '</button></div>' +
+      '<div class="visited-detail-status" aria-live="polite"></div></div>';
+  }
+
+  function setMyLogPlaceMode(kind, name, mode, btn) {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('mylog'); return; }
+    var status = btn.closest('.visited-detail') && $('.visited-detail-status', btn.closest('.visited-detail'));
+    btn.disabled = true;
+    api('/mylog/places', 'POST', { email: user.email, kind: kind, name: name, mode: mode }).then(function (res) {
+      state.myLogPlaces = res.places || state.myLogPlaces;
+      state.myLogPlaceSel = null;
+      renderMyLogPlaces();
+    }).catch(function (e) {
+      btn.disabled = false;
+      if (status) status.textContent = e && e.message === 'migration_required'
+        ? 'サーバーの準備がまだです（データベースの更新が必要です）。'
+        : '変更できませんでした。通信状況を確認して、もう一度お試しください。';
+    });
   }
 
   // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。

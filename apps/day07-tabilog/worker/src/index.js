@@ -10,6 +10,7 @@
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
+import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture } from "./visited-places.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
@@ -942,30 +943,93 @@ async function getMyLog(email, env, headers) {
       .bind(account.account_id)
       .all();
     trips = tripRows.map(rowToTrip);
-    places = await getVisitedPlaces(env, trips.map((t) => t.id));
+    const titles = {};
+    trips.forEach((t) => { titles[t.id] = t.title; });
+    places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles);
   }
 
   return json({ items, trips, places }, 200, headers);
 }
 
-// 参加した旅行（trips）にまたがる「日ごとの場所」（day_infos.admin1/country、天気取得のついでに
-// 保存したもの）から、訪れた都道府県・国を重複なく集計する。都道府県は country が「日本」の
-// 行だけを対象にする（海外のadmin1＝州などを都道府県として混ぜないため）。
-async function getVisitedPlaces(env, tripIds) {
-  if (!tripIds.length) return { prefectures: [], countries: [] };
-  const results = await selectWhereIn(
-    env, "SELECT DISTINCT admin1, country FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
+// 参加した旅行（trips）にまたがる「日ごとの場所」（day_infos.admin1/country）から、訪れた都道府県・国を
+// 集計する。国名の表記ゆれをまとめる・乗り継ぎだけの国を数えない・本人が外した国を除く、の3つは
+// visited-places.js（純粋関数）で行う（2026-09-27）。
+async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
+  const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] } };
+  if (!tripIds.length) return empty;
+  const dayRows = await selectWhereIn(
+    env, "SELECT trip_id, date, admin1, country, lat, lon FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
   );
-  const prefectures = new Set();
-  const countries = new Set();
-  results.forEach((row) => {
-    if (row.country === "日本" && row.admin1) prefectures.add(row.admin1);
-    else if (row.country && row.country !== "日本") countries.add(row.country);
+  if (!dayRows.length) return empty;
+  const blockRows = await selectWhereIn(
+    env, "SELECT id, trip_id, date, category, label FROM blocks WHERE trip_id IN (", tripIds, ")"
+  );
+  const coords = {};
+  try {
+    const entryRows = await selectWhereIn(
+      env, "SELECT e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (", tripIds, ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL"
+    );
+    entryRows.forEach((r) => {
+      if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
+      (coords[r.block_id] = coords[r.block_id] || []).push({ lat: r.lat, lng: r.lng });
+    });
+  } catch {
+    // 座標の列が無い古いDBでも、集計自体は続ける
+  }
+  let overrides = [];
+  if (accountId) {
+    try {
+      const { results } = await env.DB.prepare("SELECT kind, name, mode FROM mylog_place_overrides WHERE account_id = ?").bind(accountId).all();
+      overrides = results;
+    } catch {
+      // migrations/0023 を実行する前は、外した国が無いものとして扱う
+    }
+  }
+  return aggregateVisitedPlaces({
+    days: dayRows.map((r) => ({ tripId: r.trip_id, date: r.date, admin1: r.admin1, country: r.country, lat: r.lat, lon: r.lon })),
+    blocks: blockRows.map((r) => ({ id: r.id, tripId: r.trip_id, date: r.date, category: r.category, label: r.label })),
+    coords,
+    trips: tripTitles || {},
+    overrides,
   });
-  return {
-    prefectures: Array.from(prefectures).sort(),
-    countries: Array.from(countries).sort(),
-  };
+}
+
+// マイログの国・都道府県を本人が外す（hide）／乗り継ぎと判定されたものを数える（show）／元に戻す（clear）
+async function setMyLogPlaceOverride(request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (!["country", "prefecture"].includes(data.kind) || !["hide", "show", "clear"].includes(data.mode) || !isStr(data.name, 100) || !data.name.trim()) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(auth.email).first();
+  if (!account) return json({ error: "account_not_found" }, 404, headers);
+  const name = data.kind === "country" ? canonicalCountry(data.name) : canonicalPrefecture(data.name);
+  try {
+    if (data.mode === "clear") {
+      await env.DB.prepare("DELETE FROM mylog_place_overrides WHERE account_id = ? AND kind = ? AND name = ?")
+        .bind(account.account_id, data.kind, name).run();
+    } else {
+      await env.DB.prepare(
+        "INSERT INTO mylog_place_overrides (account_id, kind, name, mode, created_at) VALUES (?,?,?,?,?) ON CONFLICT(account_id, kind, name) DO UPDATE SET mode = excluded.mode, created_at = excluded.created_at"
+      ).bind(account.account_id, data.kind, name, data.mode, nowIso()).run();
+    }
+  } catch {
+    return json({ error: "migration_required" }, 503, headers);
+  }
+  const { results: tripRows } = await env.DB.prepare(
+    "SELECT t.id AS id, t.title AS title FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
+  ).bind(account.account_id).all();
+  const titles = {};
+  tripRows.forEach((t) => { titles[t.id] = t.title; });
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles);
+  return json({ places }, 200, headers);
 }
 
 /* ---------- 日ごとの天気（day_infos） ----------
@@ -4021,6 +4085,7 @@ export default {
     if (method === "GET" && path === "/places/details") {
       return placeDetails(url.searchParams.get("id"), url.searchParams.get("session"), env, headers);
     }
+    if (method === "POST" && path === "/mylog/places") return setMyLogPlaceOverride(request, env, headers);
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
       if (auth.error) return json({ error: auth.error }, auth.status, headers);

@@ -286,3 +286,13 @@ CREATE TABLE IF NOT EXISTS comment_reports (
 -- v22：blocksに manual_order（手で決めた並び。NULLならふだんの並び）を追加する一度きりの文。
 -- 本番環境へ反映するまでは migrations/0022_block_manual_order.sql を1回だけ実行すること。
 -- ALTER TABLE blocks ADD COLUMN manual_order INTEGER;
+
+-- v23：マイログの訪れた国・都道府県を本人が外す／数える（migrations/0023_mylog_place_overrides.sql）
+CREATE TABLE IF NOT EXISTS mylog_place_overrides (
+  account_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (account_id, kind, name)
+);

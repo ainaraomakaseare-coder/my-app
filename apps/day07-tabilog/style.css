@@ -565,6 +565,27 @@ a:hover { text-decoration: underline; }
 .visited-group-label { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); }
 .visited-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .visited-chip { padding: 6px 12px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 12.5px; font-weight: 700; }
+.visited-chip { border: 1.5px solid transparent; }
+.visited-chip.on { border-color: var(--accent); }
+.visited-chip.is-muted { background: var(--border-soft); color: var(--ink-muted); }
+.visited-chip-note { margin-left: 5px; font-size: 10.5px; font-weight: 600; opacity: .8; }
+.visited-detail { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--border-soft); }
+.visited-detail-label { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); }
+.visited-srcs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.visited-src { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 13px; }
+.visited-src-trip { color: var(--accent-deep); font-weight: 700; text-decoration: underline; text-underline-offset: 2px; text-align: left; }
+.visited-src-dates { color: var(--ink-muted); font-size: 12px; }
+.visited-detail-note { margin: 0; font-size: 12px; color: var(--ink-muted); }
+.visited-detail-actions { display: flex; gap: 8px; }
+.visited-action { padding: 8px 14px; border-radius: 999px; background: var(--accent); color: white; font-size: 12.5px; font-weight: 700; }
+.visited-action.is-danger { background: white; color: oklch(55% 0.17 25); border: 1.5px solid oklch(55% 0.17 25 / .4); }
+.visited-action:disabled { opacity: .5; }
+.visited-detail-status { font-size: 12px; color: oklch(55% 0.17 25); }
+.visited-detail-status:empty { display: none; }
+.visited-others-toggle { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; font-weight: 700; color: var(--ink-muted); text-align: left; }
+.visited-others-toggle::before { content: '▸'; }
+.visited-others-toggle[aria-expanded="true"]::before { content: '▾'; }
+.visited-others-hint { font-weight: 500; font-size: 11px; }
 .mylog-tabs { display: flex; gap: 6px; padding: 12px 0 4px; overflow-x: auto; }
 .mylog-tab { padding: 8px 15px; border-radius: 999px; color: var(--ink-muted); font-size: 12px; font-weight: 600; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
 .mylog-tab.on { background: var(--accent); color: white; font-weight: 700; }
