@@ -960,3 +960,6 @@ body.viewer-open { overflow: hidden; }
 
 /* 参加済み：押すと参加をやめられる（2026-09-27） */
 .chip-btn.is-joined { background: var(--accent-soft-bg); color: var(--accent-deep); }
+
+/* 地図のリンクが壊れている記録（2026-09-27） */
+.map-broken { color: var(--warn, #B7791F); font-weight: 700; }
