@@ -1009,5 +1009,48 @@ var visibleSec = function (st) { return st.rDwellEnd - st.rCaptionStart - T.REPL
 ok('buildReplayTimeline: 写真1枚の地点も、吹き出しが見えている時間は3秒以上', visibleSec(capTl.stops[0]) >= 3 - 1e-6);
 ok('buildReplayTimeline: エピソードだけの地点も、吹き出しが見えている時間は3秒以上', visibleSec(capTl.stops[1]) >= 3 - 1e-6);
 
+/* ---- 時差：リオ→イグアス→ブエノスアイレス→エル・カラファテは、国やタイムゾーン名が変わっても時差は同じ（UTC-3） ---- */
+var sa = [
+  { id: 'rio', date: '2026-03-05', time: '10:00', category: 'sightseeing' },
+  { id: 'rioD', date: '2026-03-06', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'igu', date: '2026-03-06', time: '12:00', category: 'sightseeing' },
+  { id: 'iguD', date: '2026-03-07', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'bue', date: '2026-03-07', time: '12:00', category: 'sightseeing' },
+  { id: 'bueD', date: '2026-03-08', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'cal', date: '2026-03-08', time: '13:00', category: 'sightseeing' }
+].map(function (b, i) { b.createdAt = String(300 + i); return b; });
+var saZ = T.assignBlockZones(sa, { rio: 'America/Sao_Paulo', igu: 'America/Argentina/Cordoba', bue: 'America/Argentina/Buenos_Aires', cal: 'America/Argentina/Rio_Gallegos' }, {}, 'Asia/Tokyo');
+eq('時差：イグアス・ブエノスアイレス・エル・カラファテはそれぞれの土地のタイムゾーンになる', [saZ.igu, saZ.bue, saZ.cal], ['America/Argentina/Cordoba', 'America/Argentina/Buenos_Aires', 'America/Argentina/Rio_Gallegos']);
+var saSorted = T.sortBlocks(T.applyBlockZones(sa.map(function (b) { return Object.assign({}, b); }), saZ));
+eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラファテはどこもUTC-3なので「ここから現地時間」は出ない',
+  saSorted.filter(function (b, i) { return i > 0 && b._offset !== saSorted[i - 1]._offset; }).length, 0);
+
+/* ---- 日付変更線：東京20:00発→ロサンゼルス18:50着（同じ日付）は、予定を入れた順・入れ方によらず発→着の順（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  var orders = { '入れた順': ['hnd', 'fl', 'arr', 'htl', 'd2'], '到着を先に入れた': ['hnd', 'arr', 'fl', 'htl', 'd2'], '逆順で入れた': ['d2', 'htl', 'arr', 'fl', 'hnd'] };
+  Object.keys(orders).forEach(function (oname) {
+    [null, TK, LA].forEach(function (flMap) {
+      [['sightseeing', undefined], ['transport', 'plane']].forEach(function (arrKind) {
+        [null, LA].forEach(function (dayZone) {
+          var bs = [
+            { id: 'hnd', date: '2026-06-26', time: '18:00', category: 'sightseeing', label: '羽田空港' },
+            { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへのフライト' },
+            { id: 'arr', date: '2026-06-26', time: '18:50', category: arrKind[0], transport: arrKind[1], label: 'ロサンゼルス到着' },
+            { id: 'htl', date: '2026-06-26', time: '21:00', category: 'lodging', label: 'ホテル' },
+            { id: 'd2', date: '2026-06-27', time: '09:00', category: 'sightseeing', label: '翌日' }];
+          bs.forEach(function (b) { b.createdAt = String(orders[oname].indexOf(b.id)); });
+          var own = { hnd: TK, arr: LA, htl: LA, d2: LA };
+          if (flMap) own.fl = flMap;
+          var z = T.assignBlockZones(bs, own, dayZone ? { '2026-06-26': dayZone } : {}, TK);
+          var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).join(',');
+          if (got !== 'hnd,fl,arr,htl,d2' || z.fl !== TK || z.arr !== LA) ng.push(oname + '/' + flMap + '/' + arrKind[0] + '/' + dayZone + ' → ' + got);
+        });
+      });
+    });
+  });
+  eq('日付変更線：入れた順（3通り）×フライトの地図（3通り）×到着の入れ方（2通り）×その日の場所（2通り）の36通りすべてで、羽田→フライト（日本時間）→ロサンゼルス到着の順', ng, []);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
