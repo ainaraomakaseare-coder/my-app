@@ -10,6 +10,8 @@
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
+import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture } from "./visited-places.js";
+import { parseWorkersAiOutput, describeWorkersAiOutputForDebug } from "./ai-parse.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
@@ -942,30 +944,93 @@ async function getMyLog(email, env, headers) {
       .bind(account.account_id)
       .all();
     trips = tripRows.map(rowToTrip);
-    places = await getVisitedPlaces(env, trips.map((t) => t.id));
+    const titles = {};
+    trips.forEach((t) => { titles[t.id] = t.title; });
+    places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles);
   }
 
   return json({ items, trips, places }, 200, headers);
 }
 
-// 参加した旅行（trips）にまたがる「日ごとの場所」（day_infos.admin1/country、天気取得のついでに
-// 保存したもの）から、訪れた都道府県・国を重複なく集計する。都道府県は country が「日本」の
-// 行だけを対象にする（海外のadmin1＝州などを都道府県として混ぜないため）。
-async function getVisitedPlaces(env, tripIds) {
-  if (!tripIds.length) return { prefectures: [], countries: [] };
-  const results = await selectWhereIn(
-    env, "SELECT DISTINCT admin1, country FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
+// 参加した旅行（trips）にまたがる「日ごとの場所」（day_infos.admin1/country）から、訪れた都道府県・国を
+// 集計する。国名の表記ゆれをまとめる・乗り継ぎだけの国を数えない・本人が外した国を除く、の3つは
+// visited-places.js（純粋関数）で行う（2026-09-27）。
+async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
+  const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] } };
+  if (!tripIds.length) return empty;
+  const dayRows = await selectWhereIn(
+    env, "SELECT trip_id, date, admin1, country, lat, lon FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
   );
-  const prefectures = new Set();
-  const countries = new Set();
-  results.forEach((row) => {
-    if (row.country === "日本" && row.admin1) prefectures.add(row.admin1);
-    else if (row.country && row.country !== "日本") countries.add(row.country);
+  if (!dayRows.length) return empty;
+  const blockRows = await selectWhereIn(
+    env, "SELECT id, trip_id, date, category, label FROM blocks WHERE trip_id IN (", tripIds, ")"
+  );
+  const coords = {};
+  try {
+    const entryRows = await selectWhereIn(
+      env, "SELECT e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (", tripIds, ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL"
+    );
+    entryRows.forEach((r) => {
+      if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
+      (coords[r.block_id] = coords[r.block_id] || []).push({ lat: r.lat, lng: r.lng });
+    });
+  } catch {
+    // 座標の列が無い古いDBでも、集計自体は続ける
+  }
+  let overrides = [];
+  if (accountId) {
+    try {
+      const { results } = await env.DB.prepare("SELECT kind, name, mode FROM mylog_place_overrides WHERE account_id = ?").bind(accountId).all();
+      overrides = results;
+    } catch {
+      // migrations/0023 を実行する前は、外した国が無いものとして扱う
+    }
+  }
+  return aggregateVisitedPlaces({
+    days: dayRows.map((r) => ({ tripId: r.trip_id, date: r.date, admin1: r.admin1, country: r.country, lat: r.lat, lon: r.lon })),
+    blocks: blockRows.map((r) => ({ id: r.id, tripId: r.trip_id, date: r.date, category: r.category, label: r.label })),
+    coords,
+    trips: tripTitles || {},
+    overrides,
   });
-  return {
-    prefectures: Array.from(prefectures).sort(),
-    countries: Array.from(countries).sort(),
-  };
+}
+
+// マイログの国・都道府県を本人が外す（hide）／乗り継ぎと判定されたものを数える（show）／元に戻す（clear）
+async function setMyLogPlaceOverride(request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (!["country", "prefecture"].includes(data.kind) || !["hide", "show", "clear"].includes(data.mode) || !isStr(data.name, 100) || !data.name.trim()) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(auth.email).first();
+  if (!account) return json({ error: "account_not_found" }, 404, headers);
+  const name = data.kind === "country" ? canonicalCountry(data.name) : canonicalPrefecture(data.name);
+  try {
+    if (data.mode === "clear") {
+      await env.DB.prepare("DELETE FROM mylog_place_overrides WHERE account_id = ? AND kind = ? AND name = ?")
+        .bind(account.account_id, data.kind, name).run();
+    } else {
+      await env.DB.prepare(
+        "INSERT INTO mylog_place_overrides (account_id, kind, name, mode, created_at) VALUES (?,?,?,?,?) ON CONFLICT(account_id, kind, name) DO UPDATE SET mode = excluded.mode, created_at = excluded.created_at"
+      ).bind(account.account_id, data.kind, name, data.mode, nowIso()).run();
+    }
+  } catch {
+    return json({ error: "migration_required" }, 503, headers);
+  }
+  const { results: tripRows } = await env.DB.prepare(
+    "SELECT t.id AS id, t.title AS title FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
+  ).bind(account.account_id).all();
+  const titles = {};
+  tripRows.forEach((t) => { titles[t.id] = t.title; });
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles);
+  return json({ places }, 200, headers);
 }
 
 /* ---------- 日ごとの天気（day_infos） ----------
@@ -2750,10 +2815,12 @@ async function transcribeAudio(env, buf, contentType, format) {
 }
 
 // /ai-compare専用。OpenAIのtranscribeAudioと同じ入力から、Workers AIのWhisperで
-// 文字起こしを試す（本番の処理からは呼ばない）。audioは音声ファイルそのもののバイト列を
-// 数値の配列にして渡す（Workers AIの音声認識モデルの入力形式）。
+// 文字起こしを試す（本番の処理からは呼ばない）。audioはWorkers AIの公式スキーマ
+// （https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/）どおり、
+// base64エンコードした文字列で渡す（数値の配列ではない。以前はバイト列の配列を渡しており、
+// 期待される入力形式と合っていなかった。2026-09-27に確認して修正）
 async function transcribeAudioWithWorkersAi(env, buf) {
-  const audio = [...new Uint8Array(buf)];
+  const audio = arrayBufferToBase64(buf);
   const result = await env.AI.run(WORKERS_AI_WHISPER_MODEL, { audio, language: "ja" });
   const text = result && typeof result.text === "string" ? result.text : (typeof result === "string" ? result : "");
   return text.trim();
@@ -2999,58 +3066,56 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
 // /ai-compare専用。organizeTextIntoBlocksと同じプロンプト・スキーマ（voicePrompt/
 // multiDayPrompt・voiceBlocksSchema/multiDayBlocksSchema）を使い、OpenAIの代わりに
 // Workers AIのLLMで試す（本番の処理からは呼ばない）。モデルによってresponse_format
-// （json_schemaでの構造化出力）の対応状況が違う可能性があるため、まずresponse_format
-// 付きで呼び、レスポンスのJSONパースに失敗した場合は「JSON以外を返さないこと」という
-// 指示を足したプロンプトだけで再試行する（それでも失敗したらエラーを返すだけで、
+// （json_schemaでの構造化出力）の対応状況・レスポンスの形（response/choices/output等）が
+// 違うため、実際の出力の読み取りはai-parse.jsの純粋関数（parseWorkersAiOutput）に任せる。
+// まずresponse_format付きで呼び、JSONとして読めなかった場合は「JSON以外を返さないこと」
+// という指示を足したプロンプトだけで再試行する（それでも失敗したらエラーを返すだけで、
 // 本番のデータには一切触れない）。
+//
+// max_tokensは以前2000（1日分）だったが、gpt-oss-120b・qwen3-30bは「考える」ぶんの
+// トークンもこの上限に含まれるため、2000では考えている途中でJSONが切れて
+// invalid_model_outputになっていた（2026-09-27に実機で確認）。OpenAI側
+// （organizeTextIntoBlocksのmax_output_tokens）と同程度まで引き上げた。
 async function organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates) {
   const multiDay = Array.isArray(dates) && dates.length > 1;
   const schema = multiDay ? multiDayBlocksSchema() : voiceBlocksSchema();
   const schemaName = multiDay ? "voice_blocks_multi_day" : "voice_blocks";
   const basePrompt = multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes);
-
-  function parseModelOutput(raw) {
-    if (raw == null) return null;
-    if (typeof raw === "object" && !Array.isArray(raw)) return raw; // すでにJSONとして返るモデルもある
-    const s = String(raw).trim();
-    // ```json ... ``` のようなコードブロックで返してくるモデルにも備える
-    const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenced ? fenced[1].trim() : s;
-    try { return JSON.parse(candidate); } catch { return null; }
-  }
+  const maxTokens = multiDay ? 16000 : 6000;
+  const jsonOnlyPrompt = basePrompt
+    + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）や<think>のような思考過程を付けないこと。";
 
   async function callOnce(prompt, withResponseFormat) {
     const input = {
       messages: [{ role: "user", content: prompt }],
-      max_tokens: multiDay ? 12000 : 2000,
+      max_tokens: maxTokens,
     };
     if (withResponseFormat) {
       input.response_format = { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } };
     }
     const result = await env.AI.run(model, input);
-    const raw = result && (result.response ?? result);
-    return parseModelOutput(raw);
+    return { result, parsed: parseWorkersAiOutput(result) };
   }
 
-  let parsed;
+  // response_format自体に対応していないモデルだと呼び出しが例外になることがあるため、
+  // その場合はattemptをnullのままにして、下のJSON専用プロンプトでの再試行に進む
+  let attempt = null;
   try {
-    parsed = await callOnce(basePrompt, true);
-  } catch (e) {
-    // response_format自体に対応していないモデルの可能性があるため、指示だけの
-    // プロンプトで1回だけ再試行する
+    attempt = await callOnce(basePrompt, true);
+  } catch { /* 下の再試行に進む */ }
+
+  if (!attempt || !attempt.parsed) {
     try {
-      const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
-      parsed = await callOnce(jsonOnlyPrompt, false);
+      attempt = await callOnce(jsonOnlyPrompt, false);
     } catch (e2) {
-      return { error: "workers_ai_error", detail: String((e2 && e2.message) || e2).slice(0, 300) };
+      return { error: "workers_ai_error", debug: { rawSnippet: String((e2 && e2.message) || e2).slice(0, 800), shape: [] } };
     }
   }
-  if (!parsed) {
-    const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
-    try { parsed = await callOnce(jsonOnlyPrompt, false); } catch { /* 下のinvalid_model_outputに落ちる */ }
+
+  if (!attempt.parsed || !Array.isArray(attempt.parsed.blocks)) {
+    return { error: "invalid_model_output", debug: describeWorkersAiOutputForDebug(attempt.result) };
   }
-  if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
-  return { blocks: parsed.blocks };
+  return { blocks: attempt.parsed.blocks };
 }
 
 // organizeTextIntoBlocksが返したBlock配列を、実際にDBへ保存する（Block本体とその記録の両方）。
@@ -3346,7 +3411,9 @@ async function aiCompareMemo(request, env, headers) {
       try {
         const r = await organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates);
         const ms = Date.now() - t0;
-        if (r.error) workersAi[key] = { result: null, ms, error: r.error };
+        // debugは/ai-compareのレスポンスにだけ載せる診断用の抜粋（利用者データではなく、
+        // モデルが返した生の出力の形・先頭部分のみ）。docs/adr/0012参照
+        if (r.error) workersAi[key] = { result: null, ms, error: r.error, ...(r.debug ? { debug: r.debug } : {}) };
         else workersAi[key] = { result: r, ms };
       } catch (e) {
         workersAi[key] = { result: null, ms: Date.now() - t0, error: String((e && e.message) || e).slice(0, 300) };
@@ -4021,6 +4088,7 @@ export default {
     if (method === "GET" && path === "/places/details") {
       return placeDetails(url.searchParams.get("id"), url.searchParams.get("session"), env, headers);
     }
+    if (method === "POST" && path === "/mylog/places") return setMyLogPlaceOverride(request, env, headers);
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
       if (auth.error) return json({ error: auth.error }, auth.status, headers);

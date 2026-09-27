@@ -26,5 +26,11 @@ jobs:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
           APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+          # 公開したくない情報（審査の連絡先・著作権の名前）はSecretsから渡す
+          APP_REVIEW_CONTACT_FIRST_NAME: ${{ secrets.APP_REVIEW_CONTACT_FIRST_NAME }}
+          APP_REVIEW_CONTACT_LAST_NAME: ${{ secrets.APP_REVIEW_CONTACT_LAST_NAME }}
+          APP_REVIEW_CONTACT_PHONE: ${{ secrets.APP_REVIEW_CONTACT_PHONE }}
+          APP_REVIEW_CONTACT_EMAIL: ${{ secrets.APP_REVIEW_CONTACT_EMAIL }}
+          APP_STORE_COPYRIGHT: ${{ secrets.APP_STORE_COPYRIGHT }}
           MODE: ${{ inputs.mode }}
         run: node apps/day18-omoide-wiki-ios/scripts/prepare-app-store-draft.mjs "$MODE"

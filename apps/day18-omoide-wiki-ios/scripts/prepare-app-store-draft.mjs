@@ -254,8 +254,19 @@ await step('説明文・キーワード・プロモーション用テキスト�
   return `日本語（${locale}）を追加`;
 });
 
-await step('審査メモ（ログイン不要・試し方）', async () => {
+// 審査の連絡先（氏名・電話・メール）は公開したくないので、GitHubのSecretsから受け取る
+const CONTACT_SECRETS = {
+  contactFirstName: 'APP_REVIEW_CONTACT_FIRST_NAME',
+  contactLastName: 'APP_REVIEW_CONTACT_LAST_NAME',
+  contactPhone: 'APP_REVIEW_CONTACT_PHONE',
+  contactEmail: 'APP_REVIEW_CONTACT_EMAIL',
+};
+const contact = Object.fromEntries(Object.entries(CONTACT_SECRETS).map(([k, env]) => [k, process.env[env]]));
+const missingContact = Object.keys(CONTACT_SECRETS).filter((k) => !contact[k]).map((k) => CONTACT_SECRETS[k]);
+await step('審査メモ（ログイン不要・試し方）と連絡先', async () => {
   const attributes = {notes: joinLines(meta.reviewNotes), demoAccountRequired: false};
+  for (const [k, v] of Object.entries(contact)) if (v) attributes[k] = v.trim();
+  if (missingContact.length) manual.push(`審査の連絡先：GitHubのSecretsに ${missingContact.join(', ')} が未登録`);
   let detail = null;
   try {
     detail = (await get(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`)).data;
@@ -263,6 +274,8 @@ await step('審査メモ（ログイン不要・試し方）', async () => {
     if (e.status !== 404) throw e;
   }
   if (detail) {
+    // 一度作ったあとは、更新のたびに連絡先4つがそろっていないとAppleに断られる
+    if (missingContact.length) return '審査メモは入力済み。連絡先はSecretsを登録してから入力';
     await patch(`/v1/appStoreReviewDetails/${detail.id}`, {type: 'appStoreReviewDetails', id: detail.id, attributes});
     return '更新';
   }
@@ -272,6 +285,85 @@ await step('審査メモ（ログイン不要・試し方）', async () => {
     relationships: {appStoreVersion: {data: {type: 'appStoreVersions', id: version.id}}},
   });
   return '追加';
+});
+
+await step('著作権', async () => {
+  const copyright = (process.env.APP_STORE_COPYRIGHT || '').trim();
+  if (!copyright) {
+    manual.push('著作権：GitHubのSecretsに APP_STORE_COPYRIGHT が未登録');
+    return 'Secrets 未登録のためスキップ';
+  }
+  await patch(`/v1/appStoreVersions/${version.id}`, {type: 'appStoreVersions', id: version.id, attributes: {copyright}});
+  return '入力';
+});
+
+// 価格：無料。すでに価格が決まっていたら触らない
+await step('価格（無料）', async () => {
+  let schedule = null;
+  try {
+    schedule = (await get(`/v1/apps/${appId}/appPriceSchedule`)).data;
+  } catch (e) {
+    if (e.status !== 404) throw e;
+  }
+  if (schedule) return '設定済みのため変更なし';
+  const points = (await get(`/v1/apps/${appId}/appPricePoints?filter[territory]=${meta.baseTerritory}&limit=200`)).data;
+  const free = points.find((p) => Number(p.attributes.customerPrice) === 0);
+  if (!free) throw new Error('無料（0円）の価格が見つかりません');
+  await post('/v1/appPriceSchedules', {
+    type: 'appPriceSchedules',
+    relationships: {
+      app: {data: {type: 'apps', id: appId}},
+      baseTerritory: {data: {type: 'territories', id: meta.baseTerritory}},
+      manualPrices: {data: [{type: 'appPrices', id: '${free}'}]},
+    },
+  }, [{
+    type: 'appPrices',
+    id: '${free}',
+    attributes: {startDate: null},
+    relationships: {appPricePoint: {data: {type: 'appPricePoints', id: free.id}}},
+  }]);
+  return '無料に設定';
+});
+
+// 配信地域：日本だけ。すでに決まっていたら、日本が入っているかだけ確かめる
+await step('配信地域（日本）', async () => {
+  let availability = null;
+  try {
+    availability = (await get(`/v1/apps/${appId}/appAvailabilityV2`)).data;
+  } catch (e) {
+    if (e.status !== 404) throw e;
+  }
+  if (!availability) {
+    await post('/v2/appAvailabilities', {
+      type: 'appAvailabilities',
+      attributes: {availableInNewTerritories: false},
+      relationships: {
+        app: {data: {type: 'apps', id: appId}},
+        territoryAvailabilities: {data: meta.territories.map((t) => ({type: 'territoryAvailabilities', id: '${' + t + '}'}))},
+      },
+    }, meta.territories.map((t) => ({
+      type: 'territoryAvailabilities',
+      id: '${' + t + '}',
+      attributes: {available: true, releaseDate: null, preOrderEnabled: false},
+      relationships: {territory: {data: {type: 'territories', id: t}}},
+    })));
+    return `${meta.territories.join(', ')} だけに設定`;
+  }
+  const list = [];
+  let next = `/v2/appAvailabilities/${availability.id}/territoryAvailabilities?include=territory&limit=200`;
+  while (next) {
+    const page = await get(next);
+    list.push(...page.data);
+    next = page.links?.next || null;
+  }
+  const on = list.filter((t) => t.attributes.available).map((t) => t.relationships?.territory?.data?.id);
+  for (const t of meta.territories) {
+    if (on.includes(t)) continue;
+    const item = list.find((x) => x.relationships?.territory?.data?.id === t);
+    if (!item) throw new Error(`${t} の配信設定が見つかりません`);
+    await patch(`/v1/territoryAvailabilities/${item.id}`, {type: 'territoryAvailabilities', id: item.id, attributes: {available: true}});
+  }
+  return `設定済み（配信中の地域：${on.length}か所。日本以外が入っていたら画面で外してください）`;
 });
 
 await step(`申請に使うビルド（${meta.minBuildNumber}以降の最新）`, async () => {
@@ -331,10 +423,7 @@ await step(`スクリーンショット（${meta.screenshotDisplayType}）`, asy
   return `${meta.screenshots.length}枚をアップロード`;
 });
 
-manual.push('「Appのプライバシー」：app-store-listing.md の表のとおり（APIでは入力できない）');
-manual.push('「価格および配信状況」：価格＝無料（0円）、配信地域＝日本');
-manual.push('「App Review に関する情報」の連絡先（氏名・電話番号・メール）');
-manual.push('著作権（例：2026 ご自身の名前や屋号）');
+manual.push('「Appのプライバシー」：APIキーでは入力できないため、パソコンで set-app-privacy.mjs を実行（app-store-listing.md 参照）');
 manual.push('すべて確認したら、右上の「審査用に追加」→「審査へ提出」');
 
 const lines = [

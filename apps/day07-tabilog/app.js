@@ -17,10 +17,11 @@
     { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
     { key: 'lodging', label: '宿泊', color: 'oklch(48% 0.1 195)' },
     { key: 'transport', label: '移動', color: 'oklch(60% 0.12 260)' },
-    { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' },
-    // 「到着」（2026-09-27〜）。種類の選択では「移動」の中の「出発｜到着」タブで選ぶ（チップには出さない）。
-    // 移動（＝出発）と違い、着いた場所の予定として扱う：地図はその時刻にいた場所、移動手段は「ここまで」の手段
-    { key: 'arrival', label: '到着', color: 'oklch(58% 0.12 225)', inMove: true }
+    // 「到着」（2026-09-27〜）。種類の選択では「移動」の隣のチップで選ぶ。
+    // 移動（＝出発）と違い、着いた場所の予定として扱う：地図はその時刻にいた場所。
+    // inMoveはMyLogのタブ（renderMyLogTabs）が「移動」にまとめて出すためのフラグで、種類の選択のチップでは使わない。
+    { key: 'arrival', label: '到着', color: 'oklch(58% 0.12 225)', inMove: true },
+    { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' }
   ];
 
   // 予定（Block）の場所までの移動手段。「地図でふりかえる」で、どのアイコンがどう動くかに使う。
@@ -2862,6 +2863,8 @@
     myLogItems: [],
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [] },
+    myLogPlaceSel: null,
+    myLogOthersOpen: false,
     homeFilters: { companion: '', year: '', tripType: '', sort: '' },
     social: { likes: {}, comments: [], accountId: '' },
     myLogCategory: 'food',
@@ -4887,7 +4890,11 @@
   function openBlockForm(block) {
     state.editingBlockId = block ? block.id : null;
     state.formCategory = block ? block.category : 'sightseeing';
-    state.formTransport = block ? (block.transport || '') : '';
+    // 移動手段が保存されているのは種類「移動」のときだけ（以前のデータで他の種類に付いていても出さない）
+    state.formTransport = block && block.category === 'transport' ? (block.transport || '') : '';
+    // 以前のデータで、移動以外の予定に付いている「ここまでの移動手段」は、画面には出さないが、種類を
+    // 変えない限り保存し直しても消さない（地図でふりかえるの乗り物に使っているため）
+    state.formLegacyTransport = block && block.category !== 'transport' ? (block.transport || '') : '';
     var mm = block ? (block.moveMinutes || 0) : 0;
     $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
     $('#blkMoveMins').value = mm ? mm % 60 : '';
@@ -4904,34 +4911,27 @@
 
   function renderCategoryChips() {
     var el = $('#blkCategoryChips');
-    var isMove = state.formCategory === 'transport' || state.formCategory === 'arrival';
-    // 「到着」はチップに出さず、「移動」を選んだときの「出発｜到着」タブで選ぶ（2026-09-27）
-    el.innerHTML = Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) {
-      var on = c.key === 'transport' ? isMove : c.key === state.formCategory;
+    // 「到着」も「移動」の隣に並ぶ通常のチップにする（以前は「移動」を選んだときの
+    // 「出発｜到着」タブで選ぶ形だった。2026-09-27）
+    el.innerHTML = Core.CATEGORIES.map(function (c) {
+      var on = c.key === state.formCategory;
       return '<button type="button" class="cat-chip' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(c.label) + '</button>';
-    }).join('') +
-      (isMove ? '<div class="move-dir-tabs" role="tablist">' +
-        '<button type="button" role="tab" class="move-dir-tab' + (state.formCategory === 'transport' ? ' on' : '') + '" data-dir="transport" aria-selected="' + (state.formCategory === 'transport') + '">出発</button>' +
-        '<button type="button" role="tab" class="move-dir-tab' + (state.formCategory === 'arrival' ? ' on' : '') + '" data-dir="arrival" aria-selected="' + (state.formCategory === 'arrival') + '">到着</button>' +
-        '</div>' : '');
+    }).join('');
     $all('.cat-chip', el).forEach(function (b) {
       b.addEventListener('click', function () {
-        // 「移動」をもう一度押しても、選んでいる出発／到着はそのまま
-        if (b.dataset.cat === 'transport' && isMove) return;
         state.formCategory = b.dataset.cat;
+        // 種類を「移動」以外に変えたら、選んでいた移動手段（飛行機など）は消す。「到着」は移動手段を
+        // 持たない（ここまでの移動手段は、直前の「移動」の予定から地図でふりかえるが引き継ぐ）
+        if (state.formCategory !== 'transport') state.formTransport = '';
+        state.formLegacyTransport = '';
         renderCategoryChips();
+        renderTransportChips();
       });
     });
-    $all('.move-dir-tab', el).forEach(function (b) {
-      b.addEventListener('click', function () { state.formCategory = b.dataset.dir; renderCategoryChips(); });
-    });
-    // 移動手段・移動時間は、種類が「移動」のときだけ出す（以前は種類に関係なく「ここまでの移動手段」を出していた）。
-    // 以前のデータで、移動以外の予定に移動手段が付いているものは、見えないまま残らないよう出しておく。
-    // 「到着」は「ここまでの移動手段」だけ（移動時間は出発の予定に入れる）
-    var arrival = state.formCategory === 'arrival';
-    $('#blkMoveFields').hidden = !(isMove || state.formTransport);
-    $('#blkMoveLabel').textContent = arrival || !isMove ? 'ここまでの移動手段（「地図でふりかえる」で使います）' : '移動手段（「地図でふりかえる」で使います）';
-    $('#blkMoveTimeWrap').hidden = arrival || !isMove;
+    // 移動手段・移動時間は、種類が「移動」のときだけ出す（「到着」も含めて他の種類では出さない。2026-09-27）
+    var isTransportCat = state.formCategory === 'transport';
+    $('#blkMoveFields').hidden = !isTransportCat;
+    $('#blkMoveTimeWrap').hidden = !isTransportCat;
   }
 
   function renderTransportChips() {
@@ -4962,7 +4962,9 @@
       time: $('#blkTime').value || '',
       label: label,
       category: state.formCategory,
-      transport: $('#blkMoveFields').hidden ? '' : (state.formTransport || ''),
+      // 移動手段を選べるのは種類が「移動」のときだけ。種類を切り替えたら選んでいた移動手段は消す
+      // （以前のデータの「ここまでの移動手段」は、種類を変えない限りそのまま）
+      transport: state.formCategory === 'transport' ? (state.formTransport || '') : (state.formLegacyTransport || ''),
       moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
     };
     var req = state.editingBlockId
@@ -6242,27 +6244,112 @@
     renderMyLogList();
   }
 
-  // 「訪れた都道府県・国」：参加した旅行の「日ごとの場所」（天気取得のときに入力した地名）から
-  // サーバー側で自動集計されたものを、そのままチップで並べるだけ（フロント側では集計しない）。
+  // 「訪れた都道府県・国」：参加した旅行の「日ごとの場所」からサーバー側で集計したもの。
+  // 国名の表記ゆれ（アメリカ／アメリカ合衆国）はサーバーでまとめ、乗り継ぎだけの国は数えない。
+  // チップをタップすると、どの旅の何日から入ったかを出し、そこから外せる（2026-09-27）。
   function renderMyLogPlaces() {
     var el = $('#mylogPlaces');
     var places = state.myLogPlaces || { prefectures: [], countries: [] };
-    var prefectures = places.prefectures || [];
-    var countries = places.countries || [];
-    if (!prefectures.length && !countries.length) {
-      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行の日タブで「＋場所を設定」すると、ここに自動で集計されます。</div>';
+    var details = places.details;
+    if (!details) {
+      // サーバーが古い（details を返さない）ときは、今までどおり名前だけを並べる
+      details = {
+        prefectures: (places.prefectures || []).map(function (n) { return { name: n, status: 'visible', sources: [] }; }),
+        countries: (places.countries || []).map(function (n) { return { name: n, status: 'visible', sources: [] }; })
+      };
+    }
+    var visPref = details.prefectures.filter(function (x) { return x.status === 'visible'; });
+    var visCountry = details.countries.filter(function (x) { return x.status === 'visible'; });
+    var others = details.countries.filter(function (x) { return x.status !== 'visible'; }).map(function (x) { return { kind: 'country', item: x }; })
+      .concat(details.prefectures.filter(function (x) { return x.status !== 'visible'; }).map(function (x) { return { kind: 'prefecture', item: x }; }));
+    if (!visPref.length && !visCountry.length && !others.length) {
+      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
       return;
     }
+    var sel = state.myLogPlaceSel;
+    var chip = function (kind, x) {
+      var on = sel && sel.kind === kind && sel.name === x.name;
+      var cls = 'visited-chip' + (x.status !== 'visible' ? ' is-muted' : '') + (on ? ' on' : '');
+      return '<button type="button" class="' + cls + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' + escapeHtml(x.name) +
+        (x.status === 'transit' ? '<span class="visited-chip-note">乗り継ぎ</span>' : x.status === 'hidden' ? '<span class="visited-chip-note">外した</span>' : '') + '</button>';
+    };
+    var detailFor = function (kind, list) {
+      if (!sel || sel.kind !== kind) return '';
+      var x = list.filter(function (i) { return i.name === sel.name; })[0];
+      return x ? myLogPlaceDetailHtml(kind, x) : '';
+    };
     var html = '';
-    if (prefectures.length) {
-      html += '<div class="visited-group"><span class="visited-group-label">都道府県（' + prefectures.length + '）</span><div class="visited-chips">'
-        + prefectures.map(function (p) { return '<span class="visited-chip">' + escapeHtml(p) + '</span>'; }).join('') + '</div></div>';
+    if (visPref.length) {
+      html += '<div class="visited-group"><span class="visited-group-label">都道府県（' + visPref.length + '）</span><div class="visited-chips">' +
+        visPref.map(function (x) { return chip('prefecture', x); }).join('') + '</div>' + detailFor('prefecture', visPref) + '</div>';
     }
-    if (countries.length) {
-      html += '<div class="visited-group"><span class="visited-group-label">海外（' + countries.length + 'か国）</span><div class="visited-chips">'
-        + countries.map(function (c) { return '<span class="visited-chip">' + escapeHtml(c) + '</span>'; }).join('') + '</div></div>';
+    if (visCountry.length) {
+      html += '<div class="visited-group"><span class="visited-group-label">海外（' + visCountry.length + 'か国）</span><div class="visited-chips">' +
+        visCountry.map(function (x) { return chip('country', x); }).join('') + '</div>' + detailFor('country', visCountry) + '</div>';
+    }
+    if (others.length) {
+      var open = state.myLogOthersOpen || (sel && others.some(function (o) { return o.kind === sel.kind && o.item.name === sel.name; }));
+      var selOther = sel ? others.filter(function (o) { return o.kind === sel.kind && o.item.name === sel.name; })[0] : null;
+      html += '<div class="visited-group visited-others">' +
+        '<button type="button" class="visited-others-toggle" aria-expanded="' + (open ? 'true' : 'false') + '">数えていない場所（' + others.length + '）<span class="visited-others-hint">乗り継ぎだけ・外したもの</span></button>' +
+        (open ? '<div class="visited-chips">' + others.map(function (o) { return chip(o.kind, o.item); }).join('') + '</div>' +
+          (selOther ? myLogPlaceDetailHtml(selOther.kind, selOther.item) : '') : '') +
+        '</div>';
     }
     el.innerHTML = html;
+    $all('.visited-chip', el).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var same = sel && sel.kind === btn.dataset.kind && sel.name === btn.dataset.name;
+        state.myLogPlaceSel = same ? null : { kind: btn.dataset.kind, name: btn.dataset.name };
+        renderMyLogPlaces();
+      });
+    });
+    var toggle = $('.visited-others-toggle', el);
+    if (toggle) toggle.addEventListener('click', function () {
+      state.myLogOthersOpen = toggle.getAttribute('aria-expanded') !== 'true';
+      if (!state.myLogOthersOpen && sel && others.some(function (o) { return o.kind === sel.kind && o.item.name === sel.name; })) state.myLogPlaceSel = null;
+      renderMyLogPlaces();
+    });
+    $all('.visited-src-trip', el).forEach(function (btn) {
+      btn.addEventListener('click', function () { openTrip(btn.dataset.trip); });
+    });
+    $all('.visited-action', el).forEach(function (btn) {
+      btn.addEventListener('click', function () { setMyLogPlaceMode(btn.dataset.kind, btn.dataset.name, btn.dataset.mode, btn); });
+    });
+  }
+
+  function myLogPlaceDetailHtml(kind, x) {
+    var srcs = (x.sources || []).map(function (s) {
+      var dates = (s.dates || []).map(function (d) { var p = d.split('-'); return Number(p[1]) + '/' + Number(p[2]); }).join('・');
+      return '<li class="visited-src"><button type="button" class="visited-src-trip" data-trip="' + escapeHtml(s.tripId) + '">' + escapeHtml(s.tripTitle || '（無題の旅）') + '</button>' +
+        (dates ? '<span class="visited-src-dates">' + escapeHtml(dates) + (s.transit ? '（乗り継ぎ）' : '') + '</span>' : '') + '</li>';
+    }).join('');
+    var action;
+    if (x.status === 'visible') action = { mode: 'hide', label: 'マイログから外す' };
+    else if (x.status === 'hidden') action = { mode: 'clear', label: '外すのをやめる' };
+    else action = { mode: 'show', label: '行った場所として数える' };
+    var note = x.status === 'transit' ? '<p class="visited-detail-note">空港・乗り継ぎの記録しか無いので、数えていません。</p>' : '';
+    return '<div class="visited-detail">' +
+      (srcs ? '<div class="visited-detail-label">この記録から入りました</div><ul class="visited-srcs">' + srcs + '</ul>' : '') + note +
+      '<div class="visited-detail-actions"><button type="button" class="visited-action' + (action.mode === 'hide' ? ' is-danger' : '') + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '" data-mode="' + action.mode + '">' + action.label + '</button></div>' +
+      '<div class="visited-detail-status" aria-live="polite"></div></div>';
+  }
+
+  function setMyLogPlaceMode(kind, name, mode, btn) {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('mylog'); return; }
+    var status = btn.closest('.visited-detail') && $('.visited-detail-status', btn.closest('.visited-detail'));
+    btn.disabled = true;
+    api('/mylog/places', 'POST', { email: user.email, kind: kind, name: name, mode: mode }).then(function (res) {
+      state.myLogPlaces = res.places || state.myLogPlaces;
+      state.myLogPlaceSel = null;
+      renderMyLogPlaces();
+    }).catch(function (e) {
+      btn.disabled = false;
+      if (status) status.textContent = e && e.message === 'migration_required'
+        ? 'サーバーの準備がまだです（データベースの更新が必要です）。'
+        : '変更できませんでした。通信状況を確認して、もう一度お試しください。';
+    });
   }
 
   // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。
@@ -6755,6 +6842,19 @@
   // アニメ中の線を隠す（replay.hideLinesOnMove。上のzoomstart/movestartの説明を参照）。
   var REPLAY_ARRIVAL_ZOOM_DELAY_SEC = 0.25; // 着陸してから着いた地点へズームし直すまでの間
   var REPLAY_HIDE_LINES_ZOOM_DELTA = 3;
+  var REPLAY_TINY_LEG_KM = 0.4; // これより近い区間は、両端が見えていればカメラを動かさない（空港の中など）
+  var REPLAY_SHORT_STAY_SEC = 1.2; // 着いてからこれ以内に次の遠い移動が始まるなら、着いた地点へ寄せない
+  // 点がすべて、見える部分（吹き出し・操作ボタンを除いた部分）に入っているか
+  function replayPointsInView(points, padOpts) {
+    try {
+      var size = replayMap.getSize();
+      var tl = window.L.point(padOpts.paddingTopLeft), br = window.L.point(padOpts.paddingBottomRight);
+      return points.every(function (p) {
+        var c = replayMap.latLngToContainerPoint(p);
+        return c.x >= tl.x && c.y >= tl.y && c.x <= size.x - br.x && c.y <= size.y - br.y;
+      });
+    } catch (e) { return false; }
+  }
   // keepCaption：着いた地点へ寄せ直すときは、いま出したばかりの写真の吹き出しを隠さない。隠すと
   // 「出る→消える→また出る」で、同じ写真が2回出たように見えていた（イグアス到着、2026-09-27）
   function replayFlyToBounds(bounds, opts, keepCaption) {
@@ -6969,7 +7069,20 @@
         : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
       var legView = replayViewPadding();
       legView.maxZoom = 15; legView.duration = 0.8;
-      replayFlyToBounds(legBounds, legView);
+      // 空港の中など、ごく近い区間（REPLAY_TINY_LEG_KM未満）で両端がもう見えているなら、カメラを動かさない。
+      // 乗り継ぎの空港（インチョン・チューリッヒ）で、ほぼ同じ場所の予定が続くたびに少しずつ寄せ直し、
+      // 地図が手振れのように揺れていた（2026-09-27）
+      var legFrom = tl.stops[leg.from], legTo = tl.stops[leg.to];
+      var tinyLeg = legFrom && legTo && Core.distanceKm(legFrom, legTo) < REPLAY_TINY_LEG_KM;
+      if (tinyLeg) {
+        // 飛行機のあとで大きく引いたままなら、街を見る大きさ（12）までは寄せる。以後の近い区間では動かさない
+        legView.maxZoom = Math.max(12, Math.min(15, replayMap.getZoom()));
+        if (replayMap.getZoom() < 10 || !replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legView)) {
+          replayFlyToBounds(legBounds, legView);
+        }
+      } else {
+        replayFlyToBounds(legBounds, legView);
+      }
       replay.lastLeg = legIndexForCamera;
       // 着いた地点に寄せる処理（下）が次のフレームで走ってこのカメラ移動を打ち消さないよう、着いた地点も済みにする
       if (!st.icon) replay.lastStop = st.stopIndex;
@@ -6982,6 +7095,15 @@
       // （次の区間があるかどうかによらない。2026-09-26）。
       var zoomedOut = replayMap.getZoom() < 10;
       var needZoom = arrived && arrived.located && replay.lastStop !== -2 && (!cameFromLeg || zoomedOut);
+      // 乗り継ぎのように、着いてすぐ次の遠い移動（飛行機など）に出るなら、寄せずに引いたままにする。
+      // 寄せた直後にまた大きく引くことになり、地図が揺れて見えていた（2026-09-27）
+      if (needZoom && cameFromLeg && replay.playing) {
+        var nextLeg = tl.legs.filter(function (l) { return l.from === st.stopIndex && l.r0 >= r; })[0];
+        if (nextLeg && nextLeg.r0 - r < REPLAY_CAMERA_LEAD_SEC + REPLAY_SHORT_STAY_SEC) {
+          var nextTo = tl.stops[nextLeg.to];
+          if (nextTo && nextTo.located && Core.distanceKm(arrived, nextTo) >= 50) needZoom = false;
+        }
+      }
       // 飛行機などで引いた地図から寄せ直すときは、着いてすぐではなく少し（REPLAY_ARRIVAL_ZOOM_DELAY_SEC）
       // 間を空けてからズームする。着陸した瞬間にズームが始まり、早すぎると感じられたため（2026-09-27）。
       // 間を空けるあいだは lastStop を進めず、次のフレームでもう一度ここに来る
