@@ -3468,9 +3468,10 @@ async function scanReceipt(request, env, headers) {
 
   const base64 = arrayBufferToBase64(buf);
 
-  // Visionが使えるときはこちらを先に試す。回数の枠（checkVoiceQuota）を使わないため、
-  // 無料プランでもレシート読み取りが使えるようになる。失敗したときだけOpenAIに回す
-  // （そのときは今までどおり音声入力と共通の枠を使う）。
+  // Visionが使えるときはこちらを先に試す。失敗したときだけOpenAIに回す。
+  // レシート読み取りは、どちらで読んでも無料（回数の枠を使わない。2026-09-27、オーナーの方針）。
+  // 以前はOpenAIに回したときだけ音声入力と共通の枠を使い、枠が無いと読み取れなかった。
+  // 使いすぎは、上のAI_RATE_LIMITER（同じ接続元から1分あたりの回数）で抑える
   if (env.GOOGLE_API_KEY) {
     const visionItems = await scanReceiptWithVision(base64, env);
     if (visionItems) return json({ items: visionItems }, 200, headers);
@@ -3478,10 +3479,7 @@ async function scanReceipt(request, env, headers) {
 
   if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
 
-  // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
-  const quota = await checkVoiceQuota(env, email);
-  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
-
+  void email;
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -3516,7 +3514,6 @@ async function scanReceipt(request, env, headers) {
   }
   if (!parsed || !Array.isArray(parsed.items)) return json({ error: "invalid_model_output" }, 502, headers);
 
-  await consumeVoiceQuota(env, quota.email, quota.via);
   return json({ items: parsed.items }, 200, headers);
 }
 

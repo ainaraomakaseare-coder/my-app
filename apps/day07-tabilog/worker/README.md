@@ -200,7 +200,7 @@ npx wrangler secret put GOOGLE_API_KEY
 
 - `GET /places/search`：Places API (New)のAutocompleteを先に試す。座標を返さないため、候補に`placeId`だけが入ることがある。クライアントは検索し直すたびに`session=`（`crypto.randomUUID()`）を付けて送る。Googleの結果はCache APIに置いていない（利用規約が長期間のキャッシュを推奨していないため）。
 - `GET /places/details?id=<placeId>&session=<token>`（新規）：座標の無い候補を「選択」したときに呼ぶ。Place Details Essentials（`location, displayName, formattedAddress`のみ。Pro以上のフィールドは足していない）を聞き、`{found, name, address, lat, lng}`を返す。`id`は`^[A-Za-z0-9_-]{10,300}$`で検証する。
-- `POST /receipts/scan`：Cloud Vision（`DOCUMENT_TEXT_DETECTION`）でレシートの文字を読み取り、`src/receipt-parse.js`の`parseReceiptText`（ルールベース。`node worker/test/receipt-parse.test.mjs`で単体テストできる）で品目に分ける。**音声入力・テキストメモと共有する利用回数の枠（`checkVoiceQuota`）は消費しない**（無料プランでも使える）。失敗したときだけ今までどおりOpenAIに回す（そのときは枠を消費する）。ログイン必須・`AI_RATE_LIMITER`はどちらの経路でも変えていない。
+- `POST /receipts/scan`：Cloud Vision（`DOCUMENT_TEXT_DETECTION`）でレシートの文字を読み取り、`src/receipt-parse.js`の`parseReceiptText`（ルールベース。`node worker/test/receipt-parse.test.mjs`で単体テストできる）で品目に分ける。**音声入力・テキストメモと共有する利用回数の枠（`checkVoiceQuota`）は消費しない**（無料プランでも使える）。失敗したときだけ今までどおりOpenAIに回す（2026-09-27〜、そのときも枠は消費しない。レシート読み取りは無料）。ログイン必須・`AI_RATE_LIMITER`はどちらの経路でも変えていない。
 
 無料枠・費用の目安は docs/adr/0011 に記載。オーナーがGCP側のクォータで1日の上限（Autocomplete/Place Details/Visionそれぞれ）と予算アラートを設定済み。
 
