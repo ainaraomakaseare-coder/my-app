@@ -540,7 +540,7 @@
 
         <!-- 地図の欄は、候補の地図を広く見せるため横並びにせず、横幅いっぱいに使う -->
           <div class="field">
-            <label for="entMapUrl">地図のURL（任意）</label>
+            <label for="entMapUrl" id="entMapLabel">地図のURL（任意）</label>
             <input type="url" id="entMapUrl" placeholder="https://maps.google.com/...">
             <div class="map-search-row">
               <input type="text" id="entPlaceSearch" placeholder="場所名で検索（例：ユニバ）">
@@ -564,19 +564,22 @@
             </div>
           </div>
 
-        <!-- 記録の画面が長いので、ときどきしか使わない欄はたたんでおく。すでに入っている記録を開いたときは
-             開いた状態にする（app.jsのopenEntryForm） -->
-        <details class="more-fields" id="entMoreFields">
-          <summary id="entMoreSummary">もっと書く（ひとこと・詳細・URLなど）</summary>
-          <!-- 記録の画面をシンプルにするため、★・費用・地図以外の欄はここにたたむ（2026-09-26〜） -->
-          <div class="field">
-            <label for="entComment">ひとこと</label>
-            <input type="text" id="entComment" placeholder="例：最高だった！">
+          <!-- 移動の予定の記録だけに出す、到着地の地図（2026-09-27〜）。上の地図の欄は出発地になる。
+               入っていれば、時差の区切り・日付変更線をまたぐ日の並び・地図でふりかえるの到着地に使う -->
+          <div class="field" id="entArriveField" hidden>
+            <label for="entArriveMapUrl">到着地の地図（任意）</label>
+            <input type="url" id="entArriveMapUrl" placeholder="https://maps.google.com/...">
+            <div class="map-search-row">
+              <input type="text" id="entArriveSearch" placeholder="到着地を検索（例：ロサンゼルス空港）">
+              <button type="button" class="btn ghost small" id="btnArriveSearch">地図を検索</button>
+            </div>
+            <div class="place-list" id="entArriveCandidates" hidden></div>
+            <p class="hint" id="entArriveStatus">到着地を入れると、時差や日付変更線をまたぐ移動の順番が確実になり、地図でふりかえるも到着地まで線でつながります。</p>
           </div>
-
-          <!-- 移動の予定の記録だけに出す、紹介文用の移動の情報（★はつけない） -->
+          <!-- 移動の予定の記録だけに出す移動の情報（★はつけない）。出発・到着の時刻は時差や日付変更線をまたぐ
+               並び・地図でふりかえるに使うので、たたまずに見せる（2026-09-27） -->
           <div class="field" id="entTravelField" hidden>
-            <label>移動の情報（紹介文に使います）</label>
+            <label>移動の情報（時刻はどちらも現地時間）</label>
             <div class="travel-grid">
               <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地（例：ローマ）">
               <span class="travel-arrow">→</span>
@@ -589,6 +592,16 @@
             </div>
             <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）。費用の明細があればそちらを使います">
             <p class="hint" id="entTravelDuration"></p>
+          </div>
+
+        <!-- 記録の画面が長いので、ときどきしか使わない欄はたたんでおく。すでに入っている記録を開いたときは
+             開いた状態にする（app.jsのopenEntryForm） -->
+        <details class="more-fields" id="entMoreFields">
+          <summary id="entMoreSummary">もっと書く（ひとこと・詳細・URLなど）</summary>
+          <!-- 記録の画面をシンプルにするため、★・費用・地図以外の欄はここにたたむ（2026-09-26〜） -->
+          <div class="field">
+            <label for="entComment">ひとこと</label>
+            <input type="text" id="entComment" placeholder="例：最高だった！">
           </div>
 
           <!-- 紹介文（ホテログ・レクログ・飯ログ）用の、自分のレビュー項目（app.jsのrenderReviewFields。docs/adr/0007）。

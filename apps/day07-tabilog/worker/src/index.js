@@ -525,14 +525,22 @@ function validTravel(x) {
     if (x[k] !== undefined && x[k] !== "" && !TIME_RE.test(x[k])) return false;
   }
   if (x.amount !== undefined && x.amount !== null && !(Number.isInteger(x.amount) && x.amount >= 0 && x.amount <= 100000000)) return false;
+  // 到着地の地図（2026-09-27〜）。移動の予定の地図の欄は出発地、こちらは到着地。座標は場所の候補から
+  // 選んだときだけ一緒に送られる（手で貼ったURLは座標なし）
+  if (!optUrl(x.arriveMapUrl, 500)) return false;
+  const hasLat = x.arriveLat !== undefined && x.arriveLat !== null, hasLng = x.arriveLng !== undefined && x.arriveLng !== null;
+  if (hasLat !== hasLng) return false;
+  if (hasLat && !validLatLng(x.arriveLat, x.arriveLng)) return false;
   return true;
 }
 
 function cleanTravel(x) {
   if (!x) return {};
   const out = {};
-  for (const k of ["from", "to", "company", "depart", "arrive"]) if (x[k]) out[k] = String(x[k]).trim();
+  for (const k of ["from", "to", "company", "depart", "arrive", "arriveMapUrl"]) if (x[k]) out[k] = String(x[k]).trim();
   if (Number.isInteger(x.amount)) out.amount = x.amount;
+  const at = out.arriveMapUrl && x.arriveLat !== undefined && x.arriveLat !== null ? validLatLng(x.arriveLat, x.arriveLng) : null;
+  if (at) { out.arriveLat = at.lat; out.arriveLng = at.lng; }
   return out;
 }
 
