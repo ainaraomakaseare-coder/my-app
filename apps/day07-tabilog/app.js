@@ -3001,6 +3001,7 @@
     $('#ntTitle').value = '';
     $('#ntStart').value = '';
     $('#ntEnd').value = '';
+    $('#ntEnd').min = '';
     $('#ntCompanions').value = '';
     $('#ntTripType').value = '';
     $('#newTripStatus').textContent = '';
@@ -3038,6 +3039,7 @@
     $('#teTitle').value = trip.title;
     $('#teStart').value = trip.startDate || '';
     $('#teEnd').value = trip.endDate || '';
+    $('#teEnd').min = trip.startDate || '';
     $('#teCompanions').value = (trip.companions || []).join('、');
     $('#teTripType').value = trip.tripType || '';
     $('#tripEditStatus').textContent = '';
@@ -7184,6 +7186,19 @@
 
     $('#btnNewTrip').addEventListener('click', openNewTripForm);
     $('#btnCreateTrip').addEventListener('click', createTrip);
+    // 出発日を選んだら、帰着日が空（または出発日より前）のときは出発日を入れておく。帰着日のカレンダーが
+    // 今月（2026年9月など）から開いて、過去の旅行だと月をさかのぼり直す手間があったため（2026-09-27）。
+    // 帰着日にはその日より前を選べないよう min も付ける
+    [['#ntStart', '#ntEnd'], ['#teStart', '#teEnd']].forEach(function (pair) {
+      var start = $(pair[0]), end = $(pair[1]);
+      if (!start || !end) return;
+      var sync = function () {
+        end.min = start.value || '';
+        if (start.value && (!end.value || end.value < start.value)) end.value = start.value;
+      };
+      start.addEventListener('change', sync);
+      start.addEventListener('input', sync);
+    });
     $('#btnOpenTripId').addEventListener('click', function () {
       var id = $('#openTripId').value.trim();
       if (id) openTrip(id);
