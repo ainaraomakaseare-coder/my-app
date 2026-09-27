@@ -282,3 +282,7 @@ CREATE TABLE IF NOT EXISTS comment_reports (
 -- 一度きりの文。参加者全員で共有する設定なので旅行本体に持たせる。既存の旅行は1円のまま変わらない。
 -- 本番環境へ反映するまでは migrations/0021_trip_settle_unit.sql を1回だけ実行すること。
 -- ALTER TABLE trips ADD COLUMN settle_unit INTEGER NOT NULL DEFAULT 1;
+
+-- v22：blocksに manual_order（手で決めた並び。NULLならふだんの並び）を追加する一度きりの文。
+-- 本番環境へ反映するまでは migrations/0022_block_manual_order.sql を1回だけ実行すること。
+-- ALTER TABLE blocks ADD COLUMN manual_order INTEGER;

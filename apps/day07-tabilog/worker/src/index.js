@@ -409,6 +409,8 @@ function rowToBlock(row) {
     category: row.category,
     transport: row.transport || "",
     moveMinutes: row.move_minutes || 0,
+    // 手で決めた並び（v22〜）。列がまだ無い環境ではundefinedなのでnullにそろえる
+    manualOrder: typeof row.manual_order === "number" ? row.manual_order : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -464,6 +466,10 @@ async function updateBlock(id, request, env, headers) {
   )
     .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", merged.transport || "", merged.moveMinutes || 0, t, id)
     .run();
+  // 別の日へ移したら、前の日の「手で決めた並び」は持っていかない（v22〜。列がまだ無い環境では何もしない）
+  if ((merged.date || "") !== (cur.date || "")) {
+    try { await env.DB.prepare("UPDATE blocks SET manual_order = NULL WHERE id = ?").bind(id).run(); } catch { /* 列が無い */ }
+  }
   const updated = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   return json(rowToBlock(updated), 200, headers);
 }
@@ -491,6 +497,12 @@ async function reorderBlocks(tripId, date, request, env, headers) {
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
+  // 手で決めた並びを消して、ふだんの並び（時刻順）に戻す（v22〜）
+  if (data && data.clear === true) {
+    await env.DB.prepare("UPDATE blocks SET manual_order = NULL WHERE trip_id = ? AND date = ?").bind(tripId, date).run();
+    await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+    return json({ ok: true }, 200, headers);
+  }
   if (!data || !Array.isArray(data.blockIds) || !data.blockIds.length || data.blockIds.length > 200) {
     return json({ error: "invalid_input" }, 400, headers);
   }
@@ -500,6 +512,18 @@ async function reorderBlocks(tripId, date, request, env, headers) {
     .bind(tripId, date)
     .all();
   const validIds = new Set(rows.map((r) => r.id));
+  // 時刻どおりでなく、手で決めた並びにする（時差の区切りがある日。v22〜）。その日の予定の並びを
+  // manual_orderに0から順に入れる（created_atは変えない）
+  if (data.manual === true) {
+    let k = 0;
+    for (const blockId of data.blockIds) {
+      if (!validIds.has(blockId)) continue;
+      await env.DB.prepare("UPDATE blocks SET manual_order=?, updated_at=? WHERE id=?").bind(k, nowIso(), blockId).run();
+      k++;
+    }
+    await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+    return json({ ok: true }, 200, headers);
+  }
   const baseTime = Date.now();
   let i = 0;
   for (const blockId of data.blockIds) {
@@ -2698,6 +2722,14 @@ const WORKERS_AI_LLM_MODELS = {
 // 使っているモデルは音声を直接聞く方式（audio input）に対応していなかったため、
 // 先にWhisper（音声認識専用API）で文字起こしし、そのテキストを元に予定・記録へ
 // 分割する2段階にしている。文字起こし自体もその日のDayInfoに保存する。
+// OpenAIの残高切れ・利用上限（429 insufficient_quota など）かどうか。混雑（429 rate_limit）とは分けて、
+// アプリに「AIの利用枠がいっぱい」と出す（2026-09-27。残高がマイナスで「混み合っている」と出て分かりにくかった）
+function isOpenAiQuotaError(status, body) {
+  if (status === 402) return true;
+  return status === 429 && /insufficient_quota|billing|exceeded your current quota/i.test(body || "");
+}
+const AI_QUOTA_EXHAUSTED = { quotaExhausted: true };
+
 async function transcribeAudio(env, buf, contentType, format) {
   const form = new FormData();
   form.append("file", new Blob([buf], { type: contentType }), "audio." + format);
@@ -2711,7 +2743,7 @@ async function transcribeAudio(env, buf, contentType, format) {
   if (!res.ok) {
     const errorBody = await res.text().catch(() => "");
     console.error(JSON.stringify({ event: "openai_transcribe_error", status: res.status, body: errorBody.slice(0, 500) }));
-    return null;
+    return isOpenAiQuotaError(res.status, errorBody) ? AI_QUOTA_EXHAUSTED : null;
   }
   const data = await res.json();
   return typeof data.text === "string" ? data.text.trim() : null;
@@ -2936,6 +2968,7 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
     if (!upstream.ok) {
       const errorBody = await upstream.text().catch(() => "");
       console.error(JSON.stringify({ event: "openai_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+      if (isOpenAiQuotaError(upstream.status, errorBody)) return { error: "ai_quota_exhausted" };
       return { error: "upstream_error", status: upstream.status };
     }
     const response = await upstream.json();
@@ -2959,6 +2992,7 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
     return { error: retry.error === "invalid_model_output" ? "output_too_long" : retry.error };
   }
   if (first.error === "upstream_error") return { error: "upstream_error" };
+  if (first.error === "ai_quota_exhausted") return first;
   return first;
 }
 
@@ -3104,6 +3138,7 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
   }
 
   const transcript = await transcribeAudio(env, buf, contentType, format);
+  if (transcript && transcript.quotaExhausted) return json({ error: "ai_quota_exhausted" }, 503, headers);
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
 
@@ -3221,6 +3256,7 @@ async function createBlocksFromVoiceMultiDay(tripId, request, env, headers) {
   }
 
   const transcript = await transcribeAudio(env, buf, contentType, format);
+  if (transcript && transcript.quotaExhausted) return json({ error: "ai_quota_exhausted" }, 503, headers);
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
 
@@ -3504,6 +3540,7 @@ async function scanReceipt(request, env, headers) {
   if (!upstream.ok) {
     const errorBody = await upstream.text().catch(() => "");
     console.error(JSON.stringify({ event: "openai_receipt_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+    if (isOpenAiQuotaError(upstream.status, errorBody)) return json({ error: "ai_quota_exhausted" }, 503, headers);
     return json({ error: "upstream_error" }, 502, headers);
   }
   const response = await upstream.json();

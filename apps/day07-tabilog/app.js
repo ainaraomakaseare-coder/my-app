@@ -386,10 +386,32 @@
   // かたまりのタイムゾーンは、その中の地図（移動の予定以外）のもの。地図が無いかたまりは、その日の場所→
   // 前のかたまり→端末のタイムゾーンの順。並び順は、日付変更線をまたぐ日の順番を直すために、これまでの
   // 決め方（orderZonesByCandidates）で一度タイムゾーンを付けて並べたものを使う。
+  // 旅の最初の「いまいる場所」。最初の日に、最初の移動より前にいた場所の地図があれば、そのタイムゾーン。
+  // 無ければ端末のタイムゾーン（家から出発する）。海外で入力した・端末の設定がUTCなどで、端末の
+  // タイムゾーンが旅の起点と違うことがあるため。以前は端末のタイムゾーン
+  // のまま決めていて、端末がUTCだと「羽田→フライト→LA到着」の到着が出発より前に並んでいた（2026-09-27）
+  function startZoneFor(blocks, byBlock, fallback, byArrive) {
+    var natural = sortBlocks(blocks).filter(function (b) { return b.date; });
+    if (!natural.length) return fallback;
+    var first = natural[0].date;
+    var day = natural.filter(function (b) { return b.date === first; });
+
+    // 最初の移動より前にいた場所（見出しが「〜到着」のものは除く）だけを手がかりにする。移動の後の予定は、
+    // 着いた先の時間で書かれていることがあるため（成田20:00発→LA18:00到着など）
+    var pick = null;
+    for (var i = 0; i < day.length; i++) {
+      var b = day[i];
+      if (b.category === 'transport' || b.category === 'arrival' || b.transport === 'plane' || (byArrive && byArrive[b.id])) break;
+      if (/到着|着いた|着く|arriv/i.test(b.label || '')) continue;
+      if (byBlock[b.id]) { pick = b; break; }
+    }
+    return pick ? byBlock[pick.id] : fallback;
+  }
   function assignBlockZones(blocks, byBlock, byDate, fallback, byArrive) {
     byDate = byDate || {};
     byArrive = byArrive || {};
     var copies = (blocks || []).map(function (b) { var c = Object.assign({}, b); delete c._offset; delete c._tz; return c; });
+    fallback = startZoneFor(copies, byBlock || {}, fallback, byArrive);
     // 1つだけ前後と違う地図（判定違い）は、並び替えより先に、日付と現地時刻の素直な順で見つけて外す
     // （判定違いのタイムゾーンで並べると、その予定が前後から離れてしまい見つけられないため）
     byBlock = withoutZoneOutliers(sortBlocks(copies), byBlock || {}, byArrive);
@@ -572,10 +594,37 @@
   }
 
   function sortBlocks(blocks) {
-    return (blocks || []).slice().sort(function (a, b) {
+    var natural = (blocks || []).slice().sort(function (a, b) {
       if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
       return blockSortKey(a).localeCompare(blockSortKey(b));
     });
+    if (!natural.some(function (b) { return typeof b.manualOrder === 'number'; })) return natural;
+    // 手で決めた並び（2026-09-27〜）：その日の予定に1つでもmanualOrderがあれば、その日はその並びにする。
+    // あとから足した予定（manualOrderなし）は、ふだんの並びで前にある予定のすぐ後ろに入れる
+    var out = [], i = 0;
+    while (i < natural.length) {
+      var j = i;
+      while (j < natural.length && natural[j].date === natural[i].date) j++;
+      out = out.concat(applyManualOrder(natural.slice(i, j)));
+      i = j;
+    }
+    return out;
+  }
+  function applyManualOrder(day) {
+    if (!day.some(function (b) { return typeof b.manualOrder === 'number'; })) return day;
+    var ordered = day.filter(function (b) { return typeof b.manualOrder === 'number'; })
+      .sort(function (a, b) { return a.manualOrder - b.manualOrder; });
+    day.forEach(function (b, k) {
+      if (typeof b.manualOrder === 'number') return;
+      var prev = null;
+      for (var m = k - 1; m >= 0; m--) { if (ordered.indexOf(day[m]) !== -1) { prev = day[m]; break; } }
+      ordered.splice(prev ? ordered.indexOf(prev) + 1 : 0, 0, b);
+    });
+    return ordered;
+  }
+  // その日の予定に「手で決めた並び」があるか
+  function dayHasManualOrder(blocks, date) {
+    return (blocks || []).some(function (b) { return b.date === date && typeof b.manualOrder === 'number'; });
   }
 
   function groupBlocksByDate(blocks) {
@@ -2123,6 +2172,7 @@
     lodgingEditPlan: lodgingEditPlan,
     lodgingNights: lodgingNights,
     lodgingSummary: lodgingSummary,
+    dayHasManualOrder: dayHasManualOrder,
     lodgingSummaryParts: lodgingSummaryParts,
     lodgingRangePlan: lodgingRangePlan,
     applyBlockZones: applyBlockZones,
@@ -3916,6 +3966,7 @@
       else if (msg === 'rate_limited') $('#voiceEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'trip_dates_required') $('#voiceEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
       else if (msg === 'output_too_long') $('#voiceEntryStatus').textContent = '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。';
+      else if (msg === 'ai_quota_exhausted') $('#voiceEntryStatus').textContent = 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。';
       else if (msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。';
       else if (msg === 'invalid_model_output') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
@@ -3982,6 +4033,7 @@
       else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'trip_dates_required') $('#textEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
       else if (msg === 'output_too_long') $('#textEntryStatus').textContent = '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。';
+      else if (msg === 'ai_quota_exhausted') $('#textEntryStatus').textContent = 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。';
       else if (msg === 'upstream_error') $('#textEntryStatus').textContent = 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。';
       else if (msg === 'invalid_model_output') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'premium_required' || msg === 'quota_exceeded') {
@@ -4354,6 +4406,17 @@
       var at = all.indexOf(blocks[0]);
       for (var i = at - 1; i >= 0; i--) { if (typeof all[i]._offset === 'number') { prevOffset = all[i]._offset; break; } }
     }
+    // 時差の区切りがある日（または手で並べた日）は、時刻のある予定も手で並べ替えられるようにする（2026-09-27）。
+    // 時差をまたぐ日は、時刻どおりの並びが実際の順番と合わないことがあるため
+    var dayDate = blocks.length ? blocks[0].date : '';
+    var hasManual = Core.dayHasManualOrder(state.blocks, dayDate);
+    var zoneChange = false, chkPrev = prevOffset;
+    blocks.forEach(function (b) {
+      if (typeof b._offset !== 'number') return;
+      if (typeof chkPrev === 'number' && b._offset !== chkPrev) zoneChange = true;
+      chkPrev = b._offset;
+    });
+    state.manualDay = !!dayDate && (hasManual || zoneChange);
     blocks.forEach(function (block) {
       if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
         el.appendChild(renderZoneDivider(block, base));
@@ -4361,6 +4424,17 @@
       if (typeof block._offset === 'number') prevOffset = block._offset;
       el.appendChild(renderBlockEl(block));
     });
+    if (state.manualDay) {
+      // 手で並べた日は「自動の並びに戻す」、まだなら並べ替えられることの案内を出す
+      var manualNote = document.createElement('div');
+      manualNote.className = 'manual-order-note';
+      manualNote.innerHTML = hasManual
+        ? '<span>この日は手で並べた順番で表示しています。</span><button type="button" class="btn text" id="btnResetManualOrder">自動の並びに戻す</button>'
+        : '<span>時差のある日は、⋮⋮ をドラッグすると時刻と関係なく並べ替えられます。</span>';
+      el.appendChild(manualNote);
+      var resetBtn = manualNote.querySelector('#btnResetManualOrder');
+      if (resetBtn) resetBtn.addEventListener('click', function () { resetManualOrder(dayDate); });
+    }
     var addBtn = document.createElement('button');
     addBtn.className = 'block-add';
     addBtn.innerHTML = plusIcon() + '<span>予定を追加</span>';
@@ -4456,7 +4530,7 @@
     head.innerHTML =
       // 時刻ありのBlockは常にその時刻の位置に固定するため、持ち手（ドラッグでの並べ替え）は
       // 時刻未設定のBlockにだけ出す
-      (!block.time ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
+      (!block.time || state.manualDay ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
       '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>' +
@@ -4561,9 +4635,19 @@
     timelineEl.addEventListener('pointercancel', endBlockDrag);
   }
 
+  function resetManualOrder(date) {
+    if (!state.trip || !date) return;
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(date) + '/blocks/reorder', 'PATCH', { clear: true })
+      .then(function () { return refreshTrip(); })
+      .then(function () { renderDaySection(); })
+      .catch(function () { alert('元に戻せませんでした。もう一度お試しください。'); });
+  }
+
   function persistBlockOrder(blockIds) {
     if (!state.trip || !state.selectedDate) return;
-    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/blocks/reorder', 'PATCH', { blockIds: blockIds })
+    // 時差のある日（手で並べられる日）は、時刻に関係なくその日全体の並びとして保存する
+    var body = state.manualDay ? { blockIds: blockIds, manual: true } : { blockIds: blockIds };
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/blocks/reorder', 'PATCH', body)
       .then(function () {
         // 保存自体はここで成功している。このあとの再取得・再描画で失敗しても
         // 「保存に失敗した」と誤って伝えないよう、ここでは分けてcatchする
@@ -5701,8 +5785,8 @@
       var msg = (e && e.message) || '';
       if (msg === 'server_not_configured') status.textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') status.textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'ai_quota_exhausted') status.textContent = 'AIの利用枠がいっぱいのため、今は読み取れません（運営側で対応します）。明細は手で入力できます。';
       else if (msg === 'invalid_model_output' || msg === 'upstream_error') status.textContent = 'うまく読み取れませんでした。もう一度お試しください。';
-      else if (msg === 'premium_required' || msg === 'quota_exceeded') status.textContent = '今月の利用回数の上限に達しました（音声入力・テキストメモと共通の枠です）。';
       else if (msg === 'login_required') status.textContent = 'ログインすると使えます。';
       else status.textContent = '失敗しました。もう一度お試しください。';
     });
