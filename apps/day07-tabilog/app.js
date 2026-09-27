@@ -5426,11 +5426,9 @@
             return (res2 && res2.found && !Core.isRouteDetourTooLong(straightKm, km2)) ? res2 : null;
           });
         }
-        // 線路の道のりが見つからなければ、車の道のりを見た目の近似として調べ直す（それでも見つからなければ
-        // やわらかい曲線のまま。距離1本のBRouter公開サーバー問い合わせに、車1本を足すだけなので許容範囲）
-        if (profile === 'rail' && !(res && res.found)) {
-          return api(routeQuery('car', a, b)).catch(function () { return null; });
-        }
+        // 線路の道のりが見つからないときは、車の道のり（道路）では代わりにしない。電車なのに道路を
+        // 走るように見えて「動きが全部車っぽい」と言われたため（2026-09-27）。やわらかい曲線のまま見せ、
+        // Worker側は見つからなかった結果を6時間しか覚えないので、あとで開き直せば線路で調べ直す。
         return res;
       }).then(function (res) {
         if (res && res.found && res.path && res.path.length > 1) { l.path = res.path; if (onRoute) onRoute(l); }

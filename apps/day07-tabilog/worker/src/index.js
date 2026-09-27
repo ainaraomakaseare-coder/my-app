@@ -1632,7 +1632,7 @@ function brouterToBody(coords, properties, from, to) {
   const first = coords[0], last = coords[coords.length - 1];
   const snapStartKm = distanceKm(from, { lat: first[1], lng: first[0] });
   const snapEndKm = distanceKm(to, { lat: last[1], lng: last[0] });
-  if (snapStartKm > RAIL_MAX_SNAP_KM || snapEndKm > RAIL_MAX_SNAP_KM) return { found: false };
+  if (snapStartKm > RAIL_MAX_SNAP_KM || snapEndKm > RAIL_MAX_SNAP_KM) return { found: false, reason: "rail_too_far_from_station" };
   const trackM = properties && Number(properties["track-length"]);
   let trackKm;
   if (Number.isFinite(trackM) && trackM > 0) {
@@ -1645,7 +1645,7 @@ function brouterToBody(coords, properties, from, to) {
     }
   }
   const straightKm = distanceKm(from, to);
-  if (straightKm > 0 && trackKm > straightKm * RAIL_MAX_DETOUR_RATIO) return { found: false };
+  if (straightKm > 0 && trackKm > straightKm * RAIL_MAX_DETOUR_RATIO) return { found: false, reason: "rail_detour_too_long" };
   const pts = downsamplePoints(coords, ROUTE_MAX_POINTS)
     .map((c) => [Math.round(c[1] * 1e5) / 1e5, Math.round(c[0] * 1e5) / 1e5]);
   return { found: true, path: pts, distance: Math.round(trackKm * 1000) };
@@ -1660,13 +1660,15 @@ async function getRoute(url, headers, ctx) {
   if (distanceKm(from, to) > ROUTE_MAX_KM) return json({ found: false }, 200, headers);
   const key = [profile, from.lat.toFixed(5), from.lng.toFixed(5), to.lat.toFixed(5), to.lng.toFixed(5)].join(",");
   const cache = caches.default;
-  const cacheKey = new Request("https://tabilog-route.cache/v1?k=" + encodeURIComponent(key));
+  // v2：found:falseを30日キャッシュしていたv1を捨てる（2026-09-27。下のキャッシュ期間の説明を参照）
+  const cacheKey = new Request("https://tabilog-route.cache/v2?k=" + encodeURIComponent(key));
   const hit = await cache.match(cacheKey);
   if (hit) return json(await hit.json(), 200, headers);
 
   let body = { found: false };
   try {
     if (isRail) {
+      let railStatus = 0;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), RAIL_TIMEOUT_MS);
       let data;
@@ -1682,6 +1684,12 @@ async function getRoute(url, headers, ctx) {
             signal: controller.signal,
           }
         );
+        // 混雑（429）・サーバー側の失敗（5xx）は一時的なので、キャッシュせずに502で返す（次に開いたときに
+        // 調べ直す）。以前は res.ok でなければ found:false として30日キャッシュしていたため、一度BRouterが
+        // 混んでいただけで、その区間は30日間ずっと車の道のり（クライアントの代わりの調べ直し）になっていた
+        // （「電車なのに動きが全部車っぽい」2026-09-27）。
+        if (res.status === 429 || res.status >= 500) throw new Error("brouter_" + res.status);
+        railStatus = res.status;
         data = res.ok ? await res.json() : null;
       } finally {
         clearTimeout(timer);
@@ -1689,6 +1697,7 @@ async function getRoute(url, headers, ctx) {
       const feature = data && Array.isArray(data.features) && data.features[0];
       const coords = feature && feature.geometry && feature.geometry.coordinates;
       body = brouterToBody(coords, feature && feature.properties, from, to);
+      if (!body.found && !body.reason) body.reason = data ? "rail_no_track" : "brouter_http_" + railStatus;
     } else {
       const res = await fetch(
         "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
@@ -1702,11 +1711,15 @@ async function getRoute(url, headers, ctx) {
   } catch {
     return json({ error: "route_failed" }, 502, headers); // 一時的な失敗・タイムアウトはキャッシュしない
   }
+  // 見つかった道のりは30日、見つからなかった結果は6時間だけ覚える（見つからないのが一時的な理由だった
+  // ときに、長く車の道のりのままにしないため）
+  const ttl = body.found ? GEOCODE_CACHE_SECONDS : ROUTE_NOT_FOUND_CACHE_SECONDS;
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
-    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + ttl },
   })));
   return json(body, 200, headers);
 }
+const ROUTE_NOT_FOUND_CACHE_SECONDS = 60 * 60 * 6;
 
 // near：「緯度,経度;緯度,経度」（同じ旅行の前後の場所）、hint：予定の見出し、
 // entry：呼び出し元の記録(entry)のid（Part A、2026-09-26〜）。付いていて、見つかった座標がある
