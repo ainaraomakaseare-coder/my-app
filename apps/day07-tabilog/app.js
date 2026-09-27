@@ -294,6 +294,9 @@
       var transports = list.filter(function (b) { return b.category === 'transport'; });
       var best = null;
       if (date && transports.length && transports.length <= 3) {
+        // いまいる場所：前の日から続くタイムゾーン。旅の最初の日は端末のタイムゾーン（家から出発する）。
+        // その日のいちばん早い時刻の地図は使えない：日付変更線をまたぐ日は、到着地の時刻（18:50）が出発地の
+        // 時刻（20:00）より早く見えるため
         var start = carry || fallback || '';
         var cands = [start];
         list.forEach(function (b) { if (byBlock[b.id] && cands.indexOf(byBlock[b.id]) === -1) cands.push(byBlock[b.id]); });
@@ -307,14 +310,34 @@
           });
           combos = nextCombos;
         });
+        // 飛行機の時刻をどこの時間で読むか：出発の予定は「いまいる場所」の時間。その日に飛行機の予定が
+        // 2つ以上あり（出発と到着を両方入れる形）、地図が「いまいる場所」と違うタイムゾーンなら到着の予定
+        // なので、その地図の土地の時間で読む。以前は、どちらでも前後の話が合うときに「予定を入れた順」で
+        // 決めていたため、到着を先に入れた・逆順に入れた旅では、ロサンゼルス到着（18:50）が東京出発（20:00）
+        // より前に並んでいた（2026-09-27。ほかの人も使うので、入れた順に左右されないようにする）
+        var planes = transports.filter(function (t) { return t.transport === 'plane'; });
+        var awayPlanes = planes.filter(function (p) { return byBlock[p.id] && byBlock[p.id] !== start; });
+        var looksArrival = function (p) { return /到着|着いた|着く|arriv/i.test(p.label || ''); };
+        var planeWant = {};
+        planes.forEach(function (p) {
+          var own = byBlock[p.id] || '';
+          // 到着の予定：飛行機の予定が2つ以上あり、地図が「いまいる場所」と違うもの。そういう予定が複数ある
+          // （出発の予定にも到着空港の地図を入れた、など）ときだけ、見出し（「〜に到着」）で見分ける
+          var arrival = planes.length >= 2 && own && own !== start &&
+            (awayPlanes.length === 1 || looksArrival(p));
+          planeWant[p.id] = arrival ? own : start;
+        });
         combos.forEach(function (forced) {
           var res = settleDay(list, date, carry, forced);
+          var planeHits = planes.filter(function (p) { return forced[p.id] === planeWant[p.id]; }).length;
           var startHits = transports.filter(function (t) { return forced[t.id] === start; }).length;
-          var score = [res.consistent, -inversions(res.order), startHits];
-          if (!best || score[0] > best.score[0] || (score[0] === best.score[0] && (score[1] > best.score[1] ||
-            (score[1] === best.score[1] && score[2] > best.score[2])))) {
-            best = { res: res, score: score };
+          var score = [res.consistent, planeHits, -inversions(res.order), startHits];
+          var better = !best;
+          for (var si = 0; !better && si < score.length; si++) {
+            if (score[si] > best.score[si]) better = true;
+            else if (score[si] < best.score[si]) break;
           }
+          if (better) best = { res: res, score: score };
         });
       }
       var res = best ? best.res : settleDay(list, date, carry, null);

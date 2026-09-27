@@ -1025,5 +1025,32 @@ var saSorted = T.sortBlocks(T.applyBlockZones(sa.map(function (b) { return Objec
 eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラファテはどこもUTC-3なので「ここから現地時間」は出ない',
   saSorted.filter(function (b, i) { return i > 0 && b._offset !== saSorted[i - 1]._offset; }).length, 0);
 
+/* ---- 日付変更線：東京20:00発→ロサンゼルス18:50着（同じ日付）は、予定を入れた順・入れ方によらず発→着の順（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  var orders = { '入れた順': ['hnd', 'fl', 'arr', 'htl', 'd2'], '到着を先に入れた': ['hnd', 'arr', 'fl', 'htl', 'd2'], '逆順で入れた': ['d2', 'htl', 'arr', 'fl', 'hnd'] };
+  Object.keys(orders).forEach(function (oname) {
+    [null, TK, LA].forEach(function (flMap) {
+      [['sightseeing', undefined], ['transport', 'plane']].forEach(function (arrKind) {
+        [null, LA].forEach(function (dayZone) {
+          var bs = [
+            { id: 'hnd', date: '2026-06-26', time: '18:00', category: 'sightseeing', label: '羽田空港' },
+            { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへのフライト' },
+            { id: 'arr', date: '2026-06-26', time: '18:50', category: arrKind[0], transport: arrKind[1], label: 'ロサンゼルス到着' },
+            { id: 'htl', date: '2026-06-26', time: '21:00', category: 'lodging', label: 'ホテル' },
+            { id: 'd2', date: '2026-06-27', time: '09:00', category: 'sightseeing', label: '翌日' }];
+          bs.forEach(function (b) { b.createdAt = String(orders[oname].indexOf(b.id)); });
+          var own = { hnd: TK, arr: LA, htl: LA, d2: LA };
+          if (flMap) own.fl = flMap;
+          var z = T.assignBlockZones(bs, own, dayZone ? { '2026-06-26': dayZone } : {}, TK);
+          var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).join(',');
+          if (got !== 'hnd,fl,arr,htl,d2' || z.fl !== TK || z.arr !== LA) ng.push(oname + '/' + flMap + '/' + arrKind[0] + '/' + dayZone + ' → ' + got);
+        });
+      });
+    });
+  });
+  eq('日付変更線：入れた順（3通り）×フライトの地図（3通り）×到着の入れ方（2通り）×その日の場所（2通り）の36通りすべてで、羽田→フライト（日本時間）→ロサンゼルス到着の順', ng, []);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
