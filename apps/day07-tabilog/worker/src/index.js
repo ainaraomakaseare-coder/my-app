@@ -11,6 +11,7 @@
 
 import { parseReceiptText } from "./receipt-parse.js";
 import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture } from "./visited-places.js";
+import { parseWorkersAiOutput, describeWorkersAiOutputForDebug } from "./ai-parse.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
@@ -2814,10 +2815,12 @@ async function transcribeAudio(env, buf, contentType, format) {
 }
 
 // /ai-compare専用。OpenAIのtranscribeAudioと同じ入力から、Workers AIのWhisperで
-// 文字起こしを試す（本番の処理からは呼ばない）。audioは音声ファイルそのもののバイト列を
-// 数値の配列にして渡す（Workers AIの音声認識モデルの入力形式）。
+// 文字起こしを試す（本番の処理からは呼ばない）。audioはWorkers AIの公式スキーマ
+// （https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/）どおり、
+// base64エンコードした文字列で渡す（数値の配列ではない。以前はバイト列の配列を渡しており、
+// 期待される入力形式と合っていなかった。2026-09-27に確認して修正）
 async function transcribeAudioWithWorkersAi(env, buf) {
-  const audio = [...new Uint8Array(buf)];
+  const audio = arrayBufferToBase64(buf);
   const result = await env.AI.run(WORKERS_AI_WHISPER_MODEL, { audio, language: "ja" });
   const text = result && typeof result.text === "string" ? result.text : (typeof result === "string" ? result : "");
   return text.trim();
@@ -3063,58 +3066,56 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
 // /ai-compare専用。organizeTextIntoBlocksと同じプロンプト・スキーマ（voicePrompt/
 // multiDayPrompt・voiceBlocksSchema/multiDayBlocksSchema）を使い、OpenAIの代わりに
 // Workers AIのLLMで試す（本番の処理からは呼ばない）。モデルによってresponse_format
-// （json_schemaでの構造化出力）の対応状況が違う可能性があるため、まずresponse_format
-// 付きで呼び、レスポンスのJSONパースに失敗した場合は「JSON以外を返さないこと」という
-// 指示を足したプロンプトだけで再試行する（それでも失敗したらエラーを返すだけで、
+// （json_schemaでの構造化出力）の対応状況・レスポンスの形（response/choices/output等）が
+// 違うため、実際の出力の読み取りはai-parse.jsの純粋関数（parseWorkersAiOutput）に任せる。
+// まずresponse_format付きで呼び、JSONとして読めなかった場合は「JSON以外を返さないこと」
+// という指示を足したプロンプトだけで再試行する（それでも失敗したらエラーを返すだけで、
 // 本番のデータには一切触れない）。
+//
+// max_tokensは以前2000（1日分）だったが、gpt-oss-120b・qwen3-30bは「考える」ぶんの
+// トークンもこの上限に含まれるため、2000では考えている途中でJSONが切れて
+// invalid_model_outputになっていた（2026-09-27に実機で確認）。OpenAI側
+// （organizeTextIntoBlocksのmax_output_tokens）と同程度まで引き上げた。
 async function organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates) {
   const multiDay = Array.isArray(dates) && dates.length > 1;
   const schema = multiDay ? multiDayBlocksSchema() : voiceBlocksSchema();
   const schemaName = multiDay ? "voice_blocks_multi_day" : "voice_blocks";
   const basePrompt = multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes);
-
-  function parseModelOutput(raw) {
-    if (raw == null) return null;
-    if (typeof raw === "object" && !Array.isArray(raw)) return raw; // すでにJSONとして返るモデルもある
-    const s = String(raw).trim();
-    // ```json ... ``` のようなコードブロックで返してくるモデルにも備える
-    const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenced ? fenced[1].trim() : s;
-    try { return JSON.parse(candidate); } catch { return null; }
-  }
+  const maxTokens = multiDay ? 16000 : 6000;
+  const jsonOnlyPrompt = basePrompt
+    + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）や<think>のような思考過程を付けないこと。";
 
   async function callOnce(prompt, withResponseFormat) {
     const input = {
       messages: [{ role: "user", content: prompt }],
-      max_tokens: multiDay ? 12000 : 2000,
+      max_tokens: maxTokens,
     };
     if (withResponseFormat) {
       input.response_format = { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } };
     }
     const result = await env.AI.run(model, input);
-    const raw = result && (result.response ?? result);
-    return parseModelOutput(raw);
+    return { result, parsed: parseWorkersAiOutput(result) };
   }
 
-  let parsed;
+  // response_format自体に対応していないモデルだと呼び出しが例外になることがあるため、
+  // その場合はattemptをnullのままにして、下のJSON専用プロンプトでの再試行に進む
+  let attempt = null;
   try {
-    parsed = await callOnce(basePrompt, true);
-  } catch (e) {
-    // response_format自体に対応していないモデルの可能性があるため、指示だけの
-    // プロンプトで1回だけ再試行する
+    attempt = await callOnce(basePrompt, true);
+  } catch { /* 下の再試行に進む */ }
+
+  if (!attempt || !attempt.parsed) {
     try {
-      const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
-      parsed = await callOnce(jsonOnlyPrompt, false);
+      attempt = await callOnce(jsonOnlyPrompt, false);
     } catch (e2) {
-      return { error: "workers_ai_error", detail: String((e2 && e2.message) || e2).slice(0, 300) };
+      return { error: "workers_ai_error", debug: { rawSnippet: String((e2 && e2.message) || e2).slice(0, 800), shape: [] } };
     }
   }
-  if (!parsed) {
-    const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
-    try { parsed = await callOnce(jsonOnlyPrompt, false); } catch { /* 下のinvalid_model_outputに落ちる */ }
+
+  if (!attempt.parsed || !Array.isArray(attempt.parsed.blocks)) {
+    return { error: "invalid_model_output", debug: describeWorkersAiOutputForDebug(attempt.result) };
   }
-  if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
-  return { blocks: parsed.blocks };
+  return { blocks: attempt.parsed.blocks };
 }
 
 // organizeTextIntoBlocksが返したBlock配列を、実際にDBへ保存する（Block本体とその記録の両方）。
@@ -3410,7 +3411,9 @@ async function aiCompareMemo(request, env, headers) {
       try {
         const r = await organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates);
         const ms = Date.now() - t0;
-        if (r.error) workersAi[key] = { result: null, ms, error: r.error };
+        // debugは/ai-compareのレスポンスにだけ載せる診断用の抜粋（利用者データではなく、
+        // モデルが返した生の出力の形・先頭部分のみ）。docs/adr/0012参照
+        if (r.error) workersAi[key] = { result: null, ms, error: r.error, ...(r.debug ? { debug: r.debug } : {}) };
         else workersAi[key] = { result: r, ms };
       } catch (e) {
         workersAi[key] = { result: null, ms: Date.now() - t0, error: String((e && e.message) || e).slice(0, 300) };

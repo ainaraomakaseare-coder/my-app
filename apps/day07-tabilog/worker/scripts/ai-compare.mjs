@@ -50,6 +50,10 @@ function printResult(label, entry) {
   console.log("時間: " + (entry && typeof entry.ms === "number" ? entry.ms + "ms" : "?"));
   if (entry && entry.error) {
     console.log("エラー: " + entry.error);
+    if (entry.debug) {
+      if (entry.debug.shape !== undefined) console.log("形状（トップレベルのキー）: " + JSON.stringify(entry.debug.shape));
+      if (entry.debug.rawSnippet !== undefined) console.log("生の出力（先頭800文字）: " + entry.debug.rawSnippet);
+    }
     return;
   }
   const result = entry ? entry.result : undefined;
