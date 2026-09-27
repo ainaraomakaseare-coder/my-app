@@ -6811,17 +6811,26 @@
       // 全部消えて見えていた（「移動の開始の時に青い経路が全体的にうまく表示されない」2026-09-27）。
       // ゴーストが目立つのはズームが大きく変わるときだけなので、replayFlyToBoundsが「ズームが3段以上
       // 変わる」と判断したときだけ隠す（replay.hideLinesOnMove）。
+      //
+      // 2026-09-27〜：上の2つ（アニメ中は線を止める・大きくズームするときは線を隠す）をやめ、カメラが
+      // 動いているあいだは毎コマ、線を地図の今の縮尺で描き直す（Leafletのレンダラーの_reset）。
+      // CSSで拡大縮小された古い絵ではなく毎回正しい位置に描くので、ズームイン・アウトの途中でも道のりが
+      // 地図の道路・線路と完全に重なり、太さも変わらない（「通った道は地図と完全に一致させたい」）。
       replayMap.on('zoomstart movestart', function () {
         if (!replay) return;
         replay.mapAnimating = true;
-        if (replay.hideLinesOnMove) hideReplayOverlayPane();
+      });
+      replayMap.on('zoom move', function () {
+        // flyTo（再生のカメラ）の途中だけ。指でのピンチ（CSSのズームアニメ）はLeaflet自身が合わせる
+        if (!replay || !replay.mapAnimating || replayMap._animatingZoom) return;
+        var rd = replayMap.options.renderer;
+        if (rd && rd._map && typeof rd._reset === 'function') rd._reset();
       });
       replayMap.on('zoomend moveend', function () {
         if (!replay) return;
         replay.mapAnimating = false;
         replay.cameraMoving = false;
         renderReplay();
-        if (replay.hideLinesOnMove) { replay.hideLinesOnMove = false; fadeInReplayOverlayPane(); }
       });
     }
     resetReplayCamera();
@@ -6853,10 +6862,8 @@
     if (top + bottom > room) { var k = room / (top + bottom); top *= k; bottom *= k; }
     return { paddingTopLeft: [36, Math.round(top + 24)], paddingBottomRight: [36, Math.round(bottom + 24)] };
   }
-  // アニメーションつきでboundsへ寄せる。ズームが大きく変わる（3段以上）ときだけ、線のゴースト対策で
-  // アニメ中の線を隠す（replay.hideLinesOnMove。上のzoomstart/movestartの説明を参照）。
+  // アニメーションつきでboundsへ寄せる（途中も線は毎コマ描き直すので、隠さない）。
   var REPLAY_ARRIVAL_ZOOM_DELAY_SEC = 0.25; // 着陸してから着いた地点へズームし直すまでの間
-  var REPLAY_HIDE_LINES_ZOOM_DELTA = 3;
   var REPLAY_TINY_LEG_KM = 0.4; // これより近い区間は、両端が見えていればカメラを動かさない（空港の中など）
   var REPLAY_SHORT_STAY_SEC = 1.2; // 着いてからこれ以内に次の遠い移動が始まるなら、着いた地点へ寄せない
   // 点がすべて、見える部分（吹き出し・操作ボタンを除いた部分）に入っているか
@@ -6873,17 +6880,7 @@
   // keepCaption：着いた地点へ寄せ直すときは、いま出したばかりの写真の吹き出しを隠さない。隠すと
   // 「出る→消える→また出る」で、同じ写真が2回出たように見えていた（イグアス到着、2026-09-27）
   function replayFlyToBounds(bounds, opts, keepCaption) {
-    var target = null;
-    try {
-      var pad = window.L.point(opts.paddingTopLeft).add(window.L.point(opts.paddingBottomRight));
-      target = Math.min(opts.maxZoom !== undefined ? opts.maxZoom : Infinity,
-        replayMap.getBoundsZoom(window.L.latLngBounds(bounds), false, pad));
-    } catch (e) { target = null; }
-    if (replay) {
-      replay.hideLinesOnMove = typeof target === 'number' && isFinite(target) &&
-        Math.abs(target - replayMap.getZoom()) >= REPLAY_HIDE_LINES_ZOOM_DELTA;
-      if (!keepCaption) replay.cameraMoving = true; // 写真の吹き出しを隠す（moveendで戻す）
-    }
+    if (replay && !keepCaption) replay.cameraMoving = true; // 写真の吹き出しを隠す（moveendで戻す）
     replayMap.flyToBounds(bounds, opts);
   }
 
@@ -6957,22 +6954,6 @@
   function replayOverlayPane() {
     return replayMap && replayMap.getPane ? replayMap.getPane('overlayPane') : null;
   }
-  function hideReplayOverlayPane() {
-    var pane = replayOverlayPane();
-    if (!pane) return;
-    pane.style.transition = 'none';
-    pane.style.opacity = '0';
-  }
-  function fadeInReplayOverlayPane() {
-    var pane = replayOverlayPane();
-    if (!pane) return;
-    // 直前にopacity:0のまま描き直しているので、ここで一度レイアウトを強制してから
-    // transitionを付けないと、0→1が一瞬で切り替わってしまい（アニメにならない）
-    pane.getBoundingClientRect();
-    pane.style.transition = 'opacity 150ms linear';
-    pane.style.opacity = '1';
-  }
-
   // 着いた地点の写真を吹き出しの上に出す。複数枚なら、吹き出しを出しているあいだに順に切り替える
   function showReplayCaptionPhotos(photos) {
     var el = $('#replayCaptionPhotos');
@@ -7030,11 +7011,11 @@
     tl.legs.forEach(function (l, k) {
       var f = r >= l.r1 ? 1 : (r <= l.r0 ? 0 : (r - l.r0) / (l.r1 - l.r0));
       var set = replay.lines[k];
-      // 地図がズーム・移動アニメ中は、線（SVGの座標）を更新すると地図とずれて見えるため更新を止める
-      // （終わったら zoomend/moveend で1回描き直す。乗り物のアイコンは通常のマーカーなので動かし続けてよい）
+      // カメラが動いているあいだも線を伸ばす（毎コマ地図の今の縮尺で描き直しているので、地図とずれない。
+      // startReplayの'zoom move'の説明を参照）。
       // 進み具合が変わらない区間（走り終わった区間など）は描き直さない。以前は毎フレーム全区間を描き直していて、
       // 長い飛行機の点線（東京→ロサンゼルス）が街を見る大きさで毎回描かれ、動きが重くなっていた（2026-09-27）
-      if (f > 0 && !replay.mapAnimating && set.lastF !== f) {
+      if (f > 0 && set.lastF !== f) {
         var pts = replayLegPoints(l, f);
         // 飛行機の点線は、走っているあいだだけ画面の外を切り落とさない（薄い青と濃い青の点をそろえるため）。
         // 走り終わったら切り落とす：何千kmもある点線を街の大きさで丸ごと描くと、とても重いため
