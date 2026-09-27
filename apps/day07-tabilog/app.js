@@ -789,6 +789,24 @@
     return groups;
   }
 
+  // 宿泊先の内訳の行を直すときに、どの予定をどう変えるか（2026-09-27）。
+  // blocks：その行の元になった「宿泊」の予定、groupStart：その行の最初の夜、newStart：選んだ泊まり始め。
+  //  ・泊まり始めがそのまま、または前にずらした：行の予定すべての名前を変え、最初の予定をその日へ移す
+  //  ・行の途中の夜にした：その夜から先だけを新しい宿にする（それより前の夜の宿は動かさない）。
+  //    その夜に予定があればそれから先の名前を変え、無ければその夜に予定を足す
+  //    （以前は最初の予定をその夜へ移してしまい、手前の夜が「未定」になっていた）
+  function lodgingEditPlan(blocks, groupStart, newStart) {
+    var sorted = (blocks || []).slice().sort(function (a, b) { return (a.date || '').localeCompare(b.date || '') || blockSortKey(a).localeCompare(blockSortKey(b)); });
+    if (!sorted.length) return { rename: [], move: null, create: newStart || null };
+    if (!newStart || newStart <= groupStart) {
+      var first = sorted[0];
+      return { rename: sorted.map(function (b) { return b.id; }), move: newStart && newStart !== first.date && newStart < first.date ? { id: first.id, date: newStart } : null, create: null };
+    }
+    var later = sorted.filter(function (b) { return b.date >= newStart; });
+    var startsThere = later.some(function (b) { return b.date === newStart; });
+    return { rename: later.map(function (b) { return b.id; }), move: null, create: startsThere ? null : newStart };
+  }
+
   // 宿泊先を手で足すときの「何泊目から」の選択肢（2026-09-27）。n泊目＝旅行のn日目の夜。
   // 日帰り・日程未設定の旅行は、分かっている日付をそのまま選べるようにする
   function lodgingNightOptions(trip, blocks) {
@@ -2023,6 +2041,7 @@
     wrapLng: wrapLng,
     lodgingNightOptions: lodgingNightOptions,
     lodgingGroupBlocks: lodgingGroupBlocks,
+    lodgingEditPlan: lodgingEditPlan,
     applyBlockZones: applyBlockZones,
     offsetDiffText: offsetDiffText,
     travelDuration: travelDuration,
@@ -3025,14 +3044,14 @@
       lodgingGroups = Core.lodgingGroupBlocks(state.trip, state.blocks);
       panel.innerHTML = groups.map(function (g, i) {
         var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
-        var editable = lodgingGroups[i] && lodgingGroups[i].blockIds.length;
+        var editable = !!lodgingGroups[i];
         // 「同上」：1つ上の行の宿と同じにする（名前をそろえて1行にまとめる。2026-09-27）
         var prev = lodgingGroups[i - 1];
-        var same = editable && prev && prev.label && prev.label !== g.label;
+        var same = editable && lodgingGroups[i].blockIds.length && prev && prev.label && prev.label !== g.label;
         return '<div class="cost-breakdown-row' + (editable ? ' lodging-row" role="button" tabindex="0" data-lodging-edit="' + i + '"' : '"') + '>' +
           '<span class="name">' + escapeHtml(range) + '</span><span class="amount">' + escapeHtml(g.label || '未定') +
           (same ? '<button type="button" class="lodging-row-same" data-lodging-same="' + i + '">同上</button>' : '') +
-          (editable ? '<span class="lodging-row-edit">直す</span>' : '') + '</span></div>';
+          (editable ? '<span class="lodging-row-edit">' + (lodgingGroups[i].blockIds.length ? '直す' : '入れる') + '</span>' : '') + '</span></div>';
       }).join('');
     } else if (primaryName) {
       // 日帰りなど「泊」の無い旅行では日ごとの内訳が作れないため、宿泊カテゴリの見出しをそのまま出す
@@ -3070,7 +3089,12 @@
     if (!form) return;
     var g = groupIndex === null ? null : lodgingGroups[groupIndex];
     var first = g ? (state.blocks || []).filter(function (b) { return b.id === g.blockIds[0]; })[0] : null;
-    lodgingEditing = first ? { blockIds: g.blockIds.slice(), block: first } : null;
+    // その行の最初の夜の日付（n泊目＝旅行のn日目）
+    var groupStart = g ? Core.allDatesForTrip(state.trip, state.blocks).filter(Boolean)[g.from - 1] : '';
+    lodgingEditing = first ? {
+      blocks: (state.blocks || []).filter(function (b) { return g.blockIds.indexOf(b.id) !== -1; }),
+      block: first, startDate: groupStart || first.date
+    } : null;
     lodgingChosen = null; lodgingPlaces = [];
     $('#lodgingAddTitle').textContent = first ? '宿泊先を直す' : '宿泊先を追加';
     $('#btnLodgingAddSave').textContent = first ? '保存する' : '追加する';
@@ -3079,7 +3103,8 @@
     if (first && !$all('option', sel).some(function (o) { return o.value === first.date; })) {
       sel.insertAdjacentHTML('beforeend', '<option value="' + escapeHtml(first.date) + '">' + escapeHtml(first.date) + '</option>');
     }
-    if (first) sel.value = first.date;
+    if (first) sel.value = lodgingEditing.startDate;
+    else if (groupStart) sel.value = groupStart; // 「未定」の行から開いたときは、その夜を選んでおく
     else if (sel.options.length) sel.selectedIndex = 0;
     $('#lodgingAddSearch').value = '';
     $('#lodgingAddCandidates').hidden = true;
@@ -3161,17 +3186,26 @@
     var editing = lodgingEditing;
     (lodgingChosen || Promise.resolve('')).then(function (mapUrl) {
       if (editing) {
-        // 直す：名前はその行の予定すべて、泊まり始め（日付）と地図は最初の予定だけ
-        var jobs = editing.blockIds.map(function (id) {
+        var plan = Core.lodgingEditPlan(editing.blocks, editing.startDate, date);
+        var jobs = plan.rename.map(function (id) {
           var body = { label: name };
-          if (id === editing.block.id && date !== editing.block.date) body.date = date;
+          if (plan.move && id === plan.move.id) body.date = plan.move.date;
           return api('/blocks/' + encodeURIComponent(id), 'PATCH', body);
         });
-        if (mapUrl) {
-          var withMap = (editing.block.entries || [])[0];
-          jobs.push(withMap
+        var mapTarget = plan.rename[0] ? (editing.blocks.filter(function (b) { return b.id === plan.rename[0]; })[0]) : null;
+        var addMap = function (block) {
+          if (!mapUrl || !block) return null;
+          var withMap = (block.entries || [])[0];
+          return withMap
             ? api('/entries/' + encodeURIComponent(withMap.id), 'PATCH', { mapUrl: mapUrl })
-            : api('/blocks/' + encodeURIComponent(editing.block.id) + '/entries', 'POST', { mapUrl: mapUrl, author: (user && user.name) || '' }));
+            : api('/blocks/' + encodeURIComponent(block.id) + '/entries', 'POST', { mapUrl: mapUrl, author: (user && user.name) || '' });
+        };
+        if (plan.create) {
+          // 行の途中の夜から別の宿にする：その夜に「宿泊」の予定を足す（それより前の夜の宿は動かさない）
+          jobs.push(api('/trips/' + encodeURIComponent(state.trip.id) + '/blocks', 'POST', { date: plan.create, time: '', label: name, category: 'lodging' })
+            .then(function (block) { return addMap(block); }));
+        } else {
+          jobs.push(addMap(mapTarget));
         }
         return Promise.all(jobs);
       }

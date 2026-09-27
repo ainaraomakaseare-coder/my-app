@@ -1220,5 +1220,19 @@ eq('lodgingNightOptions：日程なし・予定なしは空', T.lodgingNightOpti
   eq('lodgingGroupBlocks：行ごとの元の予定', g.map(function (x) { return x.blockIds; }), [['k1'], ['h']]);
 })();
 
+/* ---- 宿泊先の行を直す：泊まり始めを行の途中の夜にしたら、その夜から先だけを新しい宿に（2026-09-27。
+   「同上」でまとめた1〜3泊目を「3泊目からマリオット」に直したら、1〜2泊目の宿が3泊目へ移って未定になっていた） ---- */
+(function () {
+  var k1 = { id: 'k1', date: '2026-06-26', time: '22:30' }, h = { id: 'h', date: '2026-06-28', time: '13:00' };
+  eq('lodgingEditPlan：途中の夜に予定があれば、それから先だけ名前を変える（手前は動かさない）',
+    T.lodgingEditPlan([k1, h], '2026-06-26', '2026-06-28'), { rename: ['h'], move: null, create: null });
+  eq('lodgingEditPlan：途中の夜に予定が無ければ、その夜に予定を足す',
+    T.lodgingEditPlan([k1], '2026-06-26', '2026-06-27'), { rename: [], move: null, create: '2026-06-27' });
+  eq('lodgingEditPlan：泊まり始めがそのままなら、行の予定すべての名前を変える',
+    T.lodgingEditPlan([k1, h], '2026-06-26', '2026-06-26'), { rename: ['k1', 'h'], move: null, create: null });
+  eq('lodgingEditPlan：前にずらしたら、最初の予定をその日へ移す',
+    T.lodgingEditPlan([h], '2026-06-28', '2026-06-27'), { rename: ['h'], move: { id: 'h', date: '2026-06-27' }, create: null });
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
