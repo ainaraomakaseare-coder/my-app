@@ -870,6 +870,7 @@
   //   挟まっても、アイコンはそれまで最後にいた場所で待つ）
   // - 旅の時間は基本1000倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
   var REPLAY_PLANE_KM = 400;
+  var REPLAY_PLANE_MIN_KM = 100; // これより近い区間の飛行機はありえない（移動手段の付き違い）とみなす（2026-09-27）
   var REPLAY_WALK_KM = 1.5; // 移動手段が入っていない、とても近い移動（1.5km未満）は徒歩とみなす（2026-09-26）
 
   // 2地点の距離（km）
@@ -996,6 +997,24 @@
         legs.push(leg);
       }
       lastLoc = i;
+    });
+    // 移動の予定の移動手段は「次の移動」に付く（replayStopsのpendingTransport）。そのため「LAX→ラスベガス行きの
+    // 飛行機」の予定にラスベガス空港の地図が入っていると、飛行機が空港→フラミンゴ（約5km）の区間に付き、
+    // 街を一直線に飛び越えて見えていた（2026-09-27）。とても近い区間（REPLAY_PLANE_MIN_KM未満）の飛行機は
+    // ありえないので、直前の区間が遠くて移動手段が決め打ち（assumed）なら飛行機をそちらへ移し、近い区間は
+    // 車（ごく近ければ徒歩）として道のりをたどる。
+    legs.forEach(function (l, k) {
+      var d = distanceKm(s[l.from], s[l.to]);
+      if (l.transport !== 'plane' || d >= REPLAY_PLANE_MIN_KM) return;
+      var prev = legs[k - 1];
+      if (prev && prev.to === l.from && prev.assumed && distanceKm(s[prev.from], s[prev.to]) >= REPLAY_PLANE_MIN_KM) {
+        prev.transport = 'plane';
+        prev.assumed = false;
+        prev.path = planeArcPath(s[prev.from], s[prev.to]);
+      }
+      l.transport = d < REPLAY_WALK_KM ? 'walk' : 'car';
+      l.assumed = true;
+      l.path = gentleCurvePath(s[l.from], s[l.to]);
     });
     var legArrivingAt = {};
     legs.forEach(function (l) { legArrivingAt[l.to] = l; });
@@ -5527,8 +5546,9 @@
   // 線路データ（OpenStreetMap、Overpass API）を取って、端末の中で線路の上の最短経路を求める。
   // 求めた線はこの端末に覚えておき、次からは線路データを取りに行かない。取れなければnull。
   var RAIL_PATH_CACHE_PREFIX = 'tabilog-railpath-v1:';
-  var OVERPASS_URLS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
   var railPathTried = {};
+  // 線路データはWorker（/rail-tracks）が代わりに取ってくる（54では端末から直接Overpassへ送っていたが、
+  // iOSアプリで取れずに一直線のままだった疑いがあるため、ほかのAPIと同じ経路にまとめた。2026-09-27）。
   function localRailPath(a, b) {
     var key = RAIL_PATH_CACHE_PREFIX + [a.lat, a.lng, b.lat, b.lng].map(function (v) { return v.toFixed(4); }).join(',');
     try {
@@ -5537,28 +5557,11 @@
     } catch (e) { /* 端末に保存できない環境では毎回求める */ }
     if (railPathTried[key]) return Promise.resolve(null); // この画面を開いているあいだ、失敗した区間を何度も試さない
     railPathTried[key] = true;
-    var body = 'data=' + encodeURIComponent(Core.railOverpassQuery(Core.railBBox(a, b)));
-    function tryAt(i) {
-      if (i >= OVERPASS_URLS.length) return Promise.resolve(null);
-      var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
-      var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 25000) : null;
-      return fetch(OVERPASS_URLS[i], {
-        method: 'POST', body: body, signal: ctrl ? ctrl.signal : undefined,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-      }).then(function (r) {
-        if (!r.ok) throw new Error('overpass_' + r.status);
-        return r.json();
-      }).then(function (data) {
-        return Core.railPathFromOverpass(data && data.elements, a, b);
-      }).catch(function () { return tryAt(i + 1); }).then(function (path) {
-        if (timer) clearTimeout(timer);
-        return path;
-      });
-    }
-    return tryAt(0).then(function (path) {
+    return api('/rail-tracks?bbox=' + Core.railBBox(a, b).join(',')).then(function (data) {
+      var path = Core.railPathFromOverpass(data && data.elements, a, b);
       if (path) { try { localStorage.setItem(key, JSON.stringify(path)); } catch (e) { /* 容量不足など */ } }
       return path;
-    });
+    }).catch(function () { return null; });
   }
 
   function fetchReplayRoutes(tl, onRoute) {

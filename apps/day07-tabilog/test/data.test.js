@@ -920,5 +920,15 @@ var bb = T.railBBox(railA, railB);
 ok('railBBox: 2地点を含み、少し広げた範囲', bb[0] < railB.lat && bb[1] < railB.lng && bb[2] > railA.lat && bb[3] > railA.lng);
 ok('railOverpassQuery: 範囲と線路の種類が入る', T.railOverpassQuery(bb).indexOf(bb.join(',')) > 0 && T.railOverpassQuery(bb).indexOf('subway') > 0);
 
+/* ---- 地図でふりかえる：飛行機が近い区間に付き違う（LAX→ラスベガスの飛行機の予定にラスベガス空港の地図） ---- */
+var lasTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-07-01', endDate: '2026-07-01' }, [
+  { id: 'lax', date: '2026-07-01', time: '08:00', label: 'ロサンゼルスのホテル', entries: [{ mapUrl: 'https://m/lax' }] },
+  { id: 'fly', date: '2026-07-01', time: '10:00', label: 'ラスベガスへ飛行機', category: 'transport', transport: 'plane', entries: [{ mapUrl: 'https://m/las' }] },
+  { id: 'fla', date: '2026-07-01', time: '13:00', label: 'フラミンゴ', category: 'lodging', entries: [{ mapUrl: 'https://m/fla' }] }]),
+  { 'https://m/lax': { lat: 34.05, lng: -118.24 }, 'https://m/las': { lat: 36.084, lng: -115.1537 }, 'https://m/fla': { lat: 36.1162, lng: -115.1716 } });
+eq('buildReplayTimeline: 飛行機はLA→ラスベガス（約370km）に付き、空港→フラミンゴ（約4km）は車で道をたどる',
+  lasTl.legs.map(function (l) { return l.transport; }), ['plane', 'car']);
+ok('buildReplayTimeline: 空港→フラミンゴは道のりを調べる手段（車）になる', T.routeProfileFor(lasTl.legs[1].transport) === 'car');
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
