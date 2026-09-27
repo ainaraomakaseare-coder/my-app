@@ -1201,5 +1201,11 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
   });
 })();
 
+/* ---- 宿泊先を手で足す：何泊目からの選択肢（2026-09-27） ---- */
+eq('lodgingNightOptions：3泊4日なら1〜3泊目', T.lodgingNightOptions({ startDate: '2026-06-26', endDate: '2026-06-29' }, []),
+  [{ date: '2026-06-26', label: '1泊目（6/26）' }, { date: '2026-06-27', label: '2泊目（6/27）' }, { date: '2026-06-28', label: '3泊目（6/28）' }]);
+eq('lodgingNightOptions：日帰りはその日', T.lodgingNightOptions({ startDate: '2026-04-01', endDate: '2026-04-01' }, []), [{ date: '2026-04-01', label: '4/1' }]);
+eq('lodgingNightOptions：日程なし・予定なしは空', T.lodgingNightOptions({}, []), []);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
