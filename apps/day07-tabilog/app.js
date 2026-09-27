@@ -17,10 +17,11 @@
     { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
     { key: 'lodging', label: '宿泊', color: 'oklch(48% 0.1 195)' },
     { key: 'transport', label: '移動', color: 'oklch(60% 0.12 260)' },
-    { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' },
-    // 「到着」（2026-09-27〜）。種類の選択では「移動」の中の「出発｜到着」タブで選ぶ（チップには出さない）。
-    // 移動（＝出発）と違い、着いた場所の予定として扱う：地図はその時刻にいた場所、移動手段は「ここまで」の手段
-    { key: 'arrival', label: '到着', color: 'oklch(58% 0.12 225)', inMove: true }
+    // 「到着」（2026-09-27〜）。種類の選択では「移動」の隣のチップで選ぶ。
+    // 移動（＝出発）と違い、着いた場所の予定として扱う：地図はその時刻にいた場所。
+    // inMoveはMyLogのタブ（renderMyLogTabs）が「移動」にまとめて出すためのフラグで、種類の選択のチップでは使わない。
+    { key: 'arrival', label: '到着', color: 'oklch(58% 0.12 225)', inMove: true },
+    { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' }
   ];
 
   // 予定（Block）の場所までの移動手段。「地図でふりかえる」で、どのアイコンがどう動くかに使う。
@@ -4888,7 +4889,8 @@
   function openBlockForm(block) {
     state.editingBlockId = block ? block.id : null;
     state.formCategory = block ? block.category : 'sightseeing';
-    state.formTransport = block ? (block.transport || '') : '';
+    // 移動手段が保存されているのは種類「移動」のときだけ（以前のデータで他の種類に付いていても出さない）
+    state.formTransport = block && block.category === 'transport' ? (block.transport || '') : '';
     var mm = block ? (block.moveMinutes || 0) : 0;
     $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
     $('#blkMoveMins').value = mm ? mm % 60 : '';
@@ -4905,34 +4907,26 @@
 
   function renderCategoryChips() {
     var el = $('#blkCategoryChips');
-    var isMove = state.formCategory === 'transport' || state.formCategory === 'arrival';
-    // 「到着」はチップに出さず、「移動」を選んだときの「出発｜到着」タブで選ぶ（2026-09-27）
-    el.innerHTML = Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) {
-      var on = c.key === 'transport' ? isMove : c.key === state.formCategory;
+    // 「到着」も「移動」の隣に並ぶ通常のチップにする（以前は「移動」を選んだときの
+    // 「出発｜到着」タブで選ぶ形だった。2026-09-27）
+    el.innerHTML = Core.CATEGORIES.map(function (c) {
+      var on = c.key === state.formCategory;
       return '<button type="button" class="cat-chip' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(c.label) + '</button>';
-    }).join('') +
-      (isMove ? '<div class="move-dir-tabs" role="tablist">' +
-        '<button type="button" role="tab" class="move-dir-tab' + (state.formCategory === 'transport' ? ' on' : '') + '" data-dir="transport" aria-selected="' + (state.formCategory === 'transport') + '">出発</button>' +
-        '<button type="button" role="tab" class="move-dir-tab' + (state.formCategory === 'arrival' ? ' on' : '') + '" data-dir="arrival" aria-selected="' + (state.formCategory === 'arrival') + '">到着</button>' +
-        '</div>' : '');
+    }).join('');
     $all('.cat-chip', el).forEach(function (b) {
       b.addEventListener('click', function () {
-        // 「移動」をもう一度押しても、選んでいる出発／到着はそのまま
-        if (b.dataset.cat === 'transport' && isMove) return;
         state.formCategory = b.dataset.cat;
+        // 種類を「移動」以外に変えたら、選んでいた移動手段（飛行機など）は消す。「到着」は移動手段を
+        // 持たない（ここまでの移動手段は、直前の「移動」の予定から地図でふりかえるが引き継ぐ）
+        if (state.formCategory !== 'transport') state.formTransport = '';
         renderCategoryChips();
+        renderTransportChips();
       });
     });
-    $all('.move-dir-tab', el).forEach(function (b) {
-      b.addEventListener('click', function () { state.formCategory = b.dataset.dir; renderCategoryChips(); });
-    });
-    // 移動手段・移動時間は、種類が「移動」のときだけ出す（以前は種類に関係なく「ここまでの移動手段」を出していた）。
-    // 以前のデータで、移動以外の予定に移動手段が付いているものは、見えないまま残らないよう出しておく。
-    // 「到着」は「ここまでの移動手段」だけ（移動時間は出発の予定に入れる）
-    var arrival = state.formCategory === 'arrival';
-    $('#blkMoveFields').hidden = !(isMove || state.formTransport);
-    $('#blkMoveLabel').textContent = arrival || !isMove ? 'ここまでの移動手段（「地図でふりかえる」で使います）' : '移動手段（「地図でふりかえる」で使います）';
-    $('#blkMoveTimeWrap').hidden = arrival || !isMove;
+    // 移動手段・移動時間は、種類が「移動」のときだけ出す（「到着」も含めて他の種類では出さない。2026-09-27）
+    var isTransportCat = state.formCategory === 'transport';
+    $('#blkMoveFields').hidden = !isTransportCat;
+    $('#blkMoveTimeWrap').hidden = !isTransportCat;
   }
 
   function renderTransportChips() {
@@ -4963,7 +4957,9 @@
       time: $('#blkTime').value || '',
       label: label,
       category: state.formCategory,
-      transport: $('#blkMoveFields').hidden ? '' : (state.formTransport || ''),
+      // 移動手段を保存するのは種類が「移動」のときだけ（「到着」も含めて他の種類なら消す。以前のデータで
+      // 移動手段が付いていても保存し直す時点で消える）
+      transport: state.formCategory === 'transport' ? (state.formTransport || '') : '',
       moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
     };
     var req = state.editingBlockId
