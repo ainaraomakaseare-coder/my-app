@@ -668,7 +668,9 @@ a:hover { text-decoration: underline; }
 .replay-caption-title { font-size: 16px; font-weight: 800; }
 .replay-caption-lines div { font-size: 13.5px; color: var(--ink-muted); margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
 /* 全文を出すようにしたので、長いときは地図を隠しすぎないよう高さに上限を付け、中でスクロールさせる */
-.replay-caption { max-height: 38vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.replay-caption { max-height: 38vh; overflow-y: auto; -webkit-overflow-scrolling: touch; transition: opacity 0.2s ease; }
+/* 地図が動いている間は写真つきの吹き出しを隠す（写真が地図を覆って動きが見えないため。2026-09-27） */
+.replay-caption.hide-for-move { opacity: 0; pointer-events: none; }
 .replay-controls { display: flex; align-items: center; gap: 12px; border-radius: 999px; padding: 6px 16px 6px 6px; }
 .replay-play {
   width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
