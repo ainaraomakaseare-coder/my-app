@@ -972,5 +972,29 @@ var trip4Changes = [];
 for (var t4 = 1; t4 < trip4Sorted.length; t4++) if (trip4Sorted[t4]._offset !== trip4Sorted[t4 - 1]._offset) trip4Changes.push(trip4Sorted[t4].id);
 eq('時差のかたまり：「ここから現地時間」は香港到着・ニューヨーク到着・リオ到着の3か所だけ', trip4Changes, ['hkA', 'nyA', 'rioA']);
 
+/* ---- 時差：出発と到着をどちらも「飛行機」の移動の予定で入れる形（ブラジル・アルゼンチン旅の実際の入れ方） ---- */
+var trip5 = [
+  { id: 'nrtD', date: '2026-03-01', time: '10:00', category: 'transport', transport: 'plane', label: '成田から出発' },
+  { id: 'hkA', date: '2026-03-01', time: '14:00', category: 'transport', transport: 'plane', label: '香港に到着' },
+  { id: 'hkH', date: '2026-03-01', time: '16:00', category: 'lodging', label: '香港のホテル' },
+  { id: 'hkD', date: '2026-03-02', time: '10:00', category: 'transport', transport: 'plane', label: '香港から出発' },
+  { id: 'nyA', date: '2026-03-02', time: '12:00', category: 'transport', transport: 'plane', label: 'ニューヨークに到着' },
+  { id: 'nyH', date: '2026-03-02', time: '15:00', category: 'lodging', label: 'ニューヨークのホテル（地図なし）' }
+].map(function (b, i) { b.createdAt = String(200 + i); return b; });
+var trip5Own = { nrtD: 'Asia/Tokyo', hkA: 'Asia/Hong_Kong', hkH: 'Asia/Hong_Kong', hkD: 'Asia/Hong_Kong', nyA: 'America/New_York' };
+var trip5Z = T.assignBlockZones(trip5, trip5Own, { '2026-03-02': 'Asia/Tokyo' }, 'Asia/Tokyo');
+eq('時差（到着も飛行機の予定）：到着の予定から現地の時差、出発の予定は出発地の時差',
+  ['nrtD', 'hkA', 'hkH', 'hkD', 'nyA', 'nyH'].map(function (id) { return trip5Z[id]; }),
+  ['Asia/Tokyo', 'Asia/Hong_Kong', 'Asia/Hong_Kong', 'Asia/Hong_Kong', 'America/New_York', 'America/New_York']);
+var trip5Sorted = T.sortBlocks(T.applyBlockZones(trip5.map(function (b) { return Object.assign({}, b); }), trip5Z));
+var trip5Changes = [];
+for (var t5 = 1; t5 < trip5Sorted.length; t5++) if (trip5Sorted[t5]._offset !== trip5Sorted[t5 - 1]._offset) trip5Changes.push(trip5Sorted[t5].id);
+eq('時差（到着も飛行機の予定）：「ここから現地時間」は到着の予定の前（香港に到着・ニューヨークに到着）だけ', trip5Changes, ['hkA', 'nyA']);
+
+var trip5Stops = T.replayStops({ startDate: '2026-03-01', endDate: '2026-03-02' }, trip5Sorted);
+eq('地図でふりかえる（到着も飛行機の予定）：香港に到着・ニューヨークに到着の時点で現地の時差（分）になる',
+  trip5Stops.filter(function (st) { return st.blockId === 'hkA' || st.blockId === 'nyA' || st.blockId === 'nrtD'; }).map(function (st) { return st.offset; }),
+  [540, 480, -300]);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
