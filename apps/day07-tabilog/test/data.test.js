@@ -1252,5 +1252,10 @@ eq('lodgingNightOptions：日程なし・予定なしは空', T.lodgingNightOpti
     { rename: ['h'], create: [{ date: '2026-06-29', label: 'マリオット', mapFrom: 'h', target: false }], target: 'k1' });
 })();
 
+/* ---- 宿泊先カードの短い表し方（2026-09-27） ---- */
+eq('lodgingSummary：いちばん長く泊まった宿＋ほか○か所', T.lodgingSummary([{ label: '菊の家', from: 1, to: 2 }, { label: 'マリオット', from: 3, to: 3 }, { label: 'フラミンゴ', from: 4, to: 4 }, { label: '菊の家', from: 7, to: 9 }]), '菊の家 ほか2か所');
+eq('lodgingSummary：1か所だけなら名前', T.lodgingSummary([{ label: '菊の家', from: 1, to: 3 }]), '菊の家');
+eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingSummary([{ label: '', from: 1, to: 2 }, { label: 'A', from: 3, to: 3 }]), T.lodgingSummary([{ label: '', from: 1, to: 2 }])], ['A', '']);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
