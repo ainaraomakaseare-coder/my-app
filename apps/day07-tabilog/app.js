@@ -758,6 +758,18 @@
     return groups;
   }
 
+  // 宿泊先を手で足すときの「何泊目から」の選択肢（2026-09-27）。n泊目＝旅行のn日目の夜。
+  // 日帰り・日程未設定の旅行は、分かっている日付をそのまま選べるようにする
+  function lodgingNightOptions(trip, blocks) {
+    var dates = allDatesForTrip(trip, blocks).filter(Boolean);
+    if (dates.length < 2) return dates.map(function (d) { return { date: d, label: formatMonthDay(d) }; });
+    return dates.slice(0, -1).map(function (d, i) { return { date: d, label: (i + 1) + '泊目（' + formatMonthDay(d) + '）' }; });
+  }
+  function formatMonthDay(d) {
+    var m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d || '');
+    return m ? Number(m[1]) + '/' + Number(m[2]) : (d || '');
+  }
+
   // 費用の総額を「実際に払った人」ごとに内訳表示するための集計。立て替え（paidBy）を
   // 設定した費用行はpaidByへ、設定していない費用行（従来どおりの個人費用）はEntryの
   // authorへ、それぞれ全額を計上する（誰か1人が全部払ったことにして二重計上はしない）。
@@ -1978,6 +1990,7 @@
     assignBlockZones: assignBlockZones,
     isPlaneMove: isPlaneMove,
     wrapLng: wrapLng,
+    lodgingNightOptions: lodgingNightOptions,
     applyBlockZones: applyBlockZones,
     offsetDiffText: offsetDiffText,
     travelDuration: travelDuration,
@@ -2986,7 +2999,91 @@
     } else {
       panel.innerHTML = '<p class="empty">宿泊カテゴリの予定がまだありません。</p>';
     }
+    panel.insertAdjacentHTML('beforeend', lodgingAddHtml());
     panel.hidden = false;
+  }
+
+  // ---------- 宿泊先を手で足す（2026-09-27） ----------
+  // 宿泊先は基本は「宿泊」の予定から読み取る。読み取れていない宿は、ここから名前・何泊目から・地図を入れて足す。
+  // 足した宿は、その日の「宿泊」の予定（時刻なし）として保存するので、日程表・時差・地図でふりかえるにも使われる
+  var lodgingPlaces = [], lodgingSession = '', lodgingChosen = null;
+  function lodgingAddHtml() {
+    var opts = Core.lodgingNightOptions(state.trip, state.blocks);
+    if (!opts.length) return '';
+    return '<button type="button" class="btn text lodging-add-open" id="btnLodgingAddOpen">＋ 宿泊先を追加</button>' +
+      '<div class="lodging-add" id="lodgingAddForm" hidden>' +
+      '<input type="text" id="lodgingAddName" maxlength="200" placeholder="宿の名前">' +
+      '<label class="lodging-add-night">泊まり始め<select id="lodgingAddDate">' +
+      opts.map(function (o) { return '<option value="' + escapeHtml(o.date) + '">' + escapeHtml(o.label) + '</option>'; }).join('') +
+      '</select></label>' +
+      '<div class="lodging-add-search"><input type="text" id="lodgingAddSearch" placeholder="地図で探す（任意）"><button type="button" class="btn ghost small" id="btnLodgingSearch">探す</button></div>' +
+      '<div class="place-list" id="lodgingAddCandidates" hidden></div>' +
+      '<p class="hint" id="lodgingAddStatus"></p>' +
+      '<button type="button" class="btn primary wide" id="btnLodgingAddSave">追加する</button>' +
+      '</div>';
+  }
+  function searchLodgingPlace() {
+    var q = $('#lodgingAddSearch').value.trim() || $('#lodgingAddName').value.trim();
+    if (!q) return;
+    var status = $('#lodgingAddStatus'), list = $('#lodgingAddCandidates');
+    status.textContent = '候補を探しています…';
+    lodgingSession = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'pl-' + Date.now().toString(36);
+    api('/places/search?q=' + encodeURIComponent(q) + '&session=' + encodeURIComponent(lodgingSession)).then(function (res) {
+      lodgingPlaces = (res && res.places) || [];
+      if (!lodgingPlaces.length) { list.hidden = true; status.textContent = '候補が見つかりませんでした。地図なしでも追加できます。'; return; }
+      list.innerHTML = lodgingPlaces.map(function (p, i) {
+        return '<div class="place-card" data-lodging-choice="' + i + '" role="button" tabindex="0"><span class="place-num">' + (i + 1) + '</span>' +
+          '<div class="place-text"><div class="place-name">' + escapeHtml(p.name) + '</div>' +
+          (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">選択</span></div>';
+      }).join('');
+      list.hidden = false;
+      status.textContent = '宿を選んでください。';
+    }).catch(function () { status.textContent = '候補を取得できませんでした。地図なしでも追加できます。'; });
+  }
+  function chooseLodgingPlace(i) {
+    var p = lodgingPlaces[i];
+    if (!p) return;
+    $all('[data-lodging-choice]', $('#lodgingAddCandidates')).forEach(function (el) {
+      var on = el.getAttribute('data-lodging-choice') === String(i);
+      el.classList.toggle('on', on);
+      el.querySelector('.place-pick').textContent = on ? '選択中' : '選択';
+    });
+    if (!$('#lodgingAddName').value.trim()) $('#lodgingAddName').value = p.name || '';
+    var need = !(isFinite(p.lat) && isFinite(p.lng)) && p.placeId;
+    var req = need
+      ? api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(lodgingSession)).then(function (res) {
+        if (res && res.found && isFinite(res.lat) && isFinite(res.lng)) { p.lat = res.lat; p.lng = res.lng; }
+      }).catch(function () {})
+      : Promise.resolve();
+    lodgingChosen = req.then(function () {
+      var url = Core.placeMapUrl(p, $('#lodgingAddSearch').value);
+      $('#lodgingAddStatus').textContent = url ? '地図に「' + p.name + '」を入れます。' : '';
+      return url || '';
+    });
+  }
+  function saveLodging() {
+    var name = $('#lodgingAddName').value.trim(), date = $('#lodgingAddDate').value;
+    var status = $('#lodgingAddStatus');
+    if (!name) { status.textContent = '宿の名前を入れてください。'; return; }
+    status.textContent = '保存中…';
+    $('#btnLodgingAddSave').disabled = true;
+    var user = loadCurrentUser();
+    (lodgingChosen || Promise.resolve('')).then(function (mapUrl) {
+      return api('/trips/' + encodeURIComponent(state.trip.id) + '/blocks', 'POST', { date: date, time: '', label: name, category: 'lodging' })
+        .then(function (block) {
+          if (!mapUrl) return;
+          return api('/blocks/' + encodeURIComponent(block.id) + '/entries', 'POST', { mapUrl: mapUrl, author: (user && user.name) || '' });
+        });
+    }).then(function () {
+      lodgingChosen = null; lodgingPlaces = [];
+      return refreshTrip();
+    }).then(function () {
+      renderTripDetail();
+      toggleLodgingBreakdown();
+    }).catch(function () {
+      status.textContent = '保存に失敗しました。もう一度お試しください。';
+      $('#btnLodgingAddSave').disabled = false;
+    });
   }
 
   // 総費用の内訳（誰が実際にいくら払ったか）。統計カードの「総費用」をタップすると開閉する。
@@ -3031,6 +3128,19 @@
     $('#lodgingBreakdownPanel').hidden = true;
     $('#costBreakdownPanel').hidden = true;
     $('#btnShowLodgingBreakdown').addEventListener('click', toggleLodgingBreakdown);
+    if (!renderTripDetail.lodgingBound) {
+      renderTripDetail.lodgingBound = true;
+      $('#lodgingBreakdownPanel').addEventListener('click', function (e) {
+        var t = e.target;
+        if (t.closest('#btnLodgingAddOpen')) { $('#lodgingAddForm').hidden = false; t.closest('#btnLodgingAddOpen').hidden = true; $('#lodgingAddName').focus(); }
+        else if (t.closest('#btnLodgingSearch')) searchLodgingPlace();
+        else if (t.closest('#btnLodgingAddSave')) saveLodging();
+        else if (t.closest('[data-lodging-choice]')) chooseLodgingPlace(Number(t.closest('[data-lodging-choice]').getAttribute('data-lodging-choice')));
+      });
+      $('#lodgingBreakdownPanel').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target.id === 'lodgingAddSearch') { e.preventDefault(); searchLodgingPlace(); }
+      });
+    }
     $('#btnShowCostBreakdown').addEventListener('click', toggleCostBreakdown);
 
     renderDayTabs();
