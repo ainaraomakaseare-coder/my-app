@@ -939,6 +939,21 @@ body.viewer-open { overflow: hidden; }
 .lodging-add .hint { margin: 0 0 10px; }
 .lodging-add-actions { display: flex; justify-content: flex-end; align-items: center; gap: 14px; }
 
-/* 宿泊先カード：名前は2行まで、「ほか○か所」は必ず見える（2026-09-27） */
-.stat-card .val.lodging-val { -webkit-line-clamp: 2; line-clamp: 2; }
-.stat-card .lodging-more { margin-top: 3px; font-size: 11.5px; font-weight: 700; color: var(--accent-deep); }
+/* 宿泊先・総費用：横幅いっぱいの行を縦に並べ、押すと下に詳細が開く（2026-09-27）。
+   名前は2行まで、「ほか○か所」は必ず見える */
+.stats-row { flex-direction: column; gap: 8px; }
+.stat-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; font-family: inherit; color: var(--ink);
+  background: var(--card); border: none; border-radius: var(--radius-card); padding: 13px 14px; box-shadow: var(--card-shadow);
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+}
+.stat-row-lbl { flex: none; font-size: 11.5px; color: var(--ink-soft); font-weight: 600; width: 44px; }
+.stat-row-val { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.stat-row .lodging-val {
+  font-size: 14px; font-weight: 700; line-height: 1.35;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
+}
+.stat-row .lodging-more { font-size: 11.5px; font-weight: 700; color: var(--accent-deep); }
+.stat-row-chev { flex: none; color: var(--ink-muted); transition: transform 0.2s ease; }
+.stat-row[aria-expanded="true"] .stat-row-chev { transform: rotate(180deg); }
+.stats-row .cost-breakdown-panel { margin-top: 0; }

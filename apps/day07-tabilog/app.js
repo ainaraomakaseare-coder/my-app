@@ -3095,12 +3095,20 @@
   // 宿泊先の内訳（何泊目にどこへ泊まったか、全件）。統計カードの表示文字列（formatLodgingStat）は
   // 3行までしか出せない（.stat-card .valのline-clamp）ため、宿泊先が3件を超える旅行では
   // 全部を確認できなかった。統計カードの「宿泊先」をタップすると開閉する（DAY30〜）。
+  var STAT_CHEVRON = '<svg class="stat-row-chev" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8l4 4 4-4"/></svg>';
+  // 開いている詳細に合わせて、宿泊先・総費用の行の矢印（aria-expanded）をそろえる
+  function syncStatRows() {
+    var l = $('#btnShowLodgingBreakdown'), c = $('#btnShowCostBreakdown');
+    if (l) l.setAttribute('aria-expanded', String(!$('#lodgingBreakdownPanel').hidden));
+    if (c) c.setAttribute('aria-expanded', String(!$('#costBreakdownPanel').hidden));
+  }
   function toggleLodgingBreakdown() {
     var panel = $('#lodgingBreakdownPanel');
-    if (!panel.hidden) { panel.hidden = true; return; }
+    if (!panel.hidden) { panel.hidden = true; syncStatRows(); return; }
     $('#costBreakdownPanel').hidden = true;
     renderLodgingPanel();
     panel.hidden = false;
+    syncStatRows();
   }
   // 宿泊先の内訳。1泊ずつ1行で出す（7泊目だけ直したい、が分かりやすいように。2026-09-27）。
   // 前の夜と同じ宿は名前を薄く出し、違う宿の夜には「同上」（前の夜の宿にそろえる）を出す
@@ -3291,7 +3299,7 @@
   // 総費用の内訳（誰が実際にいくら払ったか）。統計カードの「総費用」をタップすると開閉する。
   function toggleCostBreakdown() {
     var panel = $('#costBreakdownPanel');
-    if (!panel.hidden) { panel.hidden = true; return; }
+    if (!panel.hidden) { panel.hidden = true; syncStatRows(); return; }
     $('#lodgingBreakdownPanel').hidden = true;
     var breakdown = Core.costBreakdownByPerson(state.blocks);
     var names = Object.keys(breakdown).sort(function (a, b) { return breakdown[b] - breakdown[a]; });
@@ -3301,6 +3309,7 @@
         }).join('')
       : '<p class="empty">まだ費用の記録がありません。</p>';
     panel.hidden = false;
+    syncStatRows();
   }
 
   // ---------- 旅行詳細 ----------
@@ -3325,15 +3334,21 @@
     // 名前が長くても「ほか○か所」が切れないよう、別の行に出す（名前は2行まで）
     var lodgingParts = Core.lodgingSummaryParts(Core.lodgingByNight(trip, state.blocks));
     var total = Core.tripTotalCost(state.blocks);
-    $('#tripStats').innerHTML =
-      '<button type="button" class="stat-card stat-card-btn" id="btnShowLodgingBreakdown"><div class="lbl">宿泊先</div>' +
+    // 宿泊先・総費用は横幅いっぱいの行を縦に並べ、押すとその下に詳細が開く（日程は旅行名の下に
+    // 「9泊10日」と出ているのでカードは出さない。2026-09-27）
+    var lodgingPanel = $('#lodgingBreakdownPanel'), costPanel = $('#costBreakdownPanel');
+    var stats = $('#tripStats');
+    stats.innerHTML =
+      '<button type="button" class="stat-row" id="btnShowLodgingBreakdown" aria-expanded="false"><span class="stat-row-lbl">宿泊先</span><span class="stat-row-val">' +
         (lodgingParts
-          ? '<div class="val lodging-val">' + escapeHtml(lodgingParts.main) + '</div>' + (lodgingParts.others ? '<div class="lodging-more">ほか' + lodgingParts.others + 'か所</div>' : '')
-          : '<div class="val">' + escapeHtml(lodging) + '</div>') + '</button>' +
-      '<button type="button" class="stat-card stat-card-btn" id="btnShowCostBreakdown"><div class="lbl">総費用</div><div class="val">' + escapeHtml(Core.formatYen(total) || '¥0') + '</div></button>' +
-      statCard('日程', nights || (Core.allDatesForTrip(trip, state.blocks).length + '日'));
-    $('#lodgingBreakdownPanel').hidden = true;
-    $('#costBreakdownPanel').hidden = true;
+          ? '<span class="lodging-val">' + escapeHtml(lodgingParts.main) + '</span>' + (lodgingParts.others ? '<span class="lodging-more">ほか' + lodgingParts.others + 'か所</span>' : '')
+          : '<span class="lodging-val">' + escapeHtml(lodging) + '</span>') + '</span>' + STAT_CHEVRON + '</button>' +
+      '<button type="button" class="stat-row" id="btnShowCostBreakdown" aria-expanded="false"><span class="stat-row-lbl">総費用</span><span class="stat-row-val"><span class="lodging-val">' +
+        escapeHtml(Core.formatYen(total) || '¥0') + '</span></span>' + STAT_CHEVRON + '</button>';
+    stats.insertBefore(lodgingPanel, $('#btnShowCostBreakdown'));
+    stats.appendChild(costPanel);
+    lodgingPanel.hidden = true;
+    costPanel.hidden = true;
     $('#btnShowLodgingBreakdown').addEventListener('click', toggleLodgingBreakdown);
     if (!renderTripDetail.lodgingBound) {
       renderTripDetail.lodgingBound = true;
@@ -3936,10 +3951,6 @@
       else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
-  }
-
-  function statCard(label, value) {
-    return '<div class="stat-card"><div class="lbl">' + escapeHtml(label) + '</div><div class="val">' + escapeHtml(value) + '</div></div>';
   }
 
   function renderDayTabs() {
