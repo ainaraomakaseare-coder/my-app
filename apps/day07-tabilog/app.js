@@ -3026,9 +3026,13 @@
       panel.innerHTML = groups.map(function (g, i) {
         var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
         var editable = lodgingGroups[i] && lodgingGroups[i].blockIds.length;
-        return (editable ? '<button type="button" class="cost-breakdown-row lodging-row" data-lodging-edit="' + i + '">' : '<div class="cost-breakdown-row">') +
+        // 「同上」：1つ上の行の宿と同じにする（名前をそろえて1行にまとめる。2026-09-27）
+        var prev = lodgingGroups[i - 1];
+        var same = editable && prev && prev.label && prev.label !== g.label;
+        return '<div class="cost-breakdown-row' + (editable ? ' lodging-row" role="button" tabindex="0" data-lodging-edit="' + i + '"' : '"') + '>' +
           '<span class="name">' + escapeHtml(range) + '</span><span class="amount">' + escapeHtml(g.label || '未定') +
-          (editable ? '<span class="lodging-row-edit">直す</span>' : '') + '</span>' + (editable ? '</button>' : '</div>');
+          (same ? '<button type="button" class="lodging-row-same" data-lodging-same="' + i + '">同上</button>' : '') +
+          (editable ? '<span class="lodging-row-edit">直す</span>' : '') + '</span></div>';
       }).join('');
     } else if (primaryName) {
       // 日帰りなど「泊」の無い旅行では日ごとの内訳が作れないため、宿泊カテゴリの見出しをそのまま出す
@@ -3085,6 +3089,22 @@
     $('#btnLodgingAddOpen').hidden = true;
     $all('.lodging-row').forEach(function (r) { r.classList.toggle('on', groupIndex !== null && r.getAttribute('data-lodging-edit') === String(groupIndex)); });
     if (form.scrollIntoView) form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  // 「同上」：その行の元になった予定の名前を、1つ上の行の宿の名前にそろえる（行が1つにまとまる）
+  function sameAsAboveLodging(i) {
+    var g = lodgingGroups[i], prev = lodgingGroups[i - 1];
+    if (!g || !prev || !prev.label || !g.blockIds.length) return;
+    var btn = $('[data-lodging-same="' + i + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+    Promise.all(g.blockIds.map(function (id) {
+      return api('/blocks/' + encodeURIComponent(id), 'PATCH', { label: prev.label });
+    })).then(function () { return refreshTrip(); }).then(function () {
+      renderTripDetail();
+      toggleLodgingBreakdown();
+    }).catch(function () {
+      if (btn) { btn.disabled = false; btn.textContent = '同上'; }
+      alert('保存に失敗しました。もう一度お試しください。');
+    });
   }
   function closeLodgingForm() {
     $('#lodgingAddForm').hidden = true;
@@ -3219,6 +3239,7 @@
       $('#lodgingBreakdownPanel').addEventListener('click', function (e) {
         var t = e.target;
         if (t.closest('#btnLodgingAddOpen')) { openLodgingForm(null); $('#lodgingAddName').focus(); }
+        else if (t.closest('[data-lodging-same]')) sameAsAboveLodging(Number(t.closest('[data-lodging-same]').getAttribute('data-lodging-same')));
         else if (t.closest('[data-lodging-edit]')) openLodgingForm(Number(t.closest('[data-lodging-edit]').getAttribute('data-lodging-edit')));
         else if (t.closest('#btnLodgingAddCancel')) closeLodgingForm();
         else if (t.closest('#btnLodgingSearch')) searchLodgingPlace();
@@ -3227,6 +3248,7 @@
       });
       $('#lodgingBreakdownPanel').addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && e.target.id === 'lodgingAddSearch') { e.preventDefault(); searchLodgingPlace(); }
+        else if (e.key === 'Enter' && e.target.classList.contains('lodging-row')) { e.preventDefault(); openLodgingForm(Number(e.target.getAttribute('data-lodging-edit'))); }
       });
     }
     $('#btnShowCostBreakdown').addEventListener('click', toggleCostBreakdown);
