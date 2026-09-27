@@ -1207,5 +1207,18 @@ eq('lodgingNightOptions：3泊4日なら1〜3泊目', T.lodgingNightOptions({ st
 eq('lodgingNightOptions：日帰りはその日', T.lodgingNightOptions({ startDate: '2026-04-01', endDate: '2026-04-01' }, []), [{ date: '2026-04-01', label: '4/1' }]);
 eq('lodgingNightOptions：日程なし・予定なしは空', T.lodgingNightOptions({}, []), []);
 
+/* ---- 宿泊先の内訳の行と、その元になった予定（行をタップして直すため。2026-09-27） ---- */
+(function () {
+  var bs = [
+    { id: 'k1', date: '2026-06-26', time: '22:30', category: 'lodging', label: '菊の家' },
+    { id: 'k2', date: '2026-06-28', time: '01:00', category: 'lodging', label: '菊の家' },
+    { id: 'h', date: '2026-06-28', time: '13:00', category: 'lodging', label: 'コートヤード' },
+    { id: 'x', date: '2026-06-27', time: '10:00', category: 'food', label: '昼' }];
+  var g = T.lodgingGroupBlocks({ startDate: '2026-06-26', endDate: '2026-06-30' }, bs);
+  eq('lodgingGroupBlocks：行（泊）とlodgingByNightが同じまとめ方', g.map(function (x) { return [x.from, x.to, x.label]; }),
+    T.lodgingByNight({ startDate: '2026-06-26', endDate: '2026-06-30' }, bs).map(function (x) { return [x.from, x.to, x.label]; }));
+  eq('lodgingGroupBlocks：行ごとの元の予定', g.map(function (x) { return x.blockIds; }), [['k1'], ['h']]);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
