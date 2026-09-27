@@ -485,6 +485,20 @@ a:hover { text-decoration: underline; }
 .cost-item-row input[type="text"] { flex: 1.6; min-width: 0; width: 0; border: none; border-radius: var(--radius-control); padding: 9px 11px; background: var(--input-bg); }
 .cost-item-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: none; border-radius: var(--radius-control); padding: 9px 8px; background: var(--input-bg); }
 .cost-item-row button { flex: 0 0 auto; background: none; border: none; color: var(--ink-soft); font-size: 16px; width: 22px; padding: 0; }
+.cost-currency-select {
+  flex: 0 0 auto; border: none; border-radius: var(--radius-control); padding: 9px 6px; background: var(--input-bg);
+  color: var(--ink); font-size: 12px; max-width: 70px;
+}
+.cost-currency-other { flex: 0 0 70px; min-width: 0; border: none; border-radius: var(--radius-control); padding: 9px 8px; background: var(--input-bg); text-transform: uppercase; }
+.cost-rate-row {
+  flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; margin-top: -2px;
+  padding: 8px 10px; background: var(--border-soft); border-radius: var(--radius-control); font-size: 11.5px; color: var(--ink-muted);
+}
+.cost-rate-line { font-weight: 700; color: var(--ink); }
+.cost-rate-edit { display: flex; align-items: center; gap: 6px; }
+.cost-rate-edit input.cost-rate-input { flex: 0 0 90px; border: none; border-radius: var(--radius-control); padding: 6px 8px; background: var(--card); }
+.cost-rate-converted { font-weight: 600; color: var(--accent-deep); }
+.cost-rate-warn { margin: 0; color: var(--danger, #c0392b); }
 .cost-item-row .cost-payer-toggle {
   width: auto; font-size: 11px; font-weight: 700; color: var(--ink-muted); white-space: nowrap; padding: 7px 10px;
   border: none; border-radius: 999px; background: var(--border-soft);
@@ -507,6 +521,17 @@ a:hover { text-decoration: underline; }
 .cost-item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ---------- 精算（割り勘） ---------- */
+.settle-unit-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.settle-unit-label { font-size: 12.5px; font-weight: 700; color: var(--ink-muted); }
+.settle-unit-picker {
+  display: flex; gap: 4px; padding: 3px; background: var(--input-bg); border-radius: 999px;
+}
+.settle-unit-opt {
+  padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+  color: var(--ink-muted);
+}
+.settle-unit-opt.on { background: var(--card); color: var(--accent-deep); box-shadow: var(--card-shadow); }
+.settle-round-note { font-size: 12px; color: var(--ink-muted); margin: -6px 0 18px; }
 .balance-list, .settle-plan-list, .expense-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
 .balance-row {
   display: flex; justify-content: space-between; align-items: center; padding: 11px 13px;

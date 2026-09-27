@@ -36,6 +36,19 @@
 
   var WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
 
+  // 費用の明細（costItems）に選べる通貨（DAY31〜、docs/adr/0014）。一覧に無い通貨は
+  // 「その他」から3文字コード（ISO 4217）を自由入力できるので、ここは「よく使う」ものだけに絞る。
+  // currencyが無い（省略）costItemはこれまでどおり円（JPY）として扱う＝後方互換。
+  var COST_CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'KRW', 'TWD', 'CNY', 'HKD', 'THB', 'SGD',
+    'AUD', 'BRL', 'ARS', 'MXN', 'CAD', 'CHF', 'VND', 'PHP', 'IDR', 'MYR'];
+  // 表示用の通貨記号。無い通貨（「その他」で入力した3文字コード）はコードそのままを頭に出す。
+  var COST_CURRENCY_SYMBOLS = {
+    USD: 'US$', EUR: '€', GBP: '£', KRW: '₩', TWD: 'NT$', CNY: 'CN¥', HKD: 'HK$', THB: '฿',
+    SGD: 'S$', AUD: 'A$', BRL: 'R$', ARS: 'AR$', MXN: 'MX$', CAD: 'C$', CHF: 'CHF', VND: '₫',
+    PHP: '₱', IDR: 'Rp', MYR: 'RM'
+  };
+  function costCurrencySymbol(code) { return COST_CURRENCY_SYMBOLS[code] || (code + ' '); }
+
   function categoryLabel(key) {
     var c = CATEGORIES.filter(function (c) { return c.key === key; })[0];
     return c ? c.label : key;
@@ -340,9 +353,31 @@
     return map;
   }
 
+  // costItem 1件分の金額を円に換算する（DAY31〜、docs/adr/0014）。currencyが無い・'JPY'なら
+  // amountがそのまま円（これまでどおり）。それ以外は、rate（1単位あたりの円。/ratesで自動取得しつつ
+  // 本人が直せる値）を掛けて円に丸める。合計・貸し借り（tripBalances）はこの丸めた円をそのまま
+  // 積み上げる（為替の端数まで追いかけても実用上の意味が薄く、精算の丸め＝settlementPlanと
+  // 同じ「多少はまとめて丸める」考え方に揃えた）。
+  function costItemJpy(item) {
+    if (!item) return 0;
+    var amount = typeof item.amount === 'number' ? item.amount : 0;
+    if (!item.currency || item.currency === 'JPY') return amount;
+    var rate = typeof item.rate === 'number' ? item.rate : 0;
+    return Math.round(amount * rate);
+  }
+
+  // 費用明細1件の表示用文字列。円ならこれまでどおり`formatYen`と同じ「¥1,200」、外貨なら
+  // 元の金額と円換算の両方を見せる（例：「US$25.00（¥3,737）」）。精算はすべて円で行うため、
+  // 元の金額だけだと精算画面の内訳（円）と一致しているか本人には分からなくなるため。
+  function formatCostItemAmount(item) {
+    if (!item || typeof item.amount !== 'number') return '';
+    if (!item.currency || item.currency === 'JPY') return formatYen(item.amount);
+    return costCurrencySymbol(item.currency) + item.amount.toFixed(2) + '（' + formatYen(costItemJpy(item)) + '）';
+  }
+
   function entryCostTotal(entry) {
     return ((entry && entry.costItems) || []).reduce(function (sum, it) {
-      return sum + (typeof it.amount === 'number' ? it.amount : 0);
+      return sum + costItemJpy(it);
     }, 0);
   }
 
@@ -373,10 +408,11 @@
       (block.entries || []).forEach(function (entry) {
         (entry.costItems || []).forEach(function (item) {
           var paidBy = item.paidBy || '';
-          if (!paidBy || !(item.amount > 0)) return;
+          var jpy = costItemJpy(item);
+          if (!paidBy || !(jpy > 0)) return;
           var splitAmong = (item.splitAmong && item.splitAmong.length) ? item.splitAmong : [paidBy];
-          add(paidBy, item.amount);
-          var share = item.amount / splitAmong.length;
+          add(paidBy, jpy);
+          var share = jpy / splitAmong.length;
           splitAmong.forEach(function (name) { add(name, -share); });
         });
       });
@@ -384,29 +420,52 @@
     return balance;
   }
 
+  // 精算の端数（丸め）単位。Walicaにならい、旅行ごとに1円／10円／100円から選べる
+  // （trips.settle_unit、2026-09-27）。全員で共有する設定なので、trip側に持たせる。
+  var SETTLE_UNITS = [1, 10, 100];
+
+  // xをunit単位の最も近い値に丸める。半端（ちょうど半分）は0から遠い方へ丸める
+  // （四捨五入の対称版。JSのMath.roundは常に+Infinity方向へ丸めるため、
+  // 例えば-22977.5は-22977になってしまい、「23,000円送る」つもりが「22,977円」になる
+  // ような食い違いが起きる。それを避けるため符号を先に取り出してから丸める）。
+  function roundToUnit(x, unit) {
+    var u = (unit === 10 || unit === 100) ? unit : 1;
+    if (!x) return 0;
+    return Math.sign(x) * Math.round(Math.abs(x) / u) * u;
+  }
+
   // 貸し借り残高（tripBalancesの結果）から、送金の回数が最小になるような精算方法を作る
   // （最も多くもらう人と最も多く払う人を順にマッチさせる、よく知られた貪欲法）。
-  // 端数（1円未満）は四捨五入し、集計誤差で1円未満だけ残るケースは無視する。
-  function settlementPlan(balance) {
+  // unit（1／10／100円、省略時は1円）は、マッチング自体は端数のない実残高のまま行い、
+  // 最後に送金額だけをunit単位に丸める（Walicaと同じ挙動。マッチング前に丸めてしまうと、
+  // 各人の丸め誤差が積み上がって「受け取る人の合計」が実際の残高より数円ずれて送金し
+  // 損ねるケースがあった）。丸めた結果0円になった送金は一覧から外す。
+  function settlementPlan(balance, unit) {
+    var u = SETTLE_UNITS.indexOf(unit) !== -1 ? unit : 1;
     var creditors = [];
     var debtors = [];
     Object.keys(balance || {}).forEach(function (name) {
-      var yen = Math.round(balance[name]);
-      if (yen > 0) creditors.push({ name: name, amount: yen });
-      else if (yen < 0) debtors.push({ name: name, amount: -yen });
+      var yen = balance[name] || 0;
+      if (yen > 0.005) creditors.push({ name: name, amount: yen });
+      else if (yen < -0.005) debtors.push({ name: name, amount: -yen });
     });
     creditors.sort(function (a, b) { return b.amount - a.amount; });
     debtors.sort(function (a, b) { return b.amount - a.amount; });
-    var plan = [];
+    var raw = [];
     var i = 0, j = 0;
     while (i < debtors.length && j < creditors.length) {
       var pay = Math.min(debtors[i].amount, creditors[j].amount);
-      if (pay >= 1) plan.push({ from: debtors[i].name, to: creditors[j].name, amount: pay });
+      if (pay > 0.005) raw.push({ from: debtors[i].name, to: creditors[j].name, amount: pay });
       debtors[i].amount -= pay;
       creditors[j].amount -= pay;
-      if (debtors[i].amount < 1) i++;
-      if (creditors[j].amount < 1) j++;
+      if (debtors[i].amount <= 0.005) i++;
+      if (creditors[j].amount <= 0.005) j++;
     }
+    var plan = [];
+    raw.forEach(function (p) {
+      var amount = roundToUnit(p.amount, u);
+      if (amount !== 0) plan.push({ from: p.from, to: p.to, amount: amount });
+    });
     return plan;
   }
 
@@ -419,6 +478,7 @@
           if (!item.paidBy || !(item.amount > 0)) return;
           out.push({
             date: block.date, label: item.label, amount: item.amount,
+            currency: item.currency, rate: item.rate,
             paidBy: item.paidBy, splitAmong: (item.splitAmong && item.splitAmong.length) ? item.splitAmong : [item.paidBy],
             blockLabel: block.label,
           });
@@ -479,10 +539,11 @@
     (blocks || []).forEach(function (block) {
       (block.entries || []).forEach(function (entry) {
         (entry.costItems || []).forEach(function (item) {
-          if (!(item.amount > 0)) return;
+          var jpy = costItemJpy(item);
+          if (!(jpy > 0)) return;
           var payer = item.paidBy || entry.author || '';
           if (!payer) return;
-          totals[payer] = (totals[payer] || 0) + item.amount;
+          totals[payer] = (totals[payer] || 0) + jpy;
         });
       });
     });
@@ -645,8 +706,21 @@
   var REPLAY_MAX_CAPTION_SEC = 10;    // 写真がある地点でも、これ以上は止めない（写真4枚分の秒数）
   var REPLAY_MAX_PHOTOS = 4;          // 1つの地点で見せる写真の上限（6枚だと1地点15秒止まり長かったので4枚＝10秒に）
   var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
-  var REPLAY_MOVE_SEC = 2;           // 移動の演出は、距離や時間にかかわらずこの秒数（以前は1000倍速で2〜6秒。香港→ニューヨークの飛行機が長すぎた）
+  // 移動の演出の長さ（秒）。以前はどれだけ遠くても一律2秒だったが、「短い移動と同じ速さだと、
+  // 長距離の移動が味気ない」という声より、遠い移動は少しだけ長く見せる（2026-09-27）。
+  var REPLAY_MOVE_SEC_MIN = 2;       // 100km以下はこれまでどおり2秒
+  var REPLAY_MOVE_SEC_MAX = 4;       // 500km以上はこれまでの2倍の4秒
+  var REPLAY_MOVE_KM_SHORT = 100;
+  var REPLAY_MOVE_KM_LONG = 500;
+  function legMoveSeconds(km) {
+    if (!(km > REPLAY_MOVE_KM_SHORT)) return REPLAY_MOVE_SEC_MIN;
+    if (km >= REPLAY_MOVE_KM_LONG) return REPLAY_MOVE_SEC_MAX;
+    var f = (km - REPLAY_MOVE_KM_SHORT) / (REPLAY_MOVE_KM_LONG - REPLAY_MOVE_KM_SHORT);
+    return REPLAY_MOVE_SEC_MIN + f * (REPLAY_MOVE_SEC_MAX - REPLAY_MOVE_SEC_MIN);
+  }
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
+  var REPLAY_ARRIVAL_PAUSE_SEC = 0.5; // 着いてから吹き出し（写真・エピソード）を出すまでの一呼吸（カメラが収まるのを待つ。2026-09-27）
+  var REPLAY_JUMP_EPS = 1e-6;         // 吹き出しが消えて時計を一気に進める瞬間の、見た目には分からない実時間のずらし幅
   var REPLAY_UNTIMED_START_MIN = 9 * 60;
 
   // 予定の場所は、記録に入っている地図のURL（Googleマップの共有リンク maps.app.goo.gl/… や
@@ -671,6 +745,16 @@
     } catch (e) {
       return false;
     }
+  }
+
+  // 記録フォームの「地図のURL」欄を、候補（place：座標があればlat/lng、無ければplaceIdだけ）と
+  // 検索した文字列（searchText）から作る。座標が数値として両方揃っているときだけ座標のURLにし、
+  // まだ座標が届いていない・壊れている（undefined/NaN）ときは検索文字列のURLにする。
+  // undefined/NaNを含むURLを絶対に作らないための、書き込み前の最後の関門（2026-09-27、大阪旅行の実データより）。
+  function placeMapUrl(place, searchText) {
+    var q = (place && isFinite(place.lat) && isFinite(place.lng)) ? place.lat + ',' + place.lng : (searchText || '').trim();
+    if (!q) return '';
+    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
   function replayPlaceEntry(block) {
     var entries = (block && block.entries) || [];
@@ -722,7 +806,14 @@
         minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + step, 23 * 60 + 59);
       }
       var placeEntry = replayPlaceEntry(b);
-      var arriving = b.category === 'transport' ? '' : (b.transport || pendingTransport);
+      // 移動の予定（category==='transport'）自身の transport は「次の場所への移動」を表す値なので、
+      // その予定自身が地図上の地点になるとき（＝移動の予定に、たどり着いた先の地図が入っているとき）の
+      // 「ここまでの移動手段」には使わない。代わりに、直前までに引き継いだpendingTransportを使う
+      // （地図が壊れている移動の予定でも、移動手段だけは次に引き継いでいるため）。
+      // 例：赤レンガ倉庫→（新横浜から大阪への移動、地図が壊れている。ここでpendingTransport='train'）
+      //     →新大阪からユニバへ（地図あり、それ自身のtransportは'train'だが「次への移動」の意味なので
+      //     使わず、pendingTransportの'train'を使う。2026-09-27）
+      var arriving = b.category === 'transport' ? pendingTransport : (b.transport || pendingTransport);
       if (b.category === 'transport') { pendingTransport = b.transport || ''; pendingMove = b.moveMinutes || 0; }
       else if (placeEntry) { pendingTransport = ''; pendingMove = 0; }
       lastMinute[b.date] = minute;
@@ -839,6 +930,33 @@
     return pts;
   }
 
+  // 道のり（Worker「/route」）がまだ届いていない・見つからない区間でも、旅は必ずつなげてほしいという声より
+  // （2026-09-27）、直線ではなく少しだけ膨らませた「やわらかい曲線」を最初から用意しておく。飛行機の弧
+  // （arcLatLng、bulge比率0.18）と同じ考え方だが、膨らみは直線距離の約8%に抑える（車・電車などの短い
+  // 移動で弧が大げさに見えないように）。アイコンと線が同じ点をたどるよう、この道のりをそのままleg.pathに使う。
+  var REPLAY_GENTLE_CURVE_POINTS = 32;
+  var REPLAY_GENTLE_CURVE_OFFSET_RATIO = 0.08;
+  function gentleCurvePath(a, b, n) {
+    n = Math.max(2, n || REPLAY_GENTLE_CURVE_POINTS);
+    var offsetKm = distanceKm(a, b) * REPLAY_GENTLE_CURVE_OFFSET_RATIO;
+    var dLat = b.lat - a.lat, dLng = b.lng - a.lng;
+    var latPerKm = 1 / 111, lngPerKm = 1 / (111 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180) || 1);
+    // 進行方向を平面近似（km単位）で表し、その左向きの単位ベクトルへ膨らみを乗せる
+    var dyKm = dLat / latPerKm, dxKm = dLng / lngPerKm;
+    var lenKm = Math.sqrt(dxKm * dxKm + dyKm * dyKm) || 1;
+    var perpXKm = -dyKm / lenKm, perpYKm = dxKm / lenKm;
+    var pts = [];
+    for (var i = 0; i <= n; i++) {
+      var f = i / n;
+      var bulge = Math.sin(Math.PI * f) * offsetKm;
+      pts.push([
+        a.lat + dLat * f + perpYKm * bulge * latPerKm,
+        a.lng + dLng * f + perpXKm * bulge * lngPerKm
+      ]);
+    }
+    return pts;
+  }
+
   function buildReplayTimeline(stops, coordsByQuery) {
     coordsByQuery = coordsByQuery || {};
     var withOffset = (stops || []).filter(function (st) { return typeof st.offset === 'number'; })[0];
@@ -864,10 +982,12 @@
       if (lastLoc >= 0 && (s[lastLoc].lat !== st.lat || s[lastLoc].lng !== st.lng)) {
         var d = distanceKm(s[lastLoc], st);
         var transport = st.transport || (d > REPLAY_PLANE_KM ? 'plane' : (d < REPLAY_WALK_KM ? 'walk' : 'car'));
-        var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport };
-        // 飛行機の道のりは道路検索をしないので、アイコンと同じ弧をここで作っておく
-        // （道のりが分かるのを待たずに、区間に入った瞬間から全体を青く見せられる。docs/adr/0008）。
-        if (transport === 'plane') leg.path = planeArcPath(s[lastLoc], st);
+        var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport, moveSec: legMoveSeconds(d) };
+        // 道のり（Worker「/route」）が届く・見つかるのを待たず、区間に入った瞬間から必ず線でつながるよう、
+        // アイコンと同じ道のり（飛行機は弧、それ以外はやわらかい曲線）をここで先に作っておく。実際の道のりが
+        // 届いたらこのpathを差し替える（fetchReplayRoutes）。「旅は全部必ずつなげてほしい」という声より
+        // （2026-09-27、docs/adr/0008）。
+        leg.path = transport === 'plane' ? planeArcPath(s[lastLoc], st) : gentleCurvePath(s[lastLoc], st);
         legs.push(leg);
       }
       lastLoc = i;
@@ -880,27 +1000,35 @@
     kf.push({ t: tStart, r: 0 });
     r += (s[0].t - tStart) * REPLAY_SEC_PER_MIN;
     s.forEach(function (st, i) {
-      st.r = r;
+      st.r = r; // 乗り物が着いた瞬間（まだ吹き出しは出さない。次のREPLAY_ARRIVAL_PAUSE_SECの後に出す）
       kf.push({ t: st.t, r: r });
       var next = s[i + 1];
       // 最後の予定は、深夜でも時計が翌日（存在しない日）にはみ出さないよう、その日の23:59までにとどめる
       var gap = next ? Math.max(0, next.t - st.t) : Math.max(0, Math.min(REPLAY_DWELL_MIN, (st.dayIndex + 1) * 1440 - 1 - st.t));
       var moving = !!(next && legArrivingAt[i + 1]);
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
-      r += dwell * REPLAY_SEC_PER_MIN;
-      kf.push({ t: st.t + dwell, r: r });
+      // 着いてすぐではなく、カメラが収まるのを少し待ってから吹き出し（写真・エピソード）を出す（2026-09-27）
+      r += REPLAY_ARRIVAL_PAUSE_SEC;
+      st.rCaptionStart = r;
       var photoCount = Math.min((st.photos || []).length, REPLAY_MAX_PHOTOS);
       // 写真が無ければ固定3秒、写真があれば1枚2.5秒（最大4枚＝10秒）。文章の長さでは変えない（2026-09-27）
       var minSec = photoCount > 0 ? Math.min(photoCount * REPLAY_SEC_PER_PHOTO, REPLAY_MAX_CAPTION_SEC) : REPLAY_MIN_CAPTION_SEC;
-      if (dwell * REPLAY_SEC_PER_MIN < minSec) {
-        r += minSec - dwell * REPLAY_SEC_PER_MIN;
-        kf.push({ t: st.t + dwell, r: r });
-      }
+      // 吹き出しを見せている間（一時停止＋滞在）は、時計をこの予定の時刻のまま止める。以前はこの間も
+      // 旅の時計が数分進んで見えていた（例：13:00の予定なのに13:08と表示）。吹き出しが消えたら、
+      // 旅の時計をdwell分だけ一気に進めてから続きに移る（2026-09-27）。
+      var captionSec = Math.max(dwell * REPLAY_SEC_PER_MIN, minSec);
+      r += captionSec;
+      kf.push({ t: st.t, r: r });
+      // 吹き出しが消えた直後に、旅の時計をdwell分だけ一気に進める。同じrに2つの時刻（止まっていたst.tと、
+      // 進んだst.t+dwell）を置くと、ちょうどそのrを指したときにどちらを返すか決まらない（最後の予定など、
+      // このrで再生が止まるとき）ため、ごくわずかな実時間（見た目には分からない）だけ後ろにずらす
+      r += REPLAY_JUMP_EPS;
+      kf.push({ t: st.t + dwell, r: r });
       st.rDwellEnd = r;
       if (!next) return;
       var rest = gap - dwell;
       r += moving
-        ? REPLAY_MOVE_SEC
+        ? legArrivingAt[i + 1].moveSec
         : Math.min(rest * REPLAY_SEC_PER_MIN, REPLAY_IDLE_CAP_SEC);
     });
     legs.forEach(function (l) {
@@ -989,7 +1117,8 @@
     var s = tl.stops;
     var idx = -1;
     for (var i = 0; i < s.length; i++) { if (s[i].r <= r + 1e-9) idx = i; }
-    var captionIndex = idx >= 0 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
+    // 吹き出しは、着いた瞬間（idxになった瞬間）ではなく、少し間を置いた rCaptionStart から出す（2026-09-27）
+    var captionIndex = idx >= 0 && r >= s[idx].rCaptionStart - 1e-9 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
 
     var icon = null;
     for (var k = 0; k < tl.legs.length; k++) {
@@ -1144,7 +1273,11 @@
     (k.texts || []).forEach(function (t) { if (r[t[0]]) lines.push(t[1] + '：' + r[t[0]]); });
     if (kind === 'food') {
       var menu = (entry.costItems || []).filter(function (it) { return it.label && typeof it.amount === 'number'; })
-        .map(function (it) { return it.label + ' ' + yen(it.amount); });
+        .map(function (it) {
+          return it.label + ' ' + (it.currency && it.currency !== 'JPY'
+            ? costCurrencySymbol(it.currency) + it.amount.toFixed(2) + '（' + yen(costItemJpy(it)) + '）'
+            : yen(it.amount));
+        });
       if (menu.length) lines.push('メニュー：' + menu.join('／'));
       if (entry.waitTime) lines.push('待ち時間：' + entry.waitTime);
     }
@@ -1345,8 +1478,14 @@
     entryCostTotal: entryCostTotal,
     blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
+    costItemJpy: costItemJpy,
+    formatCostItemAmount: formatCostItemAmount,
+    COST_CURRENCIES: COST_CURRENCIES,
+    COST_CURRENCY_SYMBOLS: COST_CURRENCY_SYMBOLS,
     tripBalances: tripBalances,
     settlementPlan: settlementPlan,
+    roundToUnit: roundToUnit,
+    SETTLE_UNITS: SETTLE_UNITS,
     tripExpenseList: tripExpenseList,
     primaryLodgingName: primaryLodgingName,
     lodgingByNight: lodgingByNight,
@@ -1367,6 +1506,8 @@
     manualWeatherDisplay: manualWeatherDisplay,
     replayPlaceQuery: replayPlaceQuery,
     replayPlaceEntry: replayPlaceEntry,
+    hasBrokenMapQuery: hasBrokenMapQuery,
+    placeMapUrl: placeMapUrl,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
     replayStateAt: replayStateAt,
@@ -1376,6 +1517,8 @@
     isRouteDetourTooLong: isRouteDetourTooLong,
     geocodeNearIndexes: geocodeNearIndexes,
     planeArcPath: planeArcPath,
+    gentleCurvePath: gentleCurvePath,
+    legMoveSeconds: legMoveSeconds,
     parseMemo: parseMemo,
     transportLabel: transportLabel,
     minutesText: minutesText,
@@ -1759,26 +1902,59 @@
     showScreen('settlement');
   }
 
+  // 精算の端数（丸め）単位は旅行ごとの設定（trip.settleUnit）で、参加者全員で共有する
+  // （Walicaにならい1円／10円／100円から選べる。2026-09-27）。古い旅行データにはまだ
+  // フィールドが無いことがあるので、無ければ1円扱いにする。
+  function currentSettleUnit() {
+    var u = state.trip && state.trip.settleUnit;
+    return Core.SETTLE_UNITS.indexOf(u) !== -1 ? u : 1;
+  }
+
+  function renderSettleUnitPicker() {
+    var unit = currentSettleUnit();
+    $all('.settle-unit-opt', $('#settleUnitPicker')).forEach(function (btn) {
+      btn.classList.toggle('on', Number(btn.dataset.unit) === unit);
+    });
+  }
+
+  function saveSettleUnit(unit) {
+    if (!state.trip || currentSettleUnit() === unit) return;
+    var prevUnit = state.trip.settleUnit;
+    state.trip.settleUnit = unit; // 保存前に反映し、タップの反応を速くする（失敗したら戻す）
+    renderSettleUnitPicker();
+    renderSettlement();
+    api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', { settleUnit: unit })
+      .then(function (trip) { state.trip = trip; rememberTrip(trip); })
+      .catch(function () {
+        state.trip.settleUnit = prevUnit;
+        renderSettleUnitPicker();
+        renderSettlement();
+        alert('端数の単位を保存できませんでした。もう一度お試しください。');
+      });
+  }
+
   function renderSettlement() {
     var expenses = Core.tripExpenseList(state.blocks);
     var hasExpenses = expenses.length > 0;
     $('#settlementEmpty').hidden = hasExpenses;
     $('#settlementBody').hidden = !hasExpenses;
+    renderSettleUnitPicker();
     if (!hasExpenses) return;
 
+    var unit = currentSettleUnit();
     var balance = Core.tripBalances(state.trip, state.blocks);
-    var names = Object.keys(balance).filter(function (n) { return Math.round(balance[n]) !== 0; });
+    var names = Object.keys(balance).filter(function (n) { return Core.roundToUnit(balance[n], 1) !== 0; });
     // 貸し借りが無い（＝0円の）参加者も、参加していることが分かるよう一覧には残す
     (state.trip.companions || []).forEach(function (n) { if (names.indexOf(n) === -1) names.push(n); });
 
     $('#settlementBalances').innerHTML = names.map(function (name) {
-      var yen = Math.round(balance[name] || 0);
+      var yen = Core.roundToUnit(balance[name] || 0, 1);
       var cls = yen > 0 ? 'plus' : (yen < 0 ? 'minus' : '');
       var text = yen > 0 ? '+' + Core.formatYen(yen) + '（もらう）' : (yen < 0 ? '－' + Core.formatYen(-yen) + '（払う）' : '±¥0');
       return '<div class="balance-row ' + cls + '"><span class="name">' + escapeHtml(name) + '</span><span class="amount">' + escapeHtml(text) + '</span></div>';
     }).join('');
 
-    var plan = Core.settlementPlan(balance);
+    var plan = Core.settlementPlan(balance, unit);
     var planEl = $('#settlementPlanList');
     if (!plan.length) {
       planEl.innerHTML = '<p class="empty">貸し借りはありません。</p>';
@@ -1788,12 +1964,17 @@
           + '<span class="to">' + escapeHtml(p.to) + '</span><span class="amount">' + escapeHtml(Core.formatYen(p.amount)) + '</span></div>';
       }).join('');
     }
+    var roundNote = $('#settlementRoundNote');
+    roundNote.hidden = !(unit > 1 && plan.length);
+    if (unit > 1 && plan.length) {
+      roundNote.textContent = unit + '円単位に丸めています（受け取る人の合計が実際と少しずれることがあります）。';
+    }
 
     $('#settlementExpenses').innerHTML = expenses.map(function (e) {
       var splitText = e.splitAmong.length > 1 ? e.splitAmong.join('・') + 'で割り勘' : e.paidBy + 'の分';
       var dateText = e.date ? e.date.slice(5).replace('-', '/') : '';
       return '<div class="expense-row">' +
-        '<div class="expense-main"><span class="label">' + escapeHtml(e.label || '（内容未入力）') + '</span><span class="amount">' + escapeHtml(Core.formatYen(e.amount)) + '</span></div>' +
+        '<div class="expense-main"><span class="label">' + escapeHtml(e.label || '（内容未入力）') + '</span><span class="amount">' + escapeHtml(Core.formatCostItemAmount(e)) + '</span></div>' +
         '<div class="expense-sub">' + escapeHtml(dateText) + '　' + escapeHtml(e.paidBy) + 'が立替・' + escapeHtml(splitText) + '</div>' +
         '</div>';
     }).join('');
@@ -3530,7 +3711,7 @@
     var costHtml = costItems.length
       ? '<div class="cost-lines">' +
         costItems.map(function (it) {
-          return '<div class="cost-line"><span>' + escapeHtml(it.label) + '</span><span>' + escapeHtml(Core.formatYen(it.amount)) + '</span></div>';
+          return '<div class="cost-line"><span>' + escapeHtml(it.label) + '</span><span>' + escapeHtml(Core.formatCostItemAmount(it)) + '</span></div>';
         }).join('') +
         '<div class="cost-line total"><span>計</span><span>' + escapeHtml(Core.formatYen(Core.entryCostTotal(entry))) + '</span></div>' +
         '</div>'
@@ -3819,6 +4000,8 @@
     state.pendingVideos = [];
     state.formCostItems = entry ? (entry.costItems || []).map(function (it) {
       var copy = { label: it.label, amount: it.amount };
+      if (it.currency) copy.currency = it.currency;
+      if (typeof it.rate === 'number') copy.rate = it.rate;
       if (it.paidBy) copy.paidBy = it.paidBy;
       if (it.splitAmong && it.splitAmong.length) copy.splitAmong = it.splitAmong.slice();
       return copy;
@@ -3831,7 +4014,11 @@
     $('#entDetail').value = entry ? entry.detail : '';
     $('#entWaitTime').value = entry ? entry.waitTime : '';
     $('#entTime').value = entry ? entry.time : '';
-    $('#entMapUrl').value = entry ? entry.mapUrl : '';
+    // 地図のURLがクライアント側の不具合で壊れて保存されたもの（query=undefined,undefinedなど）は、
+    // そのまま出すと地図が開けないだけでなく、次に開いたときにも壊れたまま残ってしまう。
+    // 欄を空にして、選び直してもらうよう案内する（2026-09-27、大阪旅行で見つかった不具合）
+    var brokenMapUrl = !!(entry && entry.mapUrl && Core.hasBrokenMapQuery(entry.mapUrl));
+    $('#entMapUrl').value = entry && !brokenMapUrl ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
     $('#entMoreFields').open = !!(entry && (entry.comment || entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl ||
@@ -3840,7 +4027,7 @@
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
     placeCandidates = []; placeChoice = '';
-    $('#entPlaceStatus').textContent = '';
+    $('#entPlaceStatus').textContent = brokenMapUrl ? '地図のリンクが壊れていたので、選び直してください' : '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
@@ -4291,27 +4478,111 @@
   // どちらか曖昧になり、立て替え機能と併用すると二重に割ってしまう事故のもとだったため廃止した）。
   // 「立て替え」（誰が払った・誰と割るか）は任意項目。触らなければ、これまでどおり
   // 「本人の個人費用」として扱われ、割り勘の精算画面（貸し借り）には出てこない。
+  // 旅行ごとに「最後に選んだ通貨」を覚えておき、次の明細行の初期値にする（同じ旅行では
+  // 同じ通貨の支払いが続くことが多いため。トリップをまたいだ使い回しはしない）。
+  var LAST_COST_CURRENCY_PREFIX = 'tabilog:last-currency:';
+  // 外貨のレートを取りに行っている最中のPromise（idxごと）。保存（saveEntry）はこれの完了を待ってから、
+  // レートが入っているか確かめる（2026-09-27）
+  var pendingRateFetches = {};
+  function lastCostCurrencyForTrip() {
+    if (!state.trip) return '';
+    try { return localStorage.getItem(LAST_COST_CURRENCY_PREFIX + state.trip.id) || ''; } catch (e) { return ''; }
+  }
+  function rememberLastCostCurrency(code) {
+    if (!state.trip) return;
+    try { localStorage.setItem(LAST_COST_CURRENCY_PREFIX + state.trip.id, code); } catch (e) { /* 保存できなくても致命的ではない */ }
+  }
+
+  // 明細1行の.cost-rate-row（外貨のときだけ出す、レート表示・手直し欄）の要素参照。
+  // renderCostItems()のたびに作り直す（立て替えパネルが行の間に挟まるため、
+  // 「#entCostItemsの何番目の子か」では数えられない。行を作った時点の参照を直接持っておく）。
+  var costRateRowEls = [];
+
+  // 費用の明細（costItems）は、基本は「個人（またはそのサブグループ）が実際に払った金額」を
+  // そのまま入れる（CONTEXT.md参照）。駐車場代など全体でまとめて払ったものを人数で割りたい
+  // ときは、下記「立て替え」機能で全体の金額をそのまま入れ、払った人・割る人を選ぶ
+  // （以前あった「全体費用÷人数」電卓は、金額欄の意味が「個人費用」と「全体の金額」の
+  // どちらか曖昧になり、立て替え機能と併用すると二重に割ってしまう事故のもとだったため廃止した）。
+  // 「立て替え」（誰が払った・誰と割るか）は任意項目。触らなければ、これまでどおり
+  // 「本人の個人費用」として扱われ、割り勘の精算画面（貸し借り）には出てこない。
+  //
+  // 円以外の通貨（DAY31〜）：行ごとにcurrencyを選べる。円以外を選ぶと、その日（Blockの日付）の
+  // レートを/ratesから自動取得し（本人が金額を直せるのと同様、レートも直せる。カード明細の
+  // 実際のレートに合わせられるように）、精算はすべて円換算後の金額（costItemJpy）で行う。
   function renderCostItems() {
     var el = $('#entCostItems');
     el.innerHTML = '';
+    costRateRowEls = [];
+    var block = entryFormBlock();
+    var blockDate = (block && block.date) || '';
     state.formCostItems.forEach(function (item, idx) {
       var row = document.createElement('div');
       row.className = 'cost-item-row';
       var payerLabel = item.paidBy ? (item.paidBy + 'が立替') : '立て替えを設定';
+      var currency = item.currency || 'JPY';
+      var isForeign = currency !== 'JPY';
+      var isKnown = Core.COST_CURRENCIES.indexOf(currency) !== -1;
+      var showOther = item._customCurrency || !isKnown;
+      var selectVal = showOther ? '__other' : currency;
+      var options = Core.COST_CURRENCIES.map(function (c) {
+        return '<option value="' + c + '"' + (c === selectVal ? ' selected' : '') + '>' + (c === 'JPY' ? '円' : c) + '</option>';
+      }).join('') + '<option value="__other"' + (selectVal === '__other' ? ' selected' : '') + '>その他</option>';
       row.innerHTML =
         '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
-        '<input type="number" min="0" step="1" placeholder="円" value="' + (item.amount || '') + '">' +
+        '<input type="number" min="0" step="' + (isForeign ? '0.01' : '1') + '" placeholder="' + (isForeign ? '金額' : '円') + '" value="' + (typeof item.amount === 'number' && item.amount ? item.amount : '') + '">' +
+        '<select class="cost-currency-select">' + options + '</select>' +
+        '<input type="text" class="cost-currency-other" placeholder="例：ISK" maxlength="3" value="' + ((showOther && currency !== 'JPY') ? escapeHtml(currency) : '') + '"' + (showOther ? '' : ' hidden') + '>' +
         '<button type="button" aria-label="削除">×</button>' +
         '<div class="cost-item-row-actions">' +
           '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
-        '</div>';
+        '</div>' +
+        '<div class="cost-rate-row" hidden></div>';
       var inputs = row.querySelectorAll('input');
-      var amountInput = inputs[1];
-      inputs[0].addEventListener('input', function (e) { state.formCostItems[idx].label = e.target.value; });
+      var textInput = inputs[0], amountInput = inputs[1], otherInput = row.querySelector('.cost-currency-other');
+      var currencySelect = row.querySelector('.cost-currency-select');
+      var rateRow = row.querySelector('.cost-rate-row');
+      costRateRowEls[idx] = rateRow;
+
+      textInput.addEventListener('input', function (e) { state.formCostItems[idx].label = e.target.value; });
       amountInput.addEventListener('input', function (e) {
-        state.formCostItems[idx].amount = Math.max(0, parseInt(e.target.value, 10) || 0);
+        var cur = state.formCostItems[idx];
+        if ((cur.currency || 'JPY') === 'JPY') {
+          cur.amount = Math.max(0, parseInt(e.target.value, 10) || 0);
+        } else {
+          var v = parseFloat(e.target.value);
+          cur.amount = (isFinite(v) && v >= 0) ? v : 0;
+        }
         renderCostTotal();
+        updateRateRowConverted(idx);
       });
+
+      function applyCurrency(code) {
+        var cur = state.formCostItems[idx];
+        var prev = cur.currency || 'JPY';
+        delete cur._customCurrency;
+        if (code === prev) { renderCostItems(); return; }
+        cur.currency = code === 'JPY' ? undefined : code;
+        delete cur.rate; delete cur._rateDate; delete cur._rateSource;
+        cur.amount = code === 'JPY' ? Math.round(cur.amount || 0) : Math.round((cur.amount || 0) * 100) / 100;
+        if (code !== 'JPY') rememberLastCostCurrency(code);
+        renderCostItems();
+      }
+
+      currencySelect.addEventListener('change', function (e) {
+        var v = e.target.value;
+        if (v === '__other') {
+          state.formCostItems[idx]._customCurrency = true;
+          renderCostItems();
+          return;
+        }
+        applyCurrency(v);
+      });
+      otherInput.addEventListener('input', function (e) {
+        var code = e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+        if (e.target.value !== code) e.target.value = code;
+        if (code.length === 3) applyCurrency(code);
+      });
+
       row.querySelector('.cost-payer-toggle').addEventListener('click', function () {
         var existing = row.nextElementSibling;
         if (existing && existing.classList.contains('cost-payer-row')) { existing.remove(); return; }
@@ -4322,12 +4593,77 @@
         renderCostItems();
       });
       el.appendChild(row);
+      ensureRateForItem(idx, blockDate);
     });
     renderCostTotal();
   }
 
+  // rate入力欄以外は毎回作り直す（レート取得結果が変わったときだけ）が、換算後の金額（円）は
+  // 金額欄・レート欄の入力のたびに変わるので、フォーカスを奪わないようテキストだけ差し替える。
+  function updateRateRowConverted(idx) {
+    var rateRow = costRateRowEls[idx];
+    if (!rateRow) return;
+    var el = rateRow.querySelector('.cost-rate-converted');
+    if (el) el.textContent = '→ ' + Core.formatYen(Core.costItemJpy(state.formCostItems[idx]));
+  }
+
+  // 外貨の行だけ、その日（Blockの日付）のレートを/ratesから自動取得する。すでにrateを
+  // 持っていれば（保存済みの記録を編集中、など）取り直さない＝本人が直した値を尊重する。
+  function ensureRateForItem(idx, blockDate) {
+    var item = state.formCostItems[idx];
+    if (!item || !item.currency || item.currency === 'JPY') { buildRateRow(idx); return; }
+    if (typeof item.rate === 'number' && item.rate > 0) { buildRateRow(idx); return; }
+    buildRateRow(idx, { loading: true });
+    // 保存（saveEntry）は、これが終わるまで待ってから外貨のレートが入っているか確かめる（2026-09-27）
+    var req = api('/rates?date=' + encodeURIComponent(blockDate || '') + '&currency=' + encodeURIComponent(item.currency))
+      .then(function (res) {
+        var cur = state.formCostItems[idx];
+        if (!cur || cur.currency !== item.currency) return; // その間に通貨を変え直していたら古い結果は捨てる
+        cur.rate = res.rate;
+        cur._rateDate = res.date;
+        cur._rateSource = res.source;
+        buildRateRow(idx);
+        renderCostTotal();
+      })
+      .catch(function () { buildRateRow(idx, { failed: true }); });
+    pendingRateFetches[idx] = req.then(function () { delete pendingRateFetches[idx]; }, function () { delete pendingRateFetches[idx]; });
+  }
+
+  // レート行の中身を（レート欄の入力中を除いて）丸ごと作り直す。
+  function buildRateRow(idx, opts) {
+    opts = opts || {};
+    var rateRow = costRateRowEls[idx];
+    if (!rateRow) return;
+    var item = state.formCostItems[idx];
+    var currency = item && item.currency;
+    if (!item || !currency || currency === 'JPY') { rateRow.hidden = true; rateRow.innerHTML = ''; return; }
+    rateRow.hidden = false;
+    if (opts.loading) { rateRow.innerHTML = '<p class="hint">レートを取得中…</p>'; return; }
+    var hasRate = typeof item.rate === 'number' && item.rate > 0;
+    var warn = '';
+    // 保存しようとしたのにレートが入っていないとき、行のすぐ下に出す（saveEntry。2026-09-27）
+    if (opts.blockedSave) warn = 'レートを入れてください（1 ' + currency + ' = ◯円）';
+    else if (opts.failed || !hasRate) warn = 'レートを取得できませんでした。手入力してください。';
+    else if (item._rateSource === 'currency-api-latest') warn = 'この日のレートが無いため最新のレートです。明細に合わせて直してください。';
+    var dateText = item._rateDate ? item._rateDate.slice(0, 4) + '/' + item._rateDate.slice(5, 7) + '/' + item._rateDate.slice(8, 10) : '';
+    var rateLine = hasRate
+      ? ('1 ' + currency + ' = ' + item.rate.toLocaleString('ja-JP', { maximumFractionDigits: 4 }) + '円' + (dateText ? '（' + dateText + 'のレート）' : ''))
+      : ('1 ' + currency + ' のレートを入力してください');
+    rateRow.innerHTML =
+      '<div class="cost-rate-line">' + escapeHtml(rateLine) + '</div>' +
+      '<div class="cost-rate-edit"><span>1 ' + escapeHtml(currency) + ' =</span>' +
+      '<input type="number" class="cost-rate-input" step="0.0001" min="0" value="' + (hasRate ? item.rate : '') + '"><span>円</span></div>' +
+      '<div class="cost-rate-converted">→ ' + escapeHtml(Core.formatYen(Core.costItemJpy(item))) + '</div>' +
+      (warn ? '<p class="hint cost-rate-warn">' + escapeHtml(warn) + '</p>' : '');
+    rateRow.querySelector('.cost-rate-input').addEventListener('input', function (e) {
+      item.rate = parseFloat(e.target.value) || 0;
+      updateRateRowConverted(idx);
+      renderCostTotal();
+    });
+  }
+
   function renderCostTotal() {
-    var total = state.formCostItems.reduce(function (s, it) { return s + (it.amount || 0); }, 0);
+    var total = state.formCostItems.reduce(function (s, it) { return s + Core.costItemJpy(it); }, 0);
     $('#entCostTotal').textContent = state.formCostItems.length ? '計 ' + Core.formatYen(total) : '';
   }
 
@@ -4349,8 +4685,18 @@
       $('#btnScanReceipt').disabled = false;
       var items = (res && res.items) || [];
       if (!items.length) { status.textContent = '品目を読み取れませんでした。写真を変えてお試しください。'; return; }
+      // レシート読み取り結果の通貨は、今このフォームで使っている通貨（この旅行で最後に選んだ
+      // 通貨。無ければ円）に合わせる（読み取り自体はまだ通貨を判定していないため）。
+      var scanCurrency = lastCostCurrencyForTrip();
       items.forEach(function (it) {
-        state.formCostItems.push({ label: (it.label || '').trim(), amount: Math.max(0, Math.round(it.amount || 0)) });
+        var newItem = { label: (it.label || '').trim() };
+        if (scanCurrency && scanCurrency !== 'JPY') {
+          newItem.currency = scanCurrency;
+          newItem.amount = Math.max(0, Math.round((it.amount || 0) * 100) / 100);
+        } else {
+          newItem.amount = Math.max(0, Math.round(it.amount || 0));
+        }
+        state.formCostItems.push(newItem);
       });
       renderCostItems();
       status.textContent = items.length + '件の明細を追加しました。内容を確認してください。';
@@ -4378,6 +4724,10 @@
   var PLACE_GOOGLE = 'google';
   var placeChoice = ''; // 選んでいる候補の番号（文字列）か PLACE_GOOGLE
   var placeSessionToken = ''; // Places API (New) のAutocomplete〜Details一連の呼び出しをまとめる印（docs/adr/0011）
+  // 座標を取りに行っている（ensureSelectedPlaceCoordsが返した）Promise。保存（saveEntry）は、これが
+  // 終わるのを待ってから地図欄を確定させる（届く前に保存すると、座標付きの正しいURLではなく
+  // 検索文字列のURLで保存されてしまうため。2026-09-27）
+  var placeCoordsPending = null;
 
   // 検索を始めるたびに新しく作る（1検索＝1セッションのほうが、Autocompleteの無料枠の数え方に合うため）。
   // crypto.randomUUIDが無い古いWebViewのための保険であって、暗号的な強さは求めていない。
@@ -4396,9 +4746,10 @@
     if (!p || (isFinite(p.lat) && isFinite(p.lng)) || !p.placeId) return Promise.resolve(p);
     var status = $('#entPlaceStatus');
     status.textContent = '場所を確かめています…';
-    return api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(placeSessionToken))
+    var req = api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(placeSessionToken))
       .then(function (res) {
-        if (res && res.found) {
+        // res.found でも座標が数値でなければ（壊れた応答の保険）、undefined/NaNのまま入れない
+        if (res && res.found && isFinite(res.lat) && isFinite(res.lng)) {
           p.lat = res.lat;
           p.lng = res.lng;
           if (res.address && !p.address) p.address = res.address;
@@ -4409,6 +4760,8 @@
         status.textContent = '場所の座標を取得できませんでした。';
         return p;
       });
+    placeCoordsPending = req.then(function (r) { placeCoordsPending = null; return r; });
+    return req;
   }
 
   function renderPlaceCandidates(place) {
@@ -4536,18 +4889,48 @@
   // 自動で地図欄のURLを埋める（以前は「このURLを地図欄に入れる」ボタンを押す手順が要ったが、
   // 押し忘れて地図欄が空のまま保存されることがあったため、2026-09-26に自動化した）。
   // 座標がまだ無ければ（「Googleマップで検索」を選んでいるときなど）検索した文字列そのままで検索するURLにする。
+  // 座標（p.lat/p.lng）が数値として揃っているときだけ座標のURLにする。まだ座標が届いていない・
+  // 壊れているとき（undefined/NaN）は、検索した文字列そのままのURLにする（undefined/NaNを含む
+  // URLは絶対に書き込まない。2026-09-27）
   function applySelectedPlaceToMapUrl() {
-    var p = selectedPlace();
-    var q = (p && isFinite(p.lat) && isFinite(p.lng)) ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
-    if (!q) return;
-    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+    var url = Core.placeMapUrl(selectedPlace(), $('#entPlaceSearch').value);
+    if (!url) return;
+    $('#entMapUrl').value = url;
+  }
+
+  // 外貨の行で、まだレートが（自動取得も手入力も）入っていないもの。保存を止める対象（2026-09-27）
+  function costItemsMissingRate() {
+    return state.formCostItems.map(function (it, idx) { return { it: it, idx: idx }; })
+      .filter(function (x) { return x.it.currency && x.it.currency !== 'JPY' && !(typeof x.it.rate === 'number' && x.it.rate > 0); });
   }
 
   function saveEntry() {
     var status = $('#entFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
-    // 保険：候補を選んだのに地図欄が空のまま保存されそうなら、ここで埋める
-    if (!$('#entMapUrl').value.trim() && selectedPlace()) applySelectedPlaceToMapUrl();
+    status.textContent = '確認中…';
+    // 座標を取りに行っている最中（候補を選んだ直後など）なら、届くのを待ってから地図欄を確定させる。
+    // 待たずに保存すると、座標付きの正しいURLではなく検索文字列のURLで保存されてしまう（2026-09-27）
+    var missingRate = costItemsMissingRate();
+    Promise.all(
+      [placeCoordsPending || Promise.resolve()].concat(missingRate.map(function (x) { return pendingRateFetches[x.idx] || Promise.resolve(); }))
+    ).then(function () {
+      // 保険：候補を選んだのに地図欄が空のまま保存されそうなら、ここで埋める
+      if (!$('#entMapUrl').value.trim() && selectedPlace()) applySelectedPlaceToMapUrl();
+      // 外貨のレートが（待っても）入っていなければ、ここで保存を止め、行のすぐ下に案内を出す
+      // （以前は「保存に失敗しました」という分かりにくい表示になっていた）
+      var stillMissing = costItemsMissingRate();
+      if (stillMissing.length) {
+        stillMissing.forEach(function (x) { buildRateRow(x.idx, { blockedSave: true }); });
+        status.textContent = 'レートを入れてください（1 ' + stillMissing[0].it.currency + ' = ◯円）';
+        var rowEl = costRateRowEls[stillMissing[0].idx];
+        if (rowEl && rowEl.scrollIntoView) rowEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      continueSaveEntry(status);
+    });
+  }
+
+  function continueSaveEntry(status) {
     var author = $('#entAuthor').value.trim();
     status.textContent = '保存中…';
 
@@ -4557,7 +4940,11 @@
       detail: $('#entDetail').value.trim(),
       costItems: state.formCostItems.filter(function (it) { return it.label.trim() || it.amount; })
         .map(function (it) {
-          var out = { label: it.label.trim() || '費用', amount: it.amount || 0 };
+          var currency = (it.currency && it.currency !== 'JPY') ? it.currency : undefined;
+          var amount = currency ? Math.round((it.amount || 0) * 100) / 100 : Math.round(it.amount || 0);
+          var out = { label: it.label.trim() || '費用', amount: amount };
+          if (currency) out.currency = currency;
+          if (currency && typeof it.rate === 'number' && it.rate > 0) out.rate = Math.round(it.rate * 10000) / 10000;
           if (it.paidBy) out.paidBy = it.paidBy;
           if (it.splitAmong && it.splitAmong.length) out.splitAmong = it.splitAmong;
           return out;
@@ -5009,11 +5396,15 @@
     });
   }
 
-  // 移動手段が車・タクシー・バス・徒歩・自転車の区間は、実際の道路に沿った道のりをWorker（/route）に聞き、
-  // その区間の path にする（Core.replayStateAt と線の描画が、直線の代わりにこれをたどる。docs/adr/0008）。
-  // 取れなかった区間は、これまでどおり直線のまま。
+  // 移動手段が車・タクシー・バス・徒歩・自転車・電車（新幹線・地下鉄含む）の区間は、実際の道路・線路に
+  // 沿った道のりをWorker（/route）に聞き、その区間の path にする（Core.replayStateAt と線の描画が、
+  // Core側で先に用意した「やわらかい曲線」の代わりにこれをたどる。docs/adr/0008）。
+  // 取れなかった区間は、Core.buildReplayTimelineがあらかじめ用意したやわらかい曲線のまま（直線には戻さない。
+  // 「旅は全部必ずつなげてほしい」という声より、2026-09-27）。
   // 車ルートが直線距離よりずっと長い（Core.isRouteDetourTooLong）ときは、歩行者専用の目的地（階段など）に
-  // 車で大回りしている疑いがあるので、徒歩で調べ直す。それでも長ければ直線に戻す（2026-09-26）。
+  // 車で大回りしている疑いがあるので、徒歩で調べ直す。それでも長ければ、やわらかい曲線に戻す（2026-09-26）。
+  // 電車・新幹線・地下鉄（rail）は、BRouterの公開サーバーで線路が見つからないことがあるため、見つからなければ
+  // 車の道のりを見た目の近似として使う（オーナー承認、2026-09-27）。それも見つからなければやわらかい曲線のまま。
   function routeQuery(profile, a, b) {
     return '/route?profile=' + profile +
       '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
@@ -5037,6 +5428,11 @@
             var km2 = res2 && res2.found ? (res2.distance || 0) / 1000 : null;
             return (res2 && res2.found && !Core.isRouteDetourTooLong(straightKm, km2)) ? res2 : null;
           });
+        }
+        // 線路の道のりが見つからなければ、車の道のりを見た目の近似として調べ直す（それでも見つからなければ
+        // やわらかい曲線のまま。距離1本のBRouter公開サーバー問い合わせに、車1本を足すだけなので許容範囲）
+        if (profile === 'rail' && !(res && res.found)) {
+          return api(routeQuery('car', a, b)).catch(function () { return null; });
         }
         return res;
       }).then(function (res) {
@@ -5644,6 +6040,10 @@
     initMediaViewerGestures();
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
     $('#btnOpenSettlement').addEventListener('click', openSettlement);
+    $('#settleUnitPicker').addEventListener('click', function (e) {
+      var b = e.target.closest('.settle-unit-opt');
+      if (b) saveSettleUnit(Number(b.dataset.unit));
+    });
     $('#filterCompanion').addEventListener('change', function (e) { state.homeFilters.companion = e.target.value; renderHomeTripList(); });
     $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
@@ -5739,7 +6139,10 @@
     $('#entTravelDepart').addEventListener('input', updateTravelDuration);
     $('#entTravelArrive').addEventListener('input', updateTravelDuration);
     $('#btnAddCostItem').addEventListener('click', function () {
-      state.formCostItems.push({ label: '', amount: 0 });
+      var newItem = { label: '', amount: 0 };
+      var lastCur = lastCostCurrencyForTrip();
+      if (lastCur && lastCur !== 'JPY') newItem.currency = lastCur;
+      state.formCostItems.push(newItem);
       renderCostItems();
     });
 
