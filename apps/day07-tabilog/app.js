@@ -4918,7 +4918,10 @@
         // 「移動」をもう一度押しても、選んでいる出発／到着はそのまま
         if (b.dataset.cat === 'transport' && isMove) return;
         state.formCategory = b.dataset.cat;
+        // 移動（出発／到着）以外の種類に変えたら、選んでいた移動手段（飛行機など）は消す
+        if (state.formCategory !== 'transport' && state.formCategory !== 'arrival') state.formTransport = '';
         renderCategoryChips();
+        renderTransportChips();
       });
     });
     $all('.move-dir-tab', el).forEach(function (b) {
@@ -4961,7 +4964,9 @@
       time: $('#blkTime').value || '',
       label: label,
       category: state.formCategory,
-      transport: $('#blkMoveFields').hidden ? '' : (state.formTransport || ''),
+      // 移動手段を保存するのは種類が「移動」（出発／到着）のときだけ。他の種類なら、以前のデータで
+      // 移動手段が付いていても保存し直す時点で消す
+      transport: (state.formCategory === 'transport' || state.formCategory === 'arrival') ? (state.formTransport || '') : '',
       moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
     };
     var req = state.editingBlockId
