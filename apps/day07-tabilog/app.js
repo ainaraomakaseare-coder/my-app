@@ -1182,6 +1182,20 @@
     return r.path;
   }
 
+  // 道のり（OSRM・Google・線路）は、出発地・到着地のいちばん近い道路や線路から始まり・終わる。山の上
+  // （コルコバードの丘）や広い敷地の中の地点だと、道路の端がピンから離れていて、青い線がピンから始まらず
+  // 「最初の部分が見えない」ように見えていた（2026-09-27）。道のりの両端がピンから離れていれば、ピンとの
+  // 間を線でつなぐ（アイコンもピンから動き出す）。
+  var PATH_JOIN_MIN_KM = 0.02;
+  function joinPathEnds(path, a, b) {
+    if (!Array.isArray(path) || path.length < 2 || !a || !b) return path;
+    var out = path.slice();
+    var first = { lat: out[0][0], lng: out[0][1] }, last = { lat: out[out.length - 1][0], lng: out[out.length - 1][1] };
+    if (distanceKm(a, first) > PATH_JOIN_MIN_KM) out.unshift([a.lat, a.lng]);
+    if (distanceKm(last, b) > PATH_JOIN_MIN_KM) out.push([b.lat, b.lng]);
+    return out;
+  }
+
   function routeProfileFor(transport) {
     if (transport === 'car' || transport === 'taxi' || transport === 'bus') return 'car';
     if (transport === 'walk') return 'foot';
@@ -1640,6 +1654,7 @@
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
+    joinPathEnds: joinPathEnds,
     isInJapan: isInJapan,
     railBBox: railBBox,
     railOverpassQuery: railOverpassQuery,
@@ -5595,11 +5610,15 @@
         }
         return res;
       }).then(function (res) {
-        if (res && res.found && res.path && res.path.length > 1) { l.path = res.path; if (onRoute) onRoute(l); }
+        if (res && res.found && res.path && res.path.length > 1) {
+          l.path = Core.joinPathEnds(res.path, tl.stops[l.from], tl.stops[l.to]);
+          if (onRoute) onRoute(l);
+        }
       });
     }));
   }
 
+  var REPLAY_PLANE_DASH = '8 10';
   var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
   var PAUSE_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4.5" width="3.5" height="11" rx="1"/><rect x="11.5" y="4.5" width="3.5" height="11" rx="1"/></svg>';
   var replayMap = null, replayLayer = null, replay = null, replayToken = null;
@@ -5709,9 +5728,12 @@
       var plane = l.transport === 'plane';
       var full = l.path || null;
       replay.lines[k] = {
-        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '6 8' : null }),
+        // 飛行機の点線は、薄い青（これから通る道）と濃い青（進んだところ）で点線の間隔をそろえる。以前は
+        // '6 8' と '8 10' で違っていたため、濃い青の点が薄い青の点からずれて見えていた（2026-09-27）。
+        // 線の形（l.path）は両方同じなので、間隔がそろえば濃い青がぴったり重なる。
+        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null }),
         casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
-        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '8 10' : null })
+        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null })
       };
     });
     replay.mapAnimating = false;

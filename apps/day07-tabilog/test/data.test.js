@@ -930,5 +930,13 @@ eq('buildReplayTimeline: 飛行機はLA→ラスベガス（約370km）に付き
   lasTl.legs.map(function (l) { return l.transport; }), ['plane', 'car']);
 ok('buildReplayTimeline: 空港→フラミンゴは道のりを調べる手段（車）になる', T.routeProfileFor(lasTl.legs[1].transport) === 'car');
 
+/* ---- 道のりの両端をピンにつなぐ（コルコバードの丘→大聖堂で最初の部分が見えない） ---- */
+var corco = { lat: -22.9519, lng: -43.2105 }, cated = { lat: -22.9109, lng: -43.1806 };
+var roadPath = [[-22.9530, -43.2080], [-22.9300, -43.1950], [-22.9110, -43.1807]]; // 道路は山頂から約280m離れた所から始まる
+var joined = T.joinPathEnds(roadPath, corco, cated);
+eq('joinPathEnds: 道路の端がピンから離れていれば、ピンから始まるよう先頭に足す', joined[0], [-22.9519, -43.2105]);
+eq('joinPathEnds: 到着側はピンとの差が20m未満ならそのまま（点を足さない）', joined.length, 4);
+eq('joinPathEnds: 両端がピンに近ければ変えない', T.joinPathEnds([[1, 2], [3, 4]], { lat: 1, lng: 2 }, { lat: 3, lng: 4 }).length, 2);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
