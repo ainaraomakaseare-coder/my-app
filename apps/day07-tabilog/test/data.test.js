@@ -1009,5 +1009,21 @@ var visibleSec = function (st) { return st.rDwellEnd - st.rCaptionStart - T.REPL
 ok('buildReplayTimeline: 写真1枚の地点も、吹き出しが見えている時間は3秒以上', visibleSec(capTl.stops[0]) >= 3 - 1e-6);
 ok('buildReplayTimeline: エピソードだけの地点も、吹き出しが見えている時間は3秒以上', visibleSec(capTl.stops[1]) >= 3 - 1e-6);
 
+/* ---- 時差：リオ→イグアス→ブエノスアイレス→エル・カラファテは、国やタイムゾーン名が変わっても時差は同じ（UTC-3） ---- */
+var sa = [
+  { id: 'rio', date: '2026-03-05', time: '10:00', category: 'sightseeing' },
+  { id: 'rioD', date: '2026-03-06', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'igu', date: '2026-03-06', time: '12:00', category: 'sightseeing' },
+  { id: 'iguD', date: '2026-03-07', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'bue', date: '2026-03-07', time: '12:00', category: 'sightseeing' },
+  { id: 'bueD', date: '2026-03-08', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'cal', date: '2026-03-08', time: '13:00', category: 'sightseeing' }
+].map(function (b, i) { b.createdAt = String(300 + i); return b; });
+var saZ = T.assignBlockZones(sa, { rio: 'America/Sao_Paulo', igu: 'America/Argentina/Cordoba', bue: 'America/Argentina/Buenos_Aires', cal: 'America/Argentina/Rio_Gallegos' }, {}, 'Asia/Tokyo');
+eq('時差：イグアス・ブエノスアイレス・エル・カラファテはそれぞれの土地のタイムゾーンになる', [saZ.igu, saZ.bue, saZ.cal], ['America/Argentina/Cordoba', 'America/Argentina/Buenos_Aires', 'America/Argentina/Rio_Gallegos']);
+var saSorted = T.sortBlocks(T.applyBlockZones(sa.map(function (b) { return Object.assign({}, b); }), saZ));
+eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラファテはどこもUTC-3なので「ここから現地時間」は出ない',
+  saSorted.filter(function (b, i) { return i > 0 && b._offset !== saSorted[i - 1]._offset; }).length, 0);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
