@@ -905,7 +905,3 @@ body.viewer-open { overflow: hidden; }
 .toast.toast-show { opacity: 1; transform: translate(-50%, 0); }
 .toast.toast-hide { opacity: 0; transform: translate(-50%, 8px); }
 
-/* 時差の並びを調べる（開発用・一時的） */
-.zone-diag-btn { display: block; margin: 16px auto 0; background: none; border: none; color: var(--ink-muted); font-size: 12px; text-decoration: underline; }
-.zone-diag { position: fixed; inset: 0; z-index: 3000; background: var(--bg, #F5F6F8); padding: calc(env(safe-area-inset-top) + 16px) 16px 16px; display: flex; flex-direction: column; gap: 10px; }
-.zone-diag textarea { flex: 1; width: 100%; font: 11px/1.5 ui-monospace, Menlo, monospace; padding: 10px; border-radius: 10px; border: 1px solid #ddd; }

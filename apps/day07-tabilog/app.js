@@ -3972,63 +3972,6 @@
     multiDayBtn.innerHTML = MIC_ICON + '<span>複数日をまとめて記録する</span>';
     multiDayBtn.addEventListener('click', function () { openVoiceEntryForm(true); });
     el.appendChild(multiDayBtn);
-
-    // 時差の並びを調べるための一時的なボタン（2026-09-27。実データで並びが直らない原因を確かめるため。原因が分かったら消す）
-    if (blocks.length) {
-      var diagBtn = document.createElement('button');
-      diagBtn.className = 'zone-diag-btn';
-      diagBtn.textContent = '時差の並びを調べる（開発用）';
-      diagBtn.addEventListener('click', function () { showZoneDiagnostics(blocks[0].date); });
-      el.appendChild(diagBtn);
-    }
-  }
-
-  function zoneDiagnosticsText(date) {
-    var info = state.zoneInfo || { byBlock: {}, byDate: {} };
-    var zones = Core.assignBlockZones(state.blocks, info.byBlock, info.byDate, DEVICE_TZ, info.byArrive);
-    var short = function (tz) { return tz ? String(tz).replace(/^.*\//, '') : '-'; };
-    var dates = (state.days || []).map(function (d) { return d.date; });
-    var lines = ['device=' + DEVICE_TZ,
-      'day=' + date + ' dayZone=' + short((info.byDate || {})[date]), 'loaded=' + !!info.byArrive];
-    // 旅行全体を出す（その日だけでは再現できなかったため。ほかの日の予定も時差の決め方に効く）
-    var byDate = info.byDate || {};
-    lines.push('days=' + Object.keys(byDate).sort().map(function (d) { return d.slice(5) + ':' + short(byDate[d]); }).join(' '));
-    Core.sortBlocks(state.blocks).forEach(function (b, i) {
-      var pe = Core.replayPlaceEntry(b), arr = Core.travelArrival(b);
-      lines.push([
-        'B' + i, (b.date || 'nodate').slice(5), b.time || '--:--', JSON.stringify(b.transport === undefined ? 'u' : b.transport), b.category || '', (b.label || '').slice(0, 16),
-        'map=' + (pe ? (typeof pe.lat === 'number' ? pe.lat.toFixed(2) + ',' + pe.lng.toFixed(2) : 'url') : 'なし'),
-        'own=' + short((info.byBlock || {})[b.id]),
-        'arr=' + (arr ? (typeof arr.lat === 'number' ? '座標' : 'url') + '/' + short((info.byArrive || {})[b.id]) + '/' + (arr.time || '') : 'なし'),
-        'mv=' + (b.moveMinutes || ''), 'c=' + (b.createdAt || '').slice(5, 16),
-        '→' + short(zones[b.id])
-      ].join(' '));
-    });
-    void dates;
-    return lines.join('\n');
-  }
-  function showZoneDiagnostics(date) {
-    var text = zoneDiagnosticsText(date);
-    var wrap = document.createElement('div');
-    wrap.className = 'zone-diag';
-    var ta = document.createElement('textarea');
-    ta.readOnly = true;
-    ta.value = text;
-    var copy = document.createElement('button');
-    copy.className = 'btn primary wide';
-    copy.textContent = 'コピーする';
-    copy.addEventListener('click', function () {
-      ta.select();
-      var done = function () { copy.textContent = 'コピーしました'; };
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { try { document.execCommand('copy'); done(); } catch (e) {} });
-      else { try { document.execCommand('copy'); done(); } catch (e) {} }
-    });
-    var close = document.createElement('button');
-    close.className = 'btn ghost';
-    close.textContent = '閉じる';
-    close.addEventListener('click', function () { wrap.remove(); });
-    wrap.appendChild(ta); wrap.appendChild(copy); wrap.appendChild(close);
-    document.body.appendChild(wrap);
   }
 
   var DRAG_HANDLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="5" r="1.4"/><circle cx="14" cy="5" r="1.4"/><circle cx="6" cy="10" r="1.4"/><circle cx="14" cy="10" r="1.4"/><circle cx="6" cy="15" r="1.4"/><circle cx="14" cy="15" r="1.4"/></svg>';
