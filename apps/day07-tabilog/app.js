@@ -228,7 +228,7 @@
   // 多く成り立つもの、②その中で、予定を入れた（または並べ替えた）順（createdAt）といちばん食い違わないもの、
   // ③それでも決まらなければ前の日から続くタイムゾーンを選ぶ。成田発・ロサンゼルス着のどちらも①は成り立つが、
   // ②で「発を先に入れた」旅行としての順が選ばれる。
-  function assignBlockZones(blocks, byBlock, byDate, fallback) {
+  function orderZonesByCandidates(blocks, byBlock, byDate, fallback) {
     byBlock = byBlock || {}; byDate = byDate || {};
     var copies = (blocks || []).map(function (b) { return Object.assign({}, b); });
     var byDay = {}, days = [];
@@ -323,6 +323,120 @@
     });
     return out;
   }
+  // ---- 時差は「移動」のところでしか変わらない（2026-09-27、オーナーの方針） ----
+  // 予定1つ1つの地図からタイムゾーンを決めると、地図が1つ別の国と判定されただけで（ロサンゼルスの
+  // 「チャイナタウン」が韓国の仁川になる、など）そこだけ時差が入って戻る。また「香港着」「香港発」のような
+  // 移動の予定の読み方や、地図の無い予定に使う「その日の場所（天気の場所）」のずれで、リオのホテルから時差が
+  // 入る・ニューヨークで「日本との時差ゼロ」が出る、などがあった。そこで旅を「かたまり」に分け、かたまりの
+  // 中は同じタイムゾーンにする。かたまりの切れ目は次のところだけ：
+  //  ① 飛行機の移動の予定のあと（移動の予定自身は出発地＝前のかたまり）
+  //  ② 移動手段が飛行機の予定（「ここまで飛行機で来た」）の前
+  //  ③ 移動の予定の地図のタイムゾーンが、今のかたまりと違うとき（移動先の地図とみなし、そのあとで切る）
+  //  ④ 地図のタイムゾーンが変わり、次の地図でも変わったまま（1つだけ違うものは判定違いとみなして無視）
+  // かたまりのタイムゾーンは、その中の地図（移動の予定以外）のもの。地図が無いかたまりは、その日の場所→
+  // 前のかたまり→端末のタイムゾーンの順。並び順は、日付変更線をまたぐ日の順番を直すために、これまでの
+  // 決め方（orderZonesByCandidates）で一度タイムゾーンを付けて並べたものを使う。
+  function assignBlockZones(blocks, byBlock, byDate, fallback) {
+    byDate = byDate || {};
+    var copies = (blocks || []).map(function (b) { var c = Object.assign({}, b); delete c._offset; delete c._tz; return c; });
+    // 1つだけ前後と違う地図（判定違い）は、並び替えより先に、日付と現地時刻の素直な順で見つけて外す
+    // （判定違いのタイムゾーンで並べると、その予定が前後から離れてしまい見つけられないため）
+    byBlock = withoutZoneOutliers(sortBlocks(copies), byBlock || {});
+    var zones = orderZonesByCandidates(copies, byBlock, byDate, fallback);
+    for (var round = 0; round < 2; round++) {
+      applyBlockZones(copies, zones);
+      zones = segmentZones(sortBlocks(copies), byBlock, byDate, fallback);
+    }
+    return zones;
+  }
+
+  // 地図のタイムゾーン（移動の予定以外）のうち、前後の地図と違うのが1つだけのもの（前後は同じ・間に飛行機が
+  // 無い）を判定違いとみなして外した byBlock を返す（ロサンゼルスの「チャイナタウン」が仁川になる、など）
+  function withoutZoneOutliers(order, byBlock) {
+    var isMove = function (b) { return b.category === 'transport'; };
+    var ev = [];
+    order.forEach(function (b, i) { if (!isMove(b) && byBlock[b.id]) ev.push({ i: i, z: byBlock[b.id], id: b.id }); });
+    var planeBetween = function (a, c) {
+      for (var x = a + 1; x <= c; x++) { var o = order[x]; if (o && o.transport === 'plane') return true; }
+      return false;
+    };
+    var out = Object.assign({}, byBlock);
+    ev.forEach(function (e, k) {
+      var prev = ev[k - 1], next = ev[k + 1];
+      if (prev && next && prev.z === next.z && e.z !== prev.z && !planeBetween(prev.i, e.i) && !planeBetween(e.i, next.i)) {
+        delete out[e.id];
+      }
+    });
+    return out;
+  }
+
+  function segmentZones(order, byBlock, byDate, fallback) {
+    var isMove = function (b) { return b.category === 'transport'; };
+    var evidence = {};
+    order.forEach(function (b, i) { if (!isMove(b) && byBlock[b.id]) evidence[i] = byBlock[b.id]; });
+    var segs = [], cur = { blocks: [], zone: '' }, lastZone = fallback || '';
+    var close = function () {
+      if (cur.blocks.length) { segs.push(cur); if (cur.zone) lastZone = cur.zone; }
+      cur = { blocks: [], zone: '' };
+    };
+    order.forEach(function (b, i) {
+      if (!isMove(b) && b.transport === 'plane' && cur.blocks.length) close();
+      var z = evidence[i];
+      if (z) {
+        if (cur.zone && z !== cur.zone) {
+          // ④ 変わったまま続く。直前の移動の予定があればそのあとで、無ければこの予定の前で切る
+          var cut = cur.blocks.length;
+          for (var k = cur.blocks.length - 1; k >= 0; k--) {
+            if (isMove(cur.blocks[k])) { cut = k + 1; break; }
+            if (evidence[order.indexOf(cur.blocks[k])]) break;
+          }
+          var tail = cur.blocks.slice(cut);
+          cur.blocks = cur.blocks.slice(0, cut);
+          close();
+          cur.blocks = tail;
+        }
+        if (!cur.zone) cur.zone = z;
+      }
+      cur.blocks.push(b);
+      if (isMove(b)) {
+        var own = byBlock[b.id] || '';
+        if (b.transport === 'plane') {
+          // 飛行機の予定の地図が、いまいる場所（出発地）と同じタイムゾーンなら出発地の地図。違えば到着地の地図
+          var from = cur.zone || lastZone;
+          close(); // ①
+          if (own && own !== from) cur.zone = own;
+        } else if (own && cur.zone && own !== cur.zone) {
+          close(); // ③
+          cur.zone = own;
+        } else if (own && !cur.zone) {
+          cur.zone = own;
+        }
+      }
+    });
+    close();
+    var out = {}, prevZone = '';
+    segs.forEach(function (seg) {
+      var zone = seg.zone;
+      var departsByPlane = seg.blocks.some(function (b) { return isMove(b) && b.transport === 'plane'; });
+      if (!zone && departsByPlane) {
+        // 地図が無く、飛行機で出発するだけのかたまり（旅の最初の「成田から出発」など）は、いまいる場所＝
+        // 前のかたまり（旅の最初なら端末のタイムゾーン）。その日の場所は、空港の地図から到着地が入って
+        // いることがあるので使わない
+        zone = prevZone || fallback || '';
+      }
+      if (!zone) {
+        // 地図が無いかたまり：その日の場所のうち多いもの→前のかたまり→端末のタイムゾーン
+        var count = {};
+        seg.blocks.forEach(function (b) { var d = byDate[b.date]; if (d) count[d] = (count[d] || 0) + 1; });
+        Object.keys(count).forEach(function (d) { if (!zone || count[d] > count[zone]) zone = d; });
+        if (!zone) zone = prevZone || fallback || '';
+      }
+      seg.blocks.forEach(function (b) { out[b.id] = zone; });
+      prevZone = zone;
+    });
+    return out;
+  }
+
 
   // 予定に _tz・_offset（分）を付ける（画面の中だけの値で、保存はしない）。zonesが無ければ外す。
   function applyBlockZones(blocks, zones) {

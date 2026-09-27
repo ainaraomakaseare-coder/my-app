@@ -742,8 +742,11 @@ var nextDayZones = T.assignBlockZones([
   { id: 'd1a', date: '2026-01-01', time: '20:00', category: 'food' },
   { id: 'd2a', date: '2026-01-02', time: '09:00', category: 'food' }
 ], { d1a: 'Asia/Tokyo' }, { '2026-01-02': 'America/Los_Angeles' }, 'Asia/Tokyo');
-eq('assignBlockZones: 翌日最初の地図の無い予定は前日を引き継がず、その日の場所を使う',
-  nextDayZones, { d1a: 'Asia/Tokyo', d2a: 'America/Los_Angeles' });
+// 2026-09-27の方針変更（時差は移動のところでしか変わらない）：移動の予定が無ければ、翌日の地図の無い予定も
+// 同じかたまりの時差のまま。以前は「その日の場所」を使っていたため、その日の場所が日本になっていると
+// ニューヨークの予定に「日本との時差ゼロ」が出ていた
+eq('assignBlockZones: 移動の予定が無ければ、翌日の地図の無い予定もその日の場所ではなく同じかたまりの時差',
+  nextDayZones, { d1a: 'Asia/Tokyo', d2a: 'Asia/Tokyo' });
 
 /* ---- 地図でふりかえる：飛行機の道のり（アイコンと線を同じ弧にする。docs/adr/0008） ---- */
 var flyLeg = flyTl.legs[0];
@@ -937,6 +940,37 @@ var joined = T.joinPathEnds(roadPath, corco, cated);
 eq('joinPathEnds: 道路の端がピンから離れていれば、ピンから始まるよう先頭に足す', joined[0], [-22.9519, -43.2105]);
 eq('joinPathEnds: 到着側はピンとの差が20m未満ならそのまま（点を足さない）', joined.length, 4);
 eq('joinPathEnds: 両端がピンに近ければ変えない', T.joinPathEnds([[1, 2], [3, 4]], { lat: 1, lng: 2 }, { lat: 3, lng: 4 }).length, 2);
+
+/* ---- 時差は「移動」のところでしか変わらない（ブラジル・アルゼンチン旅の形。2026-09-27） ---- */
+var trip4 = [
+  { id: 'home', date: '2026-03-01', time: '08:00', category: 'other', label: '自宅' },
+  { id: 'nrt', date: '2026-03-01', time: '10:00', category: 'transport', transport: 'plane', label: '成田から出発' },
+  { id: 'hkA', date: '2026-03-01', time: '14:00', category: 'transport', label: '香港に到着' },
+  { id: 'hkH', date: '2026-03-01', time: '16:00', category: 'lodging', label: '香港のホテル' },
+  { id: 'hkD', date: '2026-03-02', time: '10:00', category: 'transport', transport: 'plane', label: '香港から出発' },
+  { id: 'nyA', date: '2026-03-02', time: '12:00', category: 'transport', label: 'ニューヨークに到着' },
+  { id: 'nyH', date: '2026-03-02', time: '15:00', category: 'lodging', label: 'ニューヨークのホテル（地図なし）' },
+  { id: 'ts', date: '2026-03-03', time: '09:00', category: 'sightseeing', label: 'タイムズスクエア' },
+  { id: 'ct', date: '2026-03-03', time: '10:00', category: 'sightseeing', label: 'チャイナタウン（仁川と判定）' },
+  { id: 'bw', date: '2026-03-03', time: '12:00', category: 'sightseeing', label: 'ブロードウェイ' },
+  { id: 'nyD', date: '2026-03-04', time: '09:00', category: 'transport', transport: 'plane', label: 'ニューヨークから出発' },
+  { id: 'rioA', date: '2026-03-04', time: '20:00', category: 'transport', label: 'リオデジャネイロに到着' },
+  { id: 'rioH', date: '2026-03-04', time: '22:00', category: 'lodging', label: 'リオのホテル' }
+].map(function (b, i) { b.createdAt = String(100 + i); return b; });
+var trip4Own = { nrt: 'Asia/Tokyo', hkA: 'Asia/Hong_Kong', hkH: 'Asia/Hong_Kong', hkD: 'Asia/Hong_Kong', nyA: 'America/New_York',
+  ts: 'America/New_York', ct: 'Asia/Seoul', bw: 'America/New_York', nyD: 'America/New_York', rioA: 'America/Sao_Paulo', rioH: 'America/Sao_Paulo' };
+// その日の場所がずれている（ニューヨークの日が日本）
+var trip4Days = { '2026-03-01': 'Asia/Tokyo', '2026-03-02': 'Asia/Tokyo', '2026-03-03': 'America/New_York', '2026-03-04': 'America/New_York' };
+var trip4Z = T.assignBlockZones(trip4, trip4Own, trip4Days, 'Asia/Tokyo');
+eq('時差のかたまり：出発前・成田出発は日本', [trip4Z.home, trip4Z.nrt], ['Asia/Tokyo', 'Asia/Tokyo']);
+eq('時差のかたまり：「香港に到着」から香港（出発のときではなく到着のときに時差が入る）', [trip4Z.hkA, trip4Z.hkH, trip4Z.hkD], ['Asia/Hong_Kong', 'Asia/Hong_Kong', 'Asia/Hong_Kong']);
+eq('時差のかたまり：ニューヨークのホテル（地図なし）は、その日の場所（日本）ではなくニューヨーク', [trip4Z.nyA, trip4Z.nyH], ['America/New_York', 'America/New_York']);
+eq('時差のかたまり：チャイナタウン1つだけ韓国と判定されても、ニューヨークのまま', trip4Z.ct, 'America/New_York');
+eq('時差のかたまり：ニューヨーク出発はニューヨーク、「リオに到着」からリオ', [trip4Z.nyD, trip4Z.rioA, trip4Z.rioH], ['America/New_York', 'America/Sao_Paulo', 'America/Sao_Paulo']);
+var trip4Sorted = T.sortBlocks(T.applyBlockZones(trip4.map(function (b) { return Object.assign({}, b); }), trip4Z));
+var trip4Changes = [];
+for (var t4 = 1; t4 < trip4Sorted.length; t4++) if (trip4Sorted[t4]._offset !== trip4Sorted[t4 - 1]._offset) trip4Changes.push(trip4Sorted[t4].id);
+eq('時差のかたまり：「ここから現地時間」は香港到着・ニューヨーク到着・リオ到着の3か所だけ', trip4Changes, ['hkA', 'nyA', 'rioA']);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
