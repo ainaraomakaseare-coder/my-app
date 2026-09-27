@@ -245,7 +245,9 @@
         var own = byBlock[b.id] || '';
         var isTransport = b.category === 'transport';
         var tz;
-        if (isTransport && forced && forced[b.id]) {
+        if (own && isGroundMove(b, byArrive)) {
+          tz = own;
+        } else if (isTransport && forced && forced[b.id]) {
           tz = forced[b.id];
           // 直前が移動の予定なら、その地図が出発地か到着地か分からない（どこにいるか不明）ので矛盾とはみなさない
           if (prevTransport || tz === (prevZone || fallback || '')) consistent++;
@@ -291,7 +293,7 @@
     }
     days.forEach(function (date) {
       var list = byDay[date];
-      var transports = list.filter(function (b) { return b.category === 'transport'; });
+      var transports = list.filter(function (b) { return b.category === 'transport' && !(byBlock[b.id] && isGroundMove(b, byArrive)); });
       var best = null;
       if (date && transports.length && transports.length <= 3) {
         // いまいる場所：前の日から続くタイムゾーン。旅の最初の日は端末のタイムゾーン（家から出発する）。
@@ -327,7 +329,8 @@
           var arrival = !byArrive[p.id] && planes.length >= 2 && own && own !== start &&
             (awayPlanes.length === 1 || looksArrival(p));
           // 到着地が入っている移動の予定は出発の予定。時刻は出発地（その予定の地図があればその土地）の時間で読む
-          planeWant[p.id] = byArrive[p.id] ? (own || start) : (arrival ? own : start);
+          // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）
+          planeWant[p.id] = byArrive[p.id] ? (own && own !== byArrive[p.id] ? own : start) : (arrival ? own : start);
         });
         combos.forEach(function (forced) {
           var res = settleDay(list, date, carry, forced);
@@ -367,7 +370,7 @@
     var copies = (blocks || []).map(function (b) { var c = Object.assign({}, b); delete c._offset; delete c._tz; return c; });
     // 1つだけ前後と違う地図（判定違い）は、並び替えより先に、日付と現地時刻の素直な順で見つけて外す
     // （判定違いのタイムゾーンで並べると、その予定が前後から離れてしまい見つけられないため）
-    byBlock = withoutZoneOutliers(sortBlocks(copies), byBlock || {});
+    byBlock = withoutZoneOutliers(sortBlocks(copies), byBlock || {}, byArrive);
     var zones = orderZonesByCandidates(copies, byBlock, byDate, fallback, byArrive);
     for (var round = 0; round < 2; round++) {
       applyBlockZones(copies, zones);
@@ -380,17 +383,29 @@
 
   // 地図のタイムゾーン（移動の予定以外）のうち、前後の地図と違うのが1つだけのもの（前後は同じ・間に飛行機が
   // 無い）を判定違いとみなして外した byBlock を返す（ロサンゼルスの「チャイナタウン」が仁川になる、など）
-  function withoutZoneOutliers(order, byBlock) {
-    var isMove = function (b) { return b.category === 'transport'; };
+  // 飛行機以外（車・電車・徒歩など）とはっきり入っている移動の予定。出発地と到着地は同じ時差なので、その地図は
+  // 時差の手がかりにできる（「ロサンゼルス国際空港」をテスラで出発、など。以前は移動の予定の地図を一切
+  // 使わなかったため、前後につられて日本時間になっていた。2026-09-27）。到着地の地図が入っているものは除く
+  function isGroundMove(b, byArrive) {
+    return b.category === 'transport' && !!b.transport && b.transport !== 'plane' && !(byArrive && byArrive[b.id]);
+  }
+  function withoutZoneOutliers(order, byBlock, byArrive) {
+    var isMove = function (b) { return b.category === 'transport' && !isGroundMove(b, byArrive); };
     var ev = [];
     order.forEach(function (b, i) { if (!isMove(b) && byBlock[b.id]) ev.push({ i: i, z: byBlock[b.id], id: b.id }); });
     var planeBetween = function (a, c) {
       for (var x = a + 1; x <= c; x++) { var o = order[x]; if (o && o.transport === 'plane') return true; }
       return false;
     };
+    // 飛行機で移動した日は、現地時刻の素直な順だと出発地（東京）と到着地（ロサンゼルス）の出来事が入り混じる
+    // （東京 20:00 の「羽田空港の地震」が、ロサンゼルス 18:50 の「ロサンゼルス国際空港」の後に来る）。
+    // その日の地図は判定違いと決めつけない（2026-09-27）
+    var planeDays = {};
+    order.forEach(function (o) { if (o.category === 'transport' && (o.transport === 'plane' || (byArrive && byArrive[o.id]))) planeDays[o.date] = true; });
     var out = Object.assign({}, byBlock);
     ev.forEach(function (e, k) {
       var prev = ev[k - 1], next = ev[k + 1];
+      if (planeDays[order[e.i].date]) return;
       if (prev && next && prev.z === next.z && e.z !== prev.z && !planeBetween(prev.i, e.i) && !planeBetween(e.i, next.i)) {
         delete out[e.id];
       }
@@ -402,7 +417,7 @@
     byArrive = byArrive || {};
     var isMove = function (b) { return b.category === 'transport'; };
     var evidence = {};
-    order.forEach(function (b, i) { if (!isMove(b) && byBlock[b.id]) evidence[i] = byBlock[b.id]; });
+    order.forEach(function (b, i) { if ((!isMove(b) || isGroundMove(b, byArrive)) && byBlock[b.id]) evidence[i] = byBlock[b.id]; });
     var segs = [], cur = { blocks: [], zone: '' }, lastZone = fallback || '';
     var close = function () {
       if (cur.blocks.length) { segs.push(cur); if (cur.zone) lastZone = cur.zone; }
@@ -432,6 +447,8 @@
         // 到着地の地図が入っている移動の予定（2026-09-27〜）：推測しない。この予定までが出発地、
         // このあとが到着地のタイムゾーン。この予定自身の地図は出発地
         var dep = byBlock[b.id] || '';
+        // この予定の地図が到着地と同じ時差なら、それは行き先の地図（到着地の欄ができる前に入れたもの）
+        if (dep === byArrive[b.id]) dep = '';
         if (dep && !cur.zone) cur.zone = dep;
         close();
         cur.zone = byArrive[b.id];

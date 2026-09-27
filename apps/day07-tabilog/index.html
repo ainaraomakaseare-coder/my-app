@@ -581,16 +581,19 @@
           <div class="field" id="entTravelField" hidden>
             <label>移動の情報（時刻はどちらも現地時間）</label>
             <div class="travel-grid">
-              <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地（例：ローマ）">
+              <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地">
               <span class="travel-arrow">→</span>
-              <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地（例：ロンドン）">
+              <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地">
             </div>
-            <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：ブエリング航空 VY6203）">
+            <!-- スマホでは欄が狭く、例を欄の中に書くと見切れるので、欄の外に書く（2026-09-27） -->
+            <p class="hint travel-example">例：羽田 → ロサンゼルス</p>
+            <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：JAL 62）">
             <div class="travel-grid">
               <label class="travel-time">出発<input type="time" id="entTravelDepart"></label>
               <label class="travel-time">到着<input type="time" id="entTravelArrive"></label>
             </div>
-            <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）。費用の明細があればそちらを使います">
+            <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）">
+            <p class="hint travel-example">費用の明細が入っていれば、そちらを使います</p>
             <p class="hint" id="entTravelDuration"></p>
           </div>
 

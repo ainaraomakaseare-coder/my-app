@@ -759,7 +759,9 @@ body.sheet-open { overflow: hidden; }
 .travel-grid { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .travel-grid input[type="text"] { flex: 1; min-width: 0; }
 .travel-arrow { color: var(--ink-muted); }
-.travel-time { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 13px; }
+.travel-time { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 13px; white-space: nowrap; }
+.travel-time input { min-width: 0; flex: 1; }
+.travel-example { margin: -4px 0 8px; }
 #entTravelField > input { width: 100%; margin-bottom: 8px; }
 
 /* 場所の候補：番号・名前・住所・「選択」ボタンのカード */
