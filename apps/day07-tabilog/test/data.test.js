@@ -1298,5 +1298,34 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
 })();
 
+/* ---- 手で決めた並び（時差の区切りがある日。2026-09-27） ---- */
+(function () {
+  var bs = [
+    { id: 'lax', date: '2026-06-26', time: '18:50', manualOrder: 2 },
+    { id: 'eq', date: '2026-06-26', time: '20:00', manualOrder: 0 },
+    { id: 'fl', date: '2026-06-26', time: '20:00', manualOrder: 1 },
+    { id: 'new', date: '2026-06-26', time: '19:00' },        // あとから足した（手の並びなし）
+    { id: 'd2', date: '2026-06-27', time: '09:00' },
+    { id: 'd2b', date: '2026-06-27', time: '08:00' }];
+  eq('sortBlocks：手の並びがある日はその並び、あとから足した予定はふだんの並びで前の予定の後ろ',
+    T.sortBlocks(bs).map(function (b) { return b.id; }), ['eq', 'fl', 'lax', 'new', 'd2b', 'd2']);
+  eq('dayHasManualOrder', [T.dayHasManualOrder(bs, '2026-06-26'), T.dayHasManualOrder(bs, '2026-06-27')], [true, false]);
+  eq('sortBlocks：手の並びが無ければこれまでどおり', T.sortBlocks([{ id: 'b', date: 'x', time: '10:00' }, { id: 'a', date: 'x', time: '09:00' }]).map(function (b) { return b.id; }), ['a', 'b']);
+})();
+
+/* ---- 端末のタイムゾーンが旅の地図に出てこない（UTC・海外で入力）とき、最初の移動より前にいた場所を起点にする（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';
+  var bs = [
+    { id: 'hnd', date: '2026-09-01', time: '18:00', category: 'sightseeing', createdAt: '1' },
+    { id: 'fl', date: '2026-09-01', time: '20:00', category: 'transport', transport: 'plane', createdAt: '4', label: 'ロサンゼルスへのフライト' },
+    { id: 'lax', date: '2026-09-01', time: '18:50', category: 'arrival', transport: 'plane', createdAt: '2' },
+    { id: 'kiku', date: '2026-09-01', time: '22:30', category: 'lodging', createdAt: '3' }];
+  ['UTC', LA, TK].forEach(function (dev) {
+    var z = T.assignBlockZones(bs, { hnd: TK, fl: TK, lax: LA, kiku: LA }, {}, dev, {});
+    eq('端末が' + dev + 'でも、羽田→フライト（日本）→LA到着→菊の家', T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }), ['hnd', 'fl', 'lax', 'kiku']);
+  });
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
