@@ -4891,6 +4891,9 @@
     state.formCategory = block ? block.category : 'sightseeing';
     // 移動手段が保存されているのは種類「移動」のときだけ（以前のデータで他の種類に付いていても出さない）
     state.formTransport = block && block.category === 'transport' ? (block.transport || '') : '';
+    // 以前のデータで、移動以外の予定に付いている「ここまでの移動手段」は、画面には出さないが、種類を
+    // 変えない限り保存し直しても消さない（地図でふりかえるの乗り物に使っているため）
+    state.formLegacyTransport = block && block.category !== 'transport' ? (block.transport || '') : '';
     var mm = block ? (block.moveMinutes || 0) : 0;
     $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
     $('#blkMoveMins').value = mm ? mm % 60 : '';
@@ -4919,6 +4922,7 @@
         // 種類を「移動」以外に変えたら、選んでいた移動手段（飛行機など）は消す。「到着」は移動手段を
         // 持たない（ここまでの移動手段は、直前の「移動」の予定から地図でふりかえるが引き継ぐ）
         if (state.formCategory !== 'transport') state.formTransport = '';
+        state.formLegacyTransport = '';
         renderCategoryChips();
         renderTransportChips();
       });
@@ -4957,9 +4961,9 @@
       time: $('#blkTime').value || '',
       label: label,
       category: state.formCategory,
-      // 移動手段を保存するのは種類が「移動」のときだけ（「到着」も含めて他の種類なら消す。以前のデータで
-      // 移動手段が付いていても保存し直す時点で消える）
-      transport: state.formCategory === 'transport' ? (state.formTransport || '') : '',
+      // 移動手段を選べるのは種類が「移動」のときだけ。種類を切り替えたら選んでいた移動手段は消す
+      // （以前のデータの「ここまでの移動手段」は、種類を変えない限りそのまま）
+      transport: state.formCategory === 'transport' ? (state.formTransport || '') : (state.formLegacyTransport || ''),
       moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
     };
     var req = state.editingBlockId
