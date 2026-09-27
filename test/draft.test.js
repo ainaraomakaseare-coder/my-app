@@ -562,9 +562,15 @@ const personal = draft({
     assert.strictEqual(scope.checkTarget({ group_id: 'g_affi', hasAffiliateLink: false }, xAffi), null);
   });
 
-  await check('期限切れの連携先には出さない', () => {
+  await check('期限切れの連携先には出さない（取り直せない連携＝Instagram のトークン貼り付け）', () => {
     const dead = Object.assign({}, affi, { expires_at: '2020-01-01T00:00:00Z' });
     assert.strictEqual(scope.checkTarget({ group_id: 'g_affi' }, dead).code, 'expired');
+  });
+
+  // ★ DAY33 で判明。入場券（1〜24時間）の期限を「連携切れ」と扱い、毎日の繋ぎ直しを強いていた
+  await check('自動で取り直せる連携は、入場券の期限が過ぎていても出せる（TikTok・X・YouTube）', () => {
+    const renewable = Object.assign({}, affi, { expires_at: '2020-01-01T00:00:00Z', auto_refresh: true });
+    assert.strictEqual(scope.checkTarget({ group_id: 'g_affi' }, renewable), null);
   });
 
   await check('別アカウントかつ期限切れなら、別アカウントを先に言う', () => {
