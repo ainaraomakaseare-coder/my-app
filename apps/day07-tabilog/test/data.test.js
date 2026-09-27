@@ -1178,5 +1178,28 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
   eq('wrapLng：-180〜180度に戻す', [T.wrapLng(286.22), T.wrapLng(-200), T.wrapLng(139.77), T.wrapLng(180)].map(function (x) { return Math.round(x * 100) / 100; }), [-73.78, 160, 139.77, 180]);
 })();
 
+/* ---- 実データ（ブラジル・アルゼンチン旅、2024-02-10。2026-09-27）：ニューヨーク到着と出発の間の「英語表現の疑問」は、
+   地図があってもなくてもニューヨークの時差（以前は地図なしだとリオの時差で出発より前に並んでいた） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', HK = 'Asia/Hong_Kong', NY = 'America/New_York', SP = 'America/Sao_Paulo';
+  var bs = [
+    { id: 'nrt', date: '2024-02-10', time: '10:35', category: 'transport', transport: 'plane', label: '成田空港出発' },
+    { id: 'hkA', date: '2024-02-10', time: '15:00', category: 'transport', transport: 'plane', label: '香港到着' },
+    { id: 'ear', date: '2024-02-10', time: '16:00', category: 'other', label: 'イヤホンジャック忘れ' },
+    { id: 'hkD', date: '2024-02-10', time: '16:20', category: 'transport', transport: 'plane', label: '香港出発' },
+    { id: 'nyA', date: '2024-02-10', time: '19:05', category: 'transport', transport: '', label: 'ニューヨーク到着' },
+    { id: 'eng', date: '2024-02-10', time: '22:00', category: 'other', label: '英語表現の疑問' },
+    { id: 'nyD', date: '2024-02-10', time: '21:55', category: 'transport', transport: '', label: 'ニューヨーク出発' },
+    { id: 'rio', date: '2024-02-11', time: '09:00', category: 'lodging', label: 'リオのホテル' }
+  ].map(function (b, i) { b.createdAt = String(i); return b; });
+  [null, NY].forEach(function (engMap) {
+    var own = { nrt: TK, hkA: HK, nyA: NY, rio: SP };
+    if (engMap) own.eng = engMap;
+    var z = T.assignBlockZones(bs, own, { '2024-02-10': TK, '2024-02-11': SP }, TK);
+    var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; });
+    eq('実データ（英語表現の疑問、地図' + (engMap ? 'あり' : 'なし') + '）：ニューヨークの時差で、ニューヨーク出発の後', [z.eng, got.join(',')], [NY, 'nrt,hkA,ear,hkD,nyA,nyD,eng,rio']);
+  });
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
