@@ -1663,7 +1663,8 @@ async function getRoute(url, headers, ctx, env) {
   // v2：found:falseを30日キャッシュしていたv1を捨てる（2026-09-27。下のキャッシュ期間の説明を参照）
   // v3：電車をGoogleの乗り換え案内で先に調べるようにした（2026-09-27）。v2に残った「遠回りしすぎ」を捨てる
   // v4：googleReason（Googleが使えなかった理由）を返すようにした。v3に残った結果を捨てる
-  const cacheKey = new Request("https://tabilog-route.cache/v4?k=" + encodeURIComponent(key));
+  // v5：BRouterの別候補（alternativeidx 1〜3）も見るようにした。v4に残った「遠回りしすぎ」を捨てる
+  const cacheKey = new Request("https://tabilog-route.cache/v5?k=" + encodeURIComponent(key));
   const hit = await cache.match(cacheKey);
   if (hit) return json(await hit.json(), 200, headers);
 
@@ -1674,40 +1675,33 @@ async function getRoute(url, headers, ctx, env) {
     // 新大阪→USJ（直線9km）で新幹線の線路に吸い寄せられて約174kmの遠回りを返すなど、よく外れるため。
     // キーが無い・Routes APIがキーで許可されていない・1日の上限（GCPのクォータ）を超えた・経路が無い
     // ときは{ skip: 理由 }が返り、これまでどおりBRouter→（アプリ側で）やわらかい曲線に回る。
-    const google = isRail ? await googleTransitRoute(env, from, to) : null;
+    const google = !isRail ? null
+      : (isInJapan(from) && isInJapan(to)) ? { skip: "japan_not_supported" }
+      : await googleTransitRoute(env, from, to);
     if (google && google.found) {
       body = google;
     } else if (isRail) {
-      let railStatus = 0;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), RAIL_TIMEOUT_MS);
-      let data;
-      try {
-        const res = await fetch(
-          "https://brouter.de/brouter?lonlats=" + from.lng + "," + from.lat + "|" + to.lng + "," + to.lat +
-            "&profile=rail&alternativeidx=0&format=geojson",
-          {
-            headers: {
-              "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;" +
-                " 電車の道のり検索でBRouterの公開サーバーを利用しています。1区間1回・結果は30日キャッシュします)",
-            },
-            signal: controller.signal,
-          }
-        );
-        // 混雑（429）・サーバー側の失敗（5xx）は一時的なので、キャッシュせずに502で返す（次に開いたときに
-        // 調べ直す）。以前は res.ok でなければ found:false として30日キャッシュしていたため、一度BRouterが
-        // 混んでいただけで、その区間は30日間ずっと車の道のり（クライアントの代わりの調べ直し）になっていた
-        // （「電車なのに動きが全部車っぽい」2026-09-27）。
-        if (res.status === 429 || res.status >= 500) throw new Error("brouter_" + res.status);
-        railStatus = res.status;
-        data = res.ok ? await res.json() : null;
-      } finally {
-        clearTimeout(timer);
+      // 1本目の候補だけだと、新大阪のように新幹線と在来線が並ぶ駅で新幹線の線路に吸い寄せられ、
+      // 在来線につながらずに大回り（新大阪→USJで約174km）になることがある。BRouterの別の候補
+      // （alternativeidx 1〜3）も順に見て、遠回りしすぎでない最初のものを使う（2026-09-27）。
+      // どの候補もだめなら最後の理由（と何本目まで見たか）を返す。問い合わせは見つかった時点で止め、
+      // 結果は30日キャッシュするので、公開サーバーへの負担は1区間あたり多くても4回。
+      const reasons = [];
+      for (let idx = 0; idx < RAIL_ALTERNATIVES; idx++) {
+        const r = await fetchBrouterRail(from, to, idx);
+        const feature = r.data && Array.isArray(r.data.features) && r.data.features[0];
+        const coords = feature && feature.geometry && feature.geometry.coordinates;
+        const candidate = brouterToBody(coords, feature && feature.properties, from, to);
+        if (candidate.found) {
+          body = candidate;
+          if (idx > 0) body.alternative = idx;
+          break;
+        }
+        reasons.push(candidate.reason || (r.data ? "rail_no_track" : "brouter_http_" + r.status));
+        // 候補が無い（400など）なら、それ以上の番号の候補も無いので打ち切る
+        if (!r.data) break;
       }
-      const feature = data && Array.isArray(data.features) && data.features[0];
-      const coords = feature && feature.geometry && feature.geometry.coordinates;
-      body = brouterToBody(coords, feature && feature.properties, from, to);
-      if (!body.found && !body.reason) body.reason = data ? "rail_no_track" : "brouter_http_" + railStatus;
+      if (!body.found) body = { found: false, reason: reasons[reasons.length - 1], tried: reasons.length };
       if (google && google.skip) body.googleReason = google.skip;
     } else {
       const res = await fetch(
@@ -1731,6 +1725,39 @@ async function getRoute(url, headers, ctx, env) {
   return json(body, 200, headers);
 }
 const ROUTE_NOT_FOUND_CACHE_SECONDS = 60 * 60 * 6;
+const RAIL_ALTERNATIVES = 4;
+
+// BRouterのrailプロファイルで、alternativeidx番目の候補を取る。混雑（429）・サーバー側の失敗（5xx）・
+// タイムアウトは一時的なので例外にして、getRouteがキャッシュせずに502を返す。
+// 以前は res.ok でなければ found:false として30日キャッシュしていたため、一度BRouterが混んでいた
+// だけで、その区間は30日間ずっと車の道のりになっていた（「電車なのに動きが全部車っぽい」2026-09-27）。
+async function fetchBrouterRail(from, to, idx) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RAIL_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      "https://brouter.de/brouter?lonlats=" + from.lng + "," + from.lat + "|" + to.lng + "," + to.lat +
+        "&profile=rail&alternativeidx=" + idx + "&format=geojson",
+      {
+        headers: {
+          "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;" +
+            " 電車の道のり検索でBRouterの公開サーバーを利用しています。1区間あたり最大4回・結果は30日キャッシュします)",
+        },
+        signal: controller.signal,
+      }
+    );
+    if (res.status === 429 || res.status >= 500) throw new Error("brouter_" + res.status);
+    return { status: res.status, data: res.ok ? await res.json() : null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 日本の中か（おおまかな範囲）。Googleの乗り換え案内（Routes API）は日本の電車の経路を返さない
+// （本番で新大阪→USJが googleReason: no_routes、2026-09-27）ので、日本の区間ではGoogleを呼ばない。
+function isInJapan(p) {
+  return p.lat >= 24 && p.lat <= 46 && p.lng >= 122.5 && p.lng <= 154;
+}
 
 // Googleの乗り換え案内（Routes API computeRoutes、travelMode: TRANSIT）で、電車（RAIL＝電車・地下鉄・
 // 路面電車）だけを使う経路の線を取る。FieldMaskは線と距離だけ（課金はリクエスト単位）。
