@@ -1257,5 +1257,18 @@ eq('lodgingSummary：いちばん長く泊まった宿＋ほか○か所', T.lod
 eq('lodgingSummary：1か所だけなら名前', T.lodgingSummary([{ label: '菊の家', from: 1, to: 3 }]), '菊の家');
 eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingSummary([{ label: '', from: 1, to: 2 }, { label: 'A', from: 3, to: 3 }]), T.lodgingSummary([{ label: '', from: 1, to: 2 }])], ['A', '']);
 
+/* ---- 地図でふりかえるの「何日目」は予定の日付に合わせる（香港16:20発→ニューヨーク19:05着、どちらも1日目。2026-09-27） ---- */
+(function () {
+  var stops = [
+    { blockId: 'hk', dayIndex: 0, dayNumber: 1, minute: 16 * 60 + 20, offset: 480, query: 'hk', transport: '' },
+    { blockId: 'ny', dayIndex: 0, dayNumber: 1, minute: 19 * 60 + 5, offset: -300, query: 'ny', transport: 'plane' },
+    { blockId: 'rio', dayIndex: 1, dayNumber: 2, minute: 12 * 60, offset: -180, query: 'rio', transport: 'plane' }];
+  var tl = T.buildReplayTimeline(stops, { hk: { lat: 22.31, lng: 113.92 }, ny: { lat: 40.64, lng: -73.78 }, rio: { lat: -22.81, lng: -43.25 } });
+  var leg = tl.legs[0];
+  var mid = T.replayStateAt(tl, leg.r0 + (leg.r1 - leg.r0) * 0.9);
+  eq('何日目：香港→ニューヨークの飛行中は1日目（香港の時計が0時を越えても）', mid.dayNumber, 1);
+  eq('何日目：ニューヨークに着いたら1日目、リオに着いたら2日目', [T.replayStateAt(tl, tl.stops[1].r + 0.01).dayNumber, T.replayStateAt(tl, tl.stops[2].r + 0.01).dayNumber], [1, 2]);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

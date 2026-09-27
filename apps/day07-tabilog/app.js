@@ -1715,8 +1715,12 @@
     var offsetDiff = cur && typeof cur.offset === 'number' ? cur.offset - (tl.baseOffset || 0) : 0;
     var localT = t + offsetDiff;
     var localDay = Math.floor(localT / 1440);
+    // 「何日目」は予定の日付（今いる予定＝最後に着いた予定。移動中は出発した予定）に合わせる。
+    // 時計から数えると、香港16:20発→ニューヨーク19:05着（どちらも1日目の予定）の飛行中に香港の時計が
+    // 0時を越え、「2日目」と出ていた（2026-09-27）。時計（hhmm）は現地時間のまま
+    var dayNumber = cur && cur.dayNumber ? cur.dayNumber : localDay + 1;
     return {
-      t: t, dayNumber: localDay + 1, hhmm: minuteToHHMM(localT - localDay * 1440),
+      t: t, dayNumber: dayNumber, hhmm: minuteToHHMM(localT - localDay * 1440),
       stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here, offsetDiff: offsetDiff
     };
   }
@@ -6485,6 +6489,7 @@
         if (replayToken !== token || !replay || replay.tl !== tl) return;
         var set = replay.lines[tl.legs.indexOf(l)];
         if (set && set.plan) set.plan.setLatLngs(l.path);
+        if (set) set.lastF = null; // 道のりが変わったので、進んだところの線も描き直す
         renderReplay();
       });
     }).catch(function () {
@@ -6540,7 +6545,8 @@
         // 飛行機の線は点が少ない（弧の32点ほど）ので、間引きも切り落としもしない。
         plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
         casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
-        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane })
+        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
+        planeLine: plane, lastF: null
       };
     });
     replay.mapAnimating = false;
@@ -6775,10 +6781,18 @@
       var set = replay.lines[k];
       // 地図がズーム・移動アニメ中は、線（SVGの座標）を更新すると地図とずれて見えるため更新を止める
       // （終わったら zoomend/moveend で1回描き直す。乗り物のアイコンは通常のマーカーなので動かし続けてよい）
-      if (f > 0 && !replay.mapAnimating) {
+      // 進み具合が変わらない区間（走り終わった区間など）は描き直さない。以前は毎フレーム全区間を描き直していて、
+      // 長い飛行機の点線（東京→ロサンゼルス）が街を見る大きさで毎回描かれ、動きが重くなっていた（2026-09-27）
+      if (f > 0 && !replay.mapAnimating && set.lastF !== f) {
         var pts = replayLegPoints(l, f);
+        // 飛行機の点線は、走っているあいだだけ画面の外を切り落とさない（薄い青と濃い青の点をそろえるため）。
+        // 走り終わったら切り落とす：何千kmもある点線を街の大きさで丸ごと描くと、とても重いため
+        if (set.planeLine) set.line.options.noClip = f < 1;
         set.line.setLatLngs(pts);
         if (set.casing) set.casing.setLatLngs(pts);
+        set.lastF = f;
+      } else if (f === 0 && set.lastF) {
+        set.lastF = 0;
       }
       if (set.plan) setLayerVisible(set.plan, f > 0 && f < 1);
       if (set.casing) setLayerVisible(set.casing, f > 0);
