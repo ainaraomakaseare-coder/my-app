@@ -4935,7 +4935,10 @@
   function renderTravelFields(entry) {
     var block = entryFormBlock();
     var isMove = !!(block && block.category === 'transport');
-    $('#entTravelField').hidden = !isMove;
+    // 「移動の情報」（出発地・到着地・会社・時刻・料金）は飛行機のときだけ出す。車・電車などは到着地の地図だけで
+    // 足りるので、入力欄が多くて煩わしくならないようにする（2026-09-27）。隠していても、すでに入っている値は
+    // 欄に残して、保存のときにそのまま送る（消えないように）
+    $('#entTravelField').hidden = !(isMove && Core.isPlaneMove(block));
     $('#entArriveField').hidden = !isMove;
     // 移動の予定では、上の地図の欄は出発地、下の欄が到着地（2026-09-27〜）
     $('#entMapLabel').textContent = isMove ? '出発地の地図（任意）' : '地図のURL（任意）';
@@ -5913,7 +5916,7 @@
       otherUrl: $('#entOtherUrl').value.trim(),
       author: author
     };
-    if (!$('#entTravelField').hidden) payload.travel = readTravelFields();
+    if (!$('#entArriveField').hidden) payload.travel = readTravelFields();
 
     Promise.all([
       // 並べた順のまま、新しい写真だけアップロードしてidにする
