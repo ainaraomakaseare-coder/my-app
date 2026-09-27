@@ -369,6 +369,20 @@ eq('replayPlaceEntry: mapLat/mapLngが数値でなければ無視する（NaN・
   T.replayPlaceEntry({ entries: [{ id: 'ent_3', mapUrl: 'https://maps.app.goo.gl/z', mapLat: 'x', mapLng: null }] }),
   { url: 'https://maps.app.goo.gl/z', entryId: 'ent_3', lat: null, lng: null });
 
+/* ---- 記録フォーム：地図のURLはundefined/NaNを絶対に書かない（placeMapUrl。2026-09-27） ---- */
+eq('placeMapUrl: 座標が数値で揃っていれば座標のURL', T.placeMapUrl({ lat: 34.7334658, lng: 135.5002547 }, 'ユニバ'),
+  'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('34.7334658,135.5002547'));
+eq('placeMapUrl: 座標がまだ無い（placeIdだけ）候補は検索文字列のURL', T.placeMapUrl({ placeId: 'abc' }, 'ユニバ'),
+  'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ユニバ'));
+eq('placeMapUrl: 候補が無ければ検索文字列のURL', T.placeMapUrl(null, 'ユニバ'),
+  'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('ユニバ'));
+eq('placeMapUrl: 候補も検索文字列も無ければ空文字（URLを作らない）', T.placeMapUrl(null, ''), '');
+ok('placeMapUrl: 座標がNaN・undefinedのときは、URLにundefined/NaNの文字が絶対に入らない', [
+  T.placeMapUrl({ lat: NaN, lng: 135 }, 'ユニバ'),
+  T.placeMapUrl({ lat: undefined, lng: undefined }, 'ユニバ'),
+  T.placeMapUrl({ lat: 34.7, lng: undefined }, '')
+].every(function (url) { return url.indexOf('undefined') === -1 && url.indexOf('NaN') === -1; }));
+
 /* ---- 地図でふりかえる：再生する地点の並び（replayStops） ---- */
 var rpTrip = { startDate: '2026-04-01', endDate: '2026-04-02' };
 var rpBlocks = [

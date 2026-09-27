@@ -746,6 +746,16 @@
       return false;
     }
   }
+
+  // 記録フォームの「地図のURL」欄を、候補（place：座標があればlat/lng、無ければplaceIdだけ）と
+  // 検索した文字列（searchText）から作る。座標が数値として両方揃っているときだけ座標のURLにし、
+  // まだ座標が届いていない・壊れている（undefined/NaN）ときは検索文字列のURLにする。
+  // undefined/NaNを含むURLを絶対に作らないための、書き込み前の最後の関門（2026-09-27、大阪旅行の実データより）。
+  function placeMapUrl(place, searchText) {
+    var q = (place && isFinite(place.lat) && isFinite(place.lng)) ? place.lat + ',' + place.lng : (searchText || '').trim();
+    if (!q) return '';
+    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+  }
   function replayPlaceEntry(block) {
     var entries = (block && block.entries) || [];
     for (var i = 0; i < entries.length; i++) {
@@ -1496,6 +1506,8 @@
     manualWeatherDisplay: manualWeatherDisplay,
     replayPlaceQuery: replayPlaceQuery,
     replayPlaceEntry: replayPlaceEntry,
+    hasBrokenMapQuery: hasBrokenMapQuery,
+    placeMapUrl: placeMapUrl,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
     replayStateAt: replayStateAt,
@@ -4001,7 +4013,11 @@
     $('#entDetail').value = entry ? entry.detail : '';
     $('#entWaitTime').value = entry ? entry.waitTime : '';
     $('#entTime').value = entry ? entry.time : '';
-    $('#entMapUrl').value = entry ? entry.mapUrl : '';
+    // 地図のURLがクライアント側の不具合で壊れて保存されたもの（query=undefined,undefinedなど）は、
+    // そのまま出すと地図が開けないだけでなく、次に開いたときにも壊れたまま残ってしまう。
+    // 欄を空にして、選び直してもらうよう案内する（2026-09-27、大阪旅行で見つかった不具合）
+    var brokenMapUrl = !!(entry && entry.mapUrl && Core.hasBrokenMapQuery(entry.mapUrl));
+    $('#entMapUrl').value = entry && !brokenMapUrl ? entry.mapUrl : '';
     $('#entShopUrl').value = entry ? entry.shopUrl : '';
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
     $('#entMoreFields').open = !!(entry && (entry.comment || entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl ||
@@ -4010,7 +4026,7 @@
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
     placeCandidates = []; placeChoice = '';
-    $('#entPlaceStatus').textContent = '';
+    $('#entPlaceStatus').textContent = brokenMapUrl ? '地図のリンクが壊れていたので、選び直してください' : '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
@@ -4464,6 +4480,9 @@
   // 旅行ごとに「最後に選んだ通貨」を覚えておき、次の明細行の初期値にする（同じ旅行では
   // 同じ通貨の支払いが続くことが多いため。トリップをまたいだ使い回しはしない）。
   var LAST_COST_CURRENCY_PREFIX = 'tabilog:last-currency:';
+  // 外貨のレートを取りに行っている最中のPromise（idxごと）。保存（saveEntry）はこれの完了を待ってから、
+  // レートが入っているか確かめる（2026-09-27）
+  var pendingRateFetches = {};
   function lastCostCurrencyForTrip() {
     if (!state.trip) return '';
     try { return localStorage.getItem(LAST_COST_CURRENCY_PREFIX + state.trip.id) || ''; } catch (e) { return ''; }
@@ -4594,7 +4613,8 @@
     if (!item || !item.currency || item.currency === 'JPY') { buildRateRow(idx); return; }
     if (typeof item.rate === 'number' && item.rate > 0) { buildRateRow(idx); return; }
     buildRateRow(idx, { loading: true });
-    api('/rates?date=' + encodeURIComponent(blockDate || '') + '&currency=' + encodeURIComponent(item.currency))
+    // 保存（saveEntry）は、これが終わるまで待ってから外貨のレートが入っているか確かめる（2026-09-27）
+    var req = api('/rates?date=' + encodeURIComponent(blockDate || '') + '&currency=' + encodeURIComponent(item.currency))
       .then(function (res) {
         var cur = state.formCostItems[idx];
         if (!cur || cur.currency !== item.currency) return; // その間に通貨を変え直していたら古い結果は捨てる
@@ -4605,6 +4625,7 @@
         renderCostTotal();
       })
       .catch(function () { buildRateRow(idx, { failed: true }); });
+    pendingRateFetches[idx] = req.then(function () { delete pendingRateFetches[idx]; }, function () { delete pendingRateFetches[idx]; });
   }
 
   // レート行の中身を（レート欄の入力中を除いて）丸ごと作り直す。
@@ -4619,7 +4640,9 @@
     if (opts.loading) { rateRow.innerHTML = '<p class="hint">レートを取得中…</p>'; return; }
     var hasRate = typeof item.rate === 'number' && item.rate > 0;
     var warn = '';
-    if (opts.failed || !hasRate) warn = 'レートを取得できませんでした。手入力してください。';
+    // 保存しようとしたのにレートが入っていないとき、行のすぐ下に出す（saveEntry。2026-09-27）
+    if (opts.blockedSave) warn = 'レートを入れてください（1 ' + currency + ' = ◯円）';
+    else if (opts.failed || !hasRate) warn = 'レートを取得できませんでした。手入力してください。';
     else if (item._rateSource === 'currency-api-latest') warn = 'この日のレートが無いため最新のレートです。明細に合わせて直してください。';
     var dateText = item._rateDate ? item._rateDate.slice(0, 4) + '/' + item._rateDate.slice(5, 7) + '/' + item._rateDate.slice(8, 10) : '';
     var rateLine = hasRate
@@ -4700,6 +4723,10 @@
   var PLACE_GOOGLE = 'google';
   var placeChoice = ''; // 選んでいる候補の番号（文字列）か PLACE_GOOGLE
   var placeSessionToken = ''; // Places API (New) のAutocomplete〜Details一連の呼び出しをまとめる印（docs/adr/0011）
+  // 座標を取りに行っている（ensureSelectedPlaceCoordsが返した）Promise。保存（saveEntry）は、これが
+  // 終わるのを待ってから地図欄を確定させる（届く前に保存すると、座標付きの正しいURLではなく
+  // 検索文字列のURLで保存されてしまうため。2026-09-27）
+  var placeCoordsPending = null;
 
   // 検索を始めるたびに新しく作る（1検索＝1セッションのほうが、Autocompleteの無料枠の数え方に合うため）。
   // crypto.randomUUIDが無い古いWebViewのための保険であって、暗号的な強さは求めていない。
@@ -4718,9 +4745,10 @@
     if (!p || (isFinite(p.lat) && isFinite(p.lng)) || !p.placeId) return Promise.resolve(p);
     var status = $('#entPlaceStatus');
     status.textContent = '場所を確かめています…';
-    return api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(placeSessionToken))
+    var req = api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(placeSessionToken))
       .then(function (res) {
-        if (res && res.found) {
+        // res.found でも座標が数値でなければ（壊れた応答の保険）、undefined/NaNのまま入れない
+        if (res && res.found && isFinite(res.lat) && isFinite(res.lng)) {
           p.lat = res.lat;
           p.lng = res.lng;
           if (res.address && !p.address) p.address = res.address;
@@ -4731,6 +4759,8 @@
         status.textContent = '場所の座標を取得できませんでした。';
         return p;
       });
+    placeCoordsPending = req.then(function (r) { placeCoordsPending = null; return r; });
+    return req;
   }
 
   function renderPlaceCandidates(place) {
@@ -4858,18 +4888,48 @@
   // 自動で地図欄のURLを埋める（以前は「このURLを地図欄に入れる」ボタンを押す手順が要ったが、
   // 押し忘れて地図欄が空のまま保存されることがあったため、2026-09-26に自動化した）。
   // 座標がまだ無ければ（「Googleマップで検索」を選んでいるときなど）検索した文字列そのままで検索するURLにする。
+  // 座標（p.lat/p.lng）が数値として揃っているときだけ座標のURLにする。まだ座標が届いていない・
+  // 壊れているとき（undefined/NaN）は、検索した文字列そのままのURLにする（undefined/NaNを含む
+  // URLは絶対に書き込まない。2026-09-27）
   function applySelectedPlaceToMapUrl() {
-    var p = selectedPlace();
-    var q = (p && isFinite(p.lat) && isFinite(p.lng)) ? p.lat + ',' + p.lng : $('#entPlaceSearch').value.trim();
-    if (!q) return;
-    $('#entMapUrl').value = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+    var url = Core.placeMapUrl(selectedPlace(), $('#entPlaceSearch').value);
+    if (!url) return;
+    $('#entMapUrl').value = url;
+  }
+
+  // 外貨の行で、まだレートが（自動取得も手入力も）入っていないもの。保存を止める対象（2026-09-27）
+  function costItemsMissingRate() {
+    return state.formCostItems.map(function (it, idx) { return { it: it, idx: idx }; })
+      .filter(function (x) { return x.it.currency && x.it.currency !== 'JPY' && !(typeof x.it.rate === 'number' && x.it.rate > 0); });
   }
 
   function saveEntry() {
     var status = $('#entFormStatus');
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
-    // 保険：候補を選んだのに地図欄が空のまま保存されそうなら、ここで埋める
-    if (!$('#entMapUrl').value.trim() && selectedPlace()) applySelectedPlaceToMapUrl();
+    status.textContent = '確認中…';
+    // 座標を取りに行っている最中（候補を選んだ直後など）なら、届くのを待ってから地図欄を確定させる。
+    // 待たずに保存すると、座標付きの正しいURLではなく検索文字列のURLで保存されてしまう（2026-09-27）
+    var missingRate = costItemsMissingRate();
+    Promise.all(
+      [placeCoordsPending || Promise.resolve()].concat(missingRate.map(function (x) { return pendingRateFetches[x.idx] || Promise.resolve(); }))
+    ).then(function () {
+      // 保険：候補を選んだのに地図欄が空のまま保存されそうなら、ここで埋める
+      if (!$('#entMapUrl').value.trim() && selectedPlace()) applySelectedPlaceToMapUrl();
+      // 外貨のレートが（待っても）入っていなければ、ここで保存を止め、行のすぐ下に案内を出す
+      // （以前は「保存に失敗しました」という分かりにくい表示になっていた）
+      var stillMissing = costItemsMissingRate();
+      if (stillMissing.length) {
+        stillMissing.forEach(function (x) { buildRateRow(x.idx, { blockedSave: true }); });
+        status.textContent = 'レートを入れてください（1 ' + stillMissing[0].it.currency + ' = ◯円）';
+        var rowEl = costRateRowEls[stillMissing[0].idx];
+        if (rowEl && rowEl.scrollIntoView) rowEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
+      continueSaveEntry(status);
+    });
+  }
+
+  function continueSaveEntry(status) {
     var author = $('#entAuthor').value.trim();
     status.textContent = '保存中…';
 
