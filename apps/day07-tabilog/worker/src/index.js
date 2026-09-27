@@ -20,7 +20,8 @@ import {
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
 
-const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
+// "arrival"（到着）は2026-09-27〜。種類「移動」の中の「出発｜到着」の到着。移動（出発）と違い、着いた場所の予定として扱う
+const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other", "arrival"];
 // 精算の端数（丸め）単位。Walicaにならい1円／10円／100円から選べる（trips.settle_unit、v21）。
 // 旅行メンバー全員で共有する設定なので、旅行本体に持たせる。
 const SETTLE_UNITS = [1, 10, 100];

@@ -17,7 +17,10 @@
     { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
     { key: 'lodging', label: '宿泊', color: 'oklch(48% 0.1 195)' },
     { key: 'transport', label: '移動', color: 'oklch(60% 0.12 260)' },
-    { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' }
+    { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' },
+    // 「到着」（2026-09-27〜）。種類の選択では「移動」の中の「出発｜到着」タブで選ぶ（チップには出さない）。
+    // 移動（＝出発）と違い、着いた場所の予定として扱う：地図はその時刻にいた場所、移動手段は「ここまで」の手段
+    { key: 'arrival', label: '到着', color: 'oklch(58% 0.12 225)', inMove: true }
   ];
 
   // 予定（Block）の場所までの移動手段。「地図でふりかえる」で、どのアイコンがどう動くかに使う。
@@ -318,7 +321,11 @@
         // 決めていたため、到着を先に入れた・逆順に入れた旅では、ロサンゼルス到着（18:50）が東京出発（20:00）
         // より前に並んでいた（2026-09-27。ほかの人も使うので、入れた順に左右されないようにする）
         // 到着地の地図が入っている移動の予定（2026-09-27〜）は、出発の予定だと確実に分かるので飛行機と同じに扱う
-        var planes = transports.filter(function (t) { return isPlaneMove(t) || byArrive[t.id]; });
+        // 種類「到着」（2026-09-27〜）の予定があり、その地図がいまいる場所と違う時差なら、その日の移動の予定は
+        // その到着への出発の予定と分かる。飛行機と同じく、出発地（いまいる場所）の時間で読む
+        var arrivalZone = '';
+        list.forEach(function (b) { if (!arrivalZone && b.category === 'arrival' && byBlock[b.id] && byBlock[b.id] !== start) arrivalZone = byBlock[b.id]; });
+        var planes = transports.filter(function (t) { return isPlaneMove(t) || byArrive[t.id] || !!arrivalZone; });
         var awayPlanes = planes.filter(function (p) { return byBlock[p.id] && byBlock[p.id] !== start; });
         var looksArrival = function (p) { return /到着|着いた|着く|arriv/i.test(p.label || ''); };
         // 「ロサンゼルスへのフライト」「〜行き」「〜を出発」は出発の予定（地図が行き先の空港でも）。
@@ -337,6 +344,7 @@
           // 到着地が入っている移動の予定は出発の予定。時刻は出発地（その予定の地図があればその土地）の時間で読む
           // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）
           planeWant[p.id] = byArrive[p.id] ? (own && own !== byArrive[p.id] ? own : start) : (arrival ? own : start);
+          if (arrivalZone && !byArrive[p.id] && !isPlaneMove(p)) planeWant[p.id] = own && own !== arrivalZone ? own : start;
           if (!own && !byArrive[p.id] && !looksDeparture(p)) {
             // 地図の無い飛行機の予定で、出発と分かる予定の地図（または到着地の地図）が行き先を示していれば、到着の予定
             planes.forEach(function (q) {
@@ -1762,7 +1770,7 @@
   function reviewKindForCategory(category) {
     if (category === 'lodging') return 'hotel';
     if (category === 'food') return 'food';
-    if (category === 'transport') return '';
+    if (category === 'transport' || category === 'arrival') return '';
     return 'activity';
   }
 
@@ -4812,15 +4820,34 @@
 
   function renderCategoryChips() {
     var el = $('#blkCategoryChips');
-    el.innerHTML = Core.CATEGORIES.map(function (c) {
-      return '<button type="button" class="cat-chip' + (c.key === state.formCategory ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(c.label) + '</button>';
-    }).join('');
+    var isMove = state.formCategory === 'transport' || state.formCategory === 'arrival';
+    // 「到着」はチップに出さず、「移動」を選んだときの「出発｜到着」タブで選ぶ（2026-09-27）
+    el.innerHTML = Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) {
+      var on = c.key === 'transport' ? isMove : c.key === state.formCategory;
+      return '<button type="button" class="cat-chip' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(c.label) + '</button>';
+    }).join('') +
+      (isMove ? '<div class="move-dir-tabs" role="tablist">' +
+        '<button type="button" role="tab" class="move-dir-tab' + (state.formCategory === 'transport' ? ' on' : '') + '" data-dir="transport" aria-selected="' + (state.formCategory === 'transport') + '">出発</button>' +
+        '<button type="button" role="tab" class="move-dir-tab' + (state.formCategory === 'arrival' ? ' on' : '') + '" data-dir="arrival" aria-selected="' + (state.formCategory === 'arrival') + '">到着</button>' +
+        '</div>' : '');
     $all('.cat-chip', el).forEach(function (b) {
-      b.addEventListener('click', function () { state.formCategory = b.dataset.cat; renderCategoryChips(); });
+      b.addEventListener('click', function () {
+        // 「移動」をもう一度押しても、選んでいる出発／到着はそのまま
+        if (b.dataset.cat === 'transport' && isMove) return;
+        state.formCategory = b.dataset.cat;
+        renderCategoryChips();
+      });
+    });
+    $all('.move-dir-tab', el).forEach(function (b) {
+      b.addEventListener('click', function () { state.formCategory = b.dataset.dir; renderCategoryChips(); });
     });
     // 移動手段・移動時間は、種類が「移動」のときだけ出す（以前は種類に関係なく「ここまでの移動手段」を出していた）。
-    // 以前のデータで、移動以外の予定に移動手段が付いているものは、見えないまま残らないよう出しておく
-    $('#blkMoveFields').hidden = !(state.formCategory === 'transport' || state.formTransport);
+    // 以前のデータで、移動以外の予定に移動手段が付いているものは、見えないまま残らないよう出しておく。
+    // 「到着」は「ここまでの移動手段」だけ（移動時間は出発の予定に入れる）
+    var arrival = state.formCategory === 'arrival';
+    $('#blkMoveFields').hidden = !(isMove || state.formTransport);
+    $('#blkMoveLabel').textContent = arrival || !isMove ? 'ここまでの移動手段（「地図でふりかえる」で使います）' : '移動手段（「地図でふりかえる」で使います）';
+    $('#blkMoveTimeWrap').hidden = arrival || !isMove;
   }
 
   function renderTransportChips() {
@@ -6179,11 +6206,13 @@
     });
   }
 
+  function myLogCategoryOf(it) { return it.category === 'arrival' ? 'transport' : it.category; }
   function renderMyLogTabs() {
     var el = $('#mylogTabs');
-    el.innerHTML = Core.CATEGORIES.map(function (c) {
+    // 「到着」は「移動」のタブにまとめる（種類の選択と同じ。2026-09-27）
+    el.innerHTML = Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) {
       var on = c.key === state.myLogCategory;
-      var count = state.myLogItems.filter(function (it) { return it.category === c.key; }).length;
+      var count = state.myLogItems.filter(function (it) { return myLogCategoryOf(it) === c.key; }).length;
       return '<button class="mylog-tab' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(MYLOG_LABELS[c.key] || c.label) + (count ? '（' + count + '）' : '') + '</button>';
     }).join('');
     $all('.mylog-tab', el).forEach(function (b) {
@@ -6203,7 +6232,7 @@
   function renderMyLogList() {
     var el = $('#mylogList');
     var items = Core.sortMyLogItems(
-      state.myLogItems.filter(function (it) { return it.category === state.myLogCategory; }),
+      state.myLogItems.filter(function (it) { return myLogCategoryOf(it) === state.myLogCategory; }),
       state.myLogSort
     );
     if (!items.length) {
