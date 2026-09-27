@@ -3908,7 +3908,9 @@
       if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#voiceEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'trip_dates_required') $('#voiceEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
-      else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
+      else if (msg === 'output_too_long') $('#voiceEntryStatus').textContent = '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。';
+      else if (msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。';
+      else if (msg === 'invalid_model_output') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#voiceEntryStatus').textContent = '';
         openVoiceEntryForm(state.voiceEntryMultiDay);
@@ -3972,7 +3974,9 @@
       if (msg === 'server_not_configured') $('#textEntryStatus').textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'trip_dates_required') $('#textEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
-      else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
+      else if (msg === 'output_too_long') $('#textEntryStatus').textContent = '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。';
+      else if (msg === 'upstream_error') $('#textEntryStatus').textContent = 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。';
+      else if (msg === 'invalid_model_output') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#textEntryStatus').textContent = '今月のAIでの整理の回数を使い切りました。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
       }
