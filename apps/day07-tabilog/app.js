@@ -321,16 +321,30 @@
         var planes = transports.filter(function (t) { return t.transport === 'plane' || byArrive[t.id]; });
         var awayPlanes = planes.filter(function (p) { return byBlock[p.id] && byBlock[p.id] !== start; });
         var looksArrival = function (p) { return /到着|着いた|着く|arriv/i.test(p.label || ''); };
+        // 「ロサンゼルスへのフライト」「〜行き」「〜を出発」は出発の予定（地図が行き先の空港でも）。
+        // 飛行機の予定が2つ（「ロサンゼルスへのフライト」＋「ロサンゼルス国際空港」）のとき、行き先の地図が
+        // 入った出発の予定を到着と取り違えていた（2026-09-27）
+        var looksDeparture = function (p) { return !looksArrival(p) && /へ|行き|出発|発|depart|to\s/i.test(p.label || ''); };
         var planeWant = {};
         planes.forEach(function (p) {
           var own = byBlock[p.id] || '';
           // 到着の予定：飛行機の予定が2つ以上あり、地図が「いまいる場所」と違うもの。そういう予定が複数ある
           // （出発の予定にも到着空港の地図を入れた、など）ときだけ、見出し（「〜に到着」）で見分ける
-          var arrival = !byArrive[p.id] && planes.length >= 2 && own && own !== start &&
-            (awayPlanes.length === 1 || looksArrival(p));
+          // 見出しで出発と分かる予定がほかにあれば、行き先の地図が入った残りの予定は到着
+          var otherDeparts = planes.some(function (q) { return q !== p && (looksDeparture(q) || byArrive[q.id]); });
+          var arrival = !byArrive[p.id] && planes.length >= 2 && own && own !== start && !looksDeparture(p) &&
+            (awayPlanes.length === 1 || looksArrival(p) || otherDeparts);
           // 到着地が入っている移動の予定は出発の予定。時刻は出発地（その予定の地図があればその土地）の時間で読む
           // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）
           planeWant[p.id] = byArrive[p.id] ? (own && own !== byArrive[p.id] ? own : start) : (arrival ? own : start);
+          if (!own && !byArrive[p.id] && !looksDeparture(p)) {
+            // 地図の無い飛行機の予定で、出発と分かる予定の地図（または到着地の地図）が行き先を示していれば、到着の予定
+            planes.forEach(function (q) {
+              if (q === p || !(looksDeparture(q) || byArrive[q.id])) return;
+              var dest = byArrive[q.id] || (byBlock[q.id] !== start ? byBlock[q.id] : '');
+              if (dest) planeWant[p.id] = dest;
+            });
+          }
         });
         combos.forEach(function (forced) {
           var res = settleDay(list, date, carry, forced);
