@@ -49,3 +49,12 @@
 ```sh
 npx wrangler d1 execute tabilog-db --remote --file migrations/0020_entry_map_coords.sql
 ```
+
+## 追記（2026-09-27）電車の道のりをGoogleの乗り換え案内で取る
+
+地図でふりかえるの電車・新幹線・地下鉄の区間は、BRouter（線路をつなぐだけの無料サーバー）ではどの路線に乗るかが分からず、新大阪→USJ（直線9km）で新幹線の線路に吸い寄せられて約174kmの遠回りを返すなど、よく外れた。オーナーの承認を得て、Worker `/route?profile=rail` は、まずRoutes API（`POST routes.googleapis.com/directions/v2:computeRoutes`、`travelMode: TRANSIT`、`allowedTravelModes: ["RAIL"]`、FieldMaskは`routes.polyline.encodedPolyline,routes.distanceMeters`のみ）で実際の路線の線を取る（`googleTransitRoute`）。出発時刻は終電後に開いても経路が無くならないよう、次の日本時間12:00にする。
+
+- 料金：Compute Routes Essentialsは月1万回まで無料（検索で確認。公式ページはこの環境から開けず未確認）。TRANSITがEssentialsに入るかは未確認。1区間1回・30日キャッシュなので、旅1つで多くても数十回
+- 上限：他のGoogle APIと同じく、GCPのクォータで1日の上限を設定する。上限超え（429）・キーでRoutes APIが許可されていない（403）・経路なし・直線距離の3倍を超える大回りのときはnullを返し、これまでどおりBRouter→（アプリ側で）やわらかい曲線に回る
+- 利用規約：Googleの経路の線をOpenStreetMap（Leaflet）の地図に重ねて描き、結果を30日キャッシュしている。Google Maps Platformの規約はGoogle以外の地図との併用やキャッシュを制限しているため、Places（座標）と同じく利用規約上の懸念があることをオーナーに伝えたうえでの運用
+- キャッシュの鍵をv3に上げ、v2に残ったBRouterの「遠回りしすぎ」を捨てた

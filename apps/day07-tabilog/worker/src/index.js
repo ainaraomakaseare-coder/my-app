@@ -13,7 +13,7 @@ import { parseReceiptText } from "./receipt-parse.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline,
 } from "./geo-decode.js";
 import {
   isValidCurrency, isValidDate, frankfurterUrl, parseFrankfurterResponse,
@@ -1651,7 +1651,7 @@ function brouterToBody(coords, properties, from, to) {
   return { found: true, path: pts, distance: Math.round(trackKm * 1000) };
 }
 
-async function getRoute(url, headers, ctx) {
+async function getRoute(url, headers, ctx, env) {
   const profile = url.searchParams.get("profile") || "";
   const from = parseLatLng(url.searchParams.get("from"));
   const to = parseLatLng(url.searchParams.get("to"));
@@ -1661,13 +1661,22 @@ async function getRoute(url, headers, ctx) {
   const key = [profile, from.lat.toFixed(5), from.lng.toFixed(5), to.lat.toFixed(5), to.lng.toFixed(5)].join(",");
   const cache = caches.default;
   // v2：found:falseを30日キャッシュしていたv1を捨てる（2026-09-27。下のキャッシュ期間の説明を参照）
-  const cacheKey = new Request("https://tabilog-route.cache/v2?k=" + encodeURIComponent(key));
+  // v3：電車をGoogleの乗り換え案内で先に調べるようにした（2026-09-27）。v2に残った「遠回りしすぎ」を捨てる
+  const cacheKey = new Request("https://tabilog-route.cache/v3?k=" + encodeURIComponent(key));
   const hit = await cache.match(cacheKey);
   if (hit) return json(await hit.json(), 200, headers);
 
   let body = { found: false };
   try {
-    if (isRail) {
+    // 電車・新幹線・地下鉄は、まずGoogleの乗り換え案内（Routes API、TRANSIT）で実際の路線の道のりを取る
+    // （2026-09-27、オーナー承認）。BRouter（線路をつなぐだけで、どの路線に乗るかを知らない）は、
+    // 新大阪→USJ（直線9km）で新幹線の線路に吸い寄せられて約174kmの遠回りを返すなど、よく外れるため。
+    // キーが無い・Routes APIがキーで許可されていない・1日の上限（GCPのクォータ）を超えた・経路が無い
+    // ときはnullが返り、これまでどおりBRouter→（アプリ側で）やわらかい曲線に回る。
+    const google = isRail ? await googleTransitRoute(env, from, to) : null;
+    if (google) {
+      body = google;
+    } else if (isRail) {
       let railStatus = 0;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), RAIL_TIMEOUT_MS);
@@ -1720,6 +1729,60 @@ async function getRoute(url, headers, ctx) {
   return json(body, 200, headers);
 }
 const ROUTE_NOT_FOUND_CACHE_SECONDS = 60 * 60 * 6;
+
+// Googleの乗り換え案内（Routes API computeRoutes、travelMode: TRANSIT）で、電車（RAIL＝電車・地下鉄・
+// 路面電車）だけを使う経路の線を取る。FieldMaskは線と距離だけ（課金はリクエスト単位）。
+// 乗り換え前後の徒歩も線に含まれる（駅までの数百mなので見た目には問題ない）。
+// 返すのは getRoute と同じ形（found・path・distance・source）か、使えなければnull。
+const GOOGLE_TRANSIT_TIMEOUT_MS = 8000;
+function nextTransitProbeTime(now) {
+  const t = new Date(now || Date.now());
+  const probe = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 3, 0, 0));
+  if (probe.getTime() < t.getTime() + 60 * 60 * 1000) probe.setUTCDate(probe.getUTCDate() + 1);
+  return probe.toISOString();
+}
+async function googleTransitRoute(env, from, to) {
+  if (!env || !env.GOOGLE_API_KEY) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GOOGLE_TRANSIT_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
+      method: "POST",
+      headers: {
+        "X-Goog-Api-Key": env.GOOGLE_API_KEY,
+        "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.distanceMeters",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
+        destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
+        travelMode: "TRANSIT",
+        transitPreferences: { allowedTravelModes: ["RAIL"] },
+        // 出発時刻を省くと「今」になり、終電のあとに開くと経路が無くなる。電車の走っている昼
+        // （次の日本時間12:00＝UTC 03:00）で調べる。見たいのは線の形なので、時刻表の違いは問わない。
+        departureTime: nextTransitProbeTime(),
+        languageCode: "ja",
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null; // 403（Routes APIがキーで許可されていない）・429（上限）など
+    const data = await res.json();
+    const route = data && Array.isArray(data.routes) && data.routes[0];
+    const pts = route && route.polyline ? decodePolyline(route.polyline.encodedPolyline) : [];
+    if (pts.length < 2) return null;
+    const distanceM = Number(route.distanceMeters) || 0;
+    const straightKm = distanceKm(from, to);
+    // 乗り換え案内でも、直線距離の3倍を超える大回りは候補違いの疑いとして使わない（BRouterと同じ基準）
+    if (straightKm > 0 && distanceM / 1000 > straightKm * RAIL_MAX_DETOUR_RATIO) return null;
+    const path = downsamplePoints(pts, ROUTE_MAX_POINTS)
+      .map((p) => [Math.round(p[0] * 1e5) / 1e5, Math.round(p[1] * 1e5) / 1e5]);
+    return { found: true, path, distance: Math.round(distanceM), source: "google_transit" };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // near：「緯度,経度;緯度,経度」（同じ旅行の前後の場所）、hint：予定の見出し、
 // entry：呼び出し元の記録(entry)のid（Part A、2026-09-26〜）。付いていて、見つかった座標がある
@@ -3761,7 +3824,7 @@ export default {
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"), url.searchParams.get("entry"), env);
-    if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
+    if (method === "GET" && path === "/route") return getRoute(url, headers, ctx, env);
     if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
     if (method === "GET" && path === "/rates") return getRates(url, headers, ctx);
     if (method === "GET" && path === "/places/search") {
