@@ -1234,5 +1234,23 @@ eq('lodgingNightOptions：日程なし・予定なしは空', T.lodgingNightOpti
     T.lodgingEditPlan([h], '2026-06-28', '2026-06-27'), { rename: ['h'], move: { id: 'h', date: '2026-06-27' }, create: null });
 })();
 
+/* ---- 泊ごとの宿と、「n泊目〜m泊目をこの宿にする」（2026-09-27） ---- */
+(function () {
+  var trip = { startDate: '2026-06-26', endDate: '2026-07-05' }; // 9泊
+  var bs = [
+    { id: 'k1', date: '2026-06-26', time: '22:30', category: 'lodging', label: '菊の家' },
+    { id: 'h', date: '2026-06-28', time: '13:00', category: 'lodging', label: 'マリオット' },
+    { id: 'p', date: '2026-07-01', time: '', category: 'lodging', label: 'パタゴニア' }];
+  eq('lodgingNights：泊ごとの宿', T.lodgingNights(trip, bs).map(function (n) { return n.night + ':' + n.label; }),
+    ['1:菊の家', '2:菊の家', '3:マリオット', '4:マリオット', '5:マリオット', '6:パタゴニア', '7:パタゴニア', '8:パタゴニア', '9:パタゴニア']);
+  eq('lodgingRangePlan：7泊目だけ別の宿（7泊目に足し、8泊目にパタゴニアを足して戻す）', T.lodgingRangePlan(trip, bs, 7, 7, 'X'),
+    { rename: [], create: [{ date: '2026-07-02', label: 'X', mapFrom: null, target: true }, { date: '2026-07-03', label: 'パタゴニア', mapFrom: 'p', target: false }], target: null });
+  eq('lodgingRangePlan：7〜9泊目（最後まで）は戻す予定を足さない', T.lodgingRangePlan(trip, bs, 7, 9, 'X').create.length, 1);
+  eq('lodgingRangePlan：3〜5泊目の名前を変える（予定を移さない）', T.lodgingRangePlan(trip, bs, 3, 5, 'コートヤード'),
+    { rename: ['h'], create: [], target: 'h' });
+  eq('lodgingRangePlan：1〜3泊目を菊の家（同上）→ マリオットの予定の名前を変え、4泊目にマリオットを足して戻す', T.lodgingRangePlan(trip, bs, 1, 3, '菊の家'),
+    { rename: ['h'], create: [{ date: '2026-06-29', label: 'マリオット', mapFrom: 'h', target: false }], target: 'k1' });
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
