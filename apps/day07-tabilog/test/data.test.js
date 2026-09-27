@@ -417,9 +417,12 @@ var legAB = tl.legs[0];
 var stMid = T.replayStateAt(tl, (legAB.r0 + legAB.r1) / 2);
 ok('replayStateAt: 移動中は電車のアイコンが新宿と山梨の間にいる', stMid.icon && stMid.icon.transport === 'train' &&
   stMid.icon.lng < 139.70 && stMid.icon.lng > 138.57);
-var stArriveB = T.replayStateAt(tl, tl.stops[1].r + 0.01);
-eq('replayStateAt: 到着した予定の吹き出しが出る', stArriveB.captionIndex, 1);
+var stJustArriveB = T.replayStateAt(tl, tl.stops[1].r + 0.01);
+eq('replayStateAt: 着いた直後（一呼吸の間）はまだ吹き出しが出ない', stJustArriveB.captionIndex, -1);
+var stArriveB = T.replayStateAt(tl, tl.stops[1].r + 0.5 + 0.01);
+eq('replayStateAt: 一呼吸（0.5秒）置いたら到着した予定の吹き出しが出る', stArriveB.captionIndex, 1);
 eq('replayStateAt: 到着したら時計はその予定の時刻', stArriveB.hhmm, '12:00');
+eq('replayStateAt: 一呼吸の間も時計はその予定の時刻のまま', stJustArriveB.hhmm, '12:00');
 var stEnd = T.replayStateAt(tl, tl.totalReal);
 eq('replayStateAt: 最後は2日目', stEnd.dayNumber, 2);
 eq('replayStateAt: 最後にいる場所は最後の地点', [stEnd.here.lat, stEnd.here.lng], [35.50, 138.76]);
@@ -432,6 +435,41 @@ ok('arcLatLng: 飛行機は直線より外側にふくらむ', (function () {
   return Math.abs(mid.lat - 35) > 0.3;
 })());
 eq('arcLatLng: 弧でなければ直線の中点', T.arcLatLng({ lat: 30, lng: 130 }, { lat: 40, lng: 140 }, 0.5, false), { lat: 35, lng: 135 });
+
+/* ---- 地図でふりかえる：吹き出しの間、旅の時計はその予定の時刻で止まる（2026-09-27、大阪旅行の実データより） ---- */
+// 13:00の予定なのに、吹き出しを見せている途中で13:08まで進んで見えていた不具合の再現テスト
+var freezeStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'fz1', date: '2026-04-01', time: '13:00', category: 'transport', transport: 'train', label: '新大阪からユニバへ', entries: [{ mapUrl: 'https://x/usj' }] },
+  { id: 'fz2', date: '2026-04-01', time: '13:16', category: 'food', transport: 'car', label: 'たこ焼きを食べる', entries: [{ mapUrl: 'https://x/tako' }] }
+]);
+var freezeTl = T.buildReplayTimeline(freezeStops, {
+  'https://x/usj': { lat: 34.7334658, lng: 135.5002547 }, 'https://x/tako': { lat: 34.6686537, lng: 135.4375962 }
+});
+var fzStop = freezeTl.stops[0];
+ok('buildReplayTimeline: 吹き出しを見せている間（rCaptionStart〜rDwellEndの直前）はどの時点でも旅の時計が予定の時刻のまま',
+  [fzStop.rCaptionStart, (fzStop.rCaptionStart + fzStop.rDwellEnd) / 2, fzStop.rDwellEnd - 1e-4].every(function (r) {
+    return T.replayStateAt(freezeTl, r).t === fzStop.t;
+  }));
+eq('replayStateAt: 止まっている間の時計は13:00のまま（以前は8分進んで13:08と表示されていた）',
+  T.replayStateAt(freezeTl, (fzStop.rCaptionStart + fzStop.rDwellEnd) / 2).hhmm, '13:00');
+
+/* ---- 地図でふりかえる：地図が壊れている移動の予定でも、移動手段は次の地点へ引き継ぐ（大阪旅行の実データより） ---- */
+// 赤レンガ倉庫（地図あり）→新横浜から大阪への移動（電車、地図が壊れている＝地点にならない）
+// →新大阪からユニバへ（電車、地図あり）。以前は真ん中の予定が地点にならないと、次の地点自身の
+// category==='transport'な予定は「次への移動」の意味だからと無視され、車に化けていた
+var inheritStops = T.replayStops({ startDate: '2026-09-19', endDate: '2026-09-19' }, [
+  { id: 'akarenga', date: '2026-09-19', time: '10:07', category: 'other', label: 'みなとみらい発', entries: [{ mapUrl: 'https://maps.google.com/?q=赤レンガ倉庫' }] },
+  { id: 'move', date: '2026-09-19', time: '10:43', category: 'transport', transport: 'train', moveMinutes: 180, label: '新横浜から大阪への移動', entries: [{ mapUrl: 'https://maps.google.com/?query=undefined%2Cundefined' }] },
+  { id: 'usj', date: '2026-09-19', time: '13:00', category: 'transport', transport: 'train', label: '新大阪からユニバへ', entries: [{ mapUrl: 'https://maps.google.com/search/?api=1&query=34.7334658,135.5002547' }] }
+]);
+eq('replayStops: 地図の壊れた移動の予定も、地点にならないだけで移動手段は引き継ぐ',
+  inheritStops.map(function (s) { return s.transport; }), ['', '', 'train']);
+var inheritTl = T.buildReplayTimeline(inheritStops, {
+  'https://maps.google.com/?q=赤レンガ倉庫': { lat: 35.4545, lng: 139.6425 },
+  'https://maps.google.com/search/?api=1&query=34.7334658,135.5002547': { lat: 34.7334658, lng: 135.5002547 }
+});
+eq('buildReplayTimeline: 途中の予定の地図が壊れていても、区間の移動手段は電車のまま（車に化けない）',
+  inheritTl.legs.map(function (l) { return [l.transport, l.assumed]; }), [['train', false]]);
 
 /* ---- 紹介文（ホテログ・レクログ・飯ログ。docs/adr/0007） ---- */
 eq('reviewKindForCategory: 宿泊→ホテログ・食事→飯ログ・観光とその他→レクログ・移動→なし',
@@ -609,8 +647,8 @@ var phStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, 
   { id: 'p3', date: '2026-04-01', time: '10:02', label: 'C', entries: [] }]);
 eq('replayStops: 予定の記録の写真を地点に持たせる', [phStops[0].photos, phStops[1].photos], [['x1', 'x2', 'x3'], []]);
 var phTl = T.buildReplayTimeline(phStops, {});
-ok('buildReplayTimeline: 写真なしの地点は固定3秒', Math.abs((phTl.stops[1].rDwellEnd - phTl.stops[1].r) - 3) < 0.01);
-ok('buildReplayTimeline: 写真3枚の地点は1枚2.5秒×3＝7.5秒', Math.abs((phTl.stops[0].rDwellEnd - phTl.stops[0].r) - 7.5) < 0.01);
+ok('buildReplayTimeline: 写真なしの地点は固定3秒（＋着いてからの一呼吸0.5秒）', Math.abs((phTl.stops[1].rDwellEnd - phTl.stops[1].r) - 3.5) < 0.01);
+ok('buildReplayTimeline: 写真3枚の地点は1枚2.5秒×3＝7.5秒（＋一呼吸0.5秒）', Math.abs((phTl.stops[0].rDwellEnd - phTl.stops[0].r) - 8.0) < 0.01);
 
 /* ---- 地図でふりかえる：移動手段が無い移動は車（遠ければ飛行機） ---- */
 var carStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
@@ -621,18 +659,37 @@ var carTl = T.buildReplayTimeline(carStops, { 'https://x/shinjuku': { lat: 35.69
 eq('buildReplayTimeline: 移動手段が無くても移動にする。近ければ車、遠ければ（400km超）飛行機', carTl.legs.map(function (l) { return l.transport; }), ['car', 'plane']);
 ok('distanceKm: 新宿→那覇はおよそ1550km', Math.abs(T.distanceKm({ lat: 35.69, lng: 139.70 }, { lat: 26.21, lng: 127.68 }) - 1550) < 60);
 
+/* ---- 地図でふりかえる：道のりが届く前から、すべての区間を線でつなぐ（旅は全部必ずつなげる。2026-09-27） ---- */
+ok('buildReplayTimeline: 車の区間も、道のりが届く前からやわらかい曲線で最初からつながっている',
+  carTl.legs[0].path && carTl.legs[0].path.length > 2);
+ok('gentleCurvePath: 直線ではなく少し膨らむ（8%程度）', (function () {
+  var p = T.gentleCurvePath({ lat: 35.69, lng: 139.70 }, { lat: 35.50, lng: 138.76 });
+  var mid = p[Math.round(p.length / 2)];
+  var straightMidLat = (35.69 + 35.50) / 2, straightMidLng = (139.70 + 138.76) / 2;
+  return Math.abs(mid[0] - straightMidLat) > 1e-4 || Math.abs(mid[1] - straightMidLng) > 1e-4;
+})());
+eq('gentleCurvePath: 端点は出発地・到着地のまま', [T.gentleCurvePath({ lat: 35, lng: 139 }, { lat: 36, lng: 140 })[0], T.gentleCurvePath({ lat: 35, lng: 139 }, { lat: 36, lng: 140 }).slice(-1)[0]],
+  [[35, 139], [36, 140]]);
+
+/* ---- 地図でふりかえる：長い移動は少し長く見せる（100km以下2秒〜500km以上4秒。2026-09-27） ---- */
+eq('legMoveSeconds: 100km以下は2秒・500km以上は4秒・間は比例', [T.legMoveSeconds(50), T.legMoveSeconds(100), T.legMoveSeconds(300), T.legMoveSeconds(500), T.legMoveSeconds(2000)],
+  [2, 2, 3, 4, 4]);
+ok('buildReplayTimeline: 近い車の区間（100km以下）は移動2秒のまま', Math.abs(carTl.legs[0].r1 - carTl.legs[0].r0 - 2) < 0.01);
+ok('buildReplayTimeline: 遠い区間（500km以上）は移動4秒', Math.abs(carTl.legs[1].r1 - carTl.legs[1].r0 - 4) < 0.01);
+
 /* ---- 紹介文：ひとこと・URL ---- */
 var exText = T.reviewLogText({ category: 'food', label: '首里そば' }, { comment: 'また来たい', mapUrl: 'https://maps.app.goo.gl/x', shopUrl: 'https://shop.example', costItems: [] }, { score: 4.2, review: {} });
 ok('reviewLogText: ひとこととURLを添える', exText.indexOf('ひとこと：「また来たい」') !== -1 && exText.indexOf('📍 https://maps.app.goo.gl/x') !== -1 && exText.indexOf('🔗 https://shop.example') !== -1);
 ok('travelLogText: 移動にもURLを添える', T.travelLogText({ category: 'transport', transport: 'train', label: '京都へ' }, { costItems: [], travel: { from: '東京', to: '京都' }, otherUrl: 'https://jr.example' }).indexOf('🔗 https://jr.example') !== -1);
 
-/* ---- 地図でふりかえる：移動は2秒・写真は1枚2.5秒 ---- */
+/* ---- 地図でふりかえる：移動は基本2秒・写真は1枚2.5秒（長い移動は少し長く見せる。2026-09-27） ---- */
 var flyTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-02' }, [
   { id: 'h', date: '2026-04-01', time: '10:00', label: '香港', entries: [{ mapUrl: 'https://m/hk', photoIds: ['p1', 'p2', 'p3', 'p4'] }] },
   { id: 'n', date: '2026-04-02', time: '06:00', label: 'ニューヨーク', transport: 'plane', entries: [{ mapUrl: 'https://m/ny' }] }]),
   { 'https://m/hk': { lat: 22.3, lng: 114.2 }, 'https://m/ny': { lat: 40.7, lng: -74.0 } });
-ok('buildReplayTimeline: 長いフライトも移動は2秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 2) < 0.01);
-ok('buildReplayTimeline: 写真4枚なら吹き出しは10秒（1枚2.5秒×4）', Math.abs((flyTl.stops[0].rDwellEnd - flyTl.stops[0].r) - 10) < 0.01);
+// 香港→ニューヨークは500km超（実際は1万km超）なので、以前の一律2秒から上限の4秒になる
+ok('buildReplayTimeline: 長いフライト（500km超）は移動4秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 4) < 0.01);
+ok('buildReplayTimeline: 写真4枚なら吹き出しは10秒（1枚2.5秒×4、＋一呼吸0.5秒）', Math.abs((flyTl.stops[0].rDwellEnd - flyTl.stops[0].r) - 10.5) < 0.01);
 
 /* ---- 地図でふりかえる：吹き出しの秒数は写真の枚数だけで決まる（2026-09-27） ---- */
 var capSecStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
@@ -640,9 +697,9 @@ var capSecStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01'
   { id: 'two', date: '2026-04-01', time: '10:30', label: '写真2枚', entries: [{ photoIds: ['a', 'b'] }] },
   { id: 'six', date: '2026-04-01', time: '11:00', label: '写真6枚', entries: [{ photoIds: ['a', 'b', 'c', 'd', 'e', 'f'] }] }]);
 var capSecTl = T.buildReplayTimeline(capSecStops, {});
-ok('buildReplayTimeline: 写真なしは約3秒', Math.abs((capSecTl.stops[0].rDwellEnd - capSecTl.stops[0].r) - 3) < 0.01);
-ok('buildReplayTimeline: 写真2枚は約5秒（2.5秒×2）', Math.abs((capSecTl.stops[1].rDwellEnd - capSecTl.stops[1].r) - 5) < 0.01);
-ok('buildReplayTimeline: 写真6枚でも4枚分の10秒で頭打ち', Math.abs((capSecTl.stops[2].rDwellEnd - capSecTl.stops[2].r) - 10) < 0.01);
+ok('buildReplayTimeline: 写真なしは約3秒（＋一呼吸0.5秒）', Math.abs((capSecTl.stops[0].rDwellEnd - capSecTl.stops[0].r) - 3.5) < 0.01);
+ok('buildReplayTimeline: 写真2枚は約5秒（2.5秒×2、＋一呼吸0.5秒）', Math.abs((capSecTl.stops[1].rDwellEnd - capSecTl.stops[1].r) - 5.5) < 0.01);
+ok('buildReplayTimeline: 写真6枚でも4枚分の10秒で頭打ち（＋一呼吸0.5秒）', Math.abs((capSecTl.stops[2].rDwellEnd - capSecTl.stops[2].r) - 10.5) < 0.01);
 
 /* ---- 時差：地図の無い予定は直前の予定を引き継ぐ（行ったり来たり防止） ---- */
 // 10:00 成田（地図・東京）→12:00 LA到着（地図・LA）→15:00 ホテルで休憩（地図なし）→18:00 夕食（地図・LA）

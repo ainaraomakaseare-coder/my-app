@@ -706,8 +706,21 @@
   var REPLAY_MAX_CAPTION_SEC = 10;    // 写真がある地点でも、これ以上は止めない（写真4枚分の秒数）
   var REPLAY_MAX_PHOTOS = 4;          // 1つの地点で見せる写真の上限（6枚だと1地点15秒止まり長かったので4枚＝10秒に）
   var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
-  var REPLAY_MOVE_SEC = 2;           // 移動の演出は、距離や時間にかかわらずこの秒数（以前は1000倍速で2〜6秒。香港→ニューヨークの飛行機が長すぎた）
+  // 移動の演出の長さ（秒）。以前はどれだけ遠くても一律2秒だったが、「短い移動と同じ速さだと、
+  // 長距離の移動が味気ない」という声より、遠い移動は少しだけ長く見せる（2026-09-27）。
+  var REPLAY_MOVE_SEC_MIN = 2;       // 100km以下はこれまでどおり2秒
+  var REPLAY_MOVE_SEC_MAX = 4;       // 500km以上はこれまでの2倍の4秒
+  var REPLAY_MOVE_KM_SHORT = 100;
+  var REPLAY_MOVE_KM_LONG = 500;
+  function legMoveSeconds(km) {
+    if (!(km > REPLAY_MOVE_KM_SHORT)) return REPLAY_MOVE_SEC_MIN;
+    if (km >= REPLAY_MOVE_KM_LONG) return REPLAY_MOVE_SEC_MAX;
+    var f = (km - REPLAY_MOVE_KM_SHORT) / (REPLAY_MOVE_KM_LONG - REPLAY_MOVE_KM_SHORT);
+    return REPLAY_MOVE_SEC_MIN + f * (REPLAY_MOVE_SEC_MAX - REPLAY_MOVE_SEC_MIN);
+  }
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
+  var REPLAY_ARRIVAL_PAUSE_SEC = 0.5; // 着いてから吹き出し（写真・エピソード）を出すまでの一呼吸（カメラが収まるのを待つ。2026-09-27）
+  var REPLAY_JUMP_EPS = 1e-6;         // 吹き出しが消えて時計を一気に進める瞬間の、見た目には分からない実時間のずらし幅
   var REPLAY_UNTIMED_START_MIN = 9 * 60;
 
   // 予定の場所は、記録に入っている地図のURL（Googleマップの共有リンク maps.app.goo.gl/… や
@@ -783,7 +796,14 @@
         minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + step, 23 * 60 + 59);
       }
       var placeEntry = replayPlaceEntry(b);
-      var arriving = b.category === 'transport' ? '' : (b.transport || pendingTransport);
+      // 移動の予定（category==='transport'）自身の transport は「次の場所への移動」を表す値なので、
+      // その予定自身が地図上の地点になるとき（＝移動の予定に、たどり着いた先の地図が入っているとき）の
+      // 「ここまでの移動手段」には使わない。代わりに、直前までに引き継いだpendingTransportを使う
+      // （地図が壊れている移動の予定でも、移動手段だけは次に引き継いでいるため）。
+      // 例：赤レンガ倉庫→（新横浜から大阪への移動、地図が壊れている。ここでpendingTransport='train'）
+      //     →新大阪からユニバへ（地図あり、それ自身のtransportは'train'だが「次への移動」の意味なので
+      //     使わず、pendingTransportの'train'を使う。2026-09-27）
+      var arriving = b.category === 'transport' ? pendingTransport : (b.transport || pendingTransport);
       if (b.category === 'transport') { pendingTransport = b.transport || ''; pendingMove = b.moveMinutes || 0; }
       else if (placeEntry) { pendingTransport = ''; pendingMove = 0; }
       lastMinute[b.date] = minute;
@@ -900,6 +920,33 @@
     return pts;
   }
 
+  // 道のり（Worker「/route」）がまだ届いていない・見つからない区間でも、旅は必ずつなげてほしいという声より
+  // （2026-09-27）、直線ではなく少しだけ膨らませた「やわらかい曲線」を最初から用意しておく。飛行機の弧
+  // （arcLatLng、bulge比率0.18）と同じ考え方だが、膨らみは直線距離の約8%に抑える（車・電車などの短い
+  // 移動で弧が大げさに見えないように）。アイコンと線が同じ点をたどるよう、この道のりをそのままleg.pathに使う。
+  var REPLAY_GENTLE_CURVE_POINTS = 32;
+  var REPLAY_GENTLE_CURVE_OFFSET_RATIO = 0.08;
+  function gentleCurvePath(a, b, n) {
+    n = Math.max(2, n || REPLAY_GENTLE_CURVE_POINTS);
+    var offsetKm = distanceKm(a, b) * REPLAY_GENTLE_CURVE_OFFSET_RATIO;
+    var dLat = b.lat - a.lat, dLng = b.lng - a.lng;
+    var latPerKm = 1 / 111, lngPerKm = 1 / (111 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180) || 1);
+    // 進行方向を平面近似（km単位）で表し、その左向きの単位ベクトルへ膨らみを乗せる
+    var dyKm = dLat / latPerKm, dxKm = dLng / lngPerKm;
+    var lenKm = Math.sqrt(dxKm * dxKm + dyKm * dyKm) || 1;
+    var perpXKm = -dyKm / lenKm, perpYKm = dxKm / lenKm;
+    var pts = [];
+    for (var i = 0; i <= n; i++) {
+      var f = i / n;
+      var bulge = Math.sin(Math.PI * f) * offsetKm;
+      pts.push([
+        a.lat + dLat * f + perpYKm * bulge * latPerKm,
+        a.lng + dLng * f + perpXKm * bulge * lngPerKm
+      ]);
+    }
+    return pts;
+  }
+
   function buildReplayTimeline(stops, coordsByQuery) {
     coordsByQuery = coordsByQuery || {};
     var withOffset = (stops || []).filter(function (st) { return typeof st.offset === 'number'; })[0];
@@ -925,10 +972,12 @@
       if (lastLoc >= 0 && (s[lastLoc].lat !== st.lat || s[lastLoc].lng !== st.lng)) {
         var d = distanceKm(s[lastLoc], st);
         var transport = st.transport || (d > REPLAY_PLANE_KM ? 'plane' : (d < REPLAY_WALK_KM ? 'walk' : 'car'));
-        var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport };
-        // 飛行機の道のりは道路検索をしないので、アイコンと同じ弧をここで作っておく
-        // （道のりが分かるのを待たずに、区間に入った瞬間から全体を青く見せられる。docs/adr/0008）。
-        if (transport === 'plane') leg.path = planeArcPath(s[lastLoc], st);
+        var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport, moveSec: legMoveSeconds(d) };
+        // 道のり（Worker「/route」）が届く・見つかるのを待たず、区間に入った瞬間から必ず線でつながるよう、
+        // アイコンと同じ道のり（飛行機は弧、それ以外はやわらかい曲線）をここで先に作っておく。実際の道のりが
+        // 届いたらこのpathを差し替える（fetchReplayRoutes）。「旅は全部必ずつなげてほしい」という声より
+        // （2026-09-27、docs/adr/0008）。
+        leg.path = transport === 'plane' ? planeArcPath(s[lastLoc], st) : gentleCurvePath(s[lastLoc], st);
         legs.push(leg);
       }
       lastLoc = i;
@@ -941,27 +990,35 @@
     kf.push({ t: tStart, r: 0 });
     r += (s[0].t - tStart) * REPLAY_SEC_PER_MIN;
     s.forEach(function (st, i) {
-      st.r = r;
+      st.r = r; // 乗り物が着いた瞬間（まだ吹き出しは出さない。次のREPLAY_ARRIVAL_PAUSE_SECの後に出す）
       kf.push({ t: st.t, r: r });
       var next = s[i + 1];
       // 最後の予定は、深夜でも時計が翌日（存在しない日）にはみ出さないよう、その日の23:59までにとどめる
       var gap = next ? Math.max(0, next.t - st.t) : Math.max(0, Math.min(REPLAY_DWELL_MIN, (st.dayIndex + 1) * 1440 - 1 - st.t));
       var moving = !!(next && legArrivingAt[i + 1]);
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
-      r += dwell * REPLAY_SEC_PER_MIN;
-      kf.push({ t: st.t + dwell, r: r });
+      // 着いてすぐではなく、カメラが収まるのを少し待ってから吹き出し（写真・エピソード）を出す（2026-09-27）
+      r += REPLAY_ARRIVAL_PAUSE_SEC;
+      st.rCaptionStart = r;
       var photoCount = Math.min((st.photos || []).length, REPLAY_MAX_PHOTOS);
       // 写真が無ければ固定3秒、写真があれば1枚2.5秒（最大4枚＝10秒）。文章の長さでは変えない（2026-09-27）
       var minSec = photoCount > 0 ? Math.min(photoCount * REPLAY_SEC_PER_PHOTO, REPLAY_MAX_CAPTION_SEC) : REPLAY_MIN_CAPTION_SEC;
-      if (dwell * REPLAY_SEC_PER_MIN < minSec) {
-        r += minSec - dwell * REPLAY_SEC_PER_MIN;
-        kf.push({ t: st.t + dwell, r: r });
-      }
+      // 吹き出しを見せている間（一時停止＋滞在）は、時計をこの予定の時刻のまま止める。以前はこの間も
+      // 旅の時計が数分進んで見えていた（例：13:00の予定なのに13:08と表示）。吹き出しが消えたら、
+      // 旅の時計をdwell分だけ一気に進めてから続きに移る（2026-09-27）。
+      var captionSec = Math.max(dwell * REPLAY_SEC_PER_MIN, minSec);
+      r += captionSec;
+      kf.push({ t: st.t, r: r });
+      // 吹き出しが消えた直後に、旅の時計をdwell分だけ一気に進める。同じrに2つの時刻（止まっていたst.tと、
+      // 進んだst.t+dwell）を置くと、ちょうどそのrを指したときにどちらを返すか決まらない（最後の予定など、
+      // このrで再生が止まるとき）ため、ごくわずかな実時間（見た目には分からない）だけ後ろにずらす
+      r += REPLAY_JUMP_EPS;
+      kf.push({ t: st.t + dwell, r: r });
       st.rDwellEnd = r;
       if (!next) return;
       var rest = gap - dwell;
       r += moving
-        ? REPLAY_MOVE_SEC
+        ? legArrivingAt[i + 1].moveSec
         : Math.min(rest * REPLAY_SEC_PER_MIN, REPLAY_IDLE_CAP_SEC);
     });
     legs.forEach(function (l) {
@@ -1050,7 +1107,8 @@
     var s = tl.stops;
     var idx = -1;
     for (var i = 0; i < s.length; i++) { if (s[i].r <= r + 1e-9) idx = i; }
-    var captionIndex = idx >= 0 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
+    // 吹き出しは、着いた瞬間（idxになった瞬間）ではなく、少し間を置いた rCaptionStart から出す（2026-09-27）
+    var captionIndex = idx >= 0 && r >= s[idx].rCaptionStart - 1e-9 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
 
     var icon = null;
     for (var k = 0; k < tl.legs.length; k++) {
@@ -1447,6 +1505,8 @@
     isRouteDetourTooLong: isRouteDetourTooLong,
     geocodeNearIndexes: geocodeNearIndexes,
     planeArcPath: planeArcPath,
+    gentleCurvePath: gentleCurvePath,
+    legMoveSeconds: legMoveSeconds,
     parseMemo: parseMemo,
     transportLabel: transportLabel,
     minutesText: minutesText,
@@ -5268,11 +5328,15 @@
     });
   }
 
-  // 移動手段が車・タクシー・バス・徒歩・自転車の区間は、実際の道路に沿った道のりをWorker（/route）に聞き、
-  // その区間の path にする（Core.replayStateAt と線の描画が、直線の代わりにこれをたどる。docs/adr/0008）。
-  // 取れなかった区間は、これまでどおり直線のまま。
+  // 移動手段が車・タクシー・バス・徒歩・自転車・電車（新幹線・地下鉄含む）の区間は、実際の道路・線路に
+  // 沿った道のりをWorker（/route）に聞き、その区間の path にする（Core.replayStateAt と線の描画が、
+  // Core側で先に用意した「やわらかい曲線」の代わりにこれをたどる。docs/adr/0008）。
+  // 取れなかった区間は、Core.buildReplayTimelineがあらかじめ用意したやわらかい曲線のまま（直線には戻さない。
+  // 「旅は全部必ずつなげてほしい」という声より、2026-09-27）。
   // 車ルートが直線距離よりずっと長い（Core.isRouteDetourTooLong）ときは、歩行者専用の目的地（階段など）に
-  // 車で大回りしている疑いがあるので、徒歩で調べ直す。それでも長ければ直線に戻す（2026-09-26）。
+  // 車で大回りしている疑いがあるので、徒歩で調べ直す。それでも長ければ、やわらかい曲線に戻す（2026-09-26）。
+  // 電車・新幹線・地下鉄（rail）は、BRouterの公開サーバーで線路が見つからないことがあるため、見つからなければ
+  // 車の道のりを見た目の近似として使う（オーナー承認、2026-09-27）。それも見つからなければやわらかい曲線のまま。
   function routeQuery(profile, a, b) {
     return '/route?profile=' + profile +
       '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
@@ -5296,6 +5360,11 @@
             var km2 = res2 && res2.found ? (res2.distance || 0) / 1000 : null;
             return (res2 && res2.found && !Core.isRouteDetourTooLong(straightKm, km2)) ? res2 : null;
           });
+        }
+        // 線路の道のりが見つからなければ、車の道のりを見た目の近似として調べ直す（それでも見つからなければ
+        // やわらかい曲線のまま。距離1本のBRouter公開サーバー問い合わせに、車1本を足すだけなので許容範囲）
+        if (profile === 'rail' && !(res && res.found)) {
+          return api(routeQuery('car', a, b)).catch(function () { return null; });
         }
         return res;
       }).then(function (res) {
