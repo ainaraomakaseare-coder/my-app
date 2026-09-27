@@ -297,9 +297,12 @@ button,input,select,textarea{font:inherit}button,.btn,.tab,select{min-height:44p
             <input type="date" id="f-date" required>
           </label>
           <label>対戦相手
-            <input id="f-opponent" list="opponents-list" placeholder="例: 阪神" required>
+            <select id="f-opponent-select" required></select>
           </label>
         </div>
+        <label id="f-opponent-other-label" hidden>対戦相手（手入力）
+          <input id="f-opponent" list="opponents-list" placeholder="例: 侍ジャパン" required>
+        </label>
         <label>球場
           <input id="f-venue" list="venues-list" placeholder="例: 横浜スタジアム">
         </label>
@@ -461,18 +464,18 @@ function competitionGames(games,filter){return games.filter(g=>!filter||filter==
 function statsByCompetition(games,year){return COMPETITIONS.map(c=>({label:c.label,stats:seasonStats(competitionGames(games,c.id),year)}));}
 
 var TEAMS = [
- {id:"baystars",name:"横浜DeNAベイスターズ",short:"DeNA",en:"Yokohama"},
- {id:"tigers",name:"阪神タイガース",short:"阪神",en:"Hanshin"},
- {id:"giants",name:"読売ジャイアンツ",short:"巨人",en:"Yomiuri"},
- {id:"carp",name:"広島東洋カープ",short:"広島",en:"Hiroshima"},
- {id:"dragons",name:"中日ドラゴンズ",short:"中日",en:"Chunichi"},
- {id:"swallows",name:"東京ヤクルトスワローズ",short:"ヤクルト",en:"Yakult"},
- {id:"hawks",name:"福岡ソフトバンクホークス",short:"ソフトバンク",en:"Softbank"},
- {id:"fighters",name:"北海道日本ハムファイターズ",short:"日本ハム",en:"Nippon Ham"},
- {id:"eagles",name:"東北楽天ゴールデンイーグルス",short:"楽天",en:"Rakuten"},
- {id:"lions",name:"埼玉西武ライオンズ",short:"西武",en:"Seibu"},
- {id:"marines",name:"千葉ロッテマリーンズ",short:"ロッテ",en:"Lotte"},
- {id:"buffaloes",name:"オリックス・バファローズ",short:"オリックス",en:"Orix"}
+ {id:"baystars",name:"横浜DeNAベイスターズ",short:"DeNA",en:"Yokohama",venue:"横浜スタジアム"},
+ {id:"tigers",name:"阪神タイガース",short:"阪神",en:"Hanshin",venue:"阪神甲子園球場"},
+ {id:"giants",name:"読売ジャイアンツ",short:"巨人",en:"Yomiuri",venue:"東京ドーム"},
+ {id:"carp",name:"広島東洋カープ",short:"広島",en:"Hiroshima",venue:"MAZDA Zoom-Zoom スタジアム広島"},
+ {id:"dragons",name:"中日ドラゴンズ",short:"中日",en:"Chunichi",venue:"バンテリンドーム ナゴヤ"},
+ {id:"swallows",name:"東京ヤクルトスワローズ",short:"ヤクルト",en:"Yakult",venue:"神宮球場"},
+ {id:"hawks",name:"福岡ソフトバンクホークス",short:"ソフトバンク",en:"Softbank",venue:"みずほPayPayドーム"},
+ {id:"fighters",name:"北海道日本ハムファイターズ",short:"日本ハム",en:"Nippon Ham",venue:"エスコンフィールドHOKKAIDO"},
+ {id:"eagles",name:"東北楽天ゴールデンイーグルス",short:"楽天",en:"Rakuten",venue:"楽天モバイルパーク宮城"},
+ {id:"lions",name:"埼玉西武ライオンズ",short:"西武",en:"Seibu",venue:"ベルーナドーム"},
+ {id:"marines",name:"千葉ロッテマリーンズ",short:"ロッテ",en:"Lotte",venue:"ZOZOマリンスタジアム"},
+ {id:"buffaloes",name:"オリックス・バファローズ",short:"オリックス",en:"Orix",venue:"京セラドーム大阪"}
 ];
 function teamInfo(id){return TEAMS.filter(function(t){return t.id===id;})[0] || TEAMS[0];}
 function teamGames(games, id){return games.filter(function(g){return (g.myTeam || "baystars")===id;});}
@@ -1016,6 +1019,9 @@ function openForm(id){
 
   fillCompetitionSelect($("f-competition"), g ? competitionOf(g) : "regular", false);
   fillTeamSelect($("f-team"), g ? g.myTeam : selectedTeam());
+  $("f-opponent").value = g ? g.opponent : "";
+  $("f-venue").value = g ? g.venue : "";
+  lastAutoVenue = null;
   updateFormTeam();
   fillDatalist("venues-list", VENUES);
   fillDatalist("players-list-dl", distinctPlayers());
@@ -1024,8 +1030,6 @@ function openForm(id){
 
   $("f-id").value = g ? g.id : "";
   $("f-date").value = g ? g.date : localToday();
-  $("f-opponent").value = g ? g.opponent : "";
-  $("f-venue").value = g ? g.venue : "";
   $("f-bay-score").value = g && g.score.bay != null ? g.score.bay : "";
   $("f-opp-score").value = g && g.score.opp != null ? g.score.opp : "";
   $("f-result").value = g && g.result ? g.result : "";
@@ -1332,6 +1336,7 @@ $("f-api-fetch").onclick = function(){
   fetchGameFromApi(date).then(function(res){
     if(ui.view!=="form" || ui.editingId!==editingId || $("f-team").value!==formTeam || $("f-date").value!==date) return;
     $("f-opponent").value = res.opponent;
+    syncOpponentSelect();
     if(res.bay != null) $("f-bay-score").value = res.bay;
     if(res.opp != null) $("f-opp-score").value = res.opp;
     if(res.result) $("f-result").value = res.result;
@@ -1352,7 +1357,29 @@ $("reset-all-btn").onclick = resetAllData;
 
 function selectedTeam(){return teamInfo(state.settings.myTeam).id;}
 function fillTeamSelect(el,id){el.innerHTML=TEAMS.map(t=>'<option value="'+t.id+'">'+t.name+'</option>').join('');el.value=id;}
-function updateFormTeam(){var id=$('f-team').value;$('f-team-label').textContent=teamInfo(id).short;fillDatalist('opponents-list',TEAMS.filter(t=>t.id!==id).map(t=>t.short));}
+var lastAutoVenue = null;
+function fillOpponentSelect(el,myTeamId,currentOpponent){
+  var teams=TEAMS.filter(function(t){return t.id!==myTeamId;});
+  var opts=['<option value="">(選択してください)</option>'].concat(teams.map(function(t){return '<option value="'+t.id+'">'+t.short+'</option>';}));
+  opts.push('<option value="__other__">その他（手入力）</option>');
+  el.innerHTML=opts.join('');
+  var match=teams.filter(function(t){return t.short===currentOpponent;})[0];
+  el.value = match ? match.id : (currentOpponent ? '__other__' : '');
+}
+function syncOpponentSelect(){
+  fillOpponentSelect($('f-opponent-select'),$('f-team').value,$('f-opponent').value);
+  $('f-opponent-other-label').hidden = $('f-opponent-select').value !== '__other__';
+}
+function updateFormTeam(){
+  var id=$('f-team').value;
+  $('f-team-label').textContent=teamInfo(id).short;
+  fillDatalist('opponents-list',TEAMS.filter(t=>t.id!==id).map(t=>t.short));
+  syncOpponentSelect();
+  if(!ui.editingId && ($('f-venue').value===''||$('f-venue').value===lastAutoVenue)){
+    lastAutoVenue = teamInfo(id).venue;
+    $('f-venue').value = lastAutoVenue;
+  }
+}
 function localToday(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function percent(r){return r==null?'—':(r*100).toFixed(1)+'%';}
 function recordText(s){return s.win+'勝 '+s.lose+'敗 '+s.draw+'分';}
@@ -1389,6 +1416,12 @@ function renderAnalysis(){
 }
 $('settings-team').onchange=function(){state.settings.myTeam=this.value;delete state.settings.apiTeamId;delete state.settings.apiLeagueId;delete state.settings.apiTeamKey;ui.analysisTeam=this.value;saveState();$('header-summary').textContent=teamInfo(this.value).name;};
 $('f-team').onchange=updateFormTeam;
+$('f-opponent-select').onchange=function(){
+  var v=this.value;
+  if(v==='__other__'){ $('f-opponent-other-label').hidden=false; $('f-opponent').value=''; $('f-opponent').focus(); }
+  else if(v){ $('f-opponent-other-label').hidden=true; $('f-opponent').value=teamInfo(v).short; }
+  else { $('f-opponent-other-label').hidden=true; $('f-opponent').value=''; }
+};
 $('analysis-team').onchange=function(){ui.analysisTeam=this.value;renderAnalysis();};
 $('analysis-year').onchange=function(){ui.analysisYear=Number(this.value);renderAnalysis();};
 $('actual-form').onsubmit=function(ev){ev.preventDefault();var actual={win:Number($('actual-win').value),lose:Number($('actual-lose').value),draw:Number($('actual-draw').value)};if(!validActual(actual))return;var records=state.settings.actualRecords||(state.settings.actualRecords={});if(!records[ui.analysisTeam])records[ui.analysisTeam]={};records[ui.analysisTeam][ui.analysisYear]=actual;saveState();renderAnalysis();};
