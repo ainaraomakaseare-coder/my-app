@@ -1664,7 +1664,8 @@ async function getRoute(url, headers, ctx, env) {
   // v3：電車をGoogleの乗り換え案内で先に調べるようにした（2026-09-27）。v2に残った「遠回りしすぎ」を捨てる
   // v4：googleReason（Googleが使えなかった理由）を返すようにした。v3に残った結果を捨てる
   // v5：BRouterの別候補（alternativeidx 1〜3）も見るようにした。v4に残った「遠回りしすぎ」を捨てる
-  const cacheKey = new Request("https://tabilog-route.cache/v5?k=" + encodeURIComponent(key));
+  // v6：車・徒歩・自転車もOSRMがだめならGoogleで調べ直すようにした。v5に残った「見つからない」を捨てる
+  const cacheKey = new Request("https://tabilog-route.cache/v6?k=" + encodeURIComponent(key));
   const hit = await cache.match(cacheKey);
   if (hit) return json(await hit.json(), 200, headers);
 
@@ -1675,9 +1676,15 @@ async function getRoute(url, headers, ctx, env) {
     // 新大阪→USJ（直線9km）で新幹線の線路に吸い寄せられて約174kmの遠回りを返すなど、よく外れるため。
     // キーが無い・Routes APIがキーで許可されていない・1日の上限（GCPのクォータ）を超えた・経路が無い
     // ときは{ skip: 理由 }が返り、これまでどおりBRouter→（アプリ側で）やわらかい曲線に回る。
-    const google = !isRail ? null
+    let google = !isRail ? null
       : (isInJapan(from) && isInJapan(to)) ? { skip: "japan_not_supported" }
       : await googleTransitRoute(env, from, to);
+    // 電車だけでは経路が無い（ドジャースタジアムのように駅が無い場所）ときは、バスも含めた乗り換え案内で
+    // 調べ直す（道路を走る区間があっても、公共交通の道のりとして線は実際の道に沿う。2026-09-27）
+    if (google && google.skip === "no_routes") {
+      const any = await googleRoute(env, from, to, "TRANSIT_ANY");
+      if (any.found) google = any;
+    }
     if (google && google.found) {
       body = google;
     } else if (isRail) {
@@ -1704,14 +1711,35 @@ async function getRoute(url, headers, ctx, env) {
       if (!body.found) body = { found: false, reason: reasons[reasons.length - 1], tried: reasons.length };
       if (google && google.skip) body.googleReason = google.skip;
     } else {
-      const res = await fetch(
-        "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
-          from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
-        { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
-      );
-      const data = res.ok ? await res.json() : null;
-      const route = data && data.routes && data.routes[0];
-      body = osrmToBody(route);
+      // 車・徒歩・自転車は、まず無料のOSRM（routing.openstreetmap.de）。混雑・失敗・見つからないときは
+      // Googleの道のり（Routes API、DRIVE/WALK/BICYCLE）で調べ直す。以前はOSRMが一度失敗すると、その区間は
+      // やわらかい曲線（ほぼ一直線）になり、「ドジャースタジアムへの行き帰りが一直線」のように街を突っ切って
+      // 見えていた（2026-09-27）。
+      let osrmStatus = 0;
+      try {
+        const res = await fetch(
+          "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
+            from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
+          { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+        );
+        osrmStatus = res.status;
+        const data = res.ok ? await res.json() : null;
+        const route = data && data.routes && data.routes[0];
+        body = osrmToBody(route);
+      } catch {
+        osrmStatus = -1;
+        body = { found: false };
+      }
+      if (!body.found) {
+        const g = await googleRoute(env, from, to, GOOGLE_TRAVEL_MODES[profile]);
+        if (g.found) {
+          body = g;
+        } else {
+          body = { found: false, reason: "osrm_" + (osrmStatus === -1 ? "fetch_failed" : osrmStatus), googleReason: g.skip };
+          // OSRMが一時的に失敗しただけ（通信失敗・429・5xx）なら、覚えずに502を返して次に開いたとき調べ直す
+          if (osrmStatus === -1 || osrmStatus === 429 || osrmStatus >= 500) throw new Error("osrm_" + osrmStatus);
+        }
+      }
     }
   } catch {
     return json({ error: "route_failed" }, 502, headers); // 一時的な失敗・タイムアウトはキャッシュしない
@@ -1771,7 +1799,8 @@ function nextTransitProbeTime(now) {
   if (probe.getTime() < t.getTime() + 60 * 60 * 1000) probe.setUTCDate(probe.getUTCDate() + 1);
   return probe.toISOString();
 }
-async function googleTransitRoute(env, from, to) {
+async function googleRoute(env, from, to, travelMode) {
+  if (!travelMode) return { skip: "no_mode" };
   if (!env || !env.GOOGLE_API_KEY) return { skip: "no_key" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GOOGLE_TRANSIT_TIMEOUT_MS);
@@ -1786,11 +1815,14 @@ async function googleTransitRoute(env, from, to) {
       body: JSON.stringify({
         origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
         destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
-        travelMode: "TRANSIT",
-        transitPreferences: { allowedTravelModes: ["RAIL"] },
-        // 出発時刻を省くと「今」になり、終電のあとに開くと経路が無くなる。電車の走っている昼
-        // （次の日本時間12:00＝UTC 03:00）で調べる。見たいのは線の形なので、時刻表の違いは問わない。
-        departureTime: nextTransitProbeTime(),
+        travelMode: travelMode === "TRANSIT_ANY" ? "TRANSIT" : travelMode,
+        ...(travelMode === "TRANSIT_ANY" ? { departureTime: nextTransitProbeTime() } : {}),
+        ...(travelMode === "TRANSIT" ? {
+          transitPreferences: { allowedTravelModes: ["RAIL"] },
+          // 出発時刻を省くと「今」になり、終電のあとに開くと経路が無くなる。電車の走っている昼
+          // （次の日本時間12:00＝UTC 03:00）で調べる。見たいのは線の形なので、時刻表の違いは問わない。
+          departureTime: nextTransitProbeTime(),
+        } : {}),
         languageCode: "ja",
       }),
       signal: controller.signal,
@@ -1808,15 +1840,59 @@ async function googleTransitRoute(env, from, to) {
     const distanceM = Number(route.distanceMeters) || 0;
     const straightKm = distanceKm(from, to);
     // 乗り換え案内でも、直線距離の3倍を超える大回りは候補違いの疑いとして使わない（BRouterと同じ基準）
-    if (straightKm > 0 && distanceM / 1000 > straightKm * RAIL_MAX_DETOUR_RATIO) return { skip: "detour_too_long" };
+    if (/^TRANSIT/.test(travelMode) && straightKm > 0 && distanceM / 1000 > straightKm * RAIL_MAX_DETOUR_RATIO) return { skip: "detour_too_long" };
     const path = downsamplePoints(pts, ROUTE_MAX_POINTS)
       .map((p) => [Math.round(p[0] * 1e5) / 1e5, Math.round(p[1] * 1e5) / 1e5]);
-    return { found: true, path, distance: Math.round(distanceM), source: "google_transit" };
+    return { found: true, path, distance: Math.round(distanceM), source: "google_" + travelMode.toLowerCase() };
   } catch {
     return { skip: "fetch_failed" };
   } finally {
     clearTimeout(timer);
   }
+}
+
+function googleTransitRoute(env, from, to) {
+  return googleRoute(env, from, to, "TRANSIT");
+}
+const GOOGLE_TRAVEL_MODES = { car: "DRIVE", foot: "WALK", bike: "BICYCLE" };
+
+// 日本の近い電車の区間で、アプリが線路の上の最短経路を求めるための線路データ（OpenStreetMap、
+// Overpass API）を、Workerが代わりに取ってくる（2026-09-27）。54では端末から直接Overpassへ
+// POSTしていたが、iOSアプリ（CapacitorHttp経由の通信）で取れず、みなとみらい→新横浜が一直線の
+// ままだった疑いがあるため、ほかのAPIと同じ経路（Worker）にまとめる。計算（重い）はしないで、
+// Overpassの応答をそのまま流すだけ。範囲は大きすぎないもの（一辺0.8度＝約80kmまで）に限り、30日覚える。
+const RAIL_TRACKS_MAX_SPAN_DEG = 0.8;
+const OVERPASS_URLS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+async function getRailTracks(url, headers, ctx) {
+  const parts = String(url.searchParams.get("bbox") || "").split(",").map(Number);
+  const [south, west, north, east] = parts;
+  if (parts.length !== 4 || parts.some((v) => !Number.isFinite(v)) || south >= north || west >= east ||
+      north - south > RAIL_TRACKS_MAX_SPAN_DEG || east - west > RAIL_TRACKS_MAX_SPAN_DEG ||
+      south < -90 || north > 90 || west < -180 || east > 180) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const bbox = [south, west, north, east].map((v) => v.toFixed(4)).join(",");
+  const query = '[out:json][timeout:25];way["railway"~"^(rail|subway|light_rail|narrow_gauge|monorail)$"]' +
+    '["service"!~"^(yard|siding|spur)$"](' + bbox + ');(._;>;);out skel qt;';
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-rail-tracks.cache/v1?bbox=" + bbox);
+  const hit = await cache.match(cacheKey);
+  if (hit) return new Response(hit.body, { status: 200, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
+  for (const base of OVERPASS_URLS) {
+    try {
+      const res = await fetch(base + "?data=" + encodeURIComponent(query), {
+        headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/; 電車の道のりを線路の上で描くため。範囲ごとに30日キャッシュします)" },
+      });
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (text.indexOf('"elements"') < 0) continue;
+      ctx.waitUntil(cache.put(cacheKey, new Response(text, {
+        headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+      })));
+      return new Response(text, { status: 200, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
+    } catch { /* 次のサーバーを試す */ }
+  }
+  return json({ error: "overpass_failed" }, 502, headers);
 }
 
 // near：「緯度,経度;緯度,経度」（同じ旅行の前後の場所）、hint：予定の見出し、
@@ -3860,6 +3936,7 @@ export default {
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"), url.searchParams.get("entry"), env);
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx, env);
+    if (method === "GET" && path === "/rail-tracks") return getRailTracks(url, headers, ctx);
     if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
     if (method === "GET" && path === "/rates") return getRates(url, headers, ctx);
     if (method === "GET" && path === "/places/search") {
