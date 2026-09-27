@@ -101,12 +101,14 @@ try {
   }
   console.log(`ログインを確認しました：${app.attributes.name}`);
 
-  // 入力したい組み合わせ（種類×用途、種類×ユーザーとの紐づき）
+  // 入力したい組み合わせ。1件ごとに「種類・用途・ユーザーとの紐づき」の3つをそろえて入れる
+  // （種類×用途と、種類×紐づきを別々の件にすると、公開のときに「欠けている」と断られる）
   const key = (c, p, d) => `${c}|${p || ''}|${d || ''}`;
   const wanted = [];
   for (const item of meta.appPrivacy) {
-    for (const p of item.purposes) wanted.push({category: item.category, purpose: p});
-    for (const d of item.protections) wanted.push({category: item.category, dataProtection: d});
+    for (const p of item.purposes) {
+      for (const d of item.protections) wanted.push({category: item.category, purpose: p, dataProtection: d});
+    }
   }
   const wantedKeys = wanted.map((w) => key(w.category, w.purpose, w.dataProtection)).sort();
 
