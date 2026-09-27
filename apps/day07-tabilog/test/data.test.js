@@ -1052,5 +1052,39 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
   eq('日付変更線：入れた順（3通り）×フライトの地図（3通り）×到着の入れ方（2通り）×その日の場所（2通り）の36通りすべてで、羽田→フライト（日本時間）→ロサンゼルス到着の順', ng, []);
 })();
 
+/* ---- 移動の予定に「到着地の地図＋到着時刻（現地時間）」を入れると、時差の区切りと地図でふりかえるの到着に使う（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';
+  var LAX = 'https://www.google.com/maps/search/?api=1&query=33.94,-118.40';
+  var bs = [
+    { id: 'hnd', date: '2026-06-26', time: '18:00', category: 'sightseeing', label: '羽田空港', createdAt: '1' },
+    { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへ', createdAt: '2',
+      entries: [{ id: 'e1', travel: { to: 'ロサンゼルス空港', arrive: '18:50', arriveMapUrl: LAX, arriveLat: 33.94, arriveLng: -118.40 } }] },
+    { id: 'htl', date: '2026-06-26', time: '21:00', category: 'lodging', label: 'ホテル', createdAt: '3' }];
+  eq('travelArrival：到着地の地図・座標・時刻・名前を返す', T.travelArrival(bs[1]), { url: LAX, lat: 33.94, lng: -118.40, time: '18:50', label: 'ロサンゼルス空港' });
+  eq('travelArrival：移動以外の予定はnull', T.travelArrival(bs[0]), null);
+  // ホテルに地図が無くても、到着地の時差（LA）から後ろがLAになる
+  var z = T.assignBlockZones(bs, { hnd: TK }, {}, TK, { fl: LA });
+  eq('到着地の地図だけで：フライトは日本時間、到着とその後はロサンゼルス', [z.fl, z['fl#arrive'], z.htl], [TK, LA, LA]);
+  var zb = T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z);
+  var st = T.replayStops({ startDate: '2026-06-26', endDate: '2026-06-27' }, zb);
+  eq('地図でふりかえる：フライトの後に到着の地点が入る', st.map(function (s) { return s.blockId; }), ['hnd', 'fl', 'fl#arrive', 'htl']);
+  var a = st[2];
+  eq('到着の地点：座標・ラベル・到着時刻（現地）・時差', [a.knownLat, a.knownLng, a.label, a.minute, a.dayIndex, a.offset], [33.94, -118.40, 'ロサンゼルス空港', 18 * 60 + 50, 0, -420]);
+  var tl = T.buildReplayTimeline(st, {});
+  eq('到着（LA 18:50）は出発（東京 20:00）より後の時刻として並ぶ', tl.stops[2].t > tl.stops[1].t && tl.stops[3].t > tl.stops[2].t, true);
+  eq('到着の後の場所へは、飛行機を引き継がない', st[3].transport, '');
+  // 逆向き：LA 23:00発→東京 05:00着（現地）は、出発より前にならない日付（翌々日）に置く
+  var back = [{ id: 'fb', date: '2026-07-10', time: '23:00', category: 'transport', transport: 'plane', label: '帰国', createdAt: '1', _offset: -420, _arriveOffset: 540,
+    entries: [{ id: 'e2', travel: { arrive: '05:00', arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=35.55,139.78' } }] }];
+  var st2 = T.replayStops({ startDate: '2026-07-10', endDate: '2026-07-12' }, back);
+  eq('LA 23:00発→東京 05:00着：到着は出発の後の日付（2日目以降）', [st2[1].date, st2[1].minute], ['2026-07-12', 300]);
+  // 到着時刻が無ければ、移動時間（無ければ60分）の後と見積もる
+  var noTime = [{ id: 'm', date: '2026-04-01', time: '10:00', category: 'transport', transport: 'train', moveMinutes: 90, label: '移動', createdAt: '1',
+    entries: [{ id: 'e3', travel: { arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=34.73,135.50' } }] }];
+  var st3 = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, noTime);
+  eq('到着時刻なし：移動時間90分の後・見積もり扱い・ラベルは「到着」', [st3[1].minute, st3[1].estimated, st3[1].label], [11 * 60 + 30, true, '到着']);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
