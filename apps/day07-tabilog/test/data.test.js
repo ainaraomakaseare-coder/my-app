@@ -947,6 +947,14 @@ var roadPath = [[-22.9530, -43.2080], [-22.9300, -43.1950], [-22.9110, -43.1807]
 var joined = T.joinPathEnds(roadPath, corco, cated);
 eq('joinPathEnds: 道路の端がピンから離れていれば、ピンから始まるよう先頭に足す', joined[0], [-22.9519, -43.2105]);
 eq('joinPathEnds: 到着側はピンとの差が20m未満ならそのまま（点を足さない）', joined.length, 4);
+// 山の上の登山電車：線路の道のりが下の町（ツェルマット）まで行って終わっていたら使わない（スイス旅3日目）
+var gorner = { lat: 45.9837, lng: 7.7853 }, riffelberg = { lat: 45.9935, lng: 7.7545 };
+eq('railPathEndsOk: 端が到着地から3km以上離れた線路の道のりは使わない',
+  T.railPathEndsOk([[45.9837, 7.7853], [45.99, 7.76], [46.0240, 7.7480]], gorner, riffelberg), false);
+eq('railPathEndsOk: 端が駅の近く（数百m）なら使う',
+  T.railPathEndsOk([[45.9840, 7.7850], [45.99, 7.765], [45.9930, 7.7530]], gorner, riffelberg), true);
+eq('railPathEndsOk: 長い区間は、直線距離の2割までずれてよい（最大1.2km）',
+  T.railPathEndsOk([[35.681, 139.767], [35.1709, 136.8815 + 0.011]], { lat: 35.681, lng: 139.767 }, { lat: 35.1709, lng: 136.8815 }), true);
 eq('joinPathEnds: 両端がピンに近ければ変えない', T.joinPathEnds([[1, 2], [3, 4]], { lat: 1, lng: 2 }, { lat: 3, lng: 4 }).length, 2);
 
 /* ---- 時差は「移動」のところでしか変わらない（ブラジル・アルゼンチン旅の形。2026-09-27） ---- */

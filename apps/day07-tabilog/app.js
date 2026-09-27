@@ -1672,6 +1672,16 @@
     var x = ((lng + 180) % 360 + 360) % 360 - 180;
     return x === -180 && lng > 0 ? 180 : x;
   }
+  // 線路の道のり（BRouter）の端が、出発地・到着地から離れすぎていないか。山の上の登山電車
+  // （ゴルナーグラート鉄道など）で、到着地の近くの線路に乗れず、下の町の駅まで行ってから到着地へ
+  // 直線で戻る線になっていた（スイス旅3日目、2026-09-27）。離れていてよいのは、直線距離の2割か
+  // 0.5kmの大きい方まで（最大RAIL_LOCAL_SNAP_KM）
+  function railPathEndsOk(path, a, b) {
+    if (!Array.isArray(path) || path.length < 2 || !a || !b) return false;
+    var allow = Math.min(RAIL_LOCAL_SNAP_KM, Math.max(0.5, distanceKm(a, b) * 0.2));
+    var first = { lat: path[0][0], lng: path[0][1] }, last = { lat: path[path.length - 1][0], lng: path[path.length - 1][1] };
+    return distanceKm(a, first) <= allow && distanceKm(last, b) <= allow;
+  }
   function joinPathEnds(path, a, b) {
     if (!Array.isArray(path) || path.length < 2 || !a || !b) return path;
     var out = path.slice();
@@ -2146,6 +2156,7 @@
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
     joinPathEnds: joinPathEnds,
+    railPathEndsOk: railPathEndsOk,
     isInJapan: isInJapan,
     railBBox: railBBox,
     railOverpassQuery: railOverpassQuery,
@@ -6630,10 +6641,14 @@
         // Worker側は見つからなかった結果を6時間しか覚えないので、あとで開き直せば線路で調べ直す。
         // 日本の近い区間（30km以内）だけは、線路データを取ってこの端末で最短経路を求める
         // （BRouterは新大阪→USJで大回りし、Googleは日本の電車を返さないため。Core.railPathFromOverpass）。
-        if (profile === 'rail' && !(res && res.found) && Core.isInJapan(a) && Core.isInJapan(b) &&
-            straightKm <= Core.RAIL_LOCAL_MAX_KM) {
-          return localRailPath(a, b).then(function (path) { return path ? { found: true, path: path } : res; });
+        // 海外でも、線路の道のりの端が出発地・到着地から離れすぎていれば（山の上の登山電車で、下の町の
+        // 駅まで行ってしまう等）同じように線路データから求め直す。求められなければやわらかい曲線にする（2026-09-27）
+        var railBad = profile === 'rail' && res && res.found && !Core.railPathEndsOk(res.path, a, b);
+        if (profile === 'rail' && (!(res && res.found) || railBad) && straightKm <= Core.RAIL_LOCAL_MAX_KM &&
+            (railBad || (Core.isInJapan(a) && Core.isInJapan(b)))) {
+          return localRailPath(a, b).then(function (path) { return path ? { found: true, path: path } : (railBad ? null : res); });
         }
+        if (railBad) return null;
         return res;
       }).then(function (res) {
         if (res && res.found && res.path && res.path.length > 1) {
