@@ -1275,5 +1275,28 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   eq('何日目：ニューヨークに着いたら1日目、リオに着いたら2日目', [T.replayStateAt(tl, tl.stops[1].r + 0.01).dayNumber, T.replayStateAt(tl, tl.stops[2].r + 0.01).dayNumber], [1, 2]);
 })();
 
+/* ---- 種類「到着」（移動の「出発｜到着」タブ。2026-09-27）：着いた場所の予定として扱う ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  [['hnd', 'fl', 'arr', 'htl'], ['arr', 'htl', 'hnd', 'fl'], ['htl', 'arr', 'fl', 'hnd']].forEach(function (ord, oi) {
+    [null, LA].forEach(function (flMap) {
+      var bs = [
+        { id: 'hnd', date: '2026-06-26', time: '18:00', category: 'sightseeing', label: '羽田空港' },
+        { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: '', label: 'ロサンゼルスへ' },
+        { id: 'arr', date: '2026-06-26', time: '18:50', category: 'arrival', transport: 'plane', label: 'ロサンゼルス国際空港' },
+        { id: 'htl', date: '2026-06-26', time: '22:30', category: 'lodging', label: '菊の家' }];
+      bs.forEach(function (b) { b.createdAt = String(ord.indexOf(b.id)); });
+      var own = { hnd: TK, arr: LA, htl: LA };
+      if (flMap) own.fl = flMap;
+      var z = T.assignBlockZones(bs, own, {}, TK);
+      var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).join(',');
+      if (got !== 'hnd,fl,arr,htl' || z.arr !== LA || z.fl !== TK) ng.push(oi + '/' + flMap + ' → ' + got);
+    });
+  });
+  eq('到着の予定：入れた順・出発の地図によらず、羽田→出発（日本時間）→到着（LA時間）→宿', ng, []);
+  eq('到着の予定は評価の対象にしない（移動と同じ）', T.reviewKindForCategory ? T.reviewKindForCategory('arrival') : '', '');
+  eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
