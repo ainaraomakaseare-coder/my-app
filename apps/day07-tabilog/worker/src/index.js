@@ -2909,45 +2909,56 @@ async function consumeVoiceQuota(env, email, via, kind) {
 // 判定させる）に切り替わる（DAY30〜、渡さなければ今までどおり1日固定のまま）。
 async function organizeTextIntoBlocks(env, text, notes, dates) {
   const multiDay = Array.isArray(dates) && dates.length > 1;
-  const upstream = await fetch(OPENAI_RESPONSES_URL, {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: env.OPENAI_MODEL || "gpt-5.6-sol",
-      input: multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes),
-      reasoning: { effort: "medium" },
-      // 複数日モードは1回のレスポンスに何日ぶんものBlock/Entryが収まるため、1日固定より
-      // ずっと大きな出力になる（reasoningトークンもこの上限を共有する）。3000では
-      // 5日分程度の入力で出力が尻切れになりJSON.parseに失敗することが実際にあったため、
-      // 十分な余裕を持たせている（DAY30、実機での不具合報告を受けて調整）。
-      max_output_tokens: multiDay ? 12000 : 2000,
-      store: false,
-      text: {
-        format: {
-          type: "json_schema", name: multiDay ? "voice_blocks_multi_day" : "voice_blocks", strict: true,
-          schema: multiDay ? multiDayBlocksSchema() : voiceBlocksSchema(),
+  // 出力の上限（考える分＝reasoningトークンもこの中に含まれる）。1日分は以前2000で、長めのメモだと
+  // 考える分で使い切って出力が途中で切れ、「うまく処理できませんでした」になっていた（2026-09-27）。
+  // 切れたときは考える量を減らして（effort: low）もう一度だけ頼む
+  const attempt = async (effort) => {
+    const upstream = await fetch(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-5.6-sol",
+        input: multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes),
+        reasoning: { effort },
+        // 複数日モードは1回のレスポンスに何日ぶんものBlock/Entryが収まるため、ずっと大きな出力になる
+        // （DAY30、5日分程度で尻切れになったことがあり12000に上げた。さらに余裕を持たせる）
+        max_output_tokens: multiDay ? 16000 : 8000,
+        store: false,
+        text: {
+          format: {
+            type: "json_schema", name: multiDay ? "voice_blocks_multi_day" : "voice_blocks", strict: true,
+            schema: multiDay ? multiDayBlocksSchema() : voiceBlocksSchema(),
+          },
         },
-      },
-    }),
-  });
-  if (!upstream.ok) {
-    const errorBody = await upstream.text().catch(() => "");
-    console.error(JSON.stringify({ event: "openai_error", status: upstream.status, body: errorBody.slice(0, 500) }));
-    return { error: "upstream_error" };
+      }),
+    });
+    if (!upstream.ok) {
+      const errorBody = await upstream.text().catch(() => "");
+      console.error(JSON.stringify({ event: "openai_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+      return { error: "upstream_error", status: upstream.status };
+    }
+    const response = await upstream.json();
+    let parsed;
+    try { parsed = JSON.parse(outputText(response)); }
+    catch {
+      const incompleteReason = response.incomplete_details && response.incomplete_details.reason;
+      console.error(JSON.stringify({
+        event: "voice_blocks_parse_error", multiDay, effort, status: response.status, incompleteReason,
+        outputTextLength: outputText(response).length,
+      }));
+      return { error: "invalid_model_output", incomplete: response.status === "incomplete" || !!incompleteReason };
+    }
+    if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
+    return { blocks: parsed.blocks };
+  };
+  const first = await attempt("medium");
+  if (first.error === "invalid_model_output" && first.incomplete) {
+    const retry = await attempt("low");
+    if (!retry.error) return retry;
+    return { error: retry.error === "invalid_model_output" ? "output_too_long" : retry.error };
   }
-  const response = await upstream.json();
-  let parsed;
-  try { parsed = JSON.parse(outputText(response)); }
-  catch {
-    console.error(JSON.stringify({
-      event: "voice_blocks_parse_error", multiDay, status: response.status,
-      incompleteReason: response.incomplete_details && response.incomplete_details.reason,
-      outputTextLength: outputText(response).length,
-    }));
-    return { error: "invalid_model_output" };
-  }
-  if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
-  return { blocks: parsed.blocks };
+  if (first.error === "upstream_error") return { error: "upstream_error" };
+  return first;
 }
 
 // /ai-compare専用。organizeTextIntoBlocksと同じプロンプト・スキーマ（voicePrompt/
