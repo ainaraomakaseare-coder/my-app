@@ -1062,6 +1062,7 @@
   // 長距離の移動が味気ない」という声より、遠い移動は少しだけ長く見せる（2026-09-27）。
   var REPLAY_MOVE_SEC_MIN = 2;       // 100km以下はこれまでどおり2秒
   var REPLAY_MOVE_SEC_MAX = 4;       // 500km以上はこれまでの2倍の4秒
+  var REPLAY_PLANE_MOVE_SEC = 1.8;   // 飛行機の移動の秒数（カメラの動き・着いたあとの一呼吸を合わせて約3秒）
   var REPLAY_MOVE_KM_SHORT = 100;
   var REPLAY_MOVE_KM_LONG = 500;
   function legMoveSeconds(km) {
@@ -1427,6 +1428,9 @@
       l.assumed = true;
       l.path = gentleCurvePath(s[l.from], s[l.to]);
     });
+    // 飛行機の移動は、距離によらずREPLAY_PLANE_MOVE_SEC。長い飛行機が4秒＋カメラの動き・着いたあとの一呼吸で
+    // 5秒ほどかかり、長いという声より、全体で3秒ほどになるよう縮めた（2026-09-27）
+    legs.forEach(function (l) { if (l.transport === 'plane') l.moveSec = Math.min(l.moveSec, REPLAY_PLANE_MOVE_SEC); });
     var legArrivingAt = {};
     legs.forEach(function (l) { legArrivingAt[l.to] = l; });
 

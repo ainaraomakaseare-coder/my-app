@@ -689,7 +689,7 @@ eq('gentleCurvePath: 端点は出発地・到着地のまま', [T.gentleCurvePat
 eq('legMoveSeconds: 100km以下は2秒・500km以上は4秒・間は比例', [T.legMoveSeconds(50), T.legMoveSeconds(100), T.legMoveSeconds(300), T.legMoveSeconds(500), T.legMoveSeconds(2000)],
   [2, 2, 3, 4, 4]);
 ok('buildReplayTimeline: 近い車の区間（100km以下）は移動2秒のまま', Math.abs(carTl.legs[0].r1 - carTl.legs[0].r0 - 2) < 0.01);
-ok('buildReplayTimeline: 遠い区間（500km以上）は移動4秒', Math.abs(carTl.legs[1].r1 - carTl.legs[1].r0 - 4) < 0.01);
+ok('buildReplayTimeline: 遠い区間（500km以上、飛行機とみなす）は移動1.8秒（飛行機は全体で約3秒にする。2026-09-27）', Math.abs(carTl.legs[1].r1 - carTl.legs[1].r0 - 1.8) < 0.01);
 
 /* ---- 紹介文：ひとこと・URL ---- */
 var exText = T.reviewLogText({ category: 'food', label: '首里そば' }, { comment: 'また来たい', mapUrl: 'https://maps.app.goo.gl/x', shopUrl: 'https://shop.example', costItems: [] }, { score: 4.2, review: {} });
@@ -701,8 +701,13 @@ var flyTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDa
   { id: 'h', date: '2026-04-01', time: '10:00', label: '香港', entries: [{ mapUrl: 'https://m/hk', photoIds: ['p1', 'p2', 'p3', 'p4'] }] },
   { id: 'n', date: '2026-04-02', time: '06:00', label: 'ニューヨーク', transport: 'plane', entries: [{ mapUrl: 'https://m/ny' }] }]),
   { 'https://m/hk': { lat: 22.3, lng: 114.2 }, 'https://m/ny': { lat: 40.7, lng: -74.0 } });
-// 香港→ニューヨークは500km超（実際は1万km超）なので、以前の一律2秒から上限の4秒になる
-ok('buildReplayTimeline: 長いフライト（500km超）は移動4秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 4) < 0.01);
+// 飛行機は距離によらず1.8秒（4秒＋カメラの動き・一呼吸で5秒ほどかかり長いという声より。2026-09-27）
+ok('buildReplayTimeline: 長いフライトは移動1.8秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 1.8) < 0.01);
+var longCarTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'a', date: '2026-04-01', time: '08:00', label: 'LA', entries: [{ mapUrl: 'https://m/la' }] },
+  { id: 'b', date: '2026-04-01', time: '18:00', label: 'サンフランシスコ', transport: 'car', entries: [{ mapUrl: 'https://m/sf' }] }]),
+  { 'https://m/la': { lat: 34.05, lng: -118.24 }, 'https://m/sf': { lat: 37.77, lng: -122.42 } });
+ok('buildReplayTimeline: 車の長い移動（500km超）はこれまでどおり4秒', Math.abs(longCarTl.legs[0].r1 - longCarTl.legs[0].r0 - 4) < 0.01);
 // 次へ移動する地点は、カメラが動き出す少し前（REPLAY_CAPTION_HIDE_LEAD_SEC）に吹き出しを消すので、その分を足す
 // （見えている時間は1枚2.5秒×4＋一呼吸0.5秒のまま。2026-09-27）
 ok('buildReplayTimeline: 写真4枚なら吹き出しは見えている時間で10秒（1枚2.5秒×4、＋一呼吸0.5秒）',
