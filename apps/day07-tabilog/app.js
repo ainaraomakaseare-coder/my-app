@@ -6245,7 +6245,9 @@
   // アニメーションつきでboundsへ寄せる。ズームが大きく変わる（3段以上）ときだけ、線のゴースト対策で
   // アニメ中の線を隠す（replay.hideLinesOnMove。上のzoomstart/movestartの説明を参照）。
   var REPLAY_HIDE_LINES_ZOOM_DELTA = 3;
-  function replayFlyToBounds(bounds, opts) {
+  // keepCaption：着いた地点へ寄せ直すときは、いま出したばかりの写真の吹き出しを隠さない。隠すと
+  // 「出る→消える→また出る」で、同じ写真が2回出たように見えていた（イグアス到着、2026-09-27）
+  function replayFlyToBounds(bounds, opts, keepCaption) {
     var target = null;
     try {
       var pad = window.L.point(opts.paddingTopLeft).add(window.L.point(opts.paddingBottomRight));
@@ -6255,7 +6257,7 @@
     if (replay) {
       replay.hideLinesOnMove = typeof target === 'number' && isFinite(target) &&
         Math.abs(target - replayMap.getZoom()) >= REPLAY_HIDE_LINES_ZOOM_DELTA;
-      replay.cameraMoving = true; // 写真の吹き出しを隠す（moveendで戻す）
+      if (!keepCaption) replay.cameraMoving = true; // 写真の吹き出しを隠す（moveendで戻す）
     }
     replayMap.flyToBounds(bounds, opts);
   }
@@ -6264,7 +6266,7 @@
   function replayCenterOn(lat, lng, zoom, animate) {
     var opts = replayViewPadding();
     opts.maxZoom = zoom;
-    if (animate) { opts.duration = 0.8; replayFlyToBounds([[lat, lng], [lat, lng]], opts); }
+    if (animate) { opts.duration = 0.8; replayFlyToBounds([[lat, lng], [lat, lng]], opts, true); }
     else { opts.animate = false; replayMap.fitBounds([[lat, lng], [lat, lng]], opts); }
   }
 
