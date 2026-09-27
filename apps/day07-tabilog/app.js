@@ -1060,6 +1060,109 @@
   // ---- 道のり（実際の道路に沿ったルート。docs/adr/0008）----
   // 移動手段ごとに、どのルート検索を使うか。電車・新幹線・地下鉄は線路のルート（BRouterのrailプロファイル、
   // 2026-09-27〜）、飛行機は弧（''＝ルート検索しない）。
+  // ---- 日本の電車の道のり：OpenStreetMapの線路データから自分で最短経路を求める（2026-09-27） ----
+  // BRouter（線路の検索サーバー）は新大阪→USJのように新幹線の線路へ吸い寄せられて大回りし、Googleの
+  // 乗り換え案内は日本の電車の経路をAPIで返さない。そこで、2地点の周りの線路（Overpass APIで取る）を
+  // 自分でつなぎ、線路の上の最短経路（ダイクストラ法）を求める。どの路線に乗ったかは分からないが、
+  // 線路の上を通る最短の線になる。データが大きくなりすぎないよう、直線距離が短い区間だけで使う。
+  var RAIL_LOCAL_MAX_KM = 30;      // これより遠い区間（新幹線など）は使わない
+  var RAIL_LOCAL_SNAP_KM = 1.2;    // 出発地・到着地から、この範囲の線路の点を乗り降りの候補にする
+  var RAIL_LOCAL_MAX_DETOUR = 3;   // 直線距離の3倍を超える経路は使わない（BRouterのガードと同じ）
+
+  function isInJapan(p) {
+    return !!p && p.lat >= 24 && p.lat <= 46 && p.lng >= 122.5 && p.lng <= 154;
+  }
+
+  // 線路を取る範囲（南,西,北,東）。直線距離の3割（最低2km）だけ周りに広げる
+  function railBBox(a, b) {
+    var padKm = Math.max(2, distanceKm(a, b) * 0.3);
+    var dLat = padKm / 111, dLng = padKm / (111 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
+    return [Math.min(a.lat, b.lat) - dLat, Math.min(a.lng, b.lng) - dLng, Math.max(a.lat, b.lat) + dLat, Math.max(a.lng, b.lng) + dLng]
+      .map(function (v) { return Math.round(v * 1e5) / 1e5; });
+  }
+
+  function railOverpassQuery(bbox) {
+    return '[out:json][timeout:25];way["railway"~"^(rail|subway|light_rail|narrow_gauge|monorail)$"]' +
+      '["service"!~"^(yard|siding|spur)$"](' + bbox.join(',') + ');(._;>;);out skel qt;';
+  }
+
+  // Overpassの結果（elements：way と node）から、線路の点どうしのつながり（隣の点と距離km）を作る
+  function railGraph(elements) {
+    var nodes = {}, adj = {};
+    (elements || []).forEach(function (e) { if (e.type === 'node') nodes[e.id] = { lat: e.lat, lng: e.lon }; });
+    (elements || []).forEach(function (e) {
+      if (e.type !== 'way' || !Array.isArray(e.nodes)) return;
+      for (var i = 1; i < e.nodes.length; i++) {
+        var u = e.nodes[i - 1], v = e.nodes[i];
+        if (!nodes[u] || !nodes[v]) continue;
+        var d = distanceKm(nodes[u], nodes[v]);
+        (adj[u] = adj[u] || []).push([v, d]);
+        (adj[v] = adj[v] || []).push([u, d]);
+      }
+    });
+    return { nodes: nodes, adj: adj };
+  }
+
+  // 出発地・到着地からRAIL_LOCAL_SNAP_KM以内の線路の点を全部、乗り降りの候補にする（多始点のダイクストラ）。
+  // 近い線路が新幹線（在来線とつながっていない）でも、少し先の在来線の点から乗れるので大回りしない。
+  // 返すのは [[緯度,経度], ...]（出発地と到着地を両端に足したもの）か、見つからなければnull。
+  function shortestRailPath(graph, a, b) {
+    var ids = Object.keys(graph.adj);
+    if (!ids.length) return null;
+    var dist = {}, prev = {}, goal = {};
+    var heap = [];
+    function push(id, d) {
+      heap.push([d, id]);
+      var i = heap.length - 1;
+      while (i > 0) { var p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; var t = heap[p]; heap[p] = heap[i]; heap[i] = t; i = p; }
+    }
+    function pop() {
+      var top = heap[0], last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        var i = 0;
+        for (;;) {
+          var l = 2 * i + 1, r = l + 1, m = i;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === i) break;
+          var t = heap[m]; heap[m] = heap[i]; heap[i] = t; i = m;
+        }
+      }
+      return top;
+    }
+    ids.forEach(function (id) {
+      var n = graph.nodes[id];
+      var ds = distanceKm(a, n), dg = distanceKm(n, b);
+      if (ds <= RAIL_LOCAL_SNAP_KM) { dist[id] = ds; prev[id] = null; push(id, ds); }
+      if (dg <= RAIL_LOCAL_SNAP_KM) goal[id] = dg;
+    });
+    var best = null, bestCost = Infinity;
+    while (heap.length) {
+      var cur = pop(), d = cur[0], u = cur[1];
+      if (d > dist[u] || d >= bestCost) continue;
+      if (goal[u] !== undefined && d + goal[u] < bestCost) { bestCost = d + goal[u]; best = u; }
+      (graph.adj[u] || []).forEach(function (e) {
+        var nd = d + e[1];
+        if (dist[e[0]] === undefined || nd < dist[e[0]]) { dist[e[0]] = nd; prev[e[0]] = u; push(String(e[0]), nd); }
+      });
+    }
+    if (best === null) return null;
+    var path = [], at = best;
+    while (at !== null && at !== undefined) { var n = graph.nodes[at]; path.push([n.lat, n.lng]); at = prev[at]; }
+    path.reverse();
+    return { path: [[a.lat, a.lng]].concat(path, [[b.lat, b.lng]]), km: bestCost };
+  }
+
+  // Overpassの結果から道のりを求める（ガードつき）。使えなければnull
+  function railPathFromOverpass(elements, a, b) {
+    var straight = distanceKm(a, b);
+    if (!(straight > 0) || straight > RAIL_LOCAL_MAX_KM) return null;
+    var r = shortestRailPath(railGraph(elements), a, b);
+    if (!r || r.km > straight * RAIL_LOCAL_MAX_DETOUR) return null;
+    return r.path;
+  }
+
   function routeProfileFor(transport) {
     if (transport === 'car' || transport === 'taxi' || transport === 'bus') return 'car';
     if (transport === 'walk') return 'foot';
@@ -1518,6 +1621,13 @@
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
+    isInJapan: isInJapan,
+    railBBox: railBBox,
+    railOverpassQuery: railOverpassQuery,
+    railGraph: railGraph,
+    shortestRailPath: shortestRailPath,
+    railPathFromOverpass: railPathFromOverpass,
+    RAIL_LOCAL_MAX_KM: RAIL_LOCAL_MAX_KM,
     distanceKm: distanceKm,
     isRouteDetourTooLong: isRouteDetourTooLong,
     geocodeNearIndexes: geocodeNearIndexes,
@@ -5414,6 +5524,43 @@
     return '/route?profile=' + profile +
       '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
   }
+  // 線路データ（OpenStreetMap、Overpass API）を取って、端末の中で線路の上の最短経路を求める。
+  // 求めた線はこの端末に覚えておき、次からは線路データを取りに行かない。取れなければnull。
+  var RAIL_PATH_CACHE_PREFIX = 'tabilog-railpath-v1:';
+  var OVERPASS_URLS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  var railPathTried = {};
+  function localRailPath(a, b) {
+    var key = RAIL_PATH_CACHE_PREFIX + [a.lat, a.lng, b.lat, b.lng].map(function (v) { return v.toFixed(4); }).join(',');
+    try {
+      var saved = localStorage.getItem(key);
+      if (saved) return Promise.resolve(JSON.parse(saved));
+    } catch (e) { /* 端末に保存できない環境では毎回求める */ }
+    if (railPathTried[key]) return Promise.resolve(null); // この画面を開いているあいだ、失敗した区間を何度も試さない
+    railPathTried[key] = true;
+    var body = 'data=' + encodeURIComponent(Core.railOverpassQuery(Core.railBBox(a, b)));
+    function tryAt(i) {
+      if (i >= OVERPASS_URLS.length) return Promise.resolve(null);
+      var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 25000) : null;
+      return fetch(OVERPASS_URLS[i], {
+        method: 'POST', body: body, signal: ctrl ? ctrl.signal : undefined,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      }).then(function (r) {
+        if (!r.ok) throw new Error('overpass_' + r.status);
+        return r.json();
+      }).then(function (data) {
+        return Core.railPathFromOverpass(data && data.elements, a, b);
+      }).catch(function () { return tryAt(i + 1); }).then(function (path) {
+        if (timer) clearTimeout(timer);
+        return path;
+      });
+    }
+    return tryAt(0).then(function (path) {
+      if (path) { try { localStorage.setItem(key, JSON.stringify(path)); } catch (e) { /* 容量不足など */ } }
+      return path;
+    });
+  }
+
   function fetchReplayRoutes(tl, onRoute) {
     var jobs = tl.legs.filter(function (l) { return Core.routeProfileFor(l.transport); });
     // 近い区間から順に届くよう、再生の順番（区間の並び）のまま同時に聞く
@@ -5437,6 +5584,12 @@
         // 線路の道のりが見つからないときは、車の道のり（道路）では代わりにしない。電車なのに道路を
         // 走るように見えて「動きが全部車っぽい」と言われたため（2026-09-27）。やわらかい曲線のまま見せ、
         // Worker側は見つからなかった結果を6時間しか覚えないので、あとで開き直せば線路で調べ直す。
+        // 日本の近い区間（30km以内）だけは、線路データを取ってこの端末で最短経路を求める
+        // （BRouterは新大阪→USJで大回りし、Googleは日本の電車を返さないため。Core.railPathFromOverpass）。
+        if (profile === 'rail' && !(res && res.found) && Core.isInJapan(a) && Core.isInJapan(b) &&
+            straightKm <= Core.RAIL_LOCAL_MAX_KM) {
+          return localRailPath(a, b).then(function (path) { return path ? { found: true, path: path } : res; });
+        }
         return res;
       }).then(function (res) {
         if (res && res.found && res.path && res.path.length > 1) { l.path = res.path; if (onRoute) onRoute(l); }

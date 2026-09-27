@@ -889,5 +889,36 @@ eq('assignBlockZones: LA→ニューヨークの日は、入れた順が逆で�
   T.assignBlockZones(laNy, { p: 'America/Los_Angeles', b: 'America/Los_Angeles', f: 'America/New_York', a: 'America/New_York' }, {}, 'Asia/Tokyo'),
   { p: 'America/Los_Angeles', b: 'America/Los_Angeles', f: 'America/Los_Angeles', a: 'America/New_York' });
 
+/* ---- 日本の電車：線路データから最短経路（新大阪→USJのような区間） ---- */
+// 出発地のすぐそば（約100m）に新幹線の線路（北東へ遠ざかり、在来線とつながらない）、
+// 少し離れた所（約500m）に在来線（南西へ伸びて到着地の近くを通る）がある。
+var railA = { lat: 34.7335, lng: 135.5002 }, railB = { lat: 34.6687, lng: 135.4376 };
+var railEls = [
+  { type: 'node', id: 1, lat: 34.7344, lon: 135.5003 }, { type: 'node', id: 2, lat: 34.7600, lon: 135.5400 }, // 新幹線
+  { type: 'node', id: 10, lat: 34.7380, lon: 135.4990 }, { type: 'node', id: 11, lat: 34.7100, lon: 135.4700 },
+  { type: 'node', id: 12, lat: 34.6850, lon: 135.4500 }, { type: 'node', id: 13, lat: 34.6690, lon: 135.4380 }, // 在来線
+  { type: 'node', id: 20, lat: 34.7380, lon: 135.4990 }, { type: 'node', id: 21, lat: 34.9000, lon: 135.9000 }, // 遠回りの支線
+  { type: 'way', id: 100, nodes: [1, 2] },
+  { type: 'way', id: 101, nodes: [10, 11, 12, 13] },
+  { type: 'way', id: 102, nodes: [20, 21] }
+];
+var railPath = T.railPathFromOverpass(railEls, railA, railB);
+ok('railPathFromOverpass: すぐそばの新幹線の線路ではなく、在来線から乗って到着地の近くまで線路をたどる', railPath && railPath.length === 6);
+eq('railPathFromOverpass: 両端は出発地と到着地、途中は在来線の点の順', railPath && railPath.map(function (p) { return p[0]; }),
+  [34.7335, 34.738, 34.71, 34.685, 34.669, 34.6687]);
+eq('railPathFromOverpass: 近くに線路が無ければnull（やわらかい曲線のまま）',
+  T.railPathFromOverpass([{ type: 'node', id: 1, lat: 35.0, lon: 136.0 }, { type: 'node', id: 2, lat: 35.1, lon: 136.1 }, { type: 'way', id: 9, nodes: [1, 2] }], railA, railB), null);
+// 在来線が大きく迂回して、直線距離の3倍を超えるなら使わない
+var railDetour = railEls.filter(function (e) { return e.id !== 101; }).concat([
+  { type: 'node', id: 30, lat: 34.9500, lon: 135.2000 },
+  { type: 'way', id: 103, nodes: [10, 30, 13] }
+]);
+eq('railPathFromOverpass: 直線距離の3倍を超える遠回りはnull', T.railPathFromOverpass(railDetour, railA, railB), null);
+eq('railPathFromOverpass: 30kmより遠い区間は使わない（新幹線など）', T.railPathFromOverpass(railEls, railA, { lat: 35.0116, lng: 135.7681 }), null);
+ok('isInJapan: 大阪は日本、ロサンゼルスは日本ではない', T.isInJapan(railA) && !T.isInJapan({ lat: 34.05, lng: -118.24 }));
+var bb = T.railBBox(railA, railB);
+ok('railBBox: 2地点を含み、少し広げた範囲', bb[0] < railB.lat && bb[1] < railB.lng && bb[2] > railA.lat && bb[3] > railA.lng);
+ok('railOverpassQuery: 範囲と線路の種類が入る', T.railOverpassQuery(bb).indexOf(bb.join(',')) > 0 && T.railOverpassQuery(bb).indexOf('subway') > 0);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
