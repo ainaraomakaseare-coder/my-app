@@ -5929,7 +5929,8 @@
 
   function continueSaveEntry(status) {
     var author = $('#entAuthor').value.trim();
-    status.textContent = '保存中…';
+    // 新しく選んだ動画があるときは、アップロードに時間がかかることを添える（2026-09-27）
+    status.textContent = (state.pendingVideos || []).length ? '保存中…（動画の保存は時間がかかります）' : '保存中…';
 
     var payload = {
       episode: $('#entEpisode').value.trim(),
