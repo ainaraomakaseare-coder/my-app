@@ -348,7 +348,7 @@ const personal = draft({
   await check('コマの間隔は自分で管理する（requestAnimationFrame に任せない）', () => {
     const fs = require('fs');
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
-    const record = reel.slice(reel.indexOf('function record('), reel.indexOf('function record(') + 3000);
+    const record = reel.slice(reel.indexOf('function recordRealtime('), reel.indexOf('function recordRealtime(') + 3000);
     assert.ok(/captureStream\(0\)/.test(record),
       '手動モード（captureStream(0)）になっていない');
     assert.ok(/requestFrame/.test(record),
@@ -360,7 +360,7 @@ const personal = draft({
   await check('コマの間隔は t0 からの絶対時刻で計算する（遅れを積み上げない）', () => {
     const fs = require('fs');
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
-    const record = reel.slice(reel.indexOf('function record('), reel.indexOf('function record(') + 3000);
+    const record = reel.slice(reel.indexOf('function recordRealtime('), reel.indexOf('function recordRealtime(') + 3000);
     // ★ setTimeout(fn, 前回間隔) のように「前回からの相対時間」で刻むと、
     //   1回1回の遅れがそのまま積み重なる。t0 + 押し出した枚数*刻み から
     //   逆算する形になっているかを見る。
@@ -381,7 +381,7 @@ const personal = draft({
   await check('動画のビットレートを下げて、エンコードの負荷を減らしている', () => {
     const fs = require('fs');
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
-    const record = reel.slice(reel.indexOf('function record('), reel.indexOf('function record(') + 3500);
+    const record = reel.slice(reel.indexOf('function recordRealtime('), reel.indexOf('function recordRealtime(') + 3500);
     const m = record.match(/videoBitsPerSecond:\s*([0-9]+)/);
     assert.ok(m, 'videoBitsPerSecond が見当たらない');
     assert.ok(Number(m[1]) <= 1500000,
@@ -398,7 +398,7 @@ const personal = draft({
   await check('録画中に大きく詰まったら、壊れた動画のまま進まずに中断する', () => {
     const fs = require('fs');
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
-    const start = reel.indexOf('function record(');
+    const start = reel.indexOf('function recordRealtime(');
     const record = reel.slice(start, start + 3500);
     assert.ok(/STALL_MS/.test(record), 'STALL_MS によるしきい値判定が無い');
     assert.ok(/lateBy\s*>\s*STALL_MS/.test(record) || />\s*STALL_MS/.test(record),
@@ -417,7 +417,7 @@ const personal = draft({
     const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
     assert.ok(/function\s+warmupEncoder/.test(reel), 'warmupEncoder が無い');
     assert.ok(/function\s+ensureWarm/.test(reel), 'ensureWarm が無い');
-    const start = reel.indexOf('function record(');
+    const start = reel.indexOf('function recordRealtime(');
     const record = reel.slice(start, start + 500);
     assert.ok(/ensureWarm\(/.test(record),
       '本番の録画が ensureWarm を経由していない（詰まりが本番に残る）');

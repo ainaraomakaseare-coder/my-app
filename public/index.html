@@ -585,7 +585,8 @@
   </div>
 </dialog>
 
-<script src="/reel.js?v=3"></script>
+<script src="/mp4-mux.js?v=1"></script>
+<script src="/reel.js?v=4"></script>
 <script src="/split-drafts.js?v=2"></script>
 <script>
 'use strict';
@@ -1280,6 +1281,35 @@ let accounts = [];   // 繋がっているアカウント
 
 const accountLabel = (a) =>
   a ? `${NET_LABEL[a.network]}（${a.label || a.account_name || '名前なし'}）` : '不明なアカウント';
+
+/**
+ * A8.net の案件リンクを載せてよい出し先。lib/account-scope.js と同じ並び（テストで揃えている）。
+ * ★ サーバーでも止めているが、束で仕込むと動画を作り終えてから弾かれて時間が無駄になる。
+ *   案件つきのときは、そもそも選べないようにしておく。
+ */
+const AFFILIATE_NETWORKS = ['instagram', 'youtube', 'tiktok', 'pinterest', 'threads'];
+
+/**
+ * 案件つきのとき、掲載対象外の出し先をどう扱うかを画面に出す。
+ *   1本だけつくる：チェックを外して選べなくする（1本の投稿は1つの扱いしか持てない）
+ *   まとめて仕込む：選べたまま「リンクなしの通常投稿で出す」と添える（仕込むときに分ける）
+ */
+function lockAffiliateTargets(box, affi) {
+  if (!box) return;
+  const split = box.id === 'bulkTargets';
+  for (const input of box.querySelectorAll('input[type=checkbox][data-network]')) {
+    const out = affi && !AFFILIATE_NETWORKS.includes(input.dataset.network);
+    if (out && !split) input.checked = false;
+    input.disabled = out && !split;
+    const old = input.parentElement.querySelector('.affi-out');
+    if (old) old.remove();
+    if (out) {
+      input.parentElement.insertAdjacentHTML('beforeend', split
+        ? '<span class="muted affi-out"> （案件リンクなしの通常投稿で出します）</span>'
+        : '<span class="muted affi-out"> （案件つきは出せません）</span>');
+    }
+  }
+}
 
 /**
  * いま選んでいる運用アカウントの連携先だけを返す。
@@ -1991,10 +2021,14 @@ function fillTargets(box) {
   box.innerHTML = '';
   for (const a of list) {
     const l = document.createElement('label');
-    l.innerHTML = `<input type="checkbox" value="${a.id}"> ${accountLabel(a)}`;
+    l.innerHTML = `<input type="checkbox" value="${a.id}" data-network="${a.network}"> ${accountLabel(a)}`;
     box.appendChild(l);
   }
+  lockAffiliateTargets(box, box.id === 'bulkTargets' ? $('bulkAffi').checked : $('affiFlag').checked);
 }
+
+$('bulkAffi').addEventListener('change', () => lockAffiliateTargets($('bulkTargets'), $('bulkAffi').checked));
+$('affiFlag').addEventListener('change', () => lockAffiliateTargets($('targets'), $('affiFlag').checked));
 
 $('igSave').onclick = async () => {
   $('igErr').textContent = '';
@@ -2198,6 +2232,7 @@ function applyGenerated(d) {
   $('ytt').value = d.title || '';
   $('ytd').value = p.ytDescription || d.igCaption || '';
   $('affiFlag').checked = !!d.hasAffiliateLink;
+  lockAffiliateTargets($('targets'), $('affiFlag').checked);
   appliedDraft = d;
   // ここへ来るのは「1本だけつくる」の画面にいるときだけなので、画面は動かさない。
   // 動画づくりの17秒のあいだに他の画面へ移った人を、引き戻してしまうため。
@@ -2514,11 +2549,17 @@ $('bulkRun').onclick = async () => {
   $('bulkLog').innerHTML = '';
 
   const topics = $('bulkTopics').value.split('\n').map((t) => t.trim()).filter(Boolean);
-  const targets = [...document.querySelectorAll('#bulkTargets input:checked')].map((c) => c.value);
+  const affi = $('bulkAffi').checked;
+  const chosen = [...document.querySelectorAll('#bulkTargets input:checked')];
+  const targets = chosen.map((c) => c.value);
+  // ★ 案件つきの束でも、X など掲載対象外の出し先には出したい。
+  //   1本の投稿に「案件つき」と「リンクなし」は同居できない（サーバーが断る）ので、2本に分けて保存する。
+  //   X の本文は、もともと案件リンクと PR 表記を入れずに書かせている（lib/draft-generate.js）。
+  const affiTargets = chosen.filter((c) => !affi || AFFILIATE_NETWORKS.includes(c.dataset.network)).map((c) => c.value);
+  const plainTargets = chosen.filter((c) => affi && !AFFILIATE_NETWORKS.includes(c.dataset.network)).map((c) => c.value);
   const start = $('bulkStart').value;
   const time = $('bulkTime').value;
   const every = Math.max(1, parseInt($('bulkEvery').value, 10) || 1);
-  const affi = $('bulkAffi').checked;
 
   if (!topics.length) { $('bulkErr').textContent = 'ネタを1つ以上入れてください。'; return; }
   if (!start || !time) { $('bulkErr').textContent = '日付と時刻を入れてください。'; return; }
@@ -2571,9 +2612,9 @@ $('bulkRun').onclick = async () => {
         igCaption: d.igCaption, ttCaption: d.ttCaption,
         xText: d.xText, ytDescription: d.igCaption,
       };
-      await api('/api/posts', {
+      const save = (extra) => api('/api/posts', {
         method: 'POST',
-        body: {
+        body: Object.assign({
           status: ok ? 'scheduled' : 'draft',
           title: d.title,
           body_common: '',
@@ -2585,16 +2626,28 @@ $('bulkRun').onclick = async () => {
           th_text: post.thText || post.xText,
           scheduled_at_jst: ok ? when : '',
           group_id: currentGroup,
-          has_affiliate_link: affi,
           draft: d,
           media_path: up && up.path,
           media_kind: up && up.kind,
           media_bytes: up && up.bytes,
-          targets,
-        },
+        }, extra),
       });
 
-      if (ok) { done++; row.say('✅ ' + when.replace('T', ' ') + ' に予約', 'muted'); }
+      if (affiTargets.length) await save({ has_affiliate_link: affi, targets: affiTargets });
+
+      // ★ X などへの「リンクなし」の1本。こちらが失敗しても、案件つきの1本は保存済みなので失敗にしない。
+      let plainNote = '';
+      if (plainTargets.length) {
+        try {
+          await save({ has_affiliate_link: false, targets: plainTargets, title: d.title + '（リンクなし）' });
+          plainNote = '（X はリンクなしで別に予約）';
+        } catch (e) {
+          if (!affiTargets.length) throw e;
+          plainNote = '｜X の分は保存できませんでした：' + e.message;
+        }
+      }
+
+      if (ok) { done++; row.say('✅ ' + when.replace('T', ' ') + ' に予約' + plainNote, plainNote.startsWith('｜') ? 'err' : 'muted'); }
       else { held++; row.say('⚠️ 点検に引っかかったので下書きにしました（要確認）', 'err'); }
     } catch (e) {
       failed++;

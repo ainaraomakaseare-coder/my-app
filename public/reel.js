@@ -449,7 +449,7 @@
    *   エラーを返す。
    */
   const STALL_MS = 3000;
-  function record(draft, onProgress) {
+  function recordRealtime(draft, onProgress) {
     return new Promise((resolve, reject) => {
       if (!window.MediaRecorder) return reject(new Error('このブラウザは動画の書き出しに対応していません。'));
       const mime = pickMime();
@@ -530,6 +530,123 @@
           schedule(n + 1);
         }, delay);
       })(1);
+  }
+
+  // ----------------------------------------------------------------- WebCodecs で書き出す
+
+  /**
+   * ★ 今の本命。実時間で録らずに、1コマずつ時刻を付けて書き出す。
+   *
+   *   上の実時間録画（recordRealtime）は、ブラウザの手が止まると壊れる。
+   *   まとめて仕込むで20本を流したとき、途中で別のタブを見ていたら
+   *   3本目から15本目まで全部「録画中にブラウザの処理が4秒ほど止まった」で失敗した。
+   *   20本で15分以上かかるので、ずっとタブを見ていろというのは無理がある。
+   *
+   *   VideoEncoder は、渡したコマに自分で時刻を付けられる。待つのはエンコーダの
+   *   処理だけで、タイマーを使わない（dequeue の知らせで次へ進む）ので、
+   *   裏のタブでも止まらない。どのコマもちょうど 1/30 秒になるので、
+   *   TikTok の frame_rate_check_failed の元（コマ間隔の乱れ）も起きようがない。
+   *   実時間を待たないので、16.8秒かかっていたのが数秒で終わる。
+   *
+   *   VideoEncoder は MP4 の箱までは作らないので、public/mp4-mux.js で詰める。
+   *   H.264 で書き出せないブラウザでは、これまでの実時間録画に戻る。
+   */
+  const AVC_CODECS = ['avc1.64001F', 'avc1.4D401F', 'avc1.42E01F'];   // High / Main / Baseline、レベル3.1（720×1280・30fps）
+  const WC_BITRATE = 2000000;
+  const KEY_EVERY = SPEC.fps * 2;   // 2秒ごとにキーフレーム
+  let wcConfig;                     // まだ見ていない: undefined / 使えない: null
+
+  async function pickEncoderConfig() {
+    if (wcConfig !== undefined) return wcConfig;
+    wcConfig = null;
+    if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined' || !window.Mp4Mux) return null;
+    for (const codec of AVC_CODECS) {
+      const config = { codec, width: W, height: H, bitrate: WC_BITRATE, framerate: SPEC.fps, avc: { format: 'avc' } };
+      try {
+        const r = await VideoEncoder.isConfigSupported(config);
+        if (r && r.supported) { wcConfig = config; break; }
+      } catch (e) { /* 次の候補へ */ }
+    }
+    return wcConfig;
+  }
+
+  /** エンコーダの待ち行列が空くまで待つ。タイマーではなく dequeue の知らせで起きる。 */
+  function drained(encoder) {
+    return new Promise((resolve) => {
+      if ('ondequeue' in encoder) encoder.addEventListener('dequeue', resolve, { once: true });
+      else setTimeout(resolve, 0);   // 古いブラウザ向け。裏のタブでは遅くなるが止まりはしない
+    });
+  }
+
+  async function encodeFrames(config, draft, onProgress) {
+    const base = newCanvas();
+    const boxes = drawBase(base.getContext('2d'), draft);
+    const out = newCanvas();
+    const ctx = out.getContext('2d');
+
+    const total = Math.round(SPEC.duration * SPEC.fps);
+    const stepUs = 1e6 / SPEC.fps;
+    const samples = [];
+    let avcC = null, failure = null, lastTs = -Infinity;
+
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => {
+        const desc = meta && meta.decoderConfig && meta.decoderConfig.description;
+        if (desc && !avcC) {
+          avcC = ArrayBuffer.isView(desc)
+            ? new Uint8Array(desc.buffer.slice(desc.byteOffset, desc.byteOffset + desc.byteLength))
+            : new Uint8Array(desc.slice(0));
+        }
+        // ★ コマの並べ替え（Bフレーム）があると、時刻の付け方が変わる。この詰め方では扱わない。
+        if (chunk.timestamp <= lastTs) failure = failure || new Error('エンコーダがコマを並べ替えました。');
+        lastTs = chunk.timestamp;
+        const data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+        samples.push({ data, key: chunk.type === 'key' });
+      },
+      error: (e) => { failure = failure || e; },
+    });
+
+    try {
+      encoder.configure(config);
+      for (let i = 0; i < total && !failure; i++) {
+        // 最後のコマは「全部埋まった状態」にする（実時間録画の最後と同じ）
+        const t = i === total - 1 ? SPEC.duration : i / SPEC.fps;
+        drawAt(ctx, base, boxes, t);
+        const frame = new VideoFrame(out, { timestamp: Math.round(i * stepUs), duration: Math.round(stepUs) });
+        encoder.encode(frame, { keyFrame: i % KEY_EVERY === 0 });
+        frame.close();
+        while (encoder.encodeQueueSize > 4 && !failure) await drained(encoder);
+        if (onProgress && i % 15 === 0) onProgress(i / total);
+      }
+      if (!failure) await encoder.flush();
+    } finally {
+      if (encoder.state !== 'closed') encoder.close();
+    }
+    if (failure) throw failure;
+    if (samples.length !== total) throw new Error('コマの数が合いません（' + samples.length + ' / ' + total + '）。');
+
+    const bytes = window.Mp4Mux.mux({ width: W, height: H, fps: SPEC.fps, avcC, samples });
+    if (onProgress) onProgress(1);
+    return { blob: new Blob([bytes], { type: 'video/mp4' }), mime: 'video/mp4', ext: 'mp4', via: 'webcodecs' };
+  }
+
+  /**
+   * 動画を1本作る。WebCodecs で書けるならそちら、駄目なら実時間録画。
+   * onProgress(0..1) で進み具合を返す。
+   */
+  async function record(draft, onProgress) {
+    const config = await pickEncoderConfig();
+    if (config) {
+      try {
+        return await encodeFrames(config, draft, onProgress);
+      } catch (e) {
+        // ★ 一度失敗した書き方は、このページではもう使わない（同じ失敗を20回繰り返さない）。
+        console.warn('WebCodecs での書き出しに失敗したので、実時間録画に切り替えます:', e);
+        wcConfig = null;
+      }
+    }
+    return recordRealtime(draft, onProgress);
   }
 
   window.Reel = { SPEC, W, H, RIGHT, READABLE_SCALE, HARD_MIN_SCALE,
