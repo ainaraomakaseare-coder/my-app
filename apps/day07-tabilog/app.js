@@ -6591,45 +6591,29 @@
 
   function renderMyLog() {
     renderMyLogTrips();
-    renderMyLogTripPlaces();
     renderMyLogPlaces();
     renderMyLogTabs();
     renderMyLogSort();
     renderMyLogList();
   }
 
-  // 「旅行ごとの訪れた場所」：旅行ごとに、その旅行で訪れた都道府県・国のチップを出し、
-  // その場で外す・戻すができる（2026-09-28〜。旧「マイログから外す」がアカウント全体に効いて
-  // しまい、片方の旅行だけから外したくても両方消えてしまう不具合の直し方。docs/adr/0016）。
-  // 外しても戻せるよう、チップは消さずに灰色＋「戻す」のまま残す。
-  function renderMyLogTripPlaces() {
-    var el = $('#mylogTripPlaces');
-    if (!el) return;
-    var tripPlaces = (state.myLogPlaces && state.myLogPlaces.tripPlaces) || [];
-    var withPlaces = tripPlaces.filter(function (t) { return (t.prefectures && t.prefectures.length) || (t.countries && t.countries.length); });
-    if (!withPlaces.length) {
-      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
-      return;
-    }
-    var chip = function (tripId, kind, x) {
+  // その旅行で訪れた都道府県・国のチップHTML（外す・戻すの操作つき）。
+  // 旅行に場所がまだ無ければ何も出さない（空の帯を出すより、カードがシンプルな方が見やすいため）。
+  // 外しても戻せるよう、チップは消さずに灰色＋「戻す」のまま残す
+  // （2026-09-28〜。旧「マイログから外す」がアカウント全体に効いてしまい、片方の旅行だけから
+  // 外したくても両方消えてしまう不具合の直し方。docs/adr/0016）。
+  function tripPlaceChipsHtml(t) {
+    if (!t) return '';
+    var chip = function (kind, x) {
       var cls = 'trip-place-chip' + (x.excluded ? ' is-excluded' : '');
       return '<span class="' + cls + '">' +
         '<span class="trip-place-name">' + escapeHtml(x.name) + '</span>' +
-        '<button type="button" class="trip-place-action" data-trip="' + escapeHtml(tripId) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
+        '<button type="button" class="trip-place-action" data-trip="' + escapeHtml(t.tripId) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
         '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? '戻す' : '外す') + '</button></span>';
     };
-    el.innerHTML = withPlaces.map(function (t) {
-      var chips = (t.prefectures || []).map(function (x) { return chip(t.tripId, 'prefecture', x); })
-        .concat((t.countries || []).map(function (x) { return chip(t.tripId, 'country', x); })).join('');
-      return '<div class="trip-places-group">' +
-        '<div class="trip-places-title">' + escapeHtml(t.tripTitle || '（無題の旅）') + '</div>' +
-        '<div class="trip-place-chips">' + chips + '</div></div>';
-    }).join('');
-    $all('.trip-place-action', el).forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        setMyLogTripPlaceMode(btn.dataset.trip, btn.dataset.kind, btn.dataset.name, btn.dataset.mode, btn);
-      });
-    });
+    var chips = (t.prefectures || []).map(function (x) { return chip('prefecture', x); })
+      .concat((t.countries || []).map(function (x) { return chip('country', x); })).join('');
+    return chips ? '<div class="trip-place-chips">' + chips + '</div>' : '';
   }
 
   function setMyLogTripPlaceMode(tripId, kind, name, mode, btn) {
@@ -6638,7 +6622,7 @@
     btn.disabled = true;
     api('/mylog/trip-places', 'POST', { email: user.email, tripId: tripId, kind: kind, name: name, mode: mode }).then(function (res) {
       state.myLogPlaces = res.places || state.myLogPlaces;
-      renderMyLogTripPlaces();
+      renderMyLogTrips();
       renderMyLogPlaces();
     }).catch(function () {
       btn.disabled = false;
@@ -6648,8 +6632,8 @@
 
   // 「訪れた都道府県・国」（総計）：参加した旅行の「日ごとの場所」からサーバー側で集計したもの。
   // 国名の表記ゆれ（アメリカ／アメリカ合衆国）はサーバーでまとめ、乗り継ぎだけの国は数えない。
-  // 出てくる旅行すべてで外されている場所だけ、ここから落ちる（外す・戻すの操作は上の旅行ごとの
-  // 一覧で行う。ここは読み取り専用＝チップをタップすると、どの旅の何日から入ったかだけを出す。
+  // 出てくる旅行すべてで外されている場所だけ、ここから落ちる（外す・戻すの操作は上の「参加した
+  // 旅行」の各カードで行う。ここは読み取り専用＝チップをタップすると、どの旅の何日から入ったかだけを出す。
   // 2026-09-27・旅行ごとの除外に伴い読み取り専用化：2026-09-28）。
   function renderMyLogPlaces() {
     var el = $('#mylogPlaces');
@@ -6726,7 +6710,7 @@
         (dates ? '<span class="visited-src-dates">' + escapeHtml(dates) + (s.transit ? '（乗り継ぎ）' : s.excluded ? '（外した）' : '') + '</span>' : '') + '</li>';
     }).join('');
     var note = x.status === 'transit' ? '<p class="visited-detail-note">空港・乗り継ぎの記録しか無いので、数えていません。</p>'
-      : x.status === 'excluded' ? '<p class="visited-detail-note">出てくる旅行すべてで外したので、数えていません。上の「旅行ごとの訪れた場所」から戻せます。</p>' : '';
+      : x.status === 'excluded' ? '<p class="visited-detail-note">出てくる旅行すべてで外したので、数えていません。上の「参加した旅行」の各カードから戻せます。</p>' : '';
     return '<div class="visited-detail">' +
       (srcs ? '<div class="visited-detail-label">この記録から入りました</div><ul class="visited-srcs">' + srcs + '</ul>' : '') + note +
       '</div>';
@@ -6734,6 +6718,10 @@
 
   // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。
   // 評価の細かいログ（下のカテゴリ別一覧）とは別物で、どの端末からログインしても同じ内容が見える。
+  // 各カードの中に、その旅行で訪れた都道府県・国のチップも出す（旅行が増えるとページが長くなる
+  // ため、前は別セクション「旅行ごとの訪れた場所」に分けていたのを2026-09-28にここへ統合した）。
+  // チップの「外す」「戻す」はカード自体を開く操作とぶつからないよう、カードはボタンではなく
+  // クリック／キー操作を自前で処理するdivにし、チップ側のクリックはstopPropagationで止める。
   function renderMyLogTrips() {
     var el = $('#mylogTripList');
     var trips = state.myLogTrips || [];
@@ -6741,10 +6729,14 @@
       el.innerHTML = '<div class="empty">まだ参加した旅行がありません。旅行のページで「参加する」を押すとここに表示されます。</div>';
       return;
     }
+    var placesByTrip = {};
+    ((state.myLogPlaces && state.myLogPlaces.tripPlaces) || []).forEach(function (t) { placesByTrip[t.tripId] = t; });
     el.innerHTML = '';
     trips.forEach(function (t) {
-      var card = document.createElement('button');
+      var card = document.createElement('div');
       card.className = 'trip-card';
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
       card.innerHTML =
         '<div class="trip-card-row">' +
@@ -6752,8 +6744,23 @@
         '<div class="trip-card-body">' +
         '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
         (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
+        tripPlaceChipsHtml(placesByTrip[t.id]) +
         '</div></div>';
-      card.addEventListener('click', function () { openTrip(t.id); });
+      var open = function () { openTrip(t.id); };
+      card.addEventListener('click', function (e) {
+        if (e.target.closest('.trip-place-action')) return;
+        open();
+      });
+      card.addEventListener('keydown', function (e) {
+        if (e.target.closest('.trip-place-action')) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
+      $all('.trip-place-action', card).forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          setMyLogTripPlaceMode(btn.dataset.trip, btn.dataset.kind, btn.dataset.name, btn.dataset.mode, btn);
+        });
+      });
       el.appendChild(card);
     });
   }
