@@ -2192,19 +2192,39 @@
     return out;
   }
 
-  // 「行ったことある旅先」の一覧に出す、1つの場所（都道府県／国）の旅行名。
-  // /mylogのdetails.prefectures・countriesの各要素（sources: [{tripTitle, transit, excluded}]）から、
-  // 実際に数えている（乗り継ぎでも外してもいない）旅行のタイトルだけを、出てくる順に重複なく拾う。
-  function visitedPlaceTripTitles(item) {
+  // 「行ったことある旅先」の一覧に出す、1つの場所（都道府県／国）の旅行一覧。
+  // /mylogのdetails.prefectures・countriesの各要素（sources: [{tripId, tripTitle, dates, transit, excluded}]）
+  // から、実際に数えている（乗り継ぎでも外してもいない）旅行だけを、出てくる順に重複なく拾う。
+  // tripId（旅行を開くのに使う）・dates由来の年（表示用）も一緒に返す。
+  function visitedPlaceTrips(item) {
     var out = [], seen = {};
     ((item && item.sources) || []).forEach(function (s) {
       if (s.transit || s.excluded) return;
-      var t = s.tripTitle || '（無題の旅）';
-      if (seen[t]) return;
-      seen[t] = 1;
-      out.push(t);
+      var id = s.tripId || '';
+      if (seen[id]) return;
+      seen[id] = 1;
+      out.push({ tripId: id, tripTitle: s.tripTitle || '（無題の旅）', years: visitedYearsFromDates(s.dates) });
     });
     return out;
+  }
+
+  // sources[].datesの"YYYY-MM-DD"の並びから、年だけを重複なく出てくる順に拾う（無ければ空配列＝
+  // 表示側で年を省く。旧データなど日付が無い場合を想定）。
+  function visitedYearsFromDates(dates) {
+    var out = [], seen = {};
+    (dates || []).forEach(function (d) {
+      var y = String(d || '').slice(0, 4);
+      if (!/^\d{4}$/.test(y) || seen[y]) return;
+      seen[y] = 1;
+      out.push(y);
+    });
+    return out;
+  }
+
+  // 「旅行名（2026）」「旅行名（2026・2027）」「旅行名」（年が分からないときは省く）
+  function visitedTripLabel(trip) {
+    var years = trip.years && trip.years.length ? '（' + trip.years.join('・') + '）' : '';
+    return trip.tripTitle + years;
   }
 
   // 旅行の行き先（天気のために入れた「日ごとの場所」の国・都道府県）。海外があれば国、国内だけなら都道府県。
@@ -2630,8 +2650,11 @@
     buildTripPostText: buildTripPostText,
     canonicalVisitedCountryName: canonicalVisitedCountryName,
     buildCountryIsoIndex: buildCountryIsoIndex,
-    visitedPlaceTripTitles: visitedPlaceTripTitles,
+    visitedPlaceTrips: visitedPlaceTrips,
+    visitedYearsFromDates: visitedYearsFromDates,
+    visitedTripLabel: visitedTripLabel,
     VISITED_REGION_ORDER: VISITED_REGION_ORDER,
+    VISITED_PREFECTURE_REGIONS: VISITED_PREFECTURE_REGIONS,
     regionForPrefecture: regionForPrefecture,
     VISITED_CONTINENT_ORDER: VISITED_CONTINENT_ORDER,
     continentForAlpha2: continentForAlpha2,
@@ -3477,7 +3500,10 @@
   }
 
   // ---------- 旅行を開く ----------
-  function openTrip(id) {
+  // returnTo：この旅行の詳細画面から「← 戻る」を押したときにどこへ戻るか（省略時はホーム。
+  // 「行ったことある旅先」の一覧・地図の吹き出しから旅行名をタップして開いたとき（openTrip(id, 'visited')）
+  // だけ、そのページに戻れるようにする。2026-09-28〜）
+  function openTrip(id, returnTo) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
       state.trip = data.trip;
@@ -3491,6 +3517,7 @@
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       state.zoneInfo = { byBlock: {}, byDate: {} };
       screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
+      state.tripReturnScreen = returnTo === 'visited' ? 'visited' : null;
       showScreen('tripDetail');
       renderTripDetail();
       loadSocial();
@@ -7001,7 +7028,12 @@
   // タイル画像を使わないインラインSVG。ネットに繋がらないiOSアプリ内でもオフラインで描ける。
   var visitedGeoLibsLoading = null;
   function loadVisitedGeoLibs() {
-    if (window.d3 && window.topojson) return Promise.resolve();
+    // d3-array→d3-geo→topojson-clientの順で読み終わっているかを、名前空間があるかだけでなく
+    // 実際に使う関数があるかまで見る（d3-arrayだけ読めてwindow.dが truthy になった状態で
+    // 「読み込み済み」と誤判定し、d3.geoPathが無いまま地図を描こうとして例外→catchで
+    // 「地図の読み込みに失敗しました」になる不具合の直し方。国内・海外タブを素早く切り替えたときに
+    // 起きやすかった）。
+    if (window.d3 && window.d3.geoPath && window.topojson && window.topojson.feature) return Promise.resolve();
     if (visitedGeoLibsLoading) return visitedGeoLibsLoading;
     var files = ['vendor/geo/d3-array.min.js', 'vendor/geo/d3-geo.min.js', 'vendor/geo/topojson-client.min.js'];
     visitedGeoLibsLoading = new Promise(function (resolve, reject) {
@@ -7091,8 +7123,39 @@
     return a2 ? Core.flagEmojiForAlpha2(a2) : '';
   }
 
-  // 場所の一覧HTML（都道府県／国のどちらも共通）。地方・大陸の見出しごとにグループ化し、
-  // 選んだ場所は.onで強調して地図側とも呼応させる。国は先頭に国旗絵文字を出す（showFlagがtrueのとき）。
+  // 旅行名（年つき）をタップしたらその旅行を開けるリンクのHTML。押した瞬間は行の選択（クリック伝播）とは
+  // 別扱いにしたいので、クリック側でstopPropagationする（wireVisitedTripLinks）。
+  function visitedTripLinksHtml(trips) {
+    if (!trips.length) return '記録が見つかりませんでした';
+    return trips.map(function (t) {
+      return '<a href="#" class="visited-trip-link" data-trip-id="' + escapeHtml(t.tripId) + '">' + escapeHtml(Core.visitedTripLabel(t)) + '</a>';
+    }).join('・');
+  }
+
+  function wireVisitedTripLinks(root2) {
+    $all('.visited-trip-link', root2).forEach(function (a) {
+      a.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var id = a.dataset.tripId;
+        if (id) openTrip(id, 'visited');
+      });
+    });
+  }
+
+  // 見出し右の「n / m」（都道府県：その地方の何県に行ったか）・「nか国」（大陸：か国数だけ）。
+  function visitedGroupCountLabel(kind, group, count) {
+    if (kind === 'prefecture') {
+      var total = (Core.VISITED_PREFECTURE_REGIONS[group] || []).length;
+      return count + ' / ' + total;
+    }
+    return count + 'か国';
+  }
+
+  // 場所の一覧HTML（都道府県／国のどちらも共通）。地方・大陸ごとに見出し（タイトル＋件数＋区切り線）を
+  // 付けてグループ化し、選んだ場所は.onで背景だけを付けて強調する（インデントは全行共通のまま。
+  // 2026-09-28〜：以前は選択中の行だけpaddingがずれて見えたため、パディングは.onでも変えない）。
+  // 国は先頭に国旗絵文字を出す（showFlagがtrueのとき）。行の下には訪れた旅行名（年つき）のリンクを出す。
   function visitedGroupedListHtml(kind, groups, showFlag) {
     if (!groups.length) {
       return '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
@@ -7100,14 +7163,17 @@
     var sel = state.visitedSel;
     return groups.map(function (g) {
       return '<div class="visited-group">' +
-        '<div class="visited-group-header">' + escapeHtml(g.group) + '</div>' +
+        '<div class="visited-group-header">' +
+        '<span class="visited-group-title">' + escapeHtml(g.group) + '</span>' +
+        '<span class="visited-group-count">' + escapeHtml(visitedGroupCountLabel(kind, g.group, g.items.length)) + '</span>' +
+        '</div>' +
         '<div class="visited-list">' + g.items.map(function (x) {
-          var trips = Core.visitedPlaceTripTitles(x);
+          var trips = Core.visitedPlaceTrips(x);
           var on = sel && sel.kind === kind && sel.name === x.name;
           var flag = showFlag ? visitedFlagForName(x.name) : '';
           return '<div class="visited-row' + (on ? ' on' : '') + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' +
-            '<div class="visited-row-name">' + (flag ? '<span class="visited-row-flag">' + flag + '</span> ' : '') + escapeHtml(x.name) + '</div>' +
-            '<div class="visited-row-trips">' + (trips.length ? trips.map(escapeHtml).join('・') : '') + '</div>' +
+            '<div class="visited-row-name">' + (flag ? '<span class="visited-row-flag">' + flag + '</span>' : '') + escapeHtml(x.name) + '</div>' +
+            '<div class="visited-row-trips">' + visitedTripLinksHtml(trips) + '</div>' +
             '</div>';
         }).join('') + '</div>' +
         '</div>';
@@ -7120,6 +7186,7 @@
         setVisitedSelection(row.dataset.kind, row.dataset.name);
       });
     });
+    wireVisitedTripLinks(panel);
   }
 
   function setVisitedSelection(kind, name) {
@@ -7129,7 +7196,9 @@
     updateVisitedHighlight();
   }
 
-  // 全部を作り直さず、選択中クラスの付け外しだけする（地図の再読み込みを避ける）
+  // 全部を作り直さず、選択中クラスの付け外しだけする（地図の再読み込みを避ける）。
+  // キャプションは一覧の行の強調と重複して見えていたため、「選んだ場所」という小さな見出しを付けた
+  // 選択サマリーとして出す（地図をタップしたときだけ使う人にも、選んだ場所がひと目で分かるように）。
   function updateVisitedHighlight() {
     var sel = state.visitedSel;
     $all('.visited-row').forEach(function (row) {
@@ -7143,10 +7212,12 @@
     if (!sel) { caption.hidden = true; caption.innerHTML = ''; return; }
     var list = sel.kind === 'country' ? (visitedDetails().countries || []) : (visitedDetails().prefectures || []);
     var item = list.filter(function (x) { return x.name === sel.name; })[0];
-    var trips = item ? Core.visitedPlaceTripTitles(item) : [];
+    var trips = item ? Core.visitedPlaceTrips(item) : [];
     caption.hidden = false;
-    caption.innerHTML = '<div class="visited-caption-name">' + escapeHtml(sel.name) + '</div>' +
-      '<div class="visited-caption-trips">' + (trips.length ? trips.map(escapeHtml).join('・') : '記録が見つかりませんでした') + '</div>';
+    caption.innerHTML = '<div class="visited-caption-label">選んだ場所</div>' +
+      '<div class="visited-caption-name">' + escapeHtml(sel.name) + '</div>' +
+      '<div class="visited-caption-trips">' + visitedTripLinksHtml(trips) + '</div>';
+    wireVisitedTripLinks(caption);
   }
 
   var VISITED_PREFECTURE_TOTAL = 47;
@@ -7202,6 +7273,7 @@
       var b = path.bounds(mainFC);
       var padTop = 6, padBottom = 6;
       var h = Math.ceil(b[1][1] - b[0][1]) + padTop + padBottom;
+      h = Math.max(h, 8 + 78 + 8); // 左上の沖縄インセット（8,8,104x78）が収まる高さは必ず確保する
       var t = proj.translate();
       proj.translate([t[0], t[1] - b[0][1] + padTop]);
       path = d3.geoPath(proj);
@@ -7217,13 +7289,19 @@
           (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>';
       }).join('');
 
+      // 沖縄は別枠のインセットに出す。以前は下に大きく空いた枠（本土と重ならないよう高さを余分に
+      // 取っていた）を置いていたが、見た目が「空白の四角」になってしまっていたため、本土の地図では
+      // ふだん空いている左上（日本海側。北は北海道・南は九州で、左上そのものは海）に小さく収める形に
+      // 直した（2026-09-28〜）。fitExtentで枠の内側いっぱいに島々を収め、小さくても見えるようにする。
       var insetSvg = '';
       if (okinawaFeature) {
-        var insetW = 92, insetH = 60, insetPad = 8;
-        var insetX = insetPad, insetY = h - insetH - insetPad;
-        var okiProj = d3.geoMercator().fitSize([insetW - 10, insetH - 10], { type: 'FeatureCollection', features: [okinawaFeature] });
-        var ot = okiProj.translate();
-        okiProj.translate([ot[0] + insetX + 5, ot[1] + insetY + 5]);
+        var insetPad = 8, insetW = 104, insetH = 78, innerPad = 6;
+        var insetX = insetPad, insetY = insetPad;
+        var okiFC = { type: 'FeatureCollection', features: [okinawaFeature] };
+        var okiProj = d3.geoMercator().fitExtent(
+          [[insetX + innerPad, insetY + innerPad], [insetX + insetW - innerPad, insetY + insetH - innerPad]],
+          okiFC
+        );
         var okiPath = d3.geoPath(okiProj);
         var name = okinawaFeature.properties.nam_ja;
         var isVisited = !!visitedNames[name];
@@ -7240,52 +7318,93 @@
       container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた都道府県の地図">' +
         mainSvg + insetSvg + '</svg>';
       wireVisitedMapRegions(container);
-    }).catch(function () {
+    }).catch(function (e) {
+      console.error('drawVisitedJapanMap failed', e);
       var container = $('#visitedMapDomestic');
       if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
     });
   }
 
+  // 海外タブ：地図と一覧をそれぞれ別のtry/catchで描く（2026-09-28〜。オーナー報告：国内・海外タブを
+  // 素早く切り替えたり海外タブのままリロードしたりすると「地図の読み込みに失敗しました」「一覧の
+  // 読み込みに失敗しました」の両方が出ることがあった）。world-atlas（countries-110m.json）にはISOの
+  // 数値IDが無い地域（コソボ・北キプロスなど）や、alpha2の対応表に無いID・日本語名がalpha2に変換できない
+  // 国（香港など）が混ざっており、1つの地物の描画で例外が起きるとPromiseチェイン全体がcatchに落ちて
+  // 地図・一覧の両方が失敗表示になっていた。1地物ごとのtry/catchで読み飛ばし、地図が失敗しても一覧は
+  // 別で描く（逆も同様）。実際の例外はconsole.errorに出す（原因調査用）。
   function drawVisitedWorldMap(visited) {
     var visitedNames = {};
     visited.forEach(function (x) { visitedNames[x.name] = true; });
     Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/countries-110m.json', 'world'), loadVisitedJson('vendor/geo/iso-numeric-alpha2.json', 'iso')]).then(function (r) {
       var container = $('#visitedMapOverseas');
       var listWrap = $('#visitedListOverseas');
-      if (!container) return;
+      if (!container && !listWrap) return; // 読み込み中にタブが切り替わっていた
       var topo = r[1], alpha2Table = r[2];
-      var fc = topojson.feature(topo, topo.objects.countries);
-      var ids = fc.features.map(function (f) { return f.id; });
-      var idx = Core.buildCountryIsoIndex(ids, alpha2Table);
+      var idx = { idToName: {}, nameToId: {} };
+      var fc = null;
+      try {
+        fc = topojson.feature(topo, topo.objects.countries);
+        var ids = fc.features.map(function (f) { return f.id; });
+        idx = Core.buildCountryIsoIndex(ids, alpha2Table);
+      } catch (e) {
+        console.error('drawVisitedWorldMap: topojson decode failed', e);
+        fc = null;
+      }
       visitedCountryAlpha2ByName = {};
       Object.keys(idx.nameToId).forEach(function (name) {
         visitedCountryAlpha2ByName[name] = alpha2Table[idx.nameToId[name]];
       });
-      var w = 320, h = 190;
-      var proj = d3.geoNaturalEarth1().fitSize([w, h], fc);
-      var path = d3.geoPath(proj);
-      var sel = state.visitedSel;
-      container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた国の地図">' +
-        fc.features.map(function (f) {
-          var name = idx.idToName[f.id] || '';
-          var d = path(f);
-          if (!d) return '';
-          var isVisited = !!(name && visitedNames[name]);
-          var on = isVisited && sel && sel.kind === 'country' && sel.name === name;
-          return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
-            (isVisited ? ' data-kind="country" data-name="' + escapeHtml(name) + '"' : '') +
-            '>' + (name ? '<title>' + escapeHtml(name) + '</title>' : '') + '</path>';
-        }).join('') + '</svg>';
-      wireVisitedMapRegions(container);
+
+      if (container) {
+        if (fc) {
+          try {
+            var w = 320, h = 190;
+            var proj = d3.geoNaturalEarth1().fitSize([w, h], fc);
+            var path = d3.geoPath(proj);
+            var sel = state.visitedSel;
+            var paths = fc.features.map(function (f) {
+              try {
+                var name = idx.idToName[f.id] || '';
+                var d = path(f);
+                if (!d) return '';
+                var isVisited = !!(name && visitedNames[name]);
+                var on = isVisited && sel && sel.kind === 'country' && sel.name === name;
+                return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+                  (isVisited ? ' data-kind="country" data-name="' + escapeHtml(name) + '"' : '') +
+                  '>' + (name ? '<title>' + escapeHtml(name) + '</title>' : '') + '</path>';
+              } catch (eFeature) {
+                console.error('drawVisitedWorldMap: skipped a feature', f && f.id, eFeature);
+                return ''; // 1つの地物がおかしくても地図全体は描く
+              }
+            }).join('');
+            container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた国の地図">' + paths + '</svg>';
+            wireVisitedMapRegions(container);
+          } catch (eMap) {
+            console.error('drawVisitedWorldMap: map render failed', eMap);
+            container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+          }
+        } else {
+          container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+        }
+      }
 
       if (listWrap) {
-        var groups = Core.groupVisitedByOrder(visited, function (x) {
-          return Core.continentForAlpha2(visitedCountryAlpha2ByName[x.name]);
-        }, Core.VISITED_CONTINENT_ORDER);
-        listWrap.innerHTML = visitedGroupedListHtml('country', groups, true);
-        wireVisitedListRows(listWrap);
+        try {
+          // ISOの対応表に無い（地図で塗れない）国でも、集計（visited）に出ている場所は一覧からは
+          // 絶対に落とさない（continentForAlphaが分からなければ「その他」に入る＝groupVisitedByOrder
+          // 側の既定の挙動）。
+          var groups = Core.groupVisitedByOrder(visited, function (x) {
+            return Core.continentForAlpha2(visitedCountryAlpha2ByName[x.name]);
+          }, Core.VISITED_CONTINENT_ORDER);
+          listWrap.innerHTML = visitedGroupedListHtml('country', groups, true);
+          wireVisitedListRows(listWrap);
+        } catch (eList) {
+          console.error('drawVisitedWorldMap: list render failed', eList);
+          listWrap.innerHTML = '<div class="empty">一覧の読み込みに失敗しました。</div>';
+        }
       }
-    }).catch(function () {
+    }).catch(function (e) {
+      console.error('drawVisitedWorldMap failed', e);
       var container = $('#visitedMapOverseas');
       if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
       var listWrap = $('#visitedListOverseas');
@@ -8287,7 +8406,16 @@
     initDaySwipe();
     initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
     initEdgeSwipeBack(document.querySelector('[data-screen="visited"]'), goHome);
-    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), goHome);
+    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), function () {
+      // ヘッダーの「← 戻る」（data-back="home"）と同じ判定（openTripのreturnTo、2026-09-28〜）
+      if (state.tripReturnScreen === 'visited') {
+        state.tripReturnScreen = null;
+        showScreen('visited');
+        renderVisitedPlaces();
+        return;
+      }
+      goHome();
+    });
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
@@ -8395,6 +8523,15 @@
       b.addEventListener('click', function () {
         var to = b.dataset.back;
         stopVoiceRecordingIfActive();
+        // 旅の詳細（tripDetail）の「← 戻る」だけは特別扱い：「行ったことある旅先」の旅行名リンクから
+        // 開いた旅行なら、そのページに戻す（openTripのreturnTo、2026-09-28〜）。それ以外のdata-back="home"
+        // （新しい旅を作る、など）はこれまでどおりホームへ。
+        if (to === 'home' && b.classList.contains('back-btn') && state.tripReturnScreen === 'visited') {
+          state.tripReturnScreen = null;
+          showScreen('visited');
+          renderVisitedPlaces();
+          return;
+        }
         if (to === 'home') goHome();
         else { showScreen(to); if (to === 'tripDetail') renderTripDetail(); }
       });

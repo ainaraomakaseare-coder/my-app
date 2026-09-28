@@ -1399,7 +1399,7 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   ok('parseImportedBlocksJson: JSONが無ければエラー', garbage.errors.length === 1 && garbage.blocks.length === 0);
 })();
 
-/* ---- 行ったことある旅先（canonicalVisitedCountryName / buildCountryIsoIndex / visitedPlaceTripTitles） ---- */
+/* ---- 行ったことある旅先（canonicalVisitedCountryName / buildCountryIsoIndex / visitedPlaceTrips） ---- */
 (function () {
   eq('canonicalVisitedCountryName: 正式名称を短くする', T.canonicalVisitedCountryName('アメリカ合衆国'), 'アメリカ');
   eq('canonicalVisitedCountryName: 別名も同じ国名にまとめる', T.canonicalVisitedCountryName('大韓民国'), '韓国');
@@ -1422,23 +1422,34 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   eq('buildCountryIsoIndex: alpha2Tableが無いidも無視される（存在しないid）', T.buildCountryIsoIndex(['000'], alpha2Table).idToName['000'] === undefined, true);
   eq('buildCountryIsoIndex: idsが空でも空の対応表を返す', T.buildCountryIsoIndex([], alpha2Table), { idToName: {}, nameToId: {} });
 
-  eq('visitedPlaceTripTitles: 数えている旅行名だけ拾う', T.visitedPlaceTripTitles({
+  eq('visitedPlaceTrips: 数えている旅行だけ拾う（tripId・年つき）', T.visitedPlaceTrips({
     sources: [
-      { tripTitle: '沖縄旅行', transit: false, excluded: false },
-      { tripTitle: '乗り継ぎだけの旅', transit: true, excluded: false },
-      { tripTitle: '外した旅行', transit: false, excluded: true }
+      { tripId: 't1', tripTitle: '沖縄旅行', dates: ['2026-05-01'], transit: false, excluded: false },
+      { tripId: 't2', tripTitle: '乗り継ぎだけの旅', dates: ['2026-06-01'], transit: true, excluded: false },
+      { tripId: 't3', tripTitle: '外した旅行', dates: ['2026-07-01'], transit: false, excluded: true }
     ]
-  }), ['沖縄旅行']);
-  eq('visitedPlaceTripTitles: 同じ旅行タイトルが複数回出ても重複しない', T.visitedPlaceTripTitles({
+  }), [{ tripId: 't1', tripTitle: '沖縄旅行', years: ['2026'] }]);
+  eq('visitedPlaceTrips: 同じ旅行（tripId）が複数回出ても重複しない', T.visitedPlaceTrips({
     sources: [
-      { tripTitle: '家族旅行', transit: false, excluded: false },
-      { tripTitle: '家族旅行', transit: false, excluded: false }
+      { tripId: 't1', tripTitle: '家族旅行', dates: ['2026-01-01'], transit: false, excluded: false },
+      { tripId: 't1', tripTitle: '家族旅行', dates: ['2026-01-02'], transit: false, excluded: false }
     ]
-  }), ['家族旅行']);
-  eq('visitedPlaceTripTitles: 無題の旅はタイトルを補う', T.visitedPlaceTripTitles({
-    sources: [{ tripTitle: '', transit: false, excluded: false }]
-  }), ['（無題の旅）']);
-  eq('visitedPlaceTripTitles: sourcesが無ければ空配列', T.visitedPlaceTripTitles({}), []);
+  }), [{ tripId: 't1', tripTitle: '家族旅行', years: ['2026'] }]);
+  eq('visitedPlaceTrips: 無題の旅はタイトルを補う', T.visitedPlaceTrips({
+    sources: [{ tripId: 't1', tripTitle: '', dates: [], transit: false, excluded: false }]
+  }), [{ tripId: 't1', tripTitle: '（無題の旅）', years: [] }]);
+  eq('visitedPlaceTrips: sourcesが無ければ空配列', T.visitedPlaceTrips({}), []);
+  eq('visitedPlaceTrips: 複数の年にまたがる旅行は年を全部拾う', T.visitedPlaceTrips({
+    sources: [{ tripId: 't1', tripTitle: '年またぎ旅行', dates: ['2026-12-31', '2027-01-01'], transit: false, excluded: false }]
+  }), [{ tripId: 't1', tripTitle: '年またぎ旅行', years: ['2026', '2027'] }]);
+
+  eq('visitedYearsFromDates: 日付から年だけ重複なく拾う', T.visitedYearsFromDates(['2026-01-01', '2026-05-05', '2027-01-01']), ['2026', '2027']);
+  eq('visitedYearsFromDates: 日付が無ければ空配列', T.visitedYearsFromDates([]), []);
+  eq('visitedYearsFromDates: undefinedでも空配列', T.visitedYearsFromDates(undefined), []);
+
+  eq('visitedTripLabel: 年があれば（）で付ける', T.visitedTripLabel({ tripTitle: '大阪旅行', years: ['2026'] }), '大阪旅行（2026）');
+  eq('visitedTripLabel: 複数年は・でつなぐ', T.visitedTripLabel({ tripTitle: '年またぎ旅行', years: ['2026', '2027'] }), '年またぎ旅行（2026・2027）');
+  eq('visitedTripLabel: 年が無ければ省く', T.visitedTripLabel({ tripTitle: '旧データの旅行', years: [] }), '旧データの旅行');
 })();
 
 /* ---- 行ったことある旅先（地方・大陸のグループ分け／国旗絵文字／達成率、2026-09-28〜） ---- */

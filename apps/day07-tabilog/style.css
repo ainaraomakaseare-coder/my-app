@@ -595,20 +595,33 @@ a:hover { text-decoration: underline; }
 .visited-region.is-visited.on { fill: var(--accent-deep); stroke: var(--ink); stroke-width: 1.25; }
 .visited-inset-box { fill: var(--card); stroke: var(--visited-unfilled); stroke-width: 1; }
 .visited-inset-label { font-size: 7px; font-weight: 700; fill: var(--ink-muted); }
-.visited-caption { margin: 4px 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft-bg); }
-.visited-caption-name { font-size: 13.5px; font-weight: 700; color: var(--accent-deep); }
-.visited-caption-trips { font-size: 12px; color: var(--ink-muted); margin-top: 3px; }
+/* 選択サマリー（地図タップでも一覧の行ハイライトと同じ場所がひと目で分かるように、
+   小さな見出し「選んだ場所」付きのカードにした。一覧の行の強調と役割が分かれて見えるよう、
+   アクセント色の枠だけで背景は控えめにする。2026-09-28〜 */
+.visited-caption { margin: 4px 0 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--card); }
+.visited-caption-label { font-size: 10.5px; font-weight: 700; color: var(--accent-deep); letter-spacing: .02em; }
+.visited-caption-name { font-size: 14.5px; font-weight: 700; color: var(--ink); margin-top: 2px; }
+.visited-caption-trips { font-size: 12.5px; color: var(--ink-muted); margin-top: 3px; }
+.visited-caption-trips a, .visited-row-trips a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.visited-caption-trips a:hover, .visited-row-trips a:hover { color: var(--accent-deep); }
 
-/* 地方・大陸ごとの見出し付き一覧 */
-.visited-group { margin-top: 6px; }
-.visited-group-header { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); padding: 10px 4px 2px; }
-.visited-list { display: flex; flex-direction: column; gap: 2px; }
-.visited-row { display: flex; flex-direction: column; gap: 2px; padding: 10px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+/* 地方・大陸ごとの見出し付き一覧：太字の見出し＋右に件数、下に区切り線（参考にしたアプリと同じ構成）。
+   行は見出しと同じ左インデントに揃え、選択中でも余白は変えず背景だけで強調する（2026-09-28〜。
+   以前はキャプションと行ハイライトが二重に見えたり、選択中の行だけ余白がずれて見えたりしたため）。 */
+.visited-group { margin-top: 14px; }
+.visited-group-header {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 0 4px 8px; border-bottom: 1px solid var(--border-soft);
+}
+.visited-group-title { font-size: 17px; font-weight: 700; color: var(--ink); }
+.visited-group-count { font-size: 12.5px; font-weight: 600; color: var(--ink-muted); }
+.visited-list { display: flex; flex-direction: column; }
+.visited-row { display: flex; flex-direction: column; gap: 3px; padding: 10px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
 .visited-group:last-child .visited-row:last-child { border-bottom: none; }
-.visited-row.on { background: var(--accent-soft-bg); border-radius: 10px; }
-.visited-row-name { font-size: 13.5px; font-weight: 700; }
-.visited-row-flag { margin-right: 2px; }
-.visited-row-trips { font-size: 11.5px; color: var(--ink-muted); }
+.visited-row.on { background: var(--accent-soft-bg); }
+.visited-row-name { font-size: 15px; font-weight: 700; color: var(--ink); }
+.visited-row-flag { margin-right: 4px; }
+.visited-row-trips { font-size: 13px; color: var(--ink-muted); }
 .visited-credit { margin-top: 10px; font-size: 10.5px; }
 
 /* 参加した旅行カードの中の「訪れた場所」チップ（2026-09-28〜、旧「旅行ごとの訪れた場所」
