@@ -2189,8 +2189,8 @@ function applyGenerated(d) {
   $('ig').value = p.igCaption || d.igCaption || '';
   $('tt').value = p.ttCaption || d.ttCaption || '';
   $('xt').value = p.xText || d.xText || '';
-  // Threads は短い（500文字）ので、同じく短い X の本文を下敷きにする。
-  $('th').value = p.xText || d.xText || '';
+  // Threads 専用に書かせた本文（プロフィール誘導・PR表記・話題タグ込み）。古い文案は X の本文で代える。
+  $('th').value = p.thText || p.xText || d.xText || '';
   $('ytt').value = d.title || '';
   $('ytd').value = p.ytDescription || d.igCaption || '';
   $('affiFlag').checked = !!d.hasAffiliateLink;
