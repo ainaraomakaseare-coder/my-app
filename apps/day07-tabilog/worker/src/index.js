@@ -642,9 +642,20 @@ async function backgroundGeocodeEntry(env, entryId, mapUrl) {
   try {
     const result = await geocodeMapUrl(mapUrl, false, [], env);
     if (!result || result.pending || typeof result.lat !== "number" || typeof result.lng !== "number") return;
-    await env.DB.prepare(
-      "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=? WHERE id=? AND map_url=?"
-    ).bind(result.lat, result.lng, mapUrl, nowIso(), entryId, mapUrl).run();
+    // 座標が求まったこのタイミングで、都道府県・国（マイログ集計用）も1回だけ逆ジオコーディングして
+    // 一緒に保存する（v25、2026-09-28〜）。/mylogのたびに調べ直さなくて済むようにするための変更
+    // （resolveMapPointPlacesの本番障害＝サブリクエスト上限超過を防ぐ。getVisitedPlaces参照）。
+    const geo = await reverseGeocode(result.lat, result.lng).catch(() => null);
+    try {
+      await env.DB.prepare(
+        "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=?, map_admin1=?, map_country=? WHERE id=? AND map_url=?"
+      ).bind(result.lat, result.lng, mapUrl, nowIso(), (geo && geo.admin1) || "", (geo && geo.country) || "", entryId, mapUrl).run();
+    } catch {
+      // migrations/0025（map_admin1/map_country列）を実行する前のDBでは、その2列無しで保存する
+      await env.DB.prepare(
+        "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=? WHERE id=? AND map_url=?"
+      ).bind(result.lat, result.lng, mapUrl, nowIso(), entryId, mapUrl).run();
+    }
   } catch {
     // 裏の処理なので、失敗しても記録の保存自体には影響させない（次の開くタイミングでまた試す）
   }
@@ -948,7 +959,14 @@ async function getMyLog(email, env, headers, ctx) {
     trips = tripRows.map(rowToTrip);
     const titles = {};
     trips.forEach((t) => { titles[t.id] = t.title; });
-    places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles, ctx);
+    // 2026-09-28：ここで例外が出ると/mylog自体が500になり、評価一覧（items）まで見られなくなっていた
+    // （本番障害：resolveMapPointPlacesがサブリクエスト上限を超えてTooManySubrequestsを投げていた）。
+    // placesの集計に失敗しても、items・tripsだけは必ず返す。
+    try {
+      places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles, ctx);
+    } catch (err) {
+      console.error(JSON.stringify({ event: "mylog_visited_places_error", message: String((err && err.message) || err) }));
+    }
   }
 
   return json({ items, trips, places }, 200, headers);
@@ -959,16 +977,30 @@ async function getMyLog(email, env, headers, ctx) {
 // で行う（2026-09-27・旅行ごとの除外は2026-09-28、docs/adr/0016）。
 //
 // 場所の情報源は2つ（2026-09-28〜、主従を入れ替えた）：
-// 1) 記録の地図の座標（entries.map_lat/map_lng、MAP_COORDS_VALID_SINCE以降のものだけ）を
-//    reverseGeocodeで都道府県・国に変換したもの（mapVisits）。1日に複数の場所を正確に持てる。
+// 1) 記録の地図の座標（entries.map_lat/map_lng、MAP_COORDS_VALID_SINCE以降のものだけ）の
+//    都道府県・国（mapVisits）。1日に複数の場所を正確に持てる。
 // 2) day_infos（1日1か所、手入力・旧自動配置）は、mapVisitsが無い日の補完としてだけ使う
 //    （filterFallbackDayRows）。オーナー報告：大阪旅行の2026-09-19のday_infos行が、過去の誤った
 //    自動配置でフロリダの座標になっており、大阪府がマイログに出なかった。mapVisitsを主にすることで
 //    その日はUSJ・新大阪など実際の座標（大阪府）に置き換わる。
 //
+// 【本番障害（2026-09-28）】以前はここで、記録の地図の座標→都道府県・国への逆ジオコーディング
+// （Nominatim・Cache API）を/mylogのたびにやり直していた。旅行の地点数が多いと、Cache APIの
+// match/put＋Nominatim fetchだけでWorkers Free（1呼び出し50サブリクエストまで）を超え、
+// 「Too many subrequests by single Worker invocation.」で GET /mylog が丸ごと落ちた。
+// v25（migrations/0025_entry_map_region.sql）で、座標を求めるとき（backgroundGeocodeEntry・
+// /geocode?entry=）に都道府県・国も1回だけ求めてentries.map_admin1/map_country に保存するように
+// したので、ここでは基本的にその列を読むだけ。Cache API・バックグラウンドでの継続処理はもう無い。
+// まだ列が埋まっていない古い行（v25より前に座標だけ保存されたもの）だけ、1リクエストにつき
+// 最大3地点まで小分けに解決してentriesへ書き戻す（resolveStaleEntryRegions）。
+//
 // mylog_place_overrides（v23・アカウント全体でhide/show）はもう読まない：片方の旅行だけから外したくても
 // 全部の旅行から消えてしまう不具合があったため。テーブル・POST /mylog/placesは残すが（古いアプリ向け）、
 // この集計には一切反映されない。
+//
+// サブリクエスト概算（GET /mylog全体。呼び出し元getMyLogのratings/accounts/trip_membersクエリ3つを含む）：
+// getMyLog側3 + ここのday_infos 1 + entries×blocks結合1 + blocks 1 + mylog_trip_place_overrides 1
+// + 未解決地点の解決（最大3点、Nominatim fetch・UPDATEを1点ずつ）最大6 = 最大13。目安の15以内に収まる。
 async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
   const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] }, tripPlaces: [] };
   if (!tripIds.length) return empty;
@@ -977,37 +1009,76 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
     env, "SELECT trip_id, date, admin1, country, lat, lon FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
   );
 
-  // 1) 記録の地図の座標（MAP_COORDS_VALID_SINCE以降に求めたものだけ）
-  let geocodedEntryRows = [];
+  // entries×blocks を1回のIN batchで読む（座標・地域・乗り継ぎ判定用のcategory/labelをまとめて取る。
+  // 以前は「MAP_COORDS_VALID_SINCE以降の行」「lat/lngがある全行」の2回に分けて問い合わせていたのを
+  // 1回にまとめた）。migrations/0025 を実行する前のDBには map_admin1/map_country列が無いので、
+  // 無い場合は列無しで読み直す（day_infosだけの集計に近い形＝degradedになるが、tripPlaces自体は返る）。
+  let entryRows = [];
+  let hasRegionColumns = true;
   try {
-    geocodedEntryRows = await selectWhereIn(
+    entryRows = await selectWhereIn(
       env,
-      "SELECT e.map_lat AS lat, e.map_lng AS lng, b.trip_id AS trip_id, b.date AS date, b.category AS category, b.label AS label "
+      "SELECT e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng, e.map_admin1 AS admin1, e.map_country AS country, "
+        + "e.map_geocoded_at AS geocoded_at, b.trip_id AS trip_id, b.date AS date, b.category AS category, b.label AS label "
         + "FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (",
       tripIds,
-      ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL AND e.map_geocoded_at >= '" + MAP_COORDS_VALID_SINCE + "'"
+      ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL"
     );
   } catch {
-    // 座標の列が無い古いDBでも、day_infosだけで集計を続ける
+    hasRegionColumns = false;
+    try {
+      entryRows = await selectWhereIn(
+        env,
+        "SELECT e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng, e.map_geocoded_at AS geocoded_at, "
+          + "b.trip_id AS trip_id, b.date AS date, b.category AS category, b.label AS label "
+          + "FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (",
+        tripIds,
+        ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL"
+      );
+    } catch {
+      // 座標の列自体が無い、さらに古いDBでも、day_infosだけで集計を続ける
+      entryRows = [];
+    }
   }
-  const roundedPoints = new Map(); // "lat,lng"（3桁に丸め）→{lat,lng}。同じ地点を何度も問い合わせないため
-  geocodedEntryRows.forEach((r) => {
+
+  // 乗り継ぎ判定（isTransitDay）用：全ての地点（geocoded_atの新旧を問わない）をblock_idごとに集める
+  const coords = {};
+  entryRows.forEach((r) => {
     if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
-    const lat = Math.round(r.lat * 1000) / 1000;
-    const lng = Math.round(r.lng * 1000) / 1000;
-    roundedPoints.set(lat + "," + lng, { lat, lng });
+    (coords[r.block_id] = coords[r.block_id] || []).push({ lat: r.lat, lng: r.lng });
   });
-  const resolvedPoints = roundedPoints.size ? await resolveMapPointPlaces(ctx, Array.from(roundedPoints.values())) : new Map();
+
+  // mapVisitsに使うのは MAP_COORDS_VALID_SINCE 以降の行だけ
+  const validEntryRows = entryRows.filter((r) => r.geocoded_at && r.geocoded_at >= MAP_COORDS_VALID_SINCE
+    && typeof r.lat === "number" && typeof r.lng === "number");
+
+  // v25より前に保存された行など、まだmap_admin1/map_countryが埋まっていない地点を、
+  // 1リクエストにつき最大3件までその場で解決してentriesへ書き戻す（キャッシュもバックグラウンド継続も無し。
+  // 残りは次回のGET /mylogが少しずつ進める）。
+  const staleByPoint = new Map(); // "lat,lng"（3桁丸め）→ { lat, lng, ids: Set<block_id 何でもよい key> }
+  if (hasRegionColumns) {
+    validEntryRows.forEach((r) => {
+      if (r.admin1 || r.country) return; // すでに解決済み
+      const lat = Math.round(r.lat * 1000) / 1000;
+      const lng = Math.round(r.lng * 1000) / 1000;
+      const key = lat + "," + lng;
+      if (!staleByPoint.has(key)) staleByPoint.set(key, { lat: r.lat, lng: r.lng, roundedLat: lat, roundedLng: lng });
+    });
+  }
+  const resolvedNow = await resolveStaleEntryRegions(env, Array.from(staleByPoint.values()).slice(0, 3));
+  const regionFor = (r) => {
+    if (r.admin1 || r.country) return { admin1: r.admin1 || "", country: r.country || "" };
+    const key = (Math.round(r.lat * 1000) / 1000) + "," + (Math.round(r.lng * 1000) / 1000);
+    return resolvedNow.get(key) || null;
+  };
+
   const mapVisits = [];
-  geocodedEntryRows.forEach((r) => {
-    if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
-    const lat = Math.round(r.lat * 1000) / 1000;
-    const lng = Math.round(r.lng * 1000) / 1000;
-    const geo = resolvedPoints.get(lat + "," + lng);
-    if (!geo || (!geo.admin1 && !geo.country)) return; // 未解決（今回の予算切れ）・何も分からない点は使わない
+  validEntryRows.forEach((r) => {
+    const geo = regionFor(r);
+    if (!geo || (!geo.admin1 && !geo.country)) return; // 未解決（今回の3件枠に入らなかった）・地名不明の点は使わない
     mapVisits.push({
-      tripId: r.trip_id, date: r.date, admin1: geo.admin1 || "", country: geo.country || "",
-      lat, lon: lng, transit: isTransitBlock({ category: r.category, label: r.label }),
+      tripId: r.trip_id, date: r.date, admin1: geo.admin1, country: geo.country,
+      lat: r.lat, lon: r.lng, transit: isTransitBlock({ category: r.category, label: r.label }),
     });
   });
 
@@ -1025,18 +1096,6 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
   const blockRows = await selectWhereIn(
     env, "SELECT id, trip_id, date, category, label FROM blocks WHERE trip_id IN (", tripIds, ")"
   );
-  const coords = {};
-  try {
-    const entryRows = await selectWhereIn(
-      env, "SELECT e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (", tripIds, ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL"
-    );
-    entryRows.forEach((r) => {
-      if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
-      (coords[r.block_id] = coords[r.block_id] || []).push({ lat: r.lat, lng: r.lng });
-    });
-  } catch {
-    // 座標の列が無い古いDBでも、集計自体は続ける（day_infos由来の行の乗り継ぎ判定にだけ使う）
-  }
   let tripOverrides = [];
   if (accountId) {
     try {
@@ -1055,98 +1114,36 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
   });
 }
 
-// mapVisitsの座標（3桁に丸め・重複無し）を都道府県・国に変換する（NominatimのReverse、reverseGeocode）。
-// キャッシュ（caches.default、都道府県・国はまず変わらないので90日）に無い新しい地点だけ、1秒1回の
-// 制限を守って間隔を空けて呼ぶ。GET /mylogを遅くしすぎないよう、今回の返事に使う待ち時間には上限
-// （8秒）を設けるが、それで足りない分は諦めて次回に持ち越す……のではなく、ctx.waitUntilで返事を返した
-// 後もバックグラウンドで1秒1回のペースのまま解決を続け、次にマイログ・行ったことある旅先を開いたときには
-// キャッシュが埋まっているようにする（2026-09-28、オーナー報告：大阪旅行で兵庫県・神奈川県が出ない。
-// 地点数が多い旅行だと、8秒の予算では2〜3点しか解決できず、しかも「未解決」は今回のレスポンスから
-// 単に外れるだけで、バックグラウンドでの継続も無かったため、何度マイログを開いても同じ地点までしか
-// 進まないことがあった。1回のリクエストの中で毎回同じ順番から数点ずつ試すだけでは、旅行の後半の
-// 地点までなかなかたどり着かない）。
-const REVERSE_GEOCODE_CACHE_SECONDS = 60 * 60 * 24 * 90;
-const REVERSE_GEOCODE_FAIL_CACHE_SECONDS = 60 * 60 * 24; // 失敗はNominatimの一時的な不調かもしれないので短め
-const REVERSE_GEOCODE_BUDGET_MS = 8000;
-// バックグラウンド継続の上限（Workerの実行時間には限りがあるため、無限には続けない。1秒1回なので
-// 25点ほどまで。それでも足りなければ、残りはまた次回のGET /mylogが呼び出しのきっかけになる）。
-const REVERSE_GEOCODE_BACKGROUND_BUDGET_MS = 25000;
-const REVERSE_GEOCODE_SPACING_MS = 1100;
+const STALE_REGION_SPACING_MS = 1100; // Nominatimは1秒1回まで
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function reverseGeocodeCacheKey(key) {
-  return new Request("https://tabilog-reverse-geocode.cache/v1?k=" + key);
-}
-
-async function cacheGeoResult(cache, cacheKey, geo) {
-  const ttl = geo ? REVERSE_GEOCODE_CACHE_SECONDS : REVERSE_GEOCODE_FAIL_CACHE_SECONDS;
-  await cache.put(cacheKey, new Response(JSON.stringify(geo || null), {
-    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + ttl },
-  }));
-}
-
-// 予算切れで今回は呼べなかった地点を、間隔を守りながらバックグラウンドで解決してキャッシュに埋めていく
-// （待たせるのはレスポンスを返した後なので、GET /mylogの返事自体は遅くならない）。
-async function resolveRemainingInBackground(cache, remaining) {
-  const start = Date.now();
-  for (const { p, key, cacheKey } of remaining) {
-    if (Date.now() - start > REVERSE_GEOCODE_BACKGROUND_BUDGET_MS) break;
-    await sleep(REVERSE_GEOCODE_SPACING_MS);
-    let geo = null;
-    try {
-      geo = await reverseGeocode(p.lat, p.lng);
-    } catch {
-      geo = null;
-    }
-    try {
-      await cacheGeoResult(cache, cacheKey, geo);
-    } catch {
-      // キャッシュへの書き込みに失敗しても（Workerが先に止められた等）、次回また試すだけなので無視する
-    }
-  }
-}
-
-async function resolveMapPointPlaces(ctx, points) {
-  const cache = caches.default;
-  const out = new Map(); // "lat,lng" → {admin1,country}|null（未解決なら含まれない＝mapVisitsに使わない）
-
-  // まずキャッシュにある分だけ全部拾う（Nominatimを呼ばないので待ち時間はかからない）。
-  // キャッシュに無かった地点だけを、この後1秒1回で順番に呼ぶ対象にする。
-  const toFetch = [];
-  for (const p of points) {
-    const key = p.lat + "," + p.lng;
-    const cacheKey = reverseGeocodeCacheKey(key);
-    const hit = await cache.match(cacheKey);
-    if (hit) {
-      out.set(key, await hit.json());
-    } else {
-      toFetch.push({ p, key, cacheKey });
-    }
-  }
-
-  const start = Date.now();
+// 座標はあるのにまだ都道府県・国が保存されていない地点（v25より前に座標だけ保存された古い行）を、
+// 渡された分だけ（呼び出し側で最大3件に絞ってある）その場で逆ジオコーディングし、
+// entriesへ書き戻す（丸めた地点1つにつきUPDATE1回、対象は同じ丸め地点の行すべて）。
+// キャッシュ（Cache API）もバックグラウンドでの継続も使わない＝この関数はNominatim fetchとUPDATEの
+// 分だけサブリクエストを使う（呼び出し元のコメントに概算あり）。
+async function resolveStaleEntryRegions(env, points) {
+  const out = new Map(); // "lat,lng"（3桁丸め）→{admin1,country}
   let calledNominatim = false;
-  let i = 0;
-  for (; i < toFetch.length; i++) {
-    if (Date.now() - start > REVERSE_GEOCODE_BUDGET_MS) break;
-    if (calledNominatim) await sleep(REVERSE_GEOCODE_SPACING_MS);
+  for (const p of points) {
+    if (calledNominatim) await sleep(STALE_REGION_SPACING_MS);
     calledNominatim = true;
-    const { p, key, cacheKey } = toFetch[i];
-    const geo = await reverseGeocode(p.lat, p.lng);
-    out.set(key, geo || null);
-    if (ctx) ctx.waitUntil(cacheGeoResult(cache, cacheKey, geo));
+    const geo = await reverseGeocode(p.lat, p.lng).catch(() => null);
+    const admin1 = (geo && geo.admin1) || "";
+    const country = (geo && geo.country) || "";
+    out.set(p.roundedLat + "," + p.roundedLng, { admin1, country });
+    try {
+      // 丸めた地点（3桁）が同じ行はまとめて1回のUPDATEで書き戻す（同じ地点で記録が複数あるケース）
+      await env.DB.prepare(
+        "UPDATE entries SET map_admin1=?, map_country=? WHERE ROUND(map_lat,3)=? AND ROUND(map_lng,3)=? AND (map_admin1 IS NULL OR map_admin1 = '') AND (map_country IS NULL OR map_country = '')"
+      ).bind(admin1, country, p.roundedLat, p.roundedLng).run();
+    } catch {
+      // 書き戻しに失敗しても、今回のレスポンスには反映済みなので次回また試すだけでよい
+    }
   }
-
-  // 今回の予算では呼べなかった残りは、レスポンスを返した後にバックグラウンドで続ける
-  // （eventually complete。次に開いたときにはキャッシュ経由ですぐ出るようになる）。
-  const remaining = toFetch.slice(i);
-  if (ctx && remaining.length) {
-    ctx.waitUntil(resolveRemainingInBackground(cache, remaining));
-  }
-
   return out;
 }
 
@@ -2225,9 +2222,19 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam, en
   const storeForEntry = (body) => {
     if (!entryId || !env || !env.DB || !body || !body.found) return;
     if (typeof body.lat !== "number" || typeof body.lng !== "number") return;
-    ctx.waitUntil(env.DB.prepare(
-      "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=? WHERE id=? AND map_url=?"
-    ).bind(body.lat, body.lng, q, nowIso(), entryId, q).run());
+    // backgroundGeocodeEntryと同じく、座標と一緒に都道府県・国も1回だけ求めて保存する（v25）。
+    ctx.waitUntil((async () => {
+      const geo = await reverseGeocode(body.lat, body.lng).catch(() => null);
+      try {
+        await env.DB.prepare(
+          "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=?, map_admin1=?, map_country=? WHERE id=? AND map_url=?"
+        ).bind(body.lat, body.lng, q, nowIso(), (geo && geo.admin1) || "", (geo && geo.country) || "", entryId, q).run();
+      } catch {
+        await env.DB.prepare(
+          "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=? WHERE id=? AND map_url=?"
+        ).bind(body.lat, body.lng, q, nowIso(), entryId, q).run();
+      }
+    })());
   };
   const hit = await cache.match(cacheKey);
   if (hit) {
