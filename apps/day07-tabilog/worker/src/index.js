@@ -1057,43 +1057,96 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
 
 // mapVisitsの座標（3桁に丸め・重複無し）を都道府県・国に変換する（NominatimのReverse、reverseGeocode）。
 // キャッシュ（caches.default、都道府県・国はまず変わらないので90日）に無い新しい地点だけ、1秒1回の
-// 制限を守って間隔を空けて呼ぶ。GET /mylogを遅くしすぎないよう、合計の待ち時間に上限（8秒）を設け、
-// 超えたら残りは諦める＝次にマイログを開いたときに、キャッシュが埋まった分から少しずつ揃っていく
-// （eventually complete。2026-09-28）。
+// 制限を守って間隔を空けて呼ぶ。GET /mylogを遅くしすぎないよう、今回の返事に使う待ち時間には上限
+// （8秒）を設けるが、それで足りない分は諦めて次回に持ち越す……のではなく、ctx.waitUntilで返事を返した
+// 後もバックグラウンドで1秒1回のペースのまま解決を続け、次にマイログ・行ったことある旅先を開いたときには
+// キャッシュが埋まっているようにする（2026-09-28、オーナー報告：大阪旅行で兵庫県・神奈川県が出ない。
+// 地点数が多い旅行だと、8秒の予算では2〜3点しか解決できず、しかも「未解決」は今回のレスポンスから
+// 単に外れるだけで、バックグラウンドでの継続も無かったため、何度マイログを開いても同じ地点までしか
+// 進まないことがあった。1回のリクエストの中で毎回同じ順番から数点ずつ試すだけでは、旅行の後半の
+// 地点までなかなかたどり着かない）。
 const REVERSE_GEOCODE_CACHE_SECONDS = 60 * 60 * 24 * 90;
 const REVERSE_GEOCODE_FAIL_CACHE_SECONDS = 60 * 60 * 24; // 失敗はNominatimの一時的な不調かもしれないので短め
 const REVERSE_GEOCODE_BUDGET_MS = 8000;
+// バックグラウンド継続の上限（Workerの実行時間には限りがあるため、無限には続けない。1秒1回なので
+// 25点ほどまで。それでも足りなければ、残りはまた次回のGET /mylogが呼び出しのきっかけになる）。
+const REVERSE_GEOCODE_BACKGROUND_BUDGET_MS = 25000;
 const REVERSE_GEOCODE_SPACING_MS = 1100;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function reverseGeocodeCacheKey(key) {
+  return new Request("https://tabilog-reverse-geocode.cache/v1?k=" + key);
+}
+
+async function cacheGeoResult(cache, cacheKey, geo) {
+  const ttl = geo ? REVERSE_GEOCODE_CACHE_SECONDS : REVERSE_GEOCODE_FAIL_CACHE_SECONDS;
+  await cache.put(cacheKey, new Response(JSON.stringify(geo || null), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + ttl },
+  }));
+}
+
+// 予算切れで今回は呼べなかった地点を、間隔を守りながらバックグラウンドで解決してキャッシュに埋めていく
+// （待たせるのはレスポンスを返した後なので、GET /mylogの返事自体は遅くならない）。
+async function resolveRemainingInBackground(cache, remaining) {
+  const start = Date.now();
+  for (const { p, key, cacheKey } of remaining) {
+    if (Date.now() - start > REVERSE_GEOCODE_BACKGROUND_BUDGET_MS) break;
+    await sleep(REVERSE_GEOCODE_SPACING_MS);
+    let geo = null;
+    try {
+      geo = await reverseGeocode(p.lat, p.lng);
+    } catch {
+      geo = null;
+    }
+    try {
+      await cacheGeoResult(cache, cacheKey, geo);
+    } catch {
+      // キャッシュへの書き込みに失敗しても（Workerが先に止められた等）、次回また試すだけなので無視する
+    }
+  }
+}
+
 async function resolveMapPointPlaces(ctx, points) {
   const cache = caches.default;
   const out = new Map(); // "lat,lng" → {admin1,country}|null（未解決なら含まれない＝mapVisitsに使わない）
-  const start = Date.now();
-  let calledNominatim = false;
+
+  // まずキャッシュにある分だけ全部拾う（Nominatimを呼ばないので待ち時間はかからない）。
+  // キャッシュに無かった地点だけを、この後1秒1回で順番に呼ぶ対象にする。
+  const toFetch = [];
   for (const p of points) {
     const key = p.lat + "," + p.lng;
-    const cacheKey = new Request("https://tabilog-reverse-geocode.cache/v1?k=" + key);
+    const cacheKey = reverseGeocodeCacheKey(key);
     const hit = await cache.match(cacheKey);
     if (hit) {
       out.set(key, await hit.json());
-      continue;
+    } else {
+      toFetch.push({ p, key, cacheKey });
     }
+  }
+
+  const start = Date.now();
+  let calledNominatim = false;
+  let i = 0;
+  for (; i < toFetch.length; i++) {
     if (Date.now() - start > REVERSE_GEOCODE_BUDGET_MS) break;
     if (calledNominatim) await sleep(REVERSE_GEOCODE_SPACING_MS);
     calledNominatim = true;
+    const { p, key, cacheKey } = toFetch[i];
     const geo = await reverseGeocode(p.lat, p.lng);
     out.set(key, geo || null);
-    const ttl = geo ? REVERSE_GEOCODE_CACHE_SECONDS : REVERSE_GEOCODE_FAIL_CACHE_SECONDS;
-    if (ctx) {
-      ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(geo || null), {
-        headers: { "content-type": "application/json", "cache-control": "public, max-age=" + ttl },
-      })));
-    }
+    if (ctx) ctx.waitUntil(cacheGeoResult(cache, cacheKey, geo));
   }
+
+  // 今回の予算では呼べなかった残りは、レスポンスを返した後にバックグラウンドで続ける
+  // （eventually complete。次に開いたときにはキャッシュ経由ですぐ出るようになる）。
+  const remaining = toFetch.slice(i);
+  if (ctx && remaining.length) {
+    ctx.waitUntil(resolveRemainingInBackground(cache, remaining));
+  }
+
   return out;
 }
 

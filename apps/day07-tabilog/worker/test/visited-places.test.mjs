@@ -30,10 +30,12 @@ check("東京都→東京都", canonicalPrefecture("東京都"), "東京都");
 check("大阪→大阪府", canonicalPrefecture("大阪"), "大阪府");
 check("北海→そのまま", canonicalPrefecture("北海"), "北海");
 
-// 乗り継ぎの予定
+// 乗り継ぎの予定（2026-09-28〜：category==='transport'だけを乗り継ぎとする。ラベルに「空港」「到着」
+// などの語を含むだけの観光・食事の予定まで乗り継ぎ扱いにしてしまい、実際に訪れた場所が集計から落ちる
+// 誤判定を生んでいたため、判定をcategoryだけに絞った）
 check("移動は乗り継ぎ扱い", isTransitBlock({ category: "transport", label: "LAX→JFK" }), true);
-check("到着も", isTransitBlock({ category: "arrival", label: "着いた" }), true);
-check("空港の食事も", isTransitBlock({ category: "food", label: "北京首都空港でラーメン" }), true);
+check("到着は乗り継ぎではない（着いた場所の予定として数える）", isTransitBlock({ category: "arrival", label: "着いた" }), false);
+check("空港の食事も乗り継ぎではない（ラベルだけでは判定しない）", isTransitBlock({ category: "food", label: "北京首都空港でラーメン" }), false);
 check("宿泊は空港でも違う", isTransitBlock({ category: "lodging", label: "空港ホテル" }), false);
 check("観光はちがう", isTransitBlock({ category: "sightseeing", label: "自由の女神" }), false);
 
@@ -43,7 +45,7 @@ const days = [
   { tripId: "t1", date: "2026-01-01", admin1: "", country: "中華人民共和国", lat: 40.08, lon: 116.58 }, // 北京で乗り継ぎ
   { tripId: "t1", date: "2026-01-02", admin1: "New York", country: "アメリカ合衆国", lat: 40.7, lon: -74.0 },
   { tripId: "t1", date: "2026-01-03", admin1: "", country: "ブラジル", lat: -25.6, lon: -54.4 },
-  { tripId: "t1", date: "2026-01-04", admin1: "", country: "エチオピア", lat: 8.97, lon: 38.79 }, // 空港の地図から入った
+  { tripId: "t1", date: "2026-01-04", admin1: "", country: "エチオピア", lat: 8.97, lon: 38.79 }, // 移動（乗り継ぎ）の地図から入った
   { tripId: "t2", date: "2026-02-01", admin1: "California", country: "アメリカ", lat: 34.0, lon: -118.2 },
   { tripId: "t2", date: "2026-02-05", admin1: "東京", country: "日本", lat: 35.5, lon: 139.8 },
 ];
@@ -51,7 +53,7 @@ const blocks = [
   { id: "b1", tripId: "t1", date: "2026-01-01", category: "transport", label: "北京で乗り継ぎ" },
   { id: "b2", tripId: "t1", date: "2026-01-02", category: "sightseeing", label: "タイムズスクエア" },
   { id: "b3", tripId: "t1", date: "2026-01-03", category: "sightseeing", label: "イグアスの滝" },
-  { id: "b4a", tripId: "t1", date: "2026-01-04", category: "other", label: "アディスアベバ空港" },
+  { id: "b4a", tripId: "t1", date: "2026-01-04", category: "transport", label: "アディスアベバ空港で乗り継ぎ" },
   { id: "b4b", tripId: "t1", date: "2026-01-04", category: "sightseeing", label: "ブエノスアイレス" },
   { id: "b5", tripId: "t2", date: "2026-02-01", category: "food", label: "In-N-Out" },
 ];
@@ -61,7 +63,7 @@ check("行った国（表記ゆれをまとめ、乗り継ぎは外す）", r.co
 check("都道府県", r.prefectures, ["東京都"]);
 const china = r.details.countries.find((c) => c.name === "中国");
 check("中国は乗り継ぎ", china.status, "transit");
-check("エチオピアは空港の地図から入ったので乗り継ぎ", r.details.countries.find((c) => c.name === "エチオピア").status, "transit");
+check("エチオピアは移動（乗り継ぎ）の地図から入ったので乗り継ぎ", r.details.countries.find((c) => c.name === "エチオピア").status, "transit");
 const us = r.details.countries.find((c) => c.name === "アメリカ");
 check("アメリカの出どころは2つの旅", us.sources.map((s) => [s.tripTitle, s.dates]), [["ブラジル・アルゼンチン", ["2026-01-02"]], ["LA", ["2026-02-01"]]]);
 
@@ -110,6 +112,45 @@ const rMap = aggregateVisitedPlaces({
 check("mapVisitsは1日に複数の場所を持てる", rMap.prefectures, ["大阪府", "兵庫県"]);
 check("mapVisitsのtransit:trueはブロック照合なしでも乗り継ぎ扱いになり、総計には出ない", rMap.prefectures.includes("千葉県"), false);
 check("ただしdetailsにはtransitとして残る", rMap.details.prefectures.find((p) => p.name === "千葉県").status, "transit");
+
+// 大阪旅行（オーナー報告の再現）：同じ日・別の日にまたがる複数の都道府県（食事・観光・「到着」ラベルの
+// 予定）が、乗り継ぎ扱いにならずに全部残ること（2026-09-28、isTransitBlockをcategory==='transport'だけに
+// 絞った直し方の確認）。getVisitedPlacesが各記録の地図の座標をreverseGeocodeした結果として渡す
+// day（transitはそのentryが属するblockのisTransitBlockで確定済み）を模している。
+const osakaDays = [
+  { tripId: "osaka", date: "2026-09-20", admin1: "大阪府", country: "日本", lat: 34.6656, lon: 135.4325, transit: false }, // USJ
+  { tripId: "osaka", date: "2026-09-20", admin1: "兵庫県", country: "日本", lat: 34.693, lon: 135.192, transit: false }, // 神戸牛ランチ（food）
+  { tripId: "osaka", date: "2026-09-20", admin1: "兵庫県", country: "日本", lat: 34.691, lon: 135.191, transit: false }, // 三宮フリータイム（sightseeing）
+  { tripId: "osaka", date: "2026-09-20", admin1: "兵庫県", country: "日本", lat: 34.721, lon: 135.362, transit: false }, // 横浜vs阪神＠甲子園（sightseeing）
+  { tripId: "osaka", date: "2026-09-21", admin1: "兵庫県", country: "日本", lat: 34.721, lon: 135.362, transit: false }, // 横浜阪神（sightseeing）
+  { tripId: "osaka", date: "2026-09-21", admin1: "神奈川県", country: "日本", lat: 35.507, lon: 139.617, transit: false }, // 新横浜駅到着（other、ラベルに「到着」を含むが乗り継ぎではない）
+  { tripId: "osaka", date: "2026-09-21", admin1: "神奈川県", country: "日本", lat: 35.453, lon: 139.643, transit: true }, // みなとみらい発（transport＝乗り継ぎ）
+];
+const rOsaka = aggregateVisitedPlaces({ days: osakaDays, blocks: [], trips: { osaka: "大阪旅行" } });
+check("大阪旅行：大阪府・兵庫県・神奈川県が全部残る（食事・観光・到着ラベルの予定は乗り継ぎにならない）",
+  rOsaka.prefectures, ["神奈川県", "大阪府", "兵庫県"]);
+check("大阪旅行の旅行ごとの一覧も総計と同じ3つ",
+  rOsaka.tripPlaces.find((t) => t.tripId === "osaka").prefectures.map((p) => p.name).sort((a, b) => a.localeCompare(b, "ja")),
+  rOsaka.prefectures);
+
+// ブラジル・アルゼンチン旅行（オーナー報告の再現）：マイログのチップ（tripPlaces）には
+// 「アメリカ・アルゼンチン・ブラジル」と出るのに、「行ったことある旅先」の総計・世界地図では
+// 「2か国（アメリカ・ブラジル）」だけでアルゼンチンが抜けていた、という食い違い。総計（countries）を
+// tripPlacesの和集合として作るようにしたので（aggregateVisitedPlaces参照）、この2つが食い違うことは
+// 構造的に無くなっているはずであることを確認する（イグアスの滝：ブラジル側の観光のあと、乗り継ぎの
+// バスでアルゼンチン側の国境を越え、アルゼンチン側でも観光した、という想定）。
+const argentinaDays = [
+  { tripId: "arg", date: "2026-04-01", admin1: "", country: "ブラジル", lat: -25.6, lon: -54.4, transit: false }, // イグアスの滝（ブラジル側）
+  { tripId: "arg", date: "2026-04-02", admin1: "", country: "アルゼンチン", lat: -25.68, lon: -54.44, transit: true }, // 国境バス（transport）
+  { tripId: "arg", date: "2026-04-02", admin1: "", country: "アルゼンチン", lat: -25.7, lon: -54.47, transit: false }, // イグアスの滝（アルゼンチン側、観光）
+  { tripId: "us", date: "2026-05-01", admin1: "California", country: "アメリカ", lat: 34.0, lon: -118.2, transit: false },
+];
+const rArg = aggregateVisitedPlaces({ days: argentinaDays, blocks: [], trips: { arg: "ブラジル・アルゼンチン", us: "LA" } });
+check("総計にアルゼンチンが出る（tripPlacesと食い違わない）", rArg.countries, ["アメリカ", "アルゼンチン", "ブラジル"]);
+check("tripPlacesにもアルゼンチンが出る", rArg.tripPlaces.find((t) => t.tripId === "arg").countries.map((c) => c.name).sort((a, b) => a.localeCompare(b, "ja")), ["アルゼンチン", "ブラジル"]);
+check("総計はtripPlaces（除外されていないもの）の和集合と一致する", rArg.countries, Array.from(new Set(
+  rArg.tripPlaces.flatMap((t) => t.countries.filter((c) => !c.excluded).map((c) => c.name))
+)).sort((a, b) => a.localeCompare(b, "ja")));
 
 // haversineKm：おおよその実距離で確認（新大阪〜東京駅は直線で約400km、大阪〜オーランドは1万km超）
 check("新大阪〜東京は概ね400km前後", Math.round(haversineKm({ lat: 34.7335, lng: 135.5003 }, { lat: 35.6812, lng: 139.7671 }) / 50) * 50, 400);

@@ -99,13 +99,16 @@ export function canonicalPrefecture(name) {
   return hit || raw;
 }
 
-// 乗り継ぎ・空港の予定か（その日の場所がこの予定の地図から入っていたら、その国は「行った」に数えない）
-const TRANSIT_LABEL_RE = /(空港|乗り継ぎ|乗継|乗りつぎ|トランジット|経由|乗り換え|乗換|airport|transit|layover|connection)/i;
+// 乗り継ぎ・空港の予定か（その日の場所がこの予定の地図から入っていたら、その国は「行った」に数えない）。
+// 2026-09-28〜：判定を「category === 'transport'」だけに絞った（オーナー報告の大阪旅行の調査中に発覚：
+// ラベルに「空港」「到着」などの語を含むだけの観光・食事の予定（三宮フリータイム、神戸牛ランチ等は該当しない
+// が、実データでも「新横浜駅到着」のようなラベルはある）まで乗り継ぎ扱いにしてしまい、実際に訪れた場所が
+// 落ちる方向の誤判定を生んでいた。「arrival」（到着。移動の「出発｜到着」のうち到着側）も、index.jsのコメント
+// にある通り「着いた場所の予定として扱う」＝訪れた場所そのものなので、乗り継ぎには含めない。
+// 空港の中で食事しただけ・乗り継ぎの国、のような細かいケースを取りこぼす可能性はあるが、その日の予定が
+// 全部transportならisTransitDayで日単位の乗り継ぎ判定は引き続き効く（下記）ので、実害は小さいと判断した。
 export function isTransitBlock(block) {
-  if (!block) return false;
-  if (block.category === "lodging") return false;
-  if (block.category === "transport" || block.category === "arrival") return true;
-  return TRANSIT_LABEL_RE.test(String(block.label || ""));
+  return !!block && block.category === "transport";
 }
 
 const NEAR = 0.0005; // 自動で入れた場所は、予定の地図の座標そのもの
@@ -189,7 +192,6 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
   }).sort((a, b) => a.name.localeCompare(b.name, "ja"));
 
   const details = { prefectures: build("prefecture"), countries: build("country") };
-  const visible = (list) => list.filter((x) => x.status === "visible").map((x) => x.name);
 
   // 旅行ごとの一覧（乗り継ぎだけの日しか無いものは含めない）
   const tripIdOrder = Object.keys(trips);
@@ -209,7 +211,29 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
     countries: placesForTrip("country", tripId),
   }));
 
-  return { prefectures: visible(details.prefectures), countries: visible(details.countries), details, tripPlaces };
+  // 総計（prefectures/countries）は、旅行ごとの一覧（tripPlaces）に出ている「外していない」場所の
+  // 和集合として作る（2026-09-28〜。オーナー報告：ブラジル・アルゼンチン旅行ではマイログのチップに
+  // 「アメリカ・アルゼンチン・ブラジル」と出るのに、「行ったことある旅先」の総計・世界地図では
+  // 「2か国（アメリカ・ブラジル）」しかなく、アルゼンチンだけ総計から漏れていた）。
+  // 以前はdetailsのstatus==='visible'から別々に集計しており、理屈の上ではtripPlacesと同じ結果に
+  // なるはずだったが、実際には食い違いが起きていた。原因をこの場では特定しきれなかったため、
+  // 「tripPlacesに出ている場所＝総計にも出す」という一本の道筋に作り直し、構造的に食い違えないように
+  // した（tripPlacesの方がUIの見た目（マイログのチップ）に直結していて分かりやすく、総計をそこから
+  // 導く方が自然という判断もある）。
+  const unionFromTripPlaces = (kind) => {
+    const names = new Set();
+    tripPlaces.forEach((tp) => {
+      (kind === "country" ? tp.countries : tp.prefectures).forEach((p) => { if (!p.excluded) names.add(p.name); });
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "ja"));
+  };
+
+  return {
+    prefectures: unionFromTripPlaces("prefecture"),
+    countries: unionFromTripPlaces("country"),
+    details,
+    tripPlaces,
+  };
 }
 
 // 2点間の距離（km）。地図の座標のマッチング（geocodeMapUrlのnear guardなど）で使っているのと同じ
