@@ -453,6 +453,19 @@
         TikTok 側の一覧として出しています。</div>
       <div id="growTiktok" style="margin-top:10px"></div>
     </div>
+    <div class="card">
+      <h2>伸びている動画を集める（YouTube）</h2>
+      <div class="muted">直近30日の YouTube Shorts を、ジャンルの検索語でAPIから集めます（無料枠の中）。
+        のび率＝再生数÷登録者数。登録者が非公開のチャンネルは のび率 が出ません。</div>
+      <div class="row" style="margin-top:10px">
+        <select id="ytGenre"></select>
+        <button id="ytCollectBtn">集める</button>
+        <button id="ytCopyBtn" class="hide">分析用にコピー（JSON）</button>
+        <button id="ownCopyBtn">自分の投稿を分析用にコピー</button>
+      </div>
+      <div class="muted" id="ytStatus" style="margin-top:8px"></div>
+      <div id="ytTable" style="margin-top:10px"></div>
+    </div>
       </div>
 
       <div class="view hide" id="v-handoff">
@@ -602,6 +615,7 @@ const ST_LABEL = {
 
 let uploaded = null; // { path, kind, bytes }
 let groups = [];        // 運用アカウント（運用ライン）
+let growLast = null;     // 「のび」で最後に読んだ自分の数字（分析用のコピーに使う）
 let currentGroup = null; // いま選んでいる運用アカウントの id
 
 /** 日本時間で表示する。ブラウザの地域設定に関係なく必ずJST。 */
@@ -1741,16 +1755,19 @@ async function loadGrow() {
   const postBox = $('growPosts');
   try {
     const out = await api('/api/insights' + (currentGroup ? ('?group=' + currentGroup) : ''));
+    growLast = out;
     renderGrowObservations(obs, out.observations || []);
     renderGrowAccounts(accBox, out.accounts || []);
     renderGrowPosts(postBox, out.posts || []);
     renderGrowTiktok(out.tiktokVideos || []);
+    initYtCard();
   } catch (e) {
     const msg = `<span class="err">${escapeHtml(e.message)}${e.hint ? '\n' + escapeHtml(e.hint) : ''}</span>`;
     obs.className = ''; obs.innerHTML = msg;
     accBox.className = ''; accBox.innerHTML = '';
     postBox.className = ''; postBox.innerHTML = '';
     $('growTiktokCard').classList.add('hide');
+    initYtCard();
   }
 }
 
@@ -2002,6 +2019,170 @@ function renderGrowTiktok(videos) {
     `;
     tbody.appendChild(tr);
   }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  box.appendChild(wrap);
+}
+
+// --------------------------------------------- のび（YouTube 自動収集）
+let ytLastResult = null; // 「分析用にコピー」が使う、直前に集めた結果
+
+/** 今見ている運用アカウントの点検の型から、選択肢の既定値を決める。 */
+function ytDefaultGenre() {
+  const g = groups.find((x) => x.id === currentGroup);
+  if (g && g.validation_profile === 'personal') return 'ai';
+  if (g && g.validation_profile === 'curator') return 'career';
+  return 'ai';
+}
+
+/** ジャンルの選択肢を作る（1回だけ）。本人が選び直したあとは、既定値で上書きしない。 */
+function initYtCard() {
+  const sel = $('ytGenre');
+  if (!sel.dataset.init) {
+    sel.innerHTML = '<option value="ai">AI（ひろや）</option><option value="career">転職</option>';
+    sel.dataset.init = '1';
+    sel.addEventListener('change', () => { sel.dataset.touched = '1'; });
+  }
+  if (!sel.dataset.touched) sel.value = ytDefaultGenre();
+}
+
+$('ytCollectBtn').onclick = async () => {
+  const btn = $('ytCollectBtn');
+  const status = $('ytStatus');
+  const box = $('ytTable');
+  const genre = $('ytGenre').value;
+  btn.disabled = true;
+  $('ytCopyBtn').classList.add('hide');
+  status.className = 'muted';
+  status.textContent = '集めています…（検索5本ぶん。1分ほどかかることがあります）';
+  box.innerHTML = '';
+  try {
+    const out = await api('/api/insights?benchmark=youtube&genre=' + encodeURIComponent(genre)
+      + (currentGroup ? '&group=' + encodeURIComponent(currentGroup) : ''));
+    // ★ lib/insights.js と同じ流儀で、失敗は例外でなく ok:false で返ってくることがある
+    //   （Google 側のエラーを、そのまま投げっぱなしにしないため）。
+    if (out && out.ok === false) {
+      status.className = 'err';
+      status.textContent = out.error + (out.hint ? '　' + out.hint : '');
+    } else {
+      ytLastResult = out;
+      renderYtTable(box, out.items || []);
+      const s = out.summary || {};
+      status.className = 'muted';
+      status.textContent = `${(out.items || []).length} 件（点検通過 ${s.accepted ?? '—'} 件 / 除外 ${s.rejected ?? '—'} 件 / API利用量の目安 ${out.quota ?? '—'}）`;
+      if ((out.items || []).length) $('ytCopyBtn').classList.remove('hide');
+    }
+  } catch (e) {
+    status.className = 'err';
+    status.textContent = e.message + (e.hint ? '　' + e.hint : '');
+  }
+  btn.disabled = false;
+};
+
+$('ytCopyBtn').onclick = () => {
+  if (!ytLastResult) return;
+  copyForAnalysis(JSON.stringify(
+    { genre: ytLastResult.genre, collected_at: ytLastResult.collected_at, items: ytLastResult.items },
+    null, 2));
+};
+
+/**
+ * 自分の投稿と数字を、分析役（.claude/agents/trend-analyst.md）に渡す形でコピーする。
+ * ★ 比べる相手が無いと、分析は「伸びている人の傾向」だけになり、何を変えるかが決まらない。
+ *   数字は「のび」が読んだものをそのまま渡す。取れていない数字は null のまま（0 にしない）。
+ */
+$('ownCopyBtn').onclick = () => {
+  const status = $('ytStatus');
+  if (!growLast) { status.className = 'err'; status.textContent = '先に「のび」の数字が読み込まれるのを待ってください。'; return; }
+  const num = (v) => (v === undefined ? null : v);
+  copyForAnalysis(JSON.stringify({
+    own: true,
+    genre: $('ytGenre').value,
+    collected_at: new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }),
+    accounts: (growLast.accounts || []).map((a) => ({
+      network: a.network, label: a.label || a.account_name || '',
+      followers: a.latest ? num(a.latest.followers) : null,
+    })),
+    posts: (growLast.posts || []).map((p) => ({
+      network: p.network, title: p.title, url: p.permalink || null, posted_at: p.postedAt || null,
+      metrics: p.metrics ? { views: num(p.metrics.views), likes: num(p.metrics.likes), comments: num(p.metrics.comments) } : null,
+    })),
+    tiktok_videos: growLast.tiktokVideos || [],
+    // 自分の型（分析で比べる軸）。アプリで作る動画はこの1種類。
+    own_format: { format: 'text', duration_sec: 16.8, note: '文字の穴埋め6問（720×1280）。冒頭は題名と空欄' },
+  }, null, 2));
+};
+
+async function copyForAnalysis(text) {
+  const status = $('ytStatus');
+  try {
+    await navigator.clipboard.writeText(text);
+    status.className = 'muted';
+    status.textContent = 'コピーしました。';
+  } catch (_) {
+    // ★ クリップボードAPIが使えない環境向けの逃げ道。
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand('copy');
+      status.className = 'muted';
+      status.textContent = 'コピーしました。';
+    } catch (_e) {
+      status.className = 'err';
+      status.textContent = 'コピーできませんでした。手でコピーしてください。';
+    }
+    document.body.removeChild(ta);
+  }
+}
+
+function renderYtTable(box, items) {
+  box.innerHTML = '';
+  if (!items.length) {
+    box.className = 'muted';
+    box.textContent = '条件に合う動画がありませんでした。';
+    return;
+  }
+  box.className = '';
+  const wrap = document.createElement('div');
+  wrap.style.overflowX = 'auto';
+  const table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:13px';
+  table.innerHTML = '<thead><tr style="text-align:left;color:var(--muted)">'
+    + '<th style="padding:6px 8px 6px 0">順位</th>'
+    + '<th style="padding:6px 8px">チャンネル</th>'
+    + '<th style="padding:6px 8px">登録者</th>'
+    + '<th style="padding:6px 8px">再生</th>'
+    + '<th style="padding:6px 8px">のび率（倍）</th>'
+    + '<th style="padding:6px 8px">題名</th>'
+    + '</tr></thead>';
+  const tbody = document.createElement('tbody');
+  items.forEach((it, i) => {
+    const acc = it.account || {};
+    const m = it.metrics || {};
+    const c = it.content || {};
+    const tr = document.createElement('tr');
+    tr.style.borderTop = '1px solid var(--line)';
+    const url = escapeHtml(String(it.url || ''));
+    const titleText = escapeHtml(c.first_line || '');
+    const title = it.url ? `<a href="${url}" target="_blank" rel="noopener">${titleText}</a>` : titleText;
+    const followers = num(acc.followers) !== null ? jpNum(acc.followers) : '—';
+    const views = num(m.views) !== null ? jpNum(m.views) : '—';
+    const ratio = (it.ratio === null || it.ratio === undefined) ? '—' : escapeHtml(String(it.ratio));
+    tr.innerHTML = `
+      <td style="padding:6px 8px 6px 0">${i + 1}</td>
+      <td style="padding:6px 8px">${escapeHtml(acc.name || '')}</td>
+      <td style="padding:6px 8px">${followers}</td>
+      <td style="padding:6px 8px">${views}</td>
+      <td style="padding:6px 8px">${ratio}</td>
+      <td style="padding:6px 8px">${title}</td>
+    `;
+    tbody.appendChild(tr);
+  });
   table.appendChild(tbody);
   wrap.appendChild(table);
   box.appendChild(wrap);

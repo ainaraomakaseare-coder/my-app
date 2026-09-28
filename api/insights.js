@@ -23,6 +23,8 @@ const insights = require('../lib/insights');
 const store = require('../lib/metrics-store');
 const advice = require('../lib/advice');
 const scope = require('../lib/account-scope');
+const benchmark = require('../lib/benchmark');
+const benchmarkYoutube = require('../lib/benchmark-youtube');
 
 // Vercel の制限時間より手前で自分から切り上げる。
 const TIME_BUDGET_MS = 45_000;
@@ -35,6 +37,7 @@ module.exports = async function handler(req, res) {
     if (!auth.guard(req, res)) return;
     const q = req.query || {};
     if (q.probe) return res.status(200).json(await probe(String(q.probe)));
+    if (q.benchmark === 'youtube') return res.status(200).json(await collectYoutubeBenchmark(q));
     return res.status(200).json(await read(q.group ? String(q.group) : null));
   } catch (err) {
     const status = err.userError ? 400 : 500;
@@ -147,6 +150,39 @@ async function publishedTargets(accountId) {
       limit: '200',
     },
   })) || [];
+}
+
+// ---------------------------------------------------------------- のび（YouTube 自動収集）
+
+/**
+ * 「のび」タブの「伸びている動画を集める（YouTube）」ボタン。
+ * ★ ここは入口の作法（genre の点検・アカウント選び）だけ。
+ *   実際の収集（API呼び出し・点検）は lib/benchmark-youtube.js の仕事。
+ */
+async function collectYoutubeBenchmark(q) {
+  const genre = String(q.genre || '');
+  if (!benchmark.GENRES[genre]) {
+    const e = new Error(`genre は ${Object.keys(benchmark.GENRES).join(' / ')} のどれか`);
+    e.userError = true;
+    throw e;
+  }
+  const account = await pickYoutubeAccount(q.group ? String(q.group) : null);
+  if (!account) {
+    const e = new Error('YouTube が繋がっていません。連携設定で繋いでください。');
+    e.userError = true;
+    throw e;
+  }
+  return benchmarkYoutube.collect(genre, { account, db });
+}
+
+/** 連携済みの YouTube アカウントを選ぶ。いま見ている運用アカウントのものを優先し、無ければ最初の1つ。 */
+async function pickYoutubeAccount(groupId) {
+  const all = await db.listAccounts();
+  const candidates = all.filter((a) => a.network === 'youtube');
+  if (!candidates.length) return null;
+  const picked = (groupId && candidates.find((a) => a.group_id === groupId)) || candidates[0];
+  // ★ listAccounts() はトークンを隠している。API を呼ぶには getAccount() で取り直す。
+  return db.getAccount(picked.id);
 }
 
 // ---------------------------------------------------------------- 接続テスト

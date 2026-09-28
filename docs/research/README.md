@@ -55,7 +55,8 @@
 - この作業環境（クラウド）からは YouTube・TikTok のページを直接読めない。だから①はアプリと Chrome で行う
 
 ## 回し方
-1. 「のび」画面で YouTube を集め、「分析用にコピー」→ 会話に貼る
+1. 「のび」画面で YouTube を集め、「分析用にコピー」→ 会話に貼る。
+   続けて「自分の投稿を分析用にコピー」→ 会話に貼る（`research/<genre>/own-<date>.json` として保存する）
 2. Claude in Chrome に `CHROME_COLLECT.md` の指示文を貼り、返ってきた JSON を会話に貼る
 3. 会話側で `node scripts/benchmark-intake.js` に通して保存する
 4. 「分析して」→ `trend-analyst` が②を書く
