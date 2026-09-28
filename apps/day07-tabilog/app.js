@@ -2079,6 +2079,119 @@
     return { idToName: idToName, nameToId: nameToId };
   }
 
+  // 都道府県 → 8地方区分（北海道／東北／関東／中部／近畿／中国／四国／九州・沖縄）。
+  // 一覧を地方ごとに見出しを付けて出すために使う（docs/adr/0017）。
+  var VISITED_PREFECTURE_REGIONS = {
+    '北海道': ['北海道'],
+    '東北': ['青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県'],
+    '関東': ['茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県'],
+    '中部': ['新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県', '静岡県', '愛知県'],
+    '近畿': ['三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県'],
+    '中国': ['鳥取県', '島根県', '岡山県', '広島県', '山口県'],
+    '四国': ['徳島県', '香川県', '愛媛県', '高知県'],
+    '九州・沖縄': ['福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県']
+  };
+  var VISITED_REGION_ORDER = ['北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州・沖縄'];
+  var VISITED_PREFECTURE_TO_REGION = (function () {
+    var m = {};
+    VISITED_REGION_ORDER.forEach(function (region) {
+      VISITED_PREFECTURE_REGIONS[region].forEach(function (pref) { m[pref] = region; });
+    });
+    return m;
+  })();
+  function regionForPrefecture(name) {
+    return VISITED_PREFECTURE_TO_REGION[name] || null;
+  }
+
+  // ISO 3166-1 alpha-2 → 6大陸（アジア／ヨーロッパ／北アメリカ／南アメリカ／アフリカ／オセアニア）。
+  // world-atlas（vendor/geo/countries-110m.json）に含まれる国・地域をひととおりカバーする、
+  // このリポジトリ内だけの小さな対応表（外部ライブラリは使わない）。
+  // 大陸をまたぐ国は一般的な区分に合わせた（例：ロシア＝ヨーロッパ、トルコ＝アジア、
+  // エジプト＝アフリカ、ジョージア／アルメニア／アゼルバイジャン＝アジア）。
+  var VISITED_CONTINENT_BY_ALPHA2 = {
+    AD: 'ヨーロッパ', AE: 'アジア', AF: 'アジア', AG: '北アメリカ', AI: '北アメリカ', AL: 'ヨーロッパ',
+    AM: 'アジア', AO: 'アフリカ', AQ: 'オセアニア', AR: '南アメリカ', AS: 'オセアニア', AT: 'ヨーロッパ',
+    AU: 'オセアニア', AW: '北アメリカ', AX: 'ヨーロッパ', AZ: 'アジア', BA: 'ヨーロッパ', BB: '北アメリカ',
+    BD: 'アジア', BE: 'ヨーロッパ', BF: 'アフリカ', BG: 'ヨーロッパ', BH: 'アジア', BI: 'アフリカ',
+    BJ: 'アフリカ', BL: '北アメリカ', BM: '北アメリカ', BN: 'アジア', BO: '南アメリカ', BQ: '北アメリカ',
+    BR: '南アメリカ', BS: '北アメリカ', BT: 'アジア', BV: 'アフリカ', BW: 'アフリカ', BY: 'ヨーロッパ',
+    BZ: '北アメリカ', CA: '北アメリカ', CC: 'オセアニア', CD: 'アフリカ', CF: 'アフリカ', CG: 'アフリカ',
+    CH: 'ヨーロッパ', CI: 'アフリカ', CK: 'オセアニア', CL: '南アメリカ', CM: 'アフリカ', CN: 'アジア',
+    CO: '南アメリカ', CR: '北アメリカ', CU: '北アメリカ', CV: 'アフリカ', CW: '北アメリカ', CX: 'オセアニア',
+    CY: 'ヨーロッパ', CZ: 'ヨーロッパ', DE: 'ヨーロッパ', DJ: 'アフリカ', DK: 'ヨーロッパ', DM: '北アメリカ',
+    DO: '北アメリカ', DZ: 'アフリカ', EC: '南アメリカ', EE: 'ヨーロッパ', EG: 'アフリカ', EH: 'アフリカ',
+    ER: 'アフリカ', ES: 'ヨーロッパ', ET: 'アフリカ', FI: 'ヨーロッパ', FJ: 'オセアニア', FK: '南アメリカ',
+    FM: 'オセアニア', FO: 'ヨーロッパ', FR: 'ヨーロッパ', GA: 'アフリカ', GB: 'ヨーロッパ', GD: '北アメリカ',
+    GE: 'アジア', GF: '南アメリカ', GG: 'ヨーロッパ', GH: 'アフリカ', GI: 'ヨーロッパ', GL: '北アメリカ',
+    GM: 'アフリカ', GN: 'アフリカ', GP: '北アメリカ', GQ: 'アフリカ', GR: 'ヨーロッパ', GS: '南アメリカ',
+    GT: '北アメリカ', GU: 'オセアニア', GW: 'アフリカ', GY: '南アメリカ', HK: 'アジア', HM: 'オセアニア',
+    HN: '北アメリカ', HR: 'ヨーロッパ', HT: '北アメリカ', HU: 'ヨーロッパ', ID: 'アジア', IE: 'ヨーロッパ',
+    IL: 'アジア', IM: 'ヨーロッパ', IN: 'アジア', IO: 'アジア', IQ: 'アジア', IR: 'アジア', IS: 'ヨーロッパ',
+    IT: 'ヨーロッパ', JE: 'ヨーロッパ', JM: '北アメリカ', JO: 'アジア', JP: 'アジア', KE: 'アフリカ',
+    KG: 'アジア', KH: 'アジア', KI: 'オセアニア', KM: 'アフリカ', KN: '北アメリカ', KP: 'アジア',
+    KR: 'アジア', KW: 'アジア', KY: '北アメリカ', KZ: 'アジア', LA: 'アジア', LB: 'アジア', LC: '北アメリカ',
+    LI: 'ヨーロッパ', LK: 'アジア', LR: 'アフリカ', LS: 'アフリカ', LT: 'ヨーロッパ', LU: 'ヨーロッパ',
+    LV: 'ヨーロッパ', LY: 'アフリカ', MA: 'アフリカ', MC: 'ヨーロッパ', MD: 'ヨーロッパ', ME: 'ヨーロッパ',
+    MF: '北アメリカ', MG: 'アフリカ', MH: 'オセアニア', MK: 'ヨーロッパ', ML: 'アフリカ', MM: 'アジア',
+    MN: 'アジア', MO: 'アジア', MP: 'オセアニア', MQ: '北アメリカ', MR: 'アフリカ', MS: '北アメリカ',
+    MT: 'ヨーロッパ', MU: 'アフリカ', MV: 'アジア', MW: 'アフリカ', MX: '北アメリカ', MY: 'アジア',
+    MZ: 'アフリカ', NA: 'アフリカ', NC: 'オセアニア', NE: 'アフリカ', NF: 'オセアニア', NG: 'アフリカ',
+    NI: '北アメリカ', NL: 'ヨーロッパ', NO: 'ヨーロッパ', NP: 'アジア', NR: 'オセアニア', NU: 'オセアニア',
+    NZ: 'オセアニア', OM: 'アジア', PA: '北アメリカ', PE: '南アメリカ', PF: 'オセアニア', PG: 'オセアニア',
+    PH: 'アジア', PK: 'アジア', PL: 'ヨーロッパ', PM: '北アメリカ', PN: 'オセアニア', PR: '北アメリカ',
+    PS: 'アジア', PT: 'ヨーロッパ', PW: 'オセアニア', PY: '南アメリカ', QA: 'アジア', RE: 'アフリカ',
+    RO: 'ヨーロッパ', RS: 'ヨーロッパ', RU: 'ヨーロッパ', RW: 'アフリカ', SA: 'アジア', SB: 'オセアニア',
+    SC: 'アフリカ', SD: 'アフリカ', SE: 'ヨーロッパ', SG: 'アジア', SH: 'アフリカ', SI: 'ヨーロッパ',
+    SJ: 'ヨーロッパ', SK: 'ヨーロッパ', SL: 'アフリカ', SM: 'ヨーロッパ', SN: 'アフリカ', SO: 'アフリカ',
+    SR: '南アメリカ', SS: 'アフリカ', ST: 'アフリカ', SV: '北アメリカ', SX: '北アメリカ', SY: 'アジア',
+    SZ: 'アフリカ', TC: '北アメリカ', TD: 'アフリカ', TF: 'アフリカ', TG: 'アフリカ', TH: 'アジア',
+    TJ: 'アジア', TK: 'オセアニア', TL: 'アジア', TM: 'アジア', TN: 'アフリカ', TO: 'オセアニア',
+    TR: 'アジア', TT: '北アメリカ', TV: 'オセアニア', TW: 'アジア', TZ: 'アフリカ', UA: 'ヨーロッパ',
+    UG: 'アフリカ', UM: 'オセアニア', US: '北アメリカ', UY: '南アメリカ', UZ: 'アジア', VA: 'ヨーロッパ',
+    VC: '北アメリカ', VE: '南アメリカ', VG: '北アメリカ', VI: '北アメリカ', VN: 'アジア', VU: 'オセアニア',
+    WF: 'オセアニア', WS: 'オセアニア', XK: 'ヨーロッパ', YE: 'アジア', YT: 'アフリカ', ZA: 'アフリカ',
+    ZM: 'アフリカ', ZW: 'アフリカ'
+  };
+  var VISITED_CONTINENT_ORDER = ['アジア', 'ヨーロッパ', '北アメリカ', '南アメリカ', 'アフリカ', 'オセアニア'];
+  function continentForAlpha2(alpha2) {
+    return VISITED_CONTINENT_BY_ALPHA2[String(alpha2 || '').toUpperCase()] || null;
+  }
+
+  // alpha-2コード（例："JP"）→ 国旗絵文字（例："🇯🇵"）。画像は使わず、Unicodeの
+  // 地域表示記号（Regional Indicator Symbol、A=U+1F1E6）を2文字組み合わせて作る。
+  function flagEmojiForAlpha2(alpha2) {
+    var code = String(alpha2 || '').toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return '';
+    var base = 0x1F1E6;
+    var a = 'A'.charCodeAt(0);
+    return String.fromCodePoint(base + (code.charCodeAt(0) - a)) + String.fromCodePoint(base + (code.charCodeAt(1) - a));
+  }
+
+  // 「count / total」を四捨五入した整数パーセントにする（totalが0以下なら0%）。
+  function visitedPercentage(count, total) {
+    if (!total || total <= 0) return 0;
+    return Math.round((count / total) * 100);
+  }
+
+  // items を keyFn(item) の結果ごとに、order の並び順でグループ化する。
+  // order に無いキー（null・未知の値も含む）は最後に「その他」としてまとめる（中身が無ければ出さない）。
+  // 都道府県の地方分け・国の大陸分けの両方で使う汎用のヘルパー。
+  function groupVisitedByOrder(items, keyFn, order) {
+    var buckets = {};
+    order.forEach(function (key) { buckets[key] = []; });
+    var others = [];
+    (items || []).forEach(function (item) {
+      var key = keyFn(item);
+      if (key && buckets[key]) buckets[key].push(item);
+      else others.push(item);
+    });
+    var out = order.filter(function (key) { return buckets[key].length; }).map(function (key) {
+      return { group: key, items: buckets[key] };
+    });
+    if (others.length) out.push({ group: 'その他', items: others });
+    return out;
+  }
+
   // 「行ったことある旅先」の一覧に出す、1つの場所（都道府県／国）の旅行名。
   // /mylogのdetails.prefectures・countriesの各要素（sources: [{tripTitle, transit, excluded}]）から、
   // 実際に数えている（乗り継ぎでも外してもいない）旅行のタイトルだけを、出てくる順に重複なく拾う。
@@ -2517,7 +2630,14 @@
     buildTripPostText: buildTripPostText,
     canonicalVisitedCountryName: canonicalVisitedCountryName,
     buildCountryIsoIndex: buildCountryIsoIndex,
-    visitedPlaceTripTitles: visitedPlaceTripTitles
+    visitedPlaceTripTitles: visitedPlaceTripTitles,
+    VISITED_REGION_ORDER: VISITED_REGION_ORDER,
+    regionForPrefecture: regionForPrefecture,
+    VISITED_CONTINENT_ORDER: VISITED_CONTINENT_ORDER,
+    continentForAlpha2: continentForAlpha2,
+    flagEmojiForAlpha2: flagEmojiForAlpha2,
+    visitedPercentage: visitedPercentage,
+    groupVisitedByOrder: groupVisitedByOrder
   };
 
   root.TabiLog = Core;
@@ -6938,20 +7058,60 @@
     else renderVisitedDomestic(panel, (details.prefectures || []).filter(function (x) { return x.status === 'visible'; }));
   }
 
-  // 場所の一覧HTML（都道府県／国のどちらも共通）。選んだ場所は.onで強調し、地図側とも呼応させる
-  function visitedListHtml(kind, items) {
-    if (!items.length) {
+  // 達成率のドーナツ（インラインSVG。stroke-dasharrayで円弧を作るだけなので、画像もライブラリも不要）
+  function visitedDonutSvg(pct) {
+    var size = 64, stroke = 9, r = (size - stroke) / 2, c = 2 * Math.PI * r;
+    var offset = c * (1 - Math.max(0, Math.min(100, pct)) / 100);
+    var cx = size / 2, cy = size / 2;
+    return '<svg viewBox="0 0 ' + size + ' ' + size + '" class="visited-donut" aria-hidden="true">' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" class="visited-donut-bg" stroke-width="' + stroke + '" fill="none"/>' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" class="visited-donut-fg" stroke-width="' + stroke + '" fill="none" ' +
+      'stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + offset.toFixed(2) + '" ' +
+      'transform="rotate(-90 ' + cx + ' ' + cy + ')" stroke-linecap="round"/>' +
+      '<text x="' + cx + '" y="' + (cy + 4) + '" class="visited-donut-pct" text-anchor="middle">' + pct + '%</text>' +
+      '</svg>';
+  }
+
+  // 集計カード（大きい数字＋ラベル＋ドーナツ）。国内は「2 / 47 都道府県」、海外は「3 か国」＋
+  // 「国連加盟193か国中 ◯%」。カウントの数え方（旅行ごとの外す/戻すの反映など）は既存のまま変えない。
+  function visitedTotalsCardHtml(fracHtml, pctSubLabel, pct) {
+    return '<div class="visited-totals">' +
+      visitedDonutSvg(pct) +
+      '<div class="visited-totals-text">' +
+      '<div class="visited-totals-frac">' + fracHtml + '</div>' +
+      '<div class="visited-totals-pct">' + (pctSubLabel ? escapeHtml(pctSubLabel) + ' ' : '') + pct + '%</div>' +
+      '</div></div>';
+  }
+
+  // 海外の国名→alpha2の対応表。世界地図データ（idx.nameToId）が読み終わってから埋まる
+  // （地方・大陸ごとの一覧の見出しと国旗絵文字は、これが埋まってから出せる）。
+  var visitedCountryAlpha2ByName = {};
+  function visitedFlagForName(name) {
+    var a2 = visitedCountryAlpha2ByName[name];
+    return a2 ? Core.flagEmojiForAlpha2(a2) : '';
+  }
+
+  // 場所の一覧HTML（都道府県／国のどちらも共通）。地方・大陸の見出しごとにグループ化し、
+  // 選んだ場所は.onで強調して地図側とも呼応させる。国は先頭に国旗絵文字を出す（showFlagがtrueのとき）。
+  function visitedGroupedListHtml(kind, groups, showFlag) {
+    if (!groups.length) {
       return '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
     }
     var sel = state.visitedSel;
-    return '<div class="visited-list">' + items.map(function (x) {
-      var trips = Core.visitedPlaceTripTitles(x);
-      var on = sel && sel.kind === kind && sel.name === x.name;
-      return '<div class="visited-row' + (on ? ' on' : '') + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' +
-        '<div class="visited-row-name">' + escapeHtml(x.name) + '</div>' +
-        '<div class="visited-row-trips">' + (trips.length ? trips.map(escapeHtml).join('・') : '') + '</div>' +
+    return groups.map(function (g) {
+      return '<div class="visited-group">' +
+        '<div class="visited-group-header">' + escapeHtml(g.group) + '</div>' +
+        '<div class="visited-list">' + g.items.map(function (x) {
+          var trips = Core.visitedPlaceTripTitles(x);
+          var on = sel && sel.kind === kind && sel.name === x.name;
+          var flag = showFlag ? visitedFlagForName(x.name) : '';
+          return '<div class="visited-row' + (on ? ' on' : '') + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' +
+            '<div class="visited-row-name">' + (flag ? '<span class="visited-row-flag">' + flag + '</span> ' : '') + escapeHtml(x.name) + '</div>' +
+            '<div class="visited-row-trips">' + (trips.length ? trips.map(escapeHtml).join('・') : '') + '</div>' +
+            '</div>';
+        }).join('') + '</div>' +
         '</div>';
-    }).join('') + '</div>';
+    }).join('');
   }
 
   function wireVisitedListRows(panel) {
@@ -6989,27 +7149,40 @@
       '<div class="visited-caption-trips">' + (trips.length ? trips.map(escapeHtml).join('・') : '記録が見つかりませんでした') + '</div>';
   }
 
+  var VISITED_PREFECTURE_TOTAL = 47;
+  // 国連加盟国数（193）を分母にする。オブザーバー国家（バチカン・パレスチナ）を含めた195で
+  // 数えたい、という要望が来たら、ここを195に変えれば表示も一緒に変わる。
+  var VISITED_COUNTRY_TOTAL = 193;
+
   function renderVisitedDomestic(panel, visited) {
+    var pct = Core.visitedPercentage(visited.length, VISITED_PREFECTURE_TOTAL);
+    var frac = '<strong>' + visited.length + '</strong> / ' + VISITED_PREFECTURE_TOTAL + ' <span class="visited-totals-unit">都道府県</span>';
+    var groups = Core.groupVisitedByOrder(visited, function (x) { return Core.regionForPrefecture(x.name); }, Core.VISITED_REGION_ORDER);
     panel.innerHTML =
-      '<div class="visited-headline">47都道府県中 <strong>' + visited.length + '</strong></div>' +
+      visitedTotalsCardHtml(frac, '', pct) +
       '<div class="visited-map" id="visitedMapDomestic"><div class="empty">地図を読み込み中…</div></div>' +
       '<div class="visited-caption" id="visitedCaption" hidden></div>' +
-      visitedListHtml('prefecture', visited) +
+      visitedGroupedListHtml('prefecture', groups, false) +
       '<p class="hint visited-credit">地図データ: simplify-japan-geojson（ricewin、CC BY 4.0）</p>';
     wireVisitedListRows(panel);
     drawVisitedJapanMap(visited);
   }
 
   function renderVisitedOverseas(panel, visited) {
+    var pct = Core.visitedPercentage(visited.length, VISITED_COUNTRY_TOTAL);
+    var frac = '<strong>' + visited.length + '</strong> <span class="visited-totals-unit">か国</span>';
     panel.innerHTML =
-      '<div class="visited-headline"><strong>' + visited.length + '</strong> か国</div>' +
+      visitedTotalsCardHtml(frac, '国連加盟' + VISITED_COUNTRY_TOTAL + 'か国中', pct) +
       '<div class="visited-map" id="visitedMapOverseas"><div class="empty">地図を読み込み中…</div></div>' +
       '<div class="visited-caption" id="visitedCaption" hidden></div>' +
-      visitedListHtml('country', visited);
-    wireVisitedListRows(panel);
+      '<div class="visited-list-wrap" id="visitedListOverseas"><div class="empty">読み込み中…</div></div>';
     drawVisitedWorldMap(visited);
   }
 
+  // 日本地図：北海道が上・沖縄が左下という普通の向きになるよう、中央経線を日本付近（東経136度）に
+  // 合わせてから円錐図法をかける（rotateを省くとλ0=0度＝グリニッジ基準のまま回転してしまい、
+  // 地図が斜めに描かれるのが元のバグだった）。fitWidthで幅いっぱいに広げ、沖縄は別枠のインセットに
+  // 小さく出す（日本地図でよくある配置）。
   function drawVisitedJapanMap(visited) {
     var visitedNames = {};
     visited.forEach(function (x) { visitedNames[x.name] = true; });
@@ -7018,20 +7191,54 @@
       if (!container) return; // 読み込み中にタブが切り替わっていた
       var topo = r[1];
       var fc = topojson.feature(topo, topo.objects.japan);
-      var w = 320, h = 360;
-      var proj = d3.geoConicConformal().parallels([33, 45]).fitSize([w, h], fc);
+      var okinawaFeature = fc.features.filter(function (f) { return f.properties.nam_ja === '沖縄県'; })[0];
+      var mainFeatures = fc.features.filter(function (f) { return f.properties.nam_ja !== '沖縄県'; });
+      var mainFC = { type: 'FeatureCollection', features: mainFeatures };
+
+      var w = 320;
+      var proj = d3.geoConicConformal().rotate([-136, 0]).parallels([30, 45]);
+      proj.fitWidth(w, mainFC);
       var path = d3.geoPath(proj);
+      var b = path.bounds(mainFC);
+      var padTop = 6, padBottom = 6;
+      var h = Math.ceil(b[1][1] - b[0][1]) + padTop + padBottom;
+      var t = proj.translate();
+      proj.translate([t[0], t[1] - b[0][1] + padTop]);
+      path = d3.geoPath(proj);
+
       var sel = state.visitedSel;
+      var mainSvg = mainFeatures.map(function (f) {
+        var name = f.properties.nam_ja;
+        var d = path(f);
+        if (!d) return '';
+        var isVisited = !!visitedNames[name];
+        var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
+        return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+          (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>';
+      }).join('');
+
+      var insetSvg = '';
+      if (okinawaFeature) {
+        var insetW = 92, insetH = 60, insetPad = 8;
+        var insetX = insetPad, insetY = h - insetH - insetPad;
+        var okiProj = d3.geoMercator().fitSize([insetW - 10, insetH - 10], { type: 'FeatureCollection', features: [okinawaFeature] });
+        var ot = okiProj.translate();
+        okiProj.translate([ot[0] + insetX + 5, ot[1] + insetY + 5]);
+        var okiPath = d3.geoPath(okiProj);
+        var name = okinawaFeature.properties.nam_ja;
+        var isVisited = !!visitedNames[name];
+        var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
+        var d = okiPath(okinawaFeature);
+        insetSvg = '<g class="visited-inset">' +
+          '<rect x="' + insetX + '" y="' + insetY + '" width="' + insetW + '" height="' + insetH + '" class="visited-inset-box" rx="4"/>' +
+          '<text x="' + (insetX + 5) + '" y="' + (insetY + 11) + '" class="visited-inset-label">沖縄</text>' +
+          (d ? '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+            (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>' : '') +
+          '</g>';
+      }
+
       container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた都道府県の地図">' +
-        fc.features.map(function (f) {
-          var name = f.properties.nam_ja;
-          var d = path(f);
-          if (!d) return '';
-          var isVisited = !!visitedNames[name];
-          var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
-          return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
-            (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>';
-        }).join('') + '</svg>';
+        mainSvg + insetSvg + '</svg>';
       wireVisitedMapRegions(container);
     }).catch(function () {
       var container = $('#visitedMapDomestic');
@@ -7044,11 +7251,16 @@
     visited.forEach(function (x) { visitedNames[x.name] = true; });
     Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/countries-110m.json', 'world'), loadVisitedJson('vendor/geo/iso-numeric-alpha2.json', 'iso')]).then(function (r) {
       var container = $('#visitedMapOverseas');
+      var listWrap = $('#visitedListOverseas');
       if (!container) return;
       var topo = r[1], alpha2Table = r[2];
       var fc = topojson.feature(topo, topo.objects.countries);
       var ids = fc.features.map(function (f) { return f.id; });
       var idx = Core.buildCountryIsoIndex(ids, alpha2Table);
+      visitedCountryAlpha2ByName = {};
+      Object.keys(idx.nameToId).forEach(function (name) {
+        visitedCountryAlpha2ByName[name] = alpha2Table[idx.nameToId[name]];
+      });
       var w = 320, h = 190;
       var proj = d3.geoNaturalEarth1().fitSize([w, h], fc);
       var path = d3.geoPath(proj);
@@ -7065,9 +7277,19 @@
             '>' + (name ? '<title>' + escapeHtml(name) + '</title>' : '') + '</path>';
         }).join('') + '</svg>';
       wireVisitedMapRegions(container);
+
+      if (listWrap) {
+        var groups = Core.groupVisitedByOrder(visited, function (x) {
+          return Core.continentForAlpha2(visitedCountryAlpha2ByName[x.name]);
+        }, Core.VISITED_CONTINENT_ORDER);
+        listWrap.innerHTML = visitedGroupedListHtml('country', groups, true);
+        wireVisitedListRows(listWrap);
+      }
     }).catch(function () {
       var container = $('#visitedMapOverseas');
       if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+      var listWrap = $('#visitedListOverseas');
+      if (listWrap) listWrap.innerHTML = '<div class="empty">一覧の読み込みに失敗しました。</div>';
     });
   }
 

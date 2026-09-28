@@ -1441,5 +1441,66 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   eq('visitedPlaceTripTitles: sourcesが無ければ空配列', T.visitedPlaceTripTitles({}), []);
 })();
 
+/* ---- 行ったことある旅先（地方・大陸のグループ分け／国旗絵文字／達成率、2026-09-28〜） ---- */
+(function () {
+  // regionForPrefecture
+  eq('regionForPrefecture: 北海道', T.regionForPrefecture('北海道'), '北海道');
+  eq('regionForPrefecture: 東北（宮城県）', T.regionForPrefecture('宮城県'), '東北');
+  eq('regionForPrefecture: 関東（東京都）', T.regionForPrefecture('東京都'), '関東');
+  eq('regionForPrefecture: 中部（愛知県）', T.regionForPrefecture('愛知県'), '中部');
+  eq('regionForPrefecture: 近畿（京都府）', T.regionForPrefecture('京都府'), '近畿');
+  eq('regionForPrefecture: 中国（広島県）', T.regionForPrefecture('広島県'), '中国');
+  eq('regionForPrefecture: 四国（香川県）', T.regionForPrefecture('香川県'), '四国');
+  eq('regionForPrefecture: 九州・沖縄（沖縄県）', T.regionForPrefecture('沖縄県'), '九州・沖縄');
+  eq('regionForPrefecture: 九州・沖縄（鹿児島県）', T.regionForPrefecture('鹿児島県'), '九州・沖縄');
+  eq('regionForPrefecture: 知らない名前はnull', T.regionForPrefecture('架空県'), null);
+  eq('regionForPrefecture: 空文字はnull', T.regionForPrefecture(''), null);
+  eq('VISITED_REGION_ORDER: 8地方が北海道から順に並ぶ', T.VISITED_REGION_ORDER,
+    ['北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州・沖縄']);
+
+  // continentForAlpha2
+  eq('continentForAlpha2: 日本はアジア', T.continentForAlpha2('JP'), 'アジア');
+  eq('continentForAlpha2: アメリカは北アメリカ', T.continentForAlpha2('US'), '北アメリカ');
+  eq('continentForAlpha2: ブラジルは南アメリカ', T.continentForAlpha2('BR'), '南アメリカ');
+  eq('continentForAlpha2: フランスはヨーロッパ', T.continentForAlpha2('FR'), 'ヨーロッパ');
+  eq('continentForAlpha2: エジプトはアフリカ', T.continentForAlpha2('EG'), 'アフリカ');
+  eq('continentForAlpha2: オーストラリアはオセアニア', T.continentForAlpha2('AU'), 'オセアニア');
+  eq('continentForAlpha2: 小文字でも判定できる', T.continentForAlpha2('jp'), 'アジア');
+  eq('continentForAlpha2: 知らないコードはnull', T.continentForAlpha2('ZZ'), null);
+  eq('continentForAlpha2: 空文字はnull', T.continentForAlpha2(''), null);
+  eq('continentForAlpha2: undefinedはnull', T.continentForAlpha2(undefined), null);
+
+  // flagEmojiForAlpha2
+  eq('flagEmojiForAlpha2: 日本は🇯🇵', T.flagEmojiForAlpha2('JP'), '🇯🇵');
+  eq('flagEmojiForAlpha2: アメリカは🇺🇸', T.flagEmojiForAlpha2('US'), '🇺🇸');
+  eq('flagEmojiForAlpha2: 小文字でも組み立てられる', T.flagEmojiForAlpha2('jp'), '🇯🇵');
+  eq('flagEmojiForAlpha2: 不正な長さは空文字', T.flagEmojiForAlpha2('JPN'), '');
+  eq('flagEmojiForAlpha2: 数字は空文字', T.flagEmojiForAlpha2('J1'), '');
+  eq('flagEmojiForAlpha2: 空文字は空文字', T.flagEmojiForAlpha2(''), '');
+  eq('flagEmojiForAlpha2: undefinedは空文字', T.flagEmojiForAlpha2(undefined), '');
+
+  // visitedPercentage
+  eq('visitedPercentage: 2/47は四捨五入で4%', T.visitedPercentage(2, 47), 4);
+  eq('visitedPercentage: 0/47は0%', T.visitedPercentage(0, 47), 0);
+  eq('visitedPercentage: 47/47は100%', T.visitedPercentage(47, 47), 100);
+  eq('visitedPercentage: 3/193は2%（四捨五入）', T.visitedPercentage(3, 193), 2);
+  eq('visitedPercentage: totalが0なら0%', T.visitedPercentage(5, 0), 0);
+  eq('visitedPercentage: totalが負なら0%', T.visitedPercentage(5, -1), 0);
+
+  // groupVisitedByOrder
+  var byLetter = T.groupVisitedByOrder(
+    [{ name: 'b' }, { name: 'a' }, { name: 'c' }, { name: 'x' }],
+    function (x) { return x.name === 'x' ? null : (x.name <= 'a' ? 'A' : 'B'); },
+    ['A', 'B']
+  );
+  eq('groupVisitedByOrder: orderの順にグループ化する', byLetter.map(function (g) { return g.group; }), ['A', 'B', 'その他']);
+  eq('groupVisitedByOrder: 各グループの中身は元の順番を保つ', byLetter[1].items.map(function (x) { return x.name; }), ['b', 'c']);
+  eq('groupVisitedByOrder: orderに無いキーは「その他」にまとまる', byLetter[2].items.map(function (x) { return x.name; }), ['x']);
+  eq('groupVisitedByOrder: 空配列は空配列', T.groupVisitedByOrder([], function () { return 'A'; }, ['A']), []);
+  eq('groupVisitedByOrder: 中身が無いグループは出てこない', T.groupVisitedByOrder(
+    [{ name: 'a' }], function () { return 'A'; }, ['A', 'B']
+  ).map(function (g) { return g.group; }), ['A']);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

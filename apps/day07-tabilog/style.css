@@ -10,6 +10,8 @@
   --accent: #00BF8F;
   --accent-deep: #049873;
   --accent-soft-bg: #E3F8F0;
+  --visited-unfilled: #C9CDD3;
+  --visited-map-bg: #F5F6F8;
   --warn: #C77D1D;
   --warn-bg: #FFF3E0;
   --teal: #049873;
@@ -573,21 +575,39 @@ a:hover { text-decoration: underline; }
 .visited-tabs { display: flex; gap: 6px; padding: 10px 0 4px; }
 .visited-tab { flex: 1; padding: 9px 0; border-radius: 999px; text-align: center; color: var(--ink-muted); font-size: 13px; font-weight: 700; background: var(--border-soft); }
 .visited-tab.on { background: var(--accent); color: white; }
-.visited-headline { font-size: 13.5px; color: var(--ink-muted); margin: 10px 0 8px; }
-.visited-headline strong { font-size: 20px; color: var(--ink); margin: 0 2px; }
-.visited-map { display: flex; justify-content: center; padding: 6px 0; }
+
+/* 集計カード（大きい数字＋ドーナツ）。行ったことある旅先の一番上、地図より前に出す */
+.visited-totals { display: flex; align-items: center; gap: 14px; margin: 12px 0 6px; padding: 12px 14px; border-radius: 14px; background: var(--card); box-shadow: var(--card-shadow); }
+.visited-donut { width: 64px; height: 64px; flex: none; }
+.visited-donut-bg { stroke: var(--visited-unfilled); }
+.visited-donut-fg { stroke: var(--accent); transition: stroke-dashoffset .3s ease; }
+.visited-donut-pct { font-size: 13px; font-weight: 700; fill: var(--ink); }
+.visited-totals-text { display: flex; flex-direction: column; gap: 4px; }
+.visited-totals-frac { font-size: 20px; font-weight: 700; color: var(--ink); }
+.visited-totals-frac strong { font-size: 24px; }
+.visited-totals-unit { font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.visited-totals-pct { font-size: 12.5px; color: var(--ink-muted); }
+
+.visited-map { display: flex; justify-content: center; padding: 10px 0; background: var(--visited-map-bg); border-radius: 14px; margin-top: 4px; }
 .visited-svg { width: 100%; max-width: 340px; height: auto; }
-.visited-region { fill: var(--border-soft); stroke: var(--card); stroke-width: .75; }
+.visited-region { fill: var(--visited-unfilled); stroke: #FFFFFF; stroke-width: .5; }
 .visited-region.is-visited { fill: var(--accent); cursor: pointer; }
 .visited-region.is-visited.on { fill: var(--accent-deep); stroke: var(--ink); stroke-width: 1.25; }
+.visited-inset-box { fill: var(--card); stroke: var(--visited-unfilled); stroke-width: 1; }
+.visited-inset-label { font-size: 7px; font-weight: 700; fill: var(--ink-muted); }
 .visited-caption { margin: 4px 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft-bg); }
 .visited-caption-name { font-size: 13.5px; font-weight: 700; color: var(--accent-deep); }
 .visited-caption-trips { font-size: 12px; color: var(--ink-muted); margin-top: 3px; }
-.visited-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+
+/* 地方・大陸ごとの見出し付き一覧 */
+.visited-group { margin-top: 6px; }
+.visited-group-header { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); padding: 10px 4px 2px; }
+.visited-list { display: flex; flex-direction: column; gap: 2px; }
 .visited-row { display: flex; flex-direction: column; gap: 2px; padding: 10px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
-.visited-row:last-child { border-bottom: none; }
+.visited-group:last-child .visited-row:last-child { border-bottom: none; }
 .visited-row.on { background: var(--accent-soft-bg); border-radius: 10px; }
 .visited-row-name { font-size: 13.5px; font-weight: 700; }
+.visited-row-flag { margin-right: 2px; }
 .visited-row-trips { font-size: 11.5px; color: var(--ink-muted); }
 .visited-credit { margin-top: 10px; font-size: 10.5px; }
 
