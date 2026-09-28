@@ -2368,6 +2368,24 @@ async function fetchDailyWeather(lat, lon, date) {
 // アプリ側で間隔を空けて1日ずつ呼ぶ）。すでに場所が入っている日は変えない（手で入れたものを優先）。
 const JP_PREFECTURES = ["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
 
+// 香港・マカオは、Nominatimが国名を「中国」で返す（ISO3166-2は分かれている・country_codeも
+// 'hk'/'mo' のことがある）ため、そのままだと中国旅行に混ざってしまう（オーナー報告：ブラジル旅行の
+// 香港経由の乗り継ぎが「中国」に入っていた）。country_code・ISO3166-2のstate部分（lvl3/lvl4どちらに
+// 入るかはNominatimのバージョン・地点によって揺れるので両方見る）・state名のいずれかで香港・マカオと
+// 分かれば、それを国名として使う。
+function resolveNominatimCountry(a) {
+  const cc = String(a.country_code || "").toLowerCase();
+  if (cc === "hk") return "香港";
+  if (cc === "mo") return "マカオ";
+  const iso = String(a["ISO3166-2-lvl3"] || a["ISO3166-2-lvl4"] || "").toUpperCase();
+  if (iso === "CN-HK") return "香港";
+  if (iso === "CN-MO") return "マカオ";
+  const state = String(a.state || a.province || "");
+  if (state === "香港" || state === "香港特別行政区" || state === "Hong Kong") return "香港";
+  if (state === "マカオ" || state === "マカオ特別行政区" || state === "澳門" || state === "Macau" || state === "Macao") return "マカオ";
+  return String(a.country || "");
+}
+
 async function reverseGeocode(lat, lng) {
   try {
     const res = await fetch(
@@ -2380,9 +2398,10 @@ async function reverseGeocode(lat, lng) {
     // 東京都などは、都道府県名が返らずISOのコード（JP-13）だけのことがあるので、コードから引く
     const jpCode = /^JP-(\d{2})$/.exec(a["ISO3166-2-lvl4"] || "");
     const admin1 = a.province || a.state || a.region || (jpCode ? JP_PREFECTURES[Number(jpCode[1]) - 1] || "" : "");
-    const place = a.city || a.town || a.village || a.municipality || a.county || admin1 || a.country || "";
+    const country = resolveNominatimCountry(a);
+    const place = a.city || a.town || a.village || a.municipality || a.county || admin1 || country || "";
     if (!place) return null;
-    return { place: String(place).slice(0, 100), admin1: String(admin1), country: String(a.country || "") };
+    return { place: String(place).slice(0, 100), admin1: String(admin1), country: String(country || "") };
   } catch {
     return null;
   }

@@ -1490,6 +1490,15 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   eq('flagEmojiForAlpha2: 空文字は空文字', T.flagEmojiForAlpha2(''), '');
   eq('flagEmojiForAlpha2: undefinedは空文字', T.flagEmojiForAlpha2(undefined), '');
 
+  // EXTRA_COUNTRY_ALPHA2_BY_NAME（2026-09-28〜）：香港・マカオはworld-atlasに図形が無く地図からは
+  // alpha2が引けないので、一覧で「その他」に落ちない・国旗が出るよう決め打ちで足してある
+  eq('EXTRA_COUNTRY_ALPHA2_BY_NAME: 香港はHK', T.EXTRA_COUNTRY_ALPHA2_BY_NAME['香港'], 'HK');
+  eq('EXTRA_COUNTRY_ALPHA2_BY_NAME: マカオはMO', T.EXTRA_COUNTRY_ALPHA2_BY_NAME['マカオ'], 'MO');
+  eq('continentForAlpha2: 香港(HK)はアジア', T.continentForAlpha2(T.EXTRA_COUNTRY_ALPHA2_BY_NAME['香港']), 'アジア');
+  eq('continentForAlpha2: マカオ(MO)はアジア', T.continentForAlpha2(T.EXTRA_COUNTRY_ALPHA2_BY_NAME['マカオ']), 'アジア');
+  eq('flagEmojiForAlpha2: 香港は🇭🇰', T.flagEmojiForAlpha2(T.EXTRA_COUNTRY_ALPHA2_BY_NAME['香港']), '🇭🇰');
+  eq('flagEmojiForAlpha2: マカオは🇲🇴', T.flagEmojiForAlpha2(T.EXTRA_COUNTRY_ALPHA2_BY_NAME['マカオ']), '🇲🇴');
+
   // visitedPercentage
   eq('visitedPercentage: 2/47は四捨五入で4%', T.visitedPercentage(2, 47), 4);
   eq('visitedPercentage: 0/47は0%', T.visitedPercentage(0, 47), 0);

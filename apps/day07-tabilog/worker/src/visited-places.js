@@ -21,6 +21,7 @@
  */
 
 import { distanceKm } from "./geo-decode.js";
+import { overrideCountryByCoords } from "./geo-country-override.js";
 
 // [まとめた後の名前, ...別名]。完全一致（前後の空白を除き、NFKC正規化したあと）で引く
 const COUNTRY_ALIASES = [
@@ -139,13 +140,18 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
     blocksByDay.get(k).push(b);
   });
 
-  // 日付→その日に出てくる国（canonicalCountry）を旅行ごとに集める。「その日の予定が全部乗り継ぎ」でも、
+  // その日の国名（表記ゆれをまとめたあと、座標が香港・マカオの範囲に入っていれば「中国」から
+  // 香港・マカオに分ける。過去にNominatimの address.country をそのまま「中国」として保存していた
+  // 分もこれで直る。詳しくはgeo-country-override.js参照）
+  const countryOf = (d) => overrideCountryByCoords(canonicalCountry(d.country), d.lat, d.lon);
+
+  // 日付→その日に出てくる国を旅行ごとに集める。「その日の予定が全部乗り継ぎ」でも、
   // 前後の日と違う国なら「その国に泊まった」とみなして数えるための下ごしらえ（2026-09-28〜）。
   // オーナー報告：スイス・ベルギー旅行で、ベルギーの唯一の地図点（ブリュッセル出発）が移動の予定
   // （category=transport）から入ったせいで、ベルギーに行った記録があるのに乗り継ぎ扱いで落ちていた。
   const countriesByTripDate = new Map(); // tripId -> Map(date -> Set<country>)
   days.forEach((d) => {
-    const c = canonicalCountry(d.country);
+    const c = countryOf(d);
     if (!c) return;
     if (!countriesByTripDate.has(d.tripId)) countriesByTripDate.set(d.tripId, new Map());
     const m = countriesByTripDate.get(d.tripId);
@@ -198,11 +204,11 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
     // 解決されるとそのままtransit:trueになり、day_infos側の判定を通らず落ちていた）
     if (typeof d.transit === "boolean") {
       if (!d.transit) return false;
-      return allTransportVerdict(d.tripId, d.date, canonicalCountry(d.country));
+      return allTransportVerdict(d.tripId, d.date, countryOf(d));
     }
     const list = blocksByDay.get(d.tripId + "|" + d.date) || [];
     if (!list.length) return false;
-    const country = canonicalCountry(d.country);
+    const country = countryOf(d);
     // その日の予定が全部、移動・空港なら、その日は乗り継ぎ（移動だけ）の日……だが、出発・帰着日でなく
     // 前後の日と違う国なら、その国に泊まった日として数える（上のallTransportVerdict参照）
     if (list.every(isTransitBlock)) return allTransportVerdict(d.tripId, d.date, country);
@@ -226,7 +232,7 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
   };
 
   days.forEach((d) => {
-    const country = canonicalCountry(d.country);
+    const country = countryOf(d);
     const transit = isTransitDay(d);
     if (country === "日本") add("prefecture", canonicalPrefecture(d.admin1), d, transit);
     else if (country) add("country", country, d, transit);

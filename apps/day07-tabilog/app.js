@@ -2158,6 +2158,13 @@
     return VISITED_CONTINENT_BY_ALPHA2[String(alpha2 || '').toUpperCase()] || null;
   }
 
+  // world-atlas（countries-110m.json）に図形が無い（＝idx.nameToIdに出てこない）ため、地図データからは
+  // alpha2が引けない国名。香港・マカオはそれぞれ「中国」の図形に含まれてしまい、単独の図形を持たない
+  // （2026-09-28〜、visited-places.jsのcanonicalCountryが中国と分けて数えるようになった分）。
+  // これが無いとcontinentForAlpha2が引けず「その他」に落ちてしまうので、一覧では「アジア」・国旗🇭🇰🇲🇴で
+  // 出せるよう、名前→alpha2を決め打ちで足す（drawVisitedWorldMapのvisitedCountryAlpha2ByNameに合流）。
+  var EXTRA_COUNTRY_ALPHA2_BY_NAME = { '香港': 'HK', 'マカオ': 'MO' };
+
   // alpha-2コード（例："JP"）→ 国旗絵文字（例："🇯🇵"）。画像は使わず、Unicodeの
   // 地域表示記号（Regional Indicator Symbol、A=U+1F1E6）を2文字組み合わせて作る。
   function flagEmojiForAlpha2(alpha2) {
@@ -2660,6 +2667,7 @@
     VISITED_CONTINENT_ORDER: VISITED_CONTINENT_ORDER,
     continentForAlpha2: continentForAlpha2,
     flagEmojiForAlpha2: flagEmojiForAlpha2,
+    EXTRA_COUNTRY_ALPHA2_BY_NAME: EXTRA_COUNTRY_ALPHA2_BY_NAME,
     visitedPercentage: visitedPercentage,
     groupVisitedByOrder: groupVisitedByOrder
   };
@@ -7509,6 +7517,11 @@
       visitedCountryAlpha2ByName = {};
       Object.keys(idx.nameToId).forEach(function (name) {
         visitedCountryAlpha2ByName[name] = alpha2Table[idx.nameToId[name]];
+      });
+      // 香港・マカオなど、world-atlasに図形が無く上のnameToIdからは引けない国名を決め打ちで補う
+      // （EXTRA_COUNTRY_ALPHA2_BY_NAME参照。無いと一覧で「その他」に落ちてしまう）。
+      Object.keys(Core.EXTRA_COUNTRY_ALPHA2_BY_NAME || {}).forEach(function (name) {
+        if (!visitedCountryAlpha2ByName[name]) visitedCountryAlpha2ByName[name] = Core.EXTRA_COUNTRY_ALPHA2_BY_NAME[name];
       });
 
       if (container) {
