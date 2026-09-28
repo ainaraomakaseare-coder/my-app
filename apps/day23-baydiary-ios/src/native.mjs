@@ -30,5 +30,13 @@ if(Capacitor.isNativePlatform()) {
   document.addEventListener('DOMContentLoaded',()=>{
     if(window.BayDiaryShell)document.documentElement.classList.add('bay-native-shell');
     document.getElementById('share-download').textContent='画像を共有・保存';
+    // The AI backend is not deployed yet, so a visible AI button would only fail
+    // (and read as a broken feature in App Review). Keep the JSON import path.
+    const aiActions=document.getElementById('memo-analyze').closest('.feature-actions');
+    const aiHelp=aiActions.previousElementSibling;
+    if(aiHelp&&aiHelp.textContent.includes('AIで読み取る'))aiHelp.hidden=true;
+    aiActions.hidden=true;
+    const jsonHelp=aiActions.parentElement.querySelector('details');
+    if(jsonHelp)jsonHelp.open=true;
   });
 }
