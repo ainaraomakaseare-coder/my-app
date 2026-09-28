@@ -63,6 +63,7 @@
       <div class="account-row" id="accountRow" hidden>
         <span id="accountName"></span>
         <button class="btn text" id="btnOpenMyLog">マイログ</button>
+        <button class="btn text" id="btnOpenVisited">行ったことある旅先</button>
         <button class="btn text" id="btnLogout">ログアウト</button>
       </div>
       <div class="account-row" id="loginPromptRow" hidden>
@@ -683,12 +684,6 @@
       <div class="trip-list" id="mylogTripList"></div>
 
       <div class="section-label">
-        <div class="section-title">訪れた都道府県・国</div>
-      </div>
-      <p class="hint">上の「参加した旅行」で外していない場所の合計です。空港・乗り継ぎだけの国は数えません。場所をタップすると、どの記録から入ったかを確認できます。</p>
-      <div class="visited-places" id="mylogPlaces"></div>
-
-      <div class="section-label">
         <div class="section-title">評価したもの</div>
       </div>
       <div class="mylog-tabs" id="mylogTabs"></div>
@@ -713,6 +708,24 @@
       </div>
       <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
       <p class="hint">アカウント（名前・プラン・回数券・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
+    </div>
+  </section>
+
+  <!-- ============ 行ったことある旅先（国内・海外の地図。マイログの参加した旅行から集計） ============ -->
+  <section class="screen" data-screen="visited">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="home">← 戻る</button>
+        <h1>行ったことある旅先</h1>
+        <p class="lead">参加した旅行の記録から自動で集計します（マイログと同じ集計です）。</p>
+      </header>
+
+      <div class="visited-tabs" id="visitedTabs">
+        <button class="visited-tab" data-tab="domestic">国内</button>
+        <button class="visited-tab" data-tab="overseas">海外</button>
+      </div>
+
+      <div class="visited-panel" id="visitedPanel">読み込み中…</div>
     </div>
   </section>
 

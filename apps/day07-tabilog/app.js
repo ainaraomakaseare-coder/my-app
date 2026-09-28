@@ -1988,6 +1988,112 @@
     return out;
   }
 
+  // ---------- 行ったことある旅先（国内・海外の地図。docs/adr/0017） ----------
+  // 国名の表記ゆれのまとめ方は worker/src/visited-places.js の COUNTRY_ALIASES と同じ内容を
+  // ここに複製している（サーバー側は/mylogが返す時点ですでに正規化済みの日本語名を使っているが、
+  // 世界地図側は「ISO数値コード→Intl.DisplayNamesの生の国名」を同じ正規化にかけてから突き合わせる
+  // 必要があるため。2つの配列がずれると国が塗られなくなるので、直すときは両方を直す）。
+  var VISITED_COUNTRY_ALIASES = [
+    ["日本", "日本国", "Japan", "にほん", "にっぽん"],
+    ["アメリカ", "アメリカ合衆国", "米国", "アメリカ合衆国（米国）", "United States", "United States of America", "USA", "U.S.A.", "US", "U.S.", "Estados Unidos"],
+    ["中国", "中華人民共和国", "China", "People's Republic of China", "中国大陸"],
+    ["台湾", "中華民国", "中華民國", "臺灣", "Taiwan"],
+    ["香港", "中華人民共和国香港特別行政区", "香港特別行政区", "Hong Kong"],
+    ["マカオ", "中華人民共和国マカオ特別行政区", "マカオ特別行政区", "澳門", "Macao", "Macau"],
+    ["韓国", "大韓民国", "South Korea", "Korea", "Republic of Korea", "한국", "대한민국"],
+    ["北朝鮮", "朝鮮民主主義人民共和国", "North Korea"],
+    ["イギリス", "英国", "グレートブリテン及び北アイルランド連合王国", "連合王国", "United Kingdom", "UK", "Great Britain"],
+    ["ロシア", "ロシア連邦", "Russia"],
+    ["ドイツ", "ドイツ連邦共和国", "Germany", "Deutschland"],
+    ["フランス", "フランス共和国", "France"],
+    ["イタリア", "イタリア共和国", "Italy", "Italia"],
+    ["スペイン", "スペイン王国", "Spain", "España"],
+    ["ポルトガル", "ポルトガル共和国", "Portugal"],
+    ["オランダ", "オランダ王国", "Netherlands", "Nederland"],
+    ["スイス", "スイス連邦", "Switzerland"],
+    ["オーストリア", "オーストリア共和国", "Austria"],
+    ["ブラジル", "ブラジル連邦共和国", "Brazil", "Brasil"],
+    ["アルゼンチン", "アルゼンチン共和国", "Argentina"],
+    ["メキシコ", "メキシコ合衆国", "Mexico", "México"],
+    ["カナダ", "Canada"],
+    ["ペルー", "ペルー共和国", "Peru", "Perú"],
+    ["チリ", "チリ共和国", "Chile"],
+    ["オーストラリア", "オーストラリア連邦", "Australia"],
+    ["ニュージーランド", "New Zealand"],
+    ["タイ", "タイ王国", "Thailand", "ประเทศไทย"],
+    ["ベトナム", "ベトナム社会主義共和国", "Vietnam", "Viet Nam", "Việt Nam"],
+    ["フィリピン", "フィリピン共和国", "Philippines"],
+    ["インドネシア", "インドネシア共和国", "Indonesia"],
+    ["マレーシア", "Malaysia"],
+    ["シンガポール", "シンガポール共和国", "Singapore"],
+    ["インド", "インド共和国", "India"],
+    ["エチオピア", "エチオピア連邦民主共和国", "Ethiopia"],
+    ["アラブ首長国連邦", "UAE", "United Arab Emirates"],
+    ["トルコ", "トルコ共和国", "Türkiye", "Turkey"],
+    ["エジプト", "エジプト・アラブ共和国", "Egypt"],
+    ["カタール", "カタール国", "Qatar"]
+  ];
+  var VISITED_KEEP_AS_IS = { "ドミニカ共和国": 1, "ドミニカ国": 1, "コンゴ共和国": 1, "コンゴ民主共和国": 1, "中央アフリカ共和国": 1 };
+  var VISITED_FORMAL_SUFFIX_RE = /(連邦民主共和国|社会主義共和国|連邦共和国|人民共和国|共和国|合衆国|王国|連邦)$/;
+  var VISITED_ALIAS_MAP = (function () {
+    var m = {};
+    VISITED_COUNTRY_ALIASES.forEach(function (names) {
+      names.forEach(function (n) { m[String(n).normalize('NFKC').trim().toLowerCase()] = names[0]; });
+    });
+    return m;
+  })();
+
+  // ISO数値コード側の国名（Intl.DisplayNamesの生の出力や、世界地図データの国名）を、
+  // /mylogが返す日本語の正規化済み国名（例：「アメリカ合衆国」→「アメリカ」）に揃える。
+  function canonicalVisitedCountryName(name) {
+    var raw = String(name || '').normalize('NFKC').trim();
+    if (!raw) return '';
+    var hit = VISITED_ALIAS_MAP[raw.toLowerCase()];
+    if (hit) return hit;
+    if (VISITED_KEEP_AS_IS[raw]) return raw;
+    var short = raw.replace(VISITED_FORMAL_SUFFIX_RE, '');
+    if (short && short !== raw && short.length >= 2) return VISITED_ALIAS_MAP[short.toLowerCase()] || short;
+    return raw;
+  }
+
+  // 世界地図（TopoJSON、idはISO 3166-1 numeric）の各国を、/mylogの国名と突き合わせるための対応表を作る。
+  // ids: トポロジーの各featureのid（数値コードの文字列）の配列
+  // alpha2Table: vendor/geo/iso-numeric-alpha2.json の中身（{ "392": "JP", ... }）
+  // 戻り値: { idToName: {id: 正規化した日本語国名}, nameToId: {正規化した日本語国名: id} }
+  // Intl.DisplayNamesが無い環境（古いWebViewなど）では空の対応表を返し、世界地図は塗らずに一覧だけ出す。
+  function buildCountryIsoIndex(ids, alpha2Table) {
+    var idToName = {}, nameToId = {};
+    if (typeof Intl === 'undefined' || !Intl.DisplayNames) return { idToName: idToName, nameToId: nameToId };
+    var dn;
+    try { dn = new Intl.DisplayNames(['ja'], { type: 'region' }); } catch (e) { return { idToName: idToName, nameToId: nameToId }; }
+    (ids || []).forEach(function (id) {
+      var a2 = alpha2Table && alpha2Table[id];
+      if (!a2) return;
+      var raw;
+      try { raw = dn.of(a2); } catch (e) { return; }
+      if (!raw) return;
+      var name = canonicalVisitedCountryName(raw);
+      idToName[id] = name;
+      if (!nameToId[name]) nameToId[name] = id; // 同じ国名に複数idが来ることは無い想定。最初のものを使う
+    });
+    return { idToName: idToName, nameToId: nameToId };
+  }
+
+  // 「行ったことある旅先」の一覧に出す、1つの場所（都道府県／国）の旅行名。
+  // /mylogのdetails.prefectures・countriesの各要素（sources: [{tripTitle, transit, excluded}]）から、
+  // 実際に数えている（乗り継ぎでも外してもいない）旅行のタイトルだけを、出てくる順に重複なく拾う。
+  function visitedPlaceTripTitles(item) {
+    var out = [], seen = {};
+    ((item && item.sources) || []).forEach(function (s) {
+      if (s.transit || s.excluded) return;
+      var t = s.tripTitle || '（無題の旅）';
+      if (seen[t]) return;
+      seen[t] = 1;
+      out.push(t);
+    });
+    return out;
+  }
+
   // 旅行の行き先（天気のために入れた「日ごとの場所」の国・都道府県）。海外があれば国、国内だけなら都道府県。
   function tripPlaceNames(days) {
     var countries = [], prefs = [];
@@ -2408,7 +2514,10 @@
     travelLogText: travelLogText,
     tripCostByGroup: tripCostByGroup,
     tripPlaceNames: tripPlaceNames,
-    buildTripPostText: buildTripPostText
+    buildTripPostText: buildTripPostText,
+    canonicalVisitedCountryName: canonicalVisitedCountryName,
+    buildCountryIsoIndex: buildCountryIsoIndex,
+    visitedPlaceTripTitles: visitedPlaceTripTitles
   };
 
   root.TabiLog = Core;
@@ -3078,8 +3187,8 @@
     myLogItems: [],
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [], tripPlaces: [] },
-    myLogPlaceSel: null,
-    myLogOthersOpen: false,
+    visitedTab: 'domestic',   // 「行ったことある旅先」の選択中タブ（domestic|overseas）
+    visitedSel: null,          // 「行ったことある旅先」で選んだ場所（{kind, name}）。地図・一覧の両方をハイライトする
     homeFilters: { companion: '', year: '', tripType: '', sort: '' },
     social: { likes: {}, comments: [], accountId: '' },
     myLogCategory: 'food',
@@ -6591,7 +6700,6 @@
 
   function renderMyLog() {
     renderMyLogTrips();
-    renderMyLogPlaces();
     renderMyLogTabs();
     renderMyLogSort();
     renderMyLogList();
@@ -6623,97 +6731,10 @@
     api('/mylog/trip-places', 'POST', { email: user.email, tripId: tripId, kind: kind, name: name, mode: mode }).then(function (res) {
       state.myLogPlaces = res.places || state.myLogPlaces;
       renderMyLogTrips();
-      renderMyLogPlaces();
     }).catch(function () {
       btn.disabled = false;
       alert(mode === 'exclude' ? '外せませんでした。通信状況を確認して、もう一度お試しください。' : '戻せませんでした。通信状況を確認して、もう一度お試しください。');
     });
-  }
-
-  // 「訪れた都道府県・国」（総計）：参加した旅行の「日ごとの場所」からサーバー側で集計したもの。
-  // 国名の表記ゆれ（アメリカ／アメリカ合衆国）はサーバーでまとめ、乗り継ぎだけの国は数えない。
-  // 出てくる旅行すべてで外されている場所だけ、ここから落ちる（外す・戻すの操作は上の「参加した
-  // 旅行」の各カードで行う。ここは読み取り専用＝チップをタップすると、どの旅の何日から入ったかだけを出す。
-  // 2026-09-27・旅行ごとの除外に伴い読み取り専用化：2026-09-28）。
-  function renderMyLogPlaces() {
-    var el = $('#mylogPlaces');
-    var places = state.myLogPlaces || { prefectures: [], countries: [] };
-    var details = places.details;
-    if (!details) {
-      // サーバーが古い（details を返さない）ときは、今までどおり名前だけを並べる
-      details = {
-        prefectures: (places.prefectures || []).map(function (n) { return { name: n, status: 'visible', sources: [] }; }),
-        countries: (places.countries || []).map(function (n) { return { name: n, status: 'visible', sources: [] }; })
-      };
-    }
-    var visPref = details.prefectures.filter(function (x) { return x.status === 'visible'; });
-    var visCountry = details.countries.filter(function (x) { return x.status === 'visible'; });
-    var others = details.countries.filter(function (x) { return x.status !== 'visible'; }).map(function (x) { return { kind: 'country', item: x }; })
-      .concat(details.prefectures.filter(function (x) { return x.status !== 'visible'; }).map(function (x) { return { kind: 'prefecture', item: x }; }));
-    if (!visPref.length && !visCountry.length && !others.length) {
-      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
-      return;
-    }
-    var sel = state.myLogPlaceSel;
-    var chip = function (kind, x) {
-      var on = sel && sel.kind === kind && sel.name === x.name;
-      var cls = 'visited-chip' + (x.status !== 'visible' ? ' is-muted' : '') + (on ? ' on' : '');
-      return '<button type="button" class="' + cls + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' + escapeHtml(x.name) +
-        (x.status === 'transit' ? '<span class="visited-chip-note">乗り継ぎ</span>' : x.status === 'excluded' ? '<span class="visited-chip-note">外した</span>' : '') + '</button>';
-    };
-    var detailFor = function (kind, list) {
-      if (!sel || sel.kind !== kind) return '';
-      var x = list.filter(function (i) { return i.name === sel.name; })[0];
-      return x ? myLogPlaceDetailHtml(x) : '';
-    };
-    var html = '';
-    if (visPref.length) {
-      html += '<div class="visited-group"><span class="visited-group-label">都道府県（' + visPref.length + '）</span><div class="visited-chips">' +
-        visPref.map(function (x) { return chip('prefecture', x); }).join('') + '</div>' + detailFor('prefecture', visPref) + '</div>';
-    }
-    if (visCountry.length) {
-      html += '<div class="visited-group"><span class="visited-group-label">海外（' + visCountry.length + 'か国）</span><div class="visited-chips">' +
-        visCountry.map(function (x) { return chip('country', x); }).join('') + '</div>' + detailFor('country', visCountry) + '</div>';
-    }
-    if (others.length) {
-      var open = state.myLogOthersOpen || (sel && others.some(function (o) { return o.kind === sel.kind && o.item.name === sel.name; }));
-      var selOther = sel ? others.filter(function (o) { return o.kind === sel.kind && o.item.name === sel.name; })[0] : null;
-      html += '<div class="visited-group visited-others">' +
-        '<button type="button" class="visited-others-toggle" aria-expanded="' + (open ? 'true' : 'false') + '">数えていない場所（' + others.length + '）<span class="visited-others-hint">乗り継ぎだけ・外したもの</span></button>' +
-        (open ? '<div class="visited-chips">' + others.map(function (o) { return chip(o.kind, o.item); }).join('') + '</div>' +
-          (selOther ? myLogPlaceDetailHtml(selOther.item) : '') : '') +
-        '</div>';
-    }
-    el.innerHTML = html;
-    $all('.visited-chip', el).forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var same = sel && sel.kind === btn.dataset.kind && sel.name === btn.dataset.name;
-        state.myLogPlaceSel = same ? null : { kind: btn.dataset.kind, name: btn.dataset.name };
-        renderMyLogPlaces();
-      });
-    });
-    var toggle = $('.visited-others-toggle', el);
-    if (toggle) toggle.addEventListener('click', function () {
-      state.myLogOthersOpen = toggle.getAttribute('aria-expanded') !== 'true';
-      if (!state.myLogOthersOpen && sel && others.some(function (o) { return o.kind === sel.kind && o.item.name === sel.name; })) state.myLogPlaceSel = null;
-      renderMyLogPlaces();
-    });
-    $all('.visited-src-trip', el).forEach(function (btn) {
-      btn.addEventListener('click', function () { openTrip(btn.dataset.trip); });
-    });
-  }
-
-  function myLogPlaceDetailHtml(x) {
-    var srcs = (x.sources || []).map(function (s) {
-      var dates = (s.dates || []).map(function (d) { var p = d.split('-'); return Number(p[1]) + '/' + Number(p[2]); }).join('・');
-      return '<li class="visited-src"><button type="button" class="visited-src-trip" data-trip="' + escapeHtml(s.tripId) + '">' + escapeHtml(s.tripTitle || '（無題の旅）') + '</button>' +
-        (dates ? '<span class="visited-src-dates">' + escapeHtml(dates) + (s.transit ? '（乗り継ぎ）' : s.excluded ? '（外した）' : '') + '</span>' : '') + '</li>';
-    }).join('');
-    var note = x.status === 'transit' ? '<p class="visited-detail-note">空港・乗り継ぎの記録しか無いので、数えていません。</p>'
-      : x.status === 'excluded' ? '<p class="visited-detail-note">出てくる旅行すべてで外したので、数えていません。上の「参加した旅行」の各カードから戻せます。</p>' : '';
-    return '<div class="visited-detail">' +
-      (srcs ? '<div class="visited-detail-label">この記録から入りました</div><ul class="visited-srcs">' + srcs + '</ul>' : '') + note +
-      '</div>';
   }
 
   // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。
@@ -6812,6 +6833,210 @@
         '<div class="mylog-score">★' + it.score + '</div>';
       row.addEventListener('click', function () { openTrip(it.tripId); });
       el.appendChild(row);
+    });
+  }
+
+  // ---------- 行ったことある旅先（国内・海外の地図。docs/adr/0017） ----------
+  // データは/mylogのplaces（マイログの「参加した旅行」と同じ集計。旅行ごとの外す/戻すも反映済み）を
+  // そのまま使う。新しいAPIは作らない。地図はd3-geo + topojson-client（vendor/geo、ISC）で、
+  // タイル画像を使わないインラインSVG。ネットに繋がらないiOSアプリ内でもオフラインで描ける。
+  var visitedGeoLibsLoading = null;
+  function loadVisitedGeoLibs() {
+    if (window.d3 && window.topojson) return Promise.resolve();
+    if (visitedGeoLibsLoading) return visitedGeoLibsLoading;
+    var files = ['vendor/geo/d3-array.min.js', 'vendor/geo/d3-geo.min.js', 'vendor/geo/topojson-client.min.js'];
+    visitedGeoLibsLoading = new Promise(function (resolve, reject) {
+      var i = 0;
+      function next() {
+        if (i >= files.length) { resolve(); return; }
+        var s = document.createElement('script');
+        s.src = files[i++];
+        s.onload = next;
+        s.onerror = function () { visitedGeoLibsLoading = null; reject(new Error('geo_lib_load_failed')); };
+        document.head.appendChild(s);
+      }
+      next();
+    });
+    return visitedGeoLibsLoading;
+  }
+  var visitedJapanTopoCache = null, visitedWorldTopoCache = null, visitedIsoAlpha2Cache = null;
+  function loadVisitedJson(url, cacheKey) {
+    var cache = { japan: visitedJapanTopoCache, world: visitedWorldTopoCache, iso: visitedIsoAlpha2Cache }[cacheKey];
+    if (cache) return Promise.resolve(cache);
+    return fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+      if (cacheKey === 'japan') visitedJapanTopoCache = d;
+      else if (cacheKey === 'world') visitedWorldTopoCache = d;
+      else visitedIsoAlpha2Cache = d;
+      return d;
+    });
+  }
+
+  function openVisitedPlaces() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('visited'); return; }
+    showScreen('visited');
+    $('#visitedPanel').innerHTML = '<div class="empty">読み込み中…</div>';
+    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
+      state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [], details: { prefectures: [], countries: [] } };
+      renderVisitedPlaces();
+    }).catch(function () {
+      $('#visitedPanel').innerHTML = '<div class="empty">読み込みに失敗しました。通信状況を確認して、もう一度お試しください。</div>';
+    });
+  }
+
+  function visitedDetails() {
+    var places = state.myLogPlaces || {};
+    return places.details || { prefectures: [], countries: [] };
+  }
+
+  function renderVisitedPlaces() {
+    $all('.visited-tab', $('#visitedTabs')).forEach(function (b) {
+      b.classList.toggle('on', b.dataset.tab === state.visitedTab);
+    });
+    var details = visitedDetails();
+    var panel = $('#visitedPanel');
+    if (state.visitedTab === 'overseas') renderVisitedOverseas(panel, (details.countries || []).filter(function (x) { return x.status === 'visible'; }));
+    else renderVisitedDomestic(panel, (details.prefectures || []).filter(function (x) { return x.status === 'visible'; }));
+  }
+
+  // 場所の一覧HTML（都道府県／国のどちらも共通）。選んだ場所は.onで強調し、地図側とも呼応させる
+  function visitedListHtml(kind, items) {
+    if (!items.length) {
+      return '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
+    }
+    var sel = state.visitedSel;
+    return '<div class="visited-list">' + items.map(function (x) {
+      var trips = Core.visitedPlaceTripTitles(x);
+      var on = sel && sel.kind === kind && sel.name === x.name;
+      return '<div class="visited-row' + (on ? ' on' : '') + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' +
+        '<div class="visited-row-name">' + escapeHtml(x.name) + '</div>' +
+        '<div class="visited-row-trips">' + (trips.length ? trips.map(escapeHtml).join('・') : '') + '</div>' +
+        '</div>';
+    }).join('') + '</div>';
+  }
+
+  function wireVisitedListRows(panel) {
+    $all('.visited-row', panel).forEach(function (row) {
+      row.addEventListener('click', function () {
+        setVisitedSelection(row.dataset.kind, row.dataset.name);
+      });
+    });
+  }
+
+  function setVisitedSelection(kind, name) {
+    var sel = state.visitedSel;
+    var same = sel && sel.kind === kind && sel.name === name;
+    state.visitedSel = same ? null : { kind: kind, name: name };
+    updateVisitedHighlight();
+  }
+
+  // 全部を作り直さず、選択中クラスの付け外しだけする（地図の再読み込みを避ける）
+  function updateVisitedHighlight() {
+    var sel = state.visitedSel;
+    $all('.visited-row').forEach(function (row) {
+      row.classList.toggle('on', !!sel && row.dataset.kind === sel.kind && row.dataset.name === sel.name);
+    });
+    $all('.visited-region').forEach(function (region) {
+      region.classList.toggle('on', !!sel && region.dataset.kind === sel.kind && region.dataset.name === sel.name);
+    });
+    var caption = $('#visitedCaption');
+    if (!caption) return;
+    if (!sel) { caption.hidden = true; caption.innerHTML = ''; return; }
+    var list = sel.kind === 'country' ? (visitedDetails().countries || []) : (visitedDetails().prefectures || []);
+    var item = list.filter(function (x) { return x.name === sel.name; })[0];
+    var trips = item ? Core.visitedPlaceTripTitles(item) : [];
+    caption.hidden = false;
+    caption.innerHTML = '<div class="visited-caption-name">' + escapeHtml(sel.name) + '</div>' +
+      '<div class="visited-caption-trips">' + (trips.length ? trips.map(escapeHtml).join('・') : '記録が見つかりませんでした') + '</div>';
+  }
+
+  function renderVisitedDomestic(panel, visited) {
+    panel.innerHTML =
+      '<div class="visited-headline">47都道府県中 <strong>' + visited.length + '</strong></div>' +
+      '<div class="visited-map" id="visitedMapDomestic"><div class="empty">地図を読み込み中…</div></div>' +
+      '<div class="visited-caption" id="visitedCaption" hidden></div>' +
+      visitedListHtml('prefecture', visited) +
+      '<p class="hint visited-credit">地図データ: simplify-japan-geojson（ricewin、CC BY 4.0）</p>';
+    wireVisitedListRows(panel);
+    drawVisitedJapanMap(visited);
+  }
+
+  function renderVisitedOverseas(panel, visited) {
+    panel.innerHTML =
+      '<div class="visited-headline"><strong>' + visited.length + '</strong> か国</div>' +
+      '<div class="visited-map" id="visitedMapOverseas"><div class="empty">地図を読み込み中…</div></div>' +
+      '<div class="visited-caption" id="visitedCaption" hidden></div>' +
+      visitedListHtml('country', visited);
+    wireVisitedListRows(panel);
+    drawVisitedWorldMap(visited);
+  }
+
+  function drawVisitedJapanMap(visited) {
+    var visitedNames = {};
+    visited.forEach(function (x) { visitedNames[x.name] = true; });
+    Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/japan-prefectures.topojson', 'japan')]).then(function (r) {
+      var container = $('#visitedMapDomestic');
+      if (!container) return; // 読み込み中にタブが切り替わっていた
+      var topo = r[1];
+      var fc = topojson.feature(topo, topo.objects.japan);
+      var w = 320, h = 360;
+      var proj = d3.geoConicConformal().parallels([33, 45]).fitSize([w, h], fc);
+      var path = d3.geoPath(proj);
+      var sel = state.visitedSel;
+      container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた都道府県の地図">' +
+        fc.features.map(function (f) {
+          var name = f.properties.nam_ja;
+          var d = path(f);
+          if (!d) return '';
+          var isVisited = !!visitedNames[name];
+          var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
+          return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+            (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>';
+        }).join('') + '</svg>';
+      wireVisitedMapRegions(container);
+    }).catch(function () {
+      var container = $('#visitedMapDomestic');
+      if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+    });
+  }
+
+  function drawVisitedWorldMap(visited) {
+    var visitedNames = {};
+    visited.forEach(function (x) { visitedNames[x.name] = true; });
+    Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/countries-110m.json', 'world'), loadVisitedJson('vendor/geo/iso-numeric-alpha2.json', 'iso')]).then(function (r) {
+      var container = $('#visitedMapOverseas');
+      if (!container) return;
+      var topo = r[1], alpha2Table = r[2];
+      var fc = topojson.feature(topo, topo.objects.countries);
+      var ids = fc.features.map(function (f) { return f.id; });
+      var idx = Core.buildCountryIsoIndex(ids, alpha2Table);
+      var w = 320, h = 190;
+      var proj = d3.geoNaturalEarth1().fitSize([w, h], fc);
+      var path = d3.geoPath(proj);
+      var sel = state.visitedSel;
+      container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた国の地図">' +
+        fc.features.map(function (f) {
+          var name = idx.idToName[f.id] || '';
+          var d = path(f);
+          if (!d) return '';
+          var isVisited = !!(name && visitedNames[name]);
+          var on = isVisited && sel && sel.kind === 'country' && sel.name === name;
+          return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+            (isVisited ? ' data-kind="country" data-name="' + escapeHtml(name) + '"' : '') +
+            '>' + (name ? '<title>' + escapeHtml(name) + '</title>' : '') + '</path>';
+        }).join('') + '</svg>';
+      wireVisitedMapRegions(container);
+    }).catch(function () {
+      var container = $('#visitedMapOverseas');
+      if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+    });
+  }
+
+  function wireVisitedMapRegions(container) {
+    $all('.visited-region.is-visited', container).forEach(function (el) {
+      el.addEventListener('click', function () {
+        setVisitedSelection(el.dataset.kind, el.dataset.name);
+      });
     });
   }
 
@@ -7790,6 +8015,7 @@
     initEntryDragMove();
     initDaySwipe();
     initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
+    initEdgeSwipeBack(document.querySelector('[data-screen="visited"]'), goHome);
     initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), goHome);
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
@@ -7916,6 +8142,16 @@
     $('#btnResendOtp').addEventListener('click', handleSendOtp);
     $('#btnOpenMyLog').addEventListener('click', function () {
       if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
+    });
+    $('#btnOpenVisited').addEventListener('click', function () {
+      if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited');
+    });
+    $('#visitedTabs').addEventListener('click', function (e) {
+      var btn = e.target.closest('.visited-tab');
+      if (!btn) return;
+      state.visitedTab = btn.dataset.tab;
+      state.visitedSel = null;
+      renderVisitedPlaces();
     });
     $('#btnGoToPlans').addEventListener('click', function () {
       if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
@@ -8049,6 +8285,8 @@
       openVoiceEntryForm();
     } else if (target === 'mylog' && loggedIn) {
       openMyLog();
+    } else if (target === 'visited' && loggedIn) {
+      openVisitedPlaces();
     } else {
       goHome();
     }

@@ -1399,5 +1399,47 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   ok('parseImportedBlocksJson: JSONが無ければエラー', garbage.errors.length === 1 && garbage.blocks.length === 0);
 })();
 
+/* ---- 行ったことある旅先（canonicalVisitedCountryName / buildCountryIsoIndex / visitedPlaceTripTitles） ---- */
+(function () {
+  eq('canonicalVisitedCountryName: 正式名称を短くする', T.canonicalVisitedCountryName('アメリカ合衆国'), 'アメリカ');
+  eq('canonicalVisitedCountryName: 別名も同じ国名にまとめる', T.canonicalVisitedCountryName('大韓民国'), '韓国');
+  eq('canonicalVisitedCountryName: 英語表記もまとめる', T.canonicalVisitedCountryName('United States of America'), 'アメリカ');
+  eq('canonicalVisitedCountryName: すでに正規化済みならそのまま', T.canonicalVisitedCountryName('ブラジル'), 'ブラジル');
+  eq('canonicalVisitedCountryName: KEEP_AS_ISはそのまま（共和国止まりで別の国と衝突するため）', T.canonicalVisitedCountryName('ドミニカ共和国'), 'ドミニカ共和国');
+  eq('canonicalVisitedCountryName: 表に無い「〜共和国」は接尾辞だけ落とす', T.canonicalVisitedCountryName('ケニア共和国'), 'ケニア');
+  eq('canonicalVisitedCountryName: 空文字は空文字', T.canonicalVisitedCountryName(''), '');
+  eq('canonicalVisitedCountryName: nullは空文字', T.canonicalVisitedCountryName(null), '');
+
+  var alpha2Table = { '392': 'JP', '840': 'US', '076': 'BR', '032': 'AR', '410': 'KR' };
+  var idx = T.buildCountryIsoIndex(['392', '840', '076', '032', '410', '999'], alpha2Table);
+  eq('buildCountryIsoIndex: 日本', idx.idToName['392'], '日本');
+  eq('buildCountryIsoIndex: アメリカ（Intl.DisplayNamesの生名から正規化）', idx.idToName['840'], 'アメリカ');
+  eq('buildCountryIsoIndex: ブラジル', idx.idToName['076'], 'ブラジル');
+  eq('buildCountryIsoIndex: アルゼンチン', idx.idToName['032'], 'アルゼンチン');
+  eq('buildCountryIsoIndex: 韓国', idx.idToName['410'], '韓国');
+  eq('buildCountryIsoIndex: nameToIdは逆引きできる', idx.nameToId['アメリカ'], '840');
+  eq('buildCountryIsoIndex: alpha2が無いidは対応表に入らない', idx.idToName['999'] === undefined, true);
+  eq('buildCountryIsoIndex: alpha2Tableが無いidも無視される（存在しないid）', T.buildCountryIsoIndex(['000'], alpha2Table).idToName['000'] === undefined, true);
+  eq('buildCountryIsoIndex: idsが空でも空の対応表を返す', T.buildCountryIsoIndex([], alpha2Table), { idToName: {}, nameToId: {} });
+
+  eq('visitedPlaceTripTitles: 数えている旅行名だけ拾う', T.visitedPlaceTripTitles({
+    sources: [
+      { tripTitle: '沖縄旅行', transit: false, excluded: false },
+      { tripTitle: '乗り継ぎだけの旅', transit: true, excluded: false },
+      { tripTitle: '外した旅行', transit: false, excluded: true }
+    ]
+  }), ['沖縄旅行']);
+  eq('visitedPlaceTripTitles: 同じ旅行タイトルが複数回出ても重複しない', T.visitedPlaceTripTitles({
+    sources: [
+      { tripTitle: '家族旅行', transit: false, excluded: false },
+      { tripTitle: '家族旅行', transit: false, excluded: false }
+    ]
+  }), ['家族旅行']);
+  eq('visitedPlaceTripTitles: 無題の旅はタイトルを補う', T.visitedPlaceTripTitles({
+    sources: [{ tripTitle: '', transit: false, excluded: false }]
+  }), ['（無題の旅）']);
+  eq('visitedPlaceTripTitles: sourcesが無ければ空配列', T.visitedPlaceTripTitles({}), []);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

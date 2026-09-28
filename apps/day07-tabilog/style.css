@@ -88,9 +88,14 @@ a:hover { text-decoration: underline; }
 }
 .email-login-note { margin: 2px 0 0; text-align: center; }
 
-.account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0 0; font-size: 12.5px; color: var(--ink-muted); flex-wrap: wrap; }
-.account-row .btn.text { white-space: nowrap; flex-shrink: 0; }
-.account-row span { min-width: 0; }
+/* 4つ（名前・マイログ・行ったことある旅先・ログアウト）が375px幅でも1行に収まるよう、
+   このrowだけ文字を少し小さく・字間を詰め、隣り合う名前は省略記号で切る（2026-09-28〜）。 */
+.account-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 10px 0 0;
+  font-size: 11px; color: var(--ink-muted); flex-wrap: nowrap;
+}
+.account-row .btn.text { white-space: nowrap; flex-shrink: 0; padding: 6px 0; font-size: 11px; letter-spacing: -.2px; }
+.account-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
 
 .notice {
   background: var(--warn-bg); color: var(--warn);
@@ -563,26 +568,28 @@ a:hover { text-decoration: underline; }
 .plan-card button { flex-shrink: 0; }
 
 /* ---------- マイログ ---------- */
-.visited-places { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
-.visited-group { display: flex; flex-direction: column; gap: 6px; }
-.visited-group-label { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); }
-.visited-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.visited-chip { padding: 6px 12px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 12.5px; font-weight: 700; }
-.visited-chip { border: 1.5px solid transparent; }
-.visited-chip.on { border-color: var(--accent); }
-.visited-chip.is-muted { background: var(--border-soft); color: var(--ink-muted); }
-.visited-chip-note { margin-left: 5px; font-size: 10.5px; font-weight: 600; opacity: .8; }
-.visited-detail { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--border-soft); }
-.visited-detail-label { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); }
-.visited-srcs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.visited-src { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 13px; }
-.visited-src-trip { color: var(--accent-deep); font-weight: 700; text-decoration: underline; text-underline-offset: 2px; text-align: left; }
-.visited-src-dates { color: var(--ink-muted); font-size: 12px; }
-.visited-detail-note { margin: 0; font-size: 12px; color: var(--ink-muted); }
-.visited-others-toggle { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; font-weight: 700; color: var(--ink-muted); text-align: left; }
-.visited-others-toggle::before { content: '▸'; }
-.visited-others-toggle[aria-expanded="true"]::before { content: '▾'; }
-.visited-others-hint { font-weight: 500; font-size: 11px; }
+
+/* ---------- 行ったことある旅先（国内・海外タブ、docs/adr/0017） ---------- */
+.visited-tabs { display: flex; gap: 6px; padding: 10px 0 4px; }
+.visited-tab { flex: 1; padding: 9px 0; border-radius: 999px; text-align: center; color: var(--ink-muted); font-size: 13px; font-weight: 700; background: var(--border-soft); }
+.visited-tab.on { background: var(--accent); color: white; }
+.visited-headline { font-size: 13.5px; color: var(--ink-muted); margin: 10px 0 8px; }
+.visited-headline strong { font-size: 20px; color: var(--ink); margin: 0 2px; }
+.visited-map { display: flex; justify-content: center; padding: 6px 0; }
+.visited-svg { width: 100%; max-width: 340px; height: auto; }
+.visited-region { fill: var(--border-soft); stroke: var(--card); stroke-width: .75; }
+.visited-region.is-visited { fill: var(--accent); cursor: pointer; }
+.visited-region.is-visited.on { fill: var(--accent-deep); stroke: var(--ink); stroke-width: 1.25; }
+.visited-caption { margin: 4px 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft-bg); }
+.visited-caption-name { font-size: 13.5px; font-weight: 700; color: var(--accent-deep); }
+.visited-caption-trips { font-size: 12px; color: var(--ink-muted); margin-top: 3px; }
+.visited-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.visited-row { display: flex; flex-direction: column; gap: 2px; padding: 10px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+.visited-row:last-child { border-bottom: none; }
+.visited-row.on { background: var(--accent-soft-bg); border-radius: 10px; }
+.visited-row-name { font-size: 13.5px; font-weight: 700; }
+.visited-row-trips { font-size: 11.5px; color: var(--ink-muted); }
+.visited-credit { margin-top: 10px; font-size: 10.5px; }
 
 /* 参加した旅行カードの中の「訪れた場所」チップ（2026-09-28〜、旧「旅行ごとの訪れた場所」
    セクションをカード内へ統合）。チップ内に「外す／戻す」ボタンを持つ。外しても消さず、
