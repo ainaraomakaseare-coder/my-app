@@ -2099,6 +2099,196 @@
     };
   }
 
+  // ---------- 自分のAIで整理（JSON貼り付け）（docs/adr/0015） ----------
+  // 「音声・メモでまとめて記録する」の3つ目の入り口。ユーザーが自分のAI（ChatGPT・Claude・
+  // Geminiなど）にbuildAiImportPromptの文面＋自分のメモを渡し、返ってきたJSONをここで
+  // 読み取る。サーバー側の有料AI（voiceBlocksSchema/multiDayBlocksSchema、
+  // worker/src/index.js）と同じBlockの形（date・time・label・category・transport・
+  // entry{episode,mapUrl,shopUrl,costItems}）を受け付け、/trips/:id/memo-blocksという
+  // 既存のAIなし取り込みエンドポイントにそのまま渡せるようにする（新しいエンドポイントは作らない）。
+  var IMPORT_MAX_BLOCKS = 100; // worker側のMEMO_MAX_BLOCKSと合わせる
+  var IMPORT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+  // AIの答えは「```json ... ```で囲む」「前後に説明文を付ける」など、指示してもよく起きる。
+  // 文字列の中の { } は数えないよう、クォート・エスケープを見ながら最初に見つかった
+  // { または [ に対応する閉じカッコまでを取り出す（一番外側のJSON本体だけを拾う）。
+  function extractOutermostJson(text) {
+    var s = String(text || '')
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'");
+    var fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
+    if (fence) s = fence[1];
+    var startObj = s.indexOf('{'), startArr = s.indexOf('[');
+    var start = -1, openCh = '', closeCh = '';
+    if (startObj === -1 && startArr === -1) return null;
+    if (startArr === -1 || (startObj !== -1 && startObj < startArr)) { start = startObj; openCh = '{'; closeCh = '}'; }
+    else { start = startArr; openCh = '['; closeCh = ']'; }
+    var depth = 0, inStr = false, esc = false, end = -1;
+    for (var i = start; i < s.length; i++) {
+      var c = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; continue; }
+      if (c === openCh) depth++;
+      else if (c === closeCh) { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end === -1) return null;
+    try { return JSON.parse(s.slice(start, end + 1)); } catch (e) { return null; }
+  }
+
+  // trip: {startDate, endDate}。複数日の旅行はBlockごとにdateが旅行期間内であることを必須にし、
+  // 1日（または日程未設定）の旅行はdateを省略できる（そのときは選択中の日をそのまま使う）。
+  // 戻り値のblocksは、そのまま/trips/:id/memo-blocksに渡せる形。warningsは取り込みはしたが
+  // 補正した項目、errorsは取り込めずに省いた項目（件数分の理由つき）。
+  function parseImportedBlocksJson(text, trip) {
+    var payload = extractOutermostJson(text);
+    if (payload === null || payload === undefined) {
+      return { blocks: [], warnings: [], errors: ['JSONを読み取れませんでした。AIの答え全体をそのまま貼り付けてください。'] };
+    }
+    var rawBlocks = Array.isArray(payload) ? payload
+      : (payload && typeof payload === 'object' && Array.isArray(payload.blocks)) ? payload.blocks : null;
+    if (!rawBlocks) return { blocks: [], warnings: [], errors: ['blocksの配列が見つかりませんでした。'] };
+    if (!rawBlocks.length) return { blocks: [], warnings: [], errors: ['予定が1件も見つかりませんでした。'] };
+    if (rawBlocks.length > IMPORT_MAX_BLOCKS) {
+      return { blocks: [], warnings: [], errors: ['予定が多すぎます（' + IMPORT_MAX_BLOCKS + '件まで）。日を分けて取り込んでください。'] };
+    }
+
+    var tripDates = allDatesForTrip(trip, []).filter(function (d) { return d; });
+    var multiDay = tripDates.length > 1;
+    var defaultDate = (trip && trip.selectedDate) || tripDates[0] || '';
+    var blocks = [], warnings = [], errors = [];
+
+    rawBlocks.forEach(function (raw, i) {
+      var n = i + 1;
+      if (!raw || typeof raw !== 'object') { errors.push(n + '件目：形が正しくありません（オブジェクトではありません）。'); return; }
+      var label = typeof raw.label === 'string' ? raw.label.trim().slice(0, 200) : '';
+      if (!label) { errors.push(n + '件目：labelがありません。'); return; }
+
+      var date = defaultDate;
+      if (multiDay) {
+        var d = typeof raw.date === 'string' ? raw.date.trim() : '';
+        if (!d || tripDates.indexOf(d) === -1) {
+          errors.push(n + '件目「' + label + '」：dateが旅行期間内にありません（' + (d || '(空)') + '）。');
+          return;
+        }
+        date = d;
+      } else if (typeof raw.date === 'string' && raw.date && tripDates.indexOf(raw.date) !== -1) {
+        date = raw.date;
+      }
+
+      var category = CATEGORIES.some(function (c) { return c.key === raw.category; }) ? raw.category : '';
+      if (!category) {
+        warnings.push(n + '件目「' + label + '」：categoryが不明のため「その他」にしました。');
+        category = 'other';
+      }
+
+      var transport = '';
+      if (typeof raw.transport === 'string' && raw.transport) {
+        if (TRANSPORTS.some(function (t) { return t.key === raw.transport; })) transport = raw.transport;
+        else warnings.push(n + '件目「' + label + '」：transportが不明のため空にしました。');
+      }
+
+      var time = '';
+      if (typeof raw.time === 'string' && raw.time && IMPORT_TIME_RE.test(raw.time)) time = raw.time;
+      else if (raw.time) warnings.push(n + '件目「' + label + '」：timeの形式が正しくないため空にしました。');
+
+      var entryData = (raw.entry && typeof raw.entry === 'object') ? raw.entry : {};
+      var episode = typeof entryData.episode === 'string' ? entryData.episode.trim().slice(0, 4000) : '';
+      var mapUrl = typeof entryData.mapUrl === 'string' ? entryData.mapUrl.trim().slice(0, 500) : '';
+      var shopUrl = typeof entryData.shopUrl === 'string' ? entryData.shopUrl.trim().slice(0, 500) : '';
+
+      var costItems = [];
+      if (Array.isArray(entryData.costItems)) {
+        entryData.costItems.forEach(function (ci, ci_i) {
+          if (!ci || typeof ci !== 'object') return;
+          var ciLabel = typeof ci.label === 'string' ? ci.label.trim().slice(0, 60) : '';
+          var amount = ci.amount;
+          if (!ciLabel || typeof amount !== 'number' || !isFinite(amount) || amount < 0) {
+            warnings.push(n + '件目「' + label + '」：費用の内訳' + (ci_i + 1) + '件目を読み取れなかったので省きました。');
+            return;
+          }
+          var item = { label: ciLabel, amount: amount };
+          if (typeof ci.currency === 'string' && ci.currency.trim() && ci.currency.trim().toUpperCase() !== 'JPY') {
+            if (/^[A-Za-z]{3}$/.test(ci.currency.trim())) {
+              item.currency = ci.currency.trim().toUpperCase();
+              item.amount = Math.round(amount * 100) / 100;
+            } else {
+              warnings.push(n + '件目「' + label + '」：通貨コードが不明のため円として扱いました。');
+              item.amount = Math.round(amount);
+            }
+          } else {
+            item.amount = Math.round(amount);
+          }
+          costItems.push(item);
+        });
+      }
+
+      blocks.push({
+        date: date, time: time, label: label, category: category, transport: transport,
+        entry: { episode: episode, mapUrl: mapUrl, shopUrl: shopUrl, costItems: costItems }
+      });
+    });
+
+    return { blocks: blocks, warnings: warnings, errors: errors };
+  }
+
+  // 「AIへのお願い文をコピー」で使う文面。サーバー側のvoicePrompt/multiDayPrompt
+  // （worker/src/index.js）と同じ制約をユーザーの手元のAIに伝え、返ってきたJSONを
+  // parseImportedBlocksJsonでそのまま読めるようにする。
+  function buildAiImportPrompt(trip) {
+    var tripDates = allDatesForTrip(trip, []).filter(function (d) { return d; });
+    var multiDay = tripDates.length > 1;
+    var rangeText = (trip && trip.startDate)
+      ? (trip.startDate + (trip.endDate && trip.endDate !== trip.startDate ? '〜' + trip.endDate : ''))
+      : '（未設定）';
+    var categoryList = CATEGORIES.map(function (c) { return c.key + '（' + c.label + '）'; }).join(' / ');
+    var transportList = TRANSPORTS.filter(function (t) { return t.key; }).map(function (t) { return t.key + '（' + t.label + '）'; }).join(' / ');
+    var example = { blocks: [ Object.assign(
+      multiDay ? { date: tripDates[0] || 'YYYY-MM-DD' } : {},
+      {
+        time: '10:00',
+        label: '東京駅',
+        category: 'transport',
+        transport: 'shinkansen',
+        entry: {
+          episode: '新幹線で移動した',
+          mapUrl: '',
+          shopUrl: '',
+          costItems: [ { label: '新幹線代', amount: 14000 }, { label: 'お土産', amount: 12.5, currency: 'USD' } ]
+        }
+      }
+    ) ] };
+    var lines = [
+      'あなたは旅行記録アプリ「旅の足跡」のアシスタントです。下に貼る旅のメモを読んで、予定（Block）とその記録（Entry）の配列に分けてください。',
+      '',
+      'この旅行の日程：' + rangeText,
+      multiDay
+        ? ('複数日の旅行です。各予定のdateには、その出来事があった日をYYYY-MM-DD形式で必ず入れてください（' + tripDates.join('、') + 'のいずれか）。')
+        : '1日（または日程未設定）の旅行なので、dateは省略してかまいません。',
+      '',
+      '出力はJSONのみにしてください。前置きや説明・コードブロック（```）は付けず、次の形だけを出してください（あくまで形の例です。内容はメモに合わせて考えてください）：',
+      '',
+      JSON.stringify(example, null, 2),
+      '',
+      'ルール：',
+      '- categoryは次のいずれか一つだけ：' + categoryList,
+      '- transportは移動手段がはっきり分かるときだけ次のいずれかを入れ、分からなければ空文字（""）にする：' + transportList,
+      '- timeは24時間表記の"HH:MM"（例："09:30"）。はっきりしなければ空文字（""）にする（推測で作らない）',
+      '- entry.costItemsは、具体的な金額が書かれているものだけ配列で入れる（無ければ空配列[]）。amountは円の整数（小数点なし）。海外通貨で書かれているときだけcurrency（ISO 4217、例："USD"）を付け、amountはその通貨での金額（例：12.5）にする',
+      '- entry.episodeには、メモの内容をもとにした説明を書く（メモに書かれていないことを推測で付け足さない）',
+      '- labelは短い見出し（体言止め）にする',
+      '- 書かれた順番のとおりに配列を並べる',
+      '',
+      '旅のメモ：',
+      '（ここに旅のメモを貼ってください）'
+    ];
+    return lines.join('\n');
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
     TRANSPORTS: TRANSPORTS,
@@ -2171,6 +2361,8 @@
     gentleCurvePath: gentleCurvePath,
     legMoveSeconds: legMoveSeconds,
     parseMemo: parseMemo,
+    parseImportedBlocksJson: parseImportedBlocksJson,
+    buildAiImportPrompt: buildAiImportPrompt,
     transportLabel: transportLabel,
     minutesText: minutesText,
     replayDayStarts: replayDayStarts,
@@ -3874,6 +4066,12 @@
     $('#btnCreateTextEntries').disabled = false;
     $('#btnOrganizeMemoAi').disabled = false;
     $('#textEntryStatus').textContent = '';
+    $('#importJsonInput').value = '';
+    $('#importJsonStatus').textContent = '';
+    $('#importPreview').hidden = true;
+    $('#importPreview').innerHTML = '';
+    $('#btnImportJson').disabled = false;
+    state.pendingImportBlocks = null;
     $('#voicePremiumRequired').hidden = true;
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
@@ -4056,6 +4254,99 @@
       else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = '失敗しました。もう一度お試しください。';
     });
+  }
+
+  // ---------- 自分のAIで整理（JSON貼り付け）（docs/adr/0015） ----------
+  // 「AIへのお願い文をコピー」：クリップボードに書き込めない環境（一部のWebView等）では、
+  // 隠しテキストエリアを選択状態にしてdocument.execCommand('copy')にフォールバックする
+  // （copyShareLink・showZoneDiagnosticsと同じやり方）。
+  function copyAiImportPrompt() {
+    if (!state.trip) return;
+    var text = Core.buildAiImportPrompt(state.trip);
+    var done = function () { showToast('お願い文をコピーしました'); };
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); }
+      catch (e) { alert('コピーできませんでした。表示された文章を選んでコピーしてください。\n\n' + text); }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  // 「取り込む」：まずCore.parseImportedBlocksJsonで読み取ってプレビューを見せるだけにし、
+  // 実際にBlock/Entryを作るのは確認後（confirmImportJsonBlocks）にする。ログイン・AIの回数と
+  // 無関係に使えるよう、既存のAIなし取り込みエンドポイント（/trips/:id/memo-blocks）だけを使う。
+  function handleImportJson() {
+    var text = $('#importJsonInput').value.trim();
+    if (!text) { $('#importJsonStatus').textContent = '先にAIの答え（JSON）を貼り付けてください。'; return; }
+    var result = Core.parseImportedBlocksJson(text, state.trip);
+    renderImportPreview(result);
+  }
+
+  function renderImportPreview(result) {
+    var el = $('#importPreview');
+    if (!result.blocks.length) {
+      state.pendingImportBlocks = null;
+      el.hidden = true;
+      el.innerHTML = '';
+      $('#importJsonStatus').textContent = '取り込めませんでした：' + (result.errors[0] || '内容を確認してください。');
+      return;
+    }
+    state.pendingImportBlocks = result.blocks;
+    $('#importJsonStatus').textContent = '';
+    var rows = result.blocks.map(function (b) {
+      var costText = (b.entry.costItems || []).map(function (ci) {
+        return ci.currency ? (ci.currency + ' ' + ci.amount) : Core.formatYen(ci.amount);
+      }).join('・');
+      return '<li>' + (b.time ? '<strong>' + escapeHtml(b.time) + '</strong> ' : '')
+        + escapeHtml(b.label) + '（' + escapeHtml(Core.categoryLabel(b.category)) + '）'
+        + (costText ? ' ' + escapeHtml(costText) : '') + '</li>';
+    }).join('');
+    var warnings = result.warnings.length
+      ? '<p class="hint">' + result.warnings.map(escapeHtml).join('<br>') + '</p>' : '';
+    var errors = result.errors.length
+      ? '<p class="hint">省いた項目：<br>' + result.errors.map(escapeHtml).join('<br>') + '</p>' : '';
+    el.innerHTML = '<p class="hint">この内容で作ります（' + result.blocks.length + '件）：</p>'
+      + '<ul class="import-preview-list">' + rows + '</ul>'
+      + warnings + errors
+      + '<button class="btn primary wide" id="btnConfirmImportJson" type="button">この内容で取り込む</button>';
+    el.hidden = false;
+    $('#btnConfirmImportJson').addEventListener('click', confirmImportJsonBlocks);
+  }
+
+  function confirmImportJsonBlocks() {
+    var blocks = state.pendingImportBlocks;
+    if (!blocks || !blocks.length || !state.trip) return;
+    var user = loadCurrentUser();
+    $('#btnImportJson').disabled = true;
+    $('#importJsonStatus').textContent = 'AIを使わずに取り込んでいます…（無料）';
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/memo-blocks', 'POST', { blocks: blocks, author: (user && user.name) || '' })
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        $('#btnImportJson').disabled = false;
+        if (blocks[0] && blocks[0].date) state.selectedDate = blocks[0].date;
+        $('#importJsonInput').value = '';
+        $('#importPreview').hidden = true;
+        $('#importPreview').innerHTML = '';
+        state.pendingImportBlocks = null;
+        showScreen('tripDetail');
+        renderTripDetail();
+        showToast('取り込みました');
+      })
+      .catch(function () {
+        $('#btnImportJson').disabled = false;
+        $('#importJsonStatus').textContent = '取り込みに失敗しました。もう一度お試しください。';
+      });
   }
 
   function renderDayTabs() {
@@ -7468,6 +7759,8 @@
     $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
     $('#btnCreateTextEntries').addEventListener('click', handleCreateTextEntries);
     $('#btnOrganizeMemoAi').addEventListener('click', function () { organizeMemoWithAi(); });
+    $('#btnCopyAiPrompt').addEventListener('click', copyAiImportPrompt);
+    $('#btnImportJson').addEventListener('click', handleImportJson);
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);

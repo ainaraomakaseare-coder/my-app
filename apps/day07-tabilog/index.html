@@ -232,6 +232,22 @@
         <button class="btn text memo-ai-btn" id="btnOrganizeMemoAi" type="button">形が崩れていてうまく分かれないときは → AIで整理する</button>
         <p class="hint" id="memoAiInfo"></p>
         <p class="hint" id="textEntryStatus"></p>
+
+        <div class="or-divider">または</div>
+
+        <!-- 「自分のAIで整理して貼り付ける（無料）」（docs/adr/0015）：ChatGPT・Claude・Geminiなど
+             自分のAIにapp.jsのCore.buildAiImportPromptの文面＋自分のメモを渡し、返ってきたJSONを
+             貼り付ける。ログインも運営側の月10回の枠も使わない（Core.parseImportedBlocksJsonで
+             読み取り、既存の/trips/:id/memo-blocksにそのまま渡すだけのため）。 -->
+        <div class="field">
+          <p class="hint">自分のAI（ChatGPT・Claude・Geminiなど）に整理してもらってから貼り付けます。ログイン不要・無料・回数の上限なし。</p>
+          <button class="btn ghost wide" id="btnCopyAiPrompt" type="button">AIへのお願い文をコピー</button>
+          <label for="importJsonInput">AIの答え（JSON）を貼り付け</label>
+          <textarea id="importJsonInput" rows="8" placeholder='{"blocks": [...]}'></textarea>
+        </div>
+        <button class="btn primary wide" id="btnImportJson" type="button">取り込む</button>
+        <p class="hint" id="importJsonStatus"></p>
+        <div id="importPreview" hidden></div>
       </div>
     </div>
   </section>

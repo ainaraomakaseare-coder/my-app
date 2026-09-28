@@ -1335,5 +1335,63 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   });
 })();
 
+/* ---- 自分のAIで整理（JSON貼り付け）：parseImportedBlocksJson（docs/adr/0015） ---- */
+(function () {
+  var oneDayTrip = { startDate: '2026-04-01', endDate: '2026-04-01' };
+  var multiDayTrip = { startDate: '2026-04-01', endDate: '2026-04-03' };
+
+  // ```json ... ``` で囲まれていても読み取れる
+  var fenced = T.parseImportedBlocksJson(
+    '前置きの説明です。\n```json\n{"blocks":[{"time":"10:00","label":"東京駅","category":"transport","entry":{"episode":"新幹線で移動した"}}]}\n```\nよろしくお願いします。',
+    oneDayTrip
+  );
+  eq('parseImportedBlocksJson: コードフェンス付きでも読める', [fenced.errors.length, fenced.blocks.length, fenced.blocks[0] && fenced.blocks[0].label], [0, 1, '東京駅']);
+
+  // 一番外側の配列だけを渡された（{blocks:...}で包まれていない）
+  var bare = T.parseImportedBlocksJson('[{"label":"清水寺","category":"sightseeing","time":"","entry":{"episode":"拝観した"}}]', oneDayTrip);
+  eq('parseImportedBlocksJson: bareな配列も受け付ける', [bare.errors.length, bare.blocks.length, bare.blocks[0].label], [0, 1, '清水寺']);
+
+  // 前後に説明文（プロース）が付いていても、外側のJSONだけ取り出す
+  var withProse = T.parseImportedBlocksJson(
+    'はい、JSONにまとめました：\n\n{"blocks":[{"label":"ホテル到着","category":"lodging","entry":{"episode":"チェックインした"}}]}\n\n何か他にありますか？',
+    oneDayTrip
+  );
+  eq('parseImportedBlocksJson: 前後にプロースがあっても読める', [withProse.errors.length, withProse.blocks.length, withProse.blocks[0].label], [0, 1, 'ホテル到着']);
+
+  // 不明なcategoryは'other'にフォールバックし、警告を出す
+  var badCategory = T.parseImportedBlocksJson('{"blocks":[{"label":"謎の予定","category":"nazo","entry":{"episode":""}}]}', oneDayTrip);
+  eq('parseImportedBlocksJson: 不明なcategoryはotherにフォールバック', badCategory.blocks[0].category, 'other');
+  ok('parseImportedBlocksJson: categoryフォールバックの警告がある', badCategory.warnings.length === 1);
+
+  // 複数日の旅行で、旅行期間外のdateはエラーとして省かれる（他の正しい項目は取り込まれる）
+  var badDateMulti = T.parseImportedBlocksJson(
+    '{"blocks":[' +
+      '{"date":"2026-04-02","label":"良い予定","category":"sightseeing","entry":{"episode":""}},' +
+      '{"date":"2026-05-01","label":"期間外の予定","category":"sightseeing","entry":{"episode":""}}' +
+    ']}',
+    multiDayTrip
+  );
+  eq('parseImportedBlocksJson: 複数日でdateが旅行期間内なら取り込む', [badDateMulti.blocks.length, badDateMulti.blocks[0].label, badDateMulti.blocks[0].date], [1, '良い予定', '2026-04-02']);
+  eq('parseImportedBlocksJson: 複数日でdateが期間外ならその項目だけエラーで省く', badDateMulti.errors.length, 1);
+
+  // 複数日で、dateが無い項目もエラー
+  var missingDateMulti = T.parseImportedBlocksJson('{"blocks":[{"label":"日付なし","category":"sightseeing","entry":{"episode":""}}]}', multiDayTrip);
+  eq('parseImportedBlocksJson: 複数日でdateが無ければエラー', [missingDateMulti.blocks.length, missingDateMulti.errors.length], [0, 1]);
+
+  // 海外通貨のcostItemはcurrency付きでそのまま残る
+  var foreignCost = T.parseImportedBlocksJson(
+    '{"blocks":[{"label":"お土産","category":"other","entry":{"episode":"","costItems":[{"label":"置物","amount":12.5,"currency":"usd"},{"label":"入場料","amount":800}]}}]}',
+    oneDayTrip
+  );
+  eq('parseImportedBlocksJson: 海外通貨のcostItemはcurrency（大文字化）付きで残る', foreignCost.blocks[0].entry.costItems,
+    [{ label: '置物', amount: 12.5, currency: 'USD' }, { label: '入場料', amount: 800 }]);
+
+  // 空文字・ゴミ文字列（JSONが見つからない）はエラー
+  var empty = T.parseImportedBlocksJson('', oneDayTrip);
+  ok('parseImportedBlocksJson: 空文字はエラー', empty.errors.length === 1 && empty.blocks.length === 0);
+  var garbage = T.parseImportedBlocksJson('これは予定の話し合いのメモで、JSONではありません。', oneDayTrip);
+  ok('parseImportedBlocksJson: JSONが無ければエラー', garbage.errors.length === 1 && garbage.blocks.length === 0);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

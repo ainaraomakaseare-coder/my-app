@@ -3138,16 +3138,33 @@ async function saveOrganizedBlocks(env, tripId, dateOrDates, blocksData, author)
     if (!date) continue;
     const category = CATEGORIES.includes(b.category) ? b.category : "sightseeing";
     const time = isStr(b.time, 5) && TIME_RE.test(b.time) ? b.time : "";
+    // transport（DAY32〜、自分のAIで整理JSON貼り付け）：voiceBlocksSchemaはOpenAIには
+    // 求めていない項目だが、ユーザーが自分のAIに整理させたJSON（Core.parseImportedBlocksJson）
+    // にはtransportが入ってくることがあるため、ここで受けて保存する（不正な値は空扱い）。
+    const transport = typeof b.transport === "string" && TRANSPORTS.includes(b.transport) ? b.transport : "";
     const t = new Date(baseTime + i * 10).toISOString(); // 話した順番で安定して並ぶよう少しずつずらす
 
-    const blockRow = { id: uid("blk"), trip_id: tripId, date, time, label, category, created_at: t, updated_at: t };
+    const blockRow = { id: uid("blk"), trip_id: tripId, date, time, label, category, transport, created_at: t, updated_at: t };
     const entryData = (b.entry && typeof b.entry === "object") ? b.entry : {};
     const episode = isStr(entryData.episode, 4000) ? entryData.episode.trim() : "";
     const mapUrl = optUrl(entryData.mapUrl, 500) ? (entryData.mapUrl || "") : "";
     const shopUrl = optUrl(entryData.shopUrl, 500) ? (entryData.shopUrl || "") : "";
+    // costItems（DAY32〜、自分のAIで整理JSON貼り付け）：手入力の費用（validCostItems）と違い
+    // rate（外貨レート）までは自分のAIに求めないため、rate無しでもcurrency付きの行を受け付ける
+    // （円換算はcostItemJpyがrate未設定時は0扱いにするだけで、金額そのものは失われない）。
+    const costItems = Array.isArray(entryData.costItems)
+      ? entryData.costItems
+          .filter((c) => c && isStr(c.label, 60) && Number.isFinite(c.amount) && c.amount >= 0 && c.amount <= 1000000)
+          .slice(0, 30)
+          .map((c) => {
+            const item = { label: c.label.trim(), amount: c.amount };
+            if (isValidCurrency(c.currency)) item.currency = c.currency;
+            return item;
+          })
+      : [];
     const entryRow = {
       id: uid("ent"), block_id: blockRow.id, episode, comment: "", detail: "",
-      photo_ids: "[]", video_ids: "[]", cost_items: "[]", wait_time: "",
+      photo_ids: "[]", video_ids: "[]", cost_items: JSON.stringify(costItems), wait_time: "",
       map_url: mapUrl, shop_url: shopUrl, author, created_at: t, updated_at: t,
     };
     // Block本体とその記録（entry）を1つのバッチ（D1のトランザクション）にまとめる。
@@ -3156,8 +3173,8 @@ async function saveOrganizedBlocks(env, tripId, dateOrDates, blocksData, author)
     // （2026-09-15、実際にこの状態で複数件の記録が失われる事故があった）。
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
-      ).bind(blockRow.id, blockRow.trip_id, blockRow.date, blockRow.time, blockRow.label, blockRow.category, blockRow.created_at, blockRow.updated_at),
+        "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+      ).bind(blockRow.id, blockRow.trip_id, blockRow.date, blockRow.time, blockRow.label, blockRow.category, blockRow.transport, blockRow.created_at, blockRow.updated_at),
       env.DB.prepare(
         `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
