@@ -2543,6 +2543,7 @@
   var MY_TRIPS_KEY = 'tabilog:my-trips';
   var HIDDEN_TRIPS_KEY = 'tabilog:hidden-trips';
   var CURRENT_USER_KEY = 'tabilog:user';
+  var MYLOG_FILTERS_KEY = 'tabilog:mylog-filters';
 
   function $(sel, root2) { return (root2 || document).querySelector(sel); }
   function $all(sel, root2) { return Array.prototype.slice.call((root2 || document).querySelectorAll(sel)); }
@@ -2636,6 +2637,18 @@
   }
   function saveHiddenTripIds(ids) {
     localStorage.setItem(HIDDEN_TRIPS_KEY, JSON.stringify(ids));
+  }
+
+  // マイログ「参加した旅行」の絞り込み・並び順（ホーム画面のCore.filterTrips/sortTripsを再利用）。
+  // ホーム画面側の絞り込みは画面を離れると消えるが、こちらは見る人ごとに端末へ覚えておく。
+  function loadMylogFilters() {
+    try {
+      var v = JSON.parse(localStorage.getItem(MYLOG_FILTERS_KEY) || 'null');
+      return v && typeof v === 'object' ? { companion: v.companion || '', year: v.year || '', sort: v.sort || '' } : { companion: '', year: '', sort: '' };
+    } catch (e) { return { companion: '', year: '', sort: '' }; }
+  }
+  function saveMylogFilters(f) {
+    try { localStorage.setItem(MYLOG_FILTERS_KEY, JSON.stringify(f)); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
   function hideTripFromHistory() {
     if (!state.trip) return;
@@ -3187,6 +3200,7 @@
     myLogItems: [],
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [], tripPlaces: [] },
+    mylogFilters: loadMylogFilters(), // マイログ「参加した旅行」の絞り込み（誰と一緒か・年）・並び順。端末に記憶する
     visitedTab: 'domestic',   // 「行ったことある旅先」の選択中タブ（domestic|overseas）
     visitedSel: null,          // 「行ったことある旅先」で選んだ場所（{kind, name}）。地図・一覧の両方をハイライトする
     homeFilters: { companion: '', year: '', tripType: '', sort: '' },
@@ -6677,6 +6691,7 @@
         if (k.indexOf('tabilog:') === 0) localStorage.removeItem(k);
       });
       state.homeFilters = { companion: '', year: '', tripType: '', sort: '' };
+      state.mylogFilters = { companion: '', year: '', sort: '' };
       renderAccountRow();
       alert('アカウントを削除しました。');
       goHome();
@@ -6743,11 +6758,35 @@
   // ため、前は別セクション「旅行ごとの訪れた場所」に分けていたのを2026-09-28にここへ統合した）。
   // チップの「外す」「戻す」はカード自体を開く操作とぶつからないよう、カードはボタンではなく
   // クリック／キー操作を自前で処理するdivにし、チップ側のクリックはstopPropagationで止める。
+  // 誰と一緒か・年の絞り込み欄の選択肢を、実際に参加した旅行データから作り直す（ホーム画面の
+  // renderTripFilterOptionsと同じ考え方・同じCore.tripFilterOptionsを使い回す。旅行区分は対象外）。
+  function renderMyLogTripFilterOptions(allTrips) {
+    var opts = Core.tripFilterOptions(allTrips);
+    var f = state.mylogFilters;
+    $('#mylogFilterCompanion').innerHTML = '<option value="">誰と一緒か：すべて</option>' +
+      opts.companions.map(function (c) {
+        return '<option value="' + escapeHtml(c) + '"' + (f.companion === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+      }).join('');
+    $('#mylogFilterYear').innerHTML = '<option value="">年：すべて</option>' +
+      opts.years.map(function (y) {
+        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + escapeHtml(y) + '年</option>';
+      }).join('');
+  }
+
   function renderMyLogTrips() {
     var el = $('#mylogTripList');
-    var trips = state.myLogTrips || [];
-    if (!trips.length) {
+    var allTrips = state.myLogTrips || [];
+    $('#mylogTripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない（ホーム画面と同じ基準）
+    if (allTrips.length >= 2) renderMyLogTripFilterOptions(allTrips);
+    if (!allTrips.length) {
       el.innerHTML = '<div class="empty">まだ参加した旅行がありません。旅行のページで「参加する」を押すとここに表示されます。</div>';
+      return;
+    }
+    // 絞り込み・並び順は表示する一覧だけに効く（「行ったことある旅先」の総計は全旅行のまま変わらない）
+    var trips = Core.sortTrips(Core.filterTrips(allTrips, state.mylogFilters), state.mylogFilters.sort);
+    $('#mylogSortTripOrder').value = state.mylogFilters.sort;
+    if (!trips.length) {
+      el.innerHTML = '<div class="empty">条件に一致する旅行がありません。</div>';
       return;
     }
     var placesByTrip = {};
@@ -7976,6 +8015,16 @@
     $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
     $('#sortTripOrder').addEventListener('change', function (e) { state.homeFilters.sort = e.target.value; renderHomeTripList(); });
+
+    $('#mylogFilterCompanion').addEventListener('change', function (e) {
+      state.mylogFilters.companion = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
+    });
+    $('#mylogFilterYear').addEventListener('change', function (e) {
+      state.mylogFilters.year = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
+    });
+    $('#mylogSortTripOrder').addEventListener('change', function (e) {
+      state.mylogFilters.sort = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
+    });
     $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);

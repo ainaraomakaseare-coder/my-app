@@ -681,6 +681,15 @@
         <div class="section-title">参加した旅行</div>
       </div>
       <p class="hint">場所は記録の地図から自動で集計します。違う場所は「外す」でいつでも外せます（「戻す」で元に戻せます）。</p>
+      <div class="trip-filters" id="mylogTripFilters" hidden>
+        <select id="mylogFilterCompanion"><option value="">誰と一緒か：すべて</option></select>
+        <select id="mylogFilterYear"><option value="">年：すべて</option></select>
+        <select id="mylogSortTripOrder">
+          <option value="">並び順：参加した順</option>
+          <option value="date_desc">並び順：日程が新しい順</option>
+          <option value="date_asc">並び順：日程が古い順</option>
+        </select>
+      </div>
       <div class="trip-list" id="mylogTripList"></div>
 
       <div class="section-label">
