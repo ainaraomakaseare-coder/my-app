@@ -447,4 +447,39 @@ JSON文字列なので、新しいフィールドを持つcostItemもそのま�
     キャッシュキー計算は純粋関数として`src/rates.js`に切り出し、nodeで単体テストできる
     （`node worker/test/rates.test.mjs`）。
 - レートは、フォームで本人が編集できる（カード会社の実際の決済レートに合わせられるように）。
+
+## マイログ「訪れた都道府県・国」を旅行ごとに外す・戻す（2026-09-28 追加）
+
+TestFlightのフィードバックで、「アメリカ」をブラジル・アルゼンチン旅行のマイログから外すつもりで
+「マイログから外す」を押したら、別の旅行（ワールドカップ・大谷観戦旅）のアメリカも一緒に消えてしまい、
+戻す方法も無いという指摘があった。原因は`mylog_place_overrides`（v23）がアカウント単位（旅行をまたいだ
+グローバル）にhide/showを持っていたこと。旅行単位の表に作り直した。
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS mylog_trip_place_overrides (account_id TEXT NOT NULL, trip_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (account_id, trip_id, kind, name))"
+```
+
+（`--file migrations/0024_...sql`でのインポートは認証エラーになったため、`--command`形式を使った。
+同じSQLは`migrations/0024_mylog_trip_place_overrides.sql`にも置いてある。）
+
+- `mylog_trip_place_overrides(account_id, trip_id, kind, name, created_at)`：ある旅行から、ある場所を
+  「外した」という記録だけを持つ（v23と違い`mode`は無い＝外すことしかできない。戻すのは行を消すだけ）。
+- `worker/src/visited-places.js`の`aggregateVisitedPlaces`は、`overrides`（v23・グローバル）ではなく
+  `tripOverrides: [{ tripId, kind, name }]`を受け取るようになった。ある場所は「出てくる全部の旅行で
+  外されている」ときだけ総計（`prefectures`/`countries`）から落ちる。旅行ごとの一覧を
+  `tripPlaces: [{ tripId, tripTitle, prefectures: [{name, excluded}], countries: [{name, excluded}] }]`
+  として新しく返す（乗り継ぎだけの場所は含めない）。
+- **v23の`mylog_place_overrides`テーブル・`POST /mylog/places`エンドポイントは削除していない**（古い
+  アプリがまだ呼ぶ可能性があるため）。ただし`getVisitedPlaces`はこのテーブルをもう読まない＝
+  書き込みはエラーにならず成功するが、マイログの集計には一切反映されない（旧版で「外した」つもりの
+  場所は再び表示される。docs/adr/0016）。
+- 新しいエンドポイント`POST /mylog/trip-places`（`{ email, tripId, kind, name, mode: 'exclude'|'include' }`）
+  で旅行ごとに外す・戻す。認証は既存のマイログ系エンドポイントと同じ`resolveEmail`。アカウントがそのマイログの
+  持ち主であること、指定した`tripId`がそのアカウントの参加旅行（`trip_members`）であることを確認する。
+- UI（`app.js`）：マイログ画面の「訪れた都道府県・国」は総計のまま残しつつ、その上に旅行ごとの一覧
+  （`renderMyLogTripPlaces`）を追加した。旅行ごとのチップに「外す」ボタンがあり、外すとチップは
+  灰色になり「戻す」ボタンに変わる（消えない＝いつでも戻せる）。総計側からグローバルな
+  「マイログから外す」ボタンは削除した。
+- `node worker/test/visited-places.test.mjs`に、片方の旅行だけ外しても総計に残ること・両方の旅行で
+  外すと総計から落ちること・戻す（overrideを外す）と元の結果に一致することのテストを追加した。
   一度取得・入力した`rate`はアプリ側で覚えておき、通貨を変えない限り取り直さない。

@@ -8,8 +8,13 @@
  *   → canonicalCountry で1つの名前にまとめる
  * - 乗り継ぎで空港にいただけの国が数えられる（中国など）
  *   → その日の場所が「移動の予定」（空港・乗り継ぎ）の地図から入ったものなら数えない
- * - それでも間違っている国は、本人が外せる（mylog_place_overrides の mode='hide'）。
- *   乗り継ぎと判定した国を、逆に数えることもできる（mode='show'）
+ * - それでも間違っている場所は、本人が旅行ごとに外せる（mylog_trip_place_overrides。2026-09-28〜）。
+ *   例：東京都を含む2つの旅行のうち片方だけから東京都を外す、といった旅行単位の操作。
+ *   総計（prefectures/countries）は「その場所が出てくる全部の旅行で外されている」ときだけ落ちる
+ *   （どれか1つの旅行で数えていれば、総計には残る）。
+ *   旧版（mylog_place_overrides、アカウント全体でhide/show）は、片方の旅行だけから外したくても
+ *   全部の旅行から消えてしまう不具合があったため廃止。テーブル・APIは残すが、この集計では使わない
+ *   （docs/adr/0016）。
  */
 
 // [まとめた後の名前, ...別名]。完全一致（前後の空白を除き、NFKC正規化したあと）で引く
@@ -105,13 +110,18 @@ const NEAR = 0.0005; // 自動で入れた場所は、予定の地図の座標�
  * blocks:  [{ id, tripId, date, category, label }]
  * coords:  { [blockId]: [{ lat, lng }] }  予定の地図の座標（記録ごと）
  * trips:   { [tripId]: title }
- * overrides: [{ kind: 'country'|'prefecture', name, mode: 'hide'|'show' }]
+ * tripOverrides: [{ tripId, kind: 'country'|'prefecture', name }]  その旅行から外した場所（外すことだけができる）
  *
- * 返り値: { prefectures: string[], countries: string[], details: { prefectures, countries } }
- *   prefectures/countries は画面に「行った」と出すもの（古いアプリもこれだけを読む）。
- *   details の各要素: { name, status: 'visible'|'hidden'|'transit', sources: [{ tripId, tripTitle, dates, transit }] }
+ * 返り値:
+ *   { prefectures: string[], countries: string[], details: { prefectures, countries }, tripPlaces }
+ *   prefectures/countries は画面に「行った」と出すもの・総計（古いアプリもこれだけを読む）。
+ *     ある場所が出てくる全部の旅行で外されていれば、ここから落ちる。
+ *   details の各要素: { name, status: 'visible'|'excluded'|'transit', sources: [{ tripId, tripTitle, dates, transit, excluded }] }
+ *     status='excluded' は「行った記録はあるが、出てくる旅行すべてで外されている」。
+ *   tripPlaces: [{ tripId, tripTitle, prefectures: [{name, excluded}], countries: [{name, excluded}] }]
+ *     旅行ごとの一覧（乗り継ぎだけの日しか無い場所は含めない。外した場所も excluded:true で残す）。
  */
-export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, trips = {}, overrides = [] } = {}) {
+export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, trips = {}, tripOverrides = [] } = {}) {
   const blocksByDay = new Map();
   blocks.forEach((b) => {
     const k = b.tripId + "|" + b.date;
@@ -149,10 +159,11 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
     else if (country) add("country", country, d, transit);
   });
 
-  const mode = { prefecture: new Map(), country: new Map() };
-  overrides.forEach((o) => {
-    if (mode[o.kind]) mode[o.kind].set(o.kind === "country" ? canonicalCountry(o.name) : canonicalPrefecture(o.name), o.mode);
-  });
+  const excludedKeys = new Set(tripOverrides.map((o) => {
+    const name = o.kind === "country" ? canonicalCountry(o.name) : canonicalPrefecture(o.name);
+    return o.tripId + "|" + o.kind + "|" + name;
+  }));
+  const isExcluded = (kind, tripId, name) => excludedKeys.has(tripId + "|" + kind + "|" + name);
 
   const build = (kind) => Array.from(groups[kind].entries()).map(([name, byTrip]) => {
     const sources = Array.from(byTrip.values()).map((s) => ({
@@ -160,14 +171,34 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
       tripTitle: s.tripTitle,
       dates: Array.from(new Set([...s.dates, ...s.transitDates])).sort(),
       transit: s.dates.size === 0,
+      excluded: isExcluded(kind, s.tripId, name),
     }));
-    const counted = sources.some((s) => !s.transit);
-    const m = mode[kind].get(name);
-    const status = m === "hide" ? "hidden" : counted || m === "show" ? "visible" : "transit";
+    const counted = sources.some((s) => !s.transit && !s.excluded);
+    const hasVisit = sources.some((s) => !s.transit);
+    const status = counted ? "visible" : hasVisit ? "excluded" : "transit";
     return { name, status, sources };
   }).sort((a, b) => a.name.localeCompare(b.name, "ja"));
 
   const details = { prefectures: build("prefecture"), countries: build("country") };
   const visible = (list) => list.filter((x) => x.status === "visible").map((x) => x.name);
-  return { prefectures: visible(details.prefectures), countries: visible(details.countries), details };
+
+  // 旅行ごとの一覧（乗り継ぎだけの日しか無いものは含めない）
+  const tripIdOrder = Object.keys(trips);
+  const seenTripIds = new Set();
+  ["prefecture", "country"].forEach((kind) => {
+    groups[kind].forEach((byTrip) => byTrip.forEach((_, tripId) => seenTripIds.add(tripId)));
+  });
+  const extraTripIds = Array.from(seenTripIds).filter((id) => !tripIdOrder.includes(id)).sort();
+  const allTripIds = tripIdOrder.filter((id) => seenTripIds.has(id)).concat(extraTripIds);
+  const placesForTrip = (kind, tripId) => (kind === "country" ? details.countries : details.prefectures)
+    .filter((x) => x.sources.some((s) => s.tripId === tripId && !s.transit))
+    .map((x) => ({ name: x.name, excluded: x.sources.find((s) => s.tripId === tripId).excluded }));
+  const tripPlaces = allTripIds.map((tripId) => ({
+    tripId,
+    tripTitle: trips[tripId] || "",
+    prefectures: placesForTrip("prefecture", tripId),
+    countries: placesForTrip("country", tripId),
+  }));
+
+  return { prefectures: visible(details.prefectures), countries: visible(details.countries), details, tripPlaces };
 }

@@ -65,13 +65,32 @@ check("エチオピアは空港の地図から入ったので乗り継ぎ", r.de
 const us = r.details.countries.find((c) => c.name === "アメリカ");
 check("アメリカの出どころは2つの旅", us.sources.map((s) => [s.tripTitle, s.dates]), [["ブラジル・アルゼンチン", ["2026-01-02"]], ["LA", ["2026-02-01"]]]);
 
-// 本人が外す・数える
-const r2 = aggregateVisitedPlaces({ days, blocks, coords, trips, overrides: [
-  { kind: "country", name: "アメリカ合衆国", mode: "hide" },
-  { kind: "country", name: "中国", mode: "show" },
+// 旅行ごとの一覧（tripPlaces）：乗り継ぎだけの中国・エチオピアは含まれない
+check("t1の訪れた場所", r.tripPlaces.find((t) => t.tripId === "t1").countries, [{ name: "アメリカ", excluded: false }, { name: "ブラジル", excluded: false }]);
+check("t2の訪れた場所（国）", r.tripPlaces.find((t) => t.tripId === "t2").countries, [{ name: "アメリカ", excluded: false }]);
+check("t2の訪れた場所（都道府県）", r.tripPlaces.find((t) => t.tripId === "t2").prefectures, [{ name: "東京都", excluded: false }]);
+
+// 本人が旅行ごとに外す・戻す（2026-09-28〜）：t1のアメリカだけ外す→t1には残らないがt2のアメリカ・総計には影響しない
+const r2 = aggregateVisitedPlaces({ days, blocks, coords, trips, tripOverrides: [
+  { tripId: "t1", kind: "country", name: "アメリカ合衆国" },
 ] });
-check("外したアメリカは出ない・数えると決めた中国は出る", r2.countries, ["ブラジル", "中国"].sort((a, b) => a.localeCompare(b, "ja")));
-check("外したものはhidden", r2.details.countries.find((c) => c.name === "アメリカ").status, "hidden");
+check("t1だけ外しても総計のアメリカは残る（t2でまだ数えている）", r2.countries, ["アメリカ", "ブラジル"]);
+check("t1のアメリカはexcluded:trueで残る（消えない・戻せる）", r2.tripPlaces.find((t) => t.tripId === "t1").countries, [{ name: "アメリカ", excluded: true }, { name: "ブラジル", excluded: false }]);
+check("t2のアメリカはそのまま", r2.tripPlaces.find((t) => t.tripId === "t2").countries, [{ name: "アメリカ", excluded: false }]);
+const usAfterOneExclude = r2.details.countries.find((c) => c.name === "アメリカ");
+check("片方だけ外しても全体のstatusはvisibleのまま", usAfterOneExclude.status, "visible");
+
+// 出てくる全部の旅行で外すと、総計から落ちる
+const r3exclude = aggregateVisitedPlaces({ days, blocks, coords, trips, tripOverrides: [
+  { tripId: "t1", kind: "country", name: "アメリカ合衆国" },
+  { tripId: "t2", kind: "country", name: "アメリカ" },
+] });
+check("両方の旅行で外すと総計から落ちる", r3exclude.countries, ["ブラジル"]);
+check("status はexcluded", r3exclude.details.countries.find((c) => c.name === "アメリカ").status, "excluded");
+
+// 戻す＝overrideを外す操作なので、外す前の結果に戻る
+const restored = aggregateVisitedPlaces({ days, blocks, coords, trips, tripOverrides: [] });
+check("戻すと外す前と同じ結果になる", restored.countries, r.countries);
 
 // 地図の無い日（場所だけ）は数える
 const r3 = aggregateVisitedPlaces({ days: [{ tripId: "t2", date: "2026-02-09", admin1: "", country: "カナダ", lat: 49, lon: -123 }], blocks: [], trips });

@@ -955,10 +955,14 @@ async function getMyLog(email, env, headers) {
 }
 
 // 参加した旅行（trips）にまたがる「日ごとの場所」（day_infos.admin1/country）から、訪れた都道府県・国を
-// 集計する。国名の表記ゆれをまとめる・乗り継ぎだけの国を数えない・本人が外した国を除く、の3つは
-// visited-places.js（純粋関数）で行う（2026-09-27）。
+// 集計する。国名の表記ゆれをまとめる・乗り継ぎだけの国を数えない・本人が旅行ごとに外した場所を除く、の
+// 3つはvisited-places.js（純粋関数）で行う（2026-09-27・旅行ごとの除外は2026-09-28、docs/adr/0016）。
+//
+// mylog_place_overrides（v23・アカウント全体でhide/show）はもう読まない：片方の旅行だけから外したくても
+// 全部の旅行から消えてしまう不具合があったため。テーブル・POST /mylog/placesは残すが（古いアプリ向け）、
+// この集計には一切反映されない。
 async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
-  const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] } };
+  const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] }, tripPlaces: [] };
   if (!tripIds.length) return empty;
   const dayRows = await selectWhereIn(
     env, "SELECT trip_id, date, admin1, country, lat, lon FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
@@ -979,13 +983,13 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
   } catch {
     // 座標の列が無い古いDBでも、集計自体は続ける
   }
-  let overrides = [];
+  let tripOverrides = [];
   if (accountId) {
     try {
-      const { results } = await env.DB.prepare("SELECT kind, name, mode FROM mylog_place_overrides WHERE account_id = ?").bind(accountId).all();
-      overrides = results;
+      const { results } = await env.DB.prepare("SELECT trip_id, kind, name FROM mylog_trip_place_overrides WHERE account_id = ?").bind(accountId).all();
+      tripOverrides = results.map((r) => ({ tripId: r.trip_id, kind: r.kind, name: r.name }));
     } catch {
-      // migrations/0023 を実行する前は、外した国が無いものとして扱う
+      // migrations/0024 を実行する前は、外した場所が無いものとして扱う
     }
   }
   return aggregateVisitedPlaces({
@@ -993,11 +997,63 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
     blocks: blockRows.map((r) => ({ id: r.id, tripId: r.trip_id, date: r.date, category: r.category, label: r.label })),
     coords,
     trips: tripTitles || {},
-    overrides,
+    tripOverrides,
   });
 }
 
+// マイログの国・都道府県を旅行ごとに外す（exclude）／戻す（include）（2026-09-28〜）。
+// v23の「マイログから外す」（setMyLogPlaceOverride、アカウント全体）が、片方の旅行だけから
+// 外したいのに全部の旅行から消えてしまう不具合の直し方（docs/adr/0016）。
+async function setMyLogTripPlaceOverride(request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (
+    !["country", "prefecture"].includes(data.kind)
+    || !["exclude", "include"].includes(data.mode)
+    || !isStr(data.tripId, 100) || !data.tripId.trim()
+    || !isStr(data.name, 100) || !data.name.trim()
+  ) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(auth.email).first();
+  if (!account) return json({ error: "account_not_found" }, 404, headers);
+  // 指定されたtripIdが、本人が参加しているマイログ対象の旅行であることを確認する
+  const member = await env.DB.prepare("SELECT 1 AS x FROM trip_members WHERE account_id = ? AND trip_id = ?")
+    .bind(account.account_id, data.tripId).first();
+  if (!member) return json({ error: "not_found" }, 404, headers);
+  const name = data.kind === "country" ? canonicalCountry(data.name) : canonicalPrefecture(data.name);
+  try {
+    if (data.mode === "include") {
+      await env.DB.prepare("DELETE FROM mylog_trip_place_overrides WHERE account_id = ? AND trip_id = ? AND kind = ? AND name = ?")
+        .bind(account.account_id, data.tripId, data.kind, name).run();
+    } else {
+      await env.DB.prepare(
+        "INSERT INTO mylog_trip_place_overrides (account_id, trip_id, kind, name, created_at) VALUES (?,?,?,?,?) "
+        + "ON CONFLICT(account_id, trip_id, kind, name) DO UPDATE SET created_at = excluded.created_at"
+      ).bind(account.account_id, data.tripId, data.kind, name, nowIso()).run();
+    }
+  } catch {
+    return json({ error: "migration_required" }, 503, headers);
+  }
+  const { results: tripRows } = await env.DB.prepare(
+    "SELECT t.id AS id, t.title AS title FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
+  ).bind(account.account_id).all();
+  const titles = {};
+  tripRows.forEach((t) => { titles[t.id] = t.title; });
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles);
+  return json({ places }, 200, headers);
+}
+
 // マイログの国・都道府県を本人が外す（hide）／乗り継ぎと判定されたものを数える（show）／元に戻す（clear）
+// （v23・アカウント全体。2026-09-28〜：集計には反映されない。古いアプリのために残しているだけ。
+// 新しいアプリはPOST /mylog/trip-places（setMyLogTripPlaceOverride）を使う。docs/adr/0016）
 async function setMyLogPlaceOverride(request, env, headers) {
   let data;
   try {
@@ -4138,6 +4194,7 @@ export default {
       return placeDetails(url.searchParams.get("id"), url.searchParams.get("session"), env, headers);
     }
     if (method === "POST" && path === "/mylog/places") return setMyLogPlaceOverride(request, env, headers);
+    if (method === "POST" && path === "/mylog/trip-places") return setMyLogTripPlaceOverride(request, env, headers);
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
       if (auth.error) return json({ error: auth.error }, auth.status, headers);
