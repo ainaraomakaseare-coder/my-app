@@ -80,6 +80,7 @@
       <div class="account-row" id="accountRow" hidden>
         <span id="accountName"></span>
         <button class="btn text" id="btnOpenMyLog">マイログ</button>
+        <button class="btn text" id="btnOpenVisited">行ったことある旅先</button>
         <button class="btn text" id="btnLogout">ログアウト</button>
       </div>
       <div class="account-row" id="loginPromptRow" hidden>
@@ -249,6 +250,22 @@
         <button class="btn text memo-ai-btn" id="btnOrganizeMemoAi" type="button">形が崩れていてうまく分かれないときは → AIで整理する</button>
         <p class="hint" id="memoAiInfo"></p>
         <p class="hint" id="textEntryStatus"></p>
+
+        <div class="or-divider">または</div>
+
+        <!-- 「自分のAIで整理して貼り付ける（無料）」（docs/adr/0015）：ChatGPT・Claude・Geminiなど
+             自分のAIにapp.jsのCore.buildAiImportPromptの文面＋自分のメモを渡し、返ってきたJSONを
+             貼り付ける。ログインも運営側の月10回の枠も使わない（Core.parseImportedBlocksJsonで
+             読み取り、既存の/trips/:id/memo-blocksにそのまま渡すだけのため）。 -->
+        <div class="field">
+          <p class="hint">自分のAI（ChatGPT・Claude・Geminiなど）に整理してもらってから貼り付けます。ログイン不要・無料・回数の上限なし。</p>
+          <button class="btn ghost wide" id="btnCopyAiPrompt" type="button">AIへのお願い文をコピー</button>
+          <label for="importJsonInput">AIの答え（JSON）を貼り付け</label>
+          <textarea id="importJsonInput" rows="8" placeholder='{"blocks": [...]}'></textarea>
+        </div>
+        <button class="btn primary wide" id="btnImportJson" type="button">取り込む</button>
+        <p class="hint" id="importJsonStatus"></p>
+        <div id="importPreview" hidden></div>
       </div>
     </div>
   </section>
@@ -417,6 +434,7 @@
             <input type="time" id="blkTime">
           </div>
         </div>
+        <p class="hint">日付・時間は、その場所の現地時間で入れてください（チケットや現地の時計のとおり）。時差や日付変更線をまたぐ移動の順番は、アプリが自動で合わせます。</p>
 
         <div class="field">
           <label for="blkLabel">見出し</label>
@@ -430,12 +448,14 @@
 
         <!-- 種類が「移動」のときだけ出す（app.jsのrenderCategoryChips）。この予定から次の場所への移動 -->
         <div class="field move-fields" id="blkMoveFields" hidden>
-          <label>移動手段（「地図でふりかえる」で使います）</label>
+          <label id="blkMoveLabel">移動手段（「地図でふりかえる」で使います）</label>
           <div class="cat-chips transport-chips" id="blkTransportChips"></div>
-          <label class="move-time-label">移動時間（任意）</label>
-          <div class="move-time">
-            <input type="number" id="blkMoveHours" min="0" max="240" inputmode="numeric" placeholder="0"><span>時間</span>
-            <input type="number" id="blkMoveMins" min="0" max="59" inputmode="numeric" placeholder="0"><span>分</span>
+          <div id="blkMoveTimeWrap">
+            <label class="move-time-label">移動時間（任意）</label>
+            <div class="move-time">
+              <input type="number" id="blkMoveHours" min="0" max="240" inputmode="numeric" placeholder="0"><span>時間</span>
+              <input type="number" id="blkMoveMins" min="0" max="59" inputmode="numeric" placeholder="0"><span>分</span>
+            </div>
           </div>
         </div>
 
@@ -556,10 +576,10 @@
 
         <!-- 地図の欄は、候補の地図を広く見せるため横並びにせず、横幅いっぱいに使う -->
           <div class="field">
-            <label for="entMapUrl">地図のURL（任意）</label>
+            <label for="entMapUrl" id="entMapLabel">地図のURL（任意）</label>
             <input type="url" id="entMapUrl" placeholder="https://maps.google.com/...">
             <div class="map-search-row">
-              <input type="text" id="entPlaceSearch" placeholder="場所名で検索（例：ユニバ）">
+              <input type="text" id="entPlaceSearch" placeholder="場所名で検索">
               <button type="button" class="btn ghost small" id="btnPlaceSearch">地図を検索</button>
             </div>
             <!-- 検索の候補（番号つきのカード。先頭が違う場所だったときに選び直せるように。app.jsのshowPlaceMapPreview） -->
@@ -580,6 +600,39 @@
             </div>
           </div>
 
+          <!-- 移動の予定の記録だけに出す、到着地の地図（2026-09-27〜）。上の地図の欄は出発地になる。
+               入っていれば、時差の区切り・日付変更線をまたぐ日の並び・地図でふりかえるの到着地に使う -->
+          <div class="field" id="entArriveField" hidden>
+            <label for="entArriveMapUrl">到着地の地図（任意）</label>
+            <input type="url" id="entArriveMapUrl" placeholder="https://maps.google.com/...">
+            <div class="map-search-row">
+              <input type="text" id="entArriveSearch" placeholder="到着地を検索（例：ロサンゼルス空港）">
+              <button type="button" class="btn ghost small" id="btnArriveSearch">地図を検索</button>
+            </div>
+            <div class="place-list" id="entArriveCandidates" hidden></div>
+            <p class="hint" id="entArriveStatus">到着地を入れると、時差や日付変更線をまたぐ移動の順番が確実になり、地図でふりかえるも到着地まで線でつながります。</p>
+          </div>
+          <!-- 移動の予定の記録だけに出す移動の情報（★はつけない）。出発・到着の時刻は時差や日付変更線をまたぐ
+               並び・地図でふりかえるに使うので、たたまずに見せる（2026-09-27） -->
+          <div class="field" id="entTravelField" hidden>
+            <label>移動の情報（時刻はどちらも現地時間）</label>
+            <div class="travel-grid">
+              <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地">
+              <span class="travel-arrow">→</span>
+              <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地">
+            </div>
+            <!-- スマホでは欄が狭く、例を欄の中に書くと見切れるので、欄の外に書く（2026-09-27） -->
+            <p class="hint travel-example">例：羽田 → ロサンゼルス</p>
+            <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：JAL 62）">
+            <div class="travel-grid">
+              <label class="travel-time">出発<input type="time" id="entTravelDepart"></label>
+              <label class="travel-time">到着<input type="time" id="entTravelArrive"></label>
+            </div>
+            <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）">
+            <p class="hint travel-example">費用の明細が入っていれば、そちらを使います</p>
+            <p class="hint" id="entTravelDuration"></p>
+          </div>
+
         <!-- 記録の画面が長いので、ときどきしか使わない欄はたたんでおく。すでに入っている記録を開いたときは
              開いた状態にする（app.jsのopenEntryForm） -->
         <details class="more-fields" id="entMoreFields">
@@ -588,23 +641,6 @@
           <div class="field">
             <label for="entComment">ひとこと</label>
             <input type="text" id="entComment" placeholder="例：最高だった！">
-          </div>
-
-          <!-- 移動の予定の記録だけに出す、紹介文用の移動の情報（★はつけない） -->
-          <div class="field" id="entTravelField" hidden>
-            <label>移動の情報（紹介文に使います）</label>
-            <div class="travel-grid">
-              <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地（例：ローマ）">
-              <span class="travel-arrow">→</span>
-              <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地（例：ロンドン）">
-            </div>
-            <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：ブエリング航空 VY6203）">
-            <div class="travel-grid">
-              <label class="travel-time">出発<input type="time" id="entTravelDepart"></label>
-              <label class="travel-time">到着<input type="time" id="entTravelArrive"></label>
-            </div>
-            <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）。費用の明細があればそちらを使います">
-            <p class="hint" id="entTravelDuration"></p>
           </div>
 
           <!-- 紹介文（ホテログ・レクログ・飯ログ）用の、自分のレビュー項目（app.jsのrenderReviewFields。docs/adr/0007）。
@@ -661,13 +697,17 @@
       <div class="section-label">
         <div class="section-title">参加した旅行</div>
       </div>
-      <div class="trip-list" id="mylogTripList"></div>
-
-      <div class="section-label">
-        <div class="section-title">訪れた都道府県・国</div>
+      <p class="hint">場所は記録の地図から自動で集計します。違う場所は「外す」でいつでも外せます（「戻す」で元に戻せます）。</p>
+      <div class="trip-filters" id="mylogTripFilters" hidden>
+        <select id="mylogFilterCompanion"><option value="">誰と一緒か：すべて</option></select>
+        <select id="mylogFilterYear"><option value="">年：すべて</option></select>
+        <select id="mylogSortTripOrder">
+          <option value="">並び順：参加した順</option>
+          <option value="date_desc">並び順：日程が新しい順</option>
+          <option value="date_asc">並び順：日程が古い順</option>
+        </select>
       </div>
-      <p class="hint">参加した旅行で「日ごとの場所」に入力した地名から自動で集計します（天気の取得と同じ地名データを使うので、別の入力は不要です）。</p>
-      <div class="visited-places" id="mylogPlaces"></div>
+      <div class="trip-list" id="mylogTripList"></div>
 
       <div class="section-label">
         <div class="section-title">評価したもの</div>
@@ -694,6 +734,24 @@
       </div>
       <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
       <p class="hint">アカウント（名前・プラン・回数券・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
+    </div>
+  </section>
+
+  <!-- ============ 行ったことある旅先（国内・海外の地図。マイログの参加した旅行から集計） ============ -->
+  <section class="screen" data-screen="visited">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="home">← 戻る</button>
+        <h1>行ったことある旅先</h1>
+        <p class="lead">参加した旅行の記録から自動で集計します（マイログと同じ集計です）。</p>
+      </header>
+
+      <div class="visited-tabs" id="visitedTabs">
+        <button class="visited-tab" data-tab="domestic">国内</button>
+        <button class="visited-tab" data-tab="overseas">海外</button>
+      </div>
+
+      <div class="visited-panel" id="visitedPanel">読み込み中…</div>
     </div>
   </section>
 

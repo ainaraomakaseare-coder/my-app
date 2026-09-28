@@ -82,6 +82,12 @@ eq('costItemJpy: itemが無ければ0', T.costItemJpy(null), 0);
 eq('formatCostItemAmount: 円はformatYenと同じ', T.formatCostItemAmount({ amount: 1200 }), '¥1,200');
 eq('formatCostItemAmount: 外貨は元の金額と円換算を両方見せる', T.formatCostItemAmount({ amount: 25, currency: 'USD', rate: 149.46 }), 'US$25.00（¥3,737）');
 eq('formatCostItemAmount: 記号表が無い通貨（その他）はコードをそのまま出す', T.formatCostItemAmount({ amount: 100, currency: 'ISK', rate: 0.87 }), 'ISK 100.00（¥87）');
+eq('formatCostItemAmount: rateが無い外貨は「¥0」ではなく「レート未設定」と出す', T.formatCostItemAmount({ amount: 12.5, currency: 'USD' }), 'US$12.50（レート未設定）');
+eq('formatCostItemAmount: rateが0以下（不正値）も未設定と同じ扱い', T.formatCostItemAmount({ amount: 12.5, currency: 'USD', rate: 0 }), 'US$12.50（レート未設定）');
+eq('costItemHasRate: 円はcurrencyが無くても対象外（判定はfalse）', T.costItemHasRate({ amount: 1200 }), false);
+eq('costItemHasRate: 外貨でrateがあればtrue', T.costItemHasRate({ amount: 25, currency: 'USD', rate: 149.46 }), true);
+eq('costItemHasRate: 外貨でrateが無ければfalse', T.costItemHasRate({ amount: 25, currency: 'USD' }), false);
+eq('costItemHasRate: itemが無ければfalse', T.costItemHasRate(null), false);
 
 /* ---- tripBalances / settlementPlan：外貨が混ざった費用の貸し借り（円換算後で計算する） ---- */
 var mixedCurrencyBlocks = [{
@@ -689,7 +695,7 @@ eq('gentleCurvePath: 端点は出発地・到着地のまま', [T.gentleCurvePat
 eq('legMoveSeconds: 100km以下は2秒・500km以上は4秒・間は比例', [T.legMoveSeconds(50), T.legMoveSeconds(100), T.legMoveSeconds(300), T.legMoveSeconds(500), T.legMoveSeconds(2000)],
   [2, 2, 3, 4, 4]);
 ok('buildReplayTimeline: 近い車の区間（100km以下）は移動2秒のまま', Math.abs(carTl.legs[0].r1 - carTl.legs[0].r0 - 2) < 0.01);
-ok('buildReplayTimeline: 遠い区間（500km以上）は移動4秒', Math.abs(carTl.legs[1].r1 - carTl.legs[1].r0 - 4) < 0.01);
+ok('buildReplayTimeline: 遠い区間（500km以上、飛行機とみなす）は移動1.8秒（飛行機は全体で約3秒にする。2026-09-27）', Math.abs(carTl.legs[1].r1 - carTl.legs[1].r0 - 1.8) < 0.01);
 
 /* ---- 紹介文：ひとこと・URL ---- */
 var exText = T.reviewLogText({ category: 'food', label: '首里そば' }, { comment: 'また来たい', mapUrl: 'https://maps.app.goo.gl/x', shopUrl: 'https://shop.example', costItems: [] }, { score: 4.2, review: {} });
@@ -701,9 +707,17 @@ var flyTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDa
   { id: 'h', date: '2026-04-01', time: '10:00', label: '香港', entries: [{ mapUrl: 'https://m/hk', photoIds: ['p1', 'p2', 'p3', 'p4'] }] },
   { id: 'n', date: '2026-04-02', time: '06:00', label: 'ニューヨーク', transport: 'plane', entries: [{ mapUrl: 'https://m/ny' }] }]),
   { 'https://m/hk': { lat: 22.3, lng: 114.2 }, 'https://m/ny': { lat: 40.7, lng: -74.0 } });
-// 香港→ニューヨークは500km超（実際は1万km超）なので、以前の一律2秒から上限の4秒になる
-ok('buildReplayTimeline: 長いフライト（500km超）は移動4秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 4) < 0.01);
-ok('buildReplayTimeline: 写真4枚なら吹き出しは10秒（1枚2.5秒×4、＋一呼吸0.5秒）', Math.abs((flyTl.stops[0].rDwellEnd - flyTl.stops[0].r) - 10.5) < 0.01);
+// 飛行機は距離によらず1.8秒（4秒＋カメラの動き・一呼吸で5秒ほどかかり長いという声より。2026-09-27）
+ok('buildReplayTimeline: 長いフライトは移動1.8秒', Math.abs(flyTl.legs[0].r1 - flyTl.legs[0].r0 - 1.8) < 0.01);
+var longCarTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'a', date: '2026-04-01', time: '08:00', label: 'LA', entries: [{ mapUrl: 'https://m/la' }] },
+  { id: 'b', date: '2026-04-01', time: '18:00', label: 'サンフランシスコ', transport: 'car', entries: [{ mapUrl: 'https://m/sf' }] }]),
+  { 'https://m/la': { lat: 34.05, lng: -118.24 }, 'https://m/sf': { lat: 37.77, lng: -122.42 } });
+ok('buildReplayTimeline: 車の長い移動（500km超）はこれまでどおり4秒', Math.abs(longCarTl.legs[0].r1 - longCarTl.legs[0].r0 - 4) < 0.01);
+// 次へ移動する地点は、カメラが動き出す少し前（REPLAY_CAPTION_HIDE_LEAD_SEC）に吹き出しを消すので、その分を足す
+// （見えている時間は1枚2.5秒×4＋一呼吸0.5秒のまま。2026-09-27）
+ok('buildReplayTimeline: 写真4枚なら吹き出しは見えている時間で10秒（1枚2.5秒×4、＋一呼吸0.5秒）',
+  Math.abs((flyTl.stops[0].rDwellEnd - flyTl.stops[0].r) - (10.5 + T.REPLAY_CAPTION_HIDE_LEAD_SEC)) < 0.01);
 
 /* ---- 地図でふりかえる：吹き出しの秒数は写真の枚数だけで決まる（2026-09-27） ---- */
 var capSecStops = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
@@ -742,8 +756,11 @@ var nextDayZones = T.assignBlockZones([
   { id: 'd1a', date: '2026-01-01', time: '20:00', category: 'food' },
   { id: 'd2a', date: '2026-01-02', time: '09:00', category: 'food' }
 ], { d1a: 'Asia/Tokyo' }, { '2026-01-02': 'America/Los_Angeles' }, 'Asia/Tokyo');
-eq('assignBlockZones: 翌日最初の地図の無い予定は前日を引き継がず、その日の場所を使う',
-  nextDayZones, { d1a: 'Asia/Tokyo', d2a: 'America/Los_Angeles' });
+// 2026-09-27の方針変更（時差は移動のところでしか変わらない）：移動の予定が無ければ、翌日の地図の無い予定も
+// 同じかたまりの時差のまま。以前は「その日の場所」を使っていたため、その日の場所が日本になっていると
+// ニューヨークの予定に「日本との時差ゼロ」が出ていた
+eq('assignBlockZones: 移動の予定が無ければ、翌日の地図の無い予定もその日の場所ではなく同じかたまりの時差',
+  nextDayZones, { d1a: 'Asia/Tokyo', d2a: 'Asia/Tokyo' });
 
 /* ---- 地図でふりかえる：飛行機の道のり（アイコンと線を同じ弧にする。docs/adr/0008） ---- */
 var flyLeg = flyTl.legs[0];
@@ -888,6 +905,613 @@ var laNy = [
 eq('assignBlockZones: LA→ニューヨークの日は、入れた順が逆でも朝食→LA発→NY着',
   T.assignBlockZones(laNy, { p: 'America/Los_Angeles', b: 'America/Los_Angeles', f: 'America/New_York', a: 'America/New_York' }, {}, 'Asia/Tokyo'),
   { p: 'America/Los_Angeles', b: 'America/Los_Angeles', f: 'America/Los_Angeles', a: 'America/New_York' });
+
+/* ---- 日本の電車：線路データから最短経路（新大阪→USJのような区間） ---- */
+// 出発地のすぐそば（約100m）に新幹線の線路（北東へ遠ざかり、在来線とつながらない）、
+// 少し離れた所（約500m）に在来線（南西へ伸びて到着地の近くを通る）がある。
+var railA = { lat: 34.7335, lng: 135.5002 }, railB = { lat: 34.6687, lng: 135.4376 };
+var railEls = [
+  { type: 'node', id: 1, lat: 34.7344, lon: 135.5003 }, { type: 'node', id: 2, lat: 34.7600, lon: 135.5400 }, // 新幹線
+  { type: 'node', id: 10, lat: 34.7380, lon: 135.4990 }, { type: 'node', id: 11, lat: 34.7100, lon: 135.4700 },
+  { type: 'node', id: 12, lat: 34.6850, lon: 135.4500 }, { type: 'node', id: 13, lat: 34.6690, lon: 135.4380 }, // 在来線
+  { type: 'node', id: 20, lat: 34.7380, lon: 135.4990 }, { type: 'node', id: 21, lat: 34.9000, lon: 135.9000 }, // 遠回りの支線
+  { type: 'way', id: 100, nodes: [1, 2] },
+  { type: 'way', id: 101, nodes: [10, 11, 12, 13] },
+  { type: 'way', id: 102, nodes: [20, 21] }
+];
+var railPath = T.railPathFromOverpass(railEls, railA, railB);
+ok('railPathFromOverpass: すぐそばの新幹線の線路ではなく、在来線から乗って到着地の近くまで線路をたどる', railPath && railPath.length === 6);
+eq('railPathFromOverpass: 両端は出発地と到着地、途中は在来線の点の順', railPath && railPath.map(function (p) { return p[0]; }),
+  [34.7335, 34.738, 34.71, 34.685, 34.669, 34.6687]);
+eq('railPathFromOverpass: 近くに線路が無ければnull（やわらかい曲線のまま）',
+  T.railPathFromOverpass([{ type: 'node', id: 1, lat: 35.0, lon: 136.0 }, { type: 'node', id: 2, lat: 35.1, lon: 136.1 }, { type: 'way', id: 9, nodes: [1, 2] }], railA, railB), null);
+// 在来線が大きく迂回して、直線距離の3倍を超えるなら使わない
+var railDetour = railEls.filter(function (e) { return e.id !== 101; }).concat([
+  { type: 'node', id: 30, lat: 34.9500, lon: 135.2000 },
+  { type: 'way', id: 103, nodes: [10, 30, 13] }
+]);
+eq('railPathFromOverpass: 直線距離の3倍を超える遠回りはnull', T.railPathFromOverpass(railDetour, railA, railB), null);
+eq('railPathFromOverpass: 30kmより遠い区間は使わない（新幹線など）', T.railPathFromOverpass(railEls, railA, { lat: 35.0116, lng: 135.7681 }), null);
+ok('isInJapan: 大阪は日本、ロサンゼルスは日本ではない', T.isInJapan(railA) && !T.isInJapan({ lat: 34.05, lng: -118.24 }));
+var bb = T.railBBox(railA, railB);
+ok('railBBox: 2地点を含み、少し広げた範囲', bb[0] < railB.lat && bb[1] < railB.lng && bb[2] > railA.lat && bb[3] > railA.lng);
+ok('railOverpassQuery: 範囲と線路の種類が入る', T.railOverpassQuery(bb).indexOf(bb.join(',')) > 0 && T.railOverpassQuery(bb).indexOf('subway') > 0);
+
+/* ---- 地図でふりかえる：飛行機が近い区間に付き違う（LAX→ラスベガスの飛行機の予定にラスベガス空港の地図） ---- */
+var lasTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-07-01', endDate: '2026-07-01' }, [
+  { id: 'lax', date: '2026-07-01', time: '08:00', label: 'ロサンゼルスのホテル', entries: [{ mapUrl: 'https://m/lax' }] },
+  { id: 'fly', date: '2026-07-01', time: '10:00', label: 'ラスベガスへ飛行機', category: 'transport', transport: 'plane', entries: [{ mapUrl: 'https://m/las' }] },
+  { id: 'fla', date: '2026-07-01', time: '13:00', label: 'フラミンゴ', category: 'lodging', entries: [{ mapUrl: 'https://m/fla' }] }]),
+  { 'https://m/lax': { lat: 34.05, lng: -118.24 }, 'https://m/las': { lat: 36.084, lng: -115.1537 }, 'https://m/fla': { lat: 36.1162, lng: -115.1716 } });
+eq('buildReplayTimeline: 飛行機はLA→ラスベガス（約370km）に付き、空港→フラミンゴ（約4km）は車で道をたどる',
+  lasTl.legs.map(function (l) { return l.transport; }), ['plane', 'car']);
+ok('buildReplayTimeline: 空港→フラミンゴは道のりを調べる手段（車）になる', T.routeProfileFor(lasTl.legs[1].transport) === 'car');
+
+/* ---- 道のりの両端をピンにつなぐ（コルコバードの丘→大聖堂で最初の部分が見えない） ---- */
+var corco = { lat: -22.9519, lng: -43.2105 }, cated = { lat: -22.9109, lng: -43.1806 };
+var roadPath = [[-22.9530, -43.2080], [-22.9300, -43.1950], [-22.9110, -43.1807]]; // 道路は山頂から約280m離れた所から始まる
+var joined = T.joinPathEnds(roadPath, corco, cated);
+eq('joinPathEnds: 道路の端がピンから離れていれば、ピンから始まるよう先頭に足す', joined[0], [-22.9519, -43.2105]);
+eq('joinPathEnds: 到着側はピンとの差が20m未満ならそのまま（点を足さない）', joined.length, 4);
+// 山の上の登山電車：線路の道のりが下の町（ツェルマット）まで行って終わっていたら使わない（スイス旅3日目）
+var gorner = { lat: 45.9837, lng: 7.7853 }, riffelberg = { lat: 45.9935, lng: 7.7545 };
+eq('railPathEndsOk: 端が到着地から3km以上離れた線路の道のりは使わない',
+  T.railPathEndsOk([[45.9837, 7.7853], [45.99, 7.76], [46.0240, 7.7480]], gorner, riffelberg), false);
+eq('railPathEndsOk: 端が駅の近く（数百m）なら使う',
+  T.railPathEndsOk([[45.9840, 7.7850], [45.99, 7.765], [45.9930, 7.7530]], gorner, riffelberg), true);
+eq('railPathEndsOk: 長い区間は、直線距離の2割までずれてよい（最大1.2km）',
+  T.railPathEndsOk([[35.681, 139.767], [35.1709, 136.8815 + 0.011]], { lat: 35.681, lng: 139.767 }, { lat: 35.1709, lng: 136.8815 }), true);
+eq('joinPathEnds: 両端がピンに近ければ変えない', T.joinPathEnds([[1, 2], [3, 4]], { lat: 1, lng: 2 }, { lat: 3, lng: 4 }).length, 2);
+
+/* ---- 時差は「移動」のところでしか変わらない（ブラジル・アルゼンチン旅の形。2026-09-27） ---- */
+var trip4 = [
+  { id: 'home', date: '2026-03-01', time: '08:00', category: 'other', label: '自宅' },
+  { id: 'nrt', date: '2026-03-01', time: '10:00', category: 'transport', transport: 'plane', label: '成田から出発' },
+  { id: 'hkA', date: '2026-03-01', time: '14:00', category: 'transport', label: '香港に到着' },
+  { id: 'hkH', date: '2026-03-01', time: '16:00', category: 'lodging', label: '香港のホテル' },
+  { id: 'hkD', date: '2026-03-02', time: '10:00', category: 'transport', transport: 'plane', label: '香港から出発' },
+  { id: 'nyA', date: '2026-03-02', time: '12:00', category: 'transport', label: 'ニューヨークに到着' },
+  { id: 'nyH', date: '2026-03-02', time: '15:00', category: 'lodging', label: 'ニューヨークのホテル（地図なし）' },
+  { id: 'ts', date: '2026-03-03', time: '09:00', category: 'sightseeing', label: 'タイムズスクエア' },
+  { id: 'ct', date: '2026-03-03', time: '10:00', category: 'sightseeing', label: 'チャイナタウン（仁川と判定）' },
+  { id: 'bw', date: '2026-03-03', time: '12:00', category: 'sightseeing', label: 'ブロードウェイ' },
+  { id: 'nyD', date: '2026-03-04', time: '09:00', category: 'transport', transport: 'plane', label: 'ニューヨークから出発' },
+  { id: 'rioA', date: '2026-03-04', time: '20:00', category: 'transport', label: 'リオデジャネイロに到着' },
+  { id: 'rioH', date: '2026-03-04', time: '22:00', category: 'lodging', label: 'リオのホテル' }
+].map(function (b, i) { b.createdAt = String(100 + i); return b; });
+var trip4Own = { nrt: 'Asia/Tokyo', hkA: 'Asia/Hong_Kong', hkH: 'Asia/Hong_Kong', hkD: 'Asia/Hong_Kong', nyA: 'America/New_York',
+  ts: 'America/New_York', ct: 'Asia/Seoul', bw: 'America/New_York', nyD: 'America/New_York', rioA: 'America/Sao_Paulo', rioH: 'America/Sao_Paulo' };
+// その日の場所がずれている（ニューヨークの日が日本）
+var trip4Days = { '2026-03-01': 'Asia/Tokyo', '2026-03-02': 'Asia/Tokyo', '2026-03-03': 'America/New_York', '2026-03-04': 'America/New_York' };
+var trip4Z = T.assignBlockZones(trip4, trip4Own, trip4Days, 'Asia/Tokyo');
+eq('時差のかたまり：出発前・成田出発は日本', [trip4Z.home, trip4Z.nrt], ['Asia/Tokyo', 'Asia/Tokyo']);
+eq('時差のかたまり：「香港に到着」から香港（出発のときではなく到着のときに時差が入る）', [trip4Z.hkA, trip4Z.hkH, trip4Z.hkD], ['Asia/Hong_Kong', 'Asia/Hong_Kong', 'Asia/Hong_Kong']);
+eq('時差のかたまり：ニューヨークのホテル（地図なし）は、その日の場所（日本）ではなくニューヨーク', [trip4Z.nyA, trip4Z.nyH], ['America/New_York', 'America/New_York']);
+eq('時差のかたまり：チャイナタウン1つだけ韓国と判定されても、ニューヨークのまま', trip4Z.ct, 'America/New_York');
+eq('時差のかたまり：ニューヨーク出発はニューヨーク、「リオに到着」からリオ', [trip4Z.nyD, trip4Z.rioA, trip4Z.rioH], ['America/New_York', 'America/Sao_Paulo', 'America/Sao_Paulo']);
+var trip4Sorted = T.sortBlocks(T.applyBlockZones(trip4.map(function (b) { return Object.assign({}, b); }), trip4Z));
+var trip4Changes = [];
+for (var t4 = 1; t4 < trip4Sorted.length; t4++) if (trip4Sorted[t4]._offset !== trip4Sorted[t4 - 1]._offset) trip4Changes.push(trip4Sorted[t4].id);
+eq('時差のかたまり：「ここから現地時間」は香港到着・ニューヨーク到着・リオ到着の3か所だけ', trip4Changes, ['hkA', 'nyA', 'rioA']);
+
+/* ---- 時差：出発と到着をどちらも「飛行機」の移動の予定で入れる形（ブラジル・アルゼンチン旅の実際の入れ方） ---- */
+var trip5 = [
+  { id: 'nrtD', date: '2026-03-01', time: '10:00', category: 'transport', transport: 'plane', label: '成田から出発' },
+  { id: 'hkA', date: '2026-03-01', time: '14:00', category: 'transport', transport: 'plane', label: '香港に到着' },
+  { id: 'hkH', date: '2026-03-01', time: '16:00', category: 'lodging', label: '香港のホテル' },
+  { id: 'hkD', date: '2026-03-02', time: '10:00', category: 'transport', transport: 'plane', label: '香港から出発' },
+  { id: 'nyA', date: '2026-03-02', time: '12:00', category: 'transport', transport: 'plane', label: 'ニューヨークに到着' },
+  { id: 'nyH', date: '2026-03-02', time: '15:00', category: 'lodging', label: 'ニューヨークのホテル（地図なし）' }
+].map(function (b, i) { b.createdAt = String(200 + i); return b; });
+var trip5Own = { nrtD: 'Asia/Tokyo', hkA: 'Asia/Hong_Kong', hkH: 'Asia/Hong_Kong', hkD: 'Asia/Hong_Kong', nyA: 'America/New_York' };
+var trip5Z = T.assignBlockZones(trip5, trip5Own, { '2026-03-02': 'Asia/Tokyo' }, 'Asia/Tokyo');
+eq('時差（到着も飛行機の予定）：到着の予定から現地の時差、出発の予定は出発地の時差',
+  ['nrtD', 'hkA', 'hkH', 'hkD', 'nyA', 'nyH'].map(function (id) { return trip5Z[id]; }),
+  ['Asia/Tokyo', 'Asia/Hong_Kong', 'Asia/Hong_Kong', 'Asia/Hong_Kong', 'America/New_York', 'America/New_York']);
+var trip5Sorted = T.sortBlocks(T.applyBlockZones(trip5.map(function (b) { return Object.assign({}, b); }), trip5Z));
+var trip5Changes = [];
+for (var t5 = 1; t5 < trip5Sorted.length; t5++) if (trip5Sorted[t5]._offset !== trip5Sorted[t5 - 1]._offset) trip5Changes.push(trip5Sorted[t5].id);
+eq('時差（到着も飛行機の予定）：「ここから現地時間」は到着の予定の前（香港に到着・ニューヨークに到着）だけ', trip5Changes, ['hkA', 'nyA']);
+
+var trip5Stops = T.replayStops({ startDate: '2026-03-01', endDate: '2026-03-02' }, trip5Sorted);
+eq('地図でふりかえる（到着も飛行機の予定）：香港に到着・ニューヨークに到着の時点で現地の時差（分）になる',
+  trip5Stops.filter(function (st) { return st.blockId === 'hkA' || st.blockId === 'nyA' || st.blockId === 'nrtD'; }).map(function (st) { return st.offset; }),
+  [540, 480, -300]);
+
+/* ---- 吹き出し：写真1枚・エピソードだけでも3秒は見える（2026-09-27） ---- */
+var capTl = T.buildReplayTimeline(T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, [
+  { id: 'p1', date: '2026-04-01', time: '10:00', label: '写真1枚', entries: [{ mapUrl: 'https://m/a', photoIds: ['x'] }] },
+  { id: 'ep', date: '2026-04-01', time: '10:05', label: 'エピソードだけ', entries: [{ mapUrl: 'https://m/b', episode: 'たのしかった' }] },
+  { id: 'end', date: '2026-04-01', time: '10:10', label: '最後', entries: [{ mapUrl: 'https://m/c' }] }]),
+  { 'https://m/a': { lat: 35.0, lng: 135.0 }, 'https://m/b': { lat: 35.01, lng: 135.0 }, 'https://m/c': { lat: 35.02, lng: 135.0 } });
+var visibleSec = function (st) { return st.rDwellEnd - st.rCaptionStart - T.REPLAY_CAPTION_HIDE_LEAD_SEC; };
+ok('buildReplayTimeline: 写真1枚の地点も、吹き出しが見えている時間は3秒以上', visibleSec(capTl.stops[0]) >= 3 - 1e-6);
+ok('buildReplayTimeline: エピソードだけの地点も、吹き出しが見えている時間は3秒以上', visibleSec(capTl.stops[1]) >= 3 - 1e-6);
+
+/* ---- 時差：リオ→イグアス→ブエノスアイレス→エル・カラファテは、国やタイムゾーン名が変わっても時差は同じ（UTC-3） ---- */
+var sa = [
+  { id: 'rio', date: '2026-03-05', time: '10:00', category: 'sightseeing' },
+  { id: 'rioD', date: '2026-03-06', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'igu', date: '2026-03-06', time: '12:00', category: 'sightseeing' },
+  { id: 'iguD', date: '2026-03-07', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'bue', date: '2026-03-07', time: '12:00', category: 'sightseeing' },
+  { id: 'bueD', date: '2026-03-08', time: '09:00', category: 'transport', transport: 'plane' },
+  { id: 'cal', date: '2026-03-08', time: '13:00', category: 'sightseeing' }
+].map(function (b, i) { b.createdAt = String(300 + i); return b; });
+var saZ = T.assignBlockZones(sa, { rio: 'America/Sao_Paulo', igu: 'America/Argentina/Cordoba', bue: 'America/Argentina/Buenos_Aires', cal: 'America/Argentina/Rio_Gallegos' }, {}, 'Asia/Tokyo');
+eq('時差：イグアス・ブエノスアイレス・エル・カラファテはそれぞれの土地のタイムゾーンになる', [saZ.igu, saZ.bue, saZ.cal], ['America/Argentina/Cordoba', 'America/Argentina/Buenos_Aires', 'America/Argentina/Rio_Gallegos']);
+var saSorted = T.sortBlocks(T.applyBlockZones(sa.map(function (b) { return Object.assign({}, b); }), saZ));
+eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラファテはどこもUTC-3なので「ここから現地時間」は出ない',
+  saSorted.filter(function (b, i) { return i > 0 && b._offset !== saSorted[i - 1]._offset; }).length, 0);
+
+/* ---- 日付変更線：東京20:00発→ロサンゼルス18:50着（同じ日付）は、予定を入れた順・入れ方によらず発→着の順（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  var orders = { '入れた順': ['hnd', 'fl', 'arr', 'htl', 'd2'], '到着を先に入れた': ['hnd', 'arr', 'fl', 'htl', 'd2'], '逆順で入れた': ['d2', 'htl', 'arr', 'fl', 'hnd'] };
+  Object.keys(orders).forEach(function (oname) {
+    [null, TK, LA].forEach(function (flMap) {
+      [['sightseeing', undefined], ['transport', 'plane']].forEach(function (arrKind) {
+        [null, LA].forEach(function (dayZone) {
+          var bs = [
+            { id: 'hnd', date: '2026-06-26', time: '18:00', category: 'sightseeing', label: '羽田空港' },
+            { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへのフライト' },
+            { id: 'arr', date: '2026-06-26', time: '18:50', category: arrKind[0], transport: arrKind[1], label: 'ロサンゼルス到着' },
+            { id: 'htl', date: '2026-06-26', time: '21:00', category: 'lodging', label: 'ホテル' },
+            { id: 'd2', date: '2026-06-27', time: '09:00', category: 'sightseeing', label: '翌日' }];
+          bs.forEach(function (b) { b.createdAt = String(orders[oname].indexOf(b.id)); });
+          var own = { hnd: TK, arr: LA, htl: LA, d2: LA };
+          if (flMap) own.fl = flMap;
+          var z = T.assignBlockZones(bs, own, dayZone ? { '2026-06-26': dayZone } : {}, TK);
+          var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).join(',');
+          if (got !== 'hnd,fl,arr,htl,d2' || z.fl !== TK || z.arr !== LA) ng.push(oname + '/' + flMap + '/' + arrKind[0] + '/' + dayZone + ' → ' + got);
+        });
+      });
+    });
+  });
+  eq('日付変更線：入れた順（3通り）×フライトの地図（3通り）×到着の入れ方（2通り）×その日の場所（2通り）の36通りすべてで、羽田→フライト（日本時間）→ロサンゼルス到着の順', ng, []);
+})();
+
+/* ---- 移動の予定に「到着地の地図＋到着時刻（現地時間）」を入れると、時差の区切りと地図でふりかえるの到着に使う（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';
+  var LAX = 'https://www.google.com/maps/search/?api=1&query=33.94,-118.40';
+  var bs = [
+    { id: 'hnd', date: '2026-06-26', time: '18:00', category: 'sightseeing', label: '羽田空港', createdAt: '1' },
+    { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへ', createdAt: '2',
+      entries: [{ id: 'e1', travel: { to: 'ロサンゼルス空港', arrive: '18:50', arriveMapUrl: LAX, arriveLat: 33.94, arriveLng: -118.40 } }] },
+    { id: 'htl', date: '2026-06-26', time: '21:00', category: 'lodging', label: 'ホテル', createdAt: '3' }];
+  eq('travelArrival：到着地の地図・座標・時刻・名前を返す', T.travelArrival(bs[1]), { url: LAX, lat: 33.94, lng: -118.40, time: '18:50', label: 'ロサンゼルス空港' });
+  eq('travelArrival：移動以外の予定はnull', T.travelArrival(bs[0]), null);
+  // ホテルに地図が無くても、到着地の時差（LA）から後ろがLAになる
+  var z = T.assignBlockZones(bs, { hnd: TK }, {}, TK, { fl: LA });
+  eq('到着地の地図だけで：フライトは日本時間、到着とその後はロサンゼルス', [z.fl, z['fl#arrive'], z.htl], [TK, LA, LA]);
+  var zb = T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z);
+  var st = T.replayStops({ startDate: '2026-06-26', endDate: '2026-06-27' }, zb);
+  eq('地図でふりかえる：フライトの後に到着の地点が入る', st.map(function (s) { return s.blockId; }), ['hnd', 'fl', 'fl#arrive', 'htl']);
+  var a = st[2];
+  eq('到着の地点：座標・ラベル・到着時刻（現地）・時差', [a.knownLat, a.knownLng, a.label, a.minute, a.dayIndex, a.offset], [33.94, -118.40, 'ロサンゼルス空港', 18 * 60 + 50, 0, -420]);
+  var tl = T.buildReplayTimeline(st, {});
+  eq('到着（LA 18:50）は出発（東京 20:00）より後の時刻として並ぶ', tl.stops[2].t > tl.stops[1].t && tl.stops[3].t > tl.stops[2].t, true);
+  eq('到着の後の場所へは、飛行機を引き継がない', st[3].transport, '');
+  // 逆向き：LA 23:00発→東京 05:00着（現地）は、出発より前にならない日付（翌々日）に置く
+  var back = [{ id: 'fb', date: '2026-07-10', time: '23:00', category: 'transport', transport: 'plane', label: '帰国', createdAt: '1', _offset: -420, _arriveOffset: 540,
+    entries: [{ id: 'e2', travel: { arrive: '05:00', arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=35.55,139.78' } }] }];
+  var st2 = T.replayStops({ startDate: '2026-07-10', endDate: '2026-07-12' }, back);
+  eq('LA 23:00発→東京 05:00着：到着は出発の後の日付（2日目以降）', [st2[1].date, st2[1].minute], ['2026-07-12', 300]);
+  // 到着時刻が無ければ、移動時間（無ければ60分）の後と見積もる
+  var noTime = [{ id: 'm', date: '2026-04-01', time: '10:00', category: 'transport', transport: 'train', moveMinutes: 90, label: '移動', createdAt: '1',
+    entries: [{ id: 'e3', travel: { arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=34.73,135.50' } }] }];
+  var st3 = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, noTime);
+  eq('到着時刻なし：移動時間90分の後・見積もり扱い・ラベルは「到着」', [st3[1].minute, st3[1].estimated, st3[1].label], [11 * 60 + 30, true, '到着']);
+})();
+
+/* ---- ワールドカップ旅1日目（実データの形）：車の移動の予定「ロサンゼルス国際空港」「ユニオンステーション」は、その地図の
+   土地の時間。東京の「羽田空港の地震」とロサンゼルスの出来事は、入れた順・フライトの地図・到着地の地図によらず東京→LAの順（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  [null, TK, LA].forEach(function (flMap) {
+    [false, true].forEach(function (pre) {
+      [false, true].forEach(function (arrive) {
+        [['home', 'eq', 'fl', 'lax', 'uni', 'fan'], ['home', 'lax', 'uni', 'fan', 'eq', 'fl'], ['fan', 'uni', 'lax', 'fl', 'eq', 'home']].forEach(function (ord, oi) {
+          var bs = [
+            pre && { id: 'home', date: '2026-06-26', time: '15:00', category: 'sightseeing', label: '家' },
+            { id: 'lax', date: '2026-06-26', time: '18:50', category: 'transport', transport: 'car', label: 'ロサンゼルス国際空港' },
+            { id: 'eq', date: '2026-06-26', time: '20:00', category: 'other', label: '羽田空港の地震' },
+            { id: 'uni', date: '2026-06-26', time: '20:20', category: 'transport', transport: 'car', label: 'ユニオンステーション' },
+            { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへのフライト' },
+            { id: 'fan', date: '2026-06-26', time: '21:00', category: 'sightseeing', label: 'ファンゾーン' }].filter(Boolean);
+          bs.forEach(function (b) { b.createdAt = String(ord.indexOf(b.id)); });
+          var own = { lax: LA, eq: TK, uni: LA, fan: LA };
+          if (pre) own.home = TK;
+          if (flMap) own.fl = flMap;
+          var z = T.assignBlockZones(bs, own, {}, TK, arrive ? { fl: LA } : {});
+          var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).filter(function (id) { return id !== 'home'; }).join(',');
+          var zs = [z.eq, z.fl, z.lax, z.uni, z.fan].join(',');
+          if (got !== 'eq,fl,lax,uni,fan' || zs !== [TK, TK, LA, LA, LA].join(',')) ng.push(flMap + '/' + pre + '/' + arrive + '/' + oi + ' → ' + got);
+        });
+      });
+    });
+  });
+  eq('ワールドカップ旅1日目：36通りすべてで 地震・フライト（東京）→ LAX・ユニオンステーション・ファンゾーン（LA）', ng, []);
+})();
+
+/* ---- 「ロサンゼルスへのフライト」（地図は行き先のLAX）＋「ロサンゼルス国際空港」（移動・飛行機）の2つの飛行機の予定：
+   到着地の地図が無くても、見出しの「〜へ」で出発の予定と分かり、東京→LAの順になる（2026-09-27、ビルド65で直っていなかった形） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  [['eq', 'fl', 'lax', 'uni', 'fan'], ['lax', 'uni', 'fan', 'eq', 'fl']].forEach(function (ord, oi) {
+    [LA, null].forEach(function (laxMap) {
+      [TK, LA, null].forEach(function (day) {
+        var bs = [
+          { id: 'lax', date: '2026-06-26', time: '18:50', category: 'transport', transport: 'plane', label: 'ロサンゼルス国際空港' },
+          { id: 'eq', date: '2026-06-26', time: '20:00', category: 'other', label: '羽田空港の地震' },
+          { id: 'uni', date: '2026-06-26', time: '20:20', category: 'transport', transport: '', label: 'ユニオンステーション' },
+          { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'plane', label: 'ロサンゼルスへのフライト' },
+          { id: 'fan', date: '2026-06-26', time: '21:00', category: 'sightseeing', label: 'ファンゾーン' }];
+        bs.forEach(function (b) { b.createdAt = String(ord.indexOf(b.id)); });
+        var own = { eq: TK, fl: LA, uni: LA, fan: LA };
+        if (laxMap) own.lax = laxMap;
+        var z = T.assignBlockZones(bs, own, day ? { '2026-06-26': day } : {}, TK);
+        var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).join(',');
+        if (got !== 'eq,fl,lax,uni,fan' || z.fl !== TK || z.lax !== LA) ng.push(oi + '/' + laxMap + '/' + day + ' → ' + got);
+      });
+    });
+  });
+  eq('「〜へのフライト」は行き先の地図でも出発の予定：東京（地震・フライト）→ LA（空港・ユニオンステーション・ファンゾーン）', ng, []);
+})();
+
+/* ---- 実データ（ワールドカップ旅1日目、「時差の並びを調べる」で取得。2026-09-27）：移動手段が空欄の移動の予定が3つ。
+   ロサンゼルス国際空港（地図LA）・ユニオンステーション（地図なし）はLA、フライト（地図は羽田・到着地LA 18:00）は日本 ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';
+  var arrive = [{ id: 'e', travel: { arrive: '18:00', arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=33.94,-118.40', arriveLat: 33.94, arriveLng: -118.40 } }];
+  var bs = [
+    { id: 'lax', date: '2026-06-26', time: '18:50', category: 'transport', transport: '', label: 'ロサンゼルス国際空港', createdAt: '2026-09-23T13:34:00' },
+    { id: 'eq', date: '2026-06-26', time: '20:00', category: 'other', label: '羽田空港の地震', createdAt: '2026-09-23T14:01:00' },
+    { id: 'uni', date: '2026-06-26', time: '20:20', category: 'transport', transport: '', label: 'ユニオンステーション', createdAt: '2026-09-23T13:34:01' },
+    { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: '', label: 'ロサンゼルスへのフライト', createdAt: '2026-09-23T14:01:01', entries: arrive },
+    { id: 'fan', date: '2026-06-26', time: '21:00', category: 'sightseeing', label: 'ファンゾーン', createdAt: '2026-09-23T14:01:02' },
+    { id: 'inn', date: '2026-06-26', time: '21:30', category: 'food', label: 'In-N-Out Burger', createdAt: '2026-09-23T13:34:02' },
+    { id: 'kiku', date: '2026-06-26', time: '22:30', category: 'lodging', label: '菊の家', createdAt: '2026-09-23T13:34:03' }];
+  var z = T.assignBlockZones(bs, { lax: LA, eq: TK, fl: TK, kiku: LA }, { '2026-06-26': LA }, TK, { fl: LA });
+  var order = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; });
+  eq('実データ：羽田の地震・フライト（日本）→ LAX・ユニオンステーション・ファンゾーン・In-N-Out・菊の家（LA）', order, ['eq', 'fl', 'lax', 'uni', 'fan', 'inn', 'kiku']);
+  eq('実データ：時差', [z.eq, z.fl, z.lax, z.uni, z.fan, z.inn, z.kiku], [TK, TK, LA, LA, LA, LA, LA]);
+  eq('見出しが「〜フライト」なら移動手段が空欄でも飛行機', [(T.isPlaneMove||function(){return true;})({ transport: '', label: 'ロサンゼルスへのフライト' }), (T.isPlaneMove||function(){return false;})({ transport: '', label: 'ロサンゼルス国際空港' }), (T.isPlaneMove||function(){return false;})({ transport: 'car', label: 'フライト後の送迎' })], [true, false, false]);
+})();
+
+/* ---- 地図でふりかえる：日付変更線をまたいだら、そのあとの地点の経度を±360度して続ける（香港→ニューヨークで、
+   ニューヨークまでの足跡が別の周回に描かれて見えなくなっていた。2026-09-27） ---- */
+(function () {
+  var stops = [
+    { blockId: 'tk', dayIndex: 0, minute: 600, query: 'tk', transport: '' },
+    { blockId: 'hk', dayIndex: 0, minute: 900, query: 'hk', transport: 'plane' },
+    { blockId: 'ny', dayIndex: 1, minute: 600, query: 'ny', transport: 'plane' },
+    { blockId: 'rio', dayIndex: 3, minute: 600, query: 'rio', transport: 'plane' }];
+  var tl = T.buildReplayTimeline(stops, { tk: { lat: 35.68, lng: 139.77 }, hk: { lat: 22.31, lng: 113.92 }, ny: { lat: 40.64, lng: -73.78 }, rio: { lat: -22.81, lng: -43.25 } });
+  eq('日付変更線：ニューヨーク・リオは経度+360度で続く', tl.stops.map(function (s) { return Math.round(s.lng); }), [140, 114, 286, 317]);
+  var hkNy = tl.legs[1];
+  var end = hkNy.path[hkNy.path.length - 1];
+  eq('日付変更線：香港→ニューヨークの弧の終わりがニューヨークの地点と同じ経度', Math.round(end[1]), 286);
+  eq('日付変更線：距離は経度をずらしても変わらない', Math.round(T.distanceKm(tl.stops[2], tl.stops[3])), Math.round(T.distanceKm({ lat: 40.64, lng: -73.78 }, { lat: -22.81, lng: -43.25 })));
+  eq('wrapLng：-180〜180度に戻す', [T.wrapLng(286.22), T.wrapLng(-200), T.wrapLng(139.77), T.wrapLng(180)].map(function (x) { return Math.round(x * 100) / 100; }), [-73.78, 160, 139.77, 180]);
+})();
+
+/* ---- 実データ（ブラジル・アルゼンチン旅、2024-02-10。2026-09-27）：ニューヨーク到着と出発の間の「英語表現の疑問」は、
+   地図があってもなくてもニューヨークの時差（以前は地図なしだとリオの時差で出発より前に並んでいた） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', HK = 'Asia/Hong_Kong', NY = 'America/New_York', SP = 'America/Sao_Paulo';
+  var bs = [
+    { id: 'nrt', date: '2024-02-10', time: '10:35', category: 'transport', transport: 'plane', label: '成田空港出発' },
+    { id: 'hkA', date: '2024-02-10', time: '15:00', category: 'transport', transport: 'plane', label: '香港到着' },
+    { id: 'ear', date: '2024-02-10', time: '16:00', category: 'other', label: 'イヤホンジャック忘れ' },
+    { id: 'hkD', date: '2024-02-10', time: '16:20', category: 'transport', transport: 'plane', label: '香港出発' },
+    { id: 'nyA', date: '2024-02-10', time: '19:05', category: 'transport', transport: '', label: 'ニューヨーク到着' },
+    { id: 'eng', date: '2024-02-10', time: '22:00', category: 'other', label: '英語表現の疑問' },
+    { id: 'nyD', date: '2024-02-10', time: '21:55', category: 'transport', transport: '', label: 'ニューヨーク出発' },
+    { id: 'rio', date: '2024-02-11', time: '09:00', category: 'lodging', label: 'リオのホテル' }
+  ].map(function (b, i) { b.createdAt = String(i); return b; });
+  [null, NY].forEach(function (engMap) {
+    var own = { nrt: TK, hkA: HK, nyA: NY, rio: SP };
+    if (engMap) own.eng = engMap;
+    var z = T.assignBlockZones(bs, own, { '2024-02-10': TK, '2024-02-11': SP }, TK);
+    var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; });
+    eq('実データ（英語表現の疑問、地図' + (engMap ? 'あり' : 'なし') + '）：ニューヨークの時差で、ニューヨーク出発の後', [z.eng, got.join(',')], [NY, 'nrt,hkA,ear,hkD,nyA,nyD,eng,rio']);
+  });
+})();
+
+/* ---- 宿泊先を手で足す：何泊目からの選択肢（2026-09-27） ---- */
+eq('lodgingNightOptions：3泊4日なら1〜3泊目', T.lodgingNightOptions({ startDate: '2026-06-26', endDate: '2026-06-29' }, []),
+  [{ date: '2026-06-26', label: '1泊目（6/26）' }, { date: '2026-06-27', label: '2泊目（6/27）' }, { date: '2026-06-28', label: '3泊目（6/28）' }]);
+eq('lodgingNightOptions：日帰りはその日', T.lodgingNightOptions({ startDate: '2026-04-01', endDate: '2026-04-01' }, []), [{ date: '2026-04-01', label: '4/1' }]);
+eq('lodgingNightOptions：日程なし・予定なしは空', T.lodgingNightOptions({}, []), []);
+
+/* ---- 宿泊先の内訳の行と、その元になった予定（行をタップして直すため。2026-09-27） ---- */
+(function () {
+  var bs = [
+    { id: 'k1', date: '2026-06-26', time: '22:30', category: 'lodging', label: '菊の家' },
+    { id: 'k2', date: '2026-06-28', time: '01:00', category: 'lodging', label: '菊の家' },
+    { id: 'h', date: '2026-06-28', time: '13:00', category: 'lodging', label: 'コートヤード' },
+    { id: 'x', date: '2026-06-27', time: '10:00', category: 'food', label: '昼' }];
+  var g = T.lodgingGroupBlocks({ startDate: '2026-06-26', endDate: '2026-06-30' }, bs);
+  eq('lodgingGroupBlocks：行（泊）とlodgingByNightが同じまとめ方', g.map(function (x) { return [x.from, x.to, x.label]; }),
+    T.lodgingByNight({ startDate: '2026-06-26', endDate: '2026-06-30' }, bs).map(function (x) { return [x.from, x.to, x.label]; }));
+  eq('lodgingGroupBlocks：行ごとの元の予定', g.map(function (x) { return x.blockIds; }), [['k1'], ['h']]);
+})();
+
+/* ---- 宿泊先の行を直す：泊まり始めを行の途中の夜にしたら、その夜から先だけを新しい宿に（2026-09-27。
+   「同上」でまとめた1〜3泊目を「3泊目からマリオット」に直したら、1〜2泊目の宿が3泊目へ移って未定になっていた） ---- */
+(function () {
+  var k1 = { id: 'k1', date: '2026-06-26', time: '22:30' }, h = { id: 'h', date: '2026-06-28', time: '13:00' };
+  eq('lodgingEditPlan：途中の夜に予定があれば、それから先だけ名前を変える（手前は動かさない）',
+    T.lodgingEditPlan([k1, h], '2026-06-26', '2026-06-28'), { rename: ['h'], move: null, create: null });
+  eq('lodgingEditPlan：途中の夜に予定が無ければ、その夜に予定を足す',
+    T.lodgingEditPlan([k1], '2026-06-26', '2026-06-27'), { rename: [], move: null, create: '2026-06-27' });
+  eq('lodgingEditPlan：泊まり始めがそのままなら、行の予定すべての名前を変える',
+    T.lodgingEditPlan([k1, h], '2026-06-26', '2026-06-26'), { rename: ['k1', 'h'], move: null, create: null });
+  eq('lodgingEditPlan：前にずらしたら、最初の予定をその日へ移す',
+    T.lodgingEditPlan([h], '2026-06-28', '2026-06-27'), { rename: ['h'], move: { id: 'h', date: '2026-06-27' }, create: null });
+})();
+
+/* ---- 泊ごとの宿と、「n泊目〜m泊目をこの宿にする」（2026-09-27） ---- */
+(function () {
+  var trip = { startDate: '2026-06-26', endDate: '2026-07-05' }; // 9泊
+  var bs = [
+    { id: 'k1', date: '2026-06-26', time: '22:30', category: 'lodging', label: '菊の家' },
+    { id: 'h', date: '2026-06-28', time: '13:00', category: 'lodging', label: 'マリオット' },
+    { id: 'p', date: '2026-07-01', time: '', category: 'lodging', label: 'パタゴニア' }];
+  eq('lodgingNights：泊ごとの宿', T.lodgingNights(trip, bs).map(function (n) { return n.night + ':' + n.label; }),
+    ['1:菊の家', '2:菊の家', '3:マリオット', '4:マリオット', '5:マリオット', '6:パタゴニア', '7:パタゴニア', '8:パタゴニア', '9:パタゴニア']);
+  eq('lodgingRangePlan：7泊目だけ別の宿（7泊目に足し、8泊目にパタゴニアを足して戻す）', T.lodgingRangePlan(trip, bs, 7, 7, 'X'),
+    { rename: [], create: [{ date: '2026-07-02', label: 'X', mapFrom: null, target: true }, { date: '2026-07-03', label: 'パタゴニア', mapFrom: 'p', target: false }], target: null });
+  eq('lodgingRangePlan：7〜9泊目（最後まで）は戻す予定を足さない', T.lodgingRangePlan(trip, bs, 7, 9, 'X').create.length, 1);
+  eq('lodgingRangePlan：3〜5泊目の名前を変える（予定を移さない）', T.lodgingRangePlan(trip, bs, 3, 5, 'コートヤード'),
+    { rename: ['h'], create: [], target: 'h' });
+  eq('lodgingRangePlan：1〜3泊目を菊の家（同上）→ マリオットの予定の名前を変え、4泊目にマリオットを足して戻す', T.lodgingRangePlan(trip, bs, 1, 3, '菊の家'),
+    { rename: ['h'], create: [{ date: '2026-06-29', label: 'マリオット', mapFrom: 'h', target: false }], target: 'k1' });
+})();
+
+/* ---- 宿泊先カードの短い表し方（2026-09-27） ---- */
+eq('lodgingSummary：いちばん長く泊まった宿＋ほか○か所', T.lodgingSummary([{ label: '菊の家', from: 1, to: 2 }, { label: 'マリオット', from: 3, to: 3 }, { label: 'フラミンゴ', from: 4, to: 4 }, { label: '菊の家', from: 7, to: 9 }]), '菊の家 ほか2か所');
+eq('lodgingSummary：1か所だけなら名前', T.lodgingSummary([{ label: '菊の家', from: 1, to: 3 }]), '菊の家');
+eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingSummary([{ label: '', from: 1, to: 2 }, { label: 'A', from: 3, to: 3 }]), T.lodgingSummary([{ label: '', from: 1, to: 2 }])], ['A', '']);
+
+/* ---- 地図でふりかえるの「何日目」は予定の日付に合わせる（香港16:20発→ニューヨーク19:05着、どちらも1日目。2026-09-27） ---- */
+(function () {
+  var stops = [
+    { blockId: 'hk', dayIndex: 0, dayNumber: 1, minute: 16 * 60 + 20, offset: 480, query: 'hk', transport: '' },
+    { blockId: 'ny', dayIndex: 0, dayNumber: 1, minute: 19 * 60 + 5, offset: -300, query: 'ny', transport: 'plane' },
+    { blockId: 'rio', dayIndex: 1, dayNumber: 2, minute: 12 * 60, offset: -180, query: 'rio', transport: 'plane' }];
+  var tl = T.buildReplayTimeline(stops, { hk: { lat: 22.31, lng: 113.92 }, ny: { lat: 40.64, lng: -73.78 }, rio: { lat: -22.81, lng: -43.25 } });
+  var leg = tl.legs[0];
+  var mid = T.replayStateAt(tl, leg.r0 + (leg.r1 - leg.r0) * 0.9);
+  eq('何日目：香港→ニューヨークの飛行中は1日目（香港の時計が0時を越えても）', mid.dayNumber, 1);
+  eq('何日目：ニューヨークに着いたら1日目、リオに着いたら2日目', [T.replayStateAt(tl, tl.stops[1].r + 0.01).dayNumber, T.replayStateAt(tl, tl.stops[2].r + 0.01).dayNumber], [1, 2]);
+})();
+
+/* ---- 種類「到着」（移動の「出発｜到着」タブ。2026-09-27）：着いた場所の予定として扱う ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', ng = [];
+  [['hnd', 'fl', 'arr', 'htl'], ['arr', 'htl', 'hnd', 'fl'], ['htl', 'arr', 'fl', 'hnd']].forEach(function (ord, oi) {
+    [null, LA].forEach(function (flMap) {
+      var bs = [
+        { id: 'hnd', date: '2026-06-26', time: '18:00', category: 'sightseeing', label: '羽田空港' },
+        { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: '', label: 'ロサンゼルスへ' },
+        { id: 'arr', date: '2026-06-26', time: '18:50', category: 'arrival', transport: 'plane', label: 'ロサンゼルス国際空港' },
+        { id: 'htl', date: '2026-06-26', time: '22:30', category: 'lodging', label: '菊の家' }];
+      bs.forEach(function (b) { b.createdAt = String(ord.indexOf(b.id)); });
+      var own = { hnd: TK, arr: LA, htl: LA };
+      if (flMap) own.fl = flMap;
+      var z = T.assignBlockZones(bs, own, {}, TK);
+      var got = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }).join(',');
+      if (got !== 'hnd,fl,arr,htl' || z.arr !== LA || z.fl !== TK) ng.push(oi + '/' + flMap + ' → ' + got);
+    });
+  });
+  eq('到着の予定：入れた順・出発の地図によらず、羽田→出発（日本時間）→到着（LA時間）→宿', ng, []);
+  eq('到着の予定は評価の対象にしない（移動と同じ）', T.reviewKindForCategory ? T.reviewKindForCategory('arrival') : '', '');
+  eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
+})();
+
+/* ---- 手で決めた並び（時差の区切りがある日。2026-09-27） ---- */
+(function () {
+  var bs = [
+    { id: 'lax', date: '2026-06-26', time: '18:50', manualOrder: 2 },
+    { id: 'eq', date: '2026-06-26', time: '20:00', manualOrder: 0 },
+    { id: 'fl', date: '2026-06-26', time: '20:00', manualOrder: 1 },
+    { id: 'new', date: '2026-06-26', time: '19:00' },        // あとから足した（手の並びなし）
+    { id: 'd2', date: '2026-06-27', time: '09:00' },
+    { id: 'd2b', date: '2026-06-27', time: '08:00' }];
+  eq('sortBlocks：手の並びがある日はその並び、あとから足した予定はふだんの並びで前の予定の後ろ',
+    T.sortBlocks(bs).map(function (b) { return b.id; }), ['eq', 'fl', 'lax', 'new', 'd2b', 'd2']);
+  eq('dayHasManualOrder', [T.dayHasManualOrder(bs, '2026-06-26'), T.dayHasManualOrder(bs, '2026-06-27')], [true, false]);
+  eq('sortBlocks：手の並びが無ければこれまでどおり', T.sortBlocks([{ id: 'b', date: 'x', time: '10:00' }, { id: 'a', date: 'x', time: '09:00' }]).map(function (b) { return b.id; }), ['a', 'b']);
+})();
+
+/* ---- 端末のタイムゾーンが旅の地図に出てこない（UTC・海外で入力）とき、最初の移動より前にいた場所を起点にする（2026-09-27） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';
+  var bs = [
+    { id: 'hnd', date: '2026-09-01', time: '18:00', category: 'sightseeing', createdAt: '1' },
+    { id: 'fl', date: '2026-09-01', time: '20:00', category: 'transport', transport: 'plane', createdAt: '4', label: 'ロサンゼルスへのフライト' },
+    { id: 'lax', date: '2026-09-01', time: '18:50', category: 'arrival', transport: 'plane', createdAt: '2' },
+    { id: 'kiku', date: '2026-09-01', time: '22:30', category: 'lodging', createdAt: '3' }];
+  ['UTC', LA, TK].forEach(function (dev) {
+    var z = T.assignBlockZones(bs, { hnd: TK, fl: TK, lax: LA, kiku: LA }, {}, dev, {});
+    eq('端末が' + dev + 'でも、羽田→フライト（日本）→LA到着→菊の家', T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z)).map(function (b) { return b.id; }), ['hnd', 'fl', 'lax', 'kiku']);
+  });
+})();
+
+/* ---- 自分のAIで整理（JSON貼り付け）：parseImportedBlocksJson（docs/adr/0015） ---- */
+(function () {
+  var oneDayTrip = { startDate: '2026-04-01', endDate: '2026-04-01' };
+  var multiDayTrip = { startDate: '2026-04-01', endDate: '2026-04-03' };
+
+  // ```json ... ``` で囲まれていても読み取れる
+  var fenced = T.parseImportedBlocksJson(
+    '前置きの説明です。\n```json\n{"blocks":[{"time":"10:00","label":"東京駅","category":"transport","entry":{"episode":"新幹線で移動した"}}]}\n```\nよろしくお願いします。',
+    oneDayTrip
+  );
+  eq('parseImportedBlocksJson: コードフェンス付きでも読める', [fenced.errors.length, fenced.blocks.length, fenced.blocks[0] && fenced.blocks[0].label], [0, 1, '東京駅']);
+
+  // 一番外側の配列だけを渡された（{blocks:...}で包まれていない）
+  var bare = T.parseImportedBlocksJson('[{"label":"清水寺","category":"sightseeing","time":"","entry":{"episode":"拝観した"}}]', oneDayTrip);
+  eq('parseImportedBlocksJson: bareな配列も受け付ける', [bare.errors.length, bare.blocks.length, bare.blocks[0].label], [0, 1, '清水寺']);
+
+  // 前後に説明文（プロース）が付いていても、外側のJSONだけ取り出す
+  var withProse = T.parseImportedBlocksJson(
+    'はい、JSONにまとめました：\n\n{"blocks":[{"label":"ホテル到着","category":"lodging","entry":{"episode":"チェックインした"}}]}\n\n何か他にありますか？',
+    oneDayTrip
+  );
+  eq('parseImportedBlocksJson: 前後にプロースがあっても読める', [withProse.errors.length, withProse.blocks.length, withProse.blocks[0].label], [0, 1, 'ホテル到着']);
+
+  // 不明なcategoryは'other'にフォールバックし、警告を出す
+  var badCategory = T.parseImportedBlocksJson('{"blocks":[{"label":"謎の予定","category":"nazo","entry":{"episode":""}}]}', oneDayTrip);
+  eq('parseImportedBlocksJson: 不明なcategoryはotherにフォールバック', badCategory.blocks[0].category, 'other');
+  ok('parseImportedBlocksJson: categoryフォールバックの警告がある', badCategory.warnings.length === 1);
+
+  // 複数日の旅行で、旅行期間外のdateはエラーとして省かれる（他の正しい項目は取り込まれる）
+  var badDateMulti = T.parseImportedBlocksJson(
+    '{"blocks":[' +
+      '{"date":"2026-04-02","label":"良い予定","category":"sightseeing","entry":{"episode":""}},' +
+      '{"date":"2026-05-01","label":"期間外の予定","category":"sightseeing","entry":{"episode":""}}' +
+    ']}',
+    multiDayTrip
+  );
+  eq('parseImportedBlocksJson: 複数日でdateが旅行期間内なら取り込む', [badDateMulti.blocks.length, badDateMulti.blocks[0].label, badDateMulti.blocks[0].date], [1, '良い予定', '2026-04-02']);
+  eq('parseImportedBlocksJson: 複数日でdateが期間外ならその項目だけエラーで省く', badDateMulti.errors.length, 1);
+
+  // 複数日で、dateが無い項目もエラー
+  var missingDateMulti = T.parseImportedBlocksJson('{"blocks":[{"label":"日付なし","category":"sightseeing","entry":{"episode":""}}]}', multiDayTrip);
+  eq('parseImportedBlocksJson: 複数日でdateが無ければエラー', [missingDateMulti.blocks.length, missingDateMulti.errors.length], [0, 1]);
+
+  // 海外通貨のcostItemはcurrency付きでそのまま残る
+  var foreignCost = T.parseImportedBlocksJson(
+    '{"blocks":[{"label":"お土産","category":"other","entry":{"episode":"","costItems":[{"label":"置物","amount":12.5,"currency":"usd"},{"label":"入場料","amount":800}]}}]}',
+    oneDayTrip
+  );
+  eq('parseImportedBlocksJson: 海外通貨のcostItemはcurrency（大文字化）付きで残る', foreignCost.blocks[0].entry.costItems,
+    [{ label: '置物', amount: 12.5, currency: 'USD' }, { label: '入場料', amount: 800 }]);
+
+  // 空文字・ゴミ文字列（JSONが見つからない）はエラー
+  var empty = T.parseImportedBlocksJson('', oneDayTrip);
+  ok('parseImportedBlocksJson: 空文字はエラー', empty.errors.length === 1 && empty.blocks.length === 0);
+  var garbage = T.parseImportedBlocksJson('これは予定の話し合いのメモで、JSONではありません。', oneDayTrip);
+  ok('parseImportedBlocksJson: JSONが無ければエラー', garbage.errors.length === 1 && garbage.blocks.length === 0);
+})();
+
+/* ---- 行ったことある旅先（canonicalVisitedCountryName / buildCountryIsoIndex / visitedPlaceTrips） ---- */
+(function () {
+  eq('canonicalVisitedCountryName: 正式名称を短くする', T.canonicalVisitedCountryName('アメリカ合衆国'), 'アメリカ');
+  eq('canonicalVisitedCountryName: 別名も同じ国名にまとめる', T.canonicalVisitedCountryName('大韓民国'), '韓国');
+  eq('canonicalVisitedCountryName: 英語表記もまとめる', T.canonicalVisitedCountryName('United States of America'), 'アメリカ');
+  eq('canonicalVisitedCountryName: すでに正規化済みならそのまま', T.canonicalVisitedCountryName('ブラジル'), 'ブラジル');
+  eq('canonicalVisitedCountryName: KEEP_AS_ISはそのまま（共和国止まりで別の国と衝突するため）', T.canonicalVisitedCountryName('ドミニカ共和国'), 'ドミニカ共和国');
+  eq('canonicalVisitedCountryName: 表に無い「〜共和国」は接尾辞だけ落とす', T.canonicalVisitedCountryName('ケニア共和国'), 'ケニア');
+  eq('canonicalVisitedCountryName: 空文字は空文字', T.canonicalVisitedCountryName(''), '');
+  eq('canonicalVisitedCountryName: nullは空文字', T.canonicalVisitedCountryName(null), '');
+
+  var alpha2Table = { '392': 'JP', '840': 'US', '076': 'BR', '032': 'AR', '410': 'KR' };
+  var idx = T.buildCountryIsoIndex(['392', '840', '076', '032', '410', '999'], alpha2Table);
+  eq('buildCountryIsoIndex: 日本', idx.idToName['392'], '日本');
+  eq('buildCountryIsoIndex: アメリカ（Intl.DisplayNamesの生名から正規化）', idx.idToName['840'], 'アメリカ');
+  eq('buildCountryIsoIndex: ブラジル', idx.idToName['076'], 'ブラジル');
+  eq('buildCountryIsoIndex: アルゼンチン', idx.idToName['032'], 'アルゼンチン');
+  eq('buildCountryIsoIndex: 韓国', idx.idToName['410'], '韓国');
+  eq('buildCountryIsoIndex: nameToIdは逆引きできる', idx.nameToId['アメリカ'], '840');
+  eq('buildCountryIsoIndex: alpha2が無いidは対応表に入らない', idx.idToName['999'] === undefined, true);
+  eq('buildCountryIsoIndex: alpha2Tableが無いidも無視される（存在しないid）', T.buildCountryIsoIndex(['000'], alpha2Table).idToName['000'] === undefined, true);
+  eq('buildCountryIsoIndex: idsが空でも空の対応表を返す', T.buildCountryIsoIndex([], alpha2Table), { idToName: {}, nameToId: {} });
+
+  eq('visitedPlaceTrips: 数えている旅行だけ拾う（tripId・年つき）', T.visitedPlaceTrips({
+    sources: [
+      { tripId: 't1', tripTitle: '沖縄旅行', dates: ['2026-05-01'], transit: false, excluded: false },
+      { tripId: 't2', tripTitle: '乗り継ぎだけの旅', dates: ['2026-06-01'], transit: true, excluded: false },
+      { tripId: 't3', tripTitle: '外した旅行', dates: ['2026-07-01'], transit: false, excluded: true }
+    ]
+  }), [{ tripId: 't1', tripTitle: '沖縄旅行', years: ['2026'] }]);
+  eq('visitedPlaceTrips: 同じ旅行（tripId）が複数回出ても重複しない', T.visitedPlaceTrips({
+    sources: [
+      { tripId: 't1', tripTitle: '家族旅行', dates: ['2026-01-01'], transit: false, excluded: false },
+      { tripId: 't1', tripTitle: '家族旅行', dates: ['2026-01-02'], transit: false, excluded: false }
+    ]
+  }), [{ tripId: 't1', tripTitle: '家族旅行', years: ['2026'] }]);
+  eq('visitedPlaceTrips: 無題の旅はタイトルを補う', T.visitedPlaceTrips({
+    sources: [{ tripId: 't1', tripTitle: '', dates: [], transit: false, excluded: false }]
+  }), [{ tripId: 't1', tripTitle: '（無題の旅）', years: [] }]);
+  eq('visitedPlaceTrips: sourcesが無ければ空配列', T.visitedPlaceTrips({}), []);
+  eq('visitedPlaceTrips: 複数の年にまたがる旅行は年を全部拾う', T.visitedPlaceTrips({
+    sources: [{ tripId: 't1', tripTitle: '年またぎ旅行', dates: ['2026-12-31', '2027-01-01'], transit: false, excluded: false }]
+  }), [{ tripId: 't1', tripTitle: '年またぎ旅行', years: ['2026', '2027'] }]);
+
+  eq('visitedYearsFromDates: 日付から年だけ重複なく拾う', T.visitedYearsFromDates(['2026-01-01', '2026-05-05', '2027-01-01']), ['2026', '2027']);
+  eq('visitedYearsFromDates: 日付が無ければ空配列', T.visitedYearsFromDates([]), []);
+  eq('visitedYearsFromDates: undefinedでも空配列', T.visitedYearsFromDates(undefined), []);
+
+  eq('visitedTripLabel: 年があれば（）で付ける', T.visitedTripLabel({ tripTitle: '大阪旅行', years: ['2026'] }), '大阪旅行（2026）');
+  eq('visitedTripLabel: 複数年は・でつなぐ', T.visitedTripLabel({ tripTitle: '年またぎ旅行', years: ['2026', '2027'] }), '年またぎ旅行（2026・2027）');
+  eq('visitedTripLabel: 年が無ければ省く', T.visitedTripLabel({ tripTitle: '旧データの旅行', years: [] }), '旧データの旅行');
+})();
+
+/* ---- 行ったことある旅先（地方・大陸のグループ分け／国旗絵文字／達成率、2026-09-28〜） ---- */
+(function () {
+  // regionForPrefecture
+  eq('regionForPrefecture: 北海道', T.regionForPrefecture('北海道'), '北海道');
+  eq('regionForPrefecture: 東北（宮城県）', T.regionForPrefecture('宮城県'), '東北');
+  eq('regionForPrefecture: 関東（東京都）', T.regionForPrefecture('東京都'), '関東');
+  eq('regionForPrefecture: 中部（愛知県）', T.regionForPrefecture('愛知県'), '中部');
+  eq('regionForPrefecture: 近畿（京都府）', T.regionForPrefecture('京都府'), '近畿');
+  eq('regionForPrefecture: 中国（広島県）', T.regionForPrefecture('広島県'), '中国');
+  eq('regionForPrefecture: 四国（香川県）', T.regionForPrefecture('香川県'), '四国');
+  eq('regionForPrefecture: 九州・沖縄（沖縄県）', T.regionForPrefecture('沖縄県'), '九州・沖縄');
+  eq('regionForPrefecture: 九州・沖縄（鹿児島県）', T.regionForPrefecture('鹿児島県'), '九州・沖縄');
+  eq('regionForPrefecture: 知らない名前はnull', T.regionForPrefecture('架空県'), null);
+  eq('regionForPrefecture: 空文字はnull', T.regionForPrefecture(''), null);
+  eq('VISITED_REGION_ORDER: 8地方が北海道から順に並ぶ', T.VISITED_REGION_ORDER,
+    ['北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州・沖縄']);
+
+  // continentForAlpha2
+  eq('continentForAlpha2: 日本はアジア', T.continentForAlpha2('JP'), 'アジア');
+  eq('continentForAlpha2: アメリカは北アメリカ', T.continentForAlpha2('US'), '北アメリカ');
+  eq('continentForAlpha2: ブラジルは南アメリカ', T.continentForAlpha2('BR'), '南アメリカ');
+  eq('continentForAlpha2: フランスはヨーロッパ', T.continentForAlpha2('FR'), 'ヨーロッパ');
+  eq('continentForAlpha2: エジプトはアフリカ', T.continentForAlpha2('EG'), 'アフリカ');
+  eq('continentForAlpha2: オーストラリアはオセアニア', T.continentForAlpha2('AU'), 'オセアニア');
+  eq('continentForAlpha2: 小文字でも判定できる', T.continentForAlpha2('jp'), 'アジア');
+  eq('continentForAlpha2: 知らないコードはnull', T.continentForAlpha2('ZZ'), null);
+  eq('continentForAlpha2: 空文字はnull', T.continentForAlpha2(''), null);
+  eq('continentForAlpha2: undefinedはnull', T.continentForAlpha2(undefined), null);
+
+  // flagEmojiForAlpha2
+  eq('flagEmojiForAlpha2: 日本は🇯🇵', T.flagEmojiForAlpha2('JP'), '🇯🇵');
+  eq('flagEmojiForAlpha2: アメリカは🇺🇸', T.flagEmojiForAlpha2('US'), '🇺🇸');
+  eq('flagEmojiForAlpha2: 小文字でも組み立てられる', T.flagEmojiForAlpha2('jp'), '🇯🇵');
+  eq('flagEmojiForAlpha2: 不正な長さは空文字', T.flagEmojiForAlpha2('JPN'), '');
+  eq('flagEmojiForAlpha2: 数字は空文字', T.flagEmojiForAlpha2('J1'), '');
+  eq('flagEmojiForAlpha2: 空文字は空文字', T.flagEmojiForAlpha2(''), '');
+  eq('flagEmojiForAlpha2: undefinedは空文字', T.flagEmojiForAlpha2(undefined), '');
+
+  // visitedPercentage
+  eq('visitedPercentage: 2/47は四捨五入で4%', T.visitedPercentage(2, 47), 4);
+  eq('visitedPercentage: 0/47は0%', T.visitedPercentage(0, 47), 0);
+  eq('visitedPercentage: 47/47は100%', T.visitedPercentage(47, 47), 100);
+  eq('visitedPercentage: 3/193は2%（四捨五入）', T.visitedPercentage(3, 193), 2);
+  eq('visitedPercentage: totalが0なら0%', T.visitedPercentage(5, 0), 0);
+  eq('visitedPercentage: totalが負なら0%', T.visitedPercentage(5, -1), 0);
+
+  // groupVisitedByOrder
+  var byLetter = T.groupVisitedByOrder(
+    [{ name: 'b' }, { name: 'a' }, { name: 'c' }, { name: 'x' }],
+    function (x) { return x.name === 'x' ? null : (x.name <= 'a' ? 'A' : 'B'); },
+    ['A', 'B']
+  );
+  eq('groupVisitedByOrder: orderの順にグループ化する', byLetter.map(function (g) { return g.group; }), ['A', 'B', 'その他']);
+  eq('groupVisitedByOrder: 各グループの中身は元の順番を保つ', byLetter[1].items.map(function (x) { return x.name; }), ['b', 'c']);
+  eq('groupVisitedByOrder: orderに無いキーは「その他」にまとまる', byLetter[2].items.map(function (x) { return x.name; }), ['x']);
+  eq('groupVisitedByOrder: 空配列は空配列', T.groupVisitedByOrder([], function () { return 'A'; }, ['A']), []);
+  eq('groupVisitedByOrder: 中身が無いグループは出てこない', T.groupVisitedByOrder(
+    [{ name: 'a' }], function () { return 'A'; }, ['A', 'B']
+  ).map(function (g) { return g.group; }), ['A']);
+})();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

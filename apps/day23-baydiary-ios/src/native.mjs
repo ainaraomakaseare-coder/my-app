@@ -19,11 +19,24 @@ if(Capacitor.isNativePlatform()) {
     shareFile:createFileSharer({filesystem:Filesystem,share:Share,cache:Directory.Cache,readBase64}),
     async extractMemo(url,options){
       const target=/^https?:\/\//.test(url)?url:API_BASE+url;
-      return fetch(target,options);
+      try{
+        return await fetch(target,options);
+      }catch(e){
+        if(e.name==='AbortError')throw e;
+        throw new Error('AI接続サーバーに接続できませんでした。デプロイがまだの可能性があります。別のAIで変換したJSONも読み込めます。');
+      }
     }
   };
   document.addEventListener('DOMContentLoaded',()=>{
     if(window.BayDiaryShell)document.documentElement.classList.add('bay-native-shell');
     document.getElementById('share-download').textContent='画像を共有・保存';
+    // The AI backend is not deployed yet, so a visible AI button would only fail
+    // (and read as a broken feature in App Review). Keep the JSON import path.
+    const aiActions=document.getElementById('memo-analyze').closest('.feature-actions');
+    const aiHelp=aiActions.previousElementSibling;
+    if(aiHelp&&aiHelp.textContent.includes('AIで読み取る'))aiHelp.hidden=true;
+    aiActions.hidden=true;
+    const jsonHelp=aiActions.parentElement.querySelector('details');
+    if(jsonHelp)jsonHelp.open=true;
   });
 }

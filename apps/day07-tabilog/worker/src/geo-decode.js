@@ -180,8 +180,36 @@ function downsamplePoints(points, maxPoints) {
   return points.filter((_, i) => i % step === 0 || i === points.length - 1);
 }
 
+// GoogleのEncoded Polyline（Routes APIのpolyline.encodedPolyline）を [[緯度,経度], ...] に戻す
+// （2026-09-27、電車の道のりをGoogleの乗り換え案内で取るため）。形式：各値を1e5倍の整数の差分にし、
+// 5ビットずつ下位から、続きがあれば0x20を立てて63を足した文字にする。壊れた入力は空配列を返す。
+function decodePolyline(str) {
+  if (typeof str !== "string" || !str) return [];
+  const out = [];
+  let i = 0, lat = 0, lng = 0;
+  const next = () => {
+    let result = 0, shift = 0, b;
+    do {
+      if (i >= str.length) return null;
+      b = str.charCodeAt(i++) - 63;
+      if (b < 0 || b > 63) return null;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20 && shift < 35);
+    return (result & 1) ? ~(result >> 1) : (result >> 1);
+  };
+  while (i < str.length) {
+    const dLat = next();
+    const dLng = next();
+    if (dLat === null || dLng === null) return [];
+    lat += dLat; lng += dLng;
+    out.push([lat / 1e5, lng / 1e5]);
+  }
+  return out;
+}
+
 export {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, normPlaceName, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline,
 };

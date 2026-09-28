@@ -31,3 +31,25 @@
 - 本番エンドポイントの切り替え自体（この試作はあくまで比較のためだけ）
 - 3モデル目以降（`llama-3.3-70b-instruct-fp8-fast`等）を`/ai-compare`に含めること（比較対象を絞ってまず2モデルで様子を見る）
 - レシート読み取り（Vision）のWorkers AI版（今回のスコープは音声・メモの整理のみ）
+
+## 追記（2026-09-27）：`mode=memo`が両モデルとも`invalid_model_output`になる不具合を直した
+
+本番で`node scripts/ai-compare.mjs memo ...`を試したところ、OpenAI側は正常（約20秒で有効な`{blocks:[…]}`）だったが、Workers AIの2モデルはどちらも約21秒後に`invalid_model_output`になった。Cloudflareの公式ドキュメント（モデルページの`sync-input.json`/`schema-input.json`、[JSON Modeのページ](https://developers.cloudflare.com/workers-ai/features/json-mode/)）を確認して、原因は2つあった。
+
+1. **`max_tokens`が小さすぎた**：1日分の呼び出しで`max_tokens: 2000`にしていたが、`gpt-oss-120b`・`qwen3-30b-a3b-fp8`は「考える」ぶん（reasoning）のトークンもこの上限に含まれる。旅行のメモを10予定ぶん程度に整理する日本語JSONの出力には数千トークン必要で、2000ではJSONが途中で切れてパース失敗になっていた。OpenAI側（`organizeTextIntoBlocks`の`max_output_tokens`）と同程度（1日分6000・複数日16000）まで引き上げた。
+2. **レスポンスの形の読み取りが実際の形と合っていなかった**：`response_format`のJSON Mode対応モデル一覧（公式ページに載っているのはLlama 3.3 70B・3.1 8B・3 8B・Hermes 2 Pro Mistral 7B・DeepSeek Coder 6.7B・DeepSeek R1 Distill Qwen 32Bの6つ）に`gpt-oss-120b`・`qwen3-30b-a3b-fp8`は含まれておらず、この2モデルは`{ response: "..." }`ではなく、OpenAI Chat Completions互換の`{ choices: [{ message: { content: "..." } }] }`という形で返してくる。以前の実装は`result.response ?? result`しか見ておらず、`choices[].message.content`を一切読んでいなかった（＝実質どんな入力でも`invalid_model_output`になる状態だった）。加えてQwen3系は本文の前に`<think>...</think>`で思考過程を書いてくることがある。
+
+**直した内容**：
+- 出力の読み取りを`worker/src/ai-parse.js`という素の関数（Workers専用のグローバルを使わない）に切り出した。`response`（文字列・すでにJSONのオブジェクトの両方）・`choices[0].message.content`（Chat Completions互換）・`output_text`/`output[]`（念のためResponses API互換にも対応）のどの形でも読み取り、`<think>...</think>`とコードブロック記法（```json）を取り除いてから、必要なら前後の説明文を無視して最も外側の`{}`だけを取り出してJSON.parseする。単体テストは`worker/test/ai-parse.test.mjs`（node実行）
+- Whisper（`whisper-large-v3-turbo`）用の`transcribeAudioWithWorkersAi`も、公式スキーマ（`audio`は数値配列ではなくbase64文字列）と実装がずれていたのを修正した（`arrayBufferToBase64`を再利用）
+- 管理者だけが見る`/ai-compare`のレスポンスに限り、Workers AI側が失敗したときだけ`debug: { rawSnippet, shape }`（生の出力の先頭800文字とトップレベルのキー一覧）を載せるようにした。利用者の音声・メモの内容そのものはやはりログには一切出さない（レスポンスに載るだけ）
+- `scripts/ai-compare.mjs`も、エラー時に`debug.shape`/`debug.rawSnippet`があれば表示するようにした
+
+## 追記（2026-09-28）：文字起こしだけ本番採用した（試作→本採用）
+
+比較の結果、Workers AI（`@cf/openai/whisper-large-v3-turbo`）の文字起こしはOpenAI（Whisper）と精度が同等で、所要時間も約2.7秒と実用的だったため、オーナーの判断で本番の文字起こしをWorkers AIに切り替えた。上記「今後の判断の進め方」3.の想定どおり、呼び出し順は「まずWorkers AI、失敗したらOpenAI」にし、失敗時だけ今までどおりOpenAIを呼ぶ（`transcribeAudioForProduction`、`worker/src/index.js`）。
+
+- **文字起こしのみ切り替え、整理は対象外**：予定・記録への整理（`organizeTextIntoBlocks`）は精度を優先し、引き続きOpenAI（Responses API）のまま。LLM2モデル（qwen3-30b・gpt-oss-120b）は`/ai-compare`の比較専用のまま本番採用していない
+- **フォールバックの判定**：Workers AIの呼び出しが例外を投げた、または結果が空文字・空白のみだったときは、その場でOpenAI（Whisper）にフォールバックする。判定ロジック（`isUsableTranscript`）は純粋関数として`worker/src/transcribe-provider.js`に切り出し、`worker/test/transcribe-provider.test.mjs`で単体テストできる
+- **無料プランの上限も引き上げ**：文字起こしの実費がほぼ無料になったため、`PLAN_MONTHLY_LIMIT.free`を月2回→月10回に引き上げた（詳細はdocs/adr/0004の2026-09-28追記）
+- `/ai-compare`（`mode=voice`）は引き続き残しており、今後モデルが変わったときなどの比較に使える

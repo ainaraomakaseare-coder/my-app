@@ -200,7 +200,7 @@ npx wrangler secret put GOOGLE_API_KEY
 
 - `GET /places/search`：Places API (New)のAutocompleteを先に試す。座標を返さないため、候補に`placeId`だけが入ることがある。クライアントは検索し直すたびに`session=`（`crypto.randomUUID()`）を付けて送る。Googleの結果はCache APIに置いていない（利用規約が長期間のキャッシュを推奨していないため）。
 - `GET /places/details?id=<placeId>&session=<token>`（新規）：座標の無い候補を「選択」したときに呼ぶ。Place Details Essentials（`location, displayName, formattedAddress`のみ。Pro以上のフィールドは足していない）を聞き、`{found, name, address, lat, lng}`を返す。`id`は`^[A-Za-z0-9_-]{10,300}$`で検証する。
-- `POST /receipts/scan`：Cloud Vision（`DOCUMENT_TEXT_DETECTION`）でレシートの文字を読み取り、`src/receipt-parse.js`の`parseReceiptText`（ルールベース。`node worker/test/receipt-parse.test.mjs`で単体テストできる）で品目に分ける。**音声入力・テキストメモと共有する利用回数の枠（`checkVoiceQuota`）は消費しない**（無料プランでも使える）。失敗したときだけ今までどおりOpenAIに回す（そのときは枠を消費する）。ログイン必須・`AI_RATE_LIMITER`はどちらの経路でも変えていない。
+- `POST /receipts/scan`：Cloud Vision（`DOCUMENT_TEXT_DETECTION`）でレシートの文字を読み取り、`src/receipt-parse.js`の`parseReceiptText`（ルールベース。`node worker/test/receipt-parse.test.mjs`で単体テストできる）で品目に分ける。**音声入力・テキストメモと共有する利用回数の枠（`checkVoiceQuota`）は消費しない**（無料プランでも使える）。失敗したときだけ今までどおりOpenAIに回す（2026-09-27〜、そのときも枠は消費しない。レシート読み取りは無料）。ログイン必須・`AI_RATE_LIMITER`はどちらの経路でも変えていない。
 
 無料枠・費用の目安は docs/adr/0011 に記載。オーナーがGCP側のクォータで1日の上限（Autocomplete/Place Details/Visionそれぞれ）と予算アラートを設定済み。
 
@@ -232,6 +232,15 @@ node scripts/ai-compare.mjs voice ./sample-voice.webm
 ```
 
 比較対象のモデルはWorkers AIの`@cf/openai/whisper-large-v3-turbo`（音声認識）・`@cf/qwen/qwen3-30b-a3b-fp8`・`@cf/openai/gpt-oss-120b`（メモの整理）。無料枠・単価の目安はdocs/adr/0012に記載。何も保存せず、利用者の音声・テキストの内容はログにも出さない。ローカルの`wrangler dev --local`ではCloudflareへのログインが無いとWorkers AIの呼び出し自体が失敗することがあるが、その場合`workersAi`側がエラーになるだけで、`/ai-compare`自体が404にならないことは確認できる。
+
+## 音声の文字起こしをCloudflare Workers AIに切り替え（2026-09-28 追加）
+
+上記の比較試作（docs/adr/0012）を経て、本番の音声文字起こしをOpenAI（Whisper）からCloudflare Workers AI（`@cf/openai/whisper-large-v3-turbo`）に切り替えた。予定・記録への整理（`organizeTextIntoBlocks`）は精度優先で引き続きOpenAIのまま。
+
+- `transcribeAudioForProduction`（`worker/src/index.js`）が新しい呼び出し口。まずWorkers AIを試し、例外が出た・結果が空文字だったときだけ今までどおりOpenAIにフォールバックする。呼び出し元（`createBlocksFromVoice`／`createBlocksFromVoiceMultiDay`）はこの関数を呼ぶだけで、フォールバックの有無を意識しない
+- フォールバック要否の判定（`isUsableTranscript`）は純粋関数として`worker/src/transcribe-provider.js`に切り出し、`node worker/test/transcribe-provider.test.mjs`で単体テストできる
+- 文字起こしがほぼ無料になったため、無料プランの音声入力の月間上限（`PLAN_MONTHLY_LIMIT.free`）を月2回→月10回に引き上げた（basicも10回→20回、premium_plusは50回のまま。詳細はdocs/adr/0004・0012の2026-09-28追記）
+- `/ai-compare`（`mode=voice`）はそのまま残しており、モデル変更時などの比較に引き続き使える
 
 （2026-09-26 追記・地図のURLのS2セルID対応）テーブルの変更は無し。GoogleマップのURLの中には、
 「共有」からの短縮リンクを展開すると店名も座標も入らず`data=!4m2!3m1!1s0x…:0x…`や`ftid=0x…:0x…`だけが
@@ -438,4 +447,74 @@ JSON文字列なので、新しいフィールドを持つcostItemもそのま�
     キャッシュキー計算は純粋関数として`src/rates.js`に切り出し、nodeで単体テストできる
     （`node worker/test/rates.test.mjs`）。
 - レートは、フォームで本人が編集できる（カード会社の実際の決済レートに合わせられるように）。
+
+## マイログ「訪れた都道府県・国」を旅行ごとに外す・戻す（2026-09-28 追加）
+
+TestFlightのフィードバックで、「アメリカ」をブラジル・アルゼンチン旅行のマイログから外すつもりで
+「マイログから外す」を押したら、別の旅行（ワールドカップ・大谷観戦旅）のアメリカも一緒に消えてしまい、
+戻す方法も無いという指摘があった。原因は`mylog_place_overrides`（v23）がアカウント単位（旅行をまたいだ
+グローバル）にhide/showを持っていたこと。旅行単位の表に作り直した。
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS mylog_trip_place_overrides (account_id TEXT NOT NULL, trip_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (account_id, trip_id, kind, name))"
+```
+
+（`--file migrations/0024_...sql`でのインポートは認証エラーになったため、`--command`形式を使った。
+同じSQLは`migrations/0024_mylog_trip_place_overrides.sql`にも置いてある。）
+
+- `mylog_trip_place_overrides(account_id, trip_id, kind, name, created_at)`：ある旅行から、ある場所を
+  「外した」という記録だけを持つ（v23と違い`mode`は無い＝外すことしかできない。戻すのは行を消すだけ）。
+- `worker/src/visited-places.js`の`aggregateVisitedPlaces`は、`overrides`（v23・グローバル）ではなく
+  `tripOverrides: [{ tripId, kind, name }]`を受け取るようになった。ある場所は「出てくる全部の旅行で
+  外されている」ときだけ総計（`prefectures`/`countries`）から落ちる。旅行ごとの一覧を
+  `tripPlaces: [{ tripId, tripTitle, prefectures: [{name, excluded}], countries: [{name, excluded}] }]`
+  として新しく返す（乗り継ぎだけの場所は含めない）。
+- **v23の`mylog_place_overrides`テーブル・`POST /mylog/places`エンドポイントは削除していない**（古い
+  アプリがまだ呼ぶ可能性があるため）。ただし`getVisitedPlaces`はこのテーブルをもう読まない＝
+  書き込みはエラーにならず成功するが、マイログの集計には一切反映されない（旧版で「外した」つもりの
+  場所は再び表示される。docs/adr/0016）。
+- 新しいエンドポイント`POST /mylog/trip-places`（`{ email, tripId, kind, name, mode: 'exclude'|'include' }`）
+  で旅行ごとに外す・戻す。認証は既存のマイログ系エンドポイントと同じ`resolveEmail`。アカウントがそのマイログの
+  持ち主であること、指定した`tripId`がそのアカウントの参加旅行（`trip_members`）であることを確認する。
+- UI（`app.js`）：マイログ画面の「訪れた都道府県・国」は総計のまま残しつつ、その上に旅行ごとの一覧
+  （`renderMyLogTripPlaces`）を追加した。旅行ごとのチップに「外す」ボタンがあり、外すとチップは
+  灰色になり「戻す」ボタンに変わる（消えない＝いつでも戻せる）。総計側からグローバルな
+  「マイログから外す」ボタンは削除した。
+- `node worker/test/visited-places.test.mjs`に、片方の旅行だけ外しても総計に残ること・両方の旅行で
+  外すと総計から落ちること・戻す（overrideを外す）と元の結果に一致することのテストを追加した。
   一度取得・入力した`rate`はアプリ側で覚えておき、通貨を変えない限り取り直さない。
+
+## マイログの「訪れた都道府県・国」：day_infosより記録の地図の座標を優先する（2026-09-28 追加）
+
+オーナー報告：大阪旅行（USJ・新大阪・甲子園・赤レンガ倉庫などを回った旅行）のマイログに「大阪府」が
+出ない。原因は、集計が`day_infos`（1日1か所しか持てない、手入力・旧自動配置の場所）だけを見ていたこと。
+2026-09-19の`day_infos`行が、過去の誤った自動配置でフロリダ（ユニバーサル・オーランド）の座標を
+持ったままになっており、その日はUSJに行っていたにもかかわらず「アメリカ」として（誤って）扱われ、
+実際に訪れた大阪府は`day_infos`のどの行にも記録されていなかった。
+
+- 情報源を入れ替えた。**主＝記録の地図の座標**（`entries.map_lat`/`map_lng`、
+  `MAP_COORDS_VALID_SINCE`＝2026-09-27以降に求めたものだけ。geo-decode.js参照）を
+  `reverseGeocode`（既存、Nominatim）で都道府県・国に変換したもの（`mapVisits`と呼んでいる）。
+  1日に複数の記録があれば、複数の都道府県・国を正しく持てる（大阪の日に兵庫にも寄っていれば両方出る）。
+  **従＝`day_infos`**（1日1か所）は、mapVisitsが無い日の補完としてだけ使う
+  （`filterFallbackDayRows`、`worker/src/visited-places.js`）：
+  1. 同じ日にmapVisitsがあれば、その`day_infos`行は丸ごと無視する（今回のフロリダの誤りはこれで消える）。
+  2. `admin1`・`country`が両方空の行は無視する（何も分からないので補完のしようがない）。
+  3. その旅行のどのmapVisitsからも1000km（`DAY_FALLBACK_MAX_KM`）以上離れている行は無視する
+     （mapVisitsが1件も無い日でも、明らかにおかしい座標は信用しない）。
+- 座標→都道府県・国の変換はNominatimのReverse（1秒1回まで）を使うため、キャッシュ（`caches.default`、
+  3桁に丸めた座標をキーに90日）に無い新しい地点だけ、間隔を空けて呼ぶ。`GET /mylog`を遅くしすぎない
+  よう、1回の呼び出しで使う待ち時間の合計に上限（8秒、`REVERSE_GEOCODE_BUDGET_MS`）を設け、
+  超えた分は今回は諦める＝次にマイログを開いたときに、キャッシュが埋まった分からeventually complete
+  で揃っていく（`resolveMapPointPlaces`）。
+- `aggregateVisitedPlaces`の`days`は、`transit`（乗り継ぎ・空港だけの記録か）をmapVisits側は
+  自分の記録が属するBlockから直接確定させて渡す（`isTransitBlock`）。`day_infos`側（フォールバック）
+  は、これまでどおりBlockの地図座標との突き合わせで判定する（`d.transit`がbooleanでなければ
+  従来の判定にフォールバックする）。
+- `node worker/test/visited-places.test.mjs`に`haversineKm`（既知の距離で確認）・
+  `filterFallbackDayRows`（同日mapVisitsがある行・admin1/country空の行・1000km以上離れた行が
+  正しく落ちること、旅行をまたいで影響しないこと）・mapVisitsが1日に複数の場所を持てること、
+  のテストを追加した。
+- 実際のトリップJSON（`GET /trips/:id`）を取得しての確認は、このセッションでは本番データへの
+  読み取りアクセスの権限が下りず行えていない（Claude Codeの自動モードの分類器が「本番の読み取り」
+  として拒否した）。オーナーが実機・ブラウザで確認するか、権限を許可したうえで再確認をお願いしたい。

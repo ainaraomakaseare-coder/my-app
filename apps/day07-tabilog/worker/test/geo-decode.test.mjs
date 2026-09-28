@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline,
 } from "../src/geo-decode.js";
 
 let pass = 0, fail = 0;
@@ -162,6 +162,12 @@ check("downsamplePoints: maxPointsが0や未指定ならそのまま", downsampl
   check("downsamplePoints: 最初の点は必ず残る", thinned[0], [0, 0]);
   check("downsamplePoints: 最後の点は必ず残る", thinned[thinned.length - 1], [999, 999]);
 }
+
+// ---- decodePolyline（Googleの公式ドキュメントの例 "_p~iF~ps|U_ulLnnqC_mqNvxq`@"） ----
+check("decodePolyline: 公式の例を3点に戻す", decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@"),
+  [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]]);
+check("decodePolyline: 空文字・nullは空配列", [decodePolyline(""), decodePolyline(null)], [[], []]);
+check("decodePolyline: 途中で切れた文字列は空配列（壊れた線を描かない）", decodePolyline("_p~iF~ps|U_ul"), []);
 
 console.log(pass + " passed, " + fail + " failed");
 if (fail) process.exitCode = 1;

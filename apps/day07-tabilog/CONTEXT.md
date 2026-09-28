@@ -194,13 +194,27 @@ _Avoid_: 自由入力のテキストや任意のWMOコードを許可しない�
 `place`・`lat`/`lon`・`admin1`・`country`は、時差判定（`assignBlockZones`）・マイログの「訪れた都道府県・国」のために今も使う。空いている日は、旅行を開いたときにその日の最初の「記録の地図」の位置からNominatimのReverseで自動で入れる（`POST /trips/:id/days/:date/auto-place`、`autoSetDayPlace`。手で入れた場所は変えない）。**この自動配置はもうOpen-Meteoで天気を取りに行かない**（天気は本人が選ぶだけになったので、表示に使わない値をわざわざ外部APIに取りに行く意味が無くなった。2026-09-26）。旧`PUT /trips/:id/days/:date`（`setDayPlace`、場所を手入力する旧UIのエンドポイント）と、そこから呼ぶ`fetchDailyWeather`自体は、古いクライアントとの互換のためコードは残したまま、今のUIからは呼ばない。
 
 **訪れた都道府県・国（マイログ）**:
-自動配置（reverseGeocode、Nominatim）が返す`admin1`（都道府県・州など）・`country`（国）を、そのまま`day_infos`に保存しておく（DAY28〜、v13）。この2つのための別の入力・別のAPI呼び出しは無い。マイログ画面の「参加した旅行」の下に、参加した旅行すべてにまたがって自動集計した都道府県・国のチップを表示する（`getVisitedPlaces`、`GET /mylog`のレスポンスに`places`として同梱）。都道府県は`country === '日本'`の行だけを対象にする（海外の`admin1`＝州などを都道府県として混ぜないように）。
+自動配置（reverseGeocode、Nominatim）が返す`admin1`（都道府県・州など）・`country`（国）を、そのまま`day_infos`に保存しておく（DAY28〜、v13）。この2つのための別の入力・別のAPI呼び出しは無い。集計そのものは`getVisitedPlaces`（`GET /mylog`のレスポンスに`places`として同梱）。都道府県は`country === '日本'`の行だけを対象にする（海外の`admin1`＝州などを都道府県として混ぜないように）。**総計の表示先は「行ったことある旅先」画面（下記）に分離した（2026-09-28〜）**。マイログ画面には「参加した旅行」の各カード内チップ（外す・戻す操作つき）だけが残る。
 _Avoid_: フロント側で集計しないこと。参加した旅行の全日程を毎回フロントで数えるのではなく、`GET /mylog`が返す`places`をそのまま表示するだけにする（`ratingSummary`など他の集計と同じく、複数端末で見ても同じ結果になるようにサーバー側で計算する）。
+
+**行ったことある旅先（地図、2026-09-28〜、docs/adr/0017）**:
+「訪れた都道府県・国」の総計を、チップの一覧だけでなく地図で見られるようにしたページ（`data-screen="visited"`、`openVisitedPlaces`）。ホーム画面のアカウント行から、マイログ・ログアウトと並ぶ4つ目のリンクとして開く（ログイン時のみ）。**新しいAPIは作らず、`GET /mylog`のplaces（マイログと同じ集計。旅行ごとの外す/戻すも反映済み）をそのまま使う**。国内・海外の2タブ：国内は都道府県ごとに塗った日本地図＋「47都道府県中◯」、海外は国ごとに塗った世界地図＋「◯か国（日本を除く）」。どちらも下に、塗った場所ごとの訪れた旅行名の一覧。地図はタイル画像を使わず、TopoJSONの座標をd3-geo（`vendor/geo`）でSVGパスに変換して描くインラインSVG（オフラインのiOSアプリ内でも軽い）。世界地図の国名は、国データのID（ISO 3166-1 numeric）→alpha-2→`Intl.DisplayNames(['ja'])`の生名を、`/mylog`と同じ国名正規化（`canonicalVisitedCountryName`。worker側`COUNTRY_ALIASES`と同内容をapp.js側に複製）にかけて突き合わせる（`buildCountryIsoIndex`）。地図タップ・一覧タップのどちらでも同じ場所を選択状態にする（`setVisitedSelection`／`updateVisitedHighlight`）。
+_Avoid_: worker側`COUNTRY_ALIASES`（`worker/src/visited-places.js`）とapp.js側`VISITED_COUNTRY_ALIASES`のどちらか一方だけを直さないこと（2つがずれると、正しく数えているのに世界地図では塗られない国が出る）。110m解像度の世界地図データには香港・マカオなど一部の小さな地域が単独図形として含まれない（既知の制限、ADR参照）。
+
+**訪れた場所を外す＝旅行ごと（2026-09-28〜、docs/adr/0016）**:
+「マイログから外す」（`mylog_place_overrides`、v23）は**アカウント全体**にhide/showが効くグローバルな仕組みだったため、「ブラジル・アルゼンチン旅行のアメリカだけ外すつもりが、ワールドカップ旅のアメリカも一緒に消えた」という不具合を生んだ（TestFlightフィードバック）。**外す・戻すは旅行ごと**（`mylog_trip_place_overrides`：account_id・trip_id・kind・nameの複合キー、除外の行があるかどうかだけを見る＝hide専用でmodeは無い）に作り直した。`aggregateVisitedPlaces`（`visited-places.js`）は、ある場所を「**出てくる旅行すべてで外されている**ときだけ」総計から落とす（片方の旅行で外しても、もう片方で数えていれば総計には残る）。マイログ画面は「参加した旅行」の下に旅行ごとのチップ一覧（外す・戻すができる、`renderMyLogTripPlaces`）、その下に総計（読み取り専用、`renderMyLogPlaces`）の2段構成。**v23の`mylog_place_overrides`テーブル・`POST /mylog/places`はまだ残っている**（古いアプリ向け）が、集計（`getVisitedPlaces`）はもう読まないので、書き込みは成功してもマイログの表示には一切反映されない。
+_Avoid_: `mylog_place_overrides`（グローバル）を新しい集計に混ぜないこと。片方の旅行だけ外したい要望に応えられなくなる（今回直した不具合がぶり返す）。
+
+**訪れた場所の情報源＝記録の地図の座標が主、day_infosは補完（2026-09-28〜）**:
+上記の旅行ごと除外を作った直後、「大阪旅行に大阪府が出ない」という報告が来た。原因は集計が`day_infos`（1日1か所、手入力・旧自動配置）だけを見ていたことで、この旅行では2026-09-19のday_infos行が過去の誤った自動配置でフロリダの座標のまま残っていた（本人が直す「場所」欄はもうUIに無い）。**情報源の主従を入れ替えた**：主＝`entries.map_lat`/`map_lng`（`MAP_COORDS_VALID_SINCE`以降）を`reverseGeocode`した`mapVisits`（1日に複数持てる）、従＝`day_infos`（`mapVisits`が無い日の補完だけ。`filterFallbackDayRows`が「同じ日にmapVisitsがある」「admin1/countryが空」「mapVisitsのどの点からも1000km以上離れている」のいずれかで弾く）。Nominatimの逆ジオコーディング結果は`caches.default`に90日キャッシュし（1秒1回の制限があるため）、`GET /mylog`1回あたりの新規問い合わせは8秒で打ち切って次回に持ち越す（`resolveMapPointPlaces`、docs/adr/0016）。
+_Avoid_: `day_infos`を主たる情報源のまま扱わないこと（1日1か所しか持てず、古い・誤った自動配置の値が残っていると訂正する手段が無い）。本番Tripデータでの動作確認をスキップしたまま「直った」と報告すること（このセッションでは本番読み取りの権限が下りず、ロジックはnodeテストのみで検証している。実機確認が別途必要）。
 
 **音声からの記録作成**:
 開いている日タブに対して、その日にあったことをまとめて話した音声（＋任意でURL・店名を雑多に書いたメモ）を渡すと、AIが話した順番どおりに複数のBlock（予定）とEntry（記録）へ自動で分割し、その場で保存する機能。日付はAIに判定させず、常に「今開いている日タブ」に固定する（作成順で並べる）。時刻（Block.time）は「10時に着いた」のように具体的に話されたときだけ入れ、話されていなければ空のまま。費用の明細（Entry.costItems）も、具体的な金額が話されたときだけ入れる。メモの中にBlockの内容と対応しそうなURL・店名があれば、entryのmapUrl・shopUrlに振り分ける。**評価（★）や、話していない・書いていない時刻・金額をAIが推測で埋めることはしない**（費用の割り方の推測も含む。上記「全体費用からの個人費用の計算」参照）。宿泊（lodging）カテゴリのBlockは、labelを宿泊施設名だけにする（「〇〇に到着する」のような文にしない）よう指示している。保存前の確認画面は挟まず、直接保存してからいつもの編集画面でブラッシュアップする前提。**このアプリで初めてAI（OpenAI）を呼び出す機能**で、呼び出しのたびに少額の従量課金が発生する（`apps/day18-omoide-wiki`と同じOpenAIのAPIキーを使う想定だが、Workerごとにシークレット登録は別途必要）。
 
 内部的には2段階（Whisperで文字起こし→その文字起こしを元に予定・記録へ分割）で処理する。使っているモデルは音声を直接聞く方式（audio input）には対応していなかったため、実機での動作確認でこの2段階構成に変更した。文字起こし自体もDayInfo（下記）の`voiceTranscript`として保存し、日の記録の下に折りたたみで表示する（「何を話したか」をあとから確認できるようにするため）。同じ日に複数回話した場合は文字起こしを追記していく。
+
+**文字起こしはCloudflare Workers AI、整理はOpenAI（2026-09-28〜）**：文字起こし（`transcribeAudioForProduction`）は、docs/adr/0012で比較した結果を受けてCloudflare Workers AI（`@cf/openai/whisper-large-v3-turbo`）を先に呼び、失敗した・空文字だったときだけ今までどおりOpenAI（Whisper）にフォールバックする。文字起こしの後に予定・記録へ分割する処理（`organizeTextIntoBlocks`）は精度優先で引き続きOpenAIのまま変えていない。Workers AIはCloudflareの無料枠（1日1万Neurons）の範囲でほぼ無料に収まるため、この切り替えに合わせて無料プランの月間上限（`PLAN_MONTHLY_LIMIT.free`）を月2回→月10回に引き上げた（有料プランを下回らないようbasicも10→20に、premium_plusは50のまま）。
 
 **1回の録音は3分まで**：`VOICE_MAX_MS`（フロント側、`app.js`）で強制しており、3分に達すると自動的に録音を止める（ユーザーが手で止めなくても、そこまでの内容で保存できる状態になる）。これは今後の有料化（`docs/adr/0004`参照）で「1回あたりの実費を一定の範囲に収める」ための制約で、無料公開中の今も先取りで適用している。
 _Avoid_: 音声入力を「文字起こしをそのままエピソード欄に貼るだけの機能」だと誤解しないこと。実際は複数のBlock/Entryへの分割・分類までAIが行う
@@ -211,6 +225,14 @@ _Avoid_: 音声入力を「文字起こしをそのままエピソード欄に�
 **複数日をまとめて記録する**:
 音声入力・テキストメモは元々「今開いている日タブ」に固定だったが、それとは別の入り口として、複数日ぶんをまとめて話す・貼り付けると、AI自身が「1日目は〜、次の日は〜」のような話し方から各予定の日を判定し、それぞれ正しい日へ振り分けて保存する機能（DAY30〜）。1日固定の`voicePrompt`とは別に`multiDayPrompt`を用意し、旅行の開始日〜終了日（`tripDateList`で1日ずつのYYYY-MM-DD配列にしたもの）をAIに教えたうえで、Blockごとに`date`も判定させる。エンドポイントも日付を含まない`POST /trips/:id/voice-entries`・`POST /trips/:id/text-entries`（1日固定版の`/trips/:id/days/:date/voice-entries`と並列、こちらは旅行そのものに対する呼び出し）。AIが返した`date`が旅行の日程に含まれないときは、旅行の最初の日にフォールバックする（`saveOrganizedBlocks`、AIの出力を無条件には信用しない）。利用回数の枠は1日固定版と共有。
 _Avoid_: 1日固定の音声入力・テキストメモ（`voicePrompt`／`POST /trips/:id/days/:date/...`）をこの機能に置き換えないこと。複数日モードは日の判定をAIに委ねる分、1日固定より日をまたいだ誤判定のリスクが上がる（1日目分の話のつもりが2日目の予定として保存される、など）ため、「今日の分だけ」入力したいときは今までどおり1日固定の入り口を使うほうが確実。文字起こしの保存（`voiceTranscript`）は複数日モードでは行わない（どの日の下に出すべきか一意に決まらないため）。
+
+**自分のAIで整理（JSON貼り付け）（DAY32〜、`docs/adr/0015`）**:
+「音声・メモでまとめて記録する」の3つ目の入り口。運営側の有料AI（OpenAI）を呼ばず、ユーザーが自分のAI（ChatGPT・Claude・Geminiなど）に整理させたJSONを貼り付けるだけで予定・記録を作る、完全無料・回数制限なしの取り込み手段。「AIへのお願い文をコピー」（`Core.buildAiImportPrompt`）は、サーバー側のOpenAI呼び出し（`voicePrompt`／`multiDayPrompt`、`voiceBlocksSchema`）と**同じBlockの形**（`date`・`time`・`label`・`category`・`transport`・`entry`（`episode`・`mapUrl`・`shopUrl`・`costItems`））を条件つきでユーザーの手元のAIに伝える文面を組み立てる。ユーザーは自分のメモをその文面の末尾（「（ここに旅のメモを貼ってください）」の位置）に足して自分のAIに渡し、返ってきたJSONを「AIの答え（JSON）を貼り付け」欄に貼って「取り込む」を押す。
+
+読み取りは`Core.parseImportedBlocksJson(text, trip)`（純粋関数、`test/data.test.js`）が担う。AIの答えには前置き・コードブロック（```json ... ```）が付くことが多いため、文字列中の`{`/`}`をクォート・エスケープを見ながら数えて「一番外側のJSON本体」だけを取り出してから`JSON.parse`する。`{blocks:[...]}`と裸の配列`[...]`のどちらも受け付ける。項目ごとに検証・補正し、`category`・`transport`が許された値でなければ安全側（`other`・空文字）にフォールバックして警告に積む。複数日の旅行では各項目の`date`が旅行期間内であることを必須にし、無い・範囲外なら**その項目だけ**取り込まずエラーに積む（他の正しい項目は取り込む）。費用の明細（`entry.costItems`）は円の整数（`amount`）に加え、海外通貨なら`currency`（ISO 4217）付きで受け付ける（手入力の費用行と違い`rate`は求めない。円換算はレートを入れるまで0円扱いになるため、あとで本人が費用の明細から直す前提）。
+
+取り込み確定は、既存のAIなし取り込みエンドポイント`POST /trips/:id/memo-blocks`（`parseMemo`の「決まった形」取り込みと共通）にそのまま`blocks`を渡すだけで、**新しいエンドポイントは作っていない**。ログイン・AIの利用回数（`memoRemainingThisPeriod`）のどちらとも無関係に使え、ログインしていなくても（旅行のURLさえ知っていれば）使える。サーバー側の`saveOrganizedBlocks`（`worker/src/index.js`）は元々`entry.costItems`と`block.transport`を保存せず捨てていたため、この機能を作る過程で両方を保存するように直した（副作用として、既存の音声・テキストメモ経由の取り込みでもこの2項目が保存されるようになったが、そちらのAIプロンプトはそもそもこの2項目を求めていないため実質的な挙動は変わらない）。
+_Avoid_: このお願い文を「サーバー側のプロンプトの日本語をそのまま貼り替えただけ」にしないこと。ユーザーの手元のAI（ChatGPT等）はこのアプリのコードを知らないため、`category`・`transport`の許可された値の一覧・JSON以外を出力しないことを、文面の中に明示する必要がある。取り込み確定前に必ずプレビュー（件数・時刻・見出し・金額・警告・エラー）を見せてから確認を取ること（AIの言うことをそのまま無条件に保存しない、という他のAI機能と同じ姿勢）。
 
 **D1のIN句にはIDを大量に詰め込まない（`selectWhereIn`、DAY30で実際にハマった罠）**:
 `WHERE x IN (?,?,?,...)`のように、配列の要素数ぶんだけ`?`を並べてバインドするSQLは、D1（Cloudflareの管理下のSQLite）では**バインドパラメータが一定数（実測で100前後）を超えると`D1_ERROR: too many SQL variables`で落ちる**。「複数日をまとめて記録する」機能で一度に何十件ものBlock/Entryが作られたことで、`getTrip`の`entries WHERE block_id IN (...)`が実際にこれで失敗し、旅行の読み込みそのものが丸ごと500エラーになる事故が起きた（`wrangler tail`で`"D1_ERROR: too many SQL variables at offset 241"`という例外として確認）。以後、IDのリストをIN句に渡す箇所は必ず`selectWhereIn(env, sqlBeforeIn, ids, sqlAfterIn)`を使い、内部で90件ずつのチャンクに分けて複数回クエリしてから結果をまとめる。

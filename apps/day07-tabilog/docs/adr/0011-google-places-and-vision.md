@@ -4,7 +4,7 @@
 
 **決めたこと**：
 - **場所の候補検索**（`GET /places/search`、`searchPlaces`）：`GOOGLE_API_KEY`があるときは、まずPlaces API (New)のAutocomplete（`POST /v1/places:autocomplete`）を試す。返るのは`placeId`・名前・住所だけで座標は無いため、候補を「選択」した時点で新しい`GET /places/details`（`placeDetails`）を呼び、Place Details Essentials（`X-Goog-FieldMask: location,displayName,formattedAddress`。Pro以上のフィールドは足さない＝無料枠の単価を変えない）で座標を取る。Autocomplete〜Detailsの一連は`sessionToken`（クライアントが検索し直すたびに`crypto.randomUUID()`で新しく作る）でまとめ、Session Usageの範囲でAutocomplete分の無料枠を消費しないようにする。Googleが失敗した・0件だったとき、または`GOOGLE_API_KEY`が無いときは、これまでどおりNominatim・ウィキペディア・空港の予備に回る。Googleの結果はCache APIに置かない（利用規約が長期間のキャッシュを推奨していないため）。
-- **レシート読み取り**（`POST /receipts/scan`、`scanReceipt`）：`GOOGLE_API_KEY`があるときはCloud Vision（`DOCUMENT_TEXT_DETECTION`、`imageContext.languageHints: ["ja"]`）で文字を読み取り、`parseReceiptText`（`worker/src/receipt-parse.js`）というルールベースの処理で品目（品目名・金額）に分ける。単価が安く無料枠もあるため、**音声入力・テキストメモと共有する利用回数の枠（`checkVoiceQuota`/`consumeVoiceQuota`）は消費しない**（無料プランでも使えるようになる）。Visionが失敗した・読み取れなかった・`GOOGLE_API_KEY`が無いときは、これまでどおりOpenAIに回す（そのときは今までどおり枠を消費する）。ログイン必須（`resolveEmail`）・`AI_RATE_LIMITER`はどちらの経路でも変えない。
+- **レシート読み取り**（`POST /receipts/scan`、`scanReceipt`）：`GOOGLE_API_KEY`があるときはCloud Vision（`DOCUMENT_TEXT_DETECTION`、`imageContext.languageHints: ["ja"]`）で文字を読み取り、`parseReceiptText`（`worker/src/receipt-parse.js`）というルールベースの処理で品目（品目名・金額）に分ける。単価が安く無料枠もあるため、**音声入力・テキストメモと共有する利用回数の枠（`checkVoiceQuota`/`consumeVoiceQuota`）は消費しない**（無料プランでも使えるようになる）。Visionが失敗した・読み取れなかった・`GOOGLE_API_KEY`が無いときは、これまでどおりOpenAIに回す（2026-09-27〜、そのときも枠は消費しない。レシート読み取りはどちらの経路でも無料というオーナーの方針。使いすぎは`AI_RATE_LIMITER`で抑える）。ログイン必須（`resolveEmail`）・`AI_RATE_LIMITER`はどちらの経路でも変えない。
 - 返す形はどちらの機能も今までと同じ（場所の候補は`{name, address, lat, lng}`または`{name, address, placeId}`の配列、レシートは`{items: [{label, amount}]}`）にして、クライアント側の変更を最小限にする。
 
 **無料枠（2026-09-26に公式ページで確認）**：
@@ -49,3 +49,12 @@
 ```sh
 npx wrangler d1 execute tabilog-db --remote --file migrations/0020_entry_map_coords.sql
 ```
+
+## 追記（2026-09-27）電車の道のりをGoogleの乗り換え案内で取る
+
+地図でふりかえるの電車・新幹線・地下鉄の区間は、BRouter（線路をつなぐだけの無料サーバー）ではどの路線に乗るかが分からず、新大阪→USJ（直線9km）で新幹線の線路に吸い寄せられて約174kmの遠回りを返すなど、よく外れた。オーナーの承認を得て、Worker `/route?profile=rail` は、まずRoutes API（`POST routes.googleapis.com/directions/v2:computeRoutes`、`travelMode: TRANSIT`、`allowedTravelModes: ["RAIL"]`、FieldMaskは`routes.polyline.encodedPolyline,routes.distanceMeters`のみ）で実際の路線の線を取る（`googleTransitRoute`）。出発時刻は終電後に開いても経路が無くならないよう、次の日本時間12:00にする。
+
+- 料金：Compute Routes Essentialsは月1万回まで無料（検索で確認。公式ページはこの環境から開けず未確認）。TRANSITがEssentialsに入るかは未確認。1区間1回・30日キャッシュなので、旅1つで多くても数十回
+- 上限：他のGoogle APIと同じく、GCPのクォータで1日の上限を設定する。上限超え（429）・キーでRoutes APIが許可されていない（403）・経路なし・直線距離の3倍を超える大回りのときはnullを返し、これまでどおりBRouter→（アプリ側で）やわらかい曲線に回る
+- 利用規約：Googleの経路の線をOpenStreetMap（Leaflet）の地図に重ねて描き、結果を30日キャッシュしている。Google Maps Platformの規約はGoogle以外の地図との併用やキャッシュを制限しているため、Places（座標）と同じく利用規約上の懸念があることをオーナーに伝えたうえでの運用
+- キャッシュの鍵をv3に上げ、v2に残ったBRouterの「遠回りしすぎ」を捨てた

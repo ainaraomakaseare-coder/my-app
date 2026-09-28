@@ -10,6 +10,8 @@
   --accent: #00BF8F;
   --accent-deep: #049873;
   --accent-soft-bg: #E3F8F0;
+  --visited-unfilled: #C9CDD3;
+  --visited-map-bg: #F5F6F8;
   --warn: #C77D1D;
   --warn-bg: #FFF3E0;
   --teal: #049873;
@@ -88,9 +90,14 @@ a:hover { text-decoration: underline; }
 }
 .email-login-note { margin: 2px 0 0; text-align: center; }
 
-.account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0 0; font-size: 12.5px; color: var(--ink-muted); flex-wrap: wrap; }
-.account-row .btn.text { white-space: nowrap; flex-shrink: 0; }
-.account-row span { min-width: 0; }
+/* 4つ（名前・マイログ・行ったことある旅先・ログアウト）が375px幅でも1行に収まるよう、
+   このrowだけ文字を少し小さく・字間を詰め、隣り合う名前は省略記号で切る（2026-09-28〜）。 */
+.account-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 10px 0 0;
+  font-size: 11px; color: var(--ink-muted); flex-wrap: nowrap;
+}
+.account-row .btn.text { white-space: nowrap; flex-shrink: 0; padding: 6px 0; font-size: 11px; letter-spacing: -.2px; }
+.account-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1; }
 
 .notice {
   background: var(--warn-bg); color: var(--warn);
@@ -195,7 +202,7 @@ a:hover { text-decoration: underline; }
 .forget-trip-btn { margin-top: 12px; }
 .trip-card {
   background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow);
-  text-align: left; padding: 14px 16px; width: 100%;
+  text-align: left; padding: 14px 16px; width: 100%; cursor: pointer;
 }
 .trip-card-row { display: flex; gap: 12px; align-items: flex-start; }
 .trip-card-thumb {
@@ -480,10 +487,13 @@ a:hover { text-decoration: underline; }
 }
 
 .cost-items { display: flex; flex-direction: column; gap: 8px; }
-.cost-item-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; row-gap: 6px; }
-.cost-item-row-actions { display: flex; gap: 8px; flex-wrap: wrap; flex-basis: 100%; }
-.cost-item-row input[type="text"] { flex: 1.6; min-width: 0; width: 0; border: none; border-radius: var(--radius-control); padding: 9px 11px; background: var(--input-bg); }
-.cost-item-row input[type="number"] { flex: 1; min-width: 0; width: 0; border: none; border-radius: var(--radius-control); padding: 9px 8px; background: var(--input-bg); }
+/* 1行目＝内容（幅いっぱい）、2行目＝金額・通貨・×、その下にレート（外貨のみ）・立て替えボタン
+   の順で縦に積む（375px幅で金額欄が潰れてプレースホルダーが見切れないように。2026-09-28） */
+.cost-item-row { display: flex; flex-direction: column; gap: 6px; }
+.cost-item-line1, .cost-item-line2 { display: flex; gap: 8px; align-items: center; }
+.cost-item-row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cost-item-row input[type="text"] { min-width: 0; width: 0; flex: 1; border: none; border-radius: var(--radius-control); padding: 9px 11px; background: var(--input-bg); }
+.cost-item-amount { flex: 1; min-width: 7em; width: 0; border: none; border-radius: var(--radius-control); padding: 9px 8px; background: var(--input-bg); }
 .cost-item-row button { flex: 0 0 auto; background: none; border: none; color: var(--ink-soft); font-size: 16px; width: 22px; padding: 0; }
 .cost-currency-select {
   flex: 0 0 auto; border: none; border-radius: var(--radius-control); padding: 9px 6px; background: var(--input-bg);
@@ -491,12 +501,12 @@ a:hover { text-decoration: underline; }
 }
 .cost-currency-other { flex: 0 0 70px; min-width: 0; border: none; border-radius: var(--radius-control); padding: 9px 8px; background: var(--input-bg); text-transform: uppercase; }
 .cost-rate-row {
-  flex-basis: 100%; display: flex; flex-direction: column; gap: 4px; margin-top: -2px;
+  display: flex; flex-direction: column; gap: 4px;
   padding: 8px 10px; background: var(--border-soft); border-radius: var(--radius-control); font-size: 11.5px; color: var(--ink-muted);
 }
 .cost-rate-line { font-weight: 700; color: var(--ink); }
 .cost-rate-edit { display: flex; align-items: center; gap: 6px; }
-.cost-rate-edit input.cost-rate-input { flex: 0 0 90px; border: none; border-radius: var(--radius-control); padding: 6px 8px; background: var(--card); }
+.cost-rate-edit input.cost-rate-input { flex: 1; min-width: 7em; width: 0; border: none; border-radius: var(--radius-control); padding: 6px 8px; background: var(--card); }
 .cost-rate-converted { font-weight: 600; color: var(--accent-deep); }
 .cost-rate-warn { margin: 0; color: var(--danger, #c0392b); }
 .cost-item-row .cost-payer-toggle {
@@ -583,11 +593,74 @@ a:hover { text-decoration: underline; }
 .plan-card button { flex-shrink: 0; }
 
 /* ---------- マイログ ---------- */
-.visited-places { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
-.visited-group { display: flex; flex-direction: column; gap: 6px; }
-.visited-group-label { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); }
-.visited-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.visited-chip { padding: 6px 12px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 12.5px; font-weight: 700; }
+
+/* ---------- 行ったことある旅先（国内・海外タブ、docs/adr/0017） ---------- */
+.visited-tabs { display: flex; gap: 6px; padding: 10px 0 4px; }
+.visited-tab { flex: 1; padding: 9px 0; border-radius: 999px; text-align: center; color: var(--ink-muted); font-size: 13px; font-weight: 700; background: var(--border-soft); }
+.visited-tab.on { background: var(--accent); color: white; }
+
+/* 集計カード（大きい数字＋ドーナツ）。行ったことある旅先の一番上、地図より前に出す */
+.visited-totals { display: flex; align-items: center; gap: 14px; margin: 12px 0 6px; padding: 12px 14px; border-radius: 14px; background: var(--card); box-shadow: var(--card-shadow); }
+.visited-donut { width: 64px; height: 64px; flex: none; }
+.visited-donut-bg { stroke: var(--visited-unfilled); }
+.visited-donut-fg { stroke: var(--accent); transition: stroke-dashoffset .3s ease; }
+.visited-donut-pct { font-size: 13px; font-weight: 700; fill: var(--ink); }
+.visited-totals-text { display: flex; flex-direction: column; gap: 4px; }
+.visited-totals-frac { font-size: 20px; font-weight: 700; color: var(--ink); }
+.visited-totals-frac strong { font-size: 24px; }
+.visited-totals-unit { font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.visited-totals-pct { font-size: 12.5px; color: var(--ink-muted); }
+
+.visited-map { display: flex; justify-content: center; padding: 10px 0; background: var(--visited-map-bg); border-radius: 14px; margin-top: 4px; }
+.visited-svg { width: 100%; max-width: 340px; height: auto; }
+.visited-region { fill: var(--visited-unfilled); stroke: #FFFFFF; stroke-width: .5; }
+.visited-region.is-visited { fill: var(--accent); cursor: pointer; }
+.visited-region.is-visited.on { fill: var(--accent-deep); stroke: var(--ink); stroke-width: 1.25; }
+.visited-inset-box { fill: var(--card); stroke: var(--visited-unfilled); stroke-width: 1; }
+.visited-inset-label { font-size: 7px; font-weight: 700; fill: var(--ink-muted); }
+/* 選択サマリー（地図タップでも一覧の行ハイライトと同じ場所がひと目で分かるように、
+   小さな見出し「選んだ場所」付きのカードにした。一覧の行の強調と役割が分かれて見えるよう、
+   アクセント色の枠だけで背景は控えめにする。2026-09-28〜 */
+.visited-caption { margin: 4px 0 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--card); }
+.visited-caption-label { font-size: 10.5px; font-weight: 700; color: var(--accent-deep); letter-spacing: .02em; }
+.visited-caption-name { font-size: 14.5px; font-weight: 700; color: var(--ink); margin-top: 2px; }
+.visited-caption-trips { font-size: 12.5px; color: var(--ink-muted); margin-top: 3px; }
+.visited-caption-trips a, .visited-row-trips a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.visited-caption-trips a:hover, .visited-row-trips a:hover { color: var(--accent-deep); }
+
+/* 地方・大陸ごとの見出し付き一覧：太字の見出し＋右に件数、下に区切り線（参考にしたアプリと同じ構成）。
+   行は見出しと同じ左インデントに揃え、選択中でも余白は変えず背景だけで強調する（2026-09-28〜。
+   以前はキャプションと行ハイライトが二重に見えたり、選択中の行だけ余白がずれて見えたりしたため）。 */
+.visited-group { margin-top: 14px; }
+.visited-group-header {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 0 4px 8px; border-bottom: 1px solid var(--border-soft);
+}
+.visited-group-title { font-size: 17px; font-weight: 700; color: var(--ink); }
+.visited-group-count { font-size: 12.5px; font-weight: 600; color: var(--ink-muted); }
+.visited-list { display: flex; flex-direction: column; }
+.visited-row { display: flex; flex-direction: column; gap: 3px; padding: 10px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+.visited-group:last-child .visited-row:last-child { border-bottom: none; }
+.visited-row.on { background: var(--accent-soft-bg); }
+.visited-row-name { font-size: 15px; font-weight: 700; color: var(--ink); }
+.visited-row-flag { margin-right: 4px; }
+.visited-row-trips { font-size: 13px; color: var(--ink-muted); }
+.visited-credit { margin-top: 10px; font-size: 10.5px; }
+
+/* 参加した旅行カードの中の「訪れた場所」チップ（2026-09-28〜、旧「旅行ごとの訪れた場所」
+   セクションをカード内へ統合）。チップ内に「外す／戻す」ボタンを持つ。外しても消さず、
+   灰色＋「戻す」のまま残してすぐ元に戻せるようにする。 */
+.trip-place-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.trip-place-chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 2px 2px 10px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 13px; font-weight: 700; max-width: 100%; }
+.trip-place-chip.is-excluded { background: var(--border-soft); color: var(--ink-muted); }
+.trip-place-name { overflow-wrap: anywhere; }
+/* 「外す／戻す」は見た目は小さい文字リンクのまま、paddingだけでタップ領域を確保する
+   （チップ自体が大きく膨らまないよう、枠線・背景は付けない。2026-09-28〜） */
+.trip-place-action {
+  padding: 7px 8px; border-radius: 999px; background: none; border: none; color: inherit; font-size: 11px; font-weight: 700;
+  opacity: .7; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.trip-place-action:disabled { opacity: .4; }
 .mylog-tabs { display: flex; gap: 6px; padding: 12px 0 4px; overflow-x: auto; }
 .mylog-tab { padding: 8px 15px; border-radius: 999px; color: var(--ink-muted); font-size: 12px; font-weight: 600; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
 .mylog-tab.on { background: var(--accent); color: white; font-weight: 700; }
@@ -668,7 +741,9 @@ a:hover { text-decoration: underline; }
 .replay-caption-title { font-size: 16px; font-weight: 800; }
 .replay-caption-lines div { font-size: 13.5px; color: var(--ink-muted); margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
 /* 全文を出すようにしたので、長いときは地図を隠しすぎないよう高さに上限を付け、中でスクロールさせる */
-.replay-caption { max-height: 38vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.replay-caption { max-height: 38vh; overflow-y: auto; -webkit-overflow-scrolling: touch; transition: opacity 0.2s ease; }
+/* 地図が動いている間は写真つきの吹き出しを隠す（写真が地図を覆って動きが見えないため。2026-09-27） */
+.replay-caption.hide-for-move { opacity: 0; pointer-events: none; }
 .replay-controls { display: flex; align-items: center; gap: 12px; border-radius: 999px; padding: 6px 16px 6px 6px; }
 .replay-play {
   width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
@@ -780,7 +855,9 @@ body.sheet-open { overflow: hidden; }
 .travel-grid { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .travel-grid input[type="text"] { flex: 1; min-width: 0; }
 .travel-arrow { color: var(--ink-muted); }
-.travel-time { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 13px; }
+.travel-time { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 13px; white-space: nowrap; }
+.travel-time input { min-width: 0; flex: 1; }
+.travel-example { margin: -4px 0 8px; }
 #entTravelField > input { width: 100%; margin-bottom: 8px; }
 
 /* 場所の候補：番号・名前・住所・「選択」ボタンのカード */
@@ -923,3 +1000,68 @@ body.viewer-open { overflow: hidden; }
 .toast[hidden] { display: none; }
 .toast.toast-show { opacity: 1; transform: translate(-50%, 0); }
 .toast.toast-hide { opacity: 0; transform: translate(-50%, 8px); }
+
+/* 時差の並びを調べる（URLに ?zonedebug を付けたときだけ出す） */
+.zone-diag-btn { display: block; margin: 16px auto 0; background: none; border: none; color: var(--ink-muted); font-size: 12px; text-decoration: underline; }
+.zone-diag { position: fixed; inset: 0; z-index: 3000; background: var(--bg, #F5F6F8); padding: calc(env(safe-area-inset-top) + 16px) 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+.zone-diag textarea { flex: 1; width: 100%; font: 11px/1.5 ui-monospace, Menlo, monospace; padding: 10px; border-radius: 10px; border: 1px solid #ddd; }
+
+/* 宿泊先の内訳（1泊1行）と、宿泊先を足す・直すフォーム（2026-09-27）。ほかの入力画面（.field）と同じ見た目にそろえる。
+   名前が長くても「n泊目」「同上」「直す」は折り返さず、名前だけを折り返す */
+.lodging-row { display: flex; align-items: center; gap: 10px; width: 100%; color: var(--ink); cursor: pointer; }
+.lodging-night { flex: none; white-space: nowrap; display: flex; align-items: baseline; gap: 6px; }
+.lodging-night small { font-size: 11px; font-weight: 500; color: var(--ink-muted); }
+.lodging-name { flex: 1; min-width: 0; text-align: right; overflow-wrap: anywhere; line-height: 1.4; }
+.lodging-name.cont { color: var(--ink-muted); font-weight: 500; }
+.lodging-name.none { color: var(--ink-muted); font-weight: 500; }
+.lodging-actions { flex: none; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.lodging-row-edit { font-size: 11px; font-weight: 700; color: var(--accent-deep); }
+.lodging-row-same {
+  flex: none; white-space: nowrap; border: 1px solid var(--accent); background: var(--card); color: var(--accent-deep);
+  border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+}
+.lodging-row.on { outline: 2px solid var(--accent); }
+.lodging-add[hidden] { display: none; }
+.lodging-add { background: var(--card); border-radius: var(--radius-control); box-shadow: var(--card-shadow); padding: 14px 13px 10px; }
+.lodging-add-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+.lodging-add .field { margin-bottom: 12px; }
+.lodging-range { display: flex; align-items: center; gap: 8px; }
+.lodging-range .lodging-select { flex: 1; min-width: 0; }
+.lodging-select {
+  width: 100%; height: 46px; border: none; border-radius: var(--radius-control); padding: 0 10px;
+  background: var(--input-bg); color: var(--ink); font: inherit; font-size: 16px;
+}
+.lodging-add .place-list { margin-top: 8px; }
+.lodging-add .hint { margin: 0 0 10px; }
+.lodging-add-actions { display: flex; justify-content: flex-end; align-items: center; gap: 14px; }
+
+/* 宿泊先・総費用：横幅いっぱいの行を縦に並べ、押すと下に詳細が開く（2026-09-27）。
+   名前は2行まで、「ほか○か所」は必ず見える */
+.stats-row { flex-direction: column; gap: 8px; }
+.stat-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; font-family: inherit; color: var(--ink);
+  background: var(--card); border: none; border-radius: var(--radius-card); padding: 13px 14px; box-shadow: var(--card-shadow);
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+}
+.stat-row-lbl { flex: none; font-size: 11.5px; color: var(--ink-soft); font-weight: 600; width: 44px; }
+.stat-row-val { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.stat-row .lodging-val {
+  font-size: 14px; font-weight: 700; line-height: 1.35;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere;
+}
+.stat-row .lodging-more { font-size: 11.5px; font-weight: 700; color: var(--accent-deep); }
+.stat-row-chev { flex: none; color: var(--ink-muted); transition: transform 0.2s ease; }
+.stat-row[aria-expanded="true"] .stat-row-chev { transform: rotate(180deg); }
+.stats-row .cost-breakdown-panel { margin-top: 0; }
+
+/* 参加済み：押すと参加をやめられる（2026-09-27） */
+.chip-btn.is-joined { background: var(--accent-soft-bg); color: var(--accent-deep); }
+
+/* 地図のリンクが壊れている記録（2026-09-27） */
+.map-broken { color: var(--warn, #B7791F); font-weight: 700; }
+
+#blkMoveTimeWrap[hidden] { display: none; }
+
+/* 手で並べた日の案内（2026-09-27） */
+.manual-order-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin: 4px 2px 10px; font-size: 12px; color: var(--ink-muted); }
+.manual-order-note .btn.text { color: var(--accent-deep); font-weight: 700; padding: 4px 0; }

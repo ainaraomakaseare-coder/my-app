@@ -17,6 +17,10 @@
     { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
     { key: 'lodging', label: '宿泊', color: 'oklch(48% 0.1 195)' },
     { key: 'transport', label: '移動', color: 'oklch(60% 0.12 260)' },
+    // 「到着」（2026-09-27〜）。種類の選択では「移動」の隣のチップで選ぶ。
+    // 移動（＝出発）と違い、着いた場所の予定として扱う：地図はその時刻にいた場所。
+    // inMoveはMyLogのタブ（renderMyLogTabs）が「移動」にまとめて出すためのフラグで、種類の選択のチップでは使わない。
+    { key: 'arrival', label: '到着', color: 'oklch(58% 0.12 225)', inMove: true },
     { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' }
   ];
 
@@ -228,8 +232,8 @@
   // 多く成り立つもの、②その中で、予定を入れた（または並べ替えた）順（createdAt）といちばん食い違わないもの、
   // ③それでも決まらなければ前の日から続くタイムゾーンを選ぶ。成田発・ロサンゼルス着のどちらも①は成り立つが、
   // ②で「発を先に入れた」旅行としての順が選ばれる。
-  function assignBlockZones(blocks, byBlock, byDate, fallback) {
-    byBlock = byBlock || {}; byDate = byDate || {};
+  function orderZonesByCandidates(blocks, byBlock, byDate, fallback, byArrive) {
+    byBlock = byBlock || {}; byDate = byDate || {}; byArrive = byArrive || {};
     var copies = (blocks || []).map(function (b) { return Object.assign({}, b); });
     var byDay = {}, days = [];
     sortBlocks(copies).forEach(function (b) {
@@ -245,7 +249,9 @@
         var own = byBlock[b.id] || '';
         var isTransport = b.category === 'transport';
         var tz;
-        if (isTransport && forced && forced[b.id]) {
+        if (own && isGroundMove(b, byArrive, list)) {
+          tz = own;
+        } else if (isTransport && forced && forced[b.id]) {
           tz = forced[b.id];
           // 直前が移動の予定なら、その地図が出発地か到着地か分からない（どこにいるか不明）ので矛盾とはみなさない
           if (prevTransport || tz === (prevZone || fallback || '')) consistent++;
@@ -291,9 +297,12 @@
     }
     days.forEach(function (date) {
       var list = byDay[date];
-      var transports = list.filter(function (b) { return b.category === 'transport'; });
+      var transports = list.filter(function (b) { return b.category === 'transport' && !(byBlock[b.id] && isGroundMove(b, byArrive, list)); });
       var best = null;
       if (date && transports.length && transports.length <= 3) {
+        // いまいる場所：前の日から続くタイムゾーン。旅の最初の日は端末のタイムゾーン（家から出発する）。
+        // その日のいちばん早い時刻の地図は使えない：日付変更線をまたぐ日は、到着地の時刻（18:50）が出発地の
+        // 時刻（20:00）より早く見えるため
         var start = carry || fallback || '';
         var cands = [start];
         list.forEach(function (b) { if (byBlock[b.id] && cands.indexOf(byBlock[b.id]) === -1) cands.push(byBlock[b.id]); });
@@ -307,14 +316,56 @@
           });
           combos = nextCombos;
         });
+        // 飛行機の時刻をどこの時間で読むか：出発の予定は「いまいる場所」の時間。その日に飛行機の予定が
+        // 2つ以上あり（出発と到着を両方入れる形）、地図が「いまいる場所」と違うタイムゾーンなら到着の予定
+        // なので、その地図の土地の時間で読む。以前は、どちらでも前後の話が合うときに「予定を入れた順」で
+        // 決めていたため、到着を先に入れた・逆順に入れた旅では、ロサンゼルス到着（18:50）が東京出発（20:00）
+        // より前に並んでいた（2026-09-27。ほかの人も使うので、入れた順に左右されないようにする）
+        // 到着地の地図が入っている移動の予定（2026-09-27〜）は、出発の予定だと確実に分かるので飛行機と同じに扱う
+        // 種類「到着」（2026-09-27〜）の予定があり、その地図がいまいる場所と違う時差なら、その日の移動の予定は
+        // その到着への出発の予定と分かる。飛行機と同じく、出発地（いまいる場所）の時間で読む
+        var arrivalZone = '';
+        list.forEach(function (b) { if (!arrivalZone && b.category === 'arrival' && byBlock[b.id] && byBlock[b.id] !== start) arrivalZone = byBlock[b.id]; });
+        var planes = transports.filter(function (t) { return isPlaneMove(t) || byArrive[t.id] || !!arrivalZone; });
+        var awayPlanes = planes.filter(function (p) { return byBlock[p.id] && byBlock[p.id] !== start; });
+        var looksArrival = function (p) { return /到着|着いた|着く|arriv/i.test(p.label || ''); };
+        // 「ロサンゼルスへのフライト」「〜行き」「〜を出発」は出発の予定（地図が行き先の空港でも）。
+        // 飛行機の予定が2つ（「ロサンゼルスへのフライト」＋「ロサンゼルス国際空港」）のとき、行き先の地図が
+        // 入った出発の予定を到着と取り違えていた（2026-09-27）
+        var looksDeparture = function (p) { return !looksArrival(p) && /へ|行き|出発|発|depart|to\s/i.test(p.label || ''); };
+        var planeWant = {};
+        planes.forEach(function (p) {
+          var own = byBlock[p.id] || '';
+          // 到着の予定：飛行機の予定が2つ以上あり、地図が「いまいる場所」と違うもの。そういう予定が複数ある
+          // （出発の予定にも到着空港の地図を入れた、など）ときだけ、見出し（「〜に到着」）で見分ける
+          // 見出しで出発と分かる予定がほかにあれば、行き先の地図が入った残りの予定は到着
+          var otherDeparts = planes.some(function (q) { return q !== p && (looksDeparture(q) || byArrive[q.id]); });
+          var arrival = !byArrive[p.id] && planes.length >= 2 && own && own !== start && !looksDeparture(p) &&
+            (awayPlanes.length === 1 || looksArrival(p) || otherDeparts);
+          // 到着地が入っている移動の予定は出発の予定。時刻は出発地（その予定の地図があればその土地）の時間で読む
+          // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）
+          planeWant[p.id] = byArrive[p.id] ? (own && own !== byArrive[p.id] ? own : start) : (arrival ? own : start);
+          if (arrivalZone && !byArrive[p.id] && !isPlaneMove(p)) planeWant[p.id] = own && own !== arrivalZone ? own : start;
+          if (!own && !byArrive[p.id] && !looksDeparture(p)) {
+            // 地図の無い飛行機の予定で、出発と分かる予定の地図（または到着地の地図）が行き先を示していれば、到着の予定
+            planes.forEach(function (q) {
+              if (q === p || !(looksDeparture(q) || byArrive[q.id])) return;
+              var dest = byArrive[q.id] || (byBlock[q.id] !== start ? byBlock[q.id] : '');
+              if (dest) planeWant[p.id] = dest;
+            });
+          }
+        });
         combos.forEach(function (forced) {
           var res = settleDay(list, date, carry, forced);
+          var planeHits = planes.filter(function (p) { return forced[p.id] === planeWant[p.id]; }).length;
           var startHits = transports.filter(function (t) { return forced[t.id] === start; }).length;
-          var score = [res.consistent, -inversions(res.order), startHits];
-          if (!best || score[0] > best.score[0] || (score[0] === best.score[0] && (score[1] > best.score[1] ||
-            (score[1] === best.score[1] && score[2] > best.score[2])))) {
-            best = { res: res, score: score };
+          var score = [res.consistent, planeHits, -inversions(res.order), startHits];
+          var better = !best;
+          for (var si = 0; !better && si < score.length; si++) {
+            if (score[si] > best.score[si]) better = true;
+            else if (score[si] < best.score[si]) break;
           }
+          if (better) best = { res: res, score: score };
         });
       }
       var res = best ? best.res : settleDay(list, date, carry, null);
@@ -323,6 +374,203 @@
     });
     return out;
   }
+  // ---- 時差は「移動」のところでしか変わらない（2026-09-27、オーナーの方針） ----
+  // 予定1つ1つの地図からタイムゾーンを決めると、地図が1つ別の国と判定されただけで（ロサンゼルスの
+  // 「チャイナタウン」が韓国の仁川になる、など）そこだけ時差が入って戻る。また「香港着」「香港発」のような
+  // 移動の予定の読み方や、地図の無い予定に使う「その日の場所（天気の場所）」のずれで、リオのホテルから時差が
+  // 入る・ニューヨークで「日本との時差ゼロ」が出る、などがあった。そこで旅を「かたまり」に分け、かたまりの
+  // 中は同じタイムゾーンにする。かたまりの切れ目は次のところだけ：
+  //  ① 飛行機の移動の予定のあと（移動の予定自身は出発地＝前のかたまり）
+  //  ② 移動手段が飛行機の予定（「ここまで飛行機で来た」）の前
+  //  ③ 移動の予定の地図のタイムゾーンが、今のかたまりと違うとき（移動先の地図とみなし、そのあとで切る）
+  //  ④ 地図のタイムゾーンが変わり、次の地図でも変わったまま（1つだけ違うものは判定違いとみなして無視）
+  // かたまりのタイムゾーンは、その中の地図（移動の予定以外）のもの。地図が無いかたまりは、その日の場所→
+  // 前のかたまり→端末のタイムゾーンの順。並び順は、日付変更線をまたぐ日の順番を直すために、これまでの
+  // 決め方（orderZonesByCandidates）で一度タイムゾーンを付けて並べたものを使う。
+  // 旅の最初の「いまいる場所」。最初の日に、最初の移動より前にいた場所の地図があれば、そのタイムゾーン。
+  // 無ければ端末のタイムゾーン（家から出発する）。海外で入力した・端末の設定がUTCなどで、端末の
+  // タイムゾーンが旅の起点と違うことがあるため。以前は端末のタイムゾーン
+  // のまま決めていて、端末がUTCだと「羽田→フライト→LA到着」の到着が出発より前に並んでいた（2026-09-27）
+  function startZoneFor(blocks, byBlock, fallback, byArrive) {
+    var natural = sortBlocks(blocks).filter(function (b) { return b.date; });
+    if (!natural.length) return fallback;
+    var first = natural[0].date;
+    var day = natural.filter(function (b) { return b.date === first; });
+
+    // 最初の移動より前にいた場所（見出しが「〜到着」のものは除く）だけを手がかりにする。移動の後の予定は、
+    // 着いた先の時間で書かれていることがあるため（成田20:00発→LA18:00到着など）
+    var pick = null;
+    for (var i = 0; i < day.length; i++) {
+      var b = day[i];
+      if (b.category === 'transport' || b.category === 'arrival' || b.transport === 'plane' || (byArrive && byArrive[b.id])) break;
+      if (/到着|着いた|着く|arriv/i.test(b.label || '')) continue;
+      if (byBlock[b.id]) { pick = b; break; }
+    }
+    return pick ? byBlock[pick.id] : fallback;
+  }
+  function assignBlockZones(blocks, byBlock, byDate, fallback, byArrive) {
+    byDate = byDate || {};
+    byArrive = byArrive || {};
+    var copies = (blocks || []).map(function (b) { var c = Object.assign({}, b); delete c._offset; delete c._tz; return c; });
+    fallback = startZoneFor(copies, byBlock || {}, fallback, byArrive);
+    // 1つだけ前後と違う地図（判定違い）は、並び替えより先に、日付と現地時刻の素直な順で見つけて外す
+    // （判定違いのタイムゾーンで並べると、その予定が前後から離れてしまい見つけられないため）
+    byBlock = withoutZoneOutliers(sortBlocks(copies), byBlock || {}, byArrive);
+    var zones = orderZonesByCandidates(copies, byBlock, byDate, fallback, byArrive);
+    for (var round = 0; round < 2; round++) {
+      applyBlockZones(copies, zones);
+      zones = segmentZones(sortBlocks(copies), byBlock, byDate, fallback, byArrive);
+    }
+    // 地図の無い予定が、前後の予定（同じ時差）に挟まれて1つだけ別の時差になっていたら、前後に合わせる。
+    // 「ニューヨーク到着」と「ニューヨーク出発」の間の地図の無い予定が、次のかたまり（リオ）の時差で読まれ、
+    // リオの22:00＝ニューヨークの20:00として出発より前に並んでいた（2026-09-27）
+    for (var fix = 0; fix < 2; fix++) {
+      applyBlockZones(copies, zones);
+      var sorted = sortBlocks(copies), changed = false;
+      sorted.forEach(function (b, i) {
+        var prev = sorted[i - 1], next = sorted[i + 1];
+        if (!prev || !next || byBlock[b.id] || b.category === 'transport' || byArrive[prev.id]) return;
+        if (zones[prev.id] && zones[prev.id] === zones[next.id] && zones[b.id] !== zones[prev.id]) {
+          zones[b.id] = zones[prev.id];
+          changed = true;
+        }
+      });
+      if (!changed) break;
+    }
+    // 到着地の地図がある移動の予定は、到着地のタイムゾーンも「<id>#arrive」で返す（地図でふりかえるの到着地点用）
+    Object.keys(byArrive).forEach(function (id) { if (byArrive[id]) zones[id + '#arrive'] = byArrive[id]; });
+    return zones;
+  }
+
+  // 地図のタイムゾーン（移動の予定以外）のうち、前後の地図と違うのが1つだけのもの（前後は同じ・間に飛行機が
+  // 無い）を判定違いとみなして外した byBlock を返す（ロサンゼルスの「チャイナタウン」が仁川になる、など）
+  // 飛行機以外（車・電車・徒歩、移動手段が空欄の「〜空港」など）の移動の予定。その予定の時刻にいた場所の地図なので
+  // 時差の手がかりにできる（「ロサンゼルス国際空港」をテスラで出発、など。以前は移動の予定の地図を一切
+  // 使わなかったため、前後につられて日本時間になっていた。2026-09-27）。到着地の地図が入っているものは除く
+  // 移動手段が空欄のものは、同じ日にほかの飛行機の移動（または到着地の地図が入った移動）があるときだけ。
+  // それが無い日は、空欄の移動の予定そのものが時差をまたぐ移動で、地図が行き先のことがある（東京→ロンドン）
+  function isGroundMove(b, byArrive, all) {
+    if (b.category !== 'transport' || isPlaneMove(b) || (byArrive && byArrive[b.id])) return false;
+    if (b.transport) return true;
+    return (all || []).some(function (o) {
+      return o !== b && o.date === b.date && o.category === 'transport' && (isPlaneMove(o) || !!(byArrive && byArrive[o.id]));
+    });
+  }
+  // 飛行機の移動。移動手段が空欄でも、見出しが「〜フライト」「飛行機」なら飛行機とみなす
+  // （ワールドカップ旅の「ロサンゼルスへのフライト」は移動手段が空欄だった。2026-09-27）
+  function isPlaneMove(b) {
+    if (!b) return false;
+    if (b.transport === 'plane') return true;
+    return !b.transport && /フライト|飛行機|航空便|flight/i.test(b.label || '');
+  }
+  function withoutZoneOutliers(order, byBlock, byArrive) {
+    var isMove = function (b) { return b.category === 'transport' && !isGroundMove(b, byArrive, order); };
+    var ev = [];
+    order.forEach(function (b, i) { if (!isMove(b) && byBlock[b.id]) ev.push({ i: i, z: byBlock[b.id], id: b.id }); });
+    var planeBetween = function (a, c) {
+      for (var x = a + 1; x <= c; x++) { var o = order[x]; if (o && isPlaneMove(o)) return true; }
+      return false;
+    };
+    // 飛行機で移動した日は、現地時刻の素直な順だと出発地（東京）と到着地（ロサンゼルス）の出来事が入り混じる
+    // （東京 20:00 の「羽田空港の地震」が、ロサンゼルス 18:50 の「ロサンゼルス国際空港」の後に来る）。
+    // その日の地図は判定違いと決めつけない（2026-09-27）
+    var planeDays = {};
+    order.forEach(function (o) { if (o.category === 'transport' && (isPlaneMove(o) || (byArrive && byArrive[o.id]))) planeDays[o.date] = true; });
+    var out = Object.assign({}, byBlock);
+    ev.forEach(function (e, k) {
+      var prev = ev[k - 1], next = ev[k + 1];
+      if (planeDays[order[e.i].date]) return;
+      if (prev && next && prev.z === next.z && e.z !== prev.z && !planeBetween(prev.i, e.i) && !planeBetween(e.i, next.i)) {
+        delete out[e.id];
+      }
+    });
+    return out;
+  }
+
+  function segmentZones(order, byBlock, byDate, fallback, byArrive) {
+    byArrive = byArrive || {};
+    var isMove = function (b) { return b.category === 'transport'; };
+    var evidence = {};
+    order.forEach(function (b, i) { if ((!isMove(b) || isGroundMove(b, byArrive, order)) && byBlock[b.id]) evidence[i] = byBlock[b.id]; });
+    var segs = [], cur = { blocks: [], zone: '' }, lastZone = fallback || '';
+    var close = function () {
+      if (cur.blocks.length) { segs.push(cur); if (cur.zone) lastZone = cur.zone; }
+      cur = { blocks: [], zone: '' };
+    };
+    var prevWasPlaneMove = false;
+    order.forEach(function (b, i) {
+      if (!isMove(b) && isPlaneMove(b) && cur.blocks.length) close();
+      var z = evidence[i];
+      if (z) {
+        if (cur.zone && z !== cur.zone) {
+          // ④ 変わったまま続く。直前の移動の予定があればそのあとで、無ければこの予定の前で切る
+          var cut = cur.blocks.length;
+          for (var k = cur.blocks.length - 1; k >= 0; k--) {
+            if (isMove(cur.blocks[k])) { cut = k + 1; break; }
+            if (evidence[order.indexOf(cur.blocks[k])]) break;
+          }
+          var tail = cur.blocks.slice(cut);
+          cur.blocks = cur.blocks.slice(0, cut);
+          close();
+          cur.blocks = tail;
+        }
+        if (!cur.zone) cur.zone = z;
+      }
+      cur.blocks.push(b);
+      if (isMove(b) && byArrive[b.id]) {
+        // 到着地の地図が入っている移動の予定（2026-09-27〜）：推測しない。この予定までが出発地、
+        // このあとが到着地のタイムゾーン。この予定自身の地図は出発地
+        var dep = byBlock[b.id] || '';
+        // この予定の地図が到着地と同じ時差なら、それは行き先の地図（到着地の欄ができる前に入れたもの）
+        if (dep === byArrive[b.id]) dep = '';
+        if (dep && !cur.zone) cur.zone = dep;
+        close();
+        cur.zone = byArrive[b.id];
+      } else if (isMove(b)) {
+        var own = byBlock[b.id] || '';
+        if (isPlaneMove(b) && prevWasPlaneMove && cur.blocks.length === 1 && own && own !== lastZone) {
+          // 出発と到着をどちらも「飛行機」の移動の予定で入れる形（「香港から出発」→「ニューヨークに到着」）。
+          // 飛行機の予定のすぐあとの飛行機の予定で、地図が行き先のタイムゾーンなら到着の予定。新しいかたまりの
+          // 先頭にして、「ここから現地時間」を到着の予定の前に出す（以前は後ろのホテルの前に出ていた。2026-09-27）
+          cur.zone = own;
+        } else if (isPlaneMove(b)) {
+          // 飛行機の予定の地図が、いまいる場所（出発地）と同じタイムゾーンなら出発地の地図。違えば到着地の地図
+          var from = cur.zone || lastZone;
+          close(); // ①
+          if (own && own !== from) cur.zone = own;
+        } else if (own && cur.zone && own !== cur.zone) {
+          close(); // ③
+          cur.zone = own;
+        } else if (own && !cur.zone) {
+          cur.zone = own;
+        }
+      }
+      prevWasPlaneMove = isMove(b) && isPlaneMove(b);
+    });
+    close();
+    var out = {}, prevZone = '';
+    segs.forEach(function (seg) {
+      var zone = seg.zone;
+      var departsByPlane = seg.blocks.some(function (b) { return isMove(b) && isPlaneMove(b); });
+      if (!zone && departsByPlane) {
+        // 地図が無く、飛行機で出発するだけのかたまり（旅の最初の「成田から出発」など）は、いまいる場所＝
+        // 前のかたまり（旅の最初なら端末のタイムゾーン）。その日の場所は、空港の地図から到着地が入って
+        // いることがあるので使わない
+        zone = prevZone || fallback || '';
+      }
+      if (!zone) {
+        // 地図が無いかたまり：その日の場所のうち多いもの→前のかたまり→端末のタイムゾーン
+        var count = {};
+        seg.blocks.forEach(function (b) { var d = byDate[b.date]; if (d) count[d] = (count[d] || 0) + 1; });
+        Object.keys(count).forEach(function (d) { if (!zone || count[d] > count[zone]) zone = d; });
+        if (!zone) zone = prevZone || fallback || '';
+      }
+      seg.blocks.forEach(function (b) { out[b.id] = zone; });
+      prevZone = zone;
+    });
+    return out;
+  }
+
 
   // 予定に _tz・_offset（分）を付ける（画面の中だけの値で、保存はしない）。zonesが無ければ外す。
   function applyBlockZones(blocks, zones) {
@@ -331,6 +579,11 @@
       var off = tz ? tzOffsetMinutes(tz, b.date, b.time) : null;
       if (typeof off === 'number') { b._tz = tz; b._offset = off; }
       else { delete b._tz; delete b._offset; }
+      var atz = zones && zones[b.id + '#arrive'];
+      var arr = atz ? travelArrival(b) : null;
+      var aoff = atz ? tzOffsetMinutes(atz, b.date, (arr && arr.time) || b.time) : null;
+      if (typeof aoff === 'number') { b._arriveTz = atz; b._arriveOffset = aoff; }
+      else { delete b._arriveTz; delete b._arriveOffset; }
     });
     return blocks;
   }
@@ -342,10 +595,37 @@
   }
 
   function sortBlocks(blocks) {
-    return (blocks || []).slice().sort(function (a, b) {
+    var natural = (blocks || []).slice().sort(function (a, b) {
       if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
       return blockSortKey(a).localeCompare(blockSortKey(b));
     });
+    if (!natural.some(function (b) { return typeof b.manualOrder === 'number'; })) return natural;
+    // 手で決めた並び（2026-09-27〜）：その日の予定に1つでもmanualOrderがあれば、その日はその並びにする。
+    // あとから足した予定（manualOrderなし）は、ふだんの並びで前にある予定のすぐ後ろに入れる
+    var out = [], i = 0;
+    while (i < natural.length) {
+      var j = i;
+      while (j < natural.length && natural[j].date === natural[i].date) j++;
+      out = out.concat(applyManualOrder(natural.slice(i, j)));
+      i = j;
+    }
+    return out;
+  }
+  function applyManualOrder(day) {
+    if (!day.some(function (b) { return typeof b.manualOrder === 'number'; })) return day;
+    var ordered = day.filter(function (b) { return typeof b.manualOrder === 'number'; })
+      .sort(function (a, b) { return a.manualOrder - b.manualOrder; });
+    day.forEach(function (b, k) {
+      if (typeof b.manualOrder === 'number') return;
+      var prev = null;
+      for (var m = k - 1; m >= 0; m--) { if (ordered.indexOf(day[m]) !== -1) { prev = day[m]; break; } }
+      ordered.splice(prev ? ordered.indexOf(prev) + 1 : 0, 0, b);
+    });
+    return ordered;
+  }
+  // その日の予定に「手で決めた並び」があるか
+  function dayHasManualOrder(blocks, date) {
+    return (blocks || []).some(function (b) { return b.date === date && typeof b.manualOrder === 'number'; });
   }
 
   function groupBlocksByDate(blocks) {
@@ -371,13 +651,24 @@
     return Math.round(amount * rate);
   }
 
+  // 外貨のcostItemにレート（1単位あたりの円）が入っているか。/ratesの自動取得前・取得失敗・
+  // 古いデータ（レート無しで保存された外貨行）でfalseになる＝costItemJpyが0円扱いする場合と同じ判定。
+  function costItemHasRate(item) {
+    return !!item && !!item.currency && item.currency !== 'JPY' && typeof item.rate === 'number' && item.rate > 0;
+  }
+
   // 費用明細1件の表示用文字列。円ならこれまでどおり`formatYen`と同じ「¥1,200」、外貨なら
   // 元の金額と円換算の両方を見せる（例：「US$25.00（¥3,737）」）。精算はすべて円で行うため、
   // 元の金額だけだと精算画面の内訳（円）と一致しているか本人には分からなくなるため。
+  // レートが無い外貨（未取得・未入力）は円換算が0円になり「US$25.00（¥0）」のように実際より
+  // 安く見えてしまうため、代わりに「レート未設定」と出す（合計・精算の円換算もcostItemJpy通り0円のまま＝
+  // 過大にごまかさず、本人が記録を開いてレートを入れるまで正しい額として合算しない）。
   function formatCostItemAmount(item) {
     if (!item || typeof item.amount !== 'number') return '';
     if (!item.currency || item.currency === 'JPY') return formatYen(item.amount);
-    return costCurrencySymbol(item.currency) + item.amount.toFixed(2) + '（' + formatYen(costItemJpy(item)) + '）';
+    var amountText = costCurrencySymbol(item.currency) + item.amount.toFixed(2);
+    if (!costItemHasRate(item)) return amountText + '（レート未設定）';
+    return amountText + '（' + formatYen(costItemJpy(item)) + '）';
   }
 
   function entryCostTotal(entry) {
@@ -534,6 +825,130 @@
       else groups.push({ label: label, from: n, to: n });
     });
     return groups;
+  }
+
+  // 宿泊先の内訳の行ごとに、その行の元になった「宿泊」の予定を返す（行をタップして直すため。2026-09-27）。
+  // lodgingByNightと同じまとめ方で、{ label, from, to, blockIds（その行に効いている予定。日程順） }
+  function lodgingGroupBlocks(trip, blocks) {
+    var dates = allDatesForTrip(trip, blocks);
+    if (dates.length < 2) return [];
+    var lodging = (blocks || [])
+      .filter(function (b) { return b.category === 'lodging' && b.label && b.date; })
+      .slice()
+      .sort(function (a, b) {
+        if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
+        return blockSortKey(a).localeCompare(blockSortKey(b));
+      });
+    var groups = [];
+    for (var i = 0; i < dates.length - 1; i++) {
+      var applicable = null;
+      for (var j = 0; j < lodging.length; j++) {
+        if (lodging[j].date <= dates[i]) applicable = lodging[j]; else break;
+      }
+      var label = applicable ? applicable.label : '';
+      var last = groups[groups.length - 1];
+      if (last && last.label === label) last.to = i + 1;
+      else { last = { label: label, from: i + 1, to: i + 1, blockIds: [] }; groups.push(last); }
+      if (applicable && last.blockIds.indexOf(applicable.id) === -1) last.blockIds.push(applicable.id);
+      // 同じ夜のうちに同じ宿の予定がほかにもあれば（「到着」と「宿に戻る」など）一緒に直す
+      lodging.forEach(function (b) {
+        if (applicable && b.date === dates[i] && b.label === label && last.blockIds.indexOf(b.id) === -1) last.blockIds.push(b.id);
+      });
+    }
+    return groups;
+  }
+
+  // 宿泊先の内訳の行を直すときに、どの予定をどう変えるか（2026-09-27）。
+  // blocks：その行の元になった「宿泊」の予定、groupStart：その行の最初の夜、newStart：選んだ泊まり始め。
+  //  ・泊まり始めがそのまま、または前にずらした：行の予定すべての名前を変え、最初の予定をその日へ移す
+  //  ・行の途中の夜にした：その夜から先だけを新しい宿にする（それより前の夜の宿は動かさない）。
+  //    その夜に予定があればそれから先の名前を変え、無ければその夜に予定を足す
+  //    （以前は最初の予定をその夜へ移してしまい、手前の夜が「未定」になっていた）
+  function lodgingEditPlan(blocks, groupStart, newStart) {
+    var sorted = (blocks || []).slice().sort(function (a, b) { return (a.date || '').localeCompare(b.date || '') || blockSortKey(a).localeCompare(blockSortKey(b)); });
+    if (!sorted.length) return { rename: [], move: null, create: newStart || null };
+    if (!newStart || newStart <= groupStart) {
+      var first = sorted[0];
+      return { rename: sorted.map(function (b) { return b.id; }), move: newStart && newStart !== first.date && newStart < first.date ? { id: first.id, date: newStart } : null, create: null };
+    }
+    var later = sorted.filter(function (b) { return b.date >= newStart; });
+    var startsThere = later.some(function (b) { return b.date === newStart; });
+    return { rename: later.map(function (b) { return b.id; }), move: null, create: startsThere ? null : newStart };
+  }
+
+  // 宿泊先カードの短い表し方（2026-09-27）。以前は「1〜2泊目：菊の家／3泊目：マリオット／…」を全部並べ、
+  // カードの中で途中から切れていた。いちばん長く泊まった宿（同じなら先の宿）＋「ほか○か所」にし、
+  // 詳しくはカードを押したときの1泊1行の内訳で見る。未定の夜は数えない
+  function lodgingSummary(groups) {
+    var p = lodgingSummaryParts(groups);
+    return !p ? '' : p.others ? p.main + ' ほか' + p.others + 'か所' : p.main;
+  }
+  function lodgingSummaryParts(groups) {
+    var nightsBy = {}, order = [];
+    (groups || []).forEach(function (g) {
+      if (!g.label) return;
+      if (!(g.label in nightsBy)) { nightsBy[g.label] = 0; order.push(g.label); }
+      nightsBy[g.label] += g.to - g.from + 1;
+    });
+    if (!order.length) return null;
+    var main = order.reduce(function (best, l) { return nightsBy[l] > nightsBy[best] ? l : best; }, order[0]);
+    return { main: main, others: order.length - 1 };
+  }
+  // 泊ごとの宿（1泊目から順に）。{ night, date, label, blockId }（宿が無ければlabel=''・blockId=null）
+  function lodgingNights(trip, blocks) {
+    var dates = allDatesForTrip(trip, blocks).filter(Boolean);
+    if (dates.length < 2) return [];
+    var lodging = sortedLodging(blocks);
+    return dates.slice(0, -1).map(function (d, i) {
+      var applicable = null;
+      for (var j = 0; j < lodging.length; j++) { if (lodging[j].date <= d) applicable = lodging[j]; else break; }
+      return { night: i + 1, date: d, label: applicable ? applicable.label : '', blockId: applicable ? applicable.id : null };
+    });
+  }
+  function sortedLodging(blocks) {
+    return (blocks || [])
+      .filter(function (b) { return b.category === 'lodging' && b.label && b.date; })
+      .slice()
+      .sort(function (a, b) {
+        if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
+        return blockSortKey(a).localeCompare(blockSortKey(b));
+      });
+  }
+  // 「from泊目〜to泊目を、この宿にする」ための変更（2026-09-27）。予定の日付は動かさない
+  // （以前は最初の予定を別の日へ移していて、記録ごと別の日へ動き、手前の夜が「未定」になっていた）。
+  //  ・その範囲の日付にある「宿泊」の予定は、名前をこの宿にする
+  //  ・泊まり始めの日に「宿泊」の予定が無ければ、その日に足す（地図はここに入れる）
+  //  ・泊まり終わりの次の夜まで前の宿が続いていたなら、次の夜に前の宿の予定を足して、そこから元に戻す
+  // 返す値：{ rename: [予定のid], create: [{ date, label, mapFrom（地図を写す元の予定のid）, target }], target（地図を入れる予定のid。足すときはnull） }
+  function lodgingRangePlan(trip, blocks, fromNight, toNight, name) {
+    var nights = lodgingNights(trip, blocks);
+    if (!nights.length) return { rename: [], create: [], target: null };
+    var a = Math.max(1, Math.min(fromNight, toNight)), b = Math.min(nights.length, Math.max(fromNight, toNight));
+    var from = nights[a - 1].date, to = nights[b - 1].date;
+    var lodging = sortedLodging(blocks);
+    var inRange = lodging.filter(function (x) { return x.date >= from && x.date <= to; });
+    var plan = { rename: inRange.filter(function (x) { return x.label !== name; }).map(function (x) { return x.id; }), create: [], target: null };
+    var atStart = inRange.filter(function (x) { return x.date === from; });
+    if (atStart.length) plan.target = atStart[0].id;
+    else plan.create.push({ date: from, label: name, mapFrom: null, target: true });
+    var next = nights[b];
+    if (next && next.blockId && next.label !== name) {
+      var nb = lodging.filter(function (x) { return x.id === next.blockId; })[0];
+      if (nb && nb.date <= to) plan.create.push({ date: next.date, label: next.label, mapFrom: nb.id, target: false });
+    }
+    return plan;
+  }
+
+  // 宿泊先を手で足すときの「何泊目から」の選択肢（2026-09-27）。n泊目＝旅行のn日目の夜。
+  // 日帰り・日程未設定の旅行は、分かっている日付をそのまま選べるようにする
+  function lodgingNightOptions(trip, blocks) {
+    var dates = allDatesForTrip(trip, blocks).filter(Boolean);
+    if (dates.length < 2) return dates.map(function (d) { return { date: d, label: formatMonthDay(d) }; });
+    return dates.slice(0, -1).map(function (d, i) { return { date: d, label: (i + 1) + '泊目（' + formatMonthDay(d) + '）' }; });
+  }
+  function formatMonthDay(d) {
+    var m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d || '');
+    return m ? Number(m[1]) + '/' + Number(m[2]) : (d || '');
   }
 
   // 費用の総額を「実際に払った人」ごとに内訳表示するための集計。立て替え（paidBy）を
@@ -710,11 +1125,13 @@
   var REPLAY_MIN_CAPTION_SEC = 3;     // 写真が無い地点は、文章の長さに関わらずこの秒数だけ吹き出しを見せる（2026-09-27: 文章が長いほど延ばす仕組みは廃止）
   var REPLAY_MAX_CAPTION_SEC = 10;    // 写真がある地点でも、これ以上は止めない（写真4枚分の秒数）
   var REPLAY_MAX_PHOTOS = 4;          // 1つの地点で見せる写真の上限（6枚だと1地点15秒止まり長かったので4枚＝10秒に）
+  var REPLAY_CAPTION_HIDE_LEAD_SEC = 1.15; // 次の移動でカメラが動き出す少し前に吹き出しを消す秒数（画面側と共通）
   var REPLAY_SEC_PER_PHOTO = 2.5;     // 写真1枚をこの秒数ずつ見せる（1.4秒は速すぎるという声で変更）。吹き出しは全部の写真を見せ終わるまで出す
   // 移動の演出の長さ（秒）。以前はどれだけ遠くても一律2秒だったが、「短い移動と同じ速さだと、
   // 長距離の移動が味気ない」という声より、遠い移動は少しだけ長く見せる（2026-09-27）。
   var REPLAY_MOVE_SEC_MIN = 2;       // 100km以下はこれまでどおり2秒
   var REPLAY_MOVE_SEC_MAX = 4;       // 500km以上はこれまでの2倍の4秒
+  var REPLAY_PLANE_MOVE_SEC = 1.8;   // 飛行機の移動の秒数（カメラの動き・着いたあとの一呼吸を合わせて約3秒）
   var REPLAY_MOVE_KM_SHORT = 100;
   var REPLAY_MOVE_KM_LONG = 500;
   function legMoveSeconds(km) {
@@ -756,6 +1173,26 @@
   // 検索した文字列（searchText）から作る。座標が数値として両方揃っているときだけ座標のURLにし、
   // まだ座標が届いていない・壊れている（undefined/NaN）ときは検索文字列のURLにする。
   // undefined/NaNを含むURLを絶対に作らないための、書き込み前の最後の関門（2026-09-27、大阪旅行の実データより）。
+  // 移動の予定の到着地（記録の「移動の情報」の到着地の地図と到着時刻。2026-09-27〜）。無ければnull
+  function travelArrival(block) {
+    if (!block || block.category !== 'transport') return null;
+    var entries = (block && block.entries) || [];
+    for (var i = 0; i < entries.length; i++) {
+      var t = entries[i].travel || {};
+      var url = (t.arriveMapUrl || '').trim();
+      if (/^https?:\/\//i.test(url) && !hasBrokenMapQuery(url)) {
+        return {
+          url: url,
+          lat: typeof t.arriveLat === 'number' ? t.arriveLat : null,
+          lng: typeof t.arriveLng === 'number' ? t.arriveLng : null,
+          time: /^\d{1,2}:\d{2}$/.test(t.arrive || '') ? t.arrive : '',
+          label: (t.to || '').trim()
+        };
+      }
+    }
+    return null;
+  }
+
   function placeMapUrl(place, searchText) {
     var q = (place && isFinite(place.lat) && isFinite(place.lng)) ? place.lat + ',' + place.lng : (searchText || '').trim();
     if (!q) return '';
@@ -800,8 +1237,8 @@
     (blocks || []).forEach(function (b) { if (b.date && hhmmToMinute(b.time) !== null) hasTimed[b.date] = true; });
     // 移動の予定（種類が「移動」）の移動手段・移動時間は、その予定から次の場所への移動として、次の地点に渡す。
     // 以前のデータ（移動以外の予定に「ここまでの移動手段」が付いているもの）は、その予定自身の値を使う。
-    var pendingTransport = '', pendingMove = 0;
-    return sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; }).map(function (b) {
+    var pendingTransport = '', pendingMove = 0, out = [];
+    sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; }).forEach(function (b) {
       var minute = hhmmToMinute(b.time);
       var estimated = minute === null;
       if (estimated) {
@@ -831,7 +1268,7 @@
       // Reliveのように、着いたところで写真もエピソードと一緒に見せる（予定の記録の写真を最大4枚）
       var photos = [];
       (b.entries || []).forEach(function (e) { (e.photoIds || []).forEach(function (id) { if (photos.length < REPLAY_MAX_PHOTOS) photos.push(id); }); });
-      return {
+      out.push({
         blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions, photos: photos,
         transport: arriving, query: placeEntry ? placeEntry.url : '',
@@ -841,8 +1278,39 @@
         knownLat: placeEntry ? placeEntry.lat : null,
         knownLng: placeEntry ? placeEntry.lng : null,
         offset: lastOffset // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
-      };
+      });
+      // 移動の予定に「到着地の地図」が入っていれば、その移動の到着を1つの地点として足す（2026-09-27）。
+      // 到着時刻は到着地の現地時間なので、出発（出発地の時差）より前にならない日付に置く
+      // （例：6/26 20:00 成田発 → 6/26 18:50 LA着は、LAの時差で見ると出発の後）。
+      var arr = travelArrival(b);
+      if (arr && (arr.url || typeof arr.lat === 'number')) {
+        var depOff = typeof b._offset === 'number' ? b._offset : (typeof lastOffset === 'number' ? lastOffset : 0);
+        var arrOff = typeof b._arriveOffset === 'number' ? b._arriveOffset : depOff;
+        var depUtc = dayIndex * 1440 + minute - depOff;
+        var aMin = hhmmToMinute(arr.time), aDay = dayIndex, aEst = aMin === null;
+        if (aEst) {
+          var local = depUtc + (b.moveMinutes || 60) + arrOff;
+          aDay = Math.floor(local / 1440); aMin = local - aDay * 1440;
+        } else {
+          while (aDay * 1440 + aMin - arrOff < depUtc && aDay < dayIndex + 3) aDay++;
+        }
+        var aDate = dates[aDay] || b.date;
+        out.push({
+          blockId: b.id + '#arrive', date: aDate, dayIndex: aDay, dayNumber: aDay + 1,
+          minute: aMin, estimated: aEst, label: arr.label || '到着', captions: [], photos: [],
+          transport: b.transport || '', query: arr.url || '', entryId: '',
+          knownLat: typeof arr.lat === 'number' ? arr.lat : null,
+          knownLng: typeof arr.lng === 'number' ? arr.lng : null,
+          offset: typeof b._arriveOffset === 'number' ? b._arriveOffset : lastOffset,
+          arrival: true
+        });
+        // 到着でその移動は終わり。次の場所へは、移動手段を引き継がない（飛行機の続きで飛ばない）
+        pendingTransport = ''; pendingMove = 0;
+        if (typeof b._arriveOffset === 'number') lastOffset = b._arriveOffset;
+        if (dates[aDay]) lastMinute[aDate] = aMin;
+      }
     });
+    return out;
   }
 
   // 2点の間の位置（f=0〜1）。飛行機（arc=true）は進行方向の左へ弧を描くようにふくらませる。
@@ -870,6 +1338,7 @@
   //   挟まっても、アイコンはそれまで最後にいた場所で待つ）
   // - 旅の時間は基本1000倍速、ただし長い移動・何も無い空き時間は上限秒数に早送りする
   var REPLAY_PLANE_KM = 400;
+  var REPLAY_PLANE_MIN_KM = 100; // これより近い区間の飛行機はありえない（移動手段の付き違い）とみなす（2026-09-27）
   var REPLAY_WALK_KM = 1.5; // 移動手段が入っていない、とても近い移動（1.5km未満）は徒歩とみなす（2026-09-26）
 
   // 2地点の距離（km）
@@ -976,6 +1445,19 @@
       });
     });
     if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
+    // 日付変更線（経度180度）をまたいだら、そのあとの地点の経度を±360度して前の地点から続ける。
+    // 香港→ニューヨークのように太平洋を越える飛行機は、弧を太平洋回りで引くので終わりが経度+286度になる。
+    // ニューヨーク（-74度）をそのままにすると、そこから先は地図の「別の周回」に描かれ、カメラがニューヨークへ
+    // 動くと、東京→香港→ニューヨークまでの足跡が見えなくなっていた（2026-09-27）
+    var prevLng = null;
+    s.forEach(function (st) {
+      if (!st.located) return;
+      if (prevLng !== null) {
+        while (st.lng - prevLng > 180) st.lng -= 360;
+        while (st.lng - prevLng < -180) st.lng += 360;
+      }
+      prevLng = st.lng;
+    });
 
     var legs = [], lastLoc = -1;
     // 場所が変わったら移動にする。移動手段が入っていなければ車とみなす（ほとんどの移動は車、という声より。
@@ -997,6 +1479,27 @@
       }
       lastLoc = i;
     });
+    // 移動の予定の移動手段は「次の移動」に付く（replayStopsのpendingTransport）。そのため「LAX→ラスベガス行きの
+    // 飛行機」の予定にラスベガス空港の地図が入っていると、飛行機が空港→フラミンゴ（約5km）の区間に付き、
+    // 街を一直線に飛び越えて見えていた（2026-09-27）。とても近い区間（REPLAY_PLANE_MIN_KM未満）の飛行機は
+    // ありえないので、直前の区間が遠くて移動手段が決め打ち（assumed）なら飛行機をそちらへ移し、近い区間は
+    // 車（ごく近ければ徒歩）として道のりをたどる。
+    legs.forEach(function (l, k) {
+      var d = distanceKm(s[l.from], s[l.to]);
+      if (l.transport !== 'plane' || d >= REPLAY_PLANE_MIN_KM) return;
+      var prev = legs[k - 1];
+      if (prev && prev.to === l.from && prev.assumed && distanceKm(s[prev.from], s[prev.to]) >= REPLAY_PLANE_MIN_KM) {
+        prev.transport = 'plane';
+        prev.assumed = false;
+        prev.path = planeArcPath(s[prev.from], s[prev.to]);
+      }
+      l.transport = d < REPLAY_WALK_KM ? 'walk' : 'car';
+      l.assumed = true;
+      l.path = gentleCurvePath(s[l.from], s[l.to]);
+    });
+    // 飛行機の移動は、距離によらずREPLAY_PLANE_MOVE_SEC。長い飛行機が4秒＋カメラの動き・着いたあとの一呼吸で
+    // 5秒ほどかかり、長いという声より、全体で3秒ほどになるよう縮めた（2026-09-27）
+    legs.forEach(function (l) { if (l.transport === 'plane') l.moveSec = Math.min(l.moveSec, REPLAY_PLANE_MOVE_SEC); });
     var legArrivingAt = {};
     legs.forEach(function (l) { legArrivingAt[l.to] = l; });
 
@@ -1017,11 +1520,18 @@
       st.rCaptionStart = r;
       var photoCount = Math.min((st.photos || []).length, REPLAY_MAX_PHOTOS);
       // 写真が無ければ固定3秒、写真があれば1枚2.5秒（最大4枚＝10秒）。文章の長さでは変えない（2026-09-27）
-      var minSec = photoCount > 0 ? Math.min(photoCount * REPLAY_SEC_PER_PHOTO, REPLAY_MAX_CAPTION_SEC) : REPLAY_MIN_CAPTION_SEC;
+      // 写真1枚でも、写真が無いときと同じ3秒は見せる（2.5秒では短いという声より。2026-09-27）
+      var minSec = photoCount > 0
+        ? Math.max(REPLAY_MIN_CAPTION_SEC, Math.min(photoCount * REPLAY_SEC_PER_PHOTO, REPLAY_MAX_CAPTION_SEC))
+        : REPLAY_MIN_CAPTION_SEC;
       // 吹き出しを見せている間（一時停止＋滞在）は、時計をこの予定の時刻のまま止める。以前はこの間も
       // 旅の時計が数分進んで見えていた（例：13:00の予定なのに13:08と表示）。吹き出しが消えたら、
       // 旅の時計をdwell分だけ一気に進めてから続きに移る（2026-09-27）。
       var captionSec = Math.max(dwell * REPLAY_SEC_PER_MIN, minSec);
+      // 次へ移動するときは、カメラが動き出す少し前（REPLAY_CAPTION_HIDE_LEAD_SEC）に吹き出しを消すので、
+      // その分を足して、見えている時間がminSecより短くならないようにする（58で消すのを早めたら、写真1枚・
+      // エピソードだけの地点が1〜2秒で消えていた。2026-09-27）
+      if (moving) captionSec += REPLAY_CAPTION_HIDE_LEAD_SEC;
       r += captionSec;
       kf.push({ t: st.t, r: r });
       // 吹き出しが消えた直後に、旅の時計をdwell分だけ一気に進める。同じrに2つの時刻（止まっていたst.tと、
@@ -1060,6 +1570,138 @@
   // ---- 道のり（実際の道路に沿ったルート。docs/adr/0008）----
   // 移動手段ごとに、どのルート検索を使うか。電車・新幹線・地下鉄は線路のルート（BRouterのrailプロファイル、
   // 2026-09-27〜）、飛行機は弧（''＝ルート検索しない）。
+  // ---- 日本の電車の道のり：OpenStreetMapの線路データから自分で最短経路を求める（2026-09-27） ----
+  // BRouter（線路の検索サーバー）は新大阪→USJのように新幹線の線路へ吸い寄せられて大回りし、Googleの
+  // 乗り換え案内は日本の電車の経路をAPIで返さない。そこで、2地点の周りの線路（Overpass APIで取る）を
+  // 自分でつなぎ、線路の上の最短経路（ダイクストラ法）を求める。どの路線に乗ったかは分からないが、
+  // 線路の上を通る最短の線になる。データが大きくなりすぎないよう、直線距離が短い区間だけで使う。
+  var RAIL_LOCAL_MAX_KM = 30;      // これより遠い区間（新幹線など）は使わない
+  var RAIL_LOCAL_SNAP_KM = 1.2;    // 出発地・到着地から、この範囲の線路の点を乗り降りの候補にする
+  var RAIL_LOCAL_MAX_DETOUR = 3;   // 直線距離の3倍を超える経路は使わない（BRouterのガードと同じ）
+
+  function isInJapan(p) {
+    return !!p && p.lat >= 24 && p.lat <= 46 && p.lng >= 122.5 && p.lng <= 154;
+  }
+
+  // 線路を取る範囲（南,西,北,東）。直線距離の3割（最低2km）だけ周りに広げる
+  function railBBox(a, b) {
+    var padKm = Math.max(2, distanceKm(a, b) * 0.3);
+    var dLat = padKm / 111, dLng = padKm / (111 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180));
+    return [Math.min(a.lat, b.lat) - dLat, Math.min(a.lng, b.lng) - dLng, Math.max(a.lat, b.lat) + dLat, Math.max(a.lng, b.lng) + dLng]
+      .map(function (v) { return Math.round(v * 1e5) / 1e5; });
+  }
+
+  function railOverpassQuery(bbox) {
+    return '[out:json][timeout:25];way["railway"~"^(rail|subway|light_rail|narrow_gauge|monorail)$"]' +
+      '["service"!~"^(yard|siding|spur)$"](' + bbox.join(',') + ');(._;>;);out skel qt;';
+  }
+
+  // Overpassの結果（elements：way と node）から、線路の点どうしのつながり（隣の点と距離km）を作る
+  function railGraph(elements) {
+    var nodes = {}, adj = {};
+    (elements || []).forEach(function (e) { if (e.type === 'node') nodes[e.id] = { lat: e.lat, lng: e.lon }; });
+    (elements || []).forEach(function (e) {
+      if (e.type !== 'way' || !Array.isArray(e.nodes)) return;
+      for (var i = 1; i < e.nodes.length; i++) {
+        var u = e.nodes[i - 1], v = e.nodes[i];
+        if (!nodes[u] || !nodes[v]) continue;
+        var d = distanceKm(nodes[u], nodes[v]);
+        (adj[u] = adj[u] || []).push([v, d]);
+        (adj[v] = adj[v] || []).push([u, d]);
+      }
+    });
+    return { nodes: nodes, adj: adj };
+  }
+
+  // 出発地・到着地からRAIL_LOCAL_SNAP_KM以内の線路の点を全部、乗り降りの候補にする（多始点のダイクストラ）。
+  // 近い線路が新幹線（在来線とつながっていない）でも、少し先の在来線の点から乗れるので大回りしない。
+  // 返すのは [[緯度,経度], ...]（出発地と到着地を両端に足したもの）か、見つからなければnull。
+  function shortestRailPath(graph, a, b) {
+    var ids = Object.keys(graph.adj);
+    if (!ids.length) return null;
+    var dist = {}, prev = {}, goal = {};
+    var heap = [];
+    function push(id, d) {
+      heap.push([d, id]);
+      var i = heap.length - 1;
+      while (i > 0) { var p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; var t = heap[p]; heap[p] = heap[i]; heap[i] = t; i = p; }
+    }
+    function pop() {
+      var top = heap[0], last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        var i = 0;
+        for (;;) {
+          var l = 2 * i + 1, r = l + 1, m = i;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === i) break;
+          var t = heap[m]; heap[m] = heap[i]; heap[i] = t; i = m;
+        }
+      }
+      return top;
+    }
+    ids.forEach(function (id) {
+      var n = graph.nodes[id];
+      var ds = distanceKm(a, n), dg = distanceKm(n, b);
+      if (ds <= RAIL_LOCAL_SNAP_KM) { dist[id] = ds; prev[id] = null; push(id, ds); }
+      if (dg <= RAIL_LOCAL_SNAP_KM) goal[id] = dg;
+    });
+    var best = null, bestCost = Infinity;
+    while (heap.length) {
+      var cur = pop(), d = cur[0], u = cur[1];
+      if (d > dist[u] || d >= bestCost) continue;
+      if (goal[u] !== undefined && d + goal[u] < bestCost) { bestCost = d + goal[u]; best = u; }
+      (graph.adj[u] || []).forEach(function (e) {
+        var nd = d + e[1];
+        if (dist[e[0]] === undefined || nd < dist[e[0]]) { dist[e[0]] = nd; prev[e[0]] = u; push(String(e[0]), nd); }
+      });
+    }
+    if (best === null) return null;
+    var path = [], at = best;
+    while (at !== null && at !== undefined) { var n = graph.nodes[at]; path.push([n.lat, n.lng]); at = prev[at]; }
+    path.reverse();
+    return { path: [[a.lat, a.lng]].concat(path, [[b.lat, b.lng]]), km: bestCost };
+  }
+
+  // Overpassの結果から道のりを求める（ガードつき）。使えなければnull
+  function railPathFromOverpass(elements, a, b) {
+    var straight = distanceKm(a, b);
+    if (!(straight > 0) || straight > RAIL_LOCAL_MAX_KM) return null;
+    var r = shortestRailPath(railGraph(elements), a, b);
+    if (!r || r.km > straight * RAIL_LOCAL_MAX_DETOUR) return null;
+    return r.path;
+  }
+
+  // 道のり（OSRM・Google・線路）は、出発地・到着地のいちばん近い道路や線路から始まり・終わる。山の上
+  // （コルコバードの丘）や広い敷地の中の地点だと、道路の端がピンから離れていて、青い線がピンから始まらず
+  // 「最初の部分が見えない」ように見えていた（2026-09-27）。道のりの両端がピンから離れていれば、ピンとの
+  // 間を線でつなぐ（アイコンもピンから動き出す）。
+  var PATH_JOIN_MIN_KM = 0.02;
+  // 経度を-180〜180度に戻す
+  function wrapLng(lng) {
+    var x = ((lng + 180) % 360 + 360) % 360 - 180;
+    return x === -180 && lng > 0 ? 180 : x;
+  }
+  // 線路の道のり（BRouter）の端が、出発地・到着地から離れすぎていないか。山の上の登山電車
+  // （ゴルナーグラート鉄道など）で、到着地の近くの線路に乗れず、下の町の駅まで行ってから到着地へ
+  // 直線で戻る線になっていた（スイス旅3日目、2026-09-27）。離れていてよいのは、直線距離の2割か
+  // 0.5kmの大きい方まで（最大RAIL_LOCAL_SNAP_KM）
+  function railPathEndsOk(path, a, b) {
+    if (!Array.isArray(path) || path.length < 2 || !a || !b) return false;
+    var allow = Math.min(RAIL_LOCAL_SNAP_KM, Math.max(0.5, distanceKm(a, b) * 0.2));
+    var first = { lat: path[0][0], lng: path[0][1] }, last = { lat: path[path.length - 1][0], lng: path[path.length - 1][1] };
+    return distanceKm(a, first) <= allow && distanceKm(last, b) <= allow;
+  }
+  function joinPathEnds(path, a, b) {
+    if (!Array.isArray(path) || path.length < 2 || !a || !b) return path;
+    var out = path.slice();
+    var first = { lat: out[0][0], lng: out[0][1] }, last = { lat: out[out.length - 1][0], lng: out[out.length - 1][1] };
+    if (distanceKm(a, first) > PATH_JOIN_MIN_KM) out.unshift([a.lat, a.lng]);
+    if (distanceKm(last, b) > PATH_JOIN_MIN_KM) out.push([b.lat, b.lng]);
+    return out;
+  }
+
   function routeProfileFor(transport) {
     if (transport === 'car' || transport === 'taxi' || transport === 'bus') return 'car';
     if (transport === 'walk') return 'foot';
@@ -1156,8 +1798,12 @@
     var offsetDiff = cur && typeof cur.offset === 'number' ? cur.offset - (tl.baseOffset || 0) : 0;
     var localT = t + offsetDiff;
     var localDay = Math.floor(localT / 1440);
+    // 「何日目」は予定の日付（今いる予定＝最後に着いた予定。移動中は出発した予定）に合わせる。
+    // 時計から数えると、香港16:20発→ニューヨーク19:05着（どちらも1日目の予定）の飛行中に香港の時計が
+    // 0時を越え、「2日目」と出ていた（2026-09-27）。時計（hhmm）は現地時間のまま
+    var dayNumber = cur && cur.dayNumber ? cur.dayNumber : localDay + 1;
     return {
-      t: t, dayNumber: localDay + 1, hhmm: minuteToHHMM(localT - localDay * 1440),
+      t: t, dayNumber: dayNumber, hhmm: minuteToHHMM(localT - localDay * 1440),
       stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here, offsetDiff: offsetDiff
     };
   }
@@ -1195,7 +1841,7 @@
   function reviewKindForCategory(category) {
     if (category === 'lodging') return 'hotel';
     if (category === 'food') return 'food';
-    if (category === 'transport') return '';
+    if (category === 'transport' || category === 'arrival') return '';
     return 'activity';
   }
 
@@ -1342,6 +1988,245 @@
     return out;
   }
 
+  // ---------- 行ったことある旅先（国内・海外の地図。docs/adr/0017） ----------
+  // 国名の表記ゆれのまとめ方は worker/src/visited-places.js の COUNTRY_ALIASES と同じ内容を
+  // ここに複製している（サーバー側は/mylogが返す時点ですでに正規化済みの日本語名を使っているが、
+  // 世界地図側は「ISO数値コード→Intl.DisplayNamesの生の国名」を同じ正規化にかけてから突き合わせる
+  // 必要があるため。2つの配列がずれると国が塗られなくなるので、直すときは両方を直す）。
+  var VISITED_COUNTRY_ALIASES = [
+    ["日本", "日本国", "Japan", "にほん", "にっぽん"],
+    ["アメリカ", "アメリカ合衆国", "米国", "アメリカ合衆国（米国）", "United States", "United States of America", "USA", "U.S.A.", "US", "U.S.", "Estados Unidos"],
+    ["中国", "中華人民共和国", "China", "People's Republic of China", "中国大陸"],
+    ["台湾", "中華民国", "中華民國", "臺灣", "Taiwan"],
+    ["香港", "中華人民共和国香港特別行政区", "香港特別行政区", "Hong Kong"],
+    ["マカオ", "中華人民共和国マカオ特別行政区", "マカオ特別行政区", "澳門", "Macao", "Macau"],
+    ["韓国", "大韓民国", "South Korea", "Korea", "Republic of Korea", "한국", "대한민국"],
+    ["北朝鮮", "朝鮮民主主義人民共和国", "North Korea"],
+    ["イギリス", "英国", "グレートブリテン及び北アイルランド連合王国", "連合王国", "United Kingdom", "UK", "Great Britain"],
+    ["ロシア", "ロシア連邦", "Russia"],
+    ["ドイツ", "ドイツ連邦共和国", "Germany", "Deutschland"],
+    ["フランス", "フランス共和国", "France"],
+    ["イタリア", "イタリア共和国", "Italy", "Italia"],
+    ["スペイン", "スペイン王国", "Spain", "España"],
+    ["ポルトガル", "ポルトガル共和国", "Portugal"],
+    ["オランダ", "オランダ王国", "Netherlands", "Nederland"],
+    ["スイス", "スイス連邦", "Switzerland"],
+    ["オーストリア", "オーストリア共和国", "Austria"],
+    ["ブラジル", "ブラジル連邦共和国", "Brazil", "Brasil"],
+    ["アルゼンチン", "アルゼンチン共和国", "Argentina"],
+    ["メキシコ", "メキシコ合衆国", "Mexico", "México"],
+    ["カナダ", "Canada"],
+    ["ペルー", "ペルー共和国", "Peru", "Perú"],
+    ["チリ", "チリ共和国", "Chile"],
+    ["オーストラリア", "オーストラリア連邦", "Australia"],
+    ["ニュージーランド", "New Zealand"],
+    ["タイ", "タイ王国", "Thailand", "ประเทศไทย"],
+    ["ベトナム", "ベトナム社会主義共和国", "Vietnam", "Viet Nam", "Việt Nam"],
+    ["フィリピン", "フィリピン共和国", "Philippines"],
+    ["インドネシア", "インドネシア共和国", "Indonesia"],
+    ["マレーシア", "Malaysia"],
+    ["シンガポール", "シンガポール共和国", "Singapore"],
+    ["インド", "インド共和国", "India"],
+    ["エチオピア", "エチオピア連邦民主共和国", "Ethiopia"],
+    ["アラブ首長国連邦", "UAE", "United Arab Emirates"],
+    ["トルコ", "トルコ共和国", "Türkiye", "Turkey"],
+    ["エジプト", "エジプト・アラブ共和国", "Egypt"],
+    ["カタール", "カタール国", "Qatar"]
+  ];
+  var VISITED_KEEP_AS_IS = { "ドミニカ共和国": 1, "ドミニカ国": 1, "コンゴ共和国": 1, "コンゴ民主共和国": 1, "中央アフリカ共和国": 1 };
+  var VISITED_FORMAL_SUFFIX_RE = /(連邦民主共和国|社会主義共和国|連邦共和国|人民共和国|共和国|合衆国|王国|連邦)$/;
+  var VISITED_ALIAS_MAP = (function () {
+    var m = {};
+    VISITED_COUNTRY_ALIASES.forEach(function (names) {
+      names.forEach(function (n) { m[String(n).normalize('NFKC').trim().toLowerCase()] = names[0]; });
+    });
+    return m;
+  })();
+
+  // ISO数値コード側の国名（Intl.DisplayNamesの生の出力や、世界地図データの国名）を、
+  // /mylogが返す日本語の正規化済み国名（例：「アメリカ合衆国」→「アメリカ」）に揃える。
+  function canonicalVisitedCountryName(name) {
+    var raw = String(name || '').normalize('NFKC').trim();
+    if (!raw) return '';
+    var hit = VISITED_ALIAS_MAP[raw.toLowerCase()];
+    if (hit) return hit;
+    if (VISITED_KEEP_AS_IS[raw]) return raw;
+    var short = raw.replace(VISITED_FORMAL_SUFFIX_RE, '');
+    if (short && short !== raw && short.length >= 2) return VISITED_ALIAS_MAP[short.toLowerCase()] || short;
+    return raw;
+  }
+
+  // 世界地図（TopoJSON、idはISO 3166-1 numeric）の各国を、/mylogの国名と突き合わせるための対応表を作る。
+  // ids: トポロジーの各featureのid（数値コードの文字列）の配列
+  // alpha2Table: vendor/geo/iso-numeric-alpha2.json の中身（{ "392": "JP", ... }）
+  // 戻り値: { idToName: {id: 正規化した日本語国名}, nameToId: {正規化した日本語国名: id} }
+  // Intl.DisplayNamesが無い環境（古いWebViewなど）では空の対応表を返し、世界地図は塗らずに一覧だけ出す。
+  function buildCountryIsoIndex(ids, alpha2Table) {
+    var idToName = {}, nameToId = {};
+    if (typeof Intl === 'undefined' || !Intl.DisplayNames) return { idToName: idToName, nameToId: nameToId };
+    var dn;
+    try { dn = new Intl.DisplayNames(['ja'], { type: 'region' }); } catch (e) { return { idToName: idToName, nameToId: nameToId }; }
+    (ids || []).forEach(function (id) {
+      var a2 = alpha2Table && alpha2Table[id];
+      if (!a2) return;
+      var raw;
+      try { raw = dn.of(a2); } catch (e) { return; }
+      if (!raw) return;
+      var name = canonicalVisitedCountryName(raw);
+      idToName[id] = name;
+      if (!nameToId[name]) nameToId[name] = id; // 同じ国名に複数idが来ることは無い想定。最初のものを使う
+    });
+    return { idToName: idToName, nameToId: nameToId };
+  }
+
+  // 都道府県 → 8地方区分（北海道／東北／関東／中部／近畿／中国／四国／九州・沖縄）。
+  // 一覧を地方ごとに見出しを付けて出すために使う（docs/adr/0017）。
+  var VISITED_PREFECTURE_REGIONS = {
+    '北海道': ['北海道'],
+    '東北': ['青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県'],
+    '関東': ['茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県'],
+    '中部': ['新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県', '静岡県', '愛知県'],
+    '近畿': ['三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県'],
+    '中国': ['鳥取県', '島根県', '岡山県', '広島県', '山口県'],
+    '四国': ['徳島県', '香川県', '愛媛県', '高知県'],
+    '九州・沖縄': ['福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県']
+  };
+  var VISITED_REGION_ORDER = ['北海道', '東北', '関東', '中部', '近畿', '中国', '四国', '九州・沖縄'];
+  var VISITED_PREFECTURE_TO_REGION = (function () {
+    var m = {};
+    VISITED_REGION_ORDER.forEach(function (region) {
+      VISITED_PREFECTURE_REGIONS[region].forEach(function (pref) { m[pref] = region; });
+    });
+    return m;
+  })();
+  function regionForPrefecture(name) {
+    return VISITED_PREFECTURE_TO_REGION[name] || null;
+  }
+
+  // ISO 3166-1 alpha-2 → 6大陸（アジア／ヨーロッパ／北アメリカ／南アメリカ／アフリカ／オセアニア）。
+  // world-atlas（vendor/geo/countries-110m.json）に含まれる国・地域をひととおりカバーする、
+  // このリポジトリ内だけの小さな対応表（外部ライブラリは使わない）。
+  // 大陸をまたぐ国は一般的な区分に合わせた（例：ロシア＝ヨーロッパ、トルコ＝アジア、
+  // エジプト＝アフリカ、ジョージア／アルメニア／アゼルバイジャン＝アジア）。
+  var VISITED_CONTINENT_BY_ALPHA2 = {
+    AD: 'ヨーロッパ', AE: 'アジア', AF: 'アジア', AG: '北アメリカ', AI: '北アメリカ', AL: 'ヨーロッパ',
+    AM: 'アジア', AO: 'アフリカ', AQ: 'オセアニア', AR: '南アメリカ', AS: 'オセアニア', AT: 'ヨーロッパ',
+    AU: 'オセアニア', AW: '北アメリカ', AX: 'ヨーロッパ', AZ: 'アジア', BA: 'ヨーロッパ', BB: '北アメリカ',
+    BD: 'アジア', BE: 'ヨーロッパ', BF: 'アフリカ', BG: 'ヨーロッパ', BH: 'アジア', BI: 'アフリカ',
+    BJ: 'アフリカ', BL: '北アメリカ', BM: '北アメリカ', BN: 'アジア', BO: '南アメリカ', BQ: '北アメリカ',
+    BR: '南アメリカ', BS: '北アメリカ', BT: 'アジア', BV: 'アフリカ', BW: 'アフリカ', BY: 'ヨーロッパ',
+    BZ: '北アメリカ', CA: '北アメリカ', CC: 'オセアニア', CD: 'アフリカ', CF: 'アフリカ', CG: 'アフリカ',
+    CH: 'ヨーロッパ', CI: 'アフリカ', CK: 'オセアニア', CL: '南アメリカ', CM: 'アフリカ', CN: 'アジア',
+    CO: '南アメリカ', CR: '北アメリカ', CU: '北アメリカ', CV: 'アフリカ', CW: '北アメリカ', CX: 'オセアニア',
+    CY: 'ヨーロッパ', CZ: 'ヨーロッパ', DE: 'ヨーロッパ', DJ: 'アフリカ', DK: 'ヨーロッパ', DM: '北アメリカ',
+    DO: '北アメリカ', DZ: 'アフリカ', EC: '南アメリカ', EE: 'ヨーロッパ', EG: 'アフリカ', EH: 'アフリカ',
+    ER: 'アフリカ', ES: 'ヨーロッパ', ET: 'アフリカ', FI: 'ヨーロッパ', FJ: 'オセアニア', FK: '南アメリカ',
+    FM: 'オセアニア', FO: 'ヨーロッパ', FR: 'ヨーロッパ', GA: 'アフリカ', GB: 'ヨーロッパ', GD: '北アメリカ',
+    GE: 'アジア', GF: '南アメリカ', GG: 'ヨーロッパ', GH: 'アフリカ', GI: 'ヨーロッパ', GL: '北アメリカ',
+    GM: 'アフリカ', GN: 'アフリカ', GP: '北アメリカ', GQ: 'アフリカ', GR: 'ヨーロッパ', GS: '南アメリカ',
+    GT: '北アメリカ', GU: 'オセアニア', GW: 'アフリカ', GY: '南アメリカ', HK: 'アジア', HM: 'オセアニア',
+    HN: '北アメリカ', HR: 'ヨーロッパ', HT: '北アメリカ', HU: 'ヨーロッパ', ID: 'アジア', IE: 'ヨーロッパ',
+    IL: 'アジア', IM: 'ヨーロッパ', IN: 'アジア', IO: 'アジア', IQ: 'アジア', IR: 'アジア', IS: 'ヨーロッパ',
+    IT: 'ヨーロッパ', JE: 'ヨーロッパ', JM: '北アメリカ', JO: 'アジア', JP: 'アジア', KE: 'アフリカ',
+    KG: 'アジア', KH: 'アジア', KI: 'オセアニア', KM: 'アフリカ', KN: '北アメリカ', KP: 'アジア',
+    KR: 'アジア', KW: 'アジア', KY: '北アメリカ', KZ: 'アジア', LA: 'アジア', LB: 'アジア', LC: '北アメリカ',
+    LI: 'ヨーロッパ', LK: 'アジア', LR: 'アフリカ', LS: 'アフリカ', LT: 'ヨーロッパ', LU: 'ヨーロッパ',
+    LV: 'ヨーロッパ', LY: 'アフリカ', MA: 'アフリカ', MC: 'ヨーロッパ', MD: 'ヨーロッパ', ME: 'ヨーロッパ',
+    MF: '北アメリカ', MG: 'アフリカ', MH: 'オセアニア', MK: 'ヨーロッパ', ML: 'アフリカ', MM: 'アジア',
+    MN: 'アジア', MO: 'アジア', MP: 'オセアニア', MQ: '北アメリカ', MR: 'アフリカ', MS: '北アメリカ',
+    MT: 'ヨーロッパ', MU: 'アフリカ', MV: 'アジア', MW: 'アフリカ', MX: '北アメリカ', MY: 'アジア',
+    MZ: 'アフリカ', NA: 'アフリカ', NC: 'オセアニア', NE: 'アフリカ', NF: 'オセアニア', NG: 'アフリカ',
+    NI: '北アメリカ', NL: 'ヨーロッパ', NO: 'ヨーロッパ', NP: 'アジア', NR: 'オセアニア', NU: 'オセアニア',
+    NZ: 'オセアニア', OM: 'アジア', PA: '北アメリカ', PE: '南アメリカ', PF: 'オセアニア', PG: 'オセアニア',
+    PH: 'アジア', PK: 'アジア', PL: 'ヨーロッパ', PM: '北アメリカ', PN: 'オセアニア', PR: '北アメリカ',
+    PS: 'アジア', PT: 'ヨーロッパ', PW: 'オセアニア', PY: '南アメリカ', QA: 'アジア', RE: 'アフリカ',
+    RO: 'ヨーロッパ', RS: 'ヨーロッパ', RU: 'ヨーロッパ', RW: 'アフリカ', SA: 'アジア', SB: 'オセアニア',
+    SC: 'アフリカ', SD: 'アフリカ', SE: 'ヨーロッパ', SG: 'アジア', SH: 'アフリカ', SI: 'ヨーロッパ',
+    SJ: 'ヨーロッパ', SK: 'ヨーロッパ', SL: 'アフリカ', SM: 'ヨーロッパ', SN: 'アフリカ', SO: 'アフリカ',
+    SR: '南アメリカ', SS: 'アフリカ', ST: 'アフリカ', SV: '北アメリカ', SX: '北アメリカ', SY: 'アジア',
+    SZ: 'アフリカ', TC: '北アメリカ', TD: 'アフリカ', TF: 'アフリカ', TG: 'アフリカ', TH: 'アジア',
+    TJ: 'アジア', TK: 'オセアニア', TL: 'アジア', TM: 'アジア', TN: 'アフリカ', TO: 'オセアニア',
+    TR: 'アジア', TT: '北アメリカ', TV: 'オセアニア', TW: 'アジア', TZ: 'アフリカ', UA: 'ヨーロッパ',
+    UG: 'アフリカ', UM: 'オセアニア', US: '北アメリカ', UY: '南アメリカ', UZ: 'アジア', VA: 'ヨーロッパ',
+    VC: '北アメリカ', VE: '南アメリカ', VG: '北アメリカ', VI: '北アメリカ', VN: 'アジア', VU: 'オセアニア',
+    WF: 'オセアニア', WS: 'オセアニア', XK: 'ヨーロッパ', YE: 'アジア', YT: 'アフリカ', ZA: 'アフリカ',
+    ZM: 'アフリカ', ZW: 'アフリカ'
+  };
+  var VISITED_CONTINENT_ORDER = ['アジア', 'ヨーロッパ', '北アメリカ', '南アメリカ', 'アフリカ', 'オセアニア'];
+  function continentForAlpha2(alpha2) {
+    return VISITED_CONTINENT_BY_ALPHA2[String(alpha2 || '').toUpperCase()] || null;
+  }
+
+  // alpha-2コード（例："JP"）→ 国旗絵文字（例："🇯🇵"）。画像は使わず、Unicodeの
+  // 地域表示記号（Regional Indicator Symbol、A=U+1F1E6）を2文字組み合わせて作る。
+  function flagEmojiForAlpha2(alpha2) {
+    var code = String(alpha2 || '').toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return '';
+    var base = 0x1F1E6;
+    var a = 'A'.charCodeAt(0);
+    return String.fromCodePoint(base + (code.charCodeAt(0) - a)) + String.fromCodePoint(base + (code.charCodeAt(1) - a));
+  }
+
+  // 「count / total」を四捨五入した整数パーセントにする（totalが0以下なら0%）。
+  function visitedPercentage(count, total) {
+    if (!total || total <= 0) return 0;
+    return Math.round((count / total) * 100);
+  }
+
+  // items を keyFn(item) の結果ごとに、order の並び順でグループ化する。
+  // order に無いキー（null・未知の値も含む）は最後に「その他」としてまとめる（中身が無ければ出さない）。
+  // 都道府県の地方分け・国の大陸分けの両方で使う汎用のヘルパー。
+  function groupVisitedByOrder(items, keyFn, order) {
+    var buckets = {};
+    order.forEach(function (key) { buckets[key] = []; });
+    var others = [];
+    (items || []).forEach(function (item) {
+      var key = keyFn(item);
+      if (key && buckets[key]) buckets[key].push(item);
+      else others.push(item);
+    });
+    var out = order.filter(function (key) { return buckets[key].length; }).map(function (key) {
+      return { group: key, items: buckets[key] };
+    });
+    if (others.length) out.push({ group: 'その他', items: others });
+    return out;
+  }
+
+  // 「行ったことある旅先」の一覧に出す、1つの場所（都道府県／国）の旅行一覧。
+  // /mylogのdetails.prefectures・countriesの各要素（sources: [{tripId, tripTitle, dates, transit, excluded}]）
+  // から、実際に数えている（乗り継ぎでも外してもいない）旅行だけを、出てくる順に重複なく拾う。
+  // tripId（旅行を開くのに使う）・dates由来の年（表示用）も一緒に返す。
+  function visitedPlaceTrips(item) {
+    var out = [], seen = {};
+    ((item && item.sources) || []).forEach(function (s) {
+      if (s.transit || s.excluded) return;
+      var id = s.tripId || '';
+      if (seen[id]) return;
+      seen[id] = 1;
+      out.push({ tripId: id, tripTitle: s.tripTitle || '（無題の旅）', years: visitedYearsFromDates(s.dates) });
+    });
+    return out;
+  }
+
+  // sources[].datesの"YYYY-MM-DD"の並びから、年だけを重複なく出てくる順に拾う（無ければ空配列＝
+  // 表示側で年を省く。旧データなど日付が無い場合を想定）。
+  function visitedYearsFromDates(dates) {
+    var out = [], seen = {};
+    (dates || []).forEach(function (d) {
+      var y = String(d || '').slice(0, 4);
+      if (!/^\d{4}$/.test(y) || seen[y]) return;
+      seen[y] = 1;
+      out.push(y);
+    });
+    return out;
+  }
+
+  // 「旅行名（2026）」「旅行名（2026・2027）」「旅行名」（年が分からないときは省く）
+  function visitedTripLabel(trip) {
+    var years = trip.years && trip.years.length ? '（' + trip.years.join('・') + '）' : '';
+    return trip.tripTitle + years;
+  }
+
   // 旅行の行き先（天気のために入れた「日ごとの場所」の国・都道府県）。海外があれば国、国内だけなら都道府県。
   function tripPlaceNames(days) {
     var countries = [], prefs = [];
@@ -1464,6 +2349,196 @@
     };
   }
 
+  // ---------- 自分のAIで整理（JSON貼り付け）（docs/adr/0015） ----------
+  // 「音声・メモでまとめて記録する」の3つ目の入り口。ユーザーが自分のAI（ChatGPT・Claude・
+  // Geminiなど）にbuildAiImportPromptの文面＋自分のメモを渡し、返ってきたJSONをここで
+  // 読み取る。サーバー側の有料AI（voiceBlocksSchema/multiDayBlocksSchema、
+  // worker/src/index.js）と同じBlockの形（date・time・label・category・transport・
+  // entry{episode,mapUrl,shopUrl,costItems}）を受け付け、/trips/:id/memo-blocksという
+  // 既存のAIなし取り込みエンドポイントにそのまま渡せるようにする（新しいエンドポイントは作らない）。
+  var IMPORT_MAX_BLOCKS = 100; // worker側のMEMO_MAX_BLOCKSと合わせる
+  var IMPORT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+  // AIの答えは「```json ... ```で囲む」「前後に説明文を付ける」など、指示してもよく起きる。
+  // 文字列の中の { } は数えないよう、クォート・エスケープを見ながら最初に見つかった
+  // { または [ に対応する閉じカッコまでを取り出す（一番外側のJSON本体だけを拾う）。
+  function extractOutermostJson(text) {
+    var s = String(text || '')
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'");
+    var fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
+    if (fence) s = fence[1];
+    var startObj = s.indexOf('{'), startArr = s.indexOf('[');
+    var start = -1, openCh = '', closeCh = '';
+    if (startObj === -1 && startArr === -1) return null;
+    if (startArr === -1 || (startObj !== -1 && startObj < startArr)) { start = startObj; openCh = '{'; closeCh = '}'; }
+    else { start = startArr; openCh = '['; closeCh = ']'; }
+    var depth = 0, inStr = false, esc = false, end = -1;
+    for (var i = start; i < s.length; i++) {
+      var c = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') { inStr = true; continue; }
+      if (c === openCh) depth++;
+      else if (c === closeCh) { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end === -1) return null;
+    try { return JSON.parse(s.slice(start, end + 1)); } catch (e) { return null; }
+  }
+
+  // trip: {startDate, endDate}。複数日の旅行はBlockごとにdateが旅行期間内であることを必須にし、
+  // 1日（または日程未設定）の旅行はdateを省略できる（そのときは選択中の日をそのまま使う）。
+  // 戻り値のblocksは、そのまま/trips/:id/memo-blocksに渡せる形。warningsは取り込みはしたが
+  // 補正した項目、errorsは取り込めずに省いた項目（件数分の理由つき）。
+  function parseImportedBlocksJson(text, trip) {
+    var payload = extractOutermostJson(text);
+    if (payload === null || payload === undefined) {
+      return { blocks: [], warnings: [], errors: ['JSONを読み取れませんでした。AIの答え全体をそのまま貼り付けてください。'] };
+    }
+    var rawBlocks = Array.isArray(payload) ? payload
+      : (payload && typeof payload === 'object' && Array.isArray(payload.blocks)) ? payload.blocks : null;
+    if (!rawBlocks) return { blocks: [], warnings: [], errors: ['blocksの配列が見つかりませんでした。'] };
+    if (!rawBlocks.length) return { blocks: [], warnings: [], errors: ['予定が1件も見つかりませんでした。'] };
+    if (rawBlocks.length > IMPORT_MAX_BLOCKS) {
+      return { blocks: [], warnings: [], errors: ['予定が多すぎます（' + IMPORT_MAX_BLOCKS + '件まで）。日を分けて取り込んでください。'] };
+    }
+
+    var tripDates = allDatesForTrip(trip, []).filter(function (d) { return d; });
+    var multiDay = tripDates.length > 1;
+    var defaultDate = (trip && trip.selectedDate) || tripDates[0] || '';
+    var blocks = [], warnings = [], errors = [];
+
+    rawBlocks.forEach(function (raw, i) {
+      var n = i + 1;
+      if (!raw || typeof raw !== 'object') { errors.push(n + '件目：形が正しくありません（オブジェクトではありません）。'); return; }
+      var label = typeof raw.label === 'string' ? raw.label.trim().slice(0, 200) : '';
+      if (!label) { errors.push(n + '件目：labelがありません。'); return; }
+
+      var date = defaultDate;
+      if (multiDay) {
+        var d = typeof raw.date === 'string' ? raw.date.trim() : '';
+        if (!d || tripDates.indexOf(d) === -1) {
+          errors.push(n + '件目「' + label + '」：dateが旅行期間内にありません（' + (d || '(空)') + '）。');
+          return;
+        }
+        date = d;
+      } else if (typeof raw.date === 'string' && raw.date && tripDates.indexOf(raw.date) !== -1) {
+        date = raw.date;
+      }
+
+      var category = CATEGORIES.some(function (c) { return c.key === raw.category; }) ? raw.category : '';
+      if (!category) {
+        warnings.push(n + '件目「' + label + '」：categoryが不明のため「その他」にしました。');
+        category = 'other';
+      }
+
+      var transport = '';
+      if (typeof raw.transport === 'string' && raw.transport) {
+        if (TRANSPORTS.some(function (t) { return t.key === raw.transport; })) transport = raw.transport;
+        else warnings.push(n + '件目「' + label + '」：transportが不明のため空にしました。');
+      }
+
+      var time = '';
+      if (typeof raw.time === 'string' && raw.time && IMPORT_TIME_RE.test(raw.time)) time = raw.time;
+      else if (raw.time) warnings.push(n + '件目「' + label + '」：timeの形式が正しくないため空にしました。');
+
+      var entryData = (raw.entry && typeof raw.entry === 'object') ? raw.entry : {};
+      var episode = typeof entryData.episode === 'string' ? entryData.episode.trim().slice(0, 4000) : '';
+      var mapUrl = typeof entryData.mapUrl === 'string' ? entryData.mapUrl.trim().slice(0, 500) : '';
+      var shopUrl = typeof entryData.shopUrl === 'string' ? entryData.shopUrl.trim().slice(0, 500) : '';
+
+      var costItems = [];
+      if (Array.isArray(entryData.costItems)) {
+        entryData.costItems.forEach(function (ci, ci_i) {
+          if (!ci || typeof ci !== 'object') return;
+          var ciLabel = typeof ci.label === 'string' ? ci.label.trim().slice(0, 60) : '';
+          var amount = ci.amount;
+          if (!ciLabel || typeof amount !== 'number' || !isFinite(amount) || amount < 0) {
+            warnings.push(n + '件目「' + label + '」：費用の内訳' + (ci_i + 1) + '件目を読み取れなかったので省きました。');
+            return;
+          }
+          var item = { label: ciLabel, amount: amount };
+          if (typeof ci.currency === 'string' && ci.currency.trim() && ci.currency.trim().toUpperCase() !== 'JPY') {
+            if (/^[A-Za-z]{3}$/.test(ci.currency.trim())) {
+              item.currency = ci.currency.trim().toUpperCase();
+              item.amount = Math.round(amount * 100) / 100;
+            } else {
+              warnings.push(n + '件目「' + label + '」：通貨コードが不明のため円として扱いました。');
+              item.amount = Math.round(amount);
+            }
+          } else {
+            item.amount = Math.round(amount);
+          }
+          costItems.push(item);
+        });
+      }
+
+      blocks.push({
+        date: date, time: time, label: label, category: category, transport: transport,
+        entry: { episode: episode, mapUrl: mapUrl, shopUrl: shopUrl, costItems: costItems }
+      });
+    });
+
+    return { blocks: blocks, warnings: warnings, errors: errors };
+  }
+
+  // 「AIへのお願い文をコピー」で使う文面。サーバー側のvoicePrompt/multiDayPrompt
+  // （worker/src/index.js）と同じ制約をユーザーの手元のAIに伝え、返ってきたJSONを
+  // parseImportedBlocksJsonでそのまま読めるようにする。
+  function buildAiImportPrompt(trip) {
+    var tripDates = allDatesForTrip(trip, []).filter(function (d) { return d; });
+    var multiDay = tripDates.length > 1;
+    var rangeText = (trip && trip.startDate)
+      ? (trip.startDate + (trip.endDate && trip.endDate !== trip.startDate ? '〜' + trip.endDate : ''))
+      : '（未設定）';
+    var categoryList = CATEGORIES.map(function (c) { return c.key + '（' + c.label + '）'; }).join(' / ');
+    var transportList = TRANSPORTS.filter(function (t) { return t.key; }).map(function (t) { return t.key + '（' + t.label + '）'; }).join(' / ');
+    var example = { blocks: [ Object.assign(
+      multiDay ? { date: tripDates[0] || 'YYYY-MM-DD' } : {},
+      {
+        time: '10:00',
+        label: '東京駅',
+        category: 'transport',
+        transport: 'shinkansen',
+        entry: {
+          episode: '新幹線で移動した',
+          mapUrl: '',
+          shopUrl: '',
+          costItems: [ { label: '新幹線代', amount: 14000 }, { label: 'お土産', amount: 12.5, currency: 'USD' } ]
+        }
+      }
+    ) ] };
+    var lines = [
+      'あなたは旅行記録アプリ「旅の足跡」のアシスタントです。下に貼る旅のメモを読んで、予定（Block）とその記録（Entry）の配列に分けてください。',
+      '',
+      'この旅行の日程：' + rangeText,
+      multiDay
+        ? ('複数日の旅行です。各予定のdateには、その出来事があった日をYYYY-MM-DD形式で必ず入れてください（' + tripDates.join('、') + 'のいずれか）。')
+        : '1日（または日程未設定）の旅行なので、dateは省略してかまいません。',
+      '',
+      '出力はJSONのみにしてください。前置きや説明・コードブロック（```）は付けず、次の形だけを出してください（あくまで形の例です。内容はメモに合わせて考えてください）：',
+      '',
+      JSON.stringify(example, null, 2),
+      '',
+      'ルール：',
+      '- categoryは次のいずれか一つだけ：' + categoryList,
+      '- transportは移動手段がはっきり分かるときだけ次のいずれかを入れ、分からなければ空文字（""）にする：' + transportList,
+      '- timeは24時間表記の"HH:MM"（例："09:30"）。はっきりしなければ空文字（""）にする（推測で作らない）',
+      '- entry.costItemsは、具体的な金額が書かれているものだけ配列で入れる（無ければ空配列[]）。amountは円の整数（小数点なし）。海外通貨で書かれているときだけcurrency（ISO 4217、例："USD"）を付け、amountはその通貨での金額（例：12.5）にする',
+      '- entry.episodeには、メモの内容をもとにした説明を書く（メモに書かれていないことを推測で付け足さない）',
+      '- labelは短い見出し（体言止め）にする',
+      '- 書かれた順番のとおりに配列を並べる',
+      '',
+      '旅のメモ：',
+      '（ここに旅のメモを貼ってください）'
+    ];
+    return lines.join('\n');
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
     TRANSPORTS: TRANSPORTS,
@@ -1484,6 +2559,7 @@
     blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
     costItemJpy: costItemJpy,
+    costItemHasRate: costItemHasRate,
     formatCostItemAmount: formatCostItemAmount,
     COST_CURRENCIES: COST_CURRENCIES,
     COST_CURRENCY_SYMBOLS: COST_CURRENCY_SYMBOLS,
@@ -1513,11 +2589,22 @@
     replayPlaceEntry: replayPlaceEntry,
     hasBrokenMapQuery: hasBrokenMapQuery,
     placeMapUrl: placeMapUrl,
+    travelArrival: travelArrival,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
+    REPLAY_CAPTION_HIDE_LEAD_SEC: REPLAY_CAPTION_HIDE_LEAD_SEC,
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
+    joinPathEnds: joinPathEnds,
+    railPathEndsOk: railPathEndsOk,
+    isInJapan: isInJapan,
+    railBBox: railBBox,
+    railOverpassQuery: railOverpassQuery,
+    railGraph: railGraph,
+    shortestRailPath: shortestRailPath,
+    railPathFromOverpass: railPathFromOverpass,
+    RAIL_LOCAL_MAX_KM: RAIL_LOCAL_MAX_KM,
     distanceKm: distanceKm,
     isRouteDetourTooLong: isRouteDetourTooLong,
     geocodeNearIndexes: geocodeNearIndexes,
@@ -1525,12 +2612,24 @@
     gentleCurvePath: gentleCurvePath,
     legMoveSeconds: legMoveSeconds,
     parseMemo: parseMemo,
+    parseImportedBlocksJson: parseImportedBlocksJson,
+    buildAiImportPrompt: buildAiImportPrompt,
     transportLabel: transportLabel,
     minutesText: minutesText,
     replayDayStarts: replayDayStarts,
     replayNeighborStop: replayNeighborStop,
     tzOffsetMinutes: tzOffsetMinutes,
     assignBlockZones: assignBlockZones,
+    isPlaneMove: isPlaneMove,
+    wrapLng: wrapLng,
+    lodgingNightOptions: lodgingNightOptions,
+    lodgingGroupBlocks: lodgingGroupBlocks,
+    lodgingEditPlan: lodgingEditPlan,
+    lodgingNights: lodgingNights,
+    lodgingSummary: lodgingSummary,
+    dayHasManualOrder: dayHasManualOrder,
+    lodgingSummaryParts: lodgingSummaryParts,
+    lodgingRangePlan: lodgingRangePlan,
     applyBlockZones: applyBlockZones,
     offsetDiffText: offsetDiffText,
     travelDuration: travelDuration,
@@ -1548,7 +2647,20 @@
     travelLogText: travelLogText,
     tripCostByGroup: tripCostByGroup,
     tripPlaceNames: tripPlaceNames,
-    buildTripPostText: buildTripPostText
+    buildTripPostText: buildTripPostText,
+    canonicalVisitedCountryName: canonicalVisitedCountryName,
+    buildCountryIsoIndex: buildCountryIsoIndex,
+    visitedPlaceTrips: visitedPlaceTrips,
+    visitedYearsFromDates: visitedYearsFromDates,
+    visitedTripLabel: visitedTripLabel,
+    VISITED_REGION_ORDER: VISITED_REGION_ORDER,
+    VISITED_PREFECTURE_REGIONS: VISITED_PREFECTURE_REGIONS,
+    regionForPrefecture: regionForPrefecture,
+    VISITED_CONTINENT_ORDER: VISITED_CONTINENT_ORDER,
+    continentForAlpha2: continentForAlpha2,
+    flagEmojiForAlpha2: flagEmojiForAlpha2,
+    visitedPercentage: visitedPercentage,
+    groupVisitedByOrder: groupVisitedByOrder
   };
 
   root.TabiLog = Core;
@@ -1574,6 +2686,7 @@
   var MY_TRIPS_KEY = 'tabilog:my-trips';
   var HIDDEN_TRIPS_KEY = 'tabilog:hidden-trips';
   var CURRENT_USER_KEY = 'tabilog:user';
+  var MYLOG_FILTERS_KEY = 'tabilog:mylog-filters';
 
   function $(sel, root2) { return (root2 || document).querySelector(sel); }
   function $all(sel, root2) { return Array.prototype.slice.call((root2 || document).querySelectorAll(sel)); }
@@ -1667,6 +2780,18 @@
   }
   function saveHiddenTripIds(ids) {
     localStorage.setItem(HIDDEN_TRIPS_KEY, JSON.stringify(ids));
+  }
+
+  // マイログ「参加した旅行」の絞り込み・並び順（ホーム画面のCore.filterTrips/sortTripsを再利用）。
+  // ホーム画面側の絞り込みは画面を離れると消えるが、こちらは見る人ごとに端末へ覚えておく。
+  function loadMylogFilters() {
+    try {
+      var v = JSON.parse(localStorage.getItem(MYLOG_FILTERS_KEY) || 'null');
+      return v && typeof v === 'object' ? { companion: v.companion || '', year: v.year || '', sort: v.sort || '' } : { companion: '', year: '', sort: '' };
+    } catch (e) { return { companion: '', year: '', sort: '' }; }
+  }
+  function saveMylogFilters(f) {
+    try { localStorage.setItem(MYLOG_FILTERS_KEY, JSON.stringify(f)); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
   function hideTripFromHistory() {
     if (!state.trip) return;
@@ -2217,7 +3342,10 @@
     loginReturnTo: 'home',    // ログイン画面から戻る先の画面名
     myLogItems: [],
     myLogTrips: [],
-    myLogPlaces: { prefectures: [], countries: [] },
+    myLogPlaces: { prefectures: [], countries: [], tripPlaces: [] },
+    mylogFilters: loadMylogFilters(), // マイログ「参加した旅行」の絞り込み（誰と一緒か・年）・並び順。端末に記憶する
+    visitedTab: 'domestic',   // 「行ったことある旅先」の選択中タブ（domestic|overseas）
+    visitedSel: null,          // 「行ったことある旅先」で選んだ場所（{kind, name}）。地図・一覧の両方をハイライトする
     homeFilters: { companion: '', year: '', tripType: '', sort: '' },
     social: { likes: {}, comments: [], accountId: '' },
     myLogCategory: 'food',
@@ -2372,7 +3500,10 @@
   }
 
   // ---------- 旅行を開く ----------
-  function openTrip(id) {
+  // returnTo：この旅行の詳細画面から「← 戻る」を押したときにどこへ戻るか（省略時はホーム。
+  // 「行ったことある旅先」の一覧・地図の吹き出しから旅行名をタップして開いたとき（openTrip(id, 'visited')）
+  // だけ、そのページに戻れるようにする。2026-09-28〜）
+  function openTrip(id, returnTo) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
       state.trip = data.trip;
@@ -2386,6 +3517,7 @@
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       state.zoneInfo = { byBlock: {}, byDate: {} };
       screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
+      state.tripReturnScreen = returnTo === 'visited' ? 'visited' : null;
       showScreen('tripDetail');
       renderTripDetail();
       loadSocial();
@@ -2403,6 +3535,10 @@
       state.blocks = data.blocks;
       state.days = data.days || [];
       state.members = data.members || [];
+      // 地図を足した・日程を変えたあとも時差を調べ直す。以前は旅行を開いたときにしか調べず、あとから入れた
+      // 地図（ニューヨークの「英語表現の疑問」）が前の時差（ブラジル）のままだった（2026-09-27）。
+      // 調べ終わったら並びと区切りを描き直す（loadTripZones）。調べた結果は端末に覚えているので通信は少ない
+      loadTripZones();
     });
   }
 
@@ -2411,6 +3547,7 @@
     $('#ntTitle').value = '';
     $('#ntStart').value = '';
     $('#ntEnd').value = '';
+    $('#ntEnd').min = '';
     $('#ntCompanions').value = '';
     $('#ntTripType').value = '';
     $('#newTripStatus').textContent = '';
@@ -2448,6 +3585,7 @@
     $('#teTitle').value = trip.title;
     $('#teStart').value = trip.startDate || '';
     $('#teEnd').value = trip.endDate || '';
+    $('#teEnd').min = trip.startDate || '';
     $('#teCompanions').value = (trip.companions || []).join('、');
     $('#teTripType').value = trip.tripType || '';
     $('#tripEditStatus').textContent = '';
@@ -2507,27 +3645,44 @@
   // 同じ宿が続く夜はまとめる（lodgingByNight）。宿泊が1か所だけの旅行では、これまでどおり
   // 宿の名前だけをシンプルに出す（範囲表記を付けない）。
   function formatLodgingStat(groups) {
-    if (!groups.length) return Core.primaryLodgingName(state.blocks) || '未設定';
-    if (groups.length === 1) return groups[0].label || '未設定';
-    return groups.map(function (g) {
-      var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
-      return range + '：' + (g.label || '未定');
-    }).join('／');
+    return Core.lodgingSummary(groups) || Core.primaryLodgingName(state.blocks) || '未設定';
   }
 
   // 宿泊先の内訳（何泊目にどこへ泊まったか、全件）。統計カードの表示文字列（formatLodgingStat）は
   // 3行までしか出せない（.stat-card .valのline-clamp）ため、宿泊先が3件を超える旅行では
   // 全部を確認できなかった。統計カードの「宿泊先」をタップすると開閉する（DAY30〜）。
+  var STAT_CHEVRON = '<svg class="stat-row-chev" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8l4 4 4-4"/></svg>';
+  // 開いている詳細に合わせて、宿泊先・総費用の行の矢印（aria-expanded）をそろえる
+  function syncStatRows() {
+    var l = $('#btnShowLodgingBreakdown'), c = $('#btnShowCostBreakdown');
+    if (l) l.setAttribute('aria-expanded', String(!$('#lodgingBreakdownPanel').hidden));
+    if (c) c.setAttribute('aria-expanded', String(!$('#costBreakdownPanel').hidden));
+  }
   function toggleLodgingBreakdown() {
     var panel = $('#lodgingBreakdownPanel');
-    if (!panel.hidden) { panel.hidden = true; return; }
+    if (!panel.hidden) { panel.hidden = true; syncStatRows(); return; }
     $('#costBreakdownPanel').hidden = true;
-    var groups = Core.lodgingByNight(state.trip, state.blocks);
+    renderLodgingPanel();
+    panel.hidden = false;
+    syncStatRows();
+  }
+  // 宿泊先の内訳。1泊ずつ1行で出す（7泊目だけ直したい、が分かりやすいように。2026-09-27）。
+  // 前の夜と同じ宿は名前を薄く出し、違う宿の夜には「同上」（前の夜の宿にそろえる）を出す
+  function renderLodgingPanel() {
+    var panel = $('#lodgingBreakdownPanel');
+    lodgingNightList = Core.lodgingNights(state.trip, state.blocks);
     var primaryName = Core.primaryLodgingName(state.blocks);
-    if (groups.length) {
-      panel.innerHTML = groups.map(function (g) {
-        var range = g.from === g.to ? (g.from + '泊目') : (g.from + '〜' + g.to + '泊目');
-        return '<div class="cost-breakdown-row"><span class="name">' + escapeHtml(range) + '</span><span class="amount">' + escapeHtml(g.label || '未定') + '</span></div>';
+    if (lodgingNightList.length) {
+      panel.innerHTML = lodgingNightList.map(function (n, i) {
+        var prev = lodgingNightList[i - 1];
+        var cont = prev && prev.label && prev.label === n.label;
+        var same = prev && prev.label && prev.label !== n.label;
+        return '<div class="cost-breakdown-row lodging-row" role="button" tabindex="0" data-lodging-night="' + n.night + '">' +
+          '<span class="lodging-night">' + n.night + '泊目<small>' + escapeHtml(formatNightDate(n.date)) + '</small></span>' +
+          '<span class="lodging-name' + (cont ? ' cont' : '') + (n.label ? '' : ' none') + '">' + escapeHtml(n.label || '未定') + '</span>' +
+          '<span class="lodging-actions">' +
+          (same ? '<button type="button" class="lodging-row-same" data-lodging-same="' + n.night + '">同上</button>' : '') +
+          '<span class="lodging-row-edit">' + (n.label ? '直す' : '入れる') + '</span></span></div>';
       }).join('');
     } else if (primaryName) {
       // 日帰りなど「泊」の無い旅行では日ごとの内訳が作れないため、宿泊カテゴリの見出しをそのまま出す
@@ -2535,13 +3690,172 @@
     } else {
       panel.innerHTML = '<p class="empty">宿泊カテゴリの予定がまだありません。</p>';
     }
-    panel.hidden = false;
+    panel.insertAdjacentHTML('beforeend', lodgingFormHtml());
+  }
+  function formatNightDate(d) {
+    var m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d || '');
+    return m ? Number(m[1]) + '/' + Number(m[2]) : '';
+  }
+
+  // ---------- 宿泊先を手で足す・直す（2026-09-27） ----------
+  // 宿泊先は基本は「宿泊」の予定から読み取る。直すときは「n泊目〜m泊目をこの宿にする」として、その日の
+  // 「宿泊」の予定（時刻なし）を足す・名前を変える（Core.lodgingRangePlan）。日程表・時差・地図でふりかえるにも使われる
+  var lodgingPlaces = [], lodgingSession = '', lodgingChosen = null, lodgingNightList = [];
+  function lodgingFormHtml() {
+    if (!lodgingNightList.length) return '';
+    var opts = function (id) {
+      return '<select id="' + id + '" class="lodging-select">' + lodgingNightList.map(function (n) {
+        return '<option value="' + n.night + '">' + n.night + '泊目（' + escapeHtml(formatNightDate(n.date)) + '）</option>';
+      }).join('') + '</select>';
+    };
+    return '<button type="button" class="entry-add lodging-add-open" id="btnLodgingAddOpen">' + plusIcon() + '<span>宿泊先を追加</span></button>' +
+      '<div class="lodging-add" id="lodgingAddForm" hidden>' +
+      '<div class="lodging-add-title" id="lodgingAddTitle">宿泊先を追加</div>' +
+      '<div class="field"><label for="lodgingAddName">宿の名前</label><input type="text" id="lodgingAddName" maxlength="200" placeholder="例：菊の家"></div>' +
+      '<div class="field"><label for="lodgingAddFrom">泊まる夜</label><div class="lodging-range">' + opts('lodgingAddFrom') + '<span>〜</span>' + opts('lodgingAddTo') + '</div></div>' +
+      '<div class="field"><label for="lodgingAddSearch">地図（任意）</label><div class="map-search-row"><input type="text" id="lodgingAddSearch" placeholder="宿の名前や住所で探す"><button type="button" class="btn ghost small" id="btnLodgingSearch">探す</button></div>' +
+      '<div class="place-list" id="lodgingAddCandidates" hidden></div></div>' +
+      '<p class="hint" id="lodgingAddStatus"></p>' +
+      '<div class="lodging-add-actions"><button type="button" class="btn text" id="btnLodgingAddCancel">やめる</button>' +
+      '<button type="button" class="btn primary" id="btnLodgingAddSave">保存する</button></div>' +
+      '</div>';
+  }
+  // night：タップした夜（null＝「宿泊先を追加」）。範囲は、その夜から同じ宿が続く最後の夜まで
+  function openLodgingForm(night) {
+    var form = $('#lodgingAddForm');
+    if (!form) return;
+    var list = lodgingNightList;
+    var start = night || (list.filter(function (n) { return !n.label; })[0] || list[list.length - 1]).night;
+    var cur = list[start - 1];
+    var end = start;
+    while (list[end] && list[end].label === cur.label) end++;
+    lodgingChosen = null; lodgingPlaces = [];
+    $('#lodgingAddTitle').textContent = night && cur.label ? '宿泊先を直す' : '宿泊先を追加';
+    $('#lodgingAddName').value = night ? cur.label : '';
+    $('#lodgingAddFrom').value = String(start);
+    $('#lodgingAddTo').value = String(end);
+    $('#lodgingAddSearch').value = '';
+    $('#lodgingAddCandidates').hidden = true;
+    var block = cur.blockId ? (state.blocks || []).filter(function (b) { return b.id === cur.blockId; })[0] : null;
+    var pe = night && block ? Core.replayPlaceEntry(block) : null;
+    $('#lodgingAddStatus').textContent = night && cur.label ? (pe ? '地図が入っています。変えるときだけ探してください。' : '地図はまだ入っていません。') +
+      '1泊だけ変えるときは、泊まる夜を「' + start + '泊目〜' + start + '泊目」にしてください。' : '';
+    form.hidden = false;
+    $('#btnLodgingAddOpen').hidden = true;
+    $all('.lodging-row').forEach(function (r) {
+      var k = Number(r.getAttribute('data-lodging-night'));
+      r.classList.toggle('on', !!night && k >= start && k <= end);
+    });
+    if (form.scrollIntoView) form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function closeLodgingForm() {
+    $('#lodgingAddForm').hidden = true;
+    $('#btnLodgingAddOpen').hidden = false;
+    $all('.lodging-row').forEach(function (r) { r.classList.remove('on'); });
+  }
+  function searchLodgingPlace() {
+    var q = $('#lodgingAddSearch').value.trim() || $('#lodgingAddName').value.trim();
+    if (!q) return;
+    var status = $('#lodgingAddStatus'), list = $('#lodgingAddCandidates');
+    status.textContent = '候補を探しています…';
+    lodgingSession = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'pl-' + Date.now().toString(36);
+    api('/places/search?q=' + encodeURIComponent(q) + '&session=' + encodeURIComponent(lodgingSession)).then(function (res) {
+      lodgingPlaces = (res && res.places) || [];
+      if (!lodgingPlaces.length) { list.hidden = true; status.textContent = '候補が見つかりませんでした。地図なしでも保存できます。'; return; }
+      list.innerHTML = lodgingPlaces.map(function (p, i) {
+        return '<div class="place-card" data-lodging-choice="' + i + '" role="button" tabindex="0"><span class="place-num">' + (i + 1) + '</span>' +
+          '<div class="place-text"><div class="place-name">' + escapeHtml(p.name) + '</div>' +
+          (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">選択</span></div>';
+      }).join('');
+      list.hidden = false;
+      status.textContent = '宿を選んでください。';
+    }).catch(function () { status.textContent = '候補を取得できませんでした。地図なしでも保存できます。'; });
+  }
+  function chooseLodgingPlace(i) {
+    var p = lodgingPlaces[i];
+    if (!p) return;
+    $all('[data-lodging-choice]', $('#lodgingAddCandidates')).forEach(function (el) {
+      var on = el.getAttribute('data-lodging-choice') === String(i);
+      el.classList.toggle('on', on);
+      el.querySelector('.place-pick').textContent = on ? '選択中' : '選択';
+    });
+    if (!$('#lodgingAddName').value.trim()) $('#lodgingAddName').value = p.name || '';
+    var need = !(isFinite(p.lat) && isFinite(p.lng)) && p.placeId;
+    var req = need
+      ? api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(lodgingSession)).then(function (res) {
+        if (res && res.found && isFinite(res.lat) && isFinite(res.lng)) { p.lat = res.lat; p.lng = res.lng; }
+      }).catch(function () {})
+      : Promise.resolve();
+    lodgingChosen = req.then(function () {
+      var url = Core.placeMapUrl(p, $('#lodgingAddSearch').value);
+      $('#lodgingAddStatus').textContent = url ? '地図に「' + p.name + '」を入れます。' : '';
+      return url || '';
+    });
+  }
+  // 「from泊目〜to泊目をnameにする」を実行する（地図があれば泊まり始めの予定に入れる）
+  function applyLodgingRange(from, to, name, mapUrl) {
+    var plan = Core.lodgingRangePlan(state.trip, state.blocks, from, to, name);
+    var user = loadCurrentUser(), author = (user && user.name) || '';
+    var blockById = function (id) { return (state.blocks || []).filter(function (b) { return b.id === id; })[0]; };
+    var mapOf = function (id) { var b = blockById(id), pe = b ? Core.replayPlaceEntry(b) : null; return pe ? pe.url : ''; };
+    var addMap = function (block, url) {
+      if (!url || !block) return null;
+      var first = (block.entries || [])[0];
+      return first
+        ? api('/entries/' + encodeURIComponent(first.id), 'PATCH', { mapUrl: url })
+        : api('/blocks/' + encodeURIComponent(block.id) + '/entries', 'POST', { mapUrl: url, author: author });
+    };
+    var jobs = plan.rename.map(function (id) { return api('/blocks/' + encodeURIComponent(id), 'PATCH', { label: name }); });
+    plan.create.forEach(function (c) {
+      var url = c.target ? mapUrl : mapOf(c.mapFrom);
+      jobs.push(api('/trips/' + encodeURIComponent(state.trip.id) + '/blocks', 'POST', { date: c.date, time: '', label: c.label, category: 'lodging' })
+        .then(function (block) { return addMap(block, url); }));
+    });
+    if (plan.target && mapUrl) jobs.push(addMap(blockById(plan.target), mapUrl));
+    return Promise.all(jobs);
+  }
+  function saveLodging() {
+    var name = $('#lodgingAddName').value.trim();
+    var from = Number($('#lodgingAddFrom').value), to = Number($('#lodgingAddTo').value);
+    var status = $('#lodgingAddStatus');
+    if (!name) { status.textContent = '宿の名前を入れてください。'; return; }
+    if (to < from) { status.textContent = '泊まる夜の終わりは、始まりより後にしてください。'; return; }
+    status.textContent = '保存中…';
+    $('#btnLodgingAddSave').disabled = true;
+    (lodgingChosen || Promise.resolve('')).then(function (mapUrl) {
+      return applyLodgingRange(from, to, name, mapUrl);
+    }).then(function () {
+      lodgingChosen = null; lodgingPlaces = [];
+      return refreshTrip();
+    }).then(function () {
+      renderTripDetail();
+      toggleLodgingBreakdown();
+    }).catch(function () {
+      status.textContent = '保存に失敗しました。もう一度お試しください。';
+      $('#btnLodgingAddSave').disabled = false;
+    });
+  }
+  // 「同上」：この夜から同じ宿が続く最後の夜までを、前の夜の宿にそろえる
+  function sameAsAboveLodging(night) {
+    var list = lodgingNightList, cur = list[night - 1], prev = list[night - 2];
+    if (!cur || !prev || !prev.label) return;
+    var end = night;
+    while (list[end] && list[end].label === cur.label) end++;
+    var btn = $('[data-lodging-same="' + night + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+    applyLodgingRange(night, end, prev.label, '').then(function () { return refreshTrip(); }).then(function () {
+      renderTripDetail();
+      toggleLodgingBreakdown();
+    }).catch(function () {
+      if (btn) { btn.disabled = false; btn.textContent = '同上'; }
+      alert('保存に失敗しました。もう一度お試しください。');
+    });
   }
 
   // 総費用の内訳（誰が実際にいくら払ったか）。統計カードの「総費用」をタップすると開閉する。
   function toggleCostBreakdown() {
     var panel = $('#costBreakdownPanel');
-    if (!panel.hidden) { panel.hidden = true; return; }
+    if (!panel.hidden) { panel.hidden = true; syncStatRows(); return; }
     $('#lodgingBreakdownPanel').hidden = true;
     var breakdown = Core.costBreakdownByPerson(state.blocks);
     var names = Object.keys(breakdown).sort(function (a, b) { return breakdown[b] - breakdown[a]; });
@@ -2551,6 +3865,7 @@
         }).join('')
       : '<p class="empty">まだ費用の記録がありません。</p>';
     panel.hidden = false;
+    syncStatRows();
   }
 
   // ---------- 旅行詳細 ----------
@@ -2572,14 +3887,42 @@
     renderTripSocialBar();
 
     var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
+    // 名前が長くても「ほか○か所」が切れないよう、別の行に出す（名前は2行まで）
+    var lodgingParts = Core.lodgingSummaryParts(Core.lodgingByNight(trip, state.blocks));
     var total = Core.tripTotalCost(state.blocks);
-    $('#tripStats').innerHTML =
-      '<button type="button" class="stat-card stat-card-btn" id="btnShowLodgingBreakdown"><div class="lbl">宿泊先</div><div class="val">' + escapeHtml(lodging) + '</div></button>' +
-      '<button type="button" class="stat-card stat-card-btn" id="btnShowCostBreakdown"><div class="lbl">総費用</div><div class="val">' + escapeHtml(Core.formatYen(total) || '¥0') + '</div></button>' +
-      statCard('日程', nights || (Core.allDatesForTrip(trip, state.blocks).length + '日'));
-    $('#lodgingBreakdownPanel').hidden = true;
-    $('#costBreakdownPanel').hidden = true;
+    // 宿泊先・総費用は横幅いっぱいの行を縦に並べ、押すとその下に詳細が開く（日程は旅行名の下に
+    // 「9泊10日」と出ているのでカードは出さない。2026-09-27）
+    var lodgingPanel = $('#lodgingBreakdownPanel'), costPanel = $('#costBreakdownPanel');
+    var stats = $('#tripStats');
+    stats.innerHTML =
+      '<button type="button" class="stat-row" id="btnShowLodgingBreakdown" aria-expanded="false"><span class="stat-row-lbl">宿泊先</span><span class="stat-row-val">' +
+        (lodgingParts
+          ? '<span class="lodging-val">' + escapeHtml(lodgingParts.main) + '</span>' + (lodgingParts.others ? '<span class="lodging-more">ほか' + lodgingParts.others + 'か所</span>' : '')
+          : '<span class="lodging-val">' + escapeHtml(lodging) + '</span>') + '</span>' + STAT_CHEVRON + '</button>' +
+      '<button type="button" class="stat-row" id="btnShowCostBreakdown" aria-expanded="false"><span class="stat-row-lbl">総費用</span><span class="stat-row-val"><span class="lodging-val">' +
+        escapeHtml(Core.formatYen(total) || '¥0') + '</span></span>' + STAT_CHEVRON + '</button>';
+    stats.insertBefore(lodgingPanel, $('#btnShowCostBreakdown'));
+    stats.appendChild(costPanel);
+    lodgingPanel.hidden = true;
+    costPanel.hidden = true;
     $('#btnShowLodgingBreakdown').addEventListener('click', toggleLodgingBreakdown);
+    if (!renderTripDetail.lodgingBound) {
+      renderTripDetail.lodgingBound = true;
+      $('#lodgingBreakdownPanel').addEventListener('click', function (e) {
+        var t = e.target;
+        if (t.closest('#btnLodgingAddOpen')) { openLodgingForm(null); $('#lodgingAddName').focus(); }
+        else if (t.closest('[data-lodging-same]')) sameAsAboveLodging(Number(t.closest('[data-lodging-same]').getAttribute('data-lodging-same')));
+        else if (t.closest('[data-lodging-night]')) openLodgingForm(Number(t.closest('[data-lodging-night]').getAttribute('data-lodging-night')));
+        else if (t.closest('#btnLodgingAddCancel')) closeLodgingForm();
+        else if (t.closest('#btnLodgingSearch')) searchLodgingPlace();
+        else if (t.closest('#btnLodgingAddSave')) saveLodging();
+        else if (t.closest('[data-lodging-choice]')) chooseLodgingPlace(Number(t.closest('[data-lodging-choice]').getAttribute('data-lodging-choice')));
+      });
+      $('#lodgingBreakdownPanel').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target.id === 'lodgingAddSearch') { e.preventDefault(); searchLodgingPlace(); }
+        else if (e.key === 'Enter' && e.target.classList.contains('lodging-row')) { e.preventDefault(); openLodgingForm(Number(e.target.getAttribute('data-lodging-night'))); }
+      });
+    }
     $('#btnShowCostBreakdown').addEventListener('click', toggleCostBreakdown);
 
     renderDayTabs();
@@ -2599,13 +3942,18 @@
       : '';
     var btn = $('#btnJoinTrip');
     var joined = user && user.accountId && members.some(function (m) { return m.accountId === user.accountId; });
-    btn.disabled = !!joined;
+    // 参加済みでも押せるようにし、押すと参加をやめられる（2026-09-27。以前は押せず、やめられなかった）
+    btn.disabled = false;
     btn.textContent = joined ? '参加済み' : '参加する';
+    btn.classList.toggle('is-joined', !!joined);
+    btn.setAttribute('aria-pressed', String(!!joined));
   }
 
   function handleJoinTrip() {
     var user = loadCurrentUser();
     if (!user) { openLogin('tripDetail'); return; }
+    var joined = user.accountId && (state.members || []).some(function (m) { return m.accountId === user.accountId; });
+    if (joined) { handleLeaveTrip(user); return; }
     api('/trips/' + encodeURIComponent(state.trip.id) + '/join', 'POST', { email: user.email, name: user.name || '' })
       .then(function (res) {
         state.members = res.members || [];
@@ -2616,6 +3964,18 @@
       })
       .catch(function () {
         $('#tripDetailStatus').textContent = '参加に失敗しました。もう一度お試しください。';
+      });
+  }
+
+  function handleLeaveTrip(user) {
+    if (!confirm('この旅行への参加をやめますか？\n\nアカウント参加の一覧から外れます。旅行や、あなたが書いた記録は消えません。あとからもう一度「参加する」を押せば戻れます。')) return;
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/leave', 'POST', { email: user.email })
+      .then(function (res) {
+        state.members = res.members || [];
+        renderTripJoin();
+      })
+      .catch(function () {
+        $('#tripDetailStatus').textContent = '参加をやめられませんでした。もう一度お試しください。';
       });
   }
 
@@ -2939,7 +4299,8 @@
   }
 
   // 音声入力・レシート読み取りは、内容の読み取りのため録音データ・メモの文章・レシート写真を
-  // 外部のAIサービス（OpenAI）へ送信する（Apple Guideline 5.1.1(i)/5.1.2(i)対応）。
+  // 外部のAIサービス（Cloudflare Workers AI・OpenAI・Google Cloud Vision）へ送信する
+  // （Apple Guideline 5.1.1(i)/5.1.2(i)対応）。
   // 送信前に必ず内容を説明し、同意を得てから実際の送信処理へ進む。一度同意すればこの端末では
   // 再確認しない（同意そのものをやり直したい場合はブラウザのサイトデータ削除で戻せる）。
   var AI_CONSENT_KEY = 'tabilog:ai-consent';
@@ -2950,7 +4311,8 @@
     if (hasAiConsent()) return true;
     var ok = confirm(
       '音声入力・レシート読み取りでは、録音した音声・入力したメモの文章・レシートの写真を、' +
-      '内容の読み取り・文字起こしのために外部のAIサービス（OpenAI）へ送信します。\n' +
+      '内容の読み取り・文字起こしのために外部のAIサービス（Cloudflare・OpenAI・Google）へ送信します' +
+      '（氏名・メールアドレスは送信しません）。\n' +
       '送信されたデータはOpenAIのモデル学習には使われません（APIの既定ポリシー）。\n\n' +
       '同意してこの機能を使いますか？'
     );
@@ -2988,6 +4350,12 @@
     $('#btnCreateTextEntries').disabled = false;
     $('#btnOrganizeMemoAi').disabled = false;
     $('#textEntryStatus').textContent = '';
+    $('#importJsonInput').value = '';
+    $('#importJsonStatus').textContent = '';
+    $('#importPreview').hidden = true;
+    $('#importPreview').innerHTML = '';
+    $('#btnImportJson').disabled = false;
+    state.pendingImportBlocks = null;
     $('#voicePremiumRequired').hidden = true;
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
@@ -3094,7 +4462,10 @@
       if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#voiceEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'trip_dates_required') $('#voiceEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
-      else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
+      else if (msg === 'output_too_long') $('#voiceEntryStatus').textContent = '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。';
+      else if (msg === 'ai_quota_exhausted') $('#voiceEntryStatus').textContent = 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。';
+      else if (msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。';
+      else if (msg === 'invalid_model_output') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#voiceEntryStatus').textContent = '';
         openVoiceEntryForm(state.voiceEntryMultiDay);
@@ -3158,7 +4529,10 @@
       if (msg === 'server_not_configured') $('#textEntryStatus').textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
       else if (msg === 'trip_dates_required') $('#textEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
-      else if (msg === 'invalid_model_output' || msg === 'upstream_error') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
+      else if (msg === 'output_too_long') $('#textEntryStatus').textContent = '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。';
+      else if (msg === 'ai_quota_exhausted') $('#textEntryStatus').textContent = 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。';
+      else if (msg === 'upstream_error') $('#textEntryStatus').textContent = 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。';
+      else if (msg === 'invalid_model_output') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
       else if (msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#textEntryStatus').textContent = '今月のAIでの整理の回数を使い切りました。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
       }
@@ -3167,8 +4541,135 @@
     });
   }
 
-  function statCard(label, value) {
-    return '<div class="stat-card"><div class="lbl">' + escapeHtml(label) + '</div><div class="val">' + escapeHtml(value) + '</div></div>';
+  // ---------- 自分のAIで整理（JSON貼り付け）（docs/adr/0015） ----------
+  // 「AIへのお願い文をコピー」：クリップボードに書き込めない環境（一部のWebView等）では、
+  // 隠しテキストエリアを選択状態にしてdocument.execCommand('copy')にフォールバックする
+  // （copyShareLink・showZoneDiagnosticsと同じやり方）。
+  function copyAiImportPrompt() {
+    if (!state.trip) return;
+    var text = Core.buildAiImportPrompt(state.trip);
+    var done = function () { showToast('お願い文をコピーしました'); };
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); }
+      catch (e) { alert('コピーできませんでした。表示された文章を選んでコピーしてください。\n\n' + text); }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  // 「取り込む」：まずCore.parseImportedBlocksJsonで読み取ってプレビューを見せるだけにし、
+  // 実際にBlock/Entryを作るのは確認後（confirmImportJsonBlocks）にする。ログイン・AIの回数と
+  // 無関係に使えるよう、既存のAIなし取り込みエンドポイント（/trips/:id/memo-blocks）だけを使う。
+  function handleImportJson() {
+    var text = $('#importJsonInput').value.trim();
+    if (!text) { $('#importJsonStatus').textContent = '先にAIの答え（JSON）を貼り付けてください。'; return; }
+    var result = Core.parseImportedBlocksJson(text, state.trip);
+    renderImportPreview(result);
+  }
+
+  function renderImportPreview(result) {
+    var el = $('#importPreview');
+    if (!result.blocks.length) {
+      state.pendingImportBlocks = null;
+      el.hidden = true;
+      el.innerHTML = '';
+      $('#importJsonStatus').textContent = '取り込めませんでした：' + (result.errors[0] || '内容を確認してください。');
+      return;
+    }
+    state.pendingImportBlocks = result.blocks;
+    $('#importJsonStatus').textContent = '';
+    var rows = result.blocks.map(function (b) {
+      var costText = (b.entry.costItems || []).map(function (ci) {
+        return ci.currency ? (ci.currency + ' ' + ci.amount) : Core.formatYen(ci.amount);
+      }).join('・');
+      return '<li>' + (b.time ? '<strong>' + escapeHtml(b.time) + '</strong> ' : '')
+        + escapeHtml(b.label) + '（' + escapeHtml(Core.categoryLabel(b.category)) + '）'
+        + (costText ? ' ' + escapeHtml(costText) : '') + '</li>';
+    }).join('');
+    var warnings = result.warnings.length
+      ? '<p class="hint">' + result.warnings.map(escapeHtml).join('<br>') + '</p>' : '';
+    var errors = result.errors.length
+      ? '<p class="hint">省いた項目：<br>' + result.errors.map(escapeHtml).join('<br>') + '</p>' : '';
+    el.innerHTML = '<p class="hint">この内容で作ります（' + result.blocks.length + '件）：</p>'
+      + '<ul class="import-preview-list">' + rows + '</ul>'
+      + warnings + errors
+      + '<button class="btn primary wide" id="btnConfirmImportJson" type="button">この内容で取り込む</button>';
+    el.hidden = false;
+    $('#btnConfirmImportJson').addEventListener('click', confirmImportJsonBlocks);
+  }
+
+  // parseImportedBlocksJsonが読み取るcostItemsは、外貨（currency付き）でもrateを持たない
+  // （自分のAIには外貨レートまで求めていないため）。手入力の行と同じく「初期値でレートを見せる」
+  // 体験に揃え、レート抜けのまま合計・精算が黙って0円扱いになる事故を防ぐため、POSTする前に
+  // /ratesから自動取得してrateを付けておく（renderCostItems内のensureRateForItemと同じAPI）。
+  // 同じ通貨・日付の組み合わせは1回だけ取得し（複数の予定・費用行で繰り返されることが多いため）、
+  // 取得に失敗した行はrate無し（=0円扱い、formatCostItemAmountが「レート未設定」と表示）のまま
+  // 取り込みを続け、失敗した通貨コードを呼び出し側に返す（本人に記録を開いて直してもらうため）。
+  function fetchRatesForImportBlocks(blocks, trip) {
+    var tripDates = Core.allDatesForTrip(trip, []).filter(function (d) { return d; });
+    var defaultDate = (trip && trip.selectedDate) || tripDates[0] || '';
+    var rateReqs = {}; // key: "USD|2024-08-10" -> Promise<{ok, rate}>
+    var failedCurrencies = [];
+    var waits = [];
+    blocks.forEach(function (b) {
+      var blockDate = b.date || defaultDate;
+      ((b.entry && b.entry.costItems) || []).forEach(function (item) {
+        if (!item.currency || item.currency === 'JPY') return;
+        if (typeof item.rate === 'number' && item.rate > 0) return;
+        var key = item.currency + '|' + blockDate;
+        if (!rateReqs[key]) {
+          rateReqs[key] = api('/rates?date=' + encodeURIComponent(blockDate) + '&currency=' + encodeURIComponent(item.currency))
+            .then(function (res) { return { ok: true, rate: res.rate }; })
+            .catch(function () { return { ok: false }; });
+        }
+        waits.push(rateReqs[key].then(function (res) {
+          if (res.ok) item.rate = res.rate;
+          else if (failedCurrencies.indexOf(item.currency) === -1) failedCurrencies.push(item.currency);
+        }));
+      });
+    });
+    return Promise.all(waits).then(function () { return failedCurrencies; });
+  }
+
+  function confirmImportJsonBlocks() {
+    var blocks = state.pendingImportBlocks;
+    if (!blocks || !blocks.length || !state.trip) return;
+    var user = loadCurrentUser();
+    $('#btnImportJson').disabled = true;
+    $('#importJsonStatus').textContent = '外貨のレートを確認しています…';
+    fetchRatesForImportBlocks(blocks, state.trip).then(function (failedCurrencies) {
+      $('#importJsonStatus').textContent = 'AIを使わずに取り込んでいます…（無料）';
+      return api('/trips/' + encodeURIComponent(state.trip.id) + '/memo-blocks', 'POST', { blocks: blocks, author: (user && user.name) || '' })
+        .then(function () { return refreshTrip(); })
+        .then(function () {
+          $('#btnImportJson').disabled = false;
+          if (blocks[0] && blocks[0].date) state.selectedDate = blocks[0].date;
+          $('#importJsonInput').value = '';
+          $('#importPreview').hidden = true;
+          $('#importPreview').innerHTML = '';
+          state.pendingImportBlocks = null;
+          showScreen('tripDetail');
+          renderTripDetail();
+          showToast('取り込みました');
+          if (failedCurrencies.length) {
+            alert(failedCurrencies.join('・') + 'のレートを取得できませんでした。記録を開いてレートを入れてください。');
+          }
+        });
+    }).catch(function () {
+      $('#btnImportJson').disabled = false;
+      $('#importJsonStatus').textContent = '取り込みに失敗しました。もう一度お試しください。';
+    });
   }
 
   function renderDayTabs() {
@@ -3398,7 +4899,7 @@
   function applyTripZones() {
     if (!state.trip) return;
     var info = state.zoneInfo || { byBlock: {}, byDate: {} };
-    Core.applyBlockZones(state.blocks, Core.assignBlockZones(state.blocks, info.byBlock, info.byDate, DEVICE_TZ));
+    Core.applyBlockZones(state.blocks, Core.assignBlockZones(state.blocks, info.byBlock, info.byDate, DEVICE_TZ, info.byArrive));
   }
 
   function timezoneAt(lat, lng, cache) {
@@ -3487,17 +4988,29 @@
     }).then(function () {
       // ③ タイムゾーン
       if (!stillHere()) return;
-      var byBlock = {}, byDate = {};
-      var jobs = (state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
+      var byBlock = {}, byDate = {}, byArrive = {};
+      // 移動の予定の到着地の地図（2026-09-27〜）。座標が保存されていればそれを、無ければ/geocodeで求める
+      var arriveJobs = (state.blocks || []).map(function (b) {
+        var a = Core.travelArrival(b);
+        if (!a) return null;
+        var coords = typeof a.lat === 'number' && typeof a.lng === 'number' ? Promise.resolve({ lat: a.lat, lng: a.lng })
+          : geoCache[a.url] && geoCache[a.url].lat !== undefined ? Promise.resolve(geoCache[a.url])
+          : api('/geocode?quick=1&q=' + encodeURIComponent(a.url)).then(function (res) { return remember(a.url, res); }).catch(function () { return null; });
+        return coords.then(function (c) {
+          if (!c) return;
+          return timezoneAt(c.lat, c.lng, tzCache).then(function (tz) { if (tz) byArrive[b.id] = tz; });
+        });
+      }).filter(Boolean);
+      var jobs = arriveJobs.concat((state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
         .map(function (d) { return timezoneAt(d.lat, d.lon, tzCache).then(function (tz) { if (tz) byDate[d.date] = tz; }); })
         .concat(Object.keys(coordsByBlock).map(function (id) {
           var c = coordsByBlock[id];
           return timezoneAt(c.lat, c.lng, tzCache).then(function (tz) { if (tz) byBlock[id] = tz; });
-        }));
+        })));
       return Promise.all(jobs).then(function () {
         saveCaches();
         if (!stillHere()) return;
-        state.zoneInfo = { byBlock: byBlock, byDate: byDate };
+        state.zoneInfo = { byBlock: byBlock, byDate: byDate, byArrive: byArrive };
         if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
       });
     });
@@ -3521,6 +5034,17 @@
       var at = all.indexOf(blocks[0]);
       for (var i = at - 1; i >= 0; i--) { if (typeof all[i]._offset === 'number') { prevOffset = all[i]._offset; break; } }
     }
+    // 時差の区切りがある日（または手で並べた日）は、時刻のある予定も手で並べ替えられるようにする（2026-09-27）。
+    // 時差をまたぐ日は、時刻どおりの並びが実際の順番と合わないことがあるため
+    var dayDate = blocks.length ? blocks[0].date : '';
+    var hasManual = Core.dayHasManualOrder(state.blocks, dayDate);
+    var zoneChange = false, chkPrev = prevOffset;
+    blocks.forEach(function (b) {
+      if (typeof b._offset !== 'number') return;
+      if (typeof chkPrev === 'number' && b._offset !== chkPrev) zoneChange = true;
+      chkPrev = b._offset;
+    });
+    state.manualDay = !!dayDate && (hasManual || zoneChange);
     blocks.forEach(function (block) {
       if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
         el.appendChild(renderZoneDivider(block, base));
@@ -3528,6 +5052,17 @@
       if (typeof block._offset === 'number') prevOffset = block._offset;
       el.appendChild(renderBlockEl(block));
     });
+    if (state.manualDay) {
+      // 手で並べた日は「自動の並びに戻す」、まだなら並べ替えられることの案内を出す
+      var manualNote = document.createElement('div');
+      manualNote.className = 'manual-order-note';
+      manualNote.innerHTML = hasManual
+        ? '<span>この日は手で並べた順番で表示しています。</span><button type="button" class="btn text" id="btnResetManualOrder">自動の並びに戻す</button>'
+        : '<span>時差のある日は、⋮⋮ をドラッグすると時刻と関係なく並べ替えられます。</span>';
+      el.appendChild(manualNote);
+      var resetBtn = manualNote.querySelector('#btnResetManualOrder');
+      if (resetBtn) resetBtn.addEventListener('click', function () { resetManualOrder(dayDate); });
+    }
     var addBtn = document.createElement('button');
     addBtn.className = 'block-add';
     addBtn.innerHTML = plusIcon() + '<span>予定を追加</span>';
@@ -3549,6 +5084,63 @@
     multiDayBtn.innerHTML = MIC_ICON + '<span>複数日をまとめて記録する</span>';
     multiDayBtn.addEventListener('click', function () { openVoiceEntryForm(true); });
     el.appendChild(multiDayBtn);
+
+    // 時差の並びを調べるボタン。URLに ?zonedebug を付けたときだけ出す（実データで並びがおかしいときの調査用。2026-09-27）
+    if (blocks.length && /[?&]zonedebug\b/.test(location.search || '')) {
+      var diagBtn = document.createElement('button');
+      diagBtn.className = 'zone-diag-btn';
+      diagBtn.textContent = '時差の並びを調べる（開発用）';
+      diagBtn.addEventListener('click', function () { showZoneDiagnostics(blocks[0].date); });
+      el.appendChild(diagBtn);
+    }
+  }
+
+  function zoneDiagnosticsText(date) {
+    var info = state.zoneInfo || { byBlock: {}, byDate: {} };
+    var zones = Core.assignBlockZones(state.blocks, info.byBlock, info.byDate, DEVICE_TZ, info.byArrive);
+    var short = function (tz) { return tz ? String(tz).replace(/^.*\//, '') : '-'; };
+    var dates = (state.days || []).map(function (d) { return d.date; });
+    var lines = ['device=' + DEVICE_TZ,
+      'day=' + date + ' dayZone=' + short((info.byDate || {})[date]), 'loaded=' + !!info.byArrive];
+    // 旅行全体を出す（その日だけでは再現できなかったため。ほかの日の予定も時差の決め方に効く）
+    var byDate = info.byDate || {};
+    lines.push('days=' + Object.keys(byDate).sort().map(function (d) { return d.slice(5) + ':' + short(byDate[d]); }).join(' '));
+    Core.sortBlocks(state.blocks).forEach(function (b, i) {
+      var pe = Core.replayPlaceEntry(b), arr = Core.travelArrival(b);
+      lines.push([
+        'B' + i, (b.date || 'nodate').slice(5), b.time || '--:--', JSON.stringify(b.transport === undefined ? 'u' : b.transport), b.category || '', (b.label || '').slice(0, 16),
+        'map=' + (pe ? (typeof pe.lat === 'number' ? pe.lat.toFixed(2) + ',' + pe.lng.toFixed(2) : 'url') : 'なし'),
+        'own=' + short((info.byBlock || {})[b.id]),
+        'arr=' + (arr ? (typeof arr.lat === 'number' ? '座標' : 'url') + '/' + short((info.byArrive || {})[b.id]) + '/' + (arr.time || '') : 'なし'),
+        'mv=' + (b.moveMinutes || ''), 'c=' + (b.createdAt || '').slice(5, 16),
+        '→' + short(zones[b.id])
+      ].join(' '));
+    });
+    void dates;
+    return lines.join('\n');
+  }
+  function showZoneDiagnostics(date) {
+    var text = zoneDiagnosticsText(date);
+    var wrap = document.createElement('div');
+    wrap.className = 'zone-diag';
+    var ta = document.createElement('textarea');
+    ta.readOnly = true;
+    ta.value = text;
+    var copy = document.createElement('button');
+    copy.className = 'btn primary wide';
+    copy.textContent = 'コピーする';
+    copy.addEventListener('click', function () {
+      ta.select();
+      var done = function () { copy.textContent = 'コピーしました'; };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { try { document.execCommand('copy'); done(); } catch (e) {} });
+      else { try { document.execCommand('copy'); done(); } catch (e) {} }
+    });
+    var close = document.createElement('button');
+    close.className = 'btn ghost';
+    close.textContent = '閉じる';
+    close.addEventListener('click', function () { wrap.remove(); });
+    wrap.appendChild(ta); wrap.appendChild(copy); wrap.appendChild(close);
+    document.body.appendChild(wrap);
   }
 
   var DRAG_HANDLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="5" r="1.4"/><circle cx="14" cy="5" r="1.4"/><circle cx="6" cy="10" r="1.4"/><circle cx="14" cy="10" r="1.4"/><circle cx="6" cy="15" r="1.4"/><circle cx="14" cy="15" r="1.4"/></svg>';
@@ -3566,7 +5158,7 @@
     head.innerHTML =
       // 時刻ありのBlockは常にその時刻の位置に固定するため、持ち手（ドラッグでの並べ替え）は
       // 時刻未設定のBlockにだけ出す
-      (!block.time ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
+      (!block.time || state.manualDay ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
       '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>' +
@@ -3671,9 +5263,19 @@
     timelineEl.addEventListener('pointercancel', endBlockDrag);
   }
 
+  function resetManualOrder(date) {
+    if (!state.trip || !date) return;
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(date) + '/blocks/reorder', 'PATCH', { clear: true })
+      .then(function () { return refreshTrip(); })
+      .then(function () { renderDaySection(); })
+      .catch(function () { alert('元に戻せませんでした。もう一度お試しください。'); });
+  }
+
   function persistBlockOrder(blockIds) {
     if (!state.trip || !state.selectedDate) return;
-    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/blocks/reorder', 'PATCH', { blockIds: blockIds })
+    // 時差のある日（手で並べられる日）は、時刻に関係なくその日全体の並びとして保存する
+    var body = state.manualDay ? { blockIds: blockIds, manual: true } : { blockIds: blockIds };
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/blocks/reorder', 'PATCH', body)
       .then(function () {
         // 保存自体はここで成功している。このあとの再取得・再描画で失敗しても
         // 「保存に失敗した」と誤って伝えないよう、ここでは分けてcatchする
@@ -3724,7 +5326,12 @@
 
     var metaBits = [];
     if (entry.waitTime) metaBits.push('<span>待ち時間 ' + escapeHtml(entry.waitTime) + '</span>');
-    if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
+    // 地図のリンクが壊れている（以前の不具合で query=undefined,undefined になった等）・URLでないときは、
+    // 普通の「地図」リンクに見せず、直すよう案内する。押すと記録の編集が開き、見出しで場所を探し直せる。
+    // 壊れた地図は、地図でふりかえる・時差でも使えない（場所が分からない）ため（2026-09-27）
+    var mapUnusable = entry.mapUrl && (!/^https?:\/\//i.test(entry.mapUrl.trim()) || Core.hasBrokenMapQuery(entry.mapUrl.trim()));
+    if (mapUnusable) metaBits.push('<span class="map-broken">地図の場所が読み取れません・押して直す</span>');
+    else if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
     if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
     if (entry.otherUrl) metaBits.push('<a href="' + escapeHtml(entry.otherUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">リンク</a>');
 
@@ -3907,7 +5514,11 @@
   function openBlockForm(block) {
     state.editingBlockId = block ? block.id : null;
     state.formCategory = block ? block.category : 'sightseeing';
-    state.formTransport = block ? (block.transport || '') : '';
+    // 移動手段が保存されているのは種類「移動」のときだけ（以前のデータで他の種類に付いていても出さない）
+    state.formTransport = block && block.category === 'transport' ? (block.transport || '') : '';
+    // 以前のデータで、移動以外の予定に付いている「ここまでの移動手段」は、画面には出さないが、種類を
+    // 変えない限り保存し直しても消さない（地図でふりかえるの乗り物に使っているため）
+    state.formLegacyTransport = block && block.category !== 'transport' ? (block.transport || '') : '';
     var mm = block ? (block.moveMinutes || 0) : 0;
     $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
     $('#blkMoveMins').value = mm ? mm % 60 : '';
@@ -3924,15 +5535,27 @@
 
   function renderCategoryChips() {
     var el = $('#blkCategoryChips');
+    // 「到着」も「移動」の隣に並ぶ通常のチップにする（以前は「移動」を選んだときの
+    // 「出発｜到着」タブで選ぶ形だった。2026-09-27）
     el.innerHTML = Core.CATEGORIES.map(function (c) {
-      return '<button type="button" class="cat-chip' + (c.key === state.formCategory ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(c.label) + '</button>';
+      var on = c.key === state.formCategory;
+      return '<button type="button" class="cat-chip' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(c.label) + '</button>';
     }).join('');
     $all('.cat-chip', el).forEach(function (b) {
-      b.addEventListener('click', function () { state.formCategory = b.dataset.cat; renderCategoryChips(); });
+      b.addEventListener('click', function () {
+        state.formCategory = b.dataset.cat;
+        // 種類を「移動」以外に変えたら、選んでいた移動手段（飛行機など）は消す。「到着」は移動手段を
+        // 持たない（ここまでの移動手段は、直前の「移動」の予定から地図でふりかえるが引き継ぐ）
+        if (state.formCategory !== 'transport') state.formTransport = '';
+        state.formLegacyTransport = '';
+        renderCategoryChips();
+        renderTransportChips();
+      });
     });
-    // 移動手段・移動時間は、種類が「移動」のときだけ出す（以前は種類に関係なく「ここまでの移動手段」を出していた）。
-    // 以前のデータで、移動以外の予定に移動手段が付いているものは、見えないまま残らないよう出しておく
-    $('#blkMoveFields').hidden = !(state.formCategory === 'transport' || state.formTransport);
+    // 移動手段・移動時間は、種類が「移動」のときだけ出す（「到着」も含めて他の種類では出さない。2026-09-27）
+    var isTransportCat = state.formCategory === 'transport';
+    $('#blkMoveFields').hidden = !isTransportCat;
+    $('#blkMoveTimeWrap').hidden = !isTransportCat;
   }
 
   function renderTransportChips() {
@@ -3963,7 +5586,9 @@
       time: $('#blkTime').value || '',
       label: label,
       category: state.formCategory,
-      transport: $('#blkMoveFields').hidden ? '' : (state.formTransport || ''),
+      // 移動手段を選べるのは種類が「移動」のときだけ。種類を切り替えたら選んでいた移動手段は消す
+      // （以前のデータの「ここまでの移動手段」は、種類を変えない限りそのまま）
+      transport: state.formCategory === 'transport' ? (state.formTransport || '') : (state.formLegacyTransport || ''),
       moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
     };
     var req = state.editingBlockId
@@ -4028,7 +5653,9 @@
     $('#entOtherUrl').value = entry ? entry.otherUrl : '';
     $('#entMoreFields').open = !!(entry && (entry.comment || entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl ||
       (entry.travel && Object.keys(entry.travel).length)));
-    $('#entPlaceSearch').value = '';
+    // 壊れた地図を直しに来たときは、予定の見出しで探せるよう検索欄に入れておく
+    var formBlock = brokenMapUrl ? (state.blocks || []).filter(function (b) { return b.id === blockId; })[0] : null;
+    $('#entPlaceSearch').value = formBlock && formBlock.category !== 'transport' ? (formBlock.label || '') : '';
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
     placeCandidates = []; placeChoice = '';
@@ -4055,9 +5682,21 @@
   function renderTravelFields(entry) {
     var block = entryFormBlock();
     var isMove = !!(block && block.category === 'transport');
-    $('#entTravelField').hidden = !isMove;
+    // 「移動の情報」（出発地・到着地・会社・時刻・料金）は飛行機のときだけ出す。車・電車などは到着地の地図だけで
+    // 足りるので、入力欄が多くて煩わしくならないようにする（2026-09-27）。隠していても、すでに入っている値は
+    // 欄に残して、保存のときにそのまま送る（消えないように）
+    $('#entTravelField').hidden = !(isMove && Core.isPlaneMove(block));
+    $('#entArriveField').hidden = !isMove;
+    // 移動の予定では、上の地図の欄は出発地、下の欄が到着地（2026-09-27〜）
+    $('#entMapLabel').textContent = isMove ? '出発地の地図（任意）' : '地図のURL（任意）';
+    $('#entArriveCandidates').hidden = true;
+    $('#entArriveSearch').value = '';
+    arrivePlaces = [];
+    var t0 = (entry && entry.travel) || {};
+    formArrive = { url: t0.arriveMapUrl || '', lat: t0.arriveLat, lng: t0.arriveLng };
+    $('#entArriveMapUrl').value = isMove ? (t0.arriveMapUrl || '') : '';
     if (!isMove) return;
-    var t = (entry && entry.travel) || {};
+    var t = t0;
     $('#entTravelFrom').value = t.from || '';
     $('#entTravelTo').value = t.to || '';
     $('#entTravelCompany').value = t.company || '';
@@ -4092,7 +5731,70 @@
       arrive: $('#entTravelArrive').value || ''
     };
     if (amount !== '' && /^\d+$/.test(amount)) out.amount = Number(amount);
+    var arriveUrl = $('#entArriveMapUrl').value.trim();
+    if (arriveUrl && !Core.hasBrokenMapQuery(arriveUrl)) {
+      out.arriveMapUrl = arriveUrl;
+      // 候補から選んだ座標は、URLがそのときのままなら一緒に保存する（手で書き換えたら座標は送らない）
+      if (formArrive.url === arriveUrl && isFinite(formArrive.lat) && isFinite(formArrive.lng)) {
+        out.arriveLat = formArrive.lat;
+        out.arriveLng = formArrive.lng;
+      }
+    }
     return out;
+  }
+
+  // ---------- 到着地の地図（移動の予定だけ。2026-09-27〜） ----------
+  // 出発地の地図（上の欄）と同じ場所の候補（Places API (New)）を使う。プレビューの地図は出さず、候補を選ぶと
+  // 座標つきのURLが入る
+  var arrivePlaces = [], arriveSession = '', arrivePending = null;
+  var formArrive = { url: '', lat: null, lng: null };
+  function searchArrivePlace() {
+    var q = $('#entArriveSearch').value.trim();
+    if (!q) return;
+    var status = $('#entArriveStatus'), list = $('#entArriveCandidates');
+    status.textContent = '候補を探しています…';
+    arriveSession = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'pl-' + Date.now().toString(36);
+    api('/places/search?q=' + encodeURIComponent(q) + '&session=' + encodeURIComponent(arriveSession)).then(function (res) {
+      arrivePlaces = (res && res.places) || [];
+      if (!arrivePlaces.length) {
+        list.hidden = true;
+        status.textContent = '候補が見つかりませんでした。地図のURLを直接貼り付けることもできます。';
+        return;
+      }
+      list.innerHTML = '<div class="place-list-head"><span>到着地を選ぶ</span><span class="place-count">' + arrivePlaces.length + '件</span></div>' +
+        arrivePlaces.map(function (p, i) {
+          return '<div class="place-card" data-arrive-choice="' + i + '" role="button" tabindex="0"><span class="place-num">' + (i + 1) + '</span>' +
+            '<div class="place-text"><div class="place-name">' + escapeHtml(p.name) + '</div>' +
+            (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">選択</span></div>';
+        }).join('');
+      list.hidden = false;
+      status.textContent = '到着地を選んでください。';
+    }).catch(function () { status.textContent = '候補を取得できませんでした。地図のURLを直接貼り付けることもできます。'; });
+  }
+  function chooseArrivePlace(i) {
+    var p = arrivePlaces[i];
+    if (!p) return;
+    $all('[data-arrive-choice]', $('#entArriveCandidates')).forEach(function (el) {
+      var on = el.getAttribute('data-arrive-choice') === String(i);
+      el.classList.toggle('on', on);
+      el.querySelector('.place-pick').textContent = on ? '選択中' : '選択';
+    });
+    var status = $('#entArriveStatus');
+    var need = !(isFinite(p.lat) && isFinite(p.lng)) && p.placeId;
+    var req = need
+      ? api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(arriveSession)).then(function (res) {
+        if (res && res.found && isFinite(res.lat) && isFinite(res.lng)) { p.lat = res.lat; p.lng = res.lng; }
+      }).catch(function () {})
+      : Promise.resolve();
+    if (need) status.textContent = '場所を確かめています…';
+    arrivePending = req.then(function () {
+      arrivePending = null;
+      var url = Core.placeMapUrl(p, $('#entArriveSearch').value);
+      if (!url) return;
+      $('#entArriveMapUrl').value = url;
+      formArrive = { url: url, lat: isFinite(p.lat) ? p.lat : null, lng: isFinite(p.lng) ? p.lng : null };
+      status.textContent = '到着地に「' + p.name + '」を入れました。';
+    });
   }
 
   // ---------- 評価（★1〜5） ----------
@@ -4532,16 +6234,23 @@
       var options = Core.COST_CURRENCIES.map(function (c) {
         return '<option value="' + c + '"' + (c === selectVal ? ' selected' : '') + '>' + (c === 'JPY' ? '円' : c) + '</option>';
       }).join('') + '<option value="__other"' + (selectVal === '__other' ? ' selected' : '') + '>その他</option>';
+      // 375px幅のiPhoneで「内容・金額・通貨・×」を1行に詰め込むと金額欄が数文字幅まで潰れて
+      // プレースホルダーが縦の線のようにしか見えなくなっていた（オーナー指摘）ため、
+      // 1行目＝内容（幅いっぱい）、2行目＝金額・通貨・×、の2段に分ける（2026-09-28）。
       row.innerHTML =
-        '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
-        '<input type="number" min="0" step="' + (isForeign ? '0.01' : '1') + '" placeholder="' + (isForeign ? '金額' : '円') + '" value="' + (typeof item.amount === 'number' && item.amount ? item.amount : '') + '">' +
-        '<select class="cost-currency-select">' + options + '</select>' +
-        '<input type="text" class="cost-currency-other" placeholder="例：ISK" maxlength="3" value="' + ((showOther && currency !== 'JPY') ? escapeHtml(currency) : '') + '"' + (showOther ? '' : ' hidden') + '>' +
-        '<button type="button" aria-label="削除">×</button>' +
+        '<div class="cost-item-line1">' +
+          '<input type="text" class="cost-item-label" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
+        '</div>' +
+        '<div class="cost-item-line2">' +
+          '<input type="number" class="cost-item-amount" min="0" step="' + (isForeign ? '0.01' : '1') + '" inputmode="decimal" placeholder="' + (isForeign ? '金額' : '円') + '" value="' + (typeof item.amount === 'number' && item.amount ? item.amount : '') + '">' +
+          '<select class="cost-currency-select">' + options + '</select>' +
+          '<input type="text" class="cost-currency-other" placeholder="例：ISK" maxlength="3" value="' + ((showOther && currency !== 'JPY') ? escapeHtml(currency) : '') + '"' + (showOther ? '' : ' hidden') + '>' +
+          '<button type="button" aria-label="削除">×</button>' +
+        '</div>' +
+        '<div class="cost-rate-row" hidden></div>' +
         '<div class="cost-item-row-actions">' +
           '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
-        '</div>' +
-        '<div class="cost-rate-row" hidden></div>';
+        '</div>';
       var inputs = row.querySelectorAll('input');
       var textInput = inputs[0], amountInput = inputs[1], otherInput = row.querySelector('.cost-currency-other');
       var currencySelect = row.querySelector('.cost-currency-select');
@@ -4710,8 +6419,8 @@
       var msg = (e && e.message) || '';
       if (msg === 'server_not_configured') status.textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
       else if (msg === 'rate_limited') status.textContent = '少し時間をおいてからもう一度お試しください。';
+      else if (msg === 'ai_quota_exhausted') status.textContent = 'AIの利用枠がいっぱいのため、今は読み取れません（運営側で対応します）。明細は手で入力できます。';
       else if (msg === 'invalid_model_output' || msg === 'upstream_error') status.textContent = 'うまく読み取れませんでした。もう一度お試しください。';
-      else if (msg === 'premium_required' || msg === 'quota_exceeded') status.textContent = '今月の利用回数の上限に達しました（音声入力・テキストメモと共通の枠です）。';
       else if (msg === 'login_required') status.textContent = 'ログインすると使えます。';
       else status.textContent = '失敗しました。もう一度お試しください。';
     });
@@ -4917,7 +6626,7 @@
     // 待たずに保存すると、座標付きの正しいURLではなく検索文字列のURLで保存されてしまう（2026-09-27）
     var missingRate = costItemsMissingRate();
     Promise.all(
-      [placeCoordsPending || Promise.resolve()].concat(missingRate.map(function (x) { return pendingRateFetches[x.idx] || Promise.resolve(); }))
+      [placeCoordsPending || Promise.resolve(), arrivePending || Promise.resolve()].concat(missingRate.map(function (x) { return pendingRateFetches[x.idx] || Promise.resolve(); }))
     ).then(function () {
       // 保険：候補を選んだのに地図欄が空のまま保存されそうなら、ここで埋める
       if (!$('#entMapUrl').value.trim() && selectedPlace()) applySelectedPlaceToMapUrl();
@@ -4937,7 +6646,8 @@
 
   function continueSaveEntry(status) {
     var author = $('#entAuthor').value.trim();
-    status.textContent = '保存中…';
+    // 新しく選んだ動画があるときは、アップロードに時間がかかることを添える（2026-09-27）
+    status.textContent = (state.pendingVideos || []).length ? '保存中…（動画の保存は時間がかかります）' : '保存中…';
 
     var payload = {
       episode: $('#entEpisode').value.trim(),
@@ -4961,7 +6671,7 @@
       otherUrl: $('#entOtherUrl').value.trim(),
       author: author
     };
-    if (!$('#entTravelField').hidden) payload.travel = readTravelFields();
+    if (!$('#entArriveField').hidden) payload.travel = readTravelFields();
 
     Promise.all([
       // 並べた順のまま、新しい写真だけアップロードしてidにする
@@ -5006,7 +6716,7 @@
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogItems = data.items || [];
       state.myLogTrips = data.trips || [];
-      state.myLogPlaces = data.places || { prefectures: [], countries: [] };
+      state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [] };
       renderMyLog();
     }).catch(function () {
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
@@ -5136,6 +6846,7 @@
         if (k.indexOf('tabilog:') === 0) localStorage.removeItem(k);
       });
       state.homeFilters = { companion: '', year: '', tripType: '', sort: '' };
+      state.mylogFilters = { companion: '', year: '', sort: '' };
       renderAccountRow();
       alert('アカウントを削除しました。');
       goHome();
@@ -5159,48 +6870,88 @@
 
   function renderMyLog() {
     renderMyLogTrips();
-    renderMyLogPlaces();
     renderMyLogTabs();
     renderMyLogSort();
     renderMyLogList();
   }
 
-  // 「訪れた都道府県・国」：参加した旅行の「日ごとの場所」（天気取得のときに入力した地名）から
-  // サーバー側で自動集計されたものを、そのままチップで並べるだけ（フロント側では集計しない）。
-  function renderMyLogPlaces() {
-    var el = $('#mylogPlaces');
-    var places = state.myLogPlaces || { prefectures: [], countries: [] };
-    var prefectures = places.prefectures || [];
-    var countries = places.countries || [];
-    if (!prefectures.length && !countries.length) {
-      el.innerHTML = '<div class="empty">まだ訪れた場所がありません。旅行の日タブで「＋場所を設定」すると、ここに自動で集計されます。</div>';
-      return;
-    }
-    var html = '';
-    if (prefectures.length) {
-      html += '<div class="visited-group"><span class="visited-group-label">都道府県（' + prefectures.length + '）</span><div class="visited-chips">'
-        + prefectures.map(function (p) { return '<span class="visited-chip">' + escapeHtml(p) + '</span>'; }).join('') + '</div></div>';
-    }
-    if (countries.length) {
-      html += '<div class="visited-group"><span class="visited-group-label">海外（' + countries.length + 'か国）</span><div class="visited-chips">'
-        + countries.map(function (c) { return '<span class="visited-chip">' + escapeHtml(c) + '</span>'; }).join('') + '</div></div>';
-    }
-    el.innerHTML = html;
+  // その旅行で訪れた都道府県・国のチップHTML（外す・戻すの操作つき）。
+  // 旅行に場所がまだ無ければ何も出さない（空の帯を出すより、カードがシンプルな方が見やすいため）。
+  // 外しても戻せるよう、チップは消さずに灰色＋「戻す」のまま残す
+  // （2026-09-28〜。旧「マイログから外す」がアカウント全体に効いてしまい、片方の旅行だけから
+  // 外したくても両方消えてしまう不具合の直し方。docs/adr/0016）。
+  function tripPlaceChipsHtml(t) {
+    if (!t) return '';
+    var chip = function (kind, x) {
+      var cls = 'trip-place-chip' + (x.excluded ? ' is-excluded' : '');
+      return '<span class="' + cls + '">' +
+        '<span class="trip-place-name">' + escapeHtml(x.name) + '</span>' +
+        '<button type="button" class="trip-place-action" data-trip="' + escapeHtml(t.tripId) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
+        '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? '戻す' : '外す') + '</button></span>';
+    };
+    var chips = (t.prefectures || []).map(function (x) { return chip('prefecture', x); })
+      .concat((t.countries || []).map(function (x) { return chip('country', x); })).join('');
+    return chips ? '<div class="trip-place-chips">' + chips + '</div>' : '';
+  }
+
+  function setMyLogTripPlaceMode(tripId, kind, name, mode, btn) {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('mylog'); return; }
+    btn.disabled = true;
+    api('/mylog/trip-places', 'POST', { email: user.email, tripId: tripId, kind: kind, name: name, mode: mode }).then(function (res) {
+      state.myLogPlaces = res.places || state.myLogPlaces;
+      renderMyLogTrips();
+    }).catch(function () {
+      btn.disabled = false;
+      alert(mode === 'exclude' ? '外せませんでした。通信状況を確認して、もう一度お試しください。' : '戻せませんでした。通信状況を確認して、もう一度お試しください。');
+    });
   }
 
   // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。
   // 評価の細かいログ（下のカテゴリ別一覧）とは別物で、どの端末からログインしても同じ内容が見える。
+  // 各カードの中に、その旅行で訪れた都道府県・国のチップも出す（旅行が増えるとページが長くなる
+  // ため、前は別セクション「旅行ごとの訪れた場所」に分けていたのを2026-09-28にここへ統合した）。
+  // チップの「外す」「戻す」はカード自体を開く操作とぶつからないよう、カードはボタンではなく
+  // クリック／キー操作を自前で処理するdivにし、チップ側のクリックはstopPropagationで止める。
+  // 誰と一緒か・年の絞り込み欄の選択肢を、実際に参加した旅行データから作り直す（ホーム画面の
+  // renderTripFilterOptionsと同じ考え方・同じCore.tripFilterOptionsを使い回す。旅行区分は対象外）。
+  function renderMyLogTripFilterOptions(allTrips) {
+    var opts = Core.tripFilterOptions(allTrips);
+    var f = state.mylogFilters;
+    $('#mylogFilterCompanion').innerHTML = '<option value="">誰と一緒か：すべて</option>' +
+      opts.companions.map(function (c) {
+        return '<option value="' + escapeHtml(c) + '"' + (f.companion === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+      }).join('');
+    $('#mylogFilterYear').innerHTML = '<option value="">年：すべて</option>' +
+      opts.years.map(function (y) {
+        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + escapeHtml(y) + '年</option>';
+      }).join('');
+  }
+
   function renderMyLogTrips() {
     var el = $('#mylogTripList');
-    var trips = state.myLogTrips || [];
-    if (!trips.length) {
+    var allTrips = state.myLogTrips || [];
+    $('#mylogTripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない（ホーム画面と同じ基準）
+    if (allTrips.length >= 2) renderMyLogTripFilterOptions(allTrips);
+    if (!allTrips.length) {
       el.innerHTML = '<div class="empty">まだ参加した旅行がありません。旅行のページで「参加する」を押すとここに表示されます。</div>';
       return;
     }
+    // 絞り込み・並び順は表示する一覧だけに効く（「行ったことある旅先」の総計は全旅行のまま変わらない）
+    var trips = Core.sortTrips(Core.filterTrips(allTrips, state.mylogFilters), state.mylogFilters.sort);
+    $('#mylogSortTripOrder').value = state.mylogFilters.sort;
+    if (!trips.length) {
+      el.innerHTML = '<div class="empty">条件に一致する旅行がありません。</div>';
+      return;
+    }
+    var placesByTrip = {};
+    ((state.myLogPlaces && state.myLogPlaces.tripPlaces) || []).forEach(function (t) { placesByTrip[t.tripId] = t; });
     el.innerHTML = '';
     trips.forEach(function (t) {
-      var card = document.createElement('button');
+      var card = document.createElement('div');
       card.className = 'trip-card';
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
       card.innerHTML =
         '<div class="trip-card-row">' +
@@ -5208,17 +6959,34 @@
         '<div class="trip-card-body">' +
         '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
         (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
+        tripPlaceChipsHtml(placesByTrip[t.id]) +
         '</div></div>';
-      card.addEventListener('click', function () { openTrip(t.id); });
+      var open = function () { openTrip(t.id); };
+      card.addEventListener('click', function (e) {
+        if (e.target.closest('.trip-place-action')) return;
+        open();
+      });
+      card.addEventListener('keydown', function (e) {
+        if (e.target.closest('.trip-place-action')) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
+      $all('.trip-place-action', card).forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          setMyLogTripPlaceMode(btn.dataset.trip, btn.dataset.kind, btn.dataset.name, btn.dataset.mode, btn);
+        });
+      });
       el.appendChild(card);
     });
   }
 
+  function myLogCategoryOf(it) { return it.category === 'arrival' ? 'transport' : it.category; }
   function renderMyLogTabs() {
     var el = $('#mylogTabs');
-    el.innerHTML = Core.CATEGORIES.map(function (c) {
+    // 「到着」は「移動」のタブにまとめる（種類の選択と同じ。2026-09-27）
+    el.innerHTML = Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) {
       var on = c.key === state.myLogCategory;
-      var count = state.myLogItems.filter(function (it) { return it.category === c.key; }).length;
+      var count = state.myLogItems.filter(function (it) { return myLogCategoryOf(it) === c.key; }).length;
       return '<button class="mylog-tab' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(MYLOG_LABELS[c.key] || c.label) + (count ? '（' + count + '）' : '') + '</button>';
     }).join('');
     $all('.mylog-tab', el).forEach(function (b) {
@@ -5238,7 +7006,7 @@
   function renderMyLogList() {
     var el = $('#mylogList');
     var items = Core.sortMyLogItems(
-      state.myLogItems.filter(function (it) { return it.category === state.myLogCategory; }),
+      state.myLogItems.filter(function (it) { return myLogCategoryOf(it) === state.myLogCategory; }),
       state.myLogSort
     );
     if (!items.length) {
@@ -5259,6 +7027,404 @@
         '<div class="mylog-score">★' + it.score + '</div>';
       row.addEventListener('click', function () { openTrip(it.tripId); });
       el.appendChild(row);
+    });
+  }
+
+  // ---------- 行ったことある旅先（国内・海外の地図。docs/adr/0017） ----------
+  // データは/mylogのplaces（マイログの「参加した旅行」と同じ集計。旅行ごとの外す/戻すも反映済み）を
+  // そのまま使う。新しいAPIは作らない。地図はd3-geo + topojson-client（vendor/geo、ISC）で、
+  // タイル画像を使わないインラインSVG。ネットに繋がらないiOSアプリ内でもオフラインで描ける。
+  var visitedGeoLibsLoading = null;
+  function loadVisitedGeoLibs() {
+    // d3-array→d3-geo→topojson-clientの順で読み終わっているかを、名前空間があるかだけでなく
+    // 実際に使う関数があるかまで見る（d3-arrayだけ読めてwindow.dが truthy になった状態で
+    // 「読み込み済み」と誤判定し、d3.geoPathが無いまま地図を描こうとして例外→catchで
+    // 「地図の読み込みに失敗しました」になる不具合の直し方。国内・海外タブを素早く切り替えたときに
+    // 起きやすかった）。
+    if (window.d3 && window.d3.geoPath && window.topojson && window.topojson.feature) return Promise.resolve();
+    if (visitedGeoLibsLoading) return visitedGeoLibsLoading;
+    var files = ['vendor/geo/d3-array.min.js', 'vendor/geo/d3-geo.min.js', 'vendor/geo/topojson-client.min.js'];
+    visitedGeoLibsLoading = new Promise(function (resolve, reject) {
+      var i = 0;
+      function next() {
+        if (i >= files.length) { resolve(); return; }
+        var s = document.createElement('script');
+        s.src = files[i++];
+        s.onload = next;
+        s.onerror = function () { visitedGeoLibsLoading = null; reject(new Error('geo_lib_load_failed')); };
+        document.head.appendChild(s);
+      }
+      next();
+    });
+    return visitedGeoLibsLoading;
+  }
+  var visitedJapanTopoCache = null, visitedWorldTopoCache = null, visitedIsoAlpha2Cache = null;
+  function loadVisitedJson(url, cacheKey) {
+    var cache = { japan: visitedJapanTopoCache, world: visitedWorldTopoCache, iso: visitedIsoAlpha2Cache }[cacheKey];
+    if (cache) return Promise.resolve(cache);
+    return fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+      if (cacheKey === 'japan') visitedJapanTopoCache = d;
+      else if (cacheKey === 'world') visitedWorldTopoCache = d;
+      else visitedIsoAlpha2Cache = d;
+      return d;
+    });
+  }
+
+  function openVisitedPlaces() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('visited'); return; }
+    showScreen('visited');
+    $('#visitedPanel').innerHTML = '<div class="empty">読み込み中…</div>';
+    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
+      state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [], details: { prefectures: [], countries: [] } };
+      renderVisitedPlaces();
+    }).catch(function () {
+      $('#visitedPanel').innerHTML = '<div class="empty">読み込みに失敗しました。通信状況を確認して、もう一度お試しください。</div>';
+    });
+  }
+
+  function visitedDetails() {
+    var places = state.myLogPlaces || {};
+    return places.details || { prefectures: [], countries: [] };
+  }
+
+  function renderVisitedPlaces() {
+    $all('.visited-tab', $('#visitedTabs')).forEach(function (b) {
+      b.classList.toggle('on', b.dataset.tab === state.visitedTab);
+    });
+    var details = visitedDetails();
+    var panel = $('#visitedPanel');
+    if (state.visitedTab === 'overseas') renderVisitedOverseas(panel, (details.countries || []).filter(function (x) { return x.status === 'visible'; }));
+    else renderVisitedDomestic(panel, (details.prefectures || []).filter(function (x) { return x.status === 'visible'; }));
+  }
+
+  // 達成率のドーナツ（インラインSVG。stroke-dasharrayで円弧を作るだけなので、画像もライブラリも不要）
+  function visitedDonutSvg(pct) {
+    var size = 64, stroke = 9, r = (size - stroke) / 2, c = 2 * Math.PI * r;
+    var offset = c * (1 - Math.max(0, Math.min(100, pct)) / 100);
+    var cx = size / 2, cy = size / 2;
+    return '<svg viewBox="0 0 ' + size + ' ' + size + '" class="visited-donut" aria-hidden="true">' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" class="visited-donut-bg" stroke-width="' + stroke + '" fill="none"/>' +
+      '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" class="visited-donut-fg" stroke-width="' + stroke + '" fill="none" ' +
+      'stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + offset.toFixed(2) + '" ' +
+      'transform="rotate(-90 ' + cx + ' ' + cy + ')" stroke-linecap="round"/>' +
+      '<text x="' + cx + '" y="' + (cy + 4) + '" class="visited-donut-pct" text-anchor="middle">' + pct + '%</text>' +
+      '</svg>';
+  }
+
+  // 集計カード（大きい数字＋ラベル＋ドーナツ）。国内は「2 / 47 都道府県」、海外は「3 か国」＋
+  // 「国連加盟193か国中 ◯%」。カウントの数え方（旅行ごとの外す/戻すの反映など）は既存のまま変えない。
+  function visitedTotalsCardHtml(fracHtml, pctSubLabel, pct) {
+    return '<div class="visited-totals">' +
+      visitedDonutSvg(pct) +
+      '<div class="visited-totals-text">' +
+      '<div class="visited-totals-frac">' + fracHtml + '</div>' +
+      '<div class="visited-totals-pct">' + (pctSubLabel ? escapeHtml(pctSubLabel) + ' ' : '') + pct + '%</div>' +
+      '</div></div>';
+  }
+
+  // 海外の国名→alpha2の対応表。世界地図データ（idx.nameToId）が読み終わってから埋まる
+  // （地方・大陸ごとの一覧の見出しと国旗絵文字は、これが埋まってから出せる）。
+  var visitedCountryAlpha2ByName = {};
+  function visitedFlagForName(name) {
+    var a2 = visitedCountryAlpha2ByName[name];
+    return a2 ? Core.flagEmojiForAlpha2(a2) : '';
+  }
+
+  // 旅行名（年つき）をタップしたらその旅行を開けるリンクのHTML。押した瞬間は行の選択（クリック伝播）とは
+  // 別扱いにしたいので、クリック側でstopPropagationする（wireVisitedTripLinks）。
+  function visitedTripLinksHtml(trips) {
+    if (!trips.length) return '記録が見つかりませんでした';
+    return trips.map(function (t) {
+      return '<a href="#" class="visited-trip-link" data-trip-id="' + escapeHtml(t.tripId) + '">' + escapeHtml(Core.visitedTripLabel(t)) + '</a>';
+    }).join('・');
+  }
+
+  function wireVisitedTripLinks(root2) {
+    $all('.visited-trip-link', root2).forEach(function (a) {
+      a.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var id = a.dataset.tripId;
+        if (id) openTrip(id, 'visited');
+      });
+    });
+  }
+
+  // 見出し右の「n / m」（都道府県：その地方の何県に行ったか）・「nか国」（大陸：か国数だけ）。
+  function visitedGroupCountLabel(kind, group, count) {
+    if (kind === 'prefecture') {
+      var total = (Core.VISITED_PREFECTURE_REGIONS[group] || []).length;
+      return count + ' / ' + total;
+    }
+    return count + 'か国';
+  }
+
+  // 場所の一覧HTML（都道府県／国のどちらも共通）。地方・大陸ごとに見出し（タイトル＋件数＋区切り線）を
+  // 付けてグループ化し、選んだ場所は.onで背景だけを付けて強調する（インデントは全行共通のまま。
+  // 2026-09-28〜：以前は選択中の行だけpaddingがずれて見えたため、パディングは.onでも変えない）。
+  // 国は先頭に国旗絵文字を出す（showFlagがtrueのとき）。行の下には訪れた旅行名（年つき）のリンクを出す。
+  function visitedGroupedListHtml(kind, groups, showFlag) {
+    if (!groups.length) {
+      return '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
+    }
+    var sel = state.visitedSel;
+    return groups.map(function (g) {
+      return '<div class="visited-group">' +
+        '<div class="visited-group-header">' +
+        '<span class="visited-group-title">' + escapeHtml(g.group) + '</span>' +
+        '<span class="visited-group-count">' + escapeHtml(visitedGroupCountLabel(kind, g.group, g.items.length)) + '</span>' +
+        '</div>' +
+        '<div class="visited-list">' + g.items.map(function (x) {
+          var trips = Core.visitedPlaceTrips(x);
+          var on = sel && sel.kind === kind && sel.name === x.name;
+          var flag = showFlag ? visitedFlagForName(x.name) : '';
+          return '<div class="visited-row' + (on ? ' on' : '') + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' +
+            '<div class="visited-row-name">' + (flag ? '<span class="visited-row-flag">' + flag + '</span>' : '') + escapeHtml(x.name) + '</div>' +
+            '<div class="visited-row-trips">' + visitedTripLinksHtml(trips) + '</div>' +
+            '</div>';
+        }).join('') + '</div>' +
+        '</div>';
+    }).join('');
+  }
+
+  function wireVisitedListRows(panel) {
+    $all('.visited-row', panel).forEach(function (row) {
+      row.addEventListener('click', function () {
+        setVisitedSelection(row.dataset.kind, row.dataset.name);
+      });
+    });
+    wireVisitedTripLinks(panel);
+  }
+
+  function setVisitedSelection(kind, name) {
+    var sel = state.visitedSel;
+    var same = sel && sel.kind === kind && sel.name === name;
+    state.visitedSel = same ? null : { kind: kind, name: name };
+    updateVisitedHighlight();
+  }
+
+  // 全部を作り直さず、選択中クラスの付け外しだけする（地図の再読み込みを避ける）。
+  // キャプションは一覧の行の強調と重複して見えていたため、「選んだ場所」という小さな見出しを付けた
+  // 選択サマリーとして出す（地図をタップしたときだけ使う人にも、選んだ場所がひと目で分かるように）。
+  function updateVisitedHighlight() {
+    var sel = state.visitedSel;
+    $all('.visited-row').forEach(function (row) {
+      row.classList.toggle('on', !!sel && row.dataset.kind === sel.kind && row.dataset.name === sel.name);
+    });
+    $all('.visited-region').forEach(function (region) {
+      region.classList.toggle('on', !!sel && region.dataset.kind === sel.kind && region.dataset.name === sel.name);
+    });
+    var caption = $('#visitedCaption');
+    if (!caption) return;
+    if (!sel) { caption.hidden = true; caption.innerHTML = ''; return; }
+    var list = sel.kind === 'country' ? (visitedDetails().countries || []) : (visitedDetails().prefectures || []);
+    var item = list.filter(function (x) { return x.name === sel.name; })[0];
+    var trips = item ? Core.visitedPlaceTrips(item) : [];
+    caption.hidden = false;
+    caption.innerHTML = '<div class="visited-caption-label">選んだ場所</div>' +
+      '<div class="visited-caption-name">' + escapeHtml(sel.name) + '</div>' +
+      '<div class="visited-caption-trips">' + visitedTripLinksHtml(trips) + '</div>';
+    wireVisitedTripLinks(caption);
+  }
+
+  var VISITED_PREFECTURE_TOTAL = 47;
+  // 国連加盟国数（193）を分母にする。オブザーバー国家（バチカン・パレスチナ）を含めた195で
+  // 数えたい、という要望が来たら、ここを195に変えれば表示も一緒に変わる。
+  var VISITED_COUNTRY_TOTAL = 193;
+
+  function renderVisitedDomestic(panel, visited) {
+    var pct = Core.visitedPercentage(visited.length, VISITED_PREFECTURE_TOTAL);
+    var frac = '<strong>' + visited.length + '</strong> / ' + VISITED_PREFECTURE_TOTAL + ' <span class="visited-totals-unit">都道府県</span>';
+    var groups = Core.groupVisitedByOrder(visited, function (x) { return Core.regionForPrefecture(x.name); }, Core.VISITED_REGION_ORDER);
+    panel.innerHTML =
+      visitedTotalsCardHtml(frac, '', pct) +
+      '<div class="visited-map" id="visitedMapDomestic"><div class="empty">地図を読み込み中…</div></div>' +
+      '<div class="visited-caption" id="visitedCaption" hidden></div>' +
+      visitedGroupedListHtml('prefecture', groups, false) +
+      '<p class="hint visited-credit">地図データ: simplify-japan-geojson（ricewin、CC BY 4.0）</p>';
+    wireVisitedListRows(panel);
+    drawVisitedJapanMap(visited);
+  }
+
+  function renderVisitedOverseas(panel, visited) {
+    var pct = Core.visitedPercentage(visited.length, VISITED_COUNTRY_TOTAL);
+    var frac = '<strong>' + visited.length + '</strong> <span class="visited-totals-unit">か国</span>';
+    panel.innerHTML =
+      visitedTotalsCardHtml(frac, '国連加盟' + VISITED_COUNTRY_TOTAL + 'か国中', pct) +
+      '<div class="visited-map" id="visitedMapOverseas"><div class="empty">地図を読み込み中…</div></div>' +
+      '<div class="visited-caption" id="visitedCaption" hidden></div>' +
+      '<div class="visited-list-wrap" id="visitedListOverseas"><div class="empty">読み込み中…</div></div>';
+    drawVisitedWorldMap(visited);
+  }
+
+  // 日本地図：北海道が上・沖縄が左下という普通の向きになるよう、中央経線を日本付近（東経136度）に
+  // 合わせてから円錐図法をかける（rotateを省くとλ0=0度＝グリニッジ基準のまま回転してしまい、
+  // 地図が斜めに描かれるのが元のバグだった）。fitWidthで幅いっぱいに広げ、沖縄は別枠のインセットに
+  // 小さく出す（日本地図でよくある配置）。
+  function drawVisitedJapanMap(visited) {
+    var visitedNames = {};
+    visited.forEach(function (x) { visitedNames[x.name] = true; });
+    Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/japan-prefectures.topojson', 'japan')]).then(function (r) {
+      var container = $('#visitedMapDomestic');
+      if (!container) return; // 読み込み中にタブが切り替わっていた
+      var topo = r[1];
+      var fc = topojson.feature(topo, topo.objects.japan);
+      var okinawaFeature = fc.features.filter(function (f) { return f.properties.nam_ja === '沖縄県'; })[0];
+      var mainFeatures = fc.features.filter(function (f) { return f.properties.nam_ja !== '沖縄県'; });
+      var mainFC = { type: 'FeatureCollection', features: mainFeatures };
+
+      var w = 320;
+      var proj = d3.geoConicConformal().rotate([-136, 0]).parallels([30, 45]);
+      proj.fitWidth(w, mainFC);
+      var path = d3.geoPath(proj);
+      var b = path.bounds(mainFC);
+      var padTop = 6, padBottom = 6;
+      var h = Math.ceil(b[1][1] - b[0][1]) + padTop + padBottom;
+      h = Math.max(h, 8 + 78 + 8); // 左上の沖縄インセット（8,8,104x78）が収まる高さは必ず確保する
+      var t = proj.translate();
+      proj.translate([t[0], t[1] - b[0][1] + padTop]);
+      path = d3.geoPath(proj);
+
+      var sel = state.visitedSel;
+      var mainSvg = mainFeatures.map(function (f) {
+        var name = f.properties.nam_ja;
+        var d = path(f);
+        if (!d) return '';
+        var isVisited = !!visitedNames[name];
+        var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
+        return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+          (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>';
+      }).join('');
+
+      // 沖縄は別枠のインセットに出す。以前は下に大きく空いた枠（本土と重ならないよう高さを余分に
+      // 取っていた）を置いていたが、見た目が「空白の四角」になってしまっていたため、本土の地図では
+      // ふだん空いている左上（日本海側。北は北海道・南は九州で、左上そのものは海）に小さく収める形に
+      // 直した（2026-09-28〜）。fitExtentで枠の内側いっぱいに島々を収め、小さくても見えるようにする。
+      var insetSvg = '';
+      if (okinawaFeature) {
+        var insetPad = 8, insetW = 104, insetH = 78, innerPad = 6;
+        var insetX = insetPad, insetY = insetPad;
+        var okiFC = { type: 'FeatureCollection', features: [okinawaFeature] };
+        var okiProj = d3.geoMercator().fitExtent(
+          [[insetX + innerPad, insetY + innerPad], [insetX + insetW - innerPad, insetY + insetH - innerPad]],
+          okiFC
+        );
+        var okiPath = d3.geoPath(okiProj);
+        var name = okinawaFeature.properties.nam_ja;
+        var isVisited = !!visitedNames[name];
+        var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
+        var d = okiPath(okinawaFeature);
+        insetSvg = '<g class="visited-inset">' +
+          '<rect x="' + insetX + '" y="' + insetY + '" width="' + insetW + '" height="' + insetH + '" class="visited-inset-box" rx="4"/>' +
+          '<text x="' + (insetX + 5) + '" y="' + (insetY + 11) + '" class="visited-inset-label">沖縄</text>' +
+          (d ? '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+            (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>' : '') +
+          '</g>';
+      }
+
+      container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた都道府県の地図">' +
+        mainSvg + insetSvg + '</svg>';
+      wireVisitedMapRegions(container);
+    }).catch(function (e) {
+      console.error('drawVisitedJapanMap failed', e);
+      var container = $('#visitedMapDomestic');
+      if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+    });
+  }
+
+  // 海外タブ：地図と一覧をそれぞれ別のtry/catchで描く（2026-09-28〜。オーナー報告：国内・海外タブを
+  // 素早く切り替えたり海外タブのままリロードしたりすると「地図の読み込みに失敗しました」「一覧の
+  // 読み込みに失敗しました」の両方が出ることがあった）。world-atlas（countries-110m.json）にはISOの
+  // 数値IDが無い地域（コソボ・北キプロスなど）や、alpha2の対応表に無いID・日本語名がalpha2に変換できない
+  // 国（香港など）が混ざっており、1つの地物の描画で例外が起きるとPromiseチェイン全体がcatchに落ちて
+  // 地図・一覧の両方が失敗表示になっていた。1地物ごとのtry/catchで読み飛ばし、地図が失敗しても一覧は
+  // 別で描く（逆も同様）。実際の例外はconsole.errorに出す（原因調査用）。
+  function drawVisitedWorldMap(visited) {
+    var visitedNames = {};
+    visited.forEach(function (x) { visitedNames[x.name] = true; });
+    Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/countries-110m.json', 'world'), loadVisitedJson('vendor/geo/iso-numeric-alpha2.json', 'iso')]).then(function (r) {
+      var container = $('#visitedMapOverseas');
+      var listWrap = $('#visitedListOverseas');
+      if (!container && !listWrap) return; // 読み込み中にタブが切り替わっていた
+      var topo = r[1], alpha2Table = r[2];
+      var idx = { idToName: {}, nameToId: {} };
+      var fc = null;
+      try {
+        fc = topojson.feature(topo, topo.objects.countries);
+        var ids = fc.features.map(function (f) { return f.id; });
+        idx = Core.buildCountryIsoIndex(ids, alpha2Table);
+      } catch (e) {
+        console.error('drawVisitedWorldMap: topojson decode failed', e);
+        fc = null;
+      }
+      visitedCountryAlpha2ByName = {};
+      Object.keys(idx.nameToId).forEach(function (name) {
+        visitedCountryAlpha2ByName[name] = alpha2Table[idx.nameToId[name]];
+      });
+
+      if (container) {
+        if (fc) {
+          try {
+            var w = 320, h = 190;
+            var proj = d3.geoNaturalEarth1().fitSize([w, h], fc);
+            var path = d3.geoPath(proj);
+            var sel = state.visitedSel;
+            var paths = fc.features.map(function (f) {
+              try {
+                var name = idx.idToName[f.id] || '';
+                var d = path(f);
+                if (!d) return '';
+                var isVisited = !!(name && visitedNames[name]);
+                var on = isVisited && sel && sel.kind === 'country' && sel.name === name;
+                return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+                  (isVisited ? ' data-kind="country" data-name="' + escapeHtml(name) + '"' : '') +
+                  '>' + (name ? '<title>' + escapeHtml(name) + '</title>' : '') + '</path>';
+              } catch (eFeature) {
+                console.error('drawVisitedWorldMap: skipped a feature', f && f.id, eFeature);
+                return ''; // 1つの地物がおかしくても地図全体は描く
+              }
+            }).join('');
+            container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた国の地図">' + paths + '</svg>';
+            wireVisitedMapRegions(container);
+          } catch (eMap) {
+            console.error('drawVisitedWorldMap: map render failed', eMap);
+            container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+          }
+        } else {
+          container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+        }
+      }
+
+      if (listWrap) {
+        try {
+          // ISOの対応表に無い（地図で塗れない）国でも、集計（visited）に出ている場所は一覧からは
+          // 絶対に落とさない（continentForAlphaが分からなければ「その他」に入る＝groupVisitedByOrder
+          // 側の既定の挙動）。
+          var groups = Core.groupVisitedByOrder(visited, function (x) {
+            return Core.continentForAlpha2(visitedCountryAlpha2ByName[x.name]);
+          }, Core.VISITED_CONTINENT_ORDER);
+          listWrap.innerHTML = visitedGroupedListHtml('country', groups, true);
+          wireVisitedListRows(listWrap);
+        } catch (eList) {
+          console.error('drawVisitedWorldMap: list render failed', eList);
+          listWrap.innerHTML = '<div class="empty">一覧の読み込みに失敗しました。</div>';
+        }
+      }
+    }).catch(function (e) {
+      console.error('drawVisitedWorldMap failed', e);
+      var container = $('#visitedMapOverseas');
+      if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+      var listWrap = $('#visitedListOverseas');
+      if (listWrap) listWrap.innerHTML = '<div class="empty">一覧の読み込みに失敗しました。</div>';
+    });
+  }
+
+  function wireVisitedMapRegions(container) {
+    $all('.visited-region.is-visited', container).forEach(function (el) {
+      el.addEventListener('click', function () {
+        setVisitedSelection(el.dataset.kind, el.dataset.name);
+      });
     });
   }
 
@@ -5412,13 +7578,38 @@
   // 車の道のりを見た目の近似として使う（オーナー承認、2026-09-27）。それも見つからなければやわらかい曲線のまま。
   function routeQuery(profile, a, b) {
     return '/route?profile=' + profile +
-      '&from=' + a.lat.toFixed(5) + ',' + a.lng.toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + b.lng.toFixed(5);
+      '&from=' + a.lat.toFixed(5) + ',' + Core.wrapLng(a.lng).toFixed(5) + '&to=' + b.lat.toFixed(5) + ',' + Core.wrapLng(b.lng).toFixed(5);
   }
+  // 線路データ（OpenStreetMap、Overpass API）を取って、端末の中で線路の上の最短経路を求める。
+  // 求めた線はこの端末に覚えておき、次からは線路データを取りに行かない。取れなければnull。
+  var RAIL_PATH_CACHE_PREFIX = 'tabilog-railpath-v1:';
+  var railPathTried = {};
+  // 線路データはWorker（/rail-tracks）が代わりに取ってくる（54では端末から直接Overpassへ送っていたが、
+  // iOSアプリで取れずに一直線のままだった疑いがあるため、ほかのAPIと同じ経路にまとめた。2026-09-27）。
+  function localRailPath(a, b) {
+    var key = RAIL_PATH_CACHE_PREFIX + [a.lat, a.lng, b.lat, b.lng].map(function (v) { return v.toFixed(4); }).join(',');
+    try {
+      var saved = localStorage.getItem(key);
+      if (saved) return Promise.resolve(JSON.parse(saved));
+    } catch (e) { /* 端末に保存できない環境では毎回求める */ }
+    if (railPathTried[key]) return Promise.resolve(null); // この画面を開いているあいだ、失敗した区間を何度も試さない
+    railPathTried[key] = true;
+    return api('/rail-tracks?bbox=' + Core.railBBox(a, b).join(',')).then(function (data) {
+      var path = Core.railPathFromOverpass(data && data.elements, a, b);
+      if (path) { try { localStorage.setItem(key, JSON.stringify(path)); } catch (e) { /* 容量不足など */ } }
+      return path;
+    }).catch(function () { return null; });
+  }
+
   function fetchReplayRoutes(tl, onRoute) {
     var jobs = tl.legs.filter(function (l) { return Core.routeProfileFor(l.transport); });
     // 近い区間から順に届くよう、再生の順番（区間の並び）のまま同時に聞く
     return Promise.all(jobs.map(function (l) {
-      var a = tl.stops[l.from], b = tl.stops[l.to];
+      // 地点の経度は日付変更線をまたぐと±360度されている（buildReplayTimeline）。道のりは普通の経度で調べ、
+      // 届いた道のりを同じだけずらして地点につなぐ
+      var sa = tl.stops[l.from], sb = tl.stops[l.to];
+      var shift = sa.lng - Core.wrapLng(sa.lng);
+      var a = { lat: sa.lat, lng: sa.lng - shift }, b = { lat: sb.lat, lng: sb.lng - shift };
       var straightKm = Core.distanceKm(a, b);
       var profile = Core.routeProfileFor(l.transport);
       return api(routeQuery(profile, a, b)).catch(function () { return null; }).then(function (res) {
@@ -5437,13 +7628,30 @@
         // 線路の道のりが見つからないときは、車の道のり（道路）では代わりにしない。電車なのに道路を
         // 走るように見えて「動きが全部車っぽい」と言われたため（2026-09-27）。やわらかい曲線のまま見せ、
         // Worker側は見つからなかった結果を6時間しか覚えないので、あとで開き直せば線路で調べ直す。
+        // 日本の近い区間（30km以内）だけは、線路データを取ってこの端末で最短経路を求める
+        // （BRouterは新大阪→USJで大回りし、Googleは日本の電車を返さないため。Core.railPathFromOverpass）。
+        // 海外でも、線路の道のりの端が出発地・到着地から離れすぎていれば（山の上の登山電車で、下の町の
+        // 駅まで行ってしまう等）同じように線路データから求め直す。求められなければやわらかい曲線にする（2026-09-27）
+        var railBad = profile === 'rail' && res && res.found && !Core.railPathEndsOk(res.path, a, b);
+        if (profile === 'rail' && (!(res && res.found) || railBad) && straightKm <= Core.RAIL_LOCAL_MAX_KM &&
+            (railBad || (Core.isInJapan(a) && Core.isInJapan(b)))) {
+          return localRailPath(a, b).then(function (path) { return path ? { found: true, path: path } : (railBad ? null : res); });
+        }
+        if (railBad) return null;
         return res;
       }).then(function (res) {
-        if (res && res.found && res.path && res.path.length > 1) { l.path = res.path; if (onRoute) onRoute(l); }
+        if (res && res.found && res.path && res.path.length > 1) {
+          var path = shift ? res.path.map(function (p) { return [p[0], p[1] + shift]; }) : res.path;
+          l.path = Core.joinPathEnds(path, tl.stops[l.from], tl.stops[l.to]);
+          if (onRoute) onRoute(l);
+        }
       });
     }));
   }
 
+  var REPLAY_PLANE_DASH = '8 10';
+  var REPLAY_CAMERA_LEAD_SEC = 0.9; // カメラの移動（0.8秒）が、区間の動き出しまでに終わるように
+  var REPLAY_CAPTION_HIDE_LEAD_SEC = Core.REPLAY_CAPTION_HIDE_LEAD_SEC; // 写真の吹き出しは、カメラが動き出す少し前に消しておく
   var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
   var PAUSE_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4.5" width="3.5" height="11" rx="1"/><rect x="11.5" y="4.5" width="3.5" height="11" rx="1"/></svg>';
   var replayMap = null, replayLayer = null, replay = null, replayToken = null;
@@ -5507,6 +7715,7 @@
         if (replayToken !== token || !replay || replay.tl !== tl) return;
         var set = replay.lines[tl.legs.indexOf(l)];
         if (set && set.plan) set.plan.setLatLngs(l.path);
+        if (set) set.lastF = null; // 道のりが変わったので、進んだところの線も描き直す
         renderReplay();
       });
     }).catch(function () {
@@ -5553,9 +7762,17 @@
       var plane = l.transport === 'plane';
       var full = l.path || null;
       replay.lines[k] = {
-        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '6 8' : null }),
+        // 飛行機の点線は、薄い青（これから通る道）と濃い青（進んだところ）で点線の間隔をそろえる。以前は
+        // '6 8' と '8 10' で違っていたため、濃い青の点が薄い青の点からずれて見えていた（2026-09-27）。
+        // 線の形（l.path）は両方同じなので、間隔がそろえば濃い青がぴったり重なる。
+        // さらに、Leafletは線を描くときに画面の大きさに合わせて点を間引き（smoothFactor）、画面の外を
+        // 切り落とす（clip）。全体の線と途中までの線とで間引き方・切り落とし方が変わると、点線の位置がずれて
+        // 「薄い青の上に少しずれて濃い青が乗る」ように見えていた（56で間隔をそろえても残った。2026-09-27）。
+        // 飛行機の線は点が少ない（弧の32点ほど）ので、間引きも切り落としもしない。
+        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
         casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
-        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? '8 10' : null })
+        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
+        planeLine: plane, lastF: null
       };
     });
     replay.mapAnimating = false;
@@ -5583,16 +7800,26 @@
       // 全部消えて見えていた（「移動の開始の時に青い経路が全体的にうまく表示されない」2026-09-27）。
       // ゴーストが目立つのはズームが大きく変わるときだけなので、replayFlyToBoundsが「ズームが3段以上
       // 変わる」と判断したときだけ隠す（replay.hideLinesOnMove）。
+      //
+      // 2026-09-27〜：上の2つ（アニメ中は線を止める・大きくズームするときは線を隠す）をやめ、カメラが
+      // 動いているあいだは毎コマ、線を地図の今の縮尺で描き直す（Leafletのレンダラーの_reset）。
+      // CSSで拡大縮小された古い絵ではなく毎回正しい位置に描くので、ズームイン・アウトの途中でも道のりが
+      // 地図の道路・線路と完全に重なり、太さも変わらない（「通った道は地図と完全に一致させたい」）。
       replayMap.on('zoomstart movestart', function () {
         if (!replay) return;
         replay.mapAnimating = true;
-        if (replay.hideLinesOnMove) hideReplayOverlayPane();
+      });
+      replayMap.on('zoom move', function () {
+        // flyTo（再生のカメラ）の途中だけ。指でのピンチ（CSSのズームアニメ）はLeaflet自身が合わせる
+        if (!replay || !replay.mapAnimating || replayMap._animatingZoom) return;
+        var rd = replayMap.options.renderer;
+        if (rd && rd._map && typeof rd._reset === 'function') rd._reset();
       });
       replayMap.on('zoomend moveend', function () {
         if (!replay) return;
         replay.mapAnimating = false;
+        replay.cameraMoving = false;
         renderReplay();
-        if (replay.hideLinesOnMove) { replay.hideLinesOnMove = false; fadeInReplayOverlayPane(); }
       });
     }
     resetReplayCamera();
@@ -5624,20 +7851,25 @@
     if (top + bottom > room) { var k = room / (top + bottom); top *= k; bottom *= k; }
     return { paddingTopLeft: [36, Math.round(top + 24)], paddingBottomRight: [36, Math.round(bottom + 24)] };
   }
-  // アニメーションつきでboundsへ寄せる。ズームが大きく変わる（3段以上）ときだけ、線のゴースト対策で
-  // アニメ中の線を隠す（replay.hideLinesOnMove。上のzoomstart/movestartの説明を参照）。
-  var REPLAY_HIDE_LINES_ZOOM_DELTA = 3;
-  function replayFlyToBounds(bounds, opts) {
-    var target = null;
+  // アニメーションつきでboundsへ寄せる（途中も線は毎コマ描き直すので、隠さない）。
+  var REPLAY_ARRIVAL_ZOOM_DELAY_SEC = 0.25; // 着陸してから着いた地点へズームし直すまでの間
+  var REPLAY_TINY_LEG_KM = 0.4; // これより近い区間は、両端が見えていればカメラを動かさない（空港の中など）
+  var REPLAY_SHORT_STAY_SEC = 1.2; // 着いてからこれ以内に次の遠い移動が始まるなら、着いた地点へ寄せない
+  // 点がすべて、見える部分（吹き出し・操作ボタンを除いた部分）に入っているか
+  function replayPointsInView(points, padOpts) {
     try {
-      var pad = window.L.point(opts.paddingTopLeft).add(window.L.point(opts.paddingBottomRight));
-      target = Math.min(opts.maxZoom !== undefined ? opts.maxZoom : Infinity,
-        replayMap.getBoundsZoom(window.L.latLngBounds(bounds), false, pad));
-    } catch (e) { target = null; }
-    if (replay) {
-      replay.hideLinesOnMove = typeof target === 'number' && isFinite(target) &&
-        Math.abs(target - replayMap.getZoom()) >= REPLAY_HIDE_LINES_ZOOM_DELTA;
-    }
+      var size = replayMap.getSize();
+      var tl = window.L.point(padOpts.paddingTopLeft), br = window.L.point(padOpts.paddingBottomRight);
+      return points.every(function (p) {
+        var c = replayMap.latLngToContainerPoint(p);
+        return c.x >= tl.x && c.y >= tl.y && c.x <= size.x - br.x && c.y <= size.y - br.y;
+      });
+    } catch (e) { return false; }
+  }
+  // keepCaption：着いた地点へ寄せ直すときは、いま出したばかりの写真の吹き出しを隠さない。隠すと
+  // 「出る→消える→また出る」で、同じ写真が2回出たように見えていた（イグアス到着、2026-09-27）
+  function replayFlyToBounds(bounds, opts, keepCaption) {
+    if (replay && !keepCaption) replay.cameraMoving = true; // 写真の吹き出しを隠す（moveendで戻す）
     replayMap.flyToBounds(bounds, opts);
   }
 
@@ -5645,7 +7877,7 @@
   function replayCenterOn(lat, lng, zoom, animate) {
     var opts = replayViewPadding();
     opts.maxZoom = zoom;
-    if (animate) { opts.duration = 0.8; replayFlyToBounds([[lat, lng], [lat, lng]], opts); }
+    if (animate) { opts.duration = 0.8; replayFlyToBounds([[lat, lng], [lat, lng]], opts, true); }
     else { opts.animate = false; replayMap.fitBounds([[lat, lng], [lat, lng]], opts); }
   }
 
@@ -5653,7 +7885,10 @@
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
     replayCenterOn(first.lat, first.lng, 13, false);
     replay.lastLeg = -1;
-    replay.lastStop = -2;
+    // 最初の地点にはもうカメラを合わせてあるので、着いたときにもう一度カメラを動かさない。以前は再生の
+    // はじめに最初の地点へもう一度カメラが動き、吹き出しが「出て、一瞬消えて、また出る」ように見えていた
+    // （大阪旅の「みなとみらい発」、2026-09-27）
+    replay.lastStop = replay.tl.stops.indexOf(first);
     replay.captionIndex = -2;
     replay.lastDay = 0;
   }
@@ -5708,22 +7943,6 @@
   function replayOverlayPane() {
     return replayMap && replayMap.getPane ? replayMap.getPane('overlayPane') : null;
   }
-  function hideReplayOverlayPane() {
-    var pane = replayOverlayPane();
-    if (!pane) return;
-    pane.style.transition = 'none';
-    pane.style.opacity = '0';
-  }
-  function fadeInReplayOverlayPane() {
-    var pane = replayOverlayPane();
-    if (!pane) return;
-    // 直前にopacity:0のまま描き直しているので、ここで一度レイアウトを強制してから
-    // transitionを付けないと、0→1が一瞬で切り替わってしまい（アニメにならない）
-    pane.getBoundingClientRect();
-    pane.style.transition = 'opacity 150ms linear';
-    pane.style.opacity = '1';
-  }
-
   // 着いた地点の写真を吹き出しの上に出す。複数枚なら、吹き出しを出しているあいだに順に切り替える
   function showReplayCaptionPhotos(photos) {
     var el = $('#replayCaptionPhotos');
@@ -5781,12 +8000,20 @@
     tl.legs.forEach(function (l, k) {
       var f = r >= l.r1 ? 1 : (r <= l.r0 ? 0 : (r - l.r0) / (l.r1 - l.r0));
       var set = replay.lines[k];
-      // 地図がズーム・移動アニメ中は、線（SVGの座標）を更新すると地図とずれて見えるため更新を止める
-      // （終わったら zoomend/moveend で1回描き直す。乗り物のアイコンは通常のマーカーなので動かし続けてよい）
-      if (f > 0 && !replay.mapAnimating) {
+      // カメラが動いているあいだも線を伸ばす（毎コマ地図の今の縮尺で描き直しているので、地図とずれない。
+      // startReplayの'zoom move'の説明を参照）。
+      // 進み具合が変わらない区間（走り終わった区間など）は描き直さない。以前は毎フレーム全区間を描き直していて、
+      // 長い飛行機の点線（東京→ロサンゼルス）が街を見る大きさで毎回描かれ、動きが重くなっていた（2026-09-27）
+      if (f > 0 && set.lastF !== f) {
         var pts = replayLegPoints(l, f);
+        // 飛行機の点線は、走っているあいだだけ画面の外を切り落とさない（薄い青と濃い青の点をそろえるため）。
+        // 走り終わったら切り落とす：何千kmもある点線を街の大きさで丸ごと描くと、とても重いため
+        if (set.planeLine) set.line.options.noClip = f < 1;
         set.line.setLatLngs(pts);
         if (set.casing) set.casing.setLatLngs(pts);
+        set.lastF = f;
+      } else if (f === 0 && set.lastF) {
+        set.lastF = 0;
       }
       if (set.plan) setLayerVisible(set.plan, f > 0 && f < 1);
       if (set.casing) setLayerVisible(set.casing, f > 0);
@@ -5810,16 +8037,41 @@
       setLayerVisible(replay.vehicle, false);
     }
 
-    // カメラ：移動が始まったら出発地と到着地が両方入るように、移動なしで別の場所に着いたらそこへ寄せる
-    if (st.icon && st.icon.legIndex !== replay.lastLeg) {
-      var leg = tl.legs[st.icon.legIndex];
+    // カメラ：移動が始まる少し前（REPLAY_CAMERA_LEAD_SEC）に、出発地と到着地が両方入るように動かし始める。
+    // 移動が始まった瞬間に動かすと、カメラが動く0.8秒のあいだは線（SVG）を伸ばせない（地図とずれるため
+    // 止めている）ので、動き出しの青い線が出ていないように見えていた（2026-09-27）。
+    var legIndexForCamera = st.icon ? st.icon.legIndex : -1;
+    if (legIndexForCamera < 0 && replay.playing) {
+      for (var li = 0; li < tl.legs.length; li++) {
+        var lead = tl.legs[li].r0 - r;
+        if (lead > 0 && lead <= REPLAY_CAMERA_LEAD_SEC) { legIndexForCamera = li; break; }
+        if (lead > REPLAY_CAMERA_LEAD_SEC) break;
+      }
+    }
+    if (legIndexForCamera >= 0 && legIndexForCamera !== replay.lastLeg) {
+      var leg = tl.legs[legIndexForCamera];
       var legBounds = leg.path && leg.path.length > 1 ? leg.path
         : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
       var legView = replayViewPadding();
       legView.maxZoom = 15; legView.duration = 0.8;
-      replayFlyToBounds(legBounds, legView);
-      replay.lastLeg = st.icon.legIndex;
-    } else if (!st.icon && st.stopIndex !== replay.lastStop) {
+      // 空港の中など、ごく近い区間（REPLAY_TINY_LEG_KM未満）で両端がもう見えているなら、カメラを動かさない。
+      // 乗り継ぎの空港（インチョン・チューリッヒ）で、ほぼ同じ場所の予定が続くたびに少しずつ寄せ直し、
+      // 地図が手振れのように揺れていた（2026-09-27）
+      var legFrom = tl.stops[leg.from], legTo = tl.stops[leg.to];
+      var tinyLeg = legFrom && legTo && Core.distanceKm(legFrom, legTo) < REPLAY_TINY_LEG_KM;
+      if (tinyLeg) {
+        // 飛行機のあとで大きく引いたままなら、街を見る大きさ（12）までは寄せる。以後の近い区間では動かさない
+        legView.maxZoom = Math.max(12, Math.min(15, replayMap.getZoom()));
+        if (replayMap.getZoom() < 10 || !replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legView)) {
+          replayFlyToBounds(legBounds, legView);
+        }
+      } else {
+        replayFlyToBounds(legBounds, legView);
+      }
+      replay.lastLeg = legIndexForCamera;
+      // 着いた地点に寄せる処理（下）が次のフレームで走ってこのカメラ移動を打ち消さないよう、着いた地点も済みにする
+      if (!st.icon) replay.lastStop = st.stopIndex;
+    } else if (!st.icon && st.stopIndex >= 0 && st.stopIndex !== replay.lastStop) {
       var arrived = tl.stops[st.stopIndex];
       var cameFromLeg = tl.legs.some(function (l) { return l.to === st.stopIndex; });
       // 長い移動（飛行機で日本→アメリカなど）のflyToBoundsは、両端が入るよう地図を大きく引いたまま。
@@ -5827,10 +8079,25 @@
       // 見えてしまうため、着いた地点のズームが街を見る大きさ（目安10）より広いままなら、着いた地点へ寄せ直す
       // （次の区間があるかどうかによらない。2026-09-26）。
       var zoomedOut = replayMap.getZoom() < 10;
-      if (arrived && arrived.located && replay.lastStop !== -2 && (!cameFromLeg || zoomedOut)) {
-        replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
+      var needZoom = arrived && arrived.located && replay.lastStop !== -2 && (!cameFromLeg || zoomedOut);
+      // 乗り継ぎのように、着いてすぐ次の遠い移動（飛行機など）に出るなら、寄せずに引いたままにする。
+      // 寄せた直後にまた大きく引くことになり、地図が揺れて見えていた（2026-09-27）
+      if (needZoom && cameFromLeg && replay.playing) {
+        var nextLeg = tl.legs.filter(function (l) { return l.from === st.stopIndex && l.r0 >= r; })[0];
+        if (nextLeg && nextLeg.r0 - r < REPLAY_CAMERA_LEAD_SEC + REPLAY_SHORT_STAY_SEC) {
+          var nextTo = tl.stops[nextLeg.to];
+          if (nextTo && nextTo.located && Core.distanceKm(arrived, nextTo) >= 50) needZoom = false;
+        }
       }
-      replay.lastStop = st.stopIndex;
+      // 飛行機などで引いた地図から寄せ直すときは、着いてすぐではなく少し（REPLAY_ARRIVAL_ZOOM_DELAY_SEC）
+      // 間を空けてからズームする。着陸した瞬間にズームが始まり、早すぎると感じられたため（2026-09-27）。
+      // 間を空けるあいだは lastStop を進めず、次のフレームでもう一度ここに来る
+      if (needZoom && cameFromLeg && replay.playing && typeof arrived.r === 'number' && r - arrived.r < REPLAY_ARRIVAL_ZOOM_DELAY_SEC) {
+        // まだ待つ
+      } else {
+        if (needZoom) replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
+        replay.lastStop = st.stopIndex;
+      }
     }
 
     if (st.captionIndex !== replay.captionIndex) {
@@ -5852,12 +8119,36 @@
       }
     }
 
+    // 地図が動いている（ズーム・移動のアニメ中）あいだと、次の移動のためにカメラが動き出す少し前
+    // （REPLAY_CAPTION_HIDE_LEAD_SEC）からは、写真つきの吹き出しを隠す。写真が大きく地図を覆ったまま
+    // ズームすると、乗り物や線の動きが見えなかった（2026-09-27）。先に写真を消してから地図を動かし、
+    // 着いた先でカメラが止まってから（moveendで描き直したとき）もう一度出す。
+    var aboutToMove = false;
+    if (!st.icon && replay.playing) {
+      for (var hi = 0; hi < tl.legs.length; hi++) {
+        var until = tl.legs[hi].r0 - r;
+        if (until > 0 && until <= REPLAY_CAPTION_HIDE_LEAD_SEC) { aboutToMove = true; break; }
+        if (until > REPLAY_CAPTION_HIDE_LEAD_SEC) break;
+      }
+    }
+    // 隠すのは、ふりかえりの再生が自分で動かしたカメラ（replayFlyToBounds）の間だけ。Leafletのmovestartは
+    // 画面の大きさが変わったとき（時計や操作ボタンが出て地図の大きさが変わる、など）にも一瞬出るため、
+    // それで隠すと「吹き出しが出て、一瞬消えて、また出る」ように見えていた（大阪旅の最初、2026-09-27）
+    $('#replayCaption').classList.toggle('hide-for-move', !!(replay.cameraMoving || aboutToMove));
+
     $('#replayProgressBar').style.width = (tl.totalReal ? Math.min(100, r / tl.totalReal * 100) : 100) + '%';
   }
 
+  var REPLAY_MAX_FRAME_SEC = 0.1;
   function replayTick(ts) {
     if (!replay || !replay.playing) return;
-    if (replay.lastTs !== null) replay.r = Math.min(replay.tl.totalReal, replay.r + (ts - replay.lastTs) / 1000);
+    // 1コマで進める時間は最大REPLAY_MAX_FRAME_SEC。端末が一瞬固まる（初めて開いたときに線路の道のりを
+    // 計算する、写真を読み込む、など）と、以前はその時間ぶん再生が一気に飛び、吹き出しや写真が「一瞬出て
+    // すぐ消える」ように見えていた（大阪旅の新大阪・ユニバ、2026-09-27）。固まった分は飛ばさず、続きから再生する
+    if (replay.lastTs !== null) {
+      var dt = Math.min(Math.max(0, (ts - replay.lastTs) / 1000), REPLAY_MAX_FRAME_SEC);
+      replay.r = Math.min(replay.tl.totalReal, replay.r + dt);
+    }
     replay.lastTs = ts;
     renderReplay();
     if (replay.r >= replay.tl.totalReal) { setReplayPlaying(false); return; }
@@ -6073,9 +8364,25 @@
     $('#filterYear').addEventListener('change', function (e) { state.homeFilters.year = e.target.value; renderHomeTripList(); });
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
     $('#sortTripOrder').addEventListener('change', function (e) { state.homeFilters.sort = e.target.value; renderHomeTripList(); });
+
+    $('#mylogFilterCompanion').addEventListener('change', function (e) {
+      state.mylogFilters.companion = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
+    });
+    $('#mylogFilterYear').addEventListener('change', function (e) {
+      state.mylogFilters.year = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
+    });
+    $('#mylogSortTripOrder').addEventListener('change', function (e) {
+      state.mylogFilters.sort = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
+    });
     $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
+    $('#btnArriveSearch').addEventListener('click', searchArrivePlace);
+    $('#entArriveSearch').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); searchArrivePlace(); } });
+    $('#entArriveCandidates').addEventListener('click', function (e) {
+      var c = e.target.closest('[data-arrive-choice]');
+      if (c) chooseArrivePlace(Number(c.getAttribute('data-arrive-choice')));
+    });
     $('#entPlaceCandidates').addEventListener('click', function (e) {
       var b = e.target.closest('[data-place-choice]');
       if (b) choosePlaceCandidate(b.dataset.placeChoice);
@@ -6106,7 +8413,17 @@
     initEntryDragMove();
     initDaySwipe();
     initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
-    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), goHome);
+    initEdgeSwipeBack(document.querySelector('[data-screen="visited"]'), goHome);
+    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), function () {
+      // ヘッダーの「← 戻る」（data-back="home"）と同じ判定（openTripのreturnTo、2026-09-28〜）
+      if (state.tripReturnScreen === 'visited') {
+        state.tripReturnScreen = null;
+        showScreen('visited');
+        renderVisitedPlaces();
+        return;
+      }
+      goHome();
+    });
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
@@ -6114,6 +8431,19 @@
 
     $('#btnNewTrip').addEventListener('click', openNewTripForm);
     $('#btnCreateTrip').addEventListener('click', createTrip);
+    // 出発日を選んだら、帰着日が空（または出発日より前）のときは出発日を入れておく。帰着日のカレンダーが
+    // 今月（2026年9月など）から開いて、過去の旅行だと月をさかのぼり直す手間があったため（2026-09-27）。
+    // 帰着日にはその日より前を選べないよう min も付ける
+    [['#ntStart', '#ntEnd'], ['#teStart', '#teEnd']].forEach(function (pair) {
+      var start = $(pair[0]), end = $(pair[1]);
+      if (!start || !end) return;
+      var sync = function () {
+        end.min = start.value || '';
+        if (start.value && (!end.value || end.value < start.value)) end.value = start.value;
+      };
+      start.addEventListener('change', sync);
+      start.addEventListener('input', sync);
+    });
     $('#btnOpenTripId').addEventListener('click', function () {
       var id = $('#openTripId').value.trim();
       if (id) openTrip(id);
@@ -6155,6 +8485,8 @@
     $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
     $('#btnCreateTextEntries').addEventListener('click', handleCreateTextEntries);
     $('#btnOrganizeMemoAi').addEventListener('click', function () { organizeMemoWithAi(); });
+    $('#btnCopyAiPrompt').addEventListener('click', copyAiImportPrompt);
+    $('#btnImportJson').addEventListener('click', handleImportJson);
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);
@@ -6199,6 +8531,15 @@
       b.addEventListener('click', function () {
         var to = b.dataset.back;
         stopVoiceRecordingIfActive();
+        // 旅の詳細（tripDetail）の「← 戻る」だけは特別扱い：「行ったことある旅先」の旅行名リンクから
+        // 開いた旅行なら、そのページに戻す（openTripのreturnTo、2026-09-28〜）。それ以外のdata-back="home"
+        // （新しい旅を作る、など）はこれまでどおりホームへ。
+        if (to === 'home' && b.classList.contains('back-btn') && state.tripReturnScreen === 'visited') {
+          state.tripReturnScreen = null;
+          showScreen('visited');
+          renderVisitedPlaces();
+          return;
+        }
         if (to === 'home') goHome();
         else { showScreen(to); if (to === 'tripDetail') renderTripDetail(); }
       });
@@ -6217,6 +8558,16 @@
     $('#btnResendOtp').addEventListener('click', handleSendOtp);
     $('#btnOpenMyLog').addEventListener('click', function () {
       if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
+    });
+    $('#btnOpenVisited').addEventListener('click', function () {
+      if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited');
+    });
+    $('#visitedTabs').addEventListener('click', function (e) {
+      var btn = e.target.closest('.visited-tab');
+      if (!btn) return;
+      state.visitedTab = btn.dataset.tab;
+      state.visitedSel = null;
+      renderVisitedPlaces();
     });
     $('#btnGoToPlans').addEventListener('click', function () {
       if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
@@ -6350,6 +8701,8 @@
       openVoiceEntryForm();
     } else if (target === 'mylog' && loggedIn) {
       openMyLog();
+    } else if (target === 'visited' && loggedIn) {
+      openVisitedPlaces();
     } else {
       goHome();
     }

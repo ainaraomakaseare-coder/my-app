@@ -6,21 +6,26 @@
  * 旅行の閲覧・記録の追加はログイン不要。旅行のURL（trip id）を知っている人だけが
  * 読み書きできる「リンクを知っていれば入れる」方式（Googleドキュメントの共有リンクに近い）。
  * 家族・少人数グループでの利用を想定しており、不特定多数への公開は想定していない。
- * 「音声でまとめて記録する」機能だけ、唯一OpenAIを呼び出す（他の機能はAI不使用）。
+ * 「音声でまとめて記録する」機能だけ、唯一AIを呼び出す（他の機能はAI不使用）。文字起こしは
+ * Cloudflare Workers AI（失敗時のみOpenAI）、Blockへの整理は引き続きOpenAIを使う。
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
+import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture, isTransitBlock, filterFallbackDayRows } from "./visited-places.js";
+import { parseWorkersAiOutput, describeWorkersAiOutputForDebug } from "./ai-parse.js";
+import { isUsableTranscript } from "./transcribe-provider.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline,
 } from "./geo-decode.js";
 import {
   isValidCurrency, isValidDate, frankfurterUrl, parseFrankfurterResponse,
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
 
-const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other"];
+// "arrival"（到着）は2026-09-27〜。種類「移動」の中の「出発｜到着」の到着。移動（出発）と違い、着いた場所の予定として扱う
+const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other", "arrival"];
 // 精算の端数（丸め）単位。Walicaにならい1円／10円／100円から選べる（trips.settle_unit、v21）。
 // 旅行メンバー全員で共有する設定なので、旅行本体に持たせる。
 const SETTLE_UNITS = [1, 10, 100];
@@ -408,6 +413,8 @@ function rowToBlock(row) {
     category: row.category,
     transport: row.transport || "",
     moveMinutes: row.move_minutes || 0,
+    // 手で決めた並び（v22〜）。列がまだ無い環境ではundefinedなのでnullにそろえる
+    manualOrder: typeof row.manual_order === "number" ? row.manual_order : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -463,6 +470,10 @@ async function updateBlock(id, request, env, headers) {
   )
     .bind(merged.date || "", merged.time || "", (merged.label || "").trim(), merged.category || "sightseeing", merged.transport || "", merged.moveMinutes || 0, t, id)
     .run();
+  // 別の日へ移したら、前の日の「手で決めた並び」は持っていかない（v22〜。列がまだ無い環境では何もしない）
+  if ((merged.date || "") !== (cur.date || "")) {
+    try { await env.DB.prepare("UPDATE blocks SET manual_order = NULL WHERE id = ?").bind(id).run(); } catch { /* 列が無い */ }
+  }
   const updated = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   return json(rowToBlock(updated), 200, headers);
 }
@@ -490,6 +501,12 @@ async function reorderBlocks(tripId, date, request, env, headers) {
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
+  // 手で決めた並びを消して、ふだんの並び（時刻順）に戻す（v22〜）
+  if (data && data.clear === true) {
+    await env.DB.prepare("UPDATE blocks SET manual_order = NULL WHERE trip_id = ? AND date = ?").bind(tripId, date).run();
+    await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+    return json({ ok: true }, 200, headers);
+  }
   if (!data || !Array.isArray(data.blockIds) || !data.blockIds.length || data.blockIds.length > 200) {
     return json({ error: "invalid_input" }, 400, headers);
   }
@@ -499,6 +516,18 @@ async function reorderBlocks(tripId, date, request, env, headers) {
     .bind(tripId, date)
     .all();
   const validIds = new Set(rows.map((r) => r.id));
+  // 時刻どおりでなく、手で決めた並びにする（時差の区切りがある日。v22〜）。その日の予定の並びを
+  // manual_orderに0から順に入れる（created_atは変えない）
+  if (data.manual === true) {
+    let k = 0;
+    for (const blockId of data.blockIds) {
+      if (!validIds.has(blockId)) continue;
+      await env.DB.prepare("UPDATE blocks SET manual_order=?, updated_at=? WHERE id=?").bind(k, nowIso(), blockId).run();
+      k++;
+    }
+    await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+    return json({ ok: true }, 200, headers);
+  }
   const baseTime = Date.now();
   let i = 0;
   for (const blockId of data.blockIds) {
@@ -525,14 +554,22 @@ function validTravel(x) {
     if (x[k] !== undefined && x[k] !== "" && !TIME_RE.test(x[k])) return false;
   }
   if (x.amount !== undefined && x.amount !== null && !(Number.isInteger(x.amount) && x.amount >= 0 && x.amount <= 100000000)) return false;
+  // 到着地の地図（2026-09-27〜）。移動の予定の地図の欄は出発地、こちらは到着地。座標は場所の候補から
+  // 選んだときだけ一緒に送られる（手で貼ったURLは座標なし）
+  if (!optUrl(x.arriveMapUrl, 500)) return false;
+  const hasLat = x.arriveLat !== undefined && x.arriveLat !== null, hasLng = x.arriveLng !== undefined && x.arriveLng !== null;
+  if (hasLat !== hasLng) return false;
+  if (hasLat && !validLatLng(x.arriveLat, x.arriveLng)) return false;
   return true;
 }
 
 function cleanTravel(x) {
   if (!x) return {};
   const out = {};
-  for (const k of ["from", "to", "company", "depart", "arrive"]) if (x[k]) out[k] = String(x[k]).trim();
+  for (const k of ["from", "to", "company", "depart", "arrive", "arriveMapUrl"]) if (x[k]) out[k] = String(x[k]).trim();
   if (Number.isInteger(x.amount)) out.amount = x.amount;
+  const at = out.arriveMapUrl && x.arriveLat !== undefined && x.arriveLat !== null ? validLatLng(x.arriveLat, x.arriveLng) : null;
+  if (at) { out.arriveLat = at.lat; out.arriveLng = at.lng; }
   return out;
 }
 
@@ -860,7 +897,7 @@ async function deleteRating(entryId, request, env, headers) {
 
 /* ---------- マイログ：ログイン中の本人が付けた評価を、旅行をまたいで一覧する ---------- */
 
-async function getMyLog(email, env, headers) {
+async function getMyLog(email, env, headers, ctx) {
   if (!email) return json({ error: "invalid_input" }, 400, headers);
   const { results } = await env.DB.prepare(
     `SELECT r.score AS score, r.updated_at AS rated_at,
@@ -909,30 +946,298 @@ async function getMyLog(email, env, headers) {
       .bind(account.account_id)
       .all();
     trips = tripRows.map(rowToTrip);
-    places = await getVisitedPlaces(env, trips.map((t) => t.id));
+    const titles = {};
+    trips.forEach((t) => { titles[t.id] = t.title; });
+    places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles, ctx);
   }
 
   return json({ items, trips, places }, 200, headers);
 }
 
-// 参加した旅行（trips）にまたがる「日ごとの場所」（day_infos.admin1/country、天気取得のついでに
-// 保存したもの）から、訪れた都道府県・国を重複なく集計する。都道府県は country が「日本」の
-// 行だけを対象にする（海外のadmin1＝州などを都道府県として混ぜないため）。
-async function getVisitedPlaces(env, tripIds) {
-  if (!tripIds.length) return { prefectures: [], countries: [] };
-  const results = await selectWhereIn(
-    env, "SELECT DISTINCT admin1, country FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
+// 参加した旅行（trips）にまたがる「訪れた都道府県・国」を集計する。国名の表記ゆれをまとめる・
+// 乗り継ぎだけの国を数えない・本人が旅行ごとに外した場所を除く、の3つはvisited-places.js（純粋関数）
+// で行う（2026-09-27・旅行ごとの除外は2026-09-28、docs/adr/0016）。
+//
+// 場所の情報源は2つ（2026-09-28〜、主従を入れ替えた）：
+// 1) 記録の地図の座標（entries.map_lat/map_lng、MAP_COORDS_VALID_SINCE以降のものだけ）を
+//    reverseGeocodeで都道府県・国に変換したもの（mapVisits）。1日に複数の場所を正確に持てる。
+// 2) day_infos（1日1か所、手入力・旧自動配置）は、mapVisitsが無い日の補完としてだけ使う
+//    （filterFallbackDayRows）。オーナー報告：大阪旅行の2026-09-19のday_infos行が、過去の誤った
+//    自動配置でフロリダの座標になっており、大阪府がマイログに出なかった。mapVisitsを主にすることで
+//    その日はUSJ・新大阪など実際の座標（大阪府）に置き換わる。
+//
+// mylog_place_overrides（v23・アカウント全体でhide/show）はもう読まない：片方の旅行だけから外したくても
+// 全部の旅行から消えてしまう不具合があったため。テーブル・POST /mylog/placesは残すが（古いアプリ向け）、
+// この集計には一切反映されない。
+async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
+  const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] }, tripPlaces: [] };
+  if (!tripIds.length) return empty;
+
+  const dayRows = await selectWhereIn(
+    env, "SELECT trip_id, date, admin1, country, lat, lon FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
   );
-  const prefectures = new Set();
-  const countries = new Set();
-  results.forEach((row) => {
-    if (row.country === "日本" && row.admin1) prefectures.add(row.admin1);
-    else if (row.country && row.country !== "日本") countries.add(row.country);
+
+  // 1) 記録の地図の座標（MAP_COORDS_VALID_SINCE以降に求めたものだけ）
+  let geocodedEntryRows = [];
+  try {
+    geocodedEntryRows = await selectWhereIn(
+      env,
+      "SELECT e.map_lat AS lat, e.map_lng AS lng, b.trip_id AS trip_id, b.date AS date, b.category AS category, b.label AS label "
+        + "FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (",
+      tripIds,
+      ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL AND e.map_geocoded_at >= '" + MAP_COORDS_VALID_SINCE + "'"
+    );
+  } catch {
+    // 座標の列が無い古いDBでも、day_infosだけで集計を続ける
+  }
+  const roundedPoints = new Map(); // "lat,lng"（3桁に丸め）→{lat,lng}。同じ地点を何度も問い合わせないため
+  geocodedEntryRows.forEach((r) => {
+    if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
+    const lat = Math.round(r.lat * 1000) / 1000;
+    const lng = Math.round(r.lng * 1000) / 1000;
+    roundedPoints.set(lat + "," + lng, { lat, lng });
   });
-  return {
-    prefectures: Array.from(prefectures).sort(),
-    countries: Array.from(countries).sort(),
-  };
+  const resolvedPoints = roundedPoints.size ? await resolveMapPointPlaces(ctx, Array.from(roundedPoints.values())) : new Map();
+  const mapVisits = [];
+  geocodedEntryRows.forEach((r) => {
+    if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
+    const lat = Math.round(r.lat * 1000) / 1000;
+    const lng = Math.round(r.lng * 1000) / 1000;
+    const geo = resolvedPoints.get(lat + "," + lng);
+    if (!geo || (!geo.admin1 && !geo.country)) return; // 未解決（今回の予算切れ）・何も分からない点は使わない
+    mapVisits.push({
+      tripId: r.trip_id, date: r.date, admin1: geo.admin1 || "", country: geo.country || "",
+      lat, lon: lng, transit: isTransitBlock({ category: r.category, label: r.label }),
+    });
+  });
+
+  // 2) day_infos はmapVisitsが無い日の補完だけ（同じ日にmapVisitsがある・1000km以上離れている・
+  //    admin1/countryが空、のいずれかなら使わない）
+  const fallbackDayRows = filterFallbackDayRows(
+    dayRows.map((r) => ({ tripId: r.trip_id, date: r.date, admin1: r.admin1, country: r.country, lat: r.lat, lon: r.lon })),
+    mapVisits.map((v) => ({ tripId: v.tripId, date: v.date, lat: v.lat, lng: v.lon }))
+  );
+
+  const days = mapVisits.map((v) => ({ tripId: v.tripId, date: v.date, admin1: v.admin1, country: v.country, lat: v.lat, lon: v.lon, transit: v.transit }))
+    .concat(fallbackDayRows);
+  if (!days.length) return empty;
+
+  const blockRows = await selectWhereIn(
+    env, "SELECT id, trip_id, date, category, label FROM blocks WHERE trip_id IN (", tripIds, ")"
+  );
+  const coords = {};
+  try {
+    const entryRows = await selectWhereIn(
+      env, "SELECT e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (", tripIds, ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL"
+    );
+    entryRows.forEach((r) => {
+      if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
+      (coords[r.block_id] = coords[r.block_id] || []).push({ lat: r.lat, lng: r.lng });
+    });
+  } catch {
+    // 座標の列が無い古いDBでも、集計自体は続ける（day_infos由来の行の乗り継ぎ判定にだけ使う）
+  }
+  let tripOverrides = [];
+  if (accountId) {
+    try {
+      const { results } = await env.DB.prepare("SELECT trip_id, kind, name FROM mylog_trip_place_overrides WHERE account_id = ?").bind(accountId).all();
+      tripOverrides = results.map((r) => ({ tripId: r.trip_id, kind: r.kind, name: r.name }));
+    } catch {
+      // migrations/0024 を実行する前は、外した場所が無いものとして扱う
+    }
+  }
+  return aggregateVisitedPlaces({
+    days,
+    blocks: blockRows.map((r) => ({ id: r.id, tripId: r.trip_id, date: r.date, category: r.category, label: r.label })),
+    coords,
+    trips: tripTitles || {},
+    tripOverrides,
+  });
+}
+
+// mapVisitsの座標（3桁に丸め・重複無し）を都道府県・国に変換する（NominatimのReverse、reverseGeocode）。
+// キャッシュ（caches.default、都道府県・国はまず変わらないので90日）に無い新しい地点だけ、1秒1回の
+// 制限を守って間隔を空けて呼ぶ。GET /mylogを遅くしすぎないよう、今回の返事に使う待ち時間には上限
+// （8秒）を設けるが、それで足りない分は諦めて次回に持ち越す……のではなく、ctx.waitUntilで返事を返した
+// 後もバックグラウンドで1秒1回のペースのまま解決を続け、次にマイログ・行ったことある旅先を開いたときには
+// キャッシュが埋まっているようにする（2026-09-28、オーナー報告：大阪旅行で兵庫県・神奈川県が出ない。
+// 地点数が多い旅行だと、8秒の予算では2〜3点しか解決できず、しかも「未解決」は今回のレスポンスから
+// 単に外れるだけで、バックグラウンドでの継続も無かったため、何度マイログを開いても同じ地点までしか
+// 進まないことがあった。1回のリクエストの中で毎回同じ順番から数点ずつ試すだけでは、旅行の後半の
+// 地点までなかなかたどり着かない）。
+const REVERSE_GEOCODE_CACHE_SECONDS = 60 * 60 * 24 * 90;
+const REVERSE_GEOCODE_FAIL_CACHE_SECONDS = 60 * 60 * 24; // 失敗はNominatimの一時的な不調かもしれないので短め
+const REVERSE_GEOCODE_BUDGET_MS = 8000;
+// バックグラウンド継続の上限（Workerの実行時間には限りがあるため、無限には続けない。1秒1回なので
+// 25点ほどまで。それでも足りなければ、残りはまた次回のGET /mylogが呼び出しのきっかけになる）。
+const REVERSE_GEOCODE_BACKGROUND_BUDGET_MS = 25000;
+const REVERSE_GEOCODE_SPACING_MS = 1100;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function reverseGeocodeCacheKey(key) {
+  return new Request("https://tabilog-reverse-geocode.cache/v1?k=" + key);
+}
+
+async function cacheGeoResult(cache, cacheKey, geo) {
+  const ttl = geo ? REVERSE_GEOCODE_CACHE_SECONDS : REVERSE_GEOCODE_FAIL_CACHE_SECONDS;
+  await cache.put(cacheKey, new Response(JSON.stringify(geo || null), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=" + ttl },
+  }));
+}
+
+// 予算切れで今回は呼べなかった地点を、間隔を守りながらバックグラウンドで解決してキャッシュに埋めていく
+// （待たせるのはレスポンスを返した後なので、GET /mylogの返事自体は遅くならない）。
+async function resolveRemainingInBackground(cache, remaining) {
+  const start = Date.now();
+  for (const { p, key, cacheKey } of remaining) {
+    if (Date.now() - start > REVERSE_GEOCODE_BACKGROUND_BUDGET_MS) break;
+    await sleep(REVERSE_GEOCODE_SPACING_MS);
+    let geo = null;
+    try {
+      geo = await reverseGeocode(p.lat, p.lng);
+    } catch {
+      geo = null;
+    }
+    try {
+      await cacheGeoResult(cache, cacheKey, geo);
+    } catch {
+      // キャッシュへの書き込みに失敗しても（Workerが先に止められた等）、次回また試すだけなので無視する
+    }
+  }
+}
+
+async function resolveMapPointPlaces(ctx, points) {
+  const cache = caches.default;
+  const out = new Map(); // "lat,lng" → {admin1,country}|null（未解決なら含まれない＝mapVisitsに使わない）
+
+  // まずキャッシュにある分だけ全部拾う（Nominatimを呼ばないので待ち時間はかからない）。
+  // キャッシュに無かった地点だけを、この後1秒1回で順番に呼ぶ対象にする。
+  const toFetch = [];
+  for (const p of points) {
+    const key = p.lat + "," + p.lng;
+    const cacheKey = reverseGeocodeCacheKey(key);
+    const hit = await cache.match(cacheKey);
+    if (hit) {
+      out.set(key, await hit.json());
+    } else {
+      toFetch.push({ p, key, cacheKey });
+    }
+  }
+
+  const start = Date.now();
+  let calledNominatim = false;
+  let i = 0;
+  for (; i < toFetch.length; i++) {
+    if (Date.now() - start > REVERSE_GEOCODE_BUDGET_MS) break;
+    if (calledNominatim) await sleep(REVERSE_GEOCODE_SPACING_MS);
+    calledNominatim = true;
+    const { p, key, cacheKey } = toFetch[i];
+    const geo = await reverseGeocode(p.lat, p.lng);
+    out.set(key, geo || null);
+    if (ctx) ctx.waitUntil(cacheGeoResult(cache, cacheKey, geo));
+  }
+
+  // 今回の予算では呼べなかった残りは、レスポンスを返した後にバックグラウンドで続ける
+  // （eventually complete。次に開いたときにはキャッシュ経由ですぐ出るようになる）。
+  const remaining = toFetch.slice(i);
+  if (ctx && remaining.length) {
+    ctx.waitUntil(resolveRemainingInBackground(cache, remaining));
+  }
+
+  return out;
+}
+
+// マイログの国・都道府県を旅行ごとに外す（exclude）／戻す（include）（2026-09-28〜）。
+// v23の「マイログから外す」（setMyLogPlaceOverride、アカウント全体）が、片方の旅行だけから
+// 外したいのに全部の旅行から消えてしまう不具合の直し方（docs/adr/0016）。
+async function setMyLogTripPlaceOverride(request, env, headers, ctx) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (
+    !["country", "prefecture"].includes(data.kind)
+    || !["exclude", "include"].includes(data.mode)
+    || !isStr(data.tripId, 100) || !data.tripId.trim()
+    || !isStr(data.name, 100) || !data.name.trim()
+  ) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(auth.email).first();
+  if (!account) return json({ error: "account_not_found" }, 404, headers);
+  // 指定されたtripIdが、本人が参加しているマイログ対象の旅行であることを確認する
+  const member = await env.DB.prepare("SELECT 1 AS x FROM trip_members WHERE account_id = ? AND trip_id = ?")
+    .bind(account.account_id, data.tripId).first();
+  if (!member) return json({ error: "not_found" }, 404, headers);
+  const name = data.kind === "country" ? canonicalCountry(data.name) : canonicalPrefecture(data.name);
+  try {
+    if (data.mode === "include") {
+      await env.DB.prepare("DELETE FROM mylog_trip_place_overrides WHERE account_id = ? AND trip_id = ? AND kind = ? AND name = ?")
+        .bind(account.account_id, data.tripId, data.kind, name).run();
+    } else {
+      await env.DB.prepare(
+        "INSERT INTO mylog_trip_place_overrides (account_id, trip_id, kind, name, created_at) VALUES (?,?,?,?,?) "
+        + "ON CONFLICT(account_id, trip_id, kind, name) DO UPDATE SET created_at = excluded.created_at"
+      ).bind(account.account_id, data.tripId, data.kind, name, nowIso()).run();
+    }
+  } catch {
+    return json({ error: "migration_required" }, 503, headers);
+  }
+  const { results: tripRows } = await env.DB.prepare(
+    "SELECT t.id AS id, t.title AS title FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
+  ).bind(account.account_id).all();
+  const titles = {};
+  tripRows.forEach((t) => { titles[t.id] = t.title; });
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles, ctx);
+  return json({ places }, 200, headers);
+}
+
+// マイログの国・都道府県を本人が外す（hide）／乗り継ぎと判定されたものを数える（show）／元に戻す（clear）
+// （v23・アカウント全体。2026-09-28〜：集計には反映されない。古いアプリのために残しているだけ。
+// 新しいアプリはPOST /mylog/trip-places（setMyLogTripPlaceOverride）を使う。docs/adr/0016）
+async function setMyLogPlaceOverride(request, env, headers, ctx) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  if (!["country", "prefecture"].includes(data.kind) || !["hide", "show", "clear"].includes(data.mode) || !isStr(data.name, 100) || !data.name.trim()) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(auth.email).first();
+  if (!account) return json({ error: "account_not_found" }, 404, headers);
+  const name = data.kind === "country" ? canonicalCountry(data.name) : canonicalPrefecture(data.name);
+  try {
+    if (data.mode === "clear") {
+      await env.DB.prepare("DELETE FROM mylog_place_overrides WHERE account_id = ? AND kind = ? AND name = ?")
+        .bind(account.account_id, data.kind, name).run();
+    } else {
+      await env.DB.prepare(
+        "INSERT INTO mylog_place_overrides (account_id, kind, name, mode, created_at) VALUES (?,?,?,?,?) ON CONFLICT(account_id, kind, name) DO UPDATE SET mode = excluded.mode, created_at = excluded.created_at"
+      ).bind(account.account_id, data.kind, name, data.mode, nowIso()).run();
+    }
+  } catch {
+    return json({ error: "migration_required" }, 503, headers);
+  }
+  const { results: tripRows } = await env.DB.prepare(
+    "SELECT t.id AS id, t.title AS title FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
+  ).bind(account.account_id).all();
+  const titles = {};
+  tripRows.forEach((t) => { titles[t.id] = t.title; });
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles, ctx);
+  return json({ places }, 200, headers);
 }
 
 /* ---------- 日ごとの天気（day_infos） ----------
@@ -1651,7 +1956,7 @@ function brouterToBody(coords, properties, from, to) {
   return { found: true, path: pts, distance: Math.round(trackKm * 1000) };
 }
 
-async function getRoute(url, headers, ctx) {
+async function getRoute(url, headers, ctx, env) {
   const profile = url.searchParams.get("profile") || "";
   const from = parseLatLng(url.searchParams.get("from"));
   const to = parseLatLng(url.searchParams.get("to"));
@@ -1661,52 +1966,85 @@ async function getRoute(url, headers, ctx) {
   const key = [profile, from.lat.toFixed(5), from.lng.toFixed(5), to.lat.toFixed(5), to.lng.toFixed(5)].join(",");
   const cache = caches.default;
   // v2：found:falseを30日キャッシュしていたv1を捨てる（2026-09-27。下のキャッシュ期間の説明を参照）
-  const cacheKey = new Request("https://tabilog-route.cache/v2?k=" + encodeURIComponent(key));
+  // v3：電車をGoogleの乗り換え案内で先に調べるようにした（2026-09-27）。v2に残った「遠回りしすぎ」を捨てる
+  // v4：googleReason（Googleが使えなかった理由）を返すようにした。v3に残った結果を捨てる
+  // v5：BRouterの別候補（alternativeidx 1〜3）も見るようにした。v4に残った「遠回りしすぎ」を捨てる
+  // v6：車・徒歩・自転車もOSRMがだめならGoogleで調べ直すようにした。v5に残った「見つからない」を捨てる
+  const cacheKey = new Request("https://tabilog-route.cache/v6?k=" + encodeURIComponent(key));
   const hit = await cache.match(cacheKey);
   if (hit) return json(await hit.json(), 200, headers);
 
   let body = { found: false };
   try {
-    if (isRail) {
-      let railStatus = 0;
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), RAIL_TIMEOUT_MS);
-      let data;
+    // 電車・新幹線・地下鉄は、まずGoogleの乗り換え案内（Routes API、TRANSIT）で実際の路線の道のりを取る
+    // （2026-09-27、オーナー承認）。BRouter（線路をつなぐだけで、どの路線に乗るかを知らない）は、
+    // 新大阪→USJ（直線9km）で新幹線の線路に吸い寄せられて約174kmの遠回りを返すなど、よく外れるため。
+    // キーが無い・Routes APIがキーで許可されていない・1日の上限（GCPのクォータ）を超えた・経路が無い
+    // ときは{ skip: 理由 }が返り、これまでどおりBRouter→（アプリ側で）やわらかい曲線に回る。
+    let google = !isRail ? null
+      : (isInJapan(from) && isInJapan(to)) ? { skip: "japan_not_supported" }
+      : await googleTransitRoute(env, from, to);
+    // 電車だけでは経路が無い（ドジャースタジアムのように駅が無い場所）ときは、バスも含めた乗り換え案内で
+    // 調べ直す（道路を走る区間があっても、公共交通の道のりとして線は実際の道に沿う。2026-09-27）
+    if (google && google.skip === "no_routes") {
+      const any = await googleRoute(env, from, to, "TRANSIT_ANY");
+      if (any.found) google = any;
+    }
+    if (google && google.found) {
+      body = google;
+    } else if (isRail) {
+      // 1本目の候補だけだと、新大阪のように新幹線と在来線が並ぶ駅で新幹線の線路に吸い寄せられ、
+      // 在来線につながらずに大回り（新大阪→USJで約174km）になることがある。BRouterの別の候補
+      // （alternativeidx 1〜3）も順に見て、遠回りしすぎでない最初のものを使う（2026-09-27）。
+      // どの候補もだめなら最後の理由（と何本目まで見たか）を返す。問い合わせは見つかった時点で止め、
+      // 結果は30日キャッシュするので、公開サーバーへの負担は1区間あたり多くても4回。
+      const reasons = [];
+      for (let idx = 0; idx < RAIL_ALTERNATIVES; idx++) {
+        const r = await fetchBrouterRail(from, to, idx);
+        const feature = r.data && Array.isArray(r.data.features) && r.data.features[0];
+        const coords = feature && feature.geometry && feature.geometry.coordinates;
+        const candidate = brouterToBody(coords, feature && feature.properties, from, to);
+        if (candidate.found) {
+          body = candidate;
+          if (idx > 0) body.alternative = idx;
+          break;
+        }
+        reasons.push(candidate.reason || (r.data ? "rail_no_track" : "brouter_http_" + r.status));
+        // 候補が無い（400など）なら、それ以上の番号の候補も無いので打ち切る
+        if (!r.data) break;
+      }
+      if (!body.found) body = { found: false, reason: reasons[reasons.length - 1], tried: reasons.length };
+      if (google && google.skip) body.googleReason = google.skip;
+    } else {
+      // 車・徒歩・自転車は、まず無料のOSRM（routing.openstreetmap.de）。混雑・失敗・見つからないときは
+      // Googleの道のり（Routes API、DRIVE/WALK/BICYCLE）で調べ直す。以前はOSRMが一度失敗すると、その区間は
+      // やわらかい曲線（ほぼ一直線）になり、「ドジャースタジアムへの行き帰りが一直線」のように街を突っ切って
+      // 見えていた（2026-09-27）。
+      let osrmStatus = 0;
       try {
         const res = await fetch(
-          "https://brouter.de/brouter?lonlats=" + from.lng + "," + from.lat + "|" + to.lng + "," + to.lat +
-            "&profile=rail&alternativeidx=0&format=geojson",
-          {
-            headers: {
-              "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;" +
-                " 電車の道のり検索でBRouterの公開サーバーを利用しています。1区間1回・結果は30日キャッシュします)",
-            },
-            signal: controller.signal,
-          }
+          "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
+            from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
+          { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
         );
-        // 混雑（429）・サーバー側の失敗（5xx）は一時的なので、キャッシュせずに502で返す（次に開いたときに
-        // 調べ直す）。以前は res.ok でなければ found:false として30日キャッシュしていたため、一度BRouterが
-        // 混んでいただけで、その区間は30日間ずっと車の道のり（クライアントの代わりの調べ直し）になっていた
-        // （「電車なのに動きが全部車っぽい」2026-09-27）。
-        if (res.status === 429 || res.status >= 500) throw new Error("brouter_" + res.status);
-        railStatus = res.status;
-        data = res.ok ? await res.json() : null;
-      } finally {
-        clearTimeout(timer);
+        osrmStatus = res.status;
+        const data = res.ok ? await res.json() : null;
+        const route = data && data.routes && data.routes[0];
+        body = osrmToBody(route);
+      } catch {
+        osrmStatus = -1;
+        body = { found: false };
       }
-      const feature = data && Array.isArray(data.features) && data.features[0];
-      const coords = feature && feature.geometry && feature.geometry.coordinates;
-      body = brouterToBody(coords, feature && feature.properties, from, to);
-      if (!body.found && !body.reason) body.reason = data ? "rail_no_track" : "brouter_http_" + railStatus;
-    } else {
-      const res = await fetch(
-        "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
-          from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
-        { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
-      );
-      const data = res.ok ? await res.json() : null;
-      const route = data && data.routes && data.routes[0];
-      body = osrmToBody(route);
+      if (!body.found) {
+        const g = await googleRoute(env, from, to, GOOGLE_TRAVEL_MODES[profile]);
+        if (g.found) {
+          body = g;
+        } else {
+          body = { found: false, reason: "osrm_" + (osrmStatus === -1 ? "fetch_failed" : osrmStatus), googleReason: g.skip };
+          // OSRMが一時的に失敗しただけ（通信失敗・429・5xx）なら、覚えずに502を返して次に開いたとき調べ直す
+          if (osrmStatus === -1 || osrmStatus === 429 || osrmStatus >= 500) throw new Error("osrm_" + osrmStatus);
+        }
+      }
     }
   } catch {
     return json({ error: "route_failed" }, 502, headers); // 一時的な失敗・タイムアウトはキャッシュしない
@@ -1720,6 +2058,147 @@ async function getRoute(url, headers, ctx) {
   return json(body, 200, headers);
 }
 const ROUTE_NOT_FOUND_CACHE_SECONDS = 60 * 60 * 6;
+const RAIL_ALTERNATIVES = 4;
+
+// BRouterのrailプロファイルで、alternativeidx番目の候補を取る。混雑（429）・サーバー側の失敗（5xx）・
+// タイムアウトは一時的なので例外にして、getRouteがキャッシュせずに502を返す。
+// 以前は res.ok でなければ found:false として30日キャッシュしていたため、一度BRouterが混んでいた
+// だけで、その区間は30日間ずっと車の道のりになっていた（「電車なのに動きが全部車っぽい」2026-09-27）。
+async function fetchBrouterRail(from, to, idx) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RAIL_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      "https://brouter.de/brouter?lonlats=" + from.lng + "," + from.lat + "|" + to.lng + "," + to.lat +
+        "&profile=rail&alternativeidx=" + idx + "&format=geojson",
+      {
+        headers: {
+          "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;" +
+            " 電車の道のり検索でBRouterの公開サーバーを利用しています。1区間あたり最大4回・結果は30日キャッシュします)",
+        },
+        signal: controller.signal,
+      }
+    );
+    if (res.status === 429 || res.status >= 500) throw new Error("brouter_" + res.status);
+    return { status: res.status, data: res.ok ? await res.json() : null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 日本の中か（おおまかな範囲）。Googleの乗り換え案内（Routes API）は日本の電車の経路を返さない
+// （本番で新大阪→USJが googleReason: no_routes、2026-09-27）ので、日本の区間ではGoogleを呼ばない。
+function isInJapan(p) {
+  return p.lat >= 24 && p.lat <= 46 && p.lng >= 122.5 && p.lng <= 154;
+}
+
+// Googleの乗り換え案内（Routes API computeRoutes、travelMode: TRANSIT）で、電車（RAIL＝電車・地下鉄・
+// 路面電車）だけを使う経路の線を取る。FieldMaskは線と距離だけ（課金はリクエスト単位）。
+// 乗り換え前後の徒歩も線に含まれる（駅までの数百mなので見た目には問題ない）。
+// 返すのは getRoute と同じ形（found・path・distance・source）か、使えなければ { skip: 理由 }
+// （理由は /route の googleReason に載せ、本番でなぜGoogleが使えなかったかを1行で確かめられるようにする）。
+const GOOGLE_TRANSIT_TIMEOUT_MS = 8000;
+function nextTransitProbeTime(now) {
+  const t = new Date(now || Date.now());
+  const probe = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), 3, 0, 0));
+  if (probe.getTime() < t.getTime() + 60 * 60 * 1000) probe.setUTCDate(probe.getUTCDate() + 1);
+  return probe.toISOString();
+}
+async function googleRoute(env, from, to, travelMode) {
+  if (!travelMode) return { skip: "no_mode" };
+  if (!env || !env.GOOGLE_API_KEY) return { skip: "no_key" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GOOGLE_TRANSIT_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
+      method: "POST",
+      headers: {
+        "X-Goog-Api-Key": env.GOOGLE_API_KEY,
+        "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.distanceMeters",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
+        destination: { location: { latLng: { latitude: to.lat, longitude: to.lng } } },
+        travelMode: travelMode === "TRANSIT_ANY" ? "TRANSIT" : travelMode,
+        ...(travelMode === "TRANSIT_ANY" ? { departureTime: nextTransitProbeTime() } : {}),
+        ...(travelMode === "TRANSIT" ? {
+          transitPreferences: { allowedTravelModes: ["RAIL"] },
+          // 出発時刻を省くと「今」になり、終電のあとに開くと経路が無くなる。電車の走っている昼
+          // （次の日本時間12:00＝UTC 03:00）で調べる。見たいのは線の形なので、時刻表の違いは問わない。
+          departureTime: nextTransitProbeTime(),
+        } : {}),
+        languageCode: "ja",
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      // 403（Routes APIがキーで許可されていない）・429（上限）など。Googleのエラーの種類だけ添える
+      let status = "";
+      try { const err = await res.json(); status = err && err.error && err.error.status ? "_" + err.error.status : ""; } catch { /* 本文なし */ }
+      return { skip: "http_" + res.status + status };
+    }
+    const data = await res.json();
+    const route = data && Array.isArray(data.routes) && data.routes[0];
+    const pts = route && route.polyline ? decodePolyline(route.polyline.encodedPolyline) : [];
+    if (pts.length < 2) return { skip: route ? "no_polyline" : "no_routes" };
+    const distanceM = Number(route.distanceMeters) || 0;
+    const straightKm = distanceKm(from, to);
+    // 乗り換え案内でも、直線距離の3倍を超える大回りは候補違いの疑いとして使わない（BRouterと同じ基準）
+    if (/^TRANSIT/.test(travelMode) && straightKm > 0 && distanceM / 1000 > straightKm * RAIL_MAX_DETOUR_RATIO) return { skip: "detour_too_long" };
+    const path = downsamplePoints(pts, ROUTE_MAX_POINTS)
+      .map((p) => [Math.round(p[0] * 1e5) / 1e5, Math.round(p[1] * 1e5) / 1e5]);
+    return { found: true, path, distance: Math.round(distanceM), source: "google_" + travelMode.toLowerCase() };
+  } catch {
+    return { skip: "fetch_failed" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function googleTransitRoute(env, from, to) {
+  return googleRoute(env, from, to, "TRANSIT");
+}
+const GOOGLE_TRAVEL_MODES = { car: "DRIVE", foot: "WALK", bike: "BICYCLE" };
+
+// 日本の近い電車の区間で、アプリが線路の上の最短経路を求めるための線路データ（OpenStreetMap、
+// Overpass API）を、Workerが代わりに取ってくる（2026-09-27）。54では端末から直接Overpassへ
+// POSTしていたが、iOSアプリ（CapacitorHttp経由の通信）で取れず、みなとみらい→新横浜が一直線の
+// ままだった疑いがあるため、ほかのAPIと同じ経路（Worker）にまとめる。計算（重い）はしないで、
+// Overpassの応答をそのまま流すだけ。範囲は大きすぎないもの（一辺0.8度＝約80kmまで）に限り、30日覚える。
+const RAIL_TRACKS_MAX_SPAN_DEG = 0.8;
+const OVERPASS_URLS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+async function getRailTracks(url, headers, ctx) {
+  const parts = String(url.searchParams.get("bbox") || "").split(",").map(Number);
+  const [south, west, north, east] = parts;
+  if (parts.length !== 4 || parts.some((v) => !Number.isFinite(v)) || south >= north || west >= east ||
+      north - south > RAIL_TRACKS_MAX_SPAN_DEG || east - west > RAIL_TRACKS_MAX_SPAN_DEG ||
+      south < -90 || north > 90 || west < -180 || east > 180) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const bbox = [south, west, north, east].map((v) => v.toFixed(4)).join(",");
+  const query = '[out:json][timeout:25];way["railway"~"^(rail|subway|light_rail|narrow_gauge|monorail)$"]' +
+    '["service"!~"^(yard|siding|spur)$"](' + bbox + ');(._;>;);out skel qt;';
+  const cache = caches.default;
+  const cacheKey = new Request("https://tabilog-rail-tracks.cache/v1?bbox=" + bbox);
+  const hit = await cache.match(cacheKey);
+  if (hit) return new Response(hit.body, { status: 200, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
+  for (const base of OVERPASS_URLS) {
+    try {
+      const res = await fetch(base + "?data=" + encodeURIComponent(query), {
+        headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/; 電車の道のりを線路の上で描くため。範囲ごとに30日キャッシュします)" },
+      });
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (text.indexOf('"elements"') < 0) continue;
+      ctx.waitUntil(cache.put(cacheKey, new Response(text, {
+        headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
+      })));
+      return new Response(text, { status: 200, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
+    } catch { /* 次のサーバーを試す */ }
+  }
+  return json({ error: "overpass_failed" }, 502, headers);
+}
 
 // near：「緯度,経度;緯度,経度」（同じ旅行の前後の場所）、hint：予定の見出し、
 // entry：呼び出し元の記録(entry)のid（Part A、2026-09-26〜）。付いていて、見つかった座標がある
@@ -2090,9 +2569,12 @@ function generateAccountId() {
   return String(100000 + (bytes[0] % 900000));
 }
 
-// 月間の音声入力の上限（docs/adr/0004）。free（無料）は月2回まで
-// （新規登録時にticket_creditsへ3回分のボーナスを付与するため、登録した最初の月だけ実質5回）。
-var PLAN_MONTHLY_LIMIT = { free: 2, basic: 10, premium_plus: 50 };
+// 月間の音声入力の上限（docs/adr/0004、docs/adr/0012の2026-09-28追記）。文字起こしを
+// Cloudflare Workers AIに切り替えたことでほぼ無料になった（整理（organizeTextIntoBlocks）は
+// 引き続きOpenAIを呼ぶため実費はゼロではない）ため、free（無料）を月2回→月10回に引き上げた
+// （新規登録時にticket_creditsへ3回分のボーナスを付与するため、登録した最初の月だけ実質13回）。
+// 有料プランがfreeを下回らないよう、basicも10→20に上げている（premium_plusは50のまま）。
+var PLAN_MONTHLY_LIMIT = { free: 10, basic: 20, premium_plus: 50 };
 // メモをAIで整理する回数（音声とは別の枠、2026-09-26〜）。メモは文字起こしが要らないぶん音声より安いので、
 // 無料でも月10回まで使えるようにした。有料プランは、以前（音声と共通の枠）より減らないようにしている。
 // 決まった形（「10:00 新宿」のような行）のメモは、AIを使わずアプリ側で分けるので回数を使わない。
@@ -2229,7 +2711,7 @@ async function deleteAccount(request, env, headers) {
   await deleteSocialForAccount(env, account.account_id);
   await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
   // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
-  // 「削除→再登録」を繰り返すだけで無料プランの月間上限(2回)が毎回復活してしまう
+  // 「削除→再登録」を繰り返すだけで無料プランの月間上限(月10回)が毎回復活してしまう
   // （新規登録特典の抜け道と同じ構図）。月が変わったときのリセットはresetPeriodIfNeeded()に
   // 任せる。
   await env.DB.prepare(
@@ -2469,6 +2951,28 @@ async function joinTrip(tripId, request, env, headers) {
   return json({ members: results.map(rowToMember), accountId }, 200, headers);
 }
 
+// 「参加済み」を押して参加をやめる（2026-09-27）。trip_membersの自分の1件だけを消す。
+// 旅行や自分が書いた記録は消さない。本人確認は参加するときと同じ（resolveEmail）
+async function leaveTrip(tripId, request, env, headers) {
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isValidEmailFormat(data.email)) return json({ error: "invalid_email" }, 400, headers);
+  const auth = await resolveEmail(request, env, data.email);
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(auth.email).first();
+  if (account) {
+    await env.DB.prepare("DELETE FROM trip_members WHERE trip_id = ? AND account_id = ?").bind(tripId, account.account_id).run();
+  }
+  const { results } = await env.DB.prepare("SELECT * FROM trip_members WHERE trip_id = ?").bind(tripId).all();
+  return json({ members: results.map(rowToMember) }, 200, headers);
+}
+
 /* ---------- 音声からの記録作成（このアプリで唯一AIを呼び出す機能） ----------
  * その日にあったことをまとめて話した音声（＋任意でURL・店名の雑多なメモ）を
  * OpenAIに渡し、話した順番どおりに複数のBlock（予定）・Entry（記録）へ分割して
@@ -2482,8 +2986,8 @@ const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions
 const MAX_VOICE_AUDIO_BYTES = 15 * 1024 * 1024; // 数分の音声を想定した上限
 const VOICE_AUDIO_FORMATS = { "audio/webm": "webm", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/ogg": "ogg" };
 
-// Cloudflare Workers AIへの切り替えを検討するための試作（docs/adr/0012）で使うモデルID。
-// 本番の処理はまだ一切これらを使わない（/ai-compareでの比較専用）。
+// Cloudflare Workers AIのモデルID。Whisper（文字起こし）は2026-09-28に本番採用した
+// （docs/adr/0012の試作から昇格）。LLM2モデルは引き続き/ai-compareでの比較専用（本番未採用）。
 const WORKERS_AI_WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
 const WORKERS_AI_LLM_MODELS = {
   qwen3_30b: "@cf/qwen/qwen3-30b-a3b-fp8",
@@ -2493,6 +2997,14 @@ const WORKERS_AI_LLM_MODELS = {
 // 使っているモデルは音声を直接聞く方式（audio input）に対応していなかったため、
 // 先にWhisper（音声認識専用API）で文字起こしし、そのテキストを元に予定・記録へ
 // 分割する2段階にしている。文字起こし自体もその日のDayInfoに保存する。
+// OpenAIの残高切れ・利用上限（429 insufficient_quota など）かどうか。混雑（429 rate_limit）とは分けて、
+// アプリに「AIの利用枠がいっぱい」と出す（2026-09-27。残高がマイナスで「混み合っている」と出て分かりにくかった）
+function isOpenAiQuotaError(status, body) {
+  if (status === 402) return true;
+  return status === 429 && /insufficient_quota|billing|exceeded your current quota/i.test(body || "");
+}
+const AI_QUOTA_EXHAUSTED = { quotaExhausted: true };
+
 async function transcribeAudio(env, buf, contentType, format) {
   const form = new FormData();
   form.append("file", new Blob([buf], { type: contentType }), "audio." + format);
@@ -2506,20 +3018,43 @@ async function transcribeAudio(env, buf, contentType, format) {
   if (!res.ok) {
     const errorBody = await res.text().catch(() => "");
     console.error(JSON.stringify({ event: "openai_transcribe_error", status: res.status, body: errorBody.slice(0, 500) }));
-    return null;
+    return isOpenAiQuotaError(res.status, errorBody) ? AI_QUOTA_EXHAUSTED : null;
   }
   const data = await res.json();
   return typeof data.text === "string" ? data.text.trim() : null;
 }
 
-// /ai-compare専用。OpenAIのtranscribeAudioと同じ入力から、Workers AIのWhisperで
-// 文字起こしを試す（本番の処理からは呼ばない）。audioは音声ファイルそのもののバイト列を
-// 数値の配列にして渡す（Workers AIの音声認識モデルの入力形式）。
+// OpenAIのtranscribeAudioと同じ入力から、Workers AIのWhisperで文字起こしを試す。
+// audioはWorkers AIの公式スキーマ
+// （https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/）どおり、
+// base64エンコードした文字列で渡す（数値の配列ではない。以前はバイト列の配列を渡しており、
+// 期待される入力形式と合っていなかった。2026-09-27に確認して修正）。
+// 2026-09-28から本番（transcribeAudioForProduction）でも使う。/ai-compareのmode=voiceも
+// 引き続きこの関数で比較する。
 async function transcribeAudioWithWorkersAi(env, buf) {
-  const audio = [...new Uint8Array(buf)];
+  const audio = arrayBufferToBase64(buf);
   const result = await env.AI.run(WORKERS_AI_WHISPER_MODEL, { audio, language: "ja" });
   const text = result && typeof result.text === "string" ? result.text : (typeof result === "string" ? result : "");
   return text.trim();
+}
+
+// 本番の音声文字起こしはここを呼ぶ（createBlocksFromVoice／createBlocksFromVoiceMultiDay）。
+// まずCloudflare Workers AIを試し、失敗（例外）・空文字だったときだけ今までどおり
+// OpenAI（Whisper）にフォールバックする（docs/adr/0012の2026-09-28追記）。
+// Workers AI呼び出し自体の失敗はAI_QUOTA_EXHAUSTED相当ではない（OpenAIの残高とは無関係）ため、
+// ここでは握りつぶしてOpenAIに回すだけで、利用者には見せない。
+// 「使える文字起こしか」の判定（isUsableTranscript）だけを純粋関数に切り出してテストしている
+// （worker/test/transcribe-provider.test.mjs）。
+async function transcribeAudioForProduction(env, buf, contentType, format) {
+  if (env.AI) {
+    try {
+      const workersAiText = await transcribeAudioWithWorkersAi(env, buf);
+      if (isUsableTranscript(workersAiText)) return workersAiText;
+    } catch (e) {
+      console.error(JSON.stringify({ event: "workers_ai_transcribe_error", message: String((e && e.message) || e).slice(0, 300) }));
+    }
+  }
+  return transcribeAudio(env, buf, contentType, format);
 }
 
 function outputText(response) {
@@ -2705,102 +3240,113 @@ async function consumeVoiceQuota(env, email, via, kind) {
 // 判定させる）に切り替わる（DAY30〜、渡さなければ今までどおり1日固定のまま）。
 async function organizeTextIntoBlocks(env, text, notes, dates) {
   const multiDay = Array.isArray(dates) && dates.length > 1;
-  const upstream = await fetch(OPENAI_RESPONSES_URL, {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      model: env.OPENAI_MODEL || "gpt-5.6-sol",
-      input: multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes),
-      reasoning: { effort: "medium" },
-      // 複数日モードは1回のレスポンスに何日ぶんものBlock/Entryが収まるため、1日固定より
-      // ずっと大きな出力になる（reasoningトークンもこの上限を共有する）。3000では
-      // 5日分程度の入力で出力が尻切れになりJSON.parseに失敗することが実際にあったため、
-      // 十分な余裕を持たせている（DAY30、実機での不具合報告を受けて調整）。
-      max_output_tokens: multiDay ? 12000 : 2000,
-      store: false,
-      text: {
-        format: {
-          type: "json_schema", name: multiDay ? "voice_blocks_multi_day" : "voice_blocks", strict: true,
-          schema: multiDay ? multiDayBlocksSchema() : voiceBlocksSchema(),
+  // 出力の上限（考える分＝reasoningトークンもこの中に含まれる）。1日分は以前2000で、長めのメモだと
+  // 考える分で使い切って出力が途中で切れ、「うまく処理できませんでした」になっていた（2026-09-27）。
+  // 切れたときは考える量を減らして（effort: low）もう一度だけ頼む
+  const attempt = async (effort) => {
+    const upstream = await fetch(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-5.6-sol",
+        input: multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes),
+        reasoning: { effort },
+        // 複数日モードは1回のレスポンスに何日ぶんものBlock/Entryが収まるため、ずっと大きな出力になる
+        // （DAY30、5日分程度で尻切れになったことがあり12000に上げた。さらに余裕を持たせる）
+        max_output_tokens: multiDay ? 16000 : 8000,
+        store: false,
+        text: {
+          format: {
+            type: "json_schema", name: multiDay ? "voice_blocks_multi_day" : "voice_blocks", strict: true,
+            schema: multiDay ? multiDayBlocksSchema() : voiceBlocksSchema(),
+          },
         },
-      },
-    }),
-  });
-  if (!upstream.ok) {
-    const errorBody = await upstream.text().catch(() => "");
-    console.error(JSON.stringify({ event: "openai_error", status: upstream.status, body: errorBody.slice(0, 500) }));
-    return { error: "upstream_error" };
+      }),
+    });
+    if (!upstream.ok) {
+      const errorBody = await upstream.text().catch(() => "");
+      console.error(JSON.stringify({ event: "openai_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+      if (isOpenAiQuotaError(upstream.status, errorBody)) return { error: "ai_quota_exhausted" };
+      return { error: "upstream_error", status: upstream.status };
+    }
+    const response = await upstream.json();
+    let parsed;
+    try { parsed = JSON.parse(outputText(response)); }
+    catch {
+      const incompleteReason = response.incomplete_details && response.incomplete_details.reason;
+      console.error(JSON.stringify({
+        event: "voice_blocks_parse_error", multiDay, effort, status: response.status, incompleteReason,
+        outputTextLength: outputText(response).length,
+      }));
+      return { error: "invalid_model_output", incomplete: response.status === "incomplete" || !!incompleteReason };
+    }
+    if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
+    return { blocks: parsed.blocks };
+  };
+  const first = await attempt("medium");
+  if (first.error === "invalid_model_output" && first.incomplete) {
+    const retry = await attempt("low");
+    if (!retry.error) return retry;
+    return { error: retry.error === "invalid_model_output" ? "output_too_long" : retry.error };
   }
-  const response = await upstream.json();
-  let parsed;
-  try { parsed = JSON.parse(outputText(response)); }
-  catch {
-    console.error(JSON.stringify({
-      event: "voice_blocks_parse_error", multiDay, status: response.status,
-      incompleteReason: response.incomplete_details && response.incomplete_details.reason,
-      outputTextLength: outputText(response).length,
-    }));
-    return { error: "invalid_model_output" };
-  }
-  if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
-  return { blocks: parsed.blocks };
+  if (first.error === "upstream_error") return { error: "upstream_error" };
+  if (first.error === "ai_quota_exhausted") return first;
+  return first;
 }
 
 // /ai-compare専用。organizeTextIntoBlocksと同じプロンプト・スキーマ（voicePrompt/
 // multiDayPrompt・voiceBlocksSchema/multiDayBlocksSchema）を使い、OpenAIの代わりに
 // Workers AIのLLMで試す（本番の処理からは呼ばない）。モデルによってresponse_format
-// （json_schemaでの構造化出力）の対応状況が違う可能性があるため、まずresponse_format
-// 付きで呼び、レスポンスのJSONパースに失敗した場合は「JSON以外を返さないこと」という
-// 指示を足したプロンプトだけで再試行する（それでも失敗したらエラーを返すだけで、
+// （json_schemaでの構造化出力）の対応状況・レスポンスの形（response/choices/output等）が
+// 違うため、実際の出力の読み取りはai-parse.jsの純粋関数（parseWorkersAiOutput）に任せる。
+// まずresponse_format付きで呼び、JSONとして読めなかった場合は「JSON以外を返さないこと」
+// という指示を足したプロンプトだけで再試行する（それでも失敗したらエラーを返すだけで、
 // 本番のデータには一切触れない）。
+//
+// max_tokensは以前2000（1日分）だったが、gpt-oss-120b・qwen3-30bは「考える」ぶんの
+// トークンもこの上限に含まれるため、2000では考えている途中でJSONが切れて
+// invalid_model_outputになっていた（2026-09-27に実機で確認）。OpenAI側
+// （organizeTextIntoBlocksのmax_output_tokens）と同程度まで引き上げた。
 async function organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates) {
   const multiDay = Array.isArray(dates) && dates.length > 1;
   const schema = multiDay ? multiDayBlocksSchema() : voiceBlocksSchema();
   const schemaName = multiDay ? "voice_blocks_multi_day" : "voice_blocks";
   const basePrompt = multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes);
-
-  function parseModelOutput(raw) {
-    if (raw == null) return null;
-    if (typeof raw === "object" && !Array.isArray(raw)) return raw; // すでにJSONとして返るモデルもある
-    const s = String(raw).trim();
-    // ```json ... ``` のようなコードブロックで返してくるモデルにも備える
-    const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenced ? fenced[1].trim() : s;
-    try { return JSON.parse(candidate); } catch { return null; }
-  }
+  const maxTokens = multiDay ? 16000 : 6000;
+  const jsonOnlyPrompt = basePrompt
+    + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）や<think>のような思考過程を付けないこと。";
 
   async function callOnce(prompt, withResponseFormat) {
     const input = {
       messages: [{ role: "user", content: prompt }],
-      max_tokens: multiDay ? 12000 : 2000,
+      max_tokens: maxTokens,
     };
     if (withResponseFormat) {
       input.response_format = { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } };
     }
     const result = await env.AI.run(model, input);
-    const raw = result && (result.response ?? result);
-    return parseModelOutput(raw);
+    return { result, parsed: parseWorkersAiOutput(result) };
   }
 
-  let parsed;
+  // response_format自体に対応していないモデルだと呼び出しが例外になることがあるため、
+  // その場合はattemptをnullのままにして、下のJSON専用プロンプトでの再試行に進む
+  let attempt = null;
   try {
-    parsed = await callOnce(basePrompt, true);
-  } catch (e) {
-    // response_format自体に対応していないモデルの可能性があるため、指示だけの
-    // プロンプトで1回だけ再試行する
+    attempt = await callOnce(basePrompt, true);
+  } catch { /* 下の再試行に進む */ }
+
+  if (!attempt || !attempt.parsed) {
     try {
-      const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
-      parsed = await callOnce(jsonOnlyPrompt, false);
+      attempt = await callOnce(jsonOnlyPrompt, false);
     } catch (e2) {
-      return { error: "workers_ai_error", detail: String((e2 && e2.message) || e2).slice(0, 300) };
+      return { error: "workers_ai_error", debug: { rawSnippet: String((e2 && e2.message) || e2).slice(0, 800), shape: [] } };
     }
   }
-  if (!parsed) {
-    const jsonOnlyPrompt = basePrompt + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）を付けないこと。";
-    try { parsed = await callOnce(jsonOnlyPrompt, false); } catch { /* 下のinvalid_model_outputに落ちる */ }
+
+  if (!attempt.parsed || !Array.isArray(attempt.parsed.blocks)) {
+    return { error: "invalid_model_output", debug: describeWorkersAiOutputForDebug(attempt.result) };
   }
-  if (!parsed || !Array.isArray(parsed.blocks)) return { error: "invalid_model_output" };
-  return { blocks: parsed.blocks };
+  return { blocks: attempt.parsed.blocks };
 }
 
 // organizeTextIntoBlocksが返したBlock配列を、実際にDBへ保存する（Block本体とその記録の両方）。
@@ -2823,16 +3369,39 @@ async function saveOrganizedBlocks(env, tripId, dateOrDates, blocksData, author)
     if (!date) continue;
     const category = CATEGORIES.includes(b.category) ? b.category : "sightseeing";
     const time = isStr(b.time, 5) && TIME_RE.test(b.time) ? b.time : "";
+    // transport（DAY32〜、自分のAIで整理JSON貼り付け）：voiceBlocksSchemaはOpenAIには
+    // 求めていない項目だが、ユーザーが自分のAIに整理させたJSON（Core.parseImportedBlocksJson）
+    // にはtransportが入ってくることがあるため、ここで受けて保存する（不正な値は空扱い）。
+    const transport = typeof b.transport === "string" && TRANSPORTS.includes(b.transport) ? b.transport : "";
     const t = new Date(baseTime + i * 10).toISOString(); // 話した順番で安定して並ぶよう少しずつずらす
 
-    const blockRow = { id: uid("blk"), trip_id: tripId, date, time, label, category, created_at: t, updated_at: t };
+    const blockRow = { id: uid("blk"), trip_id: tripId, date, time, label, category, transport, created_at: t, updated_at: t };
     const entryData = (b.entry && typeof b.entry === "object") ? b.entry : {};
     const episode = isStr(entryData.episode, 4000) ? entryData.episode.trim() : "";
     const mapUrl = optUrl(entryData.mapUrl, 500) ? (entryData.mapUrl || "") : "";
     const shopUrl = optUrl(entryData.shopUrl, 500) ? (entryData.shopUrl || "") : "";
+    // costItems（DAY32〜、自分のAIで整理JSON貼り付け）：手入力の費用（validCostItems）と違い
+    // rate（外貨レート）までは自分のAIに求めないため、rate無しでもcurrency付きの行を受け付ける
+    // （円換算はcostItemJpyがrate未設定時は0扱いにするだけで、金額そのものは失われない）。
+    // rateは任意項目。クライアント側（confirmImportJsonBlocks）が/ratesから自動取得して
+    // 付けてくることがあるため、付いていればvalidCostItemsと同じ範囲（0<rate<1000000）で
+    // 検証して保存する（取得に失敗した行はrate無しのまま届く＝上と同じ0円扱い）。
+    const costItems = Array.isArray(entryData.costItems)
+      ? entryData.costItems
+          .filter((c) => c && isStr(c.label, 60) && Number.isFinite(c.amount) && c.amount >= 0 && c.amount <= 1000000)
+          .slice(0, 30)
+          .map((c) => {
+            const item = { label: c.label.trim(), amount: c.amount };
+            if (isValidCurrency(c.currency)) {
+              item.currency = c.currency;
+              if (Number.isFinite(c.rate) && c.rate > 0 && c.rate < 1000000) item.rate = c.rate;
+            }
+            return item;
+          })
+      : [];
     const entryRow = {
       id: uid("ent"), block_id: blockRow.id, episode, comment: "", detail: "",
-      photo_ids: "[]", video_ids: "[]", cost_items: "[]", wait_time: "",
+      photo_ids: "[]", video_ids: "[]", cost_items: JSON.stringify(costItems), wait_time: "",
       map_url: mapUrl, shop_url: shopUrl, author, created_at: t, updated_at: t,
     };
     // Block本体とその記録（entry）を1つのバッチ（D1のトランザクション）にまとめる。
@@ -2841,8 +3410,8 @@ async function saveOrganizedBlocks(env, tripId, dateOrDates, blocksData, author)
     // （2026-09-15、実際にこの状態で複数件の記録が失われる事故があった）。
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
-      ).bind(blockRow.id, blockRow.trip_id, blockRow.date, blockRow.time, blockRow.label, blockRow.category, blockRow.created_at, blockRow.updated_at),
+        "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+      ).bind(blockRow.id, blockRow.trip_id, blockRow.date, blockRow.time, blockRow.label, blockRow.category, blockRow.transport, blockRow.created_at, blockRow.updated_at),
       env.DB.prepare(
         `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
@@ -2887,7 +3456,8 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
   }
 
-  const transcript = await transcribeAudio(env, buf, contentType, format);
+  const transcript = await transcribeAudioForProduction(env, buf, contentType, format);
+  if (transcript && transcript.quotaExhausted) return json({ error: "ai_quota_exhausted" }, 503, headers);
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
 
@@ -3004,7 +3574,8 @@ async function createBlocksFromVoiceMultiDay(tripId, request, env, headers) {
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
   }
 
-  const transcript = await transcribeAudio(env, buf, contentType, format);
+  const transcript = await transcribeAudioForProduction(env, buf, contentType, format);
+  if (transcript && transcript.quotaExhausted) return json({ error: "ai_quota_exhausted" }, 503, headers);
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
 
@@ -3094,7 +3665,9 @@ async function aiCompareMemo(request, env, headers) {
       try {
         const r = await organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates);
         const ms = Date.now() - t0;
-        if (r.error) workersAi[key] = { result: null, ms, error: r.error };
+        // debugは/ai-compareのレスポンスにだけ載せる診断用の抜粋（利用者データではなく、
+        // モデルが返した生の出力の形・先頭部分のみ）。docs/adr/0012参照
+        if (r.error) workersAi[key] = { result: null, ms, error: r.error, ...(r.debug ? { debug: r.debug } : {}) };
         else workersAi[key] = { result: r, ms };
       } catch (e) {
         workersAi[key] = { result: null, ms: Date.now() - t0, error: String((e && e.message) || e).slice(0, 300) };
@@ -3253,9 +3826,10 @@ async function scanReceipt(request, env, headers) {
 
   const base64 = arrayBufferToBase64(buf);
 
-  // Visionが使えるときはこちらを先に試す。回数の枠（checkVoiceQuota）を使わないため、
-  // 無料プランでもレシート読み取りが使えるようになる。失敗したときだけOpenAIに回す
-  // （そのときは今までどおり音声入力と共通の枠を使う）。
+  // Visionが使えるときはこちらを先に試す。失敗したときだけOpenAIに回す。
+  // レシート読み取りは、どちらで読んでも無料（回数の枠を使わない。2026-09-27、オーナーの方針）。
+  // 以前はOpenAIに回したときだけ音声入力と共通の枠を使い、枠が無いと読み取れなかった。
+  // 使いすぎは、上のAI_RATE_LIMITER（同じ接続元から1分あたりの回数）で抑える
   if (env.GOOGLE_API_KEY) {
     const visionItems = await scanReceiptWithVision(base64, env);
     if (visionItems) return json({ items: visionItems }, 200, headers);
@@ -3263,10 +3837,7 @@ async function scanReceipt(request, env, headers) {
 
   if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
 
-  // プラン・回数券の確認（音声入力・テキストメモと同じ枠。docs/adr/0004）
-  const quota = await checkVoiceQuota(env, email);
-  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
-
+  void email;
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -3290,6 +3861,7 @@ async function scanReceipt(request, env, headers) {
   if (!upstream.ok) {
     const errorBody = await upstream.text().catch(() => "");
     console.error(JSON.stringify({ event: "openai_receipt_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+    if (isOpenAiQuotaError(upstream.status, errorBody)) return json({ error: "ai_quota_exhausted" }, 503, headers);
     return json({ error: "upstream_error" }, 502, headers);
   }
   const response = await upstream.json();
@@ -3301,7 +3873,6 @@ async function scanReceipt(request, env, headers) {
   }
   if (!parsed || !Array.isArray(parsed.items)) return json({ error: "invalid_model_output" }, 502, headers);
 
-  await consumeVoiceQuota(env, quota.email, quota.via);
   return json({ items: parsed.items }, 200, headers);
 }
 
@@ -3761,7 +4332,8 @@ export default {
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"), url.searchParams.get("entry"), env);
-    if (method === "GET" && path === "/route") return getRoute(url, headers, ctx);
+    if (method === "GET" && path === "/route") return getRoute(url, headers, ctx, env);
+    if (method === "GET" && path === "/rail-tracks") return getRailTracks(url, headers, ctx);
     if (method === "GET" && path === "/timezone") return getTimezone(url, headers, ctx);
     if (method === "GET" && path === "/rates") return getRates(url, headers, ctx);
     if (method === "GET" && path === "/places/search") {
@@ -3770,10 +4342,12 @@ export default {
     if (method === "GET" && path === "/places/details") {
       return placeDetails(url.searchParams.get("id"), url.searchParams.get("session"), env, headers);
     }
+    if (method === "POST" && path === "/mylog/places") return setMyLogPlaceOverride(request, env, headers, ctx);
+    if (method === "POST" && path === "/mylog/trip-places") return setMyLogTripPlaceOverride(request, env, headers, ctx);
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
       if (auth.error) return json({ error: auth.error }, auth.status, headers);
-      return getMyLog(auth.email, env, headers);
+      return getMyLog(auth.email, env, headers, ctx);
     }
 
     if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return setDayPlace(m[1], m[2], request, env, headers);
@@ -3788,6 +4362,7 @@ export default {
     if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
     if (method === "POST" && path === "/accounts/delete") return deleteAccount(request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/leave$/))) return leaveTrip(m[1], request, env, headers);
 
     if (method === "POST" && path === "/billing/checkout") return createCheckoutSession(request, env, headers);
     if (method === "POST" && path === "/billing/portal") return createPortalSession(request, env, headers);
