@@ -2712,6 +2712,20 @@
   function $(sel, root2) { return (root2 || document).querySelector(sel); }
   function $all(sel, root2) { return Array.prototype.slice.call((root2 || document).querySelectorAll(sel)); }
 
+  // 通信待ちの間、空欄や「読み込み中…」の文字だけより、それらしい形のカードがぼんやり光っている
+  // 方がAirbnbアプリのように「今読み込み中」と伝わりやすいので、シマー（光が流れる）スケルトンを出す
+  // （マイログ・「行ったことある旅先」の初回読み込みで使う。2026-09-29〜。prefers-reduced-motionでは
+  // CSS側でアニメーションを止め、ただの薄い塗りのまま出す）。
+  function skeletonCardsHtml(n) {
+    var card = '<div class="skeleton-card" aria-hidden="true">' +
+      '<div class="skeleton-line skeleton-line-title"></div>' +
+      '<div class="skeleton-line skeleton-line-sub"></div>' +
+      '</div>';
+    var out = '';
+    for (var i = 0; i < (n || 3); i++) out += card;
+    return '<div class="skeleton-wrap">' + out + '</div>';
+  }
+
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -2726,8 +2740,22 @@
   var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1 };
   function showScreen(name) {
     var leaving = $('.screen.active');
-    if (leaving && leaving.dataset.screen !== name) screenScroll[leaving.dataset.screen] = window.scrollY;
-    $all('.screen').forEach(function (s) { s.classList.toggle('active', s.dataset.screen === name); });
+    var leavingName = leaving && leaving.dataset.screen;
+    if (leaving && leavingName !== name) screenScroll[leavingName] = window.scrollY;
+    // タブバーの4画面同士を行き来するとき（例：マイログ→旅先一覧）だけクロスフェードを付ける。
+    // 旅の詳細を開く／閉じる等、タブ以外に出入りする遷移では今までどおり一瞬で切り替える
+    // （地図の再描画などが多い画面でアニメーションと被って重く見えないように）。
+    var isTabSwitch = !!TABBAR_SCREENS[name] && !!leavingName && !!TABBAR_SCREENS[leavingName] && leavingName !== name;
+    $all('.screen').forEach(function (s) {
+      var entering = s.dataset.screen === name;
+      s.classList.toggle('active', entering);
+      s.classList.remove('tab-switch-in');
+      if (entering && isTabSwitch) {
+        // 直前のフレームでクラスを外しているので、再度付けたときにアニメーションが必ず最初から走る
+        void s.offsetWidth;
+        s.classList.add('tab-switch-in');
+      }
+    });
     var y = SCROLL_RESTORE_SCREENS[name] ? (screenScroll[name] || 0) : 0;
     window.scrollTo(0, y);
     // 呼び出し元がこのあと画面を描き直すので、描き終わった後にもう一度合わせる
@@ -6819,7 +6847,8 @@
     var user = loadCurrentUser();
     if (!user) { openLogin('mylog'); return; }
     showScreen('mylog');
-    $('#mylogList').innerHTML = '<div class="empty">読み込み中…</div>';
+    $('#mylogTripList').innerHTML = skeletonCardsHtml(2);
+    $('#mylogList').innerHTML = skeletonCardsHtml(3);
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogItems = data.items || [];
       state.myLogTrips = data.trips || [];
@@ -7247,7 +7276,7 @@
     var user = loadCurrentUser();
     if (!user) { openLogin('visited'); return; }
     showScreen('visited');
-    $('#visitedPanel').innerHTML = '<div class="empty">読み込み中…</div>';
+    $('#visitedPanel').innerHTML = skeletonCardsHtml(4);
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [], details: { prefectures: [], countries: [] } };
       renderVisitedPlaces();
