@@ -7057,8 +7057,13 @@
         '<button type="button" class="trip-place-action" data-trip="' + escapeHtml(t.tripId) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
         '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? '戻す' : '外す') + '</button></span>';
     };
-    var chips = (t.prefectures || []).map(function (x) { return chip('prefecture', x); })
-      .concat((t.countries || []).map(function (x) { return chip('country', x); })).join('');
+    var items = (t.prefectures || []).map(function (x) { return { kind: 'prefecture', x: x }; })
+      .concat((t.countries || []).map(function (x) { return { kind: 'country', x: x }; }));
+    // 外した場所（is-excluded）は目立たなくしたいので、一覧の最後に回す（戻すまでは埋もれて見えて
+    // よい。2026-09-29〜。並び替えは表示だけで、外す・戻す自体の対象は変えない）。
+    var kept = items.filter(function (i) { return !i.x.excluded; });
+    var excluded = items.filter(function (i) { return i.x.excluded; });
+    var chips = kept.concat(excluded).map(function (i) { return chip(i.kind, i.x); }).join('');
     return chips ? '<div class="trip-place-chips">' + chips + '</div>' : '';
   }
 
