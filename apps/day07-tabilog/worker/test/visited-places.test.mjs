@@ -3,7 +3,7 @@
  * 実行: node worker/test/visited-places.test.mjs
  */
 import assert from "node:assert/strict";
-import { canonicalCountry, canonicalPrefecture, isTransitBlock, aggregateVisitedPlaces } from "../src/visited-places.js";
+import { canonicalCountry, canonicalPrefecture, isTransitBlock, aggregateVisitedPlaces, haversineKm, filterFallbackDayRows } from "../src/visited-places.js";
 
 let pass = 0, fail = 0;
 function check(label, got, want) {
@@ -95,6 +95,58 @@ check("戻すと外す前と同じ結果になる", restored.countries, r.countr
 // 地図の無い日（場所だけ）は数える
 const r3 = aggregateVisitedPlaces({ days: [{ tripId: "t2", date: "2026-02-09", admin1: "", country: "カナダ", lat: 49, lon: -123 }], blocks: [], trips });
 check("予定の無い日は数える", r3.countries, ["カナダ"]);
+
+// 記録の地図の座標から直接入れた場所（mapVisits）：transitはisTransitDayの当てずっぽうを介さず、
+// 呼び出し側が確定させて渡す（2026-09-28〜）
+const rMap = aggregateVisitedPlaces({
+  days: [
+    { tripId: "t3", date: "2026-03-01", admin1: "大阪府", country: "日本", lat: 34.6656, lon: 135.4325, transit: false },
+    { tripId: "t3", date: "2026-03-01", admin1: "兵庫県", country: "日本", lat: 34.8, lon: 135.2, transit: false },
+    { tripId: "t3", date: "2026-03-02", admin1: "千葉県", country: "日本", lat: 35.77, lon: 140.39, transit: true }, // 空港を経由しただけ
+  ],
+  blocks: [],
+  trips: { t3: "大阪旅行" },
+});
+check("mapVisitsは1日に複数の場所を持てる", rMap.prefectures, ["大阪府", "兵庫県"]);
+check("mapVisitsのtransit:trueはブロック照合なしでも乗り継ぎ扱いになり、総計には出ない", rMap.prefectures.includes("千葉県"), false);
+check("ただしdetailsにはtransitとして残る", rMap.details.prefectures.find((p) => p.name === "千葉県").status, "transit");
+
+// haversineKm：おおよその実距離で確認（新大阪〜東京駅は直線で約400km、大阪〜オーランドは1万km超）
+check("新大阪〜東京は概ね400km前後", Math.round(haversineKm({ lat: 34.7335, lng: 135.5003 }, { lat: 35.6812, lng: 139.7671 }) / 50) * 50, 400);
+check("大阪〜オーランドは1000kmよりずっと遠い", haversineKm({ lat: 34.6656, lng: 135.4325 }, { lat: 28.4744, lng: -81.4683 }) > 1000, true);
+check("同じ地点は0km", haversineKm({ lat: 35, lng: 135 }, { lat: 35, lng: 135 }), 0);
+
+// filterFallbackDayRows：day_infos（1日1か所の古い仕組み）は、mapVisitsが無い日の補完としてだけ使う
+// （オーナー報告：大阪旅行の2026-09-19のday_infos行が、過去の誤った自動配置でフロリダの座標になっていた）
+const dayRowsOsakaTrip = [
+  // 2026-09-19：day_infosは間違ってフロリダ（ユニバーサル・オーランド）を指しているが、
+  // 同じ日にmapVisits（実際のUSJ・大阪）があるので、この行はまるごと無視されるべき
+  { tripId: "trip1", date: "2026-09-19", admin1: "", country: "アメリカ", lat: 28.4744, lon: -81.4683 },
+  // 2026-09-20・21：甲子園（実在の座標だが、admin1/countryが空＝reverse-geocodeされていない）
+  { tripId: "trip1", date: "2026-09-20", admin1: "", country: "", lat: 34.70894, lon: 135.34692 },
+  { tripId: "trip1", date: "2026-09-21", admin1: "", country: "", lat: 34.70894, lon: 135.34692 },
+  // 2026-09-22：mapVisitsの無い日で、admin1/countryが入っている・大阪から近い→残す
+  { tripId: "trip1", date: "2026-09-22", admin1: "兵庫県", country: "日本", lat: 34.8, lon: 135.2 },
+  // 2026-09-23：mapVisitsの無い日だが、旅行のどの地図点からも1000km以上離れている→無視する
+  { tripId: "trip1", date: "2026-09-23", admin1: "", country: "アメリカ", lat: 40.7, lon: -74.0 },
+];
+const mapVisitsOsakaTrip = [
+  { tripId: "trip1", date: "2026-09-19", lat: 34.6656, lng: 135.4325 }, // USJ
+  { tripId: "trip1", date: "2026-09-19", lat: 34.7335, lng: 135.5003 }, // 新大阪
+];
+const filtered = filterFallbackDayRows(dayRowsOsakaTrip, mapVisitsOsakaTrip);
+check("mapVisitsで既に分かっている日のday_infos行（フロリダの誤り）は無視される", filtered.some((d) => d.date === "2026-09-19"), false);
+check("admin1・countryが空の行は無視される", filtered.some((d) => d.date === "2026-09-20" || d.date === "2026-09-21"), false);
+check("mapVisitsの無い日で、近く・情報ありなら残す", filtered.some((d) => d.date === "2026-09-22"), true);
+check("mapVisitsのどの点からも1000km以上離れた行は無視される", filtered.some((d) => d.date === "2026-09-23"), false);
+check("残るのは2026-09-22だけ", filtered.map((d) => d.date), ["2026-09-22"]);
+
+// 旅行をまたいでは影響しない（trip2にはmapVisitsが無いので、trip2のday_infosはそのまま残る）
+const filteredMultiTrip = filterFallbackDayRows(
+  [{ tripId: "trip2", date: "2026-09-19", admin1: "東京都", country: "日本", lat: 35.68, lon: 139.77 }],
+  mapVisitsOsakaTrip
+);
+check("別の旅行のday_infosはtrip1のmapVisitsに影響されない", filteredMultiTrip.length, 1);
 
 console.log(`visited-places: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -15,7 +15,12 @@
  *   旧版（mylog_place_overrides、アカウント全体でhide/show）は、片方の旅行だけから外したくても
  *   全部の旅行から消えてしまう不具合があったため廃止。テーブル・APIは残すが、この集計では使わない
  *   （docs/adr/0016）。
+ * - day_infos（1日1か所）は、2026-09-28〜、記録の地図の座標から直接求めた場所（mapVisits。1日に
+ *   複数でも良い・より正確）が無い日だけの補完にした。オーナー報告（大阪旅行に大阪府が出ない）の
+ *   原因が、day_infosの誤った座標（フロリダ）だったため。filterFallbackDayRows参照。
  */
+
+import { distanceKm } from "./geo-decode.js";
 
 // [まとめた後の名前, ...別名]。完全一致（前後の空白を除き、NFKC正規化したあと）で引く
 const COUNTRY_ALIASES = [
@@ -130,6 +135,10 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
   });
 
   const isTransitDay = (d) => {
+    // 記録の地図の座標から直接入れた場所（2026-09-28〜）は、どのBlockから来たかがすでに分かって
+    // いるので、呼び出し側でtransitを確定させて渡してくる。その場合はここでの当てずっぽうな
+    // 座標マッチングをしない（bool以外＝未確定のときだけ、従来どおりday_infos由来として調べる）
+    if (typeof d.transit === "boolean") return d.transit;
     const list = blocksByDay.get(d.tripId + "|" + d.date) || [];
     if (!list.length) return false;
     // その日の予定が全部、移動・空港なら、その日は乗り継ぎ（移動だけ）の日
@@ -201,4 +210,48 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
   }));
 
   return { prefectures: visible(details.prefectures), countries: visible(details.countries), details, tripPlaces };
+}
+
+// 2点間の距離（km）。地図の座標のマッチング（geocodeMapUrlのnear guardなど）で使っているのと同じ
+// ハーバサインの実装を再利用する（geo-decode.js）。day_infosの古い場所（手入力・以前の自動配置）が
+// 明らかに別大陸の値になっている（大阪旅行なのにフロリダ、など）ときに弾くために使う。
+export const haversineKm = distanceKm;
+
+export const DAY_FALLBACK_MAX_KM = 1000;
+
+/*
+ * day_infos（1日1か所、手入力・旧自動配置）は、記録の地図の座標から直接求めた場所
+ * （mapVisits、2026-09-28〜。より正確で、1日に複数の場所も持てる）が無い日だけの
+ * 補完として使う。オーナー報告（大阪旅行に大阪府が出ない）の原因は、2026-09-19の
+ * day_infos行が実際には無関係なフロリダの座標（過去の誤った自動配置）を持っていたこと。
+ * 同じ日にmapVisitsがあればそのday_infos行は丸ごと無視し、無くてもmapVisitsから
+ * 1000km以上離れていれば無視する（無関係な座標を信用しないため）。
+ *
+ * dayRows:   [{ tripId, date, admin1, country, lat, lon }]  day_infosの生データ
+ * mapVisits: [{ tripId, date, lat, lng }]  記録の地図から求めた、位置が分かっている点
+ * 返り値: 残すdayRowsだけの配列（フィルタするだけで、中身は変えない）
+ */
+export function filterFallbackDayRows(dayRows, mapVisits, maxKm = DAY_FALLBACK_MAX_KM) {
+  const byTripDates = new Map(); // tripId -> Set(date)  mapVisitsがある日
+  const byTripPoints = new Map(); // tripId -> [{lat,lng}]  mapVisitsの位置（距離チェック用）
+  (mapVisits || []).forEach((v) => {
+    if (!byTripDates.has(v.tripId)) byTripDates.set(v.tripId, new Set());
+    byTripDates.get(v.tripId).add(v.date);
+    if (typeof v.lat === "number" && typeof v.lng === "number") {
+      if (!byTripPoints.has(v.tripId)) byTripPoints.set(v.tripId, []);
+      byTripPoints.get(v.tripId).push({ lat: v.lat, lng: v.lng });
+    }
+  });
+
+  return (dayRows || []).filter((d) => {
+    if (!d.admin1 && !d.country) return false; // 何も分からない行は補完のしようがない
+    const datesWithMapVisit = byTripDates.get(d.tripId);
+    if (datesWithMapVisit && datesWithMapVisit.has(d.date)) return false; // その日はmapVisitsに任せる
+    const points = byTripPoints.get(d.tripId);
+    if (points && points.length && typeof d.lat === "number" && typeof d.lon === "number") {
+      const near = points.some((p) => haversineKm({ lat: d.lat, lng: d.lon }, p) <= maxKm);
+      if (!near) return false; // 同じ旅行のどのmapVisitsからも1000km以上離れている＝信用しない
+    }
+    return true;
+  });
 }

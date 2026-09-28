@@ -483,3 +483,38 @@ npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXIST
 - `node worker/test/visited-places.test.mjs`に、片方の旅行だけ外しても総計に残ること・両方の旅行で
   外すと総計から落ちること・戻す（overrideを外す）と元の結果に一致することのテストを追加した。
   一度取得・入力した`rate`はアプリ側で覚えておき、通貨を変えない限り取り直さない。
+
+## マイログの「訪れた都道府県・国」：day_infosより記録の地図の座標を優先する（2026-09-28 追加）
+
+オーナー報告：大阪旅行（USJ・新大阪・甲子園・赤レンガ倉庫などを回った旅行）のマイログに「大阪府」が
+出ない。原因は、集計が`day_infos`（1日1か所しか持てない、手入力・旧自動配置の場所）だけを見ていたこと。
+2026-09-19の`day_infos`行が、過去の誤った自動配置でフロリダ（ユニバーサル・オーランド）の座標を
+持ったままになっており、その日はUSJに行っていたにもかかわらず「アメリカ」として（誤って）扱われ、
+実際に訪れた大阪府は`day_infos`のどの行にも記録されていなかった。
+
+- 情報源を入れ替えた。**主＝記録の地図の座標**（`entries.map_lat`/`map_lng`、
+  `MAP_COORDS_VALID_SINCE`＝2026-09-27以降に求めたものだけ。geo-decode.js参照）を
+  `reverseGeocode`（既存、Nominatim）で都道府県・国に変換したもの（`mapVisits`と呼んでいる）。
+  1日に複数の記録があれば、複数の都道府県・国を正しく持てる（大阪の日に兵庫にも寄っていれば両方出る）。
+  **従＝`day_infos`**（1日1か所）は、mapVisitsが無い日の補完としてだけ使う
+  （`filterFallbackDayRows`、`worker/src/visited-places.js`）：
+  1. 同じ日にmapVisitsがあれば、その`day_infos`行は丸ごと無視する（今回のフロリダの誤りはこれで消える）。
+  2. `admin1`・`country`が両方空の行は無視する（何も分からないので補完のしようがない）。
+  3. その旅行のどのmapVisitsからも1000km（`DAY_FALLBACK_MAX_KM`）以上離れている行は無視する
+     （mapVisitsが1件も無い日でも、明らかにおかしい座標は信用しない）。
+- 座標→都道府県・国の変換はNominatimのReverse（1秒1回まで）を使うため、キャッシュ（`caches.default`、
+  3桁に丸めた座標をキーに90日）に無い新しい地点だけ、間隔を空けて呼ぶ。`GET /mylog`を遅くしすぎない
+  よう、1回の呼び出しで使う待ち時間の合計に上限（8秒、`REVERSE_GEOCODE_BUDGET_MS`）を設け、
+  超えた分は今回は諦める＝次にマイログを開いたときに、キャッシュが埋まった分からeventually complete
+  で揃っていく（`resolveMapPointPlaces`）。
+- `aggregateVisitedPlaces`の`days`は、`transit`（乗り継ぎ・空港だけの記録か）をmapVisits側は
+  自分の記録が属するBlockから直接確定させて渡す（`isTransitBlock`）。`day_infos`側（フォールバック）
+  は、これまでどおりBlockの地図座標との突き合わせで判定する（`d.transit`がbooleanでなければ
+  従来の判定にフォールバックする）。
+- `node worker/test/visited-places.test.mjs`に`haversineKm`（既知の距離で確認）・
+  `filterFallbackDayRows`（同日mapVisitsがある行・admin1/country空の行・1000km以上離れた行が
+  正しく落ちること、旅行をまたいで影響しないこと）・mapVisitsが1日に複数の場所を持てること、
+  のテストを追加した。
+- 実際のトリップJSON（`GET /trips/:id`）を取得しての確認は、このセッションでは本番データへの
+  読み取りアクセスの権限が下りず行えていない（Claude Codeの自動モードの分類器が「本番の読み取り」
+  として拒否した）。オーナーが実機・ブラウザで確認するか、権限を許可したうえで再確認をお願いしたい。

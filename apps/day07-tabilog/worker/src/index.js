@@ -11,7 +11,7 @@
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
-import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture } from "./visited-places.js";
+import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture, isTransitBlock, filterFallbackDayRows } from "./visited-places.js";
 import { parseWorkersAiOutput, describeWorkersAiOutputForDebug } from "./ai-parse.js";
 import { isUsableTranscript } from "./transcribe-provider.js";
 import {
@@ -897,7 +897,7 @@ async function deleteRating(entryId, request, env, headers) {
 
 /* ---------- マイログ：ログイン中の本人が付けた評価を、旅行をまたいで一覧する ---------- */
 
-async function getMyLog(email, env, headers) {
+async function getMyLog(email, env, headers, ctx) {
   if (!email) return json({ error: "invalid_input" }, 400, headers);
   const { results } = await env.DB.prepare(
     `SELECT r.score AS score, r.updated_at AS rated_at,
@@ -948,26 +948,80 @@ async function getMyLog(email, env, headers) {
     trips = tripRows.map(rowToTrip);
     const titles = {};
     trips.forEach((t) => { titles[t.id] = t.title; });
-    places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles);
+    places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles, ctx);
   }
 
   return json({ items, trips, places }, 200, headers);
 }
 
-// 参加した旅行（trips）にまたがる「日ごとの場所」（day_infos.admin1/country）から、訪れた都道府県・国を
-// 集計する。国名の表記ゆれをまとめる・乗り継ぎだけの国を数えない・本人が旅行ごとに外した場所を除く、の
-// 3つはvisited-places.js（純粋関数）で行う（2026-09-27・旅行ごとの除外は2026-09-28、docs/adr/0016）。
+// 参加した旅行（trips）にまたがる「訪れた都道府県・国」を集計する。国名の表記ゆれをまとめる・
+// 乗り継ぎだけの国を数えない・本人が旅行ごとに外した場所を除く、の3つはvisited-places.js（純粋関数）
+// で行う（2026-09-27・旅行ごとの除外は2026-09-28、docs/adr/0016）。
+//
+// 場所の情報源は2つ（2026-09-28〜、主従を入れ替えた）：
+// 1) 記録の地図の座標（entries.map_lat/map_lng、MAP_COORDS_VALID_SINCE以降のものだけ）を
+//    reverseGeocodeで都道府県・国に変換したもの（mapVisits）。1日に複数の場所を正確に持てる。
+// 2) day_infos（1日1か所、手入力・旧自動配置）は、mapVisitsが無い日の補完としてだけ使う
+//    （filterFallbackDayRows）。オーナー報告：大阪旅行の2026-09-19のday_infos行が、過去の誤った
+//    自動配置でフロリダの座標になっており、大阪府がマイログに出なかった。mapVisitsを主にすることで
+//    その日はUSJ・新大阪など実際の座標（大阪府）に置き換わる。
 //
 // mylog_place_overrides（v23・アカウント全体でhide/show）はもう読まない：片方の旅行だけから外したくても
 // 全部の旅行から消えてしまう不具合があったため。テーブル・POST /mylog/placesは残すが（古いアプリ向け）、
 // この集計には一切反映されない。
-async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
+async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
   const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] }, tripPlaces: [] };
   if (!tripIds.length) return empty;
+
   const dayRows = await selectWhereIn(
     env, "SELECT trip_id, date, admin1, country, lat, lon FROM day_infos WHERE trip_id IN (", tripIds, ") AND (admin1 != '' OR country != '')"
   );
-  if (!dayRows.length) return empty;
+
+  // 1) 記録の地図の座標（MAP_COORDS_VALID_SINCE以降に求めたものだけ）
+  let geocodedEntryRows = [];
+  try {
+    geocodedEntryRows = await selectWhereIn(
+      env,
+      "SELECT e.map_lat AS lat, e.map_lng AS lng, b.trip_id AS trip_id, b.date AS date, b.category AS category, b.label AS label "
+        + "FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (",
+      tripIds,
+      ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL AND e.map_geocoded_at >= '" + MAP_COORDS_VALID_SINCE + "'"
+    );
+  } catch {
+    // 座標の列が無い古いDBでも、day_infosだけで集計を続ける
+  }
+  const roundedPoints = new Map(); // "lat,lng"（3桁に丸め）→{lat,lng}。同じ地点を何度も問い合わせないため
+  geocodedEntryRows.forEach((r) => {
+    if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
+    const lat = Math.round(r.lat * 1000) / 1000;
+    const lng = Math.round(r.lng * 1000) / 1000;
+    roundedPoints.set(lat + "," + lng, { lat, lng });
+  });
+  const resolvedPoints = roundedPoints.size ? await resolveMapPointPlaces(ctx, Array.from(roundedPoints.values())) : new Map();
+  const mapVisits = [];
+  geocodedEntryRows.forEach((r) => {
+    if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
+    const lat = Math.round(r.lat * 1000) / 1000;
+    const lng = Math.round(r.lng * 1000) / 1000;
+    const geo = resolvedPoints.get(lat + "," + lng);
+    if (!geo || (!geo.admin1 && !geo.country)) return; // 未解決（今回の予算切れ）・何も分からない点は使わない
+    mapVisits.push({
+      tripId: r.trip_id, date: r.date, admin1: geo.admin1 || "", country: geo.country || "",
+      lat, lon: lng, transit: isTransitBlock({ category: r.category, label: r.label }),
+    });
+  });
+
+  // 2) day_infos はmapVisitsが無い日の補完だけ（同じ日にmapVisitsがある・1000km以上離れている・
+  //    admin1/countryが空、のいずれかなら使わない）
+  const fallbackDayRows = filterFallbackDayRows(
+    dayRows.map((r) => ({ tripId: r.trip_id, date: r.date, admin1: r.admin1, country: r.country, lat: r.lat, lon: r.lon })),
+    mapVisits.map((v) => ({ tripId: v.tripId, date: v.date, lat: v.lat, lng: v.lon }))
+  );
+
+  const days = mapVisits.map((v) => ({ tripId: v.tripId, date: v.date, admin1: v.admin1, country: v.country, lat: v.lat, lon: v.lon, transit: v.transit }))
+    .concat(fallbackDayRows);
+  if (!days.length) return empty;
+
   const blockRows = await selectWhereIn(
     env, "SELECT id, trip_id, date, category, label FROM blocks WHERE trip_id IN (", tripIds, ")"
   );
@@ -981,7 +1035,7 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
       (coords[r.block_id] = coords[r.block_id] || []).push({ lat: r.lat, lng: r.lng });
     });
   } catch {
-    // 座標の列が無い古いDBでも、集計自体は続ける
+    // 座標の列が無い古いDBでも、集計自体は続ける（day_infos由来の行の乗り継ぎ判定にだけ使う）
   }
   let tripOverrides = [];
   if (accountId) {
@@ -993,7 +1047,7 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
     }
   }
   return aggregateVisitedPlaces({
-    days: dayRows.map((r) => ({ tripId: r.trip_id, date: r.date, admin1: r.admin1, country: r.country, lat: r.lat, lon: r.lon })),
+    days,
     blocks: blockRows.map((r) => ({ id: r.id, tripId: r.trip_id, date: r.date, category: r.category, label: r.label })),
     coords,
     trips: tripTitles || {},
@@ -1001,10 +1055,52 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles) {
   });
 }
 
+// mapVisitsの座標（3桁に丸め・重複無し）を都道府県・国に変換する（NominatimのReverse、reverseGeocode）。
+// キャッシュ（caches.default、都道府県・国はまず変わらないので90日）に無い新しい地点だけ、1秒1回の
+// 制限を守って間隔を空けて呼ぶ。GET /mylogを遅くしすぎないよう、合計の待ち時間に上限（8秒）を設け、
+// 超えたら残りは諦める＝次にマイログを開いたときに、キャッシュが埋まった分から少しずつ揃っていく
+// （eventually complete。2026-09-28）。
+const REVERSE_GEOCODE_CACHE_SECONDS = 60 * 60 * 24 * 90;
+const REVERSE_GEOCODE_FAIL_CACHE_SECONDS = 60 * 60 * 24; // 失敗はNominatimの一時的な不調かもしれないので短め
+const REVERSE_GEOCODE_BUDGET_MS = 8000;
+const REVERSE_GEOCODE_SPACING_MS = 1100;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function resolveMapPointPlaces(ctx, points) {
+  const cache = caches.default;
+  const out = new Map(); // "lat,lng" → {admin1,country}|null（未解決なら含まれない＝mapVisitsに使わない）
+  const start = Date.now();
+  let calledNominatim = false;
+  for (const p of points) {
+    const key = p.lat + "," + p.lng;
+    const cacheKey = new Request("https://tabilog-reverse-geocode.cache/v1?k=" + key);
+    const hit = await cache.match(cacheKey);
+    if (hit) {
+      out.set(key, await hit.json());
+      continue;
+    }
+    if (Date.now() - start > REVERSE_GEOCODE_BUDGET_MS) break;
+    if (calledNominatim) await sleep(REVERSE_GEOCODE_SPACING_MS);
+    calledNominatim = true;
+    const geo = await reverseGeocode(p.lat, p.lng);
+    out.set(key, geo || null);
+    const ttl = geo ? REVERSE_GEOCODE_CACHE_SECONDS : REVERSE_GEOCODE_FAIL_CACHE_SECONDS;
+    if (ctx) {
+      ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(geo || null), {
+        headers: { "content-type": "application/json", "cache-control": "public, max-age=" + ttl },
+      })));
+    }
+  }
+  return out;
+}
+
 // マイログの国・都道府県を旅行ごとに外す（exclude）／戻す（include）（2026-09-28〜）。
 // v23の「マイログから外す」（setMyLogPlaceOverride、アカウント全体）が、片方の旅行だけから
 // 外したいのに全部の旅行から消えてしまう不具合の直し方（docs/adr/0016）。
-async function setMyLogTripPlaceOverride(request, env, headers) {
+async function setMyLogTripPlaceOverride(request, env, headers, ctx) {
   let data;
   try {
     data = await request.json();
@@ -1047,14 +1143,14 @@ async function setMyLogTripPlaceOverride(request, env, headers) {
   ).bind(account.account_id).all();
   const titles = {};
   tripRows.forEach((t) => { titles[t.id] = t.title; });
-  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles);
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles, ctx);
   return json({ places }, 200, headers);
 }
 
 // マイログの国・都道府県を本人が外す（hide）／乗り継ぎと判定されたものを数える（show）／元に戻す（clear）
 // （v23・アカウント全体。2026-09-28〜：集計には反映されない。古いアプリのために残しているだけ。
 // 新しいアプリはPOST /mylog/trip-places（setMyLogTripPlaceOverride）を使う。docs/adr/0016）
-async function setMyLogPlaceOverride(request, env, headers) {
+async function setMyLogPlaceOverride(request, env, headers, ctx) {
   let data;
   try {
     data = await request.json();
@@ -1087,7 +1183,7 @@ async function setMyLogPlaceOverride(request, env, headers) {
   ).bind(account.account_id).all();
   const titles = {};
   tripRows.forEach((t) => { titles[t.id] = t.title; });
-  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles);
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles, ctx);
   return json({ places }, 200, headers);
 }
 
@@ -4193,12 +4289,12 @@ export default {
     if (method === "GET" && path === "/places/details") {
       return placeDetails(url.searchParams.get("id"), url.searchParams.get("session"), env, headers);
     }
-    if (method === "POST" && path === "/mylog/places") return setMyLogPlaceOverride(request, env, headers);
-    if (method === "POST" && path === "/mylog/trip-places") return setMyLogTripPlaceOverride(request, env, headers);
+    if (method === "POST" && path === "/mylog/places") return setMyLogPlaceOverride(request, env, headers, ctx);
+    if (method === "POST" && path === "/mylog/trip-places") return setMyLogTripPlaceOverride(request, env, headers, ctx);
     if (method === "GET" && path === "/mylog") {
       const auth = await resolveEmail(request, env, url.searchParams.get("email") || "");
       if (auth.error) return json({ error: auth.error }, auth.status, headers);
-      return getMyLog(auth.email, env, headers);
+      return getMyLog(auth.email, env, headers, ctx);
     }
 
     if (method === "PUT" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return setDayPlace(m[1], m[2], request, env, headers);
