@@ -18,6 +18,8 @@ const auth = require('../lib/auth');
 const db = require('../lib/db');
 const rules = require('../lib/draft-rules');
 const gen = require('../lib/draft-generate');
+const topicGen = require('../lib/topic-generate');
+const stock = require('../public/topics.json');
 
 module.exports = async function handler(req, res) {
   if (!auth.guard(req, res)) return;
@@ -25,6 +27,9 @@ module.exports = async function handler(req, res) {
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+
+    // ★ 「まとめて仕込む」のネタを考えさせる。関数の数（Vercel の上限）を増やさないよう、同じ入口に置く。
+    if (body.action === 'topics') return res.status(200).json(await topics(body));
 
     const topicTitle = String(body.title || '').trim();
     if (!topicTitle) return res.status(400).json({ error: 'ネタを入力してください。' });
@@ -79,3 +84,23 @@ module.exports = async function handler(req, res) {
     return res.status(status).json({ error: err.message, hint: err.hint });
   }
 };
+
+/**
+ * ネタを20本考えさせる。
+ *
+ * ★ 重複を避ける相手は3つ。過去の投稿のタイトル（動画のタイトル）、
+ *   用意してあるネタ（public/topics.json）、いま画面の欄に入っているネタ。
+ *   投稿のタイトルは文案から付くのでネタそのものとは少し違うが、切り口の重なりは拾える。
+ */
+async function topics(body) {
+  const past = (await db.rest('posts', {
+    query: { select: 'title', order: 'created_at.desc', limit: 200 },
+  })) || [];
+  const used = [
+    ...past.map((p) => p.title),
+    ...(stock.topics || []).map((t) => t.title),
+    ...(Array.isArray(body.used) ? body.used : []),
+  ];
+  const result = await topicGen.generateTopics(used, { count: topicGen.COUNT });
+  return { topics: result.topics, ok: result.ok, rejected: result.rejected };
+}
