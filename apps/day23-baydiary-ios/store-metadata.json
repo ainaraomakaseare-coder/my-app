@@ -1,0 +1,70 @@
+{
+  "appId": "6815607772",
+  "bundleId": "com.hiroyaapps.baydiary",
+  "locale": "ja",
+  "versionString": "1.0.0",
+  "minBuildNumber": 21,
+  "primaryCategory": "LIFESTYLE",
+  "secondaryCategory": "SPORTS",
+  "baseTerritory": "JPN",
+  "territories": ["JPN"],
+  "name": "観戦日記",
+  "subtitle": "野球観戦の記録日記",
+  "privacyPolicyUrl": "https://ainaraomakaseare-coder.github.io/my-app/apps/day23-baydiary/privacy.html",
+  "supportUrl": "https://github.com/ainaraomakaseare-coder/my-app/issues",
+  "marketingUrl": "https://ainaraomakaseare-coder.github.io/my-app/apps/day23-baydiary/",
+  "promotionalText": "観戦の記憶を一試合ずつ。年度や球場ごとの成績も振り返れます。",
+  "keywords": "野球,観戦,日記,プロ野球,成績,勝率,球場,ベイスターズ,交流戦,クライマックスシリーズ",
+  "description": [
+    "球場に足を運んだ日を、自分だけの観戦日記に。",
+    "",
+    "試合の結果も、心に残った一球も、あとから振り返れる形で残せます。",
+    "",
+    "・応援する球団、試合日、対戦相手、球場、得点、結果を記録",
+    "・写真、同行者、チケット代、天気、選手、感想も一緒に保存",
+    "・今季、通算、直近6試合の成績を確認",
+    "・年度別、月別、球場別の観戦成績を振り返る",
+    "・交流戦、クライマックスシリーズ、日本シリーズを分けて集計",
+    "・結果を画像にして共有。記録はJSONで保存、別の端末へ移行",
+    "・記録と写真はお使いの端末に保存",
+    "",
+    "観戦の記憶と成績を、あなたのペースで積み重ねる日記です。",
+    "",
+    "本アプリは球団・リーグの公式アプリではありません。表示される成績は、利用者が登録した観戦記録にもとづきます。"
+  ],
+  "reviewNotes": [
+    "Thank you for reviewing Kansen Nikki (baseball game-watching diary).",
+    "",
+    "- No account or login is required. All records and photos are stored only on the device.",
+    "- How to try it: tap \"＋ 観戦を記録する\" on the Home tab, choose an opponent, enter the score and tap save. The Home, 成績 (stats) and 記録 (records) tabs then show the win/loss record for the games you attended.",
+    "- Photos are attached from the device and are never sent to external services.",
+    "- The app is not an official app of any team or league.",
+    "- The app is in Japanese only.",
+    "",
+    "（日本語訳）",
+    "・アカウント・ログインは不要です。記録と写真はすべて端末内にのみ保存されます。",
+    "・試し方：ホームの「＋ 観戦を記録する」から対戦相手と得点を入れて保存すると、ホーム・成績・記録の各タブに観戦成績が表示されます。",
+    "・写真は端末から添付するだけで、外部には送信しません。",
+    "・球団・リーグの公式アプリではありません。",
+    "・アプリは日本語のみです。"
+  ],
+  "screenshotSets": [
+    {
+      "displayType": "APP_IPHONE_65",
+      "screenshots": [
+        "store-screenshots/kansen-iphone-01-home.png",
+        "store-screenshots/kansen-iphone-02-analysis.png",
+        "store-screenshots/kansen-iphone-03-list.png",
+        "store-screenshots/kansen-iphone-04-players.png"
+      ]
+    },
+    {
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "screenshots": [
+        "store-screenshots/kansen-ipad-01-home.png",
+        "store-screenshots/kansen-ipad-02-analysis.png",
+        "store-screenshots/kansen-ipad-03-list.png"
+      ]
+    }
+  ]
+}
