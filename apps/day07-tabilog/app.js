@@ -2699,17 +2699,33 @@
   }
 
   // 画面ごとのスクロール位置。記録・予定の編集から旅行の画面に戻ったとき、毎回いちばん上に戻ってしまい
-  // 編集していた記録を探し直す必要があったため、旅行の画面だけは離れたときの位置に戻す。
-  // 別の旅行を開いたとき（openTrip）はいちばん上から。
+  // 編集していた記録を探し直す必要があったため、旅行の画面・マイログ画面は離れたときの位置に戻す
+  // （マイログは2026-09-28〜。旅行を開いてまた「← 戻る」で戻ったとき、スクロールした先のカードを
+  // 探し直さなくて済むように）。別の旅行を開いたとき（openTrip）はいちばん上から。
   var screenScroll = {};
+  var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1 };
   function showScreen(name) {
     var leaving = $('.screen.active');
     if (leaving && leaving.dataset.screen !== name) screenScroll[leaving.dataset.screen] = window.scrollY;
     $all('.screen').forEach(function (s) { s.classList.toggle('active', s.dataset.screen === name); });
-    var y = name === 'tripDetail' ? (screenScroll.tripDetail || 0) : 0;
+    var y = SCROLL_RESTORE_SCREENS[name] ? (screenScroll[name] || 0) : 0;
     window.scrollTo(0, y);
     // 呼び出し元がこのあと画面を描き直すので、描き終わった後にもう一度合わせる
     if (y) setTimeout(function () { if ($('.screen.active') && $('.screen.active').dataset.screen === name) window.scrollTo(0, y); }, 0);
+    updateTabbar(name);
+  }
+
+  // ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール）の表示・ハイライトを、画面の
+  // 切り替えのたびにここで一括して更新する（showScreenの呼び出し元がタブの状態を気にしなくてよいように）。
+  // トップレベルの4画面だけで出し、旅の詳細・記録フォーム・地図でふりかえる・シート・ログインでは隠す。
+  var TABBAR_SCREENS = { mylog: 1, visited: 1, home: 1, profile: 1 };
+  function updateTabbar(name) {
+    var bar = $('#tabbar');
+    if (!bar) return;
+    bar.classList.toggle('show', !!TABBAR_SCREENS[name]);
+    $all('.tabbar-btn', bar).forEach(function (b) {
+      b.classList.toggle('on', b.dataset.tab === name);
+    });
   }
 
   // ---------- Googleログイン ----------
@@ -3501,9 +3517,12 @@
   }
 
   // ---------- 旅行を開く ----------
-  // returnTo：この旅行の詳細画面から「← 戻る」を押したときにどこへ戻るか（省略時はホーム。
-  // 「行ったことある旅先」の一覧・地図の吹き出しから旅行名をタップして開いたとき（openTrip(id, 'visited')）
-  // だけ、そのページに戻れるようにする。2026-09-28〜）
+  // returnTo：この旅行の詳細画面から「← 戻る」／edge-swipe-backを押したときにどこへ戻るか（省略時は
+  // ホーム。共有リンク・深いリンクから直接開いたときも省略＝ホームに戻る）。
+  // 「行ったことある旅先」の一覧・地図の吹き出しから旅行名をタップして開いたとき（openTrip(id, 'visited')）、
+  // マイログの「参加した旅行」カードから開いたとき（openTrip(id, 'mylog')）は、そのページに戻す
+  // （2026-09-28〜。ボトムタブバー導入にあわせ、戻ったときに正しいタブがハイライトされるよう
+  // showScreen自身がタブの見た目も更新する＝updateTabbar参照）。
   function openTrip(id, returnTo) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
@@ -3518,7 +3537,7 @@
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       state.zoneInfo = { byBlock: {}, byDate: {} };
       screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
-      state.tripReturnScreen = returnTo === 'visited' ? 'visited' : null;
+      state.tripReturnScreen = (returnTo === 'visited' || returnTo === 'mylog') ? returnTo : null;
       showScreen('tripDetail');
       renderTripDetail();
       loadSocial();
@@ -3528,6 +3547,25 @@
       alert('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。');
       goHome();
     });
+  }
+
+  // 旅の詳細（tripDetail）の「← 戻る」／edge-swipe-backの共通の戻り先判定（openTripのreturnTo、
+  // 2026-09-28〜）。openTripで記録したtripReturnScreen（'visited'|'mylog'|null）に従って戻る。
+  // showScreenが呼ばれることで、ボトムタブバーの見た目（updateTabbar）も自動で正しいタブに戻る。
+  function returnFromTripDetail() {
+    var target = state.tripReturnScreen;
+    state.tripReturnScreen = null;
+    if (target === 'visited') {
+      showScreen('visited');
+      renderVisitedPlaces();
+      return;
+    }
+    if (target === 'mylog') {
+      showScreen('mylog');
+      renderMyLog();
+      return;
+    }
+    goHome();
   }
 
   function refreshTrip() {
@@ -6721,6 +6759,9 @@
     }).catch(function () {
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
     });
+    // プランの状態はプロフィール画面がメインだが、マイログ見出しのplanBadgeTop（残り回数の
+    // 一目バッジ）もここで最新化しておく（renderPlanStatusはプロフィール画面のDOMも一緒に更新するが、
+    // 今アクティブな画面がどちらでも副作用は無い）。
     fetchAccountStatus().then(renderPlanStatus);
   }
 
@@ -6751,7 +6792,11 @@
       manageBtn.hidden = true;
       return;
     }
-    manageBtn.hidden = account.plan === 'free';
+    // Appleの審査ガイドライン3.1.1（アプリ内課金の対象になる機能は、Appleの仕組み以外の購入導線を
+    // アプリ内に出せない）のため、iOSアプリ内では「登録する」ボタン・支払い方法の変更（Stripeへの
+    // 外部リンク）は出さない（2026-09-28〜。プロフィール画面には残り回数などの状況表示だけ残す）。
+    var native = isNativeApp();
+    manageBtn.hidden = native || account.plan === 'free';
     var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
     var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）' +
       (typeof account.memoRemainingThisPeriod === 'number' ? '・メモのAI整理：残り' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' : '');
@@ -6766,17 +6811,19 @@
       (account.ticketCredits ? '・回数券の残り' + account.ticketCredits + '回' : '') + '</div>';
 
     optionsEl.innerHTML = '';
-    PLAN_OPTIONS.forEach(function (opt) {
-      if (account.plan === opt.plan) return;
-      var card = document.createElement('div');
-      card.className = 'plan-card';
-      card.innerHTML =
-        '<div><div class="plan-card-name">' + escapeHtml(opt.name) + '</div>' +
-        '<div class="plan-card-detail">' + escapeHtml(opt.detail) + '</div></div>' +
-        '<button class="btn primary" type="button">登録する</button>';
-      card.querySelector('button').addEventListener('click', function () { startCheckout(opt.plan); });
-      optionsEl.appendChild(card);
-    });
+    if (!native) {
+      PLAN_OPTIONS.forEach(function (opt) {
+        if (account.plan === opt.plan) return;
+        var card = document.createElement('div');
+        card.className = 'plan-card';
+        card.innerHTML =
+          '<div><div class="plan-card-name">' + escapeHtml(opt.name) + '</div>' +
+          '<div class="plan-card-detail">' + escapeHtml(opt.detail) + '</div></div>' +
+          '<button class="btn primary" type="button">登録する</button>';
+        card.querySelector('button').addEventListener('click', function () { startCheckout(opt.plan); });
+        optionsEl.appendChild(card);
+      });
+    }
     msgEl.textContent = '';
   }
 
@@ -6822,6 +6869,65 @@
     }).catch(function () {
       msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
     });
+  }
+
+  // ---------- プロフィール（Airbnbのプロフィール画面を手本にした、アカウントまわりのまとめ。2026-09-28〜） ----------
+  // マイログと同じ /mylog を読んで、旅行数・評価件数・最初の旅行の年を集計するだけ（新しいAPIは無い）。
+  function openProfile() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('profile'); return; }
+    showScreen('profile');
+    renderProfileIdentity(user);
+    $('#profileStats').innerHTML = '';
+    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
+      state.myLogItems = data.items || [];
+      state.myLogTrips = data.trips || [];
+      state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [] };
+      renderProfileStats();
+    }).catch(function () {
+      // 集計が読み込めなくても、名前・アバターやプラン・アカウント操作は使えるようにしておく
+    });
+    fetchAccountStatus().then(renderPlanStatus);
+  }
+
+  function avatarInitial(user) {
+    var src = (user.name || user.email || '').trim();
+    return src ? src.slice(0, 1).toUpperCase() : '？';
+  }
+
+  function renderProfileIdentity(user) {
+    var avatar = $('#profileAvatar');
+    if (user.picture) {
+      avatar.innerHTML = '<img src="' + escapeHtml(user.picture) + '" alt="">';
+    } else {
+      avatar.innerHTML = '';
+      avatar.textContent = avatarInitial(user);
+    }
+    $('#profileName').textContent = user.name || user.email || '';
+  }
+
+  // 「記録の年数」：参加した旅行のうち、いちばん古い出発日の年から今年まで（初年も1年と数える）
+  function profileYearsSinceEarliestTrip(trips) {
+    var years = (trips || [])
+      .map(function (t) { return t.startDate ? Number(String(t.startDate).slice(0, 4)) : NaN; })
+      .filter(function (y) { return !isNaN(y); });
+    if (!years.length) return 0;
+    var earliest = Math.min.apply(null, years);
+    var current = new Date().getFullYear();
+    return Math.max(1, current - earliest + 1);
+  }
+
+  function renderProfileStats() {
+    var trips = state.myLogTrips || [];
+    var items = state.myLogItems || [];
+    var stats = [
+      { num: trips.length, label: '旅行 ' + trips.length + '回' },
+      { num: items.length, label: '評価 ' + items.length + '件' },
+      { num: profileYearsSinceEarliestTrip(trips), label: '記録の年数 ' + profileYearsSinceEarliestTrip(trips) + '年' }
+    ];
+    $('#profileStats').innerHTML = stats.map(function (s) {
+      return '<div class="profile-stat"><span class="profile-stat-label">' + escapeHtml(s.label) + '</span></div>';
+    }).join('');
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
@@ -6954,7 +7060,7 @@
         (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
         tripPlaceChipsHtml(placesByTrip[t.id]) +
         '</div></div>';
-      var open = function () { openTrip(t.id); };
+      var open = function () { openTrip(t.id, 'mylog'); };
       card.addEventListener('click', function (e) {
         if (e.target.closest('.trip-place-action')) return;
         open();
@@ -8407,16 +8513,8 @@
     initDaySwipe();
     initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
     initEdgeSwipeBack(document.querySelector('[data-screen="visited"]'), goHome);
-    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), function () {
-      // ヘッダーの「← 戻る」（data-back="home"）と同じ判定（openTripのreturnTo、2026-09-28〜）
-      if (state.tripReturnScreen === 'visited') {
-        state.tripReturnScreen = null;
-        showScreen('visited');
-        renderVisitedPlaces();
-        return;
-      }
-      goHome();
-    });
+    initEdgeSwipeBack(document.querySelector('[data-screen="profile"]'), goHome);
+    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), returnFromTripDetail);
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
@@ -8524,13 +8622,11 @@
       b.addEventListener('click', function () {
         var to = b.dataset.back;
         stopVoiceRecordingIfActive();
-        // 旅の詳細（tripDetail）の「← 戻る」だけは特別扱い：「行ったことある旅先」の旅行名リンクから
-        // 開いた旅行なら、そのページに戻す（openTripのreturnTo、2026-09-28〜）。それ以外のdata-back="home"
-        // （新しい旅を作る、など）はこれまでどおりホームへ。
-        if (to === 'home' && b.classList.contains('back-btn') && state.tripReturnScreen === 'visited') {
-          state.tripReturnScreen = null;
-          showScreen('visited');
-          renderVisitedPlaces();
+        // 旅の詳細（tripDetail）の「← 戻る」だけは特別扱い：「行ったことある旅先」・マイログの
+        // 旅行リンクから開いた旅行なら、そのページに戻す（returnFromTripDetail、openTripのreturnTo）。
+        // それ以外のdata-back="home"（新しい旅を作る、など）はこれまでどおりホームへ。
+        if (to === 'home' && b.classList.contains('back-btn') && state.tripReturnScreen) {
+          returnFromTripDetail();
           return;
         }
         if (to === 'home') goHome();
@@ -8549,12 +8645,6 @@
     $('#btnSendOtp').addEventListener('click', handleSendOtp);
     $('#btnVerifyOtp').addEventListener('click', handleVerifyOtp);
     $('#btnResendOtp').addEventListener('click', handleSendOtp);
-    $('#btnOpenMyLog').addEventListener('click', function () {
-      if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
-    });
-    $('#btnOpenVisited').addEventListener('click', function () {
-      if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited');
-    });
     $('#visitedTabs').addEventListener('click', function (e) {
       var btn = e.target.closest('.visited-tab');
       if (!btn) return;
@@ -8562,15 +8652,35 @@
       state.visitedSel = null;
       renderVisitedPlaces();
     });
+    // プラン（音声入力プラン）はプロフィール画面に移した（2026-09-28〜、ボトムタブバー導入）
     $('#btnGoToPlans').addEventListener('click', function () {
-      if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
+      if (loadCurrentUser()) openProfile(); else openLogin('profile');
     });
     $('#planBadgeTop').addEventListener('click', function () {
-      $('#planStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (loadCurrentUser()) openProfile(); else openLogin('profile');
     });
     $('#btnManageBilling').addEventListener('click', startBillingPortal);
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
     initSocial();
+
+    // ---------- ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール。2026-09-28〜） ----------
+    // タップした瞬間だけ.popを付けてアイコンのバウンス演出をやり直させる（連続タップでも毎回動くよう、
+    // 一度外してから付け直す＝reflowを挟んで同じアニメーションを再トリガーする定番の書き方）。
+    $all('.tabbar-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var icon = btn.querySelector('.tabbar-icon');
+        if (icon) {
+          icon.classList.remove('pop');
+          void icon.offsetWidth;
+          icon.classList.add('pop');
+        }
+        var tab = btn.dataset.tab;
+        if (tab === 'home') goHome();
+        else if (tab === 'mylog') { if (loadCurrentUser()) openMyLog(); else openLogin('mylog'); }
+        else if (tab === 'visited') { if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited'); }
+        else if (tab === 'profile') openProfile();
+      });
+    });
 
     $('#mylogSort').addEventListener('click', function (e) {
       var btn = e.target.closest('.sort-btn');
@@ -8696,6 +8806,8 @@
       openMyLog();
     } else if (target === 'visited' && loggedIn) {
       openVisitedPlaces();
+    } else if (target === 'profile' && loggedIn) {
+      openProfile();
     } else {
       goHome();
     }
