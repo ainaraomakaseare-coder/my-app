@@ -17,7 +17,7 @@ import { isUsableTranscript } from "./transcribe-provider.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline, hasBrokenMapQuery,
 } from "./geo-decode.js";
 import {
   isValidCurrency, isValidDate, frankfurterUrl, parseFrankfurterResponse,
@@ -958,12 +958,13 @@ async function getMyLog(email, env, headers, ctx) {
       .all();
     trips = tripRows.map(rowToTrip);
     const titles = {};
-    trips.forEach((t) => { titles[t.id] = t.title; });
+    const bounds = {};
+    trips.forEach((t) => { titles[t.id] = t.title; bounds[t.id] = { startDate: t.startDate, endDate: t.endDate }; });
     // 2026-09-28：ここで例外が出ると/mylog自体が500になり、評価一覧（items）まで見られなくなっていた
     // （本番障害：resolveMapPointPlacesがサブリクエスト上限を超えてTooManySubrequestsを投げていた）。
     // placesの集計に失敗しても、items・tripsだけは必ず返す。
     try {
-      places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles, ctx);
+      places = await getVisitedPlaces(env, trips.map((t) => t.id), account.account_id, titles, bounds, ctx);
     } catch (err) {
       console.error(JSON.stringify({ event: "mylog_visited_places_error", message: String((err && err.message) || err) }));
     }
@@ -1000,8 +1001,37 @@ async function getMyLog(email, env, headers, ctx) {
 //
 // サブリクエスト概算（GET /mylog全体。呼び出し元getMyLogのratings/accounts/trip_membersクエリ3つを含む）：
 // getMyLog側3 + ここのday_infos 1 + entries×blocks結合1 + blocks 1 + mylog_trip_place_overrides 1
-// + 未解決地点の解決（最大3点、Nominatim fetch・UPDATEを1点ずつ）最大6 = 最大13。目安の15以内に収まる。
-async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
+// + 壊れた地図URLの一括クリア（最大1、無ければ0）+ 未解決地点の解決（最大8点、Nominatim fetch・
+// UPDATEを1点ずつ）最大16 = 最大23。上限50のうちの半分弱で収まる。
+//
+// 未解決地点の解決の順番（2026-09-28〜、STALE_REGION_BUDGET）：以前は「全体で先頭から3件」だった
+// ため、地点の多い旅行（スイス・ベルギー旅行など）が後回しになり、何度GET /mylogを呼んでも
+// その旅行だけ「行ったことある旅先」が空のままになっていた（オーナー報告）。8件に増やしたうえで、
+// ①乗り継ぎ（category=transport）の地点は後回し（訪れた場所の集計に直接効くのは乗り継ぎでない地点
+// なので、そちらを先に解決する）、②同じ優先度の中では旅行をまたいで1点ずつ順番に解決する
+// （roundRobinByTrip）。これで複数回のGET /mylogで全旅行がまんべんなく進む。
+const STALE_REGION_BUDGET = 8;
+
+// staleByTrip（tripId -> Map(pointKey -> {lat,lng,roundedLat,roundedLng,transit})）から、
+// 優先度（非乗り継ぎ→乗り継ぎ）＋旅行をまたいだ1点ずつの順番（トランプを配るのと同じ要領）で並べる
+function roundRobinByTrip(staleByTrip, wantTransit) {
+  const perTrip = [];
+  staleByTrip.forEach((points) => {
+    const list = Array.from(points.values()).filter((p) => p.transit === wantTransit);
+    if (list.length) perTrip.push(list);
+  });
+  const out = [];
+  let round = 0;
+  let more = true;
+  while (more) {
+    more = false;
+    perTrip.forEach((list) => { if (list.length > round) { out.push(list[round]); more = true; } });
+    round += 1;
+  }
+  return out;
+}
+
+async function getVisitedPlaces(env, tripIds, accountId, tripTitles, tripBounds, ctx) {
   const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] }, tripPlaces: [] };
   if (!tripIds.length) return empty;
 
@@ -1013,12 +1043,16 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
   // 以前は「MAP_COORDS_VALID_SINCE以降の行」「lat/lngがある全行」の2回に分けて問い合わせていたのを
   // 1回にまとめた）。migrations/0025 を実行する前のDBには map_admin1/map_country列が無いので、
   // 無い場合は列無しで読み直す（day_infosだけの集計に近い形＝degradedになるが、tripPlaces自体は返る）。
+  // map_url（id・map_urlも）を一緒に読むのは、壊れた地図URL（hasBrokenMapQuery。query=undefined,undefined
+  // など）から入った古い座標・地域を集計から除くため（2026-09-28〜、オーナー報告：ブラジル旅行の
+  // 「ブエノスアイレス到着」の記録がこれで、Addis Ababaの誤った座標のままエチオピアが出ていた）。
   let entryRows = [];
   let hasRegionColumns = true;
   try {
     entryRows = await selectWhereIn(
       env,
-      "SELECT e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng, e.map_admin1 AS admin1, e.map_country AS country, "
+      "SELECT e.id AS entry_id, e.map_url AS map_url, e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng, "
+        + "e.map_admin1 AS admin1, e.map_country AS country, "
         + "e.map_geocoded_at AS geocoded_at, b.trip_id AS trip_id, b.date AS date, b.category AS category, b.label AS label "
         + "FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (",
       tripIds,
@@ -1029,8 +1063,8 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
     try {
       entryRows = await selectWhereIn(
         env,
-        "SELECT e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng, e.map_geocoded_at AS geocoded_at, "
-          + "b.trip_id AS trip_id, b.date AS date, b.category AS category, b.label AS label "
+        "SELECT e.id AS entry_id, e.map_url AS map_url, e.block_id AS block_id, e.map_lat AS lat, e.map_lng AS lng, "
+          + "e.map_geocoded_at AS geocoded_at, b.trip_id AS trip_id, b.date AS date, b.category AS category, b.label AS label "
           + "FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id IN (",
         tripIds,
         ") AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL"
@@ -1038,6 +1072,26 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
     } catch {
       // 座標の列自体が無い、さらに古いDBでも、day_infosだけで集計を続ける
       entryRows = [];
+    }
+  }
+
+  // 壊れた地図URL（query=undefined,undefinedなど）から入った行を、集計にも乗り継ぎ判定にも使わない。
+  // 以前に誤って座標・地域が保存されてしまっている行は、まとめて1回のUPDATEで消す（次回以降も
+  // 同じ壊れたentryを毎回調べ直さずに済む）。
+  const brokenEntryIds = [];
+  entryRows = entryRows.filter((r) => {
+    if (!hasBrokenMapQuery(r.map_url)) return true;
+    if (r.entry_id && (r.lat != null || r.lng != null || r.admin1 || r.country)) brokenEntryIds.push(r.entry_id);
+    return false;
+  });
+  if (brokenEntryIds.length) {
+    try {
+      await env.DB.prepare(
+        "UPDATE entries SET map_lat=NULL, map_lng=NULL, map_admin1=NULL, map_country=NULL WHERE id IN ("
+          + brokenEntryIds.map(() => "?").join(",") + ")"
+      ).bind(...brokenEntryIds).run();
+    } catch {
+      // 列が無い古いDBや失敗しても、今回のレスポンスからはすでに除いてあるので次回また試すだけでよい
     }
   }
 
@@ -1052,30 +1106,51 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
   const validEntryRows = entryRows.filter((r) => r.geocoded_at && r.geocoded_at >= MAP_COORDS_VALID_SINCE
     && typeof r.lat === "number" && typeof r.lng === "number");
 
-  // v25より前に保存された行など、まだmap_admin1/map_countryが埋まっていない地点を、
-  // 1リクエストにつき最大3件までその場で解決してentriesへ書き戻す（キャッシュもバックグラウンド継続も無し。
-  // 残りは次回のGET /mylogが少しずつ進める）。
-  const staleByPoint = new Map(); // "lat,lng"（3桁丸め）→ { lat, lng, ids: Set<block_id 何でもよい key> }
+  // v25より前に保存された行など、まだmap_admin1/map_countryが埋まっていない地点を、旅行をまたいで
+  // 優先度つきで並べ、1リクエストにつきSTALE_REGION_BUDGET件までその場で解決してentriesへ書き戻す
+  // （キャッシュもバックグラウンド継続も無し。残りは次回のGET /mylogが少しずつ進める）。
+  const staleByTrip = new Map(); // tripId -> Map("lat,lng"（3桁丸め） -> { lat, lng, roundedLat, roundedLng, transit })
   if (hasRegionColumns) {
     validEntryRows.forEach((r) => {
       if (r.admin1 || r.country) return; // すでに解決済み
       const lat = Math.round(r.lat * 1000) / 1000;
       const lng = Math.round(r.lng * 1000) / 1000;
       const key = lat + "," + lng;
-      if (!staleByPoint.has(key)) staleByPoint.set(key, { lat: r.lat, lng: r.lng, roundedLat: lat, roundedLng: lng });
+      if (!staleByTrip.has(r.trip_id)) staleByTrip.set(r.trip_id, new Map());
+      const points = staleByTrip.get(r.trip_id);
+      const isTransit = isTransitBlock({ category: r.category, label: r.label });
+      if (!points.has(key)) points.set(key, { lat: r.lat, lng: r.lng, roundedLat: lat, roundedLng: lng, transit: isTransit });
+      else if (!isTransit) points.get(key).transit = false; // 同じ地点に乗り継ぎ・非乗り継ぎ両方あれば非乗り継ぎ優先
     });
   }
-  const resolvedNow = await resolveStaleEntryRegions(env, Array.from(staleByPoint.values()).slice(0, 3));
+  const orderedStalePoints = roundRobinByTrip(staleByTrip, false).concat(roundRobinByTrip(staleByTrip, true))
+    .slice(0, STALE_REGION_BUDGET);
+  const resolvedNow = await resolveStaleEntryRegions(env, orderedStalePoints);
   const regionFor = (r) => {
     if (r.admin1 || r.country) return { admin1: r.admin1 || "", country: r.country || "" };
     const key = (Math.round(r.lat * 1000) / 1000) + "," + (Math.round(r.lng * 1000) / 1000);
     return resolvedNow.get(key) || null;
   };
 
+  // その日（tripId+date）に、まだ解決できていない非乗り継ぎの地点が残っているか（2026-09-28〜）。
+  // 残っていれば、その日はday_infosの補完をまだ手放さない（下のmapVisitsForFallback参照）。
+  // オーナー報告：スイス・ベルギー旅行で、ベルギーの唯一の地図点（乗り継ぎの予定）だけが先に解決され、
+  // その日がmapVisitsで「もう分かっている日」扱いになり、day_infosの正しい行（の代わり）が
+  // 使われなくなっていた。実際にはこの点は乗り継ぎ扱いになるので気にしなくてよいが、同様に
+  // 「まだ何も解決できていない・非乗り継ぎの地点が残っている」日は、day_infosを手放さないようにする。
+  const pendingDates = new Set(); // "tripId|date"
+  validEntryRows.forEach((r) => {
+    if (r.admin1 || r.country) return; // 既に解決済み
+    const key = (Math.round(r.lat * 1000) / 1000) + "," + (Math.round(r.lng * 1000) / 1000);
+    if (resolvedNow.has(key)) return; // 今回の枠で解決した
+    if (isTransitBlock({ category: r.category, label: r.label })) return; // 乗り継ぎの地点は集計に直接効かない
+    pendingDates.add(r.trip_id + "|" + r.date);
+  });
+
   const mapVisits = [];
   validEntryRows.forEach((r) => {
     const geo = regionFor(r);
-    if (!geo || (!geo.admin1 && !geo.country)) return; // 未解決（今回の3件枠に入らなかった）・地名不明の点は使わない
+    if (!geo || (!geo.admin1 && !geo.country)) return; // 未解決（今回の枠に入らなかった）・地名不明の点は使わない
     mapVisits.push({
       tripId: r.trip_id, date: r.date, admin1: geo.admin1, country: geo.country,
       lat: r.lat, lon: r.lng, transit: isTransitBlock({ category: r.category, label: r.label }),
@@ -1083,10 +1158,13 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
   });
 
   // 2) day_infos はmapVisitsが無い日の補完だけ（同じ日にmapVisitsがある・1000km以上離れている・
-  //    admin1/countryが空、のいずれかなら使わない）
+  //    admin1/countryが空、のいずれかなら使わない）。ただし、その日にまだ解決できていない非乗り継ぎの
+  //    地点が残っている（pendingDates）間は、mapVisitsがあってもday_infosを手放さない
+  //    （filterFallbackDayRowsに渡すmapVisitsから、pending中の日をあえて除く）。
+  const mapVisitsForFallback = mapVisits.filter((v) => !pendingDates.has(v.tripId + "|" + v.date));
   const fallbackDayRows = filterFallbackDayRows(
     dayRows.map((r) => ({ tripId: r.trip_id, date: r.date, admin1: r.admin1, country: r.country, lat: r.lat, lon: r.lon })),
-    mapVisits.map((v) => ({ tripId: v.tripId, date: v.date, lat: v.lat, lng: v.lon }))
+    mapVisitsForFallback.map((v) => ({ tripId: v.tripId, date: v.date, lat: v.lat, lng: v.lon }))
   );
 
   const days = mapVisits.map((v) => ({ tripId: v.tripId, date: v.date, admin1: v.admin1, country: v.country, lat: v.lat, lon: v.lon, transit: v.transit }))
@@ -1111,6 +1189,7 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, ctx) {
     coords,
     trips: tripTitles || {},
     tripOverrides,
+    tripBounds: tripBounds || {},
   });
 }
 
@@ -1121,7 +1200,8 @@ function sleep(ms) {
 }
 
 // 座標はあるのにまだ都道府県・国が保存されていない地点（v25より前に座標だけ保存された古い行）を、
-// 渡された分だけ（呼び出し側で最大3件に絞ってある）その場で逆ジオコーディングし、
+// 渡された分だけ（呼び出し側でSTALE_REGION_BUDGET＝最大8件・旅行をまたいで順番に絞ってある）
+// その場で逆ジオコーディングし、
 // entriesへ書き戻す（丸めた地点1つにつきUPDATE1回、対象は同じ丸め地点の行すべて）。
 // キャッシュ（Cache API）もバックグラウンドでの継続も使わない＝この関数はNominatim fetchとUPDATEの
 // 分だけサブリクエストを使う（呼び出し元のコメントに概算あり）。
@@ -1189,11 +1269,13 @@ async function setMyLogTripPlaceOverride(request, env, headers, ctx) {
     return json({ error: "migration_required" }, 503, headers);
   }
   const { results: tripRows } = await env.DB.prepare(
-    "SELECT t.id AS id, t.title AS title FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
+    "SELECT t.id AS id, t.title AS title, t.start_date AS start_date, t.end_date AS end_date "
+      + "FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
   ).bind(account.account_id).all();
   const titles = {};
-  tripRows.forEach((t) => { titles[t.id] = t.title; });
-  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles, ctx);
+  const bounds = {};
+  tripRows.forEach((t) => { titles[t.id] = t.title; bounds[t.id] = { startDate: t.start_date, endDate: t.end_date }; });
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles, bounds, ctx);
   return json({ places }, 200, headers);
 }
 
@@ -1229,11 +1311,13 @@ async function setMyLogPlaceOverride(request, env, headers, ctx) {
     return json({ error: "migration_required" }, 503, headers);
   }
   const { results: tripRows } = await env.DB.prepare(
-    "SELECT t.id AS id, t.title AS title FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
+    "SELECT t.id AS id, t.title AS title, t.start_date AS start_date, t.end_date AS end_date "
+      + "FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
   ).bind(account.account_id).all();
   const titles = {};
-  tripRows.forEach((t) => { titles[t.id] = t.title; });
-  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles, ctx);
+  const bounds = {};
+  tripRows.forEach((t) => { titles[t.id] = t.title; bounds[t.id] = { startDate: t.start_date, endDate: t.end_date }; });
+  const places = await getVisitedPlaces(env, tripRows.map((t) => t.id), account.account_id, titles, bounds, ctx);
   return json({ places }, 200, headers);
 }
 
@@ -1415,8 +1499,8 @@ function parseMapUrl(u) {
   if (m && validLatLng(m[1], m[2])) return { coords: validLatLng(m[1], m[2]) };
   m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
   // 壊れた地図URL（「undefined,undefined」など。クライアント側の不具合で保存されてしまうことがある）を
-  // 地名として探さない（エチオピアに飛んだことがある）
-  let text = /^(undefined|null|NaN)(\s*,\s*(undefined|null|NaN))?$/i.test(q) ? "" : q;
+  // 地名として探さない（エチオピアに飛んだことがある。判定はgeo-decode.jsのhasBrokenMapQueryに共通化した）
+  let text = hasBrokenMapQuery(u) ? "" : q;
   if (!text && m) {
     try { text = decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { text = ""; }
   }

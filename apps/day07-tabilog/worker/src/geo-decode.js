@@ -162,6 +162,23 @@ function isValidEntryId(id) {
 // 誤った座標が残ったままになるため、この時刻より前に求めた座標は自動的に「要再取得」にする。
 const MAP_COORDS_VALID_SINCE = "2026-09-27T00:00:00Z";
 
+// 壊れた地図URL（クライアント側の不具合で「query=undefined,undefined」のように保存されてしまったもの。
+// index.jsのparseMapUrlの注記のとおり、そのまま地名として探すとエチオピアなど無関係な場所に飛ぶ）かどうか。
+// parseMapUrl（展開後のURL）とgetVisitedPlaces（entries.map_urlの生値、展開せず調べる。owner報告：
+// 2024-02-14「ブエノスアイレス到着」の記録がこれで、Addis Ababaの誤った座標・地域が保存されていた）の
+// 両方から同じ判定を使えるよう、ここに共通化した（純粋関数。文字列でもURLでも渡せる）。
+const BROKEN_MAP_QUERY_RE = /^(undefined|null|NaN)(\s*,\s*(undefined|null|NaN))?$/i;
+function hasBrokenMapQuery(urlOrHref) {
+  let u = urlOrHref;
+  if (typeof u === "string") {
+    if (!u) return false;
+    try { u = new URL(u); } catch { return false; }
+  }
+  if (!u || typeof u.searchParams?.get !== "function") return false;
+  const q = (u.searchParams.get("q") || u.searchParams.get("query") || "").trim();
+  return BROKEN_MAP_QUERY_RE.test(q);
+}
+
 function entryNeedsGeocode(oldMapUrl, geocodedUrl, newMapUrl, geocodedAt) {
   if (!newMapUrl) return false;
   if (newMapUrl !== (oldMapUrl || "")) return true;
@@ -211,5 +228,5 @@ function decodePolyline(str) {
 export {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, normPlaceName, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline, hasBrokenMapQuery,
 };
