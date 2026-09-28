@@ -454,11 +454,38 @@
       <div id="growTiktok" style="margin-top:10px"></div>
     </div>
     <div class="card">
+      <h2>分析部隊（一気に回す）</h2>
+      <div class="muted">同じジャンルで伸びている投稿を集めて（① YouTube はAPI、他のSNSはChrome）、
+        事実を機械で計算し（②）、それをもとにLLMが気づきと次の企画を書きます（③）。
+        数字はすべて集めた記録から計算したもので、LLMは数字を作りません（<code>lib/benchmark-facts.js</code>）。</div>
+      <div class="row" style="margin-top:10px;align-items:center">
+        <label for="ytGenre" style="margin:0">ジャンル</label>
+        <select id="ytGenre"></select>
+        <button id="benchRunBtn">一気に回す</button>
+      </div>
+      <div class="muted" id="benchStatus" style="margin-top:8px"></div>
+      <div id="benchSteps" style="margin-top:6px"></div>
+      <div id="benchResult" style="margin-top:12px"></div>
+
+      <details style="margin-top:14px">
+        <summary>Chromeで他のSNS（TikTok・X・Instagram・Threads）も集める（任意）</summary>
+        <div class="muted" style="margin-top:8px">「一気に回す」には含まれない。気が向いたときに、好きな頻度で足せる。</div>
+        <div class="row" style="margin-top:8px">
+          <button id="benchChromeCopyBtn">Chrome用の指示文をコピー</button>
+        </div>
+        <label for="benchIntakeText" style="margin-top:10px">Chromeの結果を取り込む</label>
+        <textarea id="benchIntakeText" style="min-height:120px" placeholder="Claude in Chrome が返した JSON 配列をそのまま貼る"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="benchIntakeBtn">取り込む</button>
+        </div>
+        <div class="muted" id="benchIntakeStatus" style="margin-top:8px"></div>
+      </details>
+    </div>
+    <div class="card">
       <h2>伸びている動画を集める（YouTube）</h2>
       <div class="muted">直近30日の YouTube Shorts を、ジャンルの検索語でAPIから集めます（無料枠の中）。
         のび率＝再生数÷登録者数。登録者が非公開のチャンネルは のび率 が出ません。</div>
       <div class="row" style="margin-top:10px">
-        <select id="ytGenre"></select>
         <button id="ytCollectBtn">集める</button>
         <button id="ytCopyBtn" class="hide">分析用にコピー（JSON）</button>
         <button id="ownCopyBtn">自分の投稿を分析用にコピー</button>
@@ -601,11 +628,18 @@
 <script src="/mp4-mux.js?v=1"></script>
 <script src="/reel.js?v=4"></script>
 <script src="/split-drafts.js?v=2"></script>
+<script src="/research-prompts.js?v=1"></script>
 <script>
 'use strict';
 
 const $ = (id) => document.getElementById(id);
 const NET_LABEL = { instagram:'Instagram', youtube:'YouTube', x:'X', tiktok:'TikTok', threads:'Threads' };
+// lib/benchmark.js の FORMATS と同じ表記（画面用にここにも持つ）。
+const FORMAT_LABEL = {
+  talking: '顔出しで話す', voice: '顔なし・声で解説', screen: '画面収録（操作を見せる）',
+  text: '文字＋BGM（読ませる）', slides: '画像スライド・カルーセル', post: '文章だけの投稿',
+  other: 'その他', unknown: '分からない',
+};
 const ST_LABEL = {
   draft:'下書き', scheduled:'投稿予約', processing:'処理中',
   done:'投稿成功', partial:'一部成功', failed:'投稿失敗',
@@ -1761,6 +1795,7 @@ async function loadGrow() {
     renderGrowPosts(postBox, out.posts || []);
     renderGrowTiktok(out.tiktokVideos || []);
     initYtCard();
+    loadBenchStatus();
   } catch (e) {
     const msg = `<span class="err">${escapeHtml(e.message)}${e.hint ? '\n' + escapeHtml(e.hint) : ''}</span>`;
     obs.className = ''; obs.innerHTML = msg;
@@ -1768,6 +1803,7 @@ async function loadGrow() {
     postBox.className = ''; postBox.innerHTML = '';
     $('growTiktokCard').classList.add('hide');
     initYtCard();
+    loadBenchStatus();
   }
 }
 
@@ -2041,7 +2077,7 @@ function initYtCard() {
   if (!sel.dataset.init) {
     sel.innerHTML = '<option value="ai">AI（ひろや）</option><option value="career">転職</option>';
     sel.dataset.init = '1';
-    sel.addEventListener('change', () => { sel.dataset.touched = '1'; });
+    sel.addEventListener('change', () => { sel.dataset.touched = '1'; loadBenchStatus(); });
   }
   if (!sel.dataset.touched) sel.value = ytDefaultGenre();
 }
@@ -2087,34 +2123,41 @@ $('ytCopyBtn').onclick = () => {
 };
 
 /**
- * 自分の投稿と数字を、分析役（.claude/agents/trend-analyst.md）に渡す形でコピーする。
+ * 自分の投稿と数字を、分析役に渡す形にする。
  * ★ 比べる相手が無いと、分析は「伸びている人の傾向」だけになり、何を変えるかが決まらない。
  *   数字は「のび」が読んだものをそのまま渡す。取れていない数字は null のまま（0 にしない）。
+ * @returns growLast が無ければ null（まだ「のび」の数字を読み込んでいない）
  */
-$('ownCopyBtn').onclick = () => {
-  const status = $('ytStatus');
-  if (!growLast) { status.className = 'err'; status.textContent = '先に「のび」の数字が読み込まれるのを待ってください。'; return; }
-  const num = (v) => (v === undefined ? null : v);
-  copyForAnalysis(JSON.stringify({
+function buildOwnSnapshot() {
+  if (!growLast) return null;
+  const orNull = (v) => (v === undefined ? null : v);
+  return {
     own: true,
     genre: $('ytGenre').value,
     collected_at: new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }),
     accounts: (growLast.accounts || []).map((a) => ({
       network: a.network, label: a.label || a.account_name || '',
-      followers: a.latest ? num(a.latest.followers) : null,
+      followers: a.latest ? orNull(a.latest.followers) : null,
     })),
     posts: (growLast.posts || []).map((p) => ({
       network: p.network, title: p.title, url: p.permalink || null, posted_at: p.postedAt || null,
-      metrics: p.metrics ? { views: num(p.metrics.views), likes: num(p.metrics.likes), comments: num(p.metrics.comments) } : null,
+      metrics: p.metrics ? { views: orNull(p.metrics.views), likes: orNull(p.metrics.likes), comments: orNull(p.metrics.comments) } : null,
     })),
     tiktok_videos: growLast.tiktokVideos || [],
     // 自分の型（分析で比べる軸）。アプリで作る動画はこの1種類。
     own_format: { format: 'text', duration_sec: 16.8, note: '文字の穴埋め6問（720×1280）。冒頭は題名と空欄' },
-  }, null, 2));
+  };
+}
+
+$('ownCopyBtn').onclick = () => {
+  const status = $('ytStatus');
+  const snap = buildOwnSnapshot();
+  if (!snap) { status.className = 'err'; status.textContent = '先に「のび」の数字が読み込まれるのを待ってください。'; return; }
+  copyForAnalysis(JSON.stringify(snap, null, 2));
 };
 
-async function copyForAnalysis(text) {
-  const status = $('ytStatus');
+async function copyForAnalysis(text, statusEl) {
+  const status = statusEl || $('ytStatus');
   try {
     await navigator.clipboard.writeText(text);
     status.className = 'muted';
@@ -2139,6 +2182,240 @@ async function copyForAnalysis(text) {
     document.body.removeChild(ta);
   }
 }
+
+// --------------------------------------------------------------- 分析部隊（一気に回す）
+/**
+ * 「のび」画面の「分析部隊」カード。①YouTube収集 → ②分析 → ③企画 を、
+ * 3回のAPI呼び出しで通しで動かす。数字は①②の機械が計算したもの、
+ * 文章（気づき・企画）だけがLLM（②③、それぞれ機械点検つき）。
+ */
+let benchLastRunId = null;
+let benchRunning = false;
+
+/** 画面を開いたとき・ジャンルを切り替えたときに、いまの保存件数と最後の結果を出す。 */
+async function loadBenchStatus() {
+  const status = $('benchStatus');
+  const genre = $('ytGenre').value;
+  status.className = 'muted';
+  status.textContent = '確認しています…';
+  try {
+    const out = await api('/api/insights?benchmark=status&genre=' + encodeURIComponent(genre));
+    const c = out.counts || {};
+    status.textContent = `保存済み ${jpNum(c.total || 0)} 本　最終収集 ${c.latestCollectedAt || '—'}`;
+    const run = out.latestRun;
+    benchLastRunId = (run && run.status !== 'failed') ? run.id : null;
+    if (!benchRunning) {
+      $('benchSteps').innerHTML = '';
+      $('benchResult').innerHTML = '';
+      if (run && run.analysis) {
+        renderBenchResult($('benchResult'), { facts: run.facts, analysis: run.analysis, plan: run.plan, dropped: [] });
+      }
+    }
+  } catch (e) {
+    status.className = 'err';
+    status.textContent = e.message + (e.hint ? '　' + e.hint : '');
+  }
+}
+
+$('benchRunBtn').onclick = async () => {
+  const btn = $('benchRunBtn');
+  const steps = $('benchSteps');
+  const result = $('benchResult');
+  const genre = $('ytGenre').value;
+
+  const addStep = (text, isErr) => {
+    const div = document.createElement('div');
+    div.className = isErr ? 'err' : 'muted';
+    div.textContent = text;
+    steps.appendChild(div);
+  };
+
+  btn.disabled = true;
+  benchRunning = true;
+  steps.innerHTML = '';
+  result.innerHTML = '';
+
+  try {
+    // ① YouTube を集める（他のSNSは含まない。任意でChromeから足す）
+    addStep('① 集めています…（1分ほどかかることがあります）');
+    try {
+      const collected = await api('/api/insights?benchmark=youtube&genre=' + encodeURIComponent(genre)
+        + (currentGroup ? '&group=' + encodeURIComponent(currentGroup) : ''));
+      if (collected && collected.ok === false) {
+        addStep('① ' + collected.error + (collected.hint ? '　' + collected.hint : ''), true);
+      } else {
+        ytLastResult = collected;
+        renderYtTable($('ytTable'), collected.items || []);
+        if ((collected.items || []).length) $('ytCopyBtn').classList.remove('hide');
+        addStep(`① 集めました（今回 ${(collected.items || []).length} 件 / 保存 ${collected.saved ?? '—'} 件）`);
+      }
+    } catch (e) {
+      // ★ ①が失敗しても、すでに集めてある記録があれば②③は進められる。止めない。
+      addStep('① ' + e.message + (e.hint ? '　' + e.hint : ''), true);
+    }
+
+    // ② 分析（事実は機械、気づきはLLM＋機械点検）
+    addStep('② 分析しています…');
+    let analyzeOut;
+    try {
+      analyzeOut = await api('/api/generate', {
+        method: 'POST',
+        body: { action: 'bench-analyze', genre, own: buildOwnSnapshot() },
+      });
+      benchLastRunId = analyzeOut.run_id;
+      addStep('② 分析ができました');
+    } catch (e) {
+      addStep('② ' + e.message + (e.hint ? '　' + e.hint : ''), true);
+      return;
+    }
+    renderBenchResult(result, { facts: analyzeOut.facts, analysis: analyzeOut.analysis, dropped: analyzeOut.dropped });
+
+    // ③ 企画（②の結果をもとに、LLM＋機械点検。ネタ20本も一緒に）
+    addStep('③ 企画を考えています…');
+    try {
+      const planOut = await api('/api/generate', {
+        method: 'POST',
+        body: { action: 'bench-plan', run_id: benchLastRunId },
+      });
+      addStep('③ 企画ができました');
+      renderBenchResult(result, {
+        facts: analyzeOut.facts, analysis: analyzeOut.analysis, plan: planOut.plan,
+        dropped: (analyzeOut.dropped || []).concat(planOut.dropped || []),
+      });
+    } catch (e) {
+      addStep('③ ' + e.message + (e.hint ? '　' + e.hint : ''), true);
+    }
+  } finally {
+    btn.disabled = false;
+    benchRunning = false;
+  }
+};
+
+/** 根拠URLを「根拠1」「根拠2」…のリンクにする。 */
+function evidenceLinks(urls) {
+  return (urls || []).map((u, i) =>
+    `<a href="${escapeHtml(u)}" target="_blank" rel="noopener">根拠${i + 1}</a>`).join(' ');
+}
+
+function benchListHtml(items, empty) {
+  if (!items || !items.length) return `<div class="muted">${escapeHtml(empty)}</div>`;
+  return '<ul style="margin:6px 0 0;padding-left:18px">' + items.map((it) => {
+    const label = it.topic ? `<strong>${escapeHtml(it.topic)}</strong>　` : '';
+    const ev = evidenceLinks(it.evidence);
+    return `<li>${label}${escapeHtml(it.text)}${ev ? '　' + ev : ''}</li>`;
+  }).join('') + '</ul>';
+}
+
+/** facts・analysis・plan を画面に出す。plan が無ければ②までを出す（③の途中でも見られるように）。 */
+function renderBenchResult(box, data) {
+  const facts = data.facts || {};
+  const analysis = data.analysis || {};
+  const plan = data.plan;
+  const dropped = data.dropped || [];
+
+  const n = facts.n || {};
+  const byPlatform = Object.entries(n.byPlatform || {})
+    .map(([k, v]) => `${escapeHtml(NET_LABEL[k] || k)} ${v}`).join('　') || '—';
+
+  let html = '';
+  html += `<div class="card" style="margin-bottom:12px">
+    <div>集めた記録 <strong>${jpNum(n.total || 0)}</strong> 本　伸びている <strong>${jpNum(n.growing || 0)}</strong> 本</div>
+    <div class="muted" style="margin-top:4px">${byPlatform}</div>`;
+  if ((facts.caveats || []).length) {
+    html += `<div class="muted" style="margin-top:8px">${facts.caveats.map((c) => escapeHtml(c)).join('<br>')}</div>`;
+  }
+  html += `</div>`;
+
+  html += `<div class="card" style="margin-bottom:12px">
+    <h3 style="margin:0 0 6px">②気づき</h3>
+    <ul style="margin:0;padding-left:18px">${(analysis.summary || []).map((s) => `<li>${escapeHtml(s)}</li>`).join('')}</ul>
+    <div style="margin-top:10px"><strong>強み</strong>${benchListHtml(analysis.strengths, '言えることがありませんでした。')}</div>
+    <div style="margin-top:10px"><strong>足りていないこと</strong>${benchListHtml(analysis.gaps, '自分の投稿の数字が無いので、比べられません。')}</div>
+    <div style="margin-top:10px"><strong>ねらい目</strong>${benchListHtml(analysis.opportunities, '言えることがありませんでした。')}</div>
+  </div>`;
+
+  if (plan) {
+    html += `<div class="card" style="margin-bottom:12px"><h3 style="margin:0 0 10px">③企画</h3>`;
+    (plan.plans || []).forEach((p, i) => {
+      const rec = i === plan.recommended;
+      html += `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px${rec ? ';border-color:var(--accent,#5b8def)' : ''}">
+        <div><strong>${escapeHtml(p.name)}</strong>${rec ? ' <span class="badge">おすすめ</span>' : ''}
+          <span class="badge">${escapeHtml(FORMAT_LABEL[p.format] || p.format)}</span>
+          <span class="badge">${p.auto ? '自動で作れる' : '人手が要る'}</span></div>
+        <div class="muted" style="margin-top:6px">${escapeHtml(p.aim)}</div>
+        <ul style="margin:6px 0 0;padding-left:18px">${(p.changes || []).map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
+        <div class="muted" style="margin-top:6px">見積り：${escapeHtml(p.effort)}</div>
+        <div class="muted">確かめ方：${escapeHtml(p.verify)}</div>
+        <div style="margin-top:4px">${evidenceLinks(p.evidence)}</div>
+      </div>`;
+    });
+    if (plan.why) html += `<div class="muted">${escapeHtml(plan.why)}</div>`;
+
+    const topics = plan.topics || [];
+    html += `<div style="margin-top:12px"><strong>ネタ（${topics.length}本）</strong>
+      <ol style="margin:6px 0 0;padding-left:20px">${topics.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ol>
+      <button id="benchUseTopicsBtn" style="margin-top:8px">このネタでまとめて仕込む</button>
+    </div>`;
+    html += `</div>`;
+  }
+
+  if (dropped.length) {
+    html += `<details><summary class="muted">点検で外れた項目（${dropped.length}件）</summary>
+      <ul style="margin:6px 0 0;padding-left:18px">${dropped.map((d) =>
+        `<li class="muted">[${escapeHtml(d.section)}] ${escapeHtml(d.text)}（${escapeHtml(d.reason)}）</li>`).join('')}</ul>
+    </details>`;
+  }
+
+  box.innerHTML = html;
+
+  const useBtn = $('benchUseTopicsBtn');
+  if (useBtn) {
+    useBtn.onclick = () => {
+      $('bulkTopics').value = (plan.topics || []).join('\n');
+      showView('bulk', true);
+    };
+  }
+}
+
+// --------------------------------------------------------------- Chrome での収集（TikTok・X・Instagram・Threads）
+$('benchChromeCopyBtn').onclick = () => {
+  const genre = $('ytGenre').value;
+  const text = ResearchPrompts.chromePrompt(genre, location.origin);
+  copyForAnalysis(text, $('benchIntakeStatus'));
+};
+
+$('benchIntakeBtn').onclick = async () => {
+  const btn = $('benchIntakeBtn');
+  const status = $('benchIntakeStatus');
+  const genre = $('ytGenre').value;
+  const raw = $('benchIntakeText').value.trim();
+  if (!raw) { status.className = 'err'; status.textContent = '貼り付けるものがありません。'; return; }
+
+  // ★ そのまま JSON として送れるものは JSON で送る（サーバー側で文字列に戻して点検するため、
+  //   壊れずに往復する）。JSON として読めないものは、そのまま文字列として送る。
+  let payload;
+  try { payload = JSON.parse(raw); } catch (_) { payload = raw; }
+
+  btn.disabled = true;
+  status.className = 'muted';
+  status.textContent = '取り込んでいます…';
+  try {
+    const out = await api('/api/insights?benchmark=intake&genre=' + encodeURIComponent(genre), {
+      method: 'POST', body: payload,
+    });
+    status.className = 'muted';
+    status.textContent = `受理 ${out.accepted} 件 / 却下 ${(out.rejected || []).length} 件`;
+    if ((out.rejected || []).length) {
+      status.textContent += '\n' + out.rejected.map((r) =>
+        `${r.url || '(URL無し)'}：${(r.errors || []).join('、')}`).join('\n');
+    }
+    loadBenchStatus();
+  } catch (e) {
+    status.className = 'err';
+    status.textContent = e.message + (e.hint ? '　' + e.hint : '');
+  }
+  btn.disabled = false;
+};
 
 function renderYtTable(box, items) {
   box.innerHTML = '';
