@@ -7289,11 +7289,19 @@
 
   // 旅行名（年つき）をタップしたらその旅行を開けるリンクのHTML。押した瞬間は行の選択（クリック伝播）とは
   // 別扱いにしたいので、クリック側でstopPropagationする（wireVisitedTripLinks）。
+  // 複数の旅行にまたがる場所は、新しい旅行が上に来るよう年（最大値）で降順に並べ、1行ずつ出す
+  // （・でつなげると同じ場所に何度も行った人ほど読みにくくなるため）。年が分からない旅行は最後に回す。
   function visitedTripLinksHtml(trips) {
     if (!trips.length) return '記録が見つかりませんでした';
-    return trips.map(function (t) {
+    var sorted = trips.map(function (t, i) { return { t: t, i: i }; }).sort(function (a, b) {
+      var ay = (a.t.years && a.t.years.length) ? Math.max.apply(null, a.t.years.map(Number)) : -1;
+      var by = (b.t.years && b.t.years.length) ? Math.max.apply(null, b.t.years.map(Number)) : -1;
+      if (ay !== by) return by - ay;
+      return a.i - b.i;
+    }).map(function (x) { return x.t; });
+    return '<div class="visited-trip-links">' + sorted.map(function (t) {
       return '<a href="#" class="visited-trip-link" data-trip-id="' + escapeHtml(t.tripId) + '">' + escapeHtml(Core.visitedTripLabel(t)) + '</a>';
-    }).join('・');
+    }).join('') + '</div>';
   }
 
   function wireVisitedTripLinks(root2) {

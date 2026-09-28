@@ -604,6 +604,11 @@ a:hover { text-decoration: underline; }
 .visited-caption-trips { font-size: 12.5px; color: var(--ink-muted); margin-top: 3px; }
 .visited-caption-trips a, .visited-row-trips a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .visited-caption-trips a:hover, .visited-row-trips a:hover { color: var(--accent-deep); }
+/* 複数の旅行にまたがる場所は、旅行名を「・」でつなげず1行ずつ出す（新しい旅行が上）。
+   行間は詰めすぎない程度に2px空ける。2026-09-29〜 */
+.visited-trip-links { display: flex; flex-direction: column; }
+.visited-trip-links a { display: block; font-size: 13px; color: var(--ink-muted); margin-top: 2px; }
+.visited-trip-links a:first-child { margin-top: 0; }
 
 /* 地方・大陸ごとの見出し付き一覧：太字の見出し＋右に件数、下に区切り線（参考にしたアプリと同じ構成）。
    行は見出しと同じ左インデントに揃え、選択中でも余白は変えず背景だけで強調する（2026-09-28〜。
