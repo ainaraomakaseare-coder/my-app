@@ -23,6 +23,16 @@ check("表に無い〜共和国は短くする", canonicalCountry("チェコ共�
 check("ドミニカ共和国はそのまま", canonicalCountry("ドミニカ共和国"), "ドミニカ共和国");
 check("空", canonicalCountry(""), "");
 check("日本国→日本", canonicalCountry("日本国"), "日本");
+// オーナー報告（2026-09-28）：スイス・ベルギー旅行のベルギーが「行ったことある旅先」の総計から漏れていた
+check("ベルギー王国→ベルギー", canonicalCountry("ベルギー王国"), "ベルギー");
+check("Belgium→ベルギー", canonicalCountry("Belgium"), "ベルギー");
+check("Belgique→ベルギー", canonicalCountry("Belgique"), "ベルギー");
+check("België→ベルギー", canonicalCountry("België"), "ベルギー");
+check("スイス連邦→スイス", canonicalCountry("スイス連邦"), "スイス");
+check("Switzerland→スイス", canonicalCountry("Switzerland"), "スイス");
+check("Schweiz→スイス", canonicalCountry("Schweiz"), "スイス");
+check("Suisse→スイス", canonicalCountry("Suisse"), "スイス");
+check("Svizzera→スイス", canonicalCountry("Svizzera"), "スイス");
 
 // 都道府県
 check("東京→東京都", canonicalPrefecture("東京"), "東京都");

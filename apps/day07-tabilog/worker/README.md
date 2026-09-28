@@ -518,3 +518,55 @@ npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXIST
 - 実際のトリップJSON（`GET /trips/:id`）を取得しての確認は、このセッションでは本番データへの
   読み取りアクセスの権限が下りず行えていない（Claude Codeの自動モードの分類器が「本番の読み取り」
   として拒否した）。オーナーが実機・ブラウザで確認するか、権限を許可したうえで再確認をお願いしたい。
+
+## 本番障害：GET /mylogが「Too many subrequests」で落ちる（2026-09-28 追加）
+
+上の「day_infosより記録の地図の座標を優先する」変更をデプロイしたところ、本番で`GET /mylog`が
+`Error: Too many subrequests by single Worker invocation.`で丸ごと落ち、ロールバックした。
+Workers Free（1回のWorker呼び出しにつき50サブリクエストまで。fetchだけでなくCache APIの
+match/putも1回ずつ数える）に対し、`resolveMapPointPlaces`が旅行の地点数だけCache APIの
+match・put・Nominatimのfetchを行っていたため、地点数の多い旅行（例：ヨーロッパ周遊）で
+上限を超えていた。
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE entries ADD COLUMN map_admin1 TEXT"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE entries ADD COLUMN map_country TEXT"
+```
+
+（`--file migrations/0025_entry_map_region.sql`でのインポートは認証エラーになったため、上の
+`--command`形式を使った。同じSQLは`migrations/0025_entry_map_region.sql`にも置いてある。）
+
+- `entries`に`map_admin1`・`map_country`（座標から求めた都道府県・国）を追加した。座標を求める
+  タイミング（`backgroundGeocodeEntry`＝記録の保存時の裏処理、`GET /geocode?entry=...`＝
+  「地図でふりかえる」を開いたときの裏処理）に、都道府県・国も1回だけ`reverseGeocode`して
+  一緒に保存する。`GET /mylog`は基本的にこの列を読むだけになり、Cache API・Nominatimの
+  呼び出しをほぼ無くした。
+- `getVisitedPlaces`（`worker/src/index.js`）を書き直した：entries×blocksの問い合わせを
+  1回のIN batchにまとめ（以前は2回に分けていた）、`resolveMapPointPlaces`（Cache API＋
+  バックグラウンドでの継続解決）は削除。まだ`map_admin1`/`map_country`が埋まっていない
+  古い行（この変更より前に座標だけ保存されたもの）だけ、1リクエストにつき最大3地点まで
+  その場で`reverseGeocode`して書き戻す（`resolveStaleEntryRegions`。1秒1回の間隔を守る）。
+  `GET /mylog`全体のサブリクエスト数は、最大でも15前後に収まる見積もり（内訳はコードコメント参照）。
+- `migrations/0025`を実行する前のDB（`map_admin1`/`map_country`列が無い）でも、`ALTER TABLE`が
+  無い前提のSQLへ自動でフォールバックし、`day_infos`だけを使った集計（＝この変更より前の状態）を
+  続ける。列が無いことによる例外で`GET /mylog`全体が落ちることは無い。
+- 加えて、`getVisitedPlaces`の呼び出し自体を`try/catch`で包んだ。これから先、同じ場所（または
+  似た理由）で例外が起きても、`GET /mylog`は`items`（付けた評価の一覧）・`trips`（参加した旅行）
+  までは必ず返し、`places`（訪れた都道府県・国・旅行ごとのチップ）だけが空になる。今回のように
+  マイログの一覧そのものが開けなくなる事態は防げる（失敗時は`{event:"mylog_visited_places_error"}`
+  という1行のJSONを`console.error`する）。
+- Belgium：オーナー報告。「スイス・ベルギー旅行（2025）」に行ったのに、「行ったことある旅先」の
+  海外一覧では「ベルギー」に「記録が見つかりませんでした」と出て、総計にも含まれなかった。
+  `COUNTRY_ALIASES`（`worker/src/visited-places.js`・`app.js`の`VISITED_COUNTRY_ALIASES`、
+  2つは同じ内容を複製している）にベルギーの表記ゆれ（「ベルギー王国」「Belgium」「Belgique」
+  「België」）が無かったため。あわせてスイスの表記ゆれ（「Schweiz」「Suisse」「Svizzera」）も
+  追加した。総計（`prefectures`/`countries`）はもともと`tripPlaces`（旅行ごとの一覧）の和集合として
+  作る構造になっている（`aggregateVisitedPlaces`のコメント参照）ため、**ある場所が総計に出るのに
+  出典の旅行が0件、ということは構造上起こらない**（このアプリの他の国・都道府県も同じ）。
+  `node worker/test/visited-places.test.mjs`にベルギー・スイスの表記ゆれのテストを追加した。
+- `GET /mylog`の`places.tripPlaces`（旅行ごとのチップ）は、`migrations/0025`を実行する前でも
+  `day_infos`だけから作られる形で必ず返る（空にはならない・古いクライアントもそのまま読める）。
+  マイログ画面の旅行カードのチップ（`renderMyLogTrips`・`tripPlaceChipsHtml`、`app.js`）は
+  `places.tripPlaces`があればそのまま描く作りに以前からなっているため、この変更でクライアント側の
+  修正は不要だった（ロールバックしていた古いWorkerが`tripPlaces`自体を返していなかったのが、
+  チップが消えていた直接の原因）。
