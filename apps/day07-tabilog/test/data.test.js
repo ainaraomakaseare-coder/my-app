@@ -1471,8 +1471,8 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
 
   // continentForAlpha2
   eq('continentForAlpha2: 日本はアジア', T.continentForAlpha2('JP'), 'アジア');
-  eq('continentForAlpha2: アメリカは北アメリカ', T.continentForAlpha2('US'), '北アメリカ');
-  eq('continentForAlpha2: ブラジルは南アメリカ', T.continentForAlpha2('BR'), '南アメリカ');
+  eq('continentForAlpha2: アメリカは北米', T.continentForAlpha2('US'), '北米');
+  eq('continentForAlpha2: ブラジルは南米', T.continentForAlpha2('BR'), '南米');
   eq('continentForAlpha2: フランスはヨーロッパ', T.continentForAlpha2('FR'), 'ヨーロッパ');
   eq('continentForAlpha2: エジプトはアフリカ', T.continentForAlpha2('EG'), 'アフリカ');
   eq('continentForAlpha2: オーストラリアはオセアニア', T.continentForAlpha2('AU'), 'オセアニア');
