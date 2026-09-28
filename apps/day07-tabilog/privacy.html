@@ -17,7 +17,7 @@
 <body>
 <div class="wrap">
   <h1>旅の足跡 プライバシーポリシー</h1>
-  <p class="updated">最終更新日：2026年9月24日</p>
+  <p class="updated">最終更新日：2026年9月28日</p>
 
   <p>「旅の足跡」（以下「本アプリ」）は、旅行の記録を家族・仲間と共有するためのアプリです。本ポリシーは、本アプリが取得・保存する情報と、その取り扱いについて説明します。</p>
 
@@ -39,10 +39,31 @@
     <li>Googleのプライバシーポリシー：<a href="https://policies.google.com/privacy">https://policies.google.com/privacy</a></li>
     <li>Appleのプライバシーポリシー：<a href="https://www.apple.com/legal/privacy/">https://www.apple.com/legal/privacy/</a></li>
   </ul>
-  <p><strong>音声入力・レシート読み取り機能（OpenAI, L.L.C.）</strong>：「音声・メモでまとめて記録する」機能を使うと、録音した音声データと入力したメモの文章が、「レシートを読み取る」機能を使うとレシートの写真が、内容の読み取り・文字起こしのためOpenAI, L.L.C.（米国）のAPIに送信されます。これらの機能をはじめて使う際には、アプリ内で送信する内容の説明を表示し、同意を得たうえで送信します（同意しない場合は機能を使えません）。送信されたデータは、OpenAIのAPI利用規約により既定でモデルの学習には使用されません。</p>
+
+  <p><strong>音声入力・メモの整理・レシート読み取り機能</strong>：「音声・メモでまとめて記録する」機能を使うと録音した音声データ・入力したメモの文章が、「レシートを読み取る」機能を使うとレシートの写真が、内容の読み取り・文字起こしのために次のサービスへ送信されます。氏名・メールアドレスなど、利用者を特定する情報は送信しません。これらの機能をはじめて使う際には、アプリ内で送信先の説明を表示し、同意を得たうえで送信します（同意しない場合は機能を使えません）。</p>
   <ul>
+    <li><strong>音声の文字起こし</strong>：まずCloudflare, Inc.のWorkers AI（Cloudflareのサーバー上で動くAIモデル）で文字起こしを試み、うまく読み取れなかったときだけOpenAI, L.L.C.（米国）のAPIに音声データを送信します。なお、本アプリの記録データ（写真・動画を含む）はもともとCloudflare社のデータベース・ストレージ（D1・R2）に保存しています（本ポリシー2.も参照）。</li>
+    <li><strong>音声の文字起こし・メモの文章を予定と記録に分ける整理</strong>：OpenAI, L.L.C.のAPIに文章を送信します。</li>
+    <li><strong>レシート読み取り</strong>：まずGoogle LLCのCloud Vision APIで文字を読み取り、うまく読み取れなかったときだけOpenAI, L.L.C.のAPIに写真を送信します。</li>
+  </ul>
+  <p>送信されたデータは、OpenAIのAPI利用規約により既定でモデルの学習には使用されません。</p>
+  <ul>
+    <li>Cloudflareのプライバシーポリシー：<a href="https://www.cloudflare.com/privacypolicy/">https://www.cloudflare.com/privacypolicy/</a></li>
     <li>OpenAIのプライバシーポリシー：<a href="https://openai.com/policies/privacy-policy">https://openai.com/policies/privacy-policy</a></li>
   </ul>
+
+  <p><strong>場所の検索・地図・経路案内</strong>：「場所名で検索」欄に入力した文字や、記録に貼り付けた地図リンク中の店名・地名は、場所の候補や座標を調べるため次のサービスへ送信することがあります。いずれもアカウント情報（氏名・メールアドレスなど）は送信しません。</p>
+  <ul>
+    <li><strong>Google LLC（Google Maps Platform）</strong>：Places APIで場所の検索・座標の取得、Routes APIで電車・新幹線などの乗り換え案内（経路上の座標）の取得に使います。<a href="https://policies.google.com/privacy">https://policies.google.com/privacy</a></li>
+    <li><strong>OpenStreetMapの地図タイル・Nominatim（検索・逆引き）</strong>：地図の表示（端末がタイル画像を直接読み込みます）と、場所名からの座標検索に使います。<a href="https://osmfoundation.org/wiki/Privacy_Policy">https://osmfoundation.org/wiki/Privacy_Policy</a></li>
+    <li><strong>ウィキペディア・ウィキデータ（Wikimedia Foundation）</strong>：施設名からの座標検索の補助に使います。<a href="https://foundation.wikimedia.org/wiki/Policy:Privacy_policy">https://foundation.wikimedia.org/wiki/Policy:Privacy_policy</a></li>
+    <li><strong>routing.openstreetmap.de（OSRM）・BRouter（brouter.de）</strong>：車・徒歩・自転車・電車の道のり（経路上の座標）の計算に使います。</li>
+    <li><strong>Open-Meteo</strong>：地名からの座標検索（ジオコーディング）や、現地時刻の判定に使います。</li>
+  </ul>
+
+  <p><strong>費用の外貨換算</strong>：費用明細を外貨で入力したときのレート取得のため、通貨コードと日付だけをFrankfurter（api.frankfurter.dev）またはfawazahmed0/currency-api（jsDelivr配信）へ送信します。氏名・メールアドレスなどは送信しません。</p>
+
+  <p>なお、自分が使っているAIサービスに予定案（JSON形式）を作らせて取り込む機能は、お願い文をコピーして利用者ご自身がそのAIサービスに貼り付け、返ってきた答えを本アプリに貼り付けていただく形式です。本アプリからその内容が送信されることはありません（利用にあたっては、そのAIサービスの利用規約が適用されます）。</p>
 
   <h2>5. データの削除</h2>
   <p>旅行の記録は、アプリ内の削除機能からいつでも削除できます。ログイン中のアカウントに関する情報（名前・プラン・回数券・参加した旅行への紐付け・いいね・コメント）は、マイログ画面の「アカウントを削除する」からいつでもご自身で削除できます。なお、無料プランの月間利用回数の不正な繰り返し取得を防ぐため、メールアドレスと当該月の音声入力の利用回数のみ、不正利用防止の目的で残ります（同じメールアドレスで登録し直しても、その月の利用回数は復活しません）。メールアドレスを含む完全な削除をご希望の場合は、下記の連絡先までお問い合わせください。</p>
