@@ -651,13 +651,24 @@
     return Math.round(amount * rate);
   }
 
+  // 外貨のcostItemにレート（1単位あたりの円）が入っているか。/ratesの自動取得前・取得失敗・
+  // 古いデータ（レート無しで保存された外貨行）でfalseになる＝costItemJpyが0円扱いする場合と同じ判定。
+  function costItemHasRate(item) {
+    return !!item && !!item.currency && item.currency !== 'JPY' && typeof item.rate === 'number' && item.rate > 0;
+  }
+
   // 費用明細1件の表示用文字列。円ならこれまでどおり`formatYen`と同じ「¥1,200」、外貨なら
   // 元の金額と円換算の両方を見せる（例：「US$25.00（¥3,737）」）。精算はすべて円で行うため、
   // 元の金額だけだと精算画面の内訳（円）と一致しているか本人には分からなくなるため。
+  // レートが無い外貨（未取得・未入力）は円換算が0円になり「US$25.00（¥0）」のように実際より
+  // 安く見えてしまうため、代わりに「レート未設定」と出す（合計・精算の円換算もcostItemJpy通り0円のまま＝
+  // 過大にごまかさず、本人が記録を開いてレートを入れるまで正しい額として合算しない）。
   function formatCostItemAmount(item) {
     if (!item || typeof item.amount !== 'number') return '';
     if (!item.currency || item.currency === 'JPY') return formatYen(item.amount);
-    return costCurrencySymbol(item.currency) + item.amount.toFixed(2) + '（' + formatYen(costItemJpy(item)) + '）';
+    var amountText = costCurrencySymbol(item.currency) + item.amount.toFixed(2);
+    if (!costItemHasRate(item)) return amountText + '（レート未設定）';
+    return amountText + '（' + formatYen(costItemJpy(item)) + '）';
   }
 
   function entryCostTotal(entry) {
@@ -2309,6 +2320,7 @@
     blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
     costItemJpy: costItemJpy,
+    costItemHasRate: costItemHasRate,
     formatCostItemAmount: formatCostItemAmount,
     COST_CURRENCIES: COST_CURRENCIES,
     COST_CURRENCY_SYMBOLS: COST_CURRENCY_SYMBOLS,
@@ -4324,29 +4336,67 @@
     $('#btnConfirmImportJson').addEventListener('click', confirmImportJsonBlocks);
   }
 
+  // parseImportedBlocksJsonが読み取るcostItemsは、外貨（currency付き）でもrateを持たない
+  // （自分のAIには外貨レートまで求めていないため）。手入力の行と同じく「初期値でレートを見せる」
+  // 体験に揃え、レート抜けのまま合計・精算が黙って0円扱いになる事故を防ぐため、POSTする前に
+  // /ratesから自動取得してrateを付けておく（renderCostItems内のensureRateForItemと同じAPI）。
+  // 同じ通貨・日付の組み合わせは1回だけ取得し（複数の予定・費用行で繰り返されることが多いため）、
+  // 取得に失敗した行はrate無し（=0円扱い、formatCostItemAmountが「レート未設定」と表示）のまま
+  // 取り込みを続け、失敗した通貨コードを呼び出し側に返す（本人に記録を開いて直してもらうため）。
+  function fetchRatesForImportBlocks(blocks, trip) {
+    var tripDates = Core.allDatesForTrip(trip, []).filter(function (d) { return d; });
+    var defaultDate = (trip && trip.selectedDate) || tripDates[0] || '';
+    var rateReqs = {}; // key: "USD|2024-08-10" -> Promise<{ok, rate}>
+    var failedCurrencies = [];
+    var waits = [];
+    blocks.forEach(function (b) {
+      var blockDate = b.date || defaultDate;
+      ((b.entry && b.entry.costItems) || []).forEach(function (item) {
+        if (!item.currency || item.currency === 'JPY') return;
+        if (typeof item.rate === 'number' && item.rate > 0) return;
+        var key = item.currency + '|' + blockDate;
+        if (!rateReqs[key]) {
+          rateReqs[key] = api('/rates?date=' + encodeURIComponent(blockDate) + '&currency=' + encodeURIComponent(item.currency))
+            .then(function (res) { return { ok: true, rate: res.rate }; })
+            .catch(function () { return { ok: false }; });
+        }
+        waits.push(rateReqs[key].then(function (res) {
+          if (res.ok) item.rate = res.rate;
+          else if (failedCurrencies.indexOf(item.currency) === -1) failedCurrencies.push(item.currency);
+        }));
+      });
+    });
+    return Promise.all(waits).then(function () { return failedCurrencies; });
+  }
+
   function confirmImportJsonBlocks() {
     var blocks = state.pendingImportBlocks;
     if (!blocks || !blocks.length || !state.trip) return;
     var user = loadCurrentUser();
     $('#btnImportJson').disabled = true;
-    $('#importJsonStatus').textContent = 'AIを使わずに取り込んでいます…（無料）';
-    api('/trips/' + encodeURIComponent(state.trip.id) + '/memo-blocks', 'POST', { blocks: blocks, author: (user && user.name) || '' })
-      .then(function () { return refreshTrip(); })
-      .then(function () {
-        $('#btnImportJson').disabled = false;
-        if (blocks[0] && blocks[0].date) state.selectedDate = blocks[0].date;
-        $('#importJsonInput').value = '';
-        $('#importPreview').hidden = true;
-        $('#importPreview').innerHTML = '';
-        state.pendingImportBlocks = null;
-        showScreen('tripDetail');
-        renderTripDetail();
-        showToast('取り込みました');
-      })
-      .catch(function () {
-        $('#btnImportJson').disabled = false;
-        $('#importJsonStatus').textContent = '取り込みに失敗しました。もう一度お試しください。';
-      });
+    $('#importJsonStatus').textContent = '外貨のレートを確認しています…';
+    fetchRatesForImportBlocks(blocks, state.trip).then(function (failedCurrencies) {
+      $('#importJsonStatus').textContent = 'AIを使わずに取り込んでいます…（無料）';
+      return api('/trips/' + encodeURIComponent(state.trip.id) + '/memo-blocks', 'POST', { blocks: blocks, author: (user && user.name) || '' })
+        .then(function () { return refreshTrip(); })
+        .then(function () {
+          $('#btnImportJson').disabled = false;
+          if (blocks[0] && blocks[0].date) state.selectedDate = blocks[0].date;
+          $('#importJsonInput').value = '';
+          $('#importPreview').hidden = true;
+          $('#importPreview').innerHTML = '';
+          state.pendingImportBlocks = null;
+          showScreen('tripDetail');
+          renderTripDetail();
+          showToast('取り込みました');
+          if (failedCurrencies.length) {
+            alert(failedCurrencies.join('・') + 'のレートを取得できませんでした。記録を開いてレートを入れてください。');
+          }
+        });
+    }).catch(function () {
+      $('#btnImportJson').disabled = false;
+      $('#importJsonStatus').textContent = '取り込みに失敗しました。もう一度お試しください。';
+    });
   }
 
   function renderDayTabs() {

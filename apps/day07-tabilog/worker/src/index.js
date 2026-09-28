@@ -3152,13 +3152,19 @@ async function saveOrganizedBlocks(env, tripId, dateOrDates, blocksData, author)
     // costItems（DAY32〜、自分のAIで整理JSON貼り付け）：手入力の費用（validCostItems）と違い
     // rate（外貨レート）までは自分のAIに求めないため、rate無しでもcurrency付きの行を受け付ける
     // （円換算はcostItemJpyがrate未設定時は0扱いにするだけで、金額そのものは失われない）。
+    // rateは任意項目。クライアント側（confirmImportJsonBlocks）が/ratesから自動取得して
+    // 付けてくることがあるため、付いていればvalidCostItemsと同じ範囲（0<rate<1000000）で
+    // 検証して保存する（取得に失敗した行はrate無しのまま届く＝上と同じ0円扱い）。
     const costItems = Array.isArray(entryData.costItems)
       ? entryData.costItems
           .filter((c) => c && isStr(c.label, 60) && Number.isFinite(c.amount) && c.amount >= 0 && c.amount <= 1000000)
           .slice(0, 30)
           .map((c) => {
             const item = { label: c.label.trim(), amount: c.amount };
-            if (isValidCurrency(c.currency)) item.currency = c.currency;
+            if (isValidCurrency(c.currency)) {
+              item.currency = c.currency;
+              if (Number.isFinite(c.rate) && c.rate > 0 && c.rate < 1000000) item.rate = c.rate;
+            }
             return item;
           })
       : [];

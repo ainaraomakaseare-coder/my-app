@@ -82,6 +82,12 @@ eq('costItemJpy: itemが無ければ0', T.costItemJpy(null), 0);
 eq('formatCostItemAmount: 円はformatYenと同じ', T.formatCostItemAmount({ amount: 1200 }), '¥1,200');
 eq('formatCostItemAmount: 外貨は元の金額と円換算を両方見せる', T.formatCostItemAmount({ amount: 25, currency: 'USD', rate: 149.46 }), 'US$25.00（¥3,737）');
 eq('formatCostItemAmount: 記号表が無い通貨（その他）はコードをそのまま出す', T.formatCostItemAmount({ amount: 100, currency: 'ISK', rate: 0.87 }), 'ISK 100.00（¥87）');
+eq('formatCostItemAmount: rateが無い外貨は「¥0」ではなく「レート未設定」と出す', T.formatCostItemAmount({ amount: 12.5, currency: 'USD' }), 'US$12.50（レート未設定）');
+eq('formatCostItemAmount: rateが0以下（不正値）も未設定と同じ扱い', T.formatCostItemAmount({ amount: 12.5, currency: 'USD', rate: 0 }), 'US$12.50（レート未設定）');
+eq('costItemHasRate: 円はcurrencyが無くても対象外（判定はfalse）', T.costItemHasRate({ amount: 1200 }), false);
+eq('costItemHasRate: 外貨でrateがあればtrue', T.costItemHasRate({ amount: 25, currency: 'USD', rate: 149.46 }), true);
+eq('costItemHasRate: 外貨でrateが無ければfalse', T.costItemHasRate({ amount: 25, currency: 'USD' }), false);
+eq('costItemHasRate: itemが無ければfalse', T.costItemHasRate(null), false);
 
 /* ---- tripBalances / settlementPlan：外貨が混ざった費用の貸し借り（円換算後で計算する） ---- */
 var mixedCurrencyBlocks = [{
