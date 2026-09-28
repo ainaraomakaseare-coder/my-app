@@ -222,6 +222,16 @@ const post = (over) => Object.assign({
     assert.ok(!/\btargets,\n/.test(run), '分ける前の出し先をそのまま送っている');
   });
 
+  // ★ Threads だけ選んで仕込んだら、20本ぶん作ってから全部「即公開になります」で断られた。
+  await check('まとめて仕込むは、自動投稿を許していない出し先だけなら作り始める前に止める', () => {
+    const html = require('fs').readFileSync(__dirname + '/../public/index.html', 'utf8');
+    const run = html.slice(html.indexOf("$('bulkRun').onclick"), html.indexOf("$('bulkStop').onclick"));
+    const stopAt = run.indexOf('onlyManual(affiTargets) || onlyManual(plainTargets)');
+    assert.ok(stopAt > 0, '手渡ししかできない出し先だけのときに止めていない');
+    assert.ok(stopAt < run.indexOf("api('/api/generate'"), '文案を作り始めてから止めている');
+    assert.ok(/grp\.auto_publish_networks\.includes\(net\)/.test(run), '運用アカウントの許可を見ていない');
+  });
+
   // ---------------------------------------------------------------- まとめて仕込む
   await check('ネタは20本そろっていて、重複が無い', () => {
     const t = require('../public/topics.json').topics;

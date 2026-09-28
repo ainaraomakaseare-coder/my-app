@@ -2568,6 +2568,23 @@ $('bulkRun').onclick = async () => {
   if (!start || !time) { $('bulkErr').textContent = '日付と時刻を入れてください。'; return; }
   if (!targets.length) { $('bulkErr').textContent = '投稿先を1つ以上選んでください。'; return; }
 
+  // ★ 自動投稿を許していないSNS（Instagram・X・Threads）は、予約しても手渡し待ちになる。
+  //   保存する1本の出し先がそれだけだとサーバーが断るので、20本ぶん文案と動画を作ってから
+  //   全部失敗する。作り始める前に止める（lib/handoff.js の autoPublishesTo と同じ判定）。
+  const grp = groups.find((x) => x.id === currentGroup);
+  const autoOk = (net) => !AUTO_NETWORKS.includes(net) || !grp ||
+    !Array.isArray(grp.auto_publish_networks) || grp.auto_publish_networks.includes(net);
+  const manualBoxes = chosen.filter((c) => !autoOk(c.dataset.network));
+  const manualNames = [...new Set(manualBoxes.map((c) => NET_LABEL[c.dataset.network] || c.dataset.network))].join('・');
+  const onlyManual = (ids) => ids.length > 0 && ids.every((id) => manualBoxes.some((c) => c.value === id));
+  if (onlyManual(affiTargets) || onlyManual(plainTargets)) {
+    $('bulkErr').textContent = `${manualNames} は、この運用アカウントで自動投稿を許可していません。` +
+      `「運用アカウント」の「自動投稿してよいSNS」で ${manualNames} にチェックを入れてから仕込んでください。` +
+      '（許可すると、予約済みの手渡し待ちも自動投稿に切り替わります）';
+    return;
+  }
+  if (manualBoxes.length && !confirm(`${manualNames} は自動投稿を許可していないので、手渡し待ち（自分で投稿）になります。このまま仕込みますか？`)) return;
+
   bulkAbort = false;
   bulkRunning = true;
   $('bulkRun').disabled = true;
