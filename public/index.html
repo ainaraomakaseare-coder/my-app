@@ -189,6 +189,10 @@
 
       <label for="bulkTopics">ネタ（1行に1つ）</label>
       <textarea id="bulkTopics" style="min-height:180px" placeholder="読み込み中…"></textarea>
+      <div class="row" style="margin-top:6px;align-items:center">
+        <button type="button" id="bulkIdeas">ネタを20本考えてもらう</button>
+        <span class="muted" id="bulkIdeasState">使ったネタと被らないものを作り、上の欄と入れ替えます。</span>
+      </div>
 
       <div class="row" style="margin-top:12px;align-items:flex-end">
         <div style="flex:1;min-width:180px">
@@ -2189,8 +2193,8 @@ function applyGenerated(d) {
   $('ig').value = p.igCaption || d.igCaption || '';
   $('tt').value = p.ttCaption || d.ttCaption || '';
   $('xt').value = p.xText || d.xText || '';
-  // Threads は短い（500文字）ので、同じく短い X の本文を下敷きにする。
-  $('th').value = p.xText || d.xText || '';
+  // Threads 専用に書かせた本文（プロフィール誘導・PR表記・話題タグ込み）。古い文案は X の本文で代える。
+  $('th').value = p.thText || p.xText || d.xText || '';
   $('ytt').value = d.title || '';
   $('ytd').value = p.ytDescription || d.igCaption || '';
   $('affiFlag').checked = !!d.hasAffiliateLink;
@@ -2447,6 +2451,32 @@ async function loadTopics() {
     $('bulkStart').value = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
   }
 }
+
+/**
+ * ネタを20本考えてもらい、欄と入れ替える。
+ * ★ いま欄にあるネタも「使ったもの」として渡し、被らないものを作らせる。
+ *   用意してあるネタを使い切ったあと、同じ20本をまた仕込まないため。
+ */
+$('bulkIdeas').onclick = async () => {
+  const btn = $('bulkIdeas');
+  const state = $('bulkIdeasState');
+  const used = $('bulkTopics').value.split('\n').map((t) => t.trim()).filter(Boolean);
+  btn.disabled = true;
+  state.className = 'muted';
+  state.textContent = '考えています…（30秒ほど）';
+  try {
+    const out = await api('/api/generate', { method: 'POST', body: { action: 'topics', used } });
+    if (!out.topics || !out.topics.length) throw new Error('ネタを作れませんでした。もう一度押してください。');
+    $('bulkTopics').value = out.topics.join('\n');
+    state.textContent = out.ok
+      ? `${out.topics.length}本入れました。気になるものは書き換えてから仕込んでください。`
+      : `${out.topics.length}本だけ作れました（重なりや表現で落としたものがあります）。足りないぶんは足してください。`;
+  } catch (e) {
+    state.className = 'err';
+    state.textContent = e.message + (e.hint ? '｜' + e.hint : '');
+  }
+  btn.disabled = false;
+};
 
 /**
  * n本目の予定日時。「2026-09-03T21:00」の形で返す。

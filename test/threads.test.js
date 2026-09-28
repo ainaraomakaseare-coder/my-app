@@ -166,18 +166,59 @@ const account = { id: 'acc', network: 'threads', external_id: '123', access_toke
     assert.ok(issue && issue.code === 'affiliate-not-allowed');
   });
 
-  await check('案件つきの Threads 本文は、リンクを抜いてプロフィールへ誘導し、#PR を付ける', () => {
-    const t = rules.threadsText({ xText: '面接で落ちる6つ。3番が意外 https://px.a8.net/abc', hashtags: ['転職', '面接'] }, true);
+  // ★ Threads は文字が主役で、リプライが続く投稿ほど広がる。X 用の本文（画像に添える前提）
+  //   の使い回しをやめ、Threads 専用に書かせた thText を使う。
+  await check('Threads 専用の本文（thText）があれば、X 用ではなくそちらを使う', () => {
+    const t = rules.threadsText({ xText: 'X用', thText: '面接で落ちる人の共通点\n\n・…\n\nどれか当てはまった？', hashtags: ['面接対策', '転職'] }, false);
+    assert.ok(t.startsWith('面接で落ちる人の共通点'), t);
+    assert.ok(!t.includes('X用'));
+  });
+
+  await check('古い文案（thText なし）は、X 用の本文で代える', () => {
+    const t = rules.threadsText({ xText: '面接で落ちる6つ', hashtags: ['面接対策'] }, false);
+    assert.ok(t.startsWith('面接で落ちる6つ'), t);
+  });
+
+  await check('話題タグは1つだけ（いちばん具体的な先頭のタグ）', () => {
+    const t = rules.threadsText({ thText: '本文です。どれか当てはまった？', hashtags: ['面接対策', '転職', '第二新卒'] }, false);
+    assert.strictEqual((t.match(/#/g) || []).length, 1, t);
+    assert.ok(/#面接対策$/.test(t), t);
+  });
+
+  await check('案件つきは、リンクを抜いて【PR】付きでプロフィールへ誘導する（話題タグの枠は使わない）', () => {
+    const t = rules.threadsText({ thText: '面接で落ちる6つ。3番が意外 https://px.a8.net/abc', hashtags: ['面接対策', '転職'] }, true);
     assert.ok(!/https?:\/\//.test(t), 'リンクが残っている: ' + t);
-    assert.ok(t.includes(rules.THREADS_PROFILE_CTA), 'プロフィールへの誘導が無い');
-    assert.ok(/#PR$/.test(t), '#PR が無い');
-    assert.ok(!t.includes('#転職'), 'Threads は話題タグ1つなので #PR だけにする');
+    assert.ok(t.includes(rules.THREADS_PR_CTA), '【PR】付きの誘導が無い: ' + t);
+    assert.ok(/#面接対策$/.test(t), '話題タグが無い: ' + t);
+    assert.ok(!t.includes('#PR'), 'PR で話題タグの枠を使っている');
     assert.deepStrictEqual(rules.threadsProblems(t, true), []);
   });
 
-  await check('案件なしの Threads 本文は、いままでどおり X と同じ（ハッシュタグ2つまで）', () => {
-    const d = { xText: '面接で落ちる6つ', hashtags: ['転職', '面接', '第二新卒'] };
-    assert.strictEqual(rules.threadsText(d, false), rules.captionWithTags(d.xText, d.hashtags, 'x'));
+  await check('AI には Threads 専用の本文を必ず書かせる（構造化出力の required）', () => {
+    const gen = require('../lib/draft-generate');
+    assert.ok(gen.SCHEMA.required.includes('thText'), 'thText が required に無い');
+    assert.ok(/thText/.test(gen.SYSTEM_PROMPT) && /問いかけ/.test(gen.SYSTEM_PROMPT), 'Threads の書き方を指示していない');
+  });
+
+  await check('案件つきの回は、thText にもリンクとPR表記を書かないよう伝える', () => {
+    const gen = require('../lib/draft-generate');
+    const msg = gen.buildUserMessage({ title: '面接', hasAffiliateLink: true });
+    assert.ok(/thText/.test(msg), msg);
+  });
+
+  await check('Threads 本文が長すぎたら作り直させる', () => {
+    const d = { thText: 'あ'.repeat(rules.THREADS_BODY_MAX + 1) };
+    assert.ok(rules.findingsOf(d, 'threads-too-long').length === 1);
+  });
+
+  await check('Threads 本文にリンクがあれば作り直させる', () => {
+    assert.ok(rules.findingsOf({ thText: '詳しくは https://example.com へ。どう思う？' }, 'threads-link').length === 1);
+  });
+
+  await check('Threads 本文の一人称の体験も、他の本文と同じく止める', () => {
+    const f = rules.validateDraft({ thText: '正直、私も転職して年収が上がりました。どう思う？' })
+      .filter((x) => x.field === 'thText' && x.severity === 'error');
+    assert.ok(f.length > 0, '一人称の体験を通している');
   });
 
   await check('案件つきで本文にリンクがあれば止める', () => {
