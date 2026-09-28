@@ -5963,16 +5963,23 @@
       var options = Core.COST_CURRENCIES.map(function (c) {
         return '<option value="' + c + '"' + (c === selectVal ? ' selected' : '') + '>' + (c === 'JPY' ? '円' : c) + '</option>';
       }).join('') + '<option value="__other"' + (selectVal === '__other' ? ' selected' : '') + '>その他</option>';
+      // 375px幅のiPhoneで「内容・金額・通貨・×」を1行に詰め込むと金額欄が数文字幅まで潰れて
+      // プレースホルダーが縦の線のようにしか見えなくなっていた（オーナー指摘）ため、
+      // 1行目＝内容（幅いっぱい）、2行目＝金額・通貨・×、の2段に分ける（2026-09-28）。
       row.innerHTML =
-        '<input type="text" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
-        '<input type="number" min="0" step="' + (isForeign ? '0.01' : '1') + '" placeholder="' + (isForeign ? '金額' : '円') + '" value="' + (typeof item.amount === 'number' && item.amount ? item.amount : '') + '">' +
-        '<select class="cost-currency-select">' + options + '</select>' +
-        '<input type="text" class="cost-currency-other" placeholder="例：ISK" maxlength="3" value="' + ((showOther && currency !== 'JPY') ? escapeHtml(currency) : '') + '"' + (showOther ? '' : ' hidden') + '>' +
-        '<button type="button" aria-label="削除">×</button>' +
+        '<div class="cost-item-line1">' +
+          '<input type="text" class="cost-item-label" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
+        '</div>' +
+        '<div class="cost-item-line2">' +
+          '<input type="number" class="cost-item-amount" min="0" step="' + (isForeign ? '0.01' : '1') + '" inputmode="decimal" placeholder="' + (isForeign ? '金額' : '円') + '" value="' + (typeof item.amount === 'number' && item.amount ? item.amount : '') + '">' +
+          '<select class="cost-currency-select">' + options + '</select>' +
+          '<input type="text" class="cost-currency-other" placeholder="例：ISK" maxlength="3" value="' + ((showOther && currency !== 'JPY') ? escapeHtml(currency) : '') + '"' + (showOther ? '' : ' hidden') + '>' +
+          '<button type="button" aria-label="削除">×</button>' +
+        '</div>' +
+        '<div class="cost-rate-row" hidden></div>' +
         '<div class="cost-item-row-actions">' +
           '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
-        '</div>' +
-        '<div class="cost-rate-row" hidden></div>';
+        '</div>';
       var inputs = row.querySelectorAll('input');
       var textInput = inputs[0], amountInput = inputs[1], otherInput = row.querySelector('.cost-currency-other');
       var currencySelect = row.querySelector('.cost-currency-select');
