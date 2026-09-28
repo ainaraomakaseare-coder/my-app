@@ -233,6 +233,15 @@ node scripts/ai-compare.mjs voice ./sample-voice.webm
 
 比較対象のモデルはWorkers AIの`@cf/openai/whisper-large-v3-turbo`（音声認識）・`@cf/qwen/qwen3-30b-a3b-fp8`・`@cf/openai/gpt-oss-120b`（メモの整理）。無料枠・単価の目安はdocs/adr/0012に記載。何も保存せず、利用者の音声・テキストの内容はログにも出さない。ローカルの`wrangler dev --local`ではCloudflareへのログインが無いとWorkers AIの呼び出し自体が失敗することがあるが、その場合`workersAi`側がエラーになるだけで、`/ai-compare`自体が404にならないことは確認できる。
 
+## 音声の文字起こしをCloudflare Workers AIに切り替え（2026-09-28 追加）
+
+上記の比較試作（docs/adr/0012）を経て、本番の音声文字起こしをOpenAI（Whisper）からCloudflare Workers AI（`@cf/openai/whisper-large-v3-turbo`）に切り替えた。予定・記録への整理（`organizeTextIntoBlocks`）は精度優先で引き続きOpenAIのまま。
+
+- `transcribeAudioForProduction`（`worker/src/index.js`）が新しい呼び出し口。まずWorkers AIを試し、例外が出た・結果が空文字だったときだけ今までどおりOpenAIにフォールバックする。呼び出し元（`createBlocksFromVoice`／`createBlocksFromVoiceMultiDay`）はこの関数を呼ぶだけで、フォールバックの有無を意識しない
+- フォールバック要否の判定（`isUsableTranscript`）は純粋関数として`worker/src/transcribe-provider.js`に切り出し、`node worker/test/transcribe-provider.test.mjs`で単体テストできる
+- 文字起こしがほぼ無料になったため、無料プランの音声入力の月間上限（`PLAN_MONTHLY_LIMIT.free`）を月2回→月10回に引き上げた（basicも10回→20回、premium_plusは50回のまま。詳細はdocs/adr/0004・0012の2026-09-28追記）
+- `/ai-compare`（`mode=voice`）はそのまま残しており、モデル変更時などの比較に引き続き使える
+
 （2026-09-26 追記・地図のURLのS2セルID対応）テーブルの変更は無し。GoogleマップのURLの中には、
 「共有」からの短縮リンクを展開すると店名も座標も入らず`data=!4m2!3m1!1s0x…:0x…`や`ftid=0x…:0x…`だけが
 残るものがある（例：ユニオンステーション、ステーキの夕食）。コロンの前の16進数がその場所のS2セルIDに

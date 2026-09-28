@@ -6,12 +6,14 @@
  * 旅行の閲覧・記録の追加はログイン不要。旅行のURL（trip id）を知っている人だけが
  * 読み書きできる「リンクを知っていれば入れる」方式（Googleドキュメントの共有リンクに近い）。
  * 家族・少人数グループでの利用を想定しており、不特定多数への公開は想定していない。
- * 「音声でまとめて記録する」機能だけ、唯一OpenAIを呼び出す（他の機能はAI不使用）。
+ * 「音声でまとめて記録する」機能だけ、唯一AIを呼び出す（他の機能はAI不使用）。文字起こしは
+ * Cloudflare Workers AI（失敗時のみOpenAI）、Blockへの整理は引き続きOpenAIを使う。
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
 import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture } from "./visited-places.js";
 import { parseWorkersAiOutput, describeWorkersAiOutputForDebug } from "./ai-parse.js";
+import { isUsableTranscript } from "./transcribe-provider.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
@@ -2362,9 +2364,12 @@ function generateAccountId() {
   return String(100000 + (bytes[0] % 900000));
 }
 
-// 月間の音声入力の上限（docs/adr/0004）。free（無料）は月2回まで
-// （新規登録時にticket_creditsへ3回分のボーナスを付与するため、登録した最初の月だけ実質5回）。
-var PLAN_MONTHLY_LIMIT = { free: 2, basic: 10, premium_plus: 50 };
+// 月間の音声入力の上限（docs/adr/0004、docs/adr/0012の2026-09-28追記）。文字起こしを
+// Cloudflare Workers AIに切り替えたことでほぼ無料になった（整理（organizeTextIntoBlocks）は
+// 引き続きOpenAIを呼ぶため実費はゼロではない）ため、free（無料）を月2回→月10回に引き上げた
+// （新規登録時にticket_creditsへ3回分のボーナスを付与するため、登録した最初の月だけ実質13回）。
+// 有料プランがfreeを下回らないよう、basicも10→20に上げている（premium_plusは50のまま）。
+var PLAN_MONTHLY_LIMIT = { free: 10, basic: 20, premium_plus: 50 };
 // メモをAIで整理する回数（音声とは別の枠、2026-09-26〜）。メモは文字起こしが要らないぶん音声より安いので、
 // 無料でも月10回まで使えるようにした。有料プランは、以前（音声と共通の枠）より減らないようにしている。
 // 決まった形（「10:00 新宿」のような行）のメモは、AIを使わずアプリ側で分けるので回数を使わない。
@@ -2501,7 +2506,7 @@ async function deleteAccount(request, env, headers) {
   await deleteSocialForAccount(env, account.account_id);
   await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
   // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
-  // 「削除→再登録」を繰り返すだけで無料プランの月間上限(2回)が毎回復活してしまう
+  // 「削除→再登録」を繰り返すだけで無料プランの月間上限(月10回)が毎回復活してしまう
   // （新規登録特典の抜け道と同じ構図）。月が変わったときのリセットはresetPeriodIfNeeded()に
   // 任せる。
   await env.DB.prepare(
@@ -2776,8 +2781,8 @@ const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions
 const MAX_VOICE_AUDIO_BYTES = 15 * 1024 * 1024; // 数分の音声を想定した上限
 const VOICE_AUDIO_FORMATS = { "audio/webm": "webm", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/ogg": "ogg" };
 
-// Cloudflare Workers AIへの切り替えを検討するための試作（docs/adr/0012）で使うモデルID。
-// 本番の処理はまだ一切これらを使わない（/ai-compareでの比較専用）。
+// Cloudflare Workers AIのモデルID。Whisper（文字起こし）は2026-09-28に本番採用した
+// （docs/adr/0012の試作から昇格）。LLM2モデルは引き続き/ai-compareでの比較専用（本番未採用）。
 const WORKERS_AI_WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo";
 const WORKERS_AI_LLM_MODELS = {
   qwen3_30b: "@cf/qwen/qwen3-30b-a3b-fp8",
@@ -2814,16 +2819,37 @@ async function transcribeAudio(env, buf, contentType, format) {
   return typeof data.text === "string" ? data.text.trim() : null;
 }
 
-// /ai-compare専用。OpenAIのtranscribeAudioと同じ入力から、Workers AIのWhisperで
-// 文字起こしを試す（本番の処理からは呼ばない）。audioはWorkers AIの公式スキーマ
+// OpenAIのtranscribeAudioと同じ入力から、Workers AIのWhisperで文字起こしを試す。
+// audioはWorkers AIの公式スキーマ
 // （https://developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo/）どおり、
 // base64エンコードした文字列で渡す（数値の配列ではない。以前はバイト列の配列を渡しており、
-// 期待される入力形式と合っていなかった。2026-09-27に確認して修正）
+// 期待される入力形式と合っていなかった。2026-09-27に確認して修正）。
+// 2026-09-28から本番（transcribeAudioForProduction）でも使う。/ai-compareのmode=voiceも
+// 引き続きこの関数で比較する。
 async function transcribeAudioWithWorkersAi(env, buf) {
   const audio = arrayBufferToBase64(buf);
   const result = await env.AI.run(WORKERS_AI_WHISPER_MODEL, { audio, language: "ja" });
   const text = result && typeof result.text === "string" ? result.text : (typeof result === "string" ? result : "");
   return text.trim();
+}
+
+// 本番の音声文字起こしはここを呼ぶ（createBlocksFromVoice／createBlocksFromVoiceMultiDay）。
+// まずCloudflare Workers AIを試し、失敗（例外）・空文字だったときだけ今までどおり
+// OpenAI（Whisper）にフォールバックする（docs/adr/0012の2026-09-28追記）。
+// Workers AI呼び出し自体の失敗はAI_QUOTA_EXHAUSTED相当ではない（OpenAIの残高とは無関係）ため、
+// ここでは握りつぶしてOpenAIに回すだけで、利用者には見せない。
+// 「使える文字起こしか」の判定（isUsableTranscript）だけを純粋関数に切り出してテストしている
+// （worker/test/transcribe-provider.test.mjs）。
+async function transcribeAudioForProduction(env, buf, contentType, format) {
+  if (env.AI) {
+    try {
+      const workersAiText = await transcribeAudioWithWorkersAi(env, buf);
+      if (isUsableTranscript(workersAiText)) return workersAiText;
+    } catch (e) {
+      console.error(JSON.stringify({ event: "workers_ai_transcribe_error", message: String((e && e.message) || e).slice(0, 300) }));
+    }
+  }
+  return transcribeAudio(env, buf, contentType, format);
 }
 
 function outputText(response) {
@@ -3225,7 +3251,7 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
   }
 
-  const transcript = await transcribeAudio(env, buf, contentType, format);
+  const transcript = await transcribeAudioForProduction(env, buf, contentType, format);
   if (transcript && transcript.quotaExhausted) return json({ error: "ai_quota_exhausted" }, 503, headers);
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
@@ -3343,7 +3369,7 @@ async function createBlocksFromVoiceMultiDay(tripId, request, env, headers) {
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
   }
 
-  const transcript = await transcribeAudio(env, buf, contentType, format);
+  const transcript = await transcribeAudioForProduction(env, buf, contentType, format);
   if (transcript && transcript.quotaExhausted) return json({ error: "ai_quota_exhausted" }, 503, headers);
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);

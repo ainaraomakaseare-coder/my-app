@@ -44,3 +44,12 @@
 - Whisper（`whisper-large-v3-turbo`）用の`transcribeAudioWithWorkersAi`も、公式スキーマ（`audio`は数値配列ではなくbase64文字列）と実装がずれていたのを修正した（`arrayBufferToBase64`を再利用）
 - 管理者だけが見る`/ai-compare`のレスポンスに限り、Workers AI側が失敗したときだけ`debug: { rawSnippet, shape }`（生の出力の先頭800文字とトップレベルのキー一覧）を載せるようにした。利用者の音声・メモの内容そのものはやはりログには一切出さない（レスポンスに載るだけ）
 - `scripts/ai-compare.mjs`も、エラー時に`debug.shape`/`debug.rawSnippet`があれば表示するようにした
+
+## 追記（2026-09-28）：文字起こしだけ本番採用した（試作→本採用）
+
+比較の結果、Workers AI（`@cf/openai/whisper-large-v3-turbo`）の文字起こしはOpenAI（Whisper）と精度が同等で、所要時間も約2.7秒と実用的だったため、オーナーの判断で本番の文字起こしをWorkers AIに切り替えた。上記「今後の判断の進め方」3.の想定どおり、呼び出し順は「まずWorkers AI、失敗したらOpenAI」にし、失敗時だけ今までどおりOpenAIを呼ぶ（`transcribeAudioForProduction`、`worker/src/index.js`）。
+
+- **文字起こしのみ切り替え、整理は対象外**：予定・記録への整理（`organizeTextIntoBlocks`）は精度を優先し、引き続きOpenAI（Responses API）のまま。LLM2モデル（qwen3-30b・gpt-oss-120b）は`/ai-compare`の比較専用のまま本番採用していない
+- **フォールバックの判定**：Workers AIの呼び出しが例外を投げた、または結果が空文字・空白のみだったときは、その場でOpenAI（Whisper）にフォールバックする。判定ロジック（`isUsableTranscript`）は純粋関数として`worker/src/transcribe-provider.js`に切り出し、`worker/test/transcribe-provider.test.mjs`で単体テストできる
+- **無料プランの上限も引き上げ**：文字起こしの実費がほぼ無料になったため、`PLAN_MONTHLY_LIMIT.free`を月2回→月10回に引き上げた（詳細はdocs/adr/0004の2026-09-28追記）
+- `/ai-compare`（`mode=voice`）は引き続き残しており、今後モデルが変わったときなどの比較に使える
