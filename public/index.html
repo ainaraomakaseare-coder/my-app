@@ -1489,7 +1489,10 @@ function renderGroups() {
         return;
       }
       try {
-        await api(`/api/groups?id=${g.id}`, { method:'PATCH', body:{ auto_publish_networks: chosen } });
+        const out = await api(`/api/groups?id=${g.id}`, { method:'PATCH', body:{ auto_publish_networks: chosen } });
+        // これから出る予約のうち、手渡し待ちだったものは自動投稿に切り替わる（lib/groups.js）。
+        const moved = (out && out.promoted) || [];
+        if (moved.length) alert(`予約済みの ${moved.length} 件（${[...new Set(moved.map((t) => NET_LABEL[t.network] || t.network))].join('・')}）を、手渡し待ちから自動投稿に切り替えました。`);
       } catch (e) {
         alert(e.message + (e.hint ? '\n' + e.hint : ''));
         revert();

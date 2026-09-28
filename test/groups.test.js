@@ -28,6 +28,7 @@ function fakeDb(state) {
     groups: [], accounts: [], refs: { accounts: 0, posts: 0 }, conflict: null,
   }, state);
   s.wrote = [];
+  s.promoted = [];
   return {
     listGroups: async () => s.groups,
     listAccounts: async () => s.accounts,
@@ -36,6 +37,10 @@ function fakeDb(state) {
     deleteGroup: async (id) => { s.wrote.push(['delete', id]); },
     countGroupRefs: async () => s.refs,
     accountGroupConflict: async () => s.conflict,
+    promoteManualTargets: async (id, networks, after) => {
+      s.promoted.push([id, networks, after]);
+      return (s.manual || []).filter((t) => networks.includes(t.network));
+    },
     updateAccount: async (id, patch) => { s.wrote.push(['account', id, patch]); return Object.assign({ id }, patch); },
     upsertAccount: async (row) => { s.wrote.push(['upsert', row]); return Object.assign({ id: A1 }, row); },
     // 本物と同じ順で探す。IDが先、無いときだけ名前（ただしIDの入っていない行に限る）。
@@ -127,6 +132,30 @@ function load(modPath, db, stubs) {
     const g = load('../lib/groups.js', db);
     await g.update(G1, { auto_publish_networks: ['instagram'] });
     assert.deepStrictEqual(db._state.wrote, [['update', G1, { auto_publish_networks: ['instagram'] }]]);
+  });
+
+  // ★ 予約を保存したときに手渡し待ちになった行は、許可を足しても動かなかった
+  //   （転職キュレーションの Threads が「手渡し待ち」のまま止まった）。
+  await check('新しく自動投稿を許したSNSは、これから出る予約も順番待ちに戻す', async () => {
+    const db = fakeDb({
+      groups: [{ id: G1, label: 'A', validation_profile: 'curator', auto_publish_networks: ['instagram'] }],
+      manual: [{ post_id: 'p1', network: 'threads' }],
+    });
+    const g = load('../lib/groups.js', db);
+    const out = await g.update(G1, { auto_publish_networks: ['instagram', 'threads'] });
+    assert.strictEqual(db._state.wrote[0][0], 'update', '許可を先に書いていない');
+    assert.strictEqual(db._state.promoted.length, 1);
+    assert.deepStrictEqual(db._state.promoted[0].slice(0, 2), [G1, ['threads']], '足したSNSだけを戻していない');
+    assert.ok(Date.parse(db._state.promoted[0][2]) <= Date.now(), '「いまより後の予約だけ」の境目が無い');
+    assert.deepStrictEqual(out.promoted, [{ post_id: 'p1', network: 'threads' }]);
+  });
+
+  await check('許可を増やしていないときは、予約に触らない', async () => {
+    const db = fakeDb({ groups: [{ id: G1, label: 'A', validation_profile: 'curator', auto_publish_networks: ['instagram', 'x'] }] });
+    const g = load('../lib/groups.js', db);
+    await g.update(G1, { auto_publish_networks: ['instagram'] });
+    await g.update(G1, { label: 'B' });
+    assert.deepStrictEqual(db._state.promoted, []);
   });
 
   // ★ 打ち間違いを黙って捨てると、許可したつもりの状態に気づけない。
