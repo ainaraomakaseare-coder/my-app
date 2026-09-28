@@ -13,6 +13,7 @@ const db = require('../lib/db');
 const scope = require('../lib/account-scope');
 const handoff = require('../lib/handoff');
 const ttRules = require('../lib/tiktok-settings');
+const rules = require('../lib/draft-rules');
 // 画面と同じ数え方を使う（ブラウザとサーバーで共通のファイル）
 const drafts = require('../public/split-drafts.js');
 
@@ -147,6 +148,13 @@ async function save(req, id) {
   const thText = String(body.th_text || '');
   if (toThreads && thText.length > THREADS_MAX) {
     throw bad(`Threads の本文が長すぎます（${thText.length}文字／上限${THREADS_MAX}文字）。Threads 用の本文を短くしてください。`);
+  }
+  // ★ 案件つきを Threads に出すときは、本文にリンクが無く、PR表記があること。
+  //   Threads 用の本文が空なら共通本文が送られるので、そちらも含めて見る。
+  if (toThreads) {
+    const sent = thText || String(body.body_common || '');
+    const problems = rules.threadsProblems(sent, choice.hasAffiliateLink);
+    if (problems.length) throw bad(problems[0]);
   }
 
   // ★ TikTok の直接投稿の設定。null なら下書き送信（いままでどおり）。
