@@ -200,6 +200,27 @@ const post = (over) => Object.assign({
     assert.ok(at('schema_v10_threads.sql') < at('schema_v11_series.sql'), 'v10 と v11 の順が逆');
     assert.ok(at('schema_v11_series.sql') < at('schema_v12_threads_affiliate.sql'), 'v11 と v12 の順が逆');
   });
+  // ★ 画面は案件つきのとき掲載対象外（X など）を選べなくしている。
+  //   その一覧がサーバーとずれると、選べるのに保存で弾かれる（動画を作った後に）。
+  await check('画面の「案件リンクを載せてよい出し先」が、サーバーと同じ', () => {
+    const html = require('fs').readFileSync(__dirname + '/../public/index.html', 'utf8');
+    const m = html.match(/const AFFILIATE_NETWORKS = (\[[^\]]*\]);/);
+    assert.ok(m, '画面に AFFILIATE_NETWORKS が無い');
+    const onScreen = JSON.parse(m[1].replace(/'/g, '"'));
+    assert.deepStrictEqual(onScreen, require('../lib/account-scope').AFFILIATE_NETWORKS);
+    assert.ok(!onScreen.includes('x'), 'X が案件つきで選べてしまう');
+  });
+
+  await check('まとめて仕込むは、案件つきなら掲載対象外の出し先を送らない', () => {
+    const html = require('fs').readFileSync(__dirname + '/../public/index.html', 'utf8');
+    const run = html.slice(html.indexOf("$('bulkRun').onclick"));
+    const affiAt = run.indexOf("const affi = $('bulkAffi').checked");
+    const targetsAt = run.indexOf('const targets =');
+    assert.ok(affiAt >= 0 && affiAt < targetsAt, '出し先を決める前に案件つきかを見ていない');
+    assert.ok(/AFFILIATE_NETWORKS\.includes\(c\.dataset\.network\)/.test(run.slice(targetsAt, targetsAt + 300)),
+      '案件つきのときに出し先を絞っていない');
+  });
+
   // ---------------------------------------------------------------- まとめて仕込む
   await check('ネタは20本そろっていて、重複が無い', () => {
     const t = require('../public/topics.json').topics;

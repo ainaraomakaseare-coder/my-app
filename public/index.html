@@ -1282,6 +1282,29 @@ const accountLabel = (a) =>
   a ? `${NET_LABEL[a.network]}（${a.label || a.account_name || '名前なし'}）` : '不明なアカウント';
 
 /**
+ * A8.net の案件リンクを載せてよい出し先。lib/account-scope.js と同じ並び（テストで揃えている）。
+ * ★ サーバーでも止めているが、束で仕込むと動画を作り終えてから弾かれて時間が無駄になる。
+ *   案件つきのときは、そもそも選べないようにしておく。
+ */
+const AFFILIATE_NETWORKS = ['instagram', 'youtube', 'tiktok', 'pinterest', 'threads'];
+
+/** 案件つきなら、掲載対象外の出し先のチェックを外して選べなくする。 */
+function lockAffiliateTargets(box, affi) {
+  if (!box) return;
+  for (const input of box.querySelectorAll('input[type=checkbox][data-network]')) {
+    const out = affi && !AFFILIATE_NETWORKS.includes(input.dataset.network);
+    if (out) input.checked = false;
+    input.disabled = out;
+    const note = input.parentElement.querySelector('.affi-out');
+    if (out && !note) {
+      input.parentElement.insertAdjacentHTML('beforeend', ' <span class="muted affi-out">（案件つきは出せません）</span>');
+    } else if (!out && note) {
+      note.remove();
+    }
+  }
+}
+
+/**
  * いま選んでいる運用アカウントの連携先だけを返す。
  * 混ざる事故はDB側でも止めているが、そもそも選べないようにしておく。
  */
@@ -1991,10 +2014,14 @@ function fillTargets(box) {
   box.innerHTML = '';
   for (const a of list) {
     const l = document.createElement('label');
-    l.innerHTML = `<input type="checkbox" value="${a.id}"> ${accountLabel(a)}`;
+    l.innerHTML = `<input type="checkbox" value="${a.id}" data-network="${a.network}"> ${accountLabel(a)}`;
     box.appendChild(l);
   }
+  lockAffiliateTargets(box, box.id === 'bulkTargets' ? $('bulkAffi').checked : $('affiFlag').checked);
 }
+
+$('bulkAffi').addEventListener('change', () => lockAffiliateTargets($('bulkTargets'), $('bulkAffi').checked));
+$('affiFlag').addEventListener('change', () => lockAffiliateTargets($('targets'), $('affiFlag').checked));
 
 $('igSave').onclick = async () => {
   $('igErr').textContent = '';
@@ -2198,6 +2225,7 @@ function applyGenerated(d) {
   $('ytt').value = d.title || '';
   $('ytd').value = p.ytDescription || d.igCaption || '';
   $('affiFlag').checked = !!d.hasAffiliateLink;
+  lockAffiliateTargets($('targets'), $('affiFlag').checked);
   appliedDraft = d;
   // ここへ来るのは「1本だけつくる」の画面にいるときだけなので、画面は動かさない。
   // 動画づくりの17秒のあいだに他の画面へ移った人を、引き戻してしまうため。
@@ -2514,11 +2542,14 @@ $('bulkRun').onclick = async () => {
   $('bulkLog').innerHTML = '';
 
   const topics = $('bulkTopics').value.split('\n').map((t) => t.trim()).filter(Boolean);
-  const targets = [...document.querySelectorAll('#bulkTargets input:checked')].map((c) => c.value);
+  const affi = $('bulkAffi').checked;
+  // ★ 案件つきの束では、掲載対象外（X など）は最初から外す。選べないようにしてあるが念のため。
+  const targets = [...document.querySelectorAll('#bulkTargets input:checked')]
+    .filter((c) => !affi || AFFILIATE_NETWORKS.includes(c.dataset.network))
+    .map((c) => c.value);
   const start = $('bulkStart').value;
   const time = $('bulkTime').value;
   const every = Math.max(1, parseInt($('bulkEvery').value, 10) || 1);
-  const affi = $('bulkAffi').checked;
 
   if (!topics.length) { $('bulkErr').textContent = 'ネタを1つ以上入れてください。'; return; }
   if (!start || !time) { $('bulkErr').textContent = '日付と時刻を入れてください。'; return; }
