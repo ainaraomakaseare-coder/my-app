@@ -1996,7 +1996,7 @@
   var VISITED_COUNTRY_ALIASES = [
     ["日本", "日本国", "Japan", "にほん", "にっぽん"],
     ["アメリカ", "アメリカ合衆国", "米国", "アメリカ合衆国（米国）", "United States", "United States of America", "USA", "U.S.A.", "US", "U.S.", "Estados Unidos"],
-    ["中国", "中華人民共和国", "China", "People's Republic of China", "中国大陸"],
+    ["中国", "中華人民共和国", "China", "People's Republic of China", "中国大陸", "中国本土"],
     ["台湾", "中華民国", "中華民國", "臺灣", "Taiwan"],
     ["香港", "中華人民共和国香港特別行政区", "香港特別行政区", "Hong Kong"],
     ["マカオ", "中華人民共和国マカオ特別行政区", "マカオ特別行政区", "澳門", "Macao", "Macau"],
@@ -2044,6 +2044,15 @@
     return m;
   })();
 
+  // Intl.DisplayNames('ja', {type:'region'}).of(alpha2) の返り値は実行環境（iOS Safari・古いICU等）
+  // によって揺れることがあり、VISITED_COUNTRY_ALIASESに無い言い方（例：中国が「中国本土」など）だと
+  // 一覧には出るのに地図が塗られず国旗も出ない、という壊れ方をする（2026-09-29〜、中国で発覚）。
+  // 表記ゆれを追いかけるより、エンジン間で特に揺れやすい国だけalpha2から直接決め打ちにする方が確実。
+  var VISITED_ALPHA2_NAME_FALLBACK = {
+    CN: '中国', KR: '韓国', KP: '北朝鮮', TW: '台湾', US: 'アメリカ', GB: 'イギリス',
+    RU: 'ロシア', VN: 'ベトナム', LA: 'ラオス', CZ: 'チェコ', NL: 'オランダ', AE: 'アラブ首長国連邦'
+  };
+
   // ISO数値コード側の国名（Intl.DisplayNamesの生の出力や、世界地図データの国名）を、
   // /mylogが返す日本語の正規化済み国名（例：「アメリカ合衆国」→「アメリカ」）に揃える。
   function canonicalVisitedCountryName(name) {
@@ -2070,10 +2079,13 @@
     (ids || []).forEach(function (id) {
       var a2 = alpha2Table && alpha2Table[id];
       if (!a2) return;
-      var raw;
-      try { raw = dn.of(a2); } catch (e) { return; }
-      if (!raw) return;
-      var name = canonicalVisitedCountryName(raw);
+      var name = VISITED_ALPHA2_NAME_FALLBACK[String(a2).toUpperCase()];
+      if (!name) {
+        var raw;
+        try { raw = dn.of(a2); } catch (e) { return; }
+        if (!raw) return;
+        name = canonicalVisitedCountryName(raw);
+      }
       idToName[id] = name;
       if (!nameToId[name]) nameToId[name] = id; // 同じ国名に複数idが来ることは無い想定。最初のものを使う
     });

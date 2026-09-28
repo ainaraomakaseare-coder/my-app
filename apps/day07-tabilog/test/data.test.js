@@ -1409,14 +1409,23 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   eq('canonicalVisitedCountryName: 表に無い「〜共和国」は接尾辞だけ落とす', T.canonicalVisitedCountryName('ケニア共和国'), 'ケニア');
   eq('canonicalVisitedCountryName: 空文字は空文字', T.canonicalVisitedCountryName(''), '');
   eq('canonicalVisitedCountryName: nullは空文字', T.canonicalVisitedCountryName(null), '');
+  // 中国はIntl.DisplayNamesの実行環境によって返り値が揺れる（iOS Safari・古いICUなど）ため、
+  // 「中華人民共和国」「中国本土」どちらが来ても「中国」にまとまることを確認する（2026-09-29〜）。
+  eq('canonicalVisitedCountryName: 中国（正式名称）', T.canonicalVisitedCountryName('中華人民共和国'), '中国');
+  eq('canonicalVisitedCountryName: 中国（エンジンによっては「中国本土」で返る）', T.canonicalVisitedCountryName('中国本土'), '中国');
 
-  var alpha2Table = { '392': 'JP', '840': 'US', '076': 'BR', '032': 'AR', '410': 'KR' };
-  var idx = T.buildCountryIsoIndex(['392', '840', '076', '032', '410', '999'], alpha2Table);
+  var alpha2Table = { '392': 'JP', '840': 'US', '076': 'BR', '032': 'AR', '410': 'KR', '156': 'CN' };
+  var idx = T.buildCountryIsoIndex(['392', '840', '076', '032', '410', '156', '999'], alpha2Table);
   eq('buildCountryIsoIndex: 日本', idx.idToName['392'], '日本');
   eq('buildCountryIsoIndex: アメリカ（Intl.DisplayNamesの生名から正規化）', idx.idToName['840'], 'アメリカ');
   eq('buildCountryIsoIndex: ブラジル', idx.idToName['076'], 'ブラジル');
   eq('buildCountryIsoIndex: アルゼンチン', idx.idToName['032'], 'アルゼンチン');
   eq('buildCountryIsoIndex: 韓国', idx.idToName['410'], '韓国');
+  // 中国はDisplayNamesの生の返り値に関わらずalpha2（CN）から決め打ちで「中国」になり、地図が塗られ
+  // 国旗も引ける（VISITED_ALPHA2_NAME_FALLBACK。中国が地図で塗られず国旗も出ない不具合の再発防止）。
+  eq('buildCountryIsoIndex: 中国（DisplayNamesの揺れに関わらずCNから決め打ち）', idx.idToName['156'], '中国');
+  eq('buildCountryIsoIndex: nameToIdから中国のidも逆引きできる（地図が塗れる）', idx.nameToId['中国'], '156');
+  eq('flagEmojiForAlpha2: 中国の国旗が引ける', T.flagEmojiForAlpha2(alpha2Table[idx.nameToId['中国']]), '🇨🇳');
   eq('buildCountryIsoIndex: nameToIdは逆引きできる', idx.nameToId['アメリカ'], '840');
   eq('buildCountryIsoIndex: alpha2が無いidは対応表に入らない', idx.idToName['999'] === undefined, true);
   eq('buildCountryIsoIndex: alpha2Tableが無いidも無視される（存在しないid）', T.buildCountryIsoIndex(['000'], alpha2Table).idToName['000'] === undefined, true);
