@@ -4830,6 +4830,55 @@
     el.addEventListener('touchcancel', function () { edgeSwipeBackState = null; });
   }
 
+  // 「行ったことある旅先」の国内⇄海外の横スワイプ切り替え（2026-09-28〜）。オーナーの指定
+  // （「右にスワイプしたら海外、左にスワイプしたら国内」）は、カルーセルの一般的な向き（右スワイプ＝
+  // 次へ＝左のタブに戻る、が多い）とは逆なので、向きをこの定数1つだけで反転できるようにしておく。
+  var VISITED_SWIPE_RIGHT_GOES_TO = 'overseas';
+  var visitedSwipeState = null;
+  function initVisitedSwipe() {
+    var el = $('#visitedPanel');
+    if (!el) return;
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { visitedSwipeState = null; return; }
+      var t = e.touches[0];
+      // 画面左端はedge-swipe-back（戻る）の担当なので、ここでは拾わない
+      if (t.clientX <= EDGE_SWIPE_BACK_PX) { visitedSwipeState = null; return; }
+      visitedSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!visitedSwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - visitedSwipeState.startX;
+      var dy = t.clientY - visitedSwipeState.startY;
+      // 横方向と判定できるまでは何もしない＝地図の上のタップ・縦スクロールを妨げない
+      if (!visitedSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        visitedSwipeState.decided = true;
+        visitedSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (visitedSwipeState.decided && visitedSwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!visitedSwipeState) return;
+      var vs = visitedSwipeState;
+      visitedSwipeState = null;
+      if (!vs.decided || !vs.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - vs.startX;
+      if (Math.abs(dx) < 50) return; // 短い横移動はタップ・地図操作の揺れとみなして無視する
+      var other = VISITED_SWIPE_RIGHT_GOES_TO === 'overseas' ? 'domestic' : 'overseas';
+      var target = dx > 0 ? VISITED_SWIPE_RIGHT_GOES_TO : other;
+      if (state.visitedTab === target) return;
+      state.visitedTab = target;
+      state.visitedSel = null;
+      renderVisitedPlaces();
+    });
+
+    el.addEventListener('touchcancel', function () { visitedSwipeState = null; });
+  }
+
   function goToAdjacentDay(delta) {
     var dates = Core.allDatesForTrip(state.trip, state.blocks);
     var idx = dates.indexOf(state.selectedDate);
@@ -8511,6 +8560,7 @@
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
+    initVisitedSwipe();
     initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
     initEdgeSwipeBack(document.querySelector('[data-screen="visited"]'), goHome);
     initEdgeSwipeBack(document.querySelector('[data-screen="profile"]'), goHome);
