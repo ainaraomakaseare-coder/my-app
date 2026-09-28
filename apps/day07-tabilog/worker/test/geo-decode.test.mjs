@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
-  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline,
+  isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline, hasBrokenMapQuery,
 } from "../src/geo-decode.js";
 
 let pass = 0, fail = 0;
@@ -168,6 +168,18 @@ check("decodePolyline: 公式の例を3点に戻す", decodePolyline("_p~iF~ps|U
   [[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]]);
 check("decodePolyline: 空文字・nullは空配列", [decodePolyline(""), decodePolyline(null)], [[], []]);
 check("decodePolyline: 途中で切れた文字列は空配列（壊れた線を描かない）", decodePolyline("_p~iF~ps|U_ul"), []);
+
+// ---- hasBrokenMapQuery：壊れた地図URL（オーナー報告：2024-02-14「ブエノスアイレス到着」の記録の
+// map_urlがquery=undefined,undefinedになっており、地名として探してエチオピアに飛んでしまっていた）----
+check("hasBrokenMapQuery: query=undefined,undefined（エンコード済み）はtrue",
+  hasBrokenMapQuery("https://www.google.com/maps/search/?api=1&query=undefined%2Cundefined"), true);
+check("hasBrokenMapQuery: q=null,NaNもtrue", hasBrokenMapQuery("https://maps.google.com/?q=null%2CNaN"), true);
+check("hasBrokenMapQuery: 単独のqueryだけでもtrue", hasBrokenMapQuery("https://maps.google.com/?query=undefined"), true);
+check("hasBrokenMapQuery: 普通の座標のURLはfalse",
+  hasBrokenMapQuery("https://www.google.com/maps/search/?api=1&query=35.5482964%2C139.7779951"), false);
+check("hasBrokenMapQuery: 空・不正なURLはfalse", [hasBrokenMapQuery(""), hasBrokenMapQuery(null), hasBrokenMapQuery("not a url")], [false, false, false]);
+check("hasBrokenMapQuery: URLオブジェクトも渡せる",
+  hasBrokenMapQuery(new URL("https://maps.google.com/?query=undefined%2Cundefined")), true);
 
 console.log(pass + " passed, " + fail + " failed");
 if (fail) process.exitCode = 1;

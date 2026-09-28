@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>旅の足跡</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%2300BF8F'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
 <!-- Worker公開後に、そのURLをcontentへ設定する。空のままだとサーバーに保存できず案内だけが出る。 -->
@@ -79,9 +79,6 @@
 
       <div class="account-row" id="accountRow" hidden>
         <span id="accountName"></span>
-        <button class="btn text" id="btnOpenMyLog">マイログ</button>
-        <button class="btn text" id="btnOpenVisited">行ったことある旅先</button>
-        <button class="btn text" id="btnLogout">ログアウト</button>
       </div>
       <div class="account-row" id="loginPromptRow" hidden>
         <span>評価・マイログを使うにはログインしてください</span>
@@ -720,20 +717,6 @@
       </div>
 
       <div class="mylog-list" id="mylogList"></div>
-
-      <div class="section-label">
-        <div class="section-title">音声入力プラン</div>
-      </div>
-      <div class="plan-status" id="planStatus"></div>
-      <div class="plan-options" id="planOptions"></div>
-      <button class="btn text" id="btnManageBilling" type="button" hidden>支払い方法の変更・解約はこちら</button>
-      <p class="hint" id="planStatusMessage"></p>
-
-      <div class="section-label">
-        <div class="section-title">アカウント</div>
-      </div>
-      <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
-      <p class="hint">アカウント（名前・プラン・回数券・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
     </div>
   </section>
 
@@ -755,7 +738,60 @@
     </div>
   </section>
 
+  <!-- ============ プロフィール（Airbnbのプロフィールを手本にした、アカウントまわりのまとめ画面） ============ -->
+  <section class="screen" data-screen="profile">
+    <div class="wrap">
+      <header class="hd">
+        <h1>プロフィール</h1>
+      </header>
+
+      <div class="profile-card" id="profileCard">
+        <div class="profile-avatar" id="profileAvatar"></div>
+        <div class="profile-info">
+          <div class="profile-name" id="profileName"></div>
+          <div class="profile-stats" id="profileStats"></div>
+        </div>
+      </div>
+
+      <div class="section-label">
+        <div class="section-title">音声入力プラン</div>
+      </div>
+      <div class="plan-status" id="planStatus"></div>
+      <div class="plan-options" id="planOptions"></div>
+      <button class="btn text" id="btnManageBilling" type="button" hidden>支払い方法の変更・解約はこちら</button>
+      <p class="hint" id="planStatusMessage"></p>
+
+      <div class="section-label">
+        <div class="section-title">アカウント</div>
+      </div>
+      <button class="btn text" id="btnLogout" type="button">ログアウト</button>
+      <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
+      <p class="hint">アカウント（名前・プラン・回数券・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
+      <p class="hint"><a href="privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a></p>
+    </div>
+  </section>
+
 </div>
+
+<!-- ============ ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィールの4画面だけで表示。app.jsのupdateTabbar） ============ -->
+<nav class="tabbar" id="tabbar" aria-label="メイン">
+  <button class="tabbar-btn" type="button" data-tab="mylog">
+    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.2c2.2-1 5-1 7 .3v13.3c-2-1.3-4.8-1.3-7-.3z"/><path d="M20 5.2c-2.2-1-5-1-7 .3v13.3c2-1.3 4.8-1.3 7-.3z"/></svg></span>
+    <span class="tabbar-label">マイログ</span>
+  </button>
+  <button class="tabbar-btn" type="button" data-tab="visited">
+    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.8 3.3 2.8 13.7 0 17M12 3.5c-2.8 3.3-2.8 13.7 0 17"/></svg></span>
+    <span class="tabbar-label">旅先一覧</span>
+  </button>
+  <button class="tabbar-btn" type="button" data-tab="home">
+    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="8.3" cy="6.8" rx="2.1" ry="2.9" transform="rotate(-16 8.3 6.8)"/><ellipse cx="9.1" cy="14.6" rx="2.4" ry="3.3" transform="rotate(-6 9.1 14.6)"/><ellipse cx="15.7" cy="10.2" rx="2.1" ry="2.9" transform="rotate(16 15.7 10.2)"/><ellipse cx="14.9" cy="18" rx="2.4" ry="3.3" transform="rotate(6 14.9 18)"/></svg></span>
+    <span class="tabbar-label">旅の足跡</span>
+  </button>
+  <button class="tabbar-btn" type="button" data-tab="profile">
+    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.5-4.2 4.4-6.3 7.5-6.3s6 2.1 7.5 6.3"/></svg></span>
+    <span class="tabbar-label">プロフィール</span>
+  </button>
+</nav>
 
 <!-- ============ コメント（旅行・記録ごと。画面を切り替えず下から出すシート） ============ -->
 <div class="sheet-backdrop" id="commentSheet" hidden>

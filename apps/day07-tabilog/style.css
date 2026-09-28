@@ -17,7 +17,8 @@
   --teal: #049873;
   --danger: #E5484D;
   --danger-bg: #FDEEEE;
-  --card-shadow: 0 1px 3px rgba(20, 20, 30, 0.06);
+  /* Airbnbを手本にした2層シャドウ（近い影を薄く＋遠い影を大きく柔らかく）。2026-09-29〜 */
+  --card-shadow: 0 1px 2px rgba(20, 20, 30, 0.06), 0 6px 16px rgba(20, 20, 30, 0.08);
   --font-body: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
   --font-display: var(--font-body);
   --radius-card: 18px;
@@ -55,14 +56,40 @@ a:hover { text-decoration: underline; }
 .app { min-height: 100dvh; overflow-x: clip; }
 .screen { display: none; }
 .screen.active { display: block; }
+/* タブバーの4画面（マイログ・旅先一覧・旅の足跡・プロフィール）を切り替えたときだけ、ふわっと
+   クロスフェードする（app.jsのshowScreenが切り替え時だけ.tab-switch-inを付ける。それ以外の画面遷移
+   ＝旅の詳細を開く／戻る等は今までどおり一瞬で切り替わる。2026-09-29〜、Airbnbのタブ切り替えを手本にした）。 */
+.screen.tab-switch-in { animation: tab-switch-in .22s ease both; }
+@keyframes tab-switch-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .screen.tab-switch-in { animation: none; }
+}
 
-.wrap { max-width: 460px; margin: 0 auto; padding: 20px 18px 60px; }
+.wrap { max-width: 460px; margin: 0 auto; padding: 20px 16px 60px; }
 .wrap.narrow { max-width: 420px; }
 
 .hd { padding-bottom: 8px; }
 .hd h1 { font-family: var(--font-display); font-size: 24px; font-weight: 700; margin: 0; letter-spacing: -0.2px; }
 .hd .lead { color: var(--ink-soft); font-size: 13px; margin: 4px 0 0; }
 .hd-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+/* ボトムタブバーで行き来する4画面（マイログ・旅先一覧・旅の足跡・プロフィール）だけ、
+   Airbnbの「プロフィール」のような大きく太いタイトル＋上の余白にする（2026-09-29〜）。
+   他の画面（新しい旅を作る・旅の詳細など）の見出しサイズは変えない。 */
+.screen[data-screen="home"] > .wrap > .hd,
+.screen[data-screen="mylog"] > .wrap > .hd,
+.screen[data-screen="visited"] > .wrap > .hd,
+.screen[data-screen="profile"] > .wrap > .hd {
+  padding-top: 8px;
+}
+.screen[data-screen="home"] > .wrap > .hd h1,
+.screen[data-screen="mylog"] > .wrap > .hd h1,
+.screen[data-screen="visited"] > .wrap > .hd h1,
+.screen[data-screen="profile"] > .wrap > .hd h1 {
+  font-size: 30px; letter-spacing: -0.4px; line-height: 1.15;
+}
 .plan-badge {
   flex-shrink: 0; margin-top: 2px; border-radius: 999px;
   background: var(--border-soft); color: var(--ink-muted); font-size: 11.5px; font-weight: 700;
@@ -142,6 +169,19 @@ a:hover { text-decoration: underline; }
 .btn.wide { width: 100%; }
 #btnVoiceRecord { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .btn[hidden] { display: none; }
+
+/* 押した瞬間だけ少し縮む共通のプレス反応（Airbnbのボタン・カードを手本にした。2026-09-29〜）。
+   カード・ボタン類に共通で付け、タップした感触を出す。 */
+.btn, .trip-card, .chip-btn, .sort-btn, .visited-tab {
+  transition: transform .12s ease;
+}
+.btn:active, .trip-card:active, .chip-btn:active, .sort-btn:active, .visited-tab:active {
+  transform: scale(.98);
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn, .trip-card, .chip-btn, .sort-btn, .visited-tab { transition: none; }
+  .btn:active, .trip-card:active, .chip-btn:active, .sort-btn:active, .visited-tab:active { transform: none; }
+}
 
 .icon-btn {
   width: 30px; height: 30px; border-radius: var(--radius-control); border: none; background: var(--border-soft);
@@ -244,6 +284,29 @@ a:hover { text-decoration: underline; }
 .trip-card-avatar.c5 { background: #FFE9A8; color: #9C7A0A; }
 .trip-card-people-text { font-size: 12px; color: var(--ink-muted); }
 .empty { color: var(--ink-soft); font-size: 13px; padding: 20px 0; }
+
+/* 通信待ちのシマー（光が流れる）スケルトン（マイログ・「行ったことある旅先」の初回読み込みで使う。
+   2026-09-29〜）。カードの形だけ先に出して、空欄や「読み込み中…」の文字より進行中だと伝わりやすくする。 */
+.skeleton-wrap { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 18px; }
+.skeleton-card {
+  background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow);
+  padding: 16px; display: flex; flex-direction: column; gap: 10px;
+}
+.skeleton-line {
+  height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--border-soft) 25%, var(--border) 37%, var(--border-soft) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+.skeleton-line-title { width: 55%; height: 14px; }
+.skeleton-line-sub { width: 80%; }
+@keyframes skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line { animation: none; background: var(--border-soft); }
+}
 
 /* ---------- trip detail header ---------- */
 .trip-cover { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 4px; }
@@ -627,6 +690,11 @@ a:hover { text-decoration: underline; }
 .visited-caption-trips { font-size: 12.5px; color: var(--ink-muted); margin-top: 3px; }
 .visited-caption-trips a, .visited-row-trips a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .visited-caption-trips a:hover, .visited-row-trips a:hover { color: var(--accent-deep); }
+/* 複数の旅行にまたがる場所は、旅行名を「・」でつなげず1行ずつ出す（新しい旅行が上）。
+   行間は詰めすぎない程度に2px空ける。2026-09-29〜 */
+.visited-trip-links { display: flex; flex-direction: column; }
+.visited-trip-links a { display: block; font-size: 13px; color: var(--ink-muted); margin-top: 2px; }
+.visited-trip-links a:first-child { margin-top: 0; }
 
 /* 地方・大陸ごとの見出し付き一覧：太字の見出し＋右に件数、下に区切り線（参考にしたアプリと同じ構成）。
    行は見出しと同じ左インデントに揃え、選択中でも余白は変えず背景だけで強調する（2026-09-28〜。
@@ -652,7 +720,10 @@ a:hover { text-decoration: underline; }
    灰色＋「戻す」のまま残してすぐ元に戻せるようにする。 */
 .trip-place-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
 .trip-place-chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 2px 2px 10px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 13px; font-weight: 700; max-width: 100%; }
-.trip-place-chip.is-excluded { background: var(--border-soft); color: var(--ink-muted); }
+/* 外した場所は一覧の最後に回った上で、スキミング時はほぼ見えないくらい薄くする
+   （ほぼ白背景＋薄いグレー文字・枠線なし。押し間違いを防ぎつつ、探せば「戻す」で見つかる程度。
+   2026-09-29〜。「戻す」はタップ領域だけ既存の.trip-place-actionのpaddingを少し増やして28px以上を確保）。 */
+.trip-place-chip.is-excluded { background: #F7F8FA; color: #B8BDC4; font-size: 11.5px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .03); }
 .trip-place-name { overflow-wrap: anywhere; }
 /* 「外す／戻す」は見た目は小さい文字リンクのまま、paddingだけでタップ領域を確保する
    （チップ自体が大きく膨らまないよう、枠線・背景は付けない。2026-09-28〜） */
@@ -661,6 +732,7 @@ a:hover { text-decoration: underline; }
   opacity: .7; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
 .trip-place-action:disabled { opacity: .4; }
+.trip-place-chip.is-excluded .trip-place-action { padding: 8px 9px; opacity: .85; }
 .mylog-tabs { display: flex; gap: 6px; padding: 12px 0 4px; overflow-x: auto; }
 .mylog-tab { padding: 8px 15px; border-radius: 999px; color: var(--ink-muted); font-size: 12px; font-weight: 600; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
 .mylog-tab.on { background: var(--accent); color: white; font-weight: 700; }
@@ -1065,3 +1137,87 @@ body.viewer-open { overflow: hidden; }
 /* 手で並べた日の案内（2026-09-27） */
 .manual-order-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin: 4px 2px 10px; font-size: 12px; color: var(--ink-muted); }
 .manual-order-note .btn.text { color: var(--accent-deep); font-weight: 700; padding: 4px 0; }
+
+/* ============ ボトムタブバー（Airbnbアプリを手本にした4タブ。2026-09-28〜） ============
+   マイログ・旅先一覧（＝行ったことある旅先）・旅の足跡（＝ホーム）・プロフィールの4画面だけで
+   表示する（app.jsのupdateTabbarが.showの付け外しをする）。旅の詳細・記録フォーム・地図で
+   ふりかえる・シート・ログインでは隠す。 */
+.tabbar {
+  display: none;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  justify-content: space-around; align-items: stretch;
+  background: var(--card);
+  border-top: 1px solid var(--border-soft);
+  box-shadow: 0 -2px 12px rgba(20, 20, 30, 0.06);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.tabbar.show { display: flex; }
+.tabbar-btn {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  padding: 8px 4px calc(6px + env(safe-area-inset-bottom, 0px) * 0);
+  color: var(--ink-soft); font-size: 10.5px; font-weight: 600; letter-spacing: -.1px;
+}
+.tabbar-icon { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; transition: transform .25s cubic-bezier(.34, 1.56, .64, 1); }
+.tabbar-icon svg { width: 23px; height: 23px; }
+.tabbar-label { transition: color .2s ease, font-weight .2s ease; }
+.tabbar-btn.on { color: var(--accent-deep); }
+.tabbar-btn.on .tabbar-icon { transform: translateY(-3px) scale(1.05); }
+/* 選択中はラベルも太字にして、アイコン＋アクセント色だけより選択状態が分かりやすいようにする
+   （Airbnbアプリのタブを手本にした。2026-09-29〜）。 */
+.tabbar-btn.on .tabbar-label { font-weight: 800; }
+/* タップした瞬間だけ付くクラス（app.js）。アイコンがふわっと持ち上がって少し弾む→
+   .onの定常状態（-3px, 1.05倍）に落ち着く。Airbnbアプリのタブ切り替えの動きを参考にした。 */
+.tabbar-btn.pop .tabbar-icon { animation: tabbar-pop .25s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes tabbar-pop {
+  0% { transform: translateY(0) scale(1); }
+  55% { transform: translateY(-4px) scale(1.15); }
+  100% { transform: translateY(-3px) scale(1.05); }
+}
+.tabbar-btn:active .tabbar-icon { transform: scale(.95); }
+/* ボタン自体にもごく小さい押し込み感（ハプティックの代わりの視覚フィードバック）を足す。
+   アイコンの動きより控えめにして、既存のtabbar-pop演出と喧嘩しないようにする。2026-09-29〜 */
+.tabbar-btn { transition: transform .12s ease; }
+.tabbar-btn:active { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) {
+  .tabbar-icon, .tabbar-btn { transition: none; }
+  .tabbar-btn.pop .tabbar-icon { animation: none; }
+  .tabbar-btn.on .tabbar-icon, .tabbar-btn:active .tabbar-icon, .tabbar-btn:active { transform: none; }
+}
+
+/* ボトムタブバーが常に出る4画面（マイログ・旅先一覧・ホーム・プロフィール）だけ、
+   タブバーの高さ＋セーフエリア分の余白を下に足す（他の画面はタブバー自体が出ないので不要）。 */
+.screen[data-screen="home"] .wrap,
+.screen[data-screen="mylog"] .wrap,
+.screen[data-screen="visited"] .wrap,
+.screen[data-screen="profile"] .wrap {
+  padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 24px);
+}
+
+/* ============ プロフィール画面（Airbnbのプロフィールカードを手本にした。2026-09-28〜） ============ */
+.profile-card {
+  display: flex; align-items: center; gap: 14px;
+  background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow);
+  padding: 18px 16px; margin: 4px 0 18px;
+  animation: profile-card-in .35s ease both;
+}
+@keyframes profile-card-in {
+  from { opacity: 0; transform: scale(.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .profile-card { animation: none; }
+}
+.profile-avatar {
+  flex: none; width: 60px; height: 60px; border-radius: 50%; overflow: hidden;
+  background: var(--accent-soft-bg); color: var(--accent-deep);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; font-weight: 800;
+}
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.profile-info { flex: 1; min-width: 0; }
+.profile-name { font-size: 16px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-stats { display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
+.profile-stat { display: flex; flex-direction: column; }
+.profile-stat-num { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.profile-stat-label { font-size: 10.5px; color: var(--ink-soft); }

@@ -1996,7 +1996,7 @@
   var VISITED_COUNTRY_ALIASES = [
     ["日本", "日本国", "Japan", "にほん", "にっぽん"],
     ["アメリカ", "アメリカ合衆国", "米国", "アメリカ合衆国（米国）", "United States", "United States of America", "USA", "U.S.A.", "US", "U.S.", "Estados Unidos"],
-    ["中国", "中華人民共和国", "China", "People's Republic of China", "中国大陸"],
+    ["中国", "中華人民共和国", "China", "People's Republic of China", "中国大陸", "中国本土"],
     ["台湾", "中華民国", "中華民國", "臺灣", "Taiwan"],
     ["香港", "中華人民共和国香港特別行政区", "香港特別行政区", "Hong Kong"],
     ["マカオ", "中華人民共和国マカオ特別行政区", "マカオ特別行政区", "澳門", "Macao", "Macau"],
@@ -2010,7 +2010,8 @@
     ["スペイン", "スペイン王国", "Spain", "España"],
     ["ポルトガル", "ポルトガル共和国", "Portugal"],
     ["オランダ", "オランダ王国", "Netherlands", "Nederland"],
-    ["スイス", "スイス連邦", "Switzerland"],
+    ["ベルギー", "ベルギー王国", "Belgium", "Belgique", "België"],
+    ["スイス", "スイス連邦", "Switzerland", "Schweiz", "Suisse", "Svizzera"],
     ["オーストリア", "オーストリア共和国", "Austria"],
     ["ブラジル", "ブラジル連邦共和国", "Brazil", "Brasil"],
     ["アルゼンチン", "アルゼンチン共和国", "Argentina"],
@@ -2043,6 +2044,15 @@
     return m;
   })();
 
+  // Intl.DisplayNames('ja', {type:'region'}).of(alpha2) の返り値は実行環境（iOS Safari・古いICU等）
+  // によって揺れることがあり、VISITED_COUNTRY_ALIASESに無い言い方（例：中国が「中国本土」など）だと
+  // 一覧には出るのに地図が塗られず国旗も出ない、という壊れ方をする（2026-09-29〜、中国で発覚）。
+  // 表記ゆれを追いかけるより、エンジン間で特に揺れやすい国だけalpha2から直接決め打ちにする方が確実。
+  var VISITED_ALPHA2_NAME_FALLBACK = {
+    CN: '中国', KR: '韓国', KP: '北朝鮮', TW: '台湾', US: 'アメリカ', GB: 'イギリス',
+    RU: 'ロシア', VN: 'ベトナム', LA: 'ラオス', CZ: 'チェコ', NL: 'オランダ', AE: 'アラブ首長国連邦'
+  };
+
   // ISO数値コード側の国名（Intl.DisplayNamesの生の出力や、世界地図データの国名）を、
   // /mylogが返す日本語の正規化済み国名（例：「アメリカ合衆国」→「アメリカ」）に揃える。
   function canonicalVisitedCountryName(name) {
@@ -2069,10 +2079,13 @@
     (ids || []).forEach(function (id) {
       var a2 = alpha2Table && alpha2Table[id];
       if (!a2) return;
-      var raw;
-      try { raw = dn.of(a2); } catch (e) { return; }
-      if (!raw) return;
-      var name = canonicalVisitedCountryName(raw);
+      var name = VISITED_ALPHA2_NAME_FALLBACK[String(a2).toUpperCase()];
+      if (!name) {
+        var raw;
+        try { raw = dn.of(a2); } catch (e) { return; }
+        if (!raw) return;
+        name = canonicalVisitedCountryName(raw);
+      }
       idToName[id] = name;
       if (!nameToId[name]) nameToId[name] = id; // 同じ国名に複数idが来ることは無い想定。最初のものを使う
     });
@@ -2103,59 +2116,66 @@
     return VISITED_PREFECTURE_TO_REGION[name] || null;
   }
 
-  // ISO 3166-1 alpha-2 → 6大陸（アジア／ヨーロッパ／北アメリカ／南アメリカ／アフリカ／オセアニア）。
+  // ISO 3166-1 alpha-2 → 6大陸（アジア／ヨーロッパ／北米／南米／アフリカ／オセアニア）。
   // world-atlas（vendor/geo/countries-110m.json）に含まれる国・地域をひととおりカバーする、
   // このリポジトリ内だけの小さな対応表（外部ライブラリは使わない）。
   // 大陸をまたぐ国は一般的な区分に合わせた（例：ロシア＝ヨーロッパ、トルコ＝アジア、
   // エジプト＝アフリカ、ジョージア／アルメニア／アゼルバイジャン＝アジア）。
   var VISITED_CONTINENT_BY_ALPHA2 = {
-    AD: 'ヨーロッパ', AE: 'アジア', AF: 'アジア', AG: '北アメリカ', AI: '北アメリカ', AL: 'ヨーロッパ',
-    AM: 'アジア', AO: 'アフリカ', AQ: 'オセアニア', AR: '南アメリカ', AS: 'オセアニア', AT: 'ヨーロッパ',
-    AU: 'オセアニア', AW: '北アメリカ', AX: 'ヨーロッパ', AZ: 'アジア', BA: 'ヨーロッパ', BB: '北アメリカ',
+    AD: 'ヨーロッパ', AE: 'アジア', AF: 'アジア', AG: '北米', AI: '北米', AL: 'ヨーロッパ',
+    AM: 'アジア', AO: 'アフリカ', AQ: 'オセアニア', AR: '南米', AS: 'オセアニア', AT: 'ヨーロッパ',
+    AU: 'オセアニア', AW: '北米', AX: 'ヨーロッパ', AZ: 'アジア', BA: 'ヨーロッパ', BB: '北米',
     BD: 'アジア', BE: 'ヨーロッパ', BF: 'アフリカ', BG: 'ヨーロッパ', BH: 'アジア', BI: 'アフリカ',
-    BJ: 'アフリカ', BL: '北アメリカ', BM: '北アメリカ', BN: 'アジア', BO: '南アメリカ', BQ: '北アメリカ',
-    BR: '南アメリカ', BS: '北アメリカ', BT: 'アジア', BV: 'アフリカ', BW: 'アフリカ', BY: 'ヨーロッパ',
-    BZ: '北アメリカ', CA: '北アメリカ', CC: 'オセアニア', CD: 'アフリカ', CF: 'アフリカ', CG: 'アフリカ',
-    CH: 'ヨーロッパ', CI: 'アフリカ', CK: 'オセアニア', CL: '南アメリカ', CM: 'アフリカ', CN: 'アジア',
-    CO: '南アメリカ', CR: '北アメリカ', CU: '北アメリカ', CV: 'アフリカ', CW: '北アメリカ', CX: 'オセアニア',
-    CY: 'ヨーロッパ', CZ: 'ヨーロッパ', DE: 'ヨーロッパ', DJ: 'アフリカ', DK: 'ヨーロッパ', DM: '北アメリカ',
-    DO: '北アメリカ', DZ: 'アフリカ', EC: '南アメリカ', EE: 'ヨーロッパ', EG: 'アフリカ', EH: 'アフリカ',
-    ER: 'アフリカ', ES: 'ヨーロッパ', ET: 'アフリカ', FI: 'ヨーロッパ', FJ: 'オセアニア', FK: '南アメリカ',
-    FM: 'オセアニア', FO: 'ヨーロッパ', FR: 'ヨーロッパ', GA: 'アフリカ', GB: 'ヨーロッパ', GD: '北アメリカ',
-    GE: 'アジア', GF: '南アメリカ', GG: 'ヨーロッパ', GH: 'アフリカ', GI: 'ヨーロッパ', GL: '北アメリカ',
-    GM: 'アフリカ', GN: 'アフリカ', GP: '北アメリカ', GQ: 'アフリカ', GR: 'ヨーロッパ', GS: '南アメリカ',
-    GT: '北アメリカ', GU: 'オセアニア', GW: 'アフリカ', GY: '南アメリカ', HK: 'アジア', HM: 'オセアニア',
-    HN: '北アメリカ', HR: 'ヨーロッパ', HT: '北アメリカ', HU: 'ヨーロッパ', ID: 'アジア', IE: 'ヨーロッパ',
+    BJ: 'アフリカ', BL: '北米', BM: '北米', BN: 'アジア', BO: '南米', BQ: '北米',
+    BR: '南米', BS: '北米', BT: 'アジア', BV: 'アフリカ', BW: 'アフリカ', BY: 'ヨーロッパ',
+    BZ: '北米', CA: '北米', CC: 'オセアニア', CD: 'アフリカ', CF: 'アフリカ', CG: 'アフリカ',
+    CH: 'ヨーロッパ', CI: 'アフリカ', CK: 'オセアニア', CL: '南米', CM: 'アフリカ', CN: 'アジア',
+    CO: '南米', CR: '北米', CU: '北米', CV: 'アフリカ', CW: '北米', CX: 'オセアニア',
+    CY: 'ヨーロッパ', CZ: 'ヨーロッパ', DE: 'ヨーロッパ', DJ: 'アフリカ', DK: 'ヨーロッパ', DM: '北米',
+    DO: '北米', DZ: 'アフリカ', EC: '南米', EE: 'ヨーロッパ', EG: 'アフリカ', EH: 'アフリカ',
+    ER: 'アフリカ', ES: 'ヨーロッパ', ET: 'アフリカ', FI: 'ヨーロッパ', FJ: 'オセアニア', FK: '南米',
+    FM: 'オセアニア', FO: 'ヨーロッパ', FR: 'ヨーロッパ', GA: 'アフリカ', GB: 'ヨーロッパ', GD: '北米',
+    GE: 'アジア', GF: '南米', GG: 'ヨーロッパ', GH: 'アフリカ', GI: 'ヨーロッパ', GL: '北米',
+    GM: 'アフリカ', GN: 'アフリカ', GP: '北米', GQ: 'アフリカ', GR: 'ヨーロッパ', GS: '南米',
+    GT: '北米', GU: 'オセアニア', GW: 'アフリカ', GY: '南米', HK: 'アジア', HM: 'オセアニア',
+    HN: '北米', HR: 'ヨーロッパ', HT: '北米', HU: 'ヨーロッパ', ID: 'アジア', IE: 'ヨーロッパ',
     IL: 'アジア', IM: 'ヨーロッパ', IN: 'アジア', IO: 'アジア', IQ: 'アジア', IR: 'アジア', IS: 'ヨーロッパ',
-    IT: 'ヨーロッパ', JE: 'ヨーロッパ', JM: '北アメリカ', JO: 'アジア', JP: 'アジア', KE: 'アフリカ',
-    KG: 'アジア', KH: 'アジア', KI: 'オセアニア', KM: 'アフリカ', KN: '北アメリカ', KP: 'アジア',
-    KR: 'アジア', KW: 'アジア', KY: '北アメリカ', KZ: 'アジア', LA: 'アジア', LB: 'アジア', LC: '北アメリカ',
+    IT: 'ヨーロッパ', JE: 'ヨーロッパ', JM: '北米', JO: 'アジア', JP: 'アジア', KE: 'アフリカ',
+    KG: 'アジア', KH: 'アジア', KI: 'オセアニア', KM: 'アフリカ', KN: '北米', KP: 'アジア',
+    KR: 'アジア', KW: 'アジア', KY: '北米', KZ: 'アジア', LA: 'アジア', LB: 'アジア', LC: '北米',
     LI: 'ヨーロッパ', LK: 'アジア', LR: 'アフリカ', LS: 'アフリカ', LT: 'ヨーロッパ', LU: 'ヨーロッパ',
     LV: 'ヨーロッパ', LY: 'アフリカ', MA: 'アフリカ', MC: 'ヨーロッパ', MD: 'ヨーロッパ', ME: 'ヨーロッパ',
-    MF: '北アメリカ', MG: 'アフリカ', MH: 'オセアニア', MK: 'ヨーロッパ', ML: 'アフリカ', MM: 'アジア',
-    MN: 'アジア', MO: 'アジア', MP: 'オセアニア', MQ: '北アメリカ', MR: 'アフリカ', MS: '北アメリカ',
-    MT: 'ヨーロッパ', MU: 'アフリカ', MV: 'アジア', MW: 'アフリカ', MX: '北アメリカ', MY: 'アジア',
+    MF: '北米', MG: 'アフリカ', MH: 'オセアニア', MK: 'ヨーロッパ', ML: 'アフリカ', MM: 'アジア',
+    MN: 'アジア', MO: 'アジア', MP: 'オセアニア', MQ: '北米', MR: 'アフリカ', MS: '北米',
+    MT: 'ヨーロッパ', MU: 'アフリカ', MV: 'アジア', MW: 'アフリカ', MX: '北米', MY: 'アジア',
     MZ: 'アフリカ', NA: 'アフリカ', NC: 'オセアニア', NE: 'アフリカ', NF: 'オセアニア', NG: 'アフリカ',
-    NI: '北アメリカ', NL: 'ヨーロッパ', NO: 'ヨーロッパ', NP: 'アジア', NR: 'オセアニア', NU: 'オセアニア',
-    NZ: 'オセアニア', OM: 'アジア', PA: '北アメリカ', PE: '南アメリカ', PF: 'オセアニア', PG: 'オセアニア',
-    PH: 'アジア', PK: 'アジア', PL: 'ヨーロッパ', PM: '北アメリカ', PN: 'オセアニア', PR: '北アメリカ',
-    PS: 'アジア', PT: 'ヨーロッパ', PW: 'オセアニア', PY: '南アメリカ', QA: 'アジア', RE: 'アフリカ',
+    NI: '北米', NL: 'ヨーロッパ', NO: 'ヨーロッパ', NP: 'アジア', NR: 'オセアニア', NU: 'オセアニア',
+    NZ: 'オセアニア', OM: 'アジア', PA: '北米', PE: '南米', PF: 'オセアニア', PG: 'オセアニア',
+    PH: 'アジア', PK: 'アジア', PL: 'ヨーロッパ', PM: '北米', PN: 'オセアニア', PR: '北米',
+    PS: 'アジア', PT: 'ヨーロッパ', PW: 'オセアニア', PY: '南米', QA: 'アジア', RE: 'アフリカ',
     RO: 'ヨーロッパ', RS: 'ヨーロッパ', RU: 'ヨーロッパ', RW: 'アフリカ', SA: 'アジア', SB: 'オセアニア',
     SC: 'アフリカ', SD: 'アフリカ', SE: 'ヨーロッパ', SG: 'アジア', SH: 'アフリカ', SI: 'ヨーロッパ',
     SJ: 'ヨーロッパ', SK: 'ヨーロッパ', SL: 'アフリカ', SM: 'ヨーロッパ', SN: 'アフリカ', SO: 'アフリカ',
-    SR: '南アメリカ', SS: 'アフリカ', ST: 'アフリカ', SV: '北アメリカ', SX: '北アメリカ', SY: 'アジア',
-    SZ: 'アフリカ', TC: '北アメリカ', TD: 'アフリカ', TF: 'アフリカ', TG: 'アフリカ', TH: 'アジア',
+    SR: '南米', SS: 'アフリカ', ST: 'アフリカ', SV: '北米', SX: '北米', SY: 'アジア',
+    SZ: 'アフリカ', TC: '北米', TD: 'アフリカ', TF: 'アフリカ', TG: 'アフリカ', TH: 'アジア',
     TJ: 'アジア', TK: 'オセアニア', TL: 'アジア', TM: 'アジア', TN: 'アフリカ', TO: 'オセアニア',
-    TR: 'アジア', TT: '北アメリカ', TV: 'オセアニア', TW: 'アジア', TZ: 'アフリカ', UA: 'ヨーロッパ',
-    UG: 'アフリカ', UM: 'オセアニア', US: '北アメリカ', UY: '南アメリカ', UZ: 'アジア', VA: 'ヨーロッパ',
-    VC: '北アメリカ', VE: '南アメリカ', VG: '北アメリカ', VI: '北アメリカ', VN: 'アジア', VU: 'オセアニア',
+    TR: 'アジア', TT: '北米', TV: 'オセアニア', TW: 'アジア', TZ: 'アフリカ', UA: 'ヨーロッパ',
+    UG: 'アフリカ', UM: 'オセアニア', US: '北米', UY: '南米', UZ: 'アジア', VA: 'ヨーロッパ',
+    VC: '北米', VE: '南米', VG: '北米', VI: '北米', VN: 'アジア', VU: 'オセアニア',
     WF: 'オセアニア', WS: 'オセアニア', XK: 'ヨーロッパ', YE: 'アジア', YT: 'アフリカ', ZA: 'アフリカ',
     ZM: 'アフリカ', ZW: 'アフリカ'
   };
-  var VISITED_CONTINENT_ORDER = ['アジア', 'ヨーロッパ', '北アメリカ', '南アメリカ', 'アフリカ', 'オセアニア'];
+  var VISITED_CONTINENT_ORDER = ['アジア', 'ヨーロッパ', '北米', '南米', 'アフリカ', 'オセアニア'];
   function continentForAlpha2(alpha2) {
     return VISITED_CONTINENT_BY_ALPHA2[String(alpha2 || '').toUpperCase()] || null;
   }
+
+  // world-atlas（countries-110m.json）に図形が無い（＝idx.nameToIdに出てこない）ため、地図データからは
+  // alpha2が引けない国名。香港・マカオはそれぞれ「中国」の図形に含まれてしまい、単独の図形を持たない
+  // （2026-09-28〜、visited-places.jsのcanonicalCountryが中国と分けて数えるようになった分）。
+  // これが無いとcontinentForAlpha2が引けず「その他」に落ちてしまうので、一覧では「アジア」・国旗🇭🇰🇲🇴で
+  // 出せるよう、名前→alpha2を決め打ちで足す（drawVisitedWorldMapのvisitedCountryAlpha2ByNameに合流）。
+  var EXTRA_COUNTRY_ALPHA2_BY_NAME = { '香港': 'HK', 'マカオ': 'MO' };
 
   // alpha-2コード（例："JP"）→ 国旗絵文字（例："🇯🇵"）。画像は使わず、Unicodeの
   // 地域表示記号（Regional Indicator Symbol、A=U+1F1E6）を2文字組み合わせて作る。
@@ -2659,6 +2679,7 @@
     VISITED_CONTINENT_ORDER: VISITED_CONTINENT_ORDER,
     continentForAlpha2: continentForAlpha2,
     flagEmojiForAlpha2: flagEmojiForAlpha2,
+    EXTRA_COUNTRY_ALPHA2_BY_NAME: EXTRA_COUNTRY_ALPHA2_BY_NAME,
     visitedPercentage: visitedPercentage,
     groupVisitedByOrder: groupVisitedByOrder
   };
@@ -2691,6 +2712,20 @@
   function $(sel, root2) { return (root2 || document).querySelector(sel); }
   function $all(sel, root2) { return Array.prototype.slice.call((root2 || document).querySelectorAll(sel)); }
 
+  // 通信待ちの間、空欄や「読み込み中…」の文字だけより、それらしい形のカードがぼんやり光っている
+  // 方がAirbnbアプリのように「今読み込み中」と伝わりやすいので、シマー（光が流れる）スケルトンを出す
+  // （マイログ・「行ったことある旅先」の初回読み込みで使う。2026-09-29〜。prefers-reduced-motionでは
+  // CSS側でアニメーションを止め、ただの薄い塗りのまま出す）。
+  function skeletonCardsHtml(n) {
+    var card = '<div class="skeleton-card" aria-hidden="true">' +
+      '<div class="skeleton-line skeleton-line-title"></div>' +
+      '<div class="skeleton-line skeleton-line-sub"></div>' +
+      '</div>';
+    var out = '';
+    for (var i = 0; i < (n || 3); i++) out += card;
+    return '<div class="skeleton-wrap">' + out + '</div>';
+  }
+
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -2698,17 +2733,47 @@
   }
 
   // 画面ごとのスクロール位置。記録・予定の編集から旅行の画面に戻ったとき、毎回いちばん上に戻ってしまい
-  // 編集していた記録を探し直す必要があったため、旅行の画面だけは離れたときの位置に戻す。
-  // 別の旅行を開いたとき（openTrip）はいちばん上から。
+  // 編集していた記録を探し直す必要があったため、旅行の画面・マイログ画面は離れたときの位置に戻す
+  // （マイログは2026-09-28〜。旅行を開いてまた「← 戻る」で戻ったとき、スクロールした先のカードを
+  // 探し直さなくて済むように）。別の旅行を開いたとき（openTrip）はいちばん上から。
   var screenScroll = {};
+  var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1 };
   function showScreen(name) {
     var leaving = $('.screen.active');
-    if (leaving && leaving.dataset.screen !== name) screenScroll[leaving.dataset.screen] = window.scrollY;
-    $all('.screen').forEach(function (s) { s.classList.toggle('active', s.dataset.screen === name); });
-    var y = name === 'tripDetail' ? (screenScroll.tripDetail || 0) : 0;
+    var leavingName = leaving && leaving.dataset.screen;
+    if (leaving && leavingName !== name) screenScroll[leavingName] = window.scrollY;
+    // タブバーの4画面同士を行き来するとき（例：マイログ→旅先一覧）だけクロスフェードを付ける。
+    // 旅の詳細を開く／閉じる等、タブ以外に出入りする遷移では今までどおり一瞬で切り替える
+    // （地図の再描画などが多い画面でアニメーションと被って重く見えないように）。
+    var isTabSwitch = !!TABBAR_SCREENS[name] && !!leavingName && !!TABBAR_SCREENS[leavingName] && leavingName !== name;
+    $all('.screen').forEach(function (s) {
+      var entering = s.dataset.screen === name;
+      s.classList.toggle('active', entering);
+      s.classList.remove('tab-switch-in');
+      if (entering && isTabSwitch) {
+        // 直前のフレームでクラスを外しているので、再度付けたときにアニメーションが必ず最初から走る
+        void s.offsetWidth;
+        s.classList.add('tab-switch-in');
+      }
+    });
+    var y = SCROLL_RESTORE_SCREENS[name] ? (screenScroll[name] || 0) : 0;
     window.scrollTo(0, y);
     // 呼び出し元がこのあと画面を描き直すので、描き終わった後にもう一度合わせる
     if (y) setTimeout(function () { if ($('.screen.active') && $('.screen.active').dataset.screen === name) window.scrollTo(0, y); }, 0);
+    updateTabbar(name);
+  }
+
+  // ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール）の表示・ハイライトを、画面の
+  // 切り替えのたびにここで一括して更新する（showScreenの呼び出し元がタブの状態を気にしなくてよいように）。
+  // トップレベルの4画面だけで出し、旅の詳細・記録フォーム・地図でふりかえる・シート・ログインでは隠す。
+  var TABBAR_SCREENS = { mylog: 1, visited: 1, home: 1, profile: 1 };
+  function updateTabbar(name) {
+    var bar = $('#tabbar');
+    if (!bar) return;
+    bar.classList.toggle('show', !!TABBAR_SCREENS[name]);
+    $all('.tabbar-btn', bar).forEach(function (b) {
+      b.classList.toggle('on', b.dataset.tab === name);
+    });
   }
 
   // ---------- Googleログイン ----------
@@ -3500,9 +3565,12 @@
   }
 
   // ---------- 旅行を開く ----------
-  // returnTo：この旅行の詳細画面から「← 戻る」を押したときにどこへ戻るか（省略時はホーム。
-  // 「行ったことある旅先」の一覧・地図の吹き出しから旅行名をタップして開いたとき（openTrip(id, 'visited')）
-  // だけ、そのページに戻れるようにする。2026-09-28〜）
+  // returnTo：この旅行の詳細画面から「← 戻る」／edge-swipe-backを押したときにどこへ戻るか（省略時は
+  // ホーム。共有リンク・深いリンクから直接開いたときも省略＝ホームに戻る）。
+  // 「行ったことある旅先」の一覧・地図の吹き出しから旅行名をタップして開いたとき（openTrip(id, 'visited')）、
+  // マイログの「参加した旅行」カードから開いたとき（openTrip(id, 'mylog')）は、そのページに戻す
+  // （2026-09-28〜。ボトムタブバー導入にあわせ、戻ったときに正しいタブがハイライトされるよう
+  // showScreen自身がタブの見た目も更新する＝updateTabbar参照）。
   function openTrip(id, returnTo) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
@@ -3517,7 +3585,7 @@
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       state.zoneInfo = { byBlock: {}, byDate: {} };
       screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
-      state.tripReturnScreen = returnTo === 'visited' ? 'visited' : null;
+      state.tripReturnScreen = (returnTo === 'visited' || returnTo === 'mylog') ? returnTo : null;
       showScreen('tripDetail');
       renderTripDetail();
       loadSocial();
@@ -3527,6 +3595,25 @@
       alert('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。');
       goHome();
     });
+  }
+
+  // 旅の詳細（tripDetail）の「← 戻る」／edge-swipe-backの共通の戻り先判定（openTripのreturnTo、
+  // 2026-09-28〜）。openTripで記録したtripReturnScreen（'visited'|'mylog'|null）に従って戻る。
+  // showScreenが呼ばれることで、ボトムタブバーの見た目（updateTabbar）も自動で正しいタブに戻る。
+  function returnFromTripDetail() {
+    var target = state.tripReturnScreen;
+    state.tripReturnScreen = null;
+    if (target === 'visited') {
+      showScreen('visited');
+      renderVisitedPlaces();
+      return;
+    }
+    if (target === 'mylog') {
+      showScreen('mylog');
+      renderMyLog();
+      return;
+    }
+    goHome();
   }
 
   function refreshTrip() {
@@ -4790,6 +4877,55 @@
     });
 
     el.addEventListener('touchcancel', function () { edgeSwipeBackState = null; });
+  }
+
+  // 「行ったことある旅先」の国内⇄海外の横スワイプ切り替え（2026-09-28〜）。オーナーの指定
+  // （「右にスワイプしたら海外、左にスワイプしたら国内」）は、カルーセルの一般的な向き（右スワイプ＝
+  // 次へ＝左のタブに戻る、が多い）とは逆なので、向きをこの定数1つだけで反転できるようにしておく。
+  var VISITED_SWIPE_RIGHT_GOES_TO = 'overseas';
+  var visitedSwipeState = null;
+  function initVisitedSwipe() {
+    var el = $('#visitedPanel');
+    if (!el) return;
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { visitedSwipeState = null; return; }
+      var t = e.touches[0];
+      // 画面左端はedge-swipe-back（戻る）の担当なので、ここでは拾わない
+      if (t.clientX <= EDGE_SWIPE_BACK_PX) { visitedSwipeState = null; return; }
+      visitedSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!visitedSwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - visitedSwipeState.startX;
+      var dy = t.clientY - visitedSwipeState.startY;
+      // 横方向と判定できるまでは何もしない＝地図の上のタップ・縦スクロールを妨げない
+      if (!visitedSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        visitedSwipeState.decided = true;
+        visitedSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (visitedSwipeState.decided && visitedSwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!visitedSwipeState) return;
+      var vs = visitedSwipeState;
+      visitedSwipeState = null;
+      if (!vs.decided || !vs.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - vs.startX;
+      if (Math.abs(dx) < 50) return; // 短い横移動はタップ・地図操作の揺れとみなして無視する
+      var other = VISITED_SWIPE_RIGHT_GOES_TO === 'overseas' ? 'domestic' : 'overseas';
+      var target = dx > 0 ? VISITED_SWIPE_RIGHT_GOES_TO : other;
+      if (state.visitedTab === target) return;
+      state.visitedTab = target;
+      state.visitedSel = null;
+      renderVisitedPlaces();
+    });
+
+    el.addEventListener('touchcancel', function () { visitedSwipeState = null; });
   }
 
   function goToAdjacentDay(delta) {
@@ -6712,7 +6848,8 @@
     var user = loadCurrentUser();
     if (!user) { openLogin('mylog'); return; }
     showScreen('mylog');
-    $('#mylogList').innerHTML = '<div class="empty">読み込み中…</div>';
+    $('#mylogTripList').innerHTML = skeletonCardsHtml(2);
+    $('#mylogList').innerHTML = skeletonCardsHtml(3);
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogItems = data.items || [];
       state.myLogTrips = data.trips || [];
@@ -6721,6 +6858,9 @@
     }).catch(function () {
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
     });
+    // プランの状態はプロフィール画面がメインだが、マイログ見出しのplanBadgeTop（残り回数の
+    // 一目バッジ）もここで最新化しておく（renderPlanStatusはプロフィール画面のDOMも一緒に更新するが、
+    // 今アクティブな画面がどちらでも副作用は無い）。
     fetchAccountStatus().then(renderPlanStatus);
   }
 
@@ -6751,7 +6891,11 @@
       manageBtn.hidden = true;
       return;
     }
-    manageBtn.hidden = account.plan === 'free';
+    // Appleの審査ガイドライン3.1.1（アプリ内課金の対象になる機能は、Appleの仕組み以外の購入導線を
+    // アプリ内に出せない）のため、iOSアプリ内では「登録する」ボタン・支払い方法の変更（Stripeへの
+    // 外部リンク）は出さない（2026-09-28〜。プロフィール画面には残り回数などの状況表示だけ残す）。
+    var native = isNativeApp();
+    manageBtn.hidden = native || account.plan === 'free';
     var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
     var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）' +
       (typeof account.memoRemainingThisPeriod === 'number' ? '・メモのAI整理：残り' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' : '');
@@ -6766,24 +6910,20 @@
       (account.ticketCredits ? '・回数券の残り' + account.ticketCredits + '回' : '') + '</div>';
 
     optionsEl.innerHTML = '';
-    // iOSアプリの中では、有料プラン・回数券の購入（Stripe）を出さない。アプリ内で使うデジタルの機能を
-    // 売るときはAppleのアプリ内課金を使う決まり（審査ガイドライン3.1.1）があるため。残りの回数だけ見せる。
-    if (isNativeApp()) {
-      manageBtn.hidden = true;
-      msgEl.textContent = '';
-      return;
+    // iOSアプリの中では、有料プラン・回数券の購入（Stripe）を出さない（審査ガイドライン3.1.1）。
+    if (!native) {
+      PLAN_OPTIONS.forEach(function (opt) {
+        if (account.plan === opt.plan) return;
+        var card = document.createElement('div');
+        card.className = 'plan-card';
+        card.innerHTML =
+          '<div><div class="plan-card-name">' + escapeHtml(opt.name) + '</div>' +
+          '<div class="plan-card-detail">' + escapeHtml(opt.detail) + '</div></div>' +
+          '<button class="btn primary" type="button">登録する</button>';
+        card.querySelector('button').addEventListener('click', function () { startCheckout(opt.plan); });
+        optionsEl.appendChild(card);
+      });
     }
-    PLAN_OPTIONS.forEach(function (opt) {
-      if (account.plan === opt.plan) return;
-      var card = document.createElement('div');
-      card.className = 'plan-card';
-      card.innerHTML =
-        '<div><div class="plan-card-name">' + escapeHtml(opt.name) + '</div>' +
-        '<div class="plan-card-detail">' + escapeHtml(opt.detail) + '</div></div>' +
-        '<button class="btn primary" type="button">登録する</button>';
-      card.querySelector('button').addEventListener('click', function () { startCheckout(opt.plan); });
-      optionsEl.appendChild(card);
-    });
     msgEl.textContent = '';
   }
 
@@ -6829,6 +6969,65 @@
     }).catch(function () {
       msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
     });
+  }
+
+  // ---------- プロフィール（Airbnbのプロフィール画面を手本にした、アカウントまわりのまとめ。2026-09-28〜） ----------
+  // マイログと同じ /mylog を読んで、旅行数・評価件数・最初の旅行の年を集計するだけ（新しいAPIは無い）。
+  function openProfile() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('profile'); return; }
+    showScreen('profile');
+    renderProfileIdentity(user);
+    $('#profileStats').innerHTML = '';
+    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
+      state.myLogItems = data.items || [];
+      state.myLogTrips = data.trips || [];
+      state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [] };
+      renderProfileStats();
+    }).catch(function () {
+      // 集計が読み込めなくても、名前・アバターやプラン・アカウント操作は使えるようにしておく
+    });
+    fetchAccountStatus().then(renderPlanStatus);
+  }
+
+  function avatarInitial(user) {
+    var src = (user.name || user.email || '').trim();
+    return src ? src.slice(0, 1).toUpperCase() : '？';
+  }
+
+  function renderProfileIdentity(user) {
+    var avatar = $('#profileAvatar');
+    if (user.picture) {
+      avatar.innerHTML = '<img src="' + escapeHtml(user.picture) + '" alt="">';
+    } else {
+      avatar.innerHTML = '';
+      avatar.textContent = avatarInitial(user);
+    }
+    $('#profileName').textContent = user.name || user.email || '';
+  }
+
+  // 「記録の年数」：参加した旅行のうち、いちばん古い出発日の年から今年まで（初年も1年と数える）
+  function profileYearsSinceEarliestTrip(trips) {
+    var years = (trips || [])
+      .map(function (t) { return t.startDate ? Number(String(t.startDate).slice(0, 4)) : NaN; })
+      .filter(function (y) { return !isNaN(y); });
+    if (!years.length) return 0;
+    var earliest = Math.min.apply(null, years);
+    var current = new Date().getFullYear();
+    return Math.max(1, current - earliest + 1);
+  }
+
+  function renderProfileStats() {
+    var trips = state.myLogTrips || [];
+    var items = state.myLogItems || [];
+    var stats = [
+      { num: trips.length, label: '旅行 ' + trips.length + '回' },
+      { num: items.length, label: '評価 ' + items.length + '件' },
+      { num: profileYearsSinceEarliestTrip(trips), label: '記録の年数 ' + profileYearsSinceEarliestTrip(trips) + '年' }
+    ];
+    $('#profileStats').innerHTML = stats.map(function (s) {
+      return '<div class="profile-stat"><span class="profile-stat-label">' + escapeHtml(s.label) + '</span></div>';
+    }).join('');
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
@@ -6889,8 +7088,13 @@
         '<button type="button" class="trip-place-action" data-trip="' + escapeHtml(t.tripId) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
         '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? '戻す' : '外す') + '</button></span>';
     };
-    var chips = (t.prefectures || []).map(function (x) { return chip('prefecture', x); })
-      .concat((t.countries || []).map(function (x) { return chip('country', x); })).join('');
+    var items = (t.prefectures || []).map(function (x) { return { kind: 'prefecture', x: x }; })
+      .concat((t.countries || []).map(function (x) { return { kind: 'country', x: x }; }));
+    // 外した場所（is-excluded）は目立たなくしたいので、一覧の最後に回す（戻すまでは埋もれて見えて
+    // よい。2026-09-29〜。並び替えは表示だけで、外す・戻す自体の対象は変えない）。
+    var kept = items.filter(function (i) { return !i.x.excluded; });
+    var excluded = items.filter(function (i) { return i.x.excluded; });
+    var chips = kept.concat(excluded).map(function (i) { return chip(i.kind, i.x); }).join('');
     return chips ? '<div class="trip-place-chips">' + chips + '</div>' : '';
   }
 
@@ -6961,7 +7165,7 @@
         (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
         tripPlaceChipsHtml(placesByTrip[t.id]) +
         '</div></div>';
-      var open = function () { openTrip(t.id); };
+      var open = function () { openTrip(t.id, 'mylog'); };
       card.addEventListener('click', function (e) {
         if (e.target.closest('.trip-place-action')) return;
         open();
@@ -7074,7 +7278,7 @@
     var user = loadCurrentUser();
     if (!user) { openLogin('visited'); return; }
     showScreen('visited');
-    $('#visitedPanel').innerHTML = '<div class="empty">読み込み中…</div>';
+    $('#visitedPanel').innerHTML = skeletonCardsHtml(4);
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [], details: { prefectures: [], countries: [] } };
       renderVisitedPlaces();
@@ -7133,11 +7337,19 @@
 
   // 旅行名（年つき）をタップしたらその旅行を開けるリンクのHTML。押した瞬間は行の選択（クリック伝播）とは
   // 別扱いにしたいので、クリック側でstopPropagationする（wireVisitedTripLinks）。
+  // 複数の旅行にまたがる場所は、新しい旅行が上に来るよう年（最大値）で降順に並べ、1行ずつ出す
+  // （・でつなげると同じ場所に何度も行った人ほど読みにくくなるため）。年が分からない旅行は最後に回す。
   function visitedTripLinksHtml(trips) {
     if (!trips.length) return '記録が見つかりませんでした';
-    return trips.map(function (t) {
+    var sorted = trips.map(function (t, i) { return { t: t, i: i }; }).sort(function (a, b) {
+      var ay = (a.t.years && a.t.years.length) ? Math.max.apply(null, a.t.years.map(Number)) : -1;
+      var by = (b.t.years && b.t.years.length) ? Math.max.apply(null, b.t.years.map(Number)) : -1;
+      if (ay !== by) return by - ay;
+      return a.i - b.i;
+    }).map(function (x) { return x.t; });
+    return '<div class="visited-trip-links">' + sorted.map(function (t) {
       return '<a href="#" class="visited-trip-link" data-trip-id="' + escapeHtml(t.tripId) + '">' + escapeHtml(Core.visitedTripLabel(t)) + '</a>';
-    }).join('・');
+    }).join('') + '</div>';
   }
 
   function wireVisitedTripLinks(root2) {
@@ -7361,6 +7573,11 @@
       visitedCountryAlpha2ByName = {};
       Object.keys(idx.nameToId).forEach(function (name) {
         visitedCountryAlpha2ByName[name] = alpha2Table[idx.nameToId[name]];
+      });
+      // 香港・マカオなど、world-atlasに図形が無く上のnameToIdからは引けない国名を決め打ちで補う
+      // （EXTRA_COUNTRY_ALPHA2_BY_NAME参照。無いと一覧で「その他」に落ちてしまう）。
+      Object.keys(Core.EXTRA_COUNTRY_ALPHA2_BY_NAME || {}).forEach(function (name) {
+        if (!visitedCountryAlpha2ByName[name]) visitedCountryAlpha2ByName[name] = Core.EXTRA_COUNTRY_ALPHA2_BY_NAME[name];
       });
 
       if (container) {
@@ -8412,18 +8629,11 @@
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
+    initVisitedSwipe();
     initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
     initEdgeSwipeBack(document.querySelector('[data-screen="visited"]'), goHome);
-    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), function () {
-      // ヘッダーの「← 戻る」（data-back="home"）と同じ判定（openTripのreturnTo、2026-09-28〜）
-      if (state.tripReturnScreen === 'visited') {
-        state.tripReturnScreen = null;
-        showScreen('visited');
-        renderVisitedPlaces();
-        return;
-      }
-      goHome();
-    });
+    initEdgeSwipeBack(document.querySelector('[data-screen="profile"]'), goHome);
+    initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), returnFromTripDetail);
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
       $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
@@ -8531,13 +8741,11 @@
       b.addEventListener('click', function () {
         var to = b.dataset.back;
         stopVoiceRecordingIfActive();
-        // 旅の詳細（tripDetail）の「← 戻る」だけは特別扱い：「行ったことある旅先」の旅行名リンクから
-        // 開いた旅行なら、そのページに戻す（openTripのreturnTo、2026-09-28〜）。それ以外のdata-back="home"
-        // （新しい旅を作る、など）はこれまでどおりホームへ。
-        if (to === 'home' && b.classList.contains('back-btn') && state.tripReturnScreen === 'visited') {
-          state.tripReturnScreen = null;
-          showScreen('visited');
-          renderVisitedPlaces();
+        // 旅の詳細（tripDetail）の「← 戻る」だけは特別扱い：「行ったことある旅先」・マイログの
+        // 旅行リンクから開いた旅行なら、そのページに戻す（returnFromTripDetail、openTripのreturnTo）。
+        // それ以外のdata-back="home"（新しい旅を作る、など）はこれまでどおりホームへ。
+        if (to === 'home' && b.classList.contains('back-btn') && state.tripReturnScreen) {
+          returnFromTripDetail();
           return;
         }
         if (to === 'home') goHome();
@@ -8556,12 +8764,6 @@
     $('#btnSendOtp').addEventListener('click', handleSendOtp);
     $('#btnVerifyOtp').addEventListener('click', handleVerifyOtp);
     $('#btnResendOtp').addEventListener('click', handleSendOtp);
-    $('#btnOpenMyLog').addEventListener('click', function () {
-      if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
-    });
-    $('#btnOpenVisited').addEventListener('click', function () {
-      if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited');
-    });
     $('#visitedTabs').addEventListener('click', function (e) {
       var btn = e.target.closest('.visited-tab');
       if (!btn) return;
@@ -8569,15 +8771,35 @@
       state.visitedSel = null;
       renderVisitedPlaces();
     });
+    // プラン（音声入力プラン）はプロフィール画面に移した（2026-09-28〜、ボトムタブバー導入）
     $('#btnGoToPlans').addEventListener('click', function () {
-      if (loadCurrentUser()) openMyLog(); else openLogin('mylog');
+      if (loadCurrentUser()) openProfile(); else openLogin('profile');
     });
     $('#planBadgeTop').addEventListener('click', function () {
-      $('#planStatus').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (loadCurrentUser()) openProfile(); else openLogin('profile');
     });
     $('#btnManageBilling').addEventListener('click', startBillingPortal);
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
     initSocial();
+
+    // ---------- ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール。2026-09-28〜） ----------
+    // タップした瞬間だけ.popを付けてアイコンのバウンス演出をやり直させる（連続タップでも毎回動くよう、
+    // 一度外してから付け直す＝reflowを挟んで同じアニメーションを再トリガーする定番の書き方）。
+    $all('.tabbar-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var icon = btn.querySelector('.tabbar-icon');
+        if (icon) {
+          icon.classList.remove('pop');
+          void icon.offsetWidth;
+          icon.classList.add('pop');
+        }
+        var tab = btn.dataset.tab;
+        if (tab === 'home') goHome();
+        else if (tab === 'mylog') { if (loadCurrentUser()) openMyLog(); else openLogin('mylog'); }
+        else if (tab === 'visited') { if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited'); }
+        else if (tab === 'profile') openProfile();
+      });
+    });
 
     $('#mylogSort').addEventListener('click', function (e) {
       var btn = e.target.closest('.sort-btn');
@@ -8703,6 +8925,8 @@
       openMyLog();
     } else if (target === 'visited' && loggedIn) {
       openVisitedPlaces();
+    } else if (target === 'profile' && loggedIn) {
+      openProfile();
     } else {
       goHome();
     }

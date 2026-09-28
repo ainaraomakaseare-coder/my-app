@@ -23,6 +23,16 @@ check("表に無い〜共和国は短くする", canonicalCountry("チェコ共�
 check("ドミニカ共和国はそのまま", canonicalCountry("ドミニカ共和国"), "ドミニカ共和国");
 check("空", canonicalCountry(""), "");
 check("日本国→日本", canonicalCountry("日本国"), "日本");
+// オーナー報告（2026-09-28）：スイス・ベルギー旅行のベルギーが「行ったことある旅先」の総計から漏れていた
+check("ベルギー王国→ベルギー", canonicalCountry("ベルギー王国"), "ベルギー");
+check("Belgium→ベルギー", canonicalCountry("Belgium"), "ベルギー");
+check("Belgique→ベルギー", canonicalCountry("Belgique"), "ベルギー");
+check("België→ベルギー", canonicalCountry("België"), "ベルギー");
+check("スイス連邦→スイス", canonicalCountry("スイス連邦"), "スイス");
+check("Switzerland→スイス", canonicalCountry("Switzerland"), "スイス");
+check("Schweiz→スイス", canonicalCountry("Schweiz"), "スイス");
+check("Suisse→スイス", canonicalCountry("Suisse"), "スイス");
+check("Svizzera→スイス", canonicalCountry("Svizzera"), "スイス");
 
 // 都道府県
 check("東京→東京都", canonicalPrefecture("東京"), "東京都");
@@ -58,7 +68,10 @@ const blocks = [
   { id: "b5", tripId: "t2", date: "2026-02-01", category: "food", label: "In-N-Out" },
 ];
 const coords = { b4a: [{ lat: 8.97, lng: 38.79 }], b4b: [{ lat: -34.6, lng: -58.4 }] };
-const r = aggregateVisitedPlaces({ days, blocks, coords, trips });
+// t1の出発日・帰着日（2026-09-28〜：前後の日と違う国でも、出発・帰着日ならそのまま乗り継ぎ扱いにする
+// ためtripBoundsが要る。北京（01-01・初日）・エチオピア（01-04・最終日）はどちらも境界日）
+const tripBounds = { t1: { startDate: "2026-01-01", endDate: "2026-01-04" }, t2: { startDate: "2026-02-01", endDate: "2026-02-05" } };
+const r = aggregateVisitedPlaces({ days, blocks, coords, trips, tripBounds });
 check("行った国（表記ゆれをまとめ、乗り継ぎは外す）", r.countries, ["アメリカ", "ブラジル"]);
 check("都道府県", r.prefectures, ["東京都"]);
 const china = r.details.countries.find((c) => c.name === "中国");
@@ -73,7 +86,7 @@ check("t2の訪れた場所（国）", r.tripPlaces.find((t) => t.tripId === "t2
 check("t2の訪れた場所（都道府県）", r.tripPlaces.find((t) => t.tripId === "t2").prefectures, [{ name: "東京都", excluded: false }]);
 
 // 本人が旅行ごとに外す・戻す（2026-09-28〜）：t1のアメリカだけ外す→t1には残らないがt2のアメリカ・総計には影響しない
-const r2 = aggregateVisitedPlaces({ days, blocks, coords, trips, tripOverrides: [
+const r2 = aggregateVisitedPlaces({ days, blocks, coords, trips, tripBounds, tripOverrides: [
   { tripId: "t1", kind: "country", name: "アメリカ合衆国" },
 ] });
 check("t1だけ外しても総計のアメリカは残る（t2でまだ数えている）", r2.countries, ["アメリカ", "ブラジル"]);
@@ -83,7 +96,7 @@ const usAfterOneExclude = r2.details.countries.find((c) => c.name === "アメリ
 check("片方だけ外しても全体のstatusはvisibleのまま", usAfterOneExclude.status, "visible");
 
 // 出てくる全部の旅行で外すと、総計から落ちる
-const r3exclude = aggregateVisitedPlaces({ days, blocks, coords, trips, tripOverrides: [
+const r3exclude = aggregateVisitedPlaces({ days, blocks, coords, trips, tripBounds, tripOverrides: [
   { tripId: "t1", kind: "country", name: "アメリカ合衆国" },
   { tripId: "t2", kind: "country", name: "アメリカ" },
 ] });
@@ -91,7 +104,7 @@ check("両方の旅行で外すと総計から落ちる", r3exclude.countries, [
 check("status はexcluded", r3exclude.details.countries.find((c) => c.name === "アメリカ").status, "excluded");
 
 // 戻す＝overrideを外す操作なので、外す前の結果に戻る
-const restored = aggregateVisitedPlaces({ days, blocks, coords, trips, tripOverrides: [] });
+const restored = aggregateVisitedPlaces({ days, blocks, coords, trips, tripBounds, tripOverrides: [] });
 check("戻すと外す前と同じ結果になる", restored.countries, r.countries);
 
 // 地図の無い日（場所だけ）は数える
@@ -188,6 +201,81 @@ const filteredMultiTrip = filterFallbackDayRows(
   mapVisitsOsakaTrip
 );
 check("別の旅行のday_infosはtrip1のmapVisitsに影響されない", filteredMultiTrip.length, 1);
+
+// ==== 実際の3つの旅行の形（2026-09-28、フォローアップ修正の確認）====
+// getVisitedPlacesが渡す形（mapVisits＝各entryの座標から求めた場所、transitはそのentryのBlockの
+// categoryで確定済み／day_infosの補完＝filterFallbackDayRowsを通した後）を模している。
+
+// 1) スイス・ベルギー旅行（trip_a031672093364d19b2f7f74a1922afa1）：ベルギーの唯一の地図点
+// （2025-09-17「ブリュッセル出発」）が移動の予定（category=transport）から入っているため、
+// そのままではtransit:trueになる。前の日（2025-09-15、ジュネーブ＝スイス）と国が違い、
+// 旅行の帰着日（2025-09-18）でもないので、ベルギーに泊まった日として数える。
+const swissBounds = { swiss: { startDate: "2025-09-11", endDate: "2025-09-18" } };
+const swissMapVisits = [
+  { tripId: "swiss", date: "2025-09-11", admin1: "ベルン州", country: "スイス", lat: 47.4617, lon: 8.5509, transit: false }, // チューリッヒ到着
+  { tripId: "swiss", date: "2025-09-15", admin1: "ジュネーヴ州", country: "スイス", lat: 46.2074, lon: 6.1559, transit: false }, // ジュネーブ市内
+  { tripId: "swiss", date: "2025-09-17", admin1: "Vlaams-Brabant", country: "ベルギー", lat: 50.9002, lon: 4.4859, transit: true }, // ブリュッセル出発（transport）
+];
+// day_infosの補完（09-12〜14：ツェルマット／ヴァレー州・スイス。mapVisitsに無い日だけ残る）
+const swissDayInfos = [
+  { tripId: "swiss", date: "2025-09-12", admin1: "ヴァレー州", country: "スイス", lat: 46.02, lon: 7.75 },
+  { tripId: "swiss", date: "2025-09-13", admin1: "ヴァレー州", country: "スイス", lat: 45.99, lon: 7.75 },
+  { tripId: "swiss", date: "2025-09-14", admin1: "ヴァレー州", country: "スイス", lat: 46.02, lon: 7.75 },
+];
+const swissFallback = filterFallbackDayRows(
+  swissDayInfos,
+  swissMapVisits.map((v) => ({ tripId: v.tripId, date: v.date, lat: v.lat, lng: v.lon }))
+);
+const rSwiss = aggregateVisitedPlaces({
+  days: swissMapVisits.concat(swissFallback), blocks: [], trips: { swiss: "スイス・ベルギー旅行" }, tripBounds: swissBounds,
+});
+check("スイス・ベルギー旅行：総計にベルギーが出る（唯一の地図点が乗り継ぎの予定でも、前日と違う国・帰着日でもないので数える）",
+  rSwiss.countries, ["スイス", "ベルギー"]);
+check("ベルギーのstatusはvisible（乗り継ぎ扱いのまま落ちない）", rSwiss.details.countries.find((c) => c.name === "ベルギー").status, "visible");
+
+// 2) ブラジル・アルゼンチン旅行（trip_4fc221e877b24b95aa8c4f1f1b39c824）：出発日（2024-02-10）・
+// 帰着日（2024-02-19）はどちらも成田（千葉県）で、乗り継ぎの予定しか無い＝旅行の境界日なので、
+// 前後の日と国が違っても「行った」に数えない（千葉県が毎回の旅行の行き帰りで紛れ込むのを防ぐ）。
+const brazilBounds = { brazil: { startDate: "2024-02-10", endDate: "2024-02-19" } };
+const brazilDays = [
+  { tripId: "brazil", date: "2024-02-10", admin1: "千葉県", country: "日本", transit: true }, // 成田空港出発（出発日）
+  { tripId: "brazil", date: "2024-02-11", admin1: "リオデジャネイロ州", country: "ブラジル", transit: false },
+  { tripId: "brazil", date: "2024-02-12", admin1: "リオ デ ジャネイロ", country: "ブラジル", transit: false },
+  { tripId: "brazil", date: "2024-02-16", admin1: "サンタクルス州", country: "アルゼンチン", transit: false },
+  { tripId: "brazil", date: "2024-02-19", admin1: "千葉県", country: "日本", transit: true }, // 成田空港到着（帰着日）
+];
+const rBrazil = aggregateVisitedPlaces({ days: brazilDays, blocks: [], trips: { brazil: "ブラジル・アルゼンチン" }, tripBounds: brazilBounds });
+check("ブラジル旅行：出発・帰着日の千葉県は数えない（乗り継ぎの空港のまま）", rBrazil.prefectures.includes("千葉県"), false);
+check("ブラジル旅行：ブラジル・アルゼンチンは数える", rBrazil.countries, ["アルゼンチン", "ブラジル"]);
+
+// 3) 同じブラジル旅行：2024-02-14「ブエノスアイレス到着」の記録は地図URLが壊れていた
+// （query=undefined,undefined）ため、getVisitedPlaces側でmapVisits・day_infos補完のどちらにも
+// 使わない（hasBrokenMapQuery、geo-decode.test.mjs参照）。ここでは、そのentryを一切含めずに渡した
+// ときに、同じ日の別の地図点（氷河ツアー＝パタゴニア・アルゼンチン、正しい座標）だけで正しく
+// アルゼンチンとして数えられ、day_infosの誤った記録（過去にその壊れたentryの座標から自動で入った
+// 「エチオピア」）はmapVisitsに置き換えられて捨てられることを確認する（filterFallbackDayRows）。
+const brazilDay14MapVisits = [
+  // 氷河ツアー（正しい座標、アルゼンチン・パタゴニア）。壊れたentry（ブエノスアイレス到着）は
+  // hasBrokenMapQueryで弾かれ、そもそもmapVisitsに入ってこない想定なのでここには含めない
+  { tripId: "brazil", date: "2024-02-14", admin1: "サンタクルス州", country: "アルゼンチン", lat: -50.4967, lon: -73.1377, transit: false },
+];
+const brazilDay14DayInfosFallbackCandidate = [
+  // day_infosには、壊れたentryの座標から過去に自動で入ってしまった誤った記録（エチオピア）が
+  // まだ残っている想定。mapVisitsが同じ日を正しく持っているので、filterFallbackDayRowsで丸ごと無視される
+  { tripId: "brazil", date: "2024-02-14", admin1: "アディスアベバ", country: "エチオピア", lat: 9.0143, lon: 38.7255 },
+];
+const brazilDay14Fallback = filterFallbackDayRows(
+  brazilDay14DayInfosFallbackCandidate,
+  brazilDay14MapVisits.map((v) => ({ tripId: v.tripId, date: v.date, lat: v.lat, lng: v.lon }))
+);
+check("壊れたentryの座標由来のday_infos行（エチオピア）は、同じ日の正しいmapVisitsがあるので無視される",
+  brazilDay14Fallback.length, 0);
+const rBrazilDay14 = aggregateVisitedPlaces({
+  days: brazilDay14MapVisits.concat(brazilDay14Fallback), blocks: [], trips: { brazil: "ブラジル・アルゼンチン" }, tripBounds: brazilBounds,
+});
+check("エチオピアは出てこない（壊れた地図URLのentryを除いたので、そもそも入力に無い）",
+  rBrazilDay14.countries.includes("エチオピア"), false);
+check("2024-02-14はアルゼンチンとして数えられる", rBrazilDay14.countries, ["アルゼンチン"]);
 
 console.log(`visited-places: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -21,6 +21,7 @@
  */
 
 import { distanceKm } from "./geo-decode.js";
+import { overrideCountryByCoords } from "./geo-country-override.js";
 
 // [まとめた後の名前, ...別名]。完全一致（前後の空白を除き、NFKC正規化したあと）で引く
 const COUNTRY_ALIASES = [
@@ -40,7 +41,8 @@ const COUNTRY_ALIASES = [
   ["スペイン", "スペイン王国", "Spain", "España"],
   ["ポルトガル", "ポルトガル共和国", "Portugal"],
   ["オランダ", "オランダ王国", "Netherlands", "Nederland"],
-  ["スイス", "スイス連邦", "Switzerland"],
+  ["ベルギー", "ベルギー王国", "Belgium", "Belgique", "België"],
+  ["スイス", "スイス連邦", "Switzerland", "Schweiz", "Suisse", "Svizzera"],
   ["オーストリア", "オーストリア共和国", "Austria"],
   ["ブラジル", "ブラジル連邦共和国", "Brazil", "Brasil"],
   ["アルゼンチン", "アルゼンチン共和国", "Argentina"],
@@ -119,6 +121,7 @@ const NEAR = 0.0005; // 自動で入れた場所は、予定の地図の座標�
  * coords:  { [blockId]: [{ lat, lng }] }  予定の地図の座標（記録ごと）
  * trips:   { [tripId]: title }
  * tripOverrides: [{ tripId, kind: 'country'|'prefecture', name }]  その旅行から外した場所（外すことだけができる）
+ * tripBounds: { [tripId]: { startDate, endDate } }  旅行の開始日・終了日（2026-09-28〜、出発・帰着日の判定用）
  *
  * 返り値:
  *   { prefectures: string[], countries: string[], details: { prefectures, countries }, tripPlaces }
@@ -129,7 +132,7 @@ const NEAR = 0.0005; // 自動で入れた場所は、予定の地図の座標�
  *   tripPlaces: [{ tripId, tripTitle, prefectures: [{name, excluded}], countries: [{name, excluded}] }]
  *     旅行ごとの一覧（乗り継ぎだけの日しか無い場所は含めない。外した場所も excluded:true で残す）。
  */
-export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, trips = {}, tripOverrides = [] } = {}) {
+export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, trips = {}, tripOverrides = [], tripBounds = {} } = {}) {
   const blocksByDay = new Map();
   blocks.forEach((b) => {
     const k = b.tripId + "|" + b.date;
@@ -137,20 +140,84 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
     blocksByDay.get(k).push(b);
   });
 
+  // その日の国名（表記ゆれをまとめたあと、座標が香港・マカオの範囲に入っていれば「中国」から
+  // 香港・マカオに分ける。過去にNominatimの address.country をそのまま「中国」として保存していた
+  // 分もこれで直る。詳しくはgeo-country-override.js参照）
+  const countryOf = (d) => overrideCountryByCoords(canonicalCountry(d.country), d.lat, d.lon);
+
+  // 日付→その日に出てくる国を旅行ごとに集める。「その日の予定が全部乗り継ぎ」でも、
+  // 前後の日と違う国なら「その国に泊まった」とみなして数えるための下ごしらえ（2026-09-28〜）。
+  // オーナー報告：スイス・ベルギー旅行で、ベルギーの唯一の地図点（ブリュッセル出発）が移動の予定
+  // （category=transport）から入ったせいで、ベルギーに行った記録があるのに乗り継ぎ扱いで落ちていた。
+  const countriesByTripDate = new Map(); // tripId -> Map(date -> Set<country>)
+  days.forEach((d) => {
+    const c = countryOf(d);
+    if (!c) return;
+    if (!countriesByTripDate.has(d.tripId)) countriesByTripDate.set(d.tripId, new Map());
+    const m = countriesByTripDate.get(d.tripId);
+    if (!m.has(d.date)) m.set(d.date, new Set());
+    m.get(d.date).add(c);
+  });
+
+  // dateの前後にある、いちばん近い「国が分かっている日」の国（複数あればSet）。無ければnull
+  const neighbourCountries = (tripId, date, dir) => {
+    const m = countriesByTripDate.get(tripId);
+    if (!m) return null;
+    const dates = Array.from(m.keys()).filter((dt) => (dir < 0 ? dt < date : dt > date));
+    if (!dates.length) return null;
+    dates.sort();
+    const nearest = dir < 0 ? dates[dates.length - 1] : dates[0];
+    return m.get(nearest);
+  };
+
+  // その旅行の出発日・帰着日（tripBoundsが渡されていなければ判定できない＝falseのまま）
+  const isBoundaryDate = (tripId, date) => {
+    const b = tripBounds[tripId];
+    return !!b && (date === b.startDate || date === b.endDate);
+  };
+
+  // 前後の日と国が違う＝乗り継ぎではなく、その国に泊まった・立ち寄ったとみなせるか
+  const staysDistinctCountry = (tripId, date, country) => {
+    const prev = neighbourCountries(tripId, date, -1);
+    const next = neighbourCountries(tripId, date, 1);
+    if (prev && prev.has(country)) return false;
+    if (next && next.has(country)) return false;
+    return true;
+  };
+
+  // その日の予定・地図点が全部乗り継ぎ（移動・空港）だったときの最終判定：
+  // - 旅行の出発日・帰着日なら、そのまま乗り継ぎ（家からの行き帰り。「行った」には数えない）
+  // - それ以外で、前後の日と国が違うなら、乗り継ぎではなくその国に泊まった日として数える
+  // - 前後の日と同じ国（＝通り過ぎただけ）なら、これまでどおり乗り継ぎ
+  const allTransportVerdict = (tripId, date, country) => {
+    if (isBoundaryDate(tripId, date)) return true;
+    if (country && staysDistinctCountry(tripId, date, country)) return false;
+    return true;
+  };
+
   const isTransitDay = (d) => {
     // 記録の地図の座標から直接入れた場所（2026-09-28〜）は、どのBlockから来たかがすでに分かって
-    // いるので、呼び出し側でtransitを確定させて渡してくる。その場合はここでの当てずっぽうな
-    // 座標マッチングをしない（bool以外＝未確定のときだけ、従来どおりday_infos由来として調べる）
-    if (typeof d.transit === "boolean") return d.transit;
+    // いるので、呼び出し側でtransitを確定させて渡してくる（そのentryが属するBlockのcategoryだけを
+    // 見た判定）。ただし、乗り継ぎの予定（空港など）の地図点しかその国に無くても、出発・帰着日でなく
+    // 前後の日と違う国なら、その国に泊まった日として数える（下のallTransportVerdict。
+    // オーナー報告：スイス・ベルギー旅行で、ベルギーの唯一の地図点＝ブリュッセル出発（transport）が
+    // 解決されるとそのままtransit:trueになり、day_infos側の判定を通らず落ちていた）
+    if (typeof d.transit === "boolean") {
+      if (!d.transit) return false;
+      return allTransportVerdict(d.tripId, d.date, countryOf(d));
+    }
     const list = blocksByDay.get(d.tripId + "|" + d.date) || [];
     if (!list.length) return false;
-    // その日の予定が全部、移動・空港なら、その日は乗り継ぎ（移動だけ）の日
-    if (list.every(isTransitBlock)) return true;
+    const country = countryOf(d);
+    // その日の予定が全部、移動・空港なら、その日は乗り継ぎ（移動だけ）の日……だが、出発・帰着日でなく
+    // 前後の日と違う国なら、その国に泊まった日として数える（上のallTransportVerdict参照）
+    if (list.every(isTransitBlock)) return allTransportVerdict(d.tripId, d.date, country);
     if (typeof d.lat !== "number" || typeof d.lon !== "number") return false;
     // 日ごとの場所がどの予定の地図から入ったか（座標が一致するもの）。見つからなければ数える
     const matched = list.filter((b) => (coords[b.id] || []).some((c) =>
       Math.abs(c.lat - d.lat) < NEAR && Math.abs(c.lng - d.lon) < NEAR));
-    return matched.length > 0 && matched.every(isTransitBlock);
+    if (matched.length > 0 && matched.every(isTransitBlock)) return allTransportVerdict(d.tripId, d.date, country);
+    return false;
   };
 
   const groups = { prefecture: new Map(), country: new Map() };
@@ -165,7 +232,7 @@ export function aggregateVisitedPlaces({ days = [], blocks = [], coords = {}, tr
   };
 
   days.forEach((d) => {
-    const country = canonicalCountry(d.country);
+    const country = countryOf(d);
     const transit = isTransitDay(d);
     if (country === "日本") add("prefecture", canonicalPrefecture(d.admin1), d, transit);
     else if (country) add("country", country, d, transit);
