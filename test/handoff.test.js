@@ -186,7 +186,8 @@ const post = (over) => Object.assign({
                      'schema_v4_handoff.sql', 'schema_v5_per_network.sql',
                      'schema_v6_features.sql', 'schema_v7_identity.sql',
                      'schema_v8_insights.sql', 'schema_v9_tiktok_direct.sql',
-                     'schema_v10_threads.sql', 'schema_v11_series.sql']) {
+                     'schema_v10_threads.sql', 'schema_v11_series.sql',
+                     'schema_v12_threads_affiliate.sql']) {
       assert.ok(all.includes(fs.readFileSync(dir + f, 'utf8')), f + ' が古い');
     }
     // つなぐ順番も見る。順番が狂うと引き継ぎが効かない。
@@ -197,6 +198,7 @@ const post = (over) => Object.assign({
     assert.ok(at('schema_v8_insights.sql') < at('schema_v9_tiktok_direct.sql'), 'v8 と v9 の順が逆');
     assert.ok(at('schema_v9_tiktok_direct.sql') < at('schema_v10_threads.sql'), 'v9 と v10 の順が逆');
     assert.ok(at('schema_v10_threads.sql') < at('schema_v11_series.sql'), 'v10 と v11 の順が逆');
+    assert.ok(at('schema_v11_series.sql') < at('schema_v12_threads_affiliate.sql'), 'v11 と v12 の順が逆');
   });
   // ---------------------------------------------------------------- まとめて仕込む
   await check('ネタは20本そろっていて、重複が無い', () => {
@@ -376,6 +378,45 @@ const post = (over) => Object.assign({
     }, res);
     const row = wrote.find((w) => w[0] === 'posts');
     assert.deepStrictEqual(row[2].draft, draft);
+  });
+
+  // ★ A8.net は Threads への案件掲載を認めているが、本文へのリンクは控えるよう案内している。
+  const G_AFFI_TH = Object.assign({}, G_AFFI, { auto_publish_networks: ['instagram', 'threads'] });
+  const stateTh = { accounts: [acct('instagram'), acct('threads')], groups: [G_AFFI_TH] };
+  const saveTh = async (over) => {
+    const { handler, wrote } = loadPosts(stateTh);
+    const res = fakeRes();
+    await handler({
+      method: 'POST', query: {}, headers: { cookie: 'td_session=' + auth.issue() },
+      body: body(Object.assign({ status: 'scheduled', scheduled_at_jst: '2026-09-10T20:00',
+                                 has_affiliate_link: true, targets: ['instagram', 'threads'] }, over)),
+    }, res);
+    return { res, wrote };
+  };
+
+  await check('案件つきでも、リンク無し・PR表記ありなら Threads に予約できる', async () => {
+    const { res, wrote } = await saveTh({ th_text: '面接で落ちる6つ\n\n詳しくはプロフィールのリンクから\n\n#PR' });
+    assert.strictEqual(res.code, 200, JSON.stringify(res.body));
+    const targets = wrote.filter((w) => w[0] === 'post_targets').map((w) => [w[2].network, w[2].status]);
+    assert.deepStrictEqual(targets, [['instagram', 'queued'], ['threads', 'queued']]);
+  });
+
+  await check('案件つきで Threads の本文にリンクがあれば、予約を断る', async () => {
+    const { res } = await saveTh({ th_text: '面接で落ちる6つ https://px.a8.net/x #PR' });
+    assert.strictEqual(res.code, 400);
+    assert.ok(/プロフィール欄/.test(res.body.error), res.body.error);
+  });
+
+  await check('案件つきで Threads の本文にPR表記が無ければ、予約を断る', async () => {
+    const { res } = await saveTh({ th_text: '面接で落ちる6つ。詳しくはプロフィールから' });
+    assert.strictEqual(res.code, 400);
+    assert.ok(/PR表記/.test(res.body.error), res.body.error);
+  });
+
+  await check('Threads 用の本文が空なら、代わりに送られる共通本文を見る', async () => {
+    const { res } = await saveTh({ th_text: '', body_common: '6つのポイント https://px.a8.net/x #PR' });
+    assert.strictEqual(res.code, 400);
+    assert.ok(/プロフィール欄/.test(res.body.error), res.body.error);
   });
 
   // -------------------------------------------------------------------------

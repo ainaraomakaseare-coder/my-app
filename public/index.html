@@ -1268,7 +1268,7 @@ const NET_NOTE = {
   youtube: '審査前のため、非公開でアップロードされます',
   x: '投稿1件あたり約2.3円（リンク付きは約30円）',
   tiktok: 'TikTokアプリの下書きに届きます（本文はアプリ側で入力）。直接投稿の権限はありません',
-  threads: '公開投稿までできます（トークンは自動で延長）。案件リンクは載せられません',
+  threads: '公開投稿までできます（トークンは自動で延長）。案件つきの投稿は、本文にリンクを入れずプロフィール欄へ誘導します',
   tiktokDirect: '直接投稿できます（投稿ごとに公開範囲などを選びます）。審査前は非公開アカウントのみ',
 };
 
@@ -2552,7 +2552,7 @@ $('bulkRun').onclick = async () => {
           yt_description: post.ytDescription,
           x_text: post.xText,
           tt_caption: post.ttCaption,
-          th_text: post.xText,
+          th_text: post.thText || post.xText,
           scheduled_at_jst: ok ? when : '',
           group_id: currentGroup,
           has_affiliate_link: affi,

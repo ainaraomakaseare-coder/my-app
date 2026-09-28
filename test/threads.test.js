@@ -6,7 +6,7 @@
  *   1. コンテナ → 準備待ち → 公開 の3段階を1分ずつ進める（Instagram と同じ作法）
  *   2. 公開したのに記録前に落ちても、二度は公開しない
  *   3. トークンは切れる前に自動で延ばす（60日ごとの貼り直しを残さない）
- *   4. 案件リンクを含む投稿は Threads に出せない（A8.net の案内）
+ *   4. 案件つきの投稿は、本文にリンクを入れずプロフィール欄へ誘導する（A8.net の案内）
  */
 
 const assert = require('assert');
@@ -24,6 +24,7 @@ const threads = require('../lib/threads');
 const net = require('../lib/networks/threads');
 const scope = require('../lib/account-scope');
 const handoff = require('../lib/handoff');
+const rules = require('../lib/draft-rules');
 
 const DAY = 24 * 60 * 60 * 1000;
 const inDays = (d) => new Date(Date.now() + d * DAY).toISOString();
@@ -154,9 +155,43 @@ const account = { id: 'acc', network: 'threads', external_id: '123', access_toke
 
   console.log('\n決まりごと');
 
-  await check('案件リンクを含む投稿は Threads に出せない（A8.net の案内）', () => {
-    const issue = scope.checkTarget({ hasAffiliateLink: true }, { network: 'threads', label: 'T' });
+  // ★ A8.net は Threads を掲載できる SNS として認めている。ただし本文への
+  //   リンク掲載は控え、プロフィール欄のリンクを使うよう案内している。
+  await check('案件つきの投稿も Threads に出せる（A8.net の掲載対象）', () => {
+    assert.strictEqual(scope.checkTarget({ hasAffiliateLink: true }, { network: 'threads', label: 'T' }), null);
+  });
+
+  await check('X は引き続き、案件つきの投稿を出せない', () => {
+    const issue = scope.checkTarget({ hasAffiliateLink: true }, { network: 'x', label: 'X' });
     assert.ok(issue && issue.code === 'affiliate-not-allowed');
+  });
+
+  await check('案件つきの Threads 本文は、リンクを抜いてプロフィールへ誘導し、#PR を付ける', () => {
+    const t = rules.threadsText({ xText: '面接で落ちる6つ。3番が意外 https://px.a8.net/abc', hashtags: ['転職', '面接'] }, true);
+    assert.ok(!/https?:\/\//.test(t), 'リンクが残っている: ' + t);
+    assert.ok(t.includes(rules.THREADS_PROFILE_CTA), 'プロフィールへの誘導が無い');
+    assert.ok(/#PR$/.test(t), '#PR が無い');
+    assert.ok(!t.includes('#転職'), 'Threads は話題タグ1つなので #PR だけにする');
+    assert.deepStrictEqual(rules.threadsProblems(t, true), []);
+  });
+
+  await check('案件なしの Threads 本文は、いままでどおり X と同じ（ハッシュタグ2つまで）', () => {
+    const d = { xText: '面接で落ちる6つ', hashtags: ['転職', '面接', '第二新卒'] };
+    assert.strictEqual(rules.threadsText(d, false), rules.captionWithTags(d.xText, d.hashtags, 'x'));
+  });
+
+  await check('案件つきで本文にリンクがあれば止める', () => {
+    const p = rules.threadsProblems('6つのポイント https://px.a8.net/abc #PR', true);
+    assert.ok(p.some((m) => /リンク/.test(m)));
+  });
+
+  await check('案件つきでPR表記が無ければ止める', () => {
+    const p = rules.threadsProblems('6つのポイント。詳しくはプロフィールから', true);
+    assert.ok(p.some((m) => /PR表記/.test(m)));
+  });
+
+  await check('案件なしなら、リンクがあっても止めない（企画の投稿）', () => {
+    assert.deepStrictEqual(rules.threadsProblems('作ったアプリ https://example.com', false), []);
   });
 
   await check('Threads は即公開のSNS。自動投稿を許していなければ手渡しにする', () => {

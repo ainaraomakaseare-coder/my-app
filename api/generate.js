@@ -67,6 +67,7 @@ module.exports = async function handler(req, res) {
         ttCaption: rules.captionWithTags(result.draft.ttCaption, result.draft.hashtags, 'tiktok'),
         xText:     rules.captionWithTags(result.draft.xText,     result.draft.hashtags, 'x'),
         ytDescription: rules.captionWithTags(result.draft.igCaption, result.draft.hashtags, 'youtube'),
+        thText:    rules.threadsText(result.draft, !!body.has_affiliate_link),
       } : null,
       findings: result.findings,
       profile: rules.profileFor(profileId).label,
