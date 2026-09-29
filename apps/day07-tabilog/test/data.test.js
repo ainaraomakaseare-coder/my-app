@@ -1659,5 +1659,26 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   eq('findFarMapOutlierBlockIds: 真ん中の間違ったピンのBlockだけが対象になる', T.findFarMapOutlierBlockIds(outlierBlocks), { p3: true });
 })();
 
+/* ---- 時刻の無い宿泊（lodging）は、その日の最後（寝る前）に置く（2026-09-29） ---- */
+(function () {
+  // 時刻ありのBlockは常に時刻順が先頭グループなので、時刻なしのlodgingは自然にそのあとに来る
+  // （sortBlocksの既存の並べ方、docs/adr/0003）。ラスベガス→朝までポーカー(06:00)→WSOP(10:00)→
+  // ロサンゼルスへの移動(16:00)→シェラトン（時刻なし・宿泊）の実例で確認する。
+  var nightBlocks = [
+    { id: 'poker', date: '2026-06-30', time: '06:00', category: 'other', label: '朝までポーカー', createdAt: '1' },
+    { id: 'wsop', date: '2026-06-30', time: '10:00', category: 'other', label: 'WSOPトーナメント', createdAt: '2' },
+    { id: 'move', date: '2026-06-30', time: '16:00', category: 'transport', label: 'ロサンゼルスへの移動', createdAt: '3' },
+    { id: 'sheraton', date: '2026-06-30', time: '', category: 'lodging', label: 'シェラトン', createdAt: '4' }
+  ];
+  eq('sortBlocks: 時刻なしの宿泊は、その日の時刻ありの予定がすべて終わったあと（末尾）に来る',
+    T.sortBlocks(nightBlocks).map(function (b) { return b.id; }), ['poker', 'wsop', 'move', 'sheraton']);
+  // 時刻なしのlodgingが「作成順が先」でも、時刻ありグループより前には割り込まないことも確認する
+  var nightBlocksCreatedFirst = nightBlocks.map(function (b) {
+    return b.id === 'sheraton' ? Object.assign({}, b, { createdAt: '0' }) : b;
+  });
+  eq('sortBlocks: 時刻なしの宿泊を先に登録していても、時刻ありの予定より前には来ない',
+    T.sortBlocks(nightBlocksCreatedFirst).map(function (b) { return b.id; }), ['poker', 'wsop', 'move', 'sheraton']);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
