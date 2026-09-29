@@ -20,6 +20,7 @@ async function check(name, fn) {
 /** 実物の reel_09。ここが通らなくなったら点検が厳しすぎる。 */
 const reel09 = {
   kicker: '不安な人へ!?',
+  hook: '5番、やりがちな人多い…',   // つかみ（0秒目に赤で出る一言）。reel_09 の当時は無かったが、いまの型では必須
   title: '転職活動がバレにくい進め方',
   rows: [
     { question: '職場で話す人ほど', answer: '広まる' },
@@ -41,6 +42,7 @@ const draft = (over) => Object.assign({}, reel09, over || {});
 /** ひろや側。本人の実践記録なので一人称で書くのが正しい。 */
 const personal = draft({
   kicker: '12日目!?',
+  hook: '3番で3時間詰まった',
   title: '音声入力アプリを作った',
   igCaption: '今日は音声入力アプリを作ってみました。詰まったのは3番です',
   ttCaption: '12日目。音声入力アプリを作ってみました',
@@ -48,6 +50,56 @@ const personal = draft({
 });
 
 (async () => {
+  // ------------------------------------------------ つかみ（hook）
+  // ★ TikTok の28日分（転職21本）で、21本中20本の動画で視聴者が1秒目に大きく離れていた。
+  //   0秒目に見える「続きが気になる一言」を必須に近づけ、嘘の点検にも通す。
+  await check('つかみが無ければ注意（止めはしない。古い文案は呼びかけで代える）', () => {
+    const f = rules.validateDraft(draft({ hook: '' })).filter((x) => x.field === 'hook');
+    assert.deepStrictEqual(f.map((x) => x.severity + ':' + x.rule), ['warning:hook-missing']);
+  });
+
+  await check('つかみの一人称の体験は、転職側では止め、ひろや側では止めない', () => {
+    const curator = rules.validateDraft(draft({ hook: '私も6番やってた' }), rules.CURATOR);
+    assert.ok(curator.some((x) => x.rule === 'hook-first-person' && x.severity === 'error'));
+    const mine = rules.validateDraft(draft({ hook: '私も6番やってた' }), rules.PERSONAL);
+    assert.ok(!mine.some((x) => x.rule === 'hook-first-person'));
+  });
+
+  await check('つかみの断定（絶対・必ず）は、どちらの側でも止める', () => {
+    for (const p of [rules.CURATOR, rules.PERSONAL]) {
+      assert.ok(rules.validateDraft(draft({ hook: '絶対6番はやめて' }), p).some((x) => x.rule === 'hook-absolute'));
+    }
+  });
+
+  await check('つかみの出典のない割合は止める。行の番号（6番）は止めない', () => {
+    assert.ok(rules.validateDraft(draft({ hook: '8割がやってる' })).some((x) => x.field === 'hook' && x.severity === 'error'));
+    assert.ok(!rules.validateDraft(draft({ hook: '6番、やってる人多い…' })).some((x) => x.field === 'hook'));
+  });
+
+  await check('つかみの長さ：16字ぶんまでそのまま、21字ぶんまで縮めて収め、それ以上は止める', () => {
+    const sev = (h) => rules.validateDraft(draft({ hook: h })).filter((x) => x.rule === 'hook-too-wide').map((x) => x.severity);
+    assert.deepStrictEqual(sev('あ'.repeat(rules.MAX_HOOK_WIDTH)), []);
+    assert.deepStrictEqual(sev('あ'.repeat(rules.MAX_HOOK_WIDTH + 1)), ['warning']);
+    assert.deepStrictEqual(sev('あ'.repeat(rules.MAX_HOOK_FIT + 1)), ['error']);
+  });
+
+  await check('動画は、つかみを赤で出し、1本目の答えを1秒より前に出す', () => {
+    const fs = require('fs');
+    const reel = fs.readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    const appear = reel.match(/appear:\s*\[([^\]]+)\]/);
+    assert.ok(appear, 'SPEC.appear が見当たらない');
+    const first = Number(appear[1].split(',')[0]);
+    assert.ok(first < 1, `1本目の答えが ${first} 秒目。視聴者は1秒目で離れている`);
+    assert.ok(/hook\s*\?\s*RED\s*:\s*INK/.test(reel), 'つかみを赤で描いていない');
+    assert.ok(/draft\.hook/.test(reel), 'draft.hook を読んでいない');
+  });
+
+  await check('文案の型は、つかみを必ず書かせる', () => {
+    const gen = require('../lib/draft-generate');
+    assert.ok(gen.SCHEMA.required.includes('hook'));
+    assert.ok(/最初の1秒/.test(gen.SYSTEM_PROMPT), '最初の1秒の指示が無い');
+  });
+
   // ---- 既存の投稿が通ること ------------------------------------------------
 
   await check('reel_09 は指摘ゼロ', () => {

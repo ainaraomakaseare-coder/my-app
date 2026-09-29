@@ -74,13 +74,18 @@
 
   const SPEC = {
     kicker: { size: 34, role: 'body', track: 2, x: 44, inkTop: 172 },
+    // ★ つかみ（hook）。kicker と同じ位置に、赤の太字で出す。0秒目から見えている唯一の「続きが気になる」要素。
+    hook:   { size: 36, role: 'answer', track: 2, x: 44, inkTop: 170 },
     title:  { size: 40, role: 'body', track: 4, x: 44, inkTop: 221 },
     rule:   { y: 274, h: 4 },
     row:    { size: 32, role: 'body', track: 4, numX: 45, qX: 111 },
     answer: { size: 31, role: 'answer', track: 6 },
     box:    { h: 59, gap: 15, padX: 22, radius: 3, line: 2 },
     tops:   [316, 441, 566, 690, 816, 940],
-    appear: [1.3, 3.8, 6.3, 8.8, 11.3, 13.8],
+    // ★ 1本目の答えは0.4秒目から。以前は1.3秒目で、TikTok の28日分（転職21本）を見ると
+    //   21本中20本で視聴者が1秒目に大きく離れていた＝何も起きないうちに去られていた。
+    //   間隔（2.5秒）は変えずに全体を0.9秒前へ。最後は全部埋まった状態を長めに見せる（保存の時間）。
+    appear: [0.4, 2.9, 5.4, 7.9, 10.4, 12.9],
     charStep: 0.12,
     duration: 16.8,
     fps: 30,
@@ -240,12 +245,16 @@
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, W, H);
 
-    const kicker = draft.kicker || '', title = draft.title || '';
-    const k = scaled(SPEC.kicker, fitScale(ctx, kicker, SPEC.kicker, SPEC.kicker.x, RIGHT));
+    // ★ つかみ（hook）があれば、呼びかけ（kicker）の代わりに赤の太字で出す。
+    //   無い古い文案は、これまでどおり呼びかけを黒で出す。
+    const hook = String(draft.hook || '').trim();
+    const topText = hook || draft.kicker || '', topSpec = hook ? SPEC.hook : SPEC.kicker;
+    const title = draft.title || '';
+    const k = scaled(topSpec, fitScale(ctx, topText, topSpec, topSpec.x, RIGHT));
     const t = scaled(SPEC.title,
       fitScale(ctx, title, SPEC.title, SPEC.title.x, RIGHT - RULE_OVERHANG));
 
-    drawTracked(ctx, k.x, baselineForTop(ctx, kicker, k, k.inkTop), kicker, k, INK);
+    drawTracked(ctx, k.x, baselineForTop(ctx, topText, k, k.inkTop), topText, k, hook ? RED : INK);
 
     const right = drawTracked(
       ctx, t.x, baselineForTop(ctx, title, t, t.inkTop), title, t, INK);
