@@ -1680,5 +1680,45 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
     T.sortBlocks(nightBlocksCreatedFirst).map(function (b) { return b.id; }), ['poker', 'wsop', 'move', 'sheraton']);
 })();
 
+/* ---- 地図でふりかえる：同じ場所が続く予定・ごく近い予定は移動（leg）にせず、地図が揺れないようにする
+   （2026-09-29、docs/adr/0008。乗り継ぎ空港や、同じピンを指す予定が続くときに座標がわずかにずれて登録
+   されていても、実際には動いていないので移動を作らない） ---- */
+(function () {
+  var stayStops = T.replayStops({ startDate: '2026-06-26', endDate: '2026-06-26' }, [
+    { id: 'a', date: '2026-06-26', time: '18:30', category: 'other', label: '地震', createdAt: '1',
+      entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=35.5482964%2C139.7779951', mapLat: 35.5482964, mapLng: 139.7779951 }] },
+    // 200m弱しか離れていない（完全に同じ座標ではない）「ほぼ同じ場所」の予定。これまでは座標が
+    // 1ビットでも違えば移動（leg）になっていた
+    { id: 'b', date: '2026-06-26', time: '18:50', category: 'transport', label: 'すぐ近くの記録', createdAt: '2',
+      entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=35.5498%2C139.7779951', mapLat: 35.5498, mapLng: 139.7779951 }] },
+    // 完全に同じ座標（従来から移動にならない）
+    { id: 'c', date: '2026-06-26', time: '19:00', category: 'other', label: '完全に同じ座標', createdAt: '3',
+      entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=35.5498%2C139.7779951', mapLat: 35.5498, mapLng: 139.7779951 }] },
+    // 遠く離れた本当の移動（比較のため）
+    { id: 'd', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'car', label: '遠くの目的地', createdAt: '4',
+      entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=35.6%2C139.9', mapLat: 35.6, mapLng: 139.9 }] }
+  ]);
+  var stayCoords = {};
+  stayStops.forEach(function (s) { if (s.query) stayCoords[s.query] = { lat: s.knownLat, lng: s.knownLng }; });
+  var stayTl = T.buildReplayTimeline(stayStops, stayCoords);
+  eq('buildReplayTimeline: 全部の予定が地図上の地点になる', stayTl.stops.map(function (s) { return s.located; }), [true, true, true, true]);
+  eq('buildReplayTimeline: 300m未満しか離れていない・完全に同じ座標の予定どうしは移動（leg）にしない。遠い移動だけが残る',
+    stayTl.legs.map(function (l) { return [l.from, l.to]; }), [[2, 3]]);
+})();
+
+/* ---- 地図でふりかえる：カメラを動かす必要があるかどうかの判定（Core.cameraMoveNeeded、純粋関数）
+   （2026-09-29、docs/adr/0008） ---- */
+(function () {
+  ok('cameraMoveNeeded: 中心も縮尺もまったく同じなら動かさない',
+    !T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 12 }, { lat: 35.5, lng: 139.7, zoom: 12 }));
+  ok('cameraMoveNeeded: ごくわずかな誤差（許容範囲内）は「同じ」とみなす',
+    !T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 12 }, { lat: 35.5001, lng: 139.7001, zoom: 12.1 }));
+  ok('cameraMoveNeeded: 中心が離れていれば動かす',
+    T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 12 }, { lat: 36.5, lng: 139.7, zoom: 12 }));
+  ok('cameraMoveNeeded: 中心は同じでも縮尺が大きく違えば動かす',
+    T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 5 }, { lat: 35.5, lng: 139.7, zoom: 15 }));
+  ok('cameraMoveNeeded: 今の場所が分からなければ（初回など）動かす', T.cameraMoveNeeded(null, { lat: 35.5, lng: 139.7, zoom: 12 }));
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

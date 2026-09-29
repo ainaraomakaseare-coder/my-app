@@ -379,6 +379,7 @@
           var planeHits = planes.filter(function (p) { return forced[p.id] === planeWant[p.id]; }).length;
           var startHits = transports.filter(function (t) { return forced[t.id] === start; }).length;
           var score = [res.consistent, planeHits, -inversions(res.order), startHits];
+          if (typeof process !== 'undefined' && process.env.ZDEBUG) console.error('DEBUG combo', JSON.stringify(forced), 'score', score, 'zones', res.zones);
           var better = !best;
           for (var si = 0; !better && si < score.length; si++) {
             if (score[si] > best.score[si]) better = true;
@@ -1461,6 +1462,7 @@
   var REPLAY_PLANE_KM = 400;
   var REPLAY_PLANE_MIN_KM = 100; // これより近い区間の飛行機はありえない（移動手段の付き違い）とみなす（2026-09-27）
   var REPLAY_WALK_KM = 1.5; // 移動手段が入っていない、とても近い移動（1.5km未満）は徒歩とみなす（2026-09-26）
+  var REPLAY_STAY_KM = 0.3; // これ未満の距離は「同じ場所にとどまっている」とみなし、移動（leg）を作らない（2026-09-29）
   // 時刻の無い到着（見積もりの手がかり（moveMinutes・後の予定）が無いとき）を、飛行機の所要時間から見積もる
   // ときの速さと、離着陸・待ち時間ぶんの余裕（分）。docs/adr/0008参照（2026-09-29）
   var REPLAY_FLIGHT_KMH = 850;
@@ -1471,6 +1473,22 @@
     var rad = Math.PI / 180, dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
     var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
     return 12742 * Math.asin(Math.sqrt(h));
+  }
+
+  // ふりかえりの再生で、カメラを動かす前に「もう合っている」かどうかを決める純粋な判定（Leafletに依存しない
+  // ので単体テストできる）。今の中心・縮尺（current）が動かしたい先（target）とほぼ同じ（許容誤差以内）なら
+  // 動かす必要なしとみなす。同じ場所が続く予定（乗り継ぎ空港など）で、着くたびにほぼ同じ場所へ何度も
+  // flyToBounds／flyToが呼ばれ、地図が細かく揺れて見えていたのを防ぐ（2026-09-29、docs/adr/0008）。
+  var REPLAY_CAMERA_CENTER_TOLERANCE_KM = 0.05; // これ未満のずれは「同じ場所」とみなす
+  var REPLAY_CAMERA_ZOOM_TOLERANCE = 0.2; // これ未満のズームの差は「同じ縮尺」とみなす
+  function cameraMoveNeeded(current, target) {
+    if (!current || !target) return true;
+    if (typeof current.lat !== 'number' || typeof current.lng !== 'number') return true;
+    if (typeof target.lat !== 'number' || typeof target.lng !== 'number') return true;
+    if (distanceKm(current, target) > REPLAY_CAMERA_CENTER_TOLERANCE_KM) return true;
+    if (typeof current.zoom === 'number' && typeof target.zoom === 'number' &&
+      Math.abs(current.zoom - target.zoom) > REPLAY_CAMERA_ZOOM_TOLERANCE) return true;
+    return false;
   }
 
   // 前後の場所からだけ、遠く離れた「ピンが違うかもしれない」地点を見つける。前後の地点どうしは
@@ -1657,18 +1675,25 @@
     // 以前は移動手段が入っている区間だけを移動にしていたので、入れていないと青い道のりが出なかった）。
     // ただし遠い移動（REPLAY_PLANE_KM超、東京→沖縄など）は、車の道が無い・現実的でないので飛行機とみなす。
     // ごく近い移動（REPLAY_WALK_KM未満、大聖堂から近くの階段など）は徒歩とみなす（2026-09-26）。
+    // 前の地点からREPLAY_STAY_KM未満しか離れていなければ、移動にはせず「同じ場所にとどまっている」とみなす
+    // （空港の乗り継ぎ記録や、同じ場所を指す予定が続くときに座標がわずかにずれて登録されていても、実際には
+    // 動いていないのでゼロ・極小距離の移動を作らない。そこにカメラが小さく寄せ直され、揺れて見えていた。
+    // 前は座標が完全に一致するときだけ移動にしなかったが、近いだけで一致しない場合も同じ扱いにする。
+    // 2026-09-29、docs/adr/0008）
     s.forEach(function (st, i) {
       if (!st.located) return;
-      if (lastLoc >= 0 && (s[lastLoc].lat !== st.lat || s[lastLoc].lng !== st.lng)) {
+      if (lastLoc >= 0) {
         var d = distanceKm(s[lastLoc], st);
-        var transport = st.transport || (d > REPLAY_PLANE_KM ? 'plane' : (d < REPLAY_WALK_KM ? 'walk' : 'car'));
-        var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport, moveSec: legMoveSeconds(d) };
-        // 道のり（Worker「/route」）が届く・見つかるのを待たず、区間に入った瞬間から必ず線でつながるよう、
-        // アイコンと同じ道のり（飛行機は弧、それ以外はやわらかい曲線）をここで先に作っておく。実際の道のりが
-        // 届いたらこのpathを差し替える（fetchReplayRoutes）。「旅は全部必ずつなげてほしい」という声より
-        // （2026-09-27、docs/adr/0008）。
-        leg.path = transport === 'plane' ? planeArcPath(s[lastLoc], st) : gentleCurvePath(s[lastLoc], st);
-        legs.push(leg);
+        if (d >= REPLAY_STAY_KM) {
+          var transport = st.transport || (d > REPLAY_PLANE_KM ? 'plane' : (d < REPLAY_WALK_KM ? 'walk' : 'car'));
+          var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport, moveSec: legMoveSeconds(d) };
+          // 道のり（Worker「/route」）が届く・見つかるのを待たず、区間に入った瞬間から必ず線でつながるよう、
+          // アイコンと同じ道のり（飛行機は弧、それ以外はやわらかい曲線）をここで先に作っておく。実際の道のりが
+          // 届いたらこのpathを差し替える（fetchReplayRoutes）。「旅は全部必ずつなげてほしい」という声より
+          // （2026-09-27、docs/adr/0008）。
+          leg.path = transport === 'plane' ? planeArcPath(s[lastLoc], st) : gentleCurvePath(s[lastLoc], st);
+          legs.push(leg);
+        }
       }
       lastLoc = i;
     });
@@ -2806,6 +2831,7 @@
     travelArrival: travelArrival,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
+    cameraMoveNeeded: cameraMoveNeeded,
     REPLAY_CAPTION_HIDE_LEAD_SEC: REPLAY_CAPTION_HIDE_LEAD_SEC,
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
@@ -8710,9 +8736,29 @@
     else { opts.animate = false; replayMap.fitBounds([[lat, lng], [lat, lng]], opts); }
   }
 
+  // カメラのアニメーション（flyToBounds／flyTo）を、動かす価値があるときだけ実際に始める。
+  // - 動かしたい先（target）が、いま向かっている・すでに着いた先（replay.cameraTarget）とほぼ同じなら
+  //   （Core.cameraMoveNeededがfalse）、何もしない＝同じ場所へ何度もカメラを動かして地図が揺れるのを防ぐ
+  //   （同じ場所が続く予定・乗り継ぎ空港などで発生していた。2026-09-29、docs/adr/0008）
+  // - 直前にアニメーションを始めてからREPLAY_CAMERA_DEBOUNCE_MS未満なら、目的地が違っても始め直さない
+  //   （短い間に立て続けにカメラ移動が呼ばれて、動きが重なり合ってちらつくのを防ぐ）
+  // targetは {lat, lng, zoom}。startFnが実際にflyToBounds／flyToを呼ぶ。呼ばなかったらfalseを返す。
+  var REPLAY_CAMERA_DEBOUNCE_MS = 600;
+  function replayCameraMove(target, startFn) {
+    var now = Date.now();
+    if (replay.cameraTarget && !Core.cameraMoveNeeded(replay.cameraTarget, target)) return false;
+    if (replay.cameraTargetAt && now - replay.cameraTargetAt < REPLAY_CAMERA_DEBOUNCE_MS) return false;
+    startFn();
+    replay.cameraTarget = target;
+    replay.cameraTargetAt = now;
+    return true;
+  }
+
   function resetReplayCamera() {
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
     replayCenterOn(first.lat, first.lng, 13, false);
+    replay.cameraTarget = { lat: first.lat, lng: first.lng, zoom: 13 };
+    replay.cameraTargetAt = Date.now();
     replay.lastLeg = -1;
     // 最初の地点にはもうカメラを合わせてあるので、着いたときにもう一度カメラを動かさない。以前は再生の
     // はじめに最初の地点へもう一度カメラが動き、吹き出しが「出て、一瞬消えて、また出る」ように見えていた
@@ -8888,14 +8934,18 @@
       // 地図が手振れのように揺れていた（2026-09-27）
       var legFrom = tl.stops[leg.from], legTo = tl.stops[leg.to];
       var tinyLeg = legFrom && legTo && Core.distanceKm(legFrom, legTo) < REPLAY_TINY_LEG_KM;
+      // カメラの目的地は、区間の両端の真ん中・目安の縮尺として表す（fitBoundsの結果そのものではないが、
+      // 「もう合っているか」の判定にはこれで十分。Core.cameraMoveNeededは純粋な距離・縮尺の比較のため）。
+      var legTarget = { lat: (legFrom.lat + legTo.lat) / 2, lng: (legFrom.lng + legTo.lng) / 2, zoom: legView.maxZoom };
       if (tinyLeg) {
         // 飛行機のあとで大きく引いたままなら、街を見る大きさ（12）までは寄せる。以後の近い区間では動かさない
         legView.maxZoom = Math.max(12, Math.min(15, replayMap.getZoom()));
+        legTarget.zoom = legView.maxZoom;
         if (replayMap.getZoom() < 10 || !replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legView)) {
-          replayFlyToBounds(legBounds, legView);
+          replayCameraMove(legTarget, function () { replayFlyToBounds(legBounds, legView); });
         }
       } else {
-        replayFlyToBounds(legBounds, legView);
+        replayCameraMove(legTarget, function () { replayFlyToBounds(legBounds, legView); });
       }
       replay.lastLeg = legIndexForCamera;
       // 着いた地点に寄せる処理（下）が次のフレームで走ってこのカメラ移動を打ち消さないよう、着いた地点も済みにする
@@ -8924,7 +8974,12 @@
       if (needZoom && cameFromLeg && replay.playing && typeof arrived.r === 'number' && r - arrived.r < REPLAY_ARRIVAL_ZOOM_DELAY_SEC) {
         // まだ待つ
       } else {
-        if (needZoom) replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
+        if (needZoom) {
+          var arriveZoom = Math.max(replayMap.getZoom(), 12);
+          replayCameraMove({ lat: arrived.lat, lng: arrived.lng, zoom: arriveZoom }, function () {
+            replayCenterOn(arrived.lat, arrived.lng, arriveZoom, true);
+          });
+        }
         replay.lastStop = st.stopIndex;
       }
     }
@@ -9009,6 +9064,10 @@
     replay.lastDay = 0;
     var st = Core.replayStateAt(replay.tl, replay.r);
     if (st.here) replayCenterOn(st.here.lat, st.here.lng, replayMap.getZoom(), false);
+    // シーク先でカメラの目的地も合わせておく。ここを更新しないと、シーク直後の再生でreplayCameraMoveが
+    // 「シーク前の目的地とほぼ同じ」と誤判定し、本当は動かすべきカメラ移動を止めてしまうことがある。
+    replay.cameraTarget = st.here ? { lat: st.here.lat, lng: st.here.lng, zoom: replayMap.getZoom() } : null;
+    replay.cameraTargetAt = Date.now();
     // すでにここでカメラを合わせたので、直後のrenderReplayが「区間・地点が変わった」と勘違いして
     // もう一度（アニメつきで）カメラを動かさないよう、いま合わせた状態を済みにしておく。以前は
     // lastLeg/lastStopを-1/-2に戻していたため、シーク先が区間の途中だとrenderReplayがすぐさま
