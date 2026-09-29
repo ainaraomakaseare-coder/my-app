@@ -816,9 +816,11 @@ const TINY_PNG = Buffer.from(
       if (parsed.action === 'ack') return res.end(JSON.stringify({ ack: 'AIだけのあいづちです。' }));
       chatFollowCalls++;
       // 1回目は深掘り（あいづち入りの質問）、2回目は深掘りをやめて次の話題へ（あいづちだけ返す）
-      res.end(JSON.stringify(chatFollowCalls === 1
+      // AIが考えている間の画面も確かめられるよう、少し待ってから返す
+      const reply = chatFollowCalls === 1
         ? { done: false, followUp: 'すてきですね！どんな味でしたか？', ack: '' }
-        : { done: true, followUp: '', ack: 'AIのあいづちです。' }));
+        : { done: true, followUp: '', ack: 'AIのあいづちです。' };
+      setTimeout(() => res.end(JSON.stringify(reply)), 400);
     });
   });
   const chatPort = await new Promise(resolve => chatAi.listen(0, '127.0.0.1', () => resolve(chatAi.address().port)));
@@ -858,6 +860,7 @@ const TINY_PNG = Buffer.from(
 
   await chatPage.fill('#qAnswer', '野沢菜の漬物が好きです');
   await chatPage.click('#btnSaveQ');
+  check('送った答えは、AIが考えている間も入力欄に残さない', (await chatPage.inputValue('#qAnswer')) === '' && await chatPage.locator('#chatLog .msg.typing').count() === 1);
   await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 2);
   check('答えは右側の吹き出しとして残る', (await chatPage.locator('#chatLog .msg.me').last().textContent()) === '野沢菜の漬物が好きです');
   check('AIの深掘りは、あいづち入りの質問をそのまま出す', (await lastAi()).indexOf('すてきですね！どんな味でしたか？') !== -1 && (await lastAi()).indexOf('AIのあいづち') === -1, await lastAi());

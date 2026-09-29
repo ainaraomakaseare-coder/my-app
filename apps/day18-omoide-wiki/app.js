@@ -2059,6 +2059,8 @@
     if (chat) {
       if (skip || !text) appendChatMessage('me', ['（この質問はとばしました）'], '', 'skipped');
       else appendChatMessage('me', [text]);
+      // 送った答えは吹き出しに移したので、AIが考えている間も入力欄に残さない
+      $('#qAnswer').value = '';
     }
 
     if (skip || !text) {
