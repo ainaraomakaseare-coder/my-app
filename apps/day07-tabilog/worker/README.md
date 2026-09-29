@@ -570,3 +570,42 @@ npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE entries ADD C
   `places.tripPlaces`があればそのまま描く作りに以前からなっているため、この変更でクライアント側の
   修正は不要だった（ロールバックしていた古いWorkerが`tripPlaces`自体を返していなかったのが、
   チップが消えていた直接の原因）。
+
+## 宿泊先の名前を地図の場所名から出す（2026-09-29 追加）
+
+トップの「宿泊先」（`Core.primaryLodgingName`）・宿泊の内訳（`Core.lodgingByNight`）が、宿泊の予定の
+見出し（block.label）をそのまま出していたため、音声入力などで見出しが「ホテルに帰宅」「宿に戻る」の
+ような一般的な文言だけになった記録では、意味の無い表示になっていた（オーナー報告）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE entries ADD COLUMN map_place_name TEXT"
+```
+
+（`--file migrations/0026_entry_map_place_name.sql`は、0024・0025のときと同じ認証エラーが起きる
+見込みのため、上の`--command`形式を使うこと。同じSQLは`migrations/0026_entry_map_place_name.sql`にも
+置いてある。）
+
+- `entries`に`map_place_name`（座標と同時に求めた、その場所の人が読める名前）を追加した。座標を
+  求めるタイミング（`backgroundGeocodeEntry`・`GET /geocode?entry=...`）に、都道府県・国と同じく
+  1回だけ求めて保存する（`saveEntryGeocodeResult`。3段階のフォールダウンで、`migrations/0025`・
+  `0026`のどちらか片方だけ・どちらも未実行のDBでも、無い列を除いたSQLへ自動で切り替えて保存する）。
+- 名前の求め方：①地図URL自体（`/maps/place/<名前>/`、または座標でない`query=<名前>`。
+  `mapUrlPlaceName`）を最優先し、②それが無く`GOOGLE_API_KEY`があるときだけ、Google Text Searchで
+  座標を求めるのに使っている`googleTextSearchPlace`のPlace Details呼び出しに`displayName`を
+  ついでに追加で聞く（FieldMaskを`location`→`location,displayName`にしただけで、呼び出し回数は
+  増えない＝Essentials無料枠のまま）。壊れた地図URL（`hasBrokenMapQuery`）からは名前を取らない。
+- `GET /entries`系のAPI（`rowToEntry`）は、座標を返す条件（`map_geocoded_url`が今の`map_url`と
+  一致・座標が数値・`MAP_COORDS_VALID_SINCE`以降）と同じときだけ`mapPlaceName`も一緒に返す
+  （座標と名前は同時に求めた対だから）。
+- クライアント（`app.js`）：`Core.primaryLodgingName`は宿泊の予定を順に見て、`entries[0].mapPlaceName`
+  があればそれを、無ければ見出しが一般的な文言（`Core.isGenericLodgingLabel`。正規表現は
+  `/^(ホテル|宿|旅館|部屋)(に|へ)?(帰宅|戻る|帰る|到着|チェックイン)?$|帰宅|戻る|へ$/`。
+  「ホテルニューオータニ」のような実在の名前は誤って外さない）でなければその見出しを使う、を
+  最初に見つかった1件で決める（見つからなければ、これまでどおり最初の見出しをそのまま出す）。
+  `Core.lodgingByNight`（何泊目にどこへ泊まったか）も同じ優先順位にした。ただし、その夜の中で
+  あとに一般的な文言だけのBlock（同じ宿での「宿に戻る」）が来ても、先に分かった名前を上書きしない
+  ようにした（`test/data.test.js`の`lodgingByNight: 同じ日の後のBlockが「宿に戻る」のような
+  一般的な見出しでも、先の宿の名前を消さない`が、まさにこの以前の不具合の再現テスト）。
+- `node --check`・`node test/data.test.js`・`node worker/test/*.mjs`はすべて通した。**本番へのデプロイ
+  ＋上のマイグレーション適用が必要**（`worker/src/index.js`と`migrations/0026`をwranglerで反映しないと、
+  Google Places側の呼び出しを増やしただけで名前は保存されない）。

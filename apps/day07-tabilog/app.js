@@ -785,12 +785,40 @@
     return out;
   }
 
+  // 宿泊の見出し（label）は「ホテルに帰宅」「宿に戻る」のように、音声入力などで一般的な文言だけに
+  // なることがある。「宿泊先」の表示にはお店の名前として意味が無いので、地図から分かった場所の名前
+  // （entries[0].mapPlaceName）があればそちらを使う（v26、2026-09-29）。「ホテルニューオータニ」の
+  // ような実在の名前は誤って外さないよう、パターンはオーナー指定のものをそのまま使う。
+  var LODGING_GENERIC_LABEL_RE = /^(ホテル|宿|旅館|部屋)(に|へ)?(帰宅|戻る|帰る|到着|チェックイン)?$|帰宅|戻る|へ$/;
+  function isGenericLodgingLabel(label) {
+    return LODGING_GENERIC_LABEL_RE.test((label || '').trim());
+  }
+  // このBlockの記録（最初のもの）に、地図から分かった場所の名前が付いていればそれを返す
+  function lodgingBlockMapName(b) {
+    var e = (b && b.entries || [])[0];
+    return ((e && e.mapPlaceName) || '').trim();
+  }
+  // 宿泊Blockの「表示名」：地図の場所の名前 → 一般的な文言でない見出し → どちらも無ければ空文字
+  function lodgingDisplayName(b) {
+    var mapName = lodgingBlockMapName(b);
+    if (mapName) return mapName;
+    var label = (b.label || '').trim();
+    return isGenericLodgingLabel(label) ? '' : label;
+  }
+
   // 宿泊カテゴリのBlockは「到着する」「宿に戻る」のように、同じ宿について複数できることがある
   // （特に音声入力は行動ごとにBlockを分けるため）。すべて繋げると意味不明になるので、
   // 一番最初（日程順で最初）の見出しだけを「宿泊先」として代表させる。
+  // ただし、その見出しが「ホテルに帰宅」のような一般的な文言で地図の名前も無いときは、あとに
+  // 出てくる宿泊Blockに地図の名前・ちゃんとした見出しがあれば、そちらを代わりに使う（2026-09-29）。
   function primaryLodgingName(blocks) {
     var lodging = (blocks || []).filter(function (b) { return b.category === 'lodging' && b.label; });
-    return lodging.length ? lodging[0].label : '';
+    if (!lodging.length) return '';
+    for (var i = 0; i < lodging.length; i++) {
+      var name = lodgingDisplayName(lodging[i]);
+      if (name) return name;
+    }
+    return lodging[0].label;
   }
 
   // 宿泊先を「何泊目に、どこに泊まったか」で一覧にする。宿泊カテゴリのBlockは、
@@ -811,11 +839,18 @@
     var labelForNight = [];
     for (var i = 0; i < nights; i++) {
       var nightDate = dates[i];
-      var applicable = '';
+      // 表示名（地図の名前／一般的でない見出し）が分かればそれを使い、その夜のいちばん新しい宿泊
+      // Blockが一般的な文言だけ（例：同じ宿での「宿に帰宅」）でも、前の宿泊Blockで分かった名前を
+      // 引き継ぐ（applicableを一般的な文言では上書きしない）。最後まで名前が分からなければ、
+      // これまでどおりいちばん新しいBlockの見出しをそのまま出す（2026-09-29）。
+      var applicable = '', applicableRaw = '';
       for (var j = 0; j < lodging.length; j++) {
-        if (lodging[j].date <= nightDate) applicable = lodging[j].label; else break;
+        if (lodging[j].date > nightDate) break;
+        applicableRaw = lodging[j].label;
+        var name = lodgingDisplayName(lodging[j]);
+        if (name) applicable = name;
       }
-      labelForNight.push(applicable);
+      labelForNight.push(applicable || applicableRaw);
     }
     var groups = [];
     labelForNight.forEach(function (label, idx) {

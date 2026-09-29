@@ -218,6 +218,28 @@ eq(
   '温泉宿の慶山に到着する'
 );
 
+/* ---- 宿泊先の名前：地図の場所の名前（entries[0].mapPlaceName）を、一般的な見出しより優先する（2026-09-29） ---- */
+eq('primaryLodgingName: 見出しが一般的な文言（「ホテルに帰宅」）だけでも、地図の場所の名前があればそちらを使う',
+  T.primaryLodgingName([{ category: 'lodging', label: 'ホテルに帰宅', entries: [{ mapPlaceName: 'ホテルニューオータニ' }] }]),
+  'ホテルニューオータニ');
+eq('primaryLodgingName: 「ホテルニューオータニ」のような実在の名前は一般的な文言として外さない',
+  T.primaryLodgingName([{ category: 'lodging', label: 'ホテルニューオータニ' }]), 'ホテルニューオータニ');
+eq('primaryLodgingName: 最初のBlockが一般的な文言で地図の名前も無ければ、あとのBlockの地図の名前を使う',
+  T.primaryLodgingName([
+    { category: 'lodging', label: 'ホテルへ', date: '2024-08-10' },
+    { category: 'lodging', label: '宿に戻る', date: '2024-08-11', entries: [{ mapPlaceName: '民宿さくら' }] }
+  ]), '民宿さくら');
+eq('primaryLodgingName: すべて一般的な文言で地図の名前も無ければ、これまでどおり最初の見出しをそのまま出す',
+  T.primaryLodgingName([
+    { category: 'lodging', label: 'ホテルへ', date: '2024-08-10' },
+    { category: 'lodging', label: '宿に戻る', date: '2024-08-11' }
+  ]), 'ホテルへ');
+eq('lodgingByNight: 地図の場所の名前を、一般的な文言の見出しより優先する',
+  T.lodgingByNight({ startDate: '2024-08-10', endDate: '2024-08-12' }, [
+    { category: 'lodging', label: 'ホテルへ', date: '2024-08-10', entries: [{ mapPlaceName: 'ゲストハウス山田' }] },
+    { category: 'lodging', label: '宿に戻る', date: '2024-08-11' }
+  ])[0].label, 'ゲストハウス山田');
+
 /* ---- lodgingByNight（何泊目にどこへ泊まったか） ---- */
 var tripForNights = { startDate: '2024-08-10', endDate: '2024-08-17' }; // 7泊8日
 var blocksTwoLodgings = [
@@ -238,7 +260,10 @@ var blocksSameLodgingTwice = [
   { category: 'lodging', label: '温泉宿の慶山', date: '2024-08-12', createdAt: '3' }
 ];
 var nightsSame = T.lodgingByNight({ startDate: '2024-08-10', endDate: '2024-08-13' }, blocksSameLodgingTwice);
-eq('lodgingByNight: 同じ日に複数Blockがあれば後のBlockの見出しを採用', nightsSame[0].label, '宿に戻る');
+// 以前は同じ日の後のBlockの見出しをそのまま採用していたが、それだと「宿に戻る」のような一般的な
+// 文言（音声入力で行動ごとにBlockが分かれたもの）が、先に付いていた宿の名前を消してしまっていた。
+// 一般的な文言では上書きしない（2026-09-29、Core.isGenericLodgingLabel）。
+eq('lodgingByNight: 同じ日の後のBlockが「宿に戻る」のような一般的な見出しでも、先の宿の名前を消さない', nightsSame[0].label, '温泉宿の慶山に到着する');
 
 /* ---- costBreakdownByPerson（総費用を払った人ごとに内訳） ---- */
 var blocksForBreakdown = [
