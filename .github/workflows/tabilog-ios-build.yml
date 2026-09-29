@@ -74,6 +74,69 @@ jobs:
           # 質問（TestFlight配信のたびに毎回聞かれるやつ）が出ないようここで申告しておく。
           # ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" Info.plist
+          # カスタムURLスキーム（tabilog://open?trip=…）。LINEなどのアプリ内ブラウザでは
+          # ユニバーサルリンクが効かないため、Web版の案内バナーの「アプリで開く」からこれで起動する。
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.hiroyaapps.tabilog" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string tabilog" Info.plist
+          # アプリが日本語対応だと申告する。Capacitorのひな形は英語（en）だけの申告なので、そのままだと
+          # 端末が日本語でも、文字を長押ししたときの「Copy / Paste」、写真の選択画面、キーボードの
+          # 「Done」などのシステムの表示が英語になっていた。
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDevelopmentRegion ja" Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleDevelopmentRegion string ja" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations array" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations:0 string ja" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleAllowMixedLocalizations bool true" Info.plist
+
+      - name: ユニバーサルリンク（Associated Domains）の設定を追加する
+        # 共有リンクをアプリで開けるよう、リポジトリに置いたApp.entitlementsをコピーし、
+        # アプリ本体のターゲット（INFOPLIST_FILE = App/Info.plist; を持つビルド設定）にだけ
+        # CODE_SIGN_ENTITLEMENTSを足す。xcodebuildの引数で渡すとPodsのターゲットにも
+        # 効いてしまうため、project.pbxprojを直接書き換える。
+        # 配布用プロビジョニングプロファイルにAssociated Domainsが含まれていないと
+        # アーカイブが署名エラーで失敗する（App IDでAssociated Domainsを有効にして作り直す必要がある）。
+        working-directory: apps/day07-tabilog-ios/ios/App
+        run: |
+          cp ../../App.entitlements App/App.entitlements
+          python3 - << 'PYEOF'
+          path = "App.xcodeproj/project.pbxproj"
+          with open(path) as f:
+              content = f.read()
+          marker = "INFOPLIST_FILE = App/Info.plist;"
+          count = content.count(marker)
+          if count != 2:
+              raise SystemExit(f"App target build settings not found as expected (found {count})")
+          content = content.replace(marker, marker + "\n\t\t\t\tCODE_SIGN_ENTITLEMENTS = App/App.entitlements;")
+          with open(path, "w") as f:
+              f.write(content)
+          PYEOF
+
+      - name: アプリの画面の引っぱり（バウンス）を止める
+        # ページの一番上・一番下で引っぱると、WKWebViewの画面そのものが伸び縮みして、
+        # 下に固定したタブまで一緒に動いていた（2026-09-29、オーナー報告）。CSSの
+        # overscroll-behavior はWebの中のスクロールにしか効かないので、ネイティブ側で止める。
+        # ios/ は毎回作り直すので、生成されたAppDelegate.swiftに数行を差し込む。
+        working-directory: apps/day07-tabilog-ios/ios/App/App
+        run: |
+          python3 - << 'PYEOF'
+          path = "AppDelegate.swift"
+          with open(path) as f:
+              content = f.read()
+          marker = "func applicationDidBecomeActive(_ application: UIApplication) {\n"
+          if content.count(marker) != 1:
+              raise SystemExit(f"applicationDidBecomeActive not found as expected (found {content.count(marker)})")
+          injected = (
+              "        if let vc = self.window?.rootViewController as? CAPBridgeViewController {\n"
+              "            vc.webView?.scrollView.bounces = false\n"
+              "            vc.webView?.scrollView.alwaysBounceVertical = false\n"
+              "            vc.webView?.scrollView.alwaysBounceHorizontal = false\n"
+              "        }\n"
+          )
+          content = content.replace(marker, marker + injected, 1)
+          with open(path, "w") as f:
+              f.write(content)
+          PYEOF
 
       - name: バージョン番号を設定
         # ios/フォルダは毎回作り直しなので、ビルド番号を前回の実行から引き継げない。

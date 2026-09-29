@@ -5,7 +5,7 @@
 	<!-- 共有リンク（?trip=…）をアプリで開くためのユニバーサルリンク設定。
 	     CIで毎回 ios/App/App/App.entitlements にコピーされる（.github/workflows/tabilog-ios-build.yml）。
 	     2026-09-29〜：公開先をGitHub PagesからCloudflare Pagesへ移行するのに合わせて
-	     tabinoashiato.pages.devを追加。旧ホスト（github.io）も移行完了まで残す。 -->
+	     tabinoashiato.pages.devを追加。旧ホスト（github.io）も、送ったことのあるリンクのために残す。 -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:tabinoashiato.pages.dev</string>

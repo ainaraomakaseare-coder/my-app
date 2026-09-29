@@ -18,9 +18,26 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%2300BF8F'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
 <!-- Worker公開後に、そのURLをcontentへ設定する。空のままだとサーバーに保存できず案内だけが出る。 -->
 <meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">
+<!-- iOSアプリのApp Store公開後に、App Store ConnectのApple ID（数字）を入れてコメントを外す。
+     SafariではAppleの純正バナー（Smart App Banner）が出て、入っていない人には「入手」、
+     入っている人には「開く」が表示される。app.jsもこのapp-idを読んで、LINEなどのアプリ内ブラウザ向けの
+     自作バナーを出す（コメントのままなら、どちらのバナーも出ない）。
+<meta name="apple-itunes-app" content="app-id=6812715883">
+-->
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- iPhone/iPadのLINEなどアプリ内ブラウザで開いたときだけ出す、アプリへの案内（app.jsのsetupAppBanner） -->
+<div class="app-banner" id="appBanner" hidden>
+  <div class="app-banner-icon" aria-hidden="true">旅</div>
+  <div class="app-banner-text">
+    <strong>旅の足跡 アプリ</strong>
+    <span>共有された旅行をアプリですぐ開けます</span>
+  </div>
+  <a class="app-banner-btn ghost" id="appBannerOpen" href="#">アプリで開く</a>
+  <a class="app-banner-btn" id="appBannerGet" href="#" target="_blank" rel="noopener">入手</a>
+  <button class="app-banner-close" id="appBannerClose" type="button" aria-label="閉じる">×</button>
+</div>
 <div class="app" id="app">
 
   <!-- ============ ログイン（Apple・Google・LINEはWorkerに設定があるものだけボタン表示（GET /auth/providers）。メールでのログインは常に使える。閲覧はログイン不要で、評価をつける・マイログを見るときだけこの画面に来る。docs/adr/0019） ============ -->
