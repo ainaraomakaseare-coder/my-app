@@ -5009,10 +5009,11 @@
     el.addEventListener('touchcancel', function () { edgeSwipeBackState = null; });
   }
 
-  // 「行ったことある旅先」の国内⇄海外の横スワイプ切り替え（2026-09-28〜）。オーナーの指定
-  // （「右にスワイプしたら海外、左にスワイプしたら国内」）は、カルーセルの一般的な向き（右スワイプ＝
-  // 次へ＝左のタブに戻る、が多い）とは逆なので、向きをこの定数1つだけで反転できるようにしておく。
-  var VISITED_SWIPE_RIGHT_GOES_TO = 'overseas';
+  // 「行ったことある旅先」の国内⇄海外の横スワイプ切り替え（2026-09-28〜）。カルーセルの一般的な
+  // 向き（指を右に動かす＝前・左のタブへ戻る、指を左に動かす＝次へ進む）に合わせ、右スワイプで
+  // 国内、左スワイプで海外にする（オーナー指定、2026-09-29に向きを反転）。向きをこの定数1つだけで
+  // 変えられるようにしておく。
+  var VISITED_SWIPE_RIGHT_GOES_TO = 'domestic';
   var visitedSwipeState = null;
   function initVisitedSwipe() {
     var el = $('#visitedPanel');
