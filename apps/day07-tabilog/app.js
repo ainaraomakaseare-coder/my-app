@@ -751,6 +751,22 @@
     return (list || []).filter(function (t) { return t.id !== id; });
   }
 
+  // 「履歴から消す」の計算（純粋関数）。選んだ旅行を索引から外し、隠しリストへ足した新しい2つを返す。
+  // 隠しリストに足すのは、ログイン中のアカウント同期が消した旅行を索引へ足し直さないようにするため。
+  // ids：消したい旅行のID配列。索引に無いIDは無視する（隠しリストにも足さない）。
+  function planHistoryRemoval(myTrips, hiddenIds, ids) {
+    var remove = {};
+    (ids || []).forEach(function (id) { remove[id] = true; });
+    var removedIds = (myTrips || []).filter(function (t) { return remove[t.id]; }).map(function (t) { return t.id; });
+    var hidden = (hiddenIds || []).slice();
+    removedIds.forEach(function (id) { if (hidden.indexOf(id) === -1) hidden.push(id); });
+    return {
+      trips: (myTrips || []).filter(function (t) { return !remove[t.id]; }),
+      hidden: hidden,
+      removedIds: removedIds
+    };
+  }
+
   // ホーム画面の「最近開いた旅行一覧」を、誰と行ったか・年・旅行区分（自由入力）で絞り込む。
   // 3つとも指定が無ければ全件そのまま返す（AND条件）。
   function filterTrips(trips, filters) {
@@ -2925,6 +2941,7 @@
     buildShareUrl: buildShareUrl,
     upsertTripIndexEntry: upsertTripIndexEntry,
     removeTripIndexEntry: removeTripIndexEntry,
+    planHistoryRemoval: planHistoryRemoval,
     filterTrips: filterTrips,
     sortTrips: sortTrips,
     tripFilterOptions: tripFilterOptions,
@@ -3802,24 +3819,67 @@
   function saveMylogFilters(f) {
     try { localStorage.setItem(MYLOG_FILTERS_KEY, JSON.stringify(f)); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
+  // 選んだ旅行を「この端末の履歴」から消す（1件でも全件でも共通）。索引から外し、隠しリストへ足す。
+  // サーバー上の旅行データには触れない。消した件数を返す。
+  function removeTripsFromHistory(ids) {
+    var plan = Core.planHistoryRemoval(loadMyTrips(), loadHiddenTripIds(), ids);
+    localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(plan.trips));
+    saveHiddenTripIds(plan.hidden);
+    return plan.removedIds.length;
+  }
   function hideTripFromHistory() {
     if (!state.trip) return;
     if (!confirm('この旅行をホームの一覧（この端末の履歴）から消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。共有URLを開けば、また一覧に戻ります）')) return;
-    var id = state.trip.id;
-    forgetTrip(id);
-    var hidden = loadHiddenTripIds().filter(function (h) { return h !== id; });
-    hidden.push(id);
-    saveHiddenTripIds(hidden);
+    removeTripsFromHistory([state.trip.id]);
     goHome();
   }
-  // 「この端末の旅行の履歴を削除」。tabilog:my-tripsはログイン状態と無関係の端末ローカルな
-  // 索引（ログアウトしても消えない）なので、別アカウントに切り替えて試すときなどに前の
-  // 旅行が残り続けて紛らわしい、という声を受けて追加した手動クリア機能。サーバー上の旅行
-  // データ自体は削除しない（あくまでこの端末の「開いたことのある旅行」一覧が空になるだけ）。
-  function clearTripHistory() {
-    if (!confirm('この端末に保存されている「旅行の履歴」を削除しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを知っていれば引き続き開けます）')) return;
-    localStorage.removeItem(MY_TRIPS_KEY);
+  // 「旅行の履歴を整理」（旧「この端末の旅行の履歴を削除」）。tabilog:my-tripsはログイン状態と無関係の
+  // 端末ローカルな索引（ログアウトしても消えない）なので、別アカウントに切り替えて試すときなどに
+  // 前の旅行が残り続けて紛らわしい、という声を受けて追加した手動クリア機能。サーバー上の旅行
+  // データ自体は削除しない。以前は全件消すだけで1件だけ消したい場合に対応できなかったため、
+  // ボタンを押すとシートを開き、消す旅行を選べるようにした（「すべて消す」も同じシートから）。
+  function openTripHistorySheet() {
+    var trips = loadMyTrips();
+    if (!trips.length) return;
+    $('#tripHistoryList').innerHTML = trips.map(function (t) {
+      var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
+      return '<label class="history-pick-row">' +
+        '<input type="checkbox" class="history-pick-check" value="' + escapeHtml(t.id) + '">' +
+        tripThumbHtml(t.coverPhotoId) +
+        '<span class="history-pick-body"><span class="history-pick-title">' + escapeHtml(t.title || '（無題の旅行）') + '</span>' +
+        (dateText ? '<span class="history-pick-date">' + escapeHtml(dateText) + '</span>' : '') + '</span></label>';
+    }).join('');
+    updateTripHistorySelection();
+    $('#tripHistorySheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+  function closeTripHistorySheet() {
+    $('#tripHistorySheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+  }
+  function selectedTripHistoryIds() {
+    return Array.prototype.map.call($('#tripHistoryList').querySelectorAll('.history-pick-check:checked'), function (c) { return c.value; });
+  }
+  function updateTripHistorySelection() {
+    var n = selectedTripHistoryIds().length;
+    var btn = $('#btnRemoveSelectedHistory');
+    btn.disabled = n === 0;
+    btn.textContent = '選んだ旅行を履歴から消す（' + n + '件）';
+  }
+  function finishTripHistoryRemoval(count) {
+    closeTripHistorySheet();
     renderHomeTripList();
+    showToast(count + '件を履歴から消しました');
+  }
+  function removeSelectedTripHistory() {
+    var ids = selectedTripHistoryIds();
+    if (!ids.length) return;
+    if (!confirm(ids.length + '件の旅行をこの端末の履歴から消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを開けば、また一覧に戻ります）')) return;
+    finishTripHistoryRemoval(removeTripsFromHistory(ids));
+  }
+  function clearTripHistory() {
+    if (!confirm('この端末に保存されている「旅行の履歴」をすべて消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを知っていれば引き続き開けます）')) return;
+    finishTripHistoryRemoval(removeTripsFromHistory(loadMyTrips().map(function (t) { return t.id; })));
   }
 
   function photoUrl(id) {
@@ -10337,7 +10397,13 @@
     $('#mylogSortTripOrder').addEventListener('change', function (e) {
       state.mylogFilters.sort = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
     });
-    $('#btnClearTripHistory').addEventListener('click', clearTripHistory);
+    $('#btnClearTripHistory').addEventListener('click', openTripHistorySheet);
+    $('#btnClearAllHistory').addEventListener('click', clearTripHistory);
+    $('#btnRemoveSelectedHistory').addEventListener('click', removeSelectedTripHistory);
+    $('#btnCloseTripHistorySheet').addEventListener('click', closeTripHistorySheet);
+    $('#btnCancelTripHistory').addEventListener('click', closeTripHistorySheet);
+    $('#tripHistorySheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTripHistorySheet(); });
+    $('#tripHistoryList').addEventListener('change', updateTripHistorySelection);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
     $('#btnArriveSearch').addEventListener('click', searchArrivePlace);

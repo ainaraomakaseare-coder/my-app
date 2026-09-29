@@ -132,7 +132,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
       <div id="tripList" class="trip-list"></div>
 
-      <button class="btn text" id="btnClearTripHistory" hidden>この端末の旅行の履歴を削除</button>
+      <button class="btn text" id="btnClearTripHistory" hidden>旅行の履歴を整理</button>
 
       <div class="home-actions">
         <button class="btn primary" id="btnNewTrip">＋ 新しい旅を記録する</button>
@@ -892,6 +892,23 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <button class="btn primary" id="btnRsvShare" type="button">共有する</button>
         <button class="btn ghost" id="btnRsvAgain" type="button">作り直す</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 旅行の履歴を整理（この端末の履歴から選んで消す） ============ -->
+<div class="sheet-backdrop" id="tripHistorySheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="tripHistorySheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="tripHistorySheetTitle">この端末の旅行の履歴</div>
+      <button class="sheet-close" id="btnCloseTripHistorySheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint">消したい旅行を選んでください。旅行そのもの・サーバー上のデータは削除されません。URLを開けば、また一覧に戻ります。</p>
+    <div class="history-pick-list" id="tripHistoryList"></div>
+    <div class="sheet-actions">
+      <button class="btn danger" id="btnRemoveSelectedHistory" type="button" disabled>選んだ旅行を履歴から消す（0件）</button>
+      <button class="btn danger ghost" id="btnClearAllHistory" type="button">すべて消す</button>
+      <button class="btn ghost" id="btnCancelTripHistory" type="button">キャンセル</button>
     </div>
   </div>
 </div>

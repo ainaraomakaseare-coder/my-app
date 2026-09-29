@@ -297,6 +297,14 @@ var idx2 = T.removeTripIndexEntry(idx, 't1');
 eq('removeTripIndexEntry: 指定したidが消える', idx2.map(function (t) { return t.id; }), ['t2']);
 eq('removeTripIndexEntry: 無い id を渡しても変わらない', T.removeTripIndexEntry(idx, 'nope').map(function (t) { return t.id; }), ['t1', 't2']);
 
+/* ---- planHistoryRemoval（履歴から消す：索引と隠しリストの計算） ---- */
+var ph = T.planHistoryRemoval([{ id: 'a' }, { id: 'b' }, { id: 'c' }], ['x'], ['a', 'c', 'zzz']);
+eq('planHistoryRemoval: 選んだ旅行が索引から消える', ph.trips.map(function (t) { return t.id; }), ['b']);
+eq('planHistoryRemoval: 消した旅行が隠しリストに足される（索引に無いidは足さない）', ph.hidden, ['x', 'a', 'c']);
+eq('planHistoryRemoval: removedIdsは実際に消した分だけ', ph.removedIds, ['a', 'c']);
+eq('planHistoryRemoval: 隠しリストに重複しない', T.planHistoryRemoval([{ id: 'a' }], ['a'], ['a']).hidden, ['a']);
+eq('planHistoryRemoval: 空の選択は何も変えない', T.planHistoryRemoval([{ id: 'a' }], [], []).trips.length, 1);
+
 /* ---- filterTrips / tripFilterOptions（ホーム画面の旅行一覧の絞り込み） ---- */
 var tripsForFilter = [
   { id: 't1', companions: ['父', '母'], startDate: '2024-08-10', tripType: '家族' },
