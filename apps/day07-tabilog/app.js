@@ -10118,15 +10118,57 @@
     // ならない）。
     if (navigator.share) {
       navigator.share({ title: state.trip.title || '旅の足跡', text: '旅の足跡で旅行を一緒に記録しよう\n' + url })
-        .catch(function () { /* 共有シートをキャンセルしても何もしない */ });
+        .catch(function (err) {
+          // キャンセル（AbortError）は何もしない。共有シート自体が使えなかったときはコピーに切り替える
+          if (!err || err.name !== 'AbortError') copyInviteUrl(url);
+        });
       return;
     }
-    var done = function () { showToast('リンクをコピーしました'); };
+    copyInviteUrl(url);
+  }
+
+  // 招待リンクをコピーする。クリップボードの許可が無い環境（アプリ内ブラウザなど）では、
+  // 以前はprompt()に頼っていたが、prompt()も使えない環境では押しても何も起きないように
+  // 見えていた（2026-09-30）。古いコピー方法（execCommand）も試し、それでもだめなら
+  // URLを選んでコピーできる欄を画面に出す。
+  function copyInviteUrl(url) {
+    var done = function () { showToast('招待リンクをコピーしました'); };
+    var legacyCopy = function () {
+      var ta = document.createElement('textarea');
+      ta.value = url;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      if (ok) done(); else showInviteUrlBox(url);
+    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(done).catch(function () { prompt('このURLを共有してください', url); });
+      navigator.clipboard.writeText(url).then(done).catch(legacyCopy);
     } else {
-      prompt('このURLを共有してください', url);
+      legacyCopy();
     }
+  }
+
+  function showInviteUrlBox(url) {
+    var old = document.getElementById('inviteUrlBox');
+    if (old) old.remove();
+    var box = document.createElement('div');
+    box.id = 'inviteUrlBox';
+    box.className = 'invite-url-box';
+    box.innerHTML = '<p>このURLをコピーして、一緒に行く人に送ってください</p>' +
+      '<input type="text" readonly>' +
+      '<button type="button" class="chip-btn">閉じる</button>';
+    var input = box.querySelector('input');
+    input.value = url;
+    input.addEventListener('focus', function () { input.select(); });
+    box.querySelector('button').addEventListener('click', function () { box.remove(); });
+    document.body.appendChild(box);
+    input.focus();
+    input.select();
   }
 
   document.addEventListener('DOMContentLoaded', init);

@@ -1200,6 +1200,15 @@ body.viewer-open { overflow: hidden; }
   opacity: 0; pointer-events: none; transition: opacity 0.25s ease, transform 0.25s ease;
 }
 .toast[hidden] { display: none; }
+/* 招待リンクを自動でコピーできなかったときに出す、URLを選んでコピーする欄 */
+.invite-url-box {
+  position: fixed; left: 16px; right: 16px; bottom: calc(24px + env(safe-area-inset-bottom)); z-index: 510;
+  max-width: 480px; margin: 0 auto; padding: 14px 16px; border-radius: var(--radius-card);
+  background: var(--card); box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 10px;
+}
+.invite-url-box p { margin: 0; font-size: 13px; color: var(--ink); }
+.invite-url-box input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: none; border-radius: var(--radius-control); background: var(--input-bg); font-size: 14px; color: var(--ink); }
+.invite-url-box .chip-btn { align-self: flex-end; }
 .toast.toast-show { opacity: 1; transform: translate(-50%, 0); }
 .toast.toast-hide { opacity: 0; transform: translate(-50%, 8px); }
 
