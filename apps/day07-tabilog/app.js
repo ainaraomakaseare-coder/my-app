@@ -9915,6 +9915,18 @@
     if (message) showToast(message);
   }
 
+  // 画面が表に出ている（document.hiddenでない）ときにtrueで解決する。キャンセルされたらfalse
+  function videoWaitUntilVisible(token) {
+    return new Promise(function (resolve) {
+      if (!document.hidden) { resolve(true); return; }
+      rsvSetProgress(0.45, '画面に戻ると録画を始めます');
+      var timer = setInterval(function () {
+        if (token.cancelled) { clearInterval(timer); resolve(false); return; }
+        if (!document.hidden) { clearInterval(timer); resolve(true); }
+      }, 300);
+    });
+  }
+
   function videoLoadImage(url, timeoutMs) {
     return new Promise(function (resolve) {
       var im = new Image(), done = false, timer = null;
@@ -10220,6 +10232,13 @@
         // 汚れたcanvas（CORSが通らない画像を描いたもの）は録画できない。始める前に確かめる
         drawVideoFrame(ctx, story, story.introSec + 3);
         try { ctx.getImageData(0, 0, 1, 1); } catch (e) { throw new Error('tainted'); }
+        // 準備のあいだに別の画面・アプリへ移っていると、描画が止まったまま録画が進み、動画が
+        // 15秒より長く間延びする（録画中の切り替えはvisibilitychangeで中止するが、録画を
+        // 始める前から裏に回っていた場合は通知が来ない。2026-09-30、確認中に見つけた）。
+        // 画面に戻ってから録画を始める。
+        return videoWaitUntilVisible(token);
+      }).then(function (ok) {
+        if (!ok || token.cancelled) return null;
         rsv.recording = true;
         rsvSetProgress(0.45, '動画を作っています…');
         return videoRecord(canvas, ctx, story, mime, token, function (f) { rsvSetProgress(0.45 + f * 0.55, '動画を作っています…'); });
