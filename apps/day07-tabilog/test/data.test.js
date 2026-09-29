@@ -1413,6 +1413,59 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   eq('sortBlocks：手の並びが無ければこれまでどおり', T.sortBlocks([{ id: 'b', date: 'x', time: '10:00' }, { id: 'a', date: 'x', time: '09:00' }]).map(function (b) { return b.id; }), ['a', 'b']);
 })();
 
+/* ---- 実データ（ワールドカップ旅1日目、trip_4e6c13ab396540b3b207108efb4c6f54、2026-09-29）：
+   手で並べ直した日（manualOrder）で、LAXの到着時刻を直したら「ロサンゼルスへのフライト」が
+   現地時間（ロサンゼルス）側に移ってしまっていた。
+   根本原因は2つ：
+   ① walkDayが移動の予定のあとの「いまいる場所」を、自分の地図（＝出発地）のままにしていた。
+      到着地の地図（byArrive）がある移動のあとは、以降の予定（地図の無いファンゾーンなど）は
+      到着地を引き継ぐべきなのに出発地のままだったため、_offset（時差）が食い違い、
+      segmentZonesの並べ替えが壊れていた。
+   ② 車の移動（ユニオンステーション。出発地・到着地とも地図があり、たまたま同じ時差）が、
+      「出発地の地図＝到着地の地図なら行き先の地図とみなし、いまいる場所（日本）で読む」という
+      飛行機向けの判定にそのまま巻き込まれ、まだロサンゼルスに着く前として読まれていた。
+   （fix、2026-09-29） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';
+  function wcBlocks() {
+    return [
+      { id: 'eq', date: '2026-06-26', time: '18:30', category: 'other', label: '羽田空港の地震', manualOrder: 0 },
+      { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: '', label: 'ロサンゼルスへのフライト', manualOrder: 1,
+        entries: [{ travel: { arrive: '18:00', arriveMapUrl: 'https://maps/lax', arriveLat: 33.942153, arriveLng: -118.4036052 } }] },
+      { id: 'lax', date: '2026-06-26', time: '18:50', category: 'arrival', transport: '', label: 'ロサンゼルス国際空港', manualOrder: 2 },
+      { id: 'uni', date: '2026-06-26', time: '19:30', category: 'transport', transport: 'car', label: 'ユニオンステーション', manualOrder: 3,
+        entries: [{ travel: { arriveMapUrl: 'https://maps/union', arriveLat: 34.0560307, arriveLng: -118.2347682 } }] },
+      { id: 'fan', date: '2026-06-26', time: '21:00', category: 'sightseeing', label: 'ファンゾーン', manualOrder: 4 },
+      { id: 'inn', date: '2026-06-26', time: '21:30', category: 'food', label: 'In-N-Out Burger', manualOrder: 5 },
+      { id: 'kiku', date: '2026-06-26', time: '22:00', category: 'lodging', label: '菊の家', manualOrder: 6 }
+    ];
+  }
+  var byBlock = { eq: TK, fl: TK, lax: LA, uni: LA, kiku: LA };
+  var byArrive = { fl: LA, uni: LA };
+
+  function checkZonesAndDivider(bs, label) {
+    var z = T.assignBlockZones(bs, byBlock, { '2026-06-26': LA }, TK, byArrive);
+    var sorted = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z));
+    var ids = sorted.map(function (b) { return b.id; });
+    var flIdx = ids.indexOf('fl'), laxIdx = ids.indexOf('lax');
+    eq('実データ：並び（手で並べた順） ' + label, ids, ['eq', 'fl', 'lax', 'uni', 'fan', 'inn', 'kiku']);
+    eq('実データ：フライトは日本時間 ' + label, sorted[flIdx]._tz, TK);
+    eq('実データ：LAXは現地時間 ' + label, sorted[laxIdx]._tz, LA);
+    // 「ここから現地時間」の区切りは、フライトとLAXの間（フライトのoffsetとLAXのoffsetが違う場所）に来る
+    ok('実データ：区切りはフライトとLAXの間 ' + label, sorted[flIdx]._offset !== sorted[laxIdx]._offset && laxIdx === flIdx + 1);
+  }
+
+  // 元のLAX到着時刻（18:50）
+  checkZonesAndDivider(wcBlocks(), 'LAX18:50');
+
+  // LAXの到着時刻を直しても（オーナーが実際に行った操作）、フライトの時差は変わらない
+  ['19:00', '19:29', '19:31', '20:00', '20:30'].forEach(function (laxTime) {
+    var bs = wcBlocks();
+    bs.filter(function (b) { return b.id === 'lax'; })[0].time = laxTime;
+    checkZonesAndDivider(bs, 'LAX' + laxTime);
+  });
+})();
+
 /* ---- 端末のタイムゾーンが旅の地図に出てこない（UTC・海外で入力）とき、最初の移動より前にいた場所を起点にする（2026-09-27） ---- */
 (function () {
   var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';

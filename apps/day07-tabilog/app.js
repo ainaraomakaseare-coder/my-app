@@ -281,7 +281,13 @@
           tz = prevZone || byDate[date] || fallback || '';
         }
         zones[b.id] = tz;
-        prevZone = isTransport ? (own || byDate[date] || tz) : tz;
+        // 移動の予定のあと（次の予定・地図の無い予定が引き継ぐ「いまいる場所」）は、自分の地図
+        // （＝出発地）ではなく到着地（byArrive、記録の「移動の情報」の到着地の地図）を優先する。
+        // 出発地のままだと、地図の無い予定（ファンゾーン等）が出発地の時差を引き継いでしまい、
+        // 次のsegmentZonesの並べ替え（_offsetの世界共通時刻）が壊れて、移動の予定自身の時差まで
+        // 巻き戻ることがあった（羽田発・到着地の地図ありのフライトのあと、地図の無い予定がJSTのまま
+        // 続き、並びが壊れてフライトがロサンゼルス時間に化ける。2026-09-29）
+        prevZone = isTransport ? (byArrive[b.id] || own || byDate[date] || tz) : tz;
         prevTransport = isTransport;
         first = false;
         var finalOff = tzOffsetMinutes(tz, date, b.time);
@@ -362,8 +368,12 @@
           var arrival = !byArrive[p.id] && planes.length >= 2 && own && own !== start && !looksDeparture(p) &&
             (awayPlanes.length === 1 || looksArrival(p) || otherDeparts);
           // 到着地が入っている移動の予定は出発の予定。時刻は出発地（その予定の地図があればその土地）の時間で読む
-          // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）
-          planeWant[p.id] = byArrive[p.id] ? (own && own !== byArrive[p.id] ? own : start) : (arrival ? own : start);
+          // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）。
+          // ただし「行き先の地図が出発地の欄に入っている」という判定違いが起こり得るのは飛行機（1つの
+          // 地図しか無い・国をまたぐ）のときだけ。車などの地上の移動（ユニオンステーションなど）は、
+          // 出発地・到着地とも別々の実在する地図で、たまたま同じ時差というだけのことがあるので、
+          // 自分の地図をそのまま信じる（「いまいる場所」に巻き戻さない。2026-09-29）
+          planeWant[p.id] = byArrive[p.id] ? (own && (own !== byArrive[p.id] || !isPlaneMove(p)) ? own : start) : (arrival ? own : start);
           if (arrivalZone && !byArrive[p.id] && !isPlaneMove(p)) planeWant[p.id] = own && own !== arrivalZone ? own : start;
           if (!own && !byArrive[p.id] && !looksDeparture(p)) {
             // 地図の無い飛行機の予定で、出発と分かる予定の地図（または到着地の地図）が行き先を示していれば、到着の予定
@@ -379,7 +389,6 @@
           var planeHits = planes.filter(function (p) { return forced[p.id] === planeWant[p.id]; }).length;
           var startHits = transports.filter(function (t) { return forced[t.id] === start; }).length;
           var score = [res.consistent, planeHits, -inversions(res.order), startHits];
-          if (typeof process !== 'undefined' && process.env.ZDEBUG) console.error('DEBUG combo', JSON.stringify(forced), 'score', score, 'zones', res.zones);
           var better = !best;
           for (var si = 0; !better && si < score.length; si++) {
             if (score[si] > best.score[si]) better = true;
