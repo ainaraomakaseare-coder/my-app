@@ -1173,6 +1173,22 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
     entries: [{ id: 'e3', travel: { arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=34.73,135.50' } }] }];
   var st3 = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, noTime);
   eq('到着時刻なし：移動時間90分の後・見積もり扱い・ラベルは「到着」', [st3[1].minute, st3[1].estimated, st3[1].label], [11 * 60 + 30, true, '到着']);
+
+  // 移動の到着地点（fl#arrive）は、地図上の点・区間の到着先としては使うが、吹き出し（エピソード・写真）も
+  // 到着の一時停止も出さず、乗り物がそのまま通り過ぎるだけにする（オーナーの指示、2026-09-29）
+  var arriveCoords = { hnd: TK }; // 上のzと同じ組み立て（フライトは日本時間、到着はLA）
+  var zArr = T.assignBlockZones(bs, arriveCoords, {}, TK, { fl: LA });
+  var bsArr = T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), zArr);
+  var stArr = T.replayStops({ startDate: '2026-06-26', endDate: '2026-06-27' }, bsArr);
+  var arrTl = T.buildReplayTimeline(stArr, {
+    'https://www.google.com/maps/search/?api=1&query=33.94,-118.40': { lat: 33.94, lng: -118.40 }
+  });
+  var arriveIdx = stArr.map(function (s) { return s.blockId; }).indexOf('fl#arrive');
+  ok('到着地点はarrival:trueで、地図上の点になる', arrTl.stops[arriveIdx].arrival === true && arrTl.stops[arriveIdx].located === true);
+  eq('到着地点は吹き出しの一時停止をせず、着いた瞬間にそのまま通り過ぎる（rCaptionStart・rDwellEndが着いた瞬間rと同じ）',
+    [arrTl.stops[arriveIdx].rCaptionStart, arrTl.stops[arriveIdx].rDwellEnd], [arrTl.stops[arriveIdx].r, arrTl.stops[arriveIdx].r]);
+  ok('到着地点の吹き出し（captionIndex）は、再生のどの時点でも出ない',
+    !arrTl.keyframes.some(function (k) { return T.replayStateAt(arrTl, k.r).captionIndex === arriveIdx; }));
 })();
 
 /* ---- ワールドカップ旅1日目（実データの形）：車の移動の予定「ロサンゼルス国際空港」「ユニオンステーション」は、その地図の
@@ -1395,6 +1411,59 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
     T.sortBlocks(bs).map(function (b) { return b.id; }), ['eq', 'fl', 'lax', 'new', 'd2b', 'd2']);
   eq('dayHasManualOrder', [T.dayHasManualOrder(bs, '2026-06-26'), T.dayHasManualOrder(bs, '2026-06-27')], [true, false]);
   eq('sortBlocks：手の並びが無ければこれまでどおり', T.sortBlocks([{ id: 'b', date: 'x', time: '10:00' }, { id: 'a', date: 'x', time: '09:00' }]).map(function (b) { return b.id; }), ['a', 'b']);
+})();
+
+/* ---- 実データ（ワールドカップ旅1日目、trip_4e6c13ab396540b3b207108efb4c6f54、2026-09-29）：
+   手で並べ直した日（manualOrder）で、LAXの到着時刻を直したら「ロサンゼルスへのフライト」が
+   現地時間（ロサンゼルス）側に移ってしまっていた。
+   根本原因は2つ：
+   ① walkDayが移動の予定のあとの「いまいる場所」を、自分の地図（＝出発地）のままにしていた。
+      到着地の地図（byArrive）がある移動のあとは、以降の予定（地図の無いファンゾーンなど）は
+      到着地を引き継ぐべきなのに出発地のままだったため、_offset（時差）が食い違い、
+      segmentZonesの並べ替えが壊れていた。
+   ② 車の移動（ユニオンステーション。出発地・到着地とも地図があり、たまたま同じ時差）が、
+      「出発地の地図＝到着地の地図なら行き先の地図とみなし、いまいる場所（日本）で読む」という
+      飛行機向けの判定にそのまま巻き込まれ、まだロサンゼルスに着く前として読まれていた。
+   （fix、2026-09-29） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles';
+  function wcBlocks() {
+    return [
+      { id: 'eq', date: '2026-06-26', time: '18:30', category: 'other', label: '羽田空港の地震', manualOrder: 0 },
+      { id: 'fl', date: '2026-06-26', time: '20:00', category: 'transport', transport: '', label: 'ロサンゼルスへのフライト', manualOrder: 1,
+        entries: [{ travel: { arrive: '18:00', arriveMapUrl: 'https://maps/lax', arriveLat: 33.942153, arriveLng: -118.4036052 } }] },
+      { id: 'lax', date: '2026-06-26', time: '18:50', category: 'arrival', transport: '', label: 'ロサンゼルス国際空港', manualOrder: 2 },
+      { id: 'uni', date: '2026-06-26', time: '19:30', category: 'transport', transport: 'car', label: 'ユニオンステーション', manualOrder: 3,
+        entries: [{ travel: { arriveMapUrl: 'https://maps/union', arriveLat: 34.0560307, arriveLng: -118.2347682 } }] },
+      { id: 'fan', date: '2026-06-26', time: '21:00', category: 'sightseeing', label: 'ファンゾーン', manualOrder: 4 },
+      { id: 'inn', date: '2026-06-26', time: '21:30', category: 'food', label: 'In-N-Out Burger', manualOrder: 5 },
+      { id: 'kiku', date: '2026-06-26', time: '22:00', category: 'lodging', label: '菊の家', manualOrder: 6 }
+    ];
+  }
+  var byBlock = { eq: TK, fl: TK, lax: LA, uni: LA, kiku: LA };
+  var byArrive = { fl: LA, uni: LA };
+
+  function checkZonesAndDivider(bs, label) {
+    var z = T.assignBlockZones(bs, byBlock, { '2026-06-26': LA }, TK, byArrive);
+    var sorted = T.sortBlocks(T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), z));
+    var ids = sorted.map(function (b) { return b.id; });
+    var flIdx = ids.indexOf('fl'), laxIdx = ids.indexOf('lax');
+    eq('実データ：並び（手で並べた順） ' + label, ids, ['eq', 'fl', 'lax', 'uni', 'fan', 'inn', 'kiku']);
+    eq('実データ：フライトは日本時間 ' + label, sorted[flIdx]._tz, TK);
+    eq('実データ：LAXは現地時間 ' + label, sorted[laxIdx]._tz, LA);
+    // 「ここから現地時間」の区切りは、フライトとLAXの間（フライトのoffsetとLAXのoffsetが違う場所）に来る
+    ok('実データ：区切りはフライトとLAXの間 ' + label, sorted[flIdx]._offset !== sorted[laxIdx]._offset && laxIdx === flIdx + 1);
+  }
+
+  // 元のLAX到着時刻（18:50）
+  checkZonesAndDivider(wcBlocks(), 'LAX18:50');
+
+  // LAXの到着時刻を直しても（オーナーが実際に行った操作）、フライトの時差は変わらない
+  ['19:00', '19:29', '19:31', '20:00', '20:30'].forEach(function (laxTime) {
+    var bs = wcBlocks();
+    bs.filter(function (b) { return b.id === 'lax'; })[0].time = laxTime;
+    checkZonesAndDivider(bs, 'LAX' + laxTime);
+  });
 })();
 
 /* ---- 端末のタイムゾーンが旅の地図に出てこない（UTC・海外で入力）とき、最初の移動より前にいた場所を起点にする（2026-09-27） ---- */
@@ -1678,6 +1747,69 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   });
   eq('sortBlocks: 時刻なしの宿泊を先に登録していても、時刻ありの予定より前には来ない',
     T.sortBlocks(nightBlocksCreatedFirst).map(function (b) { return b.id; }), ['poker', 'wsop', 'move', 'sheraton']);
+})();
+
+/* ---- 地図でふりかえる：同じ場所が続く予定・ごく近い予定は移動（leg）にせず、地図が揺れないようにする
+   （2026-09-29、docs/adr/0008。乗り継ぎ空港や、同じピンを指す予定が続くときに座標がわずかにずれて登録
+   されていても、実際には動いていないので移動を作らない） ---- */
+(function () {
+  var stayStops = T.replayStops({ startDate: '2026-06-26', endDate: '2026-06-26' }, [
+    { id: 'a', date: '2026-06-26', time: '18:30', category: 'other', label: '地震', createdAt: '1',
+      entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=35.5482964%2C139.7779951', mapLat: 35.5482964, mapLng: 139.7779951 }] },
+    // 200m弱しか離れていない（完全に同じ座標ではない）「ほぼ同じ場所」の予定。これまでは座標が
+    // 1ビットでも違えば移動（leg）になっていた
+    { id: 'b', date: '2026-06-26', time: '18:50', category: 'transport', label: 'すぐ近くの記録', createdAt: '2',
+      entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=35.5498%2C139.7779951', mapLat: 35.5498, mapLng: 139.7779951 }] },
+    // 完全に同じ座標（従来から移動にならない）
+    { id: 'c', date: '2026-06-26', time: '19:00', category: 'other', label: '完全に同じ座標', createdAt: '3',
+      entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=35.5498%2C139.7779951', mapLat: 35.5498, mapLng: 139.7779951 }] },
+    // 遠く離れた本当の移動（比較のため）
+    { id: 'd', date: '2026-06-26', time: '20:00', category: 'transport', transport: 'car', label: '遠くの目的地', createdAt: '4',
+      entries: [{ mapUrl: 'https://www.google.com/maps/search/?api=1&query=35.6%2C139.9', mapLat: 35.6, mapLng: 139.9 }] }
+  ]);
+  var stayCoords = {};
+  stayStops.forEach(function (s) { if (s.query) stayCoords[s.query] = { lat: s.knownLat, lng: s.knownLng }; });
+  var stayTl = T.buildReplayTimeline(stayStops, stayCoords);
+  eq('buildReplayTimeline: 全部の予定が地図上の地点になる', stayTl.stops.map(function (s) { return s.located; }), [true, true, true, true]);
+  eq('buildReplayTimeline: 300m未満しか離れていない・完全に同じ座標の予定どうしは移動（leg）にしない。遠い移動だけが残る',
+    stayTl.legs.map(function (l) { return [l.from, l.to]; }), [[2, 3]]);
+})();
+
+/* ---- 地図でふりかえる：カメラを動かす必要があるかどうかの判定（Core.cameraMoveNeeded、純粋関数）
+   （2026-09-29、docs/adr/0008） ---- */
+(function () {
+  ok('cameraMoveNeeded: 中心も縮尺もまったく同じなら動かさない',
+    !T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 12 }, { lat: 35.5, lng: 139.7, zoom: 12 }));
+  ok('cameraMoveNeeded: ごくわずかな誤差（許容範囲内）は「同じ」とみなす',
+    !T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 12 }, { lat: 35.5001, lng: 139.7001, zoom: 12.1 }));
+  ok('cameraMoveNeeded: 中心が離れていれば動かす',
+    T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 12 }, { lat: 36.5, lng: 139.7, zoom: 12 }));
+  ok('cameraMoveNeeded: 中心は同じでも縮尺が大きく違えば動かす',
+    T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 5 }, { lat: 35.5, lng: 139.7, zoom: 15 }));
+  ok('cameraMoveNeeded: 今の場所が分からなければ（初回など）動かす', T.cameraMoveNeeded(null, { lat: 35.5, lng: 139.7, zoom: 12 }));
+})();
+
+/* ---- Blockの並べ替えドラッグ（initBlockDragReorder）で使う純粋関数
+   （Core.blockDragTargetIndex / Core.blockDragShifts、2026-09-29〜、長押しでの並べ替えを直した際に追加） ---- */
+(function () {
+  // otherCentersより上（小さい値）にあるものは何もカウントせず、下にあるものだけ数える
+  eq('blockDragTargetIndex: 全員より上ならインデックス0', T.blockDragTargetIndex(0, [100, 200, 300]), 0);
+  eq('blockDragTargetIndex: 全員より下なら人数ぶん全部数える', T.blockDragTargetIndex(1000, [100, 200, 300]), 3);
+  eq('blockDragTargetIndex: 途中の位置なら、それより上にいる人数になる', T.blockDragTargetIndex(250, [100, 200, 300]), 2);
+  eq('blockDragTargetIndex: 他のBlockが無ければ常に0', T.blockDragTargetIndex(999, []), 0);
+
+  // gapIndex（元々あった位置）より上に動かすときは、間にいたBlockが下にずれる
+  eq('blockDragShifts: 先頭へ動かすと、元の位置より前の全員が下にずれる',
+    T.blockDragShifts(4, 0, 2, 80), [80, 80, 0, 0]);
+  // gapIndexより下に動かすときは、間にいたBlockが上にずれる
+  eq('blockDragShifts: 末尾へ動かすと、元の位置より後の全員が上にずれる',
+    T.blockDragShifts(4, 4, 2, 80), [0, 0, -80, -80]);
+  // 動いていなければ誰もずれない
+  eq('blockDragShifts: 元の位置のままなら誰もずれない',
+    T.blockDragShifts(4, 2, 2, 80), [0, 0, 0, 0]);
+  // 1つ隣に動かすだけなら、間の1人だけがずれる
+  eq('blockDragShifts: 1つ前に動かすと、間の1人だけ下にずれる',
+    T.blockDragShifts(4, 1, 2, 80), [0, 80, 0, 0]);
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

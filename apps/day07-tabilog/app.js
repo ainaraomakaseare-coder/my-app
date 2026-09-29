@@ -281,7 +281,13 @@
           tz = prevZone || byDate[date] || fallback || '';
         }
         zones[b.id] = tz;
-        prevZone = isTransport ? (own || byDate[date] || tz) : tz;
+        // 移動の予定のあと（次の予定・地図の無い予定が引き継ぐ「いまいる場所」）は、自分の地図
+        // （＝出発地）ではなく到着地（byArrive、記録の「移動の情報」の到着地の地図）を優先する。
+        // 出発地のままだと、地図の無い予定（ファンゾーン等）が出発地の時差を引き継いでしまい、
+        // 次のsegmentZonesの並べ替え（_offsetの世界共通時刻）が壊れて、移動の予定自身の時差まで
+        // 巻き戻ることがあった（羽田発・到着地の地図ありのフライトのあと、地図の無い予定がJSTのまま
+        // 続き、並びが壊れてフライトがロサンゼルス時間に化ける。2026-09-29）
+        prevZone = isTransport ? (byArrive[b.id] || own || byDate[date] || tz) : tz;
         prevTransport = isTransport;
         first = false;
         var finalOff = tzOffsetMinutes(tz, date, b.time);
@@ -362,8 +368,12 @@
           var arrival = !byArrive[p.id] && planes.length >= 2 && own && own !== start && !looksDeparture(p) &&
             (awayPlanes.length === 1 || looksArrival(p) || otherDeparts);
           // 到着地が入っている移動の予定は出発の予定。時刻は出発地（その予定の地図があればその土地）の時間で読む
-          // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）
-          planeWant[p.id] = byArrive[p.id] ? (own && own !== byArrive[p.id] ? own : start) : (arrival ? own : start);
+          // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）。
+          // ただし「行き先の地図が出発地の欄に入っている」という判定違いが起こり得るのは飛行機（1つの
+          // 地図しか無い・国をまたぐ）のときだけ。車などの地上の移動（ユニオンステーションなど）は、
+          // 出発地・到着地とも別々の実在する地図で、たまたま同じ時差というだけのことがあるので、
+          // 自分の地図をそのまま信じる（「いまいる場所」に巻き戻さない。2026-09-29）
+          planeWant[p.id] = byArrive[p.id] ? (own && (own !== byArrive[p.id] || !isPlaneMove(p)) ? own : start) : (arrival ? own : start);
           if (arrivalZone && !byArrive[p.id] && !isPlaneMove(p)) planeWant[p.id] = own && own !== arrivalZone ? own : start;
           if (!own && !byArrive[p.id] && !looksDeparture(p)) {
             // 地図の無い飛行機の予定で、出発と分かる予定の地図（または到着地の地図）が行き先を示していれば、到着の予定
@@ -1461,6 +1471,7 @@
   var REPLAY_PLANE_KM = 400;
   var REPLAY_PLANE_MIN_KM = 100; // これより近い区間の飛行機はありえない（移動手段の付き違い）とみなす（2026-09-27）
   var REPLAY_WALK_KM = 1.5; // 移動手段が入っていない、とても近い移動（1.5km未満）は徒歩とみなす（2026-09-26）
+  var REPLAY_STAY_KM = 0.3; // これ未満の距離は「同じ場所にとどまっている」とみなし、移動（leg）を作らない（2026-09-29）
   // 時刻の無い到着（見積もりの手がかり（moveMinutes・後の予定）が無いとき）を、飛行機の所要時間から見積もる
   // ときの速さと、離着陸・待ち時間ぶんの余裕（分）。docs/adr/0008参照（2026-09-29）
   var REPLAY_FLIGHT_KMH = 850;
@@ -1471,6 +1482,22 @@
     var rad = Math.PI / 180, dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
     var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
     return 12742 * Math.asin(Math.sqrt(h));
+  }
+
+  // ふりかえりの再生で、カメラを動かす前に「もう合っている」かどうかを決める純粋な判定（Leafletに依存しない
+  // ので単体テストできる）。今の中心・縮尺（current）が動かしたい先（target）とほぼ同じ（許容誤差以内）なら
+  // 動かす必要なしとみなす。同じ場所が続く予定（乗り継ぎ空港など）で、着くたびにほぼ同じ場所へ何度も
+  // flyToBounds／flyToが呼ばれ、地図が細かく揺れて見えていたのを防ぐ（2026-09-29、docs/adr/0008）。
+  var REPLAY_CAMERA_CENTER_TOLERANCE_KM = 0.05; // これ未満のずれは「同じ場所」とみなす
+  var REPLAY_CAMERA_ZOOM_TOLERANCE = 0.2; // これ未満のズームの差は「同じ縮尺」とみなす
+  function cameraMoveNeeded(current, target) {
+    if (!current || !target) return true;
+    if (typeof current.lat !== 'number' || typeof current.lng !== 'number') return true;
+    if (typeof target.lat !== 'number' || typeof target.lng !== 'number') return true;
+    if (distanceKm(current, target) > REPLAY_CAMERA_CENTER_TOLERANCE_KM) return true;
+    if (typeof current.zoom === 'number' && typeof target.zoom === 'number' &&
+      Math.abs(current.zoom - target.zoom) > REPLAY_CAMERA_ZOOM_TOLERANCE) return true;
+    return false;
   }
 
   // 前後の場所からだけ、遠く離れた「ピンが違うかもしれない」地点を見つける。前後の地点どうしは
@@ -1657,18 +1684,25 @@
     // 以前は移動手段が入っている区間だけを移動にしていたので、入れていないと青い道のりが出なかった）。
     // ただし遠い移動（REPLAY_PLANE_KM超、東京→沖縄など）は、車の道が無い・現実的でないので飛行機とみなす。
     // ごく近い移動（REPLAY_WALK_KM未満、大聖堂から近くの階段など）は徒歩とみなす（2026-09-26）。
+    // 前の地点からREPLAY_STAY_KM未満しか離れていなければ、移動にはせず「同じ場所にとどまっている」とみなす
+    // （空港の乗り継ぎ記録や、同じ場所を指す予定が続くときに座標がわずかにずれて登録されていても、実際には
+    // 動いていないのでゼロ・極小距離の移動を作らない。そこにカメラが小さく寄せ直され、揺れて見えていた。
+    // 前は座標が完全に一致するときだけ移動にしなかったが、近いだけで一致しない場合も同じ扱いにする。
+    // 2026-09-29、docs/adr/0008）
     s.forEach(function (st, i) {
       if (!st.located) return;
-      if (lastLoc >= 0 && (s[lastLoc].lat !== st.lat || s[lastLoc].lng !== st.lng)) {
+      if (lastLoc >= 0) {
         var d = distanceKm(s[lastLoc], st);
-        var transport = st.transport || (d > REPLAY_PLANE_KM ? 'plane' : (d < REPLAY_WALK_KM ? 'walk' : 'car'));
-        var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport, moveSec: legMoveSeconds(d) };
-        // 道のり（Worker「/route」）が届く・見つかるのを待たず、区間に入った瞬間から必ず線でつながるよう、
-        // アイコンと同じ道のり（飛行機は弧、それ以外はやわらかい曲線）をここで先に作っておく。実際の道のりが
-        // 届いたらこのpathを差し替える（fetchReplayRoutes）。「旅は全部必ずつなげてほしい」という声より
-        // （2026-09-27、docs/adr/0008）。
-        leg.path = transport === 'plane' ? planeArcPath(s[lastLoc], st) : gentleCurvePath(s[lastLoc], st);
-        legs.push(leg);
+        if (d >= REPLAY_STAY_KM) {
+          var transport = st.transport || (d > REPLAY_PLANE_KM ? 'plane' : (d < REPLAY_WALK_KM ? 'walk' : 'car'));
+          var leg = { from: lastLoc, to: i, transport: transport, assumed: !st.transport, moveSec: legMoveSeconds(d) };
+          // 道のり（Worker「/route」）が届く・見つかるのを待たず、区間に入った瞬間から必ず線でつながるよう、
+          // アイコンと同じ道のり（飛行機は弧、それ以外はやわらかい曲線）をここで先に作っておく。実際の道のりが
+          // 届いたらこのpathを差し替える（fetchReplayRoutes）。「旅は全部必ずつなげてほしい」という声より
+          // （2026-09-27、docs/adr/0008）。
+          leg.path = transport === 'plane' ? planeArcPath(s[lastLoc], st) : gentleCurvePath(s[lastLoc], st);
+          legs.push(leg);
+        }
       }
       lastLoc = i;
     });
@@ -1707,6 +1741,17 @@
       // 最後の予定は、深夜でも時計が翌日（存在しない日）にはみ出さないよう、その日の23:59までにとどめる
       var gap = next ? Math.max(0, next.t - st.t) : Math.max(0, Math.min(REPLAY_DWELL_MIN, (st.dayIndex + 1) * 1440 - 1 - st.t));
       var moving = !!(next && legArrivingAt[i + 1]);
+      // 移動の到着地点（travel.arriveLat/arriveLngから作った仮の地点、st.arrival）は、地図上の点・区間の
+      // 到着先としては使うが、吹き出し（エピソード・写真）も到着の一時停止も出さず、乗り物がそのまま
+      // 通り過ぎるだけにする（オーナーの指示。到着の時刻・時差の見積もり自体はreplayStopsのまま変えない。
+      // 2026-09-29）
+      if (st.arrival) {
+        st.rCaptionStart = r;
+        st.rDwellEnd = r;
+        if (!next) return;
+        r += moving ? legArrivingAt[i + 1].moveSec : Math.min(gap * REPLAY_SEC_PER_MIN, REPLAY_IDLE_CAP_SEC);
+        return;
+      }
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
       // 着いてすぐではなく、カメラが収まるのを少し待ってから吹き出し（写真・エピソード）を出す（2026-09-27）
       r += REPLAY_ARRIVAL_PAUSE_SEC;
@@ -1957,8 +2002,9 @@
     var s = tl.stops;
     var idx = -1;
     for (var i = 0; i < s.length; i++) { if (s[i].r <= r + 1e-9) idx = i; }
-    // 吹き出しは、着いた瞬間（idxになった瞬間）ではなく、少し間を置いた rCaptionStart から出す（2026-09-27）
-    var captionIndex = idx >= 0 && r >= s[idx].rCaptionStart - 1e-9 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
+    // 吹き出しは、着いた瞬間（idxになった瞬間）ではなく、少し間を置いた rCaptionStart から出す（2026-09-27）。
+    // 移動の到着地点（st.arrival）は吹き出しを出さず通り過ぎるだけなので対象にしない（2026-09-29）
+    var captionIndex = idx >= 0 && !s[idx].arrival && r >= s[idx].rCaptionStart - 1e-9 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
 
     var icon = null;
     for (var k = 0; k < tl.legs.length; k++) {
@@ -2752,8 +2798,34 @@
     return lines.join('\n');
   }
 
+  // Blockの並べ替え（ドラッグ、initBlockDragReorder）で使う純粋関数。
+  // 指の位置（ドラッグ中のBlockの中心Y座標）と、他のBlockの元の中心Y座標だけから
+  // 「今どの順番に挿入されるか」を計算する。DOM操作を含まないのでnodeからも直接テストできる。
+  function blockDragTargetIndex(draggedCenterY, otherCenters) {
+    var count = 0;
+    for (var i = 0; i < otherCenters.length; i++) {
+      if (otherCenters[i] < draggedCenterY) count++;
+    }
+    return count;
+  }
+
+  // 上のblockDragTargetIndexで決まった挿入位置（targetIndex）にもとづき、他のBlockそれぞれを
+  // どれだけずらす（translateY）べきかを配列で返す。gapIndexはドラッグ中のBlockが元々あった
+  // 位置（othersの中でのすき間の位置）。
+  function blockDragShifts(otherCount, targetIndex, gapIndex, draggedHeight) {
+    var shifts = [];
+    for (var i = 0; i < otherCount; i++) {
+      if (targetIndex < gapIndex && i >= targetIndex && i < gapIndex) shifts.push(draggedHeight);
+      else if (targetIndex > gapIndex && i >= gapIndex && i < targetIndex) shifts.push(-draggedHeight);
+      else shifts.push(0);
+    }
+    return shifts;
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
+    blockDragTargetIndex: blockDragTargetIndex,
+    blockDragShifts: blockDragShifts,
     TRANSPORTS: TRANSPORTS,
     categoryLabel: categoryLabel,
     categoryColor: categoryColor,
@@ -2806,6 +2878,7 @@
     travelArrival: travelArrival,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
+    cameraMoveNeeded: cameraMoveNeeded,
     REPLAY_CAPTION_HIDE_LEAD_SEC: REPLAY_CAPTION_HIDE_LEAD_SEC,
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
@@ -2936,44 +3009,91 @@
     cards.forEach(function (c) { io.observe(c); });
   }
 
-  // ---------- 旅行カードが浮かび上がって詳細画面に広がる演出（Airbnb風のshared-element遷移、2026-09-29〜） ----------
-  // FLIP（First・Last・Invert・Play）の考え方：タップされたカードの実際の見た目（位置・大きさ・
-  // 写真の有無）をそのままコピーした「クローン」をposition:fixedで重ね、開始位置（カードの位置）→
-  // 終了位置（詳細画面のカバー写真部分いっぱい）へCSSトランジションさせる。本物の詳細画面は
-  // 裏側でそのまま読み込み・描画を始める（openTrip自体はアニメーションを待たない）。
+  // ---------- 旅行カードが丸ごと浮かび上がって詳細画面に広がる演出（Airbnb風のshared-element遷移、2026-09-29〜） ----------
+  // FLIP（First・Last・Invert・Play）の考え方：タップされたカードの実際の見た目（写真部分・白い本体部分、
+  // それぞれの位置・大きさ・角丸）をそのままコピーした「クローン」を2枚、position:fixedで重ねる。
+  // 写真クローンはカードの写真の位置→詳細ヘッダーの大きいカバー写真（ビューポート高の約40%）へ、
+  // 白本体クローンはカードの白い部分→写真の下に16px重なる角丸の白いシートへ、それぞれ別々に
+  // CSSトランジションさせる（＝カードが「丸ごと」広がって見える。写真だけが薄い帯に縮む見え方の
+  // 反省から2026-09-29に作り替えた）。本物の詳細画面は裏側でそのまま読み込み・描画を始める
+  // （openTrip自体はアニメーションを待たない）。
   // 遷移中は、抜ける画面（ホーム／マイログの一覧）を「今見えていたとおりの見た目・スクロール位置」の
   // まま画面いっぱいに固定表示し続け、その上にクローン＋暗幕（ぼかし＋暗く）を重ねることで、
-  // 「一覧がぼやけて暗くなり、カードだけが手前で広がる」というAirbnbアプリ同様の見た目にする
-  // （freezeLeavingScreen）。入る画面（旅の詳細）はクローンの下でopacity:0のまま読み込みを進め、
-  // アニメーションが終わった瞬間にフェードインで見せる（revealEnteringScreen）。
+  // 「一覧だけがぼやけて暗くなり、カードだけが手前で広がる」というAirbnbアプリ同様の見た目にする
+  // （freezeLeavingScreen）。入る画面（旅の詳細）は演出中ずっとopacity:0のまま隠しておき（＝詳細画面が
+  // ぼかされて見えることは無い）、クローンが最終位置に達した瞬間だけフェード無しで即座に見せて
+  // （revealEnteringScreen）、クローンをその場で消す（ピクセル的に同じ絵の上に本物が現れるだけなので
+  // 継ぎ目が出ない）。タイトル・日程・参加者行はその直後に少しずつ間を空けてフェードイン＋浮き上がり
+  // させる（playTripDetailStagger）。
   // 「戻る」で同じカードがまだ一覧に残っていれば、逆再生（詳細→カードの位置）してから画面を切り替える
   // （pendingCardOpenAnim、goHome参照）。
   // Web版では見え方が不自然という判断（アプリオーナー確認済み・2026-09-29）で、この演出は
   // iOSアプリ（Capacitor）内でのみ有効にする。Webはブラウザ・端末を問わずe2a3cf2以前と同じ
-  // 「即座に画面が切り替わるだけ」の遷移に戻す（暗幕・クローン・画面固定は一切出さない）。
+  // 「即座に画面が切り替わるだけ」の遷移に戻す（暗幕・クローン・画面固定は一切出さない）。ヘッダーの
+  // レイアウト自体（大きいカバー写真＋白いシート）はWebでも同じCSSを使う（見た目だけ、動きは無し）。
   // isNativeApp()は都度呼ぶ関数なので、この判定も呼び出しごとに評価する（起動直後のCapacitor
   // 初期化タイミングに依存しないようにするため、値をキャッシュしない）。
   function CARD_EXPAND_ENABLED() {
     return isNativeApp() && !prefersReducedMotion();
   }
-  var TRIP_OPEN_ANIM_MS = 380;
-  var TRIP_OPEN_ANIM_FADE_MS = 260;
+  var TRIP_OPEN_ANIM_MS = 450; // style.cssの.trip-open-cloneのtransition時間と揃える
+  var TRIP_STAGGER_STEP_MS = 40;
+  var TRIP_STAGGER_DUR_MS = 260;
   var pendingCardOpenAnim = null; // { cardEl, tripId } / 直前にカードのアニメーションで開いた旅行だけ覚える
 
-  function tripOpenCloneHtml(hasPhoto) {
-    return (hasPhoto ? '<div class="trip-open-clone-photo"></div>' : '') + '<div class="trip-open-clone-body"></div>';
+  // 詳細ヘッダーの最終的な見た目（カバー写真・白いシートの位置と大きさ）を、タップした瞬間に
+  // 同期で計算する。実際の詳細画面はこの時点ではまだ非表示（display:none）でgetBoundingClientRectが
+  // 使えないため、実測はできない。その代わりstyle.cssのカバー写真の高さ計算式（clamp(220px, 40vh, 340px)）
+  // と、シートのだいたいの高さ（見出し＋日程＋余白）をこちらでも同じ値で見積もる（誤差は数px程度で、
+  // クローン→本物の入れ替わり時に気づかれない前提。将来style.css側の数値を変えたら、ここも合わせる）。
+  function computeTripDetailHeaderTarget() {
+    var vw = document.documentElement.clientWidth;
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    var heroH = Math.max(220, Math.min(340, vh * 0.4));
+    var sheetOverlap = 16;
+    var sheetEstH = 92; // タイトル1行＋日程1行＋シートのpadding程度の見積もり
+    return {
+      photoRect: { top: 0, left: 0, width: vw, height: heroH },
+      sheetRect: { top: heroH - sheetOverlap, left: 0, width: vw, height: sheetEstH }
+    };
   }
 
-  // カードの現在の見た目（写真の有無・角丸・写真のURL）を読み取る。ホーム画面の大きい写真カード
-  // （.trip-card.has-photo）だけ「写真」を持ち、マイログの小さいサムネイル一覧カードは常に「写真なし」
-  // 扱い（白いカードが広がるだけの演出になる）。
+  // 詳細画面が実際にactiveになった後（＝本物のカバー写真・シートがDOMに描画された後）に、
+  // 実測のヘッダー位置を読み取る。これが取れる場面（screenReady後）ではこちらを正として使う。
+  function readTripDetailHeaderTarget() {
+    var photoEl = $('#tripCoverPhoto');
+    var sheetEl = $('.trip-cover-text');
+    var hasPhoto = !!(photoEl && !photoEl.hidden);
+    return {
+      hasPhoto: hasPhoto,
+      photoRect: hasPhoto ? photoEl.getBoundingClientRect() : null,
+      sheetRect: sheetEl ? sheetEl.getBoundingClientRect() : null
+    };
+  }
+
+  function setCloneRect(el, rect) {
+    el.style.top = rect.top + 'px';
+    el.style.left = rect.left + 'px';
+    el.style.width = rect.width + 'px';
+    el.style.height = rect.height + 'px';
+  }
+
+  // カードの現在の見た目（写真の有無・角丸・写真のURL、写真部分と白い本体部分それぞれの矩形）を
+  // 読み取る。ホーム画面の大きい写真カード（.trip-card.has-photo）だけ「写真」を持ち、マイログの
+  // 小さいサムネイル一覧カードは常に「写真なし」扱い（白いカードが広がるだけの演出になる）。
   function readTripCardVisual(cardEl) {
     var photoEl = cardEl.querySelector('.trip-card-photo');
+    var bodyEl = photoEl ? cardEl.querySelector('.trip-card-info') : cardEl;
+    var cardRadius = parseFloat(window.getComputedStyle(cardEl).borderRadius) || 0;
     return {
       hasPhoto: !!photoEl,
       photoUrl: photoEl ? photoEl.style.backgroundImage : '',
-      photoHeight: photoEl ? photoEl.getBoundingClientRect().height : 0,
-      radius: window.getComputedStyle(cardEl).borderRadius
+      photoRect: photoEl ? photoEl.getBoundingClientRect() : null,
+      // 写真ありカードの本体（.trip-card-info）は写真の下でカードの下2つの角だけ丸い。
+      // 写真なしカード（マイログの小さい一覧・写真のない旅行）はカード自体が本体で4つとも丸い。
+      photoRadius: photoEl ? (cardRadius + 'px ' + cardRadius + 'px 0 0') : '',
+      bodyRect: bodyEl.getBoundingClientRect(),
+      bodyRadius: photoEl ? ('0 0 ' + cardRadius + 'px ' + cardRadius + 'px') : (cardRadius + 'px')
     };
   }
 
@@ -3001,24 +3121,57 @@
     screenEl.style.top = '';
     screenEl.style.zIndex = '';
   }
-  // 入る画面（旅の詳細／ホーム）をクローンの下で見えなくしておき、アニメーション終了時にフェードインする。
+  // 入る画面（旅の詳細／ホーム）をクローンの下で見えなくしておく。詳細画面がぼかされて見える瞬間を
+  // 作らないため、演出が終わるまでは常にopacity:0（フェードでうっすら見せることもしない）。
   function hideEnteringScreen(screenEl) {
     if (!screenEl) return null;
     screenEl.style.transition = 'none';
     screenEl.style.opacity = '0';
     screenEl.style.pointerEvents = 'none';
+    if (screenEl.dataset.screen === 'tripDetail') prepareTripDetailStagger(screenEl);
     return screenEl;
   }
+  // クローンが最終位置に達した瞬間に、フェード無しで即座に本物を見せる（クローンの最終フレームと
+  // ピクセル的に同じ絵の上に本物が現れるだけなので継ぎ目が出ない）。旅の詳細画面ならこの直後に
+  // タイトル・日程・参加者行をstaggerでふわっと出す（playTripDetailStagger）。
   function revealEnteringScreen(screenEl) {
     if (!screenEl) return;
-    void screenEl.offsetWidth; // reflow：ここまでのopacity:0を確定させてからフェードインへ
-    screenEl.style.transition = 'opacity ' + TRIP_OPEN_ANIM_FADE_MS + 'ms ease';
+    screenEl.style.transition = 'none';
     screenEl.style.opacity = '1';
     screenEl.style.pointerEvents = '';
+    void screenEl.offsetWidth; // reflow
+    screenEl.style.transition = '';
+    if (screenEl.dataset.screen === 'tripDetail') playTripDetailStagger(screenEl);
+  }
+
+  // staggerでふわっと出す対象（タイトル→日程→参加者行の順、40msずつ間を空ける）。あらかじめ
+  // opacity:0・8px下にずらしておき（prepare）、本物が見えた直後に透明→表示・8px下→0へ動かす（play）。
+  function tripDetailStaggerTargets() {
+    return [$('#tripTitle'), $('#tripDates'), $('.companions-row')].filter(function (el) { return !!el; });
+  }
+  function prepareTripDetailStagger() {
+    tripDetailStaggerTargets().forEach(function (el) {
+      el.style.transition = 'none';
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(8px)';
+    });
+  }
+  function playTripDetailStagger() {
+    var targets = tripDetailStaggerTargets();
+    targets.forEach(function (el, i) {
+      void el.offsetWidth; // reflow：ここまでの初期状態を確定させてから動かす
+      var delay = i * TRIP_STAGGER_STEP_MS;
+      el.style.transition = 'opacity ' + TRIP_STAGGER_DUR_MS + 'ms ease ' + delay + 'ms, transform ' + TRIP_STAGGER_DUR_MS + 'ms ease ' + delay + 'ms';
+      el.style.opacity = '1';
+      el.style.transform = 'translateY(0)';
+    });
     setTimeout(function () {
-      screenEl.style.transition = '';
-      screenEl.style.opacity = '';
-    }, TRIP_OPEN_ANIM_FADE_MS + 40);
+      targets.forEach(function (el) {
+        el.style.transition = '';
+        el.style.opacity = '';
+        el.style.transform = '';
+      });
+    }, targets.length * TRIP_STAGGER_STEP_MS + TRIP_STAGGER_DUR_MS + 60);
   }
 
   // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
@@ -3029,34 +3182,44 @@
       openTrip(tripId, returnTo);
       return;
     }
-    var startRect = cardEl.getBoundingClientRect();
-    if (!startRect.width || !startRect.height) { openTrip(tripId, returnTo); return; }
     var visual = readTripCardVisual(cardEl);
+    if (!visual.bodyRect.width || !visual.bodyRect.height) { openTrip(tripId, returnTo); return; }
     var leavingScreen = $('.screen.active');
     var leavingScrollY = window.scrollY;
+    var target = computeTripDetailHeaderTarget(); // 実測はまだできないので見積もり
+    // 「広がるだけ・縮まない」を保証するため、見積もりがカードの現在の大きさより小さければ
+    // カード側の大きさで底上げする（カードの内容が長くて見積もりより大きい、といったケースの保険）
+    target.photoRect.width = Math.max(target.photoRect.width, visual.photoRect ? visual.photoRect.width : 0);
+    target.photoRect.height = Math.max(target.photoRect.height, visual.photoRect ? visual.photoRect.height : 0);
+    target.sheetRect.width = Math.max(target.sheetRect.width, visual.bodyRect.width);
+    target.sheetRect.height = Math.max(target.sheetRect.height, visual.bodyRect.height);
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop';
-    var clone = document.createElement('div');
-    clone.className = 'trip-open-clone';
-    clone.style.top = startRect.top + 'px';
-    clone.style.left = startRect.left + 'px';
-    clone.style.width = startRect.width + 'px';
-    clone.style.height = startRect.height + 'px';
-    clone.style.borderRadius = visual.radius;
-    clone.innerHTML = tripOpenCloneHtml(visual.hasPhoto);
-    if (visual.hasPhoto) {
-      var photo = clone.querySelector('.trip-open-clone-photo');
-      photo.style.height = visual.photoHeight + 'px';
-      photo.style.backgroundImage = visual.photoUrl;
-    }
-    document.body.appendChild(backdrop);
-    document.body.appendChild(clone);
 
-    // クローンの見た目の動き（カード位置→ヘッダーいっぱい）は、通信の完了を待たずにすぐ始める。
+    // 写真クローン：カードに写真があるときだけ作る（無ければ白本体クローンだけが広がる演出になる）
+    var clonePhoto = null;
+    if (visual.hasPhoto) {
+      clonePhoto = document.createElement('div');
+      clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
+      setCloneRect(clonePhoto, visual.photoRect);
+      clonePhoto.style.borderRadius = visual.photoRadius;
+      clonePhoto.style.backgroundImage = visual.photoUrl;
+    }
+    // 白本体クローン：カードの白い部分（写真ありなら.trip-card-info、無ければカード自体）
+    var cloneBody = document.createElement('div');
+    cloneBody.className = 'trip-open-clone trip-open-clone-body';
+    setCloneRect(cloneBody, visual.bodyRect);
+    cloneBody.style.borderRadius = visual.bodyRadius;
+
+    document.body.appendChild(backdrop);
+    if (clonePhoto) document.body.appendChild(clonePhoto);
+    document.body.appendChild(cloneBody);
+
+    // クローンの見た目の動き（カード位置→詳細ヘッダーいっぱい）は、通信の完了を待たずにすぐ始める。
     // 一方、本物の詳細画面への切り替え（showScreen）はopenTrip内部のAPI応答を待つ非同期処理のため、
-    // 「見た目のアニメーションが最短380ms経過」と「実際に画面が切り替わった」の両方が揃うまで待ってから、
-    // 抜ける画面の固定表示（freeze）を解いて、詳細画面をフェードインで見せる（minDone/screenReady）。
+    // 「見た目のアニメーションが最短450ms経過」と「実際に画面が切り替わった」の両方が揃うまで待ってから、
+    // 抜ける画面の固定表示（freeze）を解いて、詳細画面を即座に見せる（minDone/screenReady）。
     var minDone = false, screenReady = false, finished = false, enteringScreen = null;
     function finishIfReady() {
       if (finished || !minDone || !screenReady) return;
@@ -3065,7 +3228,7 @@
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
       backdrop.classList.remove('show');
-      setTimeout(function () { backdrop.remove(); clone.remove(); }, 260);
+      setTimeout(function () { backdrop.remove(); if (clonePhoto) clonePhoto.remove(); cloneBody.remove(); }, 260);
     }
     // 安全策：旅行が見つからない等でopenTripが失敗すると（catch側でalert→goHomeへ）、screenReadyが
     // 一生falseのままになり得るため、一定時間で強制的に後片付けする（暗幕・クローンが残り続けて
@@ -3075,7 +3238,8 @@
       finished = true;
       unfreezeScreen(leavingScreen);
       backdrop.remove();
-      clone.remove();
+      if (clonePhoto) clonePhoto.remove();
+      cloneBody.remove();
     }, 10000);
 
     openTrip(tripId, returnTo, function () {
@@ -3089,16 +3253,14 @@
     pendingCardOpenAnim = { cardEl: cardEl, tripId: tripId };
 
     requestAnimationFrame(function () {
-      void clone.offsetHeight; // reflow。ここまでの初期位置をブラウザに確定させてから終了位置へ動かす
+      void cloneBody.offsetHeight; // reflow。ここまでの初期位置をブラウザに確定させてから終了位置へ動かす
       backdrop.classList.add('show');
-      var vw = document.documentElement.clientWidth;
-      var targetH = visual.hasPhoto ? 160 : 96; // .trip-cover-photoの高さ（style.css）に合わせる。写真無しはヘッダー相当の高さ
-      clone.style.top = '0px';
-      clone.style.left = '0px';
-      clone.style.width = vw + 'px';
-      clone.style.height = targetH + 'px';
-      clone.style.borderRadius = '0 0 var(--radius-card) var(--radius-card)';
-      if (visual.hasPhoto) clone.querySelector('.trip-open-clone-photo').style.height = targetH + 'px';
+      if (clonePhoto) {
+        setCloneRect(clonePhoto, target.photoRect);
+        clonePhoto.style.borderRadius = '0';
+      }
+      setCloneRect(cloneBody, target.sheetRect);
+      cloneBody.style.borderRadius = '20px 20px 0 0';
     });
 
     setTimeout(function () { minDone = true; finishIfReady(); }, TRIP_OPEN_ANIM_MS);
@@ -3116,31 +3278,32 @@
       doNavigate();
       return;
     }
-    var targetRect = info.cardEl.getBoundingClientRect();
-    if (!targetRect.width || !targetRect.height) { doNavigate(); return; }
-    var visual = readTripCardVisual(info.cardEl);
-    var coverPhotoEl = $('#tripCoverPhoto');
-    var hasPhoto = !!(coverPhotoEl && !coverPhotoEl.hidden);
-    var vw = document.documentElement.clientWidth;
-    var startH = hasPhoto ? 160 : 96;
+    var cardVisual = readTripCardVisual(info.cardEl);
+    if (!cardVisual.bodyRect.width || !cardVisual.bodyRect.height) { doNavigate(); return; }
+    // 今表示中の本物の詳細画面（このあとdoNavigate()で消える直前）から、写真・シートの実際の位置を
+    // 実測する。開くときと違ってこちらは今まさに画面上にあるので実測できる（見積もりに頼らない）。
+    var start = readTripDetailHeaderTarget();
+    if (!start.sheetRect) { doNavigate(); return; }
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop show';
-    var clone = document.createElement('div');
-    clone.className = 'trip-open-clone';
-    clone.style.top = '0px';
-    clone.style.left = '0px';
-    clone.style.width = vw + 'px';
-    clone.style.height = startH + 'px';
-    clone.style.borderRadius = '0 0 var(--radius-card) var(--radius-card)';
-    clone.innerHTML = tripOpenCloneHtml(hasPhoto);
-    if (hasPhoto) {
-      var photo = clone.querySelector('.trip-open-clone-photo');
-      photo.style.height = startH + 'px';
-      photo.style.backgroundImage = coverPhotoEl.style.backgroundImage;
+
+    var clonePhoto = null;
+    if (start.hasPhoto) {
+      clonePhoto = document.createElement('div');
+      clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
+      setCloneRect(clonePhoto, start.photoRect);
+      clonePhoto.style.borderRadius = '0';
+      clonePhoto.style.backgroundImage = $('#tripCoverPhoto').style.backgroundImage;
     }
+    var cloneBody = document.createElement('div');
+    cloneBody.className = 'trip-open-clone trip-open-clone-body';
+    setCloneRect(cloneBody, start.sheetRect);
+    cloneBody.style.borderRadius = '20px 20px 0 0';
+
     document.body.appendChild(backdrop);
-    document.body.appendChild(clone);
+    if (clonePhoto) document.body.appendChild(clonePhoto);
+    document.body.appendChild(cloneBody);
 
     var leavingScreen = $('.screen.active'); // 旅の詳細（このあとdoNavigate()でホーム等に切り替わる）
     var leavingScrollY = window.scrollY;
@@ -3149,21 +3312,32 @@
     freezeLeavingScreen(leavingScreen, leavingScrollY);
 
     requestAnimationFrame(function () {
-      void clone.offsetHeight;
+      void cloneBody.offsetHeight;
       backdrop.classList.remove('show');
-      clone.style.top = targetRect.top + 'px';
-      clone.style.left = targetRect.left + 'px';
-      clone.style.width = targetRect.width + 'px';
-      clone.style.height = targetRect.height + 'px';
-      clone.style.borderRadius = visual.radius;
-      if (hasPhoto) clone.querySelector('.trip-open-clone-photo').style.height = visual.photoHeight + 'px';
+      if (clonePhoto) {
+        if (cardVisual.hasPhoto) {
+          setCloneRect(clonePhoto, cardVisual.photoRect);
+          clonePhoto.style.borderRadius = cardVisual.photoRadius;
+        } else {
+          // 戻り先のカードに写真が無い（マイログの小さい一覧など）ときは、写真クローンの高さを
+          // 0に潰してカードの上端に吸い込ませる
+          setCloneRect(clonePhoto, {
+            top: cardVisual.bodyRect.top, left: cardVisual.bodyRect.left,
+            width: cardVisual.bodyRect.width, height: 0
+          });
+          clonePhoto.style.borderRadius = '0';
+        }
+      }
+      setCloneRect(cloneBody, cardVisual.bodyRect);
+      cloneBody.style.borderRadius = cardVisual.bodyRadius;
     });
 
     setTimeout(function () {
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
       backdrop.remove();
-      clone.remove();
+      if (clonePhoto) clonePhoto.remove();
+      cloneBody.remove();
     }, TRIP_OPEN_ANIM_MS);
   }
 
@@ -5445,6 +5619,8 @@
 
     el.addEventListener('touchstart', function (e) {
       if (e.touches.length !== 1) { edgeSwipeBackState = null; return; }
+      // Blockの並べ替えドラッグ中（長押し待ちも含む）は「戻る」操作を割り込ませない
+      if (blockDragState) { edgeSwipeBackState = null; return; }
       var t = e.touches[0];
       if (t.clientX > EDGE_SWIPE_BACK_PX) { edgeSwipeBackState = null; return; }
       edgeSwipeBackState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
@@ -5912,76 +6088,206 @@
   // ---------- Blockの並べ替え（ドラッグ、時刻未設定のBlockだけ） ----------
   // 「感覚的に引っ張って場所を変えたい」という要望より。時刻ありのBlockは常にその時刻の
   // 位置で固定したいので、持ち手（.block-drag-handle）自体を時刻未設定のBlockにしか出していない。
-  // ドラッグ中は他のBlockは動かさず、挿入位置に細い線（インジケーター）を出すだけにしてある
-  // （Blockの高さが写真の枚数などでまちまちなため、他要素を仮に動かす方式より確実に動く）。
+  // iOSの標準的な並べ替え（連絡先など）に近い手触りを目指し、以下のようにしている（2026-09-29〜。
+  // 「かなりしづらい」というオーナーからの声を受けて、それまでの「即ドラッグ開始＋挿入位置に
+  // 細い線を出すだけ」の作りから作り直した）：
+  // - 持ち手を押してから約350ms長押ししたときだけ持ち上がる（それより前に8pxを超えて指が
+  //   動いたら、ふつうのスクロール操作に譲って並べ替えは始めない）
+  // - つかんだBlockは指にtransformで追従し、他のBlockはtransformのトランジション（約150ms）で
+  //   場所を譲る。どこに入るかはCore.blockDragTargetIndex／Core.blockDragShifts（純粋関数、
+  //   テストあり）でそのつど計算する
+  // - 画面の上下端（48px以内）に近づくと自動スクロールする（端に近いほど速い）
+  // - 指を離すと、実際の挿入位置へ「着地」するアニメーションをしてから並び順を保存する
+  // - マウス（デスクトップ）は長押し不要で、押したその場でつかむ
   var blockDragState = null;
+  var BLOCK_DRAG_LONG_PRESS_MS = 350;
+  var BLOCK_DRAG_MOVE_CANCEL_PX = 8;
+  var BLOCK_DRAG_EDGE_PX = 48;
+  var BLOCK_DRAG_MAX_SCROLL_PX = 16;
 
   function initBlockDragReorder() {
     var timelineEl = $('#timeline');
+
+    function collectDraggables() {
+      return Array.prototype.slice.call(timelineEl.querySelectorAll('.block'))
+        .filter(function (el) { return el.querySelector('.block-drag-handle'); });
+    }
+
+    function autoScroll(state) {
+      var y = state.lastClientY, vh = window.innerHeight, delta = 0;
+      if (y < BLOCK_DRAG_EDGE_PX) delta = -Math.ceil((BLOCK_DRAG_EDGE_PX - y) / BLOCK_DRAG_EDGE_PX * BLOCK_DRAG_MAX_SCROLL_PX);
+      else if (y > vh - BLOCK_DRAG_EDGE_PX) delta = Math.ceil((y - (vh - BLOCK_DRAG_EDGE_PX)) / BLOCK_DRAG_EDGE_PX * BLOCK_DRAG_MAX_SCROLL_PX);
+      if (delta) window.scrollBy(0, delta);
+    }
+
+    function updateVisual(state) {
+      var dy = (state.lastClientY + window.scrollY) - state.startPageY;
+      state.draggedEl.style.transform = 'translateY(' + dy + 'px) scale(1.03)';
+
+      var draggedCenter = state.draggedOrigCenter + dy;
+      var otherCenters = state.others.map(function (o) { return o.center; });
+      var targetIndex = Core.blockDragTargetIndex(draggedCenter, otherCenters);
+      if (targetIndex !== state.targetIndex) {
+        state.targetIndex = targetIndex;
+        var shifts = Core.blockDragShifts(state.others.length, targetIndex, state.gapIndex, state.draggedHeight);
+        state.others.forEach(function (o, i) {
+          o.el.style.transform = shifts[i] ? 'translateY(' + shifts[i] + 'px)' : '';
+        });
+      }
+    }
+
+    function activate(state) {
+      var draggableBlocks = collectDraggables();
+      var origIdx = draggableBlocks.indexOf(state.draggedEl);
+      if (origIdx === -1) { blockDragState = null; return; }
+
+      var others = [];
+      draggableBlocks.forEach(function (el, i) {
+        if (i === origIdx) return;
+        others.push({ el: el, center: el.offsetTop + el.offsetHeight / 2 });
+      });
+
+      state.phase = 'dragging';
+      state.originalOrder = draggableBlocks.map(function (el) { return el.dataset.blockId; });
+      state.others = others;
+      state.gapIndex = origIdx;
+      state.targetIndex = origIdx;
+      state.draggedHeight = state.draggedEl.offsetHeight;
+      state.draggedOrigCenter = state.draggedEl.offsetTop + state.draggedHeight / 2;
+      state.startPageY = state.lastClientY + window.scrollY;
+
+      try { state.handle.setPointerCapture(state.pointerId); } catch (err) {}
+      state.draggedEl.classList.add('dragging');
+      others.forEach(function (o) { o.el.classList.add('block-shift'); });
+      try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
+
+      // 「持ち上げた」感触を出すため、つかんだ瞬間だけ一瞬トランジション付きで拡大させる。
+      // その後は毎フレームtransformを直接書き換えるので、追従が遅れないようトランジションを消す
+      state.draggedEl.style.transition = 'transform 120ms ease, box-shadow 120ms ease';
+      state.draggedEl.style.transform = 'translateY(0px) scale(1.03)';
+      setTimeout(function () {
+        if (blockDragState === state) state.draggedEl.style.transition = '';
+      }, 130);
+
+      state.rafId = requestAnimationFrame(function frame() {
+        if (blockDragState !== state || state.phase !== 'dragging') return;
+        autoScroll(state);
+        updateVisual(state);
+        state.rafId = requestAnimationFrame(frame);
+      });
+    }
+
+    function releaseOthers(state) {
+      state.others.forEach(function (o) { o.el.classList.remove('block-shift'); o.el.style.transform = ''; });
+    }
+
+    function settle(state) {
+      cancelAnimationFrame(state.rafId);
+      releaseOthers(state);
+
+      var beforeRect = state.draggedEl.getBoundingClientRect();
+      var addBtn = timelineEl.querySelector('.block-add');
+      var anchor = state.targetIndex < state.others.length ? state.others[state.targetIndex].el : addBtn;
+      state.draggedEl.style.transform = '';
+      state.draggedEl.classList.remove('dragging');
+      timelineEl.insertBefore(state.draggedEl, anchor);
+
+      // 着地アニメーション：DOM移動でずれた見た目の分だけ逆向きにtransformをかけ、0へ戻す
+      var afterRect = state.draggedEl.getBoundingClientRect();
+      var deltaY = beforeRect.top - afterRect.top;
+      if (deltaY) {
+        var draggedEl = state.draggedEl;
+        draggedEl.style.transition = 'none';
+        draggedEl.style.transform = 'translateY(' + deltaY + 'px)';
+        void draggedEl.offsetHeight; // 強制リフローしてから、トランジション付きで戻す
+        draggedEl.classList.add('settling');
+        requestAnimationFrame(function () {
+          draggedEl.style.transition = '';
+          draggedEl.style.transform = '';
+        });
+        draggedEl.addEventListener('transitionend', function handler() {
+          draggedEl.classList.remove('settling');
+          draggedEl.style.transition = '';
+          draggedEl.removeEventListener('transitionend', handler);
+        });
+      }
+
+      var finalOrder = collectDraggables().map(function (el) { return el.dataset.blockId; });
+      if (finalOrder.join(',') !== state.originalOrder.join(',')) persistBlockOrder(finalOrder);
+    }
+
+    function cancelDrag(state) {
+      cancelAnimationFrame(state.rafId);
+      if (state.phase === 'dragging') {
+        releaseOthers(state);
+        state.draggedEl.classList.remove('dragging');
+        state.draggedEl.style.transform = '';
+        state.draggedEl.style.transition = '';
+      }
+    }
 
     timelineEl.addEventListener('pointerdown', function (e) {
       var handle = e.target.closest('.block-drag-handle');
       if (!handle) return;
       var draggedEl = handle.closest('.block');
-      if (!draggedEl) return;
+      if (!draggedEl || blockDragState) return;
       e.preventDefault();
 
-      var rect = draggedEl.getBoundingClientRect();
-      // 時刻ありのBlockは並べ替えの対象外（常に時刻順で固定）。持ち手が出ているBlock
-      // （＝時刻なしのBlock）同士でだけ順番を入れ替えられるようにする。
-      var draggableBlocks = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).filter(function (el) { return el.querySelector('.block-drag-handle'); });
-      var siblings = draggableBlocks.filter(function (el) { return el !== draggedEl; });
-      var addBtn = timelineEl.querySelector('.block-add');
-      var originalOrder = draggableBlocks.map(function (el) { return el.dataset.blockId; });
-
-      var indicator = document.createElement('div');
-      indicator.className = 'block-drop-indicator';
-      timelineEl.insertBefore(indicator, draggedEl);
-
-      draggedEl.classList.add('dragging');
-      draggedEl.style.width = rect.width + 'px';
-      draggedEl.style.left = rect.left + 'px';
-      draggedEl.style.top = rect.top + 'px';
-
-      blockDragState = {
-        handle: handle, draggedEl: draggedEl, pointerId: e.pointerId, offsetY: e.clientY - rect.top,
-        siblings: siblings, addBtn: addBtn, indicator: indicator, originalOrder: originalOrder
+      var state = {
+        phase: 'pending', handle: handle, draggedEl: draggedEl, pointerId: e.pointerId,
+        startClientX: e.clientX, startClientY: e.clientY, lastClientY: e.clientY, timer: null
       };
-      handle.setPointerCapture(e.pointerId);
+      blockDragState = state;
+
+      // マウスは長押し不要（デスクトップは押したその場でつかむ）。指はスクロールと区別するため
+      // 長押しを待つ（この間に8pxを超えて動いたらpointermoveハンドラーが並べ替えを取り消す）
+      if (e.pointerType === 'mouse') {
+        activate(state);
+      } else {
+        state.timer = setTimeout(function () {
+          if (blockDragState === state && state.phase === 'pending') activate(state);
+        }, BLOCK_DRAG_LONG_PRESS_MS);
+      }
     });
 
     timelineEl.addEventListener('pointermove', function (e) {
       if (!blockDragState || e.pointerId !== blockDragState.pointerId) return;
-      e.preventDefault();
-      blockDragState.draggedEl.style.top = (e.clientY - blockDragState.offsetY) + 'px';
+      var state = blockDragState;
+      state.lastClientY = e.clientY;
 
-      var target = null;
-      for (var i = 0; i < blockDragState.siblings.length; i++) {
-        var r = blockDragState.siblings[i].getBoundingClientRect();
-        if (e.clientY < r.top + r.height / 2) { target = blockDragState.siblings[i]; break; }
+      if (state.phase === 'pending') {
+        var dx = e.clientX - state.startClientX, dy = e.clientY - state.startClientY;
+        if (Math.sqrt(dx * dx + dy * dy) > BLOCK_DRAG_MOVE_CANCEL_PX) {
+          clearTimeout(state.timer);
+          blockDragState = null; // ふつうのスクロールに譲る
+        }
+        return;
       }
-      timelineEl.insertBefore(blockDragState.indicator, target || blockDragState.addBtn);
+      if (state.phase === 'dragging') e.preventDefault();
+    }, { passive: false });
+
+    timelineEl.addEventListener('pointerup', function (e) {
+      if (!blockDragState || e.pointerId !== blockDragState.pointerId) return;
+      var state = blockDragState;
+      blockDragState = null;
+      try { state.handle.releasePointerCapture(state.pointerId); } catch (err) {}
+      if (state.phase === 'pending') { clearTimeout(state.timer); return; }
+      settle(state);
     });
 
-    function endBlockDrag(e) {
+    timelineEl.addEventListener('pointercancel', function (e) {
       if (!blockDragState || e.pointerId !== blockDragState.pointerId) return;
-      var ds = blockDragState;
+      var state = blockDragState;
       blockDragState = null;
-      ds.handle.releasePointerCapture(ds.pointerId);
-      ds.draggedEl.classList.remove('dragging');
-      ds.draggedEl.style.top = '';
-      ds.draggedEl.style.left = '';
-      ds.draggedEl.style.width = '';
-      timelineEl.insertBefore(ds.draggedEl, ds.indicator);
-      ds.indicator.remove();
+      try { state.handle.releasePointerCapture(state.pointerId); } catch (err) {}
+      if (state.phase === 'pending') { clearTimeout(state.timer); return; }
+      cancelDrag(state);
+    });
 
-      var finalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block'))
-        .filter(function (el) { return el.querySelector('.block-drag-handle'); })
-        .map(function (el) { return el.dataset.blockId; });
-      if (finalOrder.join(',') !== ds.originalOrder.join(',')) persistBlockOrder(finalOrder);
-    }
-    timelineEl.addEventListener('pointerup', endBlockDrag);
-    timelineEl.addEventListener('pointercancel', endBlockDrag);
+    // iOSの長押しコールアウト・右クリックメニューなどが割り込んでこないようにする
+    timelineEl.addEventListener('contextmenu', function (e) {
+      if (blockDragState) e.preventDefault();
+    });
   }
 
   function resetManualOrder(date) {
@@ -8712,9 +9018,29 @@
     else { opts.animate = false; replayMap.fitBounds([[lat, lng], [lat, lng]], opts); }
   }
 
+  // カメラのアニメーション（flyToBounds／flyTo）を、動かす価値があるときだけ実際に始める。
+  // - 動かしたい先（target）が、いま向かっている・すでに着いた先（replay.cameraTarget）とほぼ同じなら
+  //   （Core.cameraMoveNeededがfalse）、何もしない＝同じ場所へ何度もカメラを動かして地図が揺れるのを防ぐ
+  //   （同じ場所が続く予定・乗り継ぎ空港などで発生していた。2026-09-29、docs/adr/0008）
+  // - 直前にアニメーションを始めてからREPLAY_CAMERA_DEBOUNCE_MS未満なら、目的地が違っても始め直さない
+  //   （短い間に立て続けにカメラ移動が呼ばれて、動きが重なり合ってちらつくのを防ぐ）
+  // targetは {lat, lng, zoom}。startFnが実際にflyToBounds／flyToを呼ぶ。呼ばなかったらfalseを返す。
+  var REPLAY_CAMERA_DEBOUNCE_MS = 600;
+  function replayCameraMove(target, startFn) {
+    var now = Date.now();
+    if (replay.cameraTarget && !Core.cameraMoveNeeded(replay.cameraTarget, target)) return false;
+    if (replay.cameraTargetAt && now - replay.cameraTargetAt < REPLAY_CAMERA_DEBOUNCE_MS) return false;
+    startFn();
+    replay.cameraTarget = target;
+    replay.cameraTargetAt = now;
+    return true;
+  }
+
   function resetReplayCamera() {
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
     replayCenterOn(first.lat, first.lng, 13, false);
+    replay.cameraTarget = { lat: first.lat, lng: first.lng, zoom: 13 };
+    replay.cameraTargetAt = Date.now();
     replay.lastLeg = -1;
     // 最初の地点にはもうカメラを合わせてあるので、着いたときにもう一度カメラを動かさない。以前は再生の
     // はじめに最初の地点へもう一度カメラが動き、吹き出しが「出て、一瞬消えて、また出る」ように見えていた
@@ -8890,14 +9216,18 @@
       // 地図が手振れのように揺れていた（2026-09-27）
       var legFrom = tl.stops[leg.from], legTo = tl.stops[leg.to];
       var tinyLeg = legFrom && legTo && Core.distanceKm(legFrom, legTo) < REPLAY_TINY_LEG_KM;
+      // カメラの目的地は、区間の両端の真ん中・目安の縮尺として表す（fitBoundsの結果そのものではないが、
+      // 「もう合っているか」の判定にはこれで十分。Core.cameraMoveNeededは純粋な距離・縮尺の比較のため）。
+      var legTarget = { lat: (legFrom.lat + legTo.lat) / 2, lng: (legFrom.lng + legTo.lng) / 2, zoom: legView.maxZoom };
       if (tinyLeg) {
         // 飛行機のあとで大きく引いたままなら、街を見る大きさ（12）までは寄せる。以後の近い区間では動かさない
         legView.maxZoom = Math.max(12, Math.min(15, replayMap.getZoom()));
+        legTarget.zoom = legView.maxZoom;
         if (replayMap.getZoom() < 10 || !replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legView)) {
-          replayFlyToBounds(legBounds, legView);
+          replayCameraMove(legTarget, function () { replayFlyToBounds(legBounds, legView); });
         }
       } else {
-        replayFlyToBounds(legBounds, legView);
+        replayCameraMove(legTarget, function () { replayFlyToBounds(legBounds, legView); });
       }
       replay.lastLeg = legIndexForCamera;
       // 着いた地点に寄せる処理（下）が次のフレームで走ってこのカメラ移動を打ち消さないよう、着いた地点も済みにする
@@ -8926,7 +9256,12 @@
       if (needZoom && cameFromLeg && replay.playing && typeof arrived.r === 'number' && r - arrived.r < REPLAY_ARRIVAL_ZOOM_DELAY_SEC) {
         // まだ待つ
       } else {
-        if (needZoom) replayCenterOn(arrived.lat, arrived.lng, Math.max(replayMap.getZoom(), 12), true);
+        if (needZoom) {
+          var arriveZoom = Math.max(replayMap.getZoom(), 12);
+          replayCameraMove({ lat: arrived.lat, lng: arrived.lng, zoom: arriveZoom }, function () {
+            replayCenterOn(arrived.lat, arrived.lng, arriveZoom, true);
+          });
+        }
         replay.lastStop = st.stopIndex;
       }
     }
@@ -9011,6 +9346,10 @@
     replay.lastDay = 0;
     var st = Core.replayStateAt(replay.tl, replay.r);
     if (st.here) replayCenterOn(st.here.lat, st.here.lng, replayMap.getZoom(), false);
+    // シーク先でカメラの目的地も合わせておく。ここを更新しないと、シーク直後の再生でreplayCameraMoveが
+    // 「シーク前の目的地とほぼ同じ」と誤判定し、本当は動かすべきカメラ移動を止めてしまうことがある。
+    replay.cameraTarget = st.here ? { lat: st.here.lat, lng: st.here.lng, zoom: replayMap.getZoom() } : null;
+    replay.cameraTargetAt = Date.now();
     // すでにここでカメラを合わせたので、直後のrenderReplayが「区間・地点が変わった」と勘違いして
     // もう一度（アニメつきで）カメラを動かさないよう、いま合わせた状態を済みにしておく。以前は
     // lastLeg/lastStopを-1/-2に戻していたため、シーク先が区間の途中だとrenderReplayがすぐさま
