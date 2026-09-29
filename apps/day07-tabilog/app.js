@@ -217,387 +217,79 @@
     }
   }
 
-  // 予定ごとのタイムゾーンを決める。優先順：その予定の場所（記録の地図）→
-  // 地図が無ければ「直前の予定」のタイムゾーンを引き継ぐ（ただし、その日の最初の予定は
-  // 直前の予定が別の日なので引き継がず、その日の場所＝天気の場所を使う）→ それも無ければ端末のタイムゾーン。
-  // 地図の無い予定を毎回その日の場所（byDate）に戻してしまうと、「10:00 成田（地図）→12:00 LA到着（地図）→
-  // 15:00 ホテルで休憩（地図なし）→18:00 夕食（地図）」のような移動日に、地図の無い15:00の予定だけ
-  // その日の場所（東京）に巻き戻ってしまい、「ここから現地時間」の表示が行ったり来たりする。
-  // 直前の予定を引き継げば、移動後は移動後のタイムゾーンのまま保たれる。
-  // 移動の予定の時刻は「出発の時刻」なので、出発地（直前の予定）のタイムゾーンで読む
-  // （移動の予定自体の地図は到着地のことが多いため、次の予定へはそちらを引き継ぐ）。
-  // 「直前の予定」は時差を考えた順でないと決まらない（現地時間の順だと、日付変更線をまたぐ移動で着が発より
-  // 前に来る）ので、まず移動の決まりを使わずに仮に決めて時差を付けて並べ、その順でもう一度決める。
-  //
-  // ただし「直前の予定」を仮の順で決める方法は、日付変更線を東へ越える移動日（成田6/26 20:00発 →
-  // ロサンゼルス6/26 18:00着）で壊れていた（2026-09-26）。現地時間の順では着(18:00)が発(20:00)より前に来るので、
-  // 発の「直前の予定」が着になり、発もロサンゼルス時間で読まれて、着→発の順のまま固まってしまう。
-  // そこで移動の予定がある日は、出発地のタイムゾーンの候補（前の日の最後のタイムゾーン、その日に出てくる
-  // タイムゾーン）を全部試し、①「移動の予定の出発地＝時差を考えた順で直前の予定のタイムゾーン」がいちばん
-  // 多く成り立つもの、②その中で、予定を入れた（または並べ替えた）順（createdAt）といちばん食い違わないもの、
-  // ③それでも決まらなければ前の日から続くタイムゾーンを選ぶ。成田発・ロサンゼルス着のどちらも①は成り立つが、
-  // ②で「発を先に入れた」旅行としての順が選ばれる。
-  function orderZonesByCandidates(blocks, byBlock, byDate, fallback, byArrive) {
-    byBlock = byBlock || {}; byDate = byDate || {}; byArrive = byArrive || {};
-    var copies = (blocks || []).map(function (b) { return Object.assign({}, b); });
-    var byDay = {}, days = [];
-    sortBlocks(copies).forEach(function (b) {
-      var d = b.date || '';
-      if (!byDay[d]) { byDay[d] = []; days.push(d); }
-      byDay[d].push(b);
-    });
-    var out = {}, carry = '';
-    // 1日ぶんのタイムゾーンを決める。forced：移動の予定のid→出発地のタイムゾーン（無ければ直前の予定を引き継ぐ）
-    function walkDay(list, date, prevIn, forced) {
-      var zones = {}, prevZone = prevIn, first = true, consistent = 0, prevTransport = false, prevAbsMin = null;
-      list.forEach(function (b) {
-        var own = byBlock[b.id] || '';
-        var isTransport = b.category === 'transport';
-        var tz;
-        if (own && isGroundMove(b, byArrive, list)) {
-          tz = own;
-        } else if (isTransport && forced && forced[b.id]) {
-          tz = forced[b.id];
-          // 直前が移動の予定なら、その地図が出発地か到着地か分からない（どこにいるか不明）ので矛盾とはみなさない
-          if (prevTransport || tz === (prevZone || fallback || '')) consistent++;
-        } else if (isTransport && prevZone) {
-          tz = prevZone;
-          // 「直前の予定のタイムゾーンで読む」という既定のルールだと、日付変更線をまたぐ到着の予定
-          // （地図はあるのに出発地と同じ扱いになる）が、絶対時刻で直前の予定より前に来てしまうことがある
-          // （羽田20:00発→LAX18:50着を、そのままJSTで読むと18:50<20:00に見えてしまう。2026-09-29）。
-          // そのときは直前のタイムゾーンではなく自分の地図（＝到着地）を使う（docs/adr/0009）
-          if (own && own !== tz) {
-            var curMin = hhmmToMinute(b.time);
-            if (curMin !== null && prevAbsMin !== null) {
-              var candOff = tzOffsetMinutes(tz, date, b.time);
-              if (typeof candOff === 'number' && (curMin - candOff) < prevAbsMin) tz = own;
-            }
-          }
-        } else if (own) {
-          tz = own;
-        } else if (first) {
-          tz = byDate[date] || prevZone || fallback || '';
-        } else {
-          tz = prevZone || byDate[date] || fallback || '';
-        }
-        zones[b.id] = tz;
-        // 移動の予定のあと（次の予定・地図の無い予定が引き継ぐ「いまいる場所」）は、自分の地図
-        // （＝出発地）ではなく到着地（byArrive、記録の「移動の情報」の到着地の地図）を優先する。
-        // 出発地のままだと、地図の無い予定（ファンゾーン等）が出発地の時差を引き継いでしまい、
-        // 次のsegmentZonesの並べ替え（_offsetの世界共通時刻）が壊れて、移動の予定自身の時差まで
-        // 巻き戻ることがあった（羽田発・到着地の地図ありのフライトのあと、地図の無い予定がJSTのまま
-        // 続き、並びが壊れてフライトがロサンゼルス時間に化ける。2026-09-29）
-        prevZone = isTransport ? (byArrive[b.id] || own || byDate[date] || tz) : tz;
-        prevTransport = isTransport;
-        first = false;
-        var finalOff = tzOffsetMinutes(tz, date, b.time);
-        var localMin = hhmmToMinute(b.time);
-        prevAbsMin = (typeof finalOff === 'number' && localMin !== null) ? (localMin - finalOff) : null;
-      });
-      return { zones: zones, end: prevZone, consistent: consistent };
-    }
-    // タイムゾーンを付けて時差を考えた順に並べ直し、その順でもう一度決める（順とタイムゾーンを落ち着かせる）
-    function settleDay(list, date, prevIn, forced) {
-      var res = walkDay(list, date, prevIn, forced), order = list;
-      for (var i = 0; i < 3; i++) {
-        var tmp = list.map(function (b) { return Object.assign({}, b); });
-        applyBlockZones(tmp, res.zones);
-        var next = sortBlocks(tmp);
-        var same = next.every(function (b, k) { return b.id === order[k].id; });
-        order = next;
-        res = walkDay(order, date, prevIn, forced);
-        if (same) break;
-      }
-      res.order = order;
-      return res;
-    }
-    function inversions(order) {
-      var n = 0;
-      for (var i = 0; i < order.length; i++) {
-        for (var j = i + 1; j < order.length; j++) {
-          if ((order[i].createdAt || '') > (order[j].createdAt || '')) n++;
-        }
-      }
-      return n;
-    }
-    days.forEach(function (date) {
-      var list = byDay[date];
-      var transports = list.filter(function (b) { return b.category === 'transport' && !(byBlock[b.id] && isGroundMove(b, byArrive, list)); });
-      var best = null;
-      if (date && transports.length && transports.length <= 3) {
-        // いまいる場所：前の日から続くタイムゾーン。旅の最初の日は端末のタイムゾーン（家から出発する）。
-        // その日のいちばん早い時刻の地図は使えない：日付変更線をまたぐ日は、到着地の時刻（18:50）が出発地の
-        // 時刻（20:00）より早く見えるため
-        var start = carry || fallback || '';
-        var cands = [start];
-        list.forEach(function (b) { if (byBlock[b.id] && cands.indexOf(byBlock[b.id]) === -1) cands.push(byBlock[b.id]); });
-        if (byDate[date] && cands.indexOf(byDate[date]) === -1) cands.push(byDate[date]);
-        cands = cands.filter(Boolean);
-        var combos = [{}];
-        transports.forEach(function (t) {
-          var nextCombos = [];
-          combos.forEach(function (c) {
-            cands.forEach(function (z) { var o = Object.assign({}, c); o[t.id] = z; nextCombos.push(o); });
-          });
-          combos = nextCombos;
-        });
-        // 飛行機の時刻をどこの時間で読むか：出発の予定は「いまいる場所」の時間。その日に飛行機の予定が
-        // 2つ以上あり（出発と到着を両方入れる形）、地図が「いまいる場所」と違うタイムゾーンなら到着の予定
-        // なので、その地図の土地の時間で読む。以前は、どちらでも前後の話が合うときに「予定を入れた順」で
-        // 決めていたため、到着を先に入れた・逆順に入れた旅では、ロサンゼルス到着（18:50）が東京出発（20:00）
-        // より前に並んでいた（2026-09-27。ほかの人も使うので、入れた順に左右されないようにする）
-        // 到着地の地図が入っている移動の予定（2026-09-27〜）は、出発の予定だと確実に分かるので飛行機と同じに扱う
-        // 種類「到着」（2026-09-27〜）の予定があり、その地図がいまいる場所と違う時差なら、その日の移動の予定は
-        // その到着への出発の予定と分かる。飛行機と同じく、出発地（いまいる場所）の時間で読む
-        var arrivalZone = '';
-        list.forEach(function (b) { if (!arrivalZone && b.category === 'arrival' && byBlock[b.id] && byBlock[b.id] !== start) arrivalZone = byBlock[b.id]; });
-        var planes = transports.filter(function (t) { return isPlaneMove(t) || byArrive[t.id] || !!arrivalZone; });
-        var awayPlanes = planes.filter(function (p) { return byBlock[p.id] && byBlock[p.id] !== start; });
-        var looksArrival = function (p) { return /到着|着いた|着く|arriv/i.test(p.label || ''); };
-        // 「ロサンゼルスへのフライト」「〜行き」「〜を出発」は出発の予定（地図が行き先の空港でも）。
-        // 飛行機の予定が2つ（「ロサンゼルスへのフライト」＋「ロサンゼルス国際空港」）のとき、行き先の地図が
-        // 入った出発の予定を到着と取り違えていた（2026-09-27）
-        var looksDeparture = function (p) { return !looksArrival(p) && /へ|行き|出発|発|depart|to\s/i.test(p.label || ''); };
-        var planeWant = {};
-        planes.forEach(function (p) {
-          var own = byBlock[p.id] || '';
-          // 到着の予定：飛行機の予定が2つ以上あり、地図が「いまいる場所」と違うもの。そういう予定が複数ある
-          // （出発の予定にも到着空港の地図を入れた、など）ときだけ、見出し（「〜に到着」）で見分ける
-          // 見出しで出発と分かる予定がほかにあれば、行き先の地図が入った残りの予定は到着
-          var otherDeparts = planes.some(function (q) { return q !== p && (looksDeparture(q) || byArrive[q.id]); });
-          var arrival = !byArrive[p.id] && planes.length >= 2 && own && own !== start && !looksDeparture(p) &&
-            (awayPlanes.length === 1 || looksArrival(p) || otherDeparts);
-          // 到着地が入っている移動の予定は出発の予定。時刻は出発地（その予定の地図があればその土地）の時間で読む
-          // （その地図が到着地と同じ時差なら行き先の地図なので、いまいる場所の時間で読む）。
-          // ただし「行き先の地図が出発地の欄に入っている」という判定違いが起こり得るのは飛行機（1つの
-          // 地図しか無い・国をまたぐ）のときだけ。車などの地上の移動（ユニオンステーションなど）は、
-          // 出発地・到着地とも別々の実在する地図で、たまたま同じ時差というだけのことがあるので、
-          // 自分の地図をそのまま信じる（「いまいる場所」に巻き戻さない。2026-09-29）
-          planeWant[p.id] = byArrive[p.id] ? (own && (own !== byArrive[p.id] || !isPlaneMove(p)) ? own : start) : (arrival ? own : start);
-          if (arrivalZone && !byArrive[p.id] && !isPlaneMove(p)) planeWant[p.id] = own && own !== arrivalZone ? own : start;
-          if (!own && !byArrive[p.id] && !looksDeparture(p)) {
-            // 地図の無い飛行機の予定で、出発と分かる予定の地図（または到着地の地図）が行き先を示していれば、到着の予定
-            planes.forEach(function (q) {
-              if (q === p || !(looksDeparture(q) || byArrive[q.id])) return;
-              var dest = byArrive[q.id] || (byBlock[q.id] !== start ? byBlock[q.id] : '');
-              if (dest) planeWant[p.id] = dest;
-            });
-          }
-        });
-        combos.forEach(function (forced) {
-          var res = settleDay(list, date, carry, forced);
-          var planeHits = planes.filter(function (p) { return forced[p.id] === planeWant[p.id]; }).length;
-          var startHits = transports.filter(function (t) { return forced[t.id] === start; }).length;
-          var score = [res.consistent, planeHits, -inversions(res.order), startHits];
-          var better = !best;
-          for (var si = 0; !better && si < score.length; si++) {
-            if (score[si] > best.score[si]) better = true;
-            else if (score[si] < best.score[si]) break;
-          }
-          if (better) best = { res: res, score: score };
-        });
-      }
-      var res = best ? best.res : settleDay(list, date, carry, null);
-      Object.assign(out, res.zones);
-      carry = res.end;
-    });
-    return out;
-  }
-  // ---- 時差は「移動」のところでしか変わらない（2026-09-27、オーナーの方針） ----
-  // 予定1つ1つの地図からタイムゾーンを決めると、地図が1つ別の国と判定されただけで（ロサンゼルスの
-  // 「チャイナタウン」が韓国の仁川になる、など）そこだけ時差が入って戻る。また「香港着」「香港発」のような
-  // 移動の予定の読み方や、地図の無い予定に使う「その日の場所（天気の場所）」のずれで、リオのホテルから時差が
-  // 入る・ニューヨークで「日本との時差ゼロ」が出る、などがあった。そこで旅を「かたまり」に分け、かたまりの
-  // 中は同じタイムゾーンにする。かたまりの切れ目は次のところだけ：
-  //  ① 飛行機の移動の予定のあと（移動の予定自身は出発地＝前のかたまり）
-  //  ② 移動手段が飛行機の予定（「ここまで飛行機で来た」）の前
-  //  ③ 移動の予定の地図のタイムゾーンが、今のかたまりと違うとき（移動先の地図とみなし、そのあとで切る）
-  //  ④ 地図のタイムゾーンが変わり、次の地図でも変わったまま（1つだけ違うものは判定違いとみなして無視）
-  // かたまりのタイムゾーンは、その中の地図（移動の予定以外）のもの。地図が無いかたまりは、その日の場所→
-  // 前のかたまり→端末のタイムゾーンの順。並び順は、日付変更線をまたぐ日の順番を直すために、これまでの
-  // 決め方（orderZonesByCandidates）で一度タイムゾーンを付けて並べたものを使う。
-  // 旅の最初の「いまいる場所」。最初の日に、最初の移動より前にいた場所の地図があれば、そのタイムゾーン。
-  // 無ければ端末のタイムゾーン（家から出発する）。海外で入力した・端末の設定がUTCなどで、端末の
-  // タイムゾーンが旅の起点と違うことがあるため。以前は端末のタイムゾーン
-  // のまま決めていて、端末がUTCだと「羽田→フライト→LA到着」の到着が出発より前に並んでいた（2026-09-27）
-  function startZoneFor(blocks, byBlock, fallback, byArrive) {
-    var natural = sortBlocks(blocks).filter(function (b) { return b.date; });
-    if (!natural.length) return fallback;
-    var first = natural[0].date;
-    var day = natural.filter(function (b) { return b.date === first; });
-
-    // 最初の移動より前にいた場所（見出しが「〜到着」のものは除く）だけを手がかりにする。移動の後の予定は、
-    // 着いた先の時間で書かれていることがあるため（成田20:00発→LA18:00到着など）
-    var pick = null;
-    for (var i = 0; i < day.length; i++) {
-      var b = day[i];
-      if (b.category === 'transport' || b.category === 'arrival' || b.transport === 'plane' || (byArrive && byArrive[b.id])) break;
-      if (/到着|着いた|着く|arriv/i.test(b.label || '')) continue;
-      if (byBlock[b.id]) { pick = b; break; }
-    }
-    return pick ? byBlock[pick.id] : fallback;
-  }
-  function assignBlockZones(blocks, byBlock, byDate, fallback, byArrive) {
-    byDate = byDate || {};
-    byArrive = byArrive || {};
-    var copies = (blocks || []).map(function (b) { var c = Object.assign({}, b); delete c._offset; delete c._tz; return c; });
-    fallback = startZoneFor(copies, byBlock || {}, fallback, byArrive);
-    // 1つだけ前後と違う地図（判定違い）は、並び替えより先に、日付と現地時刻の素直な順で見つけて外す
-    // （判定違いのタイムゾーンで並べると、その予定が前後から離れてしまい見つけられないため）
-    byBlock = withoutZoneOutliers(sortBlocks(copies), byBlock || {}, byArrive);
-    var zones = orderZonesByCandidates(copies, byBlock, byDate, fallback, byArrive);
-    for (var round = 0; round < 2; round++) {
-      applyBlockZones(copies, zones);
-      zones = segmentZones(sortBlocks(copies), byBlock, byDate, fallback, byArrive);
-    }
-    // 地図の無い予定が、前後の予定（同じ時差）に挟まれて1つだけ別の時差になっていたら、前後に合わせる。
-    // 「ニューヨーク到着」と「ニューヨーク出発」の間の地図の無い予定が、次のかたまり（リオ）の時差で読まれ、
-    // リオの22:00＝ニューヨークの20:00として出発より前に並んでいた（2026-09-27）
-    for (var fix = 0; fix < 2; fix++) {
-      applyBlockZones(copies, zones);
-      var sorted = sortBlocks(copies), changed = false;
-      sorted.forEach(function (b, i) {
-        var prev = sorted[i - 1], next = sorted[i + 1];
-        if (!prev || !next || byBlock[b.id] || b.category === 'transport' || byArrive[prev.id]) return;
-        if (zones[prev.id] && zones[prev.id] === zones[next.id] && zones[b.id] !== zones[prev.id]) {
-          zones[b.id] = zones[prev.id];
-          changed = true;
-        }
-      });
-      if (!changed) break;
-    }
-    // 到着地の地図がある移動の予定は、到着地のタイムゾーンも「<id>#arrive」で返す（地図でふりかえるの到着地点用）
-    Object.keys(byArrive).forEach(function (id) { if (byArrive[id]) zones[id + '#arrive'] = byArrive[id]; });
-    return zones;
-  }
-
-  // 地図のタイムゾーン（移動の予定以外）のうち、前後の地図と違うのが1つだけのもの（前後は同じ・間に飛行機が
-  // 無い）を判定違いとみなして外した byBlock を返す（ロサンゼルスの「チャイナタウン」が仁川になる、など）
-  // 飛行機以外（車・電車・徒歩、移動手段が空欄の「〜空港」など）の移動の予定。その予定の時刻にいた場所の地図なので
-  // 時差の手がかりにできる（「ロサンゼルス国際空港」をテスラで出発、など。以前は移動の予定の地図を一切
-  // 使わなかったため、前後につられて日本時間になっていた。2026-09-27）。到着地の地図が入っているものは除く
-  // 移動手段が空欄のものは、同じ日にほかの飛行機の移動（または到着地の地図が入った移動）があるときだけ。
-  // それが無い日は、空欄の移動の予定そのものが時差をまたぐ移動で、地図が行き先のことがある（東京→ロンドン）
-  function isGroundMove(b, byArrive, all) {
-    if (b.category !== 'transport' || isPlaneMove(b) || (byArrive && byArrive[b.id])) return false;
-    if (b.transport) return true;
-    return (all || []).some(function (o) {
-      return o !== b && o.date === b.date && o.category === 'transport' && (isPlaneMove(o) || !!(byArrive && byArrive[o.id]));
-    });
-  }
-  // 飛行機の移動。移動手段が空欄でも、見出しが「〜フライト」「飛行機」なら飛行機とみなす
-  // （ワールドカップ旅の「ロサンゼルスへのフライト」は移動手段が空欄だった。2026-09-27）
+  // 飛行機の移動。移動手段が空欄でも、見出しが「〜フライト」「飛行機」なら飛行機とみなす（記録フォームで
+  // 「移動の情報」欄を出すかどうかの判定にだけ使う。時差の決め方には使わない。2026-09-27）
   function isPlaneMove(b) {
     if (!b) return false;
     if (b.transport === 'plane') return true;
     return !b.transport && /フライト|飛行機|航空便|flight/i.test(b.label || '');
   }
-  function withoutZoneOutliers(order, byBlock, byArrive) {
-    var isMove = function (b) { return b.category === 'transport' && !isGroundMove(b, byArrive, order); };
-    var ev = [];
-    order.forEach(function (b, i) { if (!isMove(b) && byBlock[b.id]) ev.push({ i: i, z: byBlock[b.id], id: b.id }); });
-    var planeBetween = function (a, c) {
-      for (var x = a + 1; x <= c; x++) { var o = order[x]; if (o && isPlaneMove(o)) return true; }
-      return false;
+
+  // 予定ごとのタイムゾーンは、その予定「自身」の地図（記録の地図。移動の予定は出発地）だけで決める。
+  // 見出しの文言（「〜到着」「〜へ」）・その日の場所（天気の場所）・予定を入れた順は一切見ない
+  // （オーナー方針、2026-09-29：「マップが正。マップ入れてなかったら前の予定と一緒で大丈夫。
+  // 勝手に推測するのはやめてほしい（ラスベガスのニューヨークニューヨークというホテルをニューヨークと
+  // 判断されたらややこしい）」）。地図の無い予定は直前の予定（表示順で。手で並べた日はmanualOrderの順）を
+  // 引き継ぐ。旅の最初の方に地図の無い予定が続くときは、旅の中で最初に地図が出てくる予定のタイムゾーン
+  // （それも無ければ端末のタイムゾーン）を使う。
+  // 移動の予定（transport）の地図は出発地として読む（時刻は出発の時刻のため）。移動の情報に到着地の地図
+  // （travel.arriveMapUrl）が入っていれば、そのタイムゾーンを次の予定から使う。
+  // 手で直したタイムゾーン（block.tzOverride）があれば地図より優先する：
+  //   'inherit' … 直前の予定と同じにする（区切りを消す）。IANA名 … その場所の時間として読む。
+  // 前後から遠く離れたピン（findFarMapOutlierBlockIds、ピンが違うかもしれない）は、地図が無いのと
+  // 同じに扱う（地図そのもの・吹き出しはそのまま残す）。
+  function walkZones(order, byBlock, outlierIds, fallback, byArrive) {
+    byBlock = byBlock || {};
+    byArrive = byArrive || {};
+    var ownZone = function (b) {
+      if (outlierIds && outlierIds[b.id]) return '';
+      return byBlock[b.id] || '';
     };
-    // 飛行機で移動した日は、現地時刻の素直な順だと出発地（東京）と到着地（ロサンゼルス）の出来事が入り混じる
-    // （東京 20:00 の「羽田空港の地震」が、ロサンゼルス 18:50 の「ロサンゼルス国際空港」の後に来る）。
-    // その日の地図は判定違いと決めつけない（2026-09-27）
-    var planeDays = {};
-    order.forEach(function (o) { if (o.category === 'transport' && (isPlaneMove(o) || (byArrive && byArrive[o.id]))) planeDays[o.date] = true; });
-    var out = Object.assign({}, byBlock);
-    ev.forEach(function (e, k) {
-      var prev = ev[k - 1], next = ev[k + 1];
-      if (planeDays[order[e.i].date]) return;
-      if (prev && next && prev.z === next.z && e.z !== prev.z && !planeBetween(prev.i, e.i) && !planeBetween(e.i, next.i)) {
-        delete out[e.id];
-      }
+    var firstPinned = '';
+    for (var i = 0; i < order.length; i++) {
+      var z0 = ownZone(order[i]);
+      if (z0) { firstPinned = z0; break; }
+    }
+    var zones = {}, carry = firstPinned || fallback || '';
+    order.forEach(function (b) {
+      var own = ownZone(b);
+      var auto = own || carry;
+      var zone;
+      if (b.tzOverride === 'inherit') zone = carry;
+      else if (b.tzOverride) zone = b.tzOverride;
+      else zone = auto;
+      zones[b.id] = zone;
+      // 次の予定へ引き継ぐ「いまいる場所」：移動の予定に到着地の地図があれば、そちらを優先する
+      // （到着地が分かっているのに出発地のままだと、あとの地図の無い予定が出発地に巻き戻ってしまう）。
+      // それ以外は、いま決めたタイムゾーン（手で直したものも含む。取り消せば直前へ戻る＝そのまま連鎖する）。
+      carry = (b.category === 'transport' && byArrive[b.id]) ? byArrive[b.id] : zone;
     });
-    return out;
+    return zones;
   }
 
-  function segmentZones(order, byBlock, byDate, fallback, byArrive) {
+  // 予定ごとのタイムゾーンを決める（walkZonesを、時差を考えた並び順が落ち着くまで数回繰り返す）。
+  // 地図の無い予定は「直前の予定」を引き継ぐので、直前が何かは表示順（sortBlocks、時差が分かれば
+  // 世界共通の時刻の順）で決まる必要があり、時差が並び順に効くぶん、並べ直してもう一度決める。
+  function assignBlockZones(blocks, byBlock, fallback, byArrive) {
     byArrive = byArrive || {};
-    var isMove = function (b) { return b.category === 'transport'; };
-    var evidence = {};
-    order.forEach(function (b, i) { if ((!isMove(b) || isGroundMove(b, byArrive, order)) && byBlock[b.id]) evidence[i] = byBlock[b.id]; });
-    var segs = [], cur = { blocks: [], zone: '' }, lastZone = fallback || '';
-    var close = function () {
-      if (cur.blocks.length) { segs.push(cur); if (cur.zone) lastZone = cur.zone; }
-      cur = { blocks: [], zone: '' };
-    };
-    var prevWasPlaneMove = false;
-    order.forEach(function (b, i) {
-      if (!isMove(b) && isPlaneMove(b) && cur.blocks.length) close();
-      var z = evidence[i];
-      if (z) {
-        if (cur.zone && z !== cur.zone) {
-          // ④ 変わったまま続く。直前の移動の予定があればそのあとで、無ければこの予定の前で切る
-          var cut = cur.blocks.length;
-          for (var k = cur.blocks.length - 1; k >= 0; k--) {
-            if (isMove(cur.blocks[k])) { cut = k + 1; break; }
-            if (evidence[order.indexOf(cur.blocks[k])]) break;
-          }
-          var tail = cur.blocks.slice(cut);
-          cur.blocks = cur.blocks.slice(0, cut);
-          close();
-          cur.blocks = tail;
-        }
-        if (!cur.zone) cur.zone = z;
-      }
-      cur.blocks.push(b);
-      if (isMove(b) && byArrive[b.id]) {
-        // 到着地の地図が入っている移動の予定（2026-09-27〜）：推測しない。この予定までが出発地、
-        // このあとが到着地のタイムゾーン。この予定自身の地図は出発地
-        var dep = byBlock[b.id] || '';
-        // この予定の地図が到着地と同じ時差なら、それは行き先の地図（到着地の欄ができる前に入れたもの）
-        if (dep === byArrive[b.id]) dep = '';
-        if (dep && !cur.zone) cur.zone = dep;
-        close();
-        cur.zone = byArrive[b.id];
-      } else if (isMove(b)) {
-        var own = byBlock[b.id] || '';
-        if (isPlaneMove(b) && prevWasPlaneMove && cur.blocks.length === 1 && own && own !== lastZone) {
-          // 出発と到着をどちらも「飛行機」の移動の予定で入れる形（「香港から出発」→「ニューヨークに到着」）。
-          // 飛行機の予定のすぐあとの飛行機の予定で、地図が行き先のタイムゾーンなら到着の予定。新しいかたまりの
-          // 先頭にして、「ここから現地時間」を到着の予定の前に出す（以前は後ろのホテルの前に出ていた。2026-09-27）
-          cur.zone = own;
-        } else if (isPlaneMove(b)) {
-          // 飛行機の予定の地図が、いまいる場所（出発地）と同じタイムゾーンなら出発地の地図。違えば到着地の地図
-          var from = cur.zone || lastZone;
-          close(); // ①
-          if (own && own !== from) cur.zone = own;
-        } else if (own && cur.zone && own !== cur.zone) {
-          close(); // ③
-          cur.zone = own;
-        } else if (own && !cur.zone) {
-          cur.zone = own;
-        }
-      }
-      prevWasPlaneMove = isMove(b) && isPlaneMove(b);
-    });
-    close();
-    var out = {}, prevZone = '';
-    segs.forEach(function (seg) {
-      var zone = seg.zone;
-      var departsByPlane = seg.blocks.some(function (b) { return isMove(b) && isPlaneMove(b); });
-      if (!zone && departsByPlane) {
-        // 地図が無く、飛行機で出発するだけのかたまり（旅の最初の「成田から出発」など）は、いまいる場所＝
-        // 前のかたまり（旅の最初なら端末のタイムゾーン）。その日の場所は、空港の地図から到着地が入って
-        // いることがあるので使わない
-        zone = prevZone || fallback || '';
-      }
-      if (!zone) {
-        // 地図が無いかたまり：その日の場所のうち多いもの→前のかたまり→端末のタイムゾーン
-        var count = {};
-        seg.blocks.forEach(function (b) { var d = byDate[b.date]; if (d) count[d] = (count[d] || 0) + 1; });
-        Object.keys(count).forEach(function (d) { if (!zone || count[d] > count[zone]) zone = d; });
-        if (!zone) zone = prevZone || fallback || '';
-      }
-      seg.blocks.forEach(function (b) { out[b.id] = zone; });
-      prevZone = zone;
-    });
-    return out;
+    var copies = (blocks || []).map(function (b) { var c = Object.assign({}, b); delete c._offset; delete c._tz; return c; });
+    // 前後の予定から遠く離れた地図（ピン違い、isFarMapOutlier）は、時差の手がかりにしない＝地図が
+    // 無いのと同じに扱う。地図が無い予定と同じく前の予定の時差を引き継ぎ、「ここから現地時間」の
+    // 区切りを出さない。地図そのもの（吹き出し・警告表示）はそのまま残す（docs/adr/0009、2026-09-29）
+    var outlierIds = findFarMapOutlierBlockIds(copies);
+    var order = sortBlocks(copies);
+    var zones = {};
+    for (var round = 0; round < 3; round++) {
+      zones = walkZones(order, byBlock, outlierIds, fallback, byArrive);
+      applyBlockZones(order, zones);
+      var next = sortBlocks(order);
+      var same = next.every(function (b, i) { return b === order[i]; });
+      order = next;
+      if (same) break;
+    }
+    // 到着地の地図がある移動の予定は、到着地のタイムゾーンも「<id>#arrive」で返す（地図でふりかえるの到着地点用）
+    Object.keys(byArrive).forEach(function (id) { if (byArrive[id]) zones[id + '#arrive'] = byArrive[id]; });
+    return zones;
   }
 
 
@@ -1973,15 +1665,24 @@
 
   // 「この日から見たい」ためのジャンプ先。日ごとの最初の予定の少し前（再生の実時間r）。
   // 何日目かは予定の現地の日付（dayNumber）で数える。
+  // 移動の到着地点（st.arrival）は、飛行機の所要時間からの見積もりで日付が実際の並びより
+  // 先に進むことがあり（例：出発日のうちの移動なのに翌日扱いになる）、これを基準にすると
+  // 「その日いちばん最初の予定」が本当の1件目より早い、まだ前日の予定の合間の位置になって
+  // しまう（例：2日目のボタンが、実際には1日目の飛行機の到着直後を指してしまう）。
+  // 日の境目は、実際にその日の記録として残っている地点（通過点の到着ではないもの）だけで
+  // 決める（2026-09-29）。
   var REPLAY_JUMP_LEAD_SEC = 0.4;
   function replayDayStarts(tl) {
+    if (tl && tl._dayStartsCache) return tl._dayStartsCache;
     var out = [];
     (tl.stops || []).forEach(function (s) {
+      if (s.arrival) return;
       if (out.length && out[out.length - 1].dayNumber === s.dayNumber) return;
       if (out.some(function (d) { return d.dayNumber === s.dayNumber; })) return;
       out.push({ dayNumber: s.dayNumber, date: s.date, r: Math.max(0, s.r - REPLAY_JUMP_LEAD_SEC) });
     });
     if (out.length) out[0].r = 0; // 1日目は最初から
+    if (tl) tl._dayStartsCache = out;
     return out;
   }
 
@@ -2041,6 +1742,15 @@
     // 時計から数えると、香港16:20発→ニューヨーク19:05着（どちらも1日目の予定）の飛行中に香港の時計が
     // 0時を越え、「2日目」と出ていた（2026-09-27）。時計（hhmm）は現地時間のまま
     var dayNumber = cur && cur.dayNumber ? cur.dayNumber : localDay + 1;
+    // ただし上のcur（最後に「着いた」予定）だけで決めると、日ボタンで日の最初の予定の少し手前
+    // （REPLAY_JUMP_LEAD_SEC）へシークした直後は、まだその予定に着いていないので前日のまま
+    // 表示されてしまう（例：2日目のボタンを押しても、着地の判定的にはまだ1日目という結果になる）。
+    // 日の境目（replayDayStarts。到着の仮地点を除いた実際の予定を基準にした、日ごとの開始位置）を
+    // 今のrと直接比べて、シーク先そのものが指す日を優先する（2026-09-29）
+    var dayBounds = replayDayStarts(tl);
+    for (var bi = 0; bi < dayBounds.length; bi++) {
+      if (dayBounds[bi].r <= r + 1e-9) dayNumber = dayBounds[bi].dayNumber; else break;
+    }
     return {
       t: t, dayNumber: dayNumber, hhmm: minuteToHHMM(localT - localDay * 1440),
       stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here, offsetDiff: offsetDiff
@@ -3174,6 +2884,22 @@
     }, targets.length * TRIP_STAGGER_STEP_MS + TRIP_STAGGER_DUR_MS + 60);
   }
 
+  // 白本体クローンの中に、カードのタイトル・日程をそのまま重ねる（本物のタイトルは演出が終わるまで
+  // opacity:0のままなので、これが無いとシートがずっと空白の白い板に見えてしまう）。
+  function addCloneText(bodyClone, titleText, dateText) {
+    var textEl = document.createElement('div');
+    textEl.className = 'trip-open-clone-text';
+    var titleEl = document.createElement('div');
+    titleEl.className = 'trip-title';
+    titleEl.textContent = titleText || '';
+    var datesEl = document.createElement('div');
+    datesEl.className = 'trip-dates';
+    datesEl.textContent = dateText || '';
+    textEl.appendChild(titleEl);
+    textEl.appendChild(datesEl);
+    bodyClone.appendChild(textEl);
+  }
+
   // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
   // 読み込みを待たずにそのまま進める（読み込みが遅くても、演出は毎回同じ長さで終わる）。
   function openTripFromCard(cardEl, tripId, returnTo) {
@@ -3188,14 +2914,23 @@
     var leavingScrollY = window.scrollY;
     var target = computeTripDetailHeaderTarget(); // 実測はまだできないので見積もり
     // 「広がるだけ・縮まない」を保証するため、見積もりがカードの現在の大きさより小さければ
-    // カード側の大きさで底上げする（カードの内容が長くて見積もりより大きい、といったケースの保険）
+    // カード側の大きさで底上げする（カードの内容が長くて見積もりより大きい、といったケースの保険）。
+    // ただしsheetRect（白本体クローンの最終サイズ）は「タイトル・日程のシート」だけであるべきで、
+    // 詳細画面の残り全部（写真の下〜画面の下まで）ではない。カードの本体（.trip-card-info等）が
+    // シートの見積もりより多少大きくても、ここで底上げするのはあくまでシート1枚分の高さまで
+    // （行き過ぎて画面下まで覆う大きさにはならない＝2026-09-29、白い板がでかすぎる不具合の修正）。
     target.photoRect.width = Math.max(target.photoRect.width, visual.photoRect ? visual.photoRect.width : 0);
     target.photoRect.height = Math.max(target.photoRect.height, visual.photoRect ? visual.photoRect.height : 0);
     target.sheetRect.width = Math.max(target.sheetRect.width, visual.bodyRect.width);
-    target.sheetRect.height = Math.max(target.sheetRect.height, visual.bodyRect.height);
+    target.sheetRect.height = Math.max(target.sheetRect.height, Math.min(visual.bodyRect.height, target.sheetRect.height * 1.6));
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop';
+    // 暗幕の上・クローンの下に重ねる--bg色のベタ塗り。演出の後半でこれを不透明にし、シートの下に
+    // 見えている「ぼやけた一覧」を詳細画面と同じ地の色へすり替えておく（trip-open-bg-fade、
+    // style.css参照。白本体クローンがシートの高さしか覆わないぶん、その下は最後までこちらが担当）。
+    var bgFade = document.createElement('div');
+    bgFade.className = 'trip-open-bg-fade';
 
     // 写真クローン：カードに写真があるときだけ作る（無ければ白本体クローンだけが広がる演出になる）
     var clonePhoto = null;
@@ -3211,8 +2946,12 @@
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, visual.bodyRect);
     cloneBody.style.borderRadius = visual.bodyRadius;
+    var cardTitleEl = cardEl.querySelector('.trip-card-title');
+    var cardDateEl = cardEl.querySelector('.trip-card-date');
+    addCloneText(cloneBody, cardTitleEl ? cardTitleEl.textContent : '', cardDateEl ? cardDateEl.textContent : '');
 
     document.body.appendChild(backdrop);
+    document.body.appendChild(bgFade);
     if (clonePhoto) document.body.appendChild(clonePhoto);
     document.body.appendChild(cloneBody);
 
@@ -3225,10 +2964,17 @@
       if (finished || !minDone || !screenReady) return;
       finished = true;
       clearTimeout(safetyTimer);
+      // 順番が重要：本物の詳細画面をフェード無しで即座に見せてから、同じフレームで暗幕・
+      // ベタ塗り・クローンを消す。暗幕をフェードアウトさせながら後から消すと、消えるまでの
+      // 数フレームだけ本物の詳細画面の上に暗幕（ぼかし＋暗く）が乗ったままになり、詳細画面が
+      // ぼやけて見える不具合になる（2026-09-29修正）。ここではもう暗幕・クローンは不要な絵
+      // （本物と同じ絵の上に重なっていただけ）なので、フェードさせずに即除去してよい。
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
-      backdrop.classList.remove('show');
-      setTimeout(function () { backdrop.remove(); if (clonePhoto) clonePhoto.remove(); cloneBody.remove(); }, 260);
+      backdrop.remove();
+      bgFade.remove();
+      if (clonePhoto) clonePhoto.remove();
+      cloneBody.remove();
     }
     // 安全策：旅行が見つからない等でopenTripが失敗すると（catch側でalert→goHomeへ）、screenReadyが
     // 一生falseのままになり得るため、一定時間で強制的に後片付けする（暗幕・クローンが残り続けて
@@ -3238,6 +2984,7 @@
       finished = true;
       unfreezeScreen(leavingScreen);
       backdrop.remove();
+      bgFade.remove();
       if (clonePhoto) clonePhoto.remove();
       cloneBody.remove();
     }, 10000);
@@ -3255,6 +3002,7 @@
     requestAnimationFrame(function () {
       void cloneBody.offsetHeight; // reflow。ここまでの初期位置をブラウザに確定させてから終了位置へ動かす
       backdrop.classList.add('show');
+      bgFade.classList.add('show'); // 演出後半（CSS側のtransition-delayで225ms〜450ms）でグレーへ
       if (clonePhoto) {
         setCloneRect(clonePhoto, target.photoRect);
         clonePhoto.style.borderRadius = '0';
@@ -3287,6 +3035,14 @@
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop show';
+    // 開くときと違い、抜ける画面（frozenになる旅の詳細）はもともと本物の詳細画面そのものなので、
+    // シートの下は最初から本物の--bg色（グレー＋カード）になっている。そのためbg-fadeは「戻る」開始時
+    // から不透明（=グレーが透けて見える状態）にしておき、白本体クローンが縮んでいくあいだも
+    // その下がずっと正しいグレーであり続けるようにする（trip-open-bg-fadeにtransitionは無くても
+    // クラスの有無だけで即座に切り替わる。フェードが要るのは開くときの「ぼやけた一覧→グレー」だけで、
+    // 戻るときは最初からグレーなのでフェードではなく最初からshowでよい）。
+    var bgFade = document.createElement('div');
+    bgFade.className = 'trip-open-bg-fade show';
 
     var clonePhoto = null;
     if (start.hasPhoto) {
@@ -3300,8 +3056,15 @@
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, start.sheetRect);
     cloneBody.style.borderRadius = '20px 20px 0 0';
+    // 本物のタイトル・日程クローンを重ねておく（本物の詳細画面はこのあとdoNavigate()で消えるので、
+    // 消える前に今の文字を読み取っておく）。カードへ戻り着くまでこの文字のまま縮む＝カードの文字と
+    // 一瞬で入れ替わる（revealEnteringScreenの瞬間）。
+    var detailTitleEl = $('#tripTitle');
+    var detailDatesEl = $('#tripDates');
+    addCloneText(cloneBody, detailTitleEl ? detailTitleEl.textContent : '', detailDatesEl ? detailDatesEl.textContent : '');
 
     document.body.appendChild(backdrop);
+    document.body.appendChild(bgFade);
     if (clonePhoto) document.body.appendChild(clonePhoto);
     document.body.appendChild(cloneBody);
 
@@ -3333,9 +3096,13 @@
     });
 
     setTimeout(function () {
+      // 開くときと同じ理由で、本物（ホーム／マイログ）を即座に見せるのと同じフレームで暗幕・
+      // ベタ塗り・クローンを消す（暗幕の消滅を450msのtransitionに任せて別タイミングで消すと、
+      // 本物がぼやけて見える数フレームができてしまう。2026-09-29修正）。
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
       backdrop.remove();
+      bgFade.remove();
       if (clonePhoto) clonePhoto.remove();
       cloneBody.remove();
     }, TRIP_OPEN_ANIM_MS);
@@ -4353,7 +4120,7 @@
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       rememberTrip(state.trip);
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
-      state.zoneInfo = { byBlock: {}, byDate: {} };
+      state.zoneInfo = { byBlock: {} };
       screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
       state.tripReturnScreen = (returnTo === 'visited' || returnTo === 'mylog') ? returnTo : null;
       showScreen('tripDetail');
@@ -5740,13 +5507,146 @@
     } catch (e) { return tz; }
   }
 
+  // 「🕒 ここから現地時間」の区切り。タップすると時差を手で直せる（openTzOverrideSheet、2026-09-29〜）
   function renderZoneDivider(block, base) {
-    var div = document.createElement('div');
-    div.className = 'zone-divider';
+    var div = document.createElement('button');
+    div.type = 'button';
+    div.className = 'zone-divider' + (block.tzOverride ? ' tz-overridden' : '');
     var from = base._tz === 'Asia/Tokyo' ? '日本' : '出発地';
     div.textContent = '🕒 ここから現地時間（' + zoneDisplayName(block._tz, block.date) + '・' + from + 'との時差 ' +
       Core.offsetDiffText(block._offset - base._offset) + '）';
+    div.addEventListener('click', function () { openTzOverrideSheet(block.id); });
     return div;
+  }
+
+  // ---------- 時差の区切りを手で直す（docs/adr/0009。2026-09-29〜） ----------
+  // 自動（地図の場所だけで決める）で間違っているときだけ、その予定1件の時差を手で直せる。
+  // オーナー方針：「時差のところは人がいじれなくなっているので慎重に。間違っていたら削除くらいは
+  // できてもいい。時間を変えられるのも、やりすぎない範囲で」（2026-09-29）。
+  // 「その他…」で選べる主要なタイムゾーン（約20）。地図から出てこない場所へ行ったときの保険。
+  var TZ_OVERRIDE_COMMON = [
+    { tz: 'Asia/Tokyo', label: '日本（東京）' },
+    { tz: 'Asia/Seoul', label: '韓国（ソウル）' },
+    { tz: 'Asia/Shanghai', label: '中国（上海）' },
+    { tz: 'Asia/Hong_Kong', label: '香港' },
+    { tz: 'Asia/Taipei', label: '台湾（台北）' },
+    { tz: 'Asia/Singapore', label: 'シンガポール' },
+    { tz: 'Asia/Bangkok', label: 'タイ（バンコク）' },
+    { tz: 'Asia/Dubai', label: 'ドバイ' },
+    { tz: 'Asia/Kolkata', label: 'インド' },
+    { tz: 'Europe/London', label: 'イギリス（ロンドン）' },
+    { tz: 'Europe/Paris', label: 'フランス（パリ）' },
+    { tz: 'Europe/Berlin', label: 'ドイツ（ベルリン）' },
+    { tz: 'Europe/Rome', label: 'イタリア（ローマ）' },
+    { tz: 'Europe/Moscow', label: 'ロシア（モスクワ）' },
+    { tz: 'America/New_York', label: 'アメリカ東部（ニューヨーク）' },
+    { tz: 'America/Chicago', label: 'アメリカ中部（シカゴ）' },
+    { tz: 'America/Denver', label: 'アメリカ山岳部（デンバー）' },
+    { tz: 'America/Los_Angeles', label: 'アメリカ西部（ロサンゼルス）' },
+    { tz: 'Pacific/Honolulu', label: 'ハワイ' },
+    { tz: 'America/Sao_Paulo', label: 'ブラジル（サンパウロ）' },
+    { tz: 'Australia/Sydney', label: 'オーストラリア（シドニー）' },
+    { tz: 'Pacific/Auckland', label: 'ニュージーランド（オークランド）' }
+  ];
+
+  var tzOverrideTarget = null;
+
+  // この旅行に出てくる地図のタイムゾーン（重複なし。地図が求まった予定＝state.zoneInfo.byBlockの値）
+  function tripPinnedZones() {
+    var info = state.zoneInfo || {};
+    var seen = {}, out = [];
+    Object.keys(info.byBlock || {}).forEach(function (id) {
+      var tz = info.byBlock[id];
+      if (tz && !seen[tz]) { seen[tz] = true; out.push(tz); }
+    });
+    return out;
+  }
+
+  // タイムゾーン名から都市名らしきものを作る（Asia/Los_Angeles → Los Angeles）。選択肢の見出し用
+  function tzCityLabel(tz) {
+    var parts = (tz || '').split('/');
+    return parts[parts.length - 1].replace(/_/g, ' ');
+  }
+
+  function openTzOverrideSheet(blockId) {
+    var block = (state.blocks || []).filter(function (b) { return b.id === blockId; })[0];
+    if (!block) return;
+    tzOverrideTarget = blockId;
+    $('#tzOverrideStatus').textContent = '';
+    renderTzOverrideMain(block);
+    $('#tzOverrideSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+
+  function closeTzOverrideSheet() {
+    $('#tzOverrideSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+    tzOverrideTarget = null;
+  }
+
+  function renderTzOverrideMain(block) {
+    $('#tzOverrideCustom').hidden = true;
+    $('#tzOverrideSheetNote').textContent =
+      '自動では、地図の場所だけで時差を決めています。間違っているときだけ、この予定の時差を手で直せます。';
+    var opts = $('#tzOverrideOptions');
+    opts.innerHTML = '';
+    var addBtn = function (text, onClick) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tz-override-opt';
+      b.textContent = text;
+      b.addEventListener('click', onClick);
+      opts.appendChild(b);
+      return b;
+    };
+    addBtn('この時差を取り消す（前の予定と同じ時間にする）', function () { saveTzOverride(block.id, 'inherit'); });
+    addBtn('タイムゾーンを選ぶ', function () { renderTzOverrideZoneList(block); });
+    if (block.tzOverride) addBtn('自動に戻す', function () { saveTzOverride(block.id, ''); });
+  }
+
+  function renderTzOverrideZoneList(block) {
+    $('#tzOverrideCustom').hidden = true;
+    var opts = $('#tzOverrideOptions');
+    opts.innerHTML = '';
+    var zones = tripPinnedZones().filter(function (tz) { return tz !== 'Asia/Tokyo'; });
+    zones = ['Asia/Tokyo'].concat(zones);
+    zones.forEach(function (tz) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tz-override-opt' + (block.tzOverride === tz ? ' on' : '');
+      btn.textContent = tz === 'Asia/Tokyo' ? '日本' : tzCityLabel(tz);
+      btn.addEventListener('click', function () { saveTzOverride(block.id, tz); });
+      opts.appendChild(btn);
+    });
+    var other = document.createElement('button');
+    other.type = 'button';
+    other.className = 'tz-override-opt';
+    other.textContent = 'その他…';
+    other.addEventListener('click', function () { showTzOverrideCustomSelect(block); });
+    opts.appendChild(other);
+  }
+
+  function showTzOverrideCustomSelect(block) {
+    var wrap = $('#tzOverrideCustom');
+    var sel = $('#tzOverrideCustomSelect');
+    sel.innerHTML = TZ_OVERRIDE_COMMON.map(function (z) {
+      return '<option value="' + escapeHtml(z.tz) + '"' + (block.tzOverride === z.tz ? ' selected' : '') + '>' + escapeHtml(z.label) + '</option>';
+    }).join('');
+    wrap.hidden = false;
+    $('#btnApplyTzOverrideCustom').onclick = function () { saveTzOverride(block.id, sel.value); };
+  }
+
+  function saveTzOverride(blockId, value) {
+    if (!state.trip) return;
+    var status = $('#tzOverrideStatus');
+    status.textContent = '保存中…';
+    api('/blocks/' + encodeURIComponent(blockId), 'PATCH', { tzOverride: value || '' })
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        closeTzOverrideSheet();
+        renderDaySection();
+      })
+      .catch(function () { status.textContent = '保存できませんでした。もう一度お試しください。'; });
   }
 
   // ---------- 時差（docs/adr/0009） ----------
@@ -5758,8 +5658,8 @@
 
   function applyTripZones() {
     if (!state.trip) return;
-    var info = state.zoneInfo || { byBlock: {}, byDate: {} };
-    Core.applyBlockZones(state.blocks, Core.assignBlockZones(state.blocks, info.byBlock, info.byDate, DEVICE_TZ, info.byArrive));
+    var info = state.zoneInfo || { byBlock: {} };
+    Core.applyBlockZones(state.blocks, Core.assignBlockZones(state.blocks, info.byBlock, DEVICE_TZ, info.byArrive));
   }
 
   function timezoneAt(lat, lng, cache) {
@@ -5846,9 +5746,9 @@
         });
       }, Promise.resolve());
     }).then(function () {
-      // ③ タイムゾーン
+      // ③ タイムゾーン（記録の地図の場所だけで決める。docs/adr/0009、2026-09-29）
       if (!stillHere()) return;
-      var byBlock = {}, byDate = {}, byArrive = {};
+      var byBlock = {}, byArrive = {};
       // 移動の予定の到着地の地図（2026-09-27〜）。座標が保存されていればそれを、無ければ/geocodeで求める
       var arriveJobs = (state.blocks || []).map(function (b) {
         var a = Core.travelArrival(b);
@@ -5861,16 +5761,14 @@
           return timezoneAt(c.lat, c.lng, tzCache).then(function (tz) { if (tz) byArrive[b.id] = tz; });
         });
       }).filter(Boolean);
-      var jobs = arriveJobs.concat((state.days || []).filter(function (d) { return typeof d.lat === 'number' && typeof d.lon === 'number'; })
-        .map(function (d) { return timezoneAt(d.lat, d.lon, tzCache).then(function (tz) { if (tz) byDate[d.date] = tz; }); })
-        .concat(Object.keys(coordsByBlock).map(function (id) {
-          var c = coordsByBlock[id];
-          return timezoneAt(c.lat, c.lng, tzCache).then(function (tz) { if (tz) byBlock[id] = tz; });
-        })));
+      var jobs = arriveJobs.concat(Object.keys(coordsByBlock).map(function (id) {
+        var c = coordsByBlock[id];
+        return timezoneAt(c.lat, c.lng, tzCache).then(function (tz) { if (tz) byBlock[id] = tz; });
+      }));
       return Promise.all(jobs).then(function () {
         saveCaches();
         if (!stillHere()) return;
-        state.zoneInfo = { byBlock: byBlock, byDate: byDate, byArrive: byArrive };
+        state.zoneInfo = { byBlock: byBlock, byArrive: byArrive };
         if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
       });
     }).then(function () { return backfillLodgingPlaceNames(); });
@@ -5943,11 +5841,13 @@
     });
     state.manualDay = !!dayDate && (hasManual || zoneChange);
     blocks.forEach(function (block) {
+      var dividerShown = false;
       if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
         el.appendChild(renderZoneDivider(block, base));
+        dividerShown = true;
       }
       if (typeof block._offset === 'number') prevOffset = block._offset;
-      el.appendChild(renderBlockEl(block));
+      el.appendChild(renderBlockEl(block, dividerShown));
     });
     if (state.manualDay) {
       // 手で並べた日は「自動の並びに戻す」、まだなら並べ替えられることの案内を出す
@@ -5993,15 +5893,11 @@
   }
 
   function zoneDiagnosticsText(date) {
-    var info = state.zoneInfo || { byBlock: {}, byDate: {} };
-    var zones = Core.assignBlockZones(state.blocks, info.byBlock, info.byDate, DEVICE_TZ, info.byArrive);
+    var info = state.zoneInfo || { byBlock: {} };
+    var zones = Core.assignBlockZones(state.blocks, info.byBlock, DEVICE_TZ, info.byArrive);
     var short = function (tz) { return tz ? String(tz).replace(/^.*\//, '') : '-'; };
     var dates = (state.days || []).map(function (d) { return d.date; });
-    var lines = ['device=' + DEVICE_TZ,
-      'day=' + date + ' dayZone=' + short((info.byDate || {})[date]), 'loaded=' + !!info.byArrive];
-    // 旅行全体を出す（その日だけでは再現できなかったため。ほかの日の予定も時差の決め方に効く）
-    var byDate = info.byDate || {};
-    lines.push('days=' + Object.keys(byDate).sort().map(function (d) { return d.slice(5) + ':' + short(byDate[d]); }).join(' '));
+    var lines = ['device=' + DEVICE_TZ, 'day=' + date, 'loaded=' + !!info.byArrive];
     Core.sortBlocks(state.blocks).forEach(function (b, i) {
       var pe = Core.replayPlaceEntry(b), arr = Core.travelArrival(b);
       lines.push([
@@ -6010,6 +5906,7 @@
         'own=' + short((info.byBlock || {})[b.id]),
         'arr=' + (arr ? (typeof arr.lat === 'number' ? '座標' : 'url') + '/' + short((info.byArrive || {})[b.id]) + '/' + (arr.time || '') : 'なし'),
         'mv=' + (b.moveMinutes || ''), 'c=' + (b.createdAt || '').slice(5, 16),
+        'ov=' + (b.tzOverride || ''),
         '→' + short(zones[b.id])
       ].join(' '));
     });
@@ -6045,7 +5942,7 @@
   var ALBUM_PLAY_ICON = '<svg width="26" height="26" viewBox="0 0 20 20" fill="currentColor"><path d="M6.5 4.5v11l9-5.5z"/></svg>';
   var SETTLE_ARROW_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h13M11 6l5 4-5 4"/></svg>';
 
-  function renderBlockEl(block) {
+  function renderBlockEl(block, dividerShown) {
     var wrap = document.createElement('div');
     wrap.className = 'block';
     wrap.dataset.blockId = block.id;
@@ -6068,6 +5965,18 @@
       openBlockForm(block);
     });
     wrap.appendChild(head);
+
+    // 時差を手で直している（block.tzOverride）が、区切り（renderZoneDivider）が出ない予定
+    // （直前と同じ時差に取り消した・区切りが元から出ない場所）にも、直したことが分かる印を出す
+    // （2026-09-29〜。押すとdivierと同じ手直しシートを開ける）
+    if (block.tzOverride && !dividerShown) {
+      var tzNote = document.createElement('button');
+      tzNote.type = 'button';
+      tzNote.className = 'tz-overridden-note tz-overridden-note-inline';
+      tzNote.textContent = '時差を手で直しています';
+      tzNote.addEventListener('click', function (e) { e.stopPropagation(); openTzOverrideSheet(block.id); });
+      wrap.appendChild(tzNote);
+    }
 
     var entriesWrap = document.createElement('div');
     entriesWrap.className = 'entries';
@@ -9751,6 +9660,8 @@
     $('#btnManageBilling').addEventListener('click', startBillingPortal);
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
     initSocial();
+    $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
+    $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });
 
     // ---------- ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール。2026-09-28〜） ----------
     // タップした瞬間だけ.popを付けてアイコンのバウンス演出をやり直させる（連続タップでも毎回動くよう、

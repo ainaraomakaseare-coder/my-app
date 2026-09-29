@@ -388,7 +388,12 @@ a:hover { text-decoration: underline; }
    暗幕（backdrop）はぼかし＋暗くするだけの装飾要素で、クリックは透過させない（pointer-events: none。
    演出中は裏の一覧を操作させたくないが、専用の要素にせずJS側で一覧のfreeze中は元画面が
    position:fixedで前面に出ないようにしている）。詳細画面そのものは演出中は常に非表示のままで、
-   クローンが最終位置に達した瞬間だけ即座に（フェード無しで）その下に見せる。 */
+   クローンが最終位置に達した瞬間だけ即座に（フェード無しで）その下に見せる。
+   2026-09-29 追記：白本体クローンの最終サイズは「タイトル・日程のシート（.trip-cover-text）」だけの
+   高さに揃える（シートの下、詳細画面の残りは--bgのグレー地）。そのため、シートの下に見えている
+   一覧（ぼかし＋暗幕）を、アニメーション後半でシートと同じ--bg色のベタ塗りへフェードさせておく
+   （trip-open-bg-fade）。こうしないと、クローンが最終位置に収まった直後の一瞬だけ「シートの下は
+   ぼやけた一覧のまま」という継ぎ目が見えてしまう。 */
 .trip-open-backdrop {
   position: fixed; inset: 0; z-index: 490; pointer-events: none;
   background: rgba(10, 12, 16, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px);
@@ -397,6 +402,16 @@ a:hover { text-decoration: underline; }
 .trip-open-backdrop.show {
   background: rgba(10, 12, 16, 0.3); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
+/* 暗幕のすぐ上（クローンより下）に重ねる、詳細画面と同じ--bg色のベタ塗り。演出の後半（225ms〜450ms）
+   だけ透明→不透明にフェードし、「ぼやけた一覧」を「詳細画面の地の色」へすり替える。見える瞬間には
+   常にどちらか一方しか透けて見えないよう、暗幕とは逆方向（reveal時に暗幕は消え、これは残ったまま
+   本物の背景に切り替わる）で使う。 */
+.trip-open-bg-fade {
+  position: fixed; inset: 0; z-index: 491; pointer-events: none;
+  background: var(--bg); opacity: 0;
+  transition: opacity .225s ease .225s;
+}
+.trip-open-bg-fade.show { opacity: 1; }
 /* 写真クローン・白本体クローンに共通：位置・大きさ・角丸をひとつのtransitionでなめらかに動かす
    （gentle springのcubic-bezier。450msはTRIP_OPEN_ANIM_MSと揃える） */
 .trip-open-clone {
@@ -411,9 +426,18 @@ a:hover { text-decoration: underline; }
 /* 白い本体クローンは写真クローンより手前（写真の上に16px重なる白いシートを表現するため） */
 .trip-open-clone-body {
   background: var(--card); box-shadow: var(--card-shadow); z-index: 501;
+  position: relative;
 }
+/* 白本体クローンの中に、カードのタイトル・日程をそのまま重ねておく（本物のタイトルは演出が終わるまで
+   opacity:0のままなので、これが無いとシートが遷移中ずっと空白に見える）。本物が見えた瞬間
+   （revealEnteringScreen）にクローンごと消えるので、フェードは不要（クローンの文字→本物の文字が
+   同じ位置に一瞬で入れ替わるだけ）。 */
+.trip-open-clone-text {
+  position: absolute; left: 0; right: 0; top: 0; padding: 18px 16px 4px; pointer-events: none;
+}
+.trip-open-clone-text .trip-title { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) {
-  .trip-open-backdrop, .trip-open-clone { transition: none; }
+  .trip-open-backdrop, .trip-open-bg-fade, .trip-open-clone { transition: none; }
 }
 
 /* ボタン（参加する・招待・アルバム・精算）が画面幅より広いと、ページ全体が横に少しずれて動いていた。
@@ -1053,11 +1077,23 @@ input[type="text"], input[type="url"], input[type="search"], input[type="email"]
 .map-zoom { position: absolute; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
 .map-preview .map-zoom button { align-self: auto; width: 36px; height: 36px; border: none; border-radius: 8px; background: var(--card); color: var(--ink); font-size: 20px; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.25); cursor: pointer; }
 
-/* ---------- 時差の区切り（docs/adr/0009） ---------- */
+/* ---------- 時差の区切り（docs/adr/0009。2026-09-29〜：タップで手直しできる） ---------- */
 .zone-divider {
-  margin: 6px 0 10px; padding: 8px 12px; border-radius: var(--radius-control);
+  display: block; width: 100%; margin: 6px 0 10px; padding: 8px 12px; border-radius: var(--radius-control);
   background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 12.5px; font-weight: 700; text-align: center;
+  border: none; font-family: inherit; cursor: pointer;
 }
+.zone-divider.tz-overridden { background: var(--warn-soft-bg, #FFF3D6); color: var(--warn-deep, #8a5a00); }
+.tz-overridden-note { display: block; width: 100%; text-align: center; font-size: 11px; color: var(--ink-muted); margin: -6px 0 8px; background: none; border: none; font-family: inherit; cursor: pointer; }
+.tz-overridden-note-inline { margin: -2px 0 6px; text-align: left; padding: 0 2px; }
+.tz-override-options { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 12px; }
+.tz-override-opt {
+  text-align: left; padding: 10px 12px; border-radius: var(--radius-control); border: 1px solid var(--line, #e3e3e6);
+  background: var(--card); color: var(--ink); font-size: 14px; cursor: pointer;
+}
+.tz-override-opt.on { border-color: var(--accent-deep); background: var(--accent-soft-bg); color: var(--accent-deep); font-weight: 700; }
+.tz-override-custom { display: flex; gap: 8px; align-items: center; margin: 4px 0 12px; }
+.tz-override-custom select { flex: 1; }
 
 /* ---------- 写真の並べ替え（長押し→ドラッグ） ---------- */
 .photo-preview .ph { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; transition: transform 0.12s ease; }

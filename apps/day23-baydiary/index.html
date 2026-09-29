@@ -255,7 +255,7 @@ button,input,select,textarea{font:inherit}button,.btn,.tab,select{min-height:44p
  <div class="feature-actions"><button class="btn btn-main" id="memo-analyze">AIで読み取る</button><button class="btn" id="memo-cancel-ai" hidden>読み取りを中止</button></div><p id="memo-status" role="status" class="settings-help"></p>
  <details><summary>別のAIで変換したJSONを使う</summary><p class="settings-help">変換用プロンプトをコピーしてAIに渡し、返ってきたJSONを次の欄に貼り付けられます。</p><button class="btn btn-sm" id="memo-copy-prompt">変換用プロンプトをコピー</button><textarea id="memo-prompt" rows="4" readonly hidden aria-label="変換用プロンプト"></textarea></details>
  </div>
- <div class="card memo-step"><h3>2. JSONを確認・修正する</h3><p class="settings-help">AIの読み取り結果はここに表示されます。JSONファイルも読み込めます。修正したら「取込内容を確認」を押してください。</p><input id="memo-json-file" type="file" accept=".json,application/json" aria-label="試合JSONファイル"><label for="memo-json" class="input-label">試合データ（JSON）</label><textarea id="memo-json" rows="7" spellcheck="false" placeholder='{"games":[...]}'></textarea><div class="feature-actions"><button class="btn" id="memo-preview">取込内容を確認</button><button class="btn" id="memo-download">JSONを保存</button></div></div>
+ <div class="card memo-step"><h3>2. JSONを確認・修正する</h3><p class="settings-help">AIの読み取り結果はここに表示されます。JSONファイルも読み込めます。修正したら「取込内容を確認」を押してください。</p><input id="memo-json-file" type="file" accept=".json,application/json" aria-label="試合JSONファイル"><label for="memo-json" class="input-label">試合データ（JSON）</label><textarea id="memo-json" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off" placeholder='{"games":[...]}'></textarea><div class="feature-actions"><button class="btn" id="memo-preview">取込内容を確認</button><button class="btn" id="memo-download">JSONを保存</button></div></div>
  <div class="card memo-step"><h3>3. 確認して、まとめて登録</h3><p class="settings-help">既存の記録・写真はそのまま残ります。重複候補は初期選択しません。日付などが足りない行はJSONを修正して再確認してください。</p><div id="memo-review"></div><p id="memo-review-status" role="status" class="settings-help"></p><button class="btn btn-main" id="memo-import" disabled>選択した記録を追加</button></div>
 </section>
 <dialog id="share-dialog" aria-labelledby="share-title">
@@ -583,8 +583,21 @@ function playerTally(games, year){
 
 function parseMemoJSON(text){
   if(typeof text!=="string" || text.length>500000) throw new Error("JSONは50万文字以内にしてください。");
-  var raw=text.trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
-  var data;try{data=JSON.parse(raw);}catch(e){throw new Error("JSONを読み取れません。かっこ・カンマ・引用符を確認してください。");}
+  var trimmed=text.trim();
+  if(!trimmed)throw new Error("JSONの欄が空です。手順1の「変換用プロンプトをコピー」でAIに変換してもらい、返ってきたJSONをこの欄に貼り付けてください。");
+  // AIの返答は「以下がJSONです」などの前置きや```json```の囲みが付きがちなので、JSON部分だけを取り出す
+  var fence=trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  var raw=fence?fence[1].trim():trimmed;
+  var start=raw.search(/[\[{［｛]/);
+  if(start<0)throw new Error("JSONが見つかりません。メモの文章そのものではなく、AIが変換した {\"games\":[...]} の形の結果を貼り付けてください。");
+  var end=Math.max(raw.lastIndexOf("}"),raw.lastIndexOf("]"),raw.lastIndexOf("｝"),raw.lastIndexOf("］"));
+  raw=raw.slice(start,end+1);
+  var data;try{data=JSON.parse(raw);}catch(e){
+    // iPhoneのキーボードで編集すると " が “ ” に変わるなど、見た目では気づけない崩れを直してから読み直す
+    var fixed=raw.replace(/[“”„″]/g,'"').replace(/[‘’]/g,"'").replace(/[｛]/g,"{").replace(/[｝]/g,"}").replace(/[［]/g,"[").replace(/[］]/g,"]")
+      .replace(/([{,]\s*)：/g,"$1:").replace(/"\s*：/g,'":').replace(/[，](?=\s*["{\[\d-])/g,",").replace(/,\s*([}\]])/g,"$1");
+    try{data=JSON.parse(fixed);}catch(e2){throw new Error("JSONを読み取れません。AIの返答をすべてコピーし直すか、かっこ・カンマ・引用符を確認してください。");}
+  }
   var games=Array.isArray(data)?data:data&&data.games;
   if(!Array.isArray(games))throw new Error('「games」の配列が必要です。');
   if(games.length>500)throw new Error("一度に取り込めるのは500試合までです。");
