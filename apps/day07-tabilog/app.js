@@ -1732,6 +1732,17 @@
       // 最後の予定は、深夜でも時計が翌日（存在しない日）にはみ出さないよう、その日の23:59までにとどめる
       var gap = next ? Math.max(0, next.t - st.t) : Math.max(0, Math.min(REPLAY_DWELL_MIN, (st.dayIndex + 1) * 1440 - 1 - st.t));
       var moving = !!(next && legArrivingAt[i + 1]);
+      // 移動の到着地点（travel.arriveLat/arriveLngから作った仮の地点、st.arrival）は、地図上の点・区間の
+      // 到着先としては使うが、吹き出し（エピソード・写真）も到着の一時停止も出さず、乗り物がそのまま
+      // 通り過ぎるだけにする（オーナーの指示。到着の時刻・時差の見積もり自体はreplayStopsのまま変えない。
+      // 2026-09-29）
+      if (st.arrival) {
+        st.rCaptionStart = r;
+        st.rDwellEnd = r;
+        if (!next) return;
+        r += moving ? legArrivingAt[i + 1].moveSec : Math.min(gap * REPLAY_SEC_PER_MIN, REPLAY_IDLE_CAP_SEC);
+        return;
+      }
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
       // 着いてすぐではなく、カメラが収まるのを少し待ってから吹き出し（写真・エピソード）を出す（2026-09-27）
       r += REPLAY_ARRIVAL_PAUSE_SEC;
@@ -1982,8 +1993,9 @@
     var s = tl.stops;
     var idx = -1;
     for (var i = 0; i < s.length; i++) { if (s[i].r <= r + 1e-9) idx = i; }
-    // 吹き出しは、着いた瞬間（idxになった瞬間）ではなく、少し間を置いた rCaptionStart から出す（2026-09-27）
-    var captionIndex = idx >= 0 && r >= s[idx].rCaptionStart - 1e-9 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
+    // 吹き出しは、着いた瞬間（idxになった瞬間）ではなく、少し間を置いた rCaptionStart から出す（2026-09-27）。
+    // 移動の到着地点（st.arrival）は吹き出しを出さず通り過ぎるだけなので対象にしない（2026-09-29）
+    var captionIndex = idx >= 0 && !s[idx].arrival && r >= s[idx].rCaptionStart - 1e-9 && r <= s[idx].rDwellEnd + 1e-9 ? idx : -1;
 
     var icon = null;
     for (var k = 0; k < tl.legs.length; k++) {

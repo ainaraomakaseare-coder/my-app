@@ -199,3 +199,10 @@ track-length 489772mを確認済み）ため、車・徒歩・自転車と同じ
   - `app.js`側に`replayCameraMove(target, startFn)`を追加し、区間のflyToBounds・到着時のreplayCenterOnの呼び出しをすべてこれ経由にした。動かしたい先が今の目的地（`replay.cameraTarget`）とほぼ同じならstartFnを呼ばず、直前にアニメーションを始めてから`REPLAY_CAMERA_DEBOUNCE_MS`（600ms）未満のときも始め直さない。`resetReplayCamera`・`seekReplayTo`でも`replay.cameraTarget`／`cameraTargetAt`を合わせて更新する。
 - 実データで確認した効果（`Core.replayStops`／`Core.buildReplayTimeline`の出力を使い、`renderReplay`のカメラ判断を模したnodeスクリプトで検証）：直す前は「羽田→LAX（区間、実際の飛行機）」の直後に、LAXと同じ座標の地点へ着くたびに`replayCenterOn`が3回（ロサンゼルス国際空港・ユニオンステーション到着直前・ファンゾーン）呼ばれ直していたが、直した後はいずれも「もう合っている」としてスキップされ、実際にカメラが動くのは区間の切り替わり（羽田→LAX、LAX→ユニオンステーション、その先の本当の移動）のときだけになった。
 - `node --check`・`test/data.test.js`（同じ場所が続く予定は移動にしないこと、`cameraMoveNeeded`の単体テストを追加）・Workerの単体テスト（8ファイルすべて）は通ることを確認済み。ブラウザでの目視確認は、前回同様サインインポップアップが残っていて自動操作ができなかったため、nodeでの検証にとどめた。
+
+**修正（2026-09-29）移動の到着地点は吹き出しを出さずに通過するだけにする**：移動の予定に「到着地の地図」（`travel.arriveLat`／`arriveLng`）を入れると、`replayStops`がその到着を仮の地点（`<blockId>#arrive`、`arrival: true`）として1つ足す（上の「移動の予定に『到着地の地図＋到着時刻』を入れる」の追記を参照）。この仮の地点にも、ふつうの地点と同じように吹き出し（エピソード・写真）と到着の一時停止（`REPLAY_ARRIVAL_PAUSE_SEC`）が出ていたが、オーナーからは「乗り物が到着地点へ移動して、そのまま通り過ぎるだけにしたい（吹き出しは要らない）」との指示があった。
+
+- `buildReplayTimeline`のキーフレーム作りで、`st.arrival`な地点は着いた瞬間（`st.r`）に`rCaptionStart`・`rDwellEnd`を同じ値のまま据え置き、`REPLAY_ARRIVAL_PAUSE_SEC`・写真の枚数に応じた吹き出しの表示秒数・滞在（dwell）を一切足さずに、次の区間（moving）または空き時間（idle）へそのまま進む。地点自体は`located:true`のまま残るので、区間（leg）の到着先・カメラが合わせる先としては今までどおり使われる。
+- `replayStateAt`の吹き出し判定（`captionIndex`）にも、`s[idx].arrival`なら対象にしないガードを明示的に追加した（`rCaptionStart===rDwellEnd`で窓がほぼ無くなる分の保険）。
+- 到着の時刻・時差の見積もり（`replayStops`の`travelArrival`まわり）は変更していない。
+- `test/data.test.js`に、既存の「移動の予定に到着地の地図＋到着時刻を入れる」テストのfixtureを再利用し、到着地点が`arrival:true`かつ地図上の点になること、`rCaptionStart`／`rDwellEnd`が着いた瞬間の`r`と同じになること、再生のどのキーフレームでもその地点の`captionIndex`が出ないことを追加した。実データ（「ワールドカップ、大谷観戦旅」）でも、フライトの到着（LAX）・車の到着（ユニオンステーション）の2つの仮の地点で、`rCaptionStart`・`rDwellEnd`が`r`と一致し、再生を通じて`captionIndex`が一度も出ないことを確認済み。`node --check`・`test/data.test.js`・Workerの単体テスト（8ファイルすべて）は通ることを確認済み。

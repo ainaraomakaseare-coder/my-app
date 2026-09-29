@@ -1173,6 +1173,22 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
     entries: [{ id: 'e3', travel: { arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=34.73,135.50' } }] }];
   var st3 = T.replayStops({ startDate: '2026-04-01', endDate: '2026-04-01' }, noTime);
   eq('到着時刻なし：移動時間90分の後・見積もり扱い・ラベルは「到着」', [st3[1].minute, st3[1].estimated, st3[1].label], [11 * 60 + 30, true, '到着']);
+
+  // 移動の到着地点（fl#arrive）は、地図上の点・区間の到着先としては使うが、吹き出し（エピソード・写真）も
+  // 到着の一時停止も出さず、乗り物がそのまま通り過ぎるだけにする（オーナーの指示、2026-09-29）
+  var arriveCoords = { hnd: TK }; // 上のzと同じ組み立て（フライトは日本時間、到着はLA）
+  var zArr = T.assignBlockZones(bs, arriveCoords, {}, TK, { fl: LA });
+  var bsArr = T.applyBlockZones(bs.map(function (b) { return Object.assign({}, b); }), zArr);
+  var stArr = T.replayStops({ startDate: '2026-06-26', endDate: '2026-06-27' }, bsArr);
+  var arrTl = T.buildReplayTimeline(stArr, {
+    'https://www.google.com/maps/search/?api=1&query=33.94,-118.40': { lat: 33.94, lng: -118.40 }
+  });
+  var arriveIdx = stArr.map(function (s) { return s.blockId; }).indexOf('fl#arrive');
+  ok('到着地点はarrival:trueで、地図上の点になる', arrTl.stops[arriveIdx].arrival === true && arrTl.stops[arriveIdx].located === true);
+  eq('到着地点は吹き出しの一時停止をせず、着いた瞬間にそのまま通り過ぎる（rCaptionStart・rDwellEndが着いた瞬間rと同じ）',
+    [arrTl.stops[arriveIdx].rCaptionStart, arrTl.stops[arriveIdx].rDwellEnd], [arrTl.stops[arriveIdx].r, arrTl.stops[arriveIdx].r]);
+  ok('到着地点の吹き出し（captionIndex）は、再生のどの時点でも出ない',
+    !arrTl.keyframes.some(function (k) { return T.replayStateAt(arrTl, k.r).captionIndex === arriveIdx; }));
 })();
 
 /* ---- ワールドカップ旅1日目（実データの形）：車の移動の予定「ロサンゼルス国際空港」「ユニオンステーション」は、その地図の
