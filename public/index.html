@@ -244,6 +244,17 @@
            数字はここに入れたものだけが投稿に出る。AI は数字を書かない。 -->
       <details id="entryBox" class="entry" open>
         <summary id="entrySummary">この日の記録</summary>
+        <!-- 本人は Claude に話し言葉で送るだけ。Claude が返した【投稿卓の記録】をここに貼ると各欄が埋まる。
+             保存はしない（中身を見てから「保存」を押す）。形は public/entry-paste.js。 -->
+        <details id="entryPasteBox" style="margin-top:8px">
+          <summary>Claude の記録を貼る</summary>
+          <textarea id="entryPaste" style="min-height:80px" placeholder="Claude が返した【投稿卓の記録】をそのまま貼る"></textarea>
+          <div class="row" style="margin-top:6px">
+            <button type="button" id="entryPasteApply">欄に入れる</button>
+            <span class="muted" id="entryPasteState"></span>
+          </div>
+          <div class="err" id="entryPasteErr"></div>
+        </details>
         <div id="entryMoney">
           <div class="entry-h">売上（円）</div>
           <div id="entryIncome" class="row"></div>
@@ -633,6 +644,7 @@
 <script src="/split-drafts.js?v=2"></script>
 <script src="/research-prompts.js?v=1"></script>
 <script src="/bulk-dates.js?v=1"></script>
+<script src="/entry-paste.js?v=1"></script>
 <script>
 'use strict';
 
@@ -982,6 +994,23 @@ function renderRecent(recent) {
 }
 
 for (const b of document.querySelectorAll('#entryBox button[data-add]')) b.onclick = () => addEntryRow(b.dataset.add);
+
+// Claude が整理した記録を貼る。日付が書いてあればその日に切り替えてから入れる。保存は本人が押す。
+$('entryPasteApply').onclick = async () => {
+  $('entryPasteErr').textContent = '';
+  $('entryPasteState').textContent = '';
+  let got;
+  try { got = EntryPaste.parse($('entryPaste').value, seriesNow.incomeCategories); }
+  catch (e) { $('entryPasteErr').textContent = e.message; return; }
+  if (got.date && got.date !== $('seriesOn').value) {
+    $('seriesOn').value = got.date;
+    await refreshSeriesStats();   // その日の数字と保存済みの記録を読み直してから上書きする
+  }
+  fillEntry(got.entry);
+  $('entrySummary').textContent = `${$('seriesOn').value} の記録（貼り付けた内容・まだ保存していません）`;
+  $('entryPasteState').textContent = '✅ 欄に入れました。中身を確かめて「この日の記録を保存」を押してください';
+  if (got.warnings.length) $('entryPasteErr').textContent = got.warnings.join('\n');
+};
 
 $('seriesOn').addEventListener('change', refreshSeriesStats);
 
