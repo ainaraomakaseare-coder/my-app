@@ -374,6 +374,11 @@ async function deleteTrip(id, env, headers) {
 // この予定の場所まで、どうやって移動したか（地図でふりかえる演出で使う。v15）。空文字は「未設定＝演出なし」。
 const TRANSPORTS = ["", "plane", "car", "taxi", "walk", "train", "shinkansen", "bus", "bicycle"];
 
+// 時差の区切りを手で直した値（block.tzOverride、migrations/0027〜）。NULL/空文字＝自動、
+// 'inherit'＝直前の予定と同じにする、それ以外はIANAのタイムゾーン名（例：America/Los_Angeles）。
+// docs/adr/0009（2026-09-29改訂）
+const TZ_OVERRIDE_RE = /^[A-Za-z_]+(\/[A-Za-z0-9_+-]+){1,2}$/;
+
 function validBlockInput(x) {
   if (!x || typeof x !== "object") return false;
   if (x.date !== undefined && x.date !== "" && !DATE_RE.test(x.date)) return false;
@@ -383,6 +388,7 @@ function validBlockInput(x) {
   if (x.transport !== undefined && !TRANSPORTS.includes(x.transport)) return false;
   // moveMinutes：移動の予定の移動時間（分）。0は未入力（v19）
   if (x.moveMinutes !== undefined && !(Number.isInteger(x.moveMinutes) && x.moveMinutes >= 0 && x.moveMinutes <= 14400)) return false;
+  if (x.tzOverride !== undefined && x.tzOverride !== "" && x.tzOverride !== "inherit" && !TZ_OVERRIDE_RE.test(x.tzOverride)) return false;
   return true;
 }
 
@@ -398,6 +404,8 @@ function rowToBlock(row) {
     moveMinutes: row.move_minutes || 0,
     // 手で決めた並び（v22〜）。列がまだ無い環境ではundefinedなのでnullにそろえる
     manualOrder: typeof row.manual_order === "number" ? row.manual_order : null,
+    // 時差の区切りを手で直した値（migrations/0027〜）。列がまだ無い環境ではundefinedなので空文字にそろえる
+    tzOverride: row.tz_override || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -456,6 +464,11 @@ async function updateBlock(id, request, env, headers) {
   // 別の日へ移したら、前の日の「手で決めた並び」は持っていかない（v22〜。列がまだ無い環境では何もしない）
   if ((merged.date || "") !== (cur.date || "")) {
     try { await env.DB.prepare("UPDATE blocks SET manual_order = NULL WHERE id = ?").bind(id).run(); } catch { /* 列が無い */ }
+  }
+  // 時差の区切りを手で直した値（migrations/0027〜。列がまだ無い環境では、直そうとしても何も起きない＝
+  // 自動のままになる。docs/adr/0009）
+  if (data.tzOverride !== undefined) {
+    try { await env.DB.prepare("UPDATE blocks SET tz_override = ? WHERE id = ?").bind(data.tzOverride || null, id).run(); } catch { /* 列が無い */ }
   }
   const updated = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   return json(rowToBlock(updated), 200, headers);

@@ -818,6 +818,23 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
   </div>
 </div>
 
+<!-- ============ 時差の区切りを手で直す（docs/adr/0009。2026-09-29〜） ============ -->
+<div class="sheet-backdrop" id="tzOverrideSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="tzOverrideSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="tzOverrideSheetTitle">時差の区切り</div>
+      <button class="sheet-close" id="btnCloseTzOverrideSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint" id="tzOverrideSheetNote"></p>
+    <div class="tz-override-options" id="tzOverrideOptions"></div>
+    <div class="tz-override-custom" id="tzOverrideCustom" hidden>
+      <select id="tzOverrideCustomSelect"></select>
+      <button type="button" class="btn primary" id="btnApplyTzOverrideCustom">決定</button>
+    </div>
+    <p class="hint comment-status" id="tzOverrideStatus"></p>
+  </div>
+</div>
+
 <!-- ============ 写真の拡大表示 ============ -->
 <div class="lightbox" id="photoLightbox" hidden>
   <button class="lightbox-close" id="btnCloseLightbox" aria-label="閉じる">

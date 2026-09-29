@@ -1153,6 +1153,40 @@ eq('時差：リオ→イグアス→ブエノスアイレス→エル・カラ�
     labelOnlyZ.b, LV);
 })();
 
+/* ---- 時差の区切りを手で直す（block.tzOverride。docs/adr/0009改訂、2026-09-29） ---- */
+(function () {
+  var TK = 'Asia/Tokyo', LA = 'America/Los_Angeles', PA = 'Europe/Paris';
+  var base = [
+    { id: 'a', date: '2026-05-01', time: '10:00', category: 'sightseeing' },
+    { id: 'b', date: '2026-05-01', time: '15:00', category: 'sightseeing' }
+  ];
+  // 自動では地図どおりロサンゼルス（前後で時差の区切りが出る）
+  var autoZ = T.assignBlockZones([base[0], Object.assign({}, base[1])], { a: TK, b: LA }, TK);
+  eq('assignBlockZones: 自動では地図どおり時差が変わる', autoZ.b, LA);
+
+  // 'inherit'：この予定だけ直前と同じ時間にする（区切りが消える）
+  var inheritBlocks = [base[0], Object.assign({}, base[1], { tzOverride: 'inherit' })];
+  var inheritZ = T.assignBlockZones(inheritBlocks, { a: TK, b: LA }, TK);
+  eq("assignBlockZones: tzOverride='inherit'なら地図があっても直前の予定と同じ時差になる（区切りが消える）", inheritZ.b, TK);
+  var inheritApplied = T.applyBlockZones(inheritBlocks.map(function (b) { return Object.assign({}, b); }), inheritZ);
+  eq('tzOverride=inherit：区切りの元になる_offsetが直前と同じになる（renderTimelineでは区切りが出ない）',
+    inheritApplied[0]._offset, inheritApplied[1]._offset);
+
+  // IANA名：地図に関わらずその場所の時間として読む
+  var customBlocks = [base[0], Object.assign({}, base[1], { tzOverride: PA })];
+  var customZ = T.assignBlockZones(customBlocks, { a: TK, b: LA }, TK);
+  eq('assignBlockZones: tzOverrideにIANA名を入れると、地図に関わらずその時差になる', customZ.b, PA);
+
+  // 手で直した予定のあと、地図の無い予定はその手直しを引き継ぐ（自動の連鎖と同じ扱い）
+  var chainBlocks = [
+    base[0],
+    Object.assign({}, base[1], { tzOverride: PA }),
+    { id: 'c', date: '2026-05-01', time: '18:00', category: 'food' }
+  ];
+  var chainZ = T.assignBlockZones(chainBlocks, { a: TK, b: LA }, TK);
+  eq('assignBlockZones: 手で直した予定のあと、地図の無い予定はその手直しを引き継ぐ', chainZ.c, PA);
+})();
+
 // 2026-09-29改訂で削除：この36通りのテストは、日付変更線をまたぐ日の並びを「予定を入れた順」
 // 「見出しの種類（到着タブ）」「その日の場所」を組み合わせて推測するcombo探索（削除した
 // `orderZonesByCandidates`）を固定するものだった。地図だけで決める新しい方式では、移動の予定の

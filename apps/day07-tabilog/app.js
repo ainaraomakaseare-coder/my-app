@@ -5449,13 +5449,146 @@
     } catch (e) { return tz; }
   }
 
+  // 「🕒 ここから現地時間」の区切り。タップすると時差を手で直せる（openTzOverrideSheet、2026-09-29〜）
   function renderZoneDivider(block, base) {
-    var div = document.createElement('div');
-    div.className = 'zone-divider';
+    var div = document.createElement('button');
+    div.type = 'button';
+    div.className = 'zone-divider' + (block.tzOverride ? ' tz-overridden' : '');
     var from = base._tz === 'Asia/Tokyo' ? '日本' : '出発地';
     div.textContent = '🕒 ここから現地時間（' + zoneDisplayName(block._tz, block.date) + '・' + from + 'との時差 ' +
       Core.offsetDiffText(block._offset - base._offset) + '）';
+    div.addEventListener('click', function () { openTzOverrideSheet(block.id); });
     return div;
+  }
+
+  // ---------- 時差の区切りを手で直す（docs/adr/0009。2026-09-29〜） ----------
+  // 自動（地図の場所だけで決める）で間違っているときだけ、その予定1件の時差を手で直せる。
+  // オーナー方針：「時差のところは人がいじれなくなっているので慎重に。間違っていたら削除くらいは
+  // できてもいい。時間を変えられるのも、やりすぎない範囲で」（2026-09-29）。
+  // 「その他…」で選べる主要なタイムゾーン（約20）。地図から出てこない場所へ行ったときの保険。
+  var TZ_OVERRIDE_COMMON = [
+    { tz: 'Asia/Tokyo', label: '日本（東京）' },
+    { tz: 'Asia/Seoul', label: '韓国（ソウル）' },
+    { tz: 'Asia/Shanghai', label: '中国（上海）' },
+    { tz: 'Asia/Hong_Kong', label: '香港' },
+    { tz: 'Asia/Taipei', label: '台湾（台北）' },
+    { tz: 'Asia/Singapore', label: 'シンガポール' },
+    { tz: 'Asia/Bangkok', label: 'タイ（バンコク）' },
+    { tz: 'Asia/Dubai', label: 'ドバイ' },
+    { tz: 'Asia/Kolkata', label: 'インド' },
+    { tz: 'Europe/London', label: 'イギリス（ロンドン）' },
+    { tz: 'Europe/Paris', label: 'フランス（パリ）' },
+    { tz: 'Europe/Berlin', label: 'ドイツ（ベルリン）' },
+    { tz: 'Europe/Rome', label: 'イタリア（ローマ）' },
+    { tz: 'Europe/Moscow', label: 'ロシア（モスクワ）' },
+    { tz: 'America/New_York', label: 'アメリカ東部（ニューヨーク）' },
+    { tz: 'America/Chicago', label: 'アメリカ中部（シカゴ）' },
+    { tz: 'America/Denver', label: 'アメリカ山岳部（デンバー）' },
+    { tz: 'America/Los_Angeles', label: 'アメリカ西部（ロサンゼルス）' },
+    { tz: 'Pacific/Honolulu', label: 'ハワイ' },
+    { tz: 'America/Sao_Paulo', label: 'ブラジル（サンパウロ）' },
+    { tz: 'Australia/Sydney', label: 'オーストラリア（シドニー）' },
+    { tz: 'Pacific/Auckland', label: 'ニュージーランド（オークランド）' }
+  ];
+
+  var tzOverrideTarget = null;
+
+  // この旅行に出てくる地図のタイムゾーン（重複なし。地図が求まった予定＝state.zoneInfo.byBlockの値）
+  function tripPinnedZones() {
+    var info = state.zoneInfo || {};
+    var seen = {}, out = [];
+    Object.keys(info.byBlock || {}).forEach(function (id) {
+      var tz = info.byBlock[id];
+      if (tz && !seen[tz]) { seen[tz] = true; out.push(tz); }
+    });
+    return out;
+  }
+
+  // タイムゾーン名から都市名らしきものを作る（Asia/Los_Angeles → Los Angeles）。選択肢の見出し用
+  function tzCityLabel(tz) {
+    var parts = (tz || '').split('/');
+    return parts[parts.length - 1].replace(/_/g, ' ');
+  }
+
+  function openTzOverrideSheet(blockId) {
+    var block = (state.blocks || []).filter(function (b) { return b.id === blockId; })[0];
+    if (!block) return;
+    tzOverrideTarget = blockId;
+    $('#tzOverrideStatus').textContent = '';
+    renderTzOverrideMain(block);
+    $('#tzOverrideSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+
+  function closeTzOverrideSheet() {
+    $('#tzOverrideSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+    tzOverrideTarget = null;
+  }
+
+  function renderTzOverrideMain(block) {
+    $('#tzOverrideCustom').hidden = true;
+    $('#tzOverrideSheetNote').textContent =
+      '自動では、地図の場所だけで時差を決めています。間違っているときだけ、この予定の時差を手で直せます。';
+    var opts = $('#tzOverrideOptions');
+    opts.innerHTML = '';
+    var addBtn = function (text, onClick) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tz-override-opt';
+      b.textContent = text;
+      b.addEventListener('click', onClick);
+      opts.appendChild(b);
+      return b;
+    };
+    addBtn('この時差を取り消す（前の予定と同じ時間にする）', function () { saveTzOverride(block.id, 'inherit'); });
+    addBtn('タイムゾーンを選ぶ', function () { renderTzOverrideZoneList(block); });
+    if (block.tzOverride) addBtn('自動に戻す', function () { saveTzOverride(block.id, ''); });
+  }
+
+  function renderTzOverrideZoneList(block) {
+    $('#tzOverrideCustom').hidden = true;
+    var opts = $('#tzOverrideOptions');
+    opts.innerHTML = '';
+    var zones = tripPinnedZones().filter(function (tz) { return tz !== 'Asia/Tokyo'; });
+    zones = ['Asia/Tokyo'].concat(zones);
+    zones.forEach(function (tz) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tz-override-opt' + (block.tzOverride === tz ? ' on' : '');
+      btn.textContent = tz === 'Asia/Tokyo' ? '日本' : tzCityLabel(tz);
+      btn.addEventListener('click', function () { saveTzOverride(block.id, tz); });
+      opts.appendChild(btn);
+    });
+    var other = document.createElement('button');
+    other.type = 'button';
+    other.className = 'tz-override-opt';
+    other.textContent = 'その他…';
+    other.addEventListener('click', function () { showTzOverrideCustomSelect(block); });
+    opts.appendChild(other);
+  }
+
+  function showTzOverrideCustomSelect(block) {
+    var wrap = $('#tzOverrideCustom');
+    var sel = $('#tzOverrideCustomSelect');
+    sel.innerHTML = TZ_OVERRIDE_COMMON.map(function (z) {
+      return '<option value="' + escapeHtml(z.tz) + '"' + (block.tzOverride === z.tz ? ' selected' : '') + '>' + escapeHtml(z.label) + '</option>';
+    }).join('');
+    wrap.hidden = false;
+    $('#btnApplyTzOverrideCustom').onclick = function () { saveTzOverride(block.id, sel.value); };
+  }
+
+  function saveTzOverride(blockId, value) {
+    if (!state.trip) return;
+    var status = $('#tzOverrideStatus');
+    status.textContent = '保存中…';
+    api('/blocks/' + encodeURIComponent(blockId), 'PATCH', { tzOverride: value || '' })
+      .then(function () { return refreshTrip(); })
+      .then(function () {
+        closeTzOverrideSheet();
+        renderDaySection();
+      })
+      .catch(function () { status.textContent = '保存できませんでした。もう一度お試しください。'; });
   }
 
   // ---------- 時差（docs/adr/0009） ----------
@@ -5650,11 +5783,13 @@
     });
     state.manualDay = !!dayDate && (hasManual || zoneChange);
     blocks.forEach(function (block) {
+      var dividerShown = false;
       if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
         el.appendChild(renderZoneDivider(block, base));
+        dividerShown = true;
       }
       if (typeof block._offset === 'number') prevOffset = block._offset;
-      el.appendChild(renderBlockEl(block));
+      el.appendChild(renderBlockEl(block, dividerShown));
     });
     if (state.manualDay) {
       // 手で並べた日は「自動の並びに戻す」、まだなら並べ替えられることの案内を出す
@@ -5749,7 +5884,7 @@
   var ALBUM_PLAY_ICON = '<svg width="26" height="26" viewBox="0 0 20 20" fill="currentColor"><path d="M6.5 4.5v11l9-5.5z"/></svg>';
   var SETTLE_ARROW_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h13M11 6l5 4-5 4"/></svg>';
 
-  function renderBlockEl(block) {
+  function renderBlockEl(block, dividerShown) {
     var wrap = document.createElement('div');
     wrap.className = 'block';
     wrap.dataset.blockId = block.id;
@@ -5772,6 +5907,18 @@
       openBlockForm(block);
     });
     wrap.appendChild(head);
+
+    // 時差を手で直している（block.tzOverride）が、区切り（renderZoneDivider）が出ない予定
+    // （直前と同じ時差に取り消した・区切りが元から出ない場所）にも、直したことが分かる印を出す
+    // （2026-09-29〜。押すとdivierと同じ手直しシートを開ける）
+    if (block.tzOverride && !dividerShown) {
+      var tzNote = document.createElement('button');
+      tzNote.type = 'button';
+      tzNote.className = 'tz-overridden-note tz-overridden-note-inline';
+      tzNote.textContent = '時差を手で直しています';
+      tzNote.addEventListener('click', function (e) { e.stopPropagation(); openTzOverrideSheet(block.id); });
+      wrap.appendChild(tzNote);
+    }
 
     var entriesWrap = document.createElement('div');
     entriesWrap.className = 'entries';
@@ -9454,6 +9601,8 @@
     $('#btnManageBilling').addEventListener('click', startBillingPortal);
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
     initSocial();
+    $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
+    $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });
 
     // ---------- ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール。2026-09-28〜） ----------
     // タップした瞬間だけ.popを付けてアイコンのバウンス演出をやり直させる（連続タップでも毎回動くよう、

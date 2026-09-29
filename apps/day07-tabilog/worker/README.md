@@ -630,3 +630,47 @@ npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE entries ADD C
   座標のqueryは名前にしない・壊れたURLは名前を取らない、など）を追加した。
 - **本番へのデプロイが必要**（クライアント・Worker両方）。マイグレーションは上の0026のみで、
   新しい列は追加していない。
+
+## 時差は地図の場所だけで決め、区切りは手で直せる（2026-09-29 追加）
+
+`docs/adr/0009`を改訂した。以前は「見出しの文言」「その日の場所」「予定を入れた順」など、地図以外の
+手がかりも組み合わせて時差を推測していたが、オーナーから「マップが正。マップ入れてなかったら前の予定と
+一緒で大丈夫。勝手に推測するのはやめてほしい（ラスベガスのニューヨークニューヨークというホテルを
+ニューヨークと判断されたらややこしい）」との方針が出た（2026-09-29）。これを受けて、Core側の時差の
+決め方（`assignBlockZones`）を、地図（記録の地図・移動の到着地の地図）と、地図が無い予定が引き継ぐ
+「直前の予定」だけのシンプルな仕組みに作り直した（`orderZonesByCandidates`・`walkDay`・`segmentZones`・
+`withoutZoneOutliers`・`startZoneFor`・`isGroundMove`は削除。前後から遠く離れたピンを無視する
+`isFarMapOutlier`／`findFarMapOutlierBlockIds`はそのまま残した＝これは地図の座標どうしの距離で
+決める、地図に基づく判定のため）。
+
+あわせて、「時差のところは人がいじれなくなっているので慎重に。間違っていたら削除くらいはできてもいい。
+時間を変えられるのも、やりすぎない範囲で」というオーナーの言葉どおり、「🕒 ここから現地時間」の区切りを
+タップすると、その予定だけ時差を手で直せるようにした（`renderZoneDivider`・`openTzOverrideSheet`、
+`app.js`）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD COLUMN tz_override TEXT"
+```
+
+（`--file migrations/0027_block_tz_override.sql`は、0024〜0026のときと同じ認証エラーが起きる見込みの
+ため、上の`--command`形式を使うこと。同じSQLは`migrations/0027_block_tz_override.sql`にも置いてある。）
+
+- `blocks`に`tz_override`（TEXT）を追加した。値はNULL・空文字＝自動（地図の場所だけで決める）、
+  `'inherit'`＝直前の予定と同じにする（区切りを消す）、それ以外はIANAのタイムゾーン名
+  （例：`America/Los_Angeles`）。`PATCH /blocks/:id`で受け取り（`TZ_OVERRIDE_RE`で検証。
+  `^[A-Za-z_]+(/[A-Za-z0-9_+-]+){1,2}$`または`'inherit'`）、列がまだ無い環境では書き込みだけ
+  失敗を握りつぶす（`manual_order`と同じtry/catchのパターン）ので、マイグレーション未適用でも
+  他の操作は壊れない（ただし直した時差はマイグレーション適用まで保存されない＝毎回自動に戻る）。
+  `GET`系（`rowToBlock`）は`tzOverride`として返す。
+- クライアント（`app.js`）の`Core.assignBlockZones`は、地図より`block.tzOverride`を優先する。
+  `renderZoneDivider`はボタンになり、タップすると`openTzOverrideSheet`が開いて
+  「この時差を取り消す（前の予定と同じ時間にする）」「タイムゾーンを選ぶ」（この旅行に出てくる
+  地図のタイムゾーン＋日本＋「その他…」で約20の主要タイムゾーンから選べる）「自動に戻す」
+  （直した値があるときだけ）を選べる。直した予定・区切りには「時差を手で直しています」の注記を出す。
+  保存は`PATCH /blocks/:id`に`{tzOverride}`を送るだけ（他のフィールドは変えない）。
+- `test/data.test.js`に、ラスベガスの「ニューヨークニューヨーク」ホテル（地図はラスベガス）が
+  見出しに関わらずロサンゼルス時間のままになること、`tzOverride: 'inherit'`で区切りが消えること、
+  IANA名の`tzOverride`でその時差になることのテストを追加した。
+- `node --check`・`node test/data.test.js`・`node worker/test/*.mjs`はすべて通した。**本番への
+  デプロイ＋上のマイグレーション適用が必要**。マイグレーション未適用の間は、時差の区切りは
+  これまでどおり地図だけの自動判定になり（手直しは保存されない）、既存の時差の並び自体は変わらない。
