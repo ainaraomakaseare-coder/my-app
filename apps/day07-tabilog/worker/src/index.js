@@ -24,6 +24,7 @@ import {
   isValidCurrency, isValidDate, frankfurterUrl, parseFrankfurterResponse,
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
+import { isAllowedOrigin, cors } from "./cors.js";
 
 // "arrival"（到着）は2026-09-27〜。種類「移動」の中の「出発｜到着」の到着。移動（出発）と違い、着いた場所の予定として扱う
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other", "arrival"];
@@ -36,28 +37,6 @@ const URL_RE = /^https?:\/\/\S+$/;
 // 外部API（Wikipedia・Nominatimなど）へのリクエストに添える連絡先URL。
 // 2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行したのに合わせて更新。
 const PUBLIC_WEB_BASE_URL = "https://tabinoashiato.pages.dev/";
-
-function isAllowedOrigin(origin, allowed) {
-  if (origin === allowed) return true;
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || "")) return true;
-  // iOSアプリ（Capacitor）内のWebViewは、ページを https://... ではなく
-  // capacitor://localhost から読み込んでいるため、そのOriginも許可する。
-  if (origin === "capacitor://localhost") return true;
-  // CapacitorHttpプラグイン経由（WebViewを介さずネイティブ側がHTTPリクエストを
-  // 送る方式）だとOriginヘッダー自体が付かないため、それも許可する。
-  if (!origin) return true;
-  return false;
-}
-
-function cors(origin, allowed) {
-  const ok = isAllowedOrigin(origin, allowed);
-  return {
-    "access-control-allow-origin": ok ? origin : allowed,
-    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type, x-voice-meta, authorization",
-    "vary": "Origin",
-  };
-}
 
 function json(body, status, headers) {
   return new Response(JSON.stringify(body), {

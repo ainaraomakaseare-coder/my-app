@@ -6,7 +6,9 @@
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
-    "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io"
+    // カンマ区切りで複数指定できる（isAllowedOrigin/cors、src/cors.js）。
+    // GitHub PagesからCloudflare Pagesへの移行期間中は両方を許可する（2026-09-29〜）。
+    "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io,https://tabinoashiato.pages.dev"
   },
   "d1_databases": [
     {
