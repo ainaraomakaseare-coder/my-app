@@ -2888,6 +2888,14 @@
   // アニメーションが終わった瞬間にフェードインで見せる（revealEnteringScreen）。
   // 「戻る」で同じカードがまだ一覧に残っていれば、逆再生（詳細→カードの位置）してから画面を切り替える
   // （pendingCardOpenAnim、goHome参照）。
+  // Web版では見え方が不自然という判断（アプリオーナー確認済み・2026-09-29）で、この演出は
+  // iOSアプリ（Capacitor）内でのみ有効にする。Webはブラウザ・端末を問わずe2a3cf2以前と同じ
+  // 「即座に画面が切り替わるだけ」の遷移に戻す（暗幕・クローン・画面固定は一切出さない）。
+  // isNativeApp()は都度呼ぶ関数なので、この判定も呼び出しごとに評価する（起動直後のCapacitor
+  // 初期化タイミングに依存しないようにするため、値をキャッシュしない）。
+  function CARD_EXPAND_ENABLED() {
+    return isNativeApp() && !prefersReducedMotion();
+  }
   var TRIP_OPEN_ANIM_MS = 380;
   var TRIP_OPEN_ANIM_FADE_MS = 260;
   var pendingCardOpenAnim = null; // { cardEl, tripId } / 直前にカードのアニメーションで開いた旅行だけ覚える
@@ -2956,7 +2964,7 @@
   // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
   // 読み込みを待たずにそのまま進める（読み込みが遅くても、演出は毎回同じ長さで終わる）。
   function openTripFromCard(cardEl, tripId, returnTo) {
-    if (prefersReducedMotion() || !cardEl || typeof cardEl.getBoundingClientRect !== 'function') {
+    if (!CARD_EXPAND_ENABLED() || !cardEl || typeof cardEl.getBoundingClientRect !== 'function') {
       pendingCardOpenAnim = null;
       openTrip(tripId, returnTo);
       return;
@@ -3043,7 +3051,7 @@
   function maybeAnimateTripCardClose(doNavigate) {
     var info = pendingCardOpenAnim;
     pendingCardOpenAnim = null;
-    if (!info || prefersReducedMotion() || !state.trip || state.trip.id !== info.tripId ||
+    if (!info || !CARD_EXPAND_ENABLED() || !state.trip || state.trip.id !== info.tripId ||
       !document.body.contains(info.cardEl)) {
       doNavigate();
       return;
