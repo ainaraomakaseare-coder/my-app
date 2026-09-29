@@ -8,3 +8,8 @@ data/
 
 node_modules/
 .DS_Store
+
+# 動画の道具（tools/video）：依存・モデル・作業ファイルは入れない
+tools/video/node_modules/
+tools/video/models/
+tools/video/work/

@@ -94,6 +94,52 @@ const personal = draft({
     assert.ok(/draft\.hook/.test(reel), 'draft.hook を読んでいない');
   });
 
+  // ★ 2026-09-29 の仕込み（20本）で7本が下書きに止まった。うち3本は ttCaption だけ PR 表記が抜け、
+  //   4本は問いの末尾に「。」が付いていただけ。どちらも、足す・外すだけで事実は変わらない。
+  await check('案件つきで PR 表記が抜けたキャプションには、先頭に【PR】を足す（タグにあれば足さない）', () => {
+    const gen = require('../lib/draft-generate');
+    const d = { hasAffiliateLink: true, igCaption: '5番が刺さる…。ネットの声です #PR', ttCaption: '5番が刺さる…。ネットの声です', hashtags: ['#転職'] };
+    const added = gen.ensurePrLabel(d);
+    assert.deepStrictEqual(added.map((a) => a.field), ['ttCaption']);
+    assert.ok(d.ttCaption.startsWith('【PR】'));
+    assert.ok(!d.igCaption.startsWith('【PR】'), 'すでにある方にも足している');
+    const tagged = { hasAffiliateLink: true, igCaption: 'a', ttCaption: 'b', hashtags: ['#転職', '#PR'] };
+    assert.deepStrictEqual(gen.ensurePrLabel(tagged), [], 'タグ側の #PR を見ていない');
+    const plain = { hasAffiliateLink: false, igCaption: 'a', ttCaption: 'b', hashtags: [] };
+    assert.deepStrictEqual(gen.ensurePrLabel(plain), [], '案件なしにまで足している');
+  });
+
+  await check('問いの末尾の「。」は、外せば答えに続く形になるときだけ外す', () => {
+    const gen = require('../lib/draft-generate');
+    const d = { rows: [
+      { question: '同僚に相談すると。', answer: '伝わる' },
+      { question: 'いちばん確実なのは。', answer: '黙ること' },
+      { question: '面接官は話し方を見ています。', answer: '態度' },
+      { question: '急に有給を取ると', answer: '目立つ' },
+    ] };
+    const added = gen.closeOpenQuestions(d);
+    assert.deepStrictEqual(d.rows.map((r) => r.question),
+      ['同僚に相談すると', 'いちばん確実なのは', '面接官は話し方を見ています。', '急に有給を取ると']);
+    assert.strictEqual(added.length, 2);
+    // 言い切りの行は残るので、点検で止まる
+    assert.ok(rules.validateDraft(draft({ rows: reel09.rows.slice(0, 5).concat([d.rows[2]]) }))
+      .some((f) => f.rule === 'question-not-open'));
+  });
+
+  await check('作る流れの中で PR と「。」を直し、それで点検を通れば下書きにしない', async () => {
+    const gen = require('../lib/draft-generate');
+    const generated = Object.assign({}, reel09, {
+      rows: reel09.rows.map((r, i) => (i < 3 ? { question: r.question + '。', answer: r.answer } : r)),
+      igCaption: reel09.igCaption + ' #PR',
+      ttCaption: reel09.ttCaption,
+    });
+    const out = await gen.generateDraft({ topicId: 't', title: 't', hasAffiliateLink: true },
+      { generate: async () => JSON.parse(JSON.stringify(generated)), maxAttempts: 1 });
+    assert.strictEqual(out.ok, true, JSON.stringify(out.findings.filter((f) => f.severity === 'error')));
+    assert.ok(out.findings.some((f) => f.rule === 'pr-added'), '足したことを知らせていない');
+    assert.strictEqual(out.findings.filter((f) => f.rule === 'question-trimmed').length, 3);
+  });
+
   await check('文案の型は、つかみを必ず書かせる', () => {
     const gen = require('../lib/draft-generate');
     assert.ok(gen.SCHEMA.required.includes('hook'));
@@ -760,15 +806,15 @@ const personal = draft({
     assert.ok(r.findings.every((f) => f.severity === 'warning'));
   });
 
-  await check('案件つきで PR表記が無ければ作り直す', async () => {
-    const withPr = Object.assign({}, clean, {
-      igCaption: '引き止めは一度はある、という声が多かったです #PR',
-      ttCaption: '引き止めは一度はある、という声が多かったです #PR',
-    });
-    const s = stub([clean, withPr]);
+  // ★ 以前は作り直させていたが、作り直しても書き落とす（2026-09-29 の仕込みで3本が下書きに止まった）。
+  //   案件つきであることは事実なので、先頭に【PR】を足して通す。足したことは指摘として残す。
+  await check('案件つきで PR表記が無ければ、作り直さずに【PR】を足して通す', async () => {
+    const s = stub([clean]);
     const r = await gen.generateDraft(Object.assign({}, topic, { hasAffiliateLink: true }), { generate: s.generate });
-    assert.strictEqual(s.seen.length, 2);
+    assert.strictEqual(s.seen.length, 1, '作り直している');
     assert.strictEqual(r.ok, true);
+    assert.ok(r.draft.igCaption.startsWith('【PR】') && r.draft.ttCaption.startsWith('【PR】'));
+    assert.strictEqual(r.findings.filter((f) => f.rule === 'pr-added').length, 2);
   });
 
   // ---- リクエストの組み立て ------------------------------------------------
