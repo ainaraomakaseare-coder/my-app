@@ -441,6 +441,15 @@
     byDate = byDate || {};
     byArrive = byArrive || {};
     var copies = (blocks || []).map(function (b) { var c = Object.assign({}, b); delete c._offset; delete c._tz; return c; });
+    // 前後の予定から遠く離れた地図（ピン違い、isFarMapOutlier）は、時差の手がかりにしない＝地図が
+    // 無いのと同じに扱う。地図が無い予定と同じく前の予定の時差を引き継ぎ、「ここから現地時間」の
+    // 区切りを出さない。地図そのもの（吹き出し・警告表示）はそのまま残す（docs/adr/0009、2026-09-29）
+    var outlierIds = findFarMapOutlierBlockIds(copies);
+    if (byBlock) {
+      var withoutOutliers = {};
+      Object.keys(byBlock).forEach(function (id) { if (!outlierIds[id]) withoutOutliers[id] = byBlock[id]; });
+      byBlock = withoutOutliers;
+    }
     fallback = startZoneFor(copies, byBlock || {}, fallback, byArrive);
     // 1つだけ前後と違う地図（判定違い）は、並び替えより先に、日付と現地時刻の素直な順で見つけて外す
     // （判定違いのタイムゾーンで並べると、その予定が前後から離れてしまい見つけられないため）

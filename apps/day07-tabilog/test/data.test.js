@@ -1726,6 +1726,27 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
     { id: 'p4', date: '2026-06-29', time: '09:00', category: 'food', label: 'First Watch', entries: [{ mapLat: 29.7749, mapLng: -95.3883 }] }
   ];
   eq('findFarMapOutlierBlockIds: 真ん中の間違ったピンのBlockだけが対象になる', T.findFarMapOutlierBlockIds(outlierBlocks), { p3: true });
+
+  // assignBlockZones: 前後から遠く離れた地図（ピン違い）は時差の手がかりにしない＝地図が無いのと同じに
+  // 扱い、前の予定の時差を引き継ぐ（「ここから現地時間」の区切りを出さない）。実例：ヒューストン滞在中の
+  // 22:30 マリオットにロサンゼルスの自宅のピンが間違って残っていた（docs/adr/0009、2026-09-29）
+  var CHI = 'America/Chicago', OWN_LA = 'America/Los_Angeles';
+  var houstonDayBlocks = [
+    { id: 'arrive', date: '2026-06-28', time: '11:12', category: 'transport', label: 'ヒューストン到着', entries: [{ mapLat: 29.646, mapLng: -95.277 }] },
+    { id: 'hotel1', date: '2026-06-28', time: '13:00', category: 'lodging', label: 'マリオット', entries: [{ mapLat: 29.737, mapLng: -95.468 }] },
+    { id: 'bbq', date: '2026-06-28', time: '14:00', category: 'food', label: 'Truth BBQ', entries: [{ mapLat: 29.769, mapLng: -95.398 }] },
+    { id: 'evening1', date: '2026-06-28', time: '19:00', category: 'other', label: '夕方の予定1', entries: [{}] },
+    { id: 'evening2', date: '2026-06-28', time: '20:00', category: 'other', label: '夕方の予定2', entries: [{}] },
+    { id: 'hotel2', date: '2026-06-28', time: '22:30', category: 'lodging', label: 'マリオット', entries: [{ mapLat: 33.979, mapLng: -118.409 }] },
+    { id: 'breakfast', date: '2026-06-29', time: '09:00', category: 'food', label: 'First Watch', entries: [{ mapLat: 29.7749, mapLng: -95.3883 }] }
+  ];
+  var houstonDayByBlock = { arrive: CHI, hotel1: CHI, bbq: CHI, hotel2: OWN_LA, breakfast: CHI };
+  var houstonDayZones = T.assignBlockZones(houstonDayBlocks, houstonDayByBlock, {}, 'Asia/Tokyo');
+  eq('assignBlockZones: 前後から遠く離れた地図（間違ったピン）は、その地図の時差を採らず前の予定の時差を引き継ぐ',
+    houstonDayZones.hotel2, CHI);
+  eq('assignBlockZones: 22:30の予定まで含め、全体がヒューストンの時差のまま変わらない',
+    houstonDayBlocks.map(function (b) { return houstonDayZones[b.id]; }),
+    [CHI, CHI, CHI, CHI, CHI, CHI, CHI]);
 })();
 
 /* ---- 時刻の無い宿泊（lodging）は、その日の最後（寝る前）に置く（2026-09-29） ---- */
