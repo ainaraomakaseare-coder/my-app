@@ -414,6 +414,17 @@ ok('placeMapUrl: 座標がNaN・undefinedのときは、URLにundefined/NaNの�
   T.placeMapUrl({ lat: 34.7, lng: undefined }, '')
 ].every(function (url) { return url.indexOf('undefined') === -1 && url.indexOf('NaN') === -1; }));
 
+/* ---- 記録フォーム：「場所名で検索」で選んだ候補の名前を保存用に決める（placeSelectionName。2026-09-29） ---- */
+eq('placeSelectionName: 候補があればその名前', T.placeSelectionName({ name: 'ホテルニューオータニ', lat: 35.1, lng: 139.1 }, 'ホテル'),
+  'ホテルニューオータニ');
+eq('placeSelectionName: 候補が無ければ検索文字列をそのまま名前にする（Googleマップで検索）',
+  T.placeSelectionName(null, 'すし屋 銀座'), 'すし屋 銀座');
+eq('placeSelectionName: 検索文字列が座標そのもの（lat,lng）なら名前として保存しない',
+  T.placeSelectionName(null, '35.681236, 139.767125'), '');
+eq('placeSelectionName: 候補も検索文字列も無ければ空文字', T.placeSelectionName(null, ''), '');
+eq('placeSelectionName: 候補の名前が空文字・空白だけのときは検索文字列にフォールバックする',
+  T.placeSelectionName({ name: '  ', lat: 35.1, lng: 139.1 }, 'すし屋 銀座'), 'すし屋 銀座');
+
 /* ---- 地図でふりかえる：再生する地点の並び（replayStops） ---- */
 var rpTrip = { startDate: '2026-04-01', endDate: '2026-04-02' };
 var rpBlocks = [

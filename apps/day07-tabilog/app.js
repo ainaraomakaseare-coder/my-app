@@ -1233,6 +1233,19 @@
     if (!q) return '';
     return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
+  // 候補（place。「地図のURL」欄の座標検索で選んだもの）または検索した文字列（searchText。
+  // 「Googleマップで検索」を選んだときなど、座標のない検索）から、記録と一緒に保存する
+  // 「場所の名前」を決める。候補があればその名前（例：Googleの候補のname）。無ければ検索文字列を
+  // そのまま名前にするが、それが座標（"35.68,139.76"のような並び）そのものなら名前として
+  // 意味が無いので保存しない（applySelectedPlaceToMapUrl・saveEntryの名前紐付けで使う。2026-09-29）。
+  var COORD_PAIR_RE = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;
+  function placeSelectionName(place, searchText) {
+    var name = (place && place.name) ? String(place.name).trim() : '';
+    if (name) return name;
+    var text = (searchText || '').trim();
+    if (!text || COORD_PAIR_RE.test(text)) return '';
+    return text;
+  }
   function replayPlaceEntry(block) {
     var entries = (block && block.entries) || [];
     for (var i = 0; i < entries.length; i++) {
@@ -2726,6 +2739,7 @@
     replayPlaceEntry: replayPlaceEntry,
     hasBrokenMapQuery: hasBrokenMapQuery,
     placeMapUrl: placeMapUrl,
+    placeSelectionName: placeSelectionName,
     travelArrival: travelArrival,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
@@ -5948,6 +5962,7 @@
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
     placeCandidates = []; placeChoice = '';
+    selectedPlaceName = ''; selectedPlaceNameUrl = '';
     $('#entPlaceStatus').textContent = brokenMapUrl ? '地図のリンクが壊れていたので、選び直してください' : '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
@@ -6728,6 +6743,11 @@
   var placeCandidates = [];
   var PLACE_GOOGLE = 'google';
   var placeChoice = ''; // 選んでいる候補の番号（文字列）か PLACE_GOOGLE
+  // 「地図のURL」欄に自動で入れたURLと、そのとき選ばれていた場所の名前（Core.placeSelectionName）の組。
+  // saveEntryのときに#entMapUrlがこのURLのままなら（＝保存前に手で書き換えていなければ）、
+  // 名前も一緒に送る。手でURLを書き換えた・消したときは一致しなくなるので送らない（2026-09-29）
+  var selectedPlaceName = '';
+  var selectedPlaceNameUrl = '';
   var placeSessionToken = ''; // Places API (New) のAutocomplete〜Details一連の呼び出しをまとめる印（docs/adr/0011）
   // 座標を取りに行っている（ensureSelectedPlaceCoordsが返した）Promise。保存（saveEntry）は、これが
   // 終わるのを待ってから地図欄を確定させる（届く前に保存すると、座標付きの正しいURLではなく
@@ -6898,9 +6918,13 @@
   // 壊れているとき（undefined/NaN）は、検索した文字列そのままのURLにする（undefined/NaNを含む
   // URLは絶対に書き込まない。2026-09-27）
   function applySelectedPlaceToMapUrl() {
-    var url = Core.placeMapUrl(selectedPlace(), $('#entPlaceSearch').value);
+    var searchText = $('#entPlaceSearch').value;
+    var place = selectedPlace();
+    var url = Core.placeMapUrl(place, searchText);
     if (!url) return;
     $('#entMapUrl').value = url;
+    selectedPlaceName = Core.placeSelectionName(place, searchText);
+    selectedPlaceNameUrl = url;
   }
 
   // 外貨の行で、まだレートが（自動取得も手入力も）入っていないもの。保存を止める対象（2026-09-27）
@@ -6963,6 +6987,9 @@
       author: author
     };
     if (!$('#entArriveField').hidden) payload.travel = readTravelFields();
+    // 場所の名前は、地図欄が「候補を選んで自動で入れたURL」のままのときだけ送る（手でURLを
+    // 書き換えたり消したりしたら selectedPlaceNameUrl と一致しなくなるので送らない。2026-09-29）
+    if (selectedPlaceName && payload.mapUrl === selectedPlaceNameUrl) payload.mapPlaceName = selectedPlaceName;
 
     Promise.all([
       // 並べた順のまま、新しい写真だけアップロードしてidにする

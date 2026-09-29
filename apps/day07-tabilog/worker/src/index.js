@@ -583,6 +583,9 @@ function validEntryInput(x) {
   if (!optStr(x.waitTime, 50)) return false;
   if (x.time !== undefined && x.time !== "" && !TIME_RE.test(x.time)) return false;
   if (!optUrl(x.mapUrl, 500)) return false;
+  // mapPlaceName：「場所名で検索」の候補を選んだときに、地図URLと一緒にクライアントが送る場所の名前
+  // （2026-09-29）。任意項目・最大200字（map_place_name列の想定と合わせる）。
+  if (!optStr(x.mapPlaceName, 200)) return false;
   if (!optUrl(x.shopUrl, 500)) return false;
   if (!optUrl(x.otherUrl, 500)) return false;
   if (!optStr(x.author, 50)) return false;
@@ -665,8 +668,13 @@ async function backgroundGeocodeEntry(env, entryId, mapUrl) {
 async function saveEntryGeocodeResult(env, entryId, mapUrl, result, geo) {
   const placeName = (result.name || "").trim().slice(0, 200);
   try {
+    // map_place_nameは、まだ何も入っていないとき（NULLまたは空文字）だけ書く。「場所名で検索」の
+    // 候補を選んだときにクライアントが送った名前（本人が選んだ、正確な名前）を、裏の座標取得が
+    // 勝手に上書きしてしまわないようにするため（2026-09-29）。
     await env.DB.prepare(
-      "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=?, map_admin1=?, map_country=?, map_place_name=? WHERE id=? AND map_url=?"
+      "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=?, map_admin1=?, map_country=?, " +
+      "map_place_name = CASE WHEN map_place_name IS NULL OR map_place_name = '' THEN ? ELSE map_place_name END " +
+      "WHERE id=? AND map_url=?"
     ).bind(result.lat, result.lng, mapUrl, nowIso(), (geo && geo.admin1) || "", (geo && geo.country) || "", placeName, entryId, mapUrl).run();
   } catch {
     try {
@@ -715,6 +723,9 @@ async function createEntry(blockId, request, env, headers, ctx) {
     wait_time: (data.waitTime || "").trim(),
     time: data.time || "",
     map_url: data.mapUrl || "",
+    // 「場所名で検索」の候補を選んで地図URLを入れたとき、一緒に送られてくる場所の名前
+    // （2026-09-29、migrations/0026 map_place_name）。任意項目
+    map_place_name: (data.mapPlaceName || "").trim().slice(0, 200),
     shop_url: data.shopUrl || "",
     other_url: data.otherUrl || "",
     author: (data.author || "").trim(),
@@ -722,15 +733,29 @@ async function createEntry(blockId, request, env, headers, ctx) {
     created_at: t,
     updated_at: t,
   };
-  await env.DB.prepare(
-    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, travel, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  )
-    .bind(
-      row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
-      row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
+  try {
+    await env.DB.prepare(
+      `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, map_place_name, shop_url, other_url, author, travel, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
-    .run();
+      .bind(
+        row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
+        row.cost_items, row.wait_time, row.time, row.map_url, row.map_place_name, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
+      )
+      .run();
+  } catch (e) {
+    // migrations/0026（map_place_name列）を実行する前のDBでは、その列無しで保存する
+    if (!/no such column/i.test(String((e && e.message) || ""))) throw e;
+    await env.DB.prepare(
+      `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, travel, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+      .bind(
+        row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
+        row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
+      )
+      .run();
+  }
   // 地図URLが付いていたら、返事を待たせず裏で座標を求めてD1に保存しておく（Part A、2026-09-26〜。
   // 次に「地図でふりかえる」を開いたときはもう探しに行かなくてよい）。
   const newMapUrl = (row.map_url || "").trim();
@@ -752,17 +777,42 @@ async function updateEntry(id, request, env, headers, ctx) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   const newMapUrl = (merged.mapUrl || "").trim();
-  await env.DB.prepare(
-    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
-  )
-    .bind(
-      (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
-      JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
-      JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
-      newMapUrl, merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
-      JSON.stringify(cleanTravel(merged.travel)), t, id
+  // 場所の名前：今回のリクエストにmapPlaceNameが入っていればそれ（無い・空文字なら消す＝候補を
+  // 選び直さずURLだけ書き換えたときなど）。無ければ、地図URLが変わっていないときだけ元の名前を
+  // そのまま残し、地図URLが変わったのに名前が付いていなければ、古い場所の名前が残らないよう消す
+  // （2026-09-29）。
+  const hasMapPlaceName = Object.prototype.hasOwnProperty.call(data, "mapPlaceName");
+  const mapUrlChanged = newMapUrl !== (existing.map_url || "").trim();
+  const newMapPlaceName = hasMapPlaceName
+    ? (data.mapPlaceName || "").trim().slice(0, 200)
+    : (mapUrlChanged ? "" : (existing.map_place_name || ""));
+  try {
+    await env.DB.prepare(
+      `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, map_place_name=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
     )
-    .run();
+      .bind(
+        (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
+        JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
+        JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
+        newMapUrl, newMapPlaceName, merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
+        JSON.stringify(cleanTravel(merged.travel)), t, id
+      )
+      .run();
+  } catch (e) {
+    // migrations/0026（map_place_name列）を実行する前のDBでは、その列無しで保存する
+    if (!/no such column/i.test(String((e && e.message) || ""))) throw e;
+    await env.DB.prepare(
+      `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
+    )
+      .bind(
+        (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
+        JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
+        JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
+        newMapUrl, merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
+        JSON.stringify(cleanTravel(merged.travel)), t, id
+      )
+      .run();
+  }
   // 地図URLが変わった、またはまだ座標を求めていないときだけ、裏で座標を求め直す（Part A）。
   if (ctx && entryNeedsGeocode(existing.map_url, existing.map_geocoded_url, newMapUrl, existing.map_geocoded_at)) {
     ctx.waitUntil(backgroundGeocodeEntry(env, id, newMapUrl));
