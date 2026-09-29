@@ -141,6 +141,15 @@ const posts = (scores) => scores.map((s, i) => ({ title: `ネタ${i + 1}`, views
     assert.ok(!out.some((x) => x.kind === 'followers'), '伸びを語っている');
   });
 
+  // ★ X は数字を取らない決まり（読み取りが有料）。直すものが無いのに赤く出し続けていた。
+  await check('X は「取れていません」に出さない（取らない決まりなので）', () => {
+    const out = advice.collectionFindings([
+      account({ id: 'x1', network: 'x', label: '転職X', latest: { ok: false, error: '対応していません', taken_on: '2026-09-28' } }),
+      account({ id: 'x2', network: 'x', label: '転職X2', latest: null }),
+    ]);
+    assert.deepStrictEqual(out.filter((o) => o.confidence === advice.BLOCKED), []);
+  });
+
   await check('繋いだばかりで数字が無いことも伝える', () => {
     const out = advice.collectionFindings([account({ latest: null })]);
     assert.ok(/まだ一度も数字を取れていません/.test(out[0].headline));

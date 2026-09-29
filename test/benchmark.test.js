@@ -68,6 +68,19 @@ check('checkItem: 指示文の見本（example_user）がそのまま来たら�
   assert.ok(/この見本は出力に含めない/.test(doc), '見本を出力に含めないよう書いていない');
 });
 
+// ★ 本番の1回目で、登録者1人・1,371再生（のび率1,371倍）が「伸びている」の上位を占めた。
+check('isGrowing: のび率だけでなく、再生数が MIN_VIEWS 以上のときだけ伸びている', () => {
+  const it = (views, followers) => baseItem({ metrics: { views, likes: null, comments: null, saves: null, shares: null },
+    account: { name: 'a', followers, followers_source: 'screen' } });
+  assert.strictEqual(benchmark.isGrowing(it(1371, 1)), false, '1,371再生はのび率が大きくても伸びているとは言わない');
+  assert.strictEqual(benchmark.isGrowing(it(benchmark.MIN_VIEWS, 100)), true);
+  assert.strictEqual(benchmark.isGrowing(it(benchmark.MIN_VIEWS - 1, 1)), false);
+  assert.strictEqual(benchmark.isGrowing(it(900000, 100000)), false, 'のび率が10倍未満');
+  assert.strictEqual(benchmark.isGrowing(it(null, 100)), false, '再生が見えないものは数えない');
+  const r = benchmark.checkAll([it(1371, 1), Object.assign(it(20000, 500), { url: 'https://www.tiktok.com/@career_sample/video/2' })]);
+  assert.strictEqual(r.summary.growing, 1);
+});
+
 check('checkItem: 通る例は通る', () => {
   const r = benchmark.checkItem(baseItem());
   assert.deepStrictEqual(r.errors, []);
