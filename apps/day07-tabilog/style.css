@@ -740,6 +740,10 @@ a:hover { text-decoration: underline; }
 /* ---------- マイログ ---------- */
 
 /* ---------- 行ったことある旅先（国内・海外タブ、docs/adr/0017） ---------- */
+/* 国内⇄海外の横スワイプ（app.jsのinitTabSwipe）の対象領域。pan-yにして縦スクロールは
+   ブラウザ標準のまま、横方向のジェスチャーだけJS側へ渡す（2026-09-29〜、docs/adr/0018）。
+   画面内に横スクロールする子要素は無いので、ここに付けても他の操作とはぶつからない。 */
+.screen[data-screen="visited"] { touch-action: pan-y; }
 .visited-tabs { display: flex; gap: 6px; padding: 10px 0 4px; }
 .visited-tab { flex: 1; padding: 9px 0; border-radius: 999px; text-align: center; color: var(--ink-muted); font-size: 13px; font-weight: 700; background: var(--border-soft); }
 .visited-tab.on { background: var(--accent); color: white; }
@@ -823,7 +827,10 @@ a:hover { text-decoration: underline; }
 .sort-btn { padding: 7px 13px; border-radius: 999px; border: none; color: var(--ink-muted); font-size: 11.5px; background: var(--border-soft); }
 .sort-btn.on { background: var(--accent-soft-bg); color: var(--accent-deep); font-weight: 700; }
 
-.mylog-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+/* カテゴリの横スワイプ（app.jsのinitTabSwipe）の対象領域。pan-yで縦スクロールを標準のまま
+   残す。兄弟の.mylog-tabs（ピルの横スクロール行）には付けていないので、そちらは影響を受けない
+   （2026-09-29〜、docs/adr/0018）。 */
+.mylog-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; touch-action: pan-y; }
 .mylog-row {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 10px;

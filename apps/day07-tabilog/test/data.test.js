@@ -1820,5 +1820,19 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
     T.blockDragShifts(4, 1, 2, 80), [0, 80, 0, 0]);
 })();
 
+/* ---- 横スワイプの向き判定（Core.decideSwipe、2026-09-29〜。「行ったことある旅先」の
+   国内⇄海外・マイログのカテゴリの横スワイプで共通に使う。地図の上から始めても軽く効くように、
+   タップ（動きが小さい）とスワイプ（40px以上、または短くても素早いflick）を区別する） ---- */
+(function () {
+  eq('decideSwipe: 動きがほぼ無ければ何もしない（タップ）', T.decideSwipe(2, 1, 120), null);
+  eq('decideSwipe: 40px未満の遅い動きはタップの揺れとみなす', T.decideSwipe(25, 2, 300), null);
+  eq('decideSwipe: 40px以上の左スワイプはleft', T.decideSwipe(-45, 3, 250), 'left');
+  eq('decideSwipe: 40px以上の右スワイプはright', T.decideSwipe(45, 3, 250), 'right');
+  eq('decideSwipe: 20px以上でも素早く弾けばflickとしてleft', T.decideSwipe(-25, 2, 50), 'left');
+  eq('decideSwipe: 20px未満はflickでも判定しない', T.decideSwipe(-15, 1, 20), null);
+  eq('decideSwipe: 縦の動きの方が大きければ横スワイプにしない', T.decideSwipe(30, 40, 200), null);
+  eq('decideSwipe: dtが0（同一フレーム）でも距離だけで判定できる', T.decideSwipe(50, 0, 0), 'right');
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
