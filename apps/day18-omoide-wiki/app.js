@@ -741,8 +741,16 @@
 
   // ---------- 公開（テスト可能な部分） ----------
 
+  // 流出すると困る個人情報（住所の町名・番地、電話番号、メール、口座など）を聞いている質問か。
+  // AIには聞かないよう頼んでいるが、万一出てきたら、その質問は使わずに次へ進む（住所は市区町村まではOK）
+  var SENSITIVE_QUESTION_RE = /住所|電話番号|携帯番号|連絡先|メール(アドレス)?を|アドレスを|郵便番号|番地|丁目|町名|どの町|何町|何丁目|建物名|建物の名前|マンション名|マンションの名前|団地名|団地の名前|部屋番号|マイナンバー|口座|暗証番号|パスワード|クレジットカード/;
+  function asksSensitiveInfo(text) {
+    return SENSITIVE_QUESTION_RE.test(String(text || ''));
+  }
+
   var Core = {
     STORAGE_KEY: STORAGE_KEY,
+    asksSensitiveInfo: asksSensitiveInfo,
     STORAGE_WARN_BYTES: STORAGE_WARN_BYTES,
     uid: uid,
     nowIso: nowIso,
@@ -1895,7 +1903,7 @@
       askedQuestions: askedQuestionTexts(w, cat)
     }).then(function (result) {
       showAiDeepenStatus();
-      if (result && !result.done && result.followUp) {
+      if (result && !result.done && result.followUp && !asksSensitiveInfo(result.followUp)) {
         interviewQueue.push({ category: cat, question: result.followUp, depth: 0, dynamic: true, grown: true });
         return true;
       }
@@ -2120,6 +2128,8 @@
       askedQuestions: askedQuestionTexts(w, q.category)
     }).then(function (result) {
       showAiDeepenStatus();
+      // 流出すると困る情報を聞く質問だったら使わない（深掘りをやめて次の話題へ）
+      if (result && result.followUp && asksSensitiveInfo(result.followUp)) result = { done: true, followUp: '', ack: '' };
       if (result && !result.done && result.followUp) {
         interviewQueue.splice(interviewIndex + 1, 0, {
           category: q.category, question: result.followUp, depth: q.depth + 1, dynamic: true

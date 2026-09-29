@@ -347,5 +347,17 @@ var threw = false;
 try { W.parseImportPayload('<html><body>ただのページ</body></html>'); } catch (e) { threw = true; }
 ok('データの入っていないHTMLは読み込まない', threw);
 
+// ---- 流出すると困る個人情報を聞く質問は使わない ----
+ok('町名まで聞く質問は使わない', W.asksSensitiveInfo('横浜市立市民病院で生まれたんですね！退院後に暮らしたのは磯子区のどの町でしたか？'));
+ok('電話番号を聞く質問は使わない', W.asksSensitiveInfo('ご実家の電話番号は覚えていますか？'));
+ok('番地を聞く質問は使わない', W.asksSensitiveInfo('何丁目何番地のお家でしたか？'));
+ok('メールアドレスを聞く質問は使わない', W.asksSensitiveInfo('よく使っていたメールアドレスを教えてください'));
+ok('当時の住所を聞く質問は使わない', W.asksSensitiveInfo('保土ケ谷区のお家だったんですね！町名はどこでしたか？当時の住所で分かる範囲まで聞きたいです。'));
+ok('マンションの名前を聞く質問は使わない', W.asksSensitiveInfo('住んでいたマンションの名前は覚えていますか？'));
+ok('「保土ヶ谷区の家」での暮らしを聞く質問は使ってよい', !W.asksSensitiveInfo('保土ヶ谷区のお家では、どんな毎日を過ごしていましたか？'));
+ok('市区町村までの質問は使ってよい', !W.asksSensitiveInfo('生まれはどこですか？（都道府県・市区町村まで分かると嬉しいです）'));
+ok('携帯電話の思い出を聞く質問は使ってよい', !W.asksSensitiveInfo('初めて携帯電話を持ったのはいつごろでしたか？'));
+ok('横浜の区を聞く質問は使ってよい', !W.asksSensitiveInfo('横浜のどの区に住んでいましたか？'));
+
 console.log('\n' + pass + ' 件 通過 / ' + fail + ' 件 失敗');
 process.exit(fail ? 1 : 0);
