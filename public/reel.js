@@ -637,7 +637,9 @@
 
     const bytes = window.Mp4Mux.mux({ width: W, height: H, fps: SPEC.fps, avcC, samples });
     if (onProgress) onProgress(1);
-    return { blob: new Blob([bytes], { type: 'video/mp4' }), mime: 'video/mp4', ext: 'mp4', via: 'webcodecs' };
+    // ★ 形式名に codecs を付ける。付けないと画面の点検（avc1 を含むか）が H.264 と見なさず、
+    //   「H.264 で録れていません」と誤って出ていた（中身は H.264）。
+    return { blob: new Blob([bytes], { type: 'video/mp4' }), mime: 'video/mp4;codecs=' + config.codec, ext: 'mp4', via: 'webcodecs' };
   }
 
   /**
