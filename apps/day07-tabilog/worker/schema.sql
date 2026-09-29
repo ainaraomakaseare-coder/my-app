@@ -300,6 +300,5 @@ CREATE TABLE IF NOT EXISTS mylog_place_overrides (
 -- v28（2026-09-30）：ソーシャルログイン（docs/adr/0019）。詳しい説明は migrations/0028_social_login.sql
 CREATE TABLE IF NOT EXISTS auth_identities (provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (provider, subject));
 CREATE INDEX IF NOT EXISTS idx_auth_identities_email ON auth_identities(email);
-CREATE TABLE IF NOT EXISTS auth_states (state TEXT PRIMARY KEY, provider TEXT NOT NULL, return_to TEXT NOT NULL, req_id TEXT NOT NULL DEFAULT '', nonce TEXT NOT NULL, code_verifier TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS auth_states (state TEXT PRIMARY KEY, provider TEXT NOT NULL, return_to TEXT NOT NULL, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS auth_codes (code_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS auth_native_results (req_id TEXT PRIMARY KEY, kind TEXT NOT NULL, code TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL);
