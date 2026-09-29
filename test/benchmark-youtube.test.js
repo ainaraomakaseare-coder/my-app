@@ -70,7 +70,7 @@ function mainHandler(url) {
             id: 'v2',
             snippet: {
               channelId: 'c2', channelTitle: 'ChatGPT研究所',
-              title: 'ChatGPT tips', description: '',
+              title: 'ChatGPTの小技', description: '',
               publishedAt: '2026-09-20T00:00:00Z',
             },
             statistics: { viewCount: '5000', likeCount: '200', commentCount: '5' },
@@ -217,6 +217,21 @@ function mainHandler(url) {
     assert.ok(/利用枠を使い切りました/.test(out.error), out.error);
     assert.ok(out.hint, 'hint が無い');
     assert.ok(!/\{/.test(out.error), '生のJSONがそのままメッセージに出ている: ' + out.error);
+  });
+
+  // ★ relevanceLanguage=ja でも英語の動画が混ざった（本番の1回目）。題名に仮名・漢字が無いものは比べない。
+  await check('題名に仮名・漢字が無い動画（英語など）は落とす', async () => {
+    const fetchImpl = fakeFetch((url) => {
+      if (url.includes('/search?')) return { json: { items: [{ id: { videoId: 'en1' } }, { id: { videoId: 'ja1' } }] } };
+      if (url.includes('/videos?')) {
+        const v = (id, title) => ({ id, snippet: { channelId: 'c9', channelTitle: 'x', title, description: '', publishedAt: '2026-09-20T00:00:00Z' },
+          statistics: { viewCount: '50000', likeCount: '10', commentCount: '1' }, contentDetails: { duration: 'PT30S' } });
+        return { json: { items: [v('en1', 'ChatGPT Codes Every Student Needs in 2026'), v('ja1', 'ChatGPTで時短する方法')] } };
+      }
+      return { json: { items: [{ id: 'c9', statistics: { subscriberCount: '100' }, snippet: {} }] } };
+    });
+    const out = await benchmarkYoutube.collect('ai', { account: account(), db: {}, fetchImpl, now: new Date('2026-09-28T00:00:00Z') });
+    assert.deepStrictEqual(out.items.map((i) => i.url), ['https://www.youtube.com/shorts/ja1']);
   });
 
   await check('extractHashtags: 重複を除き（大小無視）、最大10個まで', () => {

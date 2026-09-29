@@ -127,6 +127,46 @@ const OPENAI_OK = { choices: [{ finish_reason: 'stop', message: { content: JSON.
     assert.strictEqual(REQ.schema.properties.rows.minItems, 6);
   });
 
+  // ★ 分析部隊③の企画が2回とも OpenAI に断られた原因。項目名 format が消え、required と食い違っていた。
+  await check('項目の名前（format / pattern など）は、指定の語と同じ名前でも消さない', () => {
+    const llm = load({ OPENAI_API_KEY: 'b' });
+    const schema = {
+      type: 'object',
+      properties: {
+        format: { type: 'string', enum: ['text', 'talking'] },
+        pattern: { type: 'string', maxLength: 5 },
+        list: { type: 'array', minItems: 1, items: { type: 'object', properties: { minimum: { type: 'integer', minimum: 0 } }, required: ['minimum'] } },
+      },
+      required: ['format', 'pattern', 'list'],
+    };
+    const out = llm.forStrict(schema);
+    assert.deepStrictEqual(Object.keys(out.properties), ['format', 'pattern', 'list']);
+    assert.deepStrictEqual(out.properties.format.enum, ['text', 'talking']);
+    assert.ok(!('maxLength' in out.properties.pattern), '指定の語は落とす');
+    assert.ok('minimum' in out.properties.list.items.properties, '入れ子の項目名も残す');
+    assert.ok(!('minimum' in out.properties.list.items.properties.minimum), '入れ子の指定の語は落とす');
+    for (const name of out.required) assert.ok(name in out.properties, name + ' が required にあるのに properties に無い');
+  });
+
+  // ★ 実際に使っている型すべてで、required と properties が食い違わないこと。
+  await check('アプリで使う型はどれも、strict に直しても required と properties が揃っている', () => {
+    const llm = load({ OPENAI_API_KEY: 'b' });
+    const walk = (node, where) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node.required) && node.properties) {
+        for (const name of node.required) assert.ok(name in node.properties, `${where}: ${name} が消えている`);
+      }
+      for (const [k, v] of Object.entries(node)) walk(v, where + '.' + k);
+    };
+    const plan = require('../lib/benchmark-plan');
+    const analyze = require('../lib/benchmark-analyze');
+    const topics = require('../lib/topic-generate');
+    walk(llm.forStrict(plan.SCHEMA), 'plan');
+    if (analyze.SCHEMA) walk(llm.forStrict(analyze.SCHEMA), 'analyze');
+    walk(llm.forStrict(topics.schemaFor(20)), 'topics');
+    walk(llm.forStrict(REQ.schema), 'draft');
+  });
+
   // ---------------------------------------------------------------- 送り先と形
   await check('Claude には x-api-key を付けて送る', async () => {
     const llm = load({ ANTHROPIC_API_KEY: 'sk-ant' });

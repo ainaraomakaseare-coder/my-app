@@ -97,6 +97,16 @@ const many = (prefix, n) => Array.from({ length: n }, (_, i) => `${prefix}のと
     assert.ok(msg.includes('20本'));
   });
 
+  // ★ 分析部隊③で AI（ひろや）の企画を作ったとき、補充のネタが全部転職になった。
+  await check('ジャンルで指示を切り替える（ai はひろや、既定は転職）', async () => {
+    assert.ok(topicGen.requestFor(20, [], [], 'ai').system.includes('ひろや'));
+    assert.ok(!topicGen.requestFor(20, [], [], 'ai').system.includes('第二新卒'));
+    assert.ok(topicGen.requestFor(20, [], []).system.includes('第二新卒'), '既定は転職のまま');
+    let got = null;
+    await topicGen.generateTopics([], { count: 1, genre: 'ai', generate: async (need, used, rejected, genre) => { got = genre; return ['AIに頼むと失敗する指示の出し方']; } });
+    assert.strictEqual(got, 'ai', 'generate にジャンルが渡っていない');
+  });
+
   console.log(`\n${passed} 件成功 / ${failed} 件失敗`);
   if (failed) process.exit(1);
 })();

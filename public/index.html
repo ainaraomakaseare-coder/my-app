@@ -1920,7 +1920,10 @@ function growAccountRow(a) {
   const noDays = !(a.days && a.days.length);
   const followersBadge = latest && num(latest.followers) !== null
     ? `<span class="badge">フォロワー ${jpNum(latest.followers)}人</span>` : '';
-  const brokenBadge = latest && latest.ok === false
+  // X は数字を取らない決まり（読み取りの API が有料のため）。直すものは無いので赤くしない。
+  const brokenBadge = a.network === 'x'
+    ? '<span class="badge">X は数字を取っていません（読み取りは有料のため）</span>'
+    : latest && latest.ok === false
     ? '<span class="badge b-failed">数字が取れていません</span>' : '';
 
   const wd = growWeekDiff(a.days);
@@ -2063,12 +2066,17 @@ function renderGrowTiktok(videos) {
 // --------------------------------------------- のび（YouTube 自動収集）
 let ytLastResult = null; // 「分析用にコピー」が使う、直前に集めた結果
 
-/** 今見ている運用アカウントの点検の型から、選択肢の既定値を決める。 */
-function ytDefaultGenre() {
+/** 今見ている運用アカウントのジャンル（点検の型から決める）。分からなければ null。 */
+function groupGenre() {
   const g = groups.find((x) => x.id === currentGroup);
   if (g && g.validation_profile === 'personal') return 'ai';
   if (g && g.validation_profile === 'curator') return 'career';
-  return 'ai';
+  return null;
+}
+
+/** 今見ている運用アカウントの点検の型から、選択肢の既定値を決める。 */
+function ytDefaultGenre() {
+  return groupGenre() || 'ai';
 }
 
 /** ジャンルの選択肢を作る（1回だけ）。本人が選び直したあとは、既定値で上書きしない。 */
@@ -2256,11 +2264,16 @@ $('benchRunBtn').onclick = async () => {
 
     // ② 分析（事実は機械、気づきはLLM＋機械点検）
     addStep('② 分析しています…');
+    if (groupGenre() !== genre) {
+      addStep('　（いま開いている運用アカウントは別のジャンルなので、自分の投稿とは比べません。比べるときは、そのジャンルの運用アカウントに切り替えてください）');
+    }
     let analyzeOut;
     try {
       analyzeOut = await api('/api/generate', {
         method: 'POST',
-        body: { action: 'bench-analyze', genre, own: buildOwnSnapshot() },
+        // ★ 「自分の投稿」は、いま開いている運用アカウントのもの。ジャンルが違えば渡さない。
+        //   渡すと、AI の分析に転職の投稿を「自分の投稿」として比べてしまう（本番の1回目）。
+        body: { action: 'bench-analyze', genre, own: groupGenre() === genre ? buildOwnSnapshot() : null },
       });
       benchLastRunId = analyzeOut.run_id;
       addStep('② 分析ができました');
@@ -2961,7 +2974,8 @@ $('bulkIdeas').onclick = async () => {
   state.className = 'muted';
   state.textContent = '考えています…（30秒ほど）';
   try {
-    const out = await api('/api/generate', { method: 'POST', body: { action: 'topics', used } });
+    // ジャンルを渡す（渡さないと転職のネタになる）。運用アカウントが分からなければ転職。
+    const out = await api('/api/generate', { method: 'POST', body: { action: 'topics', used, genre: groupGenre() || 'career' } });
     if (!out.topics || !out.topics.length) throw new Error('ネタを作れませんでした。もう一度押してください。');
     $('bulkTopics').value = out.topics.join('\n');
     state.textContent = out.ok

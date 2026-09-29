@@ -191,6 +191,19 @@ function fakeTopicGenerate(behavior) {
     assert.ok(!out.plan.topics.includes('退職に関する切り口その0'), '使ったネタが残っている');
   });
 
+  // ★ AI の企画なのに、足りないネタの補充が全部転職ネタになった（本番の1回目）。
+  await check('ネタの補充にはジャンルを渡す', async () => {
+    let gotGenre = null;
+    await planMod.plan(Object.assign({}, facts, { genre: 'ai' }), analysis, {
+      genre: 'ai', used: [],
+      generate: async () => ({ plans: [goodPlan({ name: '案1' }), goodPlan({ name: '案2' })], recommended: 0, why: '理由', topics: [] }),
+      topicGenerate: fakeTopicGenerate({
+        generateTopics: async (usedSoFar, o) => { gotGenre = o.genre; return { topics: [], rejected: [] }; },
+      }),
+    });
+    assert.strictEqual(gotGenre, 'ai');
+  });
+
   await check('AI の呼び出しが失敗しても投げず、作り直しに進む', async () => {
     let calls = 0;
     const out = await planMod.plan(facts, analysis, {

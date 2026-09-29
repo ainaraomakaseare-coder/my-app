@@ -217,7 +217,21 @@ const OWN = {
 
   await check('hooks: growing / rest の多重カウントと「空」', () => {
     assert.deepStrictEqual(out.hooks.growing, { '数字': 1, '問いかけ': 1, '否定・警告': 1, '結論先出し': 1 });
-    assert.deepStrictEqual(out.hooks.rest, { '空': 2, '否定・警告': 3, '問いかけ': 1 });
+    // 冒頭が空の2件は題名で判定する（「普通のタイトル」はどの型にも当たらず、「パート2 続き」は数字）。
+    assert.deepStrictEqual(out.hooks.rest, { '否定・警告': 3, '問いかけ': 1, '数字': 1 });
+    assert.deepStrictEqual(out.hooks.basis, { hook: 10, first_line: 2 });
+  });
+
+  // ★ YouTube は冒頭が API から見えず、全部「空」になっていた。冒頭も題名も無いときだけ「空」。
+  await check('hooks: 冒頭が空なら題名で判定し、両方空のときだけ「空」', () => {
+    const base = { platform: 'youtube', genre: 'ai', url: 'https://www.youtube.com/shorts/z1', account: { name: 'a', followers: 10 },
+      metrics: { views: 100, likes: null, comments: null, saves: null, shares: null }, ratio: 10, collected_at: '2026-09-28' };
+    const f = bf.facts([
+      Object.assign({}, base, { content: { format: 'unknown', first_line: '知らないと損するAIの使い方', hook: '' } }),
+      Object.assign({}, base, { url: 'https://www.youtube.com/shorts/z2', content: { format: 'unknown', first_line: '', hook: '' } }),
+    ], null, { genre: 'ai', now: new Date('2026-09-28T00:00:00Z') });
+    assert.deepStrictEqual(f.hooks.rest, { '否定・警告': 1, '空': 1 });
+    assert.deepStrictEqual(f.hooks.basis, { hook: 0, first_line: 1 });
   });
 
   await check('ctas: growing / rest の呼びかけの型', () => {

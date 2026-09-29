@@ -230,7 +230,7 @@ async function intakeBenchmark(req, q) {
   const saved = await benchmarkStore.saveItems(db, acceptedItems);
   const byPlatform = {};
   for (const it of acceptedItems) byPlatform[it.platform] = (byPlatform[it.platform] || 0) + 1;
-  const growing = acceptedItems.filter((it) => it.ratio !== null && it.ratio >= benchmark.GROWING_RATIO).length;
+  const growing = acceptedItems.filter((it) => benchmark.isGrowing(it)).length;
 
   return {
     accepted: acceptedItems.length,

@@ -118,7 +118,8 @@ async function usedTitles(extra) {
 /** ネタを20本考えさせる。 */
 async function topics(body) {
   const used = await usedTitles(body.used);
-  const result = await topicGen.generateTopics(used, { count: topicGen.COUNT });
+  const genre = benchmark.GENRES[body.genre] ? body.genre : 'career';
+  const result = await topicGen.generateTopics(used, { count: topicGen.COUNT, genre });
   return { topics: result.topics, ok: result.ok, rejected: result.rejected };
 }
 

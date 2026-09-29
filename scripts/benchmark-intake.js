@@ -223,7 +223,7 @@ function printSummary(genreLabel, plan, dryRun) {
   if (platforms.length) {
     console.log('  内訳: ' + platforms.map((p) => `${p} ${plan.summary.byPlatform[p]}`).join(' / '));
   }
-  console.log(`  のび率 ${GROWING_RATIO}倍以上: ${plan.summary.growing} 件`);
+  console.log(`  伸びている（のび率 ${GROWING_RATIO}倍以上・${benchmark.MIN_VIEWS}再生以上）: ${plan.summary.growing} 件`);
   const warned = plan.accepted.filter((a) => a.warnings && a.warnings.length).length;
   if (warned) console.log(`  注意（warnings）あり: ${warned} 件`);
   if (plan.rejected.length) {
