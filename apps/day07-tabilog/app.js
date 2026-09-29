@@ -249,7 +249,7 @@
     var out = {}, carry = '';
     // 1日ぶんのタイムゾーンを決める。forced：移動の予定のid→出発地のタイムゾーン（無ければ直前の予定を引き継ぐ）
     function walkDay(list, date, prevIn, forced) {
-      var zones = {}, prevZone = prevIn, first = true, consistent = 0, prevTransport = false;
+      var zones = {}, prevZone = prevIn, first = true, consistent = 0, prevTransport = false, prevAbsMin = null;
       list.forEach(function (b) {
         var own = byBlock[b.id] || '';
         var isTransport = b.category === 'transport';
@@ -262,6 +262,17 @@
           if (prevTransport || tz === (prevZone || fallback || '')) consistent++;
         } else if (isTransport && prevZone) {
           tz = prevZone;
+          // 「直前の予定のタイムゾーンで読む」という既定のルールだと、日付変更線をまたぐ到着の予定
+          // （地図はあるのに出発地と同じ扱いになる）が、絶対時刻で直前の予定より前に来てしまうことがある
+          // （羽田20:00発→LAX18:50着を、そのままJSTで読むと18:50<20:00に見えてしまう。2026-09-29）。
+          // そのときは直前のタイムゾーンではなく自分の地図（＝到着地）を使う（docs/adr/0009）
+          if (own && own !== tz) {
+            var curMin = hhmmToMinute(b.time);
+            if (curMin !== null && prevAbsMin !== null) {
+              var candOff = tzOffsetMinutes(tz, date, b.time);
+              if (typeof candOff === 'number' && (curMin - candOff) < prevAbsMin) tz = own;
+            }
+          }
         } else if (own) {
           tz = own;
         } else if (first) {
@@ -273,6 +284,9 @@
         prevZone = isTransport ? (own || byDate[date] || tz) : tz;
         prevTransport = isTransport;
         first = false;
+        var finalOff = tzOffsetMinutes(tz, date, b.time);
+        var localMin = hhmmToMinute(b.time);
+        prevAbsMin = (typeof finalOff === 'number' && localMin !== null) ? (localMin - finalOff) : null;
       });
       return { zones: zones, end: prevZone, consistent: consistent };
     }
@@ -1459,6 +1473,40 @@
     return 12742 * Math.asin(Math.sqrt(h));
   }
 
+  // 前後の場所からだけ、遠く離れた「ピンが違うかもしれない」地点を見つける。前後の地点どうしは
+  // 近い（FAR未満）のに、真ん中の地点だけ両方からFAR超え離れているときだけ怪しいと判定する
+  // （前後も含めて遠くへ移動した日＝本物の長距離移動は、前後どうしも遠いのでここには当たらない）。
+  // 地図でふりかえる（ピンが違うせいで大きく飛んで見える。例：ヒューストン滞在中の1件だけ
+  // ロサンゼルスの自宅のピンが残っていた）と、旅行詳細画面の「この地図は前後の予定から遠く
+  // 離れています」の注意書き、両方で使う（2026-09-29）。
+  var OUTLIER_FAR_KM = 800;
+  var OUTLIER_NEAR_KM = 300;
+  function isFarMapOutlier(prev, cur, next) {
+    if (!prev || !cur || !next) return false;
+    if (typeof prev.lat !== 'number' || typeof cur.lat !== 'number' || typeof next.lat !== 'number') return false;
+    return distanceKm(prev, cur) > OUTLIER_FAR_KM && distanceKm(cur, next) > OUTLIER_FAR_KM &&
+      distanceKm(prev, next) < OUTLIER_NEAR_KM;
+  }
+
+  // 予定（Block）を時系列に並べ、前後から遠く離れたピンを持つ予定のidを集める。各Blockの地図は
+  // 最初の記録（entries[0]）のmapLat/mapLngを使う（lodgingBlockMapName等と同じ決め方）。
+  // 旅行詳細画面の警告表示に使う（2026-09-29）。
+  function findFarMapOutlierBlockIds(blocks) {
+    var sorted = sortBlocks(blocks || []);
+    var located = [];
+    sorted.forEach(function (b) {
+      var e = (b.entries || [])[0];
+      if (e && typeof e.mapLat === 'number' && typeof e.mapLng === 'number') {
+        located.push({ id: b.id, lat: e.mapLat, lng: e.mapLng });
+      }
+    });
+    var out = {};
+    for (var i = 1; i < located.length - 1; i++) {
+      if (isFarMapOutlier(located[i - 1], located[i], located[i + 1])) out[located[i].id] = true;
+    }
+    return out;
+  }
+
   // OSRMの車ルートが、たどり着けない目的地（歩行者専用の階段など）を遠い道に迂回させることがある
   // （リオデジャネイロ大聖堂→セラロン階段、約1kmの徒歩圏なのに車で大回りするなど）。
   // 直線距離よりずっと長い道のり（2.5倍を超え、かつ+1.5km以上長い）は「たどり着けていない」とみなし、
@@ -1556,6 +1604,16 @@
       });
     });
     if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
+    // 前後の地点から遠く離れたピン（違う場所のピンが残っている）は、地図上の点にしない。
+    // 吹き出し（キャプション・写真）はそのまま出す＝「出来事」として扱う（isFarMapOutlier、2026-09-29）。
+    var locatedIdx = [];
+    s.forEach(function (st, i) { if (st.located) locatedIdx.push(i); });
+    for (var oi = 1; oi < locatedIdx.length - 1; oi++) {
+      var pI = locatedIdx[oi - 1], cI = locatedIdx[oi], nI = locatedIdx[oi + 1];
+      if (isFarMapOutlier(s[pI], s[cI], s[nI])) {
+        s[cI].located = false; s[cI].lat = null; s[cI].lng = null; s[cI].outlier = true;
+      }
+    }
     // 時刻の無い到着で、replayStopsの時点（座標がまだ分からない）ではmoveMinutes・後の予定という
     // 手がかりが無かった（estimateSource==='default'）ものを、座標が分かった今、飛行機で着いた先
     // （transport==='plane'、または移動手段が無く距離がREPLAY_PLANE_KM超）なら、飛行機の所要時間
@@ -2762,6 +2820,8 @@
     railPathFromOverpass: railPathFromOverpass,
     RAIL_LOCAL_MAX_KM: RAIL_LOCAL_MAX_KM,
     distanceKm: distanceKm,
+    isFarMapOutlier: isFarMapOutlier,
+    findFarMapOutlierBlockIds: findFarMapOutlierBlockIds,
     isRouteDetourTooLong: isRouteDetourTooLong,
     geocodeNearIndexes: geocodeNearIndexes,
     planeArcPath: planeArcPath,
@@ -5992,6 +6052,13 @@
     var mapUnusable = entry.mapUrl && (!/^https?:\/\//i.test(entry.mapUrl.trim()) || Core.hasBrokenMapQuery(entry.mapUrl.trim()));
     if (mapUnusable) metaBits.push('<span class="map-broken">地図の場所が読み取れません・押して直す</span>');
     else if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
+    // この記録がその日いちばん最初の記録（＝Blockの代表の地図）で、前後の予定から800km以上離れた
+    // ピンを持っている（かつ前後どうしは300km未満）ときは、ピンを間違えている可能性が高い
+    // （例：別の都市に泊まっている日に、前の街の家のピンが残っていた）。押して直せるよう、記録の
+    // 編集導線がある「地図」リンクのすぐ下に注意書きを出す（Core.findFarMapOutlierBlockIds、2026-09-29）。
+    if (!mapUnusable && (block.entries || [])[0] === entry && Core.findFarMapOutlierBlockIds(state.blocks || [])[block.id]) {
+      metaBits.push('<span class="map-far-outlier">この地図は前後の予定から遠く離れています（地図が違うかもしれません）</span>');
+    }
     if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
     if (entry.otherUrl) metaBits.push('<a href="' + escapeHtml(entry.otherUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">リンク</a>');
 

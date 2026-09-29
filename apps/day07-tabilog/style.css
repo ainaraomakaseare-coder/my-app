@@ -1173,6 +1173,10 @@ body.viewer-open { overflow: hidden; }
 /* 地図のリンクが壊れている記録（2026-09-27） */
 .map-broken { color: var(--warn, #B7791F); font-weight: 700; }
 
+/* 前後の予定から遠く離れたピン（違う場所のピンかもしれない）。壊れた地図ほど強くは出さず、
+   さりげない注意書きにとどめる（2026-09-29） */
+.map-far-outlier { color: var(--warn, #B7791F); font-size: 0.85em; }
+
 #blkMoveTimeWrap[hidden] { display: none; }
 
 /* 手で並べた日の案内（2026-09-27） */
