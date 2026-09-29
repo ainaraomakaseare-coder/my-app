@@ -626,7 +626,7 @@
 </dialog>
 
 <script src="/mp4-mux.js?v=1"></script>
-<script src="/reel.js?v=4"></script>
+<script src="/reel.js?v=5"></script>
 <script src="/split-drafts.js?v=2"></script>
 <script src="/research-prompts.js?v=1"></script>
 <script>
@@ -2153,7 +2153,7 @@ function buildOwnSnapshot() {
     })),
     tiktok_videos: growLast.tiktokVideos || [],
     // 自分の型（分析で比べる軸）。アプリで作る動画はこの1種類。
-    own_format: { format: 'text', duration_sec: 16.8, note: '文字の穴埋め6問（720×1280）。冒頭は題名と空欄' },
+    own_format: { format: 'text', duration_sec: 16.8, note: '文字の穴埋め6問（720×1280）。0秒目からつかみ（赤字の一言）、答えは0.4秒目から2.5秒ごと（2026-09-29 から）' },
   };
 }
 
@@ -2594,7 +2594,10 @@ function renderGenerated(out) {
 
   box.innerHTML =
     '<div class="genbox">' +
-      `<div class="kicker">${escapeHtml(d.kicker || '')}</div>` +
+      // 動画と同じく、つかみがあれば呼びかけの代わりに赤で出す（public/reel.js）。
+      (d.hook
+        ? `<div class="kicker" style="color:var(--bad);font-weight:700">${escapeHtml(d.hook)}</div>`
+        : `<div class="kicker">${escapeHtml(d.kicker || '')}</div>`) +
       `<div class="gtitle">${escapeHtml(d.title || '')}</div>` +
       `<table class="grows">${rows}</table>` +
     '</div>' +
