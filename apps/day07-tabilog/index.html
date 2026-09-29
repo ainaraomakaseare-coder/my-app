@@ -510,6 +510,12 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
       </button>
 
+      <!-- 動画でシェア（docs/adr/0020）。準備ができて、場所が2か所以上あるときだけ押せる -->
+      <button class="rsv-btn" id="btnReplayVideo" type="button" hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="M16 10.5l5-3v9l-5-3"/></svg>
+        <span>動画でシェア</span>
+      </button>
+      <p class="rsv-hint" id="rsvHint" hidden></p>
       <div class="replay-daybanner" id="replayDayBanner" hidden></div>
       <div class="replay-status-wrap">
         <p class="replay-status" id="replayStatus"></p>
@@ -853,6 +859,40 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="btn ghost" id="btnSharePost" type="button" hidden>共有する</button>
     </div>
     <p class="hint comment-status" id="postStatus"></p>
+  </div>
+</div>
+
+<!-- ============ 動画でシェア（地図でふりかえるを縦動画にして、X・Instagram・TikTokなどへ。docs/adr/0020） ============ -->
+<div class="sheet-backdrop rsv-backdrop" id="rsvSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rsvSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="rsvSheetTitle">動画でシェア</div>
+      <button class="sheet-close" id="btnCloseRsv" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div class="rsv-panel" id="rsvOptions">
+      <p class="hint">この旅行の足跡を、15秒ほどの縦向きの動画にします。旅行名・日付・地名と地図の動きだけが入り、費用や一緒に行った人の名前は出ません。</p>
+      <label class="post-option" id="rsvPhotosRow"><input type="checkbox" id="rsvPhotos"> 記録の写真を入れる</label>
+      <p class="hint" id="rsvPhotosNote">写真を入れると、同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。</p>
+      <div class="post-actions">
+        <button class="btn primary wide" id="btnRsvStart" type="button">動画を作る</button>
+      </div>
+      <p class="hint comment-status" id="rsvStatus"></p>
+    </div>
+    <div class="rsv-panel" id="rsvProgress" hidden>
+      <p class="rsv-percent" id="rsvPercent">0%</p>
+      <p class="rsv-progress-text" id="rsvProgressText">動画を作っています…</p>
+      <div class="rsv-bar"><div class="rsv-bar-fill" id="rsvBarFill"></div></div>
+      <p class="hint">動画は実際の時間をかけて作るので、30秒ほどかかります。この画面を開いたままお待ちください。</p>
+      <button class="btn ghost wide" id="btnRsvCancel" type="button">キャンセル</button>
+    </div>
+    <div class="rsv-panel" id="rsvResult" hidden>
+      <video class="rsv-video" id="rsvVideo" playsinline muted loop controls></video>
+      <p class="hint" id="rsvResultNote"></p>
+      <div class="post-actions">
+        <button class="btn primary" id="btnRsvShare" type="button">共有する</button>
+        <button class="btn ghost" id="btnRsvAgain" type="button">作り直す</button>
+      </div>
+    </div>
   </div>
 </div>
 
