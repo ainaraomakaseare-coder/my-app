@@ -7,9 +7,9 @@
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
 import {
-  configuredProviders, parseReturnTarget, isValidReqId, buildAuthorizeUrl, checkIdTokenClaims, extractProfile,
+  configuredProviders, parseReturnTarget, buildAuthorizeUrl, checkIdTokenClaims, extractProfile,
   decideIdentity, decodeJwtPayload, toBase64Url, fromBase64Url, pkceChallenge, buildAppleClientSecret,
-  nativeResultPage, PROVIDER_ENDPOINTS,
+  nativeResultPage, nativeAuthUrl, authMessagePage, PROVIDER_ENDPOINTS,
 } from "../src/oauth.js";
 
 let pass = 0, fail = 0;
@@ -59,12 +59,6 @@ check("javascript:スキーム", parseReturnTarget("javascript:alert(1)", ALLOWE
 check("空・未指定", parseReturnTarget("", ALLOWED), null);
 check("undefined", parseReturnTarget(undefined, ALLOWED), null);
 check("長すぎる", parseReturnTarget("https://tabinoashiato.pages.dev/" + "a".repeat(600), ALLOWED), null);
-
-/* ---------- isValidReqId ---------- */
-check("reqId: 32文字のhex", isValidReqId("a".repeat(32)), true);
-check("reqId: 短すぎる", isValidReqId("abc"), false);
-check("reqId: 記号を含む", isValidReqId("a".repeat(16) + "/../"), false);
-check("reqId: 文字列以外", isValidReqId(12345678901234567890), false);
 
 /* ---------- buildAuthorizeUrl ---------- */
 {
@@ -176,12 +170,35 @@ check(
   check("apple secret: \\n入りの1行secretでも署名できる", oneLine.split(".").length, 3);
 }
 
-/* ---------- nativeResultPage ---------- */
+/* ---------- nativeAuthUrl / nativeResultPage / authMessagePage ---------- */
 {
-  const html = nativeResultPage(true, "ログインできました", 'https://x.example/"><script>');
-  check("戻るリンクをエスケープする", html.includes("<script>"), false);
-  check("成功ページに戻るボタン", html.includes("旅の足跡アプリに戻る"), true);
+  const code = "a".repeat(64);
+  check("session URL", nativeAuthUrl("session", code), "tabilog://auth?code=" + code);
+  check("link URL", nativeAuthUrl("link", code), "tabilog://auth?link=" + code);
+  check("error URL", nativeAuthUrl("error", "cancelled"), "tabilog://auth?error=cancelled");
+  check("error URLは空なら failed", nativeAuthUrl("error", ""), "tabilog://auth?error=failed");
+  check("値はURLエンコードされる", nativeAuthUrl("error", "a&b=c#d"), "tabilog://auth?error=a%26b%3Dc%23d");
+  check("openと衝突しない", nativeAuthUrl("session", code).startsWith("tabilog://open"), false);
+
+  const ok = nativeResultPage("session", code);
+  check("成功ページ：すぐアプリを開く", ok.includes('location.href="tabilog://auth?code=' + code + '"'), true);
+  check("成功ページ：大きな戻るボタン", ok.includes('class="b" href="tabilog://auth?code=' + code + '">旅の足跡アプリに戻る</a>'), true);
+  check("成功ページ：フォールバック文言", ok.includes("自動でアプリが開かないとき"), true);
+  check("linkページ", nativeResultPage("link", code).includes("tabilog://auth?link=" + code), true);
+  const err = nativeResultPage("error", "cancelled");
+  check("エラーページ", [err.includes("tabilog://auth?error=cancelled"), err.includes("キャンセル")], [true, true]);
+
+  // 想定外の値でもHTML/スクリプトを壊せない
+  const evil = nativeResultPage("error", '"></a><script>alert(1)</script>');
+  check("エスケープ：scriptタグが増えない", (evil.match(/<script>/g) || []).length, 1);
+  check("エスケープ：生の値が出ない", evil.includes("alert(1)</script>"), false);
+
+  const plain = authMessagePage(true, "ログインできました", 'https://x.example/"><script>', false);
+  check("戻るリンクをエスケープする", plain.includes("<script>"), false);
+  check("自動遷移なしならscriptなし", plain.includes("location.href"), false);
+  check("戻るボタン", plain.includes("旅の足跡アプリに戻る"), true);
 }
+
 
 console.log(`\noauth.test: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

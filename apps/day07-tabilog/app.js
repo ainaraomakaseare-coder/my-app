@@ -9752,7 +9752,6 @@
     $('#loginLead').textContent = 'ログインすると、評価をつけたりマイログを見たりできます';
 
     // 前回の途中状態（待機表示・メール確認の待ち）を消してから、使えるログイン方法を並べる
-    stopNativeAuthPoll();
     state.linkCode = '';
     $('#socialWaiting').hidden = true;
     $('#socialLogin').hidden = false;
@@ -9823,7 +9822,6 @@
   // 指し示すための識別子で、これが無いと「参加する」機能が使えない。
   // 取得に失敗してもログイン自体は成立させる（参加機能だけ使えない状態で進む）。
   function ensureAccountAndProceed(user, opts) {
-    stopNativeAuthPoll();
     saveCurrentUser(user);
     renderAccountRow();
     api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
@@ -9839,7 +9837,6 @@
 
   // ログイン画面を、ログインせずに閉じる（元の画面へ戻る）
   function closeLogin() {
-    stopNativeAuthPoll();
     goToReturnScreen(state.loginReturnTo, false);
   }
 
@@ -9869,9 +9866,6 @@
   // Workerがやり、アプリは「開始URLを開く」→「使い捨てコードをセッションに交換する」だけ。
   var SOCIAL_NAMES = { apple: 'Apple', google: 'Google', line: 'LINE' };
   var LOGIN_RETURN_KEY = 'tabilog:login-return';
-  var NATIVE_POLL_INTERVAL_MS = 2000;
-  var NATIVE_POLL_LIMIT_MS = 5 * 60 * 1000;
-  var nativePoll = null;
 
   function applyAuthProviders(list) {
     if (state.linkCode) return; // メール確認待ちの間はソーシャルボタンを出さない
@@ -9881,22 +9875,16 @@
     $('#emailLoginDivider').hidden = list.length === 0;
   }
 
-  function randomReqId() {
-    var bytes = new Uint8Array(16);
-    (window.crypto || window.msCrypto).getRandomValues(bytes);
-    return Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
-  }
-
   function startSocialLogin(provider) {
     var base = API_BASE + '/auth/' + provider + '/start';
     if (isNativeApp()) {
       // iOSアプリ：WKWebViewの中ではGoogleなどがログインをブロックするので、システムのブラウザ（Safari）で
       // 開く。Workerのホストはcapacitor.config.jsonのallowNavigationに無いため、Capacitorが自動で
-      // Safariに渡す（プラグインの追加は不要）。結果は下のポーリングで受け取る。
-      var reqId = randomReqId();
+      // Safariに渡す（プラグインの追加は不要）。ログインが終わると、Workerが出す「アプリに戻る」ページが
+      // tabilog://auth?code=…でこのアプリを起動する（listenForAppLinks→handleAuthAppUrl）。
+      // ポーリングはしない：待ち合わせIDで結果を取りに行く方式は、IDを知る第三者にコードを盗まれる（docs/adr/0019）。
       showSocialWaiting(provider);
-      startNativeAuthPoll(reqId);
-      window.open(base + '?return=app&req=' + reqId, '_blank');
+      window.open(base + '?return=app', '_blank');
       return;
     }
     // Web：このページごとプロバイダーへ移動し、終わると #auth=... を付けてこのページに戻ってくる
@@ -9910,52 +9898,12 @@
     $('#emailLoginForm').hidden = true;
     $('#emailOtpForm').hidden = true;
     $('#socialWaiting').hidden = false;
-    $('#socialWaitingText').textContent = 'ブラウザで' + (SOCIAL_NAMES[provider] || '') + 'のログインを進めてください。終わったら、このアプリに戻ってきてください。';
+    $('#socialWaitingText').textContent = 'ブラウザで' + (SOCIAL_NAMES[provider] || '') + 'のログインを進めてください。終わると自動でこのアプリに戻ります。戻らないときは、ブラウザの「旅の足跡アプリに戻る」ボタンを押してください。';
     $('#loginStatus').textContent = '';
   }
 
   function cancelSocialWaiting() {
-    stopNativeAuthPoll();
     openLogin(state.loginReturnTo);
-  }
-
-  // アプリ用：2秒ごと（アプリに戻ってきた瞬間にもすぐ）Workerに結果を聞きに行く。最大5分。
-  function startNativeAuthPoll(reqId) {
-    stopNativeAuthPoll();
-    var started = Date.now();
-    var busy = false;
-    var poll = { timer: null, onVisible: null };
-    function tick() {
-      if (nativePoll !== poll || busy) return;
-      if (Date.now() - started > NATIVE_POLL_LIMIT_MS) {
-        stopNativeAuthPoll();
-        $('#socialWaiting').hidden = true;
-        $('#socialLogin').hidden = false;
-        $('#emailLoginForm').hidden = false;
-        $('#loginStatus').textContent = 'ログインの待ち時間が過ぎました。もう一度お試しください。';
-        openLoginRefreshProviders();
-        return;
-      }
-      busy = true;
-      api('/auth/poll?req=' + encodeURIComponent(reqId)).then(function (res) {
-        if (nativePoll !== poll || !res || !res.ready) return;
-        stopNativeAuthPoll();
-        handleSocialResult(res.kind, res.code, res.error);
-      }).catch(function () {
-        // 通信できなかったときは次の回にまた聞く
-      }).then(function () { busy = false; });
-    }
-    poll.onVisible = function () { if (!document.hidden) tick(); };
-    poll.timer = setInterval(tick, NATIVE_POLL_INTERVAL_MS);
-    document.addEventListener('visibilitychange', poll.onVisible);
-    nativePoll = poll;
-  }
-
-  function stopNativeAuthPoll() {
-    if (!nativePoll) return;
-    clearInterval(nativePoll.timer);
-    document.removeEventListener('visibilitychange', nativePoll.onVisible);
-    nativePoll = null;
   }
 
   function openLoginRefreshProviders() {
@@ -9966,7 +9914,7 @@
     return error === 'cancelled' ? 'ログインをキャンセルしました。' : 'ログインに失敗しました。もう一度お試しください。';
   }
 
-  // プロバイダーでの操作が終わった結果（アプリではポーリング、Webでは#auth=…）を受け取る
+  // プロバイダーでの操作が終わった結果（アプリではtabilog://auth?…、Webでは#auth=…）を受け取る
   function handleSocialResult(kind, code, error, opts) {
     if (kind === 'error' || !code) {
       // ログイン画面に居るならそこに表示、Webで元の画面に戻ってきたときは画面を動かさずトーストで知らせる
@@ -9989,7 +9937,6 @@
   }
 
   function cancelSocialWaitingKeepStatus() {
-    stopNativeAuthPoll();
     $('#socialWaiting').hidden = true;
     $('#socialLogin').hidden = false;
     $('#emailLoginForm').hidden = false;
@@ -10000,7 +9947,6 @@
   // 確認できたメールにこのプロバイダーの本人を結びつけ、次回からはそのプロバイダーだけで入れる。
   function enterLinkMode(code, info) {
     if (!$('.screen[data-screen="login"]').classList.contains('active')) openLogin(state.loginReturnTo);
-    stopNativeAuthPoll();
     state.linkCode = code;
     $('#socialWaiting').hidden = true;
     $('#socialLogin').hidden = true;
@@ -10105,17 +10051,33 @@
     $('#appBanner').hidden = false;
   }
 
+  // ログインの結果を運んでくるカスタムURL（tabilog://auth?code=… / ?link=… / ?error=…）。
+  // Webの#auth=… / #auth_link=… / #auth_error=…と同じhandleSocialResultで処理する。
+  // 戻り値：ログインの結果として処理したか
+  function handleAuthAppUrl(url) {
+    var u;
+    try { u = new URL(url); } catch (e) { return false; }
+    if (u.protocol !== 'tabilog:' || u.hostname !== 'auth') return false;
+    var p = u.searchParams;
+    state.loginReturnTo = state.loginReturnTo || 'home';
+    if (p.get('error')) handleSocialResult('error', '', p.get('error'));
+    else if (p.get('code')) handleSocialResult('session', p.get('code'), '');
+    else if (p.get('link')) handleSocialResult('session', p.get('link'), ''); // exchangeがneedEmailを返し、メール確認へ進む
+    else handleSocialResult('error', '', 'failed');
+    return true;
+  }
+
+  function handleAppUrl(url) {
+    if (!url || handleAuthAppUrl(url)) return;
+    var id = tripIdFromUrl(url);
+    if (id) openTrip(id);
+  }
+
   function listenForAppLinks() {
     var App = isNativeApp() && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
     if (!App) return;
-    App.addListener('appUrlOpen', function (ev) {
-      var id = tripIdFromUrl(ev && ev.url);
-      if (id) openTrip(id);
-    });
-    App.getLaunchUrl().then(function (res) {
-      var id = tripIdFromUrl(res && res.url);
-      if (id) openTrip(id);
-    }).catch(function () {});
+    App.addListener('appUrlOpen', function (ev) { handleAppUrl(ev && ev.url); });
+    App.getLaunchUrl().then(function (res) { handleAppUrl(res && res.url); }).catch(function () {});
   }
 
   // 画面下中央に出す小さな通知。約2.5秒でフェードして消える（トップ右のアイコンとの重複を

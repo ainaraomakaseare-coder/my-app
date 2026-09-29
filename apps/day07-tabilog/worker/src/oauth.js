@@ -75,11 +75,6 @@ export function parseReturnTarget(value, allowed) {
   return { kind: "web", url: u.origin + u.pathname + u.search };
 }
 
-// アプリが自分で作る待ち合わせ用ID（推測されない長さのランダム文字列）
-export function isValidReqId(x) {
-  return typeof x === "string" && /^[A-Za-z0-9_-]{16,64}$/.test(x);
-}
-
 /* ---------- 乱数・ハッシュ・base64url ---------- */
 
 export function toBase64Url(bytes) {
@@ -251,23 +246,58 @@ export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-export function nativeResultPage(ok, message, backUrl) {
+// アプリに戻るためのカスタムURLスキームのURL（Info.plistのCFBundleURLSchemes=tabilog。
+// tabilog://open?trip=…（共有リンク）とはホスト部分（auth / open）で区別する）。
+//   session → tabilog://auth?code=<使い捨てコード>
+//   link    → tabilog://auth?link=<使い捨てコード>（メールの確認が必要）
+//   error   → tabilog://auth?error=<理由>
+export function nativeAuthUrl(kind, value) {
+  const key = kind === "session" ? "code" : kind === "link" ? "link" : "error";
+  return "tabilog://auth?" + key + "=" + encodeURIComponent(value || (kind === "error" ? "failed" : ""));
+}
+
+// 結果を知らせるHTML。backUrlの「旅の足跡アプリに戻る」ボタンを出し、autoOpenなら開いた瞬間に
+// そのURLへ移動してアプリを起動しようとする（起動できなかったときのためにボタンも残す）。
+export function authMessagePage(ok, message, backUrl, autoOpen) {
   const title = ok ? "ログインできました" : "ログインできませんでした";
   return (
     '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<meta name="referrer" content="no-referrer">' +
     "<title>旅の足跡</title>" +
     "<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#F5F6F8;color:#222;margin:0;" +
     "display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px}" +
     ".c{background:#fff;border-radius:16px;padding:32px 24px;max-width:340px;box-shadow:0 2px 12px rgba(0,0,0,.08)}" +
     "h1{font-size:19px;margin:0 0 10px}p{font-size:14px;line-height:1.7;margin:0 0 20px;color:#555}" +
-    "a{display:inline-block;background:#00BF8F;color:#fff;text-decoration:none;border-radius:12px;padding:12px 24px;font-weight:600}" +
+    "a.b{display:block;background:#00BF8F;color:#fff;text-decoration:none;border-radius:14px;padding:18px 24px;font-size:18px;font-weight:700}" +
+    ".s{font-size:12px;color:#888;margin:16px 0 0}" +
     '</style></head><body><div class="c"><h1>' +
     escapeHtml(title) +
     "</h1><p>" +
     escapeHtml(message) +
-    '</p><a href="' +
+    '</p><a class="b" href="' +
     escapeHtml(backUrl) +
-    '">旅の足跡アプリに戻る</a></div></body></html>'
+    '">旅の足跡アプリに戻る</a>' +
+    (autoOpen
+      ? '<p class="s">自動でアプリが開かないときは、上のボタンを押してください。</p>' +
+        "<script>location.href=" +
+        // </script>で閉じられないよう < をエスケープしたJSON文字列として埋め込む
+        JSON.stringify(backUrl).replace(/</g, "\u003c") +
+        ";</script>"
+      : "") +
+    "</div></body></html>"
   );
+}
+
+// iOSアプリ用：ログインの結果をカスタムURLスキームでアプリに渡すページ。
+export function nativeResultPage(kind, value) {
+  const message =
+    kind === "session"
+      ? "ログインできました。旅の足跡アプリに戻ってください。"
+      : kind === "link"
+        ? "アプリに戻って、メールアドレスの確認を続けてください。"
+        : value === "cancelled"
+          ? "ログインをキャンセルしました。"
+          : "ログインに失敗しました。もう一度お試しください。";
+  return authMessagePage(kind !== "error", message, nativeAuthUrl(kind, value), true);
 }

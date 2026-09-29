@@ -26,9 +26,9 @@ import {
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
 import {
-  PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, isValidReqId, randomHex,
+  PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, randomHex,
   pkceChallenge, buildAuthorizeUrl, buildAppleClientSecret, decodeJwtPayload, checkIdTokenClaims, extractProfile,
-  decideIdentity, nativeResultPage,
+  decideIdentity, nativeResultPage, authMessagePage,
 } from "./oauth.js";
 
 // "arrival"（到着）は2026-09-27〜。種類「移動」の中の「出発｜到着」の到着。移動（出発）と違い、着いた場所の予定として扱う
@@ -2807,7 +2807,7 @@ function minutesFromNowIso(minutes) {
 }
 
 function authHtml(ok, message, status) {
-  return new Response(nativeResultPage(ok, message, APP_BACK_URL), {
+  return new Response(authMessagePage(ok, message, APP_BACK_URL, false), {
     status,
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   });
@@ -2823,24 +2823,19 @@ async function authStart(provider, url, env) {
   }
   const target = parseReturnTarget(url.searchParams.get("return"), env.ALLOWED_ORIGIN);
   if (!target) return authHtml(false, "ログインの開始に失敗しました（戻り先が正しくありません）。", 400);
-  const reqId = url.searchParams.get("req") || "";
-  if (target.kind === "app" && !isValidReqId(reqId)) {
-    return authHtml(false, "ログインの開始に失敗しました。アプリからもう一度お試しください。", 400);
-  }
 
   // 期限切れの古い行をついでに掃除する（専用の定期処理は作らない）
   const now = nowIso();
   await env.DB.prepare("DELETE FROM auth_states WHERE expires_at < ?").bind(now).run();
   await env.DB.prepare("DELETE FROM auth_codes WHERE expires_at < ?").bind(now).run();
-  await env.DB.prepare("DELETE FROM auth_native_results WHERE expires_at < ?").bind(now).run();
 
   const state = randomHex(24);
   const nonce = randomHex(16);
   const verifier = provider === "apple" ? "" : randomHex(32); // AppleはPKCEを使わない
   await env.DB.prepare(
-    "INSERT INTO auth_states (state, provider, return_to, req_id, nonce, code_verifier, expires_at, created_at) VALUES (?,?,?,?,?,?,?,?)"
+    "INSERT INTO auth_states (state, provider, return_to, nonce, code_verifier, expires_at, created_at) VALUES (?,?,?,?,?,?,?)"
   )
-    .bind(state, provider, target.kind === "app" ? "app" : target.url, target.kind === "app" ? reqId : "", nonce, verifier, minutesFromNowIso(AUTH_STATE_MINUTES), now)
+    .bind(state, provider, target.kind === "app" ? "app" : target.url, nonce, verifier, minutesFromNowIso(AUTH_STATE_MINUTES), now)
     .run();
 
   const location = buildAuthorizeUrl(provider, env, {
@@ -2864,22 +2859,15 @@ async function createAuthCode(env, fields) {
 }
 
 // プロバイダーでの操作が終わったあと、結果をWebなら戻り先へのリダイレクト、
-// iOSアプリならD1に置いて「アプリに戻ってください」ページで返す。
+// iOSアプリなら「アプリに戻ってください」ページ（カスタムURLスキームtabilog://auth?…で
+// アプリを起動する）で返す。使い捨てコードは、ログインを終えた端末のブラウザにだけ渡る
+// （アプリが待ち合わせIDで取りに来る方式は、IDを知る第三者にコードを盗まれるので使わない。docs/adr/0019）。
 async function finishAuth(env, stateRow, res) {
   if (stateRow.return_to === "app") {
-    await env.DB.prepare(
-      "INSERT OR REPLACE INTO auth_native_results (req_id, kind, code, error, expires_at) VALUES (?,?,?,?,?)"
-    )
-      .bind(stateRow.req_id, res.kind, res.code || "", res.error || "", minutesFromNowIso(AUTH_CODE_MINUTES))
-      .run();
-    if (res.kind === "error") {
-      return authHtml(false, res.error === "cancelled" ? "ログインをキャンセルしました。" : "ログインに失敗しました。もう一度お試しください。", 200);
-    }
-    return authHtml(
-      true,
-      res.kind === "link" ? "アプリに戻って、メールアドレスの確認を続けてください。" : "ログインできました。旅の足跡アプリに戻ってください。",
-      200
-    );
+    return new Response(nativeResultPage(res.kind, res.kind === "error" ? res.error : res.code), {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" },
+    });
   }
   const hash = res.kind === "session" ? "#auth=" + res.code : res.kind === "link" ? "#auth_link=" + res.code : "#auth_error=" + encodeURIComponent(res.error || "failed");
   return new Response(null, { status: 302, headers: { location: stateRow.return_to + hash, "cache-control": "no-store" } });
@@ -2997,18 +2985,6 @@ async function authExchange(request, env, headers) {
   const token = await issueSession(env, row.email);
   // 既にアカウントに名前があればそれを優先（プロバイダーの表示名で上書きしない）
   return json({ email: row.email, name: (account && account.name) || row.name || "", token, provider: row.provider }, 200, headers);
-}
-
-// iOSアプリ用：ブラウザで終わったログインの結果を、アプリが取りに来る。読んだら消える。
-async function authPoll(url, env, headers) {
-  const reqId = url.searchParams.get("req") || "";
-  if (!isValidReqId(reqId)) return json({ error: "invalid_req" }, 400, headers);
-  const h = { ...headers, "cache-control": "no-store" };
-  const row = await env.DB.prepare("SELECT * FROM auth_native_results WHERE req_id = ?").bind(reqId).first();
-  if (!row) return json({ ready: false }, 200, h);
-  await env.DB.prepare("DELETE FROM auth_native_results WHERE req_id = ?").bind(reqId).run();
-  if (new Date(row.expires_at).getTime() < Date.now()) return json({ ready: false }, 200, h);
-  return json({ ready: true, kind: row.kind, code: row.code, error: row.error }, 200, h);
 }
 
 /* ---------- アカウント・参加者（アカウント参加者） ----------
@@ -4823,7 +4799,6 @@ export default {
       if ((m[1] === "apple") === (method === "POST")) return authCallback(m[1], request, url, env);
     }
     if (method === "POST" && path === "/auth/exchange") return authExchange(request, env, headers);
-    if (method === "GET" && path === "/auth/poll") return authPoll(url, env, headers);
     if (method === "POST" && path === "/auth/email/send") return sendEmailOtp(request, env, headers);
     if (method === "POST" && path === "/auth/email/verify") return verifyEmailOtp(request, env, headers);
     if (method === "POST" && path === "/auth/logout") return logout(request, env, headers);

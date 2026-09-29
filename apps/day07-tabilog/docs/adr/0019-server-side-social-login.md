@@ -9,7 +9,8 @@
 - **ブラウザ用のSDKは使わず、Worker（Cloudflare）が「認可コードフロー」を全部やる**。`GET /auth/<google|apple|line>/start`でstate・nonce（とPKCE）をD1に置いてプロバイダーへ302 → プロバイダーが`/auth/<provider>/callback`に認可コードを返す（Appleだけ`response_mode=form_post`なのでPOST）→ Workerがトークンエンドポイントでコードをidトークンに交換 → iss・aud・exp・nonceを確認 → 結果をアプリに渡す。アプリは開始URLを開くだけで、プロバイダー固有のコードを持たない。純粋な部分（URL組み立て・idトークンの確認・結びつけの判断・AppleのJWT署名）は`worker/src/oauth.js`に分け、`worker/test/oauth.test.mjs`で単体テストする。
 - **アカウントは今までどおりメールアドレスがキー**のまま（メールキーのテーブル群は触らない）。新しい`auth_identities(provider, subject, email)`で「このプロバイダーのこの人は、このメールのアカウント」を結びつけるだけ。結びつけの判断（`decideIdentity`）：①既にidentityがあればそのメール、②なければ「プロバイダーが確認済みメールを返した」なら**そのメールのアカウントと同一人物として扱い**（同じメールの既存アカウントがあればそこに入り、無ければ新規作成）identityを作る、③メールが分からない（LINEでメール権限が無いなど）なら**メールOTPで一度だけ確認してもらい**、確認できたメールにidentityを結びつける（次回からはそのプロバイダーだけで入れる）。これはオーナーが選んだ方針。
 - **セッショントークンをURLに載せない**。認可の結果は「使い捨てコード」（乱数・DBにはハッシュだけ・5分・1回だけ）で渡し、アプリが`POST /auth/exchange`でセッションに交換する（返す形はメールOTPの`/auth/email/verify`と同じ`{email, name, token}`、`issueSession`をそのまま使う）。Webは`<戻り先>#auth=<コード>`（メール確認が必要なときは`#auth_link=<コード>`、失敗・キャンセルは`#auth_error=…`）にリダイレクトし、アプリ側はハッシュを`history.replaceState`ですぐ消す。ハッシュはサーバーには送られず、Referer にも載らない。
-- **iOSアプリはシステムのブラウザ（Safari）でログインし、結果をポーリングで受け取る**。Googleが埋め込みWebViewを拒否するため。アプリが自分で作った`req`（ランダム32文字）を`/auth/<provider>/start?return=app&req=…`に渡してSafariで開き、ログインが終わるとWorkerが`auth_native_results`に結果（コード）を置いて「ログインできました。アプリに戻ってください」ページを出す。アプリは`GET /auth/poll?req=…`を2秒ごと（アプリに戻った瞬間にもすぐ）、最大5分聞き、読んだ結果は消える。**Capacitorのプラグインは追加していない**（Workerのホストは`capacitor.config.json`の`allowNavigation`に無いので、`window.open`でCapacitorが自動的にSafariへ渡す）ため、iOSのビルド手順は変わらない。
+- **iOSアプリはシステムのブラウザ（Safari）でログインし、カスタムURLスキーム`tabilog://auth?…`でアプリに結果を渡す**。Googleが埋め込みWebViewを拒否するため。アプリは`/auth/<provider>/start?return=app`をSafariで開くだけ（アプリ側で作るIDは無い）。ログインが終わると、Workerが（Webと同じ）使い捨てコードを作り、「旅の足跡アプリに戻る」ページを返す。このページは開いた瞬間に`tabilog://auth?code=<コード>`（メール確認が要るときは`?link=<コード>`、失敗は`?error=<理由>`）へ移動してアプリを起動し、起動しなかったときのために大きなボタン（同じURL）も出す。アプリは`@capacitor/app`の`appUrlOpen`／`getLaunchUrl`（共有リンクの受け取りに既にある）でこのURLを受け、Webの`#auth=`と同じ処理でコードをセッションに交換する。スキーム`tabilog`は共有リンク用（`tabilog://open?trip=…`）にInfo.plistへ登録済みで、ホスト部分（`auth`／`open`）で区別する。**新しいプラグインは追加していない**（Workerのホストは`capacitor.config.json`の`allowNavigation`に無いので、`window.open`でCapacitorが自動的にSafariへ渡す）が、アプリ側のJSが変わるのでiOSの再ビルドは要る。
+  - **ポーリング方式は採用しなかった（最初の実装で使ったが、脆弱性のため廃止）**：アプリが作った`req`を開始URLに付け、Workerが結果を`req`の下に置いてアプリが`GET /auth/poll?req=…`で取りに行く方式だと、`req`は開始URLを作る人が自由に決められる。攻撃者が自分の`req`で開始URLを作って被害者に踏ませ、被害者がログインすると、攻撃者が`poll`を叩くだけで被害者の使い捨てコード（＝セッション）を受け取れてしまう。コードは「ログインを終えた端末のブラウザ」にだけ渡すべきなので、その端末が自分でアプリを起動するカスタムURLスキームを使う。（ユニバーサルリンクは、ページ内のスクリプトによる自動遷移ではアプリが起動しないことがあるため、確実に起動できるカスタムURLスキームを選んだ。）
 - **Worker側の設定がある方式だけ、ログイン画面にボタンを出す**（`GET /auth/providers`）。ログイン画面の順番は「Apple・Google・LINE・メール」。App Store Review Guideline 4.8（他社ログインを提供するなら、Sign in with Appleも同格で用意する）は、Appleを必ず並べることで満たす。Appleが未設定のままGoogleやLINEだけ設定する、という状態にはしないこと（README参照）。
 - **戻り先（`return`）は許可リスト（`ALLOWED_ORIGIN`）のOriginだけ**（`parseReturnTarget`）。開発用にhttp://localhostだけ通す。`https://x.pages.dev@evil.com`のようなuserinfoや前方一致のすり抜けは拒否する（テストあり）。`return`には`?trip=…`まで含めたページのURLを渡し、共有された旅行を開いたままログインから戻れるようにした。
 - **idトークンの署名（JWKS）検証は省いた**。idトークンはプロバイダーのトークンエンドポイントから、こちらのclient_secret付きのTLS通信で**直接**受け取るもので、ブラウザ経由で渡ってきたものではない。OpenID Connectの仕様は、この場合に署名検証を省いてよいとしている。代わりにiss・aud・exp・nonceは必ず確かめる（`checkIdTokenClaims`）。JWKSの取得とキャッシュはfetchが1回増え、Workers無料枠（1リクエスト50回）と複雑さに見合わないと判断した。
@@ -17,7 +18,7 @@
 - **設定値**：vars `GOOGLE_CLIENT_ID`・`APPLE_SERVICES_ID`・`APPLE_TEAM_ID`・`APPLE_KEY_ID`・`LINE_CHANNEL_ID`、secrets `GOOGLE_CLIENT_SECRET`・`APPLE_PRIVATE_KEY`・`LINE_CHANNEL_SECRET`。コールバックURLはWorker自身のOrigin（`https://tabilog-api.hiroya-apps.workers.dev/auth/<provider>/callback`）。`wrangler.jsonc`にはIDを書かず、オーナーが各コンソールで登録したあとに設定する。すべて無料。
 - **新しいアカウントの名前はプロバイダーの表示名**。ただし既にアカウントに名前があれば上書きしない（`/auth/exchange`が既存の名前を優先して返す）。Appleは名前を初回のPOSTの`user`パラメータでしか渡さないので、初回に取れなければ空になり、その場合はメールアドレスが表示名の代わりになる（従来と同じ）。
 - **アカウント削除（`/accounts/delete`）で`auth_identities`も消す**。削除→再登録の特典の抜け道を作らない考え方は従来と同じ（accounts行は残し、identityだけ消す）。
-- **新しいテーブル**（migrations/0028）：`auth_identities`、`auth_states`（state・nonce・PKCEを10分だけ）、`auth_codes`（使い捨てコード）、`auth_native_results`（アプリ用の受け渡し）。期限切れの行は`/auth/<provider>/start`のたびにまとめて消す（専用の定期処理は作らない）。
+- **新しいテーブル**（migrations/0028）：`auth_identities`、`auth_states`（state・nonce・PKCEを10分だけ）、`auth_codes`（使い捨てコード）。期限切れの行は`/auth/<provider>/start`のたびにまとめて消す（専用の定期処理は作らない）。
 - `/auth/<provider>/start`・`/callback`はブラウザのページ移動（Originがプロバイダー側になる。Appleのform_postでは`appleid.apple.com`）なので、既存のOrigin許可チェックの対象から外した。代わりにstate（使い捨て・10分・プロバイダー一致）とnonce・認可コードで守る。
 
 **気をつけること（リスクとして受け入れたもの）**：
@@ -30,7 +31,6 @@
 **見送ったこと**：
 
 - **ブラウザ用のGoogle／Apple／LINE SDKを使い続ける**（クライアントで完結する簡易版。サーバーで本人確認できず、iOSのWebViewでは動かない）。
-- **iOSにGoogle・LINEのネイティブSDKを組み込む**（Capacitorのプラグインとビルド手順の変更が要る。審査・保守の負担が大きい）。Safariで開いてポーリングする方式なら、プラグイン無しで3社とも同じ仕組みで動く。`@capacitor/browser`（アプリ内Safariシート）も、追加すればビルドの手順が変わるので使わなかった。
-- **ユニバーサルリンクやカスタムURLスキームでアプリに自動で戻す**：ログイン完了ページのボタン（`https://tabinoashiato.pages.dev/`のユニバーサルリンク）とポーリングで足りる。ポーリングなので、ユーザーが自分でアプリに戻っても、ボタンで戻っても動く。
+- **iOSにGoogle・LINEのネイティブSDKを組み込む**（Capacitorのプラグインとビルド手順の変更が要る。審査・保守の負担が大きい）。Safariで開いてカスタムURLスキームで戻す方式なら、プラグイン無しで3社とも同じ仕組みで動く。`@capacitor/browser`（アプリ内Safariシート）も、追加すればビルドの手順が変わるので使わなかった。
 - **アカウントのキーをメールアドレスからアカウントIDに変える**（ratings・sessions・accountsなどメール前提のテーブルが多く、影響が大きい。identityの表を1枚足すだけで4つの方式を同じアカウントにまとめられる）。
 - **同じ人が複数のメールを持つ場合の名寄せ・アカウント統合UI**：メールが違えば別アカウント（従来どおり）。
