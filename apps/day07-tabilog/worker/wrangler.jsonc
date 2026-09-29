@@ -8,7 +8,9 @@
   "vars": {
     // カンマ区切りで複数指定できる（isAllowedOrigin/cors、src/cors.js）。
     // GitHub PagesからCloudflare Pagesへの移行期間中は両方を許可する（2026-09-29〜）。
-    "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io,https://tabinoashiato.pages.dev"
+    "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io,https://tabinoashiato.pages.dev",
+    // なりすまし対策（docs/adr/0005）：ログインの証明（セッショントークン）が無い操作は断る（2026-09-30 オン）。
+    "REQUIRE_SESSION": "1"
     // ソーシャルログイン（Apple・Google・LINE。docs/adr/0019）の設定。各社のコンソールで登録して
     // IDが分かってから、ここに書き足す（設定した方式だけログイン画面にボタンが出る。手順はREADME.md）。
     // 秘密のもの（GOOGLE_CLIENT_SECRET・APPLE_PRIVATE_KEY・LINE_CHANNEL_SECRET）はここに書かず
