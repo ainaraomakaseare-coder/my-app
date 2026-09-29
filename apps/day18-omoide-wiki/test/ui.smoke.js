@@ -855,6 +855,7 @@ const TINY_PNG = Buffer.from(
   check('チャットでは設定をたたんでおく', !(await chatPage.evaluate(() => document.getElementById('ivSettings').open)));
   const firstMsg = await lastAi();
   const firstQ = await chatPage.evaluate(() => document.getElementById('qText').textContent);
+  check('あいさつで、答えは端末の中だけに保存され作り手にも見えないことを伝える', firstMsg.indexOf('この端末の中だけに保存') !== -1 && firstMsg.indexOf('作り手にも見えません') !== -1, firstMsg);
   check('最初はあいさつ（名前入り）と質問をAIの発言として出す', firstMsg.indexOf('山田 花子さん') !== -1 && firstMsg.indexOf(firstQ) !== -1, firstMsg);
   check('一問ずつ画面の質問文はチャットでは隠す', await chatPage.isHidden('#qText'));
   for (let i = 0; i < 30 && chatTts.indexOf(firstQ) === -1; i++) await chatPage.waitForTimeout(100);
