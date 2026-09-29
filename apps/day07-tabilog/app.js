@@ -5923,19 +5923,21 @@
     updateTravelDuration();
   }
 
+  // 出発の時刻は、この予定自身の時刻を使う（2026-09-29〜、以前は「移動の情報」の中に別で
+  // 出発時刻の欄があったが、入力を減らすため無くした。隠れた#entTravelDepartの欄は
+  // 古い記録の値をそのまま保存し直すためだけに残してある）
   function updateTravelDuration() {
     var block = entryFormBlock();
     var all = Core.sortBlocks(state.blocks);
     var next = block ? all[all.indexOf(block) + 1] : null;
     var depOff = block ? block._offset : undefined, arrOff = next ? next._offset : undefined;
-    var dep = $('#entTravelDepart').value, arr = $('#entTravelArrive').value;
+    var dep = block ? (block.time || '') : '', arr = $('#entTravelArrive').value;
     var d = Core.travelDurationText(dep, arr, depOff, arrOff);
     var info = Core.travelDuration(dep, arr, depOff, arrOff);
     var notes = [];
     if (typeof depOff === 'number' && typeof arrOff === 'number' && depOff !== arrOff) notes.push('時差' + Core.offsetDiffText(arrOff - depOff));
     if (info && info.dayShift) notes.push('到着は現地の' + (Core.dayShiftPrefix(info.dayShift) === '翌' ? '翌日' : Core.dayShiftPrefix(info.dayShift)));
-    $('#entTravelDuration').textContent = d ? '所要時間：' + d + (notes.length ? '（' + notes.join('・') + '）' : '') +
-      '。時刻はどちらも現地時間で入れてください。' : '時刻はどちらも現地時間で入れてください。';
+    $('#entTravelDuration').textContent = d ? '所要時間：' + d + (notes.length ? '（' + notes.join('・') + '）' : '') : '';
   }
 
   function readTravelFields() {
