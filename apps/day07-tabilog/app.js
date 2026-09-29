@@ -9689,7 +9689,7 @@
     });
     $('#btnOpenLogin').addEventListener('click', function () { openLogin('home'); });
     $('#btnLoginBack').addEventListener('click', closeLogin);
-    $all('.social-btn').forEach(function (btn) {
+    $all('.login-provider-btn').forEach(function (btn) {
       btn.addEventListener('click', function () { startSocialLogin(btn.dataset.provider); });
     });
     $('#btnSocialCancel').addEventListener('click', cancelSocialWaiting);
@@ -9869,7 +9869,7 @@
 
   function applyAuthProviders(list) {
     if (state.linkCode) return; // メール確認待ちの間はソーシャルボタンを出さない
-    $all('.social-btn').forEach(function (btn) {
+    $all('.login-provider-btn').forEach(function (btn) {
       btn.hidden = list.indexOf(btn.dataset.provider) === -1;
     });
     $('#emailLoginDivider').hidden = list.length === 0;
