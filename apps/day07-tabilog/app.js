@@ -8999,14 +8999,28 @@
   // 再生位置を r（秒）に移す。カメラは移った先の場所へ、アニメーションなしで寄せる
   function seekReplayTo(r) {
     if (!replay) return;
+    // 前の区間で始まったflyTo（区間の変わり目・再生中のカメラ移動）が終わっていないまま次のシークで
+    // fitBoundsすると、Leafletがその移動を中途半端な位置・縮尺で終わらせてしまい、乗り物や線が
+    // 地図（タイル）と少しずれて見えていた。まず止めてから位置を合わせる。
+    replayMap.stop();
     replay.r = Math.max(0, Math.min(replay.tl.totalReal, r));
     replay.lastOffsetDiff = undefined; // 飛んだ先で「時差」のバナーを出さない
-    replay.lastLeg = -1;
-    replay.lastStop = -2;
     replay.captionIndex = -2;
     replay.lastDay = 0;
-    var here = Core.replayStateAt(replay.tl, replay.r).here;
-    if (here) replayCenterOn(here.lat, here.lng, replayMap.getZoom(), false);
+    var st = Core.replayStateAt(replay.tl, replay.r);
+    if (st.here) replayCenterOn(st.here.lat, st.here.lng, replayMap.getZoom(), false);
+    // すでにここでカメラを合わせたので、直後のrenderReplayが「区間・地点が変わった」と勘違いして
+    // もう一度（アニメつきで）カメラを動かさないよう、いま合わせた状態を済みにしておく。以前は
+    // lastLeg/lastStopを-1/-2に戻していたため、シーク先が区間の途中だとrenderReplayがすぐさま
+    // flyToBounds（0.8秒）を始めてしまい、止まったはずの地図がもう一度少しずれて動いて見えていた。
+    replay.lastLeg = st.icon ? st.icon.legIndex : -1;
+    replay.lastStop = st.stopIndex;
+    // 止めたflyToのぶんズームアニメの途中状態（線を隠す・止める扱い）が残らないよう、
+    // 描画に関わる状態をここでリセットしてから、新しい位置・縮尺で線を描き直す（renderReplayが行う）。
+    replay.mapAnimating = false;
+    replay.cameraMoving = false;
+    var pane = replayOverlayPane();
+    if (pane) { pane.style.transition = 'none'; pane.style.opacity = '1'; }
     renderReplay();
   }
 
