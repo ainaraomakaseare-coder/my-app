@@ -18,6 +18,7 @@ import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
   isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline, hasBrokenMapQuery,
+  mapUrlPlaceName,
 } from "./geo-decode.js";
 import {
   isValidCurrency, isValidDate, frankfurterUrl, parseFrankfurterResponse,
@@ -1751,18 +1752,7 @@ async function geocodePlaceName(text, nears, env) {
 // （地図でふりかえるの`Core.buildReplayTimeline`は、located=falseの地点をそのまま「場所の分からない
 // 出来事」として扱い、直前の地点に居続けるようになっている）。リンクの中の文字列（店名・住所）からの
 // 検索（Google Text Search・Nominatim・ウィキペディア）はこれまでどおり使う。
-// 地図URL自体に入っている、人が読める場所の名前（/maps/place/<名前>/、または座標でない
-// query=<名前>）。無ければ空文字（呼び出し側でGoogle Places のdisplayNameに回す。v26、2026-09-29）。
-function mapUrlPlaceName(u) {
-  if (hasBrokenMapQuery(u)) return "";
-  const m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
-  if (m) {
-    try { return decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { return ""; }
-  }
-  const q = (u.searchParams.get("q") || u.searchParams.get("query") || "").trim();
-  if (q && !/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.test(q)) return q;
-  return "";
-}
+// mapUrlPlaceName（地図URL自体からの場所の名前）はgeo-decode.jsへ移した（純粋関数、単体テストのため）。
 
 async function geocodeMapUrl(raw, quick, nears, env) {
   const u = await resolveMapUrl(raw).catch(() => null);
@@ -2371,6 +2361,41 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam, en
     headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
   })));
   return json({ ...body, cached: false }, 200, headers);
+}
+
+// name=1：既存の記録（v26＝map_place_name追加より前に座標だけ保存済みのもの）に、あとから場所の
+// 名前だけを付け足す（2026-09-30）。座標はすでにmap_geocoded_urlがmap_urlと一致した状態で
+// 保存済み＝もう一度調べ直す必要が無いので、絶対に上書きしない。名前だけを、URL自体
+// （展開込みで最大1回のfetch）→ 無ければGoogle Places（Text Search＋Details、鍵があるときだけ、
+// 最大2回のfetch）の順で求める。他人の記録を書き換えられないよう、entry idの形式検証＋
+// map_url一致の両方を見る（geocodeForReplayのstoreForEntryと同じ考え方）。
+async function geocodeEntryNameOnly(q, entryParam, env, headers) {
+  q = (q || "").trim();
+  const entryId = isValidEntryId(entryParam) ? entryParam : "";
+  if (!q || !entryId || !env || !env.DB) return json({ found: false }, 200, headers);
+  const row = await env.DB.prepare(
+    "SELECT map_url, map_lat, map_lng, map_geocoded_url, map_place_name FROM entries WHERE id = ?"
+  ).bind(entryId).first();
+  if (!row || row.map_url !== q || row.map_geocoded_url !== q) return json({ found: false }, 200, headers);
+  if (typeof row.map_lat !== "number" || typeof row.map_lng !== "number") return json({ found: false }, 200, headers);
+  if (row.map_place_name) return json({ found: true, name: row.map_place_name }, 200, headers);
+  const u = await resolveMapUrl(q).catch(() => null);
+  let name = u ? mapUrlPlaceName(u) : "";
+  if (!name && u && env.GOOGLE_API_KEY) {
+    const parsed = parseMapUrl(u);
+    if (parsed && parsed.text) {
+      const g = await googleTextSearchPlace(parsed.text, env).catch(() => null);
+      if (g && g.name) name = g.name;
+    }
+  }
+  if (!name) return json({ found: true }, 200, headers); // 座標はすでにあるが、名前は分からなかった
+  const placeName = name.trim().slice(0, 200);
+  try {
+    await env.DB.prepare("UPDATE entries SET map_place_name=? WHERE id=? AND map_url=?").bind(placeName, entryId, q).run();
+  } catch {
+    // migrations/0026（map_place_name列）未実行のDBでは保存できないが、この返事の分だけは使える
+  }
+  return json({ found: true, name: placeName }, 200, headers);
 }
 
 async function fetchDailyWeather(lat, lon, date) {
@@ -4476,6 +4501,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/comments\/([^/]+)\/report$/))) return reportComment(m[1], request, env, headers, ctx);
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
+    if (method === "GET" && path === "/geocode" && url.searchParams.get("name") === "1") return geocodeEntryNameOnly(url.searchParams.get("q"), url.searchParams.get("entry"), env, headers);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"), url.searchParams.get("entry"), env);
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx, env);
     if (method === "GET" && path === "/rail-tracks") return getRailTracks(url, headers, ctx);

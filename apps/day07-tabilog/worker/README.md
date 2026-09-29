@@ -609,3 +609,24 @@ npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE entries ADD C
 - `node --check`・`node test/data.test.js`・`node worker/test/*.mjs`はすべて通した。**本番へのデプロイ
   ＋上のマイグレーション適用が必要**（`worker/src/index.js`と`migrations/0026`をwranglerで反映しないと、
   Google Places側の呼び出しを増やしただけで名前は保存されない）。
+
+**追記（2026-09-30）既存の宿泊の記録にも名前を後から入れる**：上の変更は座標をこれから求める
+記録（新しい記録・地図URLを編集した記録）にしか効かない。オーナーの現在の旅行はすでに座標が
+保存済み（`map_geocoded_url`が今の`map_url`と一致）のため、再度ジオコーディングされる機会が無く、
+「ホテルに帰宅」のままになる。これを直すため、軽い後追いを足した。
+
+- `GET /geocode?q=<地図URL>&entry=<記録のid>&name=1`（新設、`geocodeEntryNameOnly`）：指定した記録に
+  すでに座標が保存済み（`map_url`・`map_geocoded_url`がqと一致し、座標が数値）で、まだ
+  `map_place_name`が無いときだけ、名前だけを求めて保存する。**座標は絶対に上書きしない**。
+  名前は①URL自体（`mapUrlPlaceName`。短縮URLの展開に最大1回fetch）→②`GOOGLE_API_KEY`があれば
+  Google Text Search＋Place Details（`googleTextSearchPlace`、最大2回fetch）の順。
+  `mapUrlPlaceName`は`geo-decode.js`へ移し（純粋関数、単体テスト化のため）、`index.js`からは
+  そちらをimportする形にした。
+- クライアント（`app.js`）：旅行を開くたび（`loadTripZones`）に`backfillLodgingPlaceNames`を呼ぶ。
+  宿泊の予定のうち、最初の記録に地図URLはあるが`mapPlaceName`がまだ無いものを最大3件、1.1秒空けて
+  順に上のAPIへ聞き、見つかった名前をその場でstate.blocksに反映して`renderTripDetail`し直す。
+  この画面を開いているあいだは同じ記録を二度試さない（`lodgingNameTried`）。
+- `worker/test/geo-decode.test.mjs`に`mapUrlPlaceName`のテスト（`/place/<名前>/`・`query=<名前>`・
+  座標のqueryは名前にしない・壊れたURLは名前を取らない、など）を追加した。
+- **本番へのデプロイが必要**（クライアント・Worker両方）。マイグレーションは上の0026のみで、
+  新しい列は追加していない。

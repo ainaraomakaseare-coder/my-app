@@ -5265,7 +5265,44 @@
         state.zoneInfo = { byBlock: byBlock, byDate: byDate, byArrive: byArrive };
         if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
       });
+    }).then(function () { return backfillLodgingPlaceNames(); });
+  }
+
+  // 既存の宿泊の記録（v26＝map_place_name追加より前に座標だけ保存済みのもの）にも、あとから
+  // 地図の場所の名前を入れる後追い（2026-09-30）。旅行を開くたび（loadTripZones）に、宿泊の予定の
+  // 最初の記録で「地図URLはあるがmapPlaceNameがまだ無い」ものを、最大3件・1.1秒空けて順に
+  // /geocode?...&name=1で調べる。この画面を開いているあいだ、同じ記録を何度も試さない
+  // （lodgingNameTried）。座標はもう分かっている前提なので、ここでは名前だけを聞く・保存する
+  // （worker側のgeocodeEntryNameOnlyは既存の座標を絶対に上書きしない）。
+  var lodgingNameTried = {};
+  function backfillLodgingPlaceNames() {
+    if (!state.trip || !API_BASE) return Promise.resolve();
+    var tripId = state.trip.id;
+    var stillHere = function () { return state.trip && state.trip.id === tripId; };
+    var wait = function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); };
+    var targets = [];
+    (state.blocks || []).forEach(function (b) {
+      if (b.category !== 'lodging') return;
+      var e = (b.entries || [])[0];
+      if (!e || !e.id || !e.mapUrl || e.mapPlaceName) return;
+      if (lodgingNameTried[e.id]) return;
+      targets.push(e);
     });
+    targets = targets.slice(0, 3);
+    return targets.reduce(function (p, e, i) {
+      return p.then(function () {
+        if (!stillHere()) return;
+        lodgingNameTried[e.id] = true;
+        return (i ? wait(1100) : Promise.resolve()).then(function () {
+          return api('/geocode?q=' + encodeURIComponent(e.mapUrl) + '&entry=' + encodeURIComponent(e.id) + '&name=1').then(function (res) {
+            if (res && res.name && stillHere()) {
+              e.mapPlaceName = res.name;
+              if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderTripDetail();
+            }
+          }).catch(function () {});
+        });
+      });
+    }, Promise.resolve());
   }
 
   function renderTimeline(blocks) {
