@@ -10116,26 +10116,27 @@
     // urlをtextの中に含め、urlキー自体は渡さないことで、どの共有先でも必ずリンクが本文に乗る
     // ようにする（textを見る側はそのままリンク入りの本文になり、urlだけを見る側と重複表示にも
     // ならない）。
+    var message = '旅の足跡で旅行を一緒に記録しよう\n' + url;
     if (navigator.share) {
-      navigator.share({ title: state.trip.title || '旅の足跡', text: '旅の足跡で旅行を一緒に記録しよう\n' + url })
+      navigator.share({ title: state.trip.title || '旅の足跡', text: message })
         .catch(function (err) {
           // キャンセル（AbortError）は何もしない。共有シート自体が使えなかったときはコピーに切り替える
-          if (!err || err.name !== 'AbortError') copyInviteUrl(url);
+          if (!err || err.name !== 'AbortError') copyInviteUrl(message);
         });
       return;
     }
-    copyInviteUrl(url);
+    copyInviteUrl(message);
   }
 
-  // 招待リンクをコピーする。クリップボードの許可が無い環境（アプリ内ブラウザなど）では、
+  // 招待メッセージ（本文＋リンク）をコピーする。クリップボードの許可が無い環境（アプリ内ブラウザなど）では、
   // 以前はprompt()に頼っていたが、prompt()も使えない環境では押しても何も起きないように
   // 見えていた（2026-09-30）。古いコピー方法（execCommand）も試し、それでもだめなら
-  // URLを選んでコピーできる欄を画面に出す。
-  function copyInviteUrl(url) {
-    var done = function () { showToast('招待リンクをコピーしました'); };
+  // メッセージを選んでコピーできる欄を画面に出す。
+  function copyInviteUrl(text) {
+    var done = function () { showToast('招待メッセージ（リンク付き）をコピーしました'); };
     var legacyCopy = function () {
       var ta = document.createElement('textarea');
-      ta.value = url;
+      ta.value = text;
       ta.setAttribute('readonly', '');
       ta.style.position = 'fixed';
       ta.style.opacity = '0';
@@ -10144,26 +10145,26 @@
       var ok = false;
       try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
       document.body.removeChild(ta);
-      if (ok) done(); else showInviteUrlBox(url);
+      if (ok) done(); else showInviteUrlBox(text);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(done).catch(legacyCopy);
+      navigator.clipboard.writeText(text).then(done).catch(legacyCopy);
     } else {
       legacyCopy();
     }
   }
 
-  function showInviteUrlBox(url) {
+  function showInviteUrlBox(text) {
     var old = document.getElementById('inviteUrlBox');
     if (old) old.remove();
     var box = document.createElement('div');
     box.id = 'inviteUrlBox';
     box.className = 'invite-url-box';
-    box.innerHTML = '<p>このURLをコピーして、一緒に行く人に送ってください</p>' +
-      '<input type="text" readonly>' +
+    box.innerHTML = '<p>このメッセージをコピーして、一緒に行く人に送ってください</p>' +
+      '<textarea rows="3" readonly></textarea>' +
       '<button type="button" class="chip-btn">閉じる</button>';
-    var input = box.querySelector('input');
-    input.value = url;
+    var input = box.querySelector('textarea');
+    input.value = text;
     input.addEventListener('focus', function () { input.select(); });
     box.querySelector('button').addEventListener('click', function () { box.remove(); });
     document.body.appendChild(box);
