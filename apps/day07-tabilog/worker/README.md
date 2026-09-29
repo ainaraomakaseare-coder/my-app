@@ -674,3 +674,119 @@ npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD CO
 - `node --check`・`node test/data.test.js`・`node worker/test/*.mjs`はすべて通した。**本番への
   デプロイ＋上のマイグレーション適用が必要**。マイグレーション未適用の間は、時差の区切りは
   これまでどおり地図だけの自動判定になり（手直しは保存されない）、既存の時差の並び自体は変わらない。
+
+## ソーシャルログイン（Apple・Google・LINE）の準備（2026-09-30 追加）
+
+Apple・Google・LINEでログインできるようにした（docs/adr/0019）。ブラウザ用のSDKは使わず、Worker（このフォルダ）が各社とやり取りして本人確認する。**3つとも無料**（Google Cloudの認証情報の作成・LINE Developersのチャネル作成は無料。Appleは、すでに払っているApple Developer Programの年会費に含まれ、追加費用は無い）。
+
+**登録しなくても壊れない**：Workerに設定があるログイン方法だけが、ログイン画面にボタンとして出る（`GET /auth/providers`）。1つも設定しなければ今までどおりメールログインだけ。**ただしApp Storeで公開するアプリでは、Googleなど他社ログインを出すなら「Appleでサインイン」も必ず一緒に出す**（Review Guideline 4.8）。Appleを登録する前にGoogleやLINEだけ公開しないこと。
+
+以下、URLの `https://tabilog-api.hiroya-apps.workers.dev` はWorkerの公開URL（コールバックURL＝各社に登録する「戻ってくる先」）。**一文字でも違うとログインが失敗する**ので、コピーして貼り付けること。
+
+### 手順0：デプロイ前にD1へテーブルを作る（順番厳守）
+
+新しいテーブルを`wrangler deploy`**より先に**作る（逆順だと、ログイン画面を開いたときにSQLエラーになる）。テーブルを足すだけなので既存データには影響しない。**このオーナーの環境では`--file`が失敗するため、`--command`で1つずつ流す**（何度実行しても安全な`CREATE TABLE IF NOT EXISTS`）。中身は`migrations/0028_social_login.sql`と同じ。
+
+```sh
+cd apps/day07-tabilog/worker
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS auth_identities (provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (provider, subject));"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_auth_identities_email ON auth_identities(email);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS auth_states (state TEXT PRIMARY KEY, provider TEXT NOT NULL, return_to TEXT NOT NULL, req_id TEXT NOT NULL DEFAULT '', nonce TEXT NOT NULL, code_verifier TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS auth_codes (code_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS auth_native_results (req_id TEXT PRIMARY KEY, kind TEXT NOT NULL, code TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL);"
+```
+
+### 手順1：Google（Google Cloud Console）
+
+1. https://console.cloud.google.com/ を開き、プロジェクトを選ぶ（無ければ作る。すでにGoogleマップ用のAPIキーを作ったプロジェクトでよい）
+2. 「APIとサービス」→「OAuth同意画面」（新しい画面では「Google Auth Platform」→「ブランディング／対象」）
+   - User Type：**外部**
+   - アプリ名：旅の足跡／ユーザーサポートメール・デベロッパーの連絡先：自分のメールアドレス
+   - スコープは追加しなくてよい（`openid`・`email`・`profile`はもともと使える）
+   - **公開ステータスを「テスト」から「本番環境」（アプリを公開）に変える**。「テスト」のままだと、テストユーザーに登録した人しかログインできない。今回のスコープは審査（検証）が要らない種類なので、ボタンを押すだけで公開できる
+3. 「認証情報」→「認証情報を作成」→「OAuth クライアント ID」
+   - アプリケーションの種類：**ウェブ アプリケーション**
+   - 名前：tabilog-worker（何でもよい）
+   - 「承認済みのリダイレクト URI」に追加：`https://tabilog-api.hiroya-apps.workers.dev/auth/google/callback`（「承認済みのJavaScript生成元」は空でよい）
+4. 作成すると「クライアントID」（`〇〇〇.apps.googleusercontent.com`）と「クライアントシークレット」が出る。IDは`wrangler.jsonc`の`vars`へ、シークレットは下の`wrangler secret put`で登録する
+
+### 手順2：Apple（Apple Developer）
+
+前提：Apple Developer Programに登録済み（iOSアプリの配布に必要なので済んでいるはず）。
+
+1. https://developer.apple.com/account/resources/identifiers/list を開き、iOSアプリのApp ID（`com.hiroyaapps.tabilog`）を開いて「**Sign in with Apple**」にチェックが入っているか確認する（無ければ入れて保存）
+2. 同じ画面の「Identifiers」→「+」→「**Services IDs**」で新規作成
+   - Description：旅の足跡 Web／Identifier：`com.hiroyaapps.tabilog.web`（**これが`APPLE_SERVICES_ID`**。アプリのBundle IDとは別の名前にする）
+   - 作成後、そのServices IDを開いて「Sign in with Apple」にチェック→「Configure」
+     - Primary App ID：`com.hiroyaapps.tabilog`
+     - Domains and Subdomains：`tabilog-api.hiroya-apps.workers.dev`
+     - Return URLs：`https://tabilog-api.hiroya-apps.workers.dev/auth/apple/callback`
+   - 保存（Continue → Save）。ドメイン確認用のファイルのアップロードを求められた場合は、そのまま進めず相談すること（Workerの`workers.dev`ドメインには置けないため、その場合は別の方法を考える）
+3. 「Keys」→「+」→ 名前（例：tabilog-signin）→「**Sign in with Apple**」にチェック→「Configure」でPrimary App IDに`com.hiroyaapps.tabilog`を選ぶ→ Continue → Register
+   - **`.p8`ファイルのダウンロードは1回しかできない**。必ず保存して、Gitには入れない（`AuthKey_XXXXXXXXXX.p8`）
+   - 画面に出る10桁の**Key ID**（`APPLE_KEY_ID`）を控える
+4. 右上のアカウント名の横、または「Membership details」にある10桁の**Team ID**（`APPLE_TEAM_ID`）を控える
+
+### 手順3：LINE（LINE Developers）
+
+1. https://developers.line.biz/console/ にLINEアカウントでログイン
+2. 「プロバイダー」を作成（名前は何でもよい。例：hiroya-apps）
+3. そのプロバイダーの中で「新規チャネル作成」→「**LINEログイン**」
+   - チャネルの種類：LINEログイン／アプリタイプ：**ウェブアプリ**
+   - チャネル名：旅の足跡／チャネル説明・メールアドレス：自分のもの
+4. 作成したチャネルの「チャネル基本設定」に**チャネルID**（`LINE_CHANNEL_ID`）と**チャネルシークレット**（`LINE_CHANNEL_SECRET`）がある
+5. 「LINEログイン設定」タブの「コールバックURL」に追加：`https://tabilog-api.hiroya-apps.workers.dev/auth/line/callback`
+6. **チャネルの公開**：右上のステータスが「開発中」だと、そのチャネルの管理者・テスターしかログインできない。準備ができたら「公開」に切り替える
+7. （任意）**メールアドレスの取得権限**：「チャネル基本設定」の「OpenID Connect」欄にある「メールアドレス取得権限」の「申請」から、利用目的の説明とプライバシーポリシーのURL（`https://tabinoashiato.pages.dev/privacy.html`）を出して申請する。承認されるとLINEログインのときにメールアドレスが返り、同じメールのアカウントに自動でつながる。**承認されていない（または申請していない）間は、LINEでログインした人に一度だけメールの確認コードを入力してもらう**（次回からはLINEだけで入れる）ので、アプリは申請なしでも動く
+
+### 手順4：Workerに設定を入れる
+
+`wrangler.jsonc`の`vars`に、IDのほう（秘密ではないもの）を書く。使う方式の分だけでよい。
+
+```jsonc
+"vars": {
+  "ALLOWED_ORIGIN": "…そのまま…",
+  "GOOGLE_CLIENT_ID": "（手順1のクライアントID）.apps.googleusercontent.com",
+  "APPLE_SERVICES_ID": "com.hiroyaapps.tabilog.web",
+  "APPLE_TEAM_ID": "（手順2のTeam ID）",
+  "APPLE_KEY_ID": "（手順2のKey ID）",
+  "LINE_CHANNEL_ID": "（手順3のチャネルID）"
+}
+```
+
+秘密のほうは`wrangler.jsonc`に書かず、`secret put`で登録する（実行すると入力欄が出るので貼り付けてEnter）。
+
+```sh
+cd apps/day07-tabilog/worker
+npx wrangler secret put GOOGLE_CLIENT_SECRET
+npx wrangler secret put LINE_CHANNEL_SECRET
+# Appleの.p8：中身（-----BEGIN PRIVATE KEY----- から -----END PRIVATE KEY----- まで）をそのまま登録する
+# bash（Git Bash）の場合：
+npx wrangler secret put APPLE_PRIVATE_KEY < AuthKey_XXXXXXXXXX.p8
+# PowerShellの場合（`<`が使えないので、パイプで渡す）：
+Get-Content -Raw AuthKey_XXXXXXXXXX.p8 | npx wrangler secret put APPLE_PRIVATE_KEY
+```
+
+そのあとデプロイする（手順0のテーブル作成が済んでいること）。
+
+```sh
+npx wrangler deploy
+```
+
+### 手順5：動作確認
+
+1. `https://tabilog-api.hiroya-apps.workers.dev/auth/providers` をブラウザで開く。`{"providers":["apple","google","line"]}`のように、設定した方式だけが出ればWorker側は認識できている（出ない方式は、varsかsecretのどれかが抜けている。AppleはID・Team・Key・秘密鍵の4つ、GoogleとLINEはIDとシークレットの2つがそろって初めて出る）
+2. Web版（https://tabinoashiato.pages.dev/）の「ログインする」から、各ボタンでログインしてみる。ログイン後にホームへ戻り、名前が出れば成功
+3. iOSアプリ（TestFlight）でも試す。ボタンを押すとSafariが開き、ログインが終わったら「ログインできました。旅の足跡アプリに戻ってください」と出るので、アプリに戻る（自動でログイン完了になる）
+4. うまくいかないとき：Cloudflareのダッシュボード→Workers→tabilog-api→ログで`social_login_failed`を探す。`reason`に`token_http_400`（コールバックURL・シークレットの不一致）、`id_token_bad_aud`（IDの取り違え）、`client_secret_failed`（Appleの秘密鍵の貼り付け違い）などが出る
+
+### アカウントのつながり方
+
+- メールアドレス・Apple・Google・LINEのどれで入っても、**確認済みのメールアドレスが同じなら同じアカウント**（旅行・マイログ・プランは共通）。
+- LINEなどでメールが受け取れないときは、ログイン後にメールの確認コード入力が一度だけ入る。確認したメールに、そのLINEの人が結びつく。
+- Appleで「メールを非表示」を選んだ人は、Apple専用の中継アドレスが使われるため、普段のメールとは**別のアカウント**になる。
+- アカウントを削除すると、そのアカウントに結びついたログイン情報（`auth_identities`）も消える。
+
+### REQUIRE_SESSION（トークン必須）の準備状況
+
+`release/tabilog-1.1.0`ブランチのapp.jsを確認したところ、`authHeaders()`が`authorization: Bearer <token>`を`api()`・`nativeApi()`・`postBinary()`のすべてに付けており、iOSアプリ（1.1.0）側はトークン必須に切り替えても送れる状態。**切り替える（`vars`に`"REQUIRE_SESSION": "1"`）かどうかは、1.0.x以前の古いアプリが使われなくなったかを見て別途判断する**（この作業ではオンにしていない）。

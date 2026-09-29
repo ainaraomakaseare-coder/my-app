@@ -47,7 +47,7 @@ https://developer.apple.com/account の「Membership」ページに表示され�
 
 説明文・キーワード・データ収集の申告内容などの下書きは `app-store-listing.md` にまとめてあります。コピーして使ってください。プライバシーポリシーのURLは `../day07-tabilog/privacy.html`（公開後は `https://tabinoashiato.pages.dev/privacy.html`。2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行。旧URL：`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`）です。
 
-Appleでサインインを有効にする手順（Googleログインを提供する場合はほぼ必須）は `../day07-tabilog/README.md` の「Appleでサインインについて」を参照してください。
+Appleでサインインを有効にする手順（Googleなど他社ログインを提供する場合はほぼ必須）は `../day07-tabilog/worker/README.md` の「ソーシャルログイン（Apple・Google・LINE）の準備」を参照してください（ログインはアプリ内のWebViewではなくSafariで行い、終わるとアプリに戻る作りです。docs/adr/0019）。
 
 ### 5. GitHubにシークレットを登録する
 

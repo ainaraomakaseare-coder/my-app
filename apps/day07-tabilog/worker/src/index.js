@@ -25,6 +25,11 @@ import {
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
+import {
+  PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, isValidReqId, randomHex,
+  pkceChallenge, buildAuthorizeUrl, buildAppleClientSecret, decodeJwtPayload, checkIdTokenClaims, extractProfile,
+  decideIdentity, nativeResultPage,
+} from "./oauth.js";
 
 // "arrival"（到着）は2026-09-27〜。種類「移動」の中の「出発｜到着」の到着。移動（出発）と違い、着いた場所の予定として扱う
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other", "arrival"];
@@ -2747,7 +2752,7 @@ async function verifyEmailOtp(request, env, headers) {
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
-  if (!isValidEmailFormat(data.email) || !isStr(data.code, 6)) return json({ error: "invalid_input" }, 400, headers);
+  if (!isValidEmailFormat(data.email) || !isStr(data.code, 6) || !optStr(data.link, 100)) return json({ error: "invalid_input" }, 400, headers);
   const email = data.email.trim().toLowerCase();
   const code = (data.code || "").trim();
 
@@ -2766,8 +2771,244 @@ async function verifyEmailOtp(request, env, headers) {
     return json({ error: "wrong_code" }, 401, headers);
   }
   await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
+  // ソーシャルログインでメールが分からなかった人が、ここで初めてメールを確認できた場合：
+  // 待たせていたプロバイダーの本人（link）をこのメールに結びつける。次回からはそのプロバイダーだけで入れる。
+  let linked = false;
+  if (data.link) {
+    const linkRow = await env.DB.prepare("SELECT * FROM auth_codes WHERE code_hash = ? AND kind = 'link'")
+      .bind(await sha256Hex(String(data.link)))
+      .first();
+    if (linkRow && new Date(linkRow.expires_at).getTime() >= Date.now()) {
+      await env.DB.prepare("INSERT OR IGNORE INTO auth_identities (provider, subject, email, created_at) VALUES (?,?,?,?)")
+        .bind(linkRow.provider, linkRow.subject, email, nowIso())
+        .run();
+      await env.DB.prepare("DELETE FROM auth_codes WHERE code_hash = ?").bind(linkRow.code_hash).run();
+      linked = true;
+    }
+  }
   const token = await issueSession(env, email);
-  return json({ email, name: row.name, token }, 200, headers);
+  return json({ email, name: row.name, token, linked }, 200, headers);
+}
+
+/* ---------- ソーシャルログイン（Apple / Google / LINE。docs/adr/0019） ----------
+ * ブラウザ用のプロバイダーSDKは使わず、Worker側で「認可コードフロー」を行う。
+ * 純粋な部分（URL組み立て・idトークンの確認・アカウント結びつけの判断）は oauth.js にあり、
+ * ここはD1の読み書きとプロバイダーとの通信だけを担当する。
+ * セッショントークンはURLに載せない。代わりに使い捨てコード（DBにはハッシュだけ・5分・1回だけ）を
+ * 渡し、アプリが POST /auth/exchange でセッションに交換する。
+ */
+const AUTH_STATE_MINUTES = 10;
+const AUTH_CODE_MINUTES = 5;
+// アプリに戻るためのボタンの行き先（ユニバーサルリンク。アプリが入っていればアプリが開く）
+const APP_BACK_URL = PUBLIC_WEB_BASE_URL;
+
+function minutesFromNowIso(minutes) {
+  return new Date(Date.now() + minutes * 60000).toISOString();
+}
+
+function authHtml(ok, message, status) {
+  return new Response(nativeResultPage(ok, message, APP_BACK_URL), {
+    status,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+async function authProviders(env, headers) {
+  return json({ providers: configuredProviders(env) }, 200, { ...headers, "cache-control": "no-store" });
+}
+
+async function authStart(provider, url, env) {
+  if (configuredProviders(env).indexOf(provider) === -1) {
+    return authHtml(false, "このログイン方法はまだ準備中です。", 503);
+  }
+  const target = parseReturnTarget(url.searchParams.get("return"), env.ALLOWED_ORIGIN);
+  if (!target) return authHtml(false, "ログインの開始に失敗しました（戻り先が正しくありません）。", 400);
+  const reqId = url.searchParams.get("req") || "";
+  if (target.kind === "app" && !isValidReqId(reqId)) {
+    return authHtml(false, "ログインの開始に失敗しました。アプリからもう一度お試しください。", 400);
+  }
+
+  // 期限切れの古い行をついでに掃除する（専用の定期処理は作らない）
+  const now = nowIso();
+  await env.DB.prepare("DELETE FROM auth_states WHERE expires_at < ?").bind(now).run();
+  await env.DB.prepare("DELETE FROM auth_codes WHERE expires_at < ?").bind(now).run();
+  await env.DB.prepare("DELETE FROM auth_native_results WHERE expires_at < ?").bind(now).run();
+
+  const state = randomHex(24);
+  const nonce = randomHex(16);
+  const verifier = provider === "apple" ? "" : randomHex(32); // AppleはPKCEを使わない
+  await env.DB.prepare(
+    "INSERT INTO auth_states (state, provider, return_to, req_id, nonce, code_verifier, expires_at, created_at) VALUES (?,?,?,?,?,?,?,?)"
+  )
+    .bind(state, provider, target.kind === "app" ? "app" : target.url, target.kind === "app" ? reqId : "", nonce, verifier, minutesFromNowIso(AUTH_STATE_MINUTES), now)
+    .run();
+
+  const location = buildAuthorizeUrl(provider, env, {
+    redirectUri: url.origin + "/auth/" + provider + "/callback",
+    state,
+    nonce,
+    codeChallenge: verifier ? await pkceChallenge(verifier) : "",
+  });
+  return new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
+}
+
+// 使い捨てコードを作る。返すのは生のコード（DBにはハッシュだけ）。
+async function createAuthCode(env, fields) {
+  const code = randomHex(32);
+  await env.DB.prepare(
+    "INSERT INTO auth_codes (code_hash, kind, email, provider, subject, name, expires_at, created_at) VALUES (?,?,?,?,?,?,?,?)"
+  )
+    .bind(await sha256Hex(code), fields.kind, fields.email || "", fields.provider || "", fields.subject || "", fields.name || "", minutesFromNowIso(AUTH_CODE_MINUTES), nowIso())
+    .run();
+  return code;
+}
+
+// プロバイダーでの操作が終わったあと、結果をWebなら戻り先へのリダイレクト、
+// iOSアプリならD1に置いて「アプリに戻ってください」ページで返す。
+async function finishAuth(env, stateRow, res) {
+  if (stateRow.return_to === "app") {
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO auth_native_results (req_id, kind, code, error, expires_at) VALUES (?,?,?,?,?)"
+    )
+      .bind(stateRow.req_id, res.kind, res.code || "", res.error || "", minutesFromNowIso(AUTH_CODE_MINUTES))
+      .run();
+    if (res.kind === "error") {
+      return authHtml(false, res.error === "cancelled" ? "ログインをキャンセルしました。" : "ログインに失敗しました。もう一度お試しください。", 200);
+    }
+    return authHtml(
+      true,
+      res.kind === "link" ? "アプリに戻って、メールアドレスの確認を続けてください。" : "ログインできました。旅の足跡アプリに戻ってください。",
+      200
+    );
+  }
+  const hash = res.kind === "session" ? "#auth=" + res.code : res.kind === "link" ? "#auth_link=" + res.code : "#auth_error=" + encodeURIComponent(res.error || "failed");
+  return new Response(null, { status: 302, headers: { location: stateRow.return_to + hash, "cache-control": "no-store" } });
+}
+
+async function authCallback(provider, request, url, env) {
+  if (configuredProviders(env).indexOf(provider) === -1) return authHtml(false, "このログイン方法はまだ準備中です。", 503);
+  let get;
+  if (request.method === "POST") {
+    // Appleは response_mode=form_post なので、code・state・user がフォームで届く
+    const form = await request.formData().catch(() => null);
+    if (!form) return authHtml(false, "ログインに失敗しました。もう一度お試しください。", 400);
+    get = (k) => String(form.get(k) || "");
+  } else {
+    get = (k) => url.searchParams.get(k) || "";
+  }
+
+  const state = get("state");
+  const stateRow = state ? await env.DB.prepare("SELECT * FROM auth_states WHERE state = ?").bind(state).first() : null;
+  if (!stateRow) return authHtml(false, "ログインの有効期限が切れました。もう一度最初からお試しください。", 400);
+  await env.DB.prepare("DELETE FROM auth_states WHERE state = ?").bind(state).run(); // 使い捨て
+  if (stateRow.provider !== provider || new Date(stateRow.expires_at).getTime() < Date.now()) {
+    return authHtml(false, "ログインの有効期限が切れました。もう一度最初からお試しください。", 400);
+  }
+
+  if (get("error")) {
+    const cancelled = get("error") === "access_denied" || get("error") === "user_cancelled_authorize";
+    return finishAuth(env, stateRow, { kind: "error", error: cancelled ? "cancelled" : "failed" });
+  }
+  const code = get("code");
+  if (!code) return finishAuth(env, stateRow, { kind: "error", error: "failed" });
+
+  const fail = (reason, extra) => {
+    console.error(JSON.stringify({ event: "social_login_failed", provider, reason, extra: extra || "" }));
+    return finishAuth(env, stateRow, { kind: "error", error: "failed" });
+  };
+
+  // 認可コードをトークンエンドポイントに渡して idトークンを受け取る
+  const nowSec = Math.floor(Date.now() / 1000);
+  const body = new URLSearchParams();
+  body.set("grant_type", "authorization_code");
+  body.set("code", code);
+  body.set("redirect_uri", url.origin + "/auth/" + provider + "/callback");
+  body.set("client_id", clientIdOf(provider, env));
+  try {
+    if (provider === "google") body.set("client_secret", env.GOOGLE_CLIENT_SECRET);
+    if (provider === "line") body.set("client_secret", env.LINE_CHANNEL_SECRET);
+    if (provider === "apple") body.set("client_secret", await buildAppleClientSecret(env, nowSec));
+  } catch (e) {
+    return fail("client_secret_failed", String((e && e.message) || ""));
+  }
+  if (stateRow.code_verifier) body.set("code_verifier", stateRow.code_verifier);
+
+  let tokenJson;
+  try {
+    const tokenRes = await fetch(PROVIDER_ENDPOINTS[provider].token, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: body.toString(),
+    });
+    if (!tokenRes.ok) return fail("token_http_" + tokenRes.status, (await tokenRes.text().catch(() => "")).slice(0, 300));
+    tokenJson = await tokenRes.json();
+  } catch (e) {
+    return fail("token_fetch_failed", String((e && e.message) || ""));
+  }
+
+  const claims = decodeJwtPayload(tokenJson && tokenJson.id_token);
+  const check = checkIdTokenClaims(claims, {
+    issuers: PROVIDER_ENDPOINTS[provider].issuers,
+    audience: clientIdOf(provider, env),
+    nonce: stateRow.nonce,
+    nowSec,
+  });
+  if (!check.ok) return fail("id_token_" + check.reason);
+
+  const profile = extractProfile(provider, claims, get("user"));
+  const identity = await env.DB.prepare("SELECT email FROM auth_identities WHERE provider = ? AND subject = ?")
+    .bind(provider, profile.subject)
+    .first();
+  const decision = decideIdentity(identity ? identity.email : "", profile);
+
+  if (decision.action === "pending") {
+    const linkCode = await createAuthCode(env, { kind: "link", provider, subject: profile.subject, name: profile.name });
+    return finishAuth(env, stateRow, { kind: "link", code: linkCode });
+  }
+  if (decision.action === "link") {
+    await env.DB.prepare("INSERT OR IGNORE INTO auth_identities (provider, subject, email, created_at) VALUES (?,?,?,?)")
+      .bind(provider, profile.subject, decision.email, nowIso())
+      .run();
+  }
+  const sessionCode = await createAuthCode(env, { kind: "session", email: decision.email, provider, name: profile.name });
+  return finishAuth(env, stateRow, { kind: "session", code: sessionCode });
+}
+
+// 使い捨てコードをセッションに交換する。返す形はメールOTPの確認（verifyEmailOtp）と同じ
+// （{email, name, token}）。メールが分からないまま待っているコード（kind=link）は
+// 消費せず、「メールの確認が必要」だと知らせるだけにする。
+async function authExchange(request, env, headers) {
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!isStr(data.code, 64) || !/^[0-9a-f]{64}$/.test(data.code || "")) return json({ error: "invalid_code" }, 400, headers);
+  const hash = await sha256Hex(data.code);
+  const row = await env.DB.prepare("SELECT * FROM auth_codes WHERE code_hash = ?").bind(hash).first();
+  if (!row || new Date(row.expires_at).getTime() < Date.now()) return json({ error: "invalid_code" }, 404, headers);
+  if (row.kind === "link") return json({ needEmail: true, provider: row.provider, name: row.name }, 200, headers);
+
+  // 1回だけ使える：消せた（changes=1）ときだけ先へ進む
+  const del = await env.DB.prepare("DELETE FROM auth_codes WHERE code_hash = ?").bind(hash).run();
+  if (!del.meta || del.meta.changes < 1) return json({ error: "invalid_code" }, 404, headers);
+  const account = await env.DB.prepare("SELECT name FROM accounts WHERE email = ?").bind(row.email).first();
+  const token = await issueSession(env, row.email);
+  // 既にアカウントに名前があればそれを優先（プロバイダーの表示名で上書きしない）
+  return json({ email: row.email, name: (account && account.name) || row.name || "", token, provider: row.provider }, 200, headers);
+}
+
+// iOSアプリ用：ブラウザで終わったログインの結果を、アプリが取りに来る。読んだら消える。
+async function authPoll(url, env, headers) {
+  const reqId = url.searchParams.get("req") || "";
+  if (!isValidReqId(reqId)) return json({ error: "invalid_req" }, 400, headers);
+  const h = { ...headers, "cache-control": "no-store" };
+  const row = await env.DB.prepare("SELECT * FROM auth_native_results WHERE req_id = ?").bind(reqId).first();
+  if (!row) return json({ ready: false }, 200, h);
+  await env.DB.prepare("DELETE FROM auth_native_results WHERE req_id = ?").bind(reqId).run();
+  if (new Date(row.expires_at).getTime() < Date.now()) return json({ ready: false }, 200, h);
+  return json({ ready: true, kind: row.kind, code: row.code, error: row.error }, 200, h);
 }
 
 /* ---------- アカウント・参加者（アカウント参加者） ----------
@@ -2925,6 +3166,7 @@ async function deleteAccount(request, env, headers) {
   await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
   await deleteSocialForAccount(env, account.account_id);
   await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
+  await env.DB.prepare("DELETE FROM auth_identities WHERE email = ?").bind(email).run();
   // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
   // 「削除→再登録」を繰り返すだけで無料プランの月間上限(月10回)が毎回復活してしまう
   // （新規登録特典の抜け道と同じ構図）。月が変わったときのリセットはresetPeriodIfNeeded()に
@@ -4506,7 +4748,10 @@ export default {
       !isAllowedOrigin(origin, env.ALLOWED_ORIGIN) &&
       path.indexOf("/photos/") !== 0 &&
       path !== "/billing/webhook" &&
-      path !== "/admin/recover-entries"
+      path !== "/admin/recover-entries" &&
+      // ソーシャルログインの開始・戻り先はブラウザのページ移動で、Originはプロバイダーのもの
+      // （Appleのform_postではappleid.apple.com）になるため対象外。state・nonce・認可コードで守る。
+      !/^\/auth\/(google|apple|line)\/(start|callback)$/.test(path)
     ) {
       return json({ error: "origin_not_allowed" }, 403, headers);
     }
@@ -4571,6 +4816,14 @@ export default {
     if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)$/))) return deleteDayPlace(m[1], m[2], env, headers);
     if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/weather$/))) return setDayWeatherManual(m[1], m[2], request, env, headers);
 
+    if (method === "GET" && path === "/auth/providers") return authProviders(env, headers);
+    if (method === "GET" && (m = path.match(/^\/auth\/(google|apple|line)\/start$/))) return authStart(m[1], url, env);
+    if ((method === "GET" || method === "POST") && (m = path.match(/^\/auth\/(google|apple|line)\/callback$/))) {
+      // Appleだけ POST（form_post）。GoogleとLINEは GET。
+      if ((m[1] === "apple") === (method === "POST")) return authCallback(m[1], request, url, env);
+    }
+    if (method === "POST" && path === "/auth/exchange") return authExchange(request, env, headers);
+    if (method === "GET" && path === "/auth/poll") return authPoll(url, env, headers);
     if (method === "POST" && path === "/auth/email/send") return sendEmailOtp(request, env, headers);
     if (method === "POST" && path === "/auth/email/verify") return verifyEmailOtp(request, env, headers);
     if (method === "POST" && path === "/auth/logout") return logout(request, env, headers);

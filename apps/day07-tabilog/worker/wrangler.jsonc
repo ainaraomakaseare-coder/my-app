@@ -9,6 +9,15 @@
     // カンマ区切りで複数指定できる（isAllowedOrigin/cors、src/cors.js）。
     // GitHub PagesからCloudflare Pagesへの移行期間中は両方を許可する（2026-09-29〜）。
     "ALLOWED_ORIGIN": "https://ainaraomakaseare-coder.github.io,https://tabinoashiato.pages.dev"
+    // ソーシャルログイン（Apple・Google・LINE。docs/adr/0019）の設定。各社のコンソールで登録して
+    // IDが分かってから、ここに書き足す（設定した方式だけログイン画面にボタンが出る。手順はREADME.md）。
+    // 秘密のもの（GOOGLE_CLIENT_SECRET・APPLE_PRIVATE_KEY・LINE_CHANNEL_SECRET）はここに書かず
+    // `npx wrangler secret put` で登録する。
+    // , "GOOGLE_CLIENT_ID": "…apps.googleusercontent.com"
+    // , "APPLE_SERVICES_ID": "com.hiroyaapps.tabilog.web"
+    // , "APPLE_TEAM_ID": "…"
+    // , "APPLE_KEY_ID": "…"
+    // , "LINE_CHANNEL_ID": "…"
   },
   "d1_databases": [
     {

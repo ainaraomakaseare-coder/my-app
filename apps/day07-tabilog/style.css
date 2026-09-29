@@ -119,12 +119,18 @@ a:hover { text-decoration: underline; }
 
 .login-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80dvh; text-align: center; }
 .login-wrap > .hd:first-child { align-self: stretch; text-align: left; padding-bottom: 0; }
-.google-signin-slot { margin-top: 22px; }
-.apple-signin-btn {
-  display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px;
-  background: #000; color: #fff; border-radius: var(--radius-control); padding: 11px 20px; font-size: 14px; font-weight: 500;
-  width: 280px;
+/* ソーシャルログインのボタン（各社の標準的な見た目：Appleは黒、Googleは白地にGのロゴ、LINEは緑#06C755） */
+.social-login { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+.social-btn {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 280px; padding: 11px 20px; border-radius: var(--radius-control); font-size: 14px; font-weight: 600;
 }
+.social-btn[hidden] { display: none; }
+.social-apple { background: #000; color: #fff; }
+.social-google { background: #fff; color: #1f1f1f; box-shadow: var(--card-shadow); }
+.social-line { background: #06C755; color: #fff; }
+.social-waiting { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 280px; margin-top: 22px; }
+.login-link-note { width: 280px; margin: 18px 0 10px; }
 
 .login-divider { display: flex; align-items: center; gap: 10px; width: 280px; margin: 18px 0; color: var(--ink-soft); font-size: 11.5px; }
 .login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }

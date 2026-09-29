@@ -1,7 +1,7 @@
 /*
- * ログイン（クライアント側のみの簡易実装）・評価・マイログを検証する。
- * 実際のGoogle/Appleとの通信はせず、window.google.accounts.id / window.AppleID をテスト用に
- * 差し替え、ログインボタンが押されたのと同じ形でコールバックを直接呼び出す。
+ * ログイン（メールOTP・Apple/Google/LINEのサーバー側フロー）・評価・マイログを検証する。
+ * 実際のプロバイダーとの通信はしない。Workerの /auth/providers・/auth/<provider>/start・/auth/exchange を
+ * フェイクAPIで差し替え、start が「#auth=<コード>付きで戻る」リダイレクトを返したのと同じ状況を再現する。
  * 閲覧・記録の追加はログイン不要、評価とマイログだけログイン必須、という前提を確認する。
  * 実行: node test/auth.smoke.js   （要 playwright）
  */
@@ -56,7 +56,8 @@ async function installFakeApi(page, shared) {
   const state = shared || {
     tripSeq: 0, blockSeq: 0, entrySeq: 0, accountSeq: 0,
     trips: {}, blocks: {}, entriesByBlock: {}, ratingsByEntry: {}, otpsByEmail: {},
-    accountsByEmail: {}, membersByTrip: {}
+    accountsByEmail: {}, membersByTrip: {},
+    providers: [], exchangeByCode: {}, lastVerifyBody: null
   };
   const trips = state.trips;
   const blocks = state.blocks;
@@ -172,8 +173,18 @@ async function installFakeApi(page, shared) {
       otpsByEmail[data.email.toLowerCase()] = { code: '123456', name: data.name || '' };
       route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
     }),
+    page.route(/\/api\/auth\/providers$/, async (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ providers: state.providers || [] }) });
+    }),
+    page.route(/\/api\/auth\/exchange$/, async (route) => {
+      const data = JSON.parse(route.request().postData());
+      const res = (state.exchangeByCode || {})[data.code];
+      if (!res) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"invalid_code"}' });
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(res) });
+    }),
     page.route(/\/api\/auth\/email\/verify$/, async (route) => {
       const data = JSON.parse(route.request().postData());
+      state.lastVerifyBody = data;
       const email = data.email.toLowerCase();
       const otp = otpsByEmail[email];
       if (!otp) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' });
@@ -195,25 +206,11 @@ async function installFakeApi(page, shared) {
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('dialog', (d) => d.accept());
 
-  // window.google.accounts.id をテスト用のダミーに差し替える
-  await page.addInitScript(() => {
-    window.google = {
-      accounts: {
-        id: {
-          initialize: (opts) => { window.__gisCallback = opts.callback; },
-          renderButton: (el) => { el.textContent = 'FAKE_GOOGLE_BUTTON'; }
-        }
-      }
-    };
-  });
-
-  // index.htmlのmetaタグを、テスト用のAPIとダミーのGoogleクライアントIDに書き換える
+  // index.htmlのmetaタグを、テスト用のAPIに書き換える
   await page.route('**/', async (route) => {
     const res = await route.fetch();
     let body = await res.text();
-    body = body
-      .replace('<meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">', '<meta name="tabilog-api-endpoint" content="/api">')
-      .replace('<meta name="tabilog-google-client-id" content="">', '<meta name="tabilog-google-client-id" content="fake-client-id.apps.googleusercontent.com">');
+    body = body.replace('<meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">', '<meta name="tabilog-api-endpoint" content="/api">');
     await route.fulfill({ response: res, body, headers: { ...res.headers(), 'content-type': 'text/html; charset=utf-8' } });
   });
 
@@ -221,8 +218,8 @@ async function installFakeApi(page, shared) {
 
   await page.goto(BASE);
 
-  // ---- 閲覧・記録の追加はログイン不要（Google Client IDを設定していても） ----
-  check('Google Client IDを設定していても、最初はホーム画面が出る（ログイン画面ではない）', await page.isVisible('.screen[data-screen="home"].active'));
+  // ---- 閲覧・記録の追加はログイン不要 ----
+  check('最初はホーム画面が出る（ログイン画面ではない）', await page.isVisible('.screen[data-screen="home"].active'));
   check('ログインしていない人には「ログインする」案内が出る', !(await page.isHidden('#loginPromptRow')));
   check('ログインしていない人にはアカウント欄は出ない', await page.isHidden('#accountRow'));
 
@@ -258,10 +255,15 @@ async function installFakeApi(page, shared) {
   check('ログインなしのとき、評価欄には「ログインして評価する」案内が出る', await page.isVisible('#btnRatingLogin'));
   await page.click('#btnRatingLogin');
   await page.waitForSelector('.screen[data-screen="login"].active');
-  check('評価からのログインは、Appleと同様ログイン画面へ行く', true);
+  check('評価からのログインは、ログイン画面へ行く', true);
 
-  const credential = fakeJwt({ name: 'テスト太郎', email: 'test-taro@example.com' });
-  await page.evaluate((cred) => window.__gisCallback({ credential: cred }), credential);
+  // メールの確認コードでログインする（フェイクAPIのコードは常に123456）
+  await page.fill('#loginName', 'テスト太郎');
+  await page.fill('#loginEmail', 'test-taro@example.com');
+  await page.click('#btnSendOtp');
+  await page.waitForSelector('#emailOtpForm:not([hidden])');
+  await page.fill('#loginOtpCode', '123456');
+  await page.click('#btnVerifyOtp');
 
   await page.waitForSelector('.screen[data-screen="entryForm"].active');
   check('評価からログインすると、元のentryFormへ戻ってくる', true);
@@ -340,42 +342,72 @@ async function installFakeApi(page, shared) {
 
   check('ページ内エラーが発生していない', errors.length === 0, errors.join(' / '));
 
-  // ---- Appleでサインイン（別ページで、Apple Client IDだけ設定した状態を検証） ----
-  const applePage = await ctx.newPage();
-  const appleErrors = [];
-  applePage.on('pageerror', (e) => appleErrors.push(e.message));
-  await applePage.addInitScript(() => {
-    window.AppleID = {
-      auth: {
-        init: (opts) => { window.__appleInitOpts = opts; },
-        signIn: () => Promise.resolve({
-          authorization: { id_token: 'x.' + btoa('{}') + '.y' },
-          user: { name: { firstName: 'アップル', lastName: '花子' }, email: 'apple-hanako@example.com' }
-        })
-      }
-    };
-  });
-  await applePage.route('**/', async (route) => {
+  // ---- Apple・Google・LINEでログイン（サーバー側フロー。別コンテキスト＝別ブラウザ） ----
+  // フェイクの /auth/<provider>/start は、本物のWorkerと同じく「ログイン後に #auth=<コード> を付けて
+  // returnのページへ戻すリダイレクト」を返す。コードはフェイクの /auth/exchange がセッションに交換する。
+  const socialCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  const socialPage = await socialCtx.newPage();
+  const socialErrors = [];
+  socialPage.on('pageerror', (e) => socialErrors.push(e.message));
+  await socialPage.route('**/', async (route) => {
     const res = await route.fetch();
     let body = await res.text();
-    body = body
-      .replace('<meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">', '<meta name="tabilog-api-endpoint" content="/api">')
-      .replace('<meta name="tabilog-apple-client-id" content="">', '<meta name="tabilog-apple-client-id" content="com.hiroyaapps.tabilog.web">');
+    body = body.replace('<meta name="tabilog-api-endpoint" content="https://tabilog-api.hiroya-apps.workers.dev">', '<meta name="tabilog-api-endpoint" content="/api">');
     await route.fulfill({ response: res, body, headers: { ...res.headers(), 'content-type': 'text/html; charset=utf-8' } });
   });
-  await installFakeApi(applePage);
-  await applePage.goto(BASE);
-  check('Apple Client ID設定時も、最初はホーム画面が出る', await applePage.isVisible('.screen[data-screen="home"].active'));
-  await applePage.click('#btnOpenLogin');
-  await applePage.waitForSelector('.screen[data-screen="login"].active');
-  check('Apple Client ID設定時はAppleボタンが表示される', await applePage.isVisible('#appleSignInButton'));
-  await applePage.click('#appleSignInButton');
-  await applePage.waitForSelector('.screen[data-screen="home"].active');
-  check('Appleログイン後は氏名が表示される', (await applePage.textContent('#accountName')) === 'アップル 花子');
-  check('Appleログイン側でエラーが発生していない', appleErrors.length === 0, appleErrors.join(' / '));
+  const socialState = await installFakeApi(socialPage);
+  socialState.providers = ['apple', 'google', 'line'];
+  const CODE_OK = 'a'.repeat(64);
+  const CODE_LINK = 'b'.repeat(64);
+  socialState.exchangeByCode[CODE_OK] = { email: 'apple-hanako@example.com', name: 'アップル 花子', token: 't'.repeat(64), provider: 'apple' };
+  socialState.exchangeByCode[CODE_LINK] = { needEmail: true, provider: 'line', name: 'ライン太郎' };
+  const startUrls = [];
+  await socialPage.route(/\/api\/auth\/(apple|google|line)\/start/, async (route) => {
+    const u = new URL(route.request().url());
+    startUrls.push(u);
+    const back = u.searchParams.get('return');
+    const code = u.pathname.indexOf('/line/') !== -1 ? CODE_LINK : CODE_OK;
+    route.fulfill({ status: 302, headers: { location: back + '#auth=' + code } });
+  });
+  await socialPage.goto(BASE);
+  await socialPage.click('#btnOpenLogin');
+  await socialPage.waitForSelector('.screen[data-screen="login"].active');
+  await socialPage.waitForSelector('.social-btn[data-provider="line"]:not([hidden])');
+  const order = await socialPage.$$eval('.social-btn:not([hidden])', (els) => els.map((e) => e.dataset.provider));
+  check('ボタンの順番はApple・Google・LINE', order.join(',') === 'apple,google,line', order.join(','));
+  check('ソーシャルボタンがあるときは区切り線を表示する', await socialPage.isVisible('#emailLoginDivider'));
+  await socialPage.click('.social-btn[data-provider="apple"]');
+  await socialPage.waitForSelector('#accountName:not(:empty)');
+  check('Appleログイン後は氏名が表示される', (await socialPage.textContent('#accountName')) === 'アップル 花子');
+  check('startにreturnとして自分のページのURLを渡している', startUrls.length === 1 && startUrls[0].searchParams.get('return') === BASE, startUrls.map(String).join(' '));
+  check('戻ってきたあと、URLのハッシュ（コード）は消えている', (await socialPage.evaluate(() => location.hash)) === '');
+  check('ログイン後はログイン案内が消える', await socialPage.isHidden('#loginPromptRow'));
+  const stored = await socialPage.evaluate(() => JSON.parse(localStorage.getItem('tabilog:user')));
+  check('セッショントークンが端末に保存される', stored && stored.token === 't'.repeat(64) && stored.provider === 'apple');
+
+  // LINE：メールを受け取れなかった場合 → メールOTPで一度だけ確認して結びつける
+  await socialPage.click('#btnLogout');
+  await socialPage.click('#btnOpenLogin');
+  await socialPage.waitForSelector('.social-btn[data-provider="line"]:not([hidden])');
+  await socialPage.click('.social-btn[data-provider="line"]');
+  await socialPage.waitForSelector('.screen[data-screen="login"].active');
+  await socialPage.waitForSelector('#loginLinkNote:not([hidden])');
+  check('メール確認が必要なときは説明が出る', (await socialPage.textContent('#loginLinkNote')).includes('メールアドレスを受け取れなかった'));
+  check('メール確認中はソーシャルボタンを出さない', await socialPage.isHidden('#socialLogin'));
+  check('プロバイダーの表示名が名前欄に入る', (await socialPage.inputValue('#loginName')) === 'ライン太郎');
+  await socialPage.fill('#loginEmail', 'line-taro@example.com');
+  await socialPage.click('#btnSendOtp');
+  await socialPage.waitForSelector('#emailOtpForm:not([hidden])');
+  await socialPage.fill('#loginOtpCode', '123456');
+  await socialPage.click('#btnVerifyOtp');
+  await socialPage.waitForSelector('.screen[data-screen="home"].active');
+  check('確認コードの検証にlinkコードが渡る', socialState.lastVerifyBody && socialState.lastVerifyBody.link === CODE_LINK, JSON.stringify(socialState.lastVerifyBody));
+  check('LINEログイン（メール確認後）は氏名が表示される', (await socialPage.textContent('#accountName')) === 'ライン太郎');
+  check('ソーシャルログイン側でエラーが発生していない', socialErrors.length === 0, socialErrors.join(' / '));
+  await socialCtx.close();
 
   // ---- メールでログイン（Google/AppleどちらのClient IDも未設定のまま。素のindex.html） ----
-  // 別コンテキスト＝別ブラウザ扱いにして、前段のGoogle/AppleログインのlocalStorageを引き継がないようにする
+  // 別コンテキスト＝別ブラウザ扱いにして、前段のログインのlocalStorageを引き継がないようにする
   const emailCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
   const emailPage = await emailCtx.newPage();
   const emailErrors = [];
@@ -388,12 +420,13 @@ async function installFakeApi(page, shared) {
   });
   await installFakeApi(emailPage);
   await emailPage.goto(BASE);
-  check('Google/AppleのClient IDが未設定でも、ホーム画面には「ログインする」案内が出る（メールでのログインは常に使える）', !(await emailPage.isHidden('#loginPromptRow')));
+  check('プロバイダーが1つも設定されていなくても、ホーム画面には「ログインする」案内が出る（メールでのログインは常に使える）', !(await emailPage.isHidden('#loginPromptRow')));
   await emailPage.click('#btnOpenLogin');
   await emailPage.waitForSelector('.screen[data-screen="login"].active');
-  check('Client ID未設定のときはGoogleボタンが表示されない', await emailPage.isHidden('#googleSignInButton') || (await emailPage.textContent('#googleSignInButton')) === '');
-  check('Client ID未設定のときはAppleボタンが表示されない', await emailPage.isHidden('#appleSignInButton'));
-  check('Client ID未設定のときは区切り線を表示しない（メールしか選択肢が無いため）', await emailPage.isHidden('#emailLoginDivider'));
+  check('プロバイダー未設定のときはGoogleボタンが表示されない', await emailPage.isHidden('.social-btn[data-provider="google"]'));
+  check('プロバイダー未設定のときはAppleボタンが表示されない', await emailPage.isHidden('.social-btn[data-provider="apple"]'));
+  check('プロバイダー未設定のときはLINEボタンが表示されない', await emailPage.isHidden('.social-btn[data-provider="line"]'));
+  check('プロバイダー未設定のときは区切り線を表示しない（メールしか選択肢が無いため）', await emailPage.isHidden('#emailLoginDivider'));
   check('メールでのログインフォームは常に表示される', await emailPage.isVisible('#emailLoginForm'));
 
   await emailPage.fill('#loginName', 'メール花子');
@@ -424,7 +457,7 @@ async function installFakeApi(page, shared) {
   await emailPage.waitForSelector('.screen[data-screen="tripDetail"].active');
   await emailPage.click('.entry-card >> nth=0 >> .entry-author');
   await emailPage.waitForSelector('.screen[data-screen="entryForm"].active');
-  check('メールでログイン済みなら、Client ID未設定でも★ボタンが使える', await emailPage.isVisible('.star-btn'));
+  check('メールでログイン済みなら、プロバイダー未設定でも★ボタンが使える', await emailPage.isVisible('.star-btn'));
   await emailPage.click('.star-btn[data-score="3"]');
   await emailPage.waitForFunction(() => {
     const btn = document.querySelector('.star-btn[data-score="3"]');

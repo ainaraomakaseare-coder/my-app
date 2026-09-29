@@ -2676,14 +2676,6 @@
     var v = meta ? meta.getAttribute('content').trim() : '';
     return v.replace(/\/$/, '');
   })();
-  var GOOGLE_CLIENT_ID = (function () {
-    var meta = document.querySelector('meta[name="tabilog-google-client-id"]');
-    return meta ? meta.getAttribute('content').trim() : '';
-  })();
-  var APPLE_CLIENT_ID = (function () {
-    var meta = document.querySelector('meta[name="tabilog-apple-client-id"]');
-    return meta ? meta.getAttribute('content').trim() : '';
-  })();
   var MY_TRIPS_KEY = 'tabilog:my-trips';
   var HIDDEN_TRIPS_KEY = 'tabilog:hidden-trips';
   var CURRENT_USER_KEY = 'tabilog:user';
@@ -3365,24 +3357,15 @@
     return state.visitedTab !== (dir === 'left' ? 'overseas' : 'domestic');
   }
 
-  // ---------- Googleログイン ----------
-  // クライアント側だけで完結する簡易的な仕組み（サーバー側でのトークン検証はしていない）。
-  // 家族・少人数での利用を想定しており、「誰が記録したか」を自動で埋めるための本人確認として使う。
-  function decodeJwtPayload(token) {
-    try {
-      var base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-      return JSON.parse(decodeURIComponent(escape(atob(base64))));
-    } catch (e) { return null; }
-  }
-
+  // ---------- ログイン状態（端末に保存する） ----------
   function loadCurrentUser() {
     try { return JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null'); } catch (e) { return null; }
   }
   function saveCurrentUser(u) { localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(u)); }
   function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); }
 
-  // メールでのログイン（送信確認なしの簡易な本人確認）は常に使えるため、ログイン機能自体は常に有効。
-  // Google/Appleのボタンは各クライアントIDを設定したときだけ追加で出る。
+  // メールでのログインは常に使えるため、ログイン機能自体は常に有効。
+  // Apple・Google・LINEのボタンは、Workerに設定があるものだけ追加で出る（GET /auth/providers）。
   function loginEnabled() { return true; }
 
   function renderAccountRow() {
@@ -3994,6 +3977,7 @@
     pendingVideos: [],        // 新規に選んだ、まだアップロードしていない {blob, name, size}
     formCostItems: [],        // {label, amount}
     loginReturnTo: 'home',    // ログイン画面から戻る先の画面名
+    linkCode: '',             // ソーシャルログインでメールが分からなかったとき、メールOTPで結びつける待ちのコード
     myLogItems: [],
     myLogTrips: [],
     myLogPlaces: { prefectures: [], countries: [], tripPlaces: [] },
@@ -9703,6 +9687,10 @@
     });
     $('#btnOpenLogin').addEventListener('click', function () { openLogin('home'); });
     $('#btnLoginBack').addEventListener('click', closeLogin);
+    $all('.social-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { startSocialLogin(btn.dataset.provider); });
+    });
+    $('#btnSocialCancel').addEventListener('click', cancelSocialWaiting);
     $('#btnSendOtp').addEventListener('click', handleSendOtp);
     $('#btnVerifyOtp').addEventListener('click', handleVerifyOtp);
     $('#btnResendOtp').addEventListener('click', handleSendOtp);
@@ -9761,23 +9749,19 @@
     $('#loginStatus').textContent = '';
     $('#loginLead').textContent = 'ログインすると、評価をつけたりマイログを見たりできます';
 
-    if (GOOGLE_CLIENT_ID) {
-      if (!window.google || !window.google.accounts) {
-        $('#loginStatus').textContent = 'Googleログインの読み込みに失敗しました。時間をおいて再読み込みしてください。';
-      } else {
-        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
-        google.accounts.id.renderButton($('#googleSignInButton'), { theme: 'outline', size: 'large', width: 280 });
-      }
-    }
-
-    if (APPLE_CLIENT_ID) {
-      var appleBtn = $('#appleSignInButton');
-      appleBtn.hidden = false;
-      appleBtn.onclick = handleAppleSignIn;
-    }
-
-    // 「または」の区切りは、Google/Appleどちらかのボタンが並んでいるときだけ意味を持つ
-    $('#emailLoginDivider').hidden = !(GOOGLE_CLIENT_ID || APPLE_CLIENT_ID);
+    // 前回の途中状態（待機表示・メール確認の待ち）を消してから、使えるログイン方法を並べる
+    stopNativeAuthPoll();
+    state.linkCode = '';
+    $('#socialWaiting').hidden = true;
+    $('#socialLogin').hidden = false;
+    $('#loginLinkNote').hidden = true;
+    $('#emailLoginDivider').hidden = true;
+    applyAuthProviders([]);
+    api('/auth/providers').then(function (res) {
+      applyAuthProviders((res && res.providers) || []);
+    }).catch(function () {
+      // 取れなくてもメールログインは使える
+    });
     var existing = loadCurrentUser();
     $('#loginName').value = (existing && existing.provider === 'email') ? existing.name : '';
     $('#loginEmail').value = (existing && existing.provider === 'email') ? existing.email : '';
@@ -9787,8 +9771,8 @@
   }
 
   // メールでのログイン（OTP）。実際にメールで6桁のコードを送り、入力してもらうことで
-  // 「メールの持ち主であること」をサーバー側で確認する（Google/Appleとは違い、唯一
-  // サーバー側で検証するログイン方法）。
+  // 「メールの持ち主であること」をサーバー側で確認する（Apple・Google・LINEは
+  // Workerが検証するので、これはそのうち「プロバイダーを使わない」方法）。
   function handleSendOtp() {
     var name = $('#loginName').value.trim();
     var email = $('#loginEmail').value.trim();
@@ -9819,7 +9803,9 @@
     var code = $('#loginOtpCode').value.trim();
     if (!code) { $('#loginStatus').textContent = 'コードを入力してください。'; return; }
     $('#loginStatus').textContent = '確認中…';
-    api('/auth/email/verify', 'POST', { email: email, code: code }).then(function (res) {
+    var verifyBody = { email: email, code: code };
+    if (state.linkCode) verifyBody.link = state.linkCode; // ソーシャルログインで受け取れなかったメールを、ここで結びつける
+    api('/auth/email/verify', 'POST', verifyBody).then(function (res) {
       ensureAccountAndProceed({ name: name || res.name || email, email: res.email, provider: 'email', token: res.token || '' });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
@@ -9834,7 +9820,8 @@
   // 元の画面に戻る。アカウントIDは「参加者」欄で生のメールアドレスを晒さず本人を
   // 指し示すための識別子で、これが無いと「参加する」機能が使えない。
   // 取得に失敗してもログイン自体は成立させる（参加機能だけ使えない状態で進む）。
-  function ensureAccountAndProceed(user) {
+  function ensureAccountAndProceed(user, opts) {
+    stopNativeAuthPoll();
     saveCurrentUser(user);
     renderAccountRow();
     api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
@@ -9842,12 +9829,15 @@
     }).catch(function () {
       // アカウントIDが取れなくてもログインは成立させる
     }).then(function () {
+      // Webでプロバイダーから戻ってきた直後は、いま開いている画面（共有された旅行など）を動かさない
+      if (opts && opts.stay) { renderAccountRow(); if (state.trip) loadSocial(); return; }
       goToReturnScreen(state.loginReturnTo, true);
     });
   }
 
   // ログイン画面を、ログインせずに閉じる（元の画面へ戻る）
   function closeLogin() {
+    stopNativeAuthPoll();
     goToReturnScreen(state.loginReturnTo, false);
   }
 
@@ -9872,45 +9862,190 @@
     }
   }
 
-  function handleGoogleCredential(response) {
-    var payload = decodeJwtPayload(response.credential);
-    if (!payload) { $('#loginStatus').textContent = 'ログインに失敗しました。もう一度お試しください。'; return; }
-    ensureAccountAndProceed({ name: payload.name, email: payload.email, picture: payload.picture, provider: 'google' });
+  // ---------- Apple・Google・LINEでのログイン（Worker側の認可コードフロー。docs/adr/0019） ----------
+  // ブラウザ用のプロバイダーSDKは使わない。ログインの相手方（プロバイダー）とのやり取りは全部
+  // Workerがやり、アプリは「開始URLを開く」→「使い捨てコードをセッションに交換する」だけ。
+  var SOCIAL_NAMES = { apple: 'Apple', google: 'Google', line: 'LINE' };
+  var LOGIN_RETURN_KEY = 'tabilog:login-return';
+  var NATIVE_POLL_INTERVAL_MS = 2000;
+  var NATIVE_POLL_LIMIT_MS = 5 * 60 * 1000;
+  var nativePoll = null;
+
+  function applyAuthProviders(list) {
+    if (state.linkCode) return; // メール確認待ちの間はソーシャルボタンを出さない
+    $all('.social-btn').forEach(function (btn) {
+      btn.hidden = list.indexOf(btn.dataset.provider) === -1;
+    });
+    $('#emailLoginDivider').hidden = list.length === 0;
   }
 
-  function handleAppleSignIn() {
-    if (!window.AppleID || !window.AppleID.auth) {
-      $('#loginStatus').textContent = 'Appleログインの読み込みに失敗しました。時間をおいて再読み込みしてください。';
+  function randomReqId() {
+    var bytes = new Uint8Array(16);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    return Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+
+  function startSocialLogin(provider) {
+    var base = API_BASE + '/auth/' + provider + '/start';
+    if (isNativeApp()) {
+      // iOSアプリ：WKWebViewの中ではGoogleなどがログインをブロックするので、システムのブラウザ（Safari）で
+      // 開く。Workerのホストはcapacitor.config.jsonのallowNavigationに無いため、Capacitorが自動で
+      // Safariに渡す（プラグインの追加は不要）。結果は下のポーリングで受け取る。
+      var reqId = randomReqId();
+      showSocialWaiting(provider);
+      startNativeAuthPoll(reqId);
+      window.open(base + '?return=app&req=' + reqId, '_blank');
       return;
     }
-    AppleID.auth.init({
-      clientId: APPLE_CLIENT_ID,
-      scope: 'name email',
-      redirectURI: location.origin + location.pathname,
-      usePopup: true
-    });
-    AppleID.auth.signIn().then(function (res) {
-      // Appleは初回ログインのときだけ res.user に氏名・メールを返す。2回目以降はid_tokenからメールだけ分かる。
-      var payload = decodeJwtPayload(res.authorization.id_token) || {};
-      var name = (res.user && res.user.name) ? [res.user.name.firstName, res.user.name.lastName].filter(Boolean).join(' ') : '';
-      var existing = loadCurrentUser();
-      ensureAccountAndProceed({
-        name: name || (existing && existing.provider === 'apple' ? existing.name : '') || '',
-        email: (res.user && res.user.email) || payload.email || '',
-        provider: 'apple'
-      });
+    // Web：このページごとプロバイダーへ移動し、終わると #auth=... を付けてこのページに戻ってくる
+    try { sessionStorage.setItem(LOGIN_RETURN_KEY, state.loginReturnTo || 'home'); } catch (e) { /* 保存できなくても続行 */ }
+    location.href = base + '?return=' + encodeURIComponent(location.origin + location.pathname + location.search);
+  }
+
+  function showSocialWaiting(provider) {
+    $('#socialLogin').hidden = true;
+    $('#emailLoginDivider').hidden = true;
+    $('#emailLoginForm').hidden = true;
+    $('#emailOtpForm').hidden = true;
+    $('#socialWaiting').hidden = false;
+    $('#socialWaitingText').textContent = 'ブラウザで' + (SOCIAL_NAMES[provider] || '') + 'のログインを進めてください。終わったら、このアプリに戻ってきてください。';
+    $('#loginStatus').textContent = '';
+  }
+
+  function cancelSocialWaiting() {
+    stopNativeAuthPoll();
+    openLogin(state.loginReturnTo);
+  }
+
+  // アプリ用：2秒ごと（アプリに戻ってきた瞬間にもすぐ）Workerに結果を聞きに行く。最大5分。
+  function startNativeAuthPoll(reqId) {
+    stopNativeAuthPoll();
+    var started = Date.now();
+    var busy = false;
+    var poll = { timer: null, onVisible: null };
+    function tick() {
+      if (nativePoll !== poll || busy) return;
+      if (Date.now() - started > NATIVE_POLL_LIMIT_MS) {
+        stopNativeAuthPoll();
+        $('#socialWaiting').hidden = true;
+        $('#socialLogin').hidden = false;
+        $('#emailLoginForm').hidden = false;
+        $('#loginStatus').textContent = 'ログインの待ち時間が過ぎました。もう一度お試しください。';
+        openLoginRefreshProviders();
+        return;
+      }
+      busy = true;
+      api('/auth/poll?req=' + encodeURIComponent(reqId)).then(function (res) {
+        if (nativePoll !== poll || !res || !res.ready) return;
+        stopNativeAuthPoll();
+        handleSocialResult(res.kind, res.code, res.error);
+      }).catch(function () {
+        // 通信できなかったときは次の回にまた聞く
+      }).then(function () { busy = false; });
+    }
+    poll.onVisible = function () { if (!document.hidden) tick(); };
+    poll.timer = setInterval(tick, NATIVE_POLL_INTERVAL_MS);
+    document.addEventListener('visibilitychange', poll.onVisible);
+    nativePoll = poll;
+  }
+
+  function stopNativeAuthPoll() {
+    if (!nativePoll) return;
+    clearInterval(nativePoll.timer);
+    document.removeEventListener('visibilitychange', nativePoll.onVisible);
+    nativePoll = null;
+  }
+
+  function openLoginRefreshProviders() {
+    api('/auth/providers').then(function (res) { applyAuthProviders((res && res.providers) || []); }).catch(function () {});
+  }
+
+  function socialErrorMessage(error) {
+    return error === 'cancelled' ? 'ログインをキャンセルしました。' : 'ログインに失敗しました。もう一度お試しください。';
+  }
+
+  // プロバイダーでの操作が終わった結果（アプリではポーリング、Webでは#auth=…）を受け取る
+  function handleSocialResult(kind, code, error, opts) {
+    if (kind === 'error' || !code) {
+      // ログイン画面に居るならそこに表示、Webで元の画面に戻ってきたときは画面を動かさずトーストで知らせる
+      if ($('.screen[data-screen="login"]').classList.contains('active')) {
+        cancelSocialWaitingKeepStatus();
+        $('#loginStatus').textContent = socialErrorMessage(error);
+      } else {
+        showToast(socialErrorMessage(error));
+      }
+      return;
+    }
+    $('#loginStatus').textContent = 'ログインしています…';
+    api('/auth/exchange', 'POST', { code: code }).then(function (res) {
+      if (res && res.needEmail) { enterLinkMode(code, res); return; }
+      ensureAccountAndProceed({ name: res.name || res.email, email: res.email, provider: res.provider || 'email', token: res.token || '' }, opts);
     }).catch(function () {
-      $('#loginStatus').textContent = 'Appleログインに失敗、またはキャンセルされました。';
+      if (!$('.screen[data-screen="login"]').classList.contains('active')) openLogin(state.loginReturnTo);
+      $('#loginStatus').textContent = 'ログインの有効期限が切れました。もう一度お試しください。';
     });
+  }
+
+  function cancelSocialWaitingKeepStatus() {
+    stopNativeAuthPoll();
+    $('#socialWaiting').hidden = true;
+    $('#socialLogin').hidden = false;
+    $('#emailLoginForm').hidden = false;
+    openLoginRefreshProviders();
+  }
+
+  // プロバイダーからメールアドレスを受け取れなかったとき：メールOTPで一度だけ確認してもらう。
+  // 確認できたメールにこのプロバイダーの本人を結びつけ、次回からはそのプロバイダーだけで入れる。
+  function enterLinkMode(code, info) {
+    if (!$('.screen[data-screen="login"]').classList.contains('active')) openLogin(state.loginReturnTo);
+    stopNativeAuthPoll();
+    state.linkCode = code;
+    $('#socialWaiting').hidden = true;
+    $('#socialLogin').hidden = true;
+    $('#emailLoginDivider').hidden = true;
+    $('#loginLinkNote').textContent = (SOCIAL_NAMES[info.provider] || 'ログイン元') + 'からメールアドレスを受け取れなかったので、一度だけメールで確認します。確認できたら、次回からは' + (SOCIAL_NAMES[info.provider] || 'そのログイン') + 'だけでログインできます。';
+    $('#loginLinkNote').hidden = false;
+    $('#loginName').value = info.name || '';
+    $('#loginEmail').value = '';
+    $('#emailLoginForm').hidden = false;
+    $('#emailOtpForm').hidden = true;
+    $('#loginStatus').textContent = '';
+  }
+
+  // Webでプロバイダーから戻ってきたとき、URLのハッシュ（#auth=… / #auth_link=… / #auth_error=…）を処理する。
+  // コードはURLに残さない（すぐ消す）。戻り値：ハッシュを処理した（＝ログインの続きをしている）か
+  function handleAuthRedirectHash() {
+    var m = /^#(auth|auth_link|auth_error)=([0-9A-Za-z_%-]+)$/.exec(location.hash || '');
+    if (!m) return false;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* 消せなくても続行 */ }
+    var target = 'home';
+    try {
+      var saved = sessionStorage.getItem(LOGIN_RETURN_KEY);
+      sessionStorage.removeItem(LOGIN_RETURN_KEY);
+      if (saved) target = saved;
+    } catch (e) { /* 読めなくてもホームへ */ }
+    state.loginReturnTo = target;
+    var hasTrip = !!Core.getTripIdFromSearch(location.search);
+    if (m[1] === 'auth_error') {
+      handleSocialResult('error', '', decodeURIComponent(m[2]));
+      return true;
+    }
+    handleSocialResult('session', m[2], '', { stay: hasTrip });
+    return true;
   }
 
   // 起動時：ログイン状態にかかわらず、いつもどおりホーム/共有された旅行を表示する
   function enterApp() {
     renderAccountRow();
     checkBillingReturn();
+    // メールの確認が必要なログイン（#auth_link）で戻ってきたときは、旅行の画面ではなくログイン画面を出すため、?trip=を外す
+    if (/^#auth_link=/.test(location.hash) && location.search) {
+      try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* 外せなくても続行 */ }
+    }
     var tripId = Core.getTripIdFromSearch(location.search);
     if (tripId) openTrip(tripId);
     else { showScreen('home'); renderHome(); }
+    handleAuthRedirectHash();
   }
 
   // 画面下中央に出す小さな通知。約2.5秒でフェードして消える（トップ右のアイコンとの重複を
