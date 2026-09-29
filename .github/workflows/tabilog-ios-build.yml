@@ -112,6 +112,32 @@ jobs:
               f.write(content)
           PYEOF
 
+      - name: アプリの画面の引っぱり（バウンス）を止める
+        # ページの一番上・一番下で引っぱると、WKWebViewの画面そのものが伸び縮みして、
+        # 下に固定したタブまで一緒に動いていた（2026-09-29、オーナー報告）。CSSの
+        # overscroll-behavior はWebの中のスクロールにしか効かないので、ネイティブ側で止める。
+        # ios/ は毎回作り直すので、生成されたAppDelegate.swiftに数行を差し込む。
+        working-directory: apps/day07-tabilog-ios/ios/App/App
+        run: |
+          python3 - << 'PYEOF'
+          path = "AppDelegate.swift"
+          with open(path) as f:
+              content = f.read()
+          marker = "func applicationDidBecomeActive(_ application: UIApplication) {\n"
+          if content.count(marker) != 1:
+              raise SystemExit(f"applicationDidBecomeActive not found as expected (found {content.count(marker)})")
+          injected = (
+              "        if let vc = self.window?.rootViewController as? CAPBridgeViewController {\n"
+              "            vc.webView?.scrollView.bounces = false\n"
+              "            vc.webView?.scrollView.alwaysBounceVertical = false\n"
+              "            vc.webView?.scrollView.alwaysBounceHorizontal = false\n"
+              "        }\n"
+          )
+          content = content.replace(marker, marker + injected, 1)
+          with open(path, "w") as f:
+              f.write(content)
+          PYEOF
+
       - name: バージョン番号を設定
         # ios/フォルダは毎回作り直しなので、ビルド番号を前回の実行から引き継げない。
         # このワークフローの実行回数（github.run_number）を使えば、実行するたびに
