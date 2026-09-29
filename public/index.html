@@ -381,6 +381,7 @@
       <div id="ttBox" class="ttbox hide">
         <h3 style="margin:0 0 4px">TikTok の投稿設定</h3>
         <div class="muted" id="ttWho">投稿先を読み込み中…</div>
+        <div class="muted hide" id="ttDemoNote">デモ表示中：この連携にはまだ直接投稿の権限がないため、送信は下書きになります。</div>
 
         <div class="ttmode">
           <label><input type="radio" name="ttMode" value="inbox" checked> 下書きに送る（公開は TikTok アプリで。本文は手で貼る）</label>
@@ -1162,11 +1163,38 @@ const TT_PRIVACY_LABEL = {
 let ttCreators = null;   // 直接投稿する TikTok の投稿者情報（まとめたもの）
 let ttLoadedFor = '';    // どの組み合わせの情報を持っているか
 
-/** 選んだ投稿先のうち、直接投稿できる TikTok。 */
+/**
+ * ★ TikTok の審査用デモ表示。URL に ?ttdemo=1 を付けて開くとオン、?ttdemo=0 でオフ。
+ *   サンドボックスでは直接投稿の権限（video.publish）がもらえず、この欄が出ないため、
+ *   審査に出す録画のときだけ、権限のない連携でも欄を見せる。
+ *   変わるのは見た目だけ。権限のない連携はサーバー（api/posts.js）が投稿設定を
+ *   捨てるので、送り方はいままでどおり下書きになる。
+ *   連携の行き来で URL が変わっても続くよう、このタブの間だけ覚えておく。
+ */
+const TT_DEMO = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('ttdemo');
+    if (q === '1') sessionStorage.setItem('ttdemo', '1');
+    if (q === '0') sessionStorage.removeItem('ttdemo');
+    return sessionStorage.getItem('ttdemo') === '1';
+  } catch (e) { return false; }
+})();
+
+/** 選んだ投稿先のうち、直接投稿できる TikTok（デモ表示中は権限のない TikTok も）。 */
 function ttDirectTargets() {
   return [...document.querySelectorAll('#targets input:checked')]
     .map((c) => accounts.find((a) => a.id === c.value))
-    .filter((a) => a && a.network === 'tiktok' && a.can_direct_post);
+    .filter((a) => a && a.network === 'tiktok' && (a.can_direct_post || TT_DEMO));
+}
+
+/** デモ表示で、権限のない連携に出す投稿者情報。TikTok には問い合わせない。 */
+function ttDemoCreator(a) {
+  return {
+    nickname: a.account_name || 'TikTok', username: '',
+    privacyOptions: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'],
+    commentDisabled: false, duetDisabled: false, stitchDisabled: false,
+    maxDurationSec: Infinity,
+  };
 }
 
 const ttDirectChosen = () =>
@@ -1203,6 +1231,7 @@ async function updateTtBox() {
   const list = ttDirectTargets();
   $('ttBox').classList.toggle('hide', list.length === 0);
   if (!list.length) return;
+  $('ttDemoNote').classList.toggle('hide', !list.some((a) => !a.can_direct_post));
 
   $('ttDirect').classList.toggle('hide', !ttDirectChosen());
   if (!ttDirectChosen()) return;
@@ -1214,8 +1243,9 @@ async function updateTtBox() {
     ttCreators = null;
     $('ttWho').textContent = '投稿先を読み込み中…';
     try {
-      const got = await Promise.all(list.map((a) =>
-        api('/api/connect?creator=' + encodeURIComponent(a.id)).then((r) => r.creator)));
+      const got = await Promise.all(list.map((a) => a.can_direct_post
+        ? api('/api/connect?creator=' + encodeURIComponent(a.id)).then((r) => r.creator)
+        : ttDemoCreator(a)));
       if (ttLoadedFor !== key) return;   // 待っている間に選び直された
       // 2つ以上の TikTok に出すときは、全部で選べるものだけを残す。
       ttCreators = {
