@@ -56,7 +56,10 @@ const TINY_PNG = Buffer.from(
   const tmpPhoto = path.join(os.tmpdir(), 'omoide-wiki-test.png');
   fs.writeFileSync(tmpPhoto, TINY_PNG);
 
+  // ここまでのテストは「一問ずつ」画面のもの（チャット形式は後半でまとめて確かめる）
+  const keepCardStyle = () => { if (!localStorage.getItem('omoide-wiki:ivStyle')) localStorage.setItem('omoide-wiki:ivStyle', 'card'); };
   const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await ctx.addInitScript(keepCardStyle);
   const page = await ctx.newPage();
   const errors = [];
   let dismissNextConfirm = false;
@@ -381,6 +384,7 @@ const TINY_PNG = Buffer.from(
   await viewer.close();
   // 別の端末（まっさらな状態）で読み込むと、そのWikiが入って続きが書ける
   const otherCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await otherCtx.addInitScript(keepCardStyle);
   const other = await otherCtx.newPage();
   other.on('pageerror', e => errors.push(e.message));
   await other.goto(BASE);
@@ -649,6 +653,7 @@ const TINY_PNG = Buffer.from(
   check('絵文字ではなくSVGアイコンが描かれている', await page.locator('svg.icon').count() > 0);
   // ---- 音声で答えて「次」と言ったあと、前の質問の聞き取り結果が遅れて届いても次の回答欄に書き込まない ----
   const micCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await micCtx.addInitScript(keepCardStyle);
   await micCtx.addInitScript(() => {
     localStorage.setItem('omoide-wiki:aiConsent', 'granted');
     window.__srs = [];
@@ -696,6 +701,7 @@ const TINY_PNG = Buffer.from(
 
   // ---- iOSアプリの中では、iPhone本体の音声認識（プラグイン）を使い、2問目以降も聞き取れる ----
   const nativeCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await nativeCtx.addInitScript(keepCardStyle);
   await nativeCtx.addInitScript(() => {
     const listeners = {};
     const emit = (name, data) => (listeners[name] || []).forEach(f => f(data));
@@ -762,6 +768,7 @@ const TINY_PNG = Buffer.from(
 
   // ---- iOSアプリ（Capacitor）の中：書き出しは共有シート、印刷ボタンは隠す ----
   const appCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await appCtx.addInitScript(keepCardStyle);
   await appCtx.addInitScript(() => {
     window.__shared = [];
     window.Capacitor = {
@@ -789,6 +796,158 @@ const TINY_PNG = Buffer.from(
   await appPage.waitForSelector('[data-screen=view].active');
   check('アプリ内では印刷ボタンを隠す', await appPage.isHidden('#btnPrint'));
   await appCtx.close();
+
+  // ---- チャット形式のインタビュー ----
+  const chatTts = [];
+  let chatFollowCalls = 0;
+  let chatLastFollowPayload = null;
+  const chatAi = http.createServer((req, res) => {
+    const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body || '{}');
+      if (!parsed.action) chatLastFollowPayload = parsed;
+      if (parsed.action === 'tts') {
+        chatTts.push(parsed.text);
+        res.writeHead(200, { 'Content-Type': 'audio/wav', ...cors });
+        return res.end(SILENT_WAV);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
+      if (parsed.action === 'ack') return res.end(JSON.stringify({ ack: 'AIだけのあいづちです。' }));
+      chatFollowCalls++;
+      // 1回目は深掘り（あいづち入りの質問）、2回目は深掘りをやめて次の話題へ（あいづちだけ返す）
+      // AIが考えている間の画面も確かめられるよう、少し待ってから返す
+      const reply = chatFollowCalls === 1
+        ? { done: false, followUp: 'すてきですね！どんな味でしたか？', ack: '' }
+        : { done: true, followUp: '', ack: 'AIのあいづちです。' };
+      setTimeout(() => res.end(JSON.stringify(reply)), 400);
+    });
+  });
+  const chatPort = await new Promise(resolve => chatAi.listen(0, '127.0.0.1', () => resolve(chatAi.address().port)));
+  const chatCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await chatCtx.addInitScript(() => {
+    localStorage.setItem('omoide-wiki:aiConsent', 'granted');
+    function FakeSR() {}
+    FakeSR.prototype.start = function () {};
+    FakeSR.prototype.stop = function () { const sr = this; setTimeout(() => sr.onend && sr.onend(), 50); };
+    FakeSR.prototype.abort = FakeSR.prototype.stop;
+    window.SpeechRecognition = FakeSR;
+    window.webkitSpeechRecognition = FakeSR;
+  });
+  const chatPage = await chatCtx.newPage();
+  chatPage.on('pageerror', e => errors.push(e.message));
+  await chatPage.goto(BASE);
+  const setChatEndpoint = () => chatPage.evaluate((url) => {
+    document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', url);
+  }, `http://127.0.0.1:${chatPort}/`);
+  await setChatEndpoint();
+  await chatPage.click('#btnNewWiki');
+  await chatPage.fill('#newTitle', '山田 花子');
+  await chatPage.click('#btnCreateWiki');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('#tileInterview');
+  await chatPage.waitForSelector('[data-screen=interview].active');
+  const aiMsgs = () => chatPage.locator('#chatLog .msg.ai:not(.typing)').count();
+  const lastAi = () => chatPage.locator('#chatLog .msg.ai:not(.typing)').last().textContent();
+  check('はじめからチャット形式になっている（チャットが基本）', await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode')));
+  check('チャットでは設定をたたんでおく', !(await chatPage.evaluate(() => document.getElementById('ivSettings').open)));
+  const firstMsg = await lastAi();
+  const firstQ = await chatPage.evaluate(() => document.getElementById('qText').textContent);
+  check('あいさつで、答えは端末の中だけに保存され作り手にも見えないことを伝える', firstMsg.indexOf('この端末の中だけに保存') !== -1 && firstMsg.indexOf('作り手にも見えません') !== -1, firstMsg);
+  check('最初はあいさつ（名前入り）と質問をAIの発言として出す', firstMsg.indexOf('山田 花子さん') !== -1 && firstMsg.indexOf(firstQ) !== -1, firstMsg);
+  check('一問ずつ画面の質問文はチャットでは隠す', await chatPage.isHidden('#qText'));
+  for (let i = 0; i < 30 && chatTts.indexOf(firstQ) === -1; i++) await chatPage.waitForTimeout(100);
+  check('チャットでも、あいさつと質問を読み上げる', chatTts.some(t => t.indexOf('こんにちは') === 0) && chatTts.indexOf(firstQ) !== -1, JSON.stringify(chatTts));
+
+  await chatPage.fill('#qAnswer', '野沢菜の漬物が好きです');
+  await chatPage.click('#btnSaveQ');
+  check('送った答えは、AIが考えている間も入力欄に残さない', (await chatPage.inputValue('#qAnswer')) === '' && await chatPage.locator('#chatLog .msg.typing').count() === 1);
+  await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 2);
+  check('答えは右側の吹き出しとして残る', (await chatPage.locator('#chatLog .msg.me').last().textContent()) === '野沢菜の漬物が好きです');
+  check('AIには、このあと聞く予定の質問（生年月日など）を渡して、先回りして聞かないようにする',
+    chatLastFollowPayload && Array.isArray(chatLastFollowPayload.upcomingQuestions) && chatLastFollowPayload.upcomingQuestions.some(q => q.indexOf('生年月日') !== -1), JSON.stringify(chatLastFollowPayload && chatLastFollowPayload.upcomingQuestions));
+  check('AIの深掘りは、あいづち入りの質問をそのまま出す', (await lastAi()).indexOf('すてきですね！どんな味でしたか？') !== -1 && (await lastAi()).indexOf('AIのあいづち') === -1, await lastAi());
+
+  await chatPage.fill('#qAnswer', 'しょっぱくて、ご飯が進む味');
+  await chatPage.click('#btnSaveQ');
+  await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 3);
+  const afterDone = await lastAi();
+  check('深掘りをやめて次の話題に移るときは、AIのあいづちを添えてから次の質問', afterDone.indexOf('AIのあいづちです。') !== -1 && afterDone.indexOf(await chatPage.evaluate(() => document.getElementById('qText').textContent)) !== -1, afterDone);
+  for (let i = 0; i < 30 && chatTts.indexOf('AIのあいづちです。') === -1; i++) await chatPage.waitForTimeout(100);
+  check('あいづちも読み上げる（質問とは別に読むので、先に作った質問の音声が使える）', chatTts.indexOf('AIのあいづちです。') !== -1, JSON.stringify(chatTts));
+
+  await chatPage.click('#btnSkipQ');
+  await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 4);
+  check('とばしたことも吹き出しに残る', (await chatPage.locator('#chatLog .msg.me').last().textContent()).indexOf('とばしました') !== -1);
+  check('とばしたあとは「次の質問にいきますね」と返す', (await lastAi()).indexOf('次の質問にいきますね') !== -1);
+
+  await chatPage.click('#ivSettings > summary');
+  await chatPage.uncheck('#aiDeepenToggle');
+  const followBefore = chatFollowCalls;
+  await chatPage.fill('#qAnswer', '松本で生まれました');
+  await chatPage.click('#btnSaveQ');
+  await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 5);
+  check('AIの深掘りをオフにしても、決まった言葉であいづちを返す（AIは使わない）', /ありがとうございます|そうだったんですね|そうなんですね/.test(await lastAi()) && chatFollowCalls === followBefore, await lastAi());
+
+  const meBefore = await chatPage.locator('#chatLog .msg.me').count();
+  await chatPage.click('#btnPrevQ');
+  check('「前の質問に戻る」で、直前の答えの吹き出しを消して答え直せる', (await chatPage.locator('#chatLog .msg.me').count()) === meBefore - 1 && (await chatPage.inputValue('#qAnswer')) === '松本で生まれました');
+  check('戻った質問がチャットの最後に出ている', await aiMsgs() === 4 && (await lastAi()).indexOf(await chatPage.evaluate(() => document.getElementById('qText').textContent)) !== -1);
+
+  // 読み上げの途中でマイクを押したら、読み上げを止めてすぐ聞き取りを始める
+  // 再生は始まるが終わらない（＝読み上げ中のまま）状態を作る
+  await chatPage.evaluate(() => {
+    window.__played = 0;
+    window.__paused = 0;
+    HTMLMediaElement.prototype.play = function () { window.__played++; return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function () { window.__paused++; };
+  });
+  await chatPage.click('#btnSkipQ');
+  await chatPage.waitForFunction(() => window.__played > 0);
+  check('読み上げ中は、まだマイクを立ち上げない', !(await chatPage.evaluate(() => document.getElementById('qMicBtn').classList.contains('on'))));
+  const pausedBefore = await chatPage.evaluate(() => window.__paused);
+  await chatPage.click('#qMicBtn');
+  check('読み上げの途中でマイクを押すと、読み上げを止めてすぐ聞き取りを始める',
+    await chatPage.evaluate(() => document.getElementById('qMicBtn').classList.contains('on')) && (await chatPage.evaluate(() => window.__paused)) > pausedBefore);
+
+  await chatPage.selectOption('#ivStyleSelect', 'card');
+  check('「一問ずつ」に戻すと、質問文がまた見える', !(await chatPage.isHidden('#qText')) && await chatPage.isHidden('#chatLog'));
+  await chatPage.click('[data-screen="interview"] .back');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('#tileInterview');
+  await chatPage.waitForSelector('[data-screen=interview].active');
+  check('選んだ画面の形（一問ずつ）は次回も覚えている', !(await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode'))));
+  await chatPage.selectOption('#ivStyleSelect', 'chat');
+  check('途中でチャットに切り替えても、今の質問がチャットに出る', await aiMsgs() === 1);
+
+  // 生まれた場所の質問で生年月日まで答えたら、次に「生年月日を教えてください」を聞かない
+  await chatPage.click('[data-screen="interview"] .back');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('[data-screen="dash"] .back[data-back="home"]');
+  await chatPage.waitForSelector('[data-screen=home].active');
+  await chatPage.click('#btnNewWiki');
+  await chatPage.fill('#newTitle', '生年月日を先に言う人');
+  await chatPage.click('#btnCreateWiki');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('#tileInterview');
+  await chatPage.waitForSelector('[data-screen=interview].active');
+  await chatPage.click('#ivSettings > summary');
+  await chatPage.uncheck('#aiDeepenToggle');
+  await chatPage.uncheck('#voiceModeToggle');
+  const bpQ = await chatPage.evaluate(() => document.getElementById('qText').textContent);
+  await chatPage.fill('#qAnswer', '横浜です。１９９５年１２月５日生まれ');
+  await chatPage.press('#qAnswer', 'Control+Enter');
+  await chatPage.waitForFunction((q) => document.getElementById('qText').textContent !== q, bpQ);
+  check('（前提）最初の質問は生まれた場所', bpQ.indexOf('生まれた場所') !== -1, bpQ);
+  check('Ctrl＋Enterで答えを送れる', (await chatPage.locator('#chatLog .msg.me').last().textContent()).indexOf('横浜です') === 0);
+  check('答えの中の生年月日を拾ったので、次に生年月日を聞き直さない', (await chatPage.evaluate(() => document.getElementById('qText').textContent)).indexOf('生年月日') === -1);
+  await chatPage.fill('#qAnswer', '改行したい');
+  await chatPage.press('#qAnswer', 'Enter');
+  check('Enterだけなら送らずに改行する', (await chatPage.inputValue('#qAnswer')) === '改行したい\n');
+  await chatCtx.close();
+  chatAi.close();
 
   check('JSのエラーが発生していない', errors.length === 0, errors.join(' / '));
 

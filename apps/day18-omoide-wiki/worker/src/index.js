@@ -50,6 +50,10 @@ function validInput(x) {
     && (x.askedQuestions === undefined || (
       Array.isArray(x.askedQuestions) && x.askedQuestions.length <= 200
       && x.askedQuestions.every(q => typeof q === "string" && q.length <= 300)
+    ))
+    && (x.upcomingQuestions === undefined || (
+      Array.isArray(x.upcomingQuestions) && x.upcomingQuestions.length <= 20
+      && x.upcomingQuestions.every(q => typeof q === "string" && q.length <= 300)
     ));
 }
 
@@ -57,17 +61,22 @@ function schema() {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["done", "followUp"],
+    required: ["done", "followUp", "ack"],
     properties: {
       done: { type: "boolean" },
       followUp: { type: "string", maxLength: 140 },
+      // チャット形式で、深掘りをやめて次の話題に移るときに添える一言
+      ack: { type: "string", maxLength: 60 },
     },
   };
 }
 
+// 流出すると困る個人情報は聞かない・繰り返さない・載せない（住所は市区町村まで）
+const PRIVACY_RULE = "【厳守・個人情報】学校名・会社名・家族や友人の名前・生年月日など、人生の記録に必要な情報は聞いてよい。ただし、住所・電話番号・メールアドレスのような連絡先や番号を聞かれると、相手が構えてしまい話しにくくなるので聞かないこと。住所は市区町村（東京23区や政令市の区を含む）までにとどめ、町名・丁目・番地・マンションや団地などの建物名・部屋番号は聞かないこと。住まいの話は「保土ヶ谷区の家」「松本市の実家」のように、市区町村に「の家」をつけた呼び方で呼ぶこと。回答に町名や建物名が出てきても、その名前は繰り返さず、この呼び方に言い換えること（例：「星の丘ビューシティーに住んでいた」→「保土ヶ谷区のお家」）。電話番号・携帯番号・メールアドレス・SNSのアカウント・郵便番号・マイナンバー・銀行口座・クレジットカード・パスワードなど、流出すると困る情報は聞かないこと。回答にこうした情報が含まれていても、相づちや質問で繰り返さず、そこを深掘りしないこと。";
+
 // 個人のWikiだけ、Wikipediaの「来歴」に載る事実を補う観点を先頭に足す（サークル・チームは今回の見直しの対象外）
 const FACT_ANGLES = [
-  "正式名称・固有名詞（「地元の高校」「会社」「友達」のようにぼかされている、学校名・会社名・部署名・店名・地名・人名）",
+  "正式名称・固有名詞（「地元の高校」「会社」「友達」のようにぼかされている、学校名・会社名・部署名・店名・地名（市区町村まで）・人名）",
   "いつのことか（西暦の年・そのときの年齢・続いた期間）",
   "所属・役職・肩書・担当（部活のポジション、会社での役職、任された役割など）",
   "数字で表せること（人数、順位、記録、期間など）",
@@ -99,14 +108,14 @@ function prompt(data) {
   return [
     `あなたは「${who}」をもっともっと深く知っていきたい、プロのインタビュアーです。話し相手は「${data.subjectName}」について話しています。`,
     "この記録は、あとで家族が読み返したときに「こんなにいろいろな経験をしてきた、豊かな人生だったんだ」と実感できるように残すものです。抽象的な感想で終わらせず、いつ・どこで・誰と・何をしたという具体的な場面（旅行ならどこに行ったか、など）が1つでも多く残るように質問してください。",
-    isPerson && !isFavorites ? "この記録は最終的に、本物のWikipediaの記事のような形にまとめます。Wikipediaの記事には「何年に」「どこの（正式名称）」「何をして」「どんな役職・立場で」「どんな結果だったか」という事実が欠かせません。直前の回答でこれらがぼかされている・抜けている場合（例：「地元の高校に行った」「会社に入った」「大会で優勝した」のように、名前・年・大会名などが無い）は、まずその抜けている事実を1つか2つ、自然な会話の流れで聞き出してください（例：「その高校はなんという学校でしたか？何年ごろ卒業されました？」）。事実がそろっている場合は、そのときの出来事・気持ち・その後などのエピソードを深掘りしてください。回答やこれまでのやり取りにすでに出てきた事実を聞き直さないこと。" : "",
+    isPerson && !isFavorites ? "この記録は最終的に、本物のWikipediaの記事のような形にまとめます。Wikipediaの記事には「何年に」「どこの（正式名称）」「何をして」「どんな役職・立場で」「どんな結果だったか」という事実が欠かせません。ただし、いちばん大事なのは「話していて楽しい」と感じてもらうこと。事実の確認ばかりが続くと取り調べのようになり、話す気持ちがしぼんでしまいます。事実が抜けていても毎回それを聞くのではなく、次の決まりを守ってください：①事実を聞くのは1回に1つだけ（「何年に、どこの、何という学校へ」のようにまとめて聞かない）②事実を聞くときは、エピソードの質問に軽く添える形にする（例：「ボカラトンの高校、どんな雰囲気でした？ちなみに何年ごろのことですか？」）③これまでのやり取りを見て、直前の質問が年・名前などの事実確認だったら、今回は必ず、そのときの出来事・気持ち・びっくりしたこと・笑った話・印象に残っている人を聞く。回答やこれまでのやり取りにすでに出てきた事実を聞き直さないこと。" : "",
     isFavorites ? "今は本人の好きなもの・得意なことの話です。ここでは事実を集めるよりも、話している本人が気持ちよくなって『もっと話したい！』と感じることを最優先にしてください。心から興味を持った聞き手として、どこがたまらなく好きなのか、ハマったきっかけ、一番の思い出、人にすすめるならどこか、それをしているときの気分、などを聞き、好きなものを思う存分『語ってもらう』聞き方にすること。相づちでは本人の好きなものを一緒に面白がり、共感や驚きをしっかり伝えること。作品名・店名・チーム名などが抜けていれば、話の流れで自然に聞いてもよい。" : "",
     isPerson && !isFavorites
       ? "直前の回答を読み、以下の「深掘りの観点」の中から、今の回答にとって一番足りないもの・一番ネタになりそうなものを1つ選んでください（上の方針どおり、事実が抜けていれば事実を補う観点を優先）。趣味・特技の話が出てきたら積極的に深掘りしてください。"
       : "直前の回答を読み、以下の「深掘りの観点」の中から、今の回答にとって一番ネタになりそうなもの（具体的なエピソードとして語れそうなもの）を1つ選んでください。趣味・特技の話が出てきたら積極的に深掘りしてください。",
     "深掘りの観点：\n" + angles.map(a => "・" + a).join("\n"),
     "選んだ観点に沿って、追加質問を1つ作ってください。ただし、いきなり質問文だけを出すのではなく、直前の回答を受けた短い相づちや感想（「それは大変でしたね」「いいですね」「へえ、〇〇だったんですね」など）を一言添えてから、自然に質問へつなげてください。友人と雑談しているような、温かく自然な話し言葉にすること（100文字程度まで）。「〜について教えてください」のような機械的な言い回しは避け、普段の会話で聞くような聞き方にすること。箇条書きや記号は使わないこと。",
-    "答える側が『それ聞かれるの嬉しいな、もっと話したいな』とウキウキ・ワクワクした気持ちになるような、明るく前のめりな聞き方にすること。関心・驚き・楽しみが伝わる言葉選びを心がけ、事務的・機械的な響きは避けること。",
+    "答える側が『それ聞かれるの嬉しいな、もっと話したいな』とウキウキ・ワクワクした気持ちになるような、明るく前のめりな聞き方にすること。関心・驚き・楽しみが伝わる言葉選びを心がけ、事務的・機械的な響きは避けること。思わず笑顔で思い出してしまうような質問（例：「留学先で一番びっくりしたことは何でした？」「当時のあだ名は？」「そのころ夢中だった食べ物は？」）を積極的に選ぶこと。",
     isPerson
       ? "深掘りを続けるかどうか：回答が短くても、名前・年などWikipediaに載せたい事実が抜けている、または好きなものをもっと語ってもらえそうなら、深掘りしてください（done は false）。「覚えていない」「特にない」「言いたくない」のように、答えられない・答えたくない様子なら、無理に聞かず done を true にしてください。回答が具体的でエピソードや感情が豊富な場合は、まだ聞ける観点が残っていれば done を false にして積極的に深掘りを続けてください。"
       : "深掘りを続けるかどうかは、直前の回答の分量・具体性で判断してください。回答がごく短い・情報が薄い（相槌程度、数文字〜十数文字など）場合は、無理に深掘りせず done を true にしてください。反対に、回答が具体的でエピソードや感情が豊富に語られている場合は、まだ聞ける観点が残っていれば done を false にして積極的に深掘りを続けてください。",
@@ -115,6 +124,8 @@ function prompt(data) {
       : `今の回答の文字数：${len}文字（${len < 15 ? "かなり短いので、無理に深掘りしないほうがよい" : len < 40 ? "やや短め" : "十分な分量があるので、深掘りの余地を積極的に探ってよい"}）`,
     `この話題はすでに${data.depth}回深掘りしています。${data.depth >= 6 ? "十分な回数なので、余程ネタがなければ done にしてください。" : ""}`,
     data.profile ? `プロフィール表：\n${data.profile}\n（生年月日や結成年などがここに書かれていれば、その時代に日本で流行っていた具体的な番組・音楽・芸能人を挙げて「〇〇はお好きでしたか？」のように尋ねると喜ばれます。年代が分からない・自信が持てない場合は、無理に使わず他の観点にしてください。不確かな年代で古すぎる／新しすぎるものを挙げるのは避けること）` : "",
+    "ack について：done を true にするときは、次の別の質問に移る前に添える、直前の回答への短い相づち・感想を1文（40文字以内）で書いてください（例：「野沢菜の漬物、冬の楽しみだったんですね。」）。回答の内容に触れ、温かい話し言葉にすること。質問は含めないこと。done が false のときは空文字にしてください。",
+    PRIVACY_RULE,
     `カテゴリ：${data.categoryLabel}`,
     `今の質問：${data.question}`,
     `今の回答：${data.answer}`,
@@ -123,7 +134,39 @@ function prompt(data) {
       ? "【重要】このカテゴリではすでに以下の質問を聞いています。同じ内容・ほぼ同じ聞き方の質問は絶対に繰り返さないでください（記録が増えて見返せなくなり、同じことを何度も聞かれたと本人を困らせてしまいます）。ここに出てくる話題から自然に派生する、まだ聞けていない新しい角度の質問であれば問題ありません：\n"
         + data.askedQuestions.map(q => "・" + q).join("\n")
       : "",
+    (data.upcomingQuestions && data.upcomingQuestions.length)
+      ? "このあと、決まった質問として以下を順番に聞く予定です。これらと同じ内容（例：生年月日、きょうだい、学校名など）は今は聞かず、あとの質問に任せてください。今の話題の中で、これらでは聞けないことを深掘りしてください：\n"
+        + data.upcomingQuestions.map(q => "・" + q).join("\n")
+      : "",
   ].filter(Boolean).join("\n");
+}
+
+// チャット形式で、深掘りをしないときに添える「ひとことの相づち」だけを作る
+function validAckInput(x) {
+  return x
+    && typeof x.subjectName === "string" && x.subjectName.length >= 1 && x.subjectName.length <= 100
+    && typeof x.question === "string" && x.question.length >= 1 && x.question.length <= 300
+    && typeof x.answer === "string" && x.answer.length >= 1 && x.answer.length <= 4000;
+}
+
+function ackSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["ack"],
+    properties: { ack: { type: "string", maxLength: 60 } },
+  };
+}
+
+function ackPrompt(data) {
+  return [
+    `あなたは「${data.subjectName}」の人生の話を聞いている、温かいインタビュアーです。`,
+    "直前の回答を受けて、次の質問に移る前に添える短い相づち・感想を1文（40文字以内）で書いてください。",
+    "回答の内容に具体的に触れ、共感や驚きが伝わる自然な話し言葉にすること。質問は含めないこと。つらい話には、明るく茶化さず寄り添う言葉にすること。",
+    PRIVACY_RULE,
+    `質問：${data.question}`,
+    `回答：${data.answer}`,
+  ].join("\n");
 }
 
 const COMPOSE_CATS = ["history", "personality", "favorites", "skills"];
@@ -213,6 +256,7 @@ function composePrompt(data) {
     `あなたはWikipedia編集者です。以下は「${data.subjectName}」という${who}についての、聞き取り調査の生の回答（一問一答）です。`,
     "これを、実際のWikipedia記事のような、自然につながった文章に書き直してください。",
     "【厳守】回答に書かれていない事実を創作しないこと。話し言葉の言い回しは整えてよいが、内容を勝手に膨らませたり誇張したりしないこと。地名・年・固有名詞は原文どおりに保つこと。",
+    "【厳守・個人情報】回答に町名・丁目・番地・マンションや団地などの建物名が含まれていても、ページには市区町村までしか書かず、住まいは「保土ヶ谷区の家」のように市区町村に「の家」をつけた呼び方にすること。電話番号・携帯番号・メールアドレス・郵便番号・口座番号などの連絡先や番号は、ページに一切書かないこと。",
     "一人称（「私は」など）ではなく、三人称のWikipedia記事の文体（「〜である」「〜という」）に整えること。",
     "history（生い立ち・経歴）だけは特別な形式にすること：年代順の箇条書きにし、各行を「・」で始めること。分かる範囲で時期（西暦・年齢・「高校1年」など）を行の先頭に含めること。結婚・引っ越し・転職・留学など、人生の節目となる出来事はそれぞれ独立した1行に分け、複数の出来事を1つの文に圧縮しないこと（例：「結婚後は○○に住んだのち、△△へ転居した」のようにまとめず、結婚は結婚の行、転居は転居の行として分ける）。",
     "personality・favorites・skillsは、それぞれ2〜6文程度の自然な文章にまとめること（箇条書きにしないこと）。関連する回答同士は1つの流れにつなげてよい。記録が無い項目は空文字（\"\"）にすること。",
@@ -260,6 +304,25 @@ function pcmToWav(pcm, sampleRate) {
   return out;
 }
 
+// 読み上げ音声の前後の無音を削る。アプリは読み終わってからマイクを立ち上げるので、
+// 後ろの無音がそのまま「マイクが立ち上がるまでの待ち時間」になっていた（前の無音は読み始めの遅れ）。
+// 16bit・モノラルのPCM。小さな音（語尾のかすれ）を切らないよう、前後に少し余白を残す。
+const SILENCE_THRESHOLD = 400; // 32768 中。これより小さい音は無音とみなす
+function trimSilence(pcm, sampleRate) {
+  const samples = Math.floor(pcm.length / 2);
+  if (samples === 0) return pcm;
+  const view = new DataView(pcm.buffer, pcm.byteOffset, samples * 2);
+  const loud = (i) => Math.abs(view.getInt16(i * 2, true)) > SILENCE_THRESHOLD;
+  let first = 0;
+  while (first < samples && !loud(first)) first++;
+  if (first === samples) return pcm; // 全部無音なら触らない
+  let last = samples - 1;
+  while (last > first && !loud(last)) last--;
+  const start = Math.max(0, first - Math.round(sampleRate * 0.08));
+  const end = Math.min(samples, last + 1 + Math.round(sampleRate * 0.15));
+  return pcm.subarray(start * 2, end * 2);
+}
+
 function base64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -277,7 +340,7 @@ function audioFromGemini(response) {
       if (mime.includes("wav")) return { bytes, mime: "audio/wav" };
       if (mime.includes("l16") || mime.includes("pcm") || !mime) {
         const rate = Number((mime.match(/rate=(\d+)/) || [])[1]) || 24000;
-        return { bytes: pcmToWav(bytes, rate), mime: "audio/wav" };
+        return { bytes: pcmToWav(trimSilence(bytes, rate), rate), mime: "audio/wav" };
       }
       return { bytes, mime };
     }
@@ -371,6 +434,30 @@ export default {
       return json(composed, 200, headers);
     }
 
+    if (data && data.action === "ack") {
+      if (!validAckInput(data)) return json({ error: "invalid_input" }, 400, headers);
+      const upstream = await fetch(OPENAI_URL, {
+        method: "POST",
+        headers: { "authorization": `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          model: env.OPENAI_MODEL || "gpt-5.6-sol",
+          input: ackPrompt(data),
+          reasoning: { effort: "low" },
+          max_output_tokens: 300,
+          store: false,
+          text: { format: { type: "json_schema", name: "ack", strict: true, schema: ackSchema() } },
+        }),
+      });
+      if (!upstream.ok) {
+        console.error(JSON.stringify({ event: "openai_error", status: upstream.status }));
+        return json({ error: "upstream_error" }, 502, headers);
+      }
+      let parsed;
+      try { parsed = JSON.parse(outputText(await upstream.json())); }
+      catch { return json({ error: "invalid_model_output" }, 502, headers); }
+      return json(parsed, 200, headers);
+    }
+
     if (!validInput(data)) return json({ error: "invalid_input" }, 400, headers);
 
     const upstream = await fetch(OPENAI_URL, {
@@ -379,7 +466,8 @@ export default {
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5.6-sol",
         input: prompt(data),
-        reasoning: { effort: "medium" },
+        // 深掘りの質問は、答えるたびに待たされるので速さを優先する（medium だと考える時間が長く、待ちが目立った）
+        reasoning: { effort: env.OPENAI_FOLLOWUP_EFFORT || "low" },
         max_output_tokens: 800,
         store: false,
         text: { format: { type: "json_schema", name: "follow_up", strict: true, schema: schema() } },

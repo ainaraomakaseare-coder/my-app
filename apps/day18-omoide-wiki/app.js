@@ -741,8 +741,49 @@
 
   // ---------- 公開（テスト可能な部分） ----------
 
+  // 回答の中から生年月日を見つける（深掘りの途中で「1995年12月5日生まれ」のように答えた場合など）。
+  // 結婚記念日などの別の日付を取り違えないよう、回答か質問に「生まれ」「誕生」があるときだけ拾う。
+  var BIRTH_DATE_KEY = 'birth-date';
+  function toHalfWidthDigits(text) {
+    return String(text || '').replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+      .replace(/[／]/g, '/').replace(/[．]/g, '.').replace(/[－ー]/g, function (c, i, all) { return /\d/.test(all[i - 1] || '') && /\d/.test(all[i + 1] || '') ? '-' : c; });
+  }
+  function findBirthDate(answer, question) {
+    var text = toHalfWidthDigits(answer);
+    if (!/生まれ|誕生/.test(text) && !/生まれ|誕生|生年月日/.test(question || '')) return '';
+    var m = text.match(/((?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和)\s*(?:元|\d{1,2}))\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+    if (m) return m[1].replace(/\s+/g, '') + '年' + Number(m[2]) + '月' + Number(m[3]) + '日';
+    m = text.match(/((?:19|20)\d{2})[\/.\-](\d{1,2})[\/.\-](\d{1,2})/);
+    if (m) return m[1] + '年' + Number(m[2]) + '月' + Number(m[3]) + '日';
+    return '';
+  }
+
+  // 生年月日の質問にまだ答えていなければ、見つけた生年月日をその答えとして記録する（記録した項目を返す）。
+  // こうしておくと、あとから「生年月日を教えてください」をもう一度聞かずに済み、プロフィールにも使える。
+  function learnBirthDate(wiki, answer, question, author) {
+    if (!wiki || (wiki.skippedKeys || []).indexOf(BIRTH_DATE_KEY) !== -1) return null;
+    var has = (wiki.history || []).some(function (e) { return e.questionKey === BIRTH_DATE_KEY; });
+    if (has) return null;
+    var date = findBirthDate(answer, question);
+    if (!date) return null;
+    var q = (QUESTIONS.person.history || []).filter(function (x) { return x.key === BIRTH_DATE_KEY; })[0];
+    var entry = newEntry(date, author, q ? q.text : '生年月日', BIRTH_DATE_KEY);
+    wiki.history.push(entry);
+    return entry;
+  }
+
+  // 流出すると困る個人情報（住所の町名・番地、電話番号、メール、口座など）を聞いている質問か。
+  // AIには聞かないよう頼んでいるが、万一出てきたら、その質問は使わずに次へ進む（住所は市区町村まではOK）
+  var SENSITIVE_QUESTION_RE = /住所|電話番号|携帯番号|連絡先|メール(アドレス)?を|アドレスを|郵便番号|番地|丁目|町名|どの町|何町|何丁目|建物名|建物の名前|マンション名|マンションの名前|団地名|団地の名前|部屋番号|マイナンバー|口座|暗証番号|パスワード|クレジットカード/;
+  function asksSensitiveInfo(text) {
+    return SENSITIVE_QUESTION_RE.test(String(text || ''));
+  }
+
   var Core = {
     STORAGE_KEY: STORAGE_KEY,
+    asksSensitiveInfo: asksSensitiveInfo,
+    findBirthDate: findBirthDate,
+    learnBirthDate: learnBirthDate,
     STORAGE_WARN_BYTES: STORAGE_WARN_BYTES,
     uid: uid,
     nowIso: nowIso,
@@ -808,6 +849,10 @@
   var DEFAULT_PACE = 5;
   var aiThreadHistory = [];
   var interviewHistory = []; // 「前の質問に戻る」用。各ステップで {index, category, entryId, text} を積む
+  // チャット形式で、次の質問の前に添える一言（前の回答へのあいづち）と、最初のあいさつ
+  var pendingAck = '';
+  var chatGreetingPending = false;
+  var IV_STYLE_KEY = 'omoide-wiki:ivStyle';
   var pendingEpisodePhotos = [];
   var pendingCoverPhoto = null;
   var pendingInterviewPhotos = [];
@@ -1092,6 +1137,14 @@
 
   function savePacePref(n) {
     try { localStorage.setItem(PACE_PREF_KEY, String(n)); } catch (e) { /* 保存できなくても致命的ではない */ }
+  }
+
+  // インタビューの画面の形：'chat'（チャット形式・基本）／'card'（一問ずつ）。選んだものを端末に覚える
+  function loadIvStyle() {
+    try { return localStorage.getItem(IV_STYLE_KEY) === 'card' ? 'card' : 'chat'; } catch (e) { return 'chat'; }
+  }
+  function saveIvStyle(v) {
+    try { localStorage.setItem(IV_STYLE_KEY, v); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
 
   function saveVoicePref(on) {
@@ -1417,7 +1470,10 @@
     btnEl.addEventListener('click', function () {
       var ctrl = micControllers[key];
       if (!ctrl) return;
-      if (ctrl.isOn()) ctrl.stop(); else ctrl.start();
+      if (ctrl.isOn()) { ctrl.stop(); return; }
+      // 読み上げの途中でも、マイクを押したら読み上げを止めてすぐ聞き取りを始める
+      stopSpeaking();
+      ctrl.start();
     });
   }
 
@@ -1716,11 +1772,101 @@
     });
   }
 
+  // ---------- チャット形式 ----------
+
+  function isChatMode() { return $('#ivStyleSelect').value === 'chat'; }
+
+  // 一問ずつ／チャットの切り替え。チャットでは設定をたたみ、やり取りを上から下へ流す
+  function applyIvStyle() {
+    var chat = isChatMode();
+    $('[data-screen="interview"]').classList.toggle('chat-mode', chat);
+    $('#ivSettings').open = !chat;
+  }
+
+  function scrollChatToEnd() {
+    requestAnimationFrame(function () { window.scrollTo(0, document.documentElement.scrollHeight); });
+  }
+
+  // role: 'ai'（左・吹き出しなし）／'me'（右・グレーの吹き出し）。文字はtextContentで入れる
+  function appendChatMessage(role, lines, label, extraClass) {
+    var el = document.createElement('div');
+    el.className = 'msg ' + role + (extraClass ? ' ' + extraClass : '');
+    if (label) {
+      var cat = document.createElement('p');
+      cat.className = 'msg-cat';
+      cat.textContent = label;
+      el.appendChild(cat);
+    }
+    lines.filter(Boolean).forEach(function (line) {
+      var p = document.createElement('p');
+      p.textContent = line;
+      el.appendChild(p);
+    });
+    $('#chatLog').appendChild(el);
+    scrollChatToEnd();
+    return el;
+  }
+
+  // AIが考えている間の「…」
+  function showChatTyping(on) {
+    var log = $('#chatLog');
+    var typing = log.querySelector('.msg.typing');
+    if (!on) { if (typing) typing.remove(); return; }
+    if (typing) return;
+    var el = document.createElement('div');
+    el.className = 'msg ai typing';
+    el.setAttribute('aria-label', '考えています');
+    el.innerHTML = '<span></span><span></span><span></span>';
+    log.appendChild(el);
+    scrollChatToEnd();
+  }
+
+  // 「前の質問に戻る」：今の質問・直前の回答・直前の質問を消し、直前の質問から出し直す
+  function rewindChat() {
+    var log = $('#chatLog');
+    var removedAi = 0;
+    while (log.lastElementChild && removedAi < 2) {
+      if (log.lastElementChild.classList.contains('ai')) removedAi++;
+      log.removeChild(log.lastElementChild);
+    }
+  }
+
+  function chatGreeting(w) {
+    var name = w.title || '';
+    if (w.type === 'group') return 'こんにちは。これから「' + name + '」の思い出を、少しずつ聞かせてください。答えはこの端末の中だけに保存され、アプリの作り手にも見えません。答えにくい質問は「とばす」で大丈夫です。';
+    var who = name ? (/さん$|様$/.test(name) ? name : name + 'さん') : 'あなた';
+    return 'こんにちは。これから' + who + 'のことを、少しずつ聞かせてください。答えはこの端末の中だけに保存され、アプリの作り手にも見えません。思い出したことを、話しやすいところから自由に答えてくださいね。答えにくい質問は「とばす」で大丈夫です。';
+  }
+
+  // AIを使わないとき・つながらないときのあいづち（どんな内容の回答にも合う、落ち着いた言葉だけにする）
+  var CANNED_ACKS = ['ありがとうございます。', 'なるほど、そうだったんですね。', '教えてくださってありがとうございます。', 'そうなんですね。'];
+  function cannedAck() { return CANNED_ACKS[sessionAnswered % CANNED_ACKS.length]; }
+
+  // 深掘りしないときの「ひとことのあいづち」をAIに作ってもらう。だめなら決まった言葉にする
+  function fetchAiAck(w, question, answer) {
+    var endpoint = getAiEndpoint();
+    if (!endpoint || !hasAiConsent()) return Promise.resolve(cannedAck());
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 8000) : null;
+    return fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'ack', subjectName: w.title || 'この人', question: question, answer: answer.slice(0, 4000) }),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (res) { return res.ok ? res.json() : null; })
+      .catch(function () { return null; })
+      .then(function (data) {
+        if (timer) clearTimeout(timer);
+        return (data && typeof data.ack === 'string' && data.ack.trim()) ? data.ack.trim() : cannedAck();
+      });
+  }
+
   function setInterviewBusy(busy, msg) {
     $('#btnSaveQ').disabled = busy;
     $('#btnSkipQ').disabled = busy;
     $('#btnPrevQ').disabled = busy || interviewHistory.length === 0;
     $('#qMicStatus').textContent = msg || '';
+    if (isChatMode()) showChatTyping(busy);
   }
 
   // 既に答えた固定質問を飛ばした結果、その場で聞くことが無くなったら、
@@ -1765,6 +1911,14 @@
     return kept;
   }
 
+  // このあと聞く予定の決まった質問（同じカテゴリ）。AIが先回りして同じことを聞かないように渡す
+  function upcomingFixedQuestions(cat) {
+    return interviewQueue.slice(interviewIndex + 1)
+      .filter(function (x) { return !x.dynamic && x.category === cat; })
+      .slice(0, 12)
+      .map(function (x) { return x.question; });
+  }
+
   function pickGrowthCategory(w) {
     var best = CATEGORY_ORDER[0], bestCount = Infinity;
     CATEGORY_ORDER.forEach(function (cat) {
@@ -1790,7 +1944,7 @@
       askedQuestions: askedQuestionTexts(w, cat)
     }).then(function (result) {
       showAiDeepenStatus();
-      if (result && !result.done && result.followUp) {
+      if (result && !result.done && result.followUp && !asksSensitiveInfo(result.followUp)) {
         interviewQueue.push({ category: cat, question: result.followUp, depth: 0, dynamic: true, grown: true });
         return true;
       }
@@ -1806,6 +1960,11 @@
     lastBreakCheckpoint = 0;
     aiThreadHistory = [];
     interviewHistory = [];
+    pendingAck = '';
+    chatGreetingPending = true;
+    $('#chatLog').innerHTML = '';
+    $('#ivStyleSelect').value = loadIvStyle();
+    applyIvStyle();
     $('#ivAuthor').value = '';
     $('#voiceModeToggle').checked = loadVoicePref();
     var note = $('#voiceSupportNote');
@@ -1834,6 +1993,14 @@
     $('#interviewProgress').style.width = Math.min(100, Math.round((interviewIndex / interviewQueue.length) * 100)) + '%';
     $('#qCategory').textContent = L[q.category] + (q.dynamic ? '・AIの深掘り' : '') + '（' + (interviewIndex + 1) + ' / ' + interviewQueue.length + '）';
     $('#qText').textContent = q.question;
+    // チャット形式：あいさつ・前の回答へのあいづちを添えて、質問をAIの発言として流す
+    var prefix = '';
+    if (isChatMode()) {
+      prefix = [chatGreetingPending ? chatGreeting(w) : '', pendingAck].filter(Boolean).join('');
+      appendChatMessage('ai', [prefix, q.question], L[q.category] + (q.dynamic ? '・AIの深掘り' : ''));
+    }
+    pendingAck = '';
+    chatGreetingPending = false;
     $('#qAnswer').value = prefillText || '';
     $('#qPhotos').value = '';
     pendingInterviewPhotos = [];
@@ -1847,10 +2014,15 @@
       ctrl.whenIdle(function () {
         // 待っている間に別の質問・画面に移っていたら読まない
         if ($('#qText').textContent !== q.question || !$('[data-screen="interview"]').classList.contains('active')) return;
-        speak(q.question, function () { ctrl.start(); }, function (waiting) {
+        var onwaiting = function (waiting) {
           $('#qMicStatus').textContent = waiting ? '読み上げを準備しています…' : '';
-        });
+        };
+        var askQuestion = function () { speak(q.question, function () { ctrl.start(); }, onwaiting); };
+        // あいづちと質問は別々に読む（質問の音声は前もって作ってあるので、すぐ続けて読める）
+        if (prefix) speak(prefix, askQuestion, onwaiting);
+        else askQuestion();
       });
+      if (prefix) prefetchSpeech(prefix);
       var next = interviewQueue[interviewIndex + 1];
       getSpeech(q.question).then(function () { if (next) prefetchSpeech(next.question); });
     }
@@ -1869,12 +2041,22 @@
       for (var i = 0; i < arr.length; i++) {
         if (arr[i].id === last.entryId) { arr.splice(i, 1); break; }
       }
+      // その答えから拾った生年月日も取り消す（書き直した答えから拾い直す）
+      if (last.learnedId) {
+        w.history = w.history.filter(function (e) { return e.id !== last.learnedId; });
+        interviewQueue = interviewQueue.slice(0, interviewIndex + 1).concat(
+          buildInterviewQueue(w.type, w).filter(function (x) { return x.key === BIRTH_DATE_KEY; }),
+          interviewQueue.slice(interviewIndex + 1)
+        );
+      }
       sessionAnswered = Math.max(0, sessionAnswered - 1);
       w.updatedAt = nowIso();
       persist();
     }
     if (aiThreadHistory.length) aiThreadHistory.pop();
     interviewIndex = last.index;
+    pendingAck = '';
+    if (isChatMode()) rewindChat();
     renderInterviewQuestion(last.text);
   }
 
@@ -1930,8 +2112,16 @@
     var q = interviewQueue[interviewIndex];
     var text = $('#qAnswer').value.trim();
     var author = $('#ivAuthor').value.trim();
+    var chat = isChatMode();
+    if (chat) {
+      if (skip || !text) appendChatMessage('me', ['（この質問はとばしました）'], '', 'skipped');
+      else appendChatMessage('me', [text]);
+      // 送った答えは吹き出しに移したので、AIが考えている間も入力欄に残さない
+      $('#qAnswer').value = '';
+    }
 
     if (skip || !text) {
+      if (chat) pendingAck = 'わかりました。次の質問にいきますね。';
       // 明示的に「とばす」を押した固定質問は、二度と聞かないよう永続的に記憶する
       // （答えていなくても「もう聞かないでほしい」という意思表示として扱う）
       if (skip && q.key && w.skippedKeys.indexOf(q.key) === -1) {
@@ -1951,7 +2141,14 @@
       savedEntry = newEntry(text, author, q.question, q.key, pendingInterviewPhotos.slice());
       w[q.category].push(savedEntry);
     }
-    interviewHistory.push({ index: interviewIndex, category: q.category, entryId: savedEntry.id, text: text });
+    // 深掘りの途中で生年月日を答えていたら、生年月日の質問に答えたことにして、あとで聞き直さない
+    var learned = q.key === BIRTH_DATE_KEY ? null : learnBirthDate(w, text, q.question, author);
+    if (learned) {
+      for (var qi = interviewQueue.length - 1; qi > interviewIndex; qi--) {
+        if (interviewQueue[qi].key === BIRTH_DATE_KEY) interviewQueue.splice(qi, 1);
+      }
+    }
+    interviewHistory.push({ index: interviewIndex, category: q.category, entryId: savedEntry.id, text: text, learnedId: learned ? learned.id : null });
     addContributor(w, author);
     w.updatedAt = nowIso();
     persist();
@@ -1960,9 +2157,17 @@
     aiThreadHistory.push({ q: q.question, a: text });
     if (aiThreadHistory.length > 4) aiThreadHistory = aiThreadHistory.slice(-4);
 
-    var wantsAi = $('#aiDeepenToggle').checked && getAiEndpoint() && q.depth < MAX_AI_DEPTH;
+    var aiOn = $('#aiDeepenToggle').checked && getAiEndpoint();
+    var wantsAi = aiOn && q.depth < MAX_AI_DEPTH;
     if (!wantsAi) {
-      advanceInterview();
+      if (!chat) { advanceInterview(); return; }
+      // チャット形式では毎回ひとこと反応する。AIを使わない設定なら、決まった言葉で返す
+      if (!aiOn) { pendingAck = cannedAck(); advanceInterview(); return; }
+      setInterviewBusy(true, '');
+      fetchAiAck(w, q.question, text).then(function (ack) {
+        pendingAck = ack;
+        advanceInterview();
+      });
       return;
     }
 
@@ -1976,13 +2181,19 @@
       history: aiThreadHistory.slice(0, -1),
       depth: q.depth,
       profile: buildProfileContext(w),
-      askedQuestions: askedQuestionTexts(w, q.category)
+      askedQuestions: askedQuestionTexts(w, q.category),
+      upcomingQuestions: upcomingFixedQuestions(q.category)
     }).then(function (result) {
       showAiDeepenStatus();
+      // 流出すると困る情報を聞く質問だったら使わない（深掘りをやめて次の話題へ）
+      if (result && result.followUp && asksSensitiveInfo(result.followUp)) result = { done: true, followUp: '', ack: '' };
       if (result && !result.done && result.followUp) {
         interviewQueue.splice(interviewIndex + 1, 0, {
           category: q.category, question: result.followUp, depth: q.depth + 1, dynamic: true
         });
+      } else if (chat) {
+        // 深掘りの質問にはあいづちが入っているので、深掘りをやめて次の話題に移るときだけ添える
+        pendingAck = (result && typeof result.ack === 'string' && result.ack.trim()) ? result.ack.trim() : cannedAck();
       }
       advanceInterview();
     });
@@ -2761,6 +2972,15 @@
     });
     $('#paceSelect').value = String(loadPacePref());
     $('#paceSelect').addEventListener('change', function (e) { savePacePref(Number(e.target.value)); });
+    $('#ivStyleSelect').addEventListener('change', function (e) {
+      saveIvStyle(e.target.value);
+      applyIvStyle();
+      // 途中でチャットに切り替えたら、今の質問からチャットに流す
+      if (isChatMode() && interviewQueue[interviewIndex] && !$('#chatLog').children.length) {
+        var cur = interviewQueue[interviewIndex];
+        appendChatMessage('ai', [cur.question], LABELS[currentWiki().type][cur.category]);
+      }
+    });
 
     $('#tileInterview').addEventListener('click', startInterview);
     $('#tileEpisode').addEventListener('click', function () { openEpisodeForm(); });
@@ -2814,6 +3034,18 @@
     $('#btnPrevQ').addEventListener('click', goToPreviousQuestion);
     $('#btnSkipQ').addEventListener('click', function () { saveInterviewAnswer(true); });
     $('#btnSaveQ').addEventListener('click', function () { saveInterviewAnswer(false); });
+    // パソコンでは Ctrl＋Enter（Macは ⌘＋Enter）で送る。Enterだけは改行のまま。
+    // 日本語の変換中（確定前）の Enter では送らない
+    $('#qAnswer').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      if (!$('#btnSaveQ').disabled) saveInterviewAnswer(false);
+    });
+    // マウスとキーボードで使う端末だけ、送り方を入力欄に書いておく
+    if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+      var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+      $('#qAnswer').placeholder = 'ここに答えを書く（またはマイクで話す）　' + (isMac ? '⌘' : 'Ctrl') + '＋Enterで送信';
+    }
 
     $('#epPhotos').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files);
