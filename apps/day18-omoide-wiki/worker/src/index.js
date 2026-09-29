@@ -290,6 +290,25 @@ function pcmToWav(pcm, sampleRate) {
   return out;
 }
 
+// 読み上げ音声の前後の無音を削る。アプリは読み終わってからマイクを立ち上げるので、
+// 後ろの無音がそのまま「マイクが立ち上がるまでの待ち時間」になっていた（前の無音は読み始めの遅れ）。
+// 16bit・モノラルのPCM。小さな音（語尾のかすれ）を切らないよう、前後に少し余白を残す。
+const SILENCE_THRESHOLD = 400; // 32768 中。これより小さい音は無音とみなす
+function trimSilence(pcm, sampleRate) {
+  const samples = Math.floor(pcm.length / 2);
+  if (samples === 0) return pcm;
+  const view = new DataView(pcm.buffer, pcm.byteOffset, samples * 2);
+  const loud = (i) => Math.abs(view.getInt16(i * 2, true)) > SILENCE_THRESHOLD;
+  let first = 0;
+  while (first < samples && !loud(first)) first++;
+  if (first === samples) return pcm; // 全部無音なら触らない
+  let last = samples - 1;
+  while (last > first && !loud(last)) last--;
+  const start = Math.max(0, first - Math.round(sampleRate * 0.08));
+  const end = Math.min(samples, last + 1 + Math.round(sampleRate * 0.15));
+  return pcm.subarray(start * 2, end * 2);
+}
+
 function base64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -307,7 +326,7 @@ function audioFromGemini(response) {
       if (mime.includes("wav")) return { bytes, mime: "audio/wav" };
       if (mime.includes("l16") || mime.includes("pcm") || !mime) {
         const rate = Number((mime.match(/rate=(\d+)/) || [])[1]) || 24000;
-        return { bytes: pcmToWav(bytes, rate), mime: "audio/wav" };
+        return { bytes: pcmToWav(trimSilence(bytes, rate), rate), mime: "audio/wav" };
       }
       return { bytes, mime };
     }
@@ -433,7 +452,8 @@ export default {
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5.6-sol",
         input: prompt(data),
-        reasoning: { effort: "medium" },
+        // 深掘りの質問は、答えるたびに待たされるので速さを優先する（medium だと考える時間が長く、待ちが目立った）
+        reasoning: { effort: env.OPENAI_FOLLOWUP_EFFORT || "low" },
         max_output_tokens: 800,
         store: false,
         text: { format: { type: "json_schema", name: "follow_up", strict: true, schema: schema() } },

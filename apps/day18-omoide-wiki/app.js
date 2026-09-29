@@ -1098,9 +1098,9 @@
     try { localStorage.setItem(PACE_PREF_KEY, String(n)); } catch (e) { /* 保存できなくても致命的ではない */ }
   }
 
-  // インタビューの画面の形：'card'（一問ずつ）／'chat'（チャット形式）。選んだものを端末に覚える
+  // インタビューの画面の形：'chat'（チャット形式・基本）／'card'（一問ずつ）。選んだものを端末に覚える
   function loadIvStyle() {
-    try { return localStorage.getItem(IV_STYLE_KEY) === 'chat' ? 'chat' : 'card'; } catch (e) { return 'card'; }
+    try { return localStorage.getItem(IV_STYLE_KEY) === 'card' ? 'card' : 'chat'; } catch (e) { return 'chat'; }
   }
   function saveIvStyle(v) {
     try { localStorage.setItem(IV_STYLE_KEY, v); } catch (e) { /* 保存できなくても致命的ではない */ }
@@ -1429,7 +1429,10 @@
     btnEl.addEventListener('click', function () {
       var ctrl = micControllers[key];
       if (!ctrl) return;
-      if (ctrl.isOn()) ctrl.stop(); else ctrl.start();
+      if (ctrl.isOn()) { ctrl.stop(); return; }
+      // 読み上げの途中でも、マイクを押したら読み上げを止めてすぐ聞き取りを始める
+      stopSpeaking();
+      ctrl.start();
     });
   }
 

@@ -49,6 +49,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
     localStorage.setItem(W.STORAGE_KEY, JSON.stringify(st));
     localStorage.setItem('omoide-wiki:pace', '5');
     localStorage.setItem('omoide-wiki:aiConsent', 'granted');
+    localStorage.setItem('omoide-wiki:ivStyle', 'card');
   });
   await page.reload();
   const setEndpoint = (url) => page.evaluate((u) => document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', u), url);

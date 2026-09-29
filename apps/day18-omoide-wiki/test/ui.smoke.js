@@ -56,7 +56,10 @@ const TINY_PNG = Buffer.from(
   const tmpPhoto = path.join(os.tmpdir(), 'omoide-wiki-test.png');
   fs.writeFileSync(tmpPhoto, TINY_PNG);
 
+  // ここまでのテストは「一問ずつ」画面のもの（チャット形式は後半でまとめて確かめる）
+  const keepCardStyle = () => { if (!localStorage.getItem('omoide-wiki:ivStyle')) localStorage.setItem('omoide-wiki:ivStyle', 'card'); };
   const ctx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await ctx.addInitScript(keepCardStyle);
   const page = await ctx.newPage();
   const errors = [];
   let dismissNextConfirm = false;
@@ -381,6 +384,7 @@ const TINY_PNG = Buffer.from(
   await viewer.close();
   // 別の端末（まっさらな状態）で読み込むと、そのWikiが入って続きが書ける
   const otherCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await otherCtx.addInitScript(keepCardStyle);
   const other = await otherCtx.newPage();
   other.on('pageerror', e => errors.push(e.message));
   await other.goto(BASE);
@@ -649,6 +653,7 @@ const TINY_PNG = Buffer.from(
   check('絵文字ではなくSVGアイコンが描かれている', await page.locator('svg.icon').count() > 0);
   // ---- 音声で答えて「次」と言ったあと、前の質問の聞き取り結果が遅れて届いても次の回答欄に書き込まない ----
   const micCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await micCtx.addInitScript(keepCardStyle);
   await micCtx.addInitScript(() => {
     localStorage.setItem('omoide-wiki:aiConsent', 'granted');
     window.__srs = [];
@@ -696,6 +701,7 @@ const TINY_PNG = Buffer.from(
 
   // ---- iOSアプリの中では、iPhone本体の音声認識（プラグイン）を使い、2問目以降も聞き取れる ----
   const nativeCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await nativeCtx.addInitScript(keepCardStyle);
   await nativeCtx.addInitScript(() => {
     const listeners = {};
     const emit = (name, data) => (listeners[name] || []).forEach(f => f(data));
@@ -762,6 +768,7 @@ const TINY_PNG = Buffer.from(
 
   // ---- iOSアプリ（Capacitor）の中：書き出しは共有シート、印刷ボタンは隠す ----
   const appCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await appCtx.addInitScript(keepCardStyle);
   await appCtx.addInitScript(() => {
     window.__shared = [];
     window.Capacitor = {
@@ -840,15 +847,7 @@ const TINY_PNG = Buffer.from(
   await chatPage.waitForSelector('[data-screen=interview].active');
   const aiMsgs = () => chatPage.locator('#chatLog .msg.ai:not(.typing)').count();
   const lastAi = () => chatPage.locator('#chatLog .msg.ai:not(.typing)').last().textContent();
-  check('はじめは今までどおり「一問ずつ」の画面', !(await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode'))));
-  await chatPage.selectOption('#ivStyleSelect', 'chat');
-  check('チャット形式を選ぶと、画面がチャットに切り替わる', await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode')));
-  check('途中で切り替えても、今の質問がチャットに出る', await aiMsgs() === 1);
-  await chatPage.click('[data-screen="interview"] .back');
-  await chatPage.waitForSelector('[data-screen=dash].active');
-  await chatPage.click('#tileInterview');
-  await chatPage.waitForSelector('[data-screen=interview].active');
-  check('選んだ画面の形は次回も覚えている', await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode')));
+  check('はじめからチャット形式になっている（チャットが基本）', await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode')));
   check('チャットでは設定をたたんでおく', !(await chatPage.evaluate(() => document.getElementById('ivSettings').open)));
   const firstMsg = await lastAi();
   const firstQ = await chatPage.evaluate(() => document.getElementById('qText').textContent);
@@ -889,8 +888,31 @@ const TINY_PNG = Buffer.from(
   check('「前の質問に戻る」で、直前の答えの吹き出しを消して答え直せる', (await chatPage.locator('#chatLog .msg.me').count()) === meBefore - 1 && (await chatPage.inputValue('#qAnswer')) === '松本で生まれました');
   check('戻った質問がチャットの最後に出ている', await aiMsgs() === 4 && (await lastAi()).indexOf(await chatPage.evaluate(() => document.getElementById('qText').textContent)) !== -1);
 
+  // 読み上げの途中でマイクを押したら、読み上げを止めてすぐ聞き取りを始める
+  // 再生は始まるが終わらない（＝読み上げ中のまま）状態を作る
+  await chatPage.evaluate(() => {
+    window.__played = 0;
+    window.__paused = 0;
+    HTMLMediaElement.prototype.play = function () { window.__played++; return Promise.resolve(); };
+    HTMLMediaElement.prototype.pause = function () { window.__paused++; };
+  });
+  await chatPage.click('#btnSkipQ');
+  await chatPage.waitForFunction(() => window.__played > 0);
+  check('読み上げ中は、まだマイクを立ち上げない', !(await chatPage.evaluate(() => document.getElementById('qMicBtn').classList.contains('on'))));
+  const pausedBefore = await chatPage.evaluate(() => window.__paused);
+  await chatPage.click('#qMicBtn');
+  check('読み上げの途中でマイクを押すと、読み上げを止めてすぐ聞き取りを始める',
+    await chatPage.evaluate(() => document.getElementById('qMicBtn').classList.contains('on')) && (await chatPage.evaluate(() => window.__paused)) > pausedBefore);
+
   await chatPage.selectOption('#ivStyleSelect', 'card');
   check('「一問ずつ」に戻すと、質問文がまた見える', !(await chatPage.isHidden('#qText')) && await chatPage.isHidden('#chatLog'));
+  await chatPage.click('[data-screen="interview"] .back');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('#tileInterview');
+  await chatPage.waitForSelector('[data-screen=interview].active');
+  check('選んだ画面の形（一問ずつ）は次回も覚えている', !(await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode'))));
+  await chatPage.selectOption('#ivStyleSelect', 'chat');
+  check('途中でチャットに切り替えても、今の質問がチャットに出る', await aiMsgs() === 1);
   await chatCtx.close();
   chatAi.close();
 
