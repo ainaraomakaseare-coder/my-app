@@ -2798,8 +2798,34 @@
     return lines.join('\n');
   }
 
+  // Blockの並べ替え（ドラッグ、initBlockDragReorder）で使う純粋関数。
+  // 指の位置（ドラッグ中のBlockの中心Y座標）と、他のBlockの元の中心Y座標だけから
+  // 「今どの順番に挿入されるか」を計算する。DOM操作を含まないのでnodeからも直接テストできる。
+  function blockDragTargetIndex(draggedCenterY, otherCenters) {
+    var count = 0;
+    for (var i = 0; i < otherCenters.length; i++) {
+      if (otherCenters[i] < draggedCenterY) count++;
+    }
+    return count;
+  }
+
+  // 上のblockDragTargetIndexで決まった挿入位置（targetIndex）にもとづき、他のBlockそれぞれを
+  // どれだけずらす（translateY）べきかを配列で返す。gapIndexはドラッグ中のBlockが元々あった
+  // 位置（othersの中でのすき間の位置）。
+  function blockDragShifts(otherCount, targetIndex, gapIndex, draggedHeight) {
+    var shifts = [];
+    for (var i = 0; i < otherCount; i++) {
+      if (targetIndex < gapIndex && i >= targetIndex && i < gapIndex) shifts.push(draggedHeight);
+      else if (targetIndex > gapIndex && i >= gapIndex && i < targetIndex) shifts.push(-draggedHeight);
+      else shifts.push(0);
+    }
+    return shifts;
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
+    blockDragTargetIndex: blockDragTargetIndex,
+    blockDragShifts: blockDragShifts,
     TRANSPORTS: TRANSPORTS,
     categoryLabel: categoryLabel,
     categoryColor: categoryColor,
@@ -5592,6 +5618,8 @@
 
     el.addEventListener('touchstart', function (e) {
       if (e.touches.length !== 1) { edgeSwipeBackState = null; return; }
+      // Blockの並べ替えドラッグ中（長押し待ちも含む）は「戻る」操作を割り込ませない
+      if (blockDragState) { edgeSwipeBackState = null; return; }
       var t = e.touches[0];
       if (t.clientX > EDGE_SWIPE_BACK_PX) { edgeSwipeBackState = null; return; }
       edgeSwipeBackState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
@@ -6059,76 +6087,206 @@
   // ---------- Blockの並べ替え（ドラッグ、時刻未設定のBlockだけ） ----------
   // 「感覚的に引っ張って場所を変えたい」という要望より。時刻ありのBlockは常にその時刻の
   // 位置で固定したいので、持ち手（.block-drag-handle）自体を時刻未設定のBlockにしか出していない。
-  // ドラッグ中は他のBlockは動かさず、挿入位置に細い線（インジケーター）を出すだけにしてある
-  // （Blockの高さが写真の枚数などでまちまちなため、他要素を仮に動かす方式より確実に動く）。
+  // iOSの標準的な並べ替え（連絡先など）に近い手触りを目指し、以下のようにしている（2026-09-29〜。
+  // 「かなりしづらい」というオーナーからの声を受けて、それまでの「即ドラッグ開始＋挿入位置に
+  // 細い線を出すだけ」の作りから作り直した）：
+  // - 持ち手を押してから約350ms長押ししたときだけ持ち上がる（それより前に8pxを超えて指が
+  //   動いたら、ふつうのスクロール操作に譲って並べ替えは始めない）
+  // - つかんだBlockは指にtransformで追従し、他のBlockはtransformのトランジション（約150ms）で
+  //   場所を譲る。どこに入るかはCore.blockDragTargetIndex／Core.blockDragShifts（純粋関数、
+  //   テストあり）でそのつど計算する
+  // - 画面の上下端（48px以内）に近づくと自動スクロールする（端に近いほど速い）
+  // - 指を離すと、実際の挿入位置へ「着地」するアニメーションをしてから並び順を保存する
+  // - マウス（デスクトップ）は長押し不要で、押したその場でつかむ
   var blockDragState = null;
+  var BLOCK_DRAG_LONG_PRESS_MS = 350;
+  var BLOCK_DRAG_MOVE_CANCEL_PX = 8;
+  var BLOCK_DRAG_EDGE_PX = 48;
+  var BLOCK_DRAG_MAX_SCROLL_PX = 16;
 
   function initBlockDragReorder() {
     var timelineEl = $('#timeline');
+
+    function collectDraggables() {
+      return Array.prototype.slice.call(timelineEl.querySelectorAll('.block'))
+        .filter(function (el) { return el.querySelector('.block-drag-handle'); });
+    }
+
+    function autoScroll(state) {
+      var y = state.lastClientY, vh = window.innerHeight, delta = 0;
+      if (y < BLOCK_DRAG_EDGE_PX) delta = -Math.ceil((BLOCK_DRAG_EDGE_PX - y) / BLOCK_DRAG_EDGE_PX * BLOCK_DRAG_MAX_SCROLL_PX);
+      else if (y > vh - BLOCK_DRAG_EDGE_PX) delta = Math.ceil((y - (vh - BLOCK_DRAG_EDGE_PX)) / BLOCK_DRAG_EDGE_PX * BLOCK_DRAG_MAX_SCROLL_PX);
+      if (delta) window.scrollBy(0, delta);
+    }
+
+    function updateVisual(state) {
+      var dy = (state.lastClientY + window.scrollY) - state.startPageY;
+      state.draggedEl.style.transform = 'translateY(' + dy + 'px) scale(1.03)';
+
+      var draggedCenter = state.draggedOrigCenter + dy;
+      var otherCenters = state.others.map(function (o) { return o.center; });
+      var targetIndex = Core.blockDragTargetIndex(draggedCenter, otherCenters);
+      if (targetIndex !== state.targetIndex) {
+        state.targetIndex = targetIndex;
+        var shifts = Core.blockDragShifts(state.others.length, targetIndex, state.gapIndex, state.draggedHeight);
+        state.others.forEach(function (o, i) {
+          o.el.style.transform = shifts[i] ? 'translateY(' + shifts[i] + 'px)' : '';
+        });
+      }
+    }
+
+    function activate(state) {
+      var draggableBlocks = collectDraggables();
+      var origIdx = draggableBlocks.indexOf(state.draggedEl);
+      if (origIdx === -1) { blockDragState = null; return; }
+
+      var others = [];
+      draggableBlocks.forEach(function (el, i) {
+        if (i === origIdx) return;
+        others.push({ el: el, center: el.offsetTop + el.offsetHeight / 2 });
+      });
+
+      state.phase = 'dragging';
+      state.originalOrder = draggableBlocks.map(function (el) { return el.dataset.blockId; });
+      state.others = others;
+      state.gapIndex = origIdx;
+      state.targetIndex = origIdx;
+      state.draggedHeight = state.draggedEl.offsetHeight;
+      state.draggedOrigCenter = state.draggedEl.offsetTop + state.draggedHeight / 2;
+      state.startPageY = state.lastClientY + window.scrollY;
+
+      try { state.handle.setPointerCapture(state.pointerId); } catch (err) {}
+      state.draggedEl.classList.add('dragging');
+      others.forEach(function (o) { o.el.classList.add('block-shift'); });
+      try { if (navigator.vibrate) navigator.vibrate(10); } catch (err) {}
+
+      // 「持ち上げた」感触を出すため、つかんだ瞬間だけ一瞬トランジション付きで拡大させる。
+      // その後は毎フレームtransformを直接書き換えるので、追従が遅れないようトランジションを消す
+      state.draggedEl.style.transition = 'transform 120ms ease, box-shadow 120ms ease';
+      state.draggedEl.style.transform = 'translateY(0px) scale(1.03)';
+      setTimeout(function () {
+        if (blockDragState === state) state.draggedEl.style.transition = '';
+      }, 130);
+
+      state.rafId = requestAnimationFrame(function frame() {
+        if (blockDragState !== state || state.phase !== 'dragging') return;
+        autoScroll(state);
+        updateVisual(state);
+        state.rafId = requestAnimationFrame(frame);
+      });
+    }
+
+    function releaseOthers(state) {
+      state.others.forEach(function (o) { o.el.classList.remove('block-shift'); o.el.style.transform = ''; });
+    }
+
+    function settle(state) {
+      cancelAnimationFrame(state.rafId);
+      releaseOthers(state);
+
+      var beforeRect = state.draggedEl.getBoundingClientRect();
+      var addBtn = timelineEl.querySelector('.block-add');
+      var anchor = state.targetIndex < state.others.length ? state.others[state.targetIndex].el : addBtn;
+      state.draggedEl.style.transform = '';
+      state.draggedEl.classList.remove('dragging');
+      timelineEl.insertBefore(state.draggedEl, anchor);
+
+      // 着地アニメーション：DOM移動でずれた見た目の分だけ逆向きにtransformをかけ、0へ戻す
+      var afterRect = state.draggedEl.getBoundingClientRect();
+      var deltaY = beforeRect.top - afterRect.top;
+      if (deltaY) {
+        var draggedEl = state.draggedEl;
+        draggedEl.style.transition = 'none';
+        draggedEl.style.transform = 'translateY(' + deltaY + 'px)';
+        void draggedEl.offsetHeight; // 強制リフローしてから、トランジション付きで戻す
+        draggedEl.classList.add('settling');
+        requestAnimationFrame(function () {
+          draggedEl.style.transition = '';
+          draggedEl.style.transform = '';
+        });
+        draggedEl.addEventListener('transitionend', function handler() {
+          draggedEl.classList.remove('settling');
+          draggedEl.style.transition = '';
+          draggedEl.removeEventListener('transitionend', handler);
+        });
+      }
+
+      var finalOrder = collectDraggables().map(function (el) { return el.dataset.blockId; });
+      if (finalOrder.join(',') !== state.originalOrder.join(',')) persistBlockOrder(finalOrder);
+    }
+
+    function cancelDrag(state) {
+      cancelAnimationFrame(state.rafId);
+      if (state.phase === 'dragging') {
+        releaseOthers(state);
+        state.draggedEl.classList.remove('dragging');
+        state.draggedEl.style.transform = '';
+        state.draggedEl.style.transition = '';
+      }
+    }
 
     timelineEl.addEventListener('pointerdown', function (e) {
       var handle = e.target.closest('.block-drag-handle');
       if (!handle) return;
       var draggedEl = handle.closest('.block');
-      if (!draggedEl) return;
+      if (!draggedEl || blockDragState) return;
       e.preventDefault();
 
-      var rect = draggedEl.getBoundingClientRect();
-      // 時刻ありのBlockは並べ替えの対象外（常に時刻順で固定）。持ち手が出ているBlock
-      // （＝時刻なしのBlock）同士でだけ順番を入れ替えられるようにする。
-      var draggableBlocks = Array.prototype.slice.call(timelineEl.querySelectorAll('.block')).filter(function (el) { return el.querySelector('.block-drag-handle'); });
-      var siblings = draggableBlocks.filter(function (el) { return el !== draggedEl; });
-      var addBtn = timelineEl.querySelector('.block-add');
-      var originalOrder = draggableBlocks.map(function (el) { return el.dataset.blockId; });
-
-      var indicator = document.createElement('div');
-      indicator.className = 'block-drop-indicator';
-      timelineEl.insertBefore(indicator, draggedEl);
-
-      draggedEl.classList.add('dragging');
-      draggedEl.style.width = rect.width + 'px';
-      draggedEl.style.left = rect.left + 'px';
-      draggedEl.style.top = rect.top + 'px';
-
-      blockDragState = {
-        handle: handle, draggedEl: draggedEl, pointerId: e.pointerId, offsetY: e.clientY - rect.top,
-        siblings: siblings, addBtn: addBtn, indicator: indicator, originalOrder: originalOrder
+      var state = {
+        phase: 'pending', handle: handle, draggedEl: draggedEl, pointerId: e.pointerId,
+        startClientX: e.clientX, startClientY: e.clientY, lastClientY: e.clientY, timer: null
       };
-      handle.setPointerCapture(e.pointerId);
+      blockDragState = state;
+
+      // マウスは長押し不要（デスクトップは押したその場でつかむ）。指はスクロールと区別するため
+      // 長押しを待つ（この間に8pxを超えて動いたらpointermoveハンドラーが並べ替えを取り消す）
+      if (e.pointerType === 'mouse') {
+        activate(state);
+      } else {
+        state.timer = setTimeout(function () {
+          if (blockDragState === state && state.phase === 'pending') activate(state);
+        }, BLOCK_DRAG_LONG_PRESS_MS);
+      }
     });
 
     timelineEl.addEventListener('pointermove', function (e) {
       if (!blockDragState || e.pointerId !== blockDragState.pointerId) return;
-      e.preventDefault();
-      blockDragState.draggedEl.style.top = (e.clientY - blockDragState.offsetY) + 'px';
+      var state = blockDragState;
+      state.lastClientY = e.clientY;
 
-      var target = null;
-      for (var i = 0; i < blockDragState.siblings.length; i++) {
-        var r = blockDragState.siblings[i].getBoundingClientRect();
-        if (e.clientY < r.top + r.height / 2) { target = blockDragState.siblings[i]; break; }
+      if (state.phase === 'pending') {
+        var dx = e.clientX - state.startClientX, dy = e.clientY - state.startClientY;
+        if (Math.sqrt(dx * dx + dy * dy) > BLOCK_DRAG_MOVE_CANCEL_PX) {
+          clearTimeout(state.timer);
+          blockDragState = null; // ふつうのスクロールに譲る
+        }
+        return;
       }
-      timelineEl.insertBefore(blockDragState.indicator, target || blockDragState.addBtn);
+      if (state.phase === 'dragging') e.preventDefault();
+    }, { passive: false });
+
+    timelineEl.addEventListener('pointerup', function (e) {
+      if (!blockDragState || e.pointerId !== blockDragState.pointerId) return;
+      var state = blockDragState;
+      blockDragState = null;
+      try { state.handle.releasePointerCapture(state.pointerId); } catch (err) {}
+      if (state.phase === 'pending') { clearTimeout(state.timer); return; }
+      settle(state);
     });
 
-    function endBlockDrag(e) {
+    timelineEl.addEventListener('pointercancel', function (e) {
       if (!blockDragState || e.pointerId !== blockDragState.pointerId) return;
-      var ds = blockDragState;
+      var state = blockDragState;
       blockDragState = null;
-      ds.handle.releasePointerCapture(ds.pointerId);
-      ds.draggedEl.classList.remove('dragging');
-      ds.draggedEl.style.top = '';
-      ds.draggedEl.style.left = '';
-      ds.draggedEl.style.width = '';
-      timelineEl.insertBefore(ds.draggedEl, ds.indicator);
-      ds.indicator.remove();
+      try { state.handle.releasePointerCapture(state.pointerId); } catch (err) {}
+      if (state.phase === 'pending') { clearTimeout(state.timer); return; }
+      cancelDrag(state);
+    });
 
-      var finalOrder = Array.prototype.slice.call(timelineEl.querySelectorAll('.block'))
-        .filter(function (el) { return el.querySelector('.block-drag-handle'); })
-        .map(function (el) { return el.dataset.blockId; });
-      if (finalOrder.join(',') !== ds.originalOrder.join(',')) persistBlockOrder(finalOrder);
-    }
-    timelineEl.addEventListener('pointerup', endBlockDrag);
-    timelineEl.addEventListener('pointercancel', endBlockDrag);
+    // iOSの長押しコールアウト・右クリックメニューなどが割り込んでこないようにする
+    timelineEl.addEventListener('contextmenu', function (e) {
+      if (blockDragState) e.preventDefault();
+    });
   }
 
   function resetManualOrder(date) {

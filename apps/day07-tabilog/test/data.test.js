@@ -1789,5 +1789,28 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   ok('cameraMoveNeeded: 今の場所が分からなければ（初回など）動かす', T.cameraMoveNeeded(null, { lat: 35.5, lng: 139.7, zoom: 12 }));
 })();
 
+/* ---- Blockの並べ替えドラッグ（initBlockDragReorder）で使う純粋関数
+   （Core.blockDragTargetIndex / Core.blockDragShifts、2026-09-29〜、長押しでの並べ替えを直した際に追加） ---- */
+(function () {
+  // otherCentersより上（小さい値）にあるものは何もカウントせず、下にあるものだけ数える
+  eq('blockDragTargetIndex: 全員より上ならインデックス0', T.blockDragTargetIndex(0, [100, 200, 300]), 0);
+  eq('blockDragTargetIndex: 全員より下なら人数ぶん全部数える', T.blockDragTargetIndex(1000, [100, 200, 300]), 3);
+  eq('blockDragTargetIndex: 途中の位置なら、それより上にいる人数になる', T.blockDragTargetIndex(250, [100, 200, 300]), 2);
+  eq('blockDragTargetIndex: 他のBlockが無ければ常に0', T.blockDragTargetIndex(999, []), 0);
+
+  // gapIndex（元々あった位置）より上に動かすときは、間にいたBlockが下にずれる
+  eq('blockDragShifts: 先頭へ動かすと、元の位置より前の全員が下にずれる',
+    T.blockDragShifts(4, 0, 2, 80), [80, 80, 0, 0]);
+  // gapIndexより下に動かすときは、間にいたBlockが上にずれる
+  eq('blockDragShifts: 末尾へ動かすと、元の位置より後の全員が上にずれる',
+    T.blockDragShifts(4, 4, 2, 80), [0, 0, -80, -80]);
+  // 動いていなければ誰もずれない
+  eq('blockDragShifts: 元の位置のままなら誰もずれない',
+    T.blockDragShifts(4, 2, 2, 80), [0, 0, 0, 0]);
+  // 1つ隣に動かすだけなら、間の1人だけがずれる
+  eq('blockDragShifts: 1つ前に動かすと、間の1人だけ下にずれる',
+    T.blockDragShifts(4, 1, 2, 80), [0, 80, 0, 0]);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
