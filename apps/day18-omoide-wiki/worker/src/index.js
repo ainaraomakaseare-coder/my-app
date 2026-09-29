@@ -50,6 +50,10 @@ function validInput(x) {
     && (x.askedQuestions === undefined || (
       Array.isArray(x.askedQuestions) && x.askedQuestions.length <= 200
       && x.askedQuestions.every(q => typeof q === "string" && q.length <= 300)
+    ))
+    && (x.upcomingQuestions === undefined || (
+      Array.isArray(x.upcomingQuestions) && x.upcomingQuestions.length <= 20
+      && x.upcomingQuestions.every(q => typeof q === "string" && q.length <= 300)
     ));
 }
 
@@ -129,6 +133,10 @@ function prompt(data) {
     (data.askedQuestions && data.askedQuestions.length)
       ? "【重要】このカテゴリではすでに以下の質問を聞いています。同じ内容・ほぼ同じ聞き方の質問は絶対に繰り返さないでください（記録が増えて見返せなくなり、同じことを何度も聞かれたと本人を困らせてしまいます）。ここに出てくる話題から自然に派生する、まだ聞けていない新しい角度の質問であれば問題ありません：\n"
         + data.askedQuestions.map(q => "・" + q).join("\n")
+      : "",
+    (data.upcomingQuestions && data.upcomingQuestions.length)
+      ? "このあと、決まった質問として以下を順番に聞く予定です。これらと同じ内容（例：生年月日、きょうだい、学校名など）は今は聞かず、あとの質問に任せてください。今の話題の中で、これらでは聞けないことを深掘りしてください：\n"
+        + data.upcomingQuestions.map(q => "・" + q).join("\n")
       : "",
   ].filter(Boolean).join("\n");
 }

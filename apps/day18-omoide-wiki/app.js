@@ -741,6 +741,37 @@
 
   // ---------- 公開（テスト可能な部分） ----------
 
+  // 回答の中から生年月日を見つける（深掘りの途中で「1995年12月5日生まれ」のように答えた場合など）。
+  // 結婚記念日などの別の日付を取り違えないよう、回答か質問に「生まれ」「誕生」があるときだけ拾う。
+  var BIRTH_DATE_KEY = 'birth-date';
+  function toHalfWidthDigits(text) {
+    return String(text || '').replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+      .replace(/[／]/g, '/').replace(/[．]/g, '.').replace(/[－ー]/g, function (c, i, all) { return /\d/.test(all[i - 1] || '') && /\d/.test(all[i + 1] || '') ? '-' : c; });
+  }
+  function findBirthDate(answer, question) {
+    var text = toHalfWidthDigits(answer);
+    if (!/生まれ|誕生/.test(text) && !/生まれ|誕生|生年月日/.test(question || '')) return '';
+    var m = text.match(/((?:19|20)\d{2}|(?:明治|大正|昭和|平成|令和)\s*(?:元|\d{1,2}))\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+    if (m) return m[1].replace(/\s+/g, '') + '年' + Number(m[2]) + '月' + Number(m[3]) + '日';
+    m = text.match(/((?:19|20)\d{2})[\/.\-](\d{1,2})[\/.\-](\d{1,2})/);
+    if (m) return m[1] + '年' + Number(m[2]) + '月' + Number(m[3]) + '日';
+    return '';
+  }
+
+  // 生年月日の質問にまだ答えていなければ、見つけた生年月日をその答えとして記録する（記録した項目を返す）。
+  // こうしておくと、あとから「生年月日を教えてください」をもう一度聞かずに済み、プロフィールにも使える。
+  function learnBirthDate(wiki, answer, question, author) {
+    if (!wiki || (wiki.skippedKeys || []).indexOf(BIRTH_DATE_KEY) !== -1) return null;
+    var has = (wiki.history || []).some(function (e) { return e.questionKey === BIRTH_DATE_KEY; });
+    if (has) return null;
+    var date = findBirthDate(answer, question);
+    if (!date) return null;
+    var q = (QUESTIONS.person.history || []).filter(function (x) { return x.key === BIRTH_DATE_KEY; })[0];
+    var entry = newEntry(date, author, q ? q.text : '生年月日', BIRTH_DATE_KEY);
+    wiki.history.push(entry);
+    return entry;
+  }
+
   // 流出すると困る個人情報（住所の町名・番地、電話番号、メール、口座など）を聞いている質問か。
   // AIには聞かないよう頼んでいるが、万一出てきたら、その質問は使わずに次へ進む（住所は市区町村まではOK）
   var SENSITIVE_QUESTION_RE = /住所|電話番号|携帯番号|連絡先|メール(アドレス)?を|アドレスを|郵便番号|番地|丁目|町名|どの町|何町|何丁目|建物名|建物の名前|マンション名|マンションの名前|団地名|団地の名前|部屋番号|マイナンバー|口座|暗証番号|パスワード|クレジットカード/;
@@ -751,6 +782,8 @@
   var Core = {
     STORAGE_KEY: STORAGE_KEY,
     asksSensitiveInfo: asksSensitiveInfo,
+    findBirthDate: findBirthDate,
+    learnBirthDate: learnBirthDate,
     STORAGE_WARN_BYTES: STORAGE_WARN_BYTES,
     uid: uid,
     nowIso: nowIso,
@@ -1878,6 +1911,14 @@
     return kept;
   }
 
+  // このあと聞く予定の決まった質問（同じカテゴリ）。AIが先回りして同じことを聞かないように渡す
+  function upcomingFixedQuestions(cat) {
+    return interviewQueue.slice(interviewIndex + 1)
+      .filter(function (x) { return !x.dynamic && x.category === cat; })
+      .slice(0, 12)
+      .map(function (x) { return x.question; });
+  }
+
   function pickGrowthCategory(w) {
     var best = CATEGORY_ORDER[0], bestCount = Infinity;
     CATEGORY_ORDER.forEach(function (cat) {
@@ -2000,6 +2041,14 @@
       for (var i = 0; i < arr.length; i++) {
         if (arr[i].id === last.entryId) { arr.splice(i, 1); break; }
       }
+      // その答えから拾った生年月日も取り消す（書き直した答えから拾い直す）
+      if (last.learnedId) {
+        w.history = w.history.filter(function (e) { return e.id !== last.learnedId; });
+        interviewQueue = interviewQueue.slice(0, interviewIndex + 1).concat(
+          buildInterviewQueue(w.type, w).filter(function (x) { return x.key === BIRTH_DATE_KEY; }),
+          interviewQueue.slice(interviewIndex + 1)
+        );
+      }
       sessionAnswered = Math.max(0, sessionAnswered - 1);
       w.updatedAt = nowIso();
       persist();
@@ -2092,7 +2141,14 @@
       savedEntry = newEntry(text, author, q.question, q.key, pendingInterviewPhotos.slice());
       w[q.category].push(savedEntry);
     }
-    interviewHistory.push({ index: interviewIndex, category: q.category, entryId: savedEntry.id, text: text });
+    // 深掘りの途中で生年月日を答えていたら、生年月日の質問に答えたことにして、あとで聞き直さない
+    var learned = q.key === BIRTH_DATE_KEY ? null : learnBirthDate(w, text, q.question, author);
+    if (learned) {
+      for (var qi = interviewQueue.length - 1; qi > interviewIndex; qi--) {
+        if (interviewQueue[qi].key === BIRTH_DATE_KEY) interviewQueue.splice(qi, 1);
+      }
+    }
+    interviewHistory.push({ index: interviewIndex, category: q.category, entryId: savedEntry.id, text: text, learnedId: learned ? learned.id : null });
     addContributor(w, author);
     w.updatedAt = nowIso();
     persist();
@@ -2125,7 +2181,8 @@
       history: aiThreadHistory.slice(0, -1),
       depth: q.depth,
       profile: buildProfileContext(w),
-      askedQuestions: askedQuestionTexts(w, q.category)
+      askedQuestions: askedQuestionTexts(w, q.category),
+      upcomingQuestions: upcomingFixedQuestions(q.category)
     }).then(function (result) {
       showAiDeepenStatus();
       // 流出すると困る情報を聞く質問だったら使わない（深掘りをやめて次の話題へ）
@@ -2977,6 +3034,18 @@
     $('#btnPrevQ').addEventListener('click', goToPreviousQuestion);
     $('#btnSkipQ').addEventListener('click', function () { saveInterviewAnswer(true); });
     $('#btnSaveQ').addEventListener('click', function () { saveInterviewAnswer(false); });
+    // パソコンでは Ctrl＋Enter（Macは ⌘＋Enter）で送る。Enterだけは改行のまま。
+    // 日本語の変換中（確定前）の Enter では送らない
+    $('#qAnswer').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      if (!$('#btnSaveQ').disabled) saveInterviewAnswer(false);
+    });
+    // マウスとキーボードで使う端末だけ、送り方を入力欄に書いておく
+    if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+      var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+      $('#qAnswer').placeholder = 'ここに答えを書く（またはマイクで話す）　' + (isMac ? '⌘' : 'Ctrl') + '＋Enterで送信';
+    }
 
     $('#epPhotos').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files);

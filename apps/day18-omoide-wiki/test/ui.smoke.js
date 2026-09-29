@@ -800,6 +800,7 @@ const TINY_PNG = Buffer.from(
   // ---- チャット形式のインタビュー ----
   const chatTts = [];
   let chatFollowCalls = 0;
+  let chatLastFollowPayload = null;
   const chatAi = http.createServer((req, res) => {
     const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
@@ -807,6 +808,7 @@ const TINY_PNG = Buffer.from(
     req.on('data', c => { body += c; });
     req.on('end', () => {
       const parsed = JSON.parse(body || '{}');
+      if (!parsed.action) chatLastFollowPayload = parsed;
       if (parsed.action === 'tts') {
         chatTts.push(parsed.text);
         res.writeHead(200, { 'Content-Type': 'audio/wav', ...cors });
@@ -863,6 +865,8 @@ const TINY_PNG = Buffer.from(
   check('送った答えは、AIが考えている間も入力欄に残さない', (await chatPage.inputValue('#qAnswer')) === '' && await chatPage.locator('#chatLog .msg.typing').count() === 1);
   await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 2);
   check('答えは右側の吹き出しとして残る', (await chatPage.locator('#chatLog .msg.me').last().textContent()) === '野沢菜の漬物が好きです');
+  check('AIには、このあと聞く予定の質問（生年月日など）を渡して、先回りして聞かないようにする',
+    chatLastFollowPayload && Array.isArray(chatLastFollowPayload.upcomingQuestions) && chatLastFollowPayload.upcomingQuestions.some(q => q.indexOf('生年月日') !== -1), JSON.stringify(chatLastFollowPayload && chatLastFollowPayload.upcomingQuestions));
   check('AIの深掘りは、あいづち入りの質問をそのまま出す', (await lastAi()).indexOf('すてきですね！どんな味でしたか？') !== -1 && (await lastAi()).indexOf('AIのあいづち') === -1, await lastAi());
 
   await chatPage.fill('#qAnswer', 'しょっぱくて、ご飯が進む味');
@@ -916,6 +920,31 @@ const TINY_PNG = Buffer.from(
   check('選んだ画面の形（一問ずつ）は次回も覚えている', !(await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode'))));
   await chatPage.selectOption('#ivStyleSelect', 'chat');
   check('途中でチャットに切り替えても、今の質問がチャットに出る', await aiMsgs() === 1);
+
+  // 生まれた場所の質問で生年月日まで答えたら、次に「生年月日を教えてください」を聞かない
+  await chatPage.click('[data-screen="interview"] .back');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('[data-screen="dash"] .back[data-back="home"]');
+  await chatPage.waitForSelector('[data-screen=home].active');
+  await chatPage.click('#btnNewWiki');
+  await chatPage.fill('#newTitle', '生年月日を先に言う人');
+  await chatPage.click('#btnCreateWiki');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('#tileInterview');
+  await chatPage.waitForSelector('[data-screen=interview].active');
+  await chatPage.click('#ivSettings > summary');
+  await chatPage.uncheck('#aiDeepenToggle');
+  await chatPage.uncheck('#voiceModeToggle');
+  const bpQ = await chatPage.evaluate(() => document.getElementById('qText').textContent);
+  await chatPage.fill('#qAnswer', '横浜です。１９９５年１２月５日生まれ');
+  await chatPage.press('#qAnswer', 'Control+Enter');
+  await chatPage.waitForFunction((q) => document.getElementById('qText').textContent !== q, bpQ);
+  check('（前提）最初の質問は生まれた場所', bpQ.indexOf('生まれた場所') !== -1, bpQ);
+  check('Ctrl＋Enterで答えを送れる', (await chatPage.locator('#chatLog .msg.me').last().textContent()).indexOf('横浜です') === 0);
+  check('答えの中の生年月日を拾ったので、次に生年月日を聞き直さない', (await chatPage.evaluate(() => document.getElementById('qText').textContent)).indexOf('生年月日') === -1);
+  await chatPage.fill('#qAnswer', '改行したい');
+  await chatPage.press('#qAnswer', 'Enter');
+  check('Enterだけなら送らずに改行する', (await chatPage.inputValue('#qAnswer')) === '改行したい\n');
   await chatCtx.close();
   chatAi.close();
 

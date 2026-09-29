@@ -359,5 +359,16 @@ ok('市区町村までの質問は使ってよい', !W.asksSensitiveInfo('生ま
 ok('携帯電話の思い出を聞く質問は使ってよい', !W.asksSensitiveInfo('初めて携帯電話を持ったのはいつごろでしたか？'));
 ok('横浜の区を聞く質問は使ってよい', !W.asksSensitiveInfo('横浜のどの区に住んでいましたか？'));
 
+// ---- 深掘りの途中で答えた生年月日を拾って、生年月日の質問を聞き直さない ----
+eq('全角数字の生年月日を拾う', W.findBirthDate('１９９５年１２月５日生まれ　磯子区かな？横浜市民病院', '横浜生まれなんですね！何年のお生まれですか？'), '1995年12月5日');
+eq('元号の生年月日を拾う', W.findBirthDate('平成7年12月5日に生まれました', ''), '平成7年12月5日');
+eq('スラッシュ区切りの生年月日を拾う', W.findBirthDate('1995/12/05', '生年月日は？'), '1995年12月5日');
+eq('結婚の日付は生年月日として拾わない', W.findBirthDate('1990年6月1日に結婚しました', '結婚したのはいつですか？'), '');
+var bw = W.newWiki('生年月日の人', 'person');
+var learned = W.learnBirthDate(bw, '１９９５年１２月５日生まれ　磯子区かな？', '何年のお生まれですか？', '本人');
+ok('拾った生年月日を、生年月日の質問への答えとして記録する', learned && learned.questionKey === 'birth-date' && learned.text === '1995年12月5日' && bw.history.length === 1);
+ok('生年月日の質問は、もう聞かない', !W.buildInterviewQueue('person', bw).some(function (q) { return q.key === 'birth-date'; }));
+ok('一度記録したら、二重には記録しない', W.learnBirthDate(bw, '1995年12月5日生まれです', '生年月日は？', '') === null && bw.history.length === 1);
+
 console.log('\n' + pass + ' 件 通過 / ' + fail + ' 件 失敗');
 process.exit(fail ? 1 : 0);
