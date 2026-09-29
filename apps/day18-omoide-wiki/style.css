@@ -546,3 +546,55 @@ a.stop-link:focus-visible { outline: none; border-radius: 2px; box-shadow: 0 0 0
 .consent-card a { color: var(--accent); }
 .consent-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .consent-actions .btn { width: 100%; justify-content: center; }
+
+/* ---------- インタビュー：チャット形式 ---------- */
+.iv-settings > summary { display: none; }
+.chat-mode .iv-settings {
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 0 14px; margin-bottom: 20px;
+}
+.chat-mode .iv-settings > summary {
+  display: list-item; cursor: pointer; padding: 12px 0;
+  font-size: 13px; font-weight: 600; color: var(--muted-foreground);
+}
+.chat-mode .iv-settings[open] { padding-bottom: 8px; }
+
+.chat-log { display: none; }
+.chat-mode .chat-log { display: flex; flex-direction: column; gap: 22px; padding: 4px 0 20px; }
+.msg { max-width: 88%; font-size: 16px; line-height: 1.85; font-feature-settings: "palt"; }
+.msg p { margin: 0; }
+.msg p + p { margin-top: 8px; }
+.msg.ai { align-self: flex-start; }
+.msg .msg-cat {
+  font-size: 12px; font-weight: 600; color: var(--faint-foreground);
+  letter-spacing: .02em; font-variant-numeric: tabular-nums; margin-bottom: 4px;
+}
+.msg.me {
+  align-self: flex-end; background: var(--muted); border-radius: 18px;
+  padding: 10px 16px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.msg.me.skipped { color: var(--faint-foreground); font-size: 14px; }
+.msg.typing { display: flex; gap: 5px; padding: 8px 0; }
+.msg.typing span {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--faint-foreground);
+  animation: typing 1.2s ease-in-out infinite;
+}
+.msg.typing span:nth-child(2) { animation-delay: .15s; }
+.msg.typing span:nth-child(3) { animation-delay: .3s; }
+@keyframes typing { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .msg.typing span { animation: none; opacity: .6; } }
+
+/* 質問はチャットの中に出すので、カードの質問文・写真欄・説明は隠し、入力欄を画面の下に固定する */
+.chat-mode .q-cat,
+.chat-mode .q-text,
+.chat-mode #qPhotosField,
+.chat-mode .interview-card .hint { display: none; }
+.chat-mode .wrap { padding-bottom: 0; }
+.chat-mode .interview-card {
+  position: sticky; bottom: 0; z-index: 5;
+  background: var(--background); border-top: 1px solid var(--border);
+  margin-top: 0; padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+}
+.chat-mode .answer-box textarea { height: 88px; min-height: 0; border-radius: 18px; padding: 12px 56px 12px 16px; }
+.chat-mode .mic-status { min-height: 0; }
+.chat-mode .interview-actions #btnSaveQ { height: 40px; }

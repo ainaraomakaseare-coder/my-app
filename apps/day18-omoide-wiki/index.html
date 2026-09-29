@@ -146,6 +146,16 @@
         <div class="progress"><div class="progress-bar" id="interviewProgress"></div></div>
       </header>
 
+      <details class="iv-settings" id="ivSettings" open>
+      <summary>インタビューの設定</summary>
+      <div class="field">
+        <label for="ivStyleSelect">画面の形</label>
+        <select id="ivStyleSelect">
+          <option value="card">一問ずつ表示する</option>
+          <option value="chat">チャット形式（会話のように流れる）</option>
+        </select>
+      </div>
+
       <div class="field">
         <label for="ivAuthor">答えている人の名前（任意・記録に残ります）</label>
         <input type="text" id="ivAuthor" placeholder="例：本人 ／ 長女・花子">
@@ -179,6 +189,9 @@
         <p class="voice-support" id="aiDeepenStatus"></p>
       </div>
       <p class="ai-consent-link" id="aiConsentLinkWrap" hidden><button type="button" class="btn text small" id="btnAiConsent">AIへの送信について（同意の確認・変更）</button></p>
+      </details>
+
+      <div class="chat-log" id="chatLog" aria-live="polite"></div>
 
       <div class="interview-card">
         <p class="q-cat" id="qCategory"></p>
@@ -190,7 +203,7 @@
         </div>
         <p class="mic-status" id="qMicStatus"></p>
 
-        <div class="field">
+        <div class="field" id="qPhotosField">
           <label for="qPhotos">写真を添える（任意）</label>
           <input type="file" id="qPhotos" accept="image/*" multiple>
           <div id="qPhotoPreview" class="photo-preview"></div>

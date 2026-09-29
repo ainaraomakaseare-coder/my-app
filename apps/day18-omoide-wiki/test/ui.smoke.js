@@ -790,6 +790,110 @@ const TINY_PNG = Buffer.from(
   check('アプリ内では印刷ボタンを隠す', await appPage.isHidden('#btnPrint'));
   await appCtx.close();
 
+  // ---- チャット形式のインタビュー ----
+  const chatTts = [];
+  let chatFollowCalls = 0;
+  const chatAi = http.createServer((req, res) => {
+    const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type' };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body || '{}');
+      if (parsed.action === 'tts') {
+        chatTts.push(parsed.text);
+        res.writeHead(200, { 'Content-Type': 'audio/wav', ...cors });
+        return res.end(SILENT_WAV);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', ...cors });
+      if (parsed.action === 'ack') return res.end(JSON.stringify({ ack: 'AIだけのあいづちです。' }));
+      chatFollowCalls++;
+      // 1回目は深掘り（あいづち入りの質問）、2回目は深掘りをやめて次の話題へ（あいづちだけ返す）
+      res.end(JSON.stringify(chatFollowCalls === 1
+        ? { done: false, followUp: 'すてきですね！どんな味でしたか？', ack: '' }
+        : { done: true, followUp: '', ack: 'AIのあいづちです。' }));
+    });
+  });
+  const chatPort = await new Promise(resolve => chatAi.listen(0, '127.0.0.1', () => resolve(chatAi.address().port)));
+  const chatCtx = await browser.newContext({ viewport: { width: 420, height: 900 } });
+  await chatCtx.addInitScript(() => {
+    localStorage.setItem('omoide-wiki:aiConsent', 'granted');
+    function FakeSR() {}
+    FakeSR.prototype.start = function () {};
+    FakeSR.prototype.stop = function () { const sr = this; setTimeout(() => sr.onend && sr.onend(), 50); };
+    FakeSR.prototype.abort = FakeSR.prototype.stop;
+    window.SpeechRecognition = FakeSR;
+    window.webkitSpeechRecognition = FakeSR;
+  });
+  const chatPage = await chatCtx.newPage();
+  chatPage.on('pageerror', e => errors.push(e.message));
+  await chatPage.goto(BASE);
+  const setChatEndpoint = () => chatPage.evaluate((url) => {
+    document.querySelector('meta[name="omoide-ai-endpoint"]').setAttribute('content', url);
+  }, `http://127.0.0.1:${chatPort}/`);
+  await setChatEndpoint();
+  await chatPage.click('#btnNewWiki');
+  await chatPage.fill('#newTitle', '山田 花子');
+  await chatPage.click('#btnCreateWiki');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('#tileInterview');
+  await chatPage.waitForSelector('[data-screen=interview].active');
+  const aiMsgs = () => chatPage.locator('#chatLog .msg.ai:not(.typing)').count();
+  const lastAi = () => chatPage.locator('#chatLog .msg.ai:not(.typing)').last().textContent();
+  check('はじめは今までどおり「一問ずつ」の画面', !(await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode'))));
+  await chatPage.selectOption('#ivStyleSelect', 'chat');
+  check('チャット形式を選ぶと、画面がチャットに切り替わる', await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode')));
+  check('途中で切り替えても、今の質問がチャットに出る', await aiMsgs() === 1);
+  await chatPage.click('[data-screen="interview"] .back');
+  await chatPage.waitForSelector('[data-screen=dash].active');
+  await chatPage.click('#tileInterview');
+  await chatPage.waitForSelector('[data-screen=interview].active');
+  check('選んだ画面の形は次回も覚えている', await chatPage.evaluate(() => document.querySelector('[data-screen=interview]').classList.contains('chat-mode')));
+  check('チャットでは設定をたたんでおく', !(await chatPage.evaluate(() => document.getElementById('ivSettings').open)));
+  const firstMsg = await lastAi();
+  const firstQ = await chatPage.evaluate(() => document.getElementById('qText').textContent);
+  check('最初はあいさつ（名前入り）と質問をAIの発言として出す', firstMsg.indexOf('山田 花子さん') !== -1 && firstMsg.indexOf(firstQ) !== -1, firstMsg);
+  check('一問ずつ画面の質問文はチャットでは隠す', await chatPage.isHidden('#qText'));
+  for (let i = 0; i < 30 && chatTts.indexOf(firstQ) === -1; i++) await chatPage.waitForTimeout(100);
+  check('チャットでも、あいさつと質問を読み上げる', chatTts.some(t => t.indexOf('こんにちは') === 0) && chatTts.indexOf(firstQ) !== -1, JSON.stringify(chatTts));
+
+  await chatPage.fill('#qAnswer', '野沢菜の漬物が好きです');
+  await chatPage.click('#btnSaveQ');
+  await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 2);
+  check('答えは右側の吹き出しとして残る', (await chatPage.locator('#chatLog .msg.me').last().textContent()) === '野沢菜の漬物が好きです');
+  check('AIの深掘りは、あいづち入りの質問をそのまま出す', (await lastAi()).indexOf('すてきですね！どんな味でしたか？') !== -1 && (await lastAi()).indexOf('AIのあいづち') === -1, await lastAi());
+
+  await chatPage.fill('#qAnswer', 'しょっぱくて、ご飯が進む味');
+  await chatPage.click('#btnSaveQ');
+  await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 3);
+  const afterDone = await lastAi();
+  check('深掘りをやめて次の話題に移るときは、AIのあいづちを添えてから次の質問', afterDone.indexOf('AIのあいづちです。') !== -1 && afterDone.indexOf(await chatPage.evaluate(() => document.getElementById('qText').textContent)) !== -1, afterDone);
+  for (let i = 0; i < 30 && chatTts.indexOf('AIのあいづちです。') === -1; i++) await chatPage.waitForTimeout(100);
+  check('あいづちも読み上げる（質問とは別に読むので、先に作った質問の音声が使える）', chatTts.indexOf('AIのあいづちです。') !== -1, JSON.stringify(chatTts));
+
+  await chatPage.click('#btnSkipQ');
+  await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 4);
+  check('とばしたことも吹き出しに残る', (await chatPage.locator('#chatLog .msg.me').last().textContent()).indexOf('とばしました') !== -1);
+  check('とばしたあとは「次の質問にいきますね」と返す', (await lastAi()).indexOf('次の質問にいきますね') !== -1);
+
+  await chatPage.click('#ivSettings > summary');
+  await chatPage.uncheck('#aiDeepenToggle');
+  const followBefore = chatFollowCalls;
+  await chatPage.fill('#qAnswer', '松本で生まれました');
+  await chatPage.click('#btnSaveQ');
+  await chatPage.waitForFunction(() => document.querySelectorAll('#chatLog .msg.ai:not(.typing)').length === 5);
+  check('AIの深掘りをオフにしても、決まった言葉であいづちを返す（AIは使わない）', /ありがとうございます|そうだったんですね|そうなんですね/.test(await lastAi()) && chatFollowCalls === followBefore, await lastAi());
+
+  const meBefore = await chatPage.locator('#chatLog .msg.me').count();
+  await chatPage.click('#btnPrevQ');
+  check('「前の質問に戻る」で、直前の答えの吹き出しを消して答え直せる', (await chatPage.locator('#chatLog .msg.me').count()) === meBefore - 1 && (await chatPage.inputValue('#qAnswer')) === '松本で生まれました');
+  check('戻った質問がチャットの最後に出ている', await aiMsgs() === 4 && (await lastAi()).indexOf(await chatPage.evaluate(() => document.getElementById('qText').textContent)) !== -1);
+
+  await chatPage.selectOption('#ivStyleSelect', 'card');
+  check('「一問ずつ」に戻すと、質問文がまた見える', !(await chatPage.isHidden('#qText')) && await chatPage.isHidden('#chatLog'));
+  await chatCtx.close();
+  chatAi.close();
+
   check('JSのエラーが発生していない', errors.length === 0, errors.join(' / '));
 
   await browser.close();

@@ -57,10 +57,12 @@ function schema() {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["done", "followUp"],
+    required: ["done", "followUp", "ack"],
     properties: {
       done: { type: "boolean" },
       followUp: { type: "string", maxLength: 140 },
+      // チャット形式で、深掘りをやめて次の話題に移るときに添える一言
+      ack: { type: "string", maxLength: 60 },
     },
   };
 }
@@ -115,6 +117,7 @@ function prompt(data) {
       : `今の回答の文字数：${len}文字（${len < 15 ? "かなり短いので、無理に深掘りしないほうがよい" : len < 40 ? "やや短め" : "十分な分量があるので、深掘りの余地を積極的に探ってよい"}）`,
     `この話題はすでに${data.depth}回深掘りしています。${data.depth >= 6 ? "十分な回数なので、余程ネタがなければ done にしてください。" : ""}`,
     data.profile ? `プロフィール表：\n${data.profile}\n（生年月日や結成年などがここに書かれていれば、その時代に日本で流行っていた具体的な番組・音楽・芸能人を挙げて「〇〇はお好きでしたか？」のように尋ねると喜ばれます。年代が分からない・自信が持てない場合は、無理に使わず他の観点にしてください。不確かな年代で古すぎる／新しすぎるものを挙げるのは避けること）` : "",
+    "ack について：done を true にするときは、次の別の質問に移る前に添える、直前の回答への短い相づち・感想を1文（40文字以内）で書いてください（例：「野沢菜の漬物、冬の楽しみだったんですね。」）。回答の内容に触れ、温かい話し言葉にすること。質問は含めないこと。done が false のときは空文字にしてください。",
     `カテゴリ：${data.categoryLabel}`,
     `今の質問：${data.question}`,
     `今の回答：${data.answer}`,
@@ -124,6 +127,33 @@ function prompt(data) {
         + data.askedQuestions.map(q => "・" + q).join("\n")
       : "",
   ].filter(Boolean).join("\n");
+}
+
+// チャット形式で、深掘りをしないときに添える「ひとことの相づち」だけを作る
+function validAckInput(x) {
+  return x
+    && typeof x.subjectName === "string" && x.subjectName.length >= 1 && x.subjectName.length <= 100
+    && typeof x.question === "string" && x.question.length >= 1 && x.question.length <= 300
+    && typeof x.answer === "string" && x.answer.length >= 1 && x.answer.length <= 4000;
+}
+
+function ackSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["ack"],
+    properties: { ack: { type: "string", maxLength: 60 } },
+  };
+}
+
+function ackPrompt(data) {
+  return [
+    `あなたは「${data.subjectName}」の人生の話を聞いている、温かいインタビュアーです。`,
+    "直前の回答を受けて、次の質問に移る前に添える短い相づち・感想を1文（40文字以内）で書いてください。",
+    "回答の内容に具体的に触れ、共感や驚きが伝わる自然な話し言葉にすること。質問は含めないこと。つらい話には、明るく茶化さず寄り添う言葉にすること。",
+    `質問：${data.question}`,
+    `回答：${data.answer}`,
+  ].join("\n");
 }
 
 const COMPOSE_CATS = ["history", "personality", "favorites", "skills"];
@@ -369,6 +399,30 @@ export default {
       try { composed = JSON.parse(outputText(response)); }
       catch { return json({ error: "invalid_model_output" }, 502, headers); }
       return json(composed, 200, headers);
+    }
+
+    if (data && data.action === "ack") {
+      if (!validAckInput(data)) return json({ error: "invalid_input" }, 400, headers);
+      const upstream = await fetch(OPENAI_URL, {
+        method: "POST",
+        headers: { "authorization": `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          model: env.OPENAI_MODEL || "gpt-5.6-sol",
+          input: ackPrompt(data),
+          reasoning: { effort: "low" },
+          max_output_tokens: 300,
+          store: false,
+          text: { format: { type: "json_schema", name: "ack", strict: true, schema: ackSchema() } },
+        }),
+      });
+      if (!upstream.ok) {
+        console.error(JSON.stringify({ event: "openai_error", status: upstream.status }));
+        return json({ error: "upstream_error" }, 502, headers);
+      }
+      let parsed;
+      try { parsed = JSON.parse(outputText(await upstream.json())); }
+      catch { return json({ error: "invalid_model_output" }, 502, headers); }
+      return json(parsed, 200, headers);
     }
 
     if (!validInput(data)) return json({ error: "invalid_input" }, 400, headers);
