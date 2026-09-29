@@ -9944,8 +9944,13 @@
     // iOSアプリ・対応ブラウザではネイティブの共有シートを開く。それ以外（未対応ブラウザ）は
     // クリップボードにコピーする。どちらも必ずトースト（showToast）で結果を知らせる
     // （以前は#tripDetailStatusという気づかれにくい場所にだけ出していた。2026-09-26）。
+    // text・urlを別々に渡すと、共有先（LINEなど）によってはurlフィールドを見ずtextだけを使う
+    // ものがあり、メッセージにリンクが入らない不具合が起きていた（2026-09-29、TestFlight報告）。
+    // urlをtextの中に含め、urlキー自体は渡さないことで、どの共有先でも必ずリンクが本文に乗る
+    // ようにする（textを見る側はそのままリンク入りの本文になり、urlだけを見る側と重複表示にも
+    // ならない）。
     if (navigator.share) {
-      navigator.share({ title: state.trip.title || '旅の足跡', text: '旅の足跡で旅行を一緒に記録しよう', url: url })
+      navigator.share({ title: state.trip.title || '旅の足跡', text: '旅の足跡で旅行を一緒に記録しよう\n' + url })
         .catch(function () { /* 共有シートをキャンセルしても何もしない */ });
       return;
     }
