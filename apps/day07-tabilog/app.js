@@ -2884,6 +2884,22 @@
     }, targets.length * TRIP_STAGGER_STEP_MS + TRIP_STAGGER_DUR_MS + 60);
   }
 
+  // 白本体クローンの中に、カードのタイトル・日程をそのまま重ねる（本物のタイトルは演出が終わるまで
+  // opacity:0のままなので、これが無いとシートがずっと空白の白い板に見えてしまう）。
+  function addCloneText(bodyClone, titleText, dateText) {
+    var textEl = document.createElement('div');
+    textEl.className = 'trip-open-clone-text';
+    var titleEl = document.createElement('div');
+    titleEl.className = 'trip-title';
+    titleEl.textContent = titleText || '';
+    var datesEl = document.createElement('div');
+    datesEl.className = 'trip-dates';
+    datesEl.textContent = dateText || '';
+    textEl.appendChild(titleEl);
+    textEl.appendChild(datesEl);
+    bodyClone.appendChild(textEl);
+  }
+
   // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
   // 読み込みを待たずにそのまま進める（読み込みが遅くても、演出は毎回同じ長さで終わる）。
   function openTripFromCard(cardEl, tripId, returnTo) {
@@ -2898,14 +2914,23 @@
     var leavingScrollY = window.scrollY;
     var target = computeTripDetailHeaderTarget(); // 実測はまだできないので見積もり
     // 「広がるだけ・縮まない」を保証するため、見積もりがカードの現在の大きさより小さければ
-    // カード側の大きさで底上げする（カードの内容が長くて見積もりより大きい、といったケースの保険）
+    // カード側の大きさで底上げする（カードの内容が長くて見積もりより大きい、といったケースの保険）。
+    // ただしsheetRect（白本体クローンの最終サイズ）は「タイトル・日程のシート」だけであるべきで、
+    // 詳細画面の残り全部（写真の下〜画面の下まで）ではない。カードの本体（.trip-card-info等）が
+    // シートの見積もりより多少大きくても、ここで底上げするのはあくまでシート1枚分の高さまで
+    // （行き過ぎて画面下まで覆う大きさにはならない＝2026-09-29、白い板がでかすぎる不具合の修正）。
     target.photoRect.width = Math.max(target.photoRect.width, visual.photoRect ? visual.photoRect.width : 0);
     target.photoRect.height = Math.max(target.photoRect.height, visual.photoRect ? visual.photoRect.height : 0);
     target.sheetRect.width = Math.max(target.sheetRect.width, visual.bodyRect.width);
-    target.sheetRect.height = Math.max(target.sheetRect.height, visual.bodyRect.height);
+    target.sheetRect.height = Math.max(target.sheetRect.height, Math.min(visual.bodyRect.height, target.sheetRect.height * 1.6));
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop';
+    // 暗幕の上・クローンの下に重ねる--bg色のベタ塗り。演出の後半でこれを不透明にし、シートの下に
+    // 見えている「ぼやけた一覧」を詳細画面と同じ地の色へすり替えておく（trip-open-bg-fade、
+    // style.css参照。白本体クローンがシートの高さしか覆わないぶん、その下は最後までこちらが担当）。
+    var bgFade = document.createElement('div');
+    bgFade.className = 'trip-open-bg-fade';
 
     // 写真クローン：カードに写真があるときだけ作る（無ければ白本体クローンだけが広がる演出になる）
     var clonePhoto = null;
@@ -2921,8 +2946,12 @@
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, visual.bodyRect);
     cloneBody.style.borderRadius = visual.bodyRadius;
+    var cardTitleEl = cardEl.querySelector('.trip-card-title');
+    var cardDateEl = cardEl.querySelector('.trip-card-date');
+    addCloneText(cloneBody, cardTitleEl ? cardTitleEl.textContent : '', cardDateEl ? cardDateEl.textContent : '');
 
     document.body.appendChild(backdrop);
+    document.body.appendChild(bgFade);
     if (clonePhoto) document.body.appendChild(clonePhoto);
     document.body.appendChild(cloneBody);
 
@@ -2935,10 +2964,17 @@
       if (finished || !minDone || !screenReady) return;
       finished = true;
       clearTimeout(safetyTimer);
+      // 順番が重要：本物の詳細画面をフェード無しで即座に見せてから、同じフレームで暗幕・
+      // ベタ塗り・クローンを消す。暗幕をフェードアウトさせながら後から消すと、消えるまでの
+      // 数フレームだけ本物の詳細画面の上に暗幕（ぼかし＋暗く）が乗ったままになり、詳細画面が
+      // ぼやけて見える不具合になる（2026-09-29修正）。ここではもう暗幕・クローンは不要な絵
+      // （本物と同じ絵の上に重なっていただけ）なので、フェードさせずに即除去してよい。
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
-      backdrop.classList.remove('show');
-      setTimeout(function () { backdrop.remove(); if (clonePhoto) clonePhoto.remove(); cloneBody.remove(); }, 260);
+      backdrop.remove();
+      bgFade.remove();
+      if (clonePhoto) clonePhoto.remove();
+      cloneBody.remove();
     }
     // 安全策：旅行が見つからない等でopenTripが失敗すると（catch側でalert→goHomeへ）、screenReadyが
     // 一生falseのままになり得るため、一定時間で強制的に後片付けする（暗幕・クローンが残り続けて
@@ -2948,6 +2984,7 @@
       finished = true;
       unfreezeScreen(leavingScreen);
       backdrop.remove();
+      bgFade.remove();
       if (clonePhoto) clonePhoto.remove();
       cloneBody.remove();
     }, 10000);
@@ -2965,6 +3002,7 @@
     requestAnimationFrame(function () {
       void cloneBody.offsetHeight; // reflow。ここまでの初期位置をブラウザに確定させてから終了位置へ動かす
       backdrop.classList.add('show');
+      bgFade.classList.add('show'); // 演出後半（CSS側のtransition-delayで225ms〜450ms）でグレーへ
       if (clonePhoto) {
         setCloneRect(clonePhoto, target.photoRect);
         clonePhoto.style.borderRadius = '0';
@@ -2997,6 +3035,14 @@
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop show';
+    // 開くときと違い、抜ける画面（frozenになる旅の詳細）はもともと本物の詳細画面そのものなので、
+    // シートの下は最初から本物の--bg色（グレー＋カード）になっている。そのためbg-fadeは「戻る」開始時
+    // から不透明（=グレーが透けて見える状態）にしておき、白本体クローンが縮んでいくあいだも
+    // その下がずっと正しいグレーであり続けるようにする（trip-open-bg-fadeにtransitionは無くても
+    // クラスの有無だけで即座に切り替わる。フェードが要るのは開くときの「ぼやけた一覧→グレー」だけで、
+    // 戻るときは最初からグレーなのでフェードではなく最初からshowでよい）。
+    var bgFade = document.createElement('div');
+    bgFade.className = 'trip-open-bg-fade show';
 
     var clonePhoto = null;
     if (start.hasPhoto) {
@@ -3010,8 +3056,15 @@
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, start.sheetRect);
     cloneBody.style.borderRadius = '20px 20px 0 0';
+    // 本物のタイトル・日程クローンを重ねておく（本物の詳細画面はこのあとdoNavigate()で消えるので、
+    // 消える前に今の文字を読み取っておく）。カードへ戻り着くまでこの文字のまま縮む＝カードの文字と
+    // 一瞬で入れ替わる（revealEnteringScreenの瞬間）。
+    var detailTitleEl = $('#tripTitle');
+    var detailDatesEl = $('#tripDates');
+    addCloneText(cloneBody, detailTitleEl ? detailTitleEl.textContent : '', detailDatesEl ? detailDatesEl.textContent : '');
 
     document.body.appendChild(backdrop);
+    document.body.appendChild(bgFade);
     if (clonePhoto) document.body.appendChild(clonePhoto);
     document.body.appendChild(cloneBody);
 
@@ -3043,9 +3096,13 @@
     });
 
     setTimeout(function () {
+      // 開くときと同じ理由で、本物（ホーム／マイログ）を即座に見せるのと同じフレームで暗幕・
+      // ベタ塗り・クローンを消す（暗幕の消滅を450msのtransitionに任せて別タイミングで消すと、
+      // 本物がぼやけて見える数フレームができてしまう。2026-09-29修正）。
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
       backdrop.remove();
+      bgFade.remove();
       if (clonePhoto) clonePhoto.remove();
       cloneBody.remove();
     }, TRIP_OPEN_ANIM_MS);
