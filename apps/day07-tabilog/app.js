@@ -2983,44 +2983,91 @@
     cards.forEach(function (c) { io.observe(c); });
   }
 
-  // ---------- 旅行カードが浮かび上がって詳細画面に広がる演出（Airbnb風のshared-element遷移、2026-09-29〜） ----------
-  // FLIP（First・Last・Invert・Play）の考え方：タップされたカードの実際の見た目（位置・大きさ・
-  // 写真の有無）をそのままコピーした「クローン」をposition:fixedで重ね、開始位置（カードの位置）→
-  // 終了位置（詳細画面のカバー写真部分いっぱい）へCSSトランジションさせる。本物の詳細画面は
-  // 裏側でそのまま読み込み・描画を始める（openTrip自体はアニメーションを待たない）。
+  // ---------- 旅行カードが丸ごと浮かび上がって詳細画面に広がる演出（Airbnb風のshared-element遷移、2026-09-29〜） ----------
+  // FLIP（First・Last・Invert・Play）の考え方：タップされたカードの実際の見た目（写真部分・白い本体部分、
+  // それぞれの位置・大きさ・角丸）をそのままコピーした「クローン」を2枚、position:fixedで重ねる。
+  // 写真クローンはカードの写真の位置→詳細ヘッダーの大きいカバー写真（ビューポート高の約40%）へ、
+  // 白本体クローンはカードの白い部分→写真の下に16px重なる角丸の白いシートへ、それぞれ別々に
+  // CSSトランジションさせる（＝カードが「丸ごと」広がって見える。写真だけが薄い帯に縮む見え方の
+  // 反省から2026-09-29に作り替えた）。本物の詳細画面は裏側でそのまま読み込み・描画を始める
+  // （openTrip自体はアニメーションを待たない）。
   // 遷移中は、抜ける画面（ホーム／マイログの一覧）を「今見えていたとおりの見た目・スクロール位置」の
   // まま画面いっぱいに固定表示し続け、その上にクローン＋暗幕（ぼかし＋暗く）を重ねることで、
-  // 「一覧がぼやけて暗くなり、カードだけが手前で広がる」というAirbnbアプリ同様の見た目にする
-  // （freezeLeavingScreen）。入る画面（旅の詳細）はクローンの下でopacity:0のまま読み込みを進め、
-  // アニメーションが終わった瞬間にフェードインで見せる（revealEnteringScreen）。
+  // 「一覧だけがぼやけて暗くなり、カードだけが手前で広がる」というAirbnbアプリ同様の見た目にする
+  // （freezeLeavingScreen）。入る画面（旅の詳細）は演出中ずっとopacity:0のまま隠しておき（＝詳細画面が
+  // ぼかされて見えることは無い）、クローンが最終位置に達した瞬間だけフェード無しで即座に見せて
+  // （revealEnteringScreen）、クローンをその場で消す（ピクセル的に同じ絵の上に本物が現れるだけなので
+  // 継ぎ目が出ない）。タイトル・日程・参加者行はその直後に少しずつ間を空けてフェードイン＋浮き上がり
+  // させる（playTripDetailStagger）。
   // 「戻る」で同じカードがまだ一覧に残っていれば、逆再生（詳細→カードの位置）してから画面を切り替える
   // （pendingCardOpenAnim、goHome参照）。
   // Web版では見え方が不自然という判断（アプリオーナー確認済み・2026-09-29）で、この演出は
   // iOSアプリ（Capacitor）内でのみ有効にする。Webはブラウザ・端末を問わずe2a3cf2以前と同じ
-  // 「即座に画面が切り替わるだけ」の遷移に戻す（暗幕・クローン・画面固定は一切出さない）。
+  // 「即座に画面が切り替わるだけ」の遷移に戻す（暗幕・クローン・画面固定は一切出さない）。ヘッダーの
+  // レイアウト自体（大きいカバー写真＋白いシート）はWebでも同じCSSを使う（見た目だけ、動きは無し）。
   // isNativeApp()は都度呼ぶ関数なので、この判定も呼び出しごとに評価する（起動直後のCapacitor
   // 初期化タイミングに依存しないようにするため、値をキャッシュしない）。
   function CARD_EXPAND_ENABLED() {
     return isNativeApp() && !prefersReducedMotion();
   }
-  var TRIP_OPEN_ANIM_MS = 380;
-  var TRIP_OPEN_ANIM_FADE_MS = 260;
+  var TRIP_OPEN_ANIM_MS = 450; // style.cssの.trip-open-cloneのtransition時間と揃える
+  var TRIP_STAGGER_STEP_MS = 40;
+  var TRIP_STAGGER_DUR_MS = 260;
   var pendingCardOpenAnim = null; // { cardEl, tripId } / 直前にカードのアニメーションで開いた旅行だけ覚える
 
-  function tripOpenCloneHtml(hasPhoto) {
-    return (hasPhoto ? '<div class="trip-open-clone-photo"></div>' : '') + '<div class="trip-open-clone-body"></div>';
+  // 詳細ヘッダーの最終的な見た目（カバー写真・白いシートの位置と大きさ）を、タップした瞬間に
+  // 同期で計算する。実際の詳細画面はこの時点ではまだ非表示（display:none）でgetBoundingClientRectが
+  // 使えないため、実測はできない。その代わりstyle.cssのカバー写真の高さ計算式（clamp(220px, 40vh, 340px)）
+  // と、シートのだいたいの高さ（見出し＋日程＋余白）をこちらでも同じ値で見積もる（誤差は数px程度で、
+  // クローン→本物の入れ替わり時に気づかれない前提。将来style.css側の数値を変えたら、ここも合わせる）。
+  function computeTripDetailHeaderTarget() {
+    var vw = document.documentElement.clientWidth;
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    var heroH = Math.max(220, Math.min(340, vh * 0.4));
+    var sheetOverlap = 16;
+    var sheetEstH = 92; // タイトル1行＋日程1行＋シートのpadding程度の見積もり
+    return {
+      photoRect: { top: 0, left: 0, width: vw, height: heroH },
+      sheetRect: { top: heroH - sheetOverlap, left: 0, width: vw, height: sheetEstH }
+    };
   }
 
-  // カードの現在の見た目（写真の有無・角丸・写真のURL）を読み取る。ホーム画面の大きい写真カード
-  // （.trip-card.has-photo）だけ「写真」を持ち、マイログの小さいサムネイル一覧カードは常に「写真なし」
-  // 扱い（白いカードが広がるだけの演出になる）。
+  // 詳細画面が実際にactiveになった後（＝本物のカバー写真・シートがDOMに描画された後）に、
+  // 実測のヘッダー位置を読み取る。これが取れる場面（screenReady後）ではこちらを正として使う。
+  function readTripDetailHeaderTarget() {
+    var photoEl = $('#tripCoverPhoto');
+    var sheetEl = $('.trip-cover-text');
+    var hasPhoto = !!(photoEl && !photoEl.hidden);
+    return {
+      hasPhoto: hasPhoto,
+      photoRect: hasPhoto ? photoEl.getBoundingClientRect() : null,
+      sheetRect: sheetEl ? sheetEl.getBoundingClientRect() : null
+    };
+  }
+
+  function setCloneRect(el, rect) {
+    el.style.top = rect.top + 'px';
+    el.style.left = rect.left + 'px';
+    el.style.width = rect.width + 'px';
+    el.style.height = rect.height + 'px';
+  }
+
+  // カードの現在の見た目（写真の有無・角丸・写真のURL、写真部分と白い本体部分それぞれの矩形）を
+  // 読み取る。ホーム画面の大きい写真カード（.trip-card.has-photo）だけ「写真」を持ち、マイログの
+  // 小さいサムネイル一覧カードは常に「写真なし」扱い（白いカードが広がるだけの演出になる）。
   function readTripCardVisual(cardEl) {
     var photoEl = cardEl.querySelector('.trip-card-photo');
+    var bodyEl = photoEl ? cardEl.querySelector('.trip-card-info') : cardEl;
+    var cardRadius = parseFloat(window.getComputedStyle(cardEl).borderRadius) || 0;
     return {
       hasPhoto: !!photoEl,
       photoUrl: photoEl ? photoEl.style.backgroundImage : '',
-      photoHeight: photoEl ? photoEl.getBoundingClientRect().height : 0,
-      radius: window.getComputedStyle(cardEl).borderRadius
+      photoRect: photoEl ? photoEl.getBoundingClientRect() : null,
+      // 写真ありカードの本体（.trip-card-info）は写真の下でカードの下2つの角だけ丸い。
+      // 写真なしカード（マイログの小さい一覧・写真のない旅行）はカード自体が本体で4つとも丸い。
+      photoRadius: photoEl ? (cardRadius + 'px ' + cardRadius + 'px 0 0') : '',
+      bodyRect: bodyEl.getBoundingClientRect(),
+      bodyRadius: photoEl ? ('0 0 ' + cardRadius + 'px ' + cardRadius + 'px') : (cardRadius + 'px')
     };
   }
 
@@ -3048,24 +3095,57 @@
     screenEl.style.top = '';
     screenEl.style.zIndex = '';
   }
-  // 入る画面（旅の詳細／ホーム）をクローンの下で見えなくしておき、アニメーション終了時にフェードインする。
+  // 入る画面（旅の詳細／ホーム）をクローンの下で見えなくしておく。詳細画面がぼかされて見える瞬間を
+  // 作らないため、演出が終わるまでは常にopacity:0（フェードでうっすら見せることもしない）。
   function hideEnteringScreen(screenEl) {
     if (!screenEl) return null;
     screenEl.style.transition = 'none';
     screenEl.style.opacity = '0';
     screenEl.style.pointerEvents = 'none';
+    if (screenEl.dataset.screen === 'tripDetail') prepareTripDetailStagger(screenEl);
     return screenEl;
   }
+  // クローンが最終位置に達した瞬間に、フェード無しで即座に本物を見せる（クローンの最終フレームと
+  // ピクセル的に同じ絵の上に本物が現れるだけなので継ぎ目が出ない）。旅の詳細画面ならこの直後に
+  // タイトル・日程・参加者行をstaggerでふわっと出す（playTripDetailStagger）。
   function revealEnteringScreen(screenEl) {
     if (!screenEl) return;
-    void screenEl.offsetWidth; // reflow：ここまでのopacity:0を確定させてからフェードインへ
-    screenEl.style.transition = 'opacity ' + TRIP_OPEN_ANIM_FADE_MS + 'ms ease';
+    screenEl.style.transition = 'none';
     screenEl.style.opacity = '1';
     screenEl.style.pointerEvents = '';
+    void screenEl.offsetWidth; // reflow
+    screenEl.style.transition = '';
+    if (screenEl.dataset.screen === 'tripDetail') playTripDetailStagger(screenEl);
+  }
+
+  // staggerでふわっと出す対象（タイトル→日程→参加者行の順、40msずつ間を空ける）。あらかじめ
+  // opacity:0・8px下にずらしておき（prepare）、本物が見えた直後に透明→表示・8px下→0へ動かす（play）。
+  function tripDetailStaggerTargets() {
+    return [$('#tripTitle'), $('#tripDates'), $('.companions-row')].filter(function (el) { return !!el; });
+  }
+  function prepareTripDetailStagger() {
+    tripDetailStaggerTargets().forEach(function (el) {
+      el.style.transition = 'none';
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(8px)';
+    });
+  }
+  function playTripDetailStagger() {
+    var targets = tripDetailStaggerTargets();
+    targets.forEach(function (el, i) {
+      void el.offsetWidth; // reflow：ここまでの初期状態を確定させてから動かす
+      var delay = i * TRIP_STAGGER_STEP_MS;
+      el.style.transition = 'opacity ' + TRIP_STAGGER_DUR_MS + 'ms ease ' + delay + 'ms, transform ' + TRIP_STAGGER_DUR_MS + 'ms ease ' + delay + 'ms';
+      el.style.opacity = '1';
+      el.style.transform = 'translateY(0)';
+    });
     setTimeout(function () {
-      screenEl.style.transition = '';
-      screenEl.style.opacity = '';
-    }, TRIP_OPEN_ANIM_FADE_MS + 40);
+      targets.forEach(function (el) {
+        el.style.transition = '';
+        el.style.opacity = '';
+        el.style.transform = '';
+      });
+    }, targets.length * TRIP_STAGGER_STEP_MS + TRIP_STAGGER_DUR_MS + 60);
   }
 
   // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
@@ -3076,34 +3156,44 @@
       openTrip(tripId, returnTo);
       return;
     }
-    var startRect = cardEl.getBoundingClientRect();
-    if (!startRect.width || !startRect.height) { openTrip(tripId, returnTo); return; }
     var visual = readTripCardVisual(cardEl);
+    if (!visual.bodyRect.width || !visual.bodyRect.height) { openTrip(tripId, returnTo); return; }
     var leavingScreen = $('.screen.active');
     var leavingScrollY = window.scrollY;
+    var target = computeTripDetailHeaderTarget(); // 実測はまだできないので見積もり
+    // 「広がるだけ・縮まない」を保証するため、見積もりがカードの現在の大きさより小さければ
+    // カード側の大きさで底上げする（カードの内容が長くて見積もりより大きい、といったケースの保険）
+    target.photoRect.width = Math.max(target.photoRect.width, visual.photoRect ? visual.photoRect.width : 0);
+    target.photoRect.height = Math.max(target.photoRect.height, visual.photoRect ? visual.photoRect.height : 0);
+    target.sheetRect.width = Math.max(target.sheetRect.width, visual.bodyRect.width);
+    target.sheetRect.height = Math.max(target.sheetRect.height, visual.bodyRect.height);
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop';
-    var clone = document.createElement('div');
-    clone.className = 'trip-open-clone';
-    clone.style.top = startRect.top + 'px';
-    clone.style.left = startRect.left + 'px';
-    clone.style.width = startRect.width + 'px';
-    clone.style.height = startRect.height + 'px';
-    clone.style.borderRadius = visual.radius;
-    clone.innerHTML = tripOpenCloneHtml(visual.hasPhoto);
-    if (visual.hasPhoto) {
-      var photo = clone.querySelector('.trip-open-clone-photo');
-      photo.style.height = visual.photoHeight + 'px';
-      photo.style.backgroundImage = visual.photoUrl;
-    }
-    document.body.appendChild(backdrop);
-    document.body.appendChild(clone);
 
-    // クローンの見た目の動き（カード位置→ヘッダーいっぱい）は、通信の完了を待たずにすぐ始める。
+    // 写真クローン：カードに写真があるときだけ作る（無ければ白本体クローンだけが広がる演出になる）
+    var clonePhoto = null;
+    if (visual.hasPhoto) {
+      clonePhoto = document.createElement('div');
+      clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
+      setCloneRect(clonePhoto, visual.photoRect);
+      clonePhoto.style.borderRadius = visual.photoRadius;
+      clonePhoto.style.backgroundImage = visual.photoUrl;
+    }
+    // 白本体クローン：カードの白い部分（写真ありなら.trip-card-info、無ければカード自体）
+    var cloneBody = document.createElement('div');
+    cloneBody.className = 'trip-open-clone trip-open-clone-body';
+    setCloneRect(cloneBody, visual.bodyRect);
+    cloneBody.style.borderRadius = visual.bodyRadius;
+
+    document.body.appendChild(backdrop);
+    if (clonePhoto) document.body.appendChild(clonePhoto);
+    document.body.appendChild(cloneBody);
+
+    // クローンの見た目の動き（カード位置→詳細ヘッダーいっぱい）は、通信の完了を待たずにすぐ始める。
     // 一方、本物の詳細画面への切り替え（showScreen）はopenTrip内部のAPI応答を待つ非同期処理のため、
-    // 「見た目のアニメーションが最短380ms経過」と「実際に画面が切り替わった」の両方が揃うまで待ってから、
-    // 抜ける画面の固定表示（freeze）を解いて、詳細画面をフェードインで見せる（minDone/screenReady）。
+    // 「見た目のアニメーションが最短450ms経過」と「実際に画面が切り替わった」の両方が揃うまで待ってから、
+    // 抜ける画面の固定表示（freeze）を解いて、詳細画面を即座に見せる（minDone/screenReady）。
     var minDone = false, screenReady = false, finished = false, enteringScreen = null;
     function finishIfReady() {
       if (finished || !minDone || !screenReady) return;
@@ -3112,7 +3202,7 @@
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
       backdrop.classList.remove('show');
-      setTimeout(function () { backdrop.remove(); clone.remove(); }, 260);
+      setTimeout(function () { backdrop.remove(); if (clonePhoto) clonePhoto.remove(); cloneBody.remove(); }, 260);
     }
     // 安全策：旅行が見つからない等でopenTripが失敗すると（catch側でalert→goHomeへ）、screenReadyが
     // 一生falseのままになり得るため、一定時間で強制的に後片付けする（暗幕・クローンが残り続けて
@@ -3122,7 +3212,8 @@
       finished = true;
       unfreezeScreen(leavingScreen);
       backdrop.remove();
-      clone.remove();
+      if (clonePhoto) clonePhoto.remove();
+      cloneBody.remove();
     }, 10000);
 
     openTrip(tripId, returnTo, function () {
@@ -3136,16 +3227,14 @@
     pendingCardOpenAnim = { cardEl: cardEl, tripId: tripId };
 
     requestAnimationFrame(function () {
-      void clone.offsetHeight; // reflow。ここまでの初期位置をブラウザに確定させてから終了位置へ動かす
+      void cloneBody.offsetHeight; // reflow。ここまでの初期位置をブラウザに確定させてから終了位置へ動かす
       backdrop.classList.add('show');
-      var vw = document.documentElement.clientWidth;
-      var targetH = visual.hasPhoto ? 160 : 96; // .trip-cover-photoの高さ（style.css）に合わせる。写真無しはヘッダー相当の高さ
-      clone.style.top = '0px';
-      clone.style.left = '0px';
-      clone.style.width = vw + 'px';
-      clone.style.height = targetH + 'px';
-      clone.style.borderRadius = '0 0 var(--radius-card) var(--radius-card)';
-      if (visual.hasPhoto) clone.querySelector('.trip-open-clone-photo').style.height = targetH + 'px';
+      if (clonePhoto) {
+        setCloneRect(clonePhoto, target.photoRect);
+        clonePhoto.style.borderRadius = '0';
+      }
+      setCloneRect(cloneBody, target.sheetRect);
+      cloneBody.style.borderRadius = '20px 20px 0 0';
     });
 
     setTimeout(function () { minDone = true; finishIfReady(); }, TRIP_OPEN_ANIM_MS);
@@ -3163,31 +3252,32 @@
       doNavigate();
       return;
     }
-    var targetRect = info.cardEl.getBoundingClientRect();
-    if (!targetRect.width || !targetRect.height) { doNavigate(); return; }
-    var visual = readTripCardVisual(info.cardEl);
-    var coverPhotoEl = $('#tripCoverPhoto');
-    var hasPhoto = !!(coverPhotoEl && !coverPhotoEl.hidden);
-    var vw = document.documentElement.clientWidth;
-    var startH = hasPhoto ? 160 : 96;
+    var cardVisual = readTripCardVisual(info.cardEl);
+    if (!cardVisual.bodyRect.width || !cardVisual.bodyRect.height) { doNavigate(); return; }
+    // 今表示中の本物の詳細画面（このあとdoNavigate()で消える直前）から、写真・シートの実際の位置を
+    // 実測する。開くときと違ってこちらは今まさに画面上にあるので実測できる（見積もりに頼らない）。
+    var start = readTripDetailHeaderTarget();
+    if (!start.sheetRect) { doNavigate(); return; }
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop show';
-    var clone = document.createElement('div');
-    clone.className = 'trip-open-clone';
-    clone.style.top = '0px';
-    clone.style.left = '0px';
-    clone.style.width = vw + 'px';
-    clone.style.height = startH + 'px';
-    clone.style.borderRadius = '0 0 var(--radius-card) var(--radius-card)';
-    clone.innerHTML = tripOpenCloneHtml(hasPhoto);
-    if (hasPhoto) {
-      var photo = clone.querySelector('.trip-open-clone-photo');
-      photo.style.height = startH + 'px';
-      photo.style.backgroundImage = coverPhotoEl.style.backgroundImage;
+
+    var clonePhoto = null;
+    if (start.hasPhoto) {
+      clonePhoto = document.createElement('div');
+      clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
+      setCloneRect(clonePhoto, start.photoRect);
+      clonePhoto.style.borderRadius = '0';
+      clonePhoto.style.backgroundImage = $('#tripCoverPhoto').style.backgroundImage;
     }
+    var cloneBody = document.createElement('div');
+    cloneBody.className = 'trip-open-clone trip-open-clone-body';
+    setCloneRect(cloneBody, start.sheetRect);
+    cloneBody.style.borderRadius = '20px 20px 0 0';
+
     document.body.appendChild(backdrop);
-    document.body.appendChild(clone);
+    if (clonePhoto) document.body.appendChild(clonePhoto);
+    document.body.appendChild(cloneBody);
 
     var leavingScreen = $('.screen.active'); // 旅の詳細（このあとdoNavigate()でホーム等に切り替わる）
     var leavingScrollY = window.scrollY;
@@ -3196,21 +3286,32 @@
     freezeLeavingScreen(leavingScreen, leavingScrollY);
 
     requestAnimationFrame(function () {
-      void clone.offsetHeight;
+      void cloneBody.offsetHeight;
       backdrop.classList.remove('show');
-      clone.style.top = targetRect.top + 'px';
-      clone.style.left = targetRect.left + 'px';
-      clone.style.width = targetRect.width + 'px';
-      clone.style.height = targetRect.height + 'px';
-      clone.style.borderRadius = visual.radius;
-      if (hasPhoto) clone.querySelector('.trip-open-clone-photo').style.height = visual.photoHeight + 'px';
+      if (clonePhoto) {
+        if (cardVisual.hasPhoto) {
+          setCloneRect(clonePhoto, cardVisual.photoRect);
+          clonePhoto.style.borderRadius = cardVisual.photoRadius;
+        } else {
+          // 戻り先のカードに写真が無い（マイログの小さい一覧など）ときは、写真クローンの高さを
+          // 0に潰してカードの上端に吸い込ませる
+          setCloneRect(clonePhoto, {
+            top: cardVisual.bodyRect.top, left: cardVisual.bodyRect.left,
+            width: cardVisual.bodyRect.width, height: 0
+          });
+          clonePhoto.style.borderRadius = '0';
+        }
+      }
+      setCloneRect(cloneBody, cardVisual.bodyRect);
+      cloneBody.style.borderRadius = cardVisual.bodyRadius;
     });
 
     setTimeout(function () {
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
       backdrop.remove();
-      clone.remove();
+      if (clonePhoto) clonePhoto.remove();
+      cloneBody.remove();
     }, TRIP_OPEN_ANIM_MS);
   }
 

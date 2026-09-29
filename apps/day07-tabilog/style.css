@@ -329,57 +329,68 @@ a:hover { text-decoration: underline; }
 /* サムネイル画像が無い旅行では、戻る／共有／編集の3ボタンは通常のフローで横並びにする */
 .trip-cover .share-btn { margin-left: auto; }
 .trip-cover-text { flex-basis: 100%; }
-/* サムネイル画像がある旅行だけ、写真の上にボタン・タイトルを重ねて表示する（TimeTree風ヘッダー、DAY29〜） */
-.trip-cover:has(.trip-cover-photo:not([hidden]))::before {
-  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 160px; border-radius: var(--radius-card);
-  background: linear-gradient(180deg, rgba(10, 12, 16, 0.05) 0%, rgba(10, 12, 16, 0.45) 100%); pointer-events: none; z-index: 1;
+/* サムネイル画像がある旅行だけ、Airbnbの旅程詳細を手本にしたレイアウトにする（2026-09-29、
+   「カードの写真が薄い帯に縮んで見える」というオーナー指摘の修正で、TimeTree風の重ね表示から
+   作り替えた）。カバー写真をビューポート高の約40%・画面幅いっぱいに見せ（.wrapのpaddingを
+   打ち消す負のmarginで画面端まで届かせ、ステータスバーの下にも回り込ませる）、タイトル・日程は
+   写真の下の白いシート（角丸20px、写真に16px重ねる）に置く。戻る／編集ボタンだけ写真の上に
+   丸い白ボタンで重ねる（safe-area-inset-topの分だけ下げる）。 */
+.trip-cover:has(.trip-cover-photo:not([hidden])) {
+  display: block; margin: -20px -16px 0; padding-bottom: 0;
+}
+.trip-cover:has(.trip-cover-photo:not([hidden])) .trip-cover-photo {
+  width: 100%; height: clamp(220px, 40vh, 340px); border-radius: 0; margin-bottom: 0;
 }
 .trip-cover:has(.trip-cover-photo:not([hidden])) .back-btn,
 .trip-cover:has(.trip-cover-photo:not([hidden])) .share-btn,
 .trip-cover:has(.trip-cover-photo:not([hidden])) .edit-btn {
-  position: absolute; top: 14px; z-index: 2; margin-left: 0;
-  background: rgba(255, 255, 255, 0.92); color: #2A2E33;
+  position: absolute; top: calc(14px + env(safe-area-inset-top)); z-index: 3; margin-left: 0;
+  width: 36px; height: 36px; background: rgba(255, 255, 255, 0.94); color: #2A2E33;
+  box-shadow: 0 1px 4px rgba(10, 12, 16, 0.18);
 }
-.trip-cover:has(.trip-cover-photo:not([hidden])) .back-btn { left: 14px; }
-.trip-cover:has(.trip-cover-photo:not([hidden])) .share-btn { right: 56px; }
-.trip-cover:has(.trip-cover-photo:not([hidden])) .edit-btn { right: 14px; }
+.trip-cover:has(.trip-cover-photo:not([hidden])) .back-btn { left: 16px; }
+.trip-cover:has(.trip-cover-photo:not([hidden])) .share-btn { right: 60px; }
+.trip-cover:has(.trip-cover-photo:not([hidden])) .edit-btn { right: 16px; }
 .trip-cover:has(.trip-cover-photo:not([hidden])) .trip-cover-text {
-  position: absolute; left: 18px; right: 18px; bottom: 14px; z-index: 2; flex-basis: auto;
+  position: relative; z-index: 2; flex-basis: auto; background: var(--card);
+  margin-top: -16px; padding: 18px 16px 4px; border-radius: 20px 20px 0 0;
 }
-.trip-cover:has(.trip-cover-photo:not([hidden])) .trip-title,
-.trip-cover:has(.trip-cover-photo:not([hidden])) .trip-dates {
-  color: #fff;
-}
+.trip-cover:has(.trip-cover-photo:not([hidden])) .trip-title { margin-top: 0; }
 .trip-title { font-family: var(--font-display); font-size: 20px; font-weight: 700; margin-top: 10px; }
 .trip-dates { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
 
-/* 旅行カードをタップしたときに、そのカードが浮かび上がって詳細画面のヘッダーへ広がる演出
+/* 旅行カードをタップしたときに、そのカードが丸ごと浮かび上がって詳細画面のヘッダーへ広がる演出
    （Airbnbアプリを手本にしたshared-element遷移。app.jsのopenTripFromCard／maybeAnimateTripCardClose、
-   2026-09-29〜）。暗幕（backdrop）はぼかし＋暗くするだけの装飾要素で、クリックは透過させない
-   （pointer-events: none。演出中は裏の一覧を操作させたくないが、専用の要素にせずJS側で
-   一覧のfreeze中は元画面がposition:fixedで前面に出ないようにしている）。 */
+   2026-09-29〜、写真だけ縮む見え方の修正で「写真クローン」「白い本体クローン」の2枚構成に作り替え）。
+   暗幕（backdrop）はぼかし＋暗くするだけの装飾要素で、クリックは透過させない（pointer-events: none。
+   演出中は裏の一覧を操作させたくないが、専用の要素にせずJS側で一覧のfreeze中は元画面が
+   position:fixedで前面に出ないようにしている）。詳細画面そのものは演出中は常に非表示のままで、
+   クローンが最終位置に達した瞬間だけ即座に（フェード無しで）その下に見せる。 */
 .trip-open-backdrop {
   position: fixed; inset: 0; z-index: 490; pointer-events: none;
   background: rgba(10, 12, 16, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px);
-  transition: background .38s ease, backdrop-filter .38s ease, -webkit-backdrop-filter .38s ease;
+  transition: background .45s ease, backdrop-filter .45s ease, -webkit-backdrop-filter .45s ease;
 }
 .trip-open-backdrop.show {
   background: rgba(10, 12, 16, 0.3); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
+/* 写真クローン・白本体クローンに共通：位置・大きさ・角丸をひとつのtransitionでなめらかに動かす
+   （gentle springのcubic-bezier。450msはTRIP_OPEN_ANIM_MSと揃える） */
 .trip-open-clone {
-  position: fixed; z-index: 500; overflow: hidden; background: var(--card);
-  box-shadow: var(--card-shadow); pointer-events: none;
-  transition: top .38s cubic-bezier(.2, .8, .2, 1), left .38s cubic-bezier(.2, .8, .2, 1),
-    width .38s cubic-bezier(.2, .8, .2, 1), height .38s cubic-bezier(.2, .8, .2, 1),
-    border-radius .38s cubic-bezier(.2, .8, .2, 1);
+  position: fixed; z-index: 500; overflow: hidden; pointer-events: none;
+  transition: top .45s cubic-bezier(.2, .9, .25, 1), left .45s cubic-bezier(.2, .9, .25, 1),
+    width .45s cubic-bezier(.2, .9, .25, 1), height .45s cubic-bezier(.2, .9, .25, 1),
+    border-radius .45s cubic-bezier(.2, .9, .25, 1);
 }
 .trip-open-clone-photo {
-  width: 100%; background-color: var(--border-soft); background-size: cover; background-position: center;
-  transition: height .38s cubic-bezier(.2, .8, .2, 1);
+  background-color: var(--border-soft); background-size: cover; background-position: center;
 }
-.trip-open-clone-body { flex: 1; }
+/* 白い本体クローンは写真クローンより手前（写真の上に16px重なる白いシートを表現するため） */
+.trip-open-clone-body {
+  background: var(--card); box-shadow: var(--card-shadow); z-index: 501;
+}
 @media (prefers-reduced-motion: reduce) {
-  .trip-open-backdrop, .trip-open-clone, .trip-open-clone-photo { transition: none; }
+  .trip-open-backdrop, .trip-open-clone { transition: none; }
 }
 
 /* ボタン（参加する・招待・アルバム・精算）が画面幅より広いと、ページ全体が横に少しずれて動いていた。
