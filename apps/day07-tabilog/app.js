@@ -2847,6 +2847,30 @@
   // 方がAirbnbアプリのように「今読み込み中」と伝わりやすいので、シマー（光が流れる）スケルトンを出す
   // （マイログ・「行ったことある旅先」の初回読み込みで使う。2026-09-29〜。prefers-reduced-motionでは
   // CSS側でアニメーションを止め、ただの薄い塗りのまま出す）。
+  // 旅行のカードがスクロールでふわっと浮かび上がる演出（Airbnbアプリを手本にした。2026-09-29〜）。
+  // カードが画面に入ったタイミングで、下から（opacity 0→1・16px下から0へ）浮かび上がらせる。
+  // 一度出現したカードは監視をやめる（IntersectionObserver#unobserve）ので、スクロールを
+  // 行き来しても毎回は動かない。最初から画面内にあるカード同士は、同じ判定タイミングで
+  // まとめて交差するので、その中でだけ少しずつ（40msずつ）ずらして動かす。
+  // prefers-reduced-motion・IntersectionObserver非対応の環境では、演出そのものを付けない
+  // （reveal-initクラスを付けないので、CSSのopacity: 0が一切効かず最初から普通に表示される）。
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+  function revealCardsOnScroll(cards) {
+    if (!cards || !cards.length) return;
+    if (prefersReducedMotion() || typeof IntersectionObserver !== 'function') return;
+    cards.forEach(function (c) { c.classList.add('reveal-init'); });
+    var io = new IntersectionObserver(function (entries) {
+      entries.filter(function (e) { return e.isIntersecting; }).forEach(function (entry, i) {
+        var el = entry.target;
+        setTimeout(function () { el.classList.add('reveal-in'); }, i * 40);
+        io.unobserve(el);
+      });
+    }, { threshold: 0.15, rootMargin: '0px 0px -5% 0px' });
+    cards.forEach(function (c) { io.observe(c); });
+  }
+
   function skeletonCardsHtml(n) {
     var card = '<div class="skeleton-card" aria-hidden="true">' +
       '<div class="skeleton-line skeleton-line-title"></div>' +
@@ -3627,6 +3651,7 @@
       return;
     }
     el.innerHTML = '';
+    var revealCards = [];
     list.forEach(function (t) {
       var card = document.createElement('button');
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
@@ -3658,7 +3683,9 @@
       }
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
+      revealCards.push(card);
     });
+    revealCardsOnScroll(revealCards);
   }
 
   // ホーム画面の旅行一覧は本来この端末のローカル索引（tabilog:my-trips）だけを見ているため、
@@ -7333,6 +7360,7 @@
     var placesByTrip = {};
     ((state.myLogPlaces && state.myLogPlaces.tripPlaces) || []).forEach(function (t) { placesByTrip[t.tripId] = t; });
     el.innerHTML = '';
+    var revealCards = [];
     trips.forEach(function (t) {
       var card = document.createElement('div');
       card.className = 'trip-card';
@@ -7363,7 +7391,9 @@
         });
       });
       el.appendChild(card);
+      revealCards.push(card);
     });
+    revealCardsOnScroll(revealCards);
   }
 
   function myLogCategoryOf(it) { return it.category === 'arrival' ? 'transport' : it.category; }
