@@ -185,7 +185,7 @@
       <div class="muted" id="bulkLead">ネタを並べておくと、1本ずつ「文案 → 動画 → 予約」まで通しで作ります。
         20本入れておけば、20日ぶんが一度に仕込めます。
         <strong>動画はこのブラウザの中で作るので、終わるまでこの画面を開いたままにしてください。</strong>
-        1本あたり40秒ほど、20本で15分前後かかります。</div>
+        文案づくりを含めて、1本あたり数十秒かかります。</div>
 
       <label for="bulkTopics">ネタ（1行に1つ）</label>
       <textarea id="bulkTopics" style="min-height:180px" placeholder="読み込み中…"></textarea>
@@ -208,6 +208,9 @@
           <input type="number" id="bulkEvery" value="1" min="1" max="14">
         </div>
       </div>
+      <label style="margin-top:8px">
+        <input type="checkbox" id="bulkSkipBooked" checked> 予約がある日は飛ばす（空いている日だけに入れる。同じ日に2本出さない）
+      </label>
 
       <label>投稿先</label>
       <div class="targets" id="bulkTargets"></div>
@@ -626,9 +629,10 @@
 </dialog>
 
 <script src="/mp4-mux.js?v=1"></script>
-<script src="/reel.js?v=5"></script>
+<script src="/reel.js?v=6"></script>
 <script src="/split-drafts.js?v=2"></script>
 <script src="/research-prompts.js?v=1"></script>
+<script src="/bulk-dates.js?v=1"></script>
 <script>
 'use strict';
 
@@ -2613,7 +2617,7 @@ function renderGenerated(out) {
     '<div class="genpreview"><canvas id="genCanvas"></canvas>' +
       '<div class="muted" id="genFont"></div></div>' +
     '<div class="row" style="margin-top:12px">' +
-      '<button class="primary" id="genMake">動画も作って入れる（17秒）</button>' +
+      '<button class="primary" id="genMake">動画も作って入れる</button>' +
       '<button id="genApply">文だけ入れる</button>' +
       '<span class="muted" id="genMakeState"></span>' +
       '<span class="err" id="genMakeErr"></span>' +
@@ -2991,20 +2995,6 @@ $('bulkIdeas').onclick = async () => {
   btn.disabled = false;
 };
 
-/**
- * n本目の予定日時。「2026-09-03T21:00」の形で返す。
- *
- * ★ 日付の足し算は UTC の上でやる。ブラウザの地域設定で
- *   1日ずれるのを避けるため。時刻は文字列のまま渡し、
- *   サーバーが日本時間として解釈する（jstToUtc）。
- */
-function bulkWhen(startDate, time, index, every) {
-  const [y, m, d] = startDate.split('-').map(Number);
-  const at = new Date(Date.UTC(y, m - 1, d));
-  at.setUTCDate(at.getUTCDate() + index * every);
-  return at.toISOString().slice(0, 10) + 'T' + time;
-}
-
 function bulkRow(n, total, topic) {
   const el = document.createElement('div');
   el.style.cssText = 'padding:6px 0;border-top:1px solid var(--line);font-size:13px';
@@ -3060,6 +3050,27 @@ $('bulkRun').onclick = async () => {
   }
   if (manualBoxes.length && !confirm(`${manualNames} は自動投稿を許可していないので、手渡し待ち（自分で投稿）になります。このまま仕込みますか？`)) return;
 
+  // ★ 予約日を先に決める。予約がある日は飛ばす（public/bulk-dates.js）。
+  //   仕込み直すと空き日がとびとびになり、そのまま仕込むと同じ日に2本出ていた。
+  //   一覧は画面に残していないので、ここで取り直す（ほかの画面で消した分も反映される）。
+  let booked = new Set();
+  try {
+    const fresh = await api('/api/posts');
+    booked = BulkDates.bookedDates(fresh.posts || [], currentGroup);
+  } catch (e) {
+    $('bulkErr').textContent = '予約済みの日を確かめられませんでした：' + e.message;
+    return;
+  }
+  const skip = $('bulkSkipBooked').checked;
+  const planned = BulkDates.plan(start, topics.length, every, skip ? booked : null);
+  if (!skip) {
+    const clash = planned.dates.filter((d) => booked.has(d));
+    if (clash.length && !confirm(`${clash.length}日（${clash.slice(0, 3).join('・')}${clash.length > 3 ? ' など' : ''}）はすでに予約があり、同じ日に2本出ます。このまま仕込みますか？`)) return;
+  }
+  if (skip && planned.skipped.length) {
+    $('bulkState').textContent = `予約がある ${planned.skipped.length} 日を飛ばします（${planned.skipped.slice(0, 3).join('・')}${planned.skipped.length > 3 ? ' など' : ''}）`;
+  }
+
   bulkAbort = false;
   bulkRunning = true;
   $('bulkRun').disabled = true;
@@ -3069,7 +3080,7 @@ $('bulkRun').onclick = async () => {
 
   for (let i = 0; i < topics.length; i++) {
     if (bulkAbort) break;
-    const when = bulkWhen(start, time, i, every);
+    const when = planned.dates[i] + 'T' + time;
     const row = bulkRow(i + 1, topics.length, topics[i]);
     $('bulkState').textContent = `${i + 1} / ${topics.length} 本目`;
 
@@ -3216,7 +3227,7 @@ function renderViewTabs() {
       ? 'ネタを並べておくと、1本ずつ「文案 → 動画 → 予約」まで通しで作ります。'
         + '20本入れておけば、20日ぶんが一度に仕込めます。'
         + '動画はこのブラウザの中で作るので、終わるまでこの画面を開いたままにしてください。'
-        + '1本あたり40秒ほど、20本で15分前後かかります。'
+        + '文案づくりを含めて、1本あたり数十秒かかります（動画づくりそのものは数秒）。'
       : 'ネタを並べておくと、1本ずつ「文案 → 予約」まで通しで作ります。'
         + 'この運用アカウントは動画を作らない設定なので、本文だけを予約します。'
         + '1本あたり20秒ほどです。';

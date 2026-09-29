@@ -91,6 +91,13 @@ const many = (prefix, n) => Array.from({ length: n }, (_, i) => `${prefix}のと
     assert.strictEqual(out.topics.length, 2);
   });
 
+  // ★ 「退職届と退職願の使い分け」は6行とも言い切りになり、3回書き直しても止まった（2026-09-29）。
+  await check('説明型のネタ（〜の使い分け・〜の違い・〜とは）は落とす', () => {
+    const r = topicGen.screen(['退職届と退職願の使い分け', '正社員と契約社員の違い', '第二新卒とは', '退職届を出すときにやりがちなこと'], new Set());
+    assert.deepStrictEqual(r.kept, ['退職届を出すときにやりがちなこと']);
+    assert.ok(r.rejected.every((x) => /説明型/.test(x.reason)));
+  });
+
   await check('依頼文には使ったネタが入る', () => {
     const msg = topicGen.buildUserMessage(20, ['面接で落ちる人がやりがちなこと'], []);
     assert.ok(msg.includes('面接で落ちる人がやりがちなこと'));

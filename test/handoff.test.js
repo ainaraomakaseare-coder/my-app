@@ -245,23 +245,45 @@ const post = (over) => Object.assign({
     }
   });
 
-  // ★ 予定日時の足し算。画面の bulkWhen と同じ式をここでも通す。
-  //   ブラウザの地域設定で1日ずれるのを避けるため UTC の上で数える。
-  await check('n本目の予定日時が、日をまたいでも正しく出る', () => {
-    const bulkWhen = (startDate, time, index, every) => {
-      const [y, m, d] = startDate.split('-').map(Number);
-      const at = new Date(Date.UTC(y, m - 1, d));
-      at.setUTCDate(at.getUTCDate() + index * every);
-      return at.toISOString().slice(0, 10) + 'T' + time;
-    };
-    assert.strictEqual(bulkWhen('2026-09-03', '21:00', 0, 1), '2026-09-03T21:00');
-    assert.strictEqual(bulkWhen('2026-09-03', '21:00', 19, 1), '2026-09-22T21:00');
-    // 月をまたぐ
-    assert.strictEqual(bulkWhen('2026-09-28', '21:00', 5, 1), '2026-10-03T21:00');
-    // 2日おき
-    assert.strictEqual(bulkWhen('2026-09-03', '21:00', 3, 2), '2026-09-09T21:00');
-    // うるう年
-    assert.strictEqual(bulkWhen('2028-02-28', '21:00', 1, 1), '2028-02-29T21:00');
+  // ★ 予定日時の足し算（public/bulk-dates.js）。ブラウザの地域設定で1日ずれるのを避けるため UTC の上で数える。
+  await check('n本目の予定日が、日をまたいでも正しく出る', () => {
+    const bd = require('../public/bulk-dates.js');
+    const at = (start, i, every) => bd.plan(start, i + 1, every, null).dates[i];
+    assert.strictEqual(at('2026-09-03', 0, 1), '2026-09-03');
+    assert.strictEqual(at('2026-09-03', 19, 1), '2026-09-22');
+    assert.strictEqual(at('2026-09-28', 5, 1), '2026-10-03');   // 月をまたぐ
+    assert.strictEqual(at('2026-09-03', 3, 2), '2026-09-09');   // 2日おき
+    assert.strictEqual(at('2028-02-28', 1, 1), '2028-02-29');   // うるう年
+  });
+
+  // ★ 仕込み直すと空き日がとびとびになり、そのまま仕込むと同じ日に2本出た（2026-09-29）。
+  await check('予約がある日は飛ばして、空いている日だけに入れる', () => {
+    const bd = require('../public/bulk-dates.js');
+    const booked = new Set(['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-05', '2026-10-07']);
+    const r = bd.plan('2026-09-29', 5, 1, booked);
+    assert.deepStrictEqual(r.dates, ['2026-10-02', '2026-10-03', '2026-10-04', '2026-10-06', '2026-10-08']);
+    assert.deepStrictEqual(r.skipped, ['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-05', '2026-10-07']);
+  });
+
+  await check('予約済みの日は、その運用アカウントの・日付のある・下書きでない投稿から数える（日本時間）', () => {
+    const bd = require('../public/bulk-dates.js');
+    const posts = [
+      { group_id: 'g1', status: 'scheduled', scheduled_at: '2026-10-01T12:00:00Z' },   // 21:00 JST
+      { group_id: 'g1', status: 'scheduled', scheduled_at: '2026-10-01T15:30:00Z' },   // 翌 00:30 JST
+      { group_id: 'g1', status: 'success', scheduled_at: '2026-09-28T12:00:00Z' },
+      { group_id: 'g1', status: 'draft', scheduled_at: null },
+      { group_id: 'g2', status: 'scheduled', scheduled_at: '2026-10-05T12:00:00Z' },   // 別の運用アカウント
+    ];
+    assert.deepStrictEqual([...bd.bookedDates(posts, 'g1')].sort(), ['2026-09-28', '2026-10-01', '2026-10-02']);
+  });
+
+  await check('まとめて仕込むは、予約日を bulk-dates で決め、飛ばす設定を既定にしている', () => {
+    const html = require('fs').readFileSync(__dirname + '/../public/index.html', 'utf8');
+    assert.ok(/id="bulkSkipBooked" checked/.test(html), '「予約がある日は飛ばす」が既定で入っていない');
+    assert.ok(/src="\/bulk-dates\.js/.test(html));
+    const run = html.slice(html.indexOf("$('bulkRun').onclick"), html.indexOf("$('bulkStop').onclick"));
+    assert.ok(/BulkDates\.plan\(/.test(run) && /planned\.dates\[i\]/.test(run), '予約日を bulk-dates で決めていない');
+    assert.ok(run.indexOf('BulkDates.plan(') < run.indexOf("api('/api/generate'"), '文案を作り始めてから日付を決めている');
   });
 
   // ★ 21時ちょうどの予約が、UTC の12時として保存されること。

@@ -126,6 +126,35 @@ const personal = draft({
       .some((f) => f.rule === 'question-not-open'));
   });
 
+  await check('問いの末尾の「？」も、外せば答えに続く形になるときだけ外す', () => {
+    const gen = require('../lib/draft-generate');
+    const d = { rows: [{ question: '最初に聞かれるのは？', answer: '理由' }, { question: '転職は悪いことですか？', answer: 'いいえ' }] };
+    gen.closeOpenQuestions(d);
+    assert.deepStrictEqual(d.rows.map((r) => r.question), ['最初に聞かれるのは', '転職は悪いことですか？']);
+  });
+
+  // ★ 「共通する声を集めてみたよ」が一人称の体験として止まった（2026-09-29）。集める・まとめるのは
+  //   キュレーターの実際の作業なので通す。体験（使ってみた・転職してみた）は今までどおり止める。
+  await check('「集めてみた」「まとめてみました」は通し、「使ってみた」「転職してみた」は止める', () => {
+    const stops = (t) => rules.bannedIn(t, rules.CURATOR).some((f) => f.severity === 'error');
+    for (const t of ['共通する声を集めてみたよ', '口コミをまとめてみました', 'ネットで調べてみた結果です']) assert.ok(!stops(t), t + ' を止めている');
+    for (const t of ['使ってみたら便利', '転職してみたら後悔', '作ってみました', '実際に行ってみた', '私も集めてみた']) assert.ok(stops(t), t + ' を通している');
+  });
+
+  // ★ 「信頼を築くのは → 重要だとの声」が点検を素通りした（2026-09-29）。
+  await check('答えに「〜との声」「〜らしい」が入っていたら止める', () => {
+    const rows = reel09.rows.slice(0, 5).concat([{ question: '信頼を築くのは', answer: '重要だとの声' }]);
+    assert.ok(rules.validateDraft(draft({ rows })).some((f) => f.rule === 'answer-sourcing' && f.severity === 'error'));
+    assert.ok(!rules.validateDraft(draft()).some((f) => f.rule === 'answer-sourcing'), 'ふつうの答えまで止めている');
+  });
+
+  await check('新しい書き出しの動画は、形式名で H.264 と分かる（誤って「H.264 で録れていません」と出さない）', () => {
+    const reel = require('fs').readFileSync(__dirname + '/../public/reel.js', 'utf8');
+    assert.ok(/mime:\s*'video\/mp4;codecs='\s*\+\s*config\.codec/.test(reel), 'codecs を付けていない');
+    const html = require('fs').readFileSync(__dirname + '/../public/index.html', 'utf8');
+    assert.ok(/up\.mime\.indexOf\('avc1'\)/.test(html), '画面の点検が avc1 を見ていない（前提が変わった）');
+  });
+
   await check('作る流れの中で PR と「。」を直し、それで点検を通れば下書きにしない', async () => {
     const gen = require('../lib/draft-generate');
     const generated = Object.assign({}, reel09, {
