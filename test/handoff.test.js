@@ -212,6 +212,18 @@ const post = (over) => Object.assign({
     assert.ok(!onScreen.includes('x'), 'X が案件つきで選べてしまう');
   });
 
+  // ★ TikTok 審査の録画用。サンドボックスでは video.publish がもらえず、投稿設定の欄が出ない。
+  //   デモ表示は見た目だけで、権限のない連携の投稿設定はサーバーが捨てる（下書きのまま）。
+  await check('TikTok のデモ表示は ?ttdemo=1 のときだけで、権限のない連携には TikTok へ問い合わせない', () => {
+    const html = require('fs').readFileSync(__dirname + '/../public/index.html', 'utf8');
+    assert.ok(/get\('ttdemo'\)/.test(html), 'ttdemo を見ていない');
+    assert.ok(/a\.can_direct_post \|\| TT_DEMO/.test(html), 'デモ表示で欄が出ない');
+    assert.ok(/a\.can_direct_post\s*\? api\('\/api\/connect\?creator='/.test(html), '権限のない連携でも creator_info を聞いている');
+    assert.ok(/id="ttDemoNote"/.test(html), 'デモ表示中の断り書きが無い');
+    const posts = require('fs').readFileSync(__dirname + '/../api/posts.js', 'utf8');
+    assert.ok(/directTiktok \? ttRules\.normalize\(body\.tt_settings\) : null/.test(posts), '権限のない連携の投稿設定を捨てていない');
+  });
+
   // ★ 案件つきの束でも X には出したい。1本の投稿に同居できないので、2本に分けて保存する。
   await check('まとめて仕込むは、案件つきの束の X を「リンクなし」の別の1本にする', () => {
     const html = require('fs').readFileSync(__dirname + '/../public/index.html', 'utf8');
