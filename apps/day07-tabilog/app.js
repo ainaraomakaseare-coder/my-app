@@ -1982,15 +1982,24 @@
 
   // 「この日から見たい」ためのジャンプ先。日ごとの最初の予定の少し前（再生の実時間r）。
   // 何日目かは予定の現地の日付（dayNumber）で数える。
+  // 移動の到着地点（st.arrival）は、飛行機の所要時間からの見積もりで日付が実際の並びより
+  // 先に進むことがあり（例：出発日のうちの移動なのに翌日扱いになる）、これを基準にすると
+  // 「その日いちばん最初の予定」が本当の1件目より早い、まだ前日の予定の合間の位置になって
+  // しまう（例：2日目のボタンが、実際には1日目の飛行機の到着直後を指してしまう）。
+  // 日の境目は、実際にその日の記録として残っている地点（通過点の到着ではないもの）だけで
+  // 決める（2026-09-29）。
   var REPLAY_JUMP_LEAD_SEC = 0.4;
   function replayDayStarts(tl) {
+    if (tl && tl._dayStartsCache) return tl._dayStartsCache;
     var out = [];
     (tl.stops || []).forEach(function (s) {
+      if (s.arrival) return;
       if (out.length && out[out.length - 1].dayNumber === s.dayNumber) return;
       if (out.some(function (d) { return d.dayNumber === s.dayNumber; })) return;
       out.push({ dayNumber: s.dayNumber, date: s.date, r: Math.max(0, s.r - REPLAY_JUMP_LEAD_SEC) });
     });
     if (out.length) out[0].r = 0; // 1日目は最初から
+    if (tl) tl._dayStartsCache = out;
     return out;
   }
 
@@ -2050,6 +2059,15 @@
     // 時計から数えると、香港16:20発→ニューヨーク19:05着（どちらも1日目の予定）の飛行中に香港の時計が
     // 0時を越え、「2日目」と出ていた（2026-09-27）。時計（hhmm）は現地時間のまま
     var dayNumber = cur && cur.dayNumber ? cur.dayNumber : localDay + 1;
+    // ただし上のcur（最後に「着いた」予定）だけで決めると、日ボタンで日の最初の予定の少し手前
+    // （REPLAY_JUMP_LEAD_SEC）へシークした直後は、まだその予定に着いていないので前日のまま
+    // 表示されてしまう（例：2日目のボタンを押しても、着地の判定的にはまだ1日目という結果になる）。
+    // 日の境目（replayDayStarts。到着の仮地点を除いた実際の予定を基準にした、日ごとの開始位置）を
+    // 今のrと直接比べて、シーク先そのものが指す日を優先する（2026-09-29）
+    var dayBounds = replayDayStarts(tl);
+    for (var bi = 0; bi < dayBounds.length; bi++) {
+      if (dayBounds[bi].r <= r + 1e-9) dayNumber = dayBounds[bi].dayNumber; else break;
+    }
     return {
       t: t, dayNumber: dayNumber, hhmm: minuteToHHMM(localT - localDay * 1440),
       stopIndex: idx, captionIndex: captionIndex, icon: icon, here: here, offsetDiff: offsetDiff

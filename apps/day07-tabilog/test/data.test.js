@@ -662,6 +662,41 @@ ok('replayNeighborStop: 次の予定は今より後で一番近い予定', T.rep
 eq('replayNeighborStop: 最初より前は0', T.replayNeighborStop(tl, 0.1, -1), 0);
 eq('replayNeighborStop: 最後の予定の後は終わりまで', T.replayNeighborStop(tl, tl.totalReal, 1), tl.totalReal);
 
+// 日ボタンで押した日にきちんと飛ぶか（不具合の再現・修正確認、2026-09-29）。どの日dでも
+// replayDayStarts()[d]へシークしたら、その時点の状態のdayNumberは押した日と同じでなければならない。
+// 以前はここが2つの理由でずれていた：
+// 1) 日の境目を「到着の仮地点（arrival）」も含めて決めていたため、飛行機の到着見積もりで
+//    実際より先の日付になった通過点（まだ前日の予定が続く途中）が、次の日の最初として選ばれていた
+//    （実データ：trip_4e6c13ab396540b3b207108efb4c6f54の2日目がロサンゼルス到着の通過点になっていた）。
+// 2) 日の最初の予定の少し手前（REPLAY_JUMP_LEAD_SEC）へシークする仕様のせいで、シーク直後は
+//    まだその予定に「着いて」おらず、dayNumberが前日のまま計算されていた（これはarrivalが絡まない
+//    普通の日の境目でも起きていた）。
+(function () {
+  function jd(query, dayIndex, dayNumber, minute, extra) {
+    return Object.assign({
+      blockId: query, date: '2026-06-2' + (dayIndex + 6), dayIndex: dayIndex, dayNumber: dayNumber,
+      minute: minute, label: query, captions: [], photos: [], transport: '', query: query,
+      offset: dayIndex === 0 ? 540 : -420, estimated: false, estimateSource: ''
+    }, extra || {});
+  }
+  // 1日目の羽田→LAのフライトの「到着」通過点だけが2日目扱いになり、そのあとにまだ1日目の
+  // 残りの予定（q3・q4）が続く、実データと同じ形の並び
+  var jdStops = [
+    jd('q0', 0, 1, 600), jd('q1', 0, 1, 660), jd('q2arrive', 1, 2, 30, { arrival: true }),
+    jd('q3', 0, 1, 690), jd('q4', 0, 1, 750),
+    jd('q5', 1, 2, 480), jd('q6', 1, 2, 600),
+    jd('q7', 2, 3, 480)
+  ];
+  var jdCoords = {};
+  jdStops.forEach(function (s, i) { jdCoords[s.query] = { lat: 30 + i, lng: 130 + i }; });
+  var jdTl = T.buildReplayTimeline(jdStops, jdCoords);
+  var jdDays = T.replayDayStarts(jdTl);
+  eq('replayDayStarts: 到着の仮地点（arrival）は日の境目の基準にしない。2日目は本当の2日目の最初の予定', jdDays.map(function (d) { return d.dayNumber; }), [1, 2, 3]);
+  jdDays.forEach(function (d) {
+    eq('日ボタン：' + d.dayNumber + '日目へシークすると、その時点はちゃんと' + d.dayNumber + '日目', T.replayStateAt(jdTl, d.r).dayNumber, d.dayNumber);
+  });
+})();
+
 eq('minutesText', [T.minutesText(840), T.minutesText(90), T.minutesText(45)], ['14時間', '1時間30分', '45分']);
 /* ---- 移動の予定：移動手段・移動時間（その予定から次の場所へ） ---- */
 var mvBlocks = [
