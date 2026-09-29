@@ -4,6 +4,14 @@ const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8'),box={};v
 const good={date:'2025-04-12',myTeam:'baystars',opponent:'阪神',venue:'横浜スタジアム',score:{bay:5,opp:3},result:'win',sourceText:'原文',highlight:'最高'};
 const validate=r=>box.validateMemoGames([r],[])[0];
 test('JSON wrapper, fenced response, arrays; reject broken and excessive JSON',()=>{assert.equal(box.parseMemoJSON('```json\n{"games":[]}\n```').length,0);assert.equal(box.parseMemoJSON('[]').length,0);assert.throws(()=>box.parseMemoJSON('{}'));assert.throws(()=>box.parseMemoJSON('{'));assert.throws(()=>box.parseMemoJSON(JSON.stringify(Array(501).fill({}))));});
+test('AI replies with prose, iPhone smart quotes and trailing commas still parse; plain memo text is explained',()=>{
+  assert.equal(box.parseMemoJSON('以下が変換結果です。\n```json\n{"games":[{"date":"2025-04-12"}]}\n```\nご確認ください。').length,1);
+  assert.equal(box.parseMemoJSON('はい、どうぞ {"games":[{"date":"2025-04-12"}]} 以上です').length,1);
+  const smart=box.parseMemoJSON('{“games”:[{“date”:“2025-04-12”,“opponent”:“阪神”},]}');
+  assert.equal(smart[0].opponent,'阪神');
+  assert.throws(()=>box.parseMemoJSON('  '),/空です/);
+  assert.throws(()=>box.parseMemoJSON('2025/4/12 横浜スタジアム、阪神戦。DeNAが5-3で勝ち！'),/JSONが見つかりません/);
+});
 test('real dates, leap years, and absent dates',()=>{assert.equal(box.validMemoDate('2024-02-29'),true);assert.equal(box.validMemoDate('2025-02-29'),false);assert.equal(box.validMemoDate('2025-13-01'),false);assert.equal(validate({...good,date:null}).errors.length>0,true);});
 test('score/result contradictions and non-numeric values rejected',()=>{assert.ok(validate({...good,result:'lose'}).errors.length);assert.ok(validate({...good,score:{bay:'5',opp:3}}).errors.length);assert.ok(validate({...good,score:{bay:-1,opp:3}}).errors.length);assert.ok(validate({...good,score:{bay:1.5,opp:3}}).errors.length);});
 test('missing team or opponent not silently guessed',()=>{assert.ok(validate({...good,myTeam:null}).errors.length);assert.ok(validate({...good,opponent:''}).errors.length);assert.ok(validate({...good,opponent:'横浜'}).errors.length);});
