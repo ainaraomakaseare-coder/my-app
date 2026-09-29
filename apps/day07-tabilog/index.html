@@ -609,24 +609,23 @@
             <div class="place-list" id="entArriveCandidates" hidden></div>
             <p class="hint" id="entArriveStatus">到着地を入れると、時差や日付変更線をまたぐ移動の順番が確実になり、地図でふりかえるも到着地まで線でつながります。</p>
           </div>
-          <!-- 移動の予定の記録だけに出す移動の情報（★はつけない）。出発・到着の時刻は時差や日付変更線をまたぐ
-               並び・地図でふりかえるに使うので、たたまずに見せる（2026-09-27） -->
+          <!-- 移動の予定の記録だけに出す移動の情報（★はつけない）。到着の時刻は時差や日付変更線をまたぐ
+               並び・地図でふりかえるに使うので、たたまずに見せる（2026-09-27）。
+               出発地・到着地・会社便名・出発時刻・料金は入力を減らすため隠した（出発は予定自身の時刻、
+               場所は上下の地図、料金は費用の明細から出す）。古い記録の値を消さないよう欄自体はDOMに
+               残し、保存のときはそのまま送る（2026-09-29） -->
           <div class="field" id="entTravelField" hidden>
-            <label>移動の情報（時刻はどちらも現地時間）</label>
-            <div class="travel-grid">
+            <label>到着時刻（現地時間・任意）</label>
+            <input type="time" id="entTravelArrive">
+            <p class="hint">入れると時差や日付変更線をまたぐ移動の順番が正確になります</p>
+            <div class="travel-grid" hidden>
               <input type="text" id="entTravelFrom" maxlength="60" placeholder="出発地">
               <span class="travel-arrow">→</span>
               <input type="text" id="entTravelTo" maxlength="60" placeholder="到着地">
             </div>
-            <!-- スマホでは欄が狭く、例を欄の中に書くと見切れるので、欄の外に書く（2026-09-27） -->
-            <p class="hint travel-example">例：羽田 → ロサンゼルス</p>
-            <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：JAL 62）">
-            <div class="travel-grid">
-              <label class="travel-time">出発<input type="time" id="entTravelDepart"></label>
-              <label class="travel-time">到着<input type="time" id="entTravelArrive"></label>
-            </div>
-            <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）">
-            <p class="hint travel-example">費用の明細が入っていれば、そちらを使います</p>
+            <input type="text" id="entTravelCompany" maxlength="60" placeholder="会社・便名（例：JAL 62）" hidden>
+            <input type="time" id="entTravelDepart" hidden>
+            <input type="number" id="entTravelAmount" min="0" inputmode="numeric" placeholder="料金（円）" hidden>
             <p class="hint" id="entTravelDuration"></p>
           </div>
 
@@ -681,7 +680,6 @@
   <section class="screen" data-screen="mylog">
     <div class="wrap">
       <header class="hd">
-        <button class="btn text back" data-back="home">← 戻る</button>
         <div class="hd-row">
           <div>
             <h1>マイログ</h1>
@@ -724,7 +722,6 @@
   <section class="screen" data-screen="visited">
     <div class="wrap">
       <header class="hd">
-        <button class="btn text back" data-back="home">← 戻る</button>
         <h1>行ったことある旅先</h1>
         <p class="lead">参加した旅行の記録から自動で集計します（マイログと同じ集計です）。</p>
       </header>

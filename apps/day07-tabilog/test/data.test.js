@@ -218,6 +218,28 @@ eq(
   '温泉宿の慶山に到着する'
 );
 
+/* ---- 宿泊先の名前：地図の場所の名前（entries[0].mapPlaceName）を、一般的な見出しより優先する（2026-09-29） ---- */
+eq('primaryLodgingName: 見出しが一般的な文言（「ホテルに帰宅」）だけでも、地図の場所の名前があればそちらを使う',
+  T.primaryLodgingName([{ category: 'lodging', label: 'ホテルに帰宅', entries: [{ mapPlaceName: 'ホテルニューオータニ' }] }]),
+  'ホテルニューオータニ');
+eq('primaryLodgingName: 「ホテルニューオータニ」のような実在の名前は一般的な文言として外さない',
+  T.primaryLodgingName([{ category: 'lodging', label: 'ホテルニューオータニ' }]), 'ホテルニューオータニ');
+eq('primaryLodgingName: 最初のBlockが一般的な文言で地図の名前も無ければ、あとのBlockの地図の名前を使う',
+  T.primaryLodgingName([
+    { category: 'lodging', label: 'ホテルへ', date: '2024-08-10' },
+    { category: 'lodging', label: '宿に戻る', date: '2024-08-11', entries: [{ mapPlaceName: '民宿さくら' }] }
+  ]), '民宿さくら');
+eq('primaryLodgingName: すべて一般的な文言で地図の名前も無ければ、これまでどおり最初の見出しをそのまま出す',
+  T.primaryLodgingName([
+    { category: 'lodging', label: 'ホテルへ', date: '2024-08-10' },
+    { category: 'lodging', label: '宿に戻る', date: '2024-08-11' }
+  ]), 'ホテルへ');
+eq('lodgingByNight: 地図の場所の名前を、一般的な文言の見出しより優先する',
+  T.lodgingByNight({ startDate: '2024-08-10', endDate: '2024-08-12' }, [
+    { category: 'lodging', label: 'ホテルへ', date: '2024-08-10', entries: [{ mapPlaceName: 'ゲストハウス山田' }] },
+    { category: 'lodging', label: '宿に戻る', date: '2024-08-11' }
+  ])[0].label, 'ゲストハウス山田');
+
 /* ---- lodgingByNight（何泊目にどこへ泊まったか） ---- */
 var tripForNights = { startDate: '2024-08-10', endDate: '2024-08-17' }; // 7泊8日
 var blocksTwoLodgings = [
@@ -238,7 +260,10 @@ var blocksSameLodgingTwice = [
   { category: 'lodging', label: '温泉宿の慶山', date: '2024-08-12', createdAt: '3' }
 ];
 var nightsSame = T.lodgingByNight({ startDate: '2024-08-10', endDate: '2024-08-13' }, blocksSameLodgingTwice);
-eq('lodgingByNight: 同じ日に複数Blockがあれば後のBlockの見出しを採用', nightsSame[0].label, '宿に戻る');
+// 以前は同じ日の後のBlockの見出しをそのまま採用していたが、それだと「宿に戻る」のような一般的な
+// 文言（音声入力で行動ごとにBlockが分かれたもの）が、先に付いていた宿の名前を消してしまっていた。
+// 一般的な文言では上書きしない（2026-09-29、Core.isGenericLodgingLabel）。
+eq('lodgingByNight: 同じ日の後のBlockが「宿に戻る」のような一般的な見出しでも、先の宿の名前を消さない', nightsSame[0].label, '温泉宿の慶山に到着する');
 
 /* ---- costBreakdownByPerson（総費用を払った人ごとに内訳） ---- */
 var blocksForBreakdown = [
@@ -389,6 +414,17 @@ ok('placeMapUrl: 座標がNaN・undefinedのときは、URLにundefined/NaNの�
   T.placeMapUrl({ lat: 34.7, lng: undefined }, '')
 ].every(function (url) { return url.indexOf('undefined') === -1 && url.indexOf('NaN') === -1; }));
 
+/* ---- 記録フォーム：「場所名で検索」で選んだ候補の名前を保存用に決める（placeSelectionName。2026-09-29） ---- */
+eq('placeSelectionName: 候補があればその名前', T.placeSelectionName({ name: 'ホテルニューオータニ', lat: 35.1, lng: 139.1 }, 'ホテル'),
+  'ホテルニューオータニ');
+eq('placeSelectionName: 候補が無ければ検索文字列をそのまま名前にする（Googleマップで検索）',
+  T.placeSelectionName(null, 'すし屋 銀座'), 'すし屋 銀座');
+eq('placeSelectionName: 検索文字列が座標そのもの（lat,lng）なら名前として保存しない',
+  T.placeSelectionName(null, '35.681236, 139.767125'), '');
+eq('placeSelectionName: 候補も検索文字列も無ければ空文字', T.placeSelectionName(null, ''), '');
+eq('placeSelectionName: 候補の名前が空文字・空白だけのときは検索文字列にフォールバックする',
+  T.placeSelectionName({ name: '  ', lat: 35.1, lng: 139.1 }, 'すし屋 銀座'), 'すし屋 銀座');
+
 /* ---- 地図でふりかえる：再生する地点の並び（replayStops） ---- */
 var rpTrip = { startDate: '2026-04-01', endDate: '2026-04-02' };
 var rpBlocks = [
@@ -403,6 +439,7 @@ eq('replayStops: 日付のない予定は含めない', rpStops.map(function (s)
 eq('replayStops: 何日目か', rpStops.map(function (s) { return s.dayNumber; }), [1, 1, 1, 2]);
 eq('replayStops: 時刻なしの予定は直前の時刻の30分後と推定する', rpStops.map(function (s) { return s.minute; }), [600, 720, 750, 540]);
 eq('replayStops: 推定時刻かどうか', rpStops.map(function (s) { return s.estimated; }), [false, false, true, false]);
+eq('replayStops: 飛行機の到着でなければ、翌日に時刻ありの予定があっても日をまたいで見積もらず、ふつうに+30分のまま', rpStops[2].estimateSource, 'default');
 eq('replayStops: 記録のエピソード・ひとことを吹き出しにする', rpStops[0].captions, ['小西遅刻', '松藤寝坊']);
 eq('replayStops: 移動手段を引き継ぐ', rpStops.map(function (s) { return s.transport; }), ['', 'train', 'walk', 'bus']);
 eq('replayStops: 記録のid・サーバー座標をentryId/knownLat/knownLngへ引き継ぐ（Part A、座標未設定はnull）',
@@ -638,6 +675,39 @@ eq('replayStops: 移動の予定の移動手段は、次の場所への移動に
 eq('replayStops: 時刻の無い次の予定は、移動時間の分だけ後と見積もる（10:00＋90分）', mvStops[2].minute, 11 * 60 + 30);
 eq('travelLogText: 出発・到着が無くても移動時間があれば出す',
   T.travelLogText({ category: 'transport', transport: 'plane', moveMinutes: 90, label: '那覇へ' }, { costItems: [] }).split(String.fromCharCode(10)).slice(-1)[0], '所要時間：約1時間30分');
+eq('replayStops: 移動時間があるときの見積もりは変わらない（moveMinutes優先、上のstep1）', mvStops[2].estimateSource, 'move');
+
+/* ---- 地図でふりかえる：時刻の無い到着の見積もり（羽田→ハワイ、2026-09-29） ---- */
+// 移動時間の入力が無い飛行機の予定で、時刻の無い到着を「直前の30分後」にしてしまい、
+// 7〜8時間かかる長距離便でも着いた扱いになっていた不具合の修正（docs/adr/0008）。
+var haneda = { lat: 35.55, lng: 139.78 }, honolulu = { lat: 21.32, lng: -157.92 };
+// 1. あとに時刻の分かっている予定があれば、その30分前と見積もる（次の日にまたいでもよい）
+var hiBlocksWithNext = [
+  { id: 'h1', date: '2026-06-01', time: '21:55', category: 'transport', transport: 'plane', label: '羽田発', entries: [{ mapUrl: 'https://maps.app.goo.gl/haneda' }] },
+  { id: 'h2', date: '2026-06-01', time: '', category: 'sightseeing', label: 'ホノルル着', entries: [{ mapUrl: 'https://maps.app.goo.gl/honolulu' }] },
+  { id: 'h3', date: '2026-06-02', time: '11:00', category: 'sightseeing', label: 'ワイキキ', entries: [{ mapUrl: 'https://maps.app.goo.gl/waikiki' }] }
+];
+var hiStopsWithNext = T.replayStops({ startDate: '2026-06-01', endDate: '2026-06-02' }, hiBlocksWithNext);
+eq('replayStops: 時刻の無い到着は、あとの予定（11:00）の30分前と見積もる（日をまたいでもよい）',
+  { date: hiStopsWithNext[1].date, minute: hiStopsWithNext[1].minute, src: hiStopsWithNext[1].estimateSource },
+  { date: '2026-06-02', minute: 10 * 60 + 30, src: 'next' });
+// 2. あとに時刻の分かっている予定が無ければ、座標が分かった時点（buildReplayTimeline）で
+//    飛行機の所要時間（距離÷850km/h＋離着陸などの余裕60分）から見積もり直す
+var hiBlocksNoNext = [
+  { id: 'h1', date: '2026-06-01', time: '21:55', category: 'transport', transport: 'plane', label: '羽田発', entries: [{ mapUrl: 'https://maps.app.goo.gl/haneda' }], _offset: 9 * 60 },
+  { id: 'h2', date: '2026-06-01', time: '', category: 'sightseeing', label: 'ホノルル着', entries: [{ mapUrl: 'https://maps.app.goo.gl/honolulu' }], _offset: -10 * 60 }
+];
+var hiStopsNoNext = T.replayStops({ startDate: '2026-06-01', endDate: '2026-06-01' }, hiBlocksNoNext);
+eq('replayStops: あとの予定も移動時間も無ければ、座標が無いこの時点ではまだ直前+30分のまま（見積もりし直すのはbuildReplayTimeline）',
+  { minute: hiStopsNoNext[1].minute, src: hiStopsNoNext[1].estimateSource }, { minute: 21 * 60 + 55 + 30, src: 'default' });
+var hiTlNoNext = T.buildReplayTimeline(hiStopsNoNext, {
+  'https://maps.app.goo.gl/haneda': haneda, 'https://maps.app.goo.gl/honolulu': honolulu
+});
+var hnlArrive = hiTlNoNext.stops[1];
+ok('buildReplayTimeline: 座標が分かれば、飛行機の所要時間（7時間40分以上、羽田→ホノルルの距離÷850km/h＋60分）で見積もり直す',
+  (hnlArrive.t - hiTlNoNext.stops[0].t) >= 7 * 60 + 40);
+eq('buildReplayTimeline: 到着の現地時間（HST）に変換する。日付はそのまま（21:55羽田＋約8時間15分→現地11:10）',
+  { date: hnlArrive.date, minute: hnlArrive.minute }, { date: '2026-06-01', minute: 11 * 60 + 10 });
 
 /* ---- メモをAIなしで分ける（parseMemo） ---- */
 var memoDates = ['2026-04-01', '2026-04-02'];

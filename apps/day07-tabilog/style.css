@@ -30,6 +30,12 @@
 html {
   background: var(--bg);
   overscroll-behavior-x: none;
+  /* 縦のバウンス（ラバーバンド）も止める。画面はhtml/body自体がスクロール領域（.screenは
+     display:block/noneで切り替えるだけで、中に別スクロール領域は無い）。いちばん下まで
+     スクロールしてさらに引っぱると、iOS（WKWebView）はページ全体をバウンスさせ、
+     position: fixedの下タブ（#tabbar）もそれにつられて浮き上がって見えてしまう
+     （commit 8f636b3のバグ報告、2026-09-29）。overscroll-behavior-yでバウンスそのものを止める。 */
+  overscroll-behavior-y: none;
 }
 
 body {
@@ -39,6 +45,7 @@ body {
   font-family: var(--font-body);
   line-height: 1.6;
   overscroll-behavior-x: none;
+  overscroll-behavior-y: none;
   -webkit-text-size-adjust: 100%;
 }
 
@@ -66,6 +73,19 @@ a:hover { text-decoration: underline; }
 }
 @media (prefers-reduced-motion: reduce) {
   .screen.tab-switch-in { animation: none; }
+}
+
+/* マイログの「評価したもの」を横スワイプでカテゴリ切り替えしたとき、一覧をスワイプした向きへ
+   短く滑らせながらふわっと出す（app.jsのanimateSwipeList・mylogResolveSwipe。2026-09-29〜）。
+   --swipe-xはJSがスワイプの向きに合わせて設定する（右へ流れてきたように見せたいときは正、
+   左のときは負）。 */
+.list-switch-in { animation: list-switch-in .22s ease both; }
+@keyframes list-switch-in {
+  from { opacity: 0; transform: translateX(var(--swipe-x, 12px)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .list-switch-in { animation: none; }
 }
 
 .wrap { max-width: 460px; margin: 0 auto; padding: 20px 16px 60px; }
@@ -181,6 +201,21 @@ a:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
   .btn, .trip-card, .chip-btn, .sort-btn, .visited-tab { transition: none; }
   .btn:active, .trip-card:active, .chip-btn:active, .sort-btn:active, .visited-tab:active { transform: none; }
+}
+
+/* 旅行のカードがスクロールで浮かび上がる演出（Airbnbアプリを手本にした。app.jsのrevealCardsOnScroll。
+   2026-09-29〜）。押し込み演出（.trip-card:active、上のtransform: scale()）とtransformの
+   トランジション時間（.12s）がぶつからないよう、こちらはtranslate（transformとは別のCSSプロパティ、
+   同時に効かせられる）を使う。JSがprefers-reduced-motionのときは.reveal-init自体を付けないので、
+   このルールは適用されず、最初から普通に表示される。 */
+.reveal-init {
+  opacity: 0;
+  translate: 0 16px;
+  transition: opacity .35s ease-out, translate .35s ease-out;
+}
+.reveal-init.reveal-in {
+  opacity: 1;
+  translate: 0 0;
 }
 
 .icon-btn {
@@ -1149,6 +1184,10 @@ body.viewer-open { overflow: hidden; }
   background: var(--card);
   border-top: 1px solid var(--border-soft);
   box-shadow: 0 -2px 12px rgba(20, 20, 30, 0.06);
+  /* WKWebViewでposition: fixedの要素を専用レイヤーに乗せておく（コンポジット確定）。
+     html/bodyのoverscroll-behavior-yと合わせて、スクロールの端でタブバーが浮き上がらないようにする
+     ための保険（2026-09-29）。 */
+  transform: translateZ(0);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .tabbar.show { display: flex; }

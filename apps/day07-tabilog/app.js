@@ -785,12 +785,40 @@
     return out;
   }
 
+  // 宿泊の見出し（label）は「ホテルに帰宅」「宿に戻る」のように、音声入力などで一般的な文言だけに
+  // なることがある。「宿泊先」の表示にはお店の名前として意味が無いので、地図から分かった場所の名前
+  // （entries[0].mapPlaceName）があればそちらを使う（v26、2026-09-29）。「ホテルニューオータニ」の
+  // ような実在の名前は誤って外さないよう、パターンはオーナー指定のものをそのまま使う。
+  var LODGING_GENERIC_LABEL_RE = /^(ホテル|宿|旅館|部屋)(に|へ)?(帰宅|戻る|帰る|到着|チェックイン)?$|帰宅|戻る|へ$/;
+  function isGenericLodgingLabel(label) {
+    return LODGING_GENERIC_LABEL_RE.test((label || '').trim());
+  }
+  // このBlockの記録（最初のもの）に、地図から分かった場所の名前が付いていればそれを返す
+  function lodgingBlockMapName(b) {
+    var e = (b && b.entries || [])[0];
+    return ((e && e.mapPlaceName) || '').trim();
+  }
+  // 宿泊Blockの「表示名」：地図の場所の名前 → 一般的な文言でない見出し → どちらも無ければ空文字
+  function lodgingDisplayName(b) {
+    var mapName = lodgingBlockMapName(b);
+    if (mapName) return mapName;
+    var label = (b.label || '').trim();
+    return isGenericLodgingLabel(label) ? '' : label;
+  }
+
   // 宿泊カテゴリのBlockは「到着する」「宿に戻る」のように、同じ宿について複数できることがある
   // （特に音声入力は行動ごとにBlockを分けるため）。すべて繋げると意味不明になるので、
   // 一番最初（日程順で最初）の見出しだけを「宿泊先」として代表させる。
+  // ただし、その見出しが「ホテルに帰宅」のような一般的な文言で地図の名前も無いときは、あとに
+  // 出てくる宿泊Blockに地図の名前・ちゃんとした見出しがあれば、そちらを代わりに使う（2026-09-29）。
   function primaryLodgingName(blocks) {
     var lodging = (blocks || []).filter(function (b) { return b.category === 'lodging' && b.label; });
-    return lodging.length ? lodging[0].label : '';
+    if (!lodging.length) return '';
+    for (var i = 0; i < lodging.length; i++) {
+      var name = lodgingDisplayName(lodging[i]);
+      if (name) return name;
+    }
+    return lodging[0].label;
   }
 
   // 宿泊先を「何泊目に、どこに泊まったか」で一覧にする。宿泊カテゴリのBlockは、
@@ -811,11 +839,18 @@
     var labelForNight = [];
     for (var i = 0; i < nights; i++) {
       var nightDate = dates[i];
-      var applicable = '';
+      // 表示名（地図の名前／一般的でない見出し）が分かればそれを使い、その夜のいちばん新しい宿泊
+      // Blockが一般的な文言だけ（例：同じ宿での「宿に帰宅」）でも、前の宿泊Blockで分かった名前を
+      // 引き継ぐ（applicableを一般的な文言では上書きしない）。最後まで名前が分からなければ、
+      // これまでどおりいちばん新しいBlockの見出しをそのまま出す（2026-09-29）。
+      var applicable = '', applicableRaw = '';
       for (var j = 0; j < lodging.length; j++) {
-        if (lodging[j].date <= nightDate) applicable = lodging[j].label; else break;
+        if (lodging[j].date > nightDate) break;
+        applicableRaw = lodging[j].label;
+        var name = lodgingDisplayName(lodging[j]);
+        if (name) applicable = name;
       }
-      labelForNight.push(applicable);
+      labelForNight.push(applicable || applicableRaw);
     }
     var groups = [];
     labelForNight.forEach(function (label, idx) {
@@ -1198,6 +1233,19 @@
     if (!q) return '';
     return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
+  // 候補（place。「地図のURL」欄の座標検索で選んだもの）または検索した文字列（searchText。
+  // 「Googleマップで検索」を選んだときなど、座標のない検索）から、記録と一緒に保存する
+  // 「場所の名前」を決める。候補があればその名前（例：Googleの候補のname）。無ければ検索文字列を
+  // そのまま名前にするが、それが座標（"35.68,139.76"のような並び）そのものなら名前として
+  // 意味が無いので保存しない（applySelectedPlaceToMapUrl・saveEntryの名前紐付けで使う。2026-09-29）。
+  var COORD_PAIR_RE = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/;
+  function placeSelectionName(place, searchText) {
+    var name = (place && place.name) ? String(place.name).trim() : '';
+    if (name) return name;
+    var text = (searchText || '').trim();
+    if (!text || COORD_PAIR_RE.test(text)) return '';
+    return text;
+  }
   function replayPlaceEntry(block) {
     var entries = (block && block.entries) || [];
     for (var i = 0; i < entries.length; i++) {
@@ -1238,14 +1286,63 @@
     // 移動の予定（種類が「移動」）の移動手段・移動時間は、その予定から次の場所への移動として、次の地点に渡す。
     // 以前のデータ（移動以外の予定に「ここまでの移動手段」が付いているもの）は、その予定自身の値を使う。
     var pendingTransport = '', pendingMove = 0, out = [];
-    sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; }).forEach(function (b) {
+    var sorted = sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; });
+    sorted.forEach(function (b, bi) {
       var minute = hhmmToMinute(b.time);
       var estimated = minute === null;
+      // 「ここまでの移動手段」は次の予定にも引き継ぐ値なので、時刻の見積もりより前に求めておく
+      // （時刻なしの予定が飛行機で到着した先かどうかを、日をまたぐ見積もり（下のstep2）で使う）。
+      var arrivingGuess = b.category === 'transport' ? pendingTransport : (b.transport || pendingTransport);
+      var estimateSource = '';
+      var dayIndexOverride = null;
       if (estimated) {
         var prev = lastMinute[b.date];
-        // 時刻の無い予定でも、直前の移動に移動時間があれば、その分だけ後と見積もる
-        var step = pendingMove || (hasTimed[b.date] ? 30 : 60);
-        minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + step, 23 * 60 + 59);
+        var dayIdxCur = dates.indexOf(b.date);
+        var curOffset = typeof b._offset === 'number' ? b._offset : (typeof lastOffset === 'number' ? lastOffset : 0);
+        if (pendingMove) {
+          // 1. 直前の移動の予定に移動時間があれば、その分だけ後と見積もる（従来どおり）
+          minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + pendingMove, 23 * 60 + 59);
+          estimateSource = 'move';
+        } else {
+          // 2. 直前に移動時間が無ければ、あとで時刻の分かっている予定を探し、その30分前と見積もる
+          //    （羽田発→ハワイ着（時刻なし）→ハワイでの次の予定11:00、のようなケースを、次の予定を
+          //    無視して「直前+30分」にしてしまっていたのを直す。2026-09-29）。
+          //    日をまたいで探すのは、飛行機で着いた先（日付が変わることがある）だけに限る。
+          var found = null;
+          for (var k = bi + 1; k < sorted.length; k++) {
+            var nb = sorted[k];
+            if (nb.date !== b.date) {
+              if (arrivingGuess !== 'plane') break;
+              var nbDayIdx = dates.indexOf(nb.date);
+              if (nbDayIdx === -1 || nbDayIdx !== dayIdxCur + 1) break;
+            }
+            var nm = hhmmToMinute(nb.time);
+            if (nm !== null) { found = nb; break; }
+          }
+          if (found) {
+            var nextOffset = typeof found._offset === 'number' ? found._offset : curOffset;
+            var foundDayIdx = dates.indexOf(found.date);
+            var targetAbs = foundDayIdx * 1440 + hhmmToMinute(found.time) - nextOffset;
+            var prevAbs = prev === undefined ? null : (dayIdxCur * 1440 + prev - curOffset);
+            var candidateAbs = targetAbs - 30;
+            if (prevAbs !== null) {
+              var gap = targetAbs - prevAbs;
+              if (gap < 35) candidateAbs = prevAbs + gap / 2;
+            }
+            // あとの予定は日付・時差ともに確かな値を持つ手がかりなので、日付をまたぐ見積もりになっても
+            // （前日の23:xxではなく）実際の日に置く（下のstep3の「元の日付のまま」とは違い、こちらは
+            // 具体的な次の予定という裏付けがあるため）。
+            var localTotal = candidateAbs + curOffset;
+            var newDayIdx = Math.max(0, Math.min(dates.length - 1, Math.floor(localTotal / 1440)));
+            minute = Math.max(0, Math.min(23 * 60 + 59, Math.round(localTotal - newDayIdx * 1440)));
+            dayIndexOverride = newDayIdx;
+            estimateSource = 'next';
+          } else {
+            // 4. 見積もりの手がかりが無ければ、従来どおり直前の30分後（その日に時刻ありが無ければ9時から1時間おき）
+            minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + (hasTimed[b.date] ? 30 : 60), 23 * 60 + 59);
+            estimateSource = 'default';
+          }
+        }
       }
       var placeEntry = replayPlaceEntry(b);
       // 移動の予定（category==='transport'）自身の transport は「次の場所への移動」を表す値なので、
@@ -1255,12 +1352,14 @@
       // 例：赤レンガ倉庫→（新横浜から大阪への移動、地図が壊れている。ここでpendingTransport='train'）
       //     →新大阪からユニバへ（地図あり、それ自身のtransportは'train'だが「次への移動」の意味なので
       //     使わず、pendingTransportの'train'を使う。2026-09-27）
-      var arriving = b.category === 'transport' ? pendingTransport : (b.transport || pendingTransport);
+      var arriving = arrivingGuess;
       if (b.category === 'transport') { pendingTransport = b.transport || ''; pendingMove = b.moveMinutes || 0; }
       else if (placeEntry) { pendingTransport = ''; pendingMove = 0; }
-      lastMinute[b.date] = minute;
+      // 日をまたぐ見積もり（上のstep2）で置き先の日が変わったときは、その日付で並びを扱う
+      var stopDate = dayIndexOverride !== null ? (dates[dayIndexOverride] || b.date) : b.date;
+      lastMinute[stopDate] = minute;
       if (typeof b._offset === 'number') lastOffset = b._offset;
-      var dayIndex = dates.indexOf(b.date);
+      var dayIndex = dayIndexOverride !== null ? dayIndexOverride : dates.indexOf(b.date);
       var captions = (b.entries || []).map(function (e) {
         // 以前は40文字で切っていたため、スマホでは1.5行ほどで途切れていた。全文を出す（見せる時間は文字数で延ばす）
         return (e.episode || '').trim() || (e.comment || '').trim();
@@ -1269,7 +1368,7 @@
       var photos = [];
       (b.entries || []).forEach(function (e) { (e.photoIds || []).forEach(function (id) { if (photos.length < REPLAY_MAX_PHOTOS) photos.push(id); }); });
       out.push({
-        blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
+        blockId: b.id, date: stopDate, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions, photos: photos,
         transport: arriving, query: placeEntry ? placeEntry.url : '',
         // 記録のid・サーバーがすでに求めてある座標（Part A）。geocodeQueriesがこれを見て、
@@ -1277,7 +1376,10 @@
         entryId: placeEntry ? placeEntry.entryId : '',
         knownLat: placeEntry ? placeEntry.lat : null,
         knownLng: placeEntry ? placeEntry.lng : null,
-        offset: lastOffset // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
+        offset: lastOffset, // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
+        // 時刻を見積もった根拠（'move'=直前の移動時間／'next'=あとの予定の30分前／'default'=直前+30分など）。
+        // buildReplayTimelineが、座標が分かってから飛行機の所要時間で見積もり直せるかどうかに使う（2026-09-29）
+        estimateSource: estimated ? estimateSource : ''
       });
       // 移動の予定に「到着地の地図」が入っていれば、その移動の到着を1つの地点として足す（2026-09-27）。
       // 到着時刻は到着地の現地時間なので、出発（出発地の時差）より前にならない日付に置く
@@ -1340,6 +1442,10 @@
   var REPLAY_PLANE_KM = 400;
   var REPLAY_PLANE_MIN_KM = 100; // これより近い区間の飛行機はありえない（移動手段の付き違い）とみなす（2026-09-27）
   var REPLAY_WALK_KM = 1.5; // 移動手段が入っていない、とても近い移動（1.5km未満）は徒歩とみなす（2026-09-26）
+  // 時刻の無い到着（見積もりの手がかり（moveMinutes・後の予定）が無いとき）を、飛行機の所要時間から見積もる
+  // ときの速さと、離着陸・待ち時間ぶんの余裕（分）。docs/adr/0008参照（2026-09-29）
+  var REPLAY_FLIGHT_KMH = 850;
+  var REPLAY_FLIGHT_BUFFER_MIN = 60;
 
   // 2地点の距離（km）
   function distanceKm(a, b) {
@@ -1445,6 +1551,30 @@
       });
     });
     if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
+    // 時刻の無い到着で、replayStopsの時点（座標がまだ分からない）ではmoveMinutes・後の予定という
+    // 手がかりが無かった（estimateSource==='default'）ものを、座標が分かった今、飛行機で着いた先
+    // （transport==='plane'、または移動手段が無く距離がREPLAY_PLANE_KM超）なら、飛行機の所要時間
+    // （距離÷850km/h＋離着陸などの余裕60分、5分単位）で見積もり直す。日付は保存されている値のまま
+    // 変えず、その日の0:00〜23:59に収め、前後の地点をまたがない範囲に収める（2026-09-29）
+    var lastLocatedIdx = -1;
+    s.forEach(function (st, i) {
+      if (st.estimated && st.estimateSource === 'default' && st.located && lastLocatedIdx >= 0) {
+        var prevSt = s[lastLocatedIdx];
+        var km = distanceKm(prevSt, st);
+        var isPlane = st.transport === 'plane' || (!st.transport && km > REPLAY_PLANE_KM);
+        if (isPlane) {
+          var flightMin = Math.round((km / REPLAY_FLIGHT_KMH * 60 + REPLAY_FLIGHT_BUFFER_MIN) / 5) * 5;
+          var offsetHere = typeof st.offset === 'number' ? st.offset : baseOffset;
+          var absArrival = prevSt.t + flightMin;
+          var nextSt = s[i + 1];
+          if (nextSt && absArrival > nextSt.t) absArrival = nextSt.t;
+          var localMinute = Math.max(0, Math.min(23 * 60 + 59, Math.round(absArrival - st.dayIndex * 1440 + offsetHere - baseOffset)));
+          st.minute = localMinute;
+          st.t = st.dayIndex * 1440 + localMinute - (offsetHere - baseOffset);
+        }
+      }
+      if (st.located) lastLocatedIdx = i;
+    });
     // 日付変更線（経度180度）をまたいだら、そのあとの地点の経度を±360度して前の地点から続ける。
     // 香港→ニューヨークのように太平洋を越える飛行機は、弧を太平洋回りで引くので終わりが経度+286度になる。
     // ニューヨーク（-74度）をそのままにすると、そこから先は地図の「別の周回」に描かれ、カメラがニューヨークへ
@@ -2609,6 +2739,7 @@
     replayPlaceEntry: replayPlaceEntry,
     hasBrokenMapQuery: hasBrokenMapQuery,
     placeMapUrl: placeMapUrl,
+    placeSelectionName: placeSelectionName,
     travelArrival: travelArrival,
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
@@ -2716,6 +2847,30 @@
   // 方がAirbnbアプリのように「今読み込み中」と伝わりやすいので、シマー（光が流れる）スケルトンを出す
   // （マイログ・「行ったことある旅先」の初回読み込みで使う。2026-09-29〜。prefers-reduced-motionでは
   // CSS側でアニメーションを止め、ただの薄い塗りのまま出す）。
+  // 旅行のカードがスクロールでふわっと浮かび上がる演出（Airbnbアプリを手本にした。2026-09-29〜）。
+  // カードが画面に入ったタイミングで、下から（opacity 0→1・16px下から0へ）浮かび上がらせる。
+  // 一度出現したカードは監視をやめる（IntersectionObserver#unobserve）ので、スクロールを
+  // 行き来しても毎回は動かない。最初から画面内にあるカード同士は、同じ判定タイミングで
+  // まとめて交差するので、その中でだけ少しずつ（40msずつ）ずらして動かす。
+  // prefers-reduced-motion・IntersectionObserver非対応の環境では、演出そのものを付けない
+  // （reveal-initクラスを付けないので、CSSのopacity: 0が一切効かず最初から普通に表示される）。
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+  function revealCardsOnScroll(cards) {
+    if (!cards || !cards.length) return;
+    if (prefersReducedMotion() || typeof IntersectionObserver !== 'function') return;
+    cards.forEach(function (c) { c.classList.add('reveal-init'); });
+    var io = new IntersectionObserver(function (entries) {
+      entries.filter(function (e) { return e.isIntersecting; }).forEach(function (entry, i) {
+        var el = entry.target;
+        setTimeout(function () { el.classList.add('reveal-in'); }, i * 40);
+        io.unobserve(el);
+      });
+    }, { threshold: 0.15, rootMargin: '0px 0px -5% 0px' });
+    cards.forEach(function (c) { io.observe(c); });
+  }
+
   function skeletonCardsHtml(n) {
     var card = '<div class="skeleton-card" aria-hidden="true">' +
       '<div class="skeleton-line skeleton-line-title"></div>' +
@@ -2774,6 +2929,140 @@
     $all('.tabbar-btn', bar).forEach(function (b) {
       b.classList.toggle('on', b.dataset.tab === name);
     });
+  }
+
+  // タブ名から、その画面を開く処理そのものへ（ボトムタブバーのタップ・下のタブの横スワイプの
+  // 両方から呼ぶ。2026-09-29〜）。マイログ・旅先一覧はログインが要る（未ログインならログイン画面へ）。
+  function openTabScreen(name) {
+    if (name === 'home') goHome();
+    else if (name === 'mylog') { if (loadCurrentUser()) openMyLog(); else openLogin('mylog'); }
+    else if (name === 'visited') { if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited'); }
+    else if (name === 'profile') openProfile();
+  }
+
+  // ---------- ボトムタブバーの4画面（マイログ・旅先一覧・旅の足跡・プロフィール）を横スワイプで
+  // 行き来する（2026-09-29〜。トップレベル化して「← 戻る」を無くした代わりに付けた） ----------
+  // タブバーの並び（マイログ→旅先一覧→旅の足跡→プロフィール）をそのままスワイプの順にする。
+  var TAB_ORDER = ['mylog', 'visited', 'home', 'profile'];
+  function adjacentTabName(dir) {
+    var cur = $('.screen.active') && $('.screen.active').dataset.screen;
+    var i = TAB_ORDER.indexOf(cur);
+    if (i < 0) return null;
+    var j = i + dir;
+    return (j >= 0 && j < TAB_ORDER.length) ? TAB_ORDER[j] : null;
+  }
+  // 指を左に動かした（dx<0）＝次のタブへ、右に動かした（dx>0）＝前のタブへ（標準的なカルーセルの向き）
+  function goToAdjacentTabBySwipe(dx) {
+    var name = adjacentTabName(dx < 0 ? 1 : -1);
+    if (name) openTabScreen(name);
+  }
+  // カテゴリのピル・チップの行や地図など、横スクロールする要素の上から始まったタッチは、この
+  // タブ切り替えスワイプの対象にしない（そちらの横スクロール・操作をそのまま優先させる）。
+  // クラス名を決め打ちにせず、実際に横にスクロールできる要素かどうか（scrollWidth>clientWidth
+  // かつoverflow-xがauto/scroll）を辿って調べるので、マイログのカテゴリピル（.mylog-tabs）・
+  // 旅先一覧のタブなど、この先増える横スクロール行にも決め打ちの追記なしで効く。SVG（地図）の
+  // 上から始まったタッチも対象にしない。
+  function startsOnHorizontalScroller(target) {
+    var el = target;
+    while (el && el.nodeType === 1) {
+      if (el.tagName === 'svg' || el.tagName === 'SVG') return true;
+      if (el.scrollWidth > el.clientWidth + 1) {
+        var overflowX = window.getComputedStyle(el).overflowX;
+        if (overflowX === 'auto' || overflowX === 'scroll') return true;
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }
+  // タブ4画面の横スワイプに共通の判定（しきい値・「最初にどちらの向きか」の決め方は、これまでの
+  // 「行ったことある旅先」の国内⇄海外スワイプと同じ）。onSwipe(dx, startTarget)は
+  // 横スワイプと判定できたときだけ呼ぶ。画面の左右の端（EDGE_SWIPE_BACK_PX以内）から始まったタッチは
+  // 対象にしない（前は「戻る」操作の担当だった領域。今は無くしたが、念のためそのまま空けておく）。
+  var tabSwipeState = null;
+  function initTabSwipe(el, onSwipe) {
+    if (!el) return;
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { tabSwipeState = null; return; }
+      var t = e.touches[0];
+      if (t.clientX <= EDGE_SWIPE_BACK_PX || t.clientX >= window.innerWidth - EDGE_SWIPE_BACK_PX) {
+        tabSwipeState = null;
+        return;
+      }
+      if (startsOnHorizontalScroller(e.target)) { tabSwipeState = null; return; }
+      tabSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false, target: e.target };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!tabSwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - tabSwipeState.startX;
+      var dy = t.clientY - tabSwipeState.startY;
+      if (!tabSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        tabSwipeState.decided = true;
+        tabSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (tabSwipeState.decided && tabSwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!tabSwipeState) return;
+      var ts = tabSwipeState;
+      tabSwipeState = null;
+      if (!ts.decided || !ts.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - ts.startX;
+      if (Math.abs(dx) < 50) return; // 短い横移動はタップの揺れとみなして無視する（visitedと同じしきい値）
+      onSwipe(dx, ts.target);
+    });
+
+    el.addEventListener('touchcancel', function () { tabSwipeState = null; });
+  }
+
+  // マイログの「評価したもの」のカテゴリ（アクティビティーログ・飯ログ…）の並び。ピルのクリックと
+  // 同じCore.CATEGORIES（移動にまとめる種類は除く）を使う。
+  function mylogCategoryOrder() {
+    return Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) { return c.key; });
+  }
+  // マイログ画面の横スワイプ：一覧（#mylogList）の上から始まったスワイプは「評価したもの」の
+  // カテゴリを切り替える。最初・最後のカテゴリでさらに同じ向きへスワイプしたら、タブ自体を
+  // 切り替える（旅先一覧の国内⇄海外と同じ「境界まで行ったらタブへ流れる」考え方）。
+  // 一覧の外（参加した旅行の一覧・見出しなど）から始まったスワイプは、最初からタブの切り替え。
+  function mylogResolveSwipe(dx, startTarget) {
+    var insideList = !!(startTarget && startTarget.closest && startTarget.closest('#mylogList'));
+    if (!insideList) { goToAdjacentTabBySwipe(dx); return; }
+    var order = mylogCategoryOrder();
+    var i = order.indexOf(state.myLogCategory);
+    var dir = dx < 0 ? 1 : -1; // 左スワイプ＝次のカテゴリ、右スワイプ＝前のカテゴリ
+    var j = i + dir;
+    if (i < 0 || j < 0 || j >= order.length) { goToAdjacentTabBySwipe(dx); return; }
+    state.myLogCategory = order[j];
+    renderMyLog();
+    var onTab = $('.mylog-tab.on', $('#mylogTabs'));
+    if (onTab && onTab.scrollIntoView) onTab.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    animateSwipeList($('#mylogList'), dir);
+  }
+  // スワイプでカテゴリ・タブが切り替わったとき、一覧をその向きへ短く滑らせながらふわっと出す
+  // （2026-09-29〜）。prefers-reduced-motionのときはCSS側でアニメーションそのものを付けない。
+  function animateSwipeList(el, dir) {
+    if (!el) return;
+    el.style.setProperty('--swipe-x', (dir > 0 ? 12 : -12) + 'px');
+    el.classList.remove('list-switch-in');
+    void el.offsetWidth;
+    el.classList.add('list-switch-in');
+  }
+  // 「行ったことある旅先」の国内⇄海外スワイプの境界（すでにその側なのに同じ向きへさらに
+  // スワイプした）は、タブ自体の切り替えに流す（2026-09-29〜。マイログのカテゴリスワイプと同じ考え方）。
+  function visitedResolveSwipe(dx) {
+    var goingLeft = dx < 0;
+    var target = goingLeft ? 'overseas' : 'domestic';
+    if (state.visitedTab !== target) {
+      state.visitedTab = target;
+      state.visitedSel = null;
+      renderVisitedPlaces();
+      return;
+    }
+    goToAdjacentTabBySwipe(dx);
   }
 
   // ---------- Googleログイン ----------
@@ -3496,6 +3785,7 @@
       return;
     }
     el.innerHTML = '';
+    var revealCards = [];
     list.forEach(function (t) {
       var card = document.createElement('button');
       var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
@@ -3527,7 +3817,9 @@
       }
       card.addEventListener('click', function () { openTrip(t.id); });
       el.appendChild(card);
+      revealCards.push(card);
     });
+    revealCardsOnScroll(revealCards);
   }
 
   // ホーム画面の旅行一覧は本来この端末のローカル索引（tabilog:my-trips）だけを見ているため、
@@ -4879,55 +5171,6 @@
     el.addEventListener('touchcancel', function () { edgeSwipeBackState = null; });
   }
 
-  // 「行ったことある旅先」の国内⇄海外の横スワイプ切り替え（2026-09-28〜）。オーナーの指定
-  // （「右にスワイプしたら海外、左にスワイプしたら国内」）は、カルーセルの一般的な向き（右スワイプ＝
-  // 次へ＝左のタブに戻る、が多い）とは逆なので、向きをこの定数1つだけで反転できるようにしておく。
-  var VISITED_SWIPE_RIGHT_GOES_TO = 'overseas';
-  var visitedSwipeState = null;
-  function initVisitedSwipe() {
-    var el = $('#visitedPanel');
-    if (!el) return;
-
-    el.addEventListener('touchstart', function (e) {
-      if (e.touches.length !== 1) { visitedSwipeState = null; return; }
-      var t = e.touches[0];
-      // 画面左端はedge-swipe-back（戻る）の担当なので、ここでは拾わない
-      if (t.clientX <= EDGE_SWIPE_BACK_PX) { visitedSwipeState = null; return; }
-      visitedSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
-    }, { passive: true });
-
-    el.addEventListener('touchmove', function (e) {
-      if (!visitedSwipeState || e.touches.length !== 1) return;
-      var t = e.touches[0];
-      var dx = t.clientX - visitedSwipeState.startX;
-      var dy = t.clientY - visitedSwipeState.startY;
-      // 横方向と判定できるまでは何もしない＝地図の上のタップ・縦スクロールを妨げない
-      if (!visitedSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-        visitedSwipeState.decided = true;
-        visitedSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
-      }
-      if (visitedSwipeState.decided && visitedSwipeState.horizontal) e.preventDefault();
-    }, { passive: false });
-
-    el.addEventListener('touchend', function (e) {
-      if (!visitedSwipeState) return;
-      var vs = visitedSwipeState;
-      visitedSwipeState = null;
-      if (!vs.decided || !vs.horizontal) return;
-      var t = e.changedTouches[0];
-      var dx = t.clientX - vs.startX;
-      if (Math.abs(dx) < 50) return; // 短い横移動はタップ・地図操作の揺れとみなして無視する
-      var other = VISITED_SWIPE_RIGHT_GOES_TO === 'overseas' ? 'domestic' : 'overseas';
-      var target = dx > 0 ? VISITED_SWIPE_RIGHT_GOES_TO : other;
-      if (state.visitedTab === target) return;
-      state.visitedTab = target;
-      state.visitedSel = null;
-      renderVisitedPlaces();
-    });
-
-    el.addEventListener('touchcancel', function () { visitedSwipeState = null; });
-  }
-
   function goToAdjacentDay(delta) {
     var dates = Core.allDatesForTrip(state.trip, state.blocks);
     var idx = dates.indexOf(state.selectedDate);
@@ -5149,7 +5392,44 @@
         state.zoneInfo = { byBlock: byBlock, byDate: byDate, byArrive: byArrive };
         if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderDaySection();
       });
+    }).then(function () { return backfillLodgingPlaceNames(); });
+  }
+
+  // 既存の宿泊の記録（v26＝map_place_name追加より前に座標だけ保存済みのもの）にも、あとから
+  // 地図の場所の名前を入れる後追い（2026-09-30）。旅行を開くたび（loadTripZones）に、宿泊の予定の
+  // 最初の記録で「地図URLはあるがmapPlaceNameがまだ無い」ものを、最大3件・1.1秒空けて順に
+  // /geocode?...&name=1で調べる。この画面を開いているあいだ、同じ記録を何度も試さない
+  // （lodgingNameTried）。座標はもう分かっている前提なので、ここでは名前だけを聞く・保存する
+  // （worker側のgeocodeEntryNameOnlyは既存の座標を絶対に上書きしない）。
+  var lodgingNameTried = {};
+  function backfillLodgingPlaceNames() {
+    if (!state.trip || !API_BASE) return Promise.resolve();
+    var tripId = state.trip.id;
+    var stillHere = function () { return state.trip && state.trip.id === tripId; };
+    var wait = function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); };
+    var targets = [];
+    (state.blocks || []).forEach(function (b) {
+      if (b.category !== 'lodging') return;
+      var e = (b.entries || [])[0];
+      if (!e || !e.id || !e.mapUrl || e.mapPlaceName) return;
+      if (lodgingNameTried[e.id]) return;
+      targets.push(e);
     });
+    targets = targets.slice(0, 3);
+    return targets.reduce(function (p, e, i) {
+      return p.then(function () {
+        if (!stillHere()) return;
+        lodgingNameTried[e.id] = true;
+        return (i ? wait(1100) : Promise.resolve()).then(function () {
+          return api('/geocode?q=' + encodeURIComponent(e.mapUrl) + '&entry=' + encodeURIComponent(e.id) + '&name=1').then(function (res) {
+            if (res && res.name && stillHere()) {
+              e.mapPlaceName = res.name;
+              if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') renderTripDetail();
+            }
+          }).catch(function () {});
+        });
+      });
+    }, Promise.resolve());
   }
 
   function renderTimeline(blocks) {
@@ -5795,6 +6075,7 @@
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
     placeCandidates = []; placeChoice = '';
+    selectedPlaceName = ''; selectedPlaceNameUrl = '';
     $('#entPlaceStatus').textContent = brokenMapUrl ? '地図のリンクが壊れていたので、選び直してください' : '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
@@ -5842,19 +6123,21 @@
     updateTravelDuration();
   }
 
+  // 出発の時刻は、この予定自身の時刻を使う（2026-09-29〜、以前は「移動の情報」の中に別で
+  // 出発時刻の欄があったが、入力を減らすため無くした。隠れた#entTravelDepartの欄は
+  // 古い記録の値をそのまま保存し直すためだけに残してある）
   function updateTravelDuration() {
     var block = entryFormBlock();
     var all = Core.sortBlocks(state.blocks);
     var next = block ? all[all.indexOf(block) + 1] : null;
     var depOff = block ? block._offset : undefined, arrOff = next ? next._offset : undefined;
-    var dep = $('#entTravelDepart').value, arr = $('#entTravelArrive').value;
+    var dep = block ? (block.time || '') : '', arr = $('#entTravelArrive').value;
     var d = Core.travelDurationText(dep, arr, depOff, arrOff);
     var info = Core.travelDuration(dep, arr, depOff, arrOff);
     var notes = [];
     if (typeof depOff === 'number' && typeof arrOff === 'number' && depOff !== arrOff) notes.push('時差' + Core.offsetDiffText(arrOff - depOff));
     if (info && info.dayShift) notes.push('到着は現地の' + (Core.dayShiftPrefix(info.dayShift) === '翌' ? '翌日' : Core.dayShiftPrefix(info.dayShift)));
-    $('#entTravelDuration').textContent = d ? '所要時間：' + d + (notes.length ? '（' + notes.join('・') + '）' : '') +
-      '。時刻はどちらも現地時間で入れてください。' : '時刻はどちらも現地時間で入れてください。';
+    $('#entTravelDuration').textContent = d ? '所要時間：' + d + (notes.length ? '（' + notes.join('・') + '）' : '') : '';
   }
 
   function readTravelFields() {
@@ -6573,6 +6856,11 @@
   var placeCandidates = [];
   var PLACE_GOOGLE = 'google';
   var placeChoice = ''; // 選んでいる候補の番号（文字列）か PLACE_GOOGLE
+  // 「地図のURL」欄に自動で入れたURLと、そのとき選ばれていた場所の名前（Core.placeSelectionName）の組。
+  // saveEntryのときに#entMapUrlがこのURLのままなら（＝保存前に手で書き換えていなければ）、
+  // 名前も一緒に送る。手でURLを書き換えた・消したときは一致しなくなるので送らない（2026-09-29）
+  var selectedPlaceName = '';
+  var selectedPlaceNameUrl = '';
   var placeSessionToken = ''; // Places API (New) のAutocomplete〜Details一連の呼び出しをまとめる印（docs/adr/0011）
   // 座標を取りに行っている（ensureSelectedPlaceCoordsが返した）Promise。保存（saveEntry）は、これが
   // 終わるのを待ってから地図欄を確定させる（届く前に保存すると、座標付きの正しいURLではなく
@@ -6743,9 +7031,13 @@
   // 壊れているとき（undefined/NaN）は、検索した文字列そのままのURLにする（undefined/NaNを含む
   // URLは絶対に書き込まない。2026-09-27）
   function applySelectedPlaceToMapUrl() {
-    var url = Core.placeMapUrl(selectedPlace(), $('#entPlaceSearch').value);
+    var searchText = $('#entPlaceSearch').value;
+    var place = selectedPlace();
+    var url = Core.placeMapUrl(place, searchText);
     if (!url) return;
     $('#entMapUrl').value = url;
+    selectedPlaceName = Core.placeSelectionName(place, searchText);
+    selectedPlaceNameUrl = url;
   }
 
   // 外貨の行で、まだレートが（自動取得も手入力も）入っていないもの。保存を止める対象（2026-09-27）
@@ -6808,6 +7100,9 @@
       author: author
     };
     if (!$('#entArriveField').hidden) payload.travel = readTravelFields();
+    // 場所の名前は、地図欄が「候補を選んで自動で入れたURL」のままのときだけ送る（手でURLを
+    // 書き換えたり消したりしたら selectedPlaceNameUrl と一致しなくなるので送らない。2026-09-29）
+    if (selectedPlaceName && payload.mapUrl === selectedPlaceNameUrl) payload.mapPlaceName = selectedPlaceName;
 
     Promise.all([
       // 並べた順のまま、新しい写真だけアップロードしてidにする
@@ -7151,6 +7446,7 @@
     var placesByTrip = {};
     ((state.myLogPlaces && state.myLogPlaces.tripPlaces) || []).forEach(function (t) { placesByTrip[t.tripId] = t; });
     el.innerHTML = '';
+    var revealCards = [];
     trips.forEach(function (t) {
       var card = document.createElement('div');
       card.className = 'trip-card';
@@ -7181,7 +7477,9 @@
         });
       });
       el.appendChild(card);
+      revealCards.push(card);
     });
+    revealCardsOnScroll(revealCards);
   }
 
   function myLogCategoryOf(it) { return it.category === 'arrival' ? 'transport' : it.category; }
@@ -8629,10 +8927,13 @@
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
-    initVisitedSwipe();
-    initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
-    initEdgeSwipeBack(document.querySelector('[data-screen="visited"]'), goHome);
-    initEdgeSwipeBack(document.querySelector('[data-screen="profile"]'), goHome);
+    // マイログ・旅先一覧・プロフィールはボトムタブバーのトップレベル画面になったので、
+    // 「← 戻る」／edge-swipe-back（画面端からのスワイプで戻る）はもう無い。代わりに横スワイプで
+    // 4画面を行き来する（initTabSwipe。旅の詳細（tripDetail）はこれまでどおりedge-swipe-backで戻る）。
+    initTabSwipe(document.querySelector('[data-screen="mylog"]'), mylogResolveSwipe);
+    initTabSwipe(document.querySelector('[data-screen="visited"]'), function (dx) { visitedResolveSwipe(dx); });
+    initTabSwipe(document.querySelector('[data-screen="home"]'), function (dx) { goToAdjacentTabBySwipe(dx); });
+    initTabSwipe(document.querySelector('[data-screen="profile"]'), function (dx) { goToAdjacentTabBySwipe(dx); });
     initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), returnFromTripDetail);
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
@@ -8793,11 +9094,7 @@
           void icon.offsetWidth;
           icon.classList.add('pop');
         }
-        var tab = btn.dataset.tab;
-        if (tab === 'home') goHome();
-        else if (tab === 'mylog') { if (loadCurrentUser()) openMyLog(); else openLogin('mylog'); }
-        else if (tab === 'visited') { if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited'); }
-        else if (tab === 'profile') openProfile();
+        openTabScreen(btn.dataset.tab);
       });
     });
 

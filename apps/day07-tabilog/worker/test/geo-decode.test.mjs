@@ -8,6 +8,7 @@ import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
   isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline, hasBrokenMapQuery,
+  mapUrlPlaceName,
 } from "../src/geo-decode.js";
 
 let pass = 0, fail = 0;
@@ -180,6 +181,22 @@ check("hasBrokenMapQuery: 普通の座標のURLはfalse",
 check("hasBrokenMapQuery: 空・不正なURLはfalse", [hasBrokenMapQuery(""), hasBrokenMapQuery(null), hasBrokenMapQuery("not a url")], [false, false, false]);
 check("hasBrokenMapQuery: URLオブジェクトも渡せる",
   hasBrokenMapQuery(new URL("https://maps.google.com/?query=undefined%2Cundefined")), true);
+
+// ---- mapUrlPlaceName：地図URL自体から人が読める場所の名前を取り出す（v26、既存の宿泊記録への
+// 後追い＝geocodeEntryNameOnlyでも使う。2026-09-29〜） ----
+check("mapUrlPlaceName: /maps/place/<名前>/ から名前を取る",
+  mapUrlPlaceName(new URL("https://www.google.com/maps/place/%E3%83%9B%E3%83%86%E3%83%AB%E3%83%8B%E3%83%A5%E3%83%BC%E3%82%AA%E3%83%BC%E3%82%BF%E3%83%8B/@35.68,139.73,17z")),
+  "ホテルニューオータニ");
+check("mapUrlPlaceName: /place/ の+は空白に戻す",
+  mapUrlPlaceName(new URL("https://www.google.com/maps/place/Grand+Hotel/@1,2,3z")), "Grand Hotel");
+check("mapUrlPlaceName: query=<名前>（座標でない）も名前として使う",
+  mapUrlPlaceName(new URL("https://maps.google.com/?query=%E6%B0%91%E5%AE%BF%E3%81%95%E3%81%8F%E3%82%89")), "民宿さくら");
+check("mapUrlPlaceName: query=座標（緯度,経度）は名前として使わない",
+  mapUrlPlaceName(new URL("https://www.google.com/maps/search/?api=1&query=35.5482964%2C139.7779951")), "");
+check("mapUrlPlaceName: /place/ も query= も無ければ空文字（Google Placesに回す）",
+  mapUrlPlaceName(new URL("https://www.google.com/maps/@35.68,139.73,17z")), "");
+check("mapUrlPlaceName: 壊れた地図URL（query=undefined,undefined）は名前を取らない",
+  mapUrlPlaceName(new URL("https://www.google.com/maps/search/?api=1&query=undefined%2Cundefined")), "");
 
 console.log(pass + " passed, " + fail + " failed");
 if (fail) process.exitCode = 1;

@@ -18,6 +18,7 @@ import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
   isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline, hasBrokenMapQuery,
+  mapUrlPlaceName,
 } from "./geo-decode.js";
 import {
   isValidCurrency, isValidDate, frankfurterUrl, parseFrankfurterResponse,
@@ -582,6 +583,9 @@ function validEntryInput(x) {
   if (!optStr(x.waitTime, 50)) return false;
   if (x.time !== undefined && x.time !== "" && !TIME_RE.test(x.time)) return false;
   if (!optUrl(x.mapUrl, 500)) return false;
+  // mapPlaceName：「場所名で検索」の候補を選んだときに、地図URLと一緒にクライアントが送る場所の名前
+  // （2026-09-29）。任意項目・最大200字（map_place_name列の想定と合わせる）。
+  if (!optStr(x.mapPlaceName, 200)) return false;
   if (!optUrl(x.shopUrl, 500)) return false;
   if (!optUrl(x.otherUrl, 500)) return false;
   if (!optStr(x.author, 50)) return false;
@@ -629,6 +633,9 @@ function rowToEntry(row) {
   ) {
     entry.mapLat = row.map_lat;
     entry.mapLng = row.map_lng;
+    // その場所の人が読める名前（v26、2026-09-29）。座標と同時に1回だけ求めて保存してある
+    // （backgroundGeocodeEntry／geocodeForReplay）ので、座標を返すときだけ一緒に返す。
+    if (row.map_place_name) entry.mapPlaceName = row.map_place_name;
   }
   return entry;
 }
@@ -646,18 +653,41 @@ async function backgroundGeocodeEntry(env, entryId, mapUrl) {
     // 一緒に保存する（v25、2026-09-28〜）。/mylogのたびに調べ直さなくて済むようにするための変更
     // （resolveMapPointPlacesの本番障害＝サブリクエスト上限超過を防ぐ。getVisitedPlaces参照）。
     const geo = await reverseGeocode(result.lat, result.lng).catch(() => null);
+    // 場所の人が読める名前（v26、2026-09-29〜）。geocodeMapUrlが、地図URL自体（/place/<名前>/・
+    // query=<名前>）かGoogle Places（displayName）から求めて`.name`に付けてくれている。
+    // 宿泊の見出しが「ホテルに帰宅」のような一般的な文言だけのとき、旅行詳細の「宿泊先」表示に使う。
+    await saveEntryGeocodeResult(env, entryId, mapUrl, result, geo);
+  } catch {
+    // 裏の処理なので、失敗しても記録の保存自体には影響させない（次の開くタイミングでまた試す）
+  }
+}
+
+// 座標・都道府県・国・場所の名前をentriesへ保存する。migrations/0025（map_admin1/map_country）・
+// migrations/0026（map_place_name）のどちらか、または両方を実行する前のDBでも、無い列を除いた
+// SQLへ自動でフォールダウンして保存する（backgroundGeocodeEntry・geocodeForReplay共通）。
+async function saveEntryGeocodeResult(env, entryId, mapUrl, result, geo) {
+  const placeName = (result.name || "").trim().slice(0, 200);
+  try {
+    // map_place_nameは、まだ何も入っていないとき（NULLまたは空文字）だけ書く。「場所名で検索」の
+    // 候補を選んだときにクライアントが送った名前（本人が選んだ、正確な名前）を、裏の座標取得が
+    // 勝手に上書きしてしまわないようにするため（2026-09-29）。
+    await env.DB.prepare(
+      "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=?, map_admin1=?, map_country=?, " +
+      "map_place_name = CASE WHEN map_place_name IS NULL OR map_place_name = '' THEN ? ELSE map_place_name END " +
+      "WHERE id=? AND map_url=?"
+    ).bind(result.lat, result.lng, mapUrl, nowIso(), (geo && geo.admin1) || "", (geo && geo.country) || "", placeName, entryId, mapUrl).run();
+  } catch {
     try {
+      // migrations/0026（map_place_name列）を実行する前のDBでは、その列無しで保存する
       await env.DB.prepare(
         "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=?, map_admin1=?, map_country=? WHERE id=? AND map_url=?"
       ).bind(result.lat, result.lng, mapUrl, nowIso(), (geo && geo.admin1) || "", (geo && geo.country) || "", entryId, mapUrl).run();
     } catch {
-      // migrations/0025（map_admin1/map_country列）を実行する前のDBでは、その2列無しで保存する
+      // migrations/0025（map_admin1/map_country列）も実行する前のDBでは、その2列も無しで保存する
       await env.DB.prepare(
         "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=? WHERE id=? AND map_url=?"
       ).bind(result.lat, result.lng, mapUrl, nowIso(), entryId, mapUrl).run();
     }
-  } catch {
-    // 裏の処理なので、失敗しても記録の保存自体には影響させない（次の開くタイミングでまた試す）
   }
 }
 
@@ -693,6 +723,9 @@ async function createEntry(blockId, request, env, headers, ctx) {
     wait_time: (data.waitTime || "").trim(),
     time: data.time || "",
     map_url: data.mapUrl || "",
+    // 「場所名で検索」の候補を選んで地図URLを入れたとき、一緒に送られてくる場所の名前
+    // （2026-09-29、migrations/0026 map_place_name）。任意項目
+    map_place_name: (data.mapPlaceName || "").trim().slice(0, 200),
     shop_url: data.shopUrl || "",
     other_url: data.otherUrl || "",
     author: (data.author || "").trim(),
@@ -700,15 +733,29 @@ async function createEntry(blockId, request, env, headers, ctx) {
     created_at: t,
     updated_at: t,
   };
-  await env.DB.prepare(
-    `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, travel, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  )
-    .bind(
-      row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
-      row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
+  try {
+    await env.DB.prepare(
+      `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, map_place_name, shop_url, other_url, author, travel, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
-    .run();
+      .bind(
+        row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
+        row.cost_items, row.wait_time, row.time, row.map_url, row.map_place_name, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
+      )
+      .run();
+  } catch (e) {
+    // migrations/0026（map_place_name列）を実行する前のDBでは、その列無しで保存する
+    if (!/no such column/i.test(String((e && e.message) || ""))) throw e;
+    await env.DB.prepare(
+      `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url, shop_url, other_url, author, travel, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+      .bind(
+        row.id, row.block_id, row.episode, row.comment, row.detail, row.photo_ids, row.video_ids,
+        row.cost_items, row.wait_time, row.time, row.map_url, row.shop_url, row.other_url, row.author, row.travel, row.created_at, row.updated_at
+      )
+      .run();
+  }
   // 地図URLが付いていたら、返事を待たせず裏で座標を求めてD1に保存しておく（Part A、2026-09-26〜。
   // 次に「地図でふりかえる」を開いたときはもう探しに行かなくてよい）。
   const newMapUrl = (row.map_url || "").trim();
@@ -730,17 +777,42 @@ async function updateEntry(id, request, env, headers, ctx) {
   const merged = { ...cur, ...data };
   const t = nowIso();
   const newMapUrl = (merged.mapUrl || "").trim();
-  await env.DB.prepare(
-    `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
-  )
-    .bind(
-      (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
-      JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
-      JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
-      newMapUrl, merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
-      JSON.stringify(cleanTravel(merged.travel)), t, id
+  // 場所の名前：今回のリクエストにmapPlaceNameが入っていればそれ（無い・空文字なら消す＝候補を
+  // 選び直さずURLだけ書き換えたときなど）。無ければ、地図URLが変わっていないときだけ元の名前を
+  // そのまま残し、地図URLが変わったのに名前が付いていなければ、古い場所の名前が残らないよう消す
+  // （2026-09-29）。
+  const hasMapPlaceName = Object.prototype.hasOwnProperty.call(data, "mapPlaceName");
+  const mapUrlChanged = newMapUrl !== (existing.map_url || "").trim();
+  const newMapPlaceName = hasMapPlaceName
+    ? (data.mapPlaceName || "").trim().slice(0, 200)
+    : (mapUrlChanged ? "" : (existing.map_place_name || ""));
+  try {
+    await env.DB.prepare(
+      `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, map_place_name=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
     )
-    .run();
+      .bind(
+        (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
+        JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
+        JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
+        newMapUrl, newMapPlaceName, merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
+        JSON.stringify(cleanTravel(merged.travel)), t, id
+      )
+      .run();
+  } catch (e) {
+    // migrations/0026（map_place_name列）を実行する前のDBでは、その列無しで保存する
+    if (!/no such column/i.test(String((e && e.message) || ""))) throw e;
+    await env.DB.prepare(
+      `UPDATE entries SET episode=?, comment=?, detail=?, photo_ids=?, video_ids=?, cost_items=?, wait_time=?, time=?, map_url=?, shop_url=?, other_url=?, author=?, travel=?, updated_at=? WHERE id=?`
+    )
+      .bind(
+        (merged.episode || "").trim(), (merged.comment || "").trim(), (merged.detail || "").trim(),
+        JSON.stringify(merged.photoIds || []), JSON.stringify(merged.videoIds || []),
+        JSON.stringify(merged.costItems || []), (merged.waitTime || "").trim(), merged.time || "",
+        newMapUrl, merged.shopUrl || "", merged.otherUrl || "", (merged.author || "").trim(),
+        JSON.stringify(cleanTravel(merged.travel)), t, id
+      )
+      .run();
+  }
   // 地図URLが変わった、またはまだ座標を求めていないときだけ、裏で座標を求め直す（Part A）。
   if (ctx && entryNeedsGeocode(existing.map_url, existing.map_geocoded_url, newMapUrl, existing.map_geocoded_at)) {
     ctx.waitUntil(backgroundGeocodeEntry(env, id, newMapUrl));
@@ -1666,12 +1738,17 @@ async function googleTextSearchPlace(text, env) {
     const places = Array.isArray(data.places) ? data.places : [];
     const id = places[0] && places[0].id;
     if (!id) return null;
+    // displayName（v26、2026-09-29〜）も同じ呼び出しで一緒に聞く（どちらもPlace Details
+    // Essentialsの範囲なので、無料枠の消費は増えない）。宿泊先の名前など、見出しが「ホテルに帰宅」の
+    // ような一般的な文言だけのとき、地図から場所の名前を出すのに使う（saveEntryGeocodeResult参照）。
     const res2 = await fetch("https://places.googleapis.com/v1/places/" + encodeURIComponent(id) + "?languageCode=ja", {
-      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "location" },
+      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "location,displayName" },
     });
     if (!res2.ok) return null;
     const data2 = await res2.json();
-    return (data2.location && validLatLng(data2.location.latitude, data2.location.longitude)) || null;
+    const pt = data2.location && validLatLng(data2.location.latitude, data2.location.longitude);
+    if (!pt) return null;
+    return { ...pt, name: (data2.displayName && data2.displayName.text) || "" };
   } catch {
     return null;
   }
@@ -1725,14 +1802,17 @@ async function geocodePlaceName(text, nears, env) {
 // （地図でふりかえるの`Core.buildReplayTimeline`は、located=falseの地点をそのまま「場所の分からない
 // 出来事」として扱い、直前の地点に居続けるようになっている）。リンクの中の文字列（店名・住所）からの
 // 検索（Google Text Search・Nominatim・ウィキペディア）はこれまでどおり使う。
+// mapUrlPlaceName（地図URL自体からの場所の名前）はgeo-decode.jsへ移した（純粋関数、単体テストのため）。
+
 async function geocodeMapUrl(raw, quick, nears, env) {
   const u = await resolveMapUrl(raw).catch(() => null);
   const parsed = u ? parseMapUrl(u) : null;
-  if (parsed && parsed.coords) return parsed.coords;
+  const urlName = u ? mapUrlPlaceName(u) : "";
+  if (parsed && parsed.coords) return urlName ? { ...parsed.coords, name: urlName } : parsed.coords;
   if (quick) return { pending: true };
   if (parsed && parsed.text) {
     const r = await geocodePlaceName(parsed.text, nears, env);
-    if (r) return r;
+    if (r) return urlName ? { ...r, name: urlName } : r;
   }
   return null;
 }
@@ -2306,18 +2386,11 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam, en
   const storeForEntry = (body) => {
     if (!entryId || !env || !env.DB || !body || !body.found) return;
     if (typeof body.lat !== "number" || typeof body.lng !== "number") return;
-    // backgroundGeocodeEntryと同じく、座標と一緒に都道府県・国も1回だけ求めて保存する（v25）。
+    // backgroundGeocodeEntryと同じく、座標と一緒に都道府県・国・場所の名前も1回だけ求めて保存する
+    // （v25：都道府県・国、v26：名前。3段階のフォールダウンはsaveEntryGeocodeResult参照）。
     ctx.waitUntil((async () => {
       const geo = await reverseGeocode(body.lat, body.lng).catch(() => null);
-      try {
-        await env.DB.prepare(
-          "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=?, map_admin1=?, map_country=? WHERE id=? AND map_url=?"
-        ).bind(body.lat, body.lng, q, nowIso(), (geo && geo.admin1) || "", (geo && geo.country) || "", entryId, q).run();
-      } catch {
-        await env.DB.prepare(
-          "UPDATE entries SET map_lat=?, map_lng=?, map_geocoded_url=?, map_geocoded_at=? WHERE id=? AND map_url=?"
-        ).bind(body.lat, body.lng, q, nowIso(), entryId, q).run();
-      }
+      await saveEntryGeocodeResult(env, entryId, q, body, geo);
     })());
   };
   const hit = await cache.match(cacheKey);
@@ -2330,12 +2403,49 @@ async function geocodeForReplay(q, headers, ctx, quick, nearParam, hintParam, en
   if (quick && !isUrl) return json({ pending: true }, 200, headers);
   const result = isUrl ? await geocodeMapUrl(q, quick, nears, env) : await geocodeText(q, nears);
   if (result && result.pending) return json({ pending: true }, 200, headers); // まだ調べていないのでキャッシュしない
-  const body = result ? { found: true, lat: result.lat, lng: result.lng } : { found: false };
+  const body = result
+    ? { found: true, lat: result.lat, lng: result.lng, ...(result.name ? { name: result.name } : {}) }
+    : { found: false };
   storeForEntry(body);
   ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json", "cache-control": "public, max-age=" + GEOCODE_CACHE_SECONDS },
   })));
   return json({ ...body, cached: false }, 200, headers);
+}
+
+// name=1：既存の記録（v26＝map_place_name追加より前に座標だけ保存済みのもの）に、あとから場所の
+// 名前だけを付け足す（2026-09-30）。座標はすでにmap_geocoded_urlがmap_urlと一致した状態で
+// 保存済み＝もう一度調べ直す必要が無いので、絶対に上書きしない。名前だけを、URL自体
+// （展開込みで最大1回のfetch）→ 無ければGoogle Places（Text Search＋Details、鍵があるときだけ、
+// 最大2回のfetch）の順で求める。他人の記録を書き換えられないよう、entry idの形式検証＋
+// map_url一致の両方を見る（geocodeForReplayのstoreForEntryと同じ考え方）。
+async function geocodeEntryNameOnly(q, entryParam, env, headers) {
+  q = (q || "").trim();
+  const entryId = isValidEntryId(entryParam) ? entryParam : "";
+  if (!q || !entryId || !env || !env.DB) return json({ found: false }, 200, headers);
+  const row = await env.DB.prepare(
+    "SELECT map_url, map_lat, map_lng, map_geocoded_url, map_place_name FROM entries WHERE id = ?"
+  ).bind(entryId).first();
+  if (!row || row.map_url !== q || row.map_geocoded_url !== q) return json({ found: false }, 200, headers);
+  if (typeof row.map_lat !== "number" || typeof row.map_lng !== "number") return json({ found: false }, 200, headers);
+  if (row.map_place_name) return json({ found: true, name: row.map_place_name }, 200, headers);
+  const u = await resolveMapUrl(q).catch(() => null);
+  let name = u ? mapUrlPlaceName(u) : "";
+  if (!name && u && env.GOOGLE_API_KEY) {
+    const parsed = parseMapUrl(u);
+    if (parsed && parsed.text) {
+      const g = await googleTextSearchPlace(parsed.text, env).catch(() => null);
+      if (g && g.name) name = g.name;
+    }
+  }
+  if (!name) return json({ found: true }, 200, headers); // 座標はすでにあるが、名前は分からなかった
+  const placeName = name.trim().slice(0, 200);
+  try {
+    await env.DB.prepare("UPDATE entries SET map_place_name=? WHERE id=? AND map_url=?").bind(placeName, entryId, q).run();
+  } catch {
+    // migrations/0026（map_place_name列）未実行のDBでは保存できないが、この返事の分だけは使える
+  }
+  return json({ found: true, name: placeName }, 200, headers);
 }
 
 async function fetchDailyWeather(lat, lon, date) {
@@ -4441,6 +4551,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/comments\/([^/]+)\/report$/))) return reportComment(m[1], request, env, headers, ctx);
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
+    if (method === "GET" && path === "/geocode" && url.searchParams.get("name") === "1") return geocodeEntryNameOnly(url.searchParams.get("q"), url.searchParams.get("entry"), env, headers);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"), url.searchParams.get("entry"), env);
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx, env);
     if (method === "GET" && path === "/rail-tracks") return getRailTracks(url, headers, ctx);

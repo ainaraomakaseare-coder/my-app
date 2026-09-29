@@ -179,6 +179,20 @@ function hasBrokenMapQuery(urlOrHref) {
   return BROKEN_MAP_QUERY_RE.test(q);
 }
 
+// 地図URL自体に入っている、人が読める場所の名前（/maps/place/<名前>/、または座標でない
+// query=<名前>）。無ければ空文字（呼び出し側でGoogle Places のdisplayNameに回す。v26、2026-09-29）。
+// 純粋関数（展開済みのURLオブジェクトを受け取るだけ）なのでnodeで単体テストできる。
+function mapUrlPlaceName(u) {
+  if (hasBrokenMapQuery(u)) return "";
+  const m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
+  if (m) {
+    try { return decodeURIComponent(m[1].replace(/\+/g, " ")); } catch { return ""; }
+  }
+  const q = (u.searchParams.get("q") || u.searchParams.get("query") || "").trim();
+  if (q && !/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.test(q)) return q;
+  return "";
+}
+
 function entryNeedsGeocode(oldMapUrl, geocodedUrl, newMapUrl, geocodedAt) {
   if (!newMapUrl) return false;
   if (newMapUrl !== (oldMapUrl || "")) return true;
@@ -229,4 +243,5 @@ export {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, normPlaceName, placeNameRank, pickWikiHit, pickGeoNamesCandidate,
   isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline, hasBrokenMapQuery,
+  mapUrlPlaceName,
 };
