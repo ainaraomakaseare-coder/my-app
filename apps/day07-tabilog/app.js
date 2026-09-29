@@ -12,6 +12,11 @@
   // コード自体は削らず、呼び出し側でこのフラグを見て出し分ける。
   var FEATURES = { post: false, social: false };
 
+  // 公開しているWebサイトのURL（2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行）。
+  // 共有リンク・Stripeの戻り先・アプリ内から開けないリンクの組み立てなど、
+  // 「今どこで動いているか」に関係なく公開URLが要る場所はすべてここを参照する。
+  var PUBLIC_WEB_BASE = 'https://tabinoashiato.pages.dev/';
+
   var CATEGORIES = [
     { key: 'sightseeing', label: '観光', color: 'oklch(60% 0.13 150)' },
     { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
@@ -7224,9 +7229,13 @@
   // Stripeへの戻り先URLとしては使えず、他の人と共有するリンクとしても開けない。
   // その場合は実際に公開しているWebサイトのURLを使う。
   function publicPageUrl() {
-    return isNativeApp()
-      ? 'https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/'
-      : location.origin + location.pathname;
+    if (isNativeApp()) return PUBLIC_WEB_BASE;
+    // 新しいホスト（Cloudflare Pages）で動いているときだけ、今までどおり実際のURLを使う。
+    // それ以外（まだGitHub Pagesで見ている・ローカルで動かしているなど）は、
+    // 公開している最新のURL（PUBLIC_WEB_BASE）を使う。
+    return location.hostname === 'tabinoashiato.pages.dev'
+      ? location.origin + location.pathname
+      : PUBLIC_WEB_BASE;
   }
 
   function startCheckout(plan) {

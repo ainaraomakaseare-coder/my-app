@@ -45,7 +45,7 @@ https://developer.apple.com/account の「Membership」ページに表示され�
 4. Bundle ID：`com.hiroyaapps.tabilog`（`capacitor.config.json` と同じ値にする。事前に developer.apple.com の「Identifiers」からこのBundle IDを登録しておく必要があります。この登録画面で「Sign in with Apple」にもチェックを入れておいてください）
 5. SKU：何でもよい（例：`tabilog001`）
 
-説明文・キーワード・データ収集の申告内容などの下書きは `app-store-listing.md` にまとめてあります。コピーして使ってください。プライバシーポリシーのURLは `../day07-tabilog/privacy.html`（公開後は `https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`）です。
+説明文・キーワード・データ収集の申告内容などの下書きは `app-store-listing.md` にまとめてあります。コピーして使ってください。プライバシーポリシーのURLは `../day07-tabilog/privacy.html`（公開後は `https://tabinoashiato.pages.dev/privacy.html`。2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行。旧URL：`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`）です。
 
 Appleでサインインを有効にする手順（Googleログインを提供する場合はほぼ必須）は `../day07-tabilog/README.md` の「Appleでサインインについて」を参照してください。
 

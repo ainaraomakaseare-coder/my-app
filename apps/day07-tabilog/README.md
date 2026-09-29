@@ -37,7 +37,7 @@ open index.html
 
 ## プライバシーポリシー
 
-`privacy.html` にプライバシーポリシーを用意しています。公開後は `https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html` で見られ、App Store Connectへの申請時にこのURLを入力します。
+`privacy.html` にプライバシーポリシーを用意しています。公開後は `https://tabinoashiato.pages.dev/privacy.html` で見られ、App Store Connectへの申請時にこのURLを入力します（2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行。移行前の旧URLは `https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`）。
 
 ## iOSアプリ化について
 
@@ -72,7 +72,8 @@ open index.html
 3. 初回は「OAuth同意画面」の設定を求められます。ユーザーの種類は「外部」でよい（テスト段階では自分・家族のメールアドレスを「テストユーザー」に追加しておく）
 4. アプリケーションの種類：「ウェブ アプリケーション」
 5. 「承認済みの JavaScript 生成元」に、公開先のURLを追加：
-   - `https://ainaraomakaseare-coder.github.io`
+   - `https://tabinoashiato.pages.dev`（2026-09-29〜のCloudflare Pages）
+   - `https://ainaraomakaseare-coder.github.io`（移行前の旧GitHub Pages。切り替え完了まで併存させる）
    - ローカルで試す場合は `http://localhost:ポート番号` も追加（`npx serve -l 5000` のようにポートを固定すると管理しやすい）
 6. 作成すると「クライアントID」（`〇〇〇.apps.googleusercontent.com` の形）が発行されるので、`index.html` の `tabilog-google-client-id` メタタグの `content` に設定する
 
@@ -90,9 +91,9 @@ Appleの審査ルール（App Store Review Guideline 4.8）上、**Googleログ�
 2. 「+」で新しい**Services ID**を作成（例：識別子 `com.hiroyaapps.tabilog.web`。iOSアプリ本体のBundle ID `com.hiroyaapps.tabilog` とは別物）
 3. 作成したServices IDの設定画面で「Sign in with Apple」を有効化し、「Configure」から以下を登録
    - Primary App ID：iOSアプリ本体のBundle IDを選択
-   - Domains and Subdomains：`ainaraomakaseare-coder.github.io`
-   - Return URLs：`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/`
-4. ドメインの所有確認のため、この画面で「Download」できるドメイン確認用ファイルを、このリポジトリのルート直下 `.well-known/apple-developer-domain-association.txt` として保存する（GitHub Pagesで公開されているドメインのルートに置く必要があるため）
+   - Domains and Subdomains：`tabinoashiato.pages.dev`（2026-09-29〜。移行完了までは`ainaraomakaseare-coder.github.io`も残す）
+   - Return URLs：`https://tabinoashiato.pages.dev/`（移行前の旧URL：`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/`）
+4. ドメインの所有確認のため、この画面で「Download」できるドメイン確認用ファイルを保存する。**GitHub Pagesの場合はこのリポジトリのルート直下**（`ainaraomakaseare-coder.github.io`というユーザーページ用の別リポジトリのルートで、この`my-app`リポジトリのルートではない点に注意）、**Cloudflare Pagesの場合は`apps/day07-tabilog/.well-known/apple-developer-domain-association.txt`**として保存する（Cloudflare Pagesのプロジェクトルートが`apps/day07-tabilog`のため、ここが実際のサイトルートになる）
 5. 発行されたServices ID（`com.hiroyaapps.tabilog.web`）を、`index.html` の `tabilog-apple-client-id` メタタグの `content` に設定する
 
 費用は無料です（Apple Developer Programの年会費に含まれており、追加の費用は発生しません）。
