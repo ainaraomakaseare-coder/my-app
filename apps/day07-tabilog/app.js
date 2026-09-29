@@ -1238,14 +1238,63 @@
     // 移動の予定（種類が「移動」）の移動手段・移動時間は、その予定から次の場所への移動として、次の地点に渡す。
     // 以前のデータ（移動以外の予定に「ここまでの移動手段」が付いているもの）は、その予定自身の値を使う。
     var pendingTransport = '', pendingMove = 0, out = [];
-    sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; }).forEach(function (b) {
+    var sorted = sortBlocks(blocks).filter(function (b) { return b.date && dates.indexOf(b.date) !== -1; });
+    sorted.forEach(function (b, bi) {
       var minute = hhmmToMinute(b.time);
       var estimated = minute === null;
+      // 「ここまでの移動手段」は次の予定にも引き継ぐ値なので、時刻の見積もりより前に求めておく
+      // （時刻なしの予定が飛行機で到着した先かどうかを、日をまたぐ見積もり（下のstep2）で使う）。
+      var arrivingGuess = b.category === 'transport' ? pendingTransport : (b.transport || pendingTransport);
+      var estimateSource = '';
+      var dayIndexOverride = null;
       if (estimated) {
         var prev = lastMinute[b.date];
-        // 時刻の無い予定でも、直前の移動に移動時間があれば、その分だけ後と見積もる
-        var step = pendingMove || (hasTimed[b.date] ? 30 : 60);
-        minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + step, 23 * 60 + 59);
+        var dayIdxCur = dates.indexOf(b.date);
+        var curOffset = typeof b._offset === 'number' ? b._offset : (typeof lastOffset === 'number' ? lastOffset : 0);
+        if (pendingMove) {
+          // 1. 直前の移動の予定に移動時間があれば、その分だけ後と見積もる（従来どおり）
+          minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + pendingMove, 23 * 60 + 59);
+          estimateSource = 'move';
+        } else {
+          // 2. 直前に移動時間が無ければ、あとで時刻の分かっている予定を探し、その30分前と見積もる
+          //    （羽田発→ハワイ着（時刻なし）→ハワイでの次の予定11:00、のようなケースを、次の予定を
+          //    無視して「直前+30分」にしてしまっていたのを直す。2026-09-29）。
+          //    日をまたいで探すのは、飛行機で着いた先（日付が変わることがある）だけに限る。
+          var found = null;
+          for (var k = bi + 1; k < sorted.length; k++) {
+            var nb = sorted[k];
+            if (nb.date !== b.date) {
+              if (arrivingGuess !== 'plane') break;
+              var nbDayIdx = dates.indexOf(nb.date);
+              if (nbDayIdx === -1 || nbDayIdx !== dayIdxCur + 1) break;
+            }
+            var nm = hhmmToMinute(nb.time);
+            if (nm !== null) { found = nb; break; }
+          }
+          if (found) {
+            var nextOffset = typeof found._offset === 'number' ? found._offset : curOffset;
+            var foundDayIdx = dates.indexOf(found.date);
+            var targetAbs = foundDayIdx * 1440 + hhmmToMinute(found.time) - nextOffset;
+            var prevAbs = prev === undefined ? null : (dayIdxCur * 1440 + prev - curOffset);
+            var candidateAbs = targetAbs - 30;
+            if (prevAbs !== null) {
+              var gap = targetAbs - prevAbs;
+              if (gap < 35) candidateAbs = prevAbs + gap / 2;
+            }
+            // あとの予定は日付・時差ともに確かな値を持つ手がかりなので、日付をまたぐ見積もりになっても
+            // （前日の23:xxではなく）実際の日に置く（下のstep3の「元の日付のまま」とは違い、こちらは
+            // 具体的な次の予定という裏付けがあるため）。
+            var localTotal = candidateAbs + curOffset;
+            var newDayIdx = Math.max(0, Math.min(dates.length - 1, Math.floor(localTotal / 1440)));
+            minute = Math.max(0, Math.min(23 * 60 + 59, Math.round(localTotal - newDayIdx * 1440)));
+            dayIndexOverride = newDayIdx;
+            estimateSource = 'next';
+          } else {
+            // 4. 見積もりの手がかりが無ければ、従来どおり直前の30分後（その日に時刻ありが無ければ9時から1時間おき）
+            minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + (hasTimed[b.date] ? 30 : 60), 23 * 60 + 59);
+            estimateSource = 'default';
+          }
+        }
       }
       var placeEntry = replayPlaceEntry(b);
       // 移動の予定（category==='transport'）自身の transport は「次の場所への移動」を表す値なので、
@@ -1255,12 +1304,14 @@
       // 例：赤レンガ倉庫→（新横浜から大阪への移動、地図が壊れている。ここでpendingTransport='train'）
       //     →新大阪からユニバへ（地図あり、それ自身のtransportは'train'だが「次への移動」の意味なので
       //     使わず、pendingTransportの'train'を使う。2026-09-27）
-      var arriving = b.category === 'transport' ? pendingTransport : (b.transport || pendingTransport);
+      var arriving = arrivingGuess;
       if (b.category === 'transport') { pendingTransport = b.transport || ''; pendingMove = b.moveMinutes || 0; }
       else if (placeEntry) { pendingTransport = ''; pendingMove = 0; }
-      lastMinute[b.date] = minute;
+      // 日をまたぐ見積もり（上のstep2）で置き先の日が変わったときは、その日付で並びを扱う
+      var stopDate = dayIndexOverride !== null ? (dates[dayIndexOverride] || b.date) : b.date;
+      lastMinute[stopDate] = minute;
       if (typeof b._offset === 'number') lastOffset = b._offset;
-      var dayIndex = dates.indexOf(b.date);
+      var dayIndex = dayIndexOverride !== null ? dayIndexOverride : dates.indexOf(b.date);
       var captions = (b.entries || []).map(function (e) {
         // 以前は40文字で切っていたため、スマホでは1.5行ほどで途切れていた。全文を出す（見せる時間は文字数で延ばす）
         return (e.episode || '').trim() || (e.comment || '').trim();
@@ -1269,7 +1320,7 @@
       var photos = [];
       (b.entries || []).forEach(function (e) { (e.photoIds || []).forEach(function (id) { if (photos.length < REPLAY_MAX_PHOTOS) photos.push(id); }); });
       out.push({
-        blockId: b.id, date: b.date, dayIndex: dayIndex, dayNumber: dayIndex + 1,
+        blockId: b.id, date: stopDate, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions, photos: photos,
         transport: arriving, query: placeEntry ? placeEntry.url : '',
         // 記録のid・サーバーがすでに求めてある座標（Part A）。geocodeQueriesがこれを見て、
@@ -1277,7 +1328,10 @@
         entryId: placeEntry ? placeEntry.entryId : '',
         knownLat: placeEntry ? placeEntry.lat : null,
         knownLng: placeEntry ? placeEntry.lng : null,
-        offset: lastOffset // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
+        offset: lastOffset, // 現地の時差（分）。分からなければnull（時刻なしの予定は直前の予定の時差）
+        // 時刻を見積もった根拠（'move'=直前の移動時間／'next'=あとの予定の30分前／'default'=直前+30分など）。
+        // buildReplayTimelineが、座標が分かってから飛行機の所要時間で見積もり直せるかどうかに使う（2026-09-29）
+        estimateSource: estimated ? estimateSource : ''
       });
       // 移動の予定に「到着地の地図」が入っていれば、その移動の到着を1つの地点として足す（2026-09-27）。
       // 到着時刻は到着地の現地時間なので、出発（出発地の時差）より前にならない日付に置く
@@ -1340,6 +1394,10 @@
   var REPLAY_PLANE_KM = 400;
   var REPLAY_PLANE_MIN_KM = 100; // これより近い区間の飛行機はありえない（移動手段の付き違い）とみなす（2026-09-27）
   var REPLAY_WALK_KM = 1.5; // 移動手段が入っていない、とても近い移動（1.5km未満）は徒歩とみなす（2026-09-26）
+  // 時刻の無い到着（見積もりの手がかり（moveMinutes・後の予定）が無いとき）を、飛行機の所要時間から見積もる
+  // ときの速さと、離着陸・待ち時間ぶんの余裕（分）。docs/adr/0008参照（2026-09-29）
+  var REPLAY_FLIGHT_KMH = 850;
+  var REPLAY_FLIGHT_BUFFER_MIN = 60;
 
   // 2地点の距離（km）
   function distanceKm(a, b) {
@@ -1445,6 +1503,30 @@
       });
     });
     if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
+    // 時刻の無い到着で、replayStopsの時点（座標がまだ分からない）ではmoveMinutes・後の予定という
+    // 手がかりが無かった（estimateSource==='default'）ものを、座標が分かった今、飛行機で着いた先
+    // （transport==='plane'、または移動手段が無く距離がREPLAY_PLANE_KM超）なら、飛行機の所要時間
+    // （距離÷850km/h＋離着陸などの余裕60分、5分単位）で見積もり直す。日付は保存されている値のまま
+    // 変えず、その日の0:00〜23:59に収め、前後の地点をまたがない範囲に収める（2026-09-29）
+    var lastLocatedIdx = -1;
+    s.forEach(function (st, i) {
+      if (st.estimated && st.estimateSource === 'default' && st.located && lastLocatedIdx >= 0) {
+        var prevSt = s[lastLocatedIdx];
+        var km = distanceKm(prevSt, st);
+        var isPlane = st.transport === 'plane' || (!st.transport && km > REPLAY_PLANE_KM);
+        if (isPlane) {
+          var flightMin = Math.round((km / REPLAY_FLIGHT_KMH * 60 + REPLAY_FLIGHT_BUFFER_MIN) / 5) * 5;
+          var offsetHere = typeof st.offset === 'number' ? st.offset : baseOffset;
+          var absArrival = prevSt.t + flightMin;
+          var nextSt = s[i + 1];
+          if (nextSt && absArrival > nextSt.t) absArrival = nextSt.t;
+          var localMinute = Math.max(0, Math.min(23 * 60 + 59, Math.round(absArrival - st.dayIndex * 1440 + offsetHere - baseOffset)));
+          st.minute = localMinute;
+          st.t = st.dayIndex * 1440 + localMinute - (offsetHere - baseOffset);
+        }
+      }
+      if (st.located) lastLocatedIdx = i;
+    });
     // 日付変更線（経度180度）をまたいだら、そのあとの地点の経度を±360度して前の地点から続ける。
     // 香港→ニューヨークのように太平洋を越える飛行機は、弧を太平洋回りで引くので終わりが経度+286度になる。
     // ニューヨーク（-74度）をそのままにすると、そこから先は地図の「別の周回」に描かれ、カメラがニューヨークへ
