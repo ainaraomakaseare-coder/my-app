@@ -353,6 +353,35 @@ a:hover { text-decoration: underline; }
 .trip-title { font-family: var(--font-display); font-size: 20px; font-weight: 700; margin-top: 10px; }
 .trip-dates { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
 
+/* 旅行カードをタップしたときに、そのカードが浮かび上がって詳細画面のヘッダーへ広がる演出
+   （Airbnbアプリを手本にしたshared-element遷移。app.jsのopenTripFromCard／maybeAnimateTripCardClose、
+   2026-09-29〜）。暗幕（backdrop）はぼかし＋暗くするだけの装飾要素で、クリックは透過させない
+   （pointer-events: none。演出中は裏の一覧を操作させたくないが、専用の要素にせずJS側で
+   一覧のfreeze中は元画面がposition:fixedで前面に出ないようにしている）。 */
+.trip-open-backdrop {
+  position: fixed; inset: 0; z-index: 490; pointer-events: none;
+  background: rgba(10, 12, 16, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px);
+  transition: background .38s ease, backdrop-filter .38s ease, -webkit-backdrop-filter .38s ease;
+}
+.trip-open-backdrop.show {
+  background: rgba(10, 12, 16, 0.3); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.trip-open-clone {
+  position: fixed; z-index: 500; overflow: hidden; background: var(--card);
+  box-shadow: var(--card-shadow); pointer-events: none;
+  transition: top .38s cubic-bezier(.2, .8, .2, 1), left .38s cubic-bezier(.2, .8, .2, 1),
+    width .38s cubic-bezier(.2, .8, .2, 1), height .38s cubic-bezier(.2, .8, .2, 1),
+    border-radius .38s cubic-bezier(.2, .8, .2, 1);
+}
+.trip-open-clone-photo {
+  width: 100%; background-color: var(--border-soft); background-size: cover; background-position: center;
+  transition: height .38s cubic-bezier(.2, .8, .2, 1);
+}
+.trip-open-clone-body { flex: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .trip-open-backdrop, .trip-open-clone, .trip-open-clone-photo { transition: none; }
+}
+
 /* ボタン（参加する・招待・アルバム・精算）が画面幅より広いと、ページ全体が横に少しずれて動いていた。
    入りきらないときは折り返す */
 .companions-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 0; }
