@@ -30,6 +30,12 @@
 html {
   background: var(--bg);
   overscroll-behavior-x: none;
+  /* 縦のバウンス（ラバーバンド）も止める。画面はhtml/body自体がスクロール領域（.screenは
+     display:block/noneで切り替えるだけで、中に別スクロール領域は無い）。いちばん下まで
+     スクロールしてさらに引っぱると、iOS（WKWebView）はページ全体をバウンスさせ、
+     position: fixedの下タブ（#tabbar）もそれにつられて浮き上がって見えてしまう
+     （commit 8f636b3のバグ報告、2026-09-29）。overscroll-behavior-yでバウンスそのものを止める。 */
+  overscroll-behavior-y: none;
 }
 
 body {
@@ -39,6 +45,7 @@ body {
   font-family: var(--font-body);
   line-height: 1.6;
   overscroll-behavior-x: none;
+  overscroll-behavior-y: none;
   -webkit-text-size-adjust: 100%;
 }
 
@@ -1126,6 +1133,10 @@ body.viewer-open { overflow: hidden; }
   background: var(--card);
   border-top: 1px solid var(--border-soft);
   box-shadow: 0 -2px 12px rgba(20, 20, 30, 0.06);
+  /* WKWebViewでposition: fixedの要素を専用レイヤーに乗せておく（コンポジット確定）。
+     html/bodyのoverscroll-behavior-yと合わせて、スクロールの端でタブバーが浮き上がらないようにする
+     ための保険（2026-09-29）。 */
+  transform: translateZ(0);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .tabbar.show { display: flex; }
