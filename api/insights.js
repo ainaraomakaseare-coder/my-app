@@ -25,19 +25,32 @@ const advice = require('../lib/advice');
 const scope = require('../lib/account-scope');
 const benchmark = require('../lib/benchmark');
 const benchmarkYoutube = require('../lib/benchmark-youtube');
+const benchmarkStore = require('../lib/benchmark-store');
+const benchmarkIntake = require('../scripts/benchmark-intake');
 
 // Vercel の制限時間より手前で自分から切り上げる。
 const TIME_BUDGET_MS = 45_000;
 
+// 取り込みの本文はこれより大きければ断る（貼り間違いで巨大な本文が来ても詰まらないように）。
+const MAX_INTAKE_BYTES = 1_000_000;
+
 module.exports = async function handler(req, res) {
   try {
+    const q = req.query || {};
+
+    // ★ 利用者が手やClaude in Chromeで集めた記録を貼り込む入口。
+    //   cronの鍵ではなく、いつものログインで守る。POSTだが collect() より先に見る。
+    if (req.method === 'POST' && String(q.benchmark || '') === 'intake') {
+      if (!auth.guard(req, res)) return;
+      return res.status(200).json(await intakeBenchmark(req, q));
+    }
     if (req.method === 'POST') return await collect(req, res);
     if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
 
     if (!auth.guard(req, res)) return;
-    const q = req.query || {};
     if (q.probe) return res.status(200).json(await probe(String(q.probe)));
     if (q.benchmark === 'youtube') return res.status(200).json(await collectYoutubeBenchmark(q));
+    if (q.benchmark === 'status') return res.status(200).json(await benchmarkStatus(q));
     return res.status(200).json(await read(q.group ? String(q.group) : null));
   } catch (err) {
     const status = err.userError ? 400 : 500;
@@ -172,7 +185,86 @@ async function collectYoutubeBenchmark(q) {
     e.userError = true;
     throw e;
   }
-  return benchmarkYoutube.collect(genre, { account, db });
+  const result = await benchmarkYoutube.collect(genre, { account, db });
+  // 失敗（ok:false）のときは保存するものが無い。そのまま理由を返す。
+  if (!result || result.ok === false || !Array.isArray(result.items)) return result;
+  // ★ 集めるだけでなく、そのままDBにためる（分析まで一気通貫にするため）。
+  //   既存の項目は増やさず、returnの形はいままでどおり（画面が壊れないように）。
+  const saved = await benchmarkStore.saveItems(db, result.items);
+  return Object.assign({}, result, { saved: saved.saved });
+}
+
+// ---------------------------------------------------------------- のび（貼り込みでの取り込み）
+
+/**
+ * Claude in Chrome / YouTube 以外の記録を、貼り込みで取り込む。
+ *
+ * ★ 点検の規則は scripts/benchmark-intake.js（会話側での取り込み）とまったく同じにする。
+ *   ここだけ別のルールで甘くしたり厳しくしたりしない。
+ */
+async function intakeBenchmark(req, q) {
+  const text = bodyText(req.body);
+  if (Buffer.byteLength(text, 'utf8') > MAX_INTAKE_BYTES) {
+    const e = new Error('本文が大きすぎます（1MBまでにしてください）。');
+    e.userError = true;
+    throw e;
+  }
+
+  let plans;
+  try {
+    plans = benchmarkIntake.planIntake(text, { genre: q.genre ? String(q.genre) : undefined }, () => null);
+  } catch (e) {
+    const err = new Error('取り込めませんでした: ' + e.message);
+    err.userError = true;
+    throw err;
+  }
+
+  const acceptedItems = [];
+  const rejected = [];
+  for (const label of Object.keys(plans)) {
+    const plan = plans[label];
+    for (const a of plan.accepted) acceptedItems.push(a.item);
+    for (const r of plan.rejected) rejected.push({ url: (r.item && r.item.url) || null, errors: r.errors });
+  }
+
+  const saved = await benchmarkStore.saveItems(db, acceptedItems);
+  const byPlatform = {};
+  for (const it of acceptedItems) byPlatform[it.platform] = (byPlatform[it.platform] || 0) + 1;
+  const growing = acceptedItems.filter((it) => it.ratio !== null && it.ratio >= benchmark.GROWING_RATIO).length;
+
+  return {
+    accepted: acceptedItems.length,
+    rejected,
+    summary: {
+      accepted: acceptedItems.length, rejected: rejected.length, growing, byPlatform,
+      saved: saved.saved,
+    },
+  };
+}
+
+/** req.body を、点検にかけられる文字列に戻す。 */
+function bodyText(body) {
+  if (Buffer.isBuffer(body)) return body.toString('utf8');
+  if (typeof body === 'string') return body;
+  if (body === undefined || body === null) return '';
+  // 画面は貼った文字を { text } で送る。中身の文字を取り出して、同じ規則で読む。
+  if (typeof body.text === 'string' && !Array.isArray(body)) return body.text;
+  return JSON.stringify(body);
+}
+
+/** いま何件たまっているか、直近の分析はどこまで進んだか。 */
+async function benchmarkStatus(q) {
+  const genre = String(q.genre || '');
+  if (!benchmark.GENRES[genre]) {
+    const e = new Error(`genre は ${Object.keys(benchmark.GENRES).join(' / ')} のどれか`);
+    e.userError = true;
+    throw e;
+  }
+  const [counts, latestRun] = await Promise.all([
+    benchmarkStore.countItems(db, genre),
+    benchmarkStore.latestRun(db, genre),
+  ]);
+  return { counts, latestRun };
 }
 
 /** 連携済みの YouTube アカウントを選ぶ。いま見ている運用アカウントのものを優先し、無ければ最初の1つ。 */

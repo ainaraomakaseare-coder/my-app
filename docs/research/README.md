@@ -15,6 +15,13 @@
 | ② 分析 | サブエージェント `trend-analyst`（Sonnet） | 点検済みの記録と、自分の投稿 | `research/<genre>/<date>-analysis.md` |
 | ③ 企画 | この会話（Opus）がスキル `plan-from-analysis` で決める | 分析の結果 | `research/<genre>/<date>-plan.md` |
 
+**今の実装**：②分析・③企画は、上の表のとおり人（サブエージェント／このスキル）が
+書く代わりに、「のび」画面の「一気に回す」ボタンから API（`lib/benchmark-analyze.js` /
+`lib/benchmark-plan.js`）が LLM を1回呼んで書く。出力は表の役割・分ける理由と同じ
+考え方（機械点検を通ったものだけ見せる）のまま、DB（`research_runs`）に残る。
+サブエージェント `trend-analyst` とスキル `plan-from-analysis` は、込み入った相談を
+したいときや、API を経由せず会話の中で作り直したいときのための、もう一つの経路として残す。
+
 **分ける理由**
 - ①はページをたくさん読むので中身が散らかる。②と混ぜると、裏の取れていない数字が結論に流れ込む
 - ①と②のあいだで、全部の数字に出どころがあるかを**機械で点検**する（`lib/benchmark.js`）。捏造の数字を分析に入れないため
@@ -54,12 +61,32 @@
 - 画面の数字は丸められている（「1.2万」は12,000として記録する）
 - この作業環境（クラウド）からは YouTube・TikTok のページを直接読めない。だから①はアプリと Chrome で行う
 
-## 回し方
-1. 「のび」画面で YouTube を集め、「分析用にコピー」→ 会話に貼る。
-   続けて「自分の投稿を分析用にコピー」→ 会話に貼る（`research/<genre>/own-<date>.json` として保存する）
-2. Claude in Chrome に `CHROME_COLLECT.md` の指示文を貼り、返ってきた JSON を会話に貼る
-3. 会話側で `node scripts/benchmark-intake.js` に通して保存する
-4. 「分析して」→ `trend-analyst` が②を書く
-5. 「企画に落として」→ `plan-from-analysis` で③を書く。**利用者が決めるまで予約はしない**
+## 回し方（ボタン1つで①→②→③）
 
-お金は追加でかからない（YouTube の API は無料枠、Chrome は手元、分析と企画はこの会話の中）。
+「のび」画面の「分析部隊（一気に回す）」カードに、①〜③を通しで動かすボタンがある。
+
+1. ジャンルを選び、**「一気に回す」**を押す。
+   - ① YouTube を API で集めて DB に保存（`GET /api/insights?benchmark=youtube`）
+   - ② 保存済みの記録から事実を計算し、LLM に気づきを書かせる（`bench-analyze`）
+   - ③ その気づきをもとに、次の企画3案とネタ20本を LLM に考えさせる（`bench-plan`）
+
+   事実の計算（数字）は機械（`lib/benchmark-facts.js`）が行い、LLM はそれを
+   文章にするだけ。出てきた文章は根拠URL・数字・断定を機械で点検してから見せる
+   （`lib/benchmark-analyze.js` / `lib/benchmark-plan.js`）。結果は DB
+   （`research_runs`）に残るので、画面を開き直しても最後の結果がそのまま出る。
+
+2. 出てきたネタが良ければ「このネタでまとめて仕込む」を押す。
+   「まとめて仕込む」画面にネタが入るだけで、**仕込みそのものは始まらない**。
+   内容を見てから、いつもどおり自分で仕込みを開始する。
+
+### Chrome での収集（TikTok・X・Instagram・Threads）は任意・随時
+
+YouTube 以外は今も Claude in Chrome が要る（`docs/research/CHROME_COLLECT.md`）。
+これは「一気に回す」には含まれない。気が向いたとき・YouTube だけでは
+判断材料が薄いと感じたときに、カード内の「Chrome用の指示文をコピー」→
+Claude in Chrome に貼る → 返ってきた JSON を「Chromeの結果を取り込む」欄に
+貼って「取り込む」、という手順で好きなタイミングに足せる。取り込んだ記録は
+次に「一気に回す」を押したときの②③にそのまま使われる。
+
+お金は追加でかからない（YouTube の API は無料枠、Chrome は手元、
+分析と企画は文案づくりと同じ LLM の鍵を使う）。

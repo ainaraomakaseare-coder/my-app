@@ -6,21 +6,24 @@ YouTube はアプリが API で自動で集める。TikTok / X / Instagram / Thr
 
 ## 手順
 
-1. Chrome で Claude in Chrome を開く（ログイン済みの状態で）。
-2. 下の「②プロンプト」から、いま集めたいジャンル（`ai` か `career`）の
-   コードブロックをまるごとコピーして貼る。
+1. アプリの「のび」画面 →「分析部隊（一気に回す）」カード →
+   **「Chrome用の指示文をコピー」**を押す（ジャンルはカード上部の選択肢に従う）。
+   指示文の本体は `public/research-prompts.js` の `chromePrompt(genre, appUrl)` に
+   まとまっている（このファイルには本文を置かない。ズレを防ぐため）。
+2. Chrome で Claude in Chrome を開き（ログイン済みの状態で）、コピーした指示文を貼る。
 3. Claude in Chrome が各プラットフォームを検索して、JSON 配列だけを返す。
-4. その JSON を、**Claude Code のこのチャットに貼るか**、ファイルに保存して
-   パスを伝える。
-5. 取り込みスクリプトを流す。
+4. 指示文の最後に書いてあるとおり、同じブラウザでアプリの「のび」画面に戻り、
+   「Chromeの結果を取り込む」欄に JSON 配列をそのまま貼って「取り込む」を押す。
+   受理・却下の件数がその場に出る（内部では下の②プロンプトと同じ点検を、
+   `lib/benchmark.js` の `checkAll` が行っている）。
+
+   ボタンを使わずコマンドラインで取り込みたいときは、これまでどおり
 
    ```
    node scripts/benchmark-intake.js <ファイル.json | -> [--genre ai|career] [--date YYYY-MM-DD] [--dry-run]
    ```
 
-   `-` を渡すと標準入力から読む。ジャンルが JSON の中に書いてあれば
-   `--genre` は省略できる（record ごとに genre が違えば自動でファイルを分ける）。
-   まず `--dry-run` で受理・却下の内訳を見てから、本番で書き込むとよい。
+   も使える（`-` で標準入力から読む）。
 
 ## ①収集で押さえること
 
@@ -39,11 +42,13 @@ YouTube はアプリが API で自動で集める。TikTok / X / Instagram / Thr
 - 画面の数字はどのSNSも丸め表示（「1.2万」など）。`parseCount()` で整数に戻すが、
   厳密な実数ではない。
 
-## ②プロンプト
+## ②プロンプトの中身
 
-Claude in Chrome に貼る。**出力は JSON 配列だけ**（説明文やコードフェンス無し）
-にしてもらう。JSON のスキーマは `lib/benchmark.js` の `checkItem` が点検する型と
-同じ。
+指示文は `public/research-prompts.js` の `chromePrompt('ai' | 'career', appUrl)` が
+組み立てる。**出力は JSON 配列だけ**（説明文やコードフェンス無し）にしてもらう。
+JSON のスキーマは `lib/benchmark.js` の `checkItem` が点検する型と同じ。
+キーワードやジャンルの文言はジャンルごとに違うので、実際に何を貼ったか確かめたいときは
+ボタンでコピーした文面か、`public/research-prompts.js` を直接見る。
 
 ### FORMATS（content.format に入れる値と意味）
 
@@ -57,6 +62,9 @@ Claude in Chrome に貼る。**出力は JSON 配列だけ**（説明文やコ�
 - `unknown` … 分からない
 
 ### JSON の形（1本ぶん、これが通る例）
+
+これは指示文の「形の見本」と同じ架空の値（`@example_user`）。**この見本は出力に含めない**
+（実際に取り込むときは、実在の投稿の値に置き換えたものを渡す）。
 
 ```json
 {
@@ -113,139 +121,3 @@ Claude in Chrome に貼る。**出力は JSON 配列だけ**（説明文やコ�
 - `content.cta`: 締めの呼びかけ（保存して／フォロー／プロフへ／コメントして）。無ければ null
 - `content.topic`: 見つけたときの検索キーワード
 - `demand.comment_questions`: コメント欄の質問（最大3件、一字一句そのまま）。任意項目
-
-### プロンプト（ai：ひろや｜AI初心者30日30アプリ）
-
-```
-あなたはブラウザで実在の投稿を確認できるエージェントです。
-次のキーワードで、TikTok・X（Twitter）・Instagram・Threads をそれぞれ検索してください。
-
-キーワード: AI 初心者 / ChatGPT 使い方 / AIでアプリ作ってみた / 生成AI 便利ツール / AI 副業 初心者
-
-条件:
-- 直近30日以内に投稿されたものだけ
-- 再生数（見えない投稿は「いいね数」）÷ フォロワー数 が 10 倍以上を目安に選ぶ
-- フォロワー数が10万人未満のアカウントを優先する
-- 各プラットフォームにつき12件を目安に（無理に埋めない。条件に合わないなら件数は減らしてよい。ぜったいに水増ししない）
-
-各投稿について、次のJSONの形で1本ずつ記録してください。
-数字は必ず「今、画面に表示されている値」をそのまま整数に変換したものだけを使う
-（例: 1.2万 → 12000）。表示されていない項目は null にする。0 や推測を入れない。
-
-- hook: 冒頭およそ2秒に出ている画面の文字・話している第一声（テキスト投稿は1行目）。一字一句そのまま
-- first_line: タイトルか投稿の1行目。一字一句そのまま
-- cta: 投稿の締めにある呼びかけ（保存して／フォロー／プロフへ／コメントして）。無ければ null
-- topic: その投稿を見つけたときの検索キーワード（上のキーワードのどれか）
-- demand.comment_questions: コメント欄にある質問を最大3件、一字一句そのまま（任意項目、無ければ配列を空にする）
-
-JSONの型（フィールドの意味）:
-{
-  "platform": "youtube|tiktok|x|instagram|threads",
-  "genre": "ai",
-  "url": "投稿の実URL",
-  "account": { "name": "表示名", "handle": "@handle", "followers": 数値かnull, "followers_source": "screen" },
-  "posted_at": "YYYY-MM-DD かnull",
-  "collected_at": "今日の日付 YYYY-MM-DD",
-  "metrics": { "views": 数値かnull, "likes": 数値かnull, "comments": 数値かnull, "saves": 数値かnull, "shares": 数値かnull },
-  "metrics_source": "screen",
-  "content": {
-    "format": "talking|voice|screen|text|slides|post|other|unknown",
-    "first_line": "タイトルか1行目",
-    "hook": "冒頭の文言",
-    "duration_sec": 秒数かnull,
-    "cta": "締めの呼びかけかnull",
-    "topic": "見つけたときの検索キーワード"
-  },
-  "demand": { "comment_questions": ["質問1", "質問2"] }
-}
-
-形の見本（値は架空。**この見本は出力に含めない**。同じ形で、実際に見た投稿だけを書く）:
-{
-  "platform": "tiktok",
-  "genre": "ai",
-  "url": "https://www.tiktok.com/@example_user/video/7345612398712345678",
-  "account": { "name": "AI副業ラボ", "handle": "@example_user", "followers": 4300, "followers_source": "screen" },
-  "posted_at": "2026-09-15",
-  "collected_at": "2026-09-28",
-  "metrics": { "views": 88000, "likes": 3200, "comments": 140, "saves": 900, "shares": null },
-  "metrics_source": "screen",
-  "content": { "format": "screen", "first_line": "ChatGPTだけでアプリを1本作ってみた", "hook": "コード書けなくてもアプリ作れます", "duration_sec": 58, "cta": "保存して", "topic": "AIでアプリ作ってみた" },
-  "demand": { "comment_questions": ["どのプランを使ってますか?"] }
-}
-
-厳守事項:
-- ログイン操作・フォロー・いいね・コメント・DM は一切しない
-- 広告（PR/Sponsored表示のある投稿）は開かない
-- 非公開アカウントや年齢制限のある投稿はスキップする
-- 公開されているアカウント名・ハンドル以外の個人情報は含めない
-
-出力は上記JSONの配列だけ。説明文やコードフェンスは付けない。
-```
-
-### プロンプト（career：転職のホンネまとめ）
-
-```
-あなたはブラウザで実在の投稿を確認できるエージェントです。
-次のキーワードで、TikTok・X（Twitter）・Instagram・Threads をそれぞれ検索してください。
-
-キーワード: 転職 20代 / 第二新卒 / 退職 伝え方 / 面接 落ちる / 転職エージェント 本音
-
-条件:
-- 直近30日以内に投稿されたものだけ
-- 再生数（見えない投稿は「いいね数」）÷ フォロワー数 が 10 倍以上を目安に選ぶ
-- フォロワー数が10万人未満のアカウントを優先する
-- 各プラットフォームにつき12件を目安に（無理に埋めない。条件に合わないなら件数は減らしてよい。ぜったいに水増ししない）
-
-各投稿について、次のJSONの形で1本ずつ記録してください。
-数字は必ず「今、画面に表示されている値」をそのまま整数に変換したものだけを使う
-（例: 1.2万 → 12000）。表示されていない項目は null にする。0 や推測を入れない。
-
-- hook: 冒頭およそ2秒に出ている画面の文字・話している第一声（テキスト投稿は1行目）。一字一句そのまま
-- first_line: タイトルか投稿の1行目。一字一句そのまま
-- cta: 投稿の締めにある呼びかけ（保存して／フォロー／プロフへ／コメントして）。無ければ null
-- topic: その投稿を見つけたときの検索キーワード（上のキーワードのどれか）
-- demand.comment_questions: コメント欄にある質問を最大3件、一字一句そのまま（任意項目、無ければ配列を空にする）
-
-JSONの型（フィールドの意味）:
-{
-  "platform": "youtube|tiktok|x|instagram|threads",
-  "genre": "career",
-  "url": "投稿の実URL",
-  "account": { "name": "表示名", "handle": "@handle", "followers": 数値かnull, "followers_source": "screen" },
-  "posted_at": "YYYY-MM-DD かnull",
-  "collected_at": "今日の日付 YYYY-MM-DD",
-  "metrics": { "views": 数値かnull, "likes": 数値かnull, "comments": 数値かnull, "saves": 数値かnull, "shares": 数値かnull },
-  "metrics_source": "screen",
-  "content": {
-    "format": "talking|voice|screen|text|slides|post|other|unknown",
-    "first_line": "タイトルか1行目",
-    "hook": "冒頭の文言",
-    "duration_sec": 秒数かnull,
-    "cta": "締めの呼びかけかnull",
-    "topic": "見つけたときの検索キーワード"
-  },
-  "demand": { "comment_questions": ["質問1", "質問2"] }
-}
-
-形の見本（値は架空。**この見本は出力に含めない**。同じ形で、実際に見た投稿だけを書く）:
-{
-  "platform": "tiktok",
-  "genre": "career",
-  "url": "https://www.tiktok.com/@example_user/video/7345612398712345678",
-  "account": { "name": "元人事のキャリア相談室", "handle": "@example_user", "followers": 8200, "followers_source": "screen" },
-  "posted_at": "2026-09-10",
-  "collected_at": "2026-09-28",
-  "metrics": { "views": 210000, "likes": 9800, "comments": 320, "saves": 1500, "shares": null },
-  "metrics_source": "screen",
-  "content": { "format": "talking", "first_line": "第二新卒で辞めるとき、伝え方で損してる人が多い", "hook": "その退職理由、面接で聞かれたら詰みます", "duration_sec": 42, "cta": "保存して", "topic": "退職 伝え方" },
-  "demand": { "comment_questions": ["円満退職ってどこまで気にすべき?", "引き止められたらどうすればいい?"] }
-}
-
-厳守事項:
-- ログイン操作・フォロー・いいね・コメント・DM は一切しない
-- 広告（PR/Sponsored表示のある投稿）は開かない
-- 非公開アカウントや年齢制限のある投稿はスキップする
-- 公開されているアカウント名・ハンドル以外の個人情報は含めない
-
-出力は上記JSONの配列だけ。説明文やコードフェンスは付けない。
-```
