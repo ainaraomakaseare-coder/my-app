@@ -2660,7 +2660,8 @@
     flagEmojiForAlpha2: flagEmojiForAlpha2,
     EXTRA_COUNTRY_ALPHA2_BY_NAME: EXTRA_COUNTRY_ALPHA2_BY_NAME,
     visitedPercentage: visitedPercentage,
-    groupVisitedByOrder: groupVisitedByOrder
+    groupVisitedByOrder: groupVisitedByOrder,
+    decideSwipe: decideSwipe
   };
 
   root.TabiLog = Core;
@@ -3177,32 +3178,27 @@
     else if (name === 'profile') openProfile();
   }
 
-  // ---------- ボトムタブバーの4画面（マイログ・旅先一覧・旅の足跡・プロフィール）を横スワイプで
-  // 行き来する（2026-09-29〜。トップレベル化して「← 戻る」を無くした代わりに付けた） ----------
-  // タブバーの並び（マイログ→旅先一覧→旅の足跡→プロフィール）をそのままスワイプの順にする。
-  var TAB_ORDER = ['mylog', 'visited', 'home', 'profile'];
-  function adjacentTabName(dir) {
-    var cur = $('.screen.active') && $('.screen.active').dataset.screen;
-    var i = TAB_ORDER.indexOf(cur);
-    if (i < 0) return null;
-    var j = i + dir;
-    return (j >= 0 && j < TAB_ORDER.length) ? TAB_ORDER[j] : null;
-  }
-  // 指を左に動かした（dx<0）＝次のタブへ、右に動かした（dx>0）＝前のタブへ（標準的なカルーセルの向き）
-  function goToAdjacentTabBySwipe(dx) {
-    var name = adjacentTabName(dx < 0 ? 1 : -1);
-    if (name) openTabScreen(name);
-  }
-  // カテゴリのピル・チップの行や地図など、横スクロールする要素の上から始まったタッチは、この
-  // タブ切り替えスワイプの対象にしない（そちらの横スクロール・操作をそのまま優先させる）。
-  // クラス名を決め打ちにせず、実際に横にスクロールできる要素かどうか（scrollWidth>clientWidth
-  // かつoverflow-xがauto/scroll）を辿って調べるので、マイログのカテゴリピル（.mylog-tabs）・
-  // 旅先一覧のタブなど、この先増える横スクロール行にも決め打ちの追記なしで効く。SVG（地図）の
-  // 上から始まったタッチも対象にしない。
+  // ---------- 「旅先一覧」の国内⇄海外・「マイログ」評価したもののカテゴリを横スワイプで
+  // 切り替える（2026-09-29〜。a4f2949でいったんボトムタブ4画面の行き来にも同じ仕組みを使ったが、
+  // TestFlight 98でのオーナー報告「スワイプで国内海外を移動できるんだけど操作性がかなり悪い。
+  // 地図を押しているとスワイプできない気がする」＋その後の「タブ同士がスワイプで切り替わるのは
+  // やめてほしい（マイログ→旅先一覧なども含めて全部）」を受けて、同日中に構成を見直した。
+  // タブ同士の行き来はボトムタブバーのタップだけにし、ここでの横スワイプは各画面の中
+  // （国内⇄海外・評価したもののカテゴリ）だけに絞る。境界（最初/最後）でさらに同じ向きへ
+  // スワイプしても、よそのタブへは流さず、指を離すと軽く跳ね返る（詳しくはCONTEXT.md参照）----------
+
+  // カテゴリのピル・チップの行など、横スクロールする要素の上から始まったタッチは、この
+  // スワイプの対象にしない（そちらの横スクロール・操作をそのまま優先させる）。クラス名を
+  // 決め打ちにせず、実際に横にスクロールできる要素かどうか（scrollWidth>clientWidthかつ
+  // overflow-xがauto/scroll）を辿って調べるので、マイログのカテゴリピル（.mylog-tabs）など、
+  // この先増える横スクロール行にも決め打ちの追記なしで効く。
+  // 地図（SVG）はスクロールしない静的な図なので、以前あった「SVGの上から始まったタッチは
+  // 全部対象外」という決め打ちは外した（これが「地図を押しているとスワイプできない」の原因
+  // だった）。地形の領域タップ自体はclick（wireVisitedMapRegions）で別に処理しており、
+  // 指がほぼ動かなければ下のdecideSwipeがnullを返すのでタップはそのまま効く。
   function startsOnHorizontalScroller(target) {
     var el = target;
     while (el && el.nodeType === 1) {
-      if (el.tagName === 'svg' || el.tagName === 'SVG') return true;
       if (el.scrollWidth > el.clientWidth + 1) {
         var overflowX = window.getComputedStyle(el).overflowX;
         if (overflowX === 'auto' || overflowX === 'scroll') return true;
@@ -3211,12 +3207,64 @@
     }
     return false;
   }
-  // タブ4画面の横スワイプに共通の判定（しきい値・「最初にどちらの向きか」の決め方は、これまでの
-  // 「行ったことある旅先」の国内⇄海外スワイプと同じ）。onSwipe(dx, startTarget)は
-  // 横スワイプと判定できたときだけ呼ぶ。画面の左右の端（EDGE_SWIPE_BACK_PX以内）から始まったタッチは
-  // 対象にしない（前は「戻る」操作の担当だった領域。今は無くしたが、念のためそのまま空けておく）。
+
+  // 横スワイプの純粋な向き判定（node testで検証：test/data.test.js）。dx・dyは指の合計移動量
+  // （px）、dtは経過時間（ms）。斜めの動きを誤検知しないよう、横方向は|dx|が|dy|の1.2倍を超えた
+  // ときだけ。誤動作なくタップと区別するため、40px以上動くか、短くても素早く弾くように動いた
+  // （20px以上・速度0.35px/ms以上＝flick）ときだけ'left'/'right'を返し、それ以外はnull
+  // （タップ・揺れ・迷いのある動きとみなして何もしない）。
+  function decideSwipe(dx, dy, dt) {
+    if (Math.abs(dx) <= Math.abs(dy) * 1.2) return null;
+    var dist = Math.abs(dx);
+    var v = dt > 0 ? dist / dt : 0;
+    var committed = dist >= 40 || (dist >= 20 && v >= 0.35);
+    if (!committed) return null;
+    return dx < 0 ? 'left' : 'right';
+  }
+
+  // 横方向と判定するまでの最初のわずかな動き（この間はまだpreventDefaultしない＝縦スクロールを
+  // 邪魔しない）と、方向判定の比率。decideSwipeの最終判定とは別に、指が今どちら向きに進んでいるかを
+  // ドラッグ中の見た目（次に効く）に使うためだけの値。
+  var TAB_SWIPE_DECIDE_PX = 8;
+  var TAB_SWIPE_RATIO = 1.2;
+
   var tabSwipeState = null;
-  function initTabSwipe(el, onSwipe) {
+  // スワイプでコミット（区切りを跨いで切り替え）が起きた直後は、その一瞬あとに来る合成clickで
+  // 地図の領域タップ（wireVisitedMapRegions）が誤発火しないよう、短い間だけclickを無視する。
+  var tabSwipeClickGuardUntil = 0;
+
+  // 指の動きに合わせて、ドラッグ中の画面をtranslateXで追従させる。次に切り替え先がある向きは
+  // そのまま追従、無い向き（境界）はゴムのように重くする（ラバーバンド。伸びるほど動きが小さくなる
+  // 曲線にして、大きく引っ張っても際限なく画面がはみ出さないようにする）。
+  function updateTabSwipeTransform(el, dx, hasTarget) {
+    var max = hasTarget ? 120 : 36;
+    var eased = hasTarget ? dx : dx / 3;
+    var sign = eased < 0 ? -1 : 1;
+    var abs = Math.min(Math.abs(eased), max * 4);
+    var out = sign * (max * abs) / (max + abs);
+    el.style.transition = 'none';
+    el.style.transform = 'translateX(' + out + 'px)';
+  }
+  // ドラッグ終わり：中身が切り替わっていれば「そのまま定位置へ収まる」、境界で跳ね返っただけなら
+  // 「ゴムが戻る」。どちらも見た目は同じ（今の位置から0へ ease-out）。reduced-motionのときは
+  // アニメーションせず即座に0へ戻す。
+  function settleTabSwipe(el) {
+    if (prefersReducedMotion()) { el.style.transition = ''; el.style.transform = ''; return; }
+    el.style.transition = 'transform .2s ease-out';
+    el.style.transform = 'translateX(0px)';
+    window.setTimeout(function () {
+      el.style.transition = '';
+      el.style.transform = '';
+    }, 220);
+  }
+
+  // el上の横スワイプの共通エンジン。onSwipe(dx, startTarget)は横スワイプとコミットできたときだけ
+  // 呼び、実際に何かが切り替わったら真・境界で何もしなければ偽を返す（偽ならゴムが戻るだけの見た目
+  // にする）。hasSwipeTarget(dir, startTarget)は、ドラッグ中に「その向きに切り替え先があるか」を
+  // 返す任意の関数（見た目のラバーバンドの重さだけに使う。省略時は常に真＝追従）。
+  // touch-action: pan-yをCSS側（style.css）で付け、縦スクロールはネイティブのまま、横方向の
+  // ジェスチャーだけJS側に来るようにしている。
+  function initTabSwipe(el, onSwipe, hasSwipeTarget) {
     if (!el) return;
 
     el.addEventListener('touchstart', function (e) {
@@ -3227,7 +3275,7 @@
         return;
       }
       if (startsOnHorizontalScroller(e.target)) { tabSwipeState = null; return; }
-      tabSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false, target: e.target };
+      tabSwipeState = { startX: t.clientX, startY: t.clientY, startT: e.timeStamp, decided: false, horizontal: false, target: e.target };
     }, { passive: true });
 
     el.addEventListener('touchmove', function (e) {
@@ -3235,11 +3283,16 @@
       var t = e.touches[0];
       var dx = t.clientX - tabSwipeState.startX;
       var dy = t.clientY - tabSwipeState.startY;
-      if (!tabSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      if (!tabSwipeState.decided && (Math.abs(dx) > TAB_SWIPE_DECIDE_PX || Math.abs(dy) > TAB_SWIPE_DECIDE_PX)) {
         tabSwipeState.decided = true;
-        tabSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+        tabSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * TAB_SWIPE_RATIO;
       }
-      if (tabSwipeState.decided && tabSwipeState.horizontal) e.preventDefault();
+      if (tabSwipeState.decided && tabSwipeState.horizontal) {
+        e.preventDefault();
+        var dir = dx < 0 ? 'left' : 'right';
+        var hasTarget = hasSwipeTarget ? !!hasSwipeTarget(dir, tabSwipeState.target) : true;
+        updateTabSwipeTransform(el, dx, hasTarget);
+      }
     }, { passive: false });
 
     el.addEventListener('touchend', function (e) {
@@ -3249,11 +3302,15 @@
       if (!ts.decided || !ts.horizontal) return;
       var t = e.changedTouches[0];
       var dx = t.clientX - ts.startX;
-      if (Math.abs(dx) < 50) return; // 短い横移動はタップの揺れとみなして無視する（visitedと同じしきい値）
-      onSwipe(dx, ts.target);
+      var dy = t.clientY - ts.startY;
+      var dt = e.timeStamp - ts.startT;
+      var dir = decideSwipe(dx, dy, dt);
+      var handled = dir && onSwipe(dx, ts.target);
+      if (handled) tabSwipeClickGuardUntil = Date.now() + 400;
+      settleTabSwipe(el);
     });
 
-    el.addEventListener('touchcancel', function () { tabSwipeState = null; });
+    el.addEventListener('touchcancel', function () { tabSwipeState = null; settleTabSwipe(el); });
   }
 
   // マイログの「評価したもの」のカテゴリ（アクティビティーログ・飯ログ…）の並び。ピルのクリックと
@@ -3261,23 +3318,27 @@
   function mylogCategoryOrder() {
     return Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) { return c.key; });
   }
-  // マイログ画面の横スワイプ：一覧（#mylogList）の上から始まったスワイプは「評価したもの」の
-  // カテゴリを切り替える。最初・最後のカテゴリでさらに同じ向きへスワイプしたら、タブ自体を
-  // 切り替える（旅先一覧の国内⇄海外と同じ「境界まで行ったらタブへ流れる」考え方）。
-  // 一覧の外（参加した旅行の一覧・見出しなど）から始まったスワイプは、最初からタブの切り替え。
-  function mylogResolveSwipe(dx, startTarget) {
-    var insideList = !!(startTarget && startTarget.closest && startTarget.closest('#mylogList'));
-    if (!insideList) { goToAdjacentTabBySwipe(dx); return; }
+  function mylogSwipeTargetIndex(dx) {
     var order = mylogCategoryOrder();
     var i = order.indexOf(state.myLogCategory);
     var dir = dx < 0 ? 1 : -1; // 左スワイプ＝次のカテゴリ、右スワイプ＝前のカテゴリ
     var j = i + dir;
-    if (i < 0 || j < 0 || j >= order.length) { goToAdjacentTabBySwipe(dx); return; }
-    state.myLogCategory = order[j];
+    return { order: order, dir: dir, i: i, j: j, inRange: i >= 0 && j >= 0 && j < order.length };
+  }
+  // #mylogList（一覧）の上での横スワイプ：「評価したもの」のカテゴリを切り替える。最初・最後の
+  // カテゴリでさらに同じ向きへスワイプしても、よそへは流さず何もしない（ゴムが戻るだけ）。
+  function mylogResolveSwipe(dx) {
+    var r = mylogSwipeTargetIndex(dx);
+    if (!r.inRange) return false;
+    state.myLogCategory = r.order[r.j];
     renderMyLog();
     var onTab = $('.mylog-tab.on', $('#mylogTabs'));
     if (onTab && onTab.scrollIntoView) onTab.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-    animateSwipeList($('#mylogList'), dir);
+    animateSwipeList($('#mylogList'), r.dir);
+    return true;
+  }
+  function mylogHasSwipeTarget(dir) {
+    return mylogSwipeTargetIndex(dir === 'left' ? -1 : 1).inRange;
   }
   // スワイプでカテゴリ・タブが切り替わったとき、一覧をその向きへ短く滑らせながらふわっと出す
   // （2026-09-29〜）。prefers-reduced-motionのときはCSS側でアニメーションそのものを付けない。
@@ -3288,18 +3349,20 @@
     void el.offsetWidth;
     el.classList.add('list-switch-in');
   }
-  // 「行ったことある旅先」の国内⇄海外スワイプの境界（すでにその側なのに同じ向きへさらに
-  // スワイプした）は、タブ自体の切り替えに流す（2026-09-29〜。マイログのカテゴリスワイプと同じ考え方）。
+  // 「行ったことある旅先」の国内⇄海外スワイプ：すでにその側ならもう先が無いので何もしない
+  // （ゴムが戻るだけ。以前はここからさらにタブ自体の切り替えに流していたが、2026-09-29〜、
+  // タブ同士の行き来はボトムタブバーのタップだけにしたため廃止）。
   function visitedResolveSwipe(dx) {
     var goingLeft = dx < 0;
     var target = goingLeft ? 'overseas' : 'domestic';
-    if (state.visitedTab !== target) {
-      state.visitedTab = target;
-      state.visitedSel = null;
-      renderVisitedPlaces();
-      return;
-    }
-    goToAdjacentTabBySwipe(dx);
+    if (state.visitedTab === target) return false;
+    state.visitedTab = target;
+    state.visitedSel = null;
+    renderVisitedPlaces();
+    return true;
+  }
+  function visitedHasSwipeTarget(dir) {
+    return state.visitedTab !== (dir === 'left' ? 'overseas' : 'domestic');
   }
 
   // ---------- Googleログイン ----------
@@ -8468,7 +8531,10 @@
 
   function wireVisitedMapRegions(container) {
     $all('.visited-region.is-visited', container).forEach(function (el) {
-      el.addEventListener('click', function () {
+      el.addEventListener('click', function (e) {
+        // 国内⇄海外の横スワイプは地図の上から始めても効くようにした（initTabSwipe）ため、
+        // スワイプがコミットした直後の一瞬だけ来る合成clickで領域タップが誤発火しないよう無視する。
+        if (Date.now() < tabSwipeClickGuardUntil) { e.preventDefault(); e.stopPropagation(); return; }
         setVisitedSelection(el.dataset.kind, el.dataset.name);
       });
     });
@@ -9506,12 +9572,11 @@
     initEntryDragMove();
     initDaySwipe();
     // マイログ・旅先一覧・プロフィールはボトムタブバーのトップレベル画面になったので、
-    // 「← 戻る」／edge-swipe-back（画面端からのスワイプで戻る）はもう無い。代わりに横スワイプで
-    // 4画面を行き来する（initTabSwipe。旅の詳細（tripDetail）はこれまでどおりedge-swipe-backで戻る）。
-    initTabSwipe(document.querySelector('[data-screen="mylog"]'), mylogResolveSwipe);
-    initTabSwipe(document.querySelector('[data-screen="visited"]'), function (dx) { visitedResolveSwipe(dx); });
-    initTabSwipe(document.querySelector('[data-screen="home"]'), function (dx) { goToAdjacentTabBySwipe(dx); });
-    initTabSwipe(document.querySelector('[data-screen="profile"]'), function (dx) { goToAdjacentTabBySwipe(dx); });
+    // 「← 戻る」／edge-swipe-back（画面端からのスワイプで戻る）はもう無い。タブ同士の行き来は
+    // ボトムタブバーのタップだけ（2026-09-29〜。initTabSwipeは各画面の中の横スワイプだけに使う。
+    // 旅の詳細（tripDetail）はこれまでどおりedge-swipe-backで戻る）。
+    initTabSwipe($('#mylogList'), mylogResolveSwipe, mylogHasSwipeTarget);
+    initTabSwipe(document.querySelector('[data-screen="visited"]'), visitedResolveSwipe, visitedHasSwipeTarget);
     initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), returnFromTripDetail);
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
@@ -9949,8 +10014,13 @@
     // iOSアプリ・対応ブラウザではネイティブの共有シートを開く。それ以外（未対応ブラウザ）は
     // クリップボードにコピーする。どちらも必ずトースト（showToast）で結果を知らせる
     // （以前は#tripDetailStatusという気づかれにくい場所にだけ出していた。2026-09-26）。
+    // text・urlを別々に渡すと、共有先（LINEなど）によってはurlフィールドを見ずtextだけを使う
+    // ものがあり、メッセージにリンクが入らない不具合が起きていた（2026-09-29、TestFlight報告）。
+    // urlをtextの中に含め、urlキー自体は渡さないことで、どの共有先でも必ずリンクが本文に乗る
+    // ようにする（textを見る側はそのままリンク入りの本文になり、urlだけを見る側と重複表示にも
+    // ならない）。
     if (navigator.share) {
-      navigator.share({ title: state.trip.title || '旅の足跡', text: '旅の足跡で旅行を一緒に記録しよう', url: url })
+      navigator.share({ title: state.trip.title || '旅の足跡', text: '旅の足跡で旅行を一緒に記録しよう\n' + url })
         .catch(function () { /* 共有シートをキャンセルしても何もしない */ });
       return;
     }
