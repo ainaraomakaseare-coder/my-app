@@ -1002,6 +1002,12 @@ body.sheet-open { overflow: hidden; }
 .sheet-backdrop .sheet-head { margin-bottom: 8px; }
 .sheet-backdrop .sheet-title { font-size: 15px; }
 .sheet-close { border: none; background: none; font-size: 22px; color: var(--ink-soft); cursor: pointer; padding: 0 4px; }
+.history-pick-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 80px; }
+.history-pick-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; cursor: pointer; }
+.history-pick-check { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--accent); }
+.history-pick-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.history-pick-title { font-weight: 700; font-size: 14px; line-height: 1.35; }
+.history-pick-date { font-size: 11px; color: var(--ink-soft); }
 .comment-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 80px; }
 .comment-item { padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
 .comment-head { display: flex; align-items: baseline; gap: 8px; }
