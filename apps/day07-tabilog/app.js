@@ -2931,6 +2931,140 @@
     });
   }
 
+  // タブ名から、その画面を開く処理そのものへ（ボトムタブバーのタップ・下のタブの横スワイプの
+  // 両方から呼ぶ。2026-09-29〜）。マイログ・旅先一覧はログインが要る（未ログインならログイン画面へ）。
+  function openTabScreen(name) {
+    if (name === 'home') goHome();
+    else if (name === 'mylog') { if (loadCurrentUser()) openMyLog(); else openLogin('mylog'); }
+    else if (name === 'visited') { if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited'); }
+    else if (name === 'profile') openProfile();
+  }
+
+  // ---------- ボトムタブバーの4画面（マイログ・旅先一覧・旅の足跡・プロフィール）を横スワイプで
+  // 行き来する（2026-09-29〜。トップレベル化して「← 戻る」を無くした代わりに付けた） ----------
+  // タブバーの並び（マイログ→旅先一覧→旅の足跡→プロフィール）をそのままスワイプの順にする。
+  var TAB_ORDER = ['mylog', 'visited', 'home', 'profile'];
+  function adjacentTabName(dir) {
+    var cur = $('.screen.active') && $('.screen.active').dataset.screen;
+    var i = TAB_ORDER.indexOf(cur);
+    if (i < 0) return null;
+    var j = i + dir;
+    return (j >= 0 && j < TAB_ORDER.length) ? TAB_ORDER[j] : null;
+  }
+  // 指を左に動かした（dx<0）＝次のタブへ、右に動かした（dx>0）＝前のタブへ（標準的なカルーセルの向き）
+  function goToAdjacentTabBySwipe(dx) {
+    var name = adjacentTabName(dx < 0 ? 1 : -1);
+    if (name) openTabScreen(name);
+  }
+  // カテゴリのピル・チップの行や地図など、横スクロールする要素の上から始まったタッチは、この
+  // タブ切り替えスワイプの対象にしない（そちらの横スクロール・操作をそのまま優先させる）。
+  // クラス名を決め打ちにせず、実際に横にスクロールできる要素かどうか（scrollWidth>clientWidth
+  // かつoverflow-xがauto/scroll）を辿って調べるので、マイログのカテゴリピル（.mylog-tabs）・
+  // 旅先一覧のタブなど、この先増える横スクロール行にも決め打ちの追記なしで効く。SVG（地図）の
+  // 上から始まったタッチも対象にしない。
+  function startsOnHorizontalScroller(target) {
+    var el = target;
+    while (el && el.nodeType === 1) {
+      if (el.tagName === 'svg' || el.tagName === 'SVG') return true;
+      if (el.scrollWidth > el.clientWidth + 1) {
+        var overflowX = window.getComputedStyle(el).overflowX;
+        if (overflowX === 'auto' || overflowX === 'scroll') return true;
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }
+  // タブ4画面の横スワイプに共通の判定（しきい値・「最初にどちらの向きか」の決め方は、これまでの
+  // 「行ったことある旅先」の国内⇄海外スワイプと同じ）。onSwipe(dx, startTarget)は
+  // 横スワイプと判定できたときだけ呼ぶ。画面の左右の端（EDGE_SWIPE_BACK_PX以内）から始まったタッチは
+  // 対象にしない（前は「戻る」操作の担当だった領域。今は無くしたが、念のためそのまま空けておく）。
+  var tabSwipeState = null;
+  function initTabSwipe(el, onSwipe) {
+    if (!el) return;
+
+    el.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) { tabSwipeState = null; return; }
+      var t = e.touches[0];
+      if (t.clientX <= EDGE_SWIPE_BACK_PX || t.clientX >= window.innerWidth - EDGE_SWIPE_BACK_PX) {
+        tabSwipeState = null;
+        return;
+      }
+      if (startsOnHorizontalScroller(e.target)) { tabSwipeState = null; return; }
+      tabSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false, target: e.target };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      if (!tabSwipeState || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - tabSwipeState.startX;
+      var dy = t.clientY - tabSwipeState.startY;
+      if (!tabSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        tabSwipeState.decided = true;
+        tabSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
+      }
+      if (tabSwipeState.decided && tabSwipeState.horizontal) e.preventDefault();
+    }, { passive: false });
+
+    el.addEventListener('touchend', function (e) {
+      if (!tabSwipeState) return;
+      var ts = tabSwipeState;
+      tabSwipeState = null;
+      if (!ts.decided || !ts.horizontal) return;
+      var t = e.changedTouches[0];
+      var dx = t.clientX - ts.startX;
+      if (Math.abs(dx) < 50) return; // 短い横移動はタップの揺れとみなして無視する（visitedと同じしきい値）
+      onSwipe(dx, ts.target);
+    });
+
+    el.addEventListener('touchcancel', function () { tabSwipeState = null; });
+  }
+
+  // マイログの「評価したもの」のカテゴリ（アクティビティーログ・飯ログ…）の並び。ピルのクリックと
+  // 同じCore.CATEGORIES（移動にまとめる種類は除く）を使う。
+  function mylogCategoryOrder() {
+    return Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) { return c.key; });
+  }
+  // マイログ画面の横スワイプ：一覧（#mylogList）の上から始まったスワイプは「評価したもの」の
+  // カテゴリを切り替える。最初・最後のカテゴリでさらに同じ向きへスワイプしたら、タブ自体を
+  // 切り替える（旅先一覧の国内⇄海外と同じ「境界まで行ったらタブへ流れる」考え方）。
+  // 一覧の外（参加した旅行の一覧・見出しなど）から始まったスワイプは、最初からタブの切り替え。
+  function mylogResolveSwipe(dx, startTarget) {
+    var insideList = !!(startTarget && startTarget.closest && startTarget.closest('#mylogList'));
+    if (!insideList) { goToAdjacentTabBySwipe(dx); return; }
+    var order = mylogCategoryOrder();
+    var i = order.indexOf(state.myLogCategory);
+    var dir = dx < 0 ? 1 : -1; // 左スワイプ＝次のカテゴリ、右スワイプ＝前のカテゴリ
+    var j = i + dir;
+    if (i < 0 || j < 0 || j >= order.length) { goToAdjacentTabBySwipe(dx); return; }
+    state.myLogCategory = order[j];
+    renderMyLog();
+    var onTab = $('.mylog-tab.on', $('#mylogTabs'));
+    if (onTab && onTab.scrollIntoView) onTab.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    animateSwipeList($('#mylogList'), dir);
+  }
+  // スワイプでカテゴリ・タブが切り替わったとき、一覧をその向きへ短く滑らせながらふわっと出す
+  // （2026-09-29〜）。prefers-reduced-motionのときはCSS側でアニメーションそのものを付けない。
+  function animateSwipeList(el, dir) {
+    if (!el) return;
+    el.style.setProperty('--swipe-x', (dir > 0 ? 12 : -12) + 'px');
+    el.classList.remove('list-switch-in');
+    void el.offsetWidth;
+    el.classList.add('list-switch-in');
+  }
+  // 「行ったことある旅先」の国内⇄海外スワイプの境界（すでにその側なのに同じ向きへさらに
+  // スワイプした）は、タブ自体の切り替えに流す（2026-09-29〜。マイログのカテゴリスワイプと同じ考え方）。
+  function visitedResolveSwipe(dx) {
+    var goingLeft = dx < 0;
+    var target = goingLeft ? 'overseas' : 'domestic';
+    if (state.visitedTab !== target) {
+      state.visitedTab = target;
+      state.visitedSel = null;
+      renderVisitedPlaces();
+      return;
+    }
+    goToAdjacentTabBySwipe(dx);
+  }
+
   // ---------- Googleログイン ----------
   // クライアント側だけで完結する簡易的な仕組み（サーバー側でのトークン検証はしていない）。
   // 家族・少人数での利用を想定しており、「誰が記録したか」を自動で埋めるための本人確認として使う。
@@ -5034,56 +5168,6 @@
     });
 
     el.addEventListener('touchcancel', function () { edgeSwipeBackState = null; });
-  }
-
-  // 「行ったことある旅先」の国内⇄海外の横スワイプ切り替え（2026-09-28〜）。カルーセルの一般的な
-  // 向き（指を右に動かす＝前・左のタブへ戻る、指を左に動かす＝次へ進む）に合わせ、右スワイプで
-  // 国内、左スワイプで海外にする（オーナー指定、2026-09-29に向きを反転）。向きをこの定数1つだけで
-  // 変えられるようにしておく。
-  var VISITED_SWIPE_RIGHT_GOES_TO = 'domestic';
-  var visitedSwipeState = null;
-  function initVisitedSwipe() {
-    var el = $('#visitedPanel');
-    if (!el) return;
-
-    el.addEventListener('touchstart', function (e) {
-      if (e.touches.length !== 1) { visitedSwipeState = null; return; }
-      var t = e.touches[0];
-      // 画面左端はedge-swipe-back（戻る）の担当なので、ここでは拾わない
-      if (t.clientX <= EDGE_SWIPE_BACK_PX) { visitedSwipeState = null; return; }
-      visitedSwipeState = { startX: t.clientX, startY: t.clientY, decided: false, horizontal: false };
-    }, { passive: true });
-
-    el.addEventListener('touchmove', function (e) {
-      if (!visitedSwipeState || e.touches.length !== 1) return;
-      var t = e.touches[0];
-      var dx = t.clientX - visitedSwipeState.startX;
-      var dy = t.clientY - visitedSwipeState.startY;
-      // 横方向と判定できるまでは何もしない＝地図の上のタップ・縦スクロールを妨げない
-      if (!visitedSwipeState.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-        visitedSwipeState.decided = true;
-        visitedSwipeState.horizontal = Math.abs(dx) > Math.abs(dy) * 1.5;
-      }
-      if (visitedSwipeState.decided && visitedSwipeState.horizontal) e.preventDefault();
-    }, { passive: false });
-
-    el.addEventListener('touchend', function (e) {
-      if (!visitedSwipeState) return;
-      var vs = visitedSwipeState;
-      visitedSwipeState = null;
-      if (!vs.decided || !vs.horizontal) return;
-      var t = e.changedTouches[0];
-      var dx = t.clientX - vs.startX;
-      if (Math.abs(dx) < 50) return; // 短い横移動はタップ・地図操作の揺れとみなして無視する
-      var other = VISITED_SWIPE_RIGHT_GOES_TO === 'overseas' ? 'domestic' : 'overseas';
-      var target = dx > 0 ? VISITED_SWIPE_RIGHT_GOES_TO : other;
-      if (state.visitedTab === target) return;
-      state.visitedTab = target;
-      state.visitedSel = null;
-      renderVisitedPlaces();
-    });
-
-    el.addEventListener('touchcancel', function () { visitedSwipeState = null; });
   }
 
   function goToAdjacentDay(delta) {
@@ -8841,10 +8925,13 @@
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
-    initVisitedSwipe();
-    initEdgeSwipeBack(document.querySelector('[data-screen="mylog"]'), goHome);
-    initEdgeSwipeBack(document.querySelector('[data-screen="visited"]'), goHome);
-    initEdgeSwipeBack(document.querySelector('[data-screen="profile"]'), goHome);
+    // マイログ・旅先一覧・プロフィールはボトムタブバーのトップレベル画面になったので、
+    // 「← 戻る」／edge-swipe-back（画面端からのスワイプで戻る）はもう無い。代わりに横スワイプで
+    // 4画面を行き来する（initTabSwipe。旅の詳細（tripDetail）はこれまでどおりedge-swipe-backで戻る）。
+    initTabSwipe(document.querySelector('[data-screen="mylog"]'), mylogResolveSwipe);
+    initTabSwipe(document.querySelector('[data-screen="visited"]'), function (dx) { visitedResolveSwipe(dx); });
+    initTabSwipe(document.querySelector('[data-screen="home"]'), function (dx) { goToAdjacentTabBySwipe(dx); });
+    initTabSwipe(document.querySelector('[data-screen="profile"]'), function (dx) { goToAdjacentTabBySwipe(dx); });
     initEdgeSwipeBack(document.querySelector('[data-screen="tripDetail"]'), returnFromTripDetail);
     document.addEventListener('click', function (e) {
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu')) return;
@@ -9005,11 +9092,7 @@
           void icon.offsetWidth;
           icon.classList.add('pop');
         }
-        var tab = btn.dataset.tab;
-        if (tab === 'home') goHome();
-        else if (tab === 'mylog') { if (loadCurrentUser()) openMyLog(); else openLogin('mylog'); }
-        else if (tab === 'visited') { if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited'); }
-        else if (tab === 'profile') openProfile();
+        openTabScreen(btn.dataset.tab);
       });
     });
 
