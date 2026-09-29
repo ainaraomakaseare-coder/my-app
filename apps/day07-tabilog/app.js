@@ -12,6 +12,11 @@
   // コード自体は削らず、呼び出し側でこのフラグを見て出し分ける。
   var FEATURES = { post: false, social: false };
 
+  // 公開しているWebサイトのURL（2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行）。
+  // 共有リンク・Stripeの戻り先・アプリ内から開けないリンクの組み立てなど、
+  // 「今どこで動いているか」に関係なく公開URLが要る場所はすべてここを参照する。
+  var PUBLIC_WEB_BASE = 'https://tabinoashiato.pages.dev/';
+
   var CATEGORIES = [
     { key: 'sightseeing', label: '観光', color: 'oklch(60% 0.13 150)' },
     { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
@@ -244,7 +249,7 @@
     var out = {}, carry = '';
     // 1日ぶんのタイムゾーンを決める。forced：移動の予定のid→出発地のタイムゾーン（無ければ直前の予定を引き継ぐ）
     function walkDay(list, date, prevIn, forced) {
-      var zones = {}, prevZone = prevIn, first = true, consistent = 0, prevTransport = false;
+      var zones = {}, prevZone = prevIn, first = true, consistent = 0, prevTransport = false, prevAbsMin = null;
       list.forEach(function (b) {
         var own = byBlock[b.id] || '';
         var isTransport = b.category === 'transport';
@@ -257,6 +262,17 @@
           if (prevTransport || tz === (prevZone || fallback || '')) consistent++;
         } else if (isTransport && prevZone) {
           tz = prevZone;
+          // 「直前の予定のタイムゾーンで読む」という既定のルールだと、日付変更線をまたぐ到着の予定
+          // （地図はあるのに出発地と同じ扱いになる）が、絶対時刻で直前の予定より前に来てしまうことがある
+          // （羽田20:00発→LAX18:50着を、そのままJSTで読むと18:50<20:00に見えてしまう。2026-09-29）。
+          // そのときは直前のタイムゾーンではなく自分の地図（＝到着地）を使う（docs/adr/0009）
+          if (own && own !== tz) {
+            var curMin = hhmmToMinute(b.time);
+            if (curMin !== null && prevAbsMin !== null) {
+              var candOff = tzOffsetMinutes(tz, date, b.time);
+              if (typeof candOff === 'number' && (curMin - candOff) < prevAbsMin) tz = own;
+            }
+          }
         } else if (own) {
           tz = own;
         } else if (first) {
@@ -268,6 +284,9 @@
         prevZone = isTransport ? (own || byDate[date] || tz) : tz;
         prevTransport = isTransport;
         first = false;
+        var finalOff = tzOffsetMinutes(tz, date, b.time);
+        var localMin = hhmmToMinute(b.time);
+        prevAbsMin = (typeof finalOff === 'number' && localMin !== null) ? (localMin - finalOff) : null;
       });
       return { zones: zones, end: prevZone, consistent: consistent };
     }
@@ -1454,6 +1473,40 @@
     return 12742 * Math.asin(Math.sqrt(h));
   }
 
+  // 前後の場所からだけ、遠く離れた「ピンが違うかもしれない」地点を見つける。前後の地点どうしは
+  // 近い（FAR未満）のに、真ん中の地点だけ両方からFAR超え離れているときだけ怪しいと判定する
+  // （前後も含めて遠くへ移動した日＝本物の長距離移動は、前後どうしも遠いのでここには当たらない）。
+  // 地図でふりかえる（ピンが違うせいで大きく飛んで見える。例：ヒューストン滞在中の1件だけ
+  // ロサンゼルスの自宅のピンが残っていた）と、旅行詳細画面の「この地図は前後の予定から遠く
+  // 離れています」の注意書き、両方で使う（2026-09-29）。
+  var OUTLIER_FAR_KM = 800;
+  var OUTLIER_NEAR_KM = 300;
+  function isFarMapOutlier(prev, cur, next) {
+    if (!prev || !cur || !next) return false;
+    if (typeof prev.lat !== 'number' || typeof cur.lat !== 'number' || typeof next.lat !== 'number') return false;
+    return distanceKm(prev, cur) > OUTLIER_FAR_KM && distanceKm(cur, next) > OUTLIER_FAR_KM &&
+      distanceKm(prev, next) < OUTLIER_NEAR_KM;
+  }
+
+  // 予定（Block）を時系列に並べ、前後から遠く離れたピンを持つ予定のidを集める。各Blockの地図は
+  // 最初の記録（entries[0]）のmapLat/mapLngを使う（lodgingBlockMapName等と同じ決め方）。
+  // 旅行詳細画面の警告表示に使う（2026-09-29）。
+  function findFarMapOutlierBlockIds(blocks) {
+    var sorted = sortBlocks(blocks || []);
+    var located = [];
+    sorted.forEach(function (b) {
+      var e = (b.entries || [])[0];
+      if (e && typeof e.mapLat === 'number' && typeof e.mapLng === 'number') {
+        located.push({ id: b.id, lat: e.mapLat, lng: e.mapLng });
+      }
+    });
+    var out = {};
+    for (var i = 1; i < located.length - 1; i++) {
+      if (isFarMapOutlier(located[i - 1], located[i], located[i + 1])) out[located[i].id] = true;
+    }
+    return out;
+  }
+
   // OSRMの車ルートが、たどり着けない目的地（歩行者専用の階段など）を遠い道に迂回させることがある
   // （リオデジャネイロ大聖堂→セラロン階段、約1kmの徒歩圏なのに車で大回りするなど）。
   // 直線距離よりずっと長い道のり（2.5倍を超え、かつ+1.5km以上長い）は「たどり着けていない」とみなし、
@@ -1551,6 +1604,16 @@
       });
     });
     if (!s.length) return { stops: [], legs: [], keyframes: [{ t: 0, r: 0 }], totalReal: 0, baseOffset: 0 };
+    // 前後の地点から遠く離れたピン（違う場所のピンが残っている）は、地図上の点にしない。
+    // 吹き出し（キャプション・写真）はそのまま出す＝「出来事」として扱う（isFarMapOutlier、2026-09-29）。
+    var locatedIdx = [];
+    s.forEach(function (st, i) { if (st.located) locatedIdx.push(i); });
+    for (var oi = 1; oi < locatedIdx.length - 1; oi++) {
+      var pI = locatedIdx[oi - 1], cI = locatedIdx[oi], nI = locatedIdx[oi + 1];
+      if (isFarMapOutlier(s[pI], s[cI], s[nI])) {
+        s[cI].located = false; s[cI].lat = null; s[cI].lng = null; s[cI].outlier = true;
+      }
+    }
     // 時刻の無い到着で、replayStopsの時点（座標がまだ分からない）ではmoveMinutes・後の予定という
     // 手がかりが無かった（estimateSource==='default'）ものを、座標が分かった今、飛行機で着いた先
     // （transport==='plane'、または移動手段が無く距離がREPLAY_PLANE_KM超）なら、飛行機の所要時間
@@ -2757,6 +2820,8 @@
     railPathFromOverpass: railPathFromOverpass,
     RAIL_LOCAL_MAX_KM: RAIL_LOCAL_MAX_KM,
     distanceKm: distanceKm,
+    isFarMapOutlier: isFarMapOutlier,
+    findFarMapOutlierBlockIds: findFarMapOutlierBlockIds,
     isRouteDetourTooLong: isRouteDetourTooLong,
     geocodeNearIndexes: geocodeNearIndexes,
     planeArcPath: planeArcPath,
@@ -2869,6 +2934,237 @@
       });
     }, { threshold: 0.15, rootMargin: '0px 0px -5% 0px' });
     cards.forEach(function (c) { io.observe(c); });
+  }
+
+  // ---------- 旅行カードが浮かび上がって詳細画面に広がる演出（Airbnb風のshared-element遷移、2026-09-29〜） ----------
+  // FLIP（First・Last・Invert・Play）の考え方：タップされたカードの実際の見た目（位置・大きさ・
+  // 写真の有無）をそのままコピーした「クローン」をposition:fixedで重ね、開始位置（カードの位置）→
+  // 終了位置（詳細画面のカバー写真部分いっぱい）へCSSトランジションさせる。本物の詳細画面は
+  // 裏側でそのまま読み込み・描画を始める（openTrip自体はアニメーションを待たない）。
+  // 遷移中は、抜ける画面（ホーム／マイログの一覧）を「今見えていたとおりの見た目・スクロール位置」の
+  // まま画面いっぱいに固定表示し続け、その上にクローン＋暗幕（ぼかし＋暗く）を重ねることで、
+  // 「一覧がぼやけて暗くなり、カードだけが手前で広がる」というAirbnbアプリ同様の見た目にする
+  // （freezeLeavingScreen）。入る画面（旅の詳細）はクローンの下でopacity:0のまま読み込みを進め、
+  // アニメーションが終わった瞬間にフェードインで見せる（revealEnteringScreen）。
+  // 「戻る」で同じカードがまだ一覧に残っていれば、逆再生（詳細→カードの位置）してから画面を切り替える
+  // （pendingCardOpenAnim、goHome参照）。
+  // Web版では見え方が不自然という判断（アプリオーナー確認済み・2026-09-29）で、この演出は
+  // iOSアプリ（Capacitor）内でのみ有効にする。Webはブラウザ・端末を問わずe2a3cf2以前と同じ
+  // 「即座に画面が切り替わるだけ」の遷移に戻す（暗幕・クローン・画面固定は一切出さない）。
+  // isNativeApp()は都度呼ぶ関数なので、この判定も呼び出しごとに評価する（起動直後のCapacitor
+  // 初期化タイミングに依存しないようにするため、値をキャッシュしない）。
+  function CARD_EXPAND_ENABLED() {
+    return isNativeApp() && !prefersReducedMotion();
+  }
+  var TRIP_OPEN_ANIM_MS = 380;
+  var TRIP_OPEN_ANIM_FADE_MS = 260;
+  var pendingCardOpenAnim = null; // { cardEl, tripId } / 直前にカードのアニメーションで開いた旅行だけ覚える
+
+  function tripOpenCloneHtml(hasPhoto) {
+    return (hasPhoto ? '<div class="trip-open-clone-photo"></div>' : '') + '<div class="trip-open-clone-body"></div>';
+  }
+
+  // カードの現在の見た目（写真の有無・角丸・写真のURL）を読み取る。ホーム画面の大きい写真カード
+  // （.trip-card.has-photo）だけ「写真」を持ち、マイログの小さいサムネイル一覧カードは常に「写真なし」
+  // 扱い（白いカードが広がるだけの演出になる）。
+  function readTripCardVisual(cardEl) {
+    var photoEl = cardEl.querySelector('.trip-card-photo');
+    return {
+      hasPhoto: !!photoEl,
+      photoUrl: photoEl ? photoEl.style.backgroundImage : '',
+      photoHeight: photoEl ? photoEl.getBoundingClientRect().height : 0,
+      radius: window.getComputedStyle(cardEl).borderRadius
+    };
+  }
+
+  // 抜ける画面（今アクティブな画面）を、今のスクロール位置のまま画面いっぱいに固定表示し続ける。
+  // showScreen()が.activeクラスを付け替えると本来はdisplay:noneになって消えてしまうため、インライン
+  // スタイルで強制的にdisplay:blockのposition:fixedへ切り替え、topをマイナスのスクロール量にすることで
+  // 「見えていたとおりの位置」のまま静止させる（内容自体は動かない＝アニメーション中に動いて見えない）。
+  // 戻す（unfreeze）と、あとはCSS本来の.screen{display:none}に任せて自然に消える。
+  function freezeLeavingScreen(screenEl, scrollY) {
+    if (!screenEl) return null;
+    screenEl.style.display = 'block';
+    screenEl.style.position = 'fixed';
+    screenEl.style.left = '0';
+    screenEl.style.right = '0';
+    screenEl.style.top = (-scrollY) + 'px';
+    screenEl.style.zIndex = '400'; // 暗幕(490)・クローン(500)より下
+    return screenEl;
+  }
+  function unfreezeScreen(screenEl) {
+    if (!screenEl) return;
+    screenEl.style.display = '';
+    screenEl.style.position = '';
+    screenEl.style.left = '';
+    screenEl.style.right = '';
+    screenEl.style.top = '';
+    screenEl.style.zIndex = '';
+  }
+  // 入る画面（旅の詳細／ホーム）をクローンの下で見えなくしておき、アニメーション終了時にフェードインする。
+  function hideEnteringScreen(screenEl) {
+    if (!screenEl) return null;
+    screenEl.style.transition = 'none';
+    screenEl.style.opacity = '0';
+    screenEl.style.pointerEvents = 'none';
+    return screenEl;
+  }
+  function revealEnteringScreen(screenEl) {
+    if (!screenEl) return;
+    void screenEl.offsetWidth; // reflow：ここまでのopacity:0を確定させてからフェードインへ
+    screenEl.style.transition = 'opacity ' + TRIP_OPEN_ANIM_FADE_MS + 'ms ease';
+    screenEl.style.opacity = '1';
+    screenEl.style.pointerEvents = '';
+    setTimeout(function () {
+      screenEl.style.transition = '';
+      screenEl.style.opacity = '';
+    }, TRIP_OPEN_ANIM_FADE_MS + 40);
+  }
+
+  // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
+  // 読み込みを待たずにそのまま進める（読み込みが遅くても、演出は毎回同じ長さで終わる）。
+  function openTripFromCard(cardEl, tripId, returnTo) {
+    if (!CARD_EXPAND_ENABLED() || !cardEl || typeof cardEl.getBoundingClientRect !== 'function') {
+      pendingCardOpenAnim = null;
+      openTrip(tripId, returnTo);
+      return;
+    }
+    var startRect = cardEl.getBoundingClientRect();
+    if (!startRect.width || !startRect.height) { openTrip(tripId, returnTo); return; }
+    var visual = readTripCardVisual(cardEl);
+    var leavingScreen = $('.screen.active');
+    var leavingScrollY = window.scrollY;
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'trip-open-backdrop';
+    var clone = document.createElement('div');
+    clone.className = 'trip-open-clone';
+    clone.style.top = startRect.top + 'px';
+    clone.style.left = startRect.left + 'px';
+    clone.style.width = startRect.width + 'px';
+    clone.style.height = startRect.height + 'px';
+    clone.style.borderRadius = visual.radius;
+    clone.innerHTML = tripOpenCloneHtml(visual.hasPhoto);
+    if (visual.hasPhoto) {
+      var photo = clone.querySelector('.trip-open-clone-photo');
+      photo.style.height = visual.photoHeight + 'px';
+      photo.style.backgroundImage = visual.photoUrl;
+    }
+    document.body.appendChild(backdrop);
+    document.body.appendChild(clone);
+
+    // クローンの見た目の動き（カード位置→ヘッダーいっぱい）は、通信の完了を待たずにすぐ始める。
+    // 一方、本物の詳細画面への切り替え（showScreen）はopenTrip内部のAPI応答を待つ非同期処理のため、
+    // 「見た目のアニメーションが最短380ms経過」と「実際に画面が切り替わった」の両方が揃うまで待ってから、
+    // 抜ける画面の固定表示（freeze）を解いて、詳細画面をフェードインで見せる（minDone/screenReady）。
+    var minDone = false, screenReady = false, finished = false, enteringScreen = null;
+    function finishIfReady() {
+      if (finished || !minDone || !screenReady) return;
+      finished = true;
+      clearTimeout(safetyTimer);
+      unfreezeScreen(leavingScreen);
+      revealEnteringScreen(enteringScreen);
+      backdrop.classList.remove('show');
+      setTimeout(function () { backdrop.remove(); clone.remove(); }, 260);
+    }
+    // 安全策：旅行が見つからない等でopenTripが失敗すると（catch側でalert→goHomeへ）、screenReadyが
+    // 一生falseのままになり得るため、一定時間で強制的に後片付けする（暗幕・クローンが残り続けて
+    // 操作不能になることを防ぐ）。通常はfinishIfReadyが先に動くのでここまで来ない。
+    var safetyTimer = setTimeout(function () {
+      if (finished) return;
+      finished = true;
+      unfreezeScreen(leavingScreen);
+      backdrop.remove();
+      clone.remove();
+    }, 10000);
+
+    openTrip(tripId, returnTo, function () {
+      // 実際に旅の詳細画面へ切り替わった直後（renderTripDetailまで完了済み）。ここで初めて
+      // 抜ける画面をfreezeする（通信が速く、この時点でまだアニメーション中でも問題ない）。
+      freezeLeavingScreen(leavingScreen, leavingScrollY);
+      enteringScreen = hideEnteringScreen($('.screen.active'));
+      screenReady = true;
+      finishIfReady();
+    });
+    pendingCardOpenAnim = { cardEl: cardEl, tripId: tripId };
+
+    requestAnimationFrame(function () {
+      void clone.offsetHeight; // reflow。ここまでの初期位置をブラウザに確定させてから終了位置へ動かす
+      backdrop.classList.add('show');
+      var vw = document.documentElement.clientWidth;
+      var targetH = visual.hasPhoto ? 160 : 96; // .trip-cover-photoの高さ（style.css）に合わせる。写真無しはヘッダー相当の高さ
+      clone.style.top = '0px';
+      clone.style.left = '0px';
+      clone.style.width = vw + 'px';
+      clone.style.height = targetH + 'px';
+      clone.style.borderRadius = '0 0 var(--radius-card) var(--radius-card)';
+      if (visual.hasPhoto) clone.querySelector('.trip-open-clone-photo').style.height = targetH + 'px';
+    });
+
+    setTimeout(function () { minDone = true; finishIfReady(); }, TRIP_OPEN_ANIM_MS);
+  }
+
+  // 「戻る」（← 戻るボタン／画面端スワイプ）のとき：直前にカードのアニメーションで開いた旅行と同じで、
+  // かつそのカードがまだ画面上に残っていれば逆再生する。renderHomeTripList()が一覧を作り直すと
+  // 古いカードは画面から外れる（document.body.containsが false になる）ので、そのときは
+  // 素直に今までどおりの切り替えにする。doNavigateは実際の画面遷移（pushState・showScreen等）そのもの。
+  function maybeAnimateTripCardClose(doNavigate) {
+    var info = pendingCardOpenAnim;
+    pendingCardOpenAnim = null;
+    if (!info || !CARD_EXPAND_ENABLED() || !state.trip || state.trip.id !== info.tripId ||
+      !document.body.contains(info.cardEl)) {
+      doNavigate();
+      return;
+    }
+    var targetRect = info.cardEl.getBoundingClientRect();
+    if (!targetRect.width || !targetRect.height) { doNavigate(); return; }
+    var visual = readTripCardVisual(info.cardEl);
+    var coverPhotoEl = $('#tripCoverPhoto');
+    var hasPhoto = !!(coverPhotoEl && !coverPhotoEl.hidden);
+    var vw = document.documentElement.clientWidth;
+    var startH = hasPhoto ? 160 : 96;
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'trip-open-backdrop show';
+    var clone = document.createElement('div');
+    clone.className = 'trip-open-clone';
+    clone.style.top = '0px';
+    clone.style.left = '0px';
+    clone.style.width = vw + 'px';
+    clone.style.height = startH + 'px';
+    clone.style.borderRadius = '0 0 var(--radius-card) var(--radius-card)';
+    clone.innerHTML = tripOpenCloneHtml(hasPhoto);
+    if (hasPhoto) {
+      var photo = clone.querySelector('.trip-open-clone-photo');
+      photo.style.height = startH + 'px';
+      photo.style.backgroundImage = coverPhotoEl.style.backgroundImage;
+    }
+    document.body.appendChild(backdrop);
+    document.body.appendChild(clone);
+
+    var leavingScreen = $('.screen.active'); // 旅の詳細（このあとdoNavigate()でホーム等に切り替わる）
+    var leavingScrollY = window.scrollY;
+    doNavigate(); // 実際の画面切り替え（pushState・showScreen・renderHome等）
+    var enteringScreen = hideEnteringScreen($('.screen.active'));
+    freezeLeavingScreen(leavingScreen, leavingScrollY);
+
+    requestAnimationFrame(function () {
+      void clone.offsetHeight;
+      backdrop.classList.remove('show');
+      clone.style.top = targetRect.top + 'px';
+      clone.style.left = targetRect.left + 'px';
+      clone.style.width = targetRect.width + 'px';
+      clone.style.height = targetRect.height + 'px';
+      clone.style.borderRadius = visual.radius;
+      if (hasPhoto) clone.querySelector('.trip-open-clone-photo').style.height = visual.photoHeight + 'px';
+    });
+
+    setTimeout(function () {
+      unfreezeScreen(leavingScreen);
+      revealEnteringScreen(enteringScreen);
+      backdrop.remove();
+      clone.remove();
+    }, TRIP_OPEN_ANIM_MS);
   }
 
   function skeletonCardsHtml(n) {
@@ -3815,7 +4111,7 @@
           (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
           '</div>';
       }
-      card.addEventListener('click', function () { openTrip(t.id); });
+      card.addEventListener('click', function () { openTripFromCard(card, t.id); });
       el.appendChild(card);
       revealCards.push(card);
     });
@@ -3851,9 +4147,13 @@
   }
 
   function goHome() {
-    history.pushState(null, '', location.pathname);
-    showScreen('home');
-    renderHome();
+    // 直前にホームのカードのアニメーション（openTripFromCard）で開いた旅行を、そのままの
+    // カードへ戻るなら逆再生する（maybeAnimateTripCardClose、そうでなければ即座にdoNavigateだけ呼ばれる）。
+    maybeAnimateTripCardClose(function () {
+      history.pushState(null, '', location.pathname);
+      showScreen('home');
+      renderHome();
+    });
   }
 
   // ---------- 旅行を開く ----------
@@ -3863,7 +4163,11 @@
   // マイログの「参加した旅行」カードから開いたとき（openTrip(id, 'mylog')）は、そのページに戻す
   // （2026-09-28〜。ボトムタブバー導入にあわせ、戻ったときに正しいタブがハイライトされるよう
   // showScreen自身がタブの見た目も更新する＝updateTabbar参照）。
-  function openTrip(id, returnTo) {
+  // onScreenReady：省略可。旅の詳細画面へ実際に切り替わった（showScreen＋renderTripDetail完了）
+  // 直後に同期で呼ばれる。openTripFromCard（カードが浮かび上がって広がる演出）が、通信の完了を
+  // 待たずに始めたアニメーションと、実際の画面切り替え（通信待ちで遅れる）のタイミングを
+  // 合わせるために使う。それ以外の呼び出し元は今までどおり省略でよい。
+  function openTrip(id, returnTo, onScreenReady) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
       state.trip = data.trip;
@@ -3882,6 +4186,7 @@
       renderTripDetail();
       loadSocial();
       loadTripZones();
+      if (onScreenReady) onScreenReady();
     }).catch(function () {
       forgetTrip(id);
       alert('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。');
@@ -5748,6 +6053,13 @@
     var mapUnusable = entry.mapUrl && (!/^https?:\/\//i.test(entry.mapUrl.trim()) || Core.hasBrokenMapQuery(entry.mapUrl.trim()));
     if (mapUnusable) metaBits.push('<span class="map-broken">地図の場所が読み取れません・押して直す</span>');
     else if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
+    // この記録がその日いちばん最初の記録（＝Blockの代表の地図）で、前後の予定から800km以上離れた
+    // ピンを持っている（かつ前後どうしは300km未満）ときは、ピンを間違えている可能性が高い
+    // （例：別の都市に泊まっている日に、前の街の家のピンが残っていた）。押して直せるよう、記録の
+    // 編集導線がある「地図」リンクのすぐ下に注意書きを出す（Core.findFarMapOutlierBlockIds、2026-09-29）。
+    if (!mapUnusable && (block.entries || [])[0] === entry && Core.findFarMapOutlierBlockIds(state.blocks || [])[block.id]) {
+      metaBits.push('<span class="map-far-outlier">この地図は前後の予定から遠く離れています（地図が違うかもしれません）</span>');
+    }
     if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
     if (entry.otherUrl) metaBits.push('<a href="' + escapeHtml(entry.otherUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">リンク</a>');
 
@@ -7226,9 +7538,13 @@
   // Stripeへの戻り先URLとしては使えず、他の人と共有するリンクとしても開けない。
   // その場合は実際に公開しているWebサイトのURLを使う。
   function publicPageUrl() {
-    return isNativeApp()
-      ? 'https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/'
-      : location.origin + location.pathname;
+    if (isNativeApp()) return PUBLIC_WEB_BASE;
+    // 新しいホスト（Cloudflare Pages）で動いているときだけ、今までどおり実際のURLを使う。
+    // それ以外（まだGitHub Pagesで見ている・ローカルで動かしているなど）は、
+    // 公開している最新のURL（PUBLIC_WEB_BASE）を使う。
+    return location.hostname === 'tabinoashiato.pages.dev'
+      ? location.origin + location.pathname
+      : PUBLIC_WEB_BASE;
   }
 
   function startCheckout(plan) {
@@ -7461,7 +7777,7 @@
         (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
         tripPlaceChipsHtml(placesByTrip[t.id]) +
         '</div></div>';
-      var open = function () { openTrip(t.id, 'mylog'); };
+      var open = function () { openTripFromCard(card, t.id, 'mylog'); };
       card.addEventListener('click', function (e) {
         if (e.target.closest('.trip-place-action')) return;
         open();
@@ -8685,14 +9001,28 @@
   // 再生位置を r（秒）に移す。カメラは移った先の場所へ、アニメーションなしで寄せる
   function seekReplayTo(r) {
     if (!replay) return;
+    // 前の区間で始まったflyTo（区間の変わり目・再生中のカメラ移動）が終わっていないまま次のシークで
+    // fitBoundsすると、Leafletがその移動を中途半端な位置・縮尺で終わらせてしまい、乗り物や線が
+    // 地図（タイル）と少しずれて見えていた。まず止めてから位置を合わせる。
+    replayMap.stop();
     replay.r = Math.max(0, Math.min(replay.tl.totalReal, r));
     replay.lastOffsetDiff = undefined; // 飛んだ先で「時差」のバナーを出さない
-    replay.lastLeg = -1;
-    replay.lastStop = -2;
     replay.captionIndex = -2;
     replay.lastDay = 0;
-    var here = Core.replayStateAt(replay.tl, replay.r).here;
-    if (here) replayCenterOn(here.lat, here.lng, replayMap.getZoom(), false);
+    var st = Core.replayStateAt(replay.tl, replay.r);
+    if (st.here) replayCenterOn(st.here.lat, st.here.lng, replayMap.getZoom(), false);
+    // すでにここでカメラを合わせたので、直後のrenderReplayが「区間・地点が変わった」と勘違いして
+    // もう一度（アニメつきで）カメラを動かさないよう、いま合わせた状態を済みにしておく。以前は
+    // lastLeg/lastStopを-1/-2に戻していたため、シーク先が区間の途中だとrenderReplayがすぐさま
+    // flyToBounds（0.8秒）を始めてしまい、止まったはずの地図がもう一度少しずれて動いて見えていた。
+    replay.lastLeg = st.icon ? st.icon.legIndex : -1;
+    replay.lastStop = st.stopIndex;
+    // 止めたflyToのぶんズームアニメの途中状態（線を隠す・止める扱い）が残らないよう、
+    // 描画に関わる状態をここでリセットしてから、新しい位置・縮尺で線を描き直す（renderReplayが行う）。
+    replay.mapAnimating = false;
+    replay.cameraMoving = false;
+    var pane = replayOverlayPane();
+    if (pane) { pane.style.transition = 'none'; pane.style.opacity = '1'; }
     renderReplay();
   }
 

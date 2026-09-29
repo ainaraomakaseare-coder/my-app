@@ -1601,5 +1601,84 @@ eq('lodgingSummary：未定は数えない・全部未定なら空', [T.lodgingS
   ).map(function (g) { return g.group; }), ['A']);
 })();
 
+/* ---- 「ワールドカップ、大谷観戦旅」で見つかった不具合の回帰テスト（2026-09-29） ---- */
+(function () {
+  // 1. 日付変更線をまたぐ移動日の並び：羽田18:30→LAX18:50着（移動の予定・地図あり）→
+  //    羽田20:00発のフライト（地図は出発地）→ユニオンステーション20:20着。
+  //    LAXの予定は自分の地図（ロサンゼルス）を持っているのに、直前の予定（羽田・日本時間）の
+  //    時差をそのまま引き継いでしまうと、18:50JST（世界共通時刻ではフライトの20:00JSTより前）に
+  //    なり、「LAXに着く前にフライトが出発する」という順になってしまっていた。
+  var wcBlocks = [
+    { id: 'haneda', date: '2026-06-26', time: '18:30', category: 'other', label: '羽田空港の地震', createdAt: '1' },
+    { id: 'lax', date: '2026-06-26', time: '18:50', category: 'transport', transport: '', label: 'ロサンゼルス国際空港', createdAt: '2' },
+    { id: 'flight', date: '2026-06-26', time: '20:00', category: 'transport', transport: '', label: 'ロサンゼルスへのフライト', createdAt: '3' },
+    { id: 'union', date: '2026-06-26', time: '20:20', category: 'transport', transport: '', label: 'ユニオンステーション', createdAt: '4' }
+  ];
+  var wcByBlock = { haneda: 'Asia/Tokyo', lax: 'America/Los_Angeles', flight: 'Asia/Tokyo', union: 'America/Los_Angeles' };
+  var wcZones = T.assignBlockZones(wcBlocks.map(function (b) { return Object.assign({}, b); }), wcByBlock, {}, 'Asia/Tokyo', {});
+  var wcCopies = wcBlocks.map(function (b) { return Object.assign({}, b); });
+  T.applyBlockZones(wcCopies, wcZones);
+  eq('assignBlockZones: LAX到着はJSTではなく自分の地図（ロサンゼルス）の時差になる', wcCopies[1]._offset, -420);
+  eq('sortBlocks: 羽田→フライト→LAX到着→ユニオンの順（LAXがフライトより前に来ない）',
+    T.sortBlocks(wcCopies).map(function (b) { return b.id; }), ['haneda', 'flight', 'lax', 'union']);
+
+  // 2. 前後の記録から800km以上離れたピン（違う場所のピンが残っている）は、地図に出さず
+  //    吹き出し（キャプション）だけにする。ヒューストン滞在中の1件だけ、ロサンゼルスの自宅の
+  //    ピンが残っていた実例。
+  var houston1 = { lat: 29.7369, lng: -95.4681 }; // マリオット（ヒューストン、正しいピン）
+  var wrongLA = { lat: 33.9794, lng: -118.4092 }; // ロサンゼルスの自宅（間違って残っていたピン）
+  var houston2 = { lat: 29.9487, lng: -95.3300 }; // 熱中症のあった場所（ヒューストン）
+  ok('isFarMapOutlier: 前後どうしは近い（300km未満）のに真ん中だけ800km以上離れていれば外れ値',
+    T.isFarMapOutlier(houston1, wrongLA, houston2));
+  ok('isFarMapOutlier: 前後もいっしょに遠く離れる本物の長距離移動は外れ値にしない',
+    !T.isFarMapOutlier(houston1, { lat: 36.1166, lng: -115.1704 }, { lat: 36.0831, lng: -115.1482 }));
+  var outlierStops = T.replayStops({ startDate: '2026-06-28', endDate: '2026-06-29' }, [
+    { id: 'o1', date: '2026-06-28', time: '13:00', category: 'lodging', label: 'マリオット', entries: [{ mapUrl: 'https://maps.app.goo.gl/houston1' }] },
+    { id: 'o2', date: '2026-06-28', time: '14:00', category: 'food', label: 'Truth BBQ', entries: [{ mapUrl: 'https://maps.app.goo.gl/houston2' }] },
+    { id: 'o3', date: '2026-06-28', time: '22:30', category: 'lodging', label: 'マリオット', entries: [{ mapUrl: 'https://maps.app.goo.gl/wrongpin' }] },
+    { id: 'o4', date: '2026-06-29', time: '09:00', category: 'food', label: 'First Watch', entries: [{ mapUrl: 'https://maps.app.goo.gl/houston3' }] }
+  ]);
+  var outlierTl = T.buildReplayTimeline(outlierStops, {
+    'https://maps.app.goo.gl/houston1': { lat: 29.7369, lng: -95.4681 },
+    'https://maps.app.goo.gl/houston2': { lat: 29.7691, lng: -95.3976 },
+    'https://maps.app.goo.gl/wrongpin': { lat: 33.9794, lng: -118.4092 },
+    'https://maps.app.goo.gl/houston3': { lat: 29.7749, lng: -95.3883 }
+  });
+  eq('buildReplayTimeline: 前後から遠い間違ったピンは地図の地点にしない（located=false）',
+    outlierTl.stops.map(function (s) { return s.located; }), [true, true, false, true]);
+  ok('buildReplayTimeline: 外れ値と分かった地点にはoutlierの印が付く', outlierTl.stops[2].outlier === true);
+  eq('buildReplayTimeline: 外れ値でもキャプション（label）はそのまま残す', outlierTl.stops[2].label, 'マリオット');
+
+  // findFarMapOutlierBlockIds：旅行詳細画面の注意書き用（Blockのentries[0]のmapLat/mapLngで判定）
+  var outlierBlocks = [
+    { id: 'p1', date: '2026-06-28', time: '13:00', category: 'lodging', label: 'マリオット', entries: [{ mapLat: 29.7369, mapLng: -95.4681 }] },
+    { id: 'p2', date: '2026-06-28', time: '14:00', category: 'food', label: 'Truth BBQ', entries: [{ mapLat: 29.7691, mapLng: -95.3976 }] },
+    { id: 'p3', date: '2026-06-28', time: '22:30', category: 'lodging', label: 'マリオット', entries: [{ mapLat: 33.9794, mapLng: -118.4092 }] },
+    { id: 'p4', date: '2026-06-29', time: '09:00', category: 'food', label: 'First Watch', entries: [{ mapLat: 29.7749, mapLng: -95.3883 }] }
+  ];
+  eq('findFarMapOutlierBlockIds: 真ん中の間違ったピンのBlockだけが対象になる', T.findFarMapOutlierBlockIds(outlierBlocks), { p3: true });
+})();
+
+/* ---- 時刻の無い宿泊（lodging）は、その日の最後（寝る前）に置く（2026-09-29） ---- */
+(function () {
+  // 時刻ありのBlockは常に時刻順が先頭グループなので、時刻なしのlodgingは自然にそのあとに来る
+  // （sortBlocksの既存の並べ方、docs/adr/0003）。ラスベガス→朝までポーカー(06:00)→WSOP(10:00)→
+  // ロサンゼルスへの移動(16:00)→シェラトン（時刻なし・宿泊）の実例で確認する。
+  var nightBlocks = [
+    { id: 'poker', date: '2026-06-30', time: '06:00', category: 'other', label: '朝までポーカー', createdAt: '1' },
+    { id: 'wsop', date: '2026-06-30', time: '10:00', category: 'other', label: 'WSOPトーナメント', createdAt: '2' },
+    { id: 'move', date: '2026-06-30', time: '16:00', category: 'transport', label: 'ロサンゼルスへの移動', createdAt: '3' },
+    { id: 'sheraton', date: '2026-06-30', time: '', category: 'lodging', label: 'シェラトン', createdAt: '4' }
+  ];
+  eq('sortBlocks: 時刻なしの宿泊は、その日の時刻ありの予定がすべて終わったあと（末尾）に来る',
+    T.sortBlocks(nightBlocks).map(function (b) { return b.id; }), ['poker', 'wsop', 'move', 'sheraton']);
+  // 時刻なしのlodgingが「作成順が先」でも、時刻ありグループより前には割り込まないことも確認する
+  var nightBlocksCreatedFirst = nightBlocks.map(function (b) {
+    return b.id === 'sheraton' ? Object.assign({}, b, { createdAt: '0' }) : b;
+  });
+  eq('sortBlocks: 時刻なしの宿泊を先に登録していても、時刻ありの予定より前には来ない',
+    T.sortBlocks(nightBlocksCreatedFirst).map(function (b) { return b.id; }), ['poker', 'wsop', 'move', 'sheraton']);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

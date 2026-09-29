@@ -9,7 +9,7 @@ App Store Connectでアプリの情報を入力する画面が出てきたら、
 - **カテゴリ**：プライマリ = 旅行（Travel）／セカンダリ = ライフスタイル（Lifestyle）
 - **年齢制限**：4+（暴力・成人向け要素なし。ただしユーザー投稿写真を扱うため、申請時の質問には正直に回答する）
 - **サポートURL**：（GitHub リポジトリのURL、または連絡先ページ）
-- **プライバシーポリシーURL**：`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`
+- **プライバシーポリシーURL**：`https://tabinoashiato.pages.dev/privacy.html`（2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行。旧URL：`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`）
 - **著作権**：© 2026 （ご自身の名前や屋号）
 
 ## 説明文（下書き）

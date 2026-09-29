@@ -45,7 +45,7 @@ https://developer.apple.com/account の「Membership」ページに表示され�
 4. Bundle ID：`com.hiroyaapps.tabilog`（`capacitor.config.json` と同じ値にする。事前に developer.apple.com の「Identifiers」からこのBundle IDを登録しておく必要があります。この登録画面で「Sign in with Apple」にもチェックを入れておいてください）
 5. SKU：何でもよい（例：`tabilog001`）
 
-説明文・キーワード・データ収集の申告内容などの下書きは `app-store-listing.md` にまとめてあります。コピーして使ってください。プライバシーポリシーのURLは `../day07-tabilog/privacy.html`（公開後は `https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`）です。
+説明文・キーワード・データ収集の申告内容などの下書きは `app-store-listing.md` にまとめてあります。コピーして使ってください。プライバシーポリシーのURLは `../day07-tabilog/privacy.html`（公開後は `https://tabinoashiato.pages.dev/privacy.html`。2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行。旧URL：`https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/privacy.html`）です。
 
 Appleでサインインを有効にする手順（Googleログインを提供する場合はほぼ必須）は `../day07-tabilog/README.md` の「Appleでサインインについて」を参照してください。
 
@@ -88,3 +88,9 @@ Appleでサインインを有効にする手順（Googleログインを提供す
 - **アプリアイコン**（1024×1024のApp Store用アイコンなど、複数サイズ必要）：Web版の簡易アイコンのままでは審査に必要な形式に足りません
 - **スクリーンショット・説明文・プライバシーポリシーページ**：App Store Connectへの申請に必要です
 - これらは次のステップとして、必要になったタイミングで一緒に用意しましょう
+
+## ユニバーサルリンク（共有リンクをアプリで開く）について（2026-09-29〜）
+
+`App.entitlements`（Associated Domains：`applinks:tabinoashiato.pages.dev`・`applinks:ainaraomakaseare-coder.github.io`）は用意していますが、**このブランチ（`feat/tabilog-review-log`）にはまだ、これをiOSプロジェクトへ実際に組み込むCIの手順（`.github/workflows/tabilog-ios-build.yml`の「ユニバーサルリンクの設定を追加する」ステップ）も、アプリ側で共有リンクを受け取って開く処理（`app.js`の`listenForAppLinks`・`@capacitor/app`）も入っていません。** これらは別ブランチ（`feat/tabilog-universal-links`、`release/tabilog-1.1.0`に取り込み済み）で先に作った機能で、まだこのブランチにはマージされていないためです。ブランチをマージする際は、`App.entitlements`の内容（両方のドメインを含める）を突き合わせて重複や食い違いがないか確認してください。マージ後は、`apps/day07-tabilog/.well-known/apple-app-site-association`（Cloudflare Pagesのプロジェクトルート＝`apps/day07-tabilog`に置いてあるので`https://tabinoashiato.pages.dev/.well-known/apple-app-site-association`としてそのまま配信される）と、`App.entitlements`のTeam ID（`594N82AW44`）・Bundle ID（`com.hiroyaapps.tabilog`）が一致しているか確認してください。
+
+なお、**旧GitHub Pages側では`apple-app-site-association`を一度も配信できていません**（このアプリのリポジトリ`my-app`は`https://ainaraomakaseare-coder.github.io/my-app/...`というプロジェクトページで、ユニバーサルリンクに必要な`https://ainaraomakaseare-coder.github.io/.well-known/apple-app-site-association`はドメインのルート＝別の`ainaraomakaseare-coder.github.io`という名前のユーザーページ用リポジトリでしか配信できないため）。つまりgithub.io向けのユニバーサルリンクは今まで実質動いていなかった可能性が高く、Cloudflare Pagesへの移行後、初めてapple-app-site-associationを正しく配信できるようになります。

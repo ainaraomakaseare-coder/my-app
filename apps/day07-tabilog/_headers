@@ -1,0 +1,6 @@
+# Cloudflare Pagesのレスポンスヘッダー設定（https://developers.cloudflare.com/pages/configuration/headers/）。
+# apple-app-site-associationは拡張子が無いため、Pagesの既定ではcontent-typeが
+# text/plain等になりうる。iOSはこれをapplication/json（または近いJSON系）として
+# 取得できないとユニバーサルリンクの設定を認識しないため、明示しておく。
+/.well-known/apple-app-site-association
+  Content-Type: application/json

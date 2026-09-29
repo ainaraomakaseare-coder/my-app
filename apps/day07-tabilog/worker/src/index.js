@@ -24,6 +24,7 @@ import {
   isValidCurrency, isValidDate, frankfurterUrl, parseFrankfurterResponse,
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
+import { isAllowedOrigin, cors } from "./cors.js";
 
 // "arrival"（到着）は2026-09-27〜。種類「移動」の中の「出発｜到着」の到着。移動（出発）と違い、着いた場所の予定として扱う
 const CATEGORIES = ["sightseeing", "food", "lodging", "transport", "other", "arrival"];
@@ -33,28 +34,9 @@ const SETTLE_UNITS = [1, 10, 100];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const URL_RE = /^https?:\/\/\S+$/;
-
-function isAllowedOrigin(origin, allowed) {
-  if (origin === allowed) return true;
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || "")) return true;
-  // iOSアプリ（Capacitor）内のWebViewは、ページを https://... ではなく
-  // capacitor://localhost から読み込んでいるため、そのOriginも許可する。
-  if (origin === "capacitor://localhost") return true;
-  // CapacitorHttpプラグイン経由（WebViewを介さずネイティブ側がHTTPリクエストを
-  // 送る方式）だとOriginヘッダー自体が付かないため、それも許可する。
-  if (!origin) return true;
-  return false;
-}
-
-function cors(origin, allowed) {
-  const ok = isAllowedOrigin(origin, allowed);
-  return {
-    "access-control-allow-origin": ok ? origin : allowed,
-    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type, x-voice-meta, authorization",
-    "vary": "Origin",
-  };
-}
+// 外部API（Wikipedia・Nominatimなど）へのリクエストに添える連絡先URL。
+// 2026-09-29〜：GitHub PagesからCloudflare Pagesへ移行したのに合わせて更新。
+const PUBLIC_WEB_BASE_URL = "https://tabinoashiato.pages.dev/";
 
 function json(body, status, headers) {
   return new Response(JSON.stringify(body), {
@@ -1463,7 +1445,7 @@ async function nominatimSearch(q, near, nears) {
     const view = near ? "&viewbox=" + (near.lng - 3) + "," + (near.lat + 3) + "," + (near.lng + 3) + "," + (near.lat - 3) : "";
     const res = await fetch(
       "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&accept-language=ja" + view + "&q=" + encodeURIComponent(q),
-      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+      { headers: { "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ")" } }
     );
     return res.ok ? pickNominatimCandidate(await res.json(), nears) : null;
   } catch {
@@ -1621,7 +1603,7 @@ function mapTextCandidates(text) {
 // normPlaceName・placeNameRankはgeo-decode.jsのpure関数（node単体テストできるよう移動した。
 // worker/test/geo-decode.test.mjs）。
 
-const WIKI_UA = { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" };
+const WIKI_UA = { "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ")" };
 
 // 記事（転送元の題名でもよい）の座標。日本語版の記事に座標が無いとき（「フラミンゴ・ラスベガス」など）は、
 // 記事につながったウィキデータの「位置」を使う。返り値は { 題名: {lat,lng} }
@@ -1900,7 +1882,7 @@ async function searchPlaces(q, headers, ctx, env, session) {
   try {
     const res = await fetch(
       "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&accept-language=ja&q=" + encodeURIComponent(q),
-      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+      { headers: { "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ")" } }
     );
     if (res.ok) list = await res.json();
   } catch {
@@ -1994,7 +1976,7 @@ function parseLatLng(text) {
 // distanceKmはgeo-decode.jsのpure関数（node単体テストできるよう移動した。worker/test/geo-decode.test.mjs）。
 
 const RATE_TIMEOUT_MS = 8000;
-const RATE_USER_AGENT = "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;"
+const RATE_USER_AGENT = "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ";"
   + " 費用の外貨換算でFrankfurter(ECB)・fawazahmed0/currency-apiを利用しています。日付・通貨ごとに結果をキャッシュします)";
 
 async function fetchJsonWithTimeout(url, ms) {
@@ -2186,7 +2168,7 @@ async function getRoute(url, headers, ctx, env) {
         const res = await fetch(
           "https://routing.openstreetmap.de/" + ROUTE_PROFILES[profile] + "/" +
             from.lng + "," + from.lat + ";" + to.lng + "," + to.lat + "?overview=full&geometries=geojson",
-          { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+          { headers: { "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ")" } }
         );
         osrmStatus = res.status;
         const data = res.ok ? await res.json() : null;
@@ -2234,7 +2216,7 @@ async function fetchBrouterRail(from, to, idx) {
         "&profile=rail&alternativeidx=" + idx + "&format=geojson",
       {
         headers: {
-          "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/;" +
+          "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ";" +
             " 電車の道のり検索でBRouterの公開サーバーを利用しています。1区間あたり最大4回・結果は30日キャッシュします)",
         },
         signal: controller.signal,
@@ -2347,7 +2329,7 @@ async function getRailTracks(url, headers, ctx) {
   for (const base of OVERPASS_URLS) {
     try {
       const res = await fetch(base + "?data=" + encodeURIComponent(query), {
-        headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/; 電車の道のりを線路の上で描くため。範囲ごとに30日キャッシュします)" },
+        headers: { "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + "; 電車の道のりを線路の上で描くため。範囲ごとに30日キャッシュします)" },
       });
       if (!res.ok) continue;
       const text = await res.text();
@@ -2500,7 +2482,7 @@ async function reverseGeocode(lat, lng) {
   try {
     const res = await fetch(
       "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&accept-language=ja&lat=" + lat + "&lon=" + lng,
-      { headers: { "user-agent": "tabilog/1.0 (+https://ainaraomakaseare-coder.github.io/my-app/apps/day07-tabilog/)" } }
+      { headers: { "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ")" } }
     );
     if (!res.ok) return null;
     const data = await res.json();
