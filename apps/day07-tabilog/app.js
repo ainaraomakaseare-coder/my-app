@@ -914,6 +914,13 @@
   }
   var REPLAY_IDLE_CAP_SEC = 1.2;     // 移動も何も無い空き時間はこの秒数に早送りする
   var REPLAY_ARRIVAL_PAUSE_SEC = 0.5; // 着いてから吹き出し（写真・エピソード）を出すまでの一呼吸（カメラが収まるのを待つ。2026-09-27）
+  // 区間で着いた地点は、着いたあとカメラが着いた地点へ寄せ直す（遅延＋飛行の時間）ことがある。
+  // 吹き出し・写真は「乗り物が着いて、カメラが落ち着いてから」出す（オーナーの指示、2026-09-30）ので、
+  // 区間で着いた地点は、その分（カメラの寄せ直しが終わるまで）待ってから吹き出しを出す。
+  // 画面側（カメラの制御）も同じ値を使う。
+  var REPLAY_CAMERA_FLIGHT_SEC = 0.8;        // カメラのアニメーション（flyTo）の長さ
+  var REPLAY_ARRIVAL_ZOOM_DELAY_SEC = 0.2;   // 着いてから、着いた地点へ寄せ直し始めるまで
+  var REPLAY_ARRIVAL_SETTLE_SEC = 1.1;       // 区間で着いた地点：吹き出しを出すまで（0.2＋0.8＋余裕0.1）
   var REPLAY_JUMP_EPS = 1e-6;         // 吹き出しが消えて時計を一気に進める瞬間の、見た目には分からない実時間のずらし幅
   var REPLAY_UNTIMED_START_MIN = 9 * 60;
 
@@ -1208,6 +1215,36 @@
     return false;
   }
 
+  // カメラを1本の制御で動かすための判断（2026-09-30）。'skip'（動かさない）・'defer'（いまのアニメが終わってから）・
+  // 'go'（いま始める）のどれかを返す。
+  //   view   ：いまの見え方。アニメ中なら、そのアニメの行き先（今の途中の見え方ではなく）
+  //   target ：動かしたい先（fitBoundsの実際の結果。中心と縮尺）
+  //   o.flying       ：アニメ中か
+  //   o.urgent       ：動かさないと間に合わない（移動の直前）か。急ぎならアニメ中でも始め直す
+  //   o.viewWidthPx  ：地図の横幅（px）。あれば「ずれ」の許容を画面の大きさに合わせる（画面幅の6%未満は同じ場所）。
+  //                    以前は固定の50mで、ズーム15なら画面の1/10ほどのずれでも毎回カメラが動いていた
+  //   o.alreadyVisible：動かしたい対象（道のりの両端など）が、いまの見え方の中にもう収まっているか。
+  //                    収まっていて縮尺の差が1段以内なら、動かさない（続く短い区間で、毎回寄せ直して
+  //                    ズームが行ったり来たりしないように）
+  var REPLAY_CAMERA_SCREEN_TOLERANCE = 0.06;
+  var REPLAY_CAMERA_ZOOM_TOLERANCE_SNAPPED = 0.5; // 縮尺は整数刻み（zoomSnap=1）なので、半段未満は同じ
+  function cameraMoveDecision(view, target, o) {
+    o = o || {};
+    var needed;
+    if (!view || !target) needed = true;
+    else if (typeof o.viewWidthPx === 'number' && o.viewWidthPx > 0 && typeof view.zoom === 'number') {
+      var kmPerPx = 156.54303392 * Math.cos((view.lat || 0) * Math.PI / 180) / Math.pow(2, view.zoom) ;
+      var tol = Math.max(REPLAY_CAMERA_CENTER_TOLERANCE_KM, REPLAY_CAMERA_SCREEN_TOLERANCE * o.viewWidthPx * kmPerPx);
+      needed = distanceKm(view, target) > tol ||
+        (typeof target.zoom === 'number' && Math.abs(view.zoom - target.zoom) > REPLAY_CAMERA_ZOOM_TOLERANCE_SNAPPED);
+    } else needed = cameraMoveNeeded(view, target);
+    if (!needed) return 'skip';
+    if (o.alreadyVisible && view && target && typeof view.zoom === 'number' && typeof target.zoom === 'number' &&
+      Math.abs(view.zoom - target.zoom) <= 1) return 'skip';
+    if (o.flying && !o.urgent) return 'defer';
+    return 'go';
+  }
+
   // 前後の場所からだけ、遠く離れた「ピンが違うかもしれない」地点を見つける。前後の地点どうしは
   // 近い（FAR未満）のに、真ん中の地点だけ両方からFAR超え離れているときだけ怪しいと判定する
   // （前後も含めて遠くへ移動した日＝本物の長距離移動は、前後どうしも遠いのでここには当たらない）。
@@ -1462,7 +1499,8 @@
       }
       var dwell = moving ? Math.min(gap / 2, REPLAY_DWELL_MIN) : Math.min(gap, REPLAY_DWELL_MIN);
       // 着いてすぐではなく、カメラが収まるのを少し待ってから吹き出し（写真・エピソード）を出す（2026-09-27）
-      r += REPLAY_ARRIVAL_PAUSE_SEC;
+      // 区間で着いた地点は、カメラが着いた地点へ寄せ直して落ち着く（REPLAY_ARRIVAL_SETTLE_SEC）まで待つ
+      r += legArrivingAt[i] ? REPLAY_ARRIVAL_SETTLE_SEC : REPLAY_ARRIVAL_PAUSE_SEC;
       st.rCaptionStart = r;
       var photoCount = Math.min((st.photos || []).length, REPLAY_MAX_PHOTOS);
       // 写真が無ければ固定3秒、写真があれば1枚2.5秒（最大4枚＝10秒）。文章の長さでは変えない（2026-09-27）
@@ -1711,6 +1749,29 @@
     }
     var next = list.filter(function (x) { return x > r + 0.05; });
     return next.length ? next[0] : tl.totalReal;
+  }
+
+  // 次の移動が、REPLAY_CAPTION_HIDE_LEAD_SEC以内に始まるか（＝吹き出し・写真を消しはじめる時刻か）。
+  // 乗り物がいる間（区間の途中）は対象外
+  function replayAboutToMove(tl, r) {
+    for (var i = 0; i < tl.legs.length; i++) {
+      var until = tl.legs[i].r0 - r;
+      if (until > 0 && until <= REPLAY_CAPTION_HIDE_LEAD_SEC) return true;
+      if (until > REPLAY_CAPTION_HIDE_LEAD_SEC) return false;
+    }
+    return false;
+  }
+
+  // 吹き出し・写真カードを「いま見せてよいか」（2026-09-30、オーナーの指示：乗り物が着いて、カメラが
+  // 落ち着いてから出し、出発の前に消す）。st＝replayStateAt(tl, r)、flags＝画面側の状態
+  //   flags.cameraMoving：カメラがアニメーション中／flags.aboutToMove：replayAboutToMove
+  // 乗り物が区間を走っている間（st.icon）は、出発地・到着地どちらの吹き出しも出さない。
+  function replayCaptionVisible(st, flags) {
+    flags = flags || {};
+    if (!st || st.captionIndex < 0) return false;
+    if (st.icon) return false;
+    if (flags.cameraMoving || flags.aboutToMove) return false;
+    return true;
   }
 
   function replayStateAt(tl, r) {
@@ -2960,7 +3021,13 @@
     replayStops: replayStops,
     buildReplayTimeline: buildReplayTimeline,
     cameraMoveNeeded: cameraMoveNeeded,
+    cameraMoveDecision: cameraMoveDecision,
+    replayAboutToMove: replayAboutToMove,
+    replayCaptionVisible: replayCaptionVisible,
     REPLAY_CAPTION_HIDE_LEAD_SEC: REPLAY_CAPTION_HIDE_LEAD_SEC,
+    REPLAY_CAMERA_FLIGHT_SEC: REPLAY_CAMERA_FLIGHT_SEC,
+    REPLAY_ARRIVAL_ZOOM_DELAY_SEC: REPLAY_ARRIVAL_ZOOM_DELAY_SEC,
+    REPLAY_ARRIVAL_SETTLE_SEC: REPLAY_ARRIVAL_SETTLE_SEC,
     replayStateAt: replayStateAt,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
@@ -9348,6 +9415,11 @@
         if (!replay) return;
         replay.mapAnimating = false;
         replay.cameraMoving = false;
+        replay.cameraFlying = null;
+        // アニメ中に「あとで」と預かった動かし先があれば、いまの見え方と比べて、まだ必要なら始める
+        var pending = replay.cameraPending;
+        replay.cameraPending = null;
+        if (pending) replayCameraMove(pending.fit, pending.opts);
         renderReplay();
       });
     }
@@ -9396,44 +9468,56 @@
       });
     } catch (e) { return false; }
   }
-  // keepCaption：着いた地点へ寄せ直すときは、いま出したばかりの写真の吹き出しを隠さない。隠すと
-  // 「出る→消える→また出る」で、同じ写真が2回出たように見えていた（イグアス到着、2026-09-27）
-  function replayFlyToBounds(bounds, opts, keepCaption) {
-    if (replay && !keepCaption) replay.cameraMoving = true; // 写真の吹き出しを隠す（moveendで戻す）
-    replayMap.flyToBounds(bounds, opts);
+  // 点（1点でも、道のりでも）を見える部分に収めたときの、カメラの中心と縮尺（fitBoundsの結果そのもの）。
+  // 以前は「区間の両端の真ん中・縮尺15」という目安を判定に使っていて、実際のカメラ（縮尺は整数刻みに丸められる）と
+  // 食い違っていた。実際の結果で比べるので、もう合っているかを正しく判定できる。
+  function replayFitFor(points, maxZoom) {
+    var L = window.L, opts = replayViewPadding();
+    opts.maxZoom = maxZoom;
+    var b = L.latLngBounds(points);
+    var cz = replayMap._getBoundsCenterZoom(b, opts); // flyToBounds／fitBoundsが内部で使うものと同じ計算
+    var z = Math.min(maxZoom, cz.zoom);
+    if (!isFinite(z)) z = maxZoom;
+    return { lat: cz.center.lat, lng: cz.center.lng, zoom: z, points: points, pad: opts };
   }
 
-  // 1点を見える部分の真ん中に出す（ズームは zoom のまま）
-  function replayCenterOn(lat, lng, zoom, animate) {
+  // 1点を見える部分の真ん中に出す（アニメーションなし。最初と、シーク先へ合わせるとき）
+  function replayCenterOn(lat, lng, zoom) {
     var opts = replayViewPadding();
-    opts.maxZoom = zoom;
-    if (animate) { opts.duration = 0.8; replayFlyToBounds([[lat, lng], [lat, lng]], opts, true); }
-    else { opts.animate = false; replayMap.fitBounds([[lat, lng], [lat, lng]], opts); }
+    opts.maxZoom = zoom; opts.animate = false;
+    replayMap.fitBounds([[lat, lng], [lat, lng]], opts);
   }
 
-  // カメラのアニメーション（flyToBounds／flyTo）を、動かす価値があるときだけ実際に始める。
-  // - 動かしたい先（target）が、いま向かっている・すでに着いた先（replay.cameraTarget）とほぼ同じなら
-  //   （Core.cameraMoveNeededがfalse）、何もしない＝同じ場所へ何度もカメラを動かして地図が揺れるのを防ぐ
-  //   （同じ場所が続く予定・乗り継ぎ空港などで発生していた。2026-09-29、docs/adr/0008）
-  // - 直前にアニメーションを始めてからREPLAY_CAMERA_DEBOUNCE_MS未満なら、目的地が違っても始め直さない
-  //   （短い間に立て続けにカメラ移動が呼ばれて、動きが重なり合ってちらつくのを防ぐ）
-  // targetは {lat, lng, zoom}。startFnが実際にflyToBounds／flyToを呼ぶ。呼ばなかったらfalseを返す。
-  var REPLAY_CAMERA_DEBOUNCE_MS = 600;
-  function replayCameraMove(target, startFn) {
-    var now = Date.now();
-    if (replay.cameraTarget && !Core.cameraMoveNeeded(replay.cameraTarget, target)) return false;
-    if (replay.cameraTargetAt && now - replay.cameraTargetAt < REPLAY_CAMERA_DEBOUNCE_MS) return false;
-    startFn();
-    replay.cameraTarget = target;
-    replay.cameraTargetAt = now;
+  // カメラを動かすのは、この1か所だけ（2026-09-30）。区間の前・着いたあと・シークのどれから呼ばれても、
+  // Core.cameraMoveDecision が「動かさない／アニメが終わってから／いま」を決める。
+  //   fit ：replayFitFor の結果（動かしたい先）
+  //   o.urgent：移動の直前で、間に合わせたいとき（アニメ中でも始め直す）
+  // 以前は、直前の開始から600ms未満なら目的地が違っても黙って捨てて「済み」にしていた（wall-clock debounce）。
+  // 捨てたカメラ移動は取り戻されず、次の区間で大きく動いて見えた。いまは捨てずに「あとで」と預かり、
+  // アニメが終わった（moveend）ときに、まだ必要なら始める。
+  function replayCameraMove(fit, o) {
+    o = o || {};
+    var c = replayMap.getCenter(), size = replayMap.getSize();
+    var flying = replay.cameraFlying;
+    var view = flying || { lat: c.lat, lng: c.lng, zoom: replayMap.getZoom() };
+    var visible = !!(fit.points && fit.pad && replayPointsInView(fit.points, fit.pad));
+    var decision = Core.cameraMoveDecision(view, fit, { flying: !!flying, urgent: !!o.urgent, viewWidthPx: size.x, alreadyVisible: visible });
+    if (decision === 'skip') return false;
+    if (decision === 'defer') { replay.cameraPending = { fit: fit, opts: o }; return false; }
+    replay.cameraPending = null;
+    replay.cameraFlying = { lat: fit.lat, lng: fit.lng, zoom: fit.zoom };
+    replay.cameraMoving = true; // 吹き出しは、動いている間は出さない（moveendで戻す）
+    replayMap.flyTo([fit.lat, fit.lng], fit.zoom, { duration: Core.REPLAY_CAMERA_FLIGHT_SEC });
     return true;
   }
 
   function resetReplayCamera() {
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
-    replayCenterOn(first.lat, first.lng, 13, false);
-    replay.cameraTarget = { lat: first.lat, lng: first.lng, zoom: 13 };
-    replay.cameraTargetAt = Date.now();
+    replayMap.stop();
+    replayCenterOn(first.lat, first.lng, 13);
+    replay.cameraFlying = null;
+    replay.cameraPending = null;
+    replay.cameraMoving = false;
     replay.lastLeg = -1;
     // 最初の地点にはもうカメラを合わせてあるので、着いたときにもう一度カメラを動かさない。以前は再生の
     // はじめに最初の地点へもう一度カメラが動き、吹き出しが「出て、一瞬消えて、また出る」ように見えていた
@@ -9600,28 +9684,19 @@
     }
     if (legIndexForCamera >= 0 && legIndexForCamera !== replay.lastLeg) {
       var leg = tl.legs[legIndexForCamera];
-      var legBounds = leg.path && leg.path.length > 1 ? leg.path
-        : [[tl.stops[leg.from].lat, tl.stops[leg.from].lng], [tl.stops[leg.to].lat, tl.stops[leg.to].lng]];
-      var legView = replayViewPadding();
-      legView.maxZoom = 15; legView.duration = 0.8;
+      var legFrom = tl.stops[leg.from], legTo = tl.stops[leg.to];
+      var legPoints = leg.path && leg.path.length > 1 ? leg.path : [[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]];
       // 空港の中など、ごく近い区間（REPLAY_TINY_LEG_KM未満）で両端がもう見えているなら、カメラを動かさない。
       // 乗り継ぎの空港（インチョン・チューリッヒ）で、ほぼ同じ場所の予定が続くたびに少しずつ寄せ直し、
       // 地図が手振れのように揺れていた（2026-09-27）
-      var legFrom = tl.stops[leg.from], legTo = tl.stops[leg.to];
-      var tinyLeg = legFrom && legTo && Core.distanceKm(legFrom, legTo) < REPLAY_TINY_LEG_KM;
-      // カメラの目的地は、区間の両端の真ん中・目安の縮尺として表す（fitBoundsの結果そのものではないが、
-      // 「もう合っているか」の判定にはこれで十分。Core.cameraMoveNeededは純粋な距離・縮尺の比較のため）。
-      var legTarget = { lat: (legFrom.lat + legTo.lat) / 2, lng: (legFrom.lng + legTo.lng) / 2, zoom: legView.maxZoom };
-      if (tinyLeg) {
-        // 飛行機のあとで大きく引いたままなら、街を見る大きさ（12）までは寄せる。以後の近い区間では動かさない
-        legView.maxZoom = Math.max(12, Math.min(15, replayMap.getZoom()));
-        legTarget.zoom = legView.maxZoom;
-        if (replayMap.getZoom() < 10 || !replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legView)) {
-          replayCameraMove(legTarget, function () { replayFlyToBounds(legBounds, legView); });
-        }
-      } else {
-        replayCameraMove(legTarget, function () { replayFlyToBounds(legBounds, legView); });
-      }
+      var tinyLeg = Core.distanceKm(legFrom, legTo) < REPLAY_TINY_LEG_KM;
+      // 飛行機のあとで大きく引いたままなら、街を見る大きさ（12）までは寄せる。以後の近い区間では動かさない
+      var legMaxZoom = tinyLeg ? Math.max(12, Math.min(15, replayMap.getZoom())) : 15;
+      var legFit = replayFitFor(legPoints, legMaxZoom);
+      var tinyInView = tinyLeg && replayMap.getZoom() >= 10 && replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legFit.pad);
+      // 動かすかどうか（もう収まっている／アニメ中）は replayCameraMove（Core.cameraMoveDecision）が決める。
+      // 移動の直前なので急ぎ（アニメ中でも始め直す）
+      if (!tinyInView) replayCameraMove(legFit, { urgent: true });
       replay.lastLeg = legIndexForCamera;
       // 着いた地点に寄せる処理（下）が次のフレームで走ってこのカメラ移動を打ち消さないよう、着いた地点も済みにする
       if (!st.icon) replay.lastStop = st.stopIndex;
@@ -9651,49 +9726,45 @@
       } else {
         if (needZoom) {
           var arriveZoom = Math.max(replayMap.getZoom(), 12);
-          replayCameraMove({ lat: arrived.lat, lng: arrived.lng, zoom: arriveZoom }, function () {
-            replayCenterOn(arrived.lat, arrived.lng, arriveZoom, true);
-          });
+          replayCameraMove(replayFitFor([[arrived.lat, arrived.lng]], arriveZoom), { urgent: false });
         }
         replay.lastStop = st.stopIndex;
       }
     }
 
+    // 吹き出し・写真カードは「乗り物が着いて（st.icon が無い）、カメラが落ち着いて（cameraMoving でない）、
+    // 次の移動の直前（aboutToMove）でない」あいだだけ見せる（Core.replayCaptionVisible。2026-09-30）。
+    // 中身の入れ替えは、出す時に行う（隠れている間に中身だけ変えても、出るときのアニメーションを頭からやり直す）。
+    // Leafletのmovestartは画面の大きさが変わったとき（時計や操作ボタンが出て地図の大きさが変わる、など）にも
+    // 一瞬出るため、隠す条件には再生が自分で動かしたカメラ（replay.cameraMoving）だけを使う（2026-09-27）
+    var aboutToMove = replay.playing && !st.icon && Core.replayAboutToMove(tl, r);
+    var capVisible = Core.replayCaptionVisible(st, { cameraMoving: replay.cameraMoving, aboutToMove: aboutToMove });
+    var cap = $('#replayCaption');
     if (st.captionIndex !== replay.captionIndex) {
       replay.captionIndex = st.captionIndex;
-      var cap = $('#replayCaption');
+      replay.captionShown = false; // 新しい吹き出し。出せる状態になったら、中身を入れてから出す
+      var s0 = tl.stops[st.captionIndex];
+      if (!s0) { cap.hidden = true; showReplayCaptionPhotos([]); }
+    }
+    if (capVisible && !replay.captionShown) {
       var s = tl.stops[st.captionIndex];
-      if (!s) {
-        cap.hidden = true;
-        showReplayCaptionPhotos([]);
-      } else {
-        $('#replayCaptionTime').textContent = s.estimated ? '' : minuteToHHMM(s.minute);
-        $('#replayCaptionTitle').textContent = s.label;
-        $('#replayCaptionLines').innerHTML = s.captions.map(function (c) { return '<div>' + escapeHtml(c) + '</div>'; }).join('');
-        showReplayCaptionPhotos(s.photos || []);
-        preloadNextReplayPhotos(st.captionIndex);
-        cap.hidden = true;
-        void cap.offsetWidth;
-        cap.hidden = false;
-      }
+      $('#replayCaptionTime').textContent = s.estimated ? '' : minuteToHHMM(s.minute);
+      $('#replayCaptionTitle').textContent = s.label;
+      $('#replayCaptionLines').innerHTML = s.captions.map(function (c) { return '<div>' + escapeHtml(c) + '</div>'; }).join('');
+      showReplayCaptionPhotos(s.photos || []);
+      preloadNextReplayPhotos(st.captionIndex);
+      cap.hidden = true;
+      void cap.offsetWidth;
+      cap.hidden = false;
+      replay.captionShown = true;
+    } else if (!capVisible && replay.captionShown) {
+      // 出発の前・カメラが動く間は消す。同じ地点の吹き出しは、消したあと（一時停止のシークなどで）
+      // 出せる状態に戻ったら、写真を頭からもう一度出す
+      cap.hidden = true;
+      showReplayCaptionPhotos([]);
+      replay.captionShown = false;
     }
-
-    // 地図が動いている（ズーム・移動のアニメ中）あいだと、次の移動のためにカメラが動き出す少し前
-    // （REPLAY_CAPTION_HIDE_LEAD_SEC）からは、写真つきの吹き出しを隠す。写真が大きく地図を覆ったまま
-    // ズームすると、乗り物や線の動きが見えなかった（2026-09-27）。先に写真を消してから地図を動かし、
-    // 着いた先でカメラが止まってから（moveendで描き直したとき）もう一度出す。
-    var aboutToMove = false;
-    if (!st.icon && replay.playing) {
-      for (var hi = 0; hi < tl.legs.length; hi++) {
-        var until = tl.legs[hi].r0 - r;
-        if (until > 0 && until <= REPLAY_CAPTION_HIDE_LEAD_SEC) { aboutToMove = true; break; }
-        if (until > REPLAY_CAPTION_HIDE_LEAD_SEC) break;
-      }
-    }
-    // 隠すのは、ふりかえりの再生が自分で動かしたカメラ（replayFlyToBounds）の間だけ。Leafletのmovestartは
-    // 画面の大きさが変わったとき（時計や操作ボタンが出て地図の大きさが変わる、など）にも一瞬出るため、
-    // それで隠すと「吹き出しが出て、一瞬消えて、また出る」ように見えていた（大阪旅の最初、2026-09-27）
-    $('#replayCaption').classList.toggle('hide-for-move', !!(replay.cameraMoving || aboutToMove));
+    cap.classList.remove('hide-for-move');
 
     $('#replayProgressBar').style.width = (tl.totalReal ? Math.min(100, r / tl.totalReal * 100) : 100) + '%';
   }
@@ -9732,17 +9803,19 @@
     // 前の区間で始まったflyTo（区間の変わり目・再生中のカメラ移動）が終わっていないまま次のシークで
     // fitBoundsすると、Leafletがその移動を中途半端な位置・縮尺で終わらせてしまい、乗り物や線が
     // 地図（タイル）と少しずれて見えていた。まず止めてから位置を合わせる。
+    // stop()はmoveendを出すことがあるので、先に「あとで」の預かりとアニメ中の記録を捨てる（捨てないと、
+    // moveendの処理が預かったカメラ移動を始めてしまう）
+    replay.cameraPending = null;
+    replay.cameraFlying = null;
     replayMap.stop();
     replay.r = Math.max(0, Math.min(replay.tl.totalReal, r));
     replay.lastOffsetDiff = undefined; // 飛んだ先で「時差」のバナーを出さない
     replay.captionIndex = -2;
     replay.lastDay = 0;
     var st = Core.replayStateAt(replay.tl, replay.r);
-    if (st.here) replayCenterOn(st.here.lat, st.here.lng, replayMap.getZoom(), false);
-    // シーク先でカメラの目的地も合わせておく。ここを更新しないと、シーク直後の再生でreplayCameraMoveが
-    // 「シーク前の目的地とほぼ同じ」と誤判定し、本当は動かすべきカメラ移動を止めてしまうことがある。
-    replay.cameraTarget = st.here ? { lat: st.here.lat, lng: st.here.lng, zoom: replayMap.getZoom() } : null;
-    replay.cameraTargetAt = Date.now();
+    if (st.here) replayCenterOn(st.here.lat, st.here.lng, replayMap.getZoom());
+    // カメラの判定（Core.cameraMoveDecision）は、いつも地図の今の中心・縮尺と比べるので、シーク先で
+    // 合わせ直した見え方がそのまま基準になる（以前は別に持った「目的地」を更新し忘れると誤判定していた）。
     // すでにここでカメラを合わせたので、直後のrenderReplayが「区間・地点が変わった」と勘違いして
     // もう一度（アニメつきで）カメラを動かさないよう、いま合わせた状態を済みにしておく。以前は
     // lastLeg/lastStopを-1/-2に戻していたため、シーク先が区間の途中だとrenderReplayがすぐさま

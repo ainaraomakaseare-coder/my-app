@@ -484,8 +484,10 @@ ok('replayStateAt: 移動中は電車のアイコンが新宿と山梨の間に�
   stMid.icon.lng < 139.70 && stMid.icon.lng > 138.57);
 var stJustArriveB = T.replayStateAt(tl, tl.stops[1].r + 0.01);
 eq('replayStateAt: 着いた直後（一呼吸の間）はまだ吹き出しが出ない', stJustArriveB.captionIndex, -1);
-var stArriveB = T.replayStateAt(tl, tl.stops[1].r + 0.5 + 0.01);
-eq('replayStateAt: 一呼吸（0.5秒）置いたら到着した予定の吹き出しが出る', stArriveB.captionIndex, 1);
+var stArriveB = T.replayStateAt(tl, tl.stops[1].r + T.REPLAY_ARRIVAL_SETTLE_SEC + 0.01);
+eq('replayStateAt: 区間で着いた予定は、カメラが落ち着くまで待ってから吹き出しが出る（2026-09-30）', stArriveB.captionIndex, 1);
+eq('replayStateAt: 区間で着いて0.5秒ではまだ吹き出しを出さない（カメラが寄せ直している間）',
+  T.replayStateAt(tl, tl.stops[1].r + 0.5 + 0.01).captionIndex, -1);
 eq('replayStateAt: 到着したら時計はその予定の時刻', stArriveB.hhmm, '12:00');
 eq('replayStateAt: 一呼吸の間も時計はその予定の時刻のまま', stJustArriveB.hhmm, '12:00');
 var stEnd = T.replayStateAt(tl, tl.totalReal);
@@ -1803,6 +1805,90 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   ok('cameraMoveNeeded: 中心は同じでも縮尺が大きく違えば動かす',
     T.cameraMoveNeeded({ lat: 35.5, lng: 139.7, zoom: 5 }, { lat: 35.5, lng: 139.7, zoom: 15 }));
   ok('cameraMoveNeeded: 今の場所が分からなければ（初回など）動かす', T.cameraMoveNeeded(null, { lat: 35.5, lng: 139.7, zoom: 12 }));
+})();
+
+/* ---- 地図でふりかえる：吹き出し・写真は「乗り物が着いて、カメラが落ち着いてから」出す（2026-09-30） ---- */
+(function () {
+  // 場所の分かる予定・場所の分からない出来事・近すぎて区間を作らない予定・到着の仮地点が混ざった1日
+  var mk = function (id, time, label, url, extra) {
+    return Object.assign({ id: id, date: '2026-05-01', time: time, label: label, entries: url ? [{ mapUrl: url }] : [], transport: '' }, extra || {});
+  };
+  var coords = {
+    'https://maps.app.goo.gl/a': { lat: 35.00, lng: 135.00 },
+    'https://maps.app.goo.gl/b': { lat: 35.20, lng: 135.30 },
+    'https://maps.app.goo.gl/b2': { lat: 35.2005, lng: 135.3005 },   // bの約70m先＝区間を作らない
+    'https://maps.app.goo.gl/c': { lat: 34.70, lng: 135.50 }
+  };
+  var blocks = [
+    mk('a', '09:00', 'A出発', 'https://maps.app.goo.gl/a'),
+    mk('e1', '09:30', '出来事1（場所なし）', ''),
+    mk('b', '10:30', 'B到着', 'https://maps.app.goo.gl/b', { transport: 'car' }),
+    mk('b2', '10:40', 'Bのすぐ近く', 'https://maps.app.goo.gl/b2'),
+    mk('e2', '11:00', '出来事2（場所なし）', ''),
+    mk('c', '12:30', 'C到着', 'https://maps.app.goo.gl/c', { transport: 'train' })
+  ];
+  var stops = T.replayStops({ startDate: '2026-05-01', endDate: '2026-05-01' }, blocks);
+  var tl2 = T.buildReplayTimeline(stops, coords);
+  ok('前提：近すぎる予定（b→b2）は区間を作らず、a→b と b→c の2区間になる', tl2.legs.length === 2);
+  var violations = [], shown = 0, hiddenDuringLeg = 0;
+  for (var r = 0; r <= tl2.totalReal; r += 0.01) {
+    var s2 = T.replayStateAt(tl2, r);
+    var about = T.replayAboutToMove(tl2, r);
+    if (!T.replayCaptionVisible(s2, { aboutToMove: about })) { if (s2.icon && s2.captionIndex >= 0) hiddenDuringLeg++; continue; }
+    shown++;
+    var cs = tl2.stops[s2.captionIndex];
+    if (s2.icon) violations.push('乗り物が移動中なのに吹き出し r=' + r.toFixed(2));
+    var leg = tl2.legs.filter(function (l) { return l.to === s2.captionIndex; })[0];
+    if (leg && r < leg.r1 + T.REPLAY_ARRIVAL_SETTLE_SEC - 1e-6) violations.push('区間で着いてカメラが落ち着く前に吹き出し ' + cs.label + ' r=' + r.toFixed(2));
+    if (about) violations.push('出発の直前なのに吹き出し r=' + r.toFixed(2));
+    if (cs.arrival) violations.push('到着の仮地点に吹き出し');
+  }
+  eq('吹き出しは、乗り物が着いてカメラが落ち着いたあと・出発の前のあいだだけ（違反なし）', violations.slice(0, 3), []);
+  ok('吹き出しは実際に出る（全部が隠れてはいない）', shown > 50);
+  eq('乗り物が移動中の吹き出しは、そもそも出ない設計（隠すべきコマが無い）', hiddenDuringLeg, 0);
+  // 各区間：出発の1.15秒前には吹き出しが消え、着いてから1.1秒後に次の吹き出しが出る
+  tl2.legs.forEach(function (l, k) {
+    var before = T.replayStateAt(tl2, l.r0 - 0.5);
+    eq('区間' + k + '：出発の0.5秒前は吹き出しを出さない', T.replayCaptionVisible(before, { aboutToMove: T.replayAboutToMove(tl2, l.r0 - 0.5) }), false);
+    var justArrived = T.replayStateAt(tl2, l.r1 + 0.3);
+    eq('区間' + k + '：着いて0.3秒（カメラが動いている最中）は、吹き出しを出す状態ではない',
+      T.replayCaptionVisible(justArrived, {}) && justArrived.captionIndex === l.to, false);
+    var settled = T.replayStateAt(tl2, l.r1 + T.REPLAY_ARRIVAL_SETTLE_SEC + 0.05);
+    eq('区間' + k + '：カメラが落ち着いたら着いた地点の吹き出しを出す', [settled.captionIndex, T.replayCaptionVisible(settled, {})], [l.to, true]);
+    eq('区間' + k + '：カメラが動いている間（flags.cameraMoving）は出さない', T.replayCaptionVisible(settled, { cameraMoving: true }), false);
+  });
+  var lastLegStop = tl2.stops[tl2.legs[0].to];
+  ok('着いた地点の吹き出しは、着いてカメラが落ち着いた後から、次の出発の前まで続く',
+    lastLegStop.rCaptionStart - lastLegStop.r >= T.REPLAY_ARRIVAL_SETTLE_SEC - 1e-9 && lastLegStop.rDwellEnd > lastLegStop.rCaptionStart);
+  eq('区間を作らない（近すぎる）予定の吹き出しは、これまでどおり短い一呼吸（0.5秒）で出る',
+    (function () { var i = tl2.stops.findIndex(function (s) { return s.blockId === 'b2'; }); return +(tl2.stops[i].rCaptionStart - tl2.stops[i].r).toFixed(3); })(), 0.5);
+})();
+
+/* ---- 地図でふりかえる：カメラを1本の制御で動かす判断（Core.cameraMoveDecision、2026-09-30） ---- */
+(function () {
+  var view = { lat: 35.5, lng: 139.7, zoom: 15 };
+  // ズーム15・幅375pxの画面は約 375*4.77m*cos(35.5) ≒ 1.46km 幅。その6%＝約87m
+  eq('cameraMoveDecision: 画面幅に比べてわずかなずれ（約50m・ズーム15）は動かさない',
+    T.cameraMoveDecision(view, { lat: 35.5004, lng: 139.7, zoom: 15 }, { viewWidthPx: 375 }), 'skip');
+  eq('cameraMoveDecision: 画面幅の1/4ほどずれたら動かす',
+    T.cameraMoveDecision(view, { lat: 35.5033, lng: 139.7, zoom: 15 }, { viewWidthPx: 375 }), 'go');
+  eq('cameraMoveDecision: 縮尺は半段未満の差なら同じ（zoomSnap=1）',
+    T.cameraMoveDecision(view, { lat: 35.5, lng: 139.7, zoom: 15.4 }, { viewWidthPx: 375 }), 'skip');
+  eq('cameraMoveDecision: 縮尺が1段違えば動かす',
+    T.cameraMoveDecision(view, { lat: 35.5, lng: 139.7, zoom: 14 }, { viewWidthPx: 375 }), 'go');
+  eq('cameraMoveDecision: 対象がもう画面に収まっていて縮尺差が1段以内なら動かさない（続く短い区間で寄せ直さない）',
+    T.cameraMoveDecision(view, { lat: 35.503, lng: 139.7, zoom: 14 }, { viewWidthPx: 375, alreadyVisible: true }), 'skip');
+  eq('cameraMoveDecision: 収まっていても縮尺差が2段以上なら動かす',
+    T.cameraMoveDecision(view, { lat: 35.5, lng: 139.7, zoom: 12 }, { viewWidthPx: 375, alreadyVisible: true }), 'go');
+  eq('cameraMoveDecision: アニメ中に急ぎでない移動が来たら「あとで」（始め直さない）',
+    T.cameraMoveDecision(view, { lat: 36.5, lng: 139.7, zoom: 12 }, { viewWidthPx: 375, flying: true }), 'defer');
+  eq('cameraMoveDecision: アニメ中でも、移動の直前（急ぎ）なら始め直す',
+    T.cameraMoveDecision(view, { lat: 36.5, lng: 139.7, zoom: 12 }, { viewWidthPx: 375, flying: true, urgent: true }), 'go');
+  eq('cameraMoveDecision: アニメ中でも、行き先がほぼ同じなら何もしない（同じ先へ何度も始めない）',
+    T.cameraMoveDecision(view, { lat: 35.5001, lng: 139.7, zoom: 15 }, { viewWidthPx: 375, flying: true, urgent: true }), 'skip');
+  eq('cameraMoveDecision: 今の見え方が分からなければ動かす', T.cameraMoveDecision(null, view, {}), 'go');
+  eq('cameraMoveDecision: 画面幅が分からないときは従来のcameraMoveNeededと同じ基準（50m）',
+    [T.cameraMoveDecision(view, { lat: 35.5001, lng: 139.7, zoom: 15 }), T.cameraMoveDecision(view, { lat: 35.51, lng: 139.7, zoom: 15 })], ['skip', 'go']);
 })();
 
 /* ---- Blockの並べ替えドラッグ（initBlockDragReorder）で使う純粋関数
