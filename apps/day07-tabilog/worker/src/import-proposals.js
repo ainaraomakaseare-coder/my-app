@@ -59,7 +59,11 @@ export function buildProposalPrompt({ kind, text, notes, dates, branch }) {
     "- 話されていない・書かれていないことは絶対に作らないこと。分からない項目は、空文字（数字なら空配列）のままにすること。推測で埋めないこと",
   );
   if (multi) {
-    lines.push("- dateには、その出来事があった日を上記の日程からYYYY-MM-DD形式で選ぶこと。「1日目」「次の日」「2日目の朝」のような表現から判断し、はっきりしなければ直前の予定と同じ日にすること。最初の予定で日が全く分からなければ1日目の日付にすること");
+    if (branch) {
+      lines.push("- dateには、その出来事があった日を上記の日程からYYYY-MM-DD形式で選ぶこと。「1日目」「次の日」「2日目の朝」のような表現から判断し、はっきりしなければ直前の予定と同じ日にすること。最初の予定で日が全く分からなければ1日目の日付にすること");
+    } else {
+      lines.push("- dateには、その出来事があった日をYYYY-MM-DD形式で入れること。話された／書かれた日付（「5月16日」など）があるときは、上記の日程の外でも、その日付を書かれたとおりに入れること（年が話されていなければ上記の日程の年。日程に合わせて日付を変えたりずらしたりしないこと）。日付が話されていない・書かれていないときだけ、「1日目」「次の日」「2日目の朝」のような表現から上記の日程の日を選び、はっきりしなければ直前の予定と同じ日にすること。最初の予定で日が全く分からなければ1日目の日付にすること");
+    }
   } else {
     lines.push("- dateは常に" + ((dates && dates[0]) || "対象の日") + "にすること");
   }
@@ -140,7 +144,9 @@ export function normalizeProposalResult(parsed, ctx) {
     trip: ctx.trip,
     today: ctx.today,
     fixedDate: !multi && dates.length === 1 ? dates[0] : "",
-    allowedDates: multi ? dates : null,
+    // 別行動の日々は時間帯の決まりがあるので日付を限る。旅行全体の複数日モードは、書かれた日付を日程の外でも
+    // そのまま残す（黙って初日に置き換えない。確認画面で日程・日付を合わせる。2026-09-30）
+    allowedDates: multi && ctx.branch ? dates : null,
     defaultDate: dates[0] || "",
     noteMax: 1000,
     maxItems: PROPOSAL_MAX_ITEMS,

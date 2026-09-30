@@ -2746,7 +2746,7 @@
     try { return JSON.parse(s.slice(start, end + 1)); } catch (e) { return null; }
   }
 
-  // trip: {startDate, endDate}。複数日の旅行はBlockごとにdateが旅行期間内であることを必須にし、
+  // trip: {startDate, endDate}。複数日の旅行はBlockごとにdateを必須にし（旅行期間の外でも読める日付なら取り込む）、
   // 1日（または日程未設定）の旅行はdateを省略できる（そのときは選択中の日をそのまま使う）。
   // 戻り値のblocksは、Core.memoBlocksToProposalsで確認画面の候補にできる形。warningsは取り込みはしたが
   // 補正した項目、errorsは取り込めずに省いた項目（件数分の理由つき）。
@@ -2766,7 +2766,7 @@
     var tripDates = allDatesForTrip(trip, []).filter(function (d) { return d; });
     var multiDay = tripDates.length > 1;
     var defaultDate = (trip && trip.selectedDate) || tripDates[0] || '';
-    var blocks = [], warnings = [], errors = [];
+    var blocks = [], warnings = [], errors = [], outOfRange = 0;
 
     rawBlocks.forEach(function (raw, i) {
       var n = i + 1;
@@ -2774,16 +2774,17 @@
       var label = typeof raw.label === 'string' ? raw.label.trim().slice(0, 200) : '';
       if (!label) { errors.push(n + '件目：labelがありません。'); return; }
 
+      // 書かれた日付は旅行の日程の外でも黙って直さない（2026-09-30）。読めるYYYY-MM-DDならそのまま候補にし、
+      // 確認画面で「旅行の日程に合わせる／日付をずらす」を選べるようにする（日程の外の数はoutOfRangeで返す）。
+      // 日付が無い（または読めない）のは、複数日の旅行ではエラー、1日の旅行では選択中の日にする
       var date = defaultDate;
-      if (multiDay) {
-        var d = typeof raw.date === 'string' ? raw.date.trim() : '';
-        if (!d || tripDates.indexOf(d) === -1) {
-          errors.push(n + '件目「' + label + '」：dateが旅行期間内にありません（' + (d || '(空)') + '）。');
-          return;
-        }
+      var d = typeof raw.date === 'string' ? raw.date.trim() : '';
+      if (d && parseDate(d)) {
         date = d;
-      } else if (typeof raw.date === 'string' && raw.date && tripDates.indexOf(raw.date) !== -1) {
-        date = raw.date;
+        if (tripDates.length && tripDates.indexOf(d) === -1) outOfRange++;
+      } else if (multiDay) {
+        errors.push(n + '件目「' + label + '」：dateが読み取れません（' + (d || '(空)') + '）。YYYY-MM-DD形式で入れてください。');
+        return;
       }
 
       var category = CATEGORIES.some(function (c) { return c.key === raw.category; }) ? raw.category : '';
@@ -2839,7 +2840,7 @@
       });
     });
 
-    return { blocks: blocks, warnings: warnings, errors: errors };
+    return { blocks: blocks, warnings: warnings, errors: errors, outOfRange: outOfRange };
   }
 
   // 「AIへのお願い文をコピー」で使う文面。サーバー側のvoicePrompt/multiDayPrompt
@@ -2873,8 +2874,9 @@
       '',
       'この旅行の日程：' + rangeText,
       multiDay
-        ? ('複数日の旅行です。各予定のdateには、その出来事があった日をYYYY-MM-DD形式で必ず入れてください（' + tripDates.join('、') + 'のいずれか）。')
-        : '1日（または日程未設定）の旅行なので、dateは省略してかまいません。',
+        ? '複数日の旅行です。各予定のdateには、その出来事があった日をYYYY-MM-DD形式で必ず入れてください。'
+        : '1日（または日程未設定）の旅行なので、メモに日付が書かれていなければdateは省略してかまいません。',
+      '日付のルール：メモに日付（「5月16日」など）が書かれているときは、その日付を書かれたとおりにdateへ入れてください。年が書かれていなければ、この旅行の日程の年を使ってください。上の「この旅行の日程」の範囲外でも、書かれた日付を旅行の日程に合わせて変えてはいけません（ずらさない・言い換えない）。日付が書かれていない予定だけ、旅行の日程の日を使ってください' + (tripDates.length ? '（' + tripDates[0] + 'が1日目。「2日目」などの表現があれば日の順番から数える）。' : '。'),
       '',
       '出力はJSONのみにしてください。前置きや説明・コードブロック（```）は付けず、次の形だけを出してください（あくまで形の例です。内容はメモに合わせて考えてください）：',
       '',
@@ -3724,6 +3726,67 @@
     });
   }
 
+  // ---------- 日程の外の日付の候補（docs/adr/0022 2026-09-30追記） ----------
+  // メモ・画像に「5月16日」と書かれていて、旅行の日程が別の日のとき、黙って直さずに確認画面へ渡す。
+  // 確認画面では、日程の外の候補があれば「旅行の日程を合わせる」か「予定の日付をずらす」を選べる。
+  // 以下は画面を持たない純粋関数（items：確認画面の候補。use===falseは数えない）。
+  function usedProposalDates(items) {
+    return (items || []).filter(function (it) { return it && it.use !== false && parseDate(it.date); }).map(function (it) { return it.date; }).sort();
+  }
+
+  // 候補の日付が、選べる日（choices：旅行の日々／別行動の日々）の中か外かを数える。
+  // choicesが空（日程未設定）なら外は無し。戻り値 { outside, inside, min, max }（min/maxは使う候補の最も早い・遅い日）
+  function proposalDateStatus(items, choices) {
+    var dates = usedProposalDates(items);
+    var set = {};
+    (choices || []).forEach(function (d) { set[d] = true; });
+    var outside = 0, inside = 0;
+    dates.forEach(function (d) { if (!(choices && choices.length) || set[d]) inside++; else outside++; });
+    return { outside: outside, inside: inside, min: dates[0] || '', max: dates[dates.length - 1] || '' };
+  }
+
+  // 旅行の日程を候補に合わせるときの新しい日程。日程の外の候補が無い・旅行に日程が無いときはnull。
+  // - 使う候補がすべて日程の外で、旅行に予定がまだ無い（hasBlocks=false）→'replace'：日程を候補の最初〜最後に置き換える
+  // - 一部でも日程の中にある、または旅行に予定がすでにある→'extend'：今の日程と候補の両方を含むよう広げる
+  //   （置き換えると、日程の外になった今の予定が画面から見えなくなるため）
+  // 戻り値 { mode, startDate, endDate, days（新しい日程の日数）, oldDays }
+  function planTripRangeFit(items, trip, hasBlocks) {
+    var start = trip && parseDate(trip.startDate) ? trip.startDate : '';
+    if (!start) return null;
+    var end = trip.endDate && parseDate(trip.endDate) && trip.endDate >= start ? trip.endDate : start;
+    var choices = allDatesForTrip({ startDate: start, endDate: end }, []).filter(function (d) { return d; });
+    var st = proposalDateStatus(items, choices);
+    if (!st.outside) return null;
+    var mode = !st.inside && !hasBlocks ? 'replace' : 'extend';
+    var ns = mode === 'replace' ? st.min : (st.min < start ? st.min : start);
+    var ne = mode === 'replace' ? st.max : (st.max > end ? st.max : end);
+    return { mode: mode, startDate: ns, endDate: ne, days: dateDiffDays(ns, ne) + 1, oldDays: dateDiffDays(start, end) + 1 };
+  }
+
+  // 候補の日付をずらして、いちばん早い候補を選べる日の最初の日（choices[0]）に置く（日と日の間隔は保つ）。
+  // 日程の外の候補が無い・すでに最初の日から始まっているときはnull。
+  // 戻り値 { days（ずらす日数。負なら前へ）, from, to, overflow（最後の候補が選べる日の終わりを越えるか）, newMax }
+  function planProposalShift(items, choices) {
+    if (!choices || !choices.length) return null;
+    var st = proposalDateStatus(items, choices);
+    if (!st.outside || !st.min) return null;
+    var days = dateDiffDays(st.min, choices[0]);
+    if (!days) return null;
+    var newMax = addDaysToDate(st.max, days);
+    return { days: days, from: st.min, to: choices[0], overflow: newMax > choices[choices.length - 1], newMax: newMax };
+  }
+
+  // 候補の日付（と、着く日arriveDate）をdays日ずらす。元の配列の候補を書き換える。
+  // 日付が読めない候補（未設定）は触らない。月またぎ・年またぎも日付として計算する
+  function shiftProposalDates(items, days) {
+    (items || []).forEach(function (it) {
+      if (!it) return;
+      if (parseDate(it.date)) it.date = addDaysToDate(it.date, days);
+      if (parseDate(it.arriveDate)) it.arriveDate = addDaysToDate(it.arriveDate, days);
+    });
+    return items;
+  }
+
   // 取り込みの行き先になる自分だけの道（別行動）。自分の道（viewAccountId＝自分）を見ていて、選んでいる日が
   // 自分の別行動のどれかの日々の中なら、その別行動（日が重なる別行動が2つあれば、早く始まるほう）。
   // そうでなければnull（みんなの予定に入れる）。サーバーでも持ち主かどうか確かめる
@@ -3738,6 +3801,10 @@
     parseCostsFromLine: parseCostsFromLine,
     memoBlocksToProposals: memoBlocksToProposals,
     importTargetBranch: importTargetBranch,
+    proposalDateStatus: proposalDateStatus,
+    planTripRangeFit: planTripRangeFit,
+    planProposalShift: planProposalShift,
+    shiftProposalDates: shiftProposalDates,
     CATEGORIES: CATEGORIES,
     blockDragTargetIndex: blockDragTargetIndex,
     blockDragShifts: blockDragShifts,
@@ -6925,7 +6992,10 @@
   // サーバーが付けた「別行動の…」の警告は、本人が直したあとに古くならないよう、ここで数え直す
   function ssWarningsOf(item) {
     var s = ssState();
-    var warns = (item.warnings || []).filter(function (w) { return w.indexOf('別行動の') !== 0; });
+    // 「旅行の日程の外」も、日程を合わせた・日付をずらしたあとに古くならないよう数え直す
+    var warns = (item.warnings || []).filter(function (w) { return w.indexOf('別行動の') !== 0 && w.indexOf('旅行の日程の外') !== 0; });
+    var tripDays = Core.allDatesForTrip(state.trip, []).filter(function (d) { return d; });
+    if (tripDays.length && item.date && tripDays.indexOf(item.date) === -1) warns.push('旅行の日程の外の日付です。日付を直すか、上の案内から日程・日付を合わせないと追加できません');
     if (s.branch) {
       var why = Core.validateBranchBlock(s.branch, item.date, item.time || '');
       if (why === 'date_out_of_branch') warns.push('別行動の日程の外の日付です。日付を直さないと追加できません');
@@ -6968,6 +7038,64 @@
       '</div></div>';
   }
 
+  // 日程の外の日付の候補があるときの案内（docs/adr/0022 2026-09-30追記）。
+  // 「旅行の日程を合わせる」（別行動への追加では出さない）と「予定の日付を日程に合わせてずらす」を選べる
+  function mdText(d) { return Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10)); }
+  function ssDateFitBanner(s) {
+    var choices = ssDateChoices();
+    var st = Core.proposalDateStatus(s.items, choices);
+    if (!st.outside) return '';
+    var what = s.branch ? '別行動の日程' : '旅行の日程';
+    var range = choices.length ? mdText(choices[0]) + (choices.length > 1 ? '〜' + mdText(choices[choices.length - 1]) : '') : '';
+    var html = '<div class="ss-fit" role="group" aria-label="日程の外の日付">' +
+      '<p class="ss-fit-text"><strong>' + st.outside + '件の予定が、' + what + '（' + escapeHtml(range) + '）の外の日付です。</strong>' +
+      'メモや画像に書かれていた日付のままにしてあります（' + mdText(st.min) + (st.max !== st.min ? '〜' + mdText(st.max) : '') + '）。合わせ方を選ぶか、1件ずつ日付を直してください。日程の外の候補は、直すまで追加できません。</p>';
+    if (!s.branch) {
+      var fit = Core.planTripRangeFit(s.items, state.trip, allBlocks().length > 0);
+      if (fit) {
+        html += '<button type="button" class="btn ghost wide" data-ss-fit="trip">旅行の日程を ' + escapeHtml(mdText(fit.startDate) + '〜' + mdText(fit.endDate)) + ' に合わせる</button>' +
+          '<p class="hint">' + (fit.mode === 'replace' ? '旅行の日程を、この予定の日付に置き換えます。' : '今の日程と予定の日付の両方が入るよう、日程を広げます。') + '既存の予定の日付は動きません。</p>';
+      }
+    }
+    var shift = Core.planProposalShift(s.items, choices);
+    if (shift) {
+      html += '<button type="button" class="btn ghost wide" data-ss-fit="shift">予定の日付を' + what + 'に合わせてずらす（' + escapeHtml(mdText(shift.from) + ' → ' + mdText(shift.to)) + '）</button>' +
+        '<p class="hint">いちばん早い予定が' + (s.branch ? '別行動' : '旅行') + 'の最初の日になるよう、すべての予定を同じ日数（' + (shift.days > 0 ? shift.days + '日後ろへ' : -shift.days + '日前へ') + '）動かします。日と日の間隔は変わりません。' +
+        (shift.overflow ? 'ずらしても最後の予定（' + escapeHtml(mdText(shift.newMax)) + '）は' + what + 'の終わりを越えます。越えた分は日付を直してください。' : '') + '</p>';
+    }
+    return html + '</div>';
+  }
+
+  function handleSsFit(kind) {
+    var s = ssState();
+    if (kind === 'trip') {
+      var fit = Core.planTripRangeFit(s.items, state.trip, allBlocks().length > 0);
+      if (!fit) return;
+      var msg = '旅行の日程を ' + fit.startDate + '〜' + fit.endDate + '（' + fit.days + '日間）に' + (fit.mode === 'replace' ? '変えます。' : '広げます。') +
+        '\n今ある予定の日付は動きません。';
+      if (fit.days > 31) msg += '\n\n日程が' + fit.days + '日間と長くなります。日付の間違いではありませんか？';
+      if (!confirm(msg + '\n\nよろしいですか？')) return;
+      var status = $('#ssSaveStatus');
+      if (status) status.textContent = '日程を変えています…';
+      api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', { startDate: fit.startDate, endDate: fit.endDate }).then(function (trip) {
+        delete trip.shiftedDays;
+        state.trip = trip;
+        rememberTrip(trip);
+        renderSsResult();
+        showToast('旅行の日程を変えました');
+      }).catch(function () {
+        if (status) status.textContent = '日程を変えられませんでした。もう一度お試しください。';
+      });
+      return;
+    }
+    var plan = Core.planProposalShift(s.items, ssDateChoices());
+    if (!plan) return;
+    if (plan.overflow && !confirm('ずらしても、最後の予定（' + plan.newMax + '）が日程の終わりを越えます。それでもずらしますか？\n（越えた分は、あとで日付を直せます）')) return;
+    Core.shiftProposalDates(s.items, plan.days);
+    renderSsResult();
+    showToast('予定の日付をずらしました');
+  }
+
   function renderSsResult() {
     var s = ssState();
     var el = $('#ssResult');
@@ -6978,6 +7106,7 @@
     var html = '<span class="ss-source">' + escapeHtml(src.label) + 'から</span>';
     if (s.branch) html += '<div class="branch-band ss-target">' + BRANCH_ICON + '<span class="branch-band-text">' + escapeHtml(importTargetText(s.branch)) + '（' + escapeHtml(Core.branchRangeText(s.branch)) + '）</span></div>';
     (s.notes || []).forEach(function (n) { html += '<p class="hint">' + escapeHtml(n) + '</p>'; });
+    html += ssDateFitBanner(s);
     if (!s.items.length) {
       html += '<p class="hint">予定として使える情報を読み取れませんでした。</p>';
     } else {
@@ -7065,6 +7194,8 @@
     var item = ssItemOf(t);
     if (t.id === 'btnSsCancel') { cancelImportConfirm(); return; }
     if (t.id === 'btnSsSave') { handleSsSave(); return; }
+    var fitBtn = t.closest ? t.closest('[data-ss-fit]') : null;
+    if (fitBtn) { handleSsFit(fitBtn.getAttribute('data-ss-fit')); return; }
     if (!item) return;
     var btn = t.closest('[data-ss-place]');
     if (btn) {

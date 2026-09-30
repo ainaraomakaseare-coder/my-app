@@ -1456,6 +1456,9 @@ body.viewer-open { overflow: hidden; }
 .ss-card.off .ss-card-body { opacity: 0.4; }
 .ss-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .ss-use { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.ss-fit { margin: 0 0 14px; padding: 12px; border-radius: 12px; background: var(--warn-bg); color: var(--ink); }
+.ss-fit-text { margin: 0 0 10px; font-size: 13px; line-height: 1.6; }
+.ss-fit .btn { margin-bottom: 6px; }
 .ss-warn { margin: 0 0 8px; padding: 6px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 12px; line-height: 1.5; }
 .ss-card select { border: none; border-radius: var(--radius-control); padding: 11px 13px; background: var(--input-bg); color: var(--ink); font-size: 16px; }
 .ss-route { margin: 0 0 8px; }

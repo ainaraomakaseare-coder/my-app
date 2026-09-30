@@ -1514,8 +1514,12 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
     ']}',
     multiDayTrip
   );
-  eq('parseImportedBlocksJson: 複数日でdateが旅行期間内なら取り込む', [badDateMulti.blocks.length, badDateMulti.blocks[0].label, badDateMulti.blocks[0].date], [1, '良い予定', '2026-04-02']);
-  eq('parseImportedBlocksJson: 複数日でdateが期間外ならその項目だけエラーで省く', badDateMulti.errors.length, 1);
+  eq('parseImportedBlocksJson: 複数日でdateが旅行期間内なら取り込む', [badDateMulti.blocks[0].label, badDateMulti.blocks[0].date], ['良い予定', '2026-04-02']);
+  eq('parseImportedBlocksJson: dateが期間外でも書かれた日付のまま取り込み、期間外の数を返す（黙って直さない）', [badDateMulti.blocks.length, badDateMulti.blocks[1].date, badDateMulti.errors.length, badDateMulti.outOfRange], [2, '2026-05-01', 0, 1]);
+  var badFormat = T.parseImportedBlocksJson('{"blocks":[{"date":"2026-02-30","label":"存在しない日","category":"other","entry":{"episode":""}},{"date":"5/16","label":"形式違い","category":"other","entry":{"episode":""}}]}', multiDayTrip);
+  eq('parseImportedBlocksJson: 読めない日付は複数日ならエラー', [badFormat.blocks.length, badFormat.errors.length], [0, 2]);
+  var oneDayOut = T.parseImportedBlocksJson('{"blocks":[{"date":"2026-05-16","label":"別の日","category":"other","entry":{"episode":""}}]}', oneDayTrip);
+  eq('parseImportedBlocksJson: 1日の旅行でも、書かれた日付が日程の外ならそのまま残す', [oneDayOut.blocks[0].date, oneDayOut.outOfRange], ['2026-05-16', 1]);
 
   // 複数日で、dateが無い項目もエラー
   var missingDateMulti = T.parseImportedBlocksJson('{"blocks":[{"label":"日付なし","category":"sightseeing","entry":{"episode":""}}]}', multiDayTrip);
@@ -2768,6 +2772,50 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('動画のカメラ: 動画に出さない地点へは寄せ直さない（出す地点ならチューリッヒ空港へ寄せ直す）', [onHidden(sw), onHidden(swH)], [1, 0]);
   // ふりかえりと共有する値
   eq('ふりかえりと動画で共有するカメラの値', [T.REPLAY_CAMERA_LEAD_SEC, T.REPLAY_TINY_LEG_KM, T.REPLAY_LEG_MAX_ZOOM, T.REPLAY_ZOOMED_OUT, T.REPLAY_ARRIVAL_MIN_ZOOM, T.REPLAY_START_ZOOM], [0.9, 0.4, 15, 10, 12, 13]);
+})();
+
+/* ---- 日程の外の日付の候補（docs/adr/0022 2026-09-30追記） ---- */
+(function () {
+  var trip = { startDate: '2024-12-11', endDate: '2024-12-13' };
+  var choices = ['2024-12-11', '2024-12-12', '2024-12-13'];
+  var item = function (date, extra) { return Object.assign({ date: date, label: 'x' }, extra || {}); };
+  var may = [item('2024-05-16'), item('2024-05-17'), item('2024-05-18')];
+
+  eq('proposalDateStatus: 全部外', (function () { var s = T.proposalDateStatus(may, choices); return [s.outside, s.inside, s.min, s.max]; })(), [3, 0, '2024-05-16', '2024-05-18']);
+  eq('proposalDateStatus: 一部だけ外', (function () { var s = T.proposalDateStatus([item('2024-12-12'), item('2024-12-14')], choices); return [s.outside, s.inside]; })(), [1, 1]);
+  eq('proposalDateStatus: use===falseの候補は数えない', T.proposalDateStatus([item('2024-05-16', { use: false })], choices).outside, 0);
+  eq('proposalDateStatus: 選べる日が無い（日程未設定）なら外は無し', T.proposalDateStatus(may, []).outside, 0);
+
+  var replace = T.planTripRangeFit(may, trip, false);
+  eq('planTripRangeFit: 全部外で予定が無ければ置き換え', [replace.mode, replace.startDate, replace.endDate, replace.days, replace.oldDays], ['replace', '2024-05-16', '2024-05-18', 3, 3]);
+  var extendBlocks = T.planTripRangeFit(may, trip, true);
+  eq('planTripRangeFit: 全部外でも今の予定があれば広げる（今の予定を見えなくしない）', [extendBlocks.mode, extendBlocks.startDate, extendBlocks.endDate], ['extend', '2024-05-16', '2024-12-13']);
+  var extendSome = T.planTripRangeFit([item('2024-12-12'), item('2024-12-15')], trip, false);
+  eq('planTripRangeFit: 一部だけ外なら両方を含むよう広げる（後ろ）', [extendSome.mode, extendSome.startDate, extendSome.endDate, extendSome.days], ['extend', '2024-12-11', '2024-12-15', 5]);
+  eq('planTripRangeFit: 前にはみ出す場合も広げる', (function () { var p = T.planTripRangeFit([item('2024-12-12'), item('2024-12-09')], trip, false); return [p.startDate, p.endDate]; })(), ['2024-12-09', '2024-12-13']);
+  eq('planTripRangeFit: 全部日程の中ならnull', T.planTripRangeFit([item('2024-12-12')], trip, false), null);
+  eq('planTripRangeFit: 旅行に日程が無ければnull', T.planTripRangeFit(may, { startDate: '', endDate: '' }, false), null);
+  eq('planTripRangeFit: 終了日が無い旅行は開始日だけの1日として扱う', T.planTripRangeFit([item('2024-12-12')], { startDate: '2024-12-11', endDate: '' }, false).endDate, '2024-12-12');
+
+  var sh = T.planProposalShift(may, choices);
+  eq('planProposalShift: 最初の予定を旅行の1日目に（日数・重なりなし）', [sh.days, sh.from, sh.to, sh.overflow, sh.newMax], [209, '2024-05-16', '2024-12-11', false, '2024-12-13']);
+  eq('planProposalShift: 最後が日程の終わりを越えるならoverflow', (function () { var p = T.planProposalShift([item('2024-05-16'), item('2024-05-20')], choices); return [p.overflow, p.newMax]; })(), [true, '2024-12-15']);
+  eq('planProposalShift: 日程の外が無ければnull', T.planProposalShift([item('2024-12-12')], choices), null);
+  eq('planProposalShift: 前へずらす（負の日数）', T.planProposalShift([item('2025-03-01')], choices).days, -80);
+  var moved = T.shiftProposalDates([item('2024-01-30', { arriveDate: '2024-01-31' }), item('2024-02-28'), item('2024-03-01'), item('')], 2);
+  eq('shiftProposalDates: 月またぎ・うるう年（2月29日あり）を日付として計算する', moved.map(function (x) { return x.date; }), ['2024-02-01', '2024-03-01', '2024-03-03', '']);
+  eq('shiftProposalDates: arriveDateも同じだけずれる', moved[0].arriveDate, '2024-02-02');
+  eq('shiftProposalDates: 年またぎ', T.shiftProposalDates([item('2024-12-30')], 5)[0].date, '2025-01-04');
+  eq('shiftProposalDates: 負の日数', T.shiftProposalDates([item('2024-03-01')], -1)[0].date, '2024-02-29');
+  var mayCopy = may.map(function (x) { return Object.assign({}, x); });
+  T.shiftProposalDates(mayCopy, sh.days);
+  eq('shift後は全部日程の中になる', T.proposalDateStatus(mayCopy, choices).outside, 0);
+
+  // プロンプト：書かれた日付は日程の外でも変えない
+  var prompt = T.buildAiImportPrompt(trip);
+  ok('buildAiImportPrompt: 書かれた日付をそのまま使い、日程に合わせて変えないよう伝える', prompt.indexOf('書かれたとおりにdateへ入れ') !== -1 && prompt.indexOf('日程に合わせて変えてはいけません') !== -1);
+  ok('buildAiImportPrompt: 日付が無い予定だけ旅行の日程の日を使う', prompt.indexOf('日付が書かれていない予定だけ') !== -1 && prompt.indexOf('2024-12-11が1日目') !== -1);
+  ok('buildAiImportPrompt: 「日程のいずれか」と限る古い言い回しは無い', prompt.indexOf('のいずれか。') === -1 || prompt.indexOf('いずれかに') === -1);
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

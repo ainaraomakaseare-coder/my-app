@@ -34,7 +34,8 @@ const it = (o) => ({ ...empty, ...o });
   ok("プロンプト: 場所を推測で作らない", p.includes("場所を推測で作らない"));
   ok("プロンプト: 分からない項目は空のまま", p.includes("推測で埋めないこと"));
   const memo = buildProposalPrompt({ kind: "memo", text: "メモ本文", notes: "https://maps.app.goo.gl/x", dates: ["2026-10-03", "2026-10-04"] });
-  ok("プロンプト: メモ・複数日は日程の一覧とdateの選び方", memo.includes("1日目：2026-10-03") && memo.includes("2日目：2026-10-04") && memo.includes("上記の日程からYYYY-MM-DD形式で選ぶ"));
+  ok("プロンプト: メモ・複数日は日程の一覧とdateの選び方", memo.includes("1日目：2026-10-03") && memo.includes("2日目：2026-10-04") && memo.includes("書かれたとおりに入れること") && memo.includes("日程の外でも"));
+  ok("プロンプト: 別行動は別行動の日々から選ぶ（従来どおり）", buildProposalPrompt({ kind: "memo", text: "x", notes: "", dates: ["2026-10-04", "2026-10-05"], branch: { title: "", date: "2026-10-04", endDate: "2026-10-05", startTime: "13:00", endTime: "18:00" } }).includes("上記の日程からYYYY-MM-DD形式で選ぶ"));
   ok("プロンプト: メモのURL欄を渡す", memo.includes("https://maps.app.goo.gl/x") && memo.includes("mapUrl"));
   const br = buildProposalPrompt({ kind: "memo", text: "x", notes: "", dates: ["2026-10-04"], branch: { title: "美術館", date: "2026-10-04", endDate: "2026-10-04", startTime: "13:00", endTime: "18:00" } });
   ok("プロンプト: 別行動の名前と時間帯", br.includes("「美術館」") && br.includes("2026-10-04 13:00 〜 2026-10-04 18:00"));
@@ -113,7 +114,16 @@ const it = (o) => ({ ...empty, ...o });
   ] };
   const n = normalizeProposalResult(ai, { trip: TRIP, dates: ["2026-10-03", "2026-10-04", "2026-10-05"], today: "2026-09-30" });
   check("複数日: AIが選んだ日が入る", n.items.slice(0, 2).map((i) => i.date), ["2026-10-03", "2026-10-05"]);
-  check("複数日: 日程に無い・空の日付は初日に置いて警告", n.items.slice(2).map((i) => [i.date, i.warnings.length]), [["2026-10-03", 1], ["2026-10-03", 1]]);
+  // 書かれた日付は日程の外でも書き換えない（警告だけ。確認画面で日程・日付を合わせる）。読めない日付だけ初日に置く
+  check("複数日: 日程の外の日付はそのまま残して警告（初日に黙って置かない）", n.items[2].date, "2026-12-25");
+  check("複数日: 日程の外の警告の中身", n.items[2].warnings.some((w) => w.includes("旅行の日程の外")), true);
+  check("複数日: 空の日付は初日に置いて警告", [n.items[3].date, n.items[3].warnings.length], ["2026-10-03", 1]);
+  // 年が書かれていない月日は、日程の年で補う（日程の外でも書かれた月日のまま）
+  const noYear = normalizeProposalResult({ items: [it({ label: "成田空港出発", date: "--05-16" })] }, { trip: { startDate: "2024-12-11", endDate: "2024-12-19" }, dates: ["2024-12-11", "2024-12-12", "2024-12-13"], today: "2026-09-30" });
+  check("複数日: 月日だけの日付は日程の年で補い、日程の外でも月日を変えない", noYear.items[0].date, "2024-05-16");
+  // 別行動は、別行動の日々の外の日付を信用しない（従来どおり）
+  const brNorm = normalizeProposalResult({ items: [it({ label: "外", date: "2026-10-09" })] }, { trip: TRIP, dates: ["2026-10-03", "2026-10-04"], branch: { date: "2026-10-03", endDate: "2026-10-04", startTime: "09:00", endTime: "18:00" }, today: "2026-09-30" });
+  check("別行動: 別行動の日の外の日付は別行動の初日に置く", brNorm.items[0].date, "2026-10-03");
 }
 
 /* ---- 別行動（自分だけの道）：日程・時間帯の検証 ---- */
