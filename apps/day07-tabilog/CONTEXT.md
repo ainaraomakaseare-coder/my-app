@@ -296,6 +296,7 @@ _Avoid_: 種類（category）の「移動」と混同しないこと。category�
 - **カメラは1本の制御で動かす**（2026-09-30）：`replayCameraMove`だけがカメラを動かす。動かすか（`skip`）・アニメが終わってからか（`defer`）・いまか（`go`）は`Core.cameraMoveDecision`が決める。動かしたい先は`fitBounds`の実際の結果（中心・縮尺）で表し、「ずれ」の許容は地図の画面幅の6%（固定の50mではない）、縮尺は半段未満は同じ、対象がもう画面に収まっていて縮尺差1段以内なら動かさない。アニメ中に急ぎでない移動が来たら捨てずに預け、`moveend`で必要なら始める（以前の「直前から600ms未満なら黙って捨てる」は廃止）。移動の直前のカメラ（急ぎ）だけは、アニメ中でも始め直す
 - **画面上部の重なり回避**（2026-09-30）：iPhoneのアプリ（`viewport-fit=cover`の全画面）では、時計（左上）・閉じる×・「動画でシェア」が、ステータスバーの時刻・電池に重なって×が押せなかった。上・左右とも`env(safe-area-inset-*)`の分だけ内側へ寄せ、押せる範囲は44px以上（見た目の丸は34px、`::before`）にした
 - 描画側（`renderReplay`）は「r秒時点の状態をまるごと描き直す」作りにしてあり、シークや巻き戻しもrを変えるだけで済む。何を・いつ・どこに出すかは全部Coreの純粋関数（`replayStops`／`buildReplayTimeline`／`replayStateAt`、`test/data.test.js`でテスト）で決める
+- **時計と青い線はrだけで決まる**（2026-09-30）：旅の時計（`replayStateAt`）は、区間の途中でも次の予定の時刻を超えず、同じ時刻・時刻が前後した予定では止まって逆戻りしない（`buildReplayTimeline`が`stop.t`を単調にそろえる。到着の仮地点は次の実際の予定の時刻まで。元の値は`stop.tRaw`）。青い線は`Core.replayRouteFractions(tl, r)`（各区間を何割描くか）で決まり、再生もシーク（戻る・日ボタン・バー）も`renderReplayRoutes`を通す。_Avoid_: 線の描き方の途中経過（前のコマまでの状態）に頼らない。時計を予定の時刻で直接いじらず、`stop.t`の側でそろえる。
 _Avoid_: 地図タイルに大量アクセスしないこと（OpenStreetMapのタイルサーバーは帰属表示が必須で、大量利用は利用規約上不可。利用者が大きく増えたら、MapTiler・Stadia Mapsなど無料枠付きのキー制サービスへ切り替える）。Nominatimも1秒1回までの規約なので、Worker側でCache API（30日）、端末側でlocalStorage（`tabilog:geocode-cache`）にキャッシュし、Worker側のキャッシュに無かったときだけクライアントが1.1秒空けて次を聞く。この間隔とキャッシュを外さないこと。
 _Avoid_: `blocks.transport`の列を追加するマイグレーション（v15）より先にWorkerをデプロイしないこと（予定の作成・保存がSQLエラーで丸ごと失敗する。trip_typeのときと同じ罠）。
 

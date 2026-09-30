@@ -2826,5 +2826,82 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('alpha2ForCountryName: 知らない名前はnull', T.alpha2ForCountryName('存在しない国'), null);
 })();
 
+/* ---- 地図でふりかえる：区間の途中の時計は次の予定の時刻を超えない・逆戻りしない（2026-09-30。シンガポール旅の実データより） ---- */
+(function () {
+  // 最後の予定に着くまで（そのあとの滞在で時計が進むぶんは含めない）を細かく見る
+  function sampleClock(tl) {
+    var end = tl.stops[tl.stops.length - 1].r, out = [];
+    for (var i = 0; i <= 400; i++) out.push(T.replayStateAt(tl, end * i / 400));
+    return out;
+  }
+  function hhmmToMin(h) { var p = h.split(':'); return Number(p[0]) * 60 + Number(p[1]); }
+  function nonDecreasing(a) { return a.every(function (c, i) { return i === 0 || c >= a[i - 1]; }); }
+  var sgTrip = { startDate: '2026-05-16', endDate: '2026-05-18' };
+  var sgBlocks = [
+    { id: 'go', date: '2026-05-18', time: '11:15', category: 'transport', transport: 'car', moveMinutes: 50, label: 'チャンギ空港へ',
+      entries: [{ mapUrl: 'https://x/mbs', travel: { to: 'チャンギ空港', arriveMapUrl: 'https://x/changi' } }] },
+    { id: 'dep', date: '2026-05-18', time: '11:35', category: 'transport', transport: 'plane', label: 'シンガポール出発', entries: [{ mapUrl: 'https://x/changi' }] }
+  ];
+  var sgCoords = { 'https://x/mbs': { lat: 1.2834, lng: 103.8607 }, 'https://x/changi': { lat: 1.3644, lng: 103.9915 } };
+  var sgStops = T.replayStops(sgTrip, sgBlocks);
+  var arrive = sgStops.filter(function (s) { return s.arrival; })[0];
+  ok('前提：見積もりの到着（11:15＋50分＝12:05）が、次の予定（11:35）より後になる', arrive && arrive.minute === 12 * 60 + 5);
+  var sgTl = T.buildReplayTimeline(sgStops, sgCoords);
+  var clocks = sampleClock(sgTl).map(function (s) { return hhmmToMin(s.hhmm); });
+  ok('移動中の時計は11:35を超えない（以前は12:13まで進んでから11:35へ戻っていた）', Math.max.apply(null, clocks) <= 11 * 60 + 35);
+  ok('移動中の時計は11:15から11:35まで進み、逆戻りしない', nonDecreasing(clocks) && clocks[0] <= 11 * 60 + 15);
+  ok('出発の予定（11:35）に着いたときの時計はちょうど11:35', T.replayStateAt(sgTl, sgTl.stops[sgTl.stops.length - 1].r).hhmm === '11:35');
+  var mid = sgTl.legs[0];
+  var midClock = hhmmToMin(T.replayStateAt(sgTl, (mid.r0 + mid.r1) / 2).hhmm);
+  ok('区間の半ばの時計は、出発と到着の時刻のあいだ（11:25〜11:35）', midClock >= 11 * 60 + 25 && midClock <= 11 * 60 + 35);
+
+  // 同じ時刻の予定・時刻が前後した予定は、時計を止める（逆戻りさせない）
+  var sameStops = T.replayStops({ startDate: '2026-05-17', endDate: '2026-05-17' }, [
+    { id: 'w', date: '2026-05-17', time: '20:30', category: 'food', label: 'ウルフギャング', entries: [{ mapUrl: 'https://x/w' }] },
+    { id: 'h', date: '2026-05-17', time: '20:30', category: 'lodging', transport: 'car', label: 'ホテル帰着', entries: [{ mapUrl: 'https://x/h' }] },
+    { id: 'z', date: '2026-05-17', time: '20:10', category: 'other', transport: 'car', label: '時刻が前後した予定', entries: [{ mapUrl: 'https://x/z' }] },
+    { id: 'y', date: '2026-05-17', time: '21:00', category: 'other', transport: 'car', label: '最後', entries: [{ mapUrl: 'https://x/y' }] }
+  ]);
+  var sameTl = T.buildReplayTimeline(sameStops, { 'https://x/w': { lat: 1.28, lng: 103.86 }, 'https://x/h': { lat: 1.29, lng: 103.86 }, 'https://x/z': { lat: 1.30, lng: 103.85 }, 'https://x/y': { lat: 1.31, lng: 103.84 } });
+  ok('同じ時刻・前後した時刻の予定があっても、時計は逆戻りしない', nonDecreasing(sampleClock(sameTl).map(function (s) { return s.t; })));
+  ok('タイムラインの時刻（stop.t）も逆戻りしない', nonDecreasing(sameTl.stops.map(function (s) { return s.t; })));
+
+  // 日をまたぐ：23:30の移動（所要120分の見積もり）→翌日0:10の予定。時計は0時をまたいで進み、0:10を超えない
+  var midnightStops = T.replayStops({ startDate: '2026-05-17', endDate: '2026-05-18' }, [
+    { id: 'm1', date: '2026-05-17', time: '23:30', category: 'transport', transport: 'car', moveMinutes: 120, label: '深夜の移動', entries: [{ mapUrl: 'https://x/a', travel: { arriveMapUrl: 'https://x/b' } }] },
+    { id: 'm2', date: '2026-05-18', time: '00:10', category: 'other', label: '到着後', entries: [{ mapUrl: 'https://x/b' }] }
+  ]);
+  var mnTl = T.buildReplayTimeline(midnightStops, { 'https://x/a': { lat: 1.28, lng: 103.86 }, 'https://x/b': { lat: 1.36, lng: 103.99 } });
+  var mnT = sampleClock(mnTl).map(function (s) { return s.t; });
+  ok('日またぎでも時計は逆戻りせず、次の予定（翌0:10）を超えない', nonDecreasing(mnT) && Math.max.apply(null, mnT) <= 1440 + 10);
+
+  // 時差：出発地と到着地の時差が違っても、世界共通の時刻（t）は逆戻りしない
+  var zoneStops = [
+    { blockId: 'a', date: '2026-05-16', dayIndex: 0, dayNumber: 1, minute: 20 * 60, offset: 540, label: '出発', captions: [], photos: [], transport: '', query: 'q1' },
+    { blockId: 'a#arrive', date: '2026-05-16', dayIndex: 0, dayNumber: 1, minute: 20 * 60 + 30, estimated: true, offset: 480, arrival: true, label: '到着', captions: [], photos: [], transport: 'car', query: 'q2' },
+    { blockId: 'b', date: '2026-05-16', dayIndex: 0, dayNumber: 1, minute: 19 * 60 + 40, offset: 480, label: '現地の予定', captions: [], photos: [], transport: 'car', query: 'q3' }
+  ];
+  var zoneTl = T.buildReplayTimeline(zoneStops, { q1: { lat: 35, lng: 139 }, q2: { lat: 35.1, lng: 139.1 }, q3: { lat: 35.2, lng: 139.2 } });
+  ok('時差があっても世界共通の時刻は逆戻りしない', nonDecreasing(sampleClock(zoneTl).map(function (s) { return s.t; })));
+})();
+
+/* ---- 地図でふりかえる：シークしたとき、道のり（青い線）は再生位置だけで決まる（replayRouteFractions） ---- */
+(function () {
+  var routeTl = { legs: [{ r0: 2, r1: 4 }, { r0: 6, r1: 10 }, { r0: 10, r1: 10 }, { r0: 12, r1: 14 }] };
+  eq('replayRouteFractions: はじめは全区間0（何も描かない）', T.replayRouteFractions(routeTl, 0), [0, 0, 0, 0]);
+  eq('replayRouteFractions: 走り終えた区間は1、いまの区間は進んだ割合、先の区間は0', T.replayRouteFractions(routeTl, 8), [1, 0.5, 0, 0]);
+  eq('replayRouteFractions: 戻ると、先の区間はまた0になる（8→3）', T.replayRouteFractions(routeTl, 3), [0.5, 0, 0, 0]);
+  eq('replayRouteFractions: 区間の境目ちょうど', T.replayRouteFractions(routeTl, 4), [1, 0, 0, 0]);
+  eq('replayRouteFractions: 長さ0の区間はrに達したら1', T.replayRouteFractions(routeTl, 10), [1, 1, 1, 0]);
+  eq('replayRouteFractions: 終わりでは全部1', T.replayRouteFractions(routeTl, 99), [1, 1, 1, 1]);
+  // どの順番でシークしても、同じrなら同じ結果（描き方の途中経過に依らない）
+  var seen = {};
+  [9, 1, 13, 5, 7, 0, 13, 3, 9, 1].forEach(function (r) {
+    var got = JSON.stringify(T.replayRouteFractions(routeTl, r));
+    if (seen[r] === undefined) seen[r] = got; else eq('replayRouteFractions: 同じrは何度シークしても同じ結果（r=' + r + '）', got, seen[r]);
+  });
+  eq('replayRouteFractions: 区間が無くても落ちない', T.replayRouteFractions({ legs: [] }, 5), []);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

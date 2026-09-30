@@ -1720,6 +1720,28 @@
       }
       if (st.located) lastLocatedIdx = i;
     });
+    // 旅の時計（世界共通の時刻 t）が、区間の途中で次の予定の時刻を超えたり、逆戻りしたりしないようにそろえる
+    // （2026-09-30、docs/adr/0008）。「チャンギ空港へ」11:15（所要50分の見積もり）→「シンガポール出発」11:35 の
+    // ように、移動の到着の仮地点（st.arrival。出発＋所要時間の見積もり）が、次の実際の予定より後になっていると、
+    // 時計が11:39→11:56→12:13と進んでから、到着した瞬間に11:35へ戻っていた。
+    //  ・到着の仮地点は、次の実際の予定（到着ではない予定）の時刻を超えない（見積もりが長ければ、その間に縮める）
+    //  ・同じ時刻の予定や、利用者が時刻を前後させて入れた予定は、前の時刻のまま時計を止める（逆戻りさせない）
+    // 時差の境目は、tが世界共通の時刻なのでここでは影響しない（表示側が現地の時計に直す）。
+    (function () {
+      var lastT = -Infinity;
+      s.forEach(function (st, i) {
+        st.tRaw = st.t;
+        if (st.arrival) {
+          for (var j = i + 1; j < s.length; j++) {
+            if (s[j].arrival) continue;
+            if (st.t > s[j].t) st.t = s[j].t;
+            break;
+          }
+        }
+        if (st.t < lastT) st.t = lastT;
+        lastT = st.t;
+      });
+    })();
     // 日付変更線（経度180度）をまたいだら、そのあとの地点の経度を±360度して前の地点から続ける。
     // 香港→ニューヨークのように太平洋を越える飛行機は、弧を太平洋回りで引くので終わりが経度+286度になる。
     // ニューヨーク（-74度）をそのままにすると、そこから先は地図の「別の周回」に描かれ、カメラがニューヨークへ
@@ -2082,6 +2104,18 @@
     if (st.icon) return false;
     if (flags.cameraMoving || flags.aboutToMove) return false;
     return true;
+  }
+
+  // 再生位置 r（秒）のとき、各区間（tl.legs）の道のりをどこまで描くか（0〜1）。r より前に終わった区間は1
+  // （全部描く）、いま走っている区間は進んだ割合、これから走る区間は0（描かない）。ふつうの再生でも、
+  // シーク（戻る・日ボタン・バーを動かす）でも同じ結果になる純粋な関数（2026-09-30。描き方の途中経過に頼らず、
+  // rだけから毎回求める）。返すのは区間と同じ並びの数の配列
+  function replayRouteFractions(tl, r) {
+    return ((tl && tl.legs) || []).map(function (l) {
+      if (r >= l.r1) return 1;
+      if (r <= l.r0) return 0;
+      return (r - l.r0) / (l.r1 - l.r0);
+    });
   }
 
   function replayStateAt(tl, r) {
@@ -3918,6 +3952,7 @@
     REPLAY_ARRIVAL_ZOOM_DELAY_SEC: REPLAY_ARRIVAL_ZOOM_DELAY_SEC,
     REPLAY_ARRIVAL_SETTLE_SEC: REPLAY_ARRIVAL_SETTLE_SEC,
     replayStateAt: replayStateAt,
+    replayRouteFractions: replayRouteFractions,
     arcLatLng: arcLatLng,
     routeProfileFor: routeProfileFor,
     joinPathEnds: joinPathEnds,
@@ -11435,6 +11470,47 @@
     (next && next.photos || []).forEach(function (id) { var im = new Image(); im.src = photoUrl(id); });
   }
 
+  // 道のり（青い線）を、再生位置 r のときの形に描く。どこまで描くかは Core.replayRouteFractions（rだけで決まる）で、
+  // ふつうの再生もシーク（戻る・日ボタン・バーを動かす）も同じこの関数を通る。再生中は、進み具合が前のコマと
+  // 変わらない区間を描き直さない（毎コマ全区間を描くと重い）ので、シークのときは force=true で、区間ごとの
+  // 「描いた進み具合」の覚え（lastF）を捨て、まず全部隠してから、rに合う分だけ描き直す。
+  // （2026-09-30。戻ったのに、先の区間の線や、区間の途中の線の描き残りが見えた、という報告より）
+  function renderReplayRoutes(tl, r, force) {
+    var fractions = Core.replayRouteFractions(tl, r);
+    if (force) {
+      replay.lines.forEach(function (set) {
+        set.lastF = null;
+        if (set.plan) setLayerVisible(set.plan, false);
+        if (set.casing) setLayerVisible(set.casing, false);
+        setLayerVisible(set.line, false);
+      });
+    }
+    tl.legs.forEach(function (l, k) {
+      var f = fractions[k];
+      var set = replay.lines[k];
+      // カメラが動いているあいだも線を伸ばす（毎コマ地図の今の縮尺で描き直しているので、地図とずれない。
+      // startReplayの'zoom move'の説明を参照）。
+      // 進み具合が変わらない区間（走り終わった区間など）は描き直さない。以前は毎フレーム全区間を描き直していて、
+      // 長い飛行機の点線（東京→ロサンゼルス）が街を見る大きさで毎回描かれ、動きが重くなっていた（2026-09-27）
+      if (f > 0 && set.lastF !== f) {
+        var pts = replayLegPoints(l, f);
+        // 飛行機の点線は、走っているあいだだけ画面の外を切り落とさない（薄い青と濃い青の点をそろえるため）。
+        // 走り終わったら切り落とす：何千kmもある点線を街の大きさで丸ごと描くと、とても重いため
+        if (set.planeLine) set.line.options.noClip = f < 1;
+        set.line.setLatLngs(pts);
+        if (set.casing) set.casing.setLatLngs(pts);
+        set.lastF = f;
+      } else if (f === 0) {
+        // これから走る区間は、線を空にして隠す（描いたまま隠すだけだと、区間へ入り直したときに古い形が残りうる）
+        if (set.lastF) { set.line.setLatLngs([]); if (set.casing) set.casing.setLatLngs([]); }
+        set.lastF = 0;
+      }
+      if (set.plan) setLayerVisible(set.plan, f > 0 && f < 1);
+      if (set.casing) setLayerVisible(set.casing, f > 0);
+      setLayerVisible(set.line, f > 0);
+    });
+  }
+
   function renderReplay() {
     var L = replay.L, tl = replay.tl, r = replay.r;
     var st = Core.replayStateAt(tl, r);
@@ -11461,28 +11537,7 @@
       var el = dot.getElement();
       if (el && el.firstChild) el.firstChild.classList.toggle('upcoming', !arrived);
     });
-    tl.legs.forEach(function (l, k) {
-      var f = r >= l.r1 ? 1 : (r <= l.r0 ? 0 : (r - l.r0) / (l.r1 - l.r0));
-      var set = replay.lines[k];
-      // カメラが動いているあいだも線を伸ばす（毎コマ地図の今の縮尺で描き直しているので、地図とずれない。
-      // startReplayの'zoom move'の説明を参照）。
-      // 進み具合が変わらない区間（走り終わった区間など）は描き直さない。以前は毎フレーム全区間を描き直していて、
-      // 長い飛行機の点線（東京→ロサンゼルス）が街を見る大きさで毎回描かれ、動きが重くなっていた（2026-09-27）
-      if (f > 0 && set.lastF !== f) {
-        var pts = replayLegPoints(l, f);
-        // 飛行機の点線は、走っているあいだだけ画面の外を切り落とさない（薄い青と濃い青の点をそろえるため）。
-        // 走り終わったら切り落とす：何千kmもある点線を街の大きさで丸ごと描くと、とても重いため
-        if (set.planeLine) set.line.options.noClip = f < 1;
-        set.line.setLatLngs(pts);
-        if (set.casing) set.casing.setLatLngs(pts);
-        set.lastF = f;
-      } else if (f === 0 && set.lastF) {
-        set.lastF = 0;
-      }
-      if (set.plan) setLayerVisible(set.plan, f > 0 && f < 1);
-      if (set.casing) setLayerVisible(set.casing, f > 0);
-      setLayerVisible(set.line, f > 0);
-    });
+    renderReplayRoutes(tl, r, false);
 
     if (st.icon) {
       if (!replay.vehicle || replay.vehicleTransport !== st.icon.transport) {
@@ -11658,6 +11713,7 @@
     replay.cameraMoving = false;
     var pane = replayOverlayPane();
     if (pane) { pane.style.transition = 'none'; pane.style.opacity = '1'; }
+    renderReplayRoutes(replay.tl, replay.r, true); // 線は、飛んだ先の位置に合わせてゼロから描き直す
     renderReplay();
   }
 
