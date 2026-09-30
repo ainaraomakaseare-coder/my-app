@@ -2194,5 +2194,103 @@ eq('isLoginRequiredError: login_requiredのエラー', T.isLoginRequiredError(ne
 eq('isLoginRequiredError: 別のエラーは対象外（通信失敗など）', T.isLoginRequiredError(new Error('http_500')), false);
 eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null), false);
 
+/* ---- 自分だけの道（別行動の分岐。docs/adr/0021） ---- */
+(function () {
+  var A = '111111', B = '222222';
+  var shared = [
+    { id: 's1', date: '2026-10-01', time: '09:00', label: '朝ごはん', category: 'food', createdAt: '1', entries: [], branchId: '' },
+    { id: 's2', date: '2026-10-01', time: '14:00', label: '海で遊ぶ', category: 'sightseeing', createdAt: '2', entries: [], branchId: '' },
+    { id: 's3', date: '2026-10-01', time: '16:59', label: '海のかたづけ', category: 'other', createdAt: '3', entries: [], branchId: '' },
+    { id: 's4', date: '2026-10-01', time: '17:00', label: '夕食', category: 'food', createdAt: '4', entries: [], branchId: '' },
+    { id: 's5', date: '2026-10-01', time: '', label: 'お土産メモ', category: 'other', createdAt: '5', entries: [], branchId: '' },
+    { id: 's6', date: '2026-10-02', time: '15:00', label: '2日目の予定', category: 'other', createdAt: '6', entries: [], branchId: '' }
+  ];
+  var branches = [
+    { id: 'br1', accountId: A, name: 'アリス', date: '2026-10-01', startTime: '14:00', endTime: '17:00', title: '' },
+    { id: 'br2', accountId: B, name: 'ボブ', date: '2026-10-01', startTime: '15:00', endTime: '16:00', title: '釣り' }
+  ];
+  var bb = [
+    { id: 'b1', date: '2026-10-01', time: '14:30', label: '美術館', category: 'sightseeing', createdAt: '10', entries: [], branchId: 'br1' },
+    { id: 'b2', date: '2026-10-01', time: '16:00', label: 'カフェ', category: 'food', createdAt: '11', entries: [], branchId: 'br1' },
+    { id: 'b3', date: '2026-10-01', time: '', label: '帰り道の寄り道', category: 'other', createdAt: '12', entries: [], branchId: 'br1' },
+    { id: 'b4', date: '2026-10-01', time: '15:10', label: '桟橋', category: 'sightseeing', createdAt: '13', entries: [], branchId: 'br2' }
+  ];
+  var ids = function (list) { return list.map(function (b) { return b.id; }); };
+
+  eq('canUseBranches: いまはログインしていれば誰でも使える', T.canUseBranches({ email: 'a@b.c' }), true);
+  eq('canUseBranches: 有料プランの人も使える', T.canUseBranches({ plan: 'premium_plus' }), true);
+
+  eq('blocksInBranchWindow: 開始時刻ちょうどを含み、終了時刻ちょうどは含まない',
+    ids(T.blocksInBranchWindow(shared, branches[0])), ['s2', 's3']);
+  eq('blocksInBranchWindow: 時刻なしの予定は入れない', ids(T.blocksInBranchWindow(shared, branches[0])).indexOf('s5'), -1);
+  eq('blocksInBranchWindow: 別の日の予定は入れない', ids(T.blocksInBranchWindow(shared, { date: '2026-10-02', startTime: '00:00', endTime: '23:59' })), ['s6']);
+
+  eq('visibleBlocksForView: みんな＝みんなの予定だけ（今までと同じ）', ids(T.visibleBlocksForView(shared, bb, branches, '')), ids(shared));
+  eq('visibleBlocksForView: アリス＝14〜17時のみんなの予定が消えて、アリスの分岐の予定が入る',
+    ids(T.visibleBlocksForView(shared, bb, branches, A)).sort(), ['b1', 'b2', 'b3', 's1', 's4', 's5', 's6']);
+  eq('visibleBlocksForView: ボブ＝15〜16時だけ入れ替わる',
+    ids(T.visibleBlocksForView(shared, bb, branches, B)).sort(), ['b4', 's1', 's2', 's3', 's4', 's5', 's6']);
+  eq('visibleBlocksForView: 分岐を持たない人を選ぶとみんなと同じ', ids(T.visibleBlocksForView(shared, bb, branches, '999999')), ids(shared));
+  eq('visibleBlocksForView: 元の配列は変えない', shared.length + '/' + bb.length, '6/4');
+
+  eq('resolveViewAccountId: 分岐がある人はそのまま', T.resolveViewAccountId(A, branches), A);
+  eq('resolveViewAccountId: 分岐が無くなった人はみんなに戻す', T.resolveViewAccountId('999999', branches), '');
+  eq('resolveViewAccountId: 空はみんな', T.resolveViewAccountId('', branches), '');
+
+  eq('branchViewOptions: 分岐を持つ人ごとに1つ（名前は参加者から、なければ分岐の名前）',
+    T.branchViewOptions(branches, [{ accountId: A, name: 'あーちゃん' }]), [
+      { accountId: A, name: 'あーちゃん', count: 1 },
+      { accountId: B, name: 'ボブ', count: 1 }
+    ]);
+  eq('branchViewOptions: 分岐が無ければ空（切り替えを出さない）', T.branchViewOptions([], []), []);
+  eq('branchViewOptions: 同じ人の複数の分岐は1つにまとめて数える',
+    T.branchViewOptions(branches.concat([{ id: 'br3', accountId: A, name: 'アリス', date: '2026-10-02', startTime: '10:00', endTime: '11:00' }]), [])[0].count, 2);
+
+  // 1日ぶんのタイムライン
+  var kinds = function (items) {
+    return items.map(function (it) { return it.type === 'block' ? it.block.id : it.type + ':' + it.branch.id; });
+  };
+  eq('dayTimelineItems: みんな＝カードが開始時刻の位置に入る（時刻なしは末尾）',
+    kinds(T.dayTimelineItems(shared, bb, branches, '', '2026-10-01')),
+    ['s1', 'card:br1', 's2', 'card:br2', 's3', 's4', 's5']);
+  eq('dayTimelineItems: アリス＝自分の分岐は帯＋分岐の予定、ボブの分岐はカード、14〜17時のみんなの予定は隠れる',
+    kinds(T.dayTimelineItems(shared, bb, branches, A, '2026-10-01')),
+    ['s1', 'band:br1', 'b3', 'b1', 'card:br2', 'b2', 's4', 's5']);
+  eq('dayTimelineItems: ボブ＝アリスの分岐はカード、自分の窓のぶんだけ入れ替わる',
+    kinds(T.dayTimelineItems(shared, bb, branches, B, '2026-10-01')),
+    ['s1', 'card:br1', 's2', 'band:br2', 'b4', 's3', 's4', 's5']);
+  eq('dayTimelineItems: 分岐の無い日は今までどおり', kinds(T.dayTimelineItems(shared, bb, branches, A, '2026-10-02')), ['s6']);
+  eq('dayTimelineItems: 分岐が1つも無い旅行は今までどおり', kinds(T.dayTimelineItems(shared, [], [], '', '2026-10-01')), ids(T.sortBlocks(shared.filter(function (b) { return b.date === '2026-10-01'; }))));
+  eq('dayTimelineItems: 帯には自分の分岐か（own）が付く', T.dayTimelineItems(shared, bb, branches, A, '2026-10-01').filter(function (i) { return i.type === 'band'; })[0].own, true);
+  eq('dayTimelineItems: 予定が1件も無い日でも、分岐のカードは出る',
+    kinds(T.dayTimelineItems([], [], [{ id: 'brX', accountId: A, name: 'アリス', date: '2026-10-05', startTime: '10:00', endTime: '11:00' }], '', '2026-10-05')), ['card:brX']);
+
+  eq('branchCardText: 予定の見出しを→でつなぐ', T.branchCardText(branches[0], bb), 'アリス：14:00〜17:00 別行動（美術館→カフェ→帰り道の寄り道）');
+  eq('branchCardText: タイトルがあればそれを使う', T.branchCardText(branches[1], bb), 'ボブ：15:00〜16:00 別行動（釣り）');
+  eq('branchCardText: 予定が無くタイトルも無ければ括弧なし', T.branchCardText({ id: 'z', name: 'ボブ', startTime: '09:00', endTime: '10:00' }, []), 'ボブ：09:00〜10:00 別行動');
+  eq('branchCardText: 名前が無いときは「だれか」', T.branchCardText({ id: 'z', name: '', startTime: '09:00', endTime: '10:00', title: 'x' }, []), 'だれか：09:00〜10:00 別行動（x）');
+  eq('branchCardText: 予定が多いときは3つまで＋…', T.branchCardText({ id: 'br9', name: 'あ', startTime: '09:00', endTime: '20:00' },
+    ['一', '二', '三', '四'].map(function (l, i) { return { id: 'q' + i, branchId: 'br9', date: '2026-10-01', time: '1' + i + ':00', label: l }; })),
+    'あ：09:00〜20:00 別行動（一→二→三…）');
+
+  // 入力チェック（サーバー worker/src/branches.js と同じ規則）
+  eq('validateBranch: 正しい入力', T.validateBranch({ date: '2026-10-01', startTime: '09:00', endTime: '10:00' }, [], A), '');
+  eq('validateBranch: 終わりが始まり以前', T.validateBranch({ date: '2026-10-01', startTime: '10:00', endTime: '10:00' }, [], A), 'end_before_start');
+  eq('validateBranch: 時刻が空', T.validateBranch({ date: '2026-10-01', startTime: '', endTime: '10:00' }, [], A), 'invalid_time');
+  eq('validateBranch: 自分の分岐と重なる', T.validateBranch({ date: '2026-10-01', startTime: '16:00', endTime: '18:00' }, branches, A), 'overlap');
+  eq('validateBranch: 他の人の分岐とは重なってよい', T.validateBranch({ date: '2026-10-01', startTime: '15:00', endTime: '15:30' }, [branches[1]], A), '');
+  eq('validateBranch: 隣り合うだけならよい', T.validateBranch({ date: '2026-10-01', startTime: '17:00', endTime: '18:00' }, branches, A), '');
+  eq('validateBranch: 自分自身は除く', T.validateBranch({ date: '2026-10-01', startTime: '13:00', endTime: '17:30' }, branches, A, 'br1'), '');
+  eq('branchErrorText: overlapは日本語の案内', /重なって/.test(T.branchErrorText('overlap')), true);
+  eq('branchErrorText: 知らない理由でも空にならない', T.branchErrorText('mystery').length > 0, true);
+
+  // 費用：分岐の予定も精算・合計に入る（みんなの予定と同じ式）
+  var costed = [
+    { id: 'c1', date: '2026-10-01', entries: [{ costItems: [{ label: 'ランチ', amount: 1000 }] }], branchId: '' },
+    { id: 'c2', date: '2026-10-01', entries: [{ costItems: [{ label: '入館料', amount: 500 }] }], branchId: 'br1' }
+  ];
+  eq('分岐の予定の費用も合計に入る（合わせて渡したとき）', T.tripTotalCost(costed), 1500);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -390,6 +390,151 @@
     return map;
   }
 
+  // ---------- 自分だけの道（別行動の分岐。docs/adr/0021） ----------
+  // 「この人が、この日のこの時間帯だけ、みんなと別行動した」という分岐（branch）と、その中の予定
+  // （branchIdが入ったBlock）を扱う純粋な関数。画面（renderTimeline・地図でふりかえる・動画）はここが返す
+  // 「見せる予定の並び」だけを使う。サーバー側の同じ規則は worker/src/branches.js。
+
+  // 自分だけの道を作ってよい人か。いまは無料機能なのでログインしていれば誰でも true。
+  // 課金（有料プラン）を始めたら、ここだけを「有料プランの人だけ true」に変える（画面側はこの関数だけを見る）。
+  function canUseBranches(account) {
+    void account; // 有料プランの判定に使う予定（accountのplanなど）
+    return true;
+  }
+
+  // 分岐の時間帯に入る「みんなの予定」（開始ちょうどは含み、終了ちょうどは含まない）。
+  // 時刻なしの予定は、いつ起きたか分からないので入れない（別行動の間も、みんなの予定として残る）。
+  function blocksInBranchWindow(sharedBlocks, branch) {
+    var s = hhmmToMinute(branch.startTime), e = hhmmToMinute(branch.endTime);
+    if (s === null || e === null) return [];
+    return (sharedBlocks || []).filter(function (b) {
+      var m = b.date === branch.date ? hhmmToMinute(b.time) : null;
+      return m !== null && m >= s && m < e;
+    });
+  }
+
+  // 選んだ人の道（viewAccountId）で見るときの、旅行全体の予定の並び。みんな（''）ならみんなの予定そのまま。
+  // その人の分岐の時間帯にあるみんなの予定は外し、代わりにその人の分岐の予定を入れる。
+  // 「地図でふりかえる」「動画でシェア」もこの並びを使う。元の配列は変えない。
+  function visibleBlocksForView(sharedBlocks, branchBlocks, branches, viewAccountId) {
+    var shared = sharedBlocks || [];
+    if (!viewAccountId) return shared.slice();
+    var mine = (branches || []).filter(function (br) { return br.accountId === viewAccountId; });
+    if (!mine.length) return shared.slice();
+    var hidden = {};
+    mine.forEach(function (br) { blocksInBranchWindow(shared, br).forEach(function (b) { hidden[b.id] = true; }); });
+    var mineIds = {};
+    mine.forEach(function (br) { mineIds[br.id] = true; });
+    return shared.filter(function (b) { return !hidden[b.id]; })
+      .concat((branchBlocks || []).filter(function (b) { return mineIds[b.branchId]; }));
+  }
+
+  // 保存しておいた「見ている人」が、いまの旅行でも分岐を持っているか確かめ、無ければみんな（''）に戻す。
+  function resolveViewAccountId(viewAccountId, branches) {
+    if (!viewAccountId) return '';
+    return (branches || []).some(function (br) { return br.accountId === viewAccountId; }) ? viewAccountId : '';
+  }
+
+  // 「みんな／○○」の切り替えに出す人の一覧（分岐を持つ人だけ）。名前は旅行の参加者名を優先し、無ければ分岐に付いている名前。
+  function branchViewOptions(branches, members) {
+    var out = [], byId = {};
+    (branches || []).forEach(function (br) {
+      if (byId[br.accountId]) { byId[br.accountId].count++; return; }
+      var member = (members || []).filter(function (m) { return m.accountId === br.accountId; })[0];
+      byId[br.accountId] = { accountId: br.accountId, name: (member && member.name) || br.name || 'だれか', count: 1 };
+      out.push(byId[br.accountId]);
+    });
+    return out;
+  }
+
+  // 分岐の中の予定の見出しを→でつないだ短い説明（3つまで）。分岐にタイトルがあればそちらを優先する。
+  function branchSummary(branch, branchBlocks) {
+    if (branch.title) return branch.title;
+    var labels = sortBlocks((branchBlocks || []).filter(function (b) { return b.branchId === branch.id; }))
+      .map(function (b) { return b.label || categoryLabel(b.category); });
+    if (!labels.length) return '';
+    return labels.slice(0, 3).join('→') + (labels.length > 3 ? '…' : '');
+  }
+
+  // みんなの画面（と、ほかの人の道）に出す小さなカードの文。例：アリス：14:00〜17:00 別行動（美術館→カフェ）
+  function branchCardText(branch, branchBlocks) {
+    var summary = branchSummary(branch, branchBlocks);
+    return (branch.name || 'だれか') + '：' + branch.startTime + '〜' + branch.endTime + ' 別行動' + (summary ? '（' + summary + '）' : '');
+  }
+
+  // その日のタイムラインに並べるもの。type: 'block'（予定）｜'card'（ほかの人の別行動のカード）｜'band'（自分の分岐の見出し。own=true）。
+  // 帯・カードは、開始時刻以降で最初の「時刻ありの予定」の手前に入れる（無ければ時刻なしの手前＝末尾）。
+  // 自分の分岐の「時刻なし」の予定は、帯のすぐ後ろに続ける（並びの末尾に飛ばさない）。
+  function dayTimelineItems(sharedBlocks, branchBlocks, branches, viewAccountId, date) {
+    var dayBranches = (branches || []).filter(function (br) { return br.date === date; });
+    var blocks = visibleBlocksForView(sharedBlocks, branchBlocks, branches, viewAccountId)
+      .filter(function (b) { return (b.date || '') === date; });
+    var ownBranchIds = {};
+    if (viewAccountId) dayBranches.forEach(function (br) { if (br.accountId === viewAccountId) ownBranchIds[br.id] = true; });
+    var floating = {}; // 自分の分岐の、時刻なしの予定（帯の後ろに置く）
+    var sorted = sortBlocks(blocks).filter(function (b) {
+      if (ownBranchIds[b.branchId] && hhmmToMinute(b.time) === null) {
+        (floating[b.branchId] = floating[b.branchId] || []).push(b);
+        return false;
+      }
+      return true;
+    });
+    var items = sorted.map(function (b) { return { type: 'block', block: b }; });
+    var marks = dayBranches.map(function (br) {
+      return { type: ownBranchIds[br.id] ? 'band' : 'card', branch: br, own: !!ownBranchIds[br.id], start: hhmmToMinute(br.startTime) };
+    }).sort(function (a, b) { return (a.start - b.start) || (a.branch.id < b.branch.id ? -1 : 1); });
+    var out = items.slice();
+    // 開始が早い順に、後ろから挿入すると位置がずれないので、逆順に入れる
+    for (var k = marks.length - 1; k >= 0; k--) {
+      var mk = marks[k], at = -1;
+      for (var i = 0; i < out.length; i++) {
+        if (out[i].type !== 'block') continue;
+        var m = hhmmToMinute(out[i].block.time);
+        if (m !== null && m >= mk.start) { at = i; break; }
+      }
+      if (at === -1) {
+        for (var j = 0; j < out.length; j++) { if (out[j].type === 'block' && hhmmToMinute(out[j].block.time) === null) { at = j; break; } }
+      }
+      if (at === -1) at = out.length;
+      var inserted = [mk];
+      if (mk.type === 'band') {
+        (floating[mk.branch.id] || []).forEach(function (b) { inserted.push({ type: 'block', block: b }); });
+      }
+      out.splice.apply(out, [at, 0].concat(inserted));
+    }
+    return out;
+  }
+
+  // 分岐の入力を確かめる（サーバーと同じ規則）。問題なければ空文字、あれば理由。
+  // others：ほかの分岐（同じ人の分だけ見る）。excludeId：更新のときの自分自身。
+  function validateBranch(input, others, accountId, excludeId) {
+    var s = hhmmToMinute(input.startTime), e = hhmmToMinute(input.endTime);
+    if (!input.date) return 'invalid_date';
+    if (s === null || e === null) return 'invalid_time';
+    if (e <= s) return 'end_before_start';
+    var clash = (others || []).some(function (o) {
+      if (o.id === excludeId || o.accountId !== accountId || o.date !== input.date) return false;
+      var os = hhmmToMinute(o.startTime), oe = hhmmToMinute(o.endTime);
+      return s < oe && os < e;
+    });
+    return clash ? 'overlap' : '';
+  }
+
+  function branchErrorText(reason) {
+    var texts = {
+      invalid_date: '日付が正しくありません。',
+      invalid_time: '始まりと終わりの時刻を入れてください。',
+      end_before_start: '終わりの時刻は、始まりより後にしてください。',
+      overlap: 'ほかの自分の別行動と時間が重なっています。',
+      invalid_title: 'タイトルは100文字までです。',
+      not_member: 'この旅行に「参加する」と、別行動を追加できます。',
+      login_required: 'ログインすると、自分の別行動を追加できます。',
+      forbidden: '別行動は、その人だけが変更できます。',
+      branches_not_ready: 'サーバーの準備がまだ終わっていません。少し待ってからお試しください。'
+    };
+    return texts[reason] || '保存に失敗しました。もう一度お試しください。';
+  }
+
   // costItem 1件分の金額を円に換算する（DAY31〜、docs/adr/0014）。currencyが無い・'JPY'なら
   // amountがそのまま円（これまでどおり）。それ以外は、rate（1単位あたりの円。/ratesで自動取得しつつ
   // 本人が直せる値）を掛けて円に丸める。合計・貸し借り（tripBalances）はこの丸めた円をそのまま
@@ -3012,6 +3157,16 @@
     allDatesForTrip: allDatesForTrip,
     sortBlocks: sortBlocks,
     groupBlocksByDate: groupBlocksByDate,
+    canUseBranches: canUseBranches,
+    blocksInBranchWindow: blocksInBranchWindow,
+    visibleBlocksForView: visibleBlocksForView,
+    resolveViewAccountId: resolveViewAccountId,
+    branchViewOptions: branchViewOptions,
+    branchSummary: branchSummary,
+    branchCardText: branchCardText,
+    dayTimelineItems: dayTimelineItems,
+    validateBranch: validateBranch,
+    branchErrorText: branchErrorText,
     entryCostTotal: entryCostTotal,
     blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
