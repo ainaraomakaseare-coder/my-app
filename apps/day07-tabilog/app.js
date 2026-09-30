@@ -10110,7 +10110,7 @@
   // 買った回数を足すのはサーバー（RevenueCatのWebhook）で、ここは購入の入口と、購入後の再取得だけ。
   // Web版には購入の画面も案内も出さない（App Reviewの3.1.1：アプリ外の決済で買ったものをアプリで使わせない）。
   // RevenueCatの公開SDKキー（appl_で始まる。公開してよい値）。空のあいだは購入の画面ごと隠す。
-  var REVENUECAT_IOS_API_KEY = '';
+  var REVENUECAT_IOS_API_KEY = 'appl_UbwtgjLAuQKcRAZPxFtXLkanGmS';
   var iap = { configurePromise: null, userId: '', ready: null, packages: null, busy: false };
 
   function iapPlugin() {
