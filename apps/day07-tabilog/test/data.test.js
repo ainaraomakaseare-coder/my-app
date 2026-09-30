@@ -2069,10 +2069,11 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   for (var bi = 0; bi < 60; bi++) big.push(mkStop('場所' + bi, 35 + bi * 0.01, 139 + bi * 0.01, { dayNumber: 1 + Math.floor(bi / 10) }));
   var stBig = T.buildVideoStory(mkTl(big), {});
   var capCount = stBig.wps.filter(function (w) { return w.caption; }).length;
-  eq('buildVideoStory: 60地点・6日は1日10秒（60秒）', stBig.routeSec, 60);
-  eq('buildVideoStory: 1日10秒に収まる数（0.9秒×6=5.4秒≦10秒×55%）まで、1日6つ×6日=36', capCount, 36);
-  ok('buildVideoStory: 60地点でも最後の地点を出る時刻が道のりの秒数に収まる', stBig.wps[59].leave <= 60 - 0.7 + 1e-9);
-  ok('buildVideoStory: 各日の窓（10秒）の中に、その日の地点への到着が収まる', stBig.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * 10 - 1e-9 && w.arrive <= (d + 1) * 10 + 1e-9; }));
+  eq('buildVideoStory: 60地点・6日は全体45秒に収める（道のり41.5秒）', stBig.routeSec, 41.5);
+  var bigPer = stBig.routeSec / 6;
+  eq('buildVideoStory: 1日約6.9秒に収まる数（0.9秒×4=3.6秒≦6.9秒×55%）まで、1日4つ×6日=24', capCount, 24);
+  ok('buildVideoStory: 60地点でも最後の地点を出る時刻が道のりの秒数に収まる', stBig.wps[59].leave <= stBig.routeSec + 1e-9);
+  ok('buildVideoStory: 各日の窓の中に、その日の地点への到着が収まる', stBig.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * bigPer - 1e-9 && w.arrive <= (d + 1) * bigPer + 1e-9; }));
   ok('buildVideoStory: 各地名を0.85秒以上は見せる', stBig.wps.every(function (w) { return !w.caption || w.leave - w.arrive >= 0.85; }));
   ok('buildVideoStory: カメラのキーは時刻が単調に増える', stBig.cameraKeys.every(function (k, i) { return i === 0 || k.t > stBig.cameraKeys[i - 1].t; }));
   ok('buildVideoStory: 1区間の線の点は間引かれる', (function () {
@@ -2157,10 +2158,10 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   var totals = [1, 2, 3, 4, 8, 13, 14, 20, 30].map(function (d) { return T.videoDurationPlan(d).total; });
   eq('videoDurationPlan: 日帰り・2日・3日は全体で30秒', totals.slice(0, 3), [30, 30, 30]);
   eq('videoDurationPlan: 4日（3泊）は道のり40秒＋導入・締め3.5秒', [T.videoDurationPlan(4).routeSec, T.videoDurationPlan(4).total], [40, 43.5]);
-  eq('videoDurationPlan: 8日は道のり80秒', T.videoDurationPlan(8).routeSec, 80);
-  eq('videoDurationPlan: 13日まで1日10秒（全体133.5秒）', [T.videoDurationPlan(13).perDay, T.videoDurationPlan(13).total], [10, 133.5]);
-  ok('videoDurationPlan: 14日以上は全体を140秒に収め、1日ぶんは均等に縮む', [14, 20, 30, 100].every(function (d) { var p = T.videoDurationPlan(d); return near(p.total, 140) && near(p.perDay * d, p.routeSec) && p.perDay < 10; }));
-  eq('videoDurationPlan: 20日は1日6.825秒', T.videoDurationPlan(20).perDay, 6.825);
+  eq('videoDurationPlan: 8日は道のり41.5秒（1日約5.2秒）', T.videoDurationPlan(8).routeSec, 41.5);
+  eq('videoDurationPlan: 5日以上は全体45秒に収める（5日は1日8.3秒）', [T.videoDurationPlan(5).total, T.videoDurationPlan(5).perDay], [45, 8.3]);
+  ok('videoDurationPlan: 5日以上は全体を45秒に収め、1日ぶんは均等に縮む', [5, 8, 14, 20, 30, 100].every(function (d) { var p = T.videoDurationPlan(d); return near(p.total, 45) && near(p.perDay * d, p.routeSec) && p.perDay < 10; }));
+  eq('videoDurationPlan: 20日は1日2.075秒', T.videoDurationPlan(20).perDay, 2.075);
   eq('videoDurationPlan: 日数が不正でも1日として扱う', T.videoDurationPlan(0).total, 30);
   eq('videoTileLimit: 30秒までは260枚', [T.videoTileLimit(15), T.videoTileLimit(30)], [260, 260]);
   eq('videoTileLimit: 長いほど増える（140秒で920枚）', [T.videoTileLimit(43.5), T.videoTileLimit(140)], [341, 920]);
@@ -2201,24 +2202,25 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   eq('buildVideoStory: 写真OFFなら写真IDは入らない', JSON.stringify(s2).indexOf('photo_') === -1, true);
   var s2p = T.buildVideoStory(tlOf(d2), { photos: true });
   eq('buildVideoStory: 写真ONなら写真が入る', s2p.wps.filter(function (w) { return w.caption && w.caption.photo; }).length, 2);
-  // 複数日：日ごとに窓、3泊以上は1日10秒
+  // 複数日：日ごとに窓。4日（3泊）は1日10秒、5日以上は全体45秒に収めて日ごとに等分
   var days = [];
   for (var dd = 1; dd <= 8; dd++) { days.push(stop('朝' + dd, dd, 8 * 60)); days.push(stop('昼' + dd, dd, 12 * 60)); days.push(stop('夜' + dd, dd, 20 * 60)); }
   var s8 = T.buildVideoStory(tlOf(days), {});
-  eq('buildVideoStory: 8日は道のり80秒・全体83.5秒', [s8.routeSec, s8.total, s8.days], [80, 83.5, 8]);
+  eq('buildVideoStory: 8日は道のり41.5秒・全体45秒', [s8.routeSec, s8.total, s8.days], [41.5, 45, 8]);
+  var per8 = s8.routeSec / 8;
   eq('buildVideoStory: 8:00〜20:00（12時間）の日は6つのはずが3地点しか無いので3つ×8日', s8.wps.filter(function (w) { return w.caption; }).length, 24);
-  ok('buildVideoStory: 各日の到着は、その日の10秒の窓の中', s8.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * 10 - 1e-9 && w.arrive <= (d + 1) * 10 + 1e-9; }));
-  ok('buildVideoStory: 何日目かは10秒ごとに変わる', [0, 1, 2, 5, 7].every(function (d) { return T.videoFrameAt(s8, s8.introSec + d * 10 + 0.5).day === d + 1; }));
+  ok('buildVideoStory: 各日の到着は、その日の窓の中', s8.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * per8 - 1e-9 && w.arrive <= (d + 1) * per8 + 1e-9; }));
+  ok('buildVideoStory: 何日目かは1日ぶんの秒数ごとに変わる', [0, 1, 2, 5, 7].every(function (d) { return T.videoFrameAt(s8, s8.introSec + d * per8 + 0.5).day === d + 1; }));
   ok('buildVideoStory: 日をまたぐ移動は次の日の窓のはじめに始まって窓の中で終わる', (function () {
     var seg = s8.segs[2]; // 1日目の夜→2日目の朝
-    return near(seg.moveStart, 10.3, 1e-6) && seg.moveEnd > 10.3 && seg.moveEnd < 20;
+    return near(seg.moveStart, per8 + 0.3, 1e-6) && seg.moveEnd > per8 + 0.3 && seg.moveEnd < per8 * 2;
   })());
   ok('buildVideoStory: 前の日の最後の地点が延びても、地名の表示は延びない（capEnd）', s8.wps.every(function (w) { return !w.caption || w.capEnd <= w.leave + 1e-9; }));
-  // 20泊（21日）：全体140秒
+  // 20泊（21日）：全体45秒
   var long21 = [];
   for (var l = 1; l <= 21; l++) { long21.push(stop('朝' + l, l, 480)); long21.push(stop('夜' + l, l, 1200)); }
   var sl = T.buildVideoStory(tlOf(long21), {});
-  ok('buildVideoStory: 21日でも全体は140秒', near(sl.total, 140) && sl.wps[sl.wps.length - 1].leave <= sl.routeSec);
+  ok('buildVideoStory: 21日でも全体は45秒', near(sl.total, 45) && sl.wps[sl.wps.length - 1].leave <= sl.routeSec);
   // 旅行名を1行に
   var m2 = function (s, size) { return s.length * size; }; // 1文字あたりsizepx
   eq('videoFitTitle: 収まるなら最大サイズで1行', T.videoFitTitle('スイス旅行', 600, m2, { maxSize: 68, minSize: 40 }), { size: 68, lines: ['スイス旅行'] });

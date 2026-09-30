@@ -2651,7 +2651,7 @@
   var VIDEO_INTRO_SEC = 1.5;   // 旅行名と日付
   var VIDEO_SHORT_TOTAL_SEC = 30;  // 日帰り・1〜2泊（1〜3日）の動画は全体でこの秒数
   var VIDEO_SEC_PER_DAY = 10;      // 3泊以上（4日以上）は、道のりを1日あたりこの秒数にする
-  var VIDEO_MAX_TOTAL_SEC = 140;   // 全体の上限。Xは通常のアカウントで2分20秒（140秒）まで
+  var VIDEO_MAX_TOTAL_SEC = 45;    // 全体の上限。見てもらいやすさと、iPhoneで長時間録画するときのメモリを考えて45秒まで（2026-09-30 オーナー判断。以前は140秒）
   var VIDEO_CAPTION_MIN_SEC = 0.9; // 地名1つを見せる最短
   var VIDEO_CAPTION_EVERY_MIN = 120; // 地名は、その日の旅の時間2時間につき1つ
   var VIDEO_OUTRO_SEC = 2;     // アプリ名・URL
@@ -2749,7 +2749,7 @@
   }
 
   // 動画の長さ。days=旅の日数（地点のある日の数）。日帰り・1〜2泊（1〜3日）は全体で30秒、3泊以上（4日以上）は
-  // 道のりを1日10秒。ただし全体は140秒（Xの上限）に収める＝13日までは10秒/日、それ以上は全体を均等に縮める。
+  // 道のりを1日10秒。ただし全体は45秒に収める＝4日（3泊）は10秒/日で43.5秒、5日以上は全体を均等に縮める。
   function videoDurationPlan(days) {
     var d = Math.max(1, Math.floor(days || 1));
     var fixed = VIDEO_INTRO_SEC + VIDEO_OUTRO_SEC;
@@ -2759,7 +2759,7 @@
   }
 
   // 動画のタイルの取得上限。30秒までは260枚（15秒のとき決めた値を据え置き）、長いほど広い範囲を通るので
-  // 1秒あたり6枚ずつ増やし、140秒で920枚。OSMのタイル利用ポリシーに配慮し、これを超えたら寄りすぎないようにする。
+  // 1秒あたり6枚ずつ増やし、上限の45秒で350枚。OSMのタイル利用ポリシーに配慮し、これを超えたら寄りすぎないようにする。
   function videoTileLimit(totalSec) {
     return Math.round(260 + Math.max(0, totalSec - 30) * 6);
   }
@@ -10183,7 +10183,7 @@
   var VIDEO_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'; // 地図でふりかえると同じタイル
   // 1本の動画で取るタイルの上限は、動画の長さで決める（Core.videoTileLimit。OSMのタイル利用ポリシーに配慮。超えたら寄りすぎないようにする）
   var VIDEO_TILE_CONCURRENCY = 6;
-  var VIDEO_BITRATE = 3000000; // 3Mbps（30秒で11MB、140秒で52MBほど。地図は細かいので下げすぎない）
+  var VIDEO_BITRATE = 3000000; // 3Mbps（30秒で11MB、45秒で17MBほど。地図は細かいので下げすぎない）
   var VIDEO_INK = '#1C1E21';
   var VIDEO_ACCENT = '#00BF8F';
 
