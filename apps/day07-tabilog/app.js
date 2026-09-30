@@ -390,6 +390,151 @@
     return map;
   }
 
+  // ---------- 自分だけの道（別行動の分岐。docs/adr/0021） ----------
+  // 「この人が、この日のこの時間帯だけ、みんなと別行動した」という分岐（branch）と、その中の予定
+  // （branchIdが入ったBlock）を扱う純粋な関数。画面（renderTimeline・地図でふりかえる・動画）はここが返す
+  // 「見せる予定の並び」だけを使う。サーバー側の同じ規則は worker/src/branches.js。
+
+  // 自分だけの道を作ってよい人か。いまは無料機能なのでログインしていれば誰でも true。
+  // 課金（有料プラン）を始めたら、ここだけを「有料プランの人だけ true」に変える（画面側はこの関数だけを見る）。
+  function canUseBranches(account) {
+    void account; // 有料プランの判定に使う予定（accountのplanなど）
+    return true;
+  }
+
+  // 分岐の時間帯に入る「みんなの予定」（開始ちょうどは含み、終了ちょうどは含まない）。
+  // 時刻なしの予定は、いつ起きたか分からないので入れない（別行動の間も、みんなの予定として残る）。
+  function blocksInBranchWindow(sharedBlocks, branch) {
+    var s = hhmmToMinute(branch.startTime), e = hhmmToMinute(branch.endTime);
+    if (s === null || e === null) return [];
+    return (sharedBlocks || []).filter(function (b) {
+      var m = b.date === branch.date ? hhmmToMinute(b.time) : null;
+      return m !== null && m >= s && m < e;
+    });
+  }
+
+  // 選んだ人の道（viewAccountId）で見るときの、旅行全体の予定の並び。みんな（''）ならみんなの予定そのまま。
+  // その人の分岐の時間帯にあるみんなの予定は外し、代わりにその人の分岐の予定を入れる。
+  // 「地図でふりかえる」「動画でシェア」もこの並びを使う。元の配列は変えない。
+  function visibleBlocksForView(sharedBlocks, branchBlocks, branches, viewAccountId) {
+    var shared = sharedBlocks || [];
+    if (!viewAccountId) return shared.slice();
+    var mine = (branches || []).filter(function (br) { return br.accountId === viewAccountId; });
+    if (!mine.length) return shared.slice();
+    var hidden = {};
+    mine.forEach(function (br) { blocksInBranchWindow(shared, br).forEach(function (b) { hidden[b.id] = true; }); });
+    var mineIds = {};
+    mine.forEach(function (br) { mineIds[br.id] = true; });
+    return shared.filter(function (b) { return !hidden[b.id]; })
+      .concat((branchBlocks || []).filter(function (b) { return mineIds[b.branchId]; }));
+  }
+
+  // 保存しておいた「見ている人」が、いまの旅行でも分岐を持っているか確かめ、無ければみんな（''）に戻す。
+  function resolveViewAccountId(viewAccountId, branches) {
+    if (!viewAccountId) return '';
+    return (branches || []).some(function (br) { return br.accountId === viewAccountId; }) ? viewAccountId : '';
+  }
+
+  // 「みんな／○○」の切り替えに出す人の一覧（分岐を持つ人だけ）。名前は旅行の参加者名を優先し、無ければ分岐に付いている名前。
+  function branchViewOptions(branches, members) {
+    var out = [], byId = {};
+    (branches || []).forEach(function (br) {
+      if (byId[br.accountId]) { byId[br.accountId].count++; return; }
+      var member = (members || []).filter(function (m) { return m.accountId === br.accountId; })[0];
+      byId[br.accountId] = { accountId: br.accountId, name: (member && member.name) || br.name || 'だれか', count: 1 };
+      out.push(byId[br.accountId]);
+    });
+    return out;
+  }
+
+  // 分岐の中の予定の見出しを→でつないだ短い説明（3つまで）。分岐にタイトルがあればそちらを優先する。
+  function branchSummary(branch, branchBlocks) {
+    if (branch.title) return branch.title;
+    var labels = sortBlocks((branchBlocks || []).filter(function (b) { return b.branchId === branch.id; }))
+      .map(function (b) { return b.label || categoryLabel(b.category); });
+    if (!labels.length) return '';
+    return labels.slice(0, 3).join('→') + (labels.length > 3 ? '…' : '');
+  }
+
+  // みんなの画面（と、ほかの人の道）に出す小さなカードの文。例：アリス：14:00〜17:00 別行動（美術館→カフェ）
+  function branchCardText(branch, branchBlocks) {
+    var summary = branchSummary(branch, branchBlocks);
+    return (branch.name || 'だれか') + '：' + branch.startTime + '〜' + branch.endTime + ' 別行動' + (summary ? '（' + summary + '）' : '');
+  }
+
+  // その日のタイムラインに並べるもの。type: 'block'（予定）｜'card'（ほかの人の別行動のカード）｜'band'（自分の分岐の見出し。own=true）。
+  // 帯・カードは、開始時刻以降で最初の「時刻ありの予定」の手前に入れる（無ければ時刻なしの手前＝末尾）。
+  // 自分の分岐の「時刻なし」の予定は、帯のすぐ後ろに続ける（並びの末尾に飛ばさない）。
+  function dayTimelineItems(sharedBlocks, branchBlocks, branches, viewAccountId, date) {
+    var dayBranches = (branches || []).filter(function (br) { return br.date === date; });
+    var blocks = visibleBlocksForView(sharedBlocks, branchBlocks, branches, viewAccountId)
+      .filter(function (b) { return (b.date || '') === date; });
+    var ownBranchIds = {};
+    if (viewAccountId) dayBranches.forEach(function (br) { if (br.accountId === viewAccountId) ownBranchIds[br.id] = true; });
+    var floating = {}; // 自分の分岐の、時刻なしの予定（帯の後ろに置く）
+    var sorted = sortBlocks(blocks).filter(function (b) {
+      if (ownBranchIds[b.branchId] && hhmmToMinute(b.time) === null) {
+        (floating[b.branchId] = floating[b.branchId] || []).push(b);
+        return false;
+      }
+      return true;
+    });
+    var items = sorted.map(function (b) { return { type: 'block', block: b }; });
+    var marks = dayBranches.map(function (br) {
+      return { type: ownBranchIds[br.id] ? 'band' : 'card', branch: br, own: !!ownBranchIds[br.id], start: hhmmToMinute(br.startTime) };
+    }).sort(function (a, b) { return (a.start - b.start) || (a.branch.id < b.branch.id ? -1 : 1); });
+    var out = items.slice();
+    // 開始が早い順に、後ろから挿入すると位置がずれないので、逆順に入れる
+    for (var k = marks.length - 1; k >= 0; k--) {
+      var mk = marks[k], at = -1;
+      for (var i = 0; i < out.length; i++) {
+        if (out[i].type !== 'block') continue;
+        var m = hhmmToMinute(out[i].block.time);
+        if (m !== null && m >= mk.start) { at = i; break; }
+      }
+      if (at === -1) {
+        for (var j = 0; j < out.length; j++) { if (out[j].type === 'block' && hhmmToMinute(out[j].block.time) === null) { at = j; break; } }
+      }
+      if (at === -1) at = out.length;
+      var inserted = [mk];
+      if (mk.type === 'band') {
+        (floating[mk.branch.id] || []).forEach(function (b) { inserted.push({ type: 'block', block: b }); });
+      }
+      out.splice.apply(out, [at, 0].concat(inserted));
+    }
+    return out;
+  }
+
+  // 分岐の入力を確かめる（サーバーと同じ規則）。問題なければ空文字、あれば理由。
+  // others：ほかの分岐（同じ人の分だけ見る）。excludeId：更新のときの自分自身。
+  function validateBranch(input, others, accountId, excludeId) {
+    var s = hhmmToMinute(input.startTime), e = hhmmToMinute(input.endTime);
+    if (!input.date) return 'invalid_date';
+    if (s === null || e === null) return 'invalid_time';
+    if (e <= s) return 'end_before_start';
+    var clash = (others || []).some(function (o) {
+      if (o.id === excludeId || o.accountId !== accountId || o.date !== input.date) return false;
+      var os = hhmmToMinute(o.startTime), oe = hhmmToMinute(o.endTime);
+      return s < oe && os < e;
+    });
+    return clash ? 'overlap' : '';
+  }
+
+  function branchErrorText(reason) {
+    var texts = {
+      invalid_date: '日付が正しくありません。',
+      invalid_time: '始まりと終わりの時刻を入れてください。',
+      end_before_start: '終わりの時刻は、始まりより後にしてください。',
+      overlap: 'ほかの自分の別行動と時間が重なっています。',
+      invalid_title: 'タイトルは100文字までです。',
+      not_member: 'この旅行に「参加する」と、別行動を追加できます。',
+      login_required: 'ログインすると、自分の別行動を追加できます。',
+      forbidden: '別行動は、その人だけが変更できます。',
+      branches_not_ready: 'サーバーの準備がまだ終わっていません。少し待ってからお試しください。'
+    };
+    return texts[reason] || '保存に失敗しました。もう一度お試しください。';
+  }
+
   // costItem 1件分の金額を円に換算する（DAY31〜、docs/adr/0014）。currencyが無い・'JPY'なら
   // amountがそのまま円（これまでどおり）。それ以外は、rate（1単位あたりの円。/ratesで自動取得しつつ
   // 本人が直せる値）を掛けて円に丸める。合計・貸し借り（tripBalances）はこの丸めた円をそのまま
@@ -1145,6 +1290,8 @@
       out.push({
         blockId: b.id, date: stopDate, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions, photos: photos,
+        // 「動画でシェアに出さない」予定（block.videoExclude、migrations/0031〜）。動画では地名・写真・ピンを出さない
+        videoExclude: !!b.videoExclude,
         transport: arriving, query: placeEntry ? placeEntry.url : '',
         // 記録のid・サーバーがすでに求めてある座標（Part A）。geocodeQueriesがこれを見て、
         // 分かっていれば/geocodeを呼ばずに使い、無ければ&entry=を付けて呼ぶ
@@ -1179,7 +1326,7 @@
           knownLat: typeof arr.lat === 'number' ? arr.lat : null,
           knownLng: typeof arr.lng === 'number' ? arr.lng : null,
           offset: typeof b._arriveOffset === 'number' ? b._arriveOffset : lastOffset,
-          arrival: true
+          arrival: true, videoExclude: !!b.videoExclude
         });
         // 到着でその移動は終わり。次の場所へは、移動手段を引き継がない（飛行機の続きで飛ばない）
         pendingTransport = ''; pendingMove = 0;
@@ -2647,11 +2794,14 @@
   // 何を・いつ出すかは、地図でふりかえるの時間割（buildReplayTimeline）から作る（replayと二重に持たない）。
   var VIDEO_W = 720, VIDEO_H = 1280, VIDEO_FPS = 30;
   var VIDEO_INTRO_SEC = 1.5;   // 旅行名と日付
-  var VIDEO_ROUTE_SEC = 11.5;  // 旅の長さによらず、道のりの動画はこの秒数に収める
+  var VIDEO_SHORT_TOTAL_SEC = 30;  // 日帰り・1〜2泊（1〜3日）の動画は全体でこの秒数
+  var VIDEO_SEC_PER_DAY = 10;      // 3泊以上（4日以上）は、道のりを1日あたりこの秒数にする
+  var VIDEO_MAX_TOTAL_SEC = 45;    // 全体の上限。見てもらいやすさと、iPhoneで長時間録画するときのメモリを考えて45秒まで（2026-09-30 オーナー判断。以前は140秒）
+  var VIDEO_CAPTION_MIN_SEC = 0.9; // 地名1つを見せる最短
+  var VIDEO_CAPTION_EVERY_MIN = 120; // 地名は、その日の旅の時間2時間につき1つ
   var VIDEO_OUTRO_SEC = 2;     // アプリ名・URL
   var VIDEO_HEAD_SEC = 0.3;    // 道のりの最初のピンが立つまで
   var VIDEO_TAIL_SEC = 0.7;    // 最後のピンのあと、全体に引くまで
-  var VIDEO_MAX_CAPTIONS = 7;  // 地名を出す数の上限（1つ1秒ほど見せたいので、11.5秒の半分ほどで7つ）
   var VIDEO_MIN_ZOOM = 2, VIDEO_MAX_ZOOM = 13; // 13より寄るとタイルが増えるので寄らない（OSMのタイルを取りすぎない）
   // 地図の「見せたい範囲」の余白（px）。上はSNSの表示に隠れやすく、下は吹き出しのカードが載る
   var VIDEO_PAD = { top: 230, right: 80, bottom: 420, left: 80 };
@@ -2743,6 +2893,89 @@
     return out;
   }
 
+  // 動画の長さ。days=旅の日数（地点のある日の数）。日帰り・1〜2泊（1〜3日）は全体で30秒、3泊以上（4日以上）は
+  // 道のりを1日10秒。ただし全体は45秒に収める＝4日（3泊）は10秒/日で43.5秒、5日以上は全体を均等に縮める。
+  function videoDurationPlan(days) {
+    var d = Math.max(1, Math.floor(days || 1));
+    var fixed = VIDEO_INTRO_SEC + VIDEO_OUTRO_SEC;
+    var route = d >= 4 ? d * VIDEO_SEC_PER_DAY : VIDEO_SHORT_TOTAL_SEC - fixed;
+    route = Math.min(route, VIDEO_MAX_TOTAL_SEC - fixed);
+    return { days: d, routeSec: route, perDay: route / d, total: fixed + route };
+  }
+
+  // 動画のタイルの取得上限。30秒までは260枚（15秒のとき決めた値を据え置き）、長いほど広い範囲を通るので
+  // 1秒あたり6枚ずつ増やし、上限の45秒で350枚。OSMのタイル利用ポリシーに配慮し、これを超えたら寄りすぎないようにする。
+  function videoTileLimit(totalSec) {
+    return Math.round(260 + Math.max(0, totalSec - 30) * 6);
+  }
+
+  // 1日ぶんの地名の数：その日の旅の時間（最初の地点〜最後の地点の分）2時間につき1つ（最低1つ）。
+  // 1日の秒数に収まらないとき（1つ0.9秒、止まる時間は日の55%まで）は減らす
+  function videoCaptionCount(spanMinutes, daySec) {
+    var n = Math.max(1, Math.round((spanMinutes || 0) / VIDEO_CAPTION_EVERY_MIN));
+    var fit = Math.max(1, Math.floor(daySec * 0.55 / VIDEO_CAPTION_MIN_SEC));
+    return Math.min(n, fit);
+  }
+
+  // 写真のある出来事を優先し、残りを時間（minute）で均等になるよう選ぶ。cands: [{ minute, hasImage }]（時刻順）。
+  // 選んだ添字を昇順で返す
+  function videoPickEvents(cands, n) {
+    var count = cands.length;
+    if (n >= count) return cands.map(function (c, i) { return i; });
+    var photo = [];
+    cands.forEach(function (c, i) { if (c.hasImage) photo.push(i); });
+    if (photo.length >= n) return videoPickEvenly(photo.length, n).map(function (i) { return photo[i]; });
+    var chosen = photo.slice();
+    while (chosen.length < n) {
+      var best = -1, bestD = -1;
+      for (var i = 0; i < count; i++) {
+        if (chosen.indexOf(i) !== -1) continue;
+        var d = Infinity;
+        chosen.forEach(function (j) { d = Math.min(d, Math.abs(cands[i].minute - cands[j].minute)); });
+        if (!chosen.length) d = count - i; // 何も選んでいなければ先頭から
+        if (d > bestD) { bestD = d; best = i; }
+      }
+      chosen.push(best);
+    }
+    return chosen.sort(function (a, b) { return a - b; });
+  }
+
+  // 旅行名を1行に収める。maxSizeからminSizeへ2pxずつ縮めて1行に入る大きさを探し、最小でも入らなければ
+  // 「・」「、」空白の切れ目で折り返す（最大maxLines行、入りきらなければ最後を「…」で終える）。
+  // measure(文字列, フォントサイズ)は描画側が渡す幅の計測関数。返り値: { size, lines }
+  function videoFitTitle(text, maxWidth, measure, opts) {
+    opts = opts || {};
+    var maxSize = opts.maxSize || 68, minSize = opts.minSize || 40, maxLines = opts.maxLines || 2;
+    var raw = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return { size: maxSize, lines: [] };
+    for (var size = maxSize; size >= minSize; size -= 2) {
+      if (measure(raw, size) <= maxWidth) return { size: size, lines: [raw] };
+    }
+    var m = function (s) { return measure(s, minSize); };
+    var tokens = raw.match(/(?:[^・、\s]+[・、]?|[・、])\s*/g) || [raw];
+    var lines = [], cur = '', i = 0, tooWide = false;
+    tokens.forEach(function (tk) { if (m(tk.replace(/\s+$/, '')) > maxWidth) tooWide = true; });
+    if (tooWide) return { size: minSize, lines: videoWrapLines(raw, maxWidth, m, maxLines) };
+    for (; i < tokens.length; i++) {
+      var next = cur + tokens[i];
+      if (cur && m(next.replace(/\s+$/, '')) > maxWidth) {
+        if (lines.length === maxLines - 1) break;
+        lines.push(cur.replace(/\s+$/, ''));
+        cur = tokens[i];
+      } else {
+        cur = next;
+      }
+    }
+    if (i < tokens.length) {
+      cur = (cur + tokens.slice(i).join('')).replace(/\s+$/, '');
+      while (cur && m(cur + '…') > maxWidth) cur = cur.slice(0, -1);
+      lines.push(cur + '…');
+    } else if (cur) {
+      lines.push(cur.replace(/\s+$/, ''));
+    }
+    return { size: minSize, lines: lines };
+  }
+
   // 各地点の「着いてから出るまで」と、次の地点までの移動の時間割（秒）。
   // items: [{ dwell: 止まる秒数（地名を出す地点だけ）, moveWeight: 次の地点までの移動の重さ }]。
   // 止まる秒数の合計は全体の55%まで、残りを移動の重さで分ける。
@@ -2824,6 +3057,23 @@
     return null;
   }
 
+  // ---- できた動画を、この端末（IndexedDB）に残しておく（docs/adr/0020、2026-09-30）----
+  // 旅行ごと・写真あり/なしごとに最新の1本だけ。全体で最大VIDEO_SAVE_MAX本、超えたら作った日時の古いものから消す。
+  var VIDEO_SAVE_MAX = 5;
+  function videoSaveKey(tripId, photos) { return String(tripId) + ':' + (photos ? 'p' : 'n'); }
+  // list: [{ key, createdAt }]（保存済みの全部）。保存したあとに消すキー（新しい順にmax本だけ残す）
+  function videoEvictKeys(list, max) {
+    var sorted = (list || []).slice().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    return sorted.slice(typeof max === 'number' ? max : VIDEO_SAVE_MAX).map(function (r) { return r.key; });
+  }
+  // 「9/30 14:05」（端末の時刻で）
+  function videoMadeAtText(ms) {
+    var d = new Date(ms);
+    if (isNaN(d.getTime())) return '';
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
   function videoFirstImageId(photos) {
     var list = photos || [];
     for (var i = 0; i < list.length; i++) { if (list[i] && !/\.(mp4|mov|m4v|webm)$/i.test(list[i])) return list[i]; }
@@ -2831,6 +3081,9 @@
   }
 
   // 動画に使う地点（地図に点が出る地点。座標が分からない・外れ値の予定は出来事なので入らない）
+  // 出来事の「その日の何分か」。時刻の無い（テストなどの）地点は、並び順に2時間おきとみなす
+  function videoStopMinute(s, k) { return typeof s.minute === 'number' ? s.minute : k * VIDEO_CAPTION_EVERY_MIN; }
+
   function videoLocatedStops(tl) {
     var out = [];
     ((tl && tl.stops) || []).forEach(function (s, i) { if (s.located) out.push(i); });
@@ -2851,17 +3104,37 @@
     idx.forEach(function (si, k) {
       var s = stops[si];
       if (s.arrival) return;
+      if (s.videoExclude) return; // 「動画に出さない」予定：地名も写真も出さない（道のりはこの場所を通る）
       var label = String(s.label || '').replace(/\s+/g, ' ').trim();
-      var photo = opts.photos ? videoFirstImageId(s.photos) : '';
+      var img = videoFirstImageId(s.photos);
+      var photo = opts.photos ? img : '';
       if (!label && !photo) return;
       if (label && label === lastLabel && !photo) return; // 同じ地名が続くときは1回だけ
       lastLabel = label || lastLabel;
-      cand.push({ k: k, label: label, photo: photo });
+      // hasImage: 写真のある出来事は旅のハイライトなので、間引くときは（写真を入れる設定によらず）優先する
+      cand.push({ k: k, label: label, photo: photo, hasImage: !!img, minute: videoStopMinute(s, k) });
     });
-    var chosen = videoPickEvenly(cand.length, VIDEO_MAX_CAPTIONS).map(function (i) { return cand[i]; });
-    var base = videoClamp(VIDEO_ROUTE_SEC * 0.5 / Math.max(1, chosen.length), 0.9, 1.6);
-    var capByK = {};
-    chosen.forEach(function (c) { capByK[c.k] = { label: c.label, photo: c.photo, dwell: c.photo ? Math.max(base, 1.4) : base }; });
+
+    // 日ごとに区切る（連続する同じ日番号のまとまり）。動画の長さは日数で決まり、1日に同じ秒数の窓を割り当てる
+    var groups = [];
+    idx.forEach(function (si, k) {
+      var dn = stops[si].dayNumber || 1, last = groups[groups.length - 1];
+      if (last && last.day === dn) last.ks.push(k); else groups.push({ day: dn, ks: [k] });
+    });
+    var plan = videoDurationPlan(groups.length);
+    var daySec = plan.routeSec / groups.length;
+    var capByK = {}, chosen = [];
+    groups.forEach(function (g) {
+      var mins = g.ks.map(function (k) { return videoStopMinute(stops[idx[k]], k); });
+      var span = Math.max.apply(null, mins) - Math.min.apply(null, mins);
+      var gc = cand.filter(function (c) { return g.ks.indexOf(c.k) !== -1; });
+      var pick = videoPickEvents(gc, videoCaptionCount(span, daySec)).map(function (i) { return gc[i]; });
+      var base = videoClamp(daySec * 0.5 / Math.max(1, pick.length), VIDEO_CAPTION_MIN_SEC, 1.6);
+      pick.forEach(function (c) {
+        chosen.push(c);
+        capByK[c.k] = { label: c.label, photo: c.photo, dwell: c.photo ? Math.max(base, 1.4) : base };
+      });
+    });
 
     var segs = idx.slice(0, -1).map(function (si, k) {
       var a = stops[si], b = stops[idx[k + 1]];
@@ -2874,15 +3147,29 @@
         moveWeight: km < REPLAY_STAY_KM ? 0 : 1 + Math.min(2, Math.log(1 + km) / Math.LN10)
       };
     });
-    var sched = videoSchedule(idx.map(function (si, k) {
-      return { dwell: capByK[k] ? capByK[k].dwell : 0, moveWeight: k < segs.length ? segs[k].moveWeight : 0 };
-    }), VIDEO_ROUTE_SEC);
+    // 時間割は日ごとの窓（daySec）の中で組む。2日目以降の窓は、前日の最後の地点を出るところ（移動の始まり）から
+    // 始まり、前日からの移動→その日の地点、の順。前日の最後の地点は、その日の窓が始まるまで留まる
     var introSec = VIDEO_INTRO_SEC;
+    var arrive = [], leave = [], capEnd = [], dayStart = [];
+    groups.forEach(function (g, gi) {
+      var anchor = gi > 0;
+      var items = [];
+      if (anchor) items.push({ dwell: 0, moveWeight: segs[g.ks[0] - 1].moveWeight });
+      g.ks.forEach(function (k) {
+        items.push({ dwell: capByK[k] ? capByK[k].dwell : 0, moveWeight: k < segs.length ? segs[k].moveWeight : 0 });
+      });
+      var sc = videoSchedule(items, daySec), off = gi * daySec, sh = anchor ? 1 : 0;
+      if (anchor) leave[g.ks[0] - 1] = off + sc.leave[0];
+      g.ks.forEach(function (k, j) {
+        arrive[k] = off + sc.arrive[j + sh]; leave[k] = off + sc.leave[j + sh];
+        capEnd[k] = leave[k]; dayStart[k] = off;
+      });
+    });
     var wps = idx.map(function (si, k) {
       var s = stops[si], cap = capByK[k];
       return {
-        stopIndex: si, lat: s.lat, lng: s.lng, dayNumber: s.dayNumber || 1,
-        arrive: sched.arrive[k], leave: sched.leave[k],
+        stopIndex: si, lat: s.lat, lng: s.lng, dayNumber: s.dayNumber || 1, hidden: !!s.videoExclude,
+        arrive: arrive[k], leave: leave[k], capEnd: capEnd[k], dayStart: dayStart[k],
         caption: cap ? { label: cap.label, photo: cap.photo } : null
       };
     });
@@ -2910,14 +3197,14 @@
       first = false;
       k = j + 1;
     }
-    keys.push({ t: introSec + VIDEO_ROUTE_SEC - 0.25, x: overview.x, y: overview.y, zoom: overview.zoom });
+    keys.push({ t: introSec + plan.routeSec - 0.25, x: overview.x, y: overview.y, zoom: overview.zoom });
     var lastT = -1;
     keys.forEach(function (key) { if (key.t <= lastT) key.t = lastT + 1e-4; lastT = key.t; });
 
     return {
       w: VIDEO_W, h: VIDEO_H, fps: VIDEO_FPS,
-      introSec: introSec, routeSec: VIDEO_ROUTE_SEC, outroSec: VIDEO_OUTRO_SEC,
-      total: introSec + VIDEO_ROUTE_SEC + VIDEO_OUTRO_SEC,
+      introSec: introSec, routeSec: plan.routeSec, outroSec: VIDEO_OUTRO_SEC,
+      total: introSec + plan.routeSec + VIDEO_OUTRO_SEC, days: groups.length, daySec: daySec,
       title: String(opts.title || '').trim(), dateText: opts.dateText || '',
       wps: wps, segs: segs, cameraKeys: keys, overview: overview,
       maxDay: wps.reduce(function (mx, w) { return Math.max(mx, w.dayNumber); }, 1),
@@ -2952,7 +3239,8 @@
       return { k: k, f: rt < 0 ? 0 : f };
     });
     var pins = story.wps.map(function (w, k) {
-      return { k: k, pop: rt >= w.arrive ? videoClamp((rt - w.arrive) / 0.3, 0, 1) : 0, captioned: !!w.caption };
+      // hidden（動画に出さない予定）のピンは出さない。道のりだけがこの場所を通る
+      return { k: k, pop: !w.hidden && rt >= w.arrive ? videoClamp((rt - w.arrive) / 0.3, 0, 1) : 0, captioned: !!w.caption };
     });
     var head = null;
     segs.forEach(function (sg) {
@@ -2961,11 +3249,13 @@
       head = { lat: p.lat, lng: p.lng, transport: s.transport, bearing: bearingDeg(p, q), seg: sg.k };
     });
     var day = story.wps[0].dayNumber;
-    story.wps.forEach(function (w) { if (rt >= w.arrive) day = w.dayNumber; });
+    // 何日目かは、その日の窓が始まった（前日から移動を始めた）ところで変わる
+    story.wps.forEach(function (w) { if (rt >= (typeof w.dayStart === 'number' ? w.dayStart : w.arrive)) day = w.dayNumber; });
     var caption = null;
     story.wps.forEach(function (w, k) {
-      if (caption || !w.caption || rt < w.arrive || rt > w.leave) return;
-      var a = Math.min(1, (rt - w.arrive) / 0.18, (w.leave - rt) / 0.15);
+      var end = typeof w.capEnd === 'number' ? w.capEnd : w.leave;
+      if (caption || !w.caption || rt < w.arrive || rt > end) return;
+      var a = Math.min(1, (rt - w.arrive) / 0.18, (end - rt) / 0.15);
       if (a > 0) caption = { k: k, label: w.caption.label, photo: w.caption.photo, alpha: videoClamp(a, 0, 1) };
     });
     return {
@@ -3073,6 +3363,16 @@
     screenshotItemsToSavePayload: screenshotItemsToSavePayload,
     sortBlocks: sortBlocks,
     groupBlocksByDate: groupBlocksByDate,
+    canUseBranches: canUseBranches,
+    blocksInBranchWindow: blocksInBranchWindow,
+    visibleBlocksForView: visibleBlocksForView,
+    resolveViewAccountId: resolveViewAccountId,
+    branchViewOptions: branchViewOptions,
+    branchSummary: branchSummary,
+    branchCardText: branchCardText,
+    dayTimelineItems: dayTimelineItems,
+    validateBranch: validateBranch,
+    branchErrorText: branchErrorText,
     entryCostTotal: entryCostTotal,
     blockCostTotal: blockCostTotal,
     tripTotalCost: tripTotalCost,
@@ -3194,7 +3494,7 @@
     visitedPercentage: visitedPercentage,
     groupVisitedByOrder: groupVisitedByOrder,
     decideSwipe: decideSwipe,
-    VIDEO_W: VIDEO_W, VIDEO_H: VIDEO_H, VIDEO_FPS: VIDEO_FPS, VIDEO_MAX_CAPTIONS: VIDEO_MAX_CAPTIONS, VIDEO_MAX_ZOOM: VIDEO_MAX_ZOOM,
+    VIDEO_W: VIDEO_W, VIDEO_H: VIDEO_H, VIDEO_FPS: VIDEO_FPS, VIDEO_MAX_ZOOM: VIDEO_MAX_ZOOM,
     mercatorWorld: mercatorWorld,
     mercatorLatLng: mercatorLatLng,
     videoWorldScale: videoWorldScale,
@@ -3211,7 +3511,16 @@
     buildVideoStory: buildVideoStory,
     videoCameraAt: videoCameraAt,
     videoFrameAt: videoFrameAt,
-    videoTilesNeeded: videoTilesNeeded
+    videoTilesNeeded: videoTilesNeeded,
+    videoSaveKey: videoSaveKey,
+    videoEvictKeys: videoEvictKeys,
+    videoMadeAtText: videoMadeAtText,
+    VIDEO_SAVE_MAX: VIDEO_SAVE_MAX,
+    videoDurationPlan: videoDurationPlan,
+    videoTileLimit: videoTileLimit,
+    videoCaptionCount: videoCaptionCount,
+    videoPickEvents: videoPickEvents,
+    videoFitTitle: videoFitTitle
   };
 
   root.TabiLog = Core;
@@ -3972,8 +4281,9 @@
   }
 
   function findEntryById(id) {
-    for (var i = 0; i < state.blocks.length; i++) {
-      var entries = state.blocks[i].entries || [];
+    var searchBlocks = allBlocks();
+    for (var i = 0; i < searchBlocks.length; i++) {
+      var entries = searchBlocks[i].entries || [];
       for (var j = 0; j < entries.length; j++) {
         if (entries[j].id === id) return entries[j];
       }
@@ -4024,6 +4334,7 @@
     var plan = Core.planHistoryRemoval(loadMyTrips(), loadHiddenTripIds(), ids);
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(plan.trips));
     saveHiddenTripIds(plan.hidden);
+    videoSaveDeleteTrips(plan.removedIds); // この端末に残した動画も消す
     return plan.removedIds.length;
   }
   function hideTripFromHistory() {
@@ -4263,7 +4574,7 @@
 
   function renderAlbum() {
     var items = [];
-    (state.blocks || []).forEach(function (block) {
+    allBlocks().forEach(function (block) {
       (block.entries || []).forEach(function (entry) {
         (entry.photoIds || []).forEach(function (id) {
           items.push({ type: 'photo', id: id, date: block.date || '' });
@@ -4332,7 +4643,7 @@
   }
 
   function renderSettlement() {
-    var expenses = Core.tripExpenseList(state.blocks);
+    var expenses = Core.tripExpenseList(allBlocks());
     var hasExpenses = expenses.length > 0;
     $('#settlementEmpty').hidden = hasExpenses;
     $('#settlementBody').hidden = !hasExpenses;
@@ -4340,7 +4651,7 @@
     if (!hasExpenses) return;
 
     var unit = currentSettleUnit();
-    var balance = Core.tripBalances(state.trip, state.blocks);
+    var balance = Core.tripBalances(state.trip, allBlocks());
     var names = Object.keys(balance).filter(function (n) { return Core.roundToUnit(balance[n], 1) !== 0; });
     // 貸し借りが無い（＝0円の）参加者も、参加していることが分かるよう一覧には残す
     (state.trip.companions || []).forEach(function (n) { if (names.indexOf(n) === -1) names.push(n); });
@@ -4592,7 +4903,11 @@
   var state = {
     account: null,            // ログイン中アカウントのプラン状況（{plan, voiceRemainingThisPeriod, ticketCredits, ...}）
     trip: null,
-    blocks: [],
+    blocks: [],               // みんなの予定（別行動の中の予定は含まない）
+    branchBlocks: [],         // 別行動（自分だけの道）の中の予定（block.branchIdが空でないもの）
+    branches: [],             // 別行動（{id, accountId, name, date, startTime, endTime, title}）。docs/adr/0021
+    viewAccountId: '',        // 旅行の画面で「見ている道」の持ち主のaccountId。空文字＝みんな
+    editingBranchId: '',      // 予定フォームで、別行動の中の予定を作る・直しているときの別行動のid
     days: [],                // 旅行の日ごとの場所・天気（{date, place, weatherCode, tempMax, tempMin, isForecast}）
     members: [],             // アカウント参加者（{accountId, name, joinedAt}）。ゲスト参加者(companions)とは別
     selectedDate: null,
@@ -4789,10 +5104,7 @@
   function openTrip(id, returnTo, onScreenReady) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
-      state.trip = data.trip;
-      state.blocks = data.blocks;
-      state.days = data.days || [];
-      state.members = data.members || [];
+      applyTripData(data, false);
       state.social = emptySocial();
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
@@ -4834,10 +5146,7 @@
 
   function refreshTrip() {
     return api('/trips/' + encodeURIComponent(state.trip.id)).then(function (data) {
-      state.trip = data.trip;
-      state.blocks = data.blocks;
-      state.days = data.days || [];
-      state.members = data.members || [];
+      applyTripData(data, true);
       // 地図を足した・日程を変えたあとも時差を調べ直す。以前は旅行を開いたときにしか調べず、あとから入れた
       // 地図（ニューヨークの「英語表現の疑問」）が前の時差（ブラジル）のままだった（2026-09-27）。
       // 調べ終わったら並びと区切りを描き直す（loadTripZones）。調べた結果は端末に覚えているので通信は少ない
@@ -4903,7 +5212,7 @@
     if (!title) { status.textContent = 'タイトルを入力してください。'; return; }
     var newStart = $('#teStart').value, newEnd = $('#teEnd').value;
     // 日程を変えたら、予定もいっしょにずらすかを確かめる（2026-09-26。Core.tripScheduleShift）
-    var shift = Core.tripScheduleShift(state.trip, newStart, newEnd, state.blocks);
+    var shift = Core.tripScheduleShift(state.trip, newStart, newEnd, allBlocks());
     var shiftDays = 0;
     if (shift) {
       var dir = shift.days > 0 ? Math.abs(shift.days) + '日後' : Math.abs(shift.days) + '日前';
@@ -5160,7 +5469,7 @@
     var panel = $('#costBreakdownPanel');
     if (!panel.hidden) { panel.hidden = true; syncStatRows(); return; }
     $('#lodgingBreakdownPanel').hidden = true;
-    var breakdown = Core.costBreakdownByPerson(state.blocks);
+    var breakdown = Core.costBreakdownByPerson(allBlocks());
     var names = Object.keys(breakdown).sort(function (a, b) { return breakdown[b] - breakdown[a]; });
     panel.innerHTML = names.length
       ? names.map(function (name) {
@@ -5192,7 +5501,7 @@
     var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
     // 名前が長くても「ほか○か所」が切れないよう、別の行に出す（名前は2行まで）
     var lodgingParts = Core.lodgingSummaryParts(Core.lodgingByNight(trip, state.blocks));
-    var total = Core.tripTotalCost(state.blocks);
+    var total = Core.tripTotalCost(allBlocks());
     // 宿泊先・総費用は横幅いっぱいの行を縦に並べ、押すとその下に詳細が開く（日程は旅行名の下に
     // 「9泊10日」と出ているのでカードは出さない。2026-09-27）
     var lodgingPanel = $('#lodgingBreakdownPanel'), costPanel = $('#costBreakdownPanel');
@@ -5531,7 +5840,7 @@
   function openPostSheet() {
     if (!state.trip) return;
     var user = loadCurrentUser();
-    var text = Core.buildTripPostText(state.trip, state.blocks, state.days, user ? user.email : '', { legend: $('#postLegend').checked });
+    var text = Core.buildTripPostText(state.trip, allBlocks(), state.days, user ? user.email : '', { legend: $('#postLegend').checked });
     $('#postText').value = text;
     $('#postSheetNote').textContent = user
       ? 'あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。'
@@ -6396,9 +6705,218 @@
     });
   }
 
+  // ---------- 自分だけの道（別行動の分岐。docs/adr/0021） ----------
+  // 旅行のデータは、みんなの予定（state.blocks）・別行動の中の予定（state.branchBlocks）・別行動そのもの
+  // （state.branches）に分けて持つ。時差・宿泊・並べ替えなど「みんなの予定」を前提にした既存の機能は
+  // state.blocksだけを見るので、そのまま動く。費用・アルバム・記録の検索は allBlocks()（両方）を見る。
+  // 見せる予定の並びは、選んだ人（state.viewAccountId。空＝みんな）に応じて Core が決める。
+  var BRANCH_VIEW_KEY_PREFIX = 'tabilog:branch-view:';
+  var BRANCH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 7v10M18 11c0 4-6 3-12 6"/></svg>';
+
+  function loadBranchView(tripId) {
+    try { return localStorage.getItem(BRANCH_VIEW_KEY_PREFIX + tripId) || ''; } catch (e) { return ''; }
+  }
+  function saveBranchView(tripId, accountId) {
+    try {
+      if (accountId) localStorage.setItem(BRANCH_VIEW_KEY_PREFIX + tripId, accountId);
+      else localStorage.removeItem(BRANCH_VIEW_KEY_PREFIX + tripId);
+    } catch (e) { /* 保存できなくても、その回の表示には困らない */ }
+  }
+
+  // サーバーから届いた旅行のデータを state に入れる。keepView：読み直し（refreshTrip）のときは、いま選んでいる人を保つ。
+  function applyTripData(data, keepView) {
+    state.trip = data.trip;
+    var blocks = data.blocks || [];
+    state.blocks = blocks.filter(function (b) { return !b.branchId; });
+    state.branchBlocks = blocks.filter(function (b) { return b.branchId; });
+    state.branches = data.branches || [];
+    state.days = data.days || [];
+    state.members = data.members || [];
+    var wanted = keepView ? state.viewAccountId : loadBranchView(data.trip.id);
+    state.viewAccountId = Core.resolveViewAccountId(wanted, state.branches);
+  }
+
+  function allBlocks() { return (state.blocks || []).concat(state.branchBlocks || []); }
+  // 選んでいる人の道で見た、旅行全体の予定（地図でふりかえる・動画・時差の計算に使う）
+  function activeBlocks() {
+    return Core.visibleBlocksForView(state.blocks, state.branchBlocks, state.branches, state.viewAccountId);
+  }
+  function branchById(id) { return (state.branches || []).filter(function (b) { return b.id === id; })[0] || null; }
+  function myAccountId() {
+    var u = loadCurrentUser();
+    return u && u.token && u.accountId ? u.accountId : '';
+  }
+  function amTripMember() {
+    var me = myAccountId();
+    return !!me && (state.members || []).some(function (m) { return m.accountId === me; });
+  }
+  function isMyBranch(branchId) {
+    var br = branchById(branchId), me = myAccountId();
+    return !!br && !!me && br.accountId === me;
+  }
+  // 画面から直せる予定か（別行動の中の予定は、持ち主だけ。サーバーでも同じ確認をしている）
+  function canEditBlockUi(block) { return !block.branchId || isMyBranch(block.branchId); }
+  function branchOwnerName(branch) {
+    var m = (state.members || []).filter(function (x) { return x.accountId === branch.accountId; })[0];
+    return (m && m.name) || branch.name || 'だれか';
+  }
+
+  function currentDayItems() {
+    return Core.dayTimelineItems(state.blocks, state.branchBlocks, state.branches, state.viewAccountId, state.selectedDate || '');
+  }
   function currentDayBlocks() {
-    var byDate = Core.groupBlocksByDate(state.blocks);
-    return byDate[state.selectedDate || ''] || [];
+    return currentDayItems().filter(function (i) { return i.type === 'block'; }).map(function (i) { return i.block; });
+  }
+
+  function setBranchView(accountId) {
+    state.viewAccountId = Core.resolveViewAccountId(accountId, state.branches);
+    if (state.trip) saveBranchView(state.trip.id, state.viewAccountId);
+    renderDaySection();
+  }
+
+  // 「表示する道：みんな／○○」の切り替え。別行動がある旅行だけ出す
+  function renderBranchSwitcher() {
+    var el = $('#branchSwitcher');
+    var opts = Core.branchViewOptions(state.branches, state.members);
+    if (!opts.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    var chip = function (id, name) {
+      return '<button type="button" class="branch-switch-chip' + (state.viewAccountId === id ? ' on' : '') + '" data-account="' + escapeHtml(id) + '">' + escapeHtml(name) + '</button>';
+    };
+    el.innerHTML = '<span class="branch-switch-label">表示する道</span>' + chip('', 'みんな') +
+      opts.map(function (o) { return chip(o.accountId, o.name); }).join('');
+    $all('.branch-switch-chip', el).forEach(function (b) {
+      b.addEventListener('click', function () { setBranchView(b.dataset.account); });
+    });
+  }
+
+  // ほかの人の別行動の小さなカード。押すとその人の道に切り替わる
+  function renderBranchCard(branch) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'branch-card';
+    var text = Core.branchCardText(Object.assign({}, branch, { name: branchOwnerName(branch) }), state.branchBlocks);
+    b.innerHTML = BRANCH_ICON + '<span class="branch-card-text">' + escapeHtml(text) + '</span><span class="branch-card-go">この道を見る</span>';
+    b.addEventListener('click', function () { setBranchView(branch.accountId); });
+    return b;
+  }
+
+  // 選んだ人の別行動の見出し。持ち主（自分）には「予定を追加」「編集」を出す
+  function renderBranchBand(branch) {
+    var d = document.createElement('div');
+    d.className = 'branch-band';
+    d.innerHTML = BRANCH_ICON + '<span class="branch-band-text">' +
+      escapeHtml(branchOwnerName(branch) + 'の別行動 ' + branch.startTime + '〜' + branch.endTime + (branch.title ? '（' + branch.title + '）' : '')) + '</span>';
+    if (isMyBranch(branch.id)) {
+      var add = document.createElement('button');
+      add.type = 'button'; add.className = 'branch-band-btn'; add.textContent = '予定を追加';
+      add.addEventListener('click', function () { openBlockForm(null, branch); });
+      var edit = document.createElement('button');
+      edit.type = 'button'; edit.className = 'branch-band-btn'; edit.textContent = '編集';
+      edit.addEventListener('click', function () { openBranchSheet(branch); });
+      d.appendChild(add);
+      d.appendChild(edit);
+    }
+    return d;
+  }
+
+  // タイムラインの下の「ここから別行動」。ログインしていない・参加していない人には、案内の文だけを出す
+  function appendBranchAddArea(el) {
+    if (!state.selectedDate) return;
+    var user = loadCurrentUser();
+    if (!Core.canUseBranches(user)) return; // 課金を始めたら、有料プランでない人はここで止まる
+    var note = function (text) {
+      var p = document.createElement('p');
+      p.className = 'branch-hint';
+      p.textContent = text;
+      el.appendChild(p);
+    };
+    if (!user || !user.token) { note('ログインすると自分の別行動を追加できます'); return; }
+    if (!amTripMember()) { note('この旅行に「参加する」と、自分の別行動を追加できます'); return; }
+    var btn = document.createElement('button');
+    btn.className = 'block-add branch-add';
+    btn.innerHTML = BRANCH_ICON + '<span>ここから別行動</span>';
+    btn.addEventListener('click', function () { openBranchSheet(null); });
+    el.appendChild(btn);
+  }
+
+  // ---------- 別行動の追加・編集シート ----------
+  var branchSheetTarget = null; // { id（編集のとき）, date }
+
+  function defaultBranchRange(date) {
+    var me = myAccountId();
+    var starts = [13, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20];
+    for (var i = 0; i < starts.length; i++) {
+      var s = String(starts[i]).padStart(2, '0') + ':00', e = String(Math.min(23, starts[i] + 3)).padStart(2, '0') + ':00';
+      if (!Core.validateBranch({ date: date, startTime: s, endTime: e }, state.branches, me)) return { start: s, end: e };
+    }
+    return { start: '', end: '' };
+  }
+
+  function openBranchSheet(branch) {
+    var date = branch ? branch.date : state.selectedDate;
+    if (!date) return;
+    branchSheetTarget = { id: branch ? branch.id : '', date: date };
+    var range = branch ? { start: branch.startTime, end: branch.endTime } : defaultBranchRange(date);
+    $('#branchSheetTitle').textContent = branch ? '別行動を編集' : 'ここから別行動';
+    $('#brDateText').textContent = Core.formatDateJp(date);
+    $('#brStart').value = range.start;
+    $('#brEnd').value = range.end;
+    $('#brTitle').value = branch ? (branch.title || '') : '';
+    $('#brStatus').textContent = '';
+    $('#btnDeleteBranch').hidden = !branch;
+    $('#branchSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+
+  function closeBranchSheet() {
+    $('#branchSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+    branchSheetTarget = null;
+  }
+
+  function saveBranch() {
+    if (!branchSheetTarget || !state.trip) return;
+    var status = $('#brStatus');
+    var target = branchSheetTarget;
+    var me = myAccountId();
+    var input = { date: target.date, startTime: $('#brStart').value || '', endTime: $('#brEnd').value || '', title: $('#brTitle').value.trim() };
+    var reason = Core.validateBranch(input, state.branches, me, target.id);
+    if (reason) { status.textContent = Core.branchErrorText(reason); return; }
+    status.textContent = '保存中…';
+    var req = target.id
+      ? api('/branches/' + encodeURIComponent(target.id), 'PATCH', { startTime: input.startTime, endTime: input.endTime, title: input.title })
+      : api('/trips/' + encodeURIComponent(state.trip.id) + '/branches', 'POST', input);
+    req.then(function () { return refreshTrip(); }).then(function () {
+      closeBranchSheet();
+      // 作った・直したあとは、自分の道に切り替えて、その結果が見えるようにする
+      state.viewAccountId = Core.resolveViewAccountId(me, state.branches);
+      saveBranchView(state.trip.id, state.viewAccountId);
+      renderTripDetail();
+    }).catch(function (e) {
+      if (Core.isLoginRequiredError(e)) { closeBranchSheet(); handleLoginRequired(e, 'tripDetail'); return; }
+      status.textContent = Core.branchErrorText(e && e.message);
+    });
+  }
+
+  function removeBranch() {
+    if (!branchSheetTarget || !branchSheetTarget.id) return;
+    if (!confirm('この別行動と、中の予定・記録をすべて削除しますか？')) return;
+    var id = branchSheetTarget.id;
+    api('/branches/' + encodeURIComponent(id), 'DELETE').then(function () { return refreshTrip(); }).then(function () {
+      closeBranchSheet();
+      saveBranchView(state.trip.id, state.viewAccountId);
+      renderTripDetail();
+    }).catch(function (e) {
+      if (Core.isLoginRequiredError(e)) { closeBranchSheet(); handleLoginRequired(e, 'tripDetail'); return; }
+      $('#brStatus').textContent = '削除に失敗しました。';
+    });
+  }
+
+  // 「地図でふりかえる」「動画でシェア」に渡す予定：選んでいる人の道。時差はその並びで計算し直してから渡す
+  function replayBlocks() {
+    applyTripZones();
+    return activeBlocks();
   }
 
   // 画面の左端（EDGE_SWIPE_BACK_PX以内）から始まったスワイプだけを「戻る」操作として扱うための
@@ -6517,7 +7035,8 @@
   function renderDaySection() {
     applyTripZones();
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
-    renderTimeline(currentDayBlocks());
+    renderBranchSwitcher();
+    renderTimeline(currentDayItems());
     renderDayWeather();
     renderVoiceTranscript();
   }
@@ -6651,7 +7170,7 @@
   }
 
   function openTzOverrideSheet(blockId) {
-    var block = (state.blocks || []).filter(function (b) { return b.id === blockId; })[0];
+    var block = allBlocks().filter(function (b) { return b.id === blockId; })[0];
     if (!block) return;
     tzOverrideTarget = blockId;
     $('#tzOverrideStatus').textContent = '';
@@ -6742,6 +7261,11 @@
     if (!state.trip) return;
     var info = state.zoneInfo || { byBlock: {} };
     Core.applyBlockZones(state.blocks, Core.assignBlockZones(state.blocks, info.byBlock, DEVICE_TZ, info.byArrive));
+    // 人ごとの道を見ているときは、その道の並び（別行動の予定を含む）で時差を計算し直す
+    if (state.viewAccountId) {
+      var visible = activeBlocks();
+      Core.applyBlockZones(visible, Core.assignBlockZones(visible, info.byBlock, DEVICE_TZ, info.byArrive));
+    }
   }
 
   function timezoneAt(lat, lng, cache) {
@@ -6772,7 +7296,7 @@
     };
     // ① 座標がすぐ分かるものは同時に。entry.mapLat/mapLng（サーバーがすでに求めてある座標、Part A）が
     // あれば最優先で使い、/geocodeを呼ばない
-    var quick = (state.blocks || []).map(function (b) {
+    var quick = allBlocks().map(function (b) {
       var pe = Core.replayPlaceEntry(b);
       if (!pe) return null;
       var q = pe.url;
@@ -6794,7 +7318,7 @@
         return p.then(function (needWait) {
           if (!stillHere()) return false;
           return (needWait ? wait(1100) : Promise.resolve()).then(function () {
-            var order = Core.sortBlocks(state.blocks);
+            var order = Core.sortBlocks(allBlocks());
             var stops = order.map(function (b) { return { date: b.date, transport: b.transport, coords: coordsByBlock[b.id] || null }; });
             return api(geocodeFullPath(it.q, it.b.label || '', stops, order.indexOf(it.b)) + geocodeEntryParam(it.entryId)).then(function (res) {
               var c = remember(it.q, res); if (c) coordsByBlock[it.b.id] = c;
@@ -6832,7 +7356,7 @@
       if (!stillHere()) return;
       var byBlock = {}, byArrive = {};
       // 移動の予定の到着地の地図（2026-09-27〜）。座標が保存されていればそれを、無ければ/geocodeで求める
-      var arriveJobs = (state.blocks || []).map(function (b) {
+      var arriveJobs = allBlocks().map(function (b) {
         var a = Core.travelArrival(b);
         if (!a) return null;
         var coords = typeof a.lat === 'number' && typeof a.lng === 'number' ? Promise.resolve({ lat: a.lat, lng: a.lng })
@@ -6893,10 +7417,12 @@
     }, Promise.resolve());
   }
 
-  function renderTimeline(blocks) {
+  function renderTimeline(items) {
     var el = $('#timeline');
     el.innerHTML = '';
-    if (!blocks.length) {
+    // items：Core.dayTimelineItemsの結果（予定・ほかの人の別行動のカード・選んだ人の別行動の帯）
+    var blocks = items.filter(function (i) { return i.type === 'block'; }).map(function (i) { return i.block; });
+    if (!items.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = 'この日の記録はまだありません。下のボタンから追加できます。';
@@ -6904,7 +7430,7 @@
     }
     // 時差の違う場所に移ったところに「ここから現地時間（時差）」の区切りを入れる（docs/adr/0009）。
     // この日の最初の予定は、旅行全体の並びで直前の予定と比べる（前の日から続く移動のため）。
-    var all = Core.sortBlocks(state.blocks);
+    var all = Core.sortBlocks(activeBlocks());
     var base = all.filter(function (b) { return typeof b._offset === 'number'; })[0];
     var prevOffset = null;
     if (blocks.length) {
@@ -6921,8 +7447,12 @@
       if (typeof chkPrev === 'number' && b._offset !== chkPrev) zoneChange = true;
       chkPrev = b._offset;
     });
-    state.manualDay = !!dayDate && (hasManual || zoneChange);
-    blocks.forEach(function (block) {
+    // 人ごとの道を見ているあいだは、並べ替え（みんなの予定の順番を変える操作）は出さない
+    state.manualDay = !!dayDate && !state.viewAccountId && (hasManual || zoneChange);
+    items.forEach(function (item) {
+      if (item.type === 'card') { el.appendChild(renderBranchCard(item.branch)); return; }
+      if (item.type === 'band') { el.appendChild(renderBranchBand(item.branch)); return; }
+      var block = item.block;
       var dividerShown = false;
       if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
         el.appendChild(renderZoneDivider(block, base));
@@ -6947,6 +7477,7 @@
     addBtn.innerHTML = plusIcon() + '<span>予定を追加</span>';
     addBtn.addEventListener('click', function () { openBlockForm(null); });
     el.appendChild(addBtn);
+    appendBranchAddArea(el);
 
     var voiceBtn = document.createElement('button');
     voiceBtn.className = 'block-add';
@@ -6995,7 +7526,7 @@
         'own=' + short((info.byBlock || {})[b.id]),
         'arr=' + (arr ? (typeof arr.lat === 'number' ? '座標' : 'url') + '/' + short((info.byArrive || {})[b.id]) + '/' + (arr.time || '') : 'なし'),
         'mv=' + (b.moveMinutes || ''), 'c=' + (b.createdAt || '').slice(5, 16),
-        'ov=' + (b.tzOverride || ''),
+        'ov=' + (b.tzOverride || ''), 'vx=' + (b.videoExclude ? 1 : ''),
         '→' + short(zones[b.id])
       ].join(' '));
     });
@@ -7033,25 +7564,29 @@
 
   function renderBlockEl(block, dividerShown) {
     var wrap = document.createElement('div');
-    wrap.className = 'block';
+    wrap.className = 'block' + (block.branchId ? ' branch-block' : '');
     wrap.dataset.blockId = block.id;
+    // 別行動の中の予定は持ち主だけが直せる。ほかの人には見るだけ（サーバーでも同じ確認をしている）
+    var editable = canEditBlockUi(block);
 
     var head = document.createElement('div');
-    head.className = 'block-head';
+    head.className = 'block-head' + (editable ? '' : ' readonly');
     head.innerHTML =
       // 時刻ありのBlockは常にその時刻の位置に固定するため、持ち手（ドラッグでの並べ替え）は
       // 時刻未設定のBlockにだけ出す
-      (!block.time || state.manualDay ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
+      (!block.branchId && !state.viewAccountId && (!block.time || state.manualDay) ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
       '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>' +
       (block.category === 'transport' && (block.transport || block.moveMinutes)
         ? '<span class="block-move">' + (block.transport ? transportIconSvg(block.transport, 13) : '') +
           escapeHtml([Core.transportLabel(block.transport), block.moveMinutes ? '約' + Core.minutesText(block.moveMinutes) : ''].filter(Boolean).join('・')) + '</span>'
-        : '');
+        : '') +
+      // 「動画でシェアに出さない」予定は、メンバーにも分かるよう小さく印を出す
+      (block.videoExclude ? '<span class="block-video-off">動画に出さない</span>' : '');
     head.addEventListener('click', function (e) {
       if (e.target.closest('.block-drag-handle')) return;
-      openBlockForm(block);
+      if (editable) openBlockForm(block);
     });
     wrap.appendChild(head);
 
@@ -7074,11 +7609,13 @@
     });
     wrap.appendChild(entriesWrap);
 
-    var addEntryBtn = document.createElement('button');
-    addEntryBtn.className = 'entry-add';
-    addEntryBtn.innerHTML = plusIcon() + '<span>' + ((block.entries || []).length ? '別の記録を追加（別行動など）' : '記録を追加') + '</span>';
-    addEntryBtn.addEventListener('click', function (e) { e.stopPropagation(); openEntryForm(block.id, null); });
-    wrap.appendChild(addEntryBtn);
+    if (editable) {
+      var addEntryBtn = document.createElement('button');
+      addEntryBtn.className = 'entry-add';
+      addEntryBtn.innerHTML = plusIcon() + '<span>' + ((block.entries || []).length ? '別の記録を追加（別行動など）' : '記録を追加') + '</span>';
+      addEntryBtn.addEventListener('click', function (e) { e.stopPropagation(); openEntryForm(block.id, null); });
+      wrap.appendChild(addEntryBtn);
+    }
 
     return wrap;
   }
@@ -7320,6 +7857,9 @@
     card.className = 'entry-card' + (block.category === 'lodging' ? ' lodging' : '');
     card.dataset.entryId = entry.id;
     card.dataset.blockId = block.id;
+    // 別行動の中の記録は持ち主だけが直せる（ほかの人には写真を見るだけ）。別の予定への移動もみんなの予定だけ
+    var editable = canEditBlockUi(block);
+    var canMove = editable && !block.branchId;
 
     var photosHtml = (entry.photoIds || []).length
       ? '<div class="entry-photos">' + entry.photoIds.map(function (id) {
@@ -7377,11 +7917,13 @@
     // 別の予定の「記録」として移したい、という要望より）。持ち手をドラッグするか、
     // 「移動」ボタンから移動先の予定を選んでも移せる。同じ日の予定にだけ移動できる。
     card.innerHTML =
-      '<div class="entry-card-head">' +
-        '<button type="button" class="entry-move-btn" aria-label="別の予定に移動">' + MOVE_ICON + '<span>移動</span></button>' +
-        '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
-      '</div>' +
-      '<div class="entry-move-menu" hidden></div>' +
+      (canMove
+        ? '<div class="entry-card-head">' +
+            '<button type="button" class="entry-move-btn" aria-label="別の予定に移動">' + MOVE_ICON + '<span>移動</span></button>' +
+            '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
+          '</div>' +
+          '<div class="entry-move-menu" hidden></div>'
+        : '') +
       (entry.time ? '<div class="entry-time">' + escapeHtml(entry.time) + '</div>' : '') +
       (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
       (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
@@ -7413,12 +7955,14 @@
         return;
       }
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu') || e.target.closest('.entry-social')) return;
-      openEntryForm(block.id, entry);
+      if (editable) openEntryForm(block.id, entry);
     });
-    $('.entry-move-btn', card).addEventListener('click', function (e) {
-      e.stopPropagation();
-      toggleEntryMoveMenu(card, entry.id, block.id);
-    });
+    if (canMove) {
+      $('.entry-move-btn', card).addEventListener('click', function (e) {
+        e.stopPropagation();
+        toggleEntryMoveMenu(card, entry.id, block.id);
+      });
+    }
     return card;
   }
 
@@ -7430,7 +7974,11 @@
     $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
     if (wasOpen) return;
 
-    var targets = currentDayBlocks().filter(function (b) { return b.id !== currentBlockId; });
+    // 移動先は、同じ日の、同じ別行動の中（みんなの予定どうし）の予定だけ
+    var currentBlock = allBlocks().filter(function (b) { return b.id === currentBlockId; })[0];
+    var targets = currentDayBlocks().filter(function (b) {
+      return b.id !== currentBlockId && (b.branchId || '') === ((currentBlock && currentBlock.branchId) || '');
+    });
     if (!targets.length) {
       menu.innerHTML = '<p class="hint">この日には他に移動先の予定がありません。</p>';
     } else {
@@ -7493,7 +8041,7 @@
 
       var under = document.elementFromPoint(e.clientX, e.clientY);
       var blockEl = under && under.closest('.block');
-      if (blockEl && blockEl.dataset.blockId === entryDragState.sourceBlockId) blockEl = null;
+      if (blockEl && (blockEl.dataset.blockId === entryDragState.sourceBlockId || blockEl.classList.contains('branch-block'))) blockEl = null;
       if (entryDragState.targetEl !== blockEl) {
         if (entryDragState.targetEl) entryDragState.targetEl.classList.remove('drop-target');
         if (blockEl) blockEl.classList.add('drop-target');
@@ -7543,8 +8091,11 @@
   }
 
   // ---------- 大項目（予定）の追加・編集 ----------
-  function openBlockForm(block) {
+  // branch：別行動の中に新しい予定を作るときの、その別行動（編集のときは予定自身のbranchIdから決まる）
+  function openBlockForm(block, branch) {
     state.editingBlockId = block ? block.id : null;
+    var br = block && block.branchId ? branchById(block.branchId) : (branch || null);
+    state.editingBranchId = br ? br.id : '';
     state.formCategory = block ? block.category : 'sightseeing';
     // 移動手段が保存されているのは種類「移動」のときだけ（以前のデータで他の種類に付いていても出さない）
     state.formTransport = block && block.category === 'transport' ? (block.transport || '') : '';
@@ -7554,10 +8105,16 @@
     var mm = block ? (block.moveMinutes || 0) : 0;
     $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
     $('#blkMoveMins').value = mm ? mm % 60 : '';
-    $('#blkFormTitle').textContent = block ? '予定を編集' : '予定を追加';
-    $('#blkDate').value = block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10));
+    $('#blkFormTitle').textContent = (br ? '別行動の予定を' : '予定を') + (block ? '編集' : '追加');
+    $('#blkDate').value = br ? br.date : (block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10)));
+    // 別行動の中の予定は、別行動の日から動かせない（サーバーでも固定している）
+    $('#blkDate').disabled = !!br;
+    var branchNote = $('#blkBranchNote');
+    branchNote.hidden = !br;
+    branchNote.textContent = br ? branchOwnerName(br) + 'の別行動（' + br.startTime + '〜' + br.endTime + '）の中の予定です。時刻は、この時間帯の中で入れてください。' : '';
     $('#blkTime').value = block ? block.time : '';
     $('#blkLabel').value = block ? block.label : '';
+    $('#blkVideoExclude').checked = !!(block && block.videoExclude);
     $('#blkFormStatus').textContent = '';
     $('#btnDeleteBlock').hidden = !block;
     renderCategoryChips();
@@ -7612,6 +8169,13 @@
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
     var label = $('#blkLabel').value.trim();
     if (!label) { status.textContent = '見出しを入力してください。'; return; }
+    // 別行動の中の予定の時刻は、別行動の時間帯の中に入れる（外だと、その人の道の並びと合わなくなるため）
+    var editBranch = state.editingBranchId ? branchById(state.editingBranchId) : null;
+    var timeVal = $('#blkTime').value || '';
+    if (editBranch && timeVal && (timeVal < editBranch.startTime || timeVal > editBranch.endTime)) {
+      status.textContent = '時刻は、別行動の時間帯（' + editBranch.startTime + '〜' + editBranch.endTime + '）の中で入れてください。';
+      return;
+    }
     status.textContent = '保存中…';
     var payload = {
       date: $('#blkDate').value || '',
@@ -7621,8 +8185,10 @@
       // 移動手段を選べるのは種類が「移動」のときだけ。種類を切り替えたら選んでいた移動手段は消す
       // （以前のデータの「ここまでの移動手段」は、種類を変えない限りそのまま）
       transport: state.formCategory === 'transport' ? (state.formTransport || '') : (state.formLegacyTransport || ''),
-      moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
+      moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0,
+      videoExclude: $('#blkVideoExclude').checked
     };
+    if (!state.editingBlockId && state.editingBranchId) payload.branchId = state.editingBranchId;
     var req = state.editingBlockId
       ? api('/blocks/' + encodeURIComponent(state.editingBlockId), 'PATCH', payload)
       : api('/trips/' + encodeURIComponent(state.trip.id) + '/blocks', 'POST', payload);
@@ -7638,7 +8204,9 @@
           openEntryForm(block.id, null);
         }
       });
-    }).catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
+    }).catch(function (e) {
+      status.textContent = e && e.message === 'forbidden' ? Core.branchErrorText('forbidden') : '保存に失敗しました。もう一度お試しください。';
+    });
   }
 
   function deleteBlock() {
@@ -7686,7 +8254,7 @@
     $('#entMoreFields').open = !!(entry && (entry.comment || entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl ||
       (entry.travel && Object.keys(entry.travel).length)));
     // 壊れた地図を直しに来たときは、予定の見出しで探せるよう検索欄に入れておく
-    var formBlock = brokenMapUrl ? (state.blocks || []).filter(function (b) { return b.id === blockId; })[0] : null;
+    var formBlock = brokenMapUrl ? allBlocks().filter(function (b) { return b.id === blockId; })[0] : null;
     $('#entPlaceSearch').value = formBlock && formBlock.category !== 'transport' ? (formBlock.label || '') : '';
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
@@ -7707,7 +8275,7 @@
   }
 
   function entryFormBlock() {
-    return (state.blocks || []).filter(function (b) { return b.id === state.entryBlockId; })[0] || null;
+    return allBlocks().filter(function (b) { return b.id === state.entryBlockId; })[0] || null;
   }
 
   // ---------- 移動の情報（紹介文用。docs/adr/0007） ----------
@@ -7744,8 +8312,11 @@
   // 古い記録の値をそのまま保存し直すためだけに残してある）
   function updateTravelDuration() {
     var block = entryFormBlock();
-    var all = Core.sortBlocks(state.blocks);
-    var next = block ? all[all.indexOf(block) + 1] : null;
+    // 別行動の中の予定なら、同じ別行動の中で次の予定を探す（みんなの予定の並びには入っていない）
+    var all = Core.sortBlocks(block && block.branchId
+      ? (state.branchBlocks || []).filter(function (b) { return b.branchId === block.branchId; })
+      : state.blocks);
+    var next = block && all.indexOf(block) !== -1 ? all[all.indexOf(block) + 1] : null;
     var depOff = block ? block._offset : undefined, arrOff = next ? next._offset : undefined;
     var dep = block ? (block.time || '') : '', arr = $('#entTravelArrive').value;
     var d = Core.travelDurationText(dep, arr, depOff, arrOff);
@@ -9819,7 +10390,12 @@
     // が一瞬でも見えてしまわないよう、新しい旅行の地図ができるまで隠す（2026-09-26）。
     var mapEl = $('#replayMap');
     if (mapEl) mapEl.style.visibility = 'hidden';
-    var stops = Core.replayStops(state.trip, state.blocks);
+    // 選んでいる人の道で再生する（みんな＝今までどおり。別行動の時間帯は、その人の予定のルートになる）
+    var stops = Core.replayStops(state.trip, replayBlocks());
+    var viewerEl = $('#replayViewer');
+    var viewerBranch = state.viewAccountId ? (state.branches || []).filter(function (b) { return b.accountId === state.viewAccountId; })[0] : null;
+    viewerEl.hidden = !viewerBranch;
+    viewerEl.textContent = viewerBranch ? branchOwnerName(viewerBranch) + 'の道' : '';
     var status = $('#replayStatus');
     var statusSub = $('#replayStatusSub');
     statusSub.hidden = true;
@@ -9832,7 +10408,7 @@
     // 「到着した移動手段」（前の移動区間から引き継いだもの）ではなく、予定そのものの値を見る
     // （成田空港出発の区間＝飛行機を、間に挟まっているかどうかの判定に使うため。docs/adr/0008）。
     var blockById = {};
-    (state.blocks || []).forEach(function (b) { blockById[b.id] = b; });
+    allBlocks().forEach(function (b) { blockById[b.id] = b; });
     Promise.all([
       loadLeaflet(),
       geocodeQueries(stops.map(function (s) {
@@ -10469,15 +11045,79 @@
   // 編集もできてしまうので、SNSには絶対に載せない）。
   var VIDEO_FONT = '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif';
   var VIDEO_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'; // 地図でふりかえると同じタイル
-  var VIDEO_TILE_LIMIT = 260;  // 1本の動画で取るタイルの上限（OSMのタイル利用ポリシーに配慮。超えたら寄りすぎないようにする）
+  // 1本の動画で取るタイルの上限は、動画の長さで決める（Core.videoTileLimit。OSMのタイル利用ポリシーに配慮。超えたら寄りすぎないようにする）
   var VIDEO_TILE_CONCURRENCY = 6;
-  var VIDEO_BITRATE = 3000000; // 3Mbps（15秒で5MBほど。地図は細かいので下げすぎない）
+  var VIDEO_BITRATE = 3000000; // 3Mbps（30秒で11MB、45秒で17MBほど。地図は細かいので下げすぎない）
   var VIDEO_INK = '#1C1E21';
   var VIDEO_ACCENT = '#00BF8F';
 
   var videoTiles = {};       // 'z/x/y' → 読み込めた<img>、または'fail'（このあいだ使い回す）
   var videoPhotoImages = {}; // 写真ID → 読み込めた<img>（読めなかったものは入れない）
-  var rsv = { busy: false, recording: false, token: null, recorder: null, blob: null, file: null, mime: null, objectUrl: '' };
+  var rsv = { busy: false, recording: false, token: null, recorder: null, blob: null, file: null, mime: null, objectUrl: '',
+    current: null,          // いま結果画面に出している動画の情報 { photos, createdAt, saved }
+    saved: { n: null, p: null }, // この旅行の、この端末に保存済みの動画（n=写真なし / p=写真あり）。中身は { blob, mime, createdAt }
+    openSeq: 0 };           // シートを開くたびに増やす。保存済みの動画を調べている間に閉じられたら、結果を捨てるため
+
+  // ---------- できた動画をこの端末に残す（IndexedDB。アップロードはしない。docs/adr/0020） ----------
+  // 保存できない環境（プライベートブラウズ・WKWebViewの癖など）でも動画づくりは止めない：
+  // どの操作も失敗したら「保存なし」として扱い、いつもどおり作る。
+  var VIDEO_DB_NAME = 'tabilog-video', VIDEO_STORE = 'videos';
+  function videoDbOpen() {
+    return new Promise(function (resolve) {
+      try {
+        if (typeof indexedDB === 'undefined' || !indexedDB) { resolve(null); return; }
+        var req = indexedDB.open(VIDEO_DB_NAME, 1);
+        req.onupgradeneeded = function () {
+          try { req.result.createObjectStore(VIDEO_STORE, { keyPath: 'key' }); } catch (e) { /* 何もしない */ }
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { resolve(null); };
+        req.onblocked = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  }
+  // fn(store)がIDBRequestを返す。成功したらその結果、失敗なら null を返す（書き込み系は完了まで待つ）
+  function videoDbRun(mode, fn) {
+    return videoDbOpen().then(function (db) {
+      if (!db) return null;
+      return new Promise(function (resolve) {
+        var result = null, done = false;
+        var finish = function () { if (done) return; done = true; try { db.close(); } catch (e) { /* 何もしない */ } resolve(result); };
+        try {
+          var tx = db.transaction(VIDEO_STORE, mode);
+          var req = fn(tx.objectStore(VIDEO_STORE));
+          if (req) req.onsuccess = function () { result = req.result === undefined ? null : req.result; };
+          tx.oncomplete = finish; tx.onerror = finish; tx.onabort = finish;
+        } catch (e) { finish(); }
+      });
+    }).catch(function () { return null; });
+  }
+  function videoSaveGet(tripId, photos) {
+    return videoDbRun('readonly', function (st) { return st.get(Core.videoSaveKey(tripId, photos)); }).then(function (rec) {
+      return rec && rec.blob && rec.blob.size ? rec : null;
+    });
+  }
+  // 保存する（同じ旅行・同じ写真設定は置き換え）。全体がVIDEO_SAVE_MAX本を超えたら、作った日時の古いものを消す。成功でtrue
+  function videoSavePut(tripId, photos, blob, mime, createdAt, title) {
+    var rec = { key: Core.videoSaveKey(tripId, photos), tripId: String(tripId), photos: !!photos, blob: blob,
+      type: mime.type, ext: mime.ext, isMp4: !!mime.isMp4, createdAt: createdAt, title: title || '' };
+    var stored = false;
+    return videoDbRun('readwrite', function (st) { return st.put(rec); }).then(function (r) {
+      stored = r !== null;
+      return videoDbRun('readonly', function (st) { return st.getAll(); });
+    }).then(function (all) {
+      if (!stored || !all) return false;
+      var evict = Core.videoEvictKeys(all.map(function (r) { return { key: r.key, createdAt: r.createdAt }; }), Core.VIDEO_SAVE_MAX);
+      if (!evict.length) return true;
+      return videoDbRun('readwrite', function (st) { evict.forEach(function (k) { st.delete(k); }); return null; }).then(function () { return true; });
+    });
+  }
+  // 旅行の履歴を整理したとき、その旅行の保存動画も消す（端末の容量を空けるため。失敗しても何もしない）
+  function videoSaveDeleteTrips(tripIds) {
+    (tripIds || []).forEach(function (id) {
+      videoDbRun('readwrite', function (st) { st.delete(Core.videoSaveKey(id, false)); st.delete(Core.videoSaveKey(id, true)); return null; });
+    });
+  }
 
   function videoShareText() { return 'この旅行の足跡をみんなに共有 #旅の足跡\n' + PUBLIC_WEB_BASE; }
   function videoAppHost() { return PUBLIC_WEB_BASE.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
@@ -10494,6 +11134,15 @@
     hint.textContent = ok ? '' : '場所が2か所以上ないと動画にできません';
   }
 
+  // 録画は実時間なので、動画の長さ（story.total）がそのままかかる時間になる。あとどれくらいかを出す
+  function videoDurationText(sec) {
+    var s = Math.max(0, Math.round(sec));
+    return s >= 60 ? Math.floor(s / 60) + '分' + (s % 60 ? (s % 60) + '秒' : '') : s + '秒';
+  }
+  function videoRecordingText(story, frac) {
+    return '動画を作っています…（あと約' + videoDurationText(story.total * (1 - frac)) + '）';
+  }
+
   function rsvShowPanel(name) {
     ['options', 'progress', 'result'].forEach(function (p) { $('#rsv' + p.charAt(0).toUpperCase() + p.slice(1)).hidden = p !== name; });
   }
@@ -10508,26 +11157,62 @@
     if (!replay || Core.videoLocatedStops(replay.tl).length < 2) return;
     setReplayPlaying(false); // 動画を作っているあいだ、ふりかえりの地図は止めておく（重い処理を重ねない）
     rsvReleaseVideo();
+    rsv.saved = { n: null, p: null };
+    var seq = ++rsv.openSeq;
     // この旅行に写真つきの場所が無ければ、写真の選択肢そのものを出さない
     var withPhotos = Core.buildVideoStory(replay.tl, { photos: true });
+    var lenEl = $('#rsvLength');
+    if (lenEl) lenEl.textContent = withPhotos ? '動画の長さは約' + videoDurationText(withPhotos.total) + '、作るのに同じくらいの時間がかかります。' : '';
     $('#rsvPhotosRow').hidden = !(withPhotos && withPhotos.hasPhotos);
     $('#rsvPhotosNote').hidden = $('#rsvPhotosRow').hidden;
     $('#rsvPhotos').checked = false; // 同行者の顔が写ることがあるので、いつもOFFから
     $('#rsvStatus').textContent = '';
-    rsvShowPanel('options');
+    rsvShowPanel('none'); // 保存済みの動画があるかを調べるあいだ（一瞬）は、どの画面も出さない
+    rsvRefreshSavedLink();
     $('#rsvSheet').hidden = false;
     document.body.classList.add('sheet-open');
+    // 作った動画がこの端末に残っていれば、作り直さずすぐ見せる（「作り直す」を押したときだけ、また作る）
+    var tripId = (state.trip || {}).id;
+    Promise.all([videoSaveGet(tripId, false), videoSaveGet(tripId, true)]).catch(function () { return [null, null]; }).then(function (recs) {
+      if (seq !== rsv.openSeq || $('#rsvSheet').hidden || rsv.busy) return;
+      var toSaved = function (r) { return r ? { blob: r.blob, mime: { type: r.type, ext: r.ext, isMp4: r.isMp4 }, createdAt: r.createdAt } : null; };
+      rsv.saved = { n: toSaved(recs[0]), p: toSaved(recs[1]) };
+      // 写真ありの選択肢が出せない旅行（写真が無くなった等）では、写真ありの動画があっても出さない
+      if (rsv.saved.p && $('#rsvPhotosRow').hidden) rsv.saved.p = null;
+      var latest = rsv.saved.n && rsv.saved.p ? (rsv.saved.p.createdAt > rsv.saved.n.createdAt ? 'p' : 'n') : (rsv.saved.p ? 'p' : (rsv.saved.n ? 'n' : ''));
+      if (latest) rsvShowSaved(latest === 'p');
+      else { rsvShowPanel('options'); rsvRefreshSavedLink(); }
+    });
+  }
+
+  // 保存済みの動画（photos: 写真ありか）を結果画面に出す
+  function rsvShowSaved(photos) {
+    var s = photos ? rsv.saved.p : rsv.saved.n;
+    if (!s) { rsvShowPanel('options'); rsvRefreshSavedLink(); return; }
+    rsvShowResult(s.blob, s.mime, { photos: photos, createdAt: s.createdAt, saved: true });
+  }
+
+  // 選択肢の画面に「保存した動画を見る」を出す（いまの写真の選択と同じ設定の動画が保存されているとき）
+  function rsvRefreshSavedLink() {
+    var btn = $('#btnRsvSavedView');
+    if (!btn) return;
+    var photos = !$('#rsvPhotosRow').hidden && $('#rsvPhotos').checked;
+    var s = photos ? rsv.saved.p : rsv.saved.n;
+    btn.hidden = !s;
+    if (s) btn.textContent = '保存した動画を見る（' + Core.videoMadeAtText(s.createdAt) + ' に作った' + (photos ? '写真あり' : '写真なし') + '）';
   }
 
   function rsvReleaseVideo() {
     var v = $('#rsvVideo');
     if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
     if (rsv.objectUrl) { try { URL.revokeObjectURL(rsv.objectUrl); } catch (e) { /* 何もしない */ } }
-    rsv.objectUrl = ''; rsv.blob = null; rsv.file = null;
+    rsv.objectUrl = ''; rsv.blob = null; rsv.file = null; rsv.current = null;
   }
 
   function closeReplayVideoSheet() {
     if (rsv.busy) return; // 作っている最中は「キャンセル」だけで閉じる
+    rsv.openSeq++;
+    rsv.saved = { n: null, p: null };
     $('#rsvSheet').hidden = true;
     document.body.classList.remove('sheet-open');
     rsvReleaseVideo();
@@ -10732,11 +11417,15 @@
       ctx.fillRect(0, 0, W, H);
       ctx.globalAlpha = Math.min(fs.introAlpha, fs.introTextAlpha);
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#FFFFFF';
-      ctx.font = '800 68px ' + VIDEO_FONT;
-      var tl = Core.videoWrapLines(story.title || '旅の記録', 600, function (s) { return ctx.measureText(s).width; }, 3);
-      var top = 500 - (tl.length - 1) * 44;
-      tl.forEach(function (l, i) { ctx.fillText(l, W / 2, top + i * 88); });
-      var by = top + (tl.length - 1) * 88 + 44;
+      // 旅行名は1行に収まるまで縮める（下限を超えたら「・」「、」空白で最大2行）
+      var fit = Core.videoFitTitle(story.title || '旅の記録', 600, function (s, size) {
+        ctx.font = '800 ' + size + 'px ' + VIDEO_FONT; return ctx.measureText(s).width;
+      }, { maxSize: 68, minSize: 40, maxLines: 2 });
+      ctx.font = '800 ' + fit.size + 'px ' + VIDEO_FONT;
+      var lh = Math.round(fit.size * 1.3), tl = fit.lines;
+      var top = 500 - (tl.length - 1) * lh / 2;
+      tl.forEach(function (l, i) { ctx.fillText(l, W / 2, top + i * lh); });
+      var by = top + (tl.length - 1) * lh + 44;
       ctx.fillStyle = VIDEO_ACCENT; ctx.fillRect(W / 2 - 36, by, 72, 6);
       if (story.dateText) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; ctx.font = '600 40px ' + VIDEO_FONT;
@@ -10836,12 +11525,14 @@
       var maxZoom = 13, tiles;
       // 寄りすぎるとタイルが増える。OSMに負担をかけないよう、上限を超えるときは寄る上限を下げる
       for (;;) {
-        story = Core.buildVideoStory(tl, { photos: usePhotos, title: trip.title || '旅の記録', dateText: dateText, maxZoom: maxZoom });
+        story = Core.buildVideoStory(tl, { photos: usePhotos, title: (trip.title || '旅の記録') + (state.viewAccountId && $('#replayViewer').textContent ? '（' + $('#replayViewer').textContent + '）' : ''), dateText: dateText, maxZoom: maxZoom });
         if (!story) throw new Error('no_story');
         tiles = Core.videoTilesNeeded(story);
-        if (tiles.length <= VIDEO_TILE_LIMIT || maxZoom <= 4) break;
+        if (tiles.length <= Core.videoTileLimit(story.total) || maxZoom <= 4) break;
         maxZoom--;
       }
+      var hintEl = $('#rsvProgressHint');
+      if (hintEl) hintEl.textContent = '動画は実際の時間をかけて作るので、約' + videoDurationText(story.total) + 'かかります（地図の読み込みは別に少しかかります）。この画面を開いたままお待ちください。';
       canvas.width = story.w; canvas.height = story.h;
       ctx = canvas.getContext('2d');
       var photoIds = [];
@@ -10866,24 +11557,24 @@
       }).then(function (ok) {
         if (!ok || token.cancelled) return null;
         rsv.recording = true;
-        rsvSetProgress(0.45, '動画を作っています…');
-        return videoRecord(canvas, ctx, story, mime, token, function (f) { rsvSetProgress(0.45 + f * 0.55, '動画を作っています…'); });
+        rsvSetProgress(0.45, videoRecordingText(story, 0));
+        return videoRecord(canvas, ctx, story, mime, token, function (f) { rsvSetProgress(0.45 + f * 0.55, videoRecordingText(story, f)); });
       });
     }).then(function (blob) {
       rsv.busy = false; rsv.recording = false;
       if (token.cancelled || !blob) { rsvShowPanel('options'); return; }
       if (!blob.size) throw new Error('empty');
-      rsv.blob = blob; rsv.mime = mime;
-      rsv.file = new File([blob], 'tabinoashiato-trip.' + mime.ext, { type: mime.type });
-      rsv.objectUrl = URL.createObjectURL(blob);
-      var v = $('#rsvVideo');
-      v.src = rsv.objectUrl;
-      var p = v.play(); if (p && p.catch) p.catch(function () {});
-      var canFile = !!(navigator.canShare && navigator.canShare({ files: [rsv.file] }));
-      $('#btnRsvShare').textContent = canFile ? '共有する' : '動画を保存する';
-      $('#rsvResultNote').textContent = (mime.isMp4 ? '' : 'この端末ではWebM形式で作られました。XやInstagramなど、WebMを受け付けないSNSがあります。') +
-        (canFile ? '' : ' このブラウザは動画の共有に対応していないため、保存して投稿してください（投稿用の文章はコピーします）。');
-      rsvShowPanel('result');
+      var madeAt = Date.now(), tripId = trip.id;
+      // 画面に出すのが先。この端末への保存は裏で行い、失敗しても（保存なしの表示になるだけで）動画は見せる
+      rsvShowResult(blob, mime, { photos: usePhotos, createdAt: madeAt, saved: false });
+      var seq = rsv.openSeq;
+      videoSavePut(tripId, usePhotos, blob, mime, madeAt, trip.title).then(function (ok) {
+        if (!ok) return;
+        var entry = { blob: blob, mime: mime, createdAt: madeAt };
+        if (seq === rsv.openSeq) { if (usePhotos) rsv.saved.p = entry; else rsv.saved.n = entry; }
+        // まだその動画を見ているなら、「この端末に保存」の表示に切り替える
+        if (seq === rsv.openSeq && rsv.current && rsv.current.createdAt === madeAt) { rsv.current.saved = true; rsvUpdateResultInfo(); }
+      });
     }).catch(function (err) {
       rsv.busy = false; rsv.recording = false;
       rsvShowPanel('options');
@@ -10891,6 +11582,36 @@
         ? '地図や写真の画像を取り込めませんでした。写真を外してもう一度お試しください。'
         : '動画を作れませんでした。通信環境を確認して、もう一度お試しください。';
     });
+  }
+
+  // 動画を結果画面に出す。meta: { photos: 写真ありか, createdAt: 作った日時(ms), saved: この端末に保存済みか }
+  function rsvShowResult(blob, mime, meta) {
+    rsvReleaseVideo();
+    rsv.blob = blob; rsv.mime = mime;
+    rsv.file = new File([blob], 'tabinoashiato-trip.' + mime.ext, { type: mime.type });
+    rsv.objectUrl = URL.createObjectURL(blob);
+    rsv.current = { photos: !!meta.photos, createdAt: meta.createdAt, saved: !!meta.saved };
+    var v = $('#rsvVideo');
+    v.src = rsv.objectUrl;
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+    var canFile = !!(navigator.canShare && navigator.canShare({ files: [rsv.file] }));
+    $('#btnRsvShare').textContent = canFile ? '共有する' : '動画を保存する';
+    $('#rsvResultNote').textContent = (mime.isMp4 ? '' : 'この端末ではWebM形式で作られました。XやInstagramなど、WebMを受け付けないSNSがあります。') +
+      (canFile ? '' : ' このブラウザは動画の共有に対応していないため、保存して投稿してください（投稿用の文章はコピーします）。');
+    rsvUpdateResultInfo();
+    rsvShowPanel('result');
+  }
+
+  // 「写真なし・9/30 14:05 に作った動画」と、もう一方の保存済み動画へ切り替えるボタン
+  function rsvUpdateResultInfo() {
+    var cur = rsv.current;
+    if (!cur) return;
+    $('#rsvSavedInfo').textContent = (cur.photos ? '写真あり' : '写真なし') + '・' + Core.videoMadeAtText(cur.createdAt) + ' に作った動画' +
+      (cur.saved ? '（この端末に保存しています）' : '');
+    var other = cur.photos ? rsv.saved.n : rsv.saved.p;
+    var btn = $('#btnRsvOther');
+    btn.hidden = !other;
+    if (other) btn.textContent = (cur.photos ? '写真なし' : '写真あり') + 'の動画を見る（' + Core.videoMadeAtText(other.createdAt) + '）';
   }
 
   // 共有シートで動画を渡す（ボタンを押した直後でないと開けないので、動画ができた画面のボタンから）。
@@ -11132,7 +11853,17 @@
     $('#btnRsvStart').addEventListener('click', startReplayVideo);
     $('#btnRsvCancel').addEventListener('click', function () { rsvCancel('キャンセルしました'); });
     $('#btnRsvShare').addEventListener('click', shareReplayVideo);
-    $('#btnRsvAgain').addEventListener('click', function () { rsvReleaseVideo(); rsvShowPanel('options'); });
+    // 作り直す：いま見ていた動画と同じ写真の設定で、選択肢の画面へ戻る（「動画を作る」で作り直し、保存も置き換わる）
+    $('#btnRsvAgain').addEventListener('click', function () {
+      var photos = !!(rsv.current && rsv.current.photos);
+      rsvReleaseVideo();
+      if (!$('#rsvPhotosRow').hidden) $('#rsvPhotos').checked = photos;
+      rsvRefreshSavedLink();
+      rsvShowPanel('options');
+    });
+    $('#btnRsvOther').addEventListener('click', function () { rsvShowSaved(!(rsv.current && rsv.current.photos)); });
+    $('#btnRsvSavedView').addEventListener('click', function () { rsvShowSaved(!$('#rsvPhotosRow').hidden && $('#rsvPhotos').checked); });
+    $('#rsvPhotos').addEventListener('change', rsvRefreshSavedLink);
     // 録画中に画面を離れると、ブラウザが描画を止めて動画が固まる。作り直せるよう中止する
     document.addEventListener('visibilitychange', function () {
       if (rsv.recording && document.hidden) rsvCancel('画面を離れたので、動画づくりを中止しました');
@@ -11259,6 +11990,12 @@
     initSocial();
     $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
     $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });
+    // 自分だけの道（別行動）の追加・編集シート（docs/adr/0021）
+    $('#btnCloseBranchSheet').addEventListener('click', closeBranchSheet);
+    $('#btnCancelBranch').addEventListener('click', closeBranchSheet);
+    $('#btnSaveBranch').addEventListener('click', saveBranch);
+    $('#btnDeleteBranch').addEventListener('click', removeBranch);
+    $('#branchSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeBranchSheet(); });
 
     // ---------- ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール。2026-09-28〜） ----------
     // タップした瞬間だけ.popを付けてアイコンのバウンス演出をやり直させる（連続タップでも毎回動くよう、

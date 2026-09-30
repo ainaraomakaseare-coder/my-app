@@ -304,3 +304,8 @@ CREATE INDEX IF NOT EXISTS idx_auth_identities_email ON auth_identities(email);
 ALTER TABLE auth_identities ADD COLUMN refresh_token TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS auth_states (state TEXT PRIMARY KEY, provider TEXT NOT NULL, return_to TEXT NOT NULL, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS auth_codes (code_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
+
+-- v30（2026-09-30）：自分だけの道（別行動の分岐）。詳しい説明は migrations/0030_branches.sql、設計は docs/adr/0021
+CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id);
+ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';

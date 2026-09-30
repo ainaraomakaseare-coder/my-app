@@ -386,6 +386,9 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <span>紹介文を作る</span>
       </button>
 
+      <!-- 自分だけの道（別行動）の切り替え：みんな／人ごと。分岐がある旅行だけ、app.jsのrenderBranchSwitcherが出す（docs/adr/0021） -->
+      <div class="branch-switch" id="branchSwitcher" hidden></div>
+
       <div class="day-tabs" id="dayTabs"></div>
 
       <div class="section-label">
@@ -488,6 +491,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
             <input type="time" id="blkTime">
           </div>
         </div>
+        <p class="hint branch-block-note" id="blkBranchNote" hidden></p>
         <p class="hint">日付・時間は、その場所の現地時間で入れてください（チケットや現地の時計のとおり）。時差や日付変更線をまたぐ移動の順番は、アプリが自動で合わせます。</p>
 
         <div class="field">
@@ -513,6 +517,10 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           </div>
         </div>
 
+        <!-- 動画でシェアに、この予定の地名・写真・ピンを出さない（道のりはこの場所を通る）。メンバー全員に共通 -->
+        <label class="post-option" id="blkVideoExcludeRow"><input type="checkbox" id="blkVideoExclude"> 動画でシェアに出さない</label>
+        <p class="hint">チェックすると、動画にはこの予定の地名・写真・ピンが出ません（地図でふりかえるには出ます）。一緒に旅行しているメンバー全員に反映されます。</p>
+
         <p class="hint" id="blkFormStatus"></p>
         <div class="sheet-actions">
           <button class="btn danger ghost" id="btnDeleteBlock" hidden>この予定を削除</button>
@@ -530,6 +538,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <div class="replay-clock" id="replayClock" hidden>
         <div class="replay-day" id="replayDay"></div>
         <div class="replay-time" id="replayTime"></div>
+        <!-- 人ごとの道（別行動）を選んでいるときだけ「○○の道」と出す（app.jsのopenReplay） -->
+        <div class="replay-viewer" id="replayViewer" hidden></div>
       </div>
       <button class="icon-btn replay-close" id="btnCloseReplay" aria-label="閉じる">
         <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
@@ -895,28 +905,32 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="sheet-close" id="btnCloseRsv" type="button" aria-label="閉じる">×</button>
     </div>
     <div class="rsv-panel" id="rsvOptions">
-      <p class="hint">この旅行の足跡を、15秒ほどの縦向きの動画にします。旅行名・日付・地名と地図の動きだけが入り、費用や一緒に行った人の名前は出ません。</p>
+      <p class="hint">この旅行の足跡を、縦向きの動画にします（日帰り〜3日の旅行は約30秒、4日以上は1日10秒ずつ、最長2分20秒）。旅行名・日付・地名と地図の動きだけが入り、費用や一緒に行った人の名前は出ません。</p>
+      <p class="hint" id="rsvLength"></p>
       <label class="post-option" id="rsvPhotosRow"><input type="checkbox" id="rsvPhotos"> 記録の写真を入れる</label>
       <p class="hint" id="rsvPhotosNote">写真を入れると、同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。</p>
       <div class="post-actions">
         <button class="btn primary wide" id="btnRsvStart" type="button">動画を作る</button>
       </div>
+      <button class="btn ghost wide" id="btnRsvSavedView" type="button" hidden>保存した動画を見る</button>
       <p class="hint comment-status" id="rsvStatus"></p>
     </div>
     <div class="rsv-panel" id="rsvProgress" hidden>
       <p class="rsv-percent" id="rsvPercent">0%</p>
       <p class="rsv-progress-text" id="rsvProgressText">動画を作っています…</p>
       <div class="rsv-bar"><div class="rsv-bar-fill" id="rsvBarFill"></div></div>
-      <p class="hint">動画は実際の時間をかけて作るので、30秒ほどかかります。この画面を開いたままお待ちください。</p>
+      <p class="hint" id="rsvProgressHint">動画は実際の時間をかけて作るので、動画の長さと同じだけ時間がかかります。この画面を開いたままお待ちください。</p>
       <button class="btn ghost wide" id="btnRsvCancel" type="button">キャンセル</button>
     </div>
     <div class="rsv-panel" id="rsvResult" hidden>
       <video class="rsv-video" id="rsvVideo" playsinline muted loop controls></video>
+      <p class="rsv-saved-info" id="rsvSavedInfo"></p>
       <p class="hint" id="rsvResultNote"></p>
       <div class="post-actions">
         <button class="btn primary" id="btnRsvShare" type="button">共有する</button>
         <button class="btn ghost" id="btnRsvAgain" type="button">作り直す</button>
       </div>
+      <button class="btn ghost wide" id="btnRsvOther" type="button" hidden>もう一方の動画を見る</button>
     </div>
   </div>
 </div>
@@ -934,6 +948,41 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="btn danger" id="btnRemoveSelectedHistory" type="button" disabled>選んだ旅行を履歴から消す（0件）</button>
       <button class="btn danger ghost" id="btnClearAllHistory" type="button">すべて消す</button>
       <button class="btn ghost" id="btnCancelTripHistory" type="button">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 自分だけの道（別行動）の追加・編集（docs/adr/0021） ============ -->
+<div class="sheet-backdrop" id="branchSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="branchSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="branchSheetTitle">ここから別行動</div>
+      <button class="sheet-close" id="btnCloseBranchSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint" id="branchSheetNote">みんなと別行動した時間帯を入れます。この時間帯のあいだ、あなたの道の表示では「みんなの予定」のかわりに、あなたが書いた予定が並びます。みんなにも見えますが、直せるのはあなただけです。</p>
+    <div class="field">
+      <label>日付</label>
+      <div class="branch-date-text" id="brDateText"></div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="brStart">始まり</label>
+        <input type="time" id="brStart">
+      </div>
+      <div class="field">
+        <label for="brEnd">終わり</label>
+        <input type="time" id="brEnd">
+      </div>
+    </div>
+    <div class="field">
+      <label for="brTitle">タイトル（任意）</label>
+      <input type="text" id="brTitle" maxlength="100" placeholder="例：美術館とカフェ">
+    </div>
+    <p class="hint comment-status" id="brStatus"></p>
+    <div class="sheet-actions">
+      <button class="btn primary" id="btnSaveBranch" type="button">保存する</button>
+      <button class="btn danger ghost" id="btnDeleteBranch" type="button" hidden>この別行動を削除</button>
+      <button class="btn ghost" id="btnCancelBranch" type="button">キャンセル</button>
     </div>
   </div>
 </div>

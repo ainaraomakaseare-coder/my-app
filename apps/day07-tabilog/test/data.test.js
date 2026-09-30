@@ -443,6 +443,7 @@ var rpBlocks = [
   { id: 'e', date: '', time: '', label: '日付なし', transport: '', entries: [] }
 ];
 var rpStops = T.replayStops(rpTrip, rpBlocks);
+eq('replayStops: 「動画に出さない」（videoExclude）の印を地点に引き継ぐ', T.replayStops(rpTrip, [{ id: 'x', date: '2026-04-01', time: '10:00', label: '秘密', videoExclude: true, entries: [] }, { id: 'y', date: '2026-04-01', time: '11:00', label: '普通', entries: [] }]).map(function (s) { return s.videoExclude; }), [true, false]);
 eq('replayStops: 日付のない予定は含めない', rpStops.map(function (s) { return s.blockId; }), ['a', 'b', 'c', 'd']);
 eq('replayStops: 何日目か', rpStops.map(function (s) { return s.dayNumber; }), [1, 1, 1, 2]);
 eq('replayStops: 時刻なしの予定は直前の時刻の30分後と推定する', rpStops.map(function (s) { return s.minute; }), [600, 720, 750, 540]);
@@ -2015,11 +2016,11 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
     for (var i = 1; i < stops.length; i++) legs.push({ from: i - 1, to: i, transport: 'car', path: [[stops[i - 1].lat, stops[i - 1].lng], [stops[i].lat, stops[i].lng]] });
     return { stops: stops, legs: legs, keyframes: [{ t: 0, r: 0 }], totalReal: 10 };
   }
-  var tl3 = mkTl([mkStop('成田空港', 35.77, 140.39), mkStop('浅草寺', 35.71, 139.79, { dayNumber: 1 }), mkStop('京都駅', 34.98, 135.76, { dayNumber: 2 })]);
+  var tl3 = mkTl([mkStop('成田空港', 35.77, 140.39, { minute: 480 }), mkStop('浅草寺', 35.71, 139.79, { dayNumber: 1, minute: 720 }), mkStop('京都駅', 34.98, 135.76, { dayNumber: 2, minute: 600 })]);
   var st = T.buildVideoStory(tl3, { title: 'テスト旅行', dateText: '2025.9.11〜9.13' });
   ok('buildVideoStory: 3地点から絵コンテができる', st && st.wps.length === 3 && st.segs.length === 2);
-  eq('buildVideoStory: 全体は導入1.5＋道のり11.5＋締め2=15秒', st.total, 15);
-  eq('buildVideoStory: 地名は3つ出る', st.wps.map(function (w) { return w.caption && w.caption.label; }), ['成田空港', '浅草寺', '京都駅']);
+  eq('buildVideoStory: 2日の旅行は全体で30秒（導入1.5＋道のり26.5＋締め2）', [st.introSec, st.routeSec, st.outroSec, st.total], [1.5, 26.5, 2, 30]);
+  eq('buildVideoStory: 1日目が8:00〜12:00（4時間）なので2つ、2日目は1つで、地名は3つ出る', st.wps.map(function (w) { return w.caption && w.caption.label; }), ['成田空港', '浅草寺', '京都駅']);
   ok('buildVideoStory: 動画にはエピソード本文・費用などを持ち込まない', JSON.stringify(st).indexOf('エピソード本文') === -1);
   eq('buildVideoStory: 2日目があれば日の表示を出す（maxDay）', st.maxDay, 2);
   eq('buildVideoStory: 写真オプションOFFなら写真は無い', st.hasPhotos, false);
@@ -2036,13 +2037,31 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   eq('buildVideoStory: 見出しが空の地点は地名を出さない', T.buildVideoStory(tlNoLabel, {}).wps.map(function (w) { return !!w.caption; }), [false, true]);
   var tlSame = mkTl([mkStop('宿', 35, 139), mkStop('宿', 35.001, 139.001), mkStop('駅', 35.2, 139.2)]);
   eq('buildVideoStory: 同じ地名が続くときは1回だけ', T.buildVideoStory(tlSame, {}).wps.map(function (w) { return !!w.caption; }), [true, false, true]);
+  // 保存した動画（IndexedDB）のキー・入れ替え
+  eq('videoSaveKey: 旅行ID＋写真あり/なしで別のキー', [T.videoSaveKey('t1', false), T.videoSaveKey('t1', true)], ['t1:n', 't1:p']);
+  eq('videoEvictKeys: 上限以内なら何も消さない', T.videoEvictKeys([{ key: 'a', createdAt: 1 }, { key: 'b', createdAt: 2 }], 5), []);
+  eq('videoEvictKeys: 上限を超えたら作った日時の古いものから消す', T.videoEvictKeys([{ key: 'a', createdAt: 3 }, { key: 'b', createdAt: 1 }, { key: 'c', createdAt: 2 }, { key: 'd', createdAt: 4 }], 2), ['c', 'b']);
+  eq('videoEvictKeys: 上限の既定は' + T.VIDEO_SAVE_MAX + '本', T.videoEvictKeys([1, 2, 3, 4, 5, 6].map(function (n) { return { key: 'k' + n, createdAt: n }; })), ['k1']);
+  eq('videoMadeAtText: 月/日 時:分（分は2桁）', T.videoMadeAtText(new Date(2026, 8, 30, 14, 5).getTime()), '9/30 14:05');
+  eq('videoMadeAtText: 不正な値は空', T.videoMadeAtText(NaN), '');
+  // 「動画に出さない」予定（videoExclude）：地名・写真・ピンは出さないが、道のりはその場所を通る
+  var tlEx = mkTl([mkStop('A', 35, 139), mkStop('秘密の場所', 35.1, 139.1, { videoExclude: true, photos: ['secret.jpg'] }), mkStop('C', 35.2, 139.2)]);
+  var stEx = T.buildVideoStory(tlEx, { photos: true });
+  eq('buildVideoStory: 動画に出さない予定も地点（道のりの通過点）には残る', stEx.wps.map(function (w) { return w.stopIndex; }), [0, 1, 2]);
+  eq('buildVideoStory: 動画に出さない予定の地名は出さない', stEx.wps.map(function (w) { return !!w.caption; }), [true, false, true]);
+  eq('buildVideoStory: 動画に出さない予定の地名・写真IDは絵コンテのどこにも入らない', JSON.stringify(stEx).indexOf('秘密') === -1 && JSON.stringify(stEx).indexOf('secret.jpg') === -1, true);
+  eq('buildVideoStory: 動画に出さない予定の写真は「写真あり」にも数えない', stEx.hasPhotos, false);
+  eq('buildVideoStory: 動画に出さない予定は隠す印（hidden）が付く', stEx.wps.map(function (w) { return w.hidden; }), [false, true, false]);
+  eq('buildVideoStory: 動画に出さない予定の前後にも道のりはつながっている（区間は2つ）', stEx.segs.length, 2);
+  var frEx = T.videoFrameAt(stEx, stEx.introSec + stEx.routeSec - 0.5);
+  eq('videoFrameAt: 動画に出さない予定のピンは最後まで出ない', frEx.pins.map(function (p) { return p.pop > 0; }), [true, false, true]);
   // 写真
   var tlPh = mkTl([mkStop('A', 35, 139, { photos: ['photo_a.jpg', 'photo_a2.jpg'] }), mkStop('', 35.1, 139.1, { photos: ['clip.mp4', 'photo_b.png'] }), mkStop('C', 35.2, 139.2, { photos: ['clip2.mov'] })]);
   var stPhOff = T.buildVideoStory(tlPh, { photos: false });
   eq('buildVideoStory: 写真OFFなら写真IDを持ち込まない', JSON.stringify(stPhOff).indexOf('photo_') === -1, true);
   eq('buildVideoStory: 写真OFFでは見出しの無い地点は出さない', stPhOff.wps.map(function (w) { return !!w.caption; }), [true, false, true]);
   var stPh = T.buildVideoStory(tlPh, { photos: true });
-  eq('buildVideoStory: 写真ONでは各地点の最初の写真（動画は除く）', stPh.wps.map(function (w) { return w.caption && w.caption.photo; }), ['photo_a.jpg', 'photo_b.png', '']);
+  eq('buildVideoStory: 写真ONでは各地点の最初の写真（動画は除く）。写真のある出来事を優先するので写真の無い3つ目は間引かれる', stPh.wps.map(function (w) { return w.caption && w.caption.photo; }), ['photo_a.jpg', 'photo_b.png', null]);
   eq('buildVideoStory: 写真ONなら見出しが空でも写真つきの地点は出す', stPh.wps[1].caption.label, '');
   eq('buildVideoStory: 写真があればhasPhotos', stPh.hasPhotos, true);
   // 多い旅行：地名の上限・時間の収まり
@@ -2050,9 +2069,11 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   for (var bi = 0; bi < 60; bi++) big.push(mkStop('場所' + bi, 35 + bi * 0.01, 139 + bi * 0.01, { dayNumber: 1 + Math.floor(bi / 10) }));
   var stBig = T.buildVideoStory(mkTl(big), {});
   var capCount = stBig.wps.filter(function (w) { return w.caption; }).length;
-  eq('buildVideoStory: 地点が60でも地名は上限（7つ）まで', capCount, T.VIDEO_MAX_CAPTIONS);
-  ok('buildVideoStory: 最初と最後の地名は残す', !!stBig.wps[0].caption && !!stBig.wps[59].caption);
-  ok('buildVideoStory: 60地点でも全部の地点に着いて出る時刻が道のりの秒数に収まる', stBig.wps[59].leave <= 11.5 - 0.7 + 1e-9);
+  eq('buildVideoStory: 60地点・6日は全体45秒に収める（道のり41.5秒）', stBig.routeSec, 41.5);
+  var bigPer = stBig.routeSec / 6;
+  eq('buildVideoStory: 1日約6.9秒に収まる数（0.9秒×4=3.6秒≦6.9秒×55%）まで、1日4つ×6日=24', capCount, 24);
+  ok('buildVideoStory: 60地点でも最後の地点を出る時刻が道のりの秒数に収まる', stBig.wps[59].leave <= stBig.routeSec + 1e-9);
+  ok('buildVideoStory: 各日の窓の中に、その日の地点への到着が収まる', stBig.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * bigPer - 1e-9 && w.arrive <= (d + 1) * bigPer + 1e-9; }));
   ok('buildVideoStory: 各地名を0.85秒以上は見せる', stBig.wps.every(function (w) { return !w.caption || w.leave - w.arrive >= 0.85; }));
   ok('buildVideoStory: カメラのキーは時刻が単調に増える', stBig.cameraKeys.every(function (k, i) { return i === 0 || k.t > stBig.cameraKeys[i - 1].t; }));
   ok('buildVideoStory: 1区間の線の点は間引かれる', (function () {
@@ -2066,7 +2087,7 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   })(), 2);
 
   // 各時刻の絵
-  var f0 = T.videoFrameAt(st, 0), fMid = T.videoFrameAt(st, 1.5 + 4), fEnd = T.videoFrameAt(st, 15);
+  var f0 = T.videoFrameAt(st, 0), fMid = T.videoFrameAt(st, 1.5 + 4), fEnd = T.videoFrameAt(st, st.total);
   eq('videoFrameAt: 始まりは導入（暗幕あり・ピンはまだ無い）', [f0.phase, f0.introAlpha > 0.9, f0.pins.every(function (p) { return p.pop === 0; })], ['intro', true, true]);
   ok('videoFrameAt: 導入の文字は少しずつ出る', T.videoFrameAt(st, 0.1).introTextAlpha < 1 && T.videoFrameAt(st, 0.5).introTextAlpha === 1);
   eq('videoFrameAt: 導入が終わると暗幕は無い', T.videoFrameAt(st, 1.5).introAlpha, 0);
@@ -2074,7 +2095,7 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   eq('videoFrameAt: 終わりは締め（暗幕あり）', [fEnd.phase, fEnd.outroAlpha], ['outro', 1]);
   ok('videoFrameAt: 最後にはすべての区間が描き終わり、ピンがすべて立つ', fEnd.segs.every(function (s) { return s.f === 1; }) && fEnd.pins.every(function (p) { return p.pop === 1; }));
   ok('videoFrameAt: 移動中は先頭の位置が2地点の間にある', (function () {
-    for (var t = 1.6; t < 13; t += 0.05) {
+    for (var t = 1.6; t < st.total - 3; t += 0.05) {
       var f = T.videoFrameAt(st, t);
       if (f.head) return f.head.lat > 34.9 && f.head.lat < 35.8;
     }
@@ -2082,7 +2103,7 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   })());
   ok('videoFrameAt: 区間の進み具合は時間とともに増えるだけ', (function () {
     var last = 0;
-    for (var t = 1.5; t <= 13; t += 0.1) { var f = T.videoFrameAt(st, t).segs[0].f; if (f < last - 1e-9) return false; last = f; }
+    for (var t = 1.5; t <= st.total - 2; t += 0.1) { var f = T.videoFrameAt(st, t).segs[0].f; if (f < last - 1e-9) return false; last = f; }
     return true;
   })());
   ok('videoFrameAt: 最初の地点に着くと地名の吹き出しが出る', (function () {
@@ -2090,16 +2111,16 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
     return !!f.caption && f.caption.label === '成田空港' && f.caption.alpha > 0.9;
   })());
   ok('videoFrameAt: 吹き出しは出る・消えるときにフェードする', T.videoFrameAt(st, 1.5 + st.wps[0].arrive + 0.05).caption.alpha < 1);
-  eq('videoFrameAt: 日は今いる地点の日（2日目の京都駅に着いたら2日目）', T.videoFrameAt(st, 15).day, 2);
+  eq('videoFrameAt: 日は今いる地点の日（最後は2日目）', T.videoFrameAt(st, st.total).day, 2);
   eq('videoFrameAt: 1日だけの旅行では日を出さない', T.videoFrameAt(T.buildVideoStory(mkTl([mkStop('a', 35, 139), mkStop('b', 35.2, 139.2)]), {}), 5).showDay, false);
   ok('videoFrameAt: 範囲外の時刻でも落ちない', !!T.videoFrameAt(st, -5) && !!T.videoFrameAt(st, 999));
   // カメラ：全区間で、立っているピンが画面に入っている
   ok('videoCameraAt: 導入は全体、最後も全体（同じ見え方）', (function () {
-    var a = T.videoCameraAt(st, 0), b = T.videoCameraAt(st, 15);
+    var a = T.videoCameraAt(st, 0), b = T.videoCameraAt(st, st.total);
     return near(a.x, b.x) && near(a.y, b.y) && near(a.zoom, b.zoom);
   })());
   ok('videoCameraAt: 道のりの間、移動中の先頭は画面（余白を含む）の中に入っている', (function () {
-    for (var t = 1.5; t < 13; t += 0.05) {
+    for (var t = 1.5; t < st.total - 2; t += 0.05) {
       var f = T.videoFrameAt(st, t);
       if (!f.head) continue;
       var p = T.videoProject(f.camera, 720, 1280, f.head.lat, f.head.lng);
@@ -2108,7 +2129,7 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
     return true;
   })());
   ok('videoCameraAt: 大きな旅行でも先頭はいつも画面の中', (function () {
-    for (var t = 1.5; t < 13; t += 0.05) {
+    for (var t = 1.5; t < stBig.total - 2; t += 0.1) {
       var f = T.videoFrameAt(stBig, t);
       if (!f.head) continue;
       var p = T.videoProject(f.camera, 720, 1280, f.head.lat, f.head.lng);
@@ -2128,6 +2149,92 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
     var v = stDate.overview, a = T.videoProject(v, 720, 1280, 35.55, 139.78), b = T.videoProject(v, 720, 1280, 33.94, 241.6);
     return a.x >= 0 && a.x <= 720 && b.x >= 0 && b.x <= 720;
   })());
+})();
+
+/* ---- 動画でシェア：長さは旅の日数で決める／地名は2時間に1つ・写真優先／旅行名は1行（2026-09-30） ---- */
+(function () {
+  function near(a, b, eps) { return Math.abs(a - b) <= (eps || 1e-6); }
+  // 長さ
+  var totals = [1, 2, 3, 4, 8, 13, 14, 20, 30].map(function (d) { return T.videoDurationPlan(d).total; });
+  eq('videoDurationPlan: 日帰り・2日・3日は全体で30秒', totals.slice(0, 3), [30, 30, 30]);
+  eq('videoDurationPlan: 4日（3泊）は道のり40秒＋導入・締め3.5秒', [T.videoDurationPlan(4).routeSec, T.videoDurationPlan(4).total], [40, 43.5]);
+  eq('videoDurationPlan: 8日は道のり41.5秒（1日約5.2秒）', T.videoDurationPlan(8).routeSec, 41.5);
+  eq('videoDurationPlan: 5日以上は全体45秒に収める（5日は1日8.3秒）', [T.videoDurationPlan(5).total, T.videoDurationPlan(5).perDay], [45, 8.3]);
+  ok('videoDurationPlan: 5日以上は全体を45秒に収め、1日ぶんは均等に縮む', [5, 8, 14, 20, 30, 100].every(function (d) { var p = T.videoDurationPlan(d); return near(p.total, 45) && near(p.perDay * d, p.routeSec) && p.perDay < 10; }));
+  eq('videoDurationPlan: 20日は1日2.075秒', T.videoDurationPlan(20).perDay, 2.075);
+  eq('videoDurationPlan: 日数が不正でも1日として扱う', T.videoDurationPlan(0).total, 30);
+  eq('videoTileLimit: 30秒までは260枚', [T.videoTileLimit(15), T.videoTileLimit(30)], [260, 260]);
+  eq('videoTileLimit: 長いほど増える（140秒で920枚）', [T.videoTileLimit(43.5), T.videoTileLimit(140)], [341, 920]);
+  // 地名の数：2時間に1つ
+  eq('videoCaptionCount: 8:00〜22:00（14時間）は7つ', T.videoCaptionCount(14 * 60, 30), 7);
+  eq('videoCaptionCount: 短い日でも最低1つ', T.videoCaptionCount(30, 10), 1);
+  eq('videoCaptionCount: 1日10秒なら止まる時間は55%まで＝0.9秒×6つまで', T.videoCaptionCount(14 * 60, 10), 6);
+  eq('videoCaptionCount: 1日約26秒なら7つ入る', T.videoCaptionCount(14 * 60, 26.5), 7);
+  // 出来事の選び方：写真優先、残りは時間で均等
+  eq('videoPickEvents: 少なければ全部', T.videoPickEvents([{ minute: 0 }, { minute: 60 }], 5), [0, 1]);
+  eq('videoPickEvents: 写真のある出来事を優先', T.videoPickEvents([{ minute: 0 }, { minute: 60, hasImage: true }, { minute: 120 }, { minute: 180, hasImage: true }, { minute: 240 }], 2), [1, 3]);
+  eq('videoPickEvents: 写真の方が多ければ、写真の中から均等に', T.videoPickEvents([0, 1, 2, 3, 4].map(function (i) { return { minute: i * 60, hasImage: true }; }), 3), [0, 2, 4]);
+  eq('videoPickEvents: 写真が足りないぶんは、時間が離れたものを選ぶ（写真は9:00、残り1つは端の21:00）',
+    T.videoPickEvents([{ minute: 540, hasImage: true }, { minute: 600 }, { minute: 780 }, { minute: 1260 }], 2), [0, 3]);
+  eq('videoPickEvents: 写真が無ければ先頭から時間で均等（8時・15時・22時）',
+    T.videoPickEvents([480, 540, 900, 1000, 1320].map(function (m) { return { minute: m }; }), 3), [0, 2, 4]);
+  // 絵コンテ：1日あたりの地名数と写真優先
+  function stop(label, day, minute, extra) {
+    return Object.assign({ label: label, lat: 35 + day * 0.1 + minute / 100000, lng: 139 + minute / 5000, located: true, dayNumber: day, minute: minute, photos: [] }, extra || {});
+  }
+  function tlOf(stops) {
+    var legs = [];
+    for (var i = 1; i < stops.length; i++) legs.push({ from: i - 1, to: i, transport: 'car', path: [[stops[i - 1].lat, stops[i - 1].lng], [stops[i].lat, stops[i].lng]] });
+    return { stops: stops, legs: legs, keyframes: [{ t: 0, r: 0 }], totalReal: 10 };
+  }
+  var d1 = []; // 8:00〜22:00、2時間おきに8つ、1日だけ
+  for (var h = 8; h <= 22; h += 2) d1.push(stop('場所' + h, 1, h * 60));
+  var s1 = T.buildVideoStory(tlOf(d1), {});
+  eq('buildVideoStory: 日帰りは30秒', s1.total, 30);
+  eq('buildVideoStory: 8:00〜22:00の日は7つ（14時間÷2時間）', s1.wps.filter(function (w) { return w.caption; }).length, 7);
+  ok('buildVideoStory: 各地名は0.9秒以上見せる', s1.wps.every(function (w) { return !w.caption || w.capEnd - w.arrive >= 0.9 - 1e-9; }));
+  ok('buildVideoStory: 時刻順のまま', s1.wps.every(function (w, i) { return i === 0 || w.arrive >= s1.wps[i - 1].leave - 1e-9; }));
+  // 写真のある出来事を優先（写真を入れる設定がOFFでも）
+  var d2 = d1.map(function (s, i) { return i === 1 || i === 5 ? Object.assign({}, s, { photos: ['photo_' + i + '.jpg'] }) : s; });
+  var s2 = T.buildVideoStory(tlOf(d2), { photos: false });
+  var labels2 = s2.wps.filter(function (w) { return w.caption; }).map(function (w) { return w.caption.label; });
+  ok('buildVideoStory: 写真OFFでも、写真のある出来事（10時・18時）を優先して残す', labels2.indexOf('場所10') !== -1 && labels2.indexOf('場所18') !== -1);
+  eq('buildVideoStory: 写真OFFなら写真IDは入らない', JSON.stringify(s2).indexOf('photo_') === -1, true);
+  var s2p = T.buildVideoStory(tlOf(d2), { photos: true });
+  eq('buildVideoStory: 写真ONなら写真が入る', s2p.wps.filter(function (w) { return w.caption && w.caption.photo; }).length, 2);
+  // 複数日：日ごとに窓。4日（3泊）は1日10秒、5日以上は全体45秒に収めて日ごとに等分
+  var days = [];
+  for (var dd = 1; dd <= 8; dd++) { days.push(stop('朝' + dd, dd, 8 * 60)); days.push(stop('昼' + dd, dd, 12 * 60)); days.push(stop('夜' + dd, dd, 20 * 60)); }
+  var s8 = T.buildVideoStory(tlOf(days), {});
+  eq('buildVideoStory: 8日は道のり41.5秒・全体45秒', [s8.routeSec, s8.total, s8.days], [41.5, 45, 8]);
+  var per8 = s8.routeSec / 8;
+  eq('buildVideoStory: 8:00〜20:00（12時間）の日は6つのはずが3地点しか無いので3つ×8日', s8.wps.filter(function (w) { return w.caption; }).length, 24);
+  ok('buildVideoStory: 各日の到着は、その日の窓の中', s8.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * per8 - 1e-9 && w.arrive <= (d + 1) * per8 + 1e-9; }));
+  ok('buildVideoStory: 何日目かは1日ぶんの秒数ごとに変わる', [0, 1, 2, 5, 7].every(function (d) { return T.videoFrameAt(s8, s8.introSec + d * per8 + 0.5).day === d + 1; }));
+  ok('buildVideoStory: 日をまたぐ移動は次の日の窓のはじめに始まって窓の中で終わる', (function () {
+    var seg = s8.segs[2]; // 1日目の夜→2日目の朝
+    return near(seg.moveStart, per8 + 0.3, 1e-6) && seg.moveEnd > per8 + 0.3 && seg.moveEnd < per8 * 2;
+  })());
+  ok('buildVideoStory: 前の日の最後の地点が延びても、地名の表示は延びない（capEnd）', s8.wps.every(function (w) { return !w.caption || w.capEnd <= w.leave + 1e-9; }));
+  // 20泊（21日）：全体45秒
+  var long21 = [];
+  for (var l = 1; l <= 21; l++) { long21.push(stop('朝' + l, l, 480)); long21.push(stop('夜' + l, l, 1200)); }
+  var sl = T.buildVideoStory(tlOf(long21), {});
+  ok('buildVideoStory: 21日でも全体は45秒', near(sl.total, 45) && sl.wps[sl.wps.length - 1].leave <= sl.routeSec);
+  // 旅行名を1行に
+  var m2 = function (s, size) { return s.length * size; }; // 1文字あたりsizepx
+  eq('videoFitTitle: 収まるなら最大サイズで1行', T.videoFitTitle('スイス旅行', 600, m2, { maxSize: 68, minSize: 40 }), { size: 68, lines: ['スイス旅行'] });
+  var f1 = T.videoFitTitle('ブラジル・アルゼンチン', 600, m2, { maxSize: 68, minSize: 40 });
+  ok('videoFitTitle: 長い旅行名は縮めて1行（幅に収まる最大のサイズ）', f1.lines.length === 1 && f1.size === 54 && m2(f1.lines[0], f1.size) <= 600 && m2(f1.lines[0], 56) > 600);
+  var f2 = T.videoFitTitle('ブラジル・アルゼンチン・チリ・ペルー周遊の旅', 600, m2, { maxSize: 68, minSize: 40 });
+  eq('videoFitTitle: 最小サイズでも入らなければ「・」で折り返す', f2, { size: 40, lines: ['ブラジル・アルゼンチン・チリ・', 'ペルー周遊の旅'] });
+  var f3 = T.videoFitTitle('Brazil Argentina Trip', 600, m2, { maxSize: 68, minSize: 40 });
+  ok('videoFitTitle: 英語は空白で折り返し、単語を切らない', f3.lines.length === 2 && f3.lines.join(' ') === 'Brazil Argentina Trip');
+  var f4 = T.videoFitTitle('あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよ', 600, m2, { maxSize: 68, minSize: 40 });
+  ok('videoFitTitle: 切れ目が無くて入らないときは2行・最後は…で幅に収まる', f4.lines.length === 2 && /…$/.test(f4.lines[1]) && f4.lines.every(function (l) { return m2(l, 40) <= 600; }));
+  var f5 = T.videoFitTitle('アルゼンチン・ブラジル・チリ・ペルー・ボリビア・パラグアイ・ウルグアイ・コロンビア・エクアドル', 600, m2, { maxSize: 68, minSize: 40 });
+  ok('videoFitTitle: 2行に入らなければ2行目を…で終える', f5.lines.length === 2 && /…$/.test(f5.lines[1]) && f5.lines.every(function (l) { return m2(l, 40) <= 600; }));
+  eq('videoFitTitle: 空なら行なし', T.videoFitTitle('  ', 600, m2, {}).lines, []);
 })();
 
 /* ---- 移動の予定の唯一のピンが到着地のとき、その予定は前の時差のまま（2026-09-30） ---- */
@@ -2229,6 +2336,119 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('スクショ: エラーの理由（除外は数えない）', r.errors.map(function (e) { return e.reason; }), ['日付が旅行の日程の外です', '日付を入れてください', '見出しが空です']);
   eq('スクショ: 不正な時刻は空・負の金額は送らない・レートは持ち越す', [r.items[0].time, r.items[0].costItems], ['', [{ label: 'A', amount: 5, currency: 'USD', rate: 150 }]]);
   eq('スクショ: 日程未設定の旅行なら日付は何でも通る', T.screenshotItemsToSavePayload([{ date: '2030-01-01', label: 'x', category: 'other' }], {}).items.length, 1);
+})();
+
+/* ---- 自分だけの道（別行動の分岐。docs/adr/0021） ---- */
+(function () {
+  var A = '111111', B = '222222';
+  var shared = [
+    { id: 's1', date: '2026-10-01', time: '09:00', label: '朝ごはん', category: 'food', createdAt: '1', entries: [], branchId: '' },
+    { id: 's2', date: '2026-10-01', time: '14:00', label: '海で遊ぶ', category: 'sightseeing', createdAt: '2', entries: [], branchId: '' },
+    { id: 's3', date: '2026-10-01', time: '16:59', label: '海のかたづけ', category: 'other', createdAt: '3', entries: [], branchId: '' },
+    { id: 's4', date: '2026-10-01', time: '17:00', label: '夕食', category: 'food', createdAt: '4', entries: [], branchId: '' },
+    { id: 's5', date: '2026-10-01', time: '', label: 'お土産メモ', category: 'other', createdAt: '5', entries: [], branchId: '' },
+    { id: 's6', date: '2026-10-02', time: '15:00', label: '2日目の予定', category: 'other', createdAt: '6', entries: [], branchId: '' }
+  ];
+  var branches = [
+    { id: 'br1', accountId: A, name: 'アリス', date: '2026-10-01', startTime: '14:00', endTime: '17:00', title: '' },
+    { id: 'br2', accountId: B, name: 'ボブ', date: '2026-10-01', startTime: '15:00', endTime: '16:00', title: '釣り' }
+  ];
+  var bb = [
+    { id: 'b1', date: '2026-10-01', time: '14:30', label: '美術館', category: 'sightseeing', createdAt: '10', entries: [], branchId: 'br1' },
+    { id: 'b2', date: '2026-10-01', time: '16:00', label: 'カフェ', category: 'food', createdAt: '11', entries: [], branchId: 'br1' },
+    { id: 'b3', date: '2026-10-01', time: '', label: '帰り道の寄り道', category: 'other', createdAt: '12', entries: [], branchId: 'br1' },
+    { id: 'b4', date: '2026-10-01', time: '15:10', label: '桟橋', category: 'sightseeing', createdAt: '13', entries: [], branchId: 'br2' }
+  ];
+  var ids = function (list) { return list.map(function (b) { return b.id; }); };
+
+  eq('canUseBranches: いまはログインしていれば誰でも使える', T.canUseBranches({ email: 'a@b.c' }), true);
+  eq('canUseBranches: 有料プランの人も使える', T.canUseBranches({ plan: 'premium_plus' }), true);
+
+  eq('blocksInBranchWindow: 開始時刻ちょうどを含み、終了時刻ちょうどは含まない',
+    ids(T.blocksInBranchWindow(shared, branches[0])), ['s2', 's3']);
+  eq('blocksInBranchWindow: 時刻なしの予定は入れない', ids(T.blocksInBranchWindow(shared, branches[0])).indexOf('s5'), -1);
+  eq('blocksInBranchWindow: 別の日の予定は入れない', ids(T.blocksInBranchWindow(shared, { date: '2026-10-02', startTime: '00:00', endTime: '23:59' })), ['s6']);
+
+  eq('visibleBlocksForView: みんな＝みんなの予定だけ（今までと同じ）', ids(T.visibleBlocksForView(shared, bb, branches, '')), ids(shared));
+  eq('visibleBlocksForView: アリス＝14〜17時のみんなの予定が消えて、アリスの分岐の予定が入る',
+    ids(T.visibleBlocksForView(shared, bb, branches, A)).sort(), ['b1', 'b2', 'b3', 's1', 's4', 's5', 's6']);
+  eq('visibleBlocksForView: ボブ＝15〜16時だけ入れ替わる',
+    ids(T.visibleBlocksForView(shared, bb, branches, B)).sort(), ['b4', 's1', 's2', 's3', 's4', 's5', 's6']);
+  eq('visibleBlocksForView: 分岐を持たない人を選ぶとみんなと同じ', ids(T.visibleBlocksForView(shared, bb, branches, '999999')), ids(shared));
+  eq('visibleBlocksForView: 元の配列は変えない', shared.length + '/' + bb.length, '6/4');
+
+  eq('resolveViewAccountId: 分岐がある人はそのまま', T.resolveViewAccountId(A, branches), A);
+  eq('resolveViewAccountId: 分岐が無くなった人はみんなに戻す', T.resolveViewAccountId('999999', branches), '');
+  eq('resolveViewAccountId: 空はみんな', T.resolveViewAccountId('', branches), '');
+
+  eq('branchViewOptions: 分岐を持つ人ごとに1つ（名前は参加者から、なければ分岐の名前）',
+    T.branchViewOptions(branches, [{ accountId: A, name: 'あーちゃん' }]), [
+      { accountId: A, name: 'あーちゃん', count: 1 },
+      { accountId: B, name: 'ボブ', count: 1 }
+    ]);
+  eq('branchViewOptions: 分岐が無ければ空（切り替えを出さない）', T.branchViewOptions([], []), []);
+  eq('branchViewOptions: 同じ人の複数の分岐は1つにまとめて数える',
+    T.branchViewOptions(branches.concat([{ id: 'br3', accountId: A, name: 'アリス', date: '2026-10-02', startTime: '10:00', endTime: '11:00' }]), [])[0].count, 2);
+
+  // 1日ぶんのタイムライン
+  var kinds = function (items) {
+    return items.map(function (it) { return it.type === 'block' ? it.block.id : it.type + ':' + it.branch.id; });
+  };
+  eq('dayTimelineItems: みんな＝カードが開始時刻の位置に入る（時刻なしは末尾）',
+    kinds(T.dayTimelineItems(shared, bb, branches, '', '2026-10-01')),
+    ['s1', 'card:br1', 's2', 'card:br2', 's3', 's4', 's5']);
+  eq('dayTimelineItems: アリス＝自分の分岐は帯＋分岐の予定、ボブの分岐はカード、14〜17時のみんなの予定は隠れる',
+    kinds(T.dayTimelineItems(shared, bb, branches, A, '2026-10-01')),
+    ['s1', 'band:br1', 'b3', 'b1', 'card:br2', 'b2', 's4', 's5']);
+  eq('dayTimelineItems: ボブ＝アリスの分岐はカード、自分の窓のぶんだけ入れ替わる',
+    kinds(T.dayTimelineItems(shared, bb, branches, B, '2026-10-01')),
+    ['s1', 'card:br1', 's2', 'band:br2', 'b4', 's3', 's4', 's5']);
+  eq('dayTimelineItems: 分岐の無い日は今までどおり', kinds(T.dayTimelineItems(shared, bb, branches, A, '2026-10-02')), ['s6']);
+  eq('dayTimelineItems: 分岐が1つも無い旅行は今までどおり', kinds(T.dayTimelineItems(shared, [], [], '', '2026-10-01')), ids(T.sortBlocks(shared.filter(function (b) { return b.date === '2026-10-01'; }))));
+  eq('dayTimelineItems: 帯には自分の分岐か（own）が付く', T.dayTimelineItems(shared, bb, branches, A, '2026-10-01').filter(function (i) { return i.type === 'band'; })[0].own, true);
+  eq('dayTimelineItems: 予定が1件も無い日でも、分岐のカードは出る',
+    kinds(T.dayTimelineItems([], [], [{ id: 'brX', accountId: A, name: 'アリス', date: '2026-10-05', startTime: '10:00', endTime: '11:00' }], '', '2026-10-05')), ['card:brX']);
+
+  eq('branchCardText: 予定の見出しを→でつなぐ', T.branchCardText(branches[0], bb), 'アリス：14:00〜17:00 別行動（美術館→カフェ→帰り道の寄り道）');
+  eq('branchCardText: タイトルがあればそれを使う', T.branchCardText(branches[1], bb), 'ボブ：15:00〜16:00 別行動（釣り）');
+  eq('branchCardText: 予定が無くタイトルも無ければ括弧なし', T.branchCardText({ id: 'z', name: 'ボブ', startTime: '09:00', endTime: '10:00' }, []), 'ボブ：09:00〜10:00 別行動');
+  eq('branchCardText: 名前が無いときは「だれか」', T.branchCardText({ id: 'z', name: '', startTime: '09:00', endTime: '10:00', title: 'x' }, []), 'だれか：09:00〜10:00 別行動（x）');
+  eq('branchCardText: 予定が多いときは3つまで＋…', T.branchCardText({ id: 'br9', name: 'あ', startTime: '09:00', endTime: '20:00' },
+    ['一', '二', '三', '四'].map(function (l, i) { return { id: 'q' + i, branchId: 'br9', date: '2026-10-01', time: '1' + i + ':00', label: l }; })),
+    'あ：09:00〜20:00 別行動（一→二→三…）');
+
+  // 入力チェック（サーバー worker/src/branches.js と同じ規則）
+  eq('validateBranch: 正しい入力', T.validateBranch({ date: '2026-10-01', startTime: '09:00', endTime: '10:00' }, [], A), '');
+  eq('validateBranch: 終わりが始まり以前', T.validateBranch({ date: '2026-10-01', startTime: '10:00', endTime: '10:00' }, [], A), 'end_before_start');
+  eq('validateBranch: 時刻が空', T.validateBranch({ date: '2026-10-01', startTime: '', endTime: '10:00' }, [], A), 'invalid_time');
+  eq('validateBranch: 自分の分岐と重なる', T.validateBranch({ date: '2026-10-01', startTime: '16:00', endTime: '18:00' }, branches, A), 'overlap');
+  eq('validateBranch: 他の人の分岐とは重なってよい', T.validateBranch({ date: '2026-10-01', startTime: '15:00', endTime: '15:30' }, [branches[1]], A), '');
+  eq('validateBranch: 隣り合うだけならよい', T.validateBranch({ date: '2026-10-01', startTime: '17:00', endTime: '18:00' }, branches, A), '');
+  eq('validateBranch: 自分自身は除く', T.validateBranch({ date: '2026-10-01', startTime: '13:00', endTime: '17:30' }, branches, A, 'br1'), '');
+  eq('branchErrorText: overlapは日本語の案内', /重なって/.test(T.branchErrorText('overlap')), true);
+  eq('branchErrorText: 知らない理由でも空にならない', T.branchErrorText('mystery').length > 0, true);
+
+  // 地図でふりかえる・動画：選んだ人の道の予定で再生地点を作る
+  (function () {
+    var trip2 = { startDate: '2026-10-01', endDate: '2026-10-01' };
+    var mk = function (id, time, label, url, branchId) {
+      return { id: id, date: '2026-10-01', time: time, label: label, category: 'sightseeing', createdAt: id, branchId: branchId || '',
+        entries: [{ id: 'e' + id, mapUrl: url, episode: label + 'の話', photoIds: [], costItems: [] }] };
+    };
+    var sh = [mk('s1', '09:00', '朝', 'https://maps.app.goo.gl/a'), mk('s2', '14:00', '海', 'https://maps.app.goo.gl/b'), mk('s4', '18:00', '夕食', 'https://maps.app.goo.gl/c')];
+    var bk = [mk('b1', '14:30', '美術館', 'https://maps.app.goo.gl/d', 'br1')];
+    var brs = [{ id: 'br1', accountId: 'A', name: 'a', date: '2026-10-01', startTime: '14:00', endTime: '17:00' }];
+    var stopIds = function (v) { return T.replayStops(trip2, T.visibleBlocksForView(sh, bk, brs, v)).map(function (s) { return s.blockId; }); };
+    eq('replayStops: みんなの道は今までどおり', stopIds(''), ['s1', 's2', 's4']);
+    eq('replayStops: 人の道では、別行動の時間帯がその人の予定の地点になる', stopIds('A'), ['s1', 'b1', 's4']);
+  })();
+
+  // 費用：分岐の予定も精算・合計に入る（みんなの予定と同じ式）
+  var costed = [
+    { id: 'c1', date: '2026-10-01', entries: [{ costItems: [{ label: 'ランチ', amount: 1000 }] }], branchId: '' },
+    { id: 'c2', date: '2026-10-01', entries: [{ costItems: [{ label: '入館料', amount: 500 }] }], branchId: 'br1' }
+  ];
+  eq('分岐の予定の費用も合計に入る（合わせて渡したとき）', T.tripTotalCost(costed), 1500);
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

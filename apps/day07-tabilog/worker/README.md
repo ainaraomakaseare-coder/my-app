@@ -812,3 +812,34 @@ npx wrangler deploy
 - **GCPのクォータに注意**：Cloud Visionは月1,000枚まで無料、超えると1,000枚あたり約$1.5。1回の取り込みで最大10枚使います。GCPで「Visionの1日の上限」を30枚などに絞っていると、10枚の取り込みは3回で尽きて`vision_failed`になります。機能を出す前に、1日の上限と予算アラートを決めてください。Places Text Searchは名前・住所・座標を聞くため Pro の単価帯です（1回の取り込みで最大12回）。
 - **サブリクエスト**：Workers Freeは1リクエスト50回まで。1回の取り込みは Vision 1＋OpenAI 1＋場所検索 最大12＋D1 約10＝約24回（最大でも約35回）で、`worker/src/screenshot-import.js`の`estimateSubrequests`で数えています。
 - ローカルの確認：`node worker/test/screenshot-import.test.mjs`（純粋関数）と`node worker/test/screenshot-handler.test.mjs`（Workerの入口から通し。D1・Vision・OpenAI・Placesはモックで、有料APIは呼びません）。
+
+
+## 自分だけの道（別行動の分岐）：マイグレーションは1文ずつ（2026-09-30 追加、docs/adr/0021）
+
+新しいテーブル`branches`と、`blocks`の新しい列`branch_id`が要る。`--file`は認証エラーになる環境があるので、**次の3つを1文ずつ**`--command`で実行する（`worker`フォルダで。デプロイの前でも後でもよい。`migrations/0030_branches.sql`にも同じものがある）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id);"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';"
+```
+
+- 3つ目のALTER TABLEは1回だけ（2回目は`duplicate column name`エラーになるが害はない）。列の有無は`PRAGMA table_info(blocks)`で確かめられる。
+- **実行前にデプロイしても壊れない**：`GET /trips/:id`は`branches: []`を返し、分岐を作ろうとしたときだけ503（`branches_not_ready`）になる。
+- API：`POST /trips/:id/branches`・`PATCH /branches/:id`・`DELETE /branches/:id`（持ち主だけ・ログイン必須）。`POST /trips/:id/blocks`の`branchId`。分岐の中の予定・記録の書き込みは持ち主だけ（403）。
+- テスト：`node worker/test/branches.test.mjs`（入力チェック・権限の純粋関数）と`node worker/test/branches-api.test.mjs`（`node:sqlite`の本物のSQLiteの上で、APIを通しで確認。Node 22.5以降）。
+
+## 予定を「動画でシェアに出さない」にする列（migration 0031）
+
+予定に`blocks.video_exclude`（0＝出す／1＝動画に出さない）の列を足した（`docs/adr/0020` 2026-09-30追記）。APIは、予定の作成・更新（`POST /trips/:id/blocks`、`PATCH /blocks/:id`）で`videoExclude`（true/false）を受け取り、旅行の取得と予定のレスポンスで返す。
+
+**デプロイの順番：先にmigration、そのあとにwrangler deploy**。
+
+```sh
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD COLUMN video_exclude INTEGER NOT NULL DEFAULT 0;"
+npx wrangler deploy
+```
+
+（`--file`は0024〜のときと同じ認証エラーが出る環境があるため`--command`。同じSQLは`migrations/0031_block_video_exclude.sql`にもある。1回だけ実行。2回目は`duplicate column name`になるが害はない。）
+
+先にデプロイしてしまっても壊れない：`video_exclude`の書き込みは別のUPDATEで`try/catch`（列が無ければ印が付かないだけ）、読み出しは列が無ければfalse。逆に、migrationだけ先に流しても、古いWorkerは列を知らないだけで動く。
