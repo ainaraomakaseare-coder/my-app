@@ -225,6 +225,20 @@
     return !b.transport && /フライト|飛行機|航空便|flight/i.test(b.label || '');
   }
 
+  var ARRIVAL_PIN_SAME_PLACE_KM = 3; // 次の予定の地図とこれ未満なら「同じ場所」
+
+  // 移動の予定の唯一のピンが、出発地ではなく到着地を指していると判断できるか（地図だけで決める）。
+  // 次の予定のピンとほぼ同じ場所なら、到着の予定に同じ場所を入れている＝この予定のピンも到着地。
+  // そうでなければ今までどおり出発地として読む（着いた先を別の移動の予定として入れた場合など）。
+  // 時刻の前後（出発が直前の予定より前になる等）では判断しない：日付変更線をまたぐ日は、時差が決まる前の
+  // 並びが当てにならないため。
+  function isArrivalOnlyPin(b, next) {
+    var e = (b.entries || [])[0], ne = next && (next.entries || [])[0];
+    return !!(e && ne && typeof e.mapLat === 'number' && typeof e.mapLng === 'number' &&
+      typeof ne.mapLat === 'number' && typeof ne.mapLng === 'number' &&
+      distanceKm({ lat: e.mapLat, lng: e.mapLng }, { lat: ne.mapLat, lng: ne.mapLng }) < ARRIVAL_PIN_SAME_PLACE_KM);
+  }
+
   // 予定ごとのタイムゾーンは、その予定「自身」の地図（記録の地図。移動の予定は出発地）だけで決める。
   // 見出しの文言（「〜到着」「〜へ」）・その日の場所（天気の場所）・予定を入れた順は一切見ない
   // （オーナー方針、2026-09-29：「マップが正。マップ入れてなかったら前の予定と一緒で大丈夫。
@@ -251,9 +265,19 @@
       if (z0) { firstPinned = z0; break; }
     }
     var zones = {}, carry = firstPinned || fallback || '';
-    order.forEach(function (b) {
+    order.forEach(function (b, idx) {
       var own = ownZone(b);
       var auto = own || carry;
+      // 移動の予定の時刻は出発の時刻。到着地の地図が別に無く、唯一のピンが今いる場所と違うタイムゾーンで、
+      // しかも次の予定が同じ場所のピンを持つ（isArrivalOnlyPin）ときは、そのピンは到着地と
+      // みなす：この予定は今いる場所（直前のタイムゾーン）の時間で読み、新しいタイムゾーンは次の予定から
+      // 使う（docs/adr/0009、2026-09-30）
+      var arrivalOnlyPin = '';
+      if (b.category === 'transport' && own && carry && own !== carry && !byArrive[b.id] &&
+          !b.tzOverride && isArrivalOnlyPin(b, order[idx + 1])) {
+        arrivalOnlyPin = own;
+        auto = carry;
+      }
       var zone;
       if (b.tzOverride === 'inherit') zone = carry;
       else if (b.tzOverride) zone = b.tzOverride;
@@ -263,6 +287,7 @@
       // （到着地が分かっているのに出発地のままだと、あとの地図の無い予定が出発地に巻き戻ってしまう）。
       // それ以外は、いま決めたタイムゾーン（手で直したものも含む。取り消せば直前へ戻る＝そのまま連鎖する）。
       carry = (b.category === 'transport' && byArrive[b.id]) ? byArrive[b.id] : zone;
+      if (arrivalOnlyPin) carry = arrivalOnlyPin;
     });
     return zones;
   }
