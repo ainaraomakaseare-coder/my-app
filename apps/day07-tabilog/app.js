@@ -11274,7 +11274,7 @@
         if (rd && rd._map && typeof rd._reset === 'function') rd._reset();
       });
       replayMap.on('zoomend moveend', function () {
-        if (!replay) return;
+        if (!replay || replay.seeking) return; // シーク中は seekReplayTo が自分で描き直す
         replay.mapAnimating = false;
         replay.cameraMoving = false;
         replay.cameraFlying = null;
@@ -11347,6 +11347,18 @@
   }
 
   // 1点を見える部分の真ん中に出す（アニメーションなし。最初と、シーク先へ合わせるとき）
+  // カメラの動き（flyTo・パン・ズームのアニメ）を、いまの見え方のまま止める。Leafletの map.stop() は使わない。
+  // stop() は最後に setZoom(今の縮尺を丸めたもの) を呼ぶ。setZoom はズームのアニメを「次のフレームで」始める
+  // ので、その時点の中心（飛んでいる途中の場所）へ戻るアニメが、直後にこちらが合わせ直した位置を上書きしてしまう。
+  // 「戻るを3回続けて押すと、地図が古い場所へずれ、青い線が乱れる」原因だった（2026-09-30）。
+  // ここでは、飛行・パンのアニメだけを止め（_stop）、走っているCSSのズームアニメがあれば終わらせ、
+  // 縮尺は自分で整数（zoomSnap）に丸める。
+  function replayStopCamera() {
+    if (typeof replayMap._stop === 'function') replayMap._stop(); else replayMap.stop();
+    if (replayMap._animatingZoom && typeof replayMap._onZoomTransitionEnd === 'function') replayMap._onZoomTransitionEnd();
+    return Math.round(replayMap.getZoom());
+  }
+
   function replayCenterOn(lat, lng, zoom) {
     var opts = replayViewPadding();
     opts.maxZoom = zoom; opts.animate = false;
@@ -11378,8 +11390,8 @@
 
   function resetReplayCamera() {
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
-    replayMap.stop();
-    replayCenterOn(first.lat, first.lng, Core.REPLAY_START_ZOOM);
+    replay.seeking = true;
+    try { replayStopCamera(); replayCenterOn(first.lat, first.lng, Core.REPLAY_START_ZOOM); } finally { replay.seeking = false; }
     replay.cameraFlying = null;
     replay.cameraPending = null;
     replay.cameraMoving = false;
@@ -11692,13 +11704,16 @@
     // moveendの処理が預かったカメラ移動を始めてしまう）
     replay.cameraPending = null;
     replay.cameraFlying = null;
-    replayMap.stop();
+    replay.seeking = true; // 止める・合わせ直すときに出るmoveendで、renderReplay（カメラ移動の開始）を走らせない
+    var keepZoom = replayStopCamera();
     replay.r = Math.max(0, Math.min(replay.tl.totalReal, r));
     replay.lastOffsetDiff = undefined; // 飛んだ先で「時差」のバナーを出さない
     replay.captionIndex = -2;
     replay.lastDay = 0;
     var st = Core.replayStateAt(replay.tl, replay.r);
-    if (st.here) replayCenterOn(st.here.lat, st.here.lng, replayMap.getZoom());
+    try {
+      if (st.here) replayCenterOn(st.here.lat, st.here.lng, keepZoom);
+    } finally { replay.seeking = false; }
     // カメラの判定（Core.cameraMoveDecision）は、いつも地図の今の中心・縮尺と比べるので、シーク先で
     // 合わせ直した見え方がそのまま基準になる（以前は別に持った「目的地」を更新し忘れると誤判定していた）。
     // すでにここでカメラを合わせたので、直後のrenderReplayが「区間・地点が変わった」と勘違いして
@@ -11713,6 +11728,9 @@
     replay.cameraMoving = false;
     var pane = replayOverlayPane();
     if (pane) { pane.style.transition = 'none'; pane.style.opacity = '1'; }
+    // 線の入れ物（SVG）の位置・大きさを、いまの地図に合わせ直してから描く（止めたアニメの途中の状態を残さない）
+    var rd = replayMap.options.renderer;
+    if (rd && rd._map && typeof rd._reset === 'function') rd._reset();
     renderReplayRoutes(replay.tl, replay.r, true); // 線は、飛んだ先の位置に合わせてゼロから描き直す
     renderReplay();
   }
