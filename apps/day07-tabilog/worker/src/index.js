@@ -31,7 +31,7 @@ import {
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
-import { validateBranchInput, validateBranchBlockPlacement, branchEndDateOf, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
+import { validateBranchInput, validateBranchBlockPlacement, dateToDays, branchEndDateOf, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
 import {
   PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, randomHex,
   pkceChallenge, buildAuthorizeUrl, buildAppleClientSecret, decodeJwtPayload, checkIdTokenClaims, extractProfile, revokeAppleTokens,
@@ -4561,7 +4561,7 @@ async function scanScreenshots(tripId, request, env, headers) {
 async function resolveProposalTarget(env, request, headers, tripId, { date, branchId }) {
   const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
   if (!trip) return { error: json({ error: "trip_not_found" }, 404, headers) };
-  if (date !== undefined && date !== null && date !== "" && !(isStr(date, 10) && DATE_RE.test(date))) return { error: json({ error: "invalid_date" }, 400, headers) };
+  if (date !== undefined && date !== null && date !== "" && !(isStr(date, 10) && dateToDays(date) !== null)) return { error: json({ error: "invalid_date" }, 400, headers) };
   if (!optStr(branchId, 100)) return { error: json({ error: "invalid_input" }, 400, headers) };
   let branch = null;
   let dates;
