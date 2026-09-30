@@ -1471,6 +1471,7 @@ body.viewer-open { overflow: hidden; }
 }
 .branch-card svg { flex-shrink: 0; color: var(--accent-deep); }
 .branch-card-text { flex: 1; min-width: 0; }
+.branch-card.continued { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
 .branch-card-go { font-size: 11px; font-weight: 700; color: var(--accent-deep); white-space: nowrap; }
 /* 選んだ人の分岐の見出し（帯）。持ち主には「予定を追加」「編集」が付く */
 .branch-band {

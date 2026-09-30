@@ -819,14 +819,22 @@ npx wrangler deploy
 新しいテーブル`branches`と、`blocks`の新しい列`branch_id`が要る。`--file`は認証エラーになる環境があるので、**次の3つを1文ずつ**`--command`で実行する（`worker`フォルダで。デプロイの前でも後でもよい。`migrations/0030_branches.sql`にも同じものがある）。
 
 ```
-npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, end_date TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
 npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id);"
 npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';"
 ```
 
+- `end_date`（日をまたぐ別行動の終わりの日。空＝1日）は、2026-09-30に0030のCREATE TABLEへ足した。**まだ0030を実行していないなら、上の3文（end_date入りの新しいCREATE）だけでよい。**
+- **すでに古い0030（end_dateなし）を実行済みのDBだけ**、続けて次の1文を実行する（`migrations/0032_branch_end_date.sql`と同じ。新しいCREATEで作った場合は不要で、実行しても`duplicate column name`エラーになるだけで害はない）。列の有無は`PRAGMA table_info(branches)`で確かめられる。
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE branches ADD COLUMN end_date TEXT NOT NULL DEFAULT '';"
+```
+
+- **end_date列が無いままデプロイしても壊れない**：すべて「1日の別行動」として動き、日をまたぐ別行動を作る・終わりの日を直すときだけ503（`branch_multiday_not_ready`）になる。
 - 3つ目のALTER TABLEは1回だけ（2回目は`duplicate column name`エラーになるが害はない）。列の有無は`PRAGMA table_info(blocks)`で確かめられる。
 - **実行前にデプロイしても壊れない**：`GET /trips/:id`は`branches: []`を返し、分岐を作ろうとしたときだけ503（`branches_not_ready`）になる。
-- API：`POST /trips/:id/branches`・`PATCH /branches/:id`・`DELETE /branches/:id`（持ち主だけ・ログイン必須）。`POST /trips/:id/blocks`の`branchId`。分岐の中の予定・記録の書き込みは持ち主だけ（403）。
+- API：`POST /trips/:id/branches`（`{date, endDate?, startTime, endTime, title?}`。`endDate`が開始日より後なら日をまたぐ）・`PATCH /branches/:id`（終わりの日・時刻・タイトル。始まりの日は変えられない）・`DELETE /branches/:id`（持ち主だけ・ログイン必須）。日をまたぐ別行動の中の予定は、日付が分岐の日々の中・時刻がその日の時間帯の中（始まりの日は開始以降、終わりの日は終了まで）でなければ400（`date_out_of_branch`・`time_out_of_branch`）。旅行に日程があるときは、始まり・終わりの日が日程の外だと400（`date_out_of_range`）。`POST /trips/:id/blocks`の`branchId`。分岐の中の予定・記録の書き込みは持ち主だけ（403）。
 - テスト：`node worker/test/branches.test.mjs`（入力チェック・権限の純粋関数）と`node worker/test/branches-api.test.mjs`（`node:sqlite`の本物のSQLiteの上で、APIを通しで確認。Node 22.5以降）。
 
 ## 予定を「動画でシェアに出さない」にする列（migration 0031）

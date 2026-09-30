@@ -2443,6 +2443,103 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
     eq('replayStops: 人の道では、別行動の時間帯がその人の予定の地点になる', stopIds('A'), ['s1', 'b1', 's4']);
   })();
 
+  // ---- 日をまたぐ別行動（6/27 14:00〜6/28 12:00） ----
+  (function () {
+    var C = 'ccc';
+    var sh = [
+      { id: 'm1', date: '2026-06-27', time: '10:00', label: '朝', category: 'other', createdAt: '1', entries: [], branchId: '' },
+      { id: 'm2', date: '2026-06-27', time: '15:00', label: '午後', category: 'other', createdAt: '2', entries: [], branchId: '' },
+      { id: 'm3', date: '2026-06-28', time: '08:00', label: '朝食', category: 'food', createdAt: '3', entries: [], branchId: '' },
+      { id: 'm4', date: '2026-06-28', time: '11:59', label: '出発前', category: 'other', createdAt: '4', entries: [], branchId: '' },
+      { id: 'm5', date: '2026-06-28', time: '12:00', label: '合流', category: 'other', createdAt: '5', entries: [], branchId: '' },
+      { id: 'm6', date: '2026-06-28', time: '', label: 'メモ', category: 'other', createdAt: '6', entries: [], branchId: '' },
+      { id: 'm7', date: '2026-06-29', time: '09:00', label: '3日目', category: 'other', createdAt: '7', entries: [], branchId: '' }
+    ];
+    var br = { id: 'bm', accountId: C, name: 'ひろや', date: '2026-06-27', endDate: '2026-06-28', startTime: '14:00', endTime: '12:00', title: '' };
+    var brSingle = { id: 'bs', accountId: A, name: 'アリス', date: '2026-06-29', startTime: '08:00', endTime: '10:00', title: '' };
+    var bk = [
+      { id: 'x1', date: '2026-06-27', time: '16:00', label: '温泉', category: 'other', createdAt: '20', entries: [], branchId: 'bm' },
+      { id: 'x2', date: '2026-06-28', time: '07:00', label: '朝市', category: 'food', createdAt: '21', entries: [], branchId: 'bm' },
+      { id: 'x3', date: '2026-06-28', time: '', label: '土産', category: 'other', createdAt: '22', entries: [], branchId: 'bm' }
+    ];
+    var ids2 = function (list) { return list.map(function (b) { return b.id; }); };
+    var kinds2 = function (items) {
+      return items.map(function (it) { return it.type === 'block' ? it.block.id : it.type + (it.continued ? '*' : '') + ':' + it.branch.id; });
+    };
+
+    eq('branchEndDate: 空なら開始日', [T.branchEndDate(brSingle), T.branchEndDate(br)], ['2026-06-29', '2026-06-28']);
+    eq('isMultiDayBranch', [T.isMultiDayBranch(brSingle), T.isMultiDayBranch(br), T.isMultiDayBranch(Object.assign({}, brSingle, { endDate: '2026-06-29' }))], [false, true, false]);
+    eq('branchDates: 日をまたぐと始まり〜終わりの日', T.branchDates(br), ['2026-06-27', '2026-06-28']);
+    eq('branchDates: 3日', T.branchDates({ date: '2026-06-30', endDate: '2026-07-02' }), ['2026-06-30', '2026-07-01', '2026-07-02']);
+    eq('branchDates: 1日', T.branchDates(brSingle), ['2026-06-29']);
+    eq('branchWindowOn: 始まりの日は開始から', T.branchWindowOn(br, '2026-06-27'), { start: 840, end: 1440 });
+    eq('branchWindowOn: 終わりの日は終了まで', T.branchWindowOn(br, '2026-06-28'), { start: 0, end: 720 });
+    eq('branchWindowOn: 途中の日は1日中', T.branchWindowOn({ date: '2026-06-27', endDate: '2026-06-29', startTime: '14:00', endTime: '12:00' }, '2026-06-28'), { start: 0, end: 1440 });
+    eq('branchWindowOn: かかっていない日はnull', [T.branchWindowOn(br, '2026-06-26'), T.branchWindowOn(br, '2026-06-29')], [null, null]);
+
+    eq('blocksInBranchWindow: 日またぎ：始まりの日は開始後、終わりの日は終了前（12:00ちょうどは含まない）・時刻なしは入れない',
+      ids2(T.blocksInBranchWindow(sh, br)), ['m2', 'm3', 'm4']);
+    eq('visibleBlocksForView: 日またぎの人の道：各日の窓の中のみんなの予定が外れ、その人の予定が入る',
+      ids2(T.visibleBlocksForView(sh, bk, [br], C)).sort(), ['m1', 'm5', 'm6', 'm7', 'x1', 'x2', 'x3']);
+    eq('visibleBlocksForView: 別の人の道は変わらない', ids2(T.visibleBlocksForView(sh, bk, [br], A)), ids2(sh));
+    eq('visibleBlocksForView: みんなの道は今までどおり', ids2(T.visibleBlocksForView(sh, bk, [br], '')), ids2(sh));
+
+    // タイムライン
+    eq('dayTimelineItems: みんなの表示・始まりの日はカード（開始の位置）',
+      kinds2(T.dayTimelineItems(sh, bk, [br], '', '2026-06-27')), ['m1', 'card:bm', 'm2']);
+    eq('dayTimelineItems: みんなの表示・2日目はその日の先頭に「別行動中」カード',
+      kinds2(T.dayTimelineItems(sh, bk, [br], '', '2026-06-28')), ['card*:bm', 'm3', 'm4', 'm5', 'm6']);
+    eq('dayTimelineItems: みんなの表示・分岐がかからない日は出ない', kinds2(T.dayTimelineItems(sh, bk, [br], '', '2026-06-29')), ['m7']);
+    eq('dayTimelineItems: その人の道・始まりの日は開始からその人の予定に置き換わる',
+      kinds2(T.dayTimelineItems(sh, bk, [br], C, '2026-06-27')), ['m1', 'band:bm', 'x1']);
+    eq('dayTimelineItems: その人の道・2日目は先頭の帯（時刻なしの予定が続く）、終了前のみんなの予定は外れ、終了後は残る',
+      kinds2(T.dayTimelineItems(sh, bk, [br], C, '2026-06-28')), ['band*:bm', 'x3', 'x2', 'm5', 'm6']);
+    eq('dayTimelineItems: 別の人の道では、日またぎはカードのまま',
+      kinds2(T.dayTimelineItems(sh, bk, [br], A, '2026-06-28')), ['card*:bm', 'm3', 'm4', 'm5', 'm6']);
+    eq('dayTimelineItems: 1日の分岐は今までどおり（continuedなし）',
+      kinds2(T.dayTimelineItems(sh, [], [brSingle], '', '2026-06-29')), ['card:bs', 'm7']);
+    eq('dayTimelineItems: 帯のcontinued・own', (function () {
+      var b = T.dayTimelineItems(sh, bk, [br], C, '2026-06-28')[0];
+      return [b.type, b.continued, b.own];
+    })(), ['band', true, true]);
+
+    // 文言
+    eq('branchRangeText: 1日は時刻だけ', T.branchRangeText(brSingle), '08:00〜10:00');
+    eq('branchRangeText: 日またぎは月/日つき', T.branchRangeText(br), '6/27 14:00〜6/28 12:00');
+    eq('branchCardText: 日またぎの開始日のカード（予定なし）', T.branchCardText(br, []), 'ひろや：6/27 14:00〜6/28 12:00 別行動');
+    eq('branchCardText: 日またぎ＋予定の見出し', T.branchCardText(br, bk), 'ひろや：6/27 14:00〜6/28 12:00 別行動（温泉→朝市→土産）');
+    eq('branchContinuedText: 2日目以降の小さなカード', T.branchContinuedText(br), 'ひろや：別行動中（〜6/28 12:00）');
+    eq('branchUntilText', T.branchUntilText(br), '〜6/28 12:00');
+
+    // 入力チェック（サーバーと同じ規則）
+    var vb = function (o, others, exclude, trip) { return T.validateBranch(o, others || [], C, exclude, trip); };
+    eq('validateBranch: 日またぎ（終わり時刻が前でも、終わりの日が後ならOK）', vb({ date: '2026-06-27', endDate: '2026-06-28', startTime: '14:00', endTime: '12:00' }), '');
+    eq('validateBranch: 終わりの日が始まりより前', vb({ date: '2026-06-28', endDate: '2026-06-27', startTime: '09:00', endTime: '10:00' }), 'end_before_start');
+    eq('validateBranch: 同じ日で終わり<始まり', vb({ date: '2026-06-27', endDate: '2026-06-27', startTime: '14:00', endTime: '12:00' }), 'end_before_start');
+    eq('validateBranch: endDate省略は1日', vb({ date: '2026-06-27', startTime: '09:00', endTime: '10:00' }), '');
+    eq('validateBranch: 日またぎと重なる（途中の日）', vb({ date: '2026-06-28', startTime: '01:00', endTime: '02:00' }, [br]), 'overlap');
+    eq('validateBranch: 日またぎの終了ちょうどから始めるのはOK', vb({ date: '2026-06-28', startTime: '12:00', endTime: '13:00' }, [br]), '');
+    eq('validateBranch: 日またぎ自身は除く', vb({ date: '2026-06-27', endDate: '2026-06-28', startTime: '13:00', endTime: '12:00' }, [br], 'bm'), '');
+    eq('validateBranch: 別の人の日またぎとは重なってよい', T.validateBranch({ date: '2026-06-28', startTime: '01:00', endTime: '02:00' }, [br], A), '');
+    eq('validateBranch: 旅行の日程の外（終わりの日）', vb({ date: '2026-06-27', endDate: '2026-06-29', startTime: '14:00', endTime: '12:00' }, [], undefined, { startDate: '2026-06-27', endDate: '2026-06-28' }), 'date_out_of_range');
+    eq('validateBranch: 旅行の日程の中', vb({ date: '2026-06-27', endDate: '2026-06-28', startTime: '14:00', endTime: '12:00' }, [], undefined, { startDate: '2026-06-27', endDate: '2026-06-28' }), '');
+    eq('validateBranch: 日程が空の旅行は範囲を見ない', vb({ date: '2026-06-27', endDate: '2026-06-29', startTime: '14:00', endTime: '12:00' }, [], undefined, { startDate: '', endDate: '' }), '');
+    eq('branchErrorText: 日またぎ関連の案内', ['date_out_of_range', 'date_out_of_branch', 'time_out_of_branch', 'branch_multiday_not_ready'].every(function (k) { return T.branchErrorText(k).indexOf('保存に失敗') < 0; }), true);
+
+    // 別行動の中の予定の置き場所（サーバーと同じ規則）
+    eq('validateBranchBlock: 始まりの日の開始前はNG・開始ちょうどはOK', [T.validateBranchBlock(br, '2026-06-27', '13:59'), T.validateBranchBlock(br, '2026-06-27', '14:00')], ['time_out_of_branch', '']);
+    eq('validateBranchBlock: 終わりの日の終了ちょうどはOK・後はNG', [T.validateBranchBlock(br, '2026-06-28', '12:00'), T.validateBranchBlock(br, '2026-06-28', '12:01')], ['', 'time_out_of_branch']);
+    eq('validateBranchBlock: 範囲外の日・時刻なし', [T.validateBranchBlock(br, '2026-06-29', '10:00'), T.validateBranchBlock(br, '2026-06-26', ''), T.validateBranchBlock(br, '2026-06-28', '')], ['date_out_of_branch', 'date_out_of_branch', '']);
+
+    // 地図でふりかえる・動画：日をまたぐ窓に従う
+    var trip3 = { startDate: '2026-06-27', endDate: '2026-06-29' };
+    var geo = function (b) { b.entries = [{ id: 'e' + b.id, mapUrl: 'https://maps.app.goo.gl/' + b.id, episode: b.label + 'の話', photoIds: [], costItems: [] }]; return b; };
+    var shG = sh.map(function (b) { return geo(Object.assign({}, b)); }), bkG = bk.map(function (b) { return geo(Object.assign({}, b)); });
+    var stopIds2 = function (v) { return T.replayStops(trip3, T.visibleBlocksForView(shG, bkG, [br], v)).map(function (s) { return s.blockId; }); };
+    eq('replayStops: みんなの道は今までどおり', stopIds2('').filter(function (i) { return i !== 'm6'; }), ['m1', 'm2', 'm3', 'm4', 'm5', 'm7']);
+    eq('replayStops: 日またぎの人の道は2日にわたってその人の予定になる', stopIds2(C).filter(function (i) { return i !== 'm6' && i !== 'x3'; }), ['m1', 'x1', 'x2', 'm5', 'm7']);
+  })();
+
   // 費用：分岐の予定も精算・合計に入る（みんなの予定と同じ式）
   var costed = [
     { id: 'c1', date: '2026-10-01', entries: [{ costItems: [{ label: 'ランチ', amount: 1000 }] }], branchId: '' },

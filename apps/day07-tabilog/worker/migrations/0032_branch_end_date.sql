@@ -1,0 +1,11 @@
+-- v32（2026-09-30）：別行動（分岐）が日をまたげるようにする。docs/adr/0021-personal-branches.md（日をまたぐ別行動の節）
+-- branches.end_date：別行動の終わりの日。空文字は date と同じ（1日の別行動）。
+--
+-- 実行が必要なのは「0030を、end_date列が入る前の版で実行済みのDB」だけ。
+-- 0030のCREATE TABLEを新しい版（end_date入り）で実行した場合は不要（実行しても「duplicate column name」エラーになるだけで害はない）。
+--
+--   npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE branches ADD COLUMN end_date TEXT NOT NULL DEFAULT '';"
+--
+-- 実行前にWorkerをデプロイしても壊れない作りにしてある（列が無ければ全部1日の別行動として動き、
+-- 日をまたぐ別行動を作ろうとしたときだけ503 branch_multiday_not_ready を返す）。
+ALTER TABLE branches ADD COLUMN end_date TEXT NOT NULL DEFAULT '';

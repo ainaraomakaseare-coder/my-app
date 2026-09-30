@@ -485,6 +485,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <div class="field">
             <label for="blkDate">日付</label>
             <input type="date" id="blkDate">
+            <select id="blkBranchDate" hidden></select>
           </div>
           <div class="field">
             <label for="blkTime">時間</label>
@@ -960,20 +961,27 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="sheet-close" id="btnCloseBranchSheet" type="button" aria-label="閉じる">×</button>
     </div>
     <p class="hint" id="branchSheetNote">みんなと別行動した時間帯を入れます。この時間帯のあいだ、あなたの道の表示では「みんなの予定」のかわりに、あなたが書いた予定が並びます。みんなにも見えますが、直せるのはあなただけです。</p>
-    <div class="field">
-      <label>日付</label>
-      <div class="branch-date-text" id="brDateText"></div>
+    <div class="field-row">
+      <div class="field">
+        <label for="brStartDate">始まり（日付）</label>
+        <select id="brStartDate"></select>
+      </div>
+      <div class="field">
+        <label for="brStart">始まり（時刻）</label>
+        <input type="time" id="brStart">
+      </div>
     </div>
     <div class="field-row">
       <div class="field">
-        <label for="brStart">始まり</label>
-        <input type="time" id="brStart">
+        <label for="brEndDate">終わり（日付）</label>
+        <select id="brEndDate"></select>
       </div>
       <div class="field">
-        <label for="brEnd">終わり</label>
+        <label for="brEnd">終わり（時刻）</label>
         <input type="time" id="brEnd">
       </div>
     </div>
+    <p class="hint">終わりの日付を後の日にすると、日をまたぐ別行動（例：6/27 14:00〜6/28 12:00）になります。</p>
     <div class="field">
       <label for="brTitle">タイトル（任意）</label>
       <input type="text" id="brTitle" maxlength="100" placeholder="例：美術館とカフェ">

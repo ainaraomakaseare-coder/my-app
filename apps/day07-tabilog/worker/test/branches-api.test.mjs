@@ -26,7 +26,7 @@ CREATE TABLE trips (id TEXT PRIMARY KEY, title TEXT NOT NULL, start_date TEXT NO
 CREATE TABLE blocks (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, date TEXT NOT NULL DEFAULT '', time TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'sightseeing', transport TEXT NOT NULL DEFAULT '', move_minutes INTEGER NOT NULL DEFAULT 0, manual_order INTEGER, tz_override TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE entries (id TEXT PRIMARY KEY, block_id TEXT NOT NULL, episode TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', photo_ids TEXT NOT NULL DEFAULT '[]', video_ids TEXT NOT NULL DEFAULT '[]', cost_items TEXT NOT NULL DEFAULT '[]', wait_time TEXT NOT NULL DEFAULT '', map_url TEXT NOT NULL DEFAULT '', map_place_name TEXT NOT NULL DEFAULT '', shop_url TEXT NOT NULL DEFAULT '', other_url TEXT NOT NULL DEFAULT '', time TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', travel TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE ratings (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, rater_email TEXT NOT NULL, score REAL);
-CREATE TABLE day_infos (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, date TEXT NOT NULL);
+CREATE TABLE day_infos (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, date TEXT NOT NULL, weather_code INTEGER, temp_max REAL, temp_min REAL, precip_sum REAL, is_forecast INTEGER NOT NULL DEFAULT 0, fetched_at TEXT NOT NULL DEFAULT '', weather_manual INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE accounts (email TEXT PRIMARY KEY, account_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '', plan TEXT NOT NULL DEFAULT 'free', ticket_credits INTEGER NOT NULL DEFAULT 0, plan_period_start TEXT NOT NULL DEFAULT '', voice_uses_this_period INTEGER NOT NULL DEFAULT 0, memo_uses_this_period INTEGER NOT NULL DEFAULT 0, stripe_customer_id TEXT NOT NULL DEFAULT '', stripe_subscription_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE trip_members (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', joined_at TEXT NOT NULL, UNIQUE(trip_id, account_id));
 CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, email TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
@@ -36,12 +36,32 @@ CREATE TABLE user_blocks (blocker_account_id TEXT NOT NULL, blocked_account_id T
 CREATE TABLE auth_identities (provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT NOT NULL, refresh_token TEXT NOT NULL DEFAULT '');
 CREATE TABLE comment_reports (id TEXT PRIMARY KEY, comment_id TEXT NOT NULL, reporter_account_id TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 `);
-// マイグレーション0030の中身（branchesテーブルとblocks.branch_id）は、あとで「実行前」の状態を作るため別に流す
-const MIGRATION_0030 = [
+// マイグレーション0030の中身（branchesテーブルとblocks.branch_id）は、あとで「実行前」の状態を作るため別に流す。
+// end_date列が入る前の古い0030（OLD）を先に流し、そのあと0032のALTERで足す流れも確かめる。
+const MIGRATION_0030_OLD = [
   "CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
   "CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id)",
   "ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT ''",
 ];
+const MIGRATION_0032 = "ALTER TABLE branches ADD COLUMN end_date TEXT NOT NULL DEFAULT ''";
+
+// 実際のマイグレーションファイル（0030の新しいCREATE・0032）が、別のDBで通り、end_date列ができることを確かめる
+{
+  const { readFileSync } = await import("node:fs");
+  const sqlOf = (name) => readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8");
+  const fresh = new DatabaseSync(":memory:");
+  fresh.exec("CREATE TABLE blocks (id TEXT PRIMARY KEY)");
+  fresh.exec(sqlOf("0030_branches.sql"));
+  check("0030（新）にはend_date列がある", fresh.prepare("PRAGMA table_info(branches)").all().some((c) => c.name === "end_date"), true);
+  let dup = "";
+  try { fresh.exec(sqlOf("0032_branch_end_date.sql")); } catch (e) { dup = String(e.message); }
+  check("0030（新）のあとに0032を流すと重複列エラー（害はない）", /duplicate column/i.test(dup), true);
+  const old = new DatabaseSync(":memory:");
+  old.exec("CREATE TABLE blocks (id TEXT PRIMARY KEY)");
+  for (const sql of MIGRATION_0030_OLD) old.exec(sql);
+  old.exec(sqlOf("0032_branch_end_date.sql"));
+  check("古い0030のあとに0032を流すとend_date列ができる", old.prepare("PRAGMA table_info(branches)").all().some((c) => c.name === "end_date"), true);
+}
 
 const DB = {
   prepare(sql) {
@@ -98,7 +118,27 @@ async function call(method, path, who, body) {
   const reorder = await call("PATCH", "/trips/t1/days/2026-10-01/blocks/reorder", null, { blockIds: [shared.data.id] });
   check("マイグレーション前でも並べ替えは動く", reorder.status, 200);
 }
-for (const sql of MIGRATION_0030) sqlite.exec(sql);
+for (const sql of MIGRATION_0030_OLD) sqlite.exec(sql);
+
+// ---------- 0030は流したが、0032（end_date列）はまだ：1日の別行動だけ動き、日をまたぐ別行動は503 ----------
+{
+  let x = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-05", startTime: "09:00", endTime: "10:00" });
+  check("end_date列が無くても、1日の別行動は作れる（endDateは開始日と同じ）", [x.status, x.data.endDate, x.data.date], [201, "2026-10-05", "2026-10-05"]);
+  const oldId = x.data.id;
+  x = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-06", endDate: "2026-10-07", startTime: "09:00", endTime: "10:00" });
+  check("end_date列が無いと、日をまたぐ別行動は503（わかるエラー）", [x.status, x.data.error], [503, "branch_multiday_not_ready"]);
+  x = await call("PATCH", "/branches/" + oldId, "alice", { endDate: "2026-10-06" });
+  check("end_date列が無いと、終わりの日を後ろへ直すのも503", [x.status, x.data.error], [503, "branch_multiday_not_ready"]);
+  x = await call("PATCH", "/branches/" + oldId, "alice", { endTime: "11:00" });
+  check("end_date列が無くても、時刻の更新はできる", [x.status, x.data.endTime, x.data.endDate], [200, "11:00", "2026-10-05"]);
+  x = await call("GET", "/trips/t1");
+  check("end_date列が無くてもGETでき、endDateは開始日と同じ", [x.status, x.data.branches.map((b) => b.endDate)], [200, ["2026-10-05"]]);
+  x = await call("POST", "/trips/t1/blocks", "alice", { label: "朝", time: "09:30", branchId: oldId });
+  check("end_date列が無くても、分岐の中の予定は作れる", [x.status, x.data.date], [201, "2026-10-05"]);
+  sqlite.prepare("DELETE FROM blocks WHERE branch_id != ''").run();
+  sqlite.prepare("DELETE FROM branches").run();
+}
+sqlite.exec(MIGRATION_0032);
 
 // ---------- 分岐の作成 ----------
 const sharedId = sqlite.prepare("SELECT id FROM blocks WHERE trip_id = 't1'").get().id;
@@ -123,15 +163,21 @@ r = await call("POST", "/trips/t1/blocks", "bob", { label: "ボブがアリス�
 check("他人の分岐の中には予定を作れない", [r.status, r.data.error], [403, "forbidden"]);
 r = await call("POST", "/trips/t1/blocks", null, { label: "匿名", time: "15:00", branchId });
 check("ログインなしで分岐の中に予定は作れない", r.status, 401);
-r = await call("POST", "/trips/t1/blocks", "alice", { date: "2099-01-01", label: "美術館", time: "14:30", category: "sightseeing", branchId });
-check("持ち主は作れて、日付は分岐の日に固定される", [r.status, r.data.branchId, r.data.date], [201, branchId, "2026-10-01"]);
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2099-01-01", label: "範囲外", time: "14:30", category: "sightseeing", branchId });
+check("分岐の日の外の日付は400", [r.status, r.data.error], [400, "date_out_of_branch"]);
+r = await call("POST", "/trips/t1/blocks", "alice", { label: "時間外", time: "10:00", category: "sightseeing", branchId });
+check("分岐の時間帯より前の時刻は400", [r.status, r.data.error], [400, "time_out_of_branch"]);
+r = await call("POST", "/trips/t1/blocks", "alice", { label: "美術館", time: "14:30", category: "sightseeing", branchId });
+check("持ち主は作れて、日付を省くと分岐の日になる", [r.status, r.data.branchId, r.data.date], [201, branchId, "2026-10-01"]);
 const branchBlockId = r.data.id;
 r = await call("POST", "/trips/t1/blocks", "alice", { label: "存在しない分岐", branchId: "br_nothing" });
 check("存在しない分岐は404", [r.status, r.data.error], [404, "branch_not_found"]);
 r = await call("PATCH", "/blocks/" + branchBlockId, "bob", { label: "書き換え" });
 check("他人は分岐の中の予定を直せない", r.status, 403);
 r = await call("PATCH", "/blocks/" + branchBlockId, "alice", { label: "美術館（改）", date: "2099-01-01" });
-check("持ち主は直せる（日付は動かない）", [r.status, r.data.label, r.data.date, r.data.branchId], [200, "美術館（改）", "2026-10-01", branchId]);
+check("分岐の外の日付への更新は400", [r.status, r.data.error], [400, "date_out_of_branch"]);
+r = await call("PATCH", "/blocks/" + branchBlockId, "alice", { label: "美術館（改）" });
+check("持ち主は直せる（分岐は変わらない）", [r.status, r.data.label, r.data.date, r.data.branchId], [200, "美術館（改）", "2026-10-01", branchId]);
 r = await call("POST", "/blocks/" + branchBlockId + "/entries", "bob", { episode: "x", author: "ボブ" });
 check("他人は分岐の中の予定に記録を書けない", r.status, 403);
 r = await call("POST", "/blocks/" + branchBlockId + "/entries", null, { episode: "x" });
@@ -169,11 +215,107 @@ check("みんなの予定にはmanual_orderが付く", sqlite.prepare("SELECT ma
 r = await call("PATCH", "/branches/" + branchId, "bob", { title: "乗っ取り" });
 check("他人は分岐を直せない", [r.status, r.data.error], [403, "forbidden"]);
 r = await call("PATCH", "/branches/" + branchId, "alice", { date: "2026-10-02" });
-check("日付は変えられない", r.status, 400);
+check("始まりの日付は変えられない", r.status, 400);
 r = await call("PATCH", "/branches/" + branchId, "alice", { startTime: "13:00", endTime: "17:30", title: "延長" });
 check("持ち主は時間帯とタイトルを直せる（自分自身とは重ならない扱い）", [r.status, r.data.startTime, r.data.endTime, r.data.title], [200, "13:00", "17:30", "延長"]);
 r = await call("PATCH", "/branches/" + branchId, "alice", { endTime: "12:00" });
 check("終わりが始まりより前になる更新は400", r.status, 400);
+
+// ---------- 日をまたぐ別行動（end_date） ----------
+r = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-02", endDate: "2026-10-04", startTime: "14:00", endTime: "12:00", title: "一泊二日の別行動" });
+check("日をまたぐ別行動を作れる（終わりの時刻が始まりより前でも、終わりの日が後ならよい）", [r.status, r.data.date, r.data.endDate, r.data.startTime, r.data.endTime], [201, "2026-10-02", "2026-10-04", "14:00", "12:00"]);
+const multiId = r.data.id;
+check("DBのend_dateに入る", sqlite.prepare("SELECT end_date AS e FROM branches WHERE id = ?").get(multiId).e, "2026-10-04");
+r = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-04", endDate: "2026-10-02", startTime: "09:00", endTime: "10:00" });
+check("終わりの日が始まりの日より前は400", [r.status, r.data.error], [400, "end_before_start"]);
+r = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-06", endDate: "2026-10-06", startTime: "12:00", endTime: "10:00" });
+check("同じ日で終わりが始まりより前は400", [r.status, r.data.error], [400, "end_before_start"]);
+r = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-03", startTime: "10:00", endTime: "11:00" });
+check("日をまたぐ別行動の途中の日に、自分の別行動は重ねられない", [r.status, r.data.error], [400, "overlap"]);
+r = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-04", endDate: "2026-10-05", startTime: "11:00", endTime: "09:00" });
+check("終わりの日の終了時刻より前から始まる別行動は重なる", [r.status, r.data.error], [400, "overlap"]);
+r = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-01", endDate: "2026-10-02", startTime: "16:00", endTime: "15:00" });
+check("始まりの日の開始時刻より後に終わる別行動は重なる", [r.status, r.data.error], [400, "overlap"]);
+r = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-04", startTime: "12:00", endTime: "13:00" });
+check("ぴったり隣り合う（終わりの日の12:00から）のは重ならない", [r.status, r.data.endDate], [201, "2026-10-04"]);
+const adjacentId = r.data.id;
+r = await call("POST", "/trips/t1/branches", "bob", { date: "2026-10-03", endDate: "2026-10-04", startTime: "08:00", endTime: "08:00" });
+check("別の人なら、同じ日に重なる日またぎも作れる", [r.status, r.data.endDate], [201, "2026-10-04"]);
+const bobMultiId = r.data.id;
+
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2026-10-02", time: "13:59", label: "始まりの日の開始前", branchId: multiId });
+check("始まりの日は開始時刻より前の予定を置けない", [r.status, r.data.error], [400, "time_out_of_branch"]);
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2026-10-04", time: "12:01", label: "終わりの日の終了後", branchId: multiId });
+check("終わりの日は終了時刻より後の予定を置けない", [r.status, r.data.error], [400, "time_out_of_branch"]);
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2026-10-05", time: "10:00", label: "範囲外の日", branchId: multiId });
+check("分岐の最後の日より後の日付は置けない", [r.status, r.data.error], [400, "date_out_of_branch"]);
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2026-10-01", time: "20:00", label: "範囲外の日", branchId: multiId });
+check("分岐の最初の日より前の日付は置けない", [r.status, r.data.error], [400, "date_out_of_branch"]);
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2026-10-03", time: "03:00", label: "夜中", branchId: multiId });
+check("途中の日は1日中どの時刻でもよい", [r.status, r.data.date, r.data.branchId], [201, "2026-10-03", multiId]);
+const midBlockId = r.data.id;
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2026-10-02", time: "14:00", label: "開始ちょうど", branchId: multiId });
+check("開始ちょうどは置ける", r.status, 201);
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2026-10-04", time: "12:00", label: "終了ちょうど", branchId: multiId });
+check("終了ちょうどは置ける", r.status, 201);
+r = await call("POST", "/trips/t1/blocks", "alice", { time: "18:00", label: "日付なし", branchId: multiId });
+check("日付を省くと始まりの日になる", [r.status, r.data.date], [201, "2026-10-02"]);
+r = await call("POST", "/trips/t1/blocks", "alice", { date: "2026-10-03", label: "時刻なし", branchId: multiId });
+check("時刻なしの予定は時刻の確認なしで置ける", r.status, 201);
+r = await call("PATCH", "/blocks/" + midBlockId, "alice", { date: "2026-10-04", time: "11:00" });
+check("分岐の中の予定を、別の日（分岐の中）へ動かせる", [r.status, r.data.date, r.data.time], [200, "2026-10-04", "11:00"]);
+r = await call("PATCH", "/blocks/" + midBlockId, "alice", { date: "2026-10-04", time: "13:00" });
+check("終わりの日の終了後への更新は400", [r.status, r.data.error], [400, "time_out_of_branch"]);
+r = await call("PATCH", "/blocks/" + midBlockId, "alice", { date: "2026-10-09" });
+check("分岐の外の日への移動は400", [r.status, r.data.error], [400, "date_out_of_branch"]);
+r = await call("GET", "/trips/t1");
+const gm = r.data.branches.find((b) => b.id === multiId);
+check("GETに終わりの日が出る（メールなし）", [gm.date, gm.endDate, gm.name, JSON.stringify(r.data.branches).includes("@")], ["2026-10-02", "2026-10-04", "アリス", false]);
+r = await call("PATCH", "/branches/" + multiId, "alice", { endDate: "2026-10-05" });
+check("終わりの日を延ばして、隣の別行動と重なるなら400", [r.status, r.data.error], [400, "overlap"]);
+r = await call("PATCH", "/branches/" + multiId, "alice", { endDate: "2026-10-03" });
+check("持ち主は終わりの日を直せる", [r.status, r.data.endDate], [200, "2026-10-03"]);
+r = await call("PATCH", "/branches/" + multiId, "alice", { endDate: "2026-10-01" });
+check("終わりの日を始まりより前にはできない", [r.status, r.data.error], [400, "end_before_start"]);
+r = await call("PATCH", "/branches/" + multiId, "alice", { endDate: "2026-10-04" });
+check("終わりの日を戻せる", [r.status, r.data.endDate], [200, "2026-10-04"]);
+r = await call("PATCH", "/branches/" + multiId, "alice", { endDate: "2026-10-02", endTime: "13:00" });
+check("1日に戻す（終わりが始まりより前になる更新は400）", [r.status, r.data.error], [400, "end_before_start"]);
+r = await call("PATCH", "/branches/" + multiId, "alice", { endDate: "2026-10-04" });
+check("終わりの日を同じ値で更新しても成功する", [r.status, r.data.endDate], [200, "2026-10-04"]);
+r = await call("PATCH", "/branches/" + multiId, "bob", { endDate: "2026-10-09" });
+check("他人は日をまたぐ別行動を直せない", [r.status, r.data.error], [403, "forbidden"]);
+
+// 旅行に日程があるとき：始まり・終わりの日が旅行の中
+sqlite.prepare("INSERT INTO trips (id, title, start_date, end_date, created_at, updated_at) VALUES ('t2','日程つき','2026-10-01','2026-10-03',?,?)").run(now, now);
+sqlite.prepare("INSERT INTO trip_members (id, trip_id, account_id, name, joined_at) VALUES ('m2_alice','t2','111111','アリス',?)").run(now);
+r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-10-03", endDate: "2026-10-04", startTime: "14:00", endTime: "12:00" });
+check("終わりの日が旅行の日程の外は400", [r.status, r.data.error], [400, "date_out_of_range"]);
+r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-09-30", endDate: "2026-10-01", startTime: "14:00", endTime: "12:00" });
+check("始まりの日が旅行の日程の外は400", [r.status, r.data.error], [400, "date_out_of_range"]);
+r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-10-02", endDate: "2026-10-03", startTime: "14:00", endTime: "12:00" });
+check("旅行の日程の中なら作れる", [r.status, r.data.endDate], [201, "2026-10-03"]);
+const t2BranchId = r.data.id;
+r = await call("POST", "/trips/t2/blocks", "alice", { date: "2026-10-03", time: "09:00", label: "2日目の朝", branchId: t2BranchId });
+check("日をまたぐ別行動の中の予定（終わりの日）", [r.status, r.data.date], [201, "2026-10-03"]);
+// 日程をずらすと、始まりの日も終わりの日もずれる
+r = await call("PATCH", "/trips/t2", null, { startDate: "2026-10-03", endDate: "2026-10-05", shiftDays: 2 });
+check("日程のずらしは成功する", r.status, 200);
+check("日程をずらすと、別行動の始まりと終わりの日がいっしょにずれ、中の予定も動く", [
+  JSON.stringify(sqlite.prepare("SELECT date AS d, end_date AS e FROM branches WHERE id = ?").get(t2BranchId)),
+  sqlite.prepare("SELECT date AS d FROM blocks WHERE branch_id = ?").get(t2BranchId).d,
+], [JSON.stringify({ d: "2026-10-04", e: "2026-10-05" }), "2026-10-05"]);
+sqlite.prepare("INSERT INTO branches (id, trip_id, account_id, date, start_time, end_time, title, created_at, updated_at) VALUES ('br_single','t2','111111','2026-10-05','09:00','10:00','',?,?)").run(now, now);
+r = await call("PATCH", "/trips/t2", null, { startDate: "2026-10-02", endDate: "2026-10-04", shiftDays: -1 });
+check("1日の別行動（end_dateが空）は、ずらしても空のまま", JSON.stringify(sqlite.prepare("SELECT date AS d, end_date AS e FROM branches WHERE id = 'br_single'").get()), JSON.stringify({ d: "2026-10-04", e: "" }));
+r = await call("DELETE", "/trips/t2");
+check("日程つきの旅行を消すと、日をまたぐ別行動もまとめて消える", [r.status, sqlite.prepare("SELECT COUNT(*) AS n FROM branches WHERE trip_id = 't2'").get().n], [200, 0]);
+
+// 日をまたぐ別行動の削除で、日をまたいだ中身がすべて消える。あとの確認に影響しないよう、ここで片づける
+r = await call("DELETE", "/branches/" + multiId, "alice");
+check("日をまたぐ別行動を消すと、中の予定（どの日でも）も消える", [r.status, sqlite.prepare("SELECT COUNT(*) AS n FROM blocks WHERE branch_id = ?").get(multiId).n], [200, 0]);
+await call("DELETE", "/branches/" + adjacentId, "alice");
+await call("DELETE", "/branches/" + bobMultiId, "bob");
 
 // ---------- 分岐の削除 ----------
 r = await call("DELETE", "/branches/" + branchId, "bob");
@@ -194,7 +336,7 @@ check("みんなの予定と他人の分岐は残る", [
 ], [1, 1]);
 
 // ---------- アカウント削除・旅行削除 ----------
-r = await call("POST", "/trips/t1/blocks", "bob", { label: "ボブの寄り道", time: "15:00", branchId: bobBranchId });
+r = await call("POST", "/trips/t1/blocks", "bob", { label: "ボブの寄り道", time: "17:00", branchId: bobBranchId });
 const bobBlockId = r.data.id;
 await call("POST", "/blocks/" + bobBlockId + "/entries", "bob", { episode: "ボブの記録", author: "ボブ" });
 r = await call("POST", "/accounts/delete", "bob", { email: "bob@example.com" });

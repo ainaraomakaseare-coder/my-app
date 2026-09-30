@@ -30,7 +30,7 @@ import {
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
-import { validateBranchInput, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
+import { validateBranchInput, validateBranchBlockPlacement, branchEndDateOf, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
 import {
   PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, randomHex,
   pkceChallenge, buildAuthorizeUrl, buildAppleClientSecret, decodeJwtPayload, checkIdTokenClaims, extractProfile, revokeAppleTokens,
@@ -333,6 +333,11 @@ async function updateTrip(id, request, env, headers, ctx) {
       await env.DB.prepare("UPDATE branches SET date = date(date, ?), updated_at = ? WHERE trip_id = ? AND date != ''")
         .bind((shiftDays > 0 ? "+" : "") + shiftDays + " days", next.updated_at, id).run();
     } catch { /* branchesテーブルが無い */ }
+    // 日をまたぐ別行動の終わりの日（end_date。migrations/0030新版・0032）。列が無ければ何もしない
+    try {
+      await env.DB.prepare("UPDATE branches SET end_date = date(end_date, ?) WHERE trip_id = ? AND end_date != ''")
+        .bind((shiftDays > 0 ? "+" : "") + shiftDays + " days", id).run();
+    } catch { /* end_date列が無い */ }
     if (ctx) ctx.waitUntil(refetchShiftedWeather(env, id));
   } else {
     await tripUpdate.run();
@@ -463,12 +468,16 @@ async function createBlock(tripId, request, env, headers) {
     if (!branch || branch.trip_id !== tripId) return json({ error: "branch_not_found" }, 404, headers);
     const denied = await branchWriteGuard(env, request, headers, { branch_id: branch.id });
     if (denied) return denied;
+    // 日付は分岐の日々（始まり〜終わり）の中、時刻はその日の時間帯の中（始まりの日は開始以降、終わりの日は終了まで）。
+    // 日付を省くと分岐の始まりの日になる
+    const placed = validateBranchBlockPlacement(branch, data.date || branch.date, data.time || "");
+    if (placed) return json({ error: placed }, 400, headers);
   }
   const t = nowIso();
   const row = {
     id: uid("blk"),
     trip_id: tripId,
-    date: branch ? branch.date : (data.date || ""),
+    date: branch ? (data.date || branch.date) : (data.date || ""),
     time: data.time || "",
     label: (data.label || "").trim(),
     category: data.category || "sightseeing",
@@ -518,7 +527,13 @@ async function updateBlock(id, request, env, headers) {
   const cur = rowToBlock(existing);
   const merged = { ...cur, ...data };
   // 分岐の中の予定は、分岐の日から動かさない。どの分岐に属するかも変えない（UPDATEでbranch_idは触らない）
-  if (cur.branchId) merged.date = cur.date;
+  if (cur.branchId) {
+    const branch = await findBranch(env, cur.branchId);
+    if (branch) {
+      const placed = validateBranchBlockPlacement(branch, merged.date || "", merged.time || "");
+      if (placed) return json({ error: placed }, 400, headers);
+    }
+  }
   const t = nowIso();
   await env.DB.prepare(
     "UPDATE blocks SET date=?, time=?, label=?, category=?, transport=?, move_minutes=?, updated_at=? WHERE id=?"
@@ -630,6 +645,8 @@ function rowToBranch(row) {
     // 持ち主の名前（accounts.name）。メールアドレスは返さない
     name: row.owner_name || "",
     date: row.date,
+    // 終わりの日。end_date列が無い・空のときは開始日と同じ（1日の別行動）
+    endDate: row.end_date || row.date,
     startTime: row.start_time,
     endTime: row.end_time,
     title: row.title || "",
@@ -661,24 +678,46 @@ async function branchWriteGuard(env, request, headers, blockRow) {
   return null;
 }
 
-// 同じ人・同じ日の、ほかの分岐（重なりの確認用）。テーブルが無ければnull。
-async function sameDayBranchesOfOwner(env, tripId, accountId, date) {
+// 同じ人・同じ旅行の、ほかの分岐すべて（日をまたぐ分岐との重なりの確認用）。テーブルが無ければnull。
+async function ownerBranches(env, tripId, accountId) {
   try {
-    const { results } = await env.DB.prepare("SELECT * FROM branches WHERE trip_id = ? AND account_id = ? AND date = ?")
-      .bind(tripId, accountId, date).all();
+    const { results } = await env.DB.prepare("SELECT * FROM branches WHERE trip_id = ? AND account_id = ?")
+      .bind(tripId, accountId).all();
     return results;
   } catch {
     return null;
   }
 }
 
+// end_date列（migrations/0032）がこのDBにあるか。日をまたぐ別行動を作る・直すときだけ確かめる。
+async function hasBranchEndDateColumn(env) {
+  try {
+    await env.DB.prepare("SELECT end_date FROM branches LIMIT 1").first();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function branchInputFrom(data, base) {
   return {
     date: data.date !== undefined ? data.date : base.date,
+    endDate: data.endDate !== undefined ? data.endDate : base.endDate,
     startTime: data.startTime !== undefined ? data.startTime : base.startTime,
     endTime: data.endTime !== undefined ? data.endTime : base.endTime,
     title: data.title !== undefined ? data.title : base.title,
   };
+}
+
+// 旅行の日程（空なら範囲チェックをしない）
+async function tripRangeOpts(env, tripId) {
+  const t = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
+  return { tripStart: (t && t.start_date) || "", tripEnd: (t && t.end_date) || "" };
+}
+
+// 分岐の、DB行に近い形（重なりの確認に渡す）
+function branchRowForCheck(r) {
+  return { id: r.id, date: r.date, end_date: r.end_date, start_time: r.start_time, end_time: r.end_time };
 }
 
 async function createBranch(tripId, request, env, headers) {
@@ -696,20 +735,31 @@ async function createBranch(tripId, request, env, headers) {
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
-  const input = branchInputFrom(data || {}, { title: "" });
-  const others = await sameDayBranchesOfOwner(env, tripId, accountId, input.date);
+  const input = branchInputFrom(data || {}, { title: "", endDate: "" });
+  const others = await ownerBranches(env, tripId, accountId);
   if (others === null) return json({ error: "branches_not_ready" }, 503, headers);
-  const reason = validateBranchInput(input, others.map((r) => ({ id: r.id, date: r.date, start_time: r.start_time, end_time: r.end_time })));
+  const reason = validateBranchInput(input, others.map(branchRowForCheck), undefined, await tripRangeOpts(env, tripId));
   if (reason) return json({ error: reason }, 400, headers);
+  const multiDay = branchEndDateOf(input) !== input.date;
+  // 日をまたぐ別行動はend_date列が要る（migrations/0032）。列が無い環境では作らせない
+  if (multiDay && !(await hasBranchEndDateColumn(env))) return json({ error: "branch_multiday_not_ready" }, 503, headers);
   const t = nowIso();
   const row = {
     id: uid("br"), trip_id: tripId, account_id: accountId, date: input.date,
+    end_date: multiDay ? input.endDate : "",
     start_time: input.startTime, end_time: input.endTime, title: (input.title || "").trim(),
     created_at: t, updated_at: t, owner_name: who.account.name || "",
   };
-  await env.DB.prepare(
-    "INSERT INTO branches (id, trip_id, account_id, date, start_time, end_time, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
-  ).bind(row.id, row.trip_id, row.account_id, row.date, row.start_time, row.end_time, row.title, row.created_at, row.updated_at).run();
+  if (multiDay) {
+    await env.DB.prepare(
+      "INSERT INTO branches (id, trip_id, account_id, date, end_date, start_time, end_time, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    ).bind(row.id, row.trip_id, row.account_id, row.date, row.end_date, row.start_time, row.end_time, row.title, row.created_at, row.updated_at).run();
+  } else {
+    // 1日の別行動は、end_date列が無い環境でも作れる（空のまま）
+    await env.DB.prepare(
+      "INSERT INTO branches (id, trip_id, account_id, date, start_time, end_time, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    ).bind(row.id, row.trip_id, row.account_id, row.date, row.start_time, row.end_time, row.title, row.created_at, row.updated_at).run();
+  }
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, tripId).run();
   return json(rowToBranch(row), 201, headers);
 }
@@ -727,17 +777,21 @@ async function updateBranch(id, request, env, headers) {
     return json({ error: "invalid_json" }, 400, headers);
   }
   data = data || {};
-  // 日付は変えない（分岐の中の予定は分岐の日に固定されているため）。変えたいときは作り直す
+  // 始まりの日は変えない（変えたいときは作り直す）。終わりの日・時刻・タイトルは直せる
   if (data.date !== undefined && data.date !== existing.date) return json({ error: "invalid_input" }, 400, headers);
-  const base = { date: existing.date, startTime: existing.start_time, endTime: existing.end_time, title: existing.title };
+  const base = { date: existing.date, endDate: existing.end_date || "", startTime: existing.start_time, endTime: existing.end_time, title: existing.title };
   const input = branchInputFrom(data, base);
-  const others = await sameDayBranchesOfOwner(env, existing.trip_id, existing.account_id, existing.date);
+  const others = await ownerBranches(env, existing.trip_id, existing.account_id);
   if (others === null) return json({ error: "branches_not_ready" }, 503, headers);
-  const reason = validateBranchInput(input, others.map((r) => ({ id: r.id, date: r.date, start_time: r.start_time, end_time: r.end_time })), id);
+  const reason = validateBranchInput(input, others.map(branchRowForCheck), id, await tripRangeOpts(env, existing.trip_id));
   if (reason) return json({ error: reason }, 400, headers);
+  const nextEnd = branchEndDateOf(input) !== input.date ? input.endDate : "";
+  const endChanged = nextEnd !== (existing.end_date || "");
+  if (endChanged && !(await hasBranchEndDateColumn(env))) return json({ error: "branch_multiday_not_ready" }, 503, headers);
   const t = nowIso();
   await env.DB.prepare("UPDATE branches SET start_time=?, end_time=?, title=?, updated_at=? WHERE id=?")
     .bind(input.startTime, input.endTime, (input.title || "").trim(), t, id).run();
+  if (endChanged) await env.DB.prepare("UPDATE branches SET end_date=? WHERE id=?").bind(nextEnd, id).run();
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, existing.trip_id).run();
   const updated = await env.DB.prepare("SELECT * FROM branches WHERE id = ?").bind(id).first();
   return json(rowToBranch({ ...updated, owner_name: who.account.name || "" }), 200, headers);

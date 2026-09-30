@@ -402,15 +402,82 @@
     return true;
   }
 
-  // 分岐の時間帯に入る「みんなの予定」（開始ちょうどは含み、終了ちょうどは含まない）。
+  // 分岐の終わりの日。endDateが空・無いときは開始日と同じ（1日の別行動）。日をまたぐ別行動は endDate が開始日より後。
+  function branchEndDate(branch) {
+    return branch.endDate || branch.date;
+  }
+
+  // 分岐が日をまたぐか
+  function isMultiDayBranch(branch) {
+    return branchEndDate(branch) !== branch.date;
+  }
+
+  // 分岐がかかっている日（始まりの日〜終わりの日）の一覧。日付が読めなければ空。
+  function branchDates(branch) {
+    var out = [], end = branchEndDate(branch);
+    if (!parseDate(branch.date) || !parseDate(end) || end < branch.date) return out;
+    for (var d = branch.date, i = 0; d && d <= end && i < 400; i++) {
+      out.push(d);
+      d = addDaysToDate(d, 1);
+    }
+    return out;
+  }
+
+  // その日、分岐がかかっている時間帯を [開始分, 終了分) で返す。かかっていない日は null。
+  // 始まりの日は始まりの時刻から、途中の日は1日中（0〜1440）、終わりの日は終わりの時刻まで。
+  function branchWindowOn(branch, date) {
+    var s = hhmmToMinute(branch.startTime), e = hhmmToMinute(branch.endTime), end = branchEndDate(branch);
+    if (s === null || e === null || !date || date < branch.date || date > end) return null;
+    return { start: date === branch.date ? s : 0, end: date === end ? e : 1440 };
+  }
+
+  // 分岐の終わりの日。endDateが空・無いときは開始日と同じ（1日の別行動）。日をまたぐ別行動は endDate が開始日より後。
+  function branchEndDate(branch) {
+    return branch.endDate || branch.date;
+  }
+
+  // 分岐が日をまたぐか
+  function isMultiDayBranch(branch) {
+    return branchEndDate(branch) !== branch.date;
+  }
+
+  // 分岐がかかっている日（始まりの日〜終わりの日）の一覧。日付が読めなければ空。
+  function branchDates(branch) {
+    var out = [], end = branchEndDate(branch);
+    if (!parseDate(branch.date) || !parseDate(end) || end < branch.date) return out;
+    for (var d = branch.date, i = 0; d && d <= end && i < 400; i++) {
+      out.push(d);
+      d = addDaysToDate(d, 1);
+    }
+    return out;
+  }
+
+  // その日、分岐がかかっている時間帯を [開始分, 終了分) で返す。かかっていない日は null。
+  // 始まりの日は始まりの時刻から、途中の日は1日中（0〜1440）、終わりの日は終わりの時刻まで。
+  function branchWindowOn(branch, date) {
+    var s = hhmmToMinute(branch.startTime), e = hhmmToMinute(branch.endTime), end = branchEndDate(branch);
+    if (s === null || e === null || !date || date < branch.date || date > end) return null;
+    return { start: date === branch.date ? s : 0, end: date === end ? e : 1440 };
+  }
+
+  // 分岐の時間帯に入る「みんなの予定」（開始ちょうどは含み、終了ちょうどは含まない。日をまたぐ分岐は、途中の日は1日中）。
   // 時刻なしの予定は、いつ起きたか分からないので入れない（別行動の間も、みんなの予定として残る）。
   function blocksInBranchWindow(sharedBlocks, branch) {
-    var s = hhmmToMinute(branch.startTime), e = hhmmToMinute(branch.endTime);
-    if (s === null || e === null) return [];
     return (sharedBlocks || []).filter(function (b) {
-      var m = b.date === branch.date ? hhmmToMinute(b.time) : null;
-      return m !== null && m >= s && m < e;
+      var w = branchWindowOn(branch, b.date), m = hhmmToMinute(b.time);
+      return !!w && m !== null && m >= w.start && m < w.end;
     });
+  }
+
+  // 別行動の中の予定を、この日付・時刻で置いてよいか（サーバーと同じ規則）。問題なければ空文字、あれば理由。
+  // 始まりの日は始まりの時刻以降、途中の日は1日中、終わりの日は終わりの時刻まで（ちょうどは可）。時刻なしは時刻を見ない。
+  function validateBranchBlock(branch, date, time) {
+    if (!date || date < branch.date || date > branchEndDate(branch)) return 'date_out_of_branch';
+    var m = hhmmToMinute(time);
+    if (!time || m === null) return '';
+    if (date === branch.date && m < hhmmToMinute(branch.startTime)) return 'time_out_of_branch';
+    if (date === branchEndDate(branch) && m > hhmmToMinute(branch.endTime)) return 'time_out_of_branch';
+    return '';
   }
 
   // 選んだ人の道（viewAccountId）で見るときの、旅行全体の予定の並び。みんな（''）ならみんなの予定そのまま。
@@ -456,17 +523,54 @@
     return labels.slice(0, 3).join('→') + (labels.length > 3 ? '…' : '');
   }
 
+  // 「6/27」のような月/日。読めなければ空文字。
+  function shortMonthDay(date) {
+    var d = parseDate(date);
+    return d ? (d.getUTCMonth() + 1) + '/' + d.getUTCDate() : '';
+  }
+
+  // 別行動の時間帯の文。1日なら「14:00〜17:00」、日をまたぐなら「6/27 14:00〜6/28 12:00」。
+  function branchRangeText(branch) {
+    if (!isMultiDayBranch(branch)) return branch.startTime + '〜' + branch.endTime;
+    return shortMonthDay(branch.date) + ' ' + branch.startTime + '〜' + shortMonthDay(branchEndDate(branch)) + ' ' + branch.endTime;
+  }
+
+  // 「6/27」のような月/日。読めなければ空文字。
+  function shortMonthDay(date) {
+    var d = parseDate(date);
+    return d ? (d.getUTCMonth() + 1) + '/' + d.getUTCDate() : '';
+  }
+
+  // 別行動の時間帯の文。1日なら「14:00〜17:00」、日をまたぐなら「6/27 14:00〜6/28 12:00」。
+  function branchRangeText(branch) {
+    if (!isMultiDayBranch(branch)) return branch.startTime + '〜' + branch.endTime;
+    return shortMonthDay(branch.date) + ' ' + branch.startTime + '〜' + shortMonthDay(branchEndDate(branch)) + ' ' + branch.endTime;
+  }
+
   // みんなの画面（と、ほかの人の道）に出す小さなカードの文。例：アリス：14:00〜17:00 別行動（美術館→カフェ）
+  // 日をまたぐ別行動の始まりの日：ひろや：6/27 14:00〜6/28 12:00 別行動（…）
   function branchCardText(branch, branchBlocks) {
     var summary = branchSummary(branch, branchBlocks);
-    return (branch.name || 'だれか') + '：' + branch.startTime + '〜' + branch.endTime + ' 別行動' + (summary ? '（' + summary + '）' : '');
+    return (branch.name || 'だれか') + '：' + branchRangeText(branch) + ' 別行動' + (summary ? '（' + summary + '）' : '');
+  }
+
+  // 「〜6/28 12:00」（別行動の終わり）
+  function branchUntilText(branch) {
+    return '〜' + shortMonthDay(branchEndDate(branch)) + ' ' + branch.endTime;
+  }
+
+  // 日をまたぐ別行動の、2日目以降に出す小さなカードの文。例：ひろや：別行動中（〜6/28 12:00）
+  function branchContinuedText(branch) {
+    return (branch.name || 'だれか') + '：別行動中（' + branchUntilText(branch) + '）';
   }
 
   // その日のタイムラインに並べるもの。type: 'block'（予定）｜'card'（ほかの人の別行動のカード）｜'band'（自分の分岐の見出し。own=true）。
   // 帯・カードは、開始時刻以降で最初の「時刻ありの予定」の手前に入れる（無ければ時刻なしの手前＝末尾）。
   // 自分の分岐の「時刻なし」の予定は、帯のすぐ後ろに続ける（並びの末尾に飛ばさない）。
+  // 日をまたぐ分岐は、始まりの日は今までどおり（始まりの時刻の位置）、2日目以降は continued=true の帯・カードを
+  // その日の先頭（0:00の位置）に出す（みんなの画面では「別行動中（〜終わり）」の小さなカード）。
   function dayTimelineItems(sharedBlocks, branchBlocks, branches, viewAccountId, date) {
-    var dayBranches = (branches || []).filter(function (br) { return br.date === date; });
+    var dayBranches = (branches || []).filter(function (br) { return !!branchWindowOn(br, date); });
     var blocks = visibleBlocksForView(sharedBlocks, branchBlocks, branches, viewAccountId)
       .filter(function (b) { return (b.date || '') === date; });
     var ownBranchIds = {};
@@ -481,7 +585,8 @@
     });
     var items = sorted.map(function (b) { return { type: 'block', block: b }; });
     var marks = dayBranches.map(function (br) {
-      return { type: ownBranchIds[br.id] ? 'band' : 'card', branch: br, own: !!ownBranchIds[br.id], start: hhmmToMinute(br.startTime) };
+      var continued = br.date !== date;
+      return { type: ownBranchIds[br.id] ? 'band' : 'card', branch: br, own: !!ownBranchIds[br.id], continued: continued, start: continued ? 0 : hhmmToMinute(br.startTime) };
     }).sort(function (a, b) { return (a.start - b.start) || (a.branch.id < b.branch.id ? -1 : 1); });
     var out = items.slice();
     // 開始が早い順に、後ろから挿入すると位置がずれないので、逆順に入れる
@@ -505,17 +610,31 @@
     return out;
   }
 
+  // 分岐の始まり・終わりを、日をまたいで比べられる「日数×1440＋分」にする。読めなければ null。
+  function branchAbsMinutes(date, time) {
+    var d = parseDate(date), m = hhmmToMinute(time);
+    if (!d || m === null) return null;
+    return Math.round(d.getTime() / 86400000) * 1440 + m;
+  }
+
   // 分岐の入力を確かめる（サーバーと同じ規則）。問題なければ空文字、あれば理由。
+  // input: { date, endDate（空なら開始日と同じ）, startTime, endTime }
   // others：ほかの分岐（同じ人の分だけ見る）。excludeId：更新のときの自分自身。
-  function validateBranch(input, others, accountId, excludeId) {
+  // trip：旅行に日程があれば、始まりの日・終わりの日がその中か確かめる（省略可）。
+  function validateBranch(input, others, accountId, excludeId, trip) {
     var s = hhmmToMinute(input.startTime), e = hhmmToMinute(input.endTime);
-    if (!input.date) return 'invalid_date';
+    if (!input.date || !parseDate(input.date)) return 'invalid_date';
+    var endDate = input.endDate || input.date;
+    if (!parseDate(endDate)) return 'invalid_date';
     if (s === null || e === null) return 'invalid_time';
-    if (e <= s) return 'end_before_start';
+    var mineStart = branchAbsMinutes(input.date, input.startTime), mineEnd = branchAbsMinutes(endDate, input.endTime);
+    if (mineEnd <= mineStart) return 'end_before_start';
+    if (trip && trip.startDate && (input.date < trip.startDate || endDate < trip.startDate)) return 'date_out_of_range';
+    if (trip && trip.endDate && (input.date > trip.endDate || endDate > trip.endDate)) return 'date_out_of_range';
     var clash = (others || []).some(function (o) {
-      if (o.id === excludeId || o.accountId !== accountId || o.date !== input.date) return false;
-      var os = hhmmToMinute(o.startTime), oe = hhmmToMinute(o.endTime);
-      return s < oe && os < e;
+      if (o.id === excludeId || o.accountId !== accountId) return false;
+      var os = branchAbsMinutes(o.date, o.startTime), oe = branchAbsMinutes(branchEndDate(o), o.endTime);
+      return os !== null && oe !== null && mineStart < oe && os < mineEnd;
     });
     return clash ? 'overlap' : '';
   }
@@ -524,8 +643,12 @@
     var texts = {
       invalid_date: '日付が正しくありません。',
       invalid_time: '始まりと終わりの時刻を入れてください。',
-      end_before_start: '終わりの時刻は、始まりより後にしてください。',
+      end_before_start: '終わりは、始まりより後にしてください。',
       overlap: 'ほかの自分の別行動と時間が重なっています。',
+      date_out_of_range: '別行動の日付は、旅行の日程の中で選んでください。',
+      date_out_of_branch: '日付は、別行動の日（始まりの日〜終わりの日）の中で選んでください。',
+      time_out_of_branch: '時刻は、別行動の時間帯の中で入れてください。',
+      branch_multiday_not_ready: 'サーバーの準備がまだ終わっていないため、日をまたぐ別行動はまだ作れません。1日ずつに分けるか、少し待ってからお試しください。',
       invalid_title: 'タイトルは100文字までです。',
       not_member: 'この旅行に「参加する」と、別行動を追加できます。',
       login_required: 'ログインすると、自分の別行動を追加できます。',
@@ -3365,6 +3488,21 @@
     groupBlocksByDate: groupBlocksByDate,
     canUseBranches: canUseBranches,
     blocksInBranchWindow: blocksInBranchWindow,
+    branchEndDate: branchEndDate,
+    isMultiDayBranch: isMultiDayBranch,
+    branchDates: branchDates,
+    branchWindowOn: branchWindowOn,
+    validateBranchBlock: validateBranchBlock,
+    branchRangeText: branchRangeText,
+    branchContinuedText: branchContinuedText,
+    branchUntilText: branchUntilText,
+    branchEndDate: branchEndDate,
+    isMultiDayBranch: isMultiDayBranch,
+    branchDates: branchDates,
+    branchWindowOn: branchWindowOn,
+    validateBranchBlock: validateBranchBlock,
+    branchRangeText: branchRangeText,
+    branchContinuedText: branchContinuedText,
     visibleBlocksForView: visibleBlocksForView,
     resolveViewAccountId: resolveViewAccountId,
     branchViewOptions: branchViewOptions,
@@ -6791,26 +6929,30 @@
   }
 
   // ほかの人の別行動の小さなカード。押すとその人の道に切り替わる
-  function renderBranchCard(branch) {
+  // continued：日をまたぐ別行動の2日目以降（小さな「別行動中」カードにする）
+  function renderBranchCard(branch, continued) {
     var b = document.createElement('button');
     b.type = 'button';
-    b.className = 'branch-card';
-    var text = Core.branchCardText(Object.assign({}, branch, { name: branchOwnerName(branch) }), state.branchBlocks);
+    b.className = 'branch-card' + (continued ? ' continued' : '');
+    var named = Object.assign({}, branch, { name: branchOwnerName(branch) });
+    var text = continued ? Core.branchContinuedText(named) : Core.branchCardText(named, state.branchBlocks);
     b.innerHTML = BRANCH_ICON + '<span class="branch-card-text">' + escapeHtml(text) + '</span><span class="branch-card-go">この道を見る</span>';
     b.addEventListener('click', function () { setBranchView(branch.accountId); });
     return b;
   }
 
   // 選んだ人の別行動の見出し。持ち主（自分）には「予定を追加」「編集」を出す
-  function renderBranchBand(branch) {
+  function renderBranchBand(branch, continued) {
     var d = document.createElement('div');
     d.className = 'branch-band';
-    d.innerHTML = BRANCH_ICON + '<span class="branch-band-text">' +
-      escapeHtml(branchOwnerName(branch) + 'の別行動 ' + branch.startTime + '〜' + branch.endTime + (branch.title ? '（' + branch.title + '）' : '')) + '</span>';
+    var bandText = continued
+      ? branchOwnerName(branch) + 'の別行動中（' + Core.branchUntilText(branch) + '）'
+      : branchOwnerName(branch) + 'の別行動 ' + Core.branchRangeText(branch) + (branch.title ? '（' + branch.title + '）' : '');
+    d.innerHTML = BRANCH_ICON + '<span class="branch-band-text">' + escapeHtml(bandText) + '</span>';
     if (isMyBranch(branch.id)) {
       var add = document.createElement('button');
       add.type = 'button'; add.className = 'branch-band-btn'; add.textContent = '予定を追加';
-      add.addEventListener('click', function () { openBlockForm(null, branch); });
+      add.addEventListener('click', function () { openBlockForm(null, branch, state.selectedDate); });
       var edit = document.createElement('button');
       edit.type = 'button'; edit.className = 'branch-band-btn'; edit.textContent = '編集';
       edit.addEventListener('click', function () { openBranchSheet(branch); });
@@ -6841,7 +6983,7 @@
   }
 
   // ---------- 別行動の追加・編集シート ----------
-  var branchSheetTarget = null; // { id（編集のとき）, date }
+  var branchSheetTarget = null; // { id（編集のとき）, date（始まりの日） }
 
   function defaultBranchRange(date) {
     var me = myAccountId();
@@ -6853,13 +6995,41 @@
     return { start: '', end: '' };
   }
 
+  // 別行動の日付の選択肢：旅行の日々（日程があればその範囲）。編集中の別行動の日付が範囲外でも選べるように足す。
+  function branchDateChoices(branch) {
+    var dates = Core.allDatesForTrip(state.trip, allBlocks()).slice();
+    if (branch) Core.branchDates(branch).forEach(function (d) { if (dates.indexOf(d) < 0) dates.push(d); });
+    return dates.sort();
+  }
+
+  function dateOptionsHtml(dates, selected) {
+    return dates.map(function (d) {
+      return '<option value="' + escapeHtml(d) + '"' + (d === selected ? ' selected' : '') + '>' + escapeHtml(Core.dayLabel(state.trip, d) + '（' + d.slice(5).replace('-', '/') + '）') + '</option>';
+    }).join('');
+  }
+
+  // 終わりの日の選択肢は、始まりの日以降だけ。始まりの日を変えたら、終わりが始まりより前にならないよう合わせる
+  function refreshBranchEndDates(keepEnd) {
+    var choices = branchDateChoices(branchSheetTarget && branchSheetTarget.id ? branchById(branchSheetTarget.id) : null);
+    var start = $('#brStartDate').value;
+    var ends = choices.filter(function (d) { return d >= start; });
+    var cur = keepEnd || $('#brEndDate').value || start;
+    if (cur < start || ends.indexOf(cur) < 0) cur = start;
+    $('#brEndDate').innerHTML = dateOptionsHtml(ends, cur);
+  }
+
   function openBranchSheet(branch) {
     var date = branch ? branch.date : state.selectedDate;
     if (!date) return;
     branchSheetTarget = { id: branch ? branch.id : '', date: date };
     var range = branch ? { start: branch.startTime, end: branch.endTime } : defaultBranchRange(date);
     $('#branchSheetTitle').textContent = branch ? '別行動を編集' : 'ここから別行動';
-    $('#brDateText').textContent = Core.formatDateJp(date);
+    var choices = branchDateChoices(branch);
+    $('#brStartDate').innerHTML = dateOptionsHtml(choices, date);
+    $('#brStartDate').value = date;
+    // 始まりの日は作ったあとで変えられない（変えたいときは作り直す）
+    $('#brStartDate').disabled = !!branch;
+    refreshBranchEndDates(branch ? Core.branchEndDate(branch) : date);
     $('#brStart').value = range.start;
     $('#brEnd').value = range.end;
     $('#brTitle').value = branch ? (branch.title || '') : '';
@@ -6880,12 +7050,17 @@
     var status = $('#brStatus');
     var target = branchSheetTarget;
     var me = myAccountId();
-    var input = { date: target.date, startTime: $('#brStart').value || '', endTime: $('#brEnd').value || '', title: $('#brTitle').value.trim() };
-    var reason = Core.validateBranch(input, state.branches, me, target.id);
+    var input = {
+      date: $('#brStartDate').value || target.date,
+      endDate: $('#brEndDate').value || $('#brStartDate').value || target.date,
+      startTime: $('#brStart').value || '', endTime: $('#brEnd').value || '',
+      title: $('#brTitle').value.trim()
+    };
+    var reason = Core.validateBranch(input, state.branches, me, target.id, state.trip);
     if (reason) { status.textContent = Core.branchErrorText(reason); return; }
     status.textContent = '保存中…';
     var req = target.id
-      ? api('/branches/' + encodeURIComponent(target.id), 'PATCH', { startTime: input.startTime, endTime: input.endTime, title: input.title })
+      ? api('/branches/' + encodeURIComponent(target.id), 'PATCH', { endDate: input.endDate, startTime: input.startTime, endTime: input.endTime, title: input.title })
       : api('/trips/' + encodeURIComponent(state.trip.id) + '/branches', 'POST', input);
     req.then(function () { return refreshTrip(); }).then(function () {
       closeBranchSheet();
@@ -7450,8 +7625,8 @@
     // 人ごとの道を見ているあいだは、並べ替え（みんなの予定の順番を変える操作）は出さない
     state.manualDay = !!dayDate && !state.viewAccountId && (hasManual || zoneChange);
     items.forEach(function (item) {
-      if (item.type === 'card') { el.appendChild(renderBranchCard(item.branch)); return; }
-      if (item.type === 'band') { el.appendChild(renderBranchBand(item.branch)); return; }
+      if (item.type === 'card') { el.appendChild(renderBranchCard(item.branch, item.continued)); return; }
+      if (item.type === 'band') { el.appendChild(renderBranchBand(item.branch, item.continued)); return; }
       var block = item.block;
       var dividerShown = false;
       if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
@@ -8092,7 +8267,8 @@
 
   // ---------- 大項目（予定）の追加・編集 ----------
   // branch：別行動の中に新しい予定を作るときの、その別行動（編集のときは予定自身のbranchIdから決まる）
-  function openBlockForm(block, branch) {
+  // defaultDate：別行動の中の予定を新しく作るときの日付の初期値（別行動の日々の中のときだけ使う）
+  function openBlockForm(block, branch, defaultDate) {
     state.editingBlockId = block ? block.id : null;
     var br = block && block.branchId ? branchById(block.branchId) : (branch || null);
     state.editingBranchId = br ? br.id : '';
@@ -8107,11 +8283,20 @@
     $('#blkMoveMins').value = mm ? mm % 60 : '';
     $('#blkFormTitle').textContent = (br ? '別行動の予定を' : '予定を') + (block ? '編集' : '追加');
     $('#blkDate').value = br ? br.date : (block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10)));
-    // 別行動の中の予定は、別行動の日から動かせない（サーバーでも固定している）
-    $('#blkDate').disabled = !!br;
+    // 別行動の中の予定の日付は、別行動の日々（始まりの日〜終わりの日）から選ぶ（サーバーでも確かめている）
+    var brSel = $('#blkBranchDate');
+    $('#blkDate').hidden = !!br;
+    brSel.hidden = !br;
+    if (br) {
+      var brDates = Core.branchDates(br);
+      var pick = block ? block.date : (defaultDate || br.date);
+      if (brDates.indexOf(pick) < 0) pick = br.date;
+      brSel.innerHTML = dateOptionsHtml(brDates, pick);
+      brSel.value = pick;
+    }
     var branchNote = $('#blkBranchNote');
     branchNote.hidden = !br;
-    branchNote.textContent = br ? branchOwnerName(br) + 'の別行動（' + br.startTime + '〜' + br.endTime + '）の中の予定です。時刻は、この時間帯の中で入れてください。' : '';
+    branchNote.textContent = br ? branchOwnerName(br) + 'の別行動（' + Core.branchRangeText(br) + '）の中の予定です。日付は別行動の日から選び、時刻はこの時間帯の中で入れてください。' : '';
     $('#blkTime').value = block ? block.time : '';
     $('#blkLabel').value = block ? block.label : '';
     $('#blkVideoExclude').checked = !!(block && block.videoExclude);
@@ -8172,13 +8357,17 @@
     // 別行動の中の予定の時刻は、別行動の時間帯の中に入れる（外だと、その人の道の並びと合わなくなるため）
     var editBranch = state.editingBranchId ? branchById(state.editingBranchId) : null;
     var timeVal = $('#blkTime').value || '';
-    if (editBranch && timeVal && (timeVal < editBranch.startTime || timeVal > editBranch.endTime)) {
-      status.textContent = '時刻は、別行動の時間帯（' + editBranch.startTime + '〜' + editBranch.endTime + '）の中で入れてください。';
+    var dateVal = editBranch ? $('#blkBranchDate').value : $('#blkDate').value;
+    var placeReason = editBranch ? Core.validateBranchBlock(editBranch, dateVal, timeVal) : '';
+    if (placeReason) {
+      status.textContent = placeReason === 'time_out_of_branch'
+        ? '時刻は、別行動の時間帯（' + Core.branchRangeText(editBranch) + '）の中で入れてください。'
+        : Core.branchErrorText(placeReason);
       return;
     }
     status.textContent = '保存中…';
     var payload = {
-      date: $('#blkDate').value || '',
+      date: dateVal || '',
       time: $('#blkTime').value || '',
       label: label,
       category: state.formCategory,
@@ -11994,6 +12183,7 @@
     $('#btnCloseBranchSheet').addEventListener('click', closeBranchSheet);
     $('#btnCancelBranch').addEventListener('click', closeBranchSheet);
     $('#btnSaveBranch').addEventListener('click', saveBranch);
+    $('#brStartDate').addEventListener('change', function () { refreshBranchEndDates(''); });
     $('#btnDeleteBranch').addEventListener('click', removeBranch);
     $('#branchSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeBranchSheet(); });
 
