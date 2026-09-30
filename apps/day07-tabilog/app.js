@@ -4804,7 +4804,7 @@
     try { return JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null'); } catch (e) { return null; }
   }
   function saveCurrentUser(u) { localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(u)); }
-  function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); iapLogOut(); }
+  function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); }
 
   // メールでのログインは常に使えるため、ログイン機能自体は常に有効。
   // Apple・Google・LINEのボタンは、Workerに設定があるものだけ追加で出る（GET /auth/providers）。
@@ -10081,129 +10081,8 @@
     if (!user) { state.account = null; return Promise.resolve(null); }
     return api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
       state.account = account;
-      iapLogIn(account.accountId);
       return account;
     }).catch(function () { state.account = null; return null; });
-  }
-
-  // ---------- 回数券のアプリ内課金（iOSアプリだけ。docs/adr/0004の2026-09-30の節） ----------
-  // 買った回数を足すのはサーバー（RevenueCatのWebhook）で、ここは購入の入口と、購入後の再取得だけ。
-  // Web版には購入の画面も案内も出さない（App Reviewの3.1.1：アプリ外の決済で買ったものをアプリで使わせない）。
-  // RevenueCatの公開SDKキー（appl_で始まる。公開してよい値）。空のあいだは購入の画面ごと隠す。
-  var REVENUECAT_IOS_API_KEY = '';
-  var iap = { configurePromise: null, userId: '', ready: null, packages: null, busy: false };
-
-  function iapPlugin() {
-    return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases) || null;
-  }
-  function iapAvailable() {
-    return isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios' &&
-      !!REVENUECAT_IOS_API_KEY && !!iapPlugin() && !!loadCurrentUser();
-  }
-  // RevenueCatの利用者IDには、サーバーが採番したaccountId（6桁）を使う。
-  // メールアドレスや名前は渡さない。ログインするたび・ログインし直すたびに呼んでよい（同じ人なら何もしない）。
-  function iapLogIn(accountId) {
-    if (!iapAvailable() || !accountId) return Promise.resolve(false);
-    if (iap.userId === accountId && iap.ready) return iap.ready;
-    var P = iapPlugin();
-    iap.userId = accountId;
-    iap.packages = null;
-    if (!iap.configurePromise) iap.configurePromise = P.configure({ apiKey: REVENUECAT_IOS_API_KEY });
-    iap.ready = iap.configurePromise.then(function () {
-      return P.logIn({ appUserID: accountId });
-    }).then(function () { return true; }).catch(function () {
-      iap.userId = ''; iap.ready = null; iap.configurePromise = null;
-      return false;
-    });
-    return iap.ready;
-  }
-  function iapLogOut() {
-    var wasIn = !!iap.userId;
-    iap.userId = ''; iap.ready = null; iap.packages = null;
-    var P = iapPlugin();
-    if (wasIn && P) P.logOut().catch(function () {});
-  }
-  function iapLoadPackages() {
-    if (iap.packages) return Promise.resolve(iap.packages);
-    return iapPlugin().getOfferings().then(function (o) {
-      var list = (o && o.current && o.current.availablePackages) || [];
-      iap.packages = list.slice().sort(function (a, b) { return (a.product.price || 0) - (b.product.price || 0); });
-      return iap.packages;
-    });
-  }
-
-  // 回数券の買えるところ（el）に「回数券を買う」を描く。値段はStoreKitが返す表示用の文字列をそのまま出す。
-  // 買えない状態（Web・キー未設定・未ログイン・商品が取れない）なら、何も出さない。
-  function renderTicketShop(el) {
-    if (!el) return;
-    el.hidden = true;
-    el.innerHTML = '';
-    if (!iapAvailable() || !state.account) return;
-    iapLogIn(state.account.accountId).then(function (ok) {
-      return ok ? iapLoadPackages() : [];
-    }).then(function (list) {
-      if (!list.length || !iapAvailable()) return;
-      el.innerHTML = '<div class="ticket-shop-title">回数券を買う</div>' +
-        '<p class="hint">買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。</p>' +
-        list.map(function (pkg, i) {
-          return '<button type="button" class="btn ticket-buy" data-ticket-index="' + i + '">' +
-            escapeHtml(pkg.product.title || pkg.identifier) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
-        }).join('') + '<p class="hint ticket-shop-status" role="status"></p>';
-      el.hidden = false;
-      $all('.ticket-buy', el).forEach(function (btn) {
-        btn.addEventListener('click', function () { buyTicket(list[Number(btn.getAttribute('data-ticket-index'))], el); });
-      });
-    }).catch(function () { /* 商品が取れなければ、買う画面を出さないだけ */ });
-  }
-
-  function buyTicket(pkg, el) {
-    if (!pkg || iap.busy) return;
-    var statusEl = $('.ticket-shop-status', el);
-    var setStatus = function (t) { if (statusEl) statusEl.textContent = t; };
-    var before = state.account ? (state.account.ticketCredits || 0) : 0;
-    iap.busy = true;
-    $all('.ticket-buy', el).forEach(function (b) { b.disabled = true; });
-    setStatus('購入の手続き中です…');
-    iapPlugin().purchasePackage({ aPackage: pkg }).then(function () {
-      setStatus('購入ありがとうございます。回数を反映しています…');
-      // 回数を足すのはRevenueCatからサーバーへの通知（非同期）なので、増えるまで少し待って取り直す
-      var tries = 0;
-      var poll = function () {
-        return fetchAccountStatus().then(function (account) {
-          if (account && (account.ticketCredits || 0) > before) return account;
-          if (++tries >= 8) return null;
-          return new Promise(function (r) { setTimeout(r, 1500); }).then(poll);
-        });
-      };
-      return poll();
-    }).then(function (account) {
-      if (account) {
-        showToast('回数券が追加されました');
-        refreshTicketViews();
-      } else {
-        setStatus('購入は完了しました。回数の反映に少し時間がかかっています。しばらくしてからプロフィール画面で確認してください。');
-      }
-    }).catch(function (e) {
-      // 購入画面を自分で閉じた場合は、何も言わない
-      if (e && (e.userCancelled || e.code === 'PURCHASE_CANCELLED' || e.code === '1')) { setStatus(''); return; }
-      setStatus('購入できませんでした。時間をおいてもう一度お試しください。');
-    }).then(function () {
-      iap.busy = false;
-      $all('.ticket-buy', el).forEach(function (b) { b.disabled = false; });
-    });
-  }
-
-  // 購入で回数が変わったあと、いま開いている画面の残り回数と買う場所を描き直す
-  function refreshTicketViews() {
-    renderPlanStatus();
-    var active = $('.screen.active');
-    var name = active && active.dataset.screen;
-    if (name === 'voiceEntryForm') openVoiceEntryFormRefresh();
-    else if (name === 'screenshotImport' && state.account) {
-      var bonus = state.account.ticketCredits ? '（おまけの回数：' + state.account.ticketCredits + '回）' : '';
-      $('#ssInfo').textContent = 'メモ・スクショのAI整理：あと' + state.account.memoRemainingThisPeriod + '回（月' + state.account.memoMonthlyLimit + '回まで）' + bonus;
-      $('#ssTicketShop').hidden = true;
-    }
   }
 
   // 残り回数の表示だけ（有料プラン・購入の画面は無い。2026-09-30〜、docs/adr/0004）。
