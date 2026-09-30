@@ -3458,6 +3458,65 @@
     return out;
   }
 
+  // ---------- スクショから予定を作る（docs/adr/0022） ----------
+  // 確認画面用の純粋関数。サーバー（POST /trips/:id/screenshot-scan）が返した予定の候補を
+  // 日ごとにまとめ、確認・修正のあと「この内容で追加」で送る形（POST /trips/:id/screenshot-blocks）にする。
+  // 候補の形（サーバーのnormalizeScreenshotResult）：date・time・label・category・transport・place・
+  // fromPlace/toPlace・company・routeNumber・departTime/arriveTime・costItems・note・mapUrl…。
+  // 確認画面で本人が直した値がそのまま入る。use===false（除外）の候補は送らない。
+
+  // 日付順→時刻順（時刻なしは最後）にして、日ごとの {date, items} にする。itemsの中身は元の候補
+  // （画面から元の配列の位置に戻せるよう、_indexに元の位置を入れる）
+  function groupScreenshotItemsByDay(items) {
+    var list = (items || []).map(function (it, i) { var c = {}; for (var k in it) c[k] = it[k]; c._index = i; return c; });
+    list.sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      if (a.time !== b.time) { if (!a.time) return 1; if (!b.time) return -1; return a.time < b.time ? -1 : 1; }
+      return a._index - b._index;
+    });
+    var groups = [];
+    list.forEach(function (it) {
+      var g = groups[groups.length - 1];
+      if (!g || g.date !== it.date) { g = { date: it.date, items: [] }; groups.push(g); }
+      g.items.push(it);
+    });
+    return groups;
+  }
+
+  // 確認画面の候補を、保存のリクエスト用にする。日程の外の日付・見出しが空・日付が不正なものは
+  // 送らずerrorsに理由を積む（サーバーも同じ検証をするが、先に画面で教えるため）。
+  // 戻り値 { items, errors:[{index（配列の位置）, label, reason}] }
+  function screenshotItemsToSavePayload(items, trip) {
+    var dates = allDatesForTrip(trip || {}, []).filter(function (d) { return d; });
+    var out = [], errors = [];
+    (items || []).forEach(function (it, index) {
+      if (!it || it.use === false) return;
+      var label = String(it.label || '').trim();
+      if (!label) { errors.push({ index: index, label: label, reason: '見出しが空です' }); return; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(it.date || '')) { errors.push({ index: index, label: label, reason: '日付を入れてください' }); return; }
+      if (dates.length && dates.indexOf(it.date) === -1) { errors.push({ index: index, label: label, reason: '日付が旅行の日程の外です' }); return; }
+      var time = /^([01]\d|2[0-3]):[0-5]\d$/.test(it.time || '') ? it.time : '';
+      var p = {
+        date: it.date, time: time, label: label, category: it.category, transport: it.transport || '',
+        note: it.note || '', costItems: (it.costItems || []).filter(function (c) { return c && isFinite(c.amount) && Number(c.amount) >= 0; }).map(function (c) {
+          var x = { label: String(c.label || '費用').trim() || '費用', amount: Number(c.amount) };
+          if (c.currency) x.currency = c.currency;
+          if (c.rate) x.rate = c.rate;
+          return x;
+        })
+      };
+      if (it.mapUrl) { p.mapUrl = it.mapUrl; p.mapPlaceName = it.mapPlaceName || ''; p.mapLat = it.mapLat; p.mapLng = it.mapLng; }
+      if (it.category === 'transport') {
+        p.from = it.fromPlace || ''; p.to = it.toPlace || '';
+        p.company = [it.company, it.routeNumber].filter(Boolean).join(' ');
+        p.depart = time; p.arrive = it.arriveTime || '';
+        if (it.arriveMapUrl) { p.arriveMapUrl = it.arriveMapUrl; p.arriveLat = it.arriveLat; p.arriveLng = it.arriveLng; }
+      }
+      out.push(p);
+    });
+    return { items: out, errors: errors };
+  }
+
   var Core = {
     CATEGORIES: CATEGORIES,
     blockDragTargetIndex: blockDragTargetIndex,
@@ -3474,6 +3533,8 @@
     dayLabel: dayLabel,
     tripNights: tripNights,
     allDatesForTrip: allDatesForTrip,
+    groupScreenshotItemsByDay: groupScreenshotItemsByDay,
+    screenshotItemsToSavePayload: screenshotItemsToSavePayload,
     sortBlocks: sortBlocks,
     groupBlocksByDate: groupBlocksByDate,
     canUseBranches: canUseBranches,
@@ -6433,6 +6494,385 @@
     });
   }
 
+  // ---------- スクショから予定を作る（docs/adr/0022） ----------
+  // 画像（最大10枚）を選ぶ → 長辺1600pxのJPEGに縮めて送る（POST /trips/:id/screenshot-scan。サーバーが
+  // Cloud Visionで文字にし、AIで予定の候補にして、場所を探して返す。ここではまだ何も保存されない）
+  // → 確認画面で日・時刻・見出し・種類・場所・費用を直す／要らない候補を外す
+  // → 「この内容で追加」で保存（POST /trips/:id/screenshot-blocks。AIは使わず1回のD1バッチ）。
+  // 候補の並び替え・保存前の検証はCore.groupScreenshotItemsByDay／Core.screenshotItemsToSavePayload。
+  var SS_MAX_IMAGES = 10;
+  var SS_CONSENT_KEY = 'tabilog:ai-consent-screenshots';
+  var IMAGE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><circle cx="7" cy="8" r="1.4"/><path d="M3 15l4.5-4.5 3 3 2.5-2.5 4 4"/></svg>';
+  var ssPlaceSession = '';
+
+  function ssState() {
+    if (!state.ss) state.ss = { files: [], items: null, unreadable: [], dropped: 0 };
+    return state.ss;
+  }
+
+  function ssRevokeFiles() {
+    var s = ssState();
+    s.files.forEach(function (f) { try { URL.revokeObjectURL(f.url); } catch (e) {} });
+    s.files = [];
+  }
+
+  // 入口。ログインしていなければログインへ（AIを使う機能のため。ログイン後はここに戻る）
+  function openScreenshotImport() {
+    if (!state.trip) return;
+    if (!loadCurrentUser()) {
+      openLogin('screenshotImport');
+      $('#loginLead').textContent = 'ログインすると、スクショから予定を作る機能が使えます';
+      return;
+    }
+    ssRevokeFiles();
+    state.ss = { files: [], items: null, unreadable: [], dropped: 0 };
+    $('#ssPickArea').hidden = false;
+    $('#ssResult').hidden = true;
+    $('#ssResult').innerHTML = '';
+    $('#ssStatus').textContent = '';
+    $('#ssInfo').textContent = '';
+    renderSsThumbs();
+    showScreen('screenshotImport');
+    fetchAccountStatus().then(function (account) {
+      if (!account) return;
+      var tickets = account.ticketCredits ? '（回数券の残り' + account.ticketCredits + '回）' : '';
+      $('#ssInfo').textContent = '今月あと' + account.memoRemainingThisPeriod + '回使えます（月' + account.memoMonthlyLimit + '回まで無料）' + tickets;
+    });
+  }
+
+  function renderSsThumbs() {
+    var s = ssState();
+    $('#ssThumbs').innerHTML = s.files.map(function (f, i) {
+      return '<div class="ss-thumb-wrap"><img class="ss-thumb" src="' + f.url + '" alt="選んだ画像' + (i + 1) + '">' +
+        '<button type="button" class="ss-thumb-x" data-ss-remove="' + i + '" aria-label="この画像を外す">×</button></div>';
+    }).join('');
+    $('#btnSsPick').textContent = s.files.length ? '画像を追加する（' + s.files.length + '/' + SS_MAX_IMAGES + '枚）' : '画像を選ぶ（最大' + SS_MAX_IMAGES + '枚）';
+    $('#btnSsPick').disabled = s.files.length >= SS_MAX_IMAGES;
+    $('#btnSsScan').disabled = !s.files.length;
+  }
+
+  function handleSsFilesChosen(fileList) {
+    var s = ssState();
+    var files = Array.prototype.slice.call(fileList || []);
+    var room = SS_MAX_IMAGES - s.files.length;
+    var over = files.length > room;
+    files = files.slice(0, Math.max(0, room));
+    $('#ssStatus').textContent = files.length ? '画像を準備しています…' : '';
+    Promise.all(files.map(function (f) {
+      return fileToCompressedBlob(f, 1600, 0.8).then(function (blob) { return { blob: blob, url: URL.createObjectURL(blob) }; }).catch(function () { return null; });
+    })).then(function (list) {
+      var failed = list.filter(function (x) { return !x; }).length;
+      list.forEach(function (x) { if (x) s.files.push(x); });
+      renderSsThumbs();
+      var notes = [];
+      if (over) notes.push('画像は' + SS_MAX_IMAGES + '枚までです。超えた分は追加していません。');
+      if (failed) notes.push(failed + '枚は読み込めませんでした。');
+      $('#ssStatus').textContent = notes.join('');
+    });
+  }
+
+  // 画像には氏名・予約番号などが写っていることがあるため、音声・レシートとは別に、画像の送信について同意を取る
+  function confirmScreenshotSharing() {
+    var done = false;
+    try { done = localStorage.getItem(SS_CONSENT_KEY) === '1'; } catch (e) {}
+    if (done) return true;
+    var ok = confirm(
+      '選んだスクリーンショットの画像を、文字の読み取りと予定への整理のために、外部のAIサービス（Google・OpenAI）へ送信します。\n' +
+      '画像には、氏名・予約番号・電話番号などが写っている場合があります。送信前に、写したくない部分は隠してください' +
+      '（予約番号や氏名は、予定には保存しません）。\n' +
+      '送信されたデータはOpenAIのモデル学習には使われません（APIの既定ポリシー）。\n\n' +
+      '同意してこの機能を使いますか？'
+    );
+    if (ok) { try { localStorage.setItem(SS_CONSENT_KEY, '1'); } catch (e) {} }
+    return ok;
+  }
+
+  function ssErrorMessage(msg) {
+    var map = {
+      server_not_configured: 'この機能はまだ使えません（サーバー側の設定が必要です）。',
+      rate_limited: '少し時間をおいてからもう一度お試しください。',
+      too_many_images: '画像は' + SS_MAX_IMAGES + '枚までです。',
+      invalid_size: '画像のサイズが大きすぎます。枚数を減らしてお試しください。',
+      vision_failed: '画像の文字を読み取れませんでした。少し時間をおいてもう一度お試しください。',
+      ai_quota_exhausted: 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。',
+      upstream_error: 'AIのサービスにつながりませんでした。少し時間をおいてもう一度お試しください。',
+      invalid_model_output: 'うまく処理できませんでした。もう一度お試しください。',
+      output_too_long: '内容が多すぎて整理しきれませんでした。画像を分けて、何回かに分けてお試しください。'
+    };
+    return map[msg] || '失敗しました。もう一度お試しください。';
+  }
+
+  function handleSsScan() {
+    var s = ssState();
+    if (!s.files.length || !state.trip) return;
+    var user = loadCurrentUser();
+    if (!user) { openScreenshotImport(); return; }
+    if (!confirmScreenshotSharing()) return;
+    $('#btnSsScan').disabled = true;
+    $('#ssStatus').textContent = '画像を読み取っています…（数十秒かかることがあります）';
+    Promise.all(s.files.map(function (f) { return blobToBase64(f.blob).then(function (data) { return { type: 'image/jpeg', data: data }; }); }))
+      .then(function (images) {
+        return api('/trips/' + encodeURIComponent(state.trip.id) + '/screenshot-scan', 'POST', { images: images, email: user.email || '' });
+      })
+      .then(function (res) {
+        $('#btnSsScan').disabled = false;
+        s.items = (res.items || []).map(function (it) { it.use = true; return it; });
+        s.unreadable = res.unreadable || [];
+        s.dropped = res.dropped || 0;
+        $('#ssStatus').textContent = '';
+        renderSsResult();
+      })
+      .catch(function (e) {
+        $('#btnSsScan').disabled = false;
+        var msg = (e && e.message) || '';
+        if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
+          $('#ssStatus').textContent = msg === 'login_required' ? 'ログインし直してください。' : '今月のAIの回数を使い切りました。';
+          return;
+        }
+        $('#ssStatus').textContent = ssErrorMessage(msg);
+      });
+  }
+
+  function ssThumbFor(item) {
+    var f = item.sourceImage !== null && item.sourceImage !== undefined ? ssState().files[item.sourceImage] : null;
+    return f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="元の画像">' : '';
+  }
+
+  function ssPlaceLine(item, which) {
+    var isArrive = which === 'arrive';
+    var name = isArrive ? item.arrivePlaceName : item.mapPlaceName;
+    var query = isArrive ? item.toPlace : (item.category === 'transport' ? item.fromPlace : item.place);
+    var label = isArrive ? '到着地' : (item.category === 'transport' ? '出発地' : '場所');
+    if (!name && !query) return '';
+    return '<div class="ss-place"><span class="ss-place-label">' + label + '</span> ' +
+      (name ? '<strong>' + escapeHtml(name) + '</strong>' : '<span class="ss-nomap">' + escapeHtml(query || '') + '（地図なし）</span>') +
+      ' <button type="button" class="btn text small" data-ss-place="' + which + '">' + (name ? '変える' : '場所を探す') + '</button>' +
+      '<div class="ss-place-search" data-ss-place-box="' + which + '" hidden>' +
+      '<div class="field-row"><div class="field"><input type="text" data-ss-place-q="' + which + '" value="' + escapeHtml(query || '') + '" placeholder="場所の名前"></div>' +
+      '<button type="button" class="btn ghost small" data-ss-place-go="' + which + '">探す</button></div>' +
+      '<div class="ss-place-list" data-ss-place-list="' + which + '"></div>' +
+      '<button type="button" class="btn text small" data-ss-place-clear="' + which + '">地図を外す</button></div></div>';
+  }
+
+  function ssCard(item) {
+    var s = ssState();
+    var i = s.items.indexOf(item);
+    var tripDates = Core.allDatesForTrip(state.trip, []).filter(function (d) { return d; });
+    var range = tripDates.length ? ' min="' + tripDates[0] + '" max="' + tripDates[tripDates.length - 1] + '"' : '';
+    var cats = Core.CATEGORIES.map(function (c) { return c.key; }).filter(function (c) { return c !== 'arrival'; }).map(function (c) {
+      return '<option value="' + c + '"' + (item.category === c ? ' selected' : '') + '>' + escapeHtml(Core.categoryLabel(c)) + '</option>';
+    }).join('');
+    var costs = (item.costItems || []).map(function (c, k) {
+      return '<div class="ss-cost-row"><input type="text" data-ss-cost-label="' + k + '" value="' + escapeHtml(c.label) + '">' +
+        '<input type="number" inputmode="decimal" min="0" step="any" data-ss-cost-amount="' + k + '" value="' + c.amount + '">' +
+        '<span class="ss-cost-unit">' + escapeHtml(c.currency || '円') + '</span>' +
+        '<button type="button" class="ss-cost-x" data-ss-cost-remove="' + k + '" aria-label="この費用を外す">×</button></div>';
+    }).join('');
+    var warns = (item.warnings || []).map(function (w) { return '<p class="ss-warn">' + escapeHtml(w) + '</p>'; }).join('');
+    var routeText = item.category === 'transport' && (item.fromPlace || item.toPlace)
+      ? '<p class="hint ss-route">' + escapeHtml((item.fromPlace || '?') + '→' + (item.toPlace || '?')) +
+        (item.departTime || item.arriveTime ? '（' + escapeHtml((item.departTime || '') + '〜' + (item.arriveTime || '')) + '）' : '') + '</p>'
+      : '';
+    return '<div class="ss-card' + (item.use === false ? ' off' : '') + '" data-ss-idx="' + i + '">' +
+      '<div class="ss-card-head"><label class="ss-use"><input type="checkbox" data-ss="use"' + (item.use === false ? '' : ' checked') + '> 追加する</label>' + ssThumbFor(item) + '</div>' +
+      '<div class="ss-card-body">' + warns +
+      '<div class="field-row"><div class="field"><label>日付</label><input type="date" data-ss="date" value="' + escapeHtml(item.date) + '"' + range + '></div>' +
+      '<div class="field"><label>時刻' + (item.timeEstimated ? '（目安）' : '') + '</label><input type="time" data-ss="time" value="' + escapeHtml(item.time || '') + '"></div></div>' +
+      '<div class="field"><label>見出し</label><input type="text" data-ss="label" value="' + escapeHtml(item.label) + '"></div>' +
+      '<div class="field"><label>種類</label><select data-ss="category">' + cats + '</select></div>' +
+      routeText +
+      (item.category === 'transport' ? ssPlaceLine(item, 'main') + ssPlaceLine(item, 'arrive') : ssPlaceLine(item, 'main')) +
+      (costs ? '<div class="ss-costs"><label class="ss-cost-title">費用</label>' + costs + '</div>' : '') +
+      (item.note ? '<p class="hint ss-note">' + escapeHtml(item.note) + '</p>' : '') +
+      '</div></div>';
+  }
+
+  function renderSsResult() {
+    var s = ssState();
+    var el = $('#ssResult');
+    $('#ssPickArea').hidden = true;
+    var used = s.items.filter(function (it) { return it.use !== false; }).length;
+    var html = '';
+    if (!s.items.length) {
+      html += '<p class="hint">予定として使える情報を読み取れませんでした。</p>';
+    } else {
+      html += '<p class="hint">' + s.items.length + '件の候補です。内容を確認して、直すところは直してください。要らない候補は「追加する」を外します。</p>';
+      Core.groupScreenshotItemsByDay(s.items).forEach(function (g) {
+        html += '<h2 class="ss-day">' + escapeHtml(g.date ? Core.formatDateJp(g.date) + '（' + Core.dayLabel(state.trip, g.date) + '）' : '日付未設定') + '</h2>';
+        g.items.forEach(function (it) { html += ssCard(s.items[it._index]); });
+      });
+    }
+    if (s.dropped) html += '<p class="hint">' + s.dropped + '件は、内容が足りず候補にできませんでした。</p>';
+    if (s.unreadable.length) {
+      html += '<h2 class="ss-day">読み取れなかった画像</h2><div class="ss-unreadable">' + s.unreadable.map(function (u) {
+        var f = s.files[u.image];
+        return '<div class="ss-unreadable-row">' + (f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="">' : '') +
+          '<span>画像' + (u.image + 1) + '：' + escapeHtml(u.message || '読み取れませんでした') + '</span></div>';
+      }).join('') + '</div>';
+    }
+    html += '<p class="hint" id="ssSaveStatus"></p>' +
+      (s.items.length ? '<button type="button" class="btn primary wide" id="btnSsSave"' + (used ? '' : ' disabled') + '>この内容で追加（' + used + '件）</button>' : '') +
+      '<button type="button" class="btn ghost wide" id="btnSsRetry">画像を選び直す</button>';
+    el.innerHTML = html;
+    el.hidden = false;
+  }
+
+  function ssItemOf(target) {
+    var card = target.closest ? target.closest('[data-ss-idx]') : null;
+    return card ? ssState().items[Number(card.getAttribute('data-ss-idx'))] : null;
+  }
+
+  function ssRefreshSaveButton() {
+    var used = ssState().items.filter(function (it) { return it.use !== false; }).length;
+    var btn = $('#btnSsSave');
+    if (btn) { btn.disabled = !used; btn.textContent = 'この内容で追加（' + used + '件）'; }
+  }
+
+  // 場所を探し直す：既存の /places/search と /places/details（記録フォームの「場所名で検索」と同じ）を使う
+  function ssSearchPlace(item, which, box) {
+    var q = $('[data-ss-place-q="' + which + '"]', box).value.trim();
+    var list = $('[data-ss-place-list="' + which + '"]', box);
+    if (!q) return;
+    list.innerHTML = '<p class="hint">探しています…</p>';
+    ssPlaceSession = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'ss-' + Date.now().toString(36);
+    var session = ssPlaceSession;
+    api('/places/search?q=' + encodeURIComponent(q) + '&session=' + encodeURIComponent(session)).then(function (res) {
+      var places = (res && res.places) || [];
+      if (!places.length) { list.innerHTML = '<p class="hint">見つかりませんでした。</p>'; return; }
+      list.innerHTML = places.map(function (p, k) {
+        return '<div class="place-card" data-ss-choice="' + k + '" role="button" tabindex="0"><span class="place-num">' + (k + 1) + '</span>' +
+          '<div class="place-text"><div class="place-name">' + escapeHtml(p.name) + '</div>' +
+          (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">選択</span></div>';
+      }).join('');
+      $all('[data-ss-choice]', list).forEach(function (card) {
+        var pick = function () {
+          var p = places[Number(card.getAttribute('data-ss-choice'))];
+          var need = !(isFinite(p.lat) && isFinite(p.lng)) && p.placeId;
+          var req = need
+            ? api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(session)).then(function (d) {
+              if (d && d.found && isFinite(d.lat) && isFinite(d.lng)) { p.lat = d.lat; p.lng = d.lng; }
+            }).catch(function () {})
+            : Promise.resolve();
+          req.then(function () {
+            var url = Core.placeMapUrl(p, q);
+            if (which === 'arrive') {
+              item.arriveMapUrl = url; item.arrivePlaceName = p.name;
+              item.arriveLat = isFinite(p.lat) ? p.lat : undefined; item.arriveLng = isFinite(p.lng) ? p.lng : undefined;
+            } else {
+              item.mapUrl = url; item.mapPlaceName = p.name;
+              item.mapLat = isFinite(p.lat) ? p.lat : undefined; item.mapLng = isFinite(p.lng) ? p.lng : undefined;
+              item.placeGuessed = false;
+              item.warnings = (item.warnings || []).filter(function (w) { return w.indexOf('推測') === -1; });
+            }
+            renderSsResult();
+          });
+        };
+        card.addEventListener('click', pick);
+        card.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') pick(); });
+      });
+    }).catch(function () { list.innerHTML = '<p class="hint">候補を取得できませんでした。</p>'; });
+  }
+
+  function handleSsResultClick(e) {
+    var t = e.target;
+    var item = ssItemOf(t);
+    if (t.id === 'btnSsRetry') { openScreenshotImport(); return; }
+    if (t.id === 'btnSsSave') { handleSsSave(); return; }
+    if (!item) return;
+    var btn = t.closest('[data-ss-place]');
+    if (btn) {
+      var box = $('[data-ss-place-box="' + btn.getAttribute('data-ss-place') + '"]', btn.parentNode);
+      box.hidden = !box.hidden;
+      return;
+    }
+    var go = t.closest('[data-ss-place-go]');
+    if (go) { var w = go.getAttribute('data-ss-place-go'); ssSearchPlace(item, w, go.closest('.ss-place-search')); return; }
+    var clear = t.closest('[data-ss-place-clear]');
+    if (clear) {
+      if (clear.getAttribute('data-ss-place-clear') === 'arrive') { item.arriveMapUrl = ''; item.arrivePlaceName = ''; item.arriveLat = undefined; item.arriveLng = undefined; }
+      else { item.mapUrl = ''; item.mapPlaceName = ''; item.mapLat = undefined; item.mapLng = undefined; }
+      renderSsResult();
+      return;
+    }
+    var rm = t.closest('[data-ss-cost-remove]');
+    if (rm) { item.costItems.splice(Number(rm.getAttribute('data-ss-cost-remove')), 1); renderSsResult(); }
+  }
+
+  // 入力欄の値を候補に反映する。日付・種類を変えたときだけ描き直す（並びや入力欄が変わるため）
+  function handleSsResultChange(e) {
+    var t = e.target;
+    var item = ssItemOf(t);
+    if (!item) return;
+    var field = t.getAttribute('data-ss');
+    if (field === 'use') {
+      item.use = t.checked;
+      var card = t.closest('.ss-card');
+      if (card) card.classList.toggle('off', !t.checked);
+      ssRefreshSaveButton();
+    } else if (field === 'date') { item.date = t.value; renderSsResult(); }
+    else if (field === 'time') { item.time = t.value; item.timeEstimated = false; }
+    else if (field === 'label') { item.label = t.value; }
+    else if (field === 'category') {
+      item.category = t.value;
+      if (t.value !== 'transport') item.transport = '';
+      renderSsResult();
+    } else if (t.hasAttribute('data-ss-cost-label')) { item.costItems[Number(t.getAttribute('data-ss-cost-label'))].label = t.value; }
+    else if (t.hasAttribute('data-ss-cost-amount')) {
+      var c = item.costItems[Number(t.getAttribute('data-ss-cost-amount'))];
+      var n = Number(t.value);
+      c.amount = isFinite(n) && n >= 0 ? n : 0;
+    }
+  }
+
+  function handleSsSave() {
+    var s = ssState();
+    var user = loadCurrentUser();
+    var payload = Core.screenshotItemsToSavePayload(s.items, state.trip);
+    var status = $('#ssSaveStatus');
+    if (payload.errors.length) {
+      status.textContent = '直してから追加してください：' + payload.errors.map(function (er) { return '「' + (er.label || '（見出しなし）') + '」' + er.reason; }).join('、');
+      return;
+    }
+    if (!payload.items.length) { status.textContent = '追加する候補がありません。'; return; }
+    $('#btnSsSave').disabled = true;
+    status.textContent = '外貨のレートを確認しています…';
+    // 外貨の費用にはレート（円換算）を付ける。fetchRatesForImportBlocksは{date, entry:{costItems}}の形を読む
+    var shaped = payload.items.map(function (p) { return { date: p.date, entry: { costItems: p.costItems } }; });
+    fetchRatesForImportBlocks(shaped, state.trip).then(function (failedCurrencies) {
+      status.textContent = '追加しています…';
+      return api('/trips/' + encodeURIComponent(state.trip.id) + '/screenshot-blocks', 'POST', { items: payload.items, author: (user && user.name) || '' })
+        .then(function (res) { return refreshTrip().then(function () { return { res: res, failed: failedCurrencies }; }); });
+    }).then(function (r) {
+      var first = payload.items.map(function (p) { return p.date; }).sort()[0];
+      if (first) state.selectedDate = first;
+      ssRevokeFiles();
+      state.ss = null;
+      showScreen('tripDetail');
+      renderTripDetail();
+      showToast((r.res.blocks || []).length + '件の予定を追加しました');
+      if (r.failed.length) alert(r.failed.join('・') + 'のレートを取得できませんでした。記録を開いてレートを入れてください。');
+    }).catch(function () {
+      $('#btnSsSave').disabled = false;
+      status.textContent = '追加に失敗しました。もう一度お試しください。';
+    });
+  }
+
+  function setupScreenshotImport() {
+    $('#btnSsPick').addEventListener('click', function () { $('#ssFileInput').click(); });
+    $('#ssFileInput').addEventListener('change', function (e) { handleSsFilesChosen(e.target.files); e.target.value = ''; });
+    $('#ssThumbs').addEventListener('click', function (e) {
+      var x = e.target.closest ? e.target.closest('[data-ss-remove]') : null;
+      if (!x) return;
+      var s = ssState();
+      var f = s.files.splice(Number(x.getAttribute('data-ss-remove')), 1)[0];
+      if (f) { try { URL.revokeObjectURL(f.url); } catch (err) {} }
+      renderSsThumbs();
+    });
+    $('#btnSsScan').addEventListener('click', handleSsScan);
+    $('#ssResult').addEventListener('click', handleSsResultClick);
+    $('#ssResult').addEventListener('change', handleSsResultChange);
+  }
+
   function renderDayTabs() {
     var dates = Core.allDatesForTrip(state.trip, state.blocks);
     var el = $('#dayTabs');
@@ -7239,6 +7679,13 @@
     multiDayBtn.innerHTML = MIC_ICON + '<span>複数日をまとめて記録する</span>';
     multiDayBtn.addEventListener('click', function () { openVoiceEntryForm(true); });
     el.appendChild(multiDayBtn);
+
+    // スクショから予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
+    var screenshotBtn = document.createElement('button');
+    screenshotBtn.className = 'block-add';
+    screenshotBtn.innerHTML = IMAGE_ICON + '<span>スクショから予定を作る</span>';
+    screenshotBtn.addEventListener('click', function () { openScreenshotImport(); });
+    el.appendChild(screenshotBtn);
 
     // 時差の並びを調べるボタン。URLに ?zonedebug を付けたときだけ出す（実データで並びがおかしいときの調査用。2026-09-27）
     if (blocks.length && /[?&]zonedebug\b/.test(location.search || '')) {
@@ -11641,6 +12088,7 @@
     $('#btnOrganizeMemoAi').addEventListener('click', function () { organizeMemoWithAi(); });
     $('#btnCopyAiPrompt').addEventListener('click', copyAiImportPrompt);
     $('#btnImportJson').addEventListener('click', handleImportJson);
+    setupScreenshotImport();
 
     $('#btnSaveBlock').addEventListener('click', saveBlock);
     $('#btnDeleteBlock').addEventListener('click', deleteBlock);
@@ -11872,6 +12320,8 @@
       if (loggedIn) loadSocial();
     } else if (target === 'voiceEntryForm' && state.trip) {
       openVoiceEntryForm();
+    } else if (target === 'screenshotImport' && state.trip) {
+      openScreenshotImport();
     } else if (target === 'mylog' && loggedIn) {
       openMyLog();
     } else if (target === 'visited' && loggedIn) {

@@ -802,6 +802,17 @@ npx wrangler deploy
 
 `release/tabilog-1.1.0`ブランチのapp.jsを確認したところ、`authHeaders()`が`authorization: Bearer <token>`を`api()`・`nativeApi()`・`postBinary()`のすべてに付けており、iOSアプリ（1.1.0）側はトークン必須に切り替えても送れる状態。**切り替える（`vars`に`"REQUIRE_SESSION": "1"`）かどうかは、1.0.x以前の古いアプリが使われなくなったかを見て別途判断する**（この作業ではオンにしていない）。
 
+## スクショから予定を作る（2026-09-30 追加、docs/adr/0022）
+
+旅行詳細の「スクショから予定を作る」（画像を最大10枚→予定の候補→確認画面→追加）に必要な設定です。**新しいシークレットや`wrangler.jsonc`の変更・DBのマイグレーションはありません**（すべて既存のものを使います）。
+
+- `GOOGLE_API_KEY`：レシート読み取り・場所の候補検索で使っているものと同じキー。**このキーで Cloud Vision API と Places API (New) の両方が有効**である必要があります（Visionは`DOCUMENT_TEXT_DETECTION`、Placesは Text Search）。どちらかが無効・キーが無いと、この機能は`server_not_configured`（503）を返し、画面に「まだ使えません」と出ます。
+- `OPENAI_API_KEY`：音声・メモのAI整理と同じキー。
+- `AI_RATE_LIMITER`：既存のもの（1分に10回）を使います。回数の枠は「メモのAI整理」を1回の取り込みにつき1回使います（`memo_uses_this_period`、使い切ったら回数券）。
+- **GCPのクォータに注意**：Cloud Visionは月1,000枚まで無料、超えると1,000枚あたり約$1.5。1回の取り込みで最大10枚使います。GCPで「Visionの1日の上限」を30枚などに絞っていると、10枚の取り込みは3回で尽きて`vision_failed`になります。機能を出す前に、1日の上限と予算アラートを決めてください。Places Text Searchは名前・住所・座標を聞くため Pro の単価帯です（1回の取り込みで最大12回）。
+- **サブリクエスト**：Workers Freeは1リクエスト50回まで。1回の取り込みは Vision 1＋OpenAI 1＋場所検索 最大12＋D1 約10＝約24回（最大でも約35回）で、`worker/src/screenshot-import.js`の`estimateSubrequests`で数えています。
+- ローカルの確認：`node worker/test/screenshot-import.test.mjs`（純粋関数）と`node worker/test/screenshot-handler.test.mjs`（Workerの入口から通し。D1・Vision・OpenAI・Placesはモックで、有料APIは呼びません）。
+
 
 ## 自分だけの道（別行動の分岐）：マイグレーションは1文ずつ（2026-09-30 追加、docs/adr/0021）
 

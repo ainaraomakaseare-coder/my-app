@@ -299,6 +299,31 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     </div>
   </section>
 
+  <!-- ============ スクショから予定を作る（docs/adr/0022） ============
+       画像を選ぶ→サーバーで文字にして予定の候補にする→確認画面で直す→追加。AIを使うので
+       ログインとAI送信の同意が要り、メモのAI整理の回数を1回使う。#ssResultはapp.jsが描く -->
+  <section class="screen" data-screen="screenshotImport">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" data-back="tripDetail">← 戻る</button>
+        <h1>スクショから予定を作る</h1>
+        <p class="lead">航空券・新幹線のきっぷ・ホテルの予約画面・乗換案内・チケット・レシートなどのスクリーンショットを選ぶと、予定の候補を作ります。保存する前に、内容を確認して直せます。</p>
+      </header>
+
+      <div id="ssPickArea">
+        <input type="file" id="ssFileInput" accept="image/*" multiple hidden>
+        <button class="btn ghost wide" id="btnSsPick" type="button">画像を選ぶ（最大10枚）</button>
+        <div class="ss-thumbs" id="ssThumbs"></div>
+        <p class="hint">画像に写っている氏名・予約番号などは、読み取りのため外部のAIサービス（Google・OpenAI）に送られます（予約番号や氏名は予定には保存しません）。1回の取り込みで、メモのAI整理の回数を1回使います。</p>
+        <p class="hint" id="ssInfo"></p>
+        <button class="btn primary wide" id="btnSsScan" type="button" disabled>読み取る</button>
+        <p class="hint" id="ssStatus"></p>
+      </div>
+
+      <div id="ssResult" hidden></div>
+    </div>
+  </section>
+
   <!-- ============ 旅の詳細（日ごとのきろく） ============ -->
   <section class="screen" data-screen="tripDetail">
     <div class="wrap">

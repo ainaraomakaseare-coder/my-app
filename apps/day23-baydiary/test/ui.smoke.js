@@ -48,7 +48,14 @@ function check(label, cond, extra){
   check("フォーム画面に切り替わる", await vis("#scr-form"));
   await page.fill("#f-date", "2025-04-12");
   await page.selectOption("#f-opponent-select", { label: "阪神" });
-  await page.fill("#f-venue", "横浜スタジアム");
+  check("球場は応援球団の本拠地が自動で選ばれる", await val("#f-venue-select") === "横浜スタジアム");
+  check("球場の手入力欄は最初は隠れている", !(await vis("#f-venue")));
+  await page.selectOption("#f-venue-select", "__other__");
+  check("球場で「その他」を選ぶと手入力欄が出る", await vis("#f-venue"));
+  await page.fill("#f-venue", "県営大宮球場");
+  await page.selectOption("#f-venue-select", "東京ドーム");
+  check("一覧から選び直すと手入力欄が隠れ、その球場になる", !(await vis("#f-venue")) && await val("#f-venue") === "東京ドーム");
+  await page.selectOption("#f-venue-select", "横浜スタジアム");
   await page.fill("#f-bay-score", "5");
   await page.fill("#f-opp-score", "3");
   check("スコア入力で勝敗が自動判定される", await val("#f-result") === "win");

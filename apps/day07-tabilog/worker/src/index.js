@@ -15,6 +15,11 @@ import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture, isTransi
 import { parseWorkersAiOutput, describeWorkersAiOutputForDebug } from "./ai-parse.js";
 import { isUsableTranscript } from "./transcribe-provider.js";
 import {
+  SCREENSHOT_MAX_ITEMS, UNREADABLE_REASONS, estimateSubrequests, buildVisionBatchBody, parseVisionBatchResponse,
+  buildScreenshotPrompt, screenshotSchema, normalizeScreenshotResult, collectPlaceQueries, buildTextSearchRequest,
+  parseTextSearchResponse, attachPlaces, placeKey, validateSaveItems, validateImagesInput,
+} from "./screenshot-import.js";
+import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
   isValidEntryId, entryNeedsGeocode, MAP_COORDS_VALID_SINCE, downsamplePoints, decodePolyline, hasBrokenMapQuery,
@@ -4334,6 +4339,217 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
   return json({ blocks: created, transcript: text }, 200, headers);
 }
 
+/* ---------- スクショから予定を作る（docs/adr/0022） ----------
+ * 画像（最大10枚）→ Cloud Visionで文字にする（1回のバッチ）→ OpenAIで予定の候補にする
+ * → Google Text Searchで場所（座標）を付ける → 確認画面へ返す（ここでは何も保存しない）。
+ * 保存は確認のあとの別のエンドポイント（saveScreenshotBlocks）。AIを使うのはこちらだけで、
+ * 「メモのAI整理」の枠を1回ぶん使う（画像が何枚でも1回）。
+ * 純粋な部分（プロンプト・検証・補正・件数の絞り込み）は screenshot-import.js にまとめてある。
+ *
+ * サブリクエストの内訳（Workers Freeは1リクエスト50回まで）：
+ *   Vision 1回（10枚を1リクエストにまとめる）＋OpenAI 1回（やり直し時は最大2回）
+ *   ＋場所検索 最大12回＋D1（ログイン確認・回数の確認と消費・旅行の取得）約10回 → 最大でも約35回
+ */
+
+const SCREENSHOT_AI_ERRORS = { too_many_images: 400, invalid_input: 400, invalid_size: 413 };
+
+// OpenAIに、OCR結果から予定の候補を作ってもらう。切れたとき（incomplete）だけ考える量を減らして1回やり直す
+async function organizeScreenshotsWithOpenAi(env, prompt) {
+  const attempt = async (effort) => {
+    const upstream = await fetch(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || "gpt-5.6-sol",
+        input: prompt,
+        reasoning: { effort },
+        max_output_tokens: 12000,
+        store: false,
+        text: { format: { type: "json_schema", name: "screenshot_items", strict: true, schema: screenshotSchema() } },
+      }),
+    });
+    if (!upstream.ok) {
+      const errorBody = await upstream.text().catch(() => "");
+      console.error(JSON.stringify({ event: "openai_screenshot_error", status: upstream.status, body: errorBody.slice(0, 500) }));
+      if (isOpenAiQuotaError(upstream.status, errorBody)) return { error: "ai_quota_exhausted" };
+      return { error: "upstream_error" };
+    }
+    const response = await upstream.json();
+    try {
+      const parsed = JSON.parse(outputText(response));
+      if (!parsed || !Array.isArray(parsed.items)) return { error: "invalid_model_output" };
+      return { parsed };
+    } catch {
+      const reason = response.incomplete_details && response.incomplete_details.reason;
+      return { error: "invalid_model_output", incomplete: response.status === "incomplete" || !!reason };
+    }
+  };
+  const first = await attempt("medium");
+  if (first.error === "invalid_model_output" && first.incomplete) {
+    const retry = await attempt("low");
+    return retry.error === "invalid_model_output" ? { error: "output_too_long" } : retry;
+  }
+  return first;
+}
+
+// Google Text Searchで場所を1件だけ探す（名前・住所・座標を1回の呼び出しで）。失敗・0件はnull
+async function googleTextSearchOne(q, env) {
+  try {
+    const req = buildTextSearchRequest(q);
+    const res = await fetch(req.url, {
+      method: "POST",
+      headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": req.fieldMask, "content-type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+    if (!res.ok) return null;
+    return parseTextSearchResponse(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+async function scanScreenshots(tripId, request, env, headers) {
+  if (!env.OPENAI_API_KEY || !env.GOOGLE_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  const v = validateImagesInput(data && data.images);
+  if (!v.ok) return json({ error: v.error }, SCREENSHOT_AI_ERRORS[v.error] || 400, headers);
+  const count = v.images.length;
+
+  const auth = await resolveEmail(request, env, optStr(data.email, 200) && data.email ? String(data.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+
+  // メモのAI整理と同じ枠（docs/adr/0004）。画像が何枚でも1回ぶん。消費は成功したあと
+  const quota = await checkVoiceQuota(env, auth.email, "memo");
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  // 1) Cloud Vision：全画像を1回のimages:annotateにまとめる（サブリクエスト1回）
+  let texts;
+  try {
+    const res = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + encodeURIComponent(env.GOOGLE_API_KEY), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(buildVisionBatchBody(v.images.map((im) => im.data))),
+    });
+    if (!res.ok) {
+      console.error(JSON.stringify({ event: "vision_screenshot_error", status: res.status }));
+      return json({ error: "vision_failed" }, 502, headers);
+    }
+    texts = parseVisionBatchResponse(await res.json(), count);
+  } catch {
+    return json({ error: "vision_failed" }, 502, headers);
+  }
+  const unreadable = texts.filter((t) => !t.text).map((t) => ({ image: t.index, reason: t.reason }));
+  const readable = texts.filter((t) => t.text);
+  if (!readable.length) {
+    return json({ items: [], unreadable, dropped: 0, usage: { images: count, placeLookups: 0, placesSkipped: 0 } }, 200, headers);
+  }
+
+  // 2) OpenAI：予定の候補にする（サブリクエスト1回）
+  const tripInfo = { startDate: trip.start_date, endDate: trip.end_date };
+  const ai = await organizeScreenshotsWithOpenAi(env, buildScreenshotPrompt(readable, tripInfo));
+  if (ai.error) return json({ error: ai.error }, ai.error === "ai_quota_exhausted" ? 503 : 502, headers);
+  const norm = normalizeScreenshotResult(ai.parsed, { trip: tripInfo, imageCount: count, today: nowIso().slice(0, 10) });
+
+  // 3) 場所検索：名前ごとに1回（最大12回、並べて同時に呼ぶ）
+  const { queries, skipped } = collectPlaceQueries(norm.items);
+  const found = {};
+  await Promise.all(queries.map(async (q) => { found[placeKey(q)] = await googleTextSearchOne(q, env); }));
+  attachPlaces(norm.items, found);
+
+  // 使える情報が何も無かった画像も「読み取れなかった画像」に含める（画像ごとの理由をそろえる）
+  const used = new Set(norm.items.map((it) => it.sourceImage).filter((n) => n !== null));
+  const seen = new Set(unreadable.map((u) => u.image));
+  for (const t of readable) {
+    if (!used.has(t.index) && !seen.has(t.index)) { unreadable.push({ image: t.index, reason: "no_event" }); seen.add(t.index); }
+  }
+  unreadable.sort((a, b) => a.image - b.image);
+  for (const u of unreadable) u.message = UNREADABLE_REASONS[u.reason] || UNREADABLE_REASONS.read_error;
+
+  if (norm.items.length) await consumeVoiceQuota(env, quota.email, quota.via, "memo");
+  return json({
+    items: norm.items, unreadable, dropped: norm.dropped,
+    usage: { images: count, placeLookups: queries.length, placesSkipped: skipped, subrequests: estimateSubrequests(count, queries.length) },
+  }, 200, headers);
+}
+
+// 確認画面で「この内容で追加」を押したあとの保存。AIを使わないのでログイン・回数は要らない
+// （メモの決まった形の取り込み＝createBlocksFromMemoと同じ扱い）。届いた値は
+// validateSaveItemsで検証し直し、予定（blocks）とその記録（entries）を1回のD1バッチで保存する
+async function saveScreenshotBlocks(tripId, request, env, headers) {
+  const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  if (!data || !Array.isArray(data.items) || !data.items.length || data.items.length > SCREENSHOT_MAX_ITEMS) return json({ error: "invalid_input" }, 400, headers);
+  const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
+  const checked = validateSaveItems(data.items, { startDate: trip.start_date, endDate: trip.end_date });
+  if (!checked.items.length) return json({ error: "invalid_input", errors: checked.errors }, 400, headers);
+
+  const baseTime = Date.now();
+  const built = checked.items.map((it, i) => {
+    const t = new Date(baseTime + i * 10).toISOString(); // 並びが安定するよう少しずつずらす
+    const blockRow = { id: uid("blk"), trip_id: tripId, date: it.date, time: it.time, label: it.label, category: it.category, transport: it.transport, created_at: t, updated_at: t };
+    const hasMap = !!it.mapUrl;
+    const entryRow = {
+      id: uid("ent"), block_id: blockRow.id, episode: it.episode, comment: "", detail: "",
+      photo_ids: "[]", video_ids: "[]", cost_items: JSON.stringify(it.costItems), wait_time: "", time: "",
+      map_url: it.mapUrl, map_place_name: it.mapPlaceName,
+      // 場所検索で座標まで分かっているものは、いま座標も一緒に保存する（あとで地図でふりかえるを開いても
+      // 探し直さない）。map_geocoded_urlをmap_urlと同じにするのが「この座標は今のURLのもの」という印
+      map_lat: hasMap && typeof it.mapLat === "number" ? it.mapLat : null,
+      map_lng: hasMap && typeof it.mapLng === "number" ? it.mapLng : null,
+      map_geocoded_url: hasMap && typeof it.mapLat === "number" ? it.mapUrl : null,
+      map_geocoded_at: hasMap && typeof it.mapLat === "number" ? t : null,
+      shop_url: "", other_url: "", author, travel: JSON.stringify(cleanTravel(it.travel)), created_at: t, updated_at: t,
+    };
+    return { blockRow, entryRow };
+  });
+
+  const statements = (withPlaceName) => built.flatMap(({ blockRow: b, entryRow: e }) => [
+    env.DB.prepare(
+      "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    ).bind(b.id, b.trip_id, b.date, b.time, b.label, b.category, b.transport, b.created_at, b.updated_at),
+    env.DB.prepare(
+      `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url,${withPlaceName ? " map_place_name," : ""} map_lat, map_lng, map_geocoded_url, map_geocoded_at, shop_url, other_url, author, travel, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,${withPlaceName ? "?," : ""}?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      ...[e.id, e.block_id, e.episode, e.comment, e.detail, e.photo_ids, e.video_ids, e.cost_items, e.wait_time, e.time, e.map_url]
+        .concat(withPlaceName ? [e.map_place_name] : [])
+        .concat([e.map_lat, e.map_lng, e.map_geocoded_url, e.map_geocoded_at, e.shop_url, e.other_url, e.author, e.travel, e.created_at, e.updated_at])
+    ),
+  ]);
+  // 予定と記録を全部1つのバッチ（D1のトランザクション）にする。途中で失敗して「予定だけ残る」ことを防ぐ
+  try {
+    await env.DB.batch(statements(true));
+  } catch (e) {
+    // migrations/0026（map_place_name列）を実行する前のDBでは、その列無しで保存する
+    if (!/no such column/i.test(String((e && e.message) || ""))) throw e;
+    await env.DB.batch(statements(false));
+  }
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+
+  const blocks = built.map(({ blockRow, entryRow }) => ({ ...rowToBlock(blockRow), entries: [rowToEntry(entryRow)] }));
+  return json({ blocks, errors: checked.errors }, 200, headers);
+}
+
 /* ---------- OpenAI→Workers AIの切り替え比較（試作、docs/adr/0012） ----------
  * 管理者だけが使う `POST /ai-compare`。Workerのシークレット`AI_COMPARE_TOKEN`を
  * 設定していないと常に404（機能自体が存在しないように見せる）。設定していても、
@@ -5102,6 +5318,8 @@ export default {
       return createBlocksFromVoiceMultiDay(m[1], request, env, headers);
     }
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/memo-blocks$/))) return createBlocksFromMemo(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/screenshot-scan$/))) return scanScreenshots(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/screenshot-blocks$/))) return saveScreenshotBlocks(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/text-entries$/))) {
       return createBlocksFromTextMultiDay(m[1], request, env, headers);
     }
