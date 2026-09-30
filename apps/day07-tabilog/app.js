@@ -6531,6 +6531,10 @@
     $('#importPreview').innerHTML = '';
     $('#btnImportJson').disabled = false;
     $('#voicePremiumRequired').hidden = true;
+    $('#voiceTicketShop').hidden = true;
+    $('#voiceTicketShop').innerHTML = '';
+    $('#memoTicketShop').hidden = true;
+    $('#memoTicketShop').innerHTML = '';
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
     if (!user) {
@@ -6539,17 +6543,28 @@
     }
     $('#memoAiInfo').textContent = '';
     fetchAccountStatus().then(function (account) {
-      if (!account) return;
-      var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
-      $('#memoAiInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
-      var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
-      if (!voiceOk) {
-        // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
-        $('#voicePremiumRequired').hidden = false;
-        $('#voicePremiumMessage').textContent = '今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。';
-        $('#btnVoiceRecord').disabled = true;
-      }
+      if (account) applyAiQuotaUi(account);
     });
+  }
+
+  // 音声・メモの画面に、残り回数と、使い切ったときの案内（iOSアプリなら回数券を買う入口も）を反映する
+  function applyAiQuotaUi(account) {
+    var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
+    $('#memoAiInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
+    var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
+    if (!voiceOk) {
+      // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
+      $('#voicePremiumRequired').hidden = false;
+      $('#voicePremiumMessage').textContent = '今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。';
+      $('#btnVoiceRecord').disabled = true;
+      renderTicketShop($('#voiceTicketShop'));
+    } else {
+      $('#voicePremiumRequired').hidden = true;
+      $('#btnVoiceRecord').disabled = false;
+    }
+    var memoOk = account.memoRemainingThisPeriod > 0 || account.ticketCredits > 0;
+    if (memoOk) { $('#memoTicketShop').hidden = true; $('#memoTicketShop').innerHTML = ''; }
+    else renderTicketShop($('#memoTicketShop'));
   }
 
   // 音声・AIを使う前の確認。ログインしていなければログインへ（書きかけのメモは残す）
@@ -6716,6 +6731,7 @@
       $('#btnOrganizeMemoAi').disabled = false;
       if (msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#textEntryStatus').textContent = '今月の回数を使い切りました。来月1日にまた使えます。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
+        fetchAccountStatus().then(function () { renderTicketShop($('#memoTicketShop')); });
       } else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = importScanErrorMessage(msg);
     });
@@ -6899,12 +6915,15 @@
     $('#ssResult').innerHTML = '';
     $('#ssStatus').textContent = '';
     $('#ssInfo').textContent = '';
+    $('#ssTicketShop').hidden = true;
+    $('#ssTicketShop').innerHTML = '';
     renderSsThumbs();
     showScreen('screenshotImport');
     fetchAccountStatus().then(function (account) {
       if (!account) return;
       var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
       $('#ssInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
+      if (account.memoRemainingThisPeriod <= 0 && !account.ticketCredits) renderTicketShop($('#ssTicketShop'));
     });
   }
 
@@ -6999,6 +7018,7 @@
         var msg = (e && e.message) || '';
         if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
           $('#ssStatus').textContent = msg === 'login_required' ? 'ログインし直してください。' : '今月の回数を使い切りました。来月1日にまた使えます。';
+          if (msg !== 'login_required') fetchAccountStatus().then(function () { renderTicketShop($('#ssTicketShop')); });
           return;
         }
         $('#ssStatus').textContent = ssErrorMessage(msg);
@@ -10198,11 +10218,12 @@
     renderPlanStatus();
     var active = $('.screen.active');
     var name = active && active.dataset.screen;
-    if (name === 'voiceEntryForm') openVoiceEntryFormRefresh();
+    if (name === 'voiceEntryForm' && state.account) applyAiQuotaUi(state.account);
     else if (name === 'screenshotImport' && state.account) {
       var bonus = state.account.ticketCredits ? '（おまけの回数：' + state.account.ticketCredits + '回）' : '';
       $('#ssInfo').textContent = 'メモ・スクショのAI整理：あと' + state.account.memoRemainingThisPeriod + '回（月' + state.account.memoMonthlyLimit + '回まで）' + bonus;
       $('#ssTicketShop').hidden = true;
+      $('#ssTicketShop').innerHTML = '';
     }
   }
 
@@ -10216,6 +10237,7 @@
       statusEl.innerHTML = '';
       msgEl.textContent = '';
       badgeEl.hidden = true;
+      renderTicketShop($('#profileTicketShop'));
       return;
     }
     var lines = ['<div class="plan-usage">今月の音声入力：あと' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）</div>'];
@@ -10229,6 +10251,7 @@
     badgeEl.classList.add('is-free');
     badgeEl.textContent = '音声入力 あと' + account.voiceRemainingThisPeriod + '回';
     msgEl.textContent = '';
+    renderTicketShop($('#profileTicketShop'));
   }
 
   // iOSアプリ内ではlocation.originがcapacitor://localhostになってしまい、
@@ -10314,7 +10337,9 @@
   function deleteMyAccount() {
     var user = loadCurrentUser();
     if (!user) return;
-    if (!confirm('アカウントを削除しますか？\n（名前・おまけの回数の情報と、この端末の旅行一覧が削除されます。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
+    var left = state.account ? (state.account.ticketCredits || 0) : 0;
+    var lostNote = left > 0 ? '\n残っている回数券・おまけの回数（' + left + '回）は消えます。払い戻しはできません。' : '';
+    if (!confirm('アカウントを削除しますか？' + lostNote + '\n（名前・おまけの回数の情報と、この端末の旅行一覧が削除されます。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
     api('/accounts/delete', 'POST', { email: user.email }).then(function () {
       Object.keys(localStorage).forEach(function (k) {
         if (k.indexOf('tabilog:') === 0) localStorage.removeItem(k);
@@ -12930,6 +12955,7 @@
     renderAccountRow();
     api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
       saveCurrentUser(Object.assign({}, loadCurrentUser(), { accountId: account.accountId }));
+      iapLogIn(account.accountId); // 回数券の購入者をRevenueCat側でもこのアカウントにする（iOSアプリだけ）
     }).catch(function () {
       // アカウントIDが取れなくてもログインは成立させる
     }).then(function () {
