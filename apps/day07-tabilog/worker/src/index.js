@@ -3707,6 +3707,88 @@ async function handleStripeWebhook(request, env, headers) {
   return json({ received: true }, 200, headers);
 }
 
+/* ---------- RevenueCat Webhook（回数券のアプリ内課金。docs/adr/0004の2026-09-30の節） ----------
+ * iOSアプリで買われた回数券（消耗型のアプリ内課金）を、RevenueCatがこのWorkerへ通知する。
+ * 足す回数はここ（サーバー）の表で決める。クライアントが「10回買った」と申告しても信用しない。
+ * app_user_idにはaccounts.account_id（サーバーが採番する6桁）を使う。メールアドレスは
+ * RevenueCatへ渡さずに済み、ログイン方法（Google/Apple/メール）が変わっても同じ人を指せる。
+ */
+var IAP_TICKET_PRODUCTS = {
+  "com.hiroyaapps.tabilog.ticket10": 10,
+  "com.hiroyaapps.tabilog.ticket30": 30,
+};
+
+// 文字列の一致を、どこまで合っていたかが処理時間に出ない形で確かめる（SHA-256にしてから全バイトを比べる）
+async function secretsEqual(a, b) {
+  const enc = new TextEncoder();
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(String(a))),
+    crypto.subtle.digest("SHA-256", enc.encode(String(b))),
+  ]);
+  const x = new Uint8Array(ha);
+  const y = new Uint8Array(hb);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
+async function handleRevenueCatWebhook(request, env, headers) {
+  // 合言葉が未設定のときは、この経路が存在しないのと同じ扱いにする（誰でも叩ける状態にしない）
+  if (!env.REVENUECAT_WEBHOOK_AUTH) return json({ error: "not_found" }, 404, headers);
+  if (!(await secretsEqual(request.headers.get("authorization") || "", env.REVENUECAT_WEBHOOK_AUTH))) {
+    return json({ error: "unauthorized" }, 401, headers);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  const event = (body && body.event) || {};
+  // 消耗型（回数券）の購入はNON_RENEWING_PURCHASE。それ以外（TEST・返金・サブスク系など）は何もしない
+  if (event.type !== "NON_RENEWING_PURCHASE") return json({ received: true, ignored: "event_type" }, 200, headers);
+
+  // テスト購入（SANDBOX。TestFlightでの購入もこれ）は本番の回数を増やしてしまうので、変数REVENUECAT_ACCEPT_SANDBOXが"true"のときだけ反映する
+  if (event.environment === "SANDBOX" && env.REVENUECAT_ACCEPT_SANDBOX !== "true") {
+    return json({ received: true, ignored: "sandbox" }, 200, headers);
+  }
+
+  const credits = IAP_TICKET_PRODUCTS[event.product_id];
+  const transactionId = String(event.transaction_id || "");
+  const appUserId = String(event.app_user_id || "");
+  if (!credits || !transactionId) {
+    // 200で返す（4xx/5xxだとRevenueCatが再送を繰り返す。再送しても直らない）。ログで気づけるようにする
+    console.error(JSON.stringify({ event: "revenuecat_unknown_product", product_id: String(event.product_id || "").slice(0, 100), transaction_id: transactionId.slice(0, 100) }));
+    return json({ received: true, ignored: "unknown_product" }, 200, headers);
+  }
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE account_id = ?").bind(appUserId).first();
+  if (!account) {
+    // 200で返す。ログインしてからしか買えない作りなので、未知のIDは再送しても現れない
+    // （RevenueCatの匿名ID「$RCAnonymousID:…」など）。お金が動いている可能性があるので、
+    // 取引IDをログに残し、オーナーが手で回数を足せるようにする。
+    console.error(JSON.stringify({ event: "revenuecat_unknown_user", app_user_id: appUserId.slice(0, 100), transaction_id: transactionId.slice(0, 100), product_id: event.product_id }));
+    return json({ received: true, ignored: "unknown_user" }, 200, headers);
+  }
+  const already = await env.DB.prepare("SELECT transaction_id FROM iap_transactions WHERE transaction_id = ?").bind(transactionId).first();
+  if (already) return json({ received: true, duplicate: true }, 200, headers);
+
+  // 取引の記録と回数の加算は1つのトランザクション（batch）で行う。片方だけ成功して二重に足す・足し損ねるのを防ぐ。
+  // 同時に同じ通知が2本届いても、取引IDの主キーが2本目を弾く（＝batch全体が失敗して回数は足されない）。
+  const t = nowIso();
+  try {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO iap_transactions (transaction_id, account_id, product_id, credits, environment, created_at) VALUES (?,?,?,?,?,?)")
+        .bind(transactionId, appUserId, event.product_id, credits, String(event.environment || ""), t),
+      env.DB.prepare("UPDATE accounts SET ticket_credits = ticket_credits + ?, updated_at=? WHERE account_id=?")
+        .bind(credits, t, appUserId),
+    ]);
+  } catch (e) {
+    if (String((e && e.message) || "").indexOf("UNIQUE") !== -1) return json({ received: true, duplicate: true }, 200, headers);
+    throw e; // 500になり、RevenueCatが後で再送する
+  }
+  return json({ received: true, credited: credits }, 200, headers);
+}
+
 async function joinTrip(tripId, request, env, headers) {
   const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
   if (!trip) return json({ error: "trip_not_found" }, 404, headers);
@@ -5472,6 +5554,7 @@ export default {
       !isAllowedOrigin(origin, env.ALLOWED_ORIGIN) &&
       path.indexOf("/photos/") !== 0 &&
       path !== "/billing/webhook" &&
+      path !== "/billing/revenuecat-webhook" &&
       path !== "/admin/recover-entries" &&
       // ソーシャルログインの開始・戻り先はブラウザのページ移動で、Originはプロバイダーのもの
       // （Appleのform_postではappleid.apple.com）になるため対象外。state・nonce・認可コードで守る。
@@ -5559,6 +5642,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/leave$/))) return leaveTrip(m[1], request, env, headers);
 
+    if (method === "POST" && path === "/billing/revenuecat-webhook") return handleRevenueCatWebhook(request, env, headers);
     if (path.startsWith("/billing/ticket")) return billingDisabled(headers);
     if (method === "POST" && path === "/billing/checkout") return createCheckoutSession(request, env, headers);
     if (method === "POST" && path === "/billing/portal") return createPortalSession(request, env, headers);

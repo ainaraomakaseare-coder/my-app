@@ -309,3 +309,7 @@ CREATE TABLE IF NOT EXISTS auth_codes (code_hash TEXT PRIMARY KEY, kind TEXT NOT
 CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id);
 ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';
+
+-- v33（2026-09-30）：回数券のアプリ内課金（RevenueCat）。詳しい説明は migrations/0033_iap_transactions.sql
+CREATE TABLE IF NOT EXISTS iap_transactions (transaction_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, product_id TEXT NOT NULL, credits INTEGER NOT NULL, environment TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_iap_transactions_account ON iap_transactions(account_id);
