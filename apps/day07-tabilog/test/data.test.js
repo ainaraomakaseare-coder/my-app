@@ -2099,5 +2099,14 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   eq('時刻が合う別のピンの移動は自分のピンの時差', T.assignBlockZones(sep, { h: TK, lax: LA }, TK).lax, LA);
 })();
 
+/* ---- ログインし直しが必要かの判定（REQUIRE_SESSION後、2026-09-30） ---- */
+eq('needsFreshLogin: tokenの無い保存済みユーザーは再ログインが必要', T.needsFreshLogin({ email: 'a@b.c', name: 'x' }), true);
+eq('needsFreshLogin: 空文字のtokenも再ログインが必要', T.needsFreshLogin({ email: 'a@b.c', token: '' }), true);
+eq('needsFreshLogin: tokenがあれば不要', T.needsFreshLogin({ email: 'a@b.c', token: 'abc' }), false);
+eq('needsFreshLogin: 未ログイン（null）はログイン画面へ行くだけなので対象外', T.needsFreshLogin(null), false);
+eq('isLoginRequiredError: login_requiredのエラー', T.isLoginRequiredError(new Error('login_required')), true);
+eq('isLoginRequiredError: 別のエラーは対象外（通信失敗など）', T.isLoginRequiredError(new Error('http_500')), false);
+eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null), false);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
