@@ -1,7 +1,8 @@
 /*
  * 音声でまとめて記録する機能（このアプリで唯一AIを呼び出す機能）を検証する。
  * 実際のマイク・OpenAIとは通信せず、Chromiumのフェイクマイク（--use-fake-device-for-media-stream）
- * と、page.route で用意したフェイクのvoice-entries APIで検証する。
+ * と、page.route で用意したフェイクのvoice-scan／import-blocks APIで検証する
+ * （音声→候補（確認画面）→「この内容で追加」で保存。docs/adr/0002・0022）。
  * 実行: node test/voice.smoke.js   （要 playwright）
  */
 const path = require('path');
@@ -103,33 +104,43 @@ async function launch() {
   let receivedMeta = null;
   let receivedBodySize = 0;
   let voiceCallCount = 0;
+  let savedBody = null;
   const FAKE_TRANSCRIPT = '朝からダイヤモンドヘッドに登って、そのあとファーマーズマーケット行っておいしい5ドルのアサイー食べておなか壊したんだよね、そのあとホテルに帰ってプールに行ったんだけどタオル忘れてびしょびしょで帰った。';
-  await page.route(/\/api\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/, async (route) => {
+  const base = { transport: '', place: '', placeGuessed: false, fromPlace: '', toPlace: '', company: '', routeNumber: '', departTime: '', arriveTime: '', arriveDate: '', warnings: [], timeEstimated: false, nightIndex: 0, sourceImage: null };
+  // 音声は候補を返すだけ（保存しない）。確認画面のあと import-blocks で保存する
+  await page.route(/\/api\/trips\/([^/]+)\/voice-scan$/, async (route) => {
     const req = route.request();
-    const m = req.url().match(/\/api\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/);
-    const tripId = decodeURIComponent(m[1]);
-    const date = decodeURIComponent(m[2]);
     receivedContentType = req.headers()['content-type'] || '';
     const metaHeader = req.headers()['x-voice-meta'];
     try { receivedMeta = JSON.parse(Buffer.from(metaHeader, 'base64').toString('utf-8')); } catch (e) { receivedMeta = null; }
     receivedBodySize = (req.postDataBuffer() || Buffer.alloc(0)).length;
     voiceCallCount += 1;
-
-    // 実際のサーバーは毎回新しいIDでBlock/Entryを作る（同じ日にもう一度話すと積み増される）ので、
-    // モックも呼ばれるたびに新しいIDを発行する。
-    const suffix = voiceCallCount;
-    const created = [
-      { id: 'blk_v1_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '10:00', label: 'ダイヤモンドヘッドに登る', category: 'sightseeing', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v1_' + suffix, blockId: 'blk_v1_' + suffix, episode: '朝からダイヤモンドヘッドに登った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
-      { id: 'blk_v2_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'ファーマーズマーケットでアサイーを食べる', category: 'food', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v2_' + suffix, blockId: 'blk_v2_' + suffix, episode: '5ドルのアサイーを食べたが、おなかを壊した。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [{ label: 'アサイー', amount: 800 }], waitTime: '', mapUrl: 'https://maps.example.com/farmers-market', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] },
-      { id: 'blk_v3_' + suffix, tripId: 'trip_1', date: '2026-08-10', time: '', label: 'プールでタオルを忘れる', category: 'other', createdAt: 'now', updatedAt: 'now', entries: [{ id: 'ent_v3_' + suffix, blockId: 'blk_v3_' + suffix, episode: 'ホテルのプールに行ったがタオルを忘れ、びしょ濡れで帰った。', comment: '', detail: '', photoIds: [], videoIds: [], costItems: [], waitTime: '', mapUrl: '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }] }
+    const items = [
+      { ...base, id: 'p1', category: 'sightseeing', date: '2026-08-10', time: '10:00', label: 'ダイヤモンドヘッドに登る', place: 'ダイヤモンドヘッド', mapUrl: 'https://www.google.com/maps/search/?api=1&query=21.26%2C-157.8', mapPlaceName: 'ダイヤモンドヘッド', mapLat: 21.26, mapLng: -157.8, costItems: [], note: '朝からダイヤモンドヘッドに登った。' },
+      { ...base, id: 'p2', category: 'food', date: '2026-08-10', time: '', label: 'ファーマーズマーケットでアサイーを食べる', costItems: [{ label: 'アサイー', amount: 5, currency: 'USD' }], note: '5ドルのアサイーを食べたが、おなかを壊した。' },
+      { ...base, id: 'p3', category: 'other', date: '2026-08-10', time: '', label: 'プールでタオルを忘れる', costItems: [], note: 'ホテルのプールに行ったがタオルを忘れ、びしょ濡れで帰った。' }
     ];
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items, dropped: 0, transcript: FAKE_TRANSCRIPT, dates: ['2026-08-10'], usage: {} }) });
+  });
+  await page.route(/\/api\/rates\?/, async (route) => {
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rate: 160 }) });
+  });
+  await page.route(/\/api\/trips\/([^/]+)\/import-blocks$/, async (route) => {
+    savedBody = JSON.parse(route.request().postData());
+    const suffix = voiceCallCount;
+    const created = savedBody.items.map((it, i) => ({
+      id: 'blk_v' + i + '_' + suffix, tripId: 'trip_1', date: it.date, time: it.time, label: it.label, category: it.category, createdAt: 'now', updatedAt: 'now',
+      entries: [{ id: 'ent_v' + i + '_' + suffix, blockId: 'blk_v' + i + '_' + suffix, episode: it.note, comment: '', detail: '', photoIds: [], videoIds: [], costItems: (it.costItems || []).map((c) => ({ label: c.label, amount: c.currency ? Math.round(c.amount * (c.rate || 0)) : c.amount })), waitTime: '', mapUrl: it.mapUrl || '', shopUrl: '', author: 'テスト太郎', createdAt: 'now', updatedAt: 'now' }]
+    }));
     created.forEach((b) => {
       blocks[b.id] = { id: b.id, tripId: b.tripId, date: b.date, time: b.time, label: b.label, category: b.category, createdAt: b.createdAt, updatedAt: b.updatedAt };
       entriesByBlock[b.id] = b.entries;
     });
-    dayInfosByTrip[tripId] = dayInfosByTrip[tripId] || {};
-    dayInfosByTrip[tripId][date] = { voiceTranscript: FAKE_TRANSCRIPT };
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ blocks: created, transcript: FAKE_TRANSCRIPT }) });
+    if (savedBody.transcript && savedBody.transcriptDate) {
+      dayInfosByTrip.trip_1 = dayInfosByTrip.trip_1 || {};
+      dayInfosByTrip.trip_1[savedBody.transcriptDate] = { voiceTranscript: savedBody.transcript };
+    }
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ blocks: created, errors: [] }) });
   });
 
   await page.goto(BASE);
@@ -158,6 +169,11 @@ async function launch() {
   check('録音を終えると「この内容で予定を作る」が押せるようになる', await page.isVisible('#btnCreateVoiceEntries'));
 
   await page.click('#btnCreateVoiceEntries');
+  await page.waitForSelector('.screen[data-screen="importConfirm"].active');
+  check('音声も確認画面を通る（まだ保存されていない）', savedBody === null && (await page.$$('.ss-card')).length === 3);
+  check('確認画面に「音声から」と出る', (await page.textContent('#ssResult')).includes('音声から'));
+  check('話した時刻・金額・場所が候補に入っている', (await page.inputValue('[data-ss="time"] >> nth=0')) === '10:00' && (await page.textContent('.ss-card >> nth=0')).includes('ダイヤモンドヘッド') && (await page.inputValue('[data-ss-cost-amount="0"] >> nth=0')) === '5');
+  await page.click('#btnSsSave');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   await page.waitForSelector('.block');
 
@@ -166,7 +182,8 @@ async function launch() {
   check('話した順番どおりに並ぶ（2件目）', (await page.textContent('.block-label >> nth=1')) === 'ファーマーズマーケットでアサイーを食べる');
   check('話した順番どおりに並ぶ（3件目）', (await page.textContent('.block-label >> nth=2')) === 'プールでタオルを忘れる');
   check('話した内容に具体的な時刻があれば、その予定の時刻として反映される', (await page.textContent('.block-time >> nth=0')) === '10:00');
-  check('話した内容に具体的な金額があれば、その記録の費用の明細として反映される', (await page.textContent('.cost-line.total >> nth=0')).includes('¥800'));
+  check('話した内容に具体的な金額があれば、その記録の費用の明細として反映される（外貨は保存時にレートが付く）', (await page.textContent('.cost-line.total >> nth=0')).includes('¥800'));
+  check('確認して追加したとき、文字起こしがその日の欄に送られる', savedBody && savedBody.transcript === FAKE_TRANSCRIPT && savedBody.transcriptDate === '2026-08-10');
   check('メモに書いたURLが、対応する予定のentryに反映される（サーバー側の仕事だが、返り値どおり表示されるか）', (await page.textContent('.entry-card >> nth=1')).length > 0);
 
   check('文字起こしの折りたたみが表示される', await page.isVisible('#voiceTranscriptBox'));
@@ -176,7 +193,8 @@ async function launch() {
   check('録音した音声データがサーバーに送られている', receivedBodySize > 0);
   check('content-typeが音声の形式になっている', receivedContentType.indexOf('audio/') === 0);
   check('メモ（notes）がx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.notes.indexOf('ファーマーズマーケット') !== -1);
-  check('ログイン中の名前がauthorとしてx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.author === TEST_USER.name);
+  check('ログイン中の名前が、保存のときのauthorとして届く', savedBody && savedBody.author === TEST_USER.name);
+  check('取り込み先の日がx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.date === '2026-08-10');
   check('ログイン中のメールアドレスもx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.email === TEST_USER.email);
 
   // ---- 同じ日にもう一度録音して送れる（1回目の成功後に「この内容で予定を作る」が無効のまま残らないか） ----
@@ -194,6 +212,8 @@ async function launch() {
   await page.waitForSelector('#btnCreateVoiceEntries:not([hidden])');
   check('2回目の録音後もボタンが無効になっていない', !(await page.isDisabled('#btnCreateVoiceEntries')));
   await page.click('#btnCreateVoiceEntries');
+  await page.waitForSelector('.screen[data-screen="importConfirm"].active');
+  await page.click('#btnSsSave');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
   await page.waitForFunction(() => document.querySelectorAll('.block').length === 6);
   check('2回目の送信もタイムラインに積み増される（3件→6件）', (await page.$$('.block')).length === 6);

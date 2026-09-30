@@ -82,6 +82,7 @@ const openaiBodies = [];
 globalThis.fetch = async (url, init) => {
   const u = String(url);
   fetched.push(u.split("?")[0]);
+  if (u.includes("vision.googleapis.com")) return new Response(JSON.stringify({ responses: [{ fullTextAnnotation: { text: "美術館のチケット 10月4日 10:00" } }] }));
   if (u.includes("audio/transcriptions")) return new Response(JSON.stringify({ text: "10時に浅草寺、ランチは天丼1500円、そのあとスカイツリー" }));
   if (u.includes("api.openai.com/v1/responses")) {
     openaiBodies.push(JSON.parse(init.body));
@@ -195,6 +196,27 @@ const SAMPLE = [
   const vb = await call("POST", "/trips/t1/voice-scan", "bob", audio, { "content-type": "audio/webm", "x-voice-meta": voiceMeta({ email: "bob@example.com", branchId: "br1", date: "2026-10-04" }) });
   check("音声も他人の別行動には使えない", [vb.status, vb.data.error], [403, "forbidden"]);
   sqlite.prepare("UPDATE accounts SET memo_uses_this_period = 0, voice_uses_this_period = 0").run();
+}
+
+/* ---- スクショの取り込みも別行動の持ち主だけ・別行動の時間帯で警告 ---- */
+{
+  const shot = (o) => ({ image: 1, placeGuessed: false, checkOutDate: "", ...empty, ...o });
+  aiItems = [shot({ category: "sightseeing", date: "--10-04", time: "10:00", label: "美術館", place: "浅草寺" }), shot({ category: "sightseeing", date: "", time: "15:00", label: "日付なし" })];
+  const scan = (who, body) => call("POST", "/trips/t1/screenshot-scan", who, { images: [{ type: "image/jpeg", data: "QUJD" }], email: who ? people[who][0] : "", ...body });
+  reset();
+  const bob = await scan("bob", { branchId: "br1" });
+  check("スクショ: 他人の別行動は403でVisionもAIも呼ばない", [bob.status, bob.data.error, fetched.length], [403, "forbidden", 0]);
+  const gone = await scan("alice", { branchId: "nothing" });
+  check("スクショ: 存在しない別行動は404", [gone.status, gone.data.error], [404, "branch_not_found"]);
+  reset();
+  const good = await scan("alice", { branchId: "br1" });
+  check("スクショ: 持ち主は使える・日付なしは別行動の初日に置く", [good.status, good.data.items.map((i) => i.date)], [200, ["2026-10-04", "2026-10-04"]]);
+  check("スクショ: 別行動の時間帯の外（10:00）だけ警告", good.data.items.map((i) => i.warnings.filter((w) => w.startsWith("別行動の")).length), [1, 0]);
+  check("スクショ: 外部呼び出しはVision1・OpenAI1・場所検索1", fetched.map((u) => u.split("/")[2]), ["vision.googleapis.com", "api.openai.com", "places.googleapis.com"]);
+  ok("スクショ（別行動）の見積もりは50回以内", good.data.usage.subrequests.ok);
+  const shared = await scan("alice", {});
+  check("スクショ: 別行動でなければ今までどおり（旅行の初日に置いて警告）", [shared.data.items[1].date, shared.data.items[1].warnings.length], ["2026-10-03", 1]);
+  sqlite.prepare("UPDATE accounts SET memo_uses_this_period = 0").run();
 }
 
 /* ---- 保存（3つ共通）：共有の予定 ---- */
