@@ -2194,5 +2194,42 @@ eq('isLoginRequiredError: login_requiredのエラー', T.isLoginRequiredError(ne
 eq('isLoginRequiredError: 別のエラーは対象外（通信失敗など）', T.isLoginRequiredError(new Error('http_500')), false);
 eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null), false);
 
+/* ---- スクショから予定を作る：確認画面の純粋関数（docs/adr/0022） ---- */
+(function () {
+  var trip = { startDate: '2026-10-03', endDate: '2026-10-05' };
+  var items = [
+    { date: '2026-10-04', time: '', label: '夕食', category: 'food', costItems: [] },
+    { date: '2026-10-03', time: '12:05', label: 'ホテル', category: 'lodging', costItems: [] },
+    { date: '2026-10-03', time: '09:30', label: '羽田→那覇', category: 'transport', transport: 'plane', fromPlace: '羽田空港', toPlace: '那覇空港', company: '日本航空', routeNumber: 'JAL903', arriveTime: '12:05', mapUrl: 'https://www.google.com/maps/search/?api=1&query=1%2C2', mapPlaceName: '羽田空港', mapLat: 1, mapLng: 2, arriveMapUrl: 'https://www.google.com/maps/search/?api=1&query=3%2C4', arriveLat: 3, arriveLng: 4, costItems: [{ label: '運賃', amount: 18700 }] },
+    { date: '2026-10-04', time: '14:00', label: '試合', category: 'sightseeing', costItems: [] }
+  ];
+  var g = T.groupScreenshotItemsByDay(items);
+  eq('スクショ: 日ごとにまとめる', g.map(function (x) { return x.date; }), ['2026-10-03', '2026-10-04']);
+  eq('スクショ: 日の中は時刻順', g[0].items.map(function (x) { return x.label; }), ['羽田→那覇', 'ホテル']);
+  eq('スクショ: 時刻なしは最後', g[1].items.map(function (x) { return x.label; }), ['試合', '夕食']);
+  eq('スクショ: 元の位置を_indexに持つ', g[0].items.map(function (x) { return x._index; }), [2, 1]);
+  eq('スクショ: 空でも落ちない', T.groupScreenshotItemsByDay(null), []);
+
+  var p = T.screenshotItemsToSavePayload(items, trip);
+  eq('スクショ: 送る件数', p.items.length, 4);
+  var t = p.items[2];
+  eq('スクショ: 移動は区間・便名・出発到着・到着地の地図を持つ', [t.from, t.to, t.company, t.depart, t.arrive, t.arriveLat, t.mapLat], ['羽田空港', '那覇空港', '日本航空 JAL903', '09:30', '12:05', 3, 1]);
+  eq('スクショ: 費用', t.costItems, [{ label: '運賃', amount: 18700 }]);
+  eq('スクショ: 移動以外は移動の項目を持たない', p.items[0].from, undefined);
+
+  var bad = [
+    { use: false, date: '2026-10-03', label: '除外', category: 'other' },
+    { date: '2026-10-09', label: '日程の外', category: 'other' },
+    { date: '', label: '日付なし', category: 'other' },
+    { date: '2026-10-03', label: '  ', category: 'other' },
+    { date: '2026-10-03', label: '外貨', category: 'other', time: '25:00', costItems: [{ label: 'A', amount: 5, currency: 'USD', rate: 150 }, { label: 'B', amount: -1 }] }
+  ];
+  var r = T.screenshotItemsToSavePayload(bad, trip);
+  eq('スクショ: 通るのは1件（除外・日程外・日付なし・見出しなしは送らない）', r.items.length, 1);
+  eq('スクショ: エラーの理由（除外は数えない）', r.errors.map(function (e) { return e.reason; }), ['日付が旅行の日程の外です', '日付を入れてください', '見出しが空です']);
+  eq('スクショ: 不正な時刻は空・負の金額は送らない・レートは持ち越す', [r.items[0].time, r.items[0].costItems], ['', [{ label: 'A', amount: 5, currency: 'USD', rate: 150 }]]);
+  eq('スクショ: 日程未設定の旅行なら日付は何でも通る', T.screenshotItemsToSavePayload([{ date: '2030-01-01', label: 'x', category: 'other' }], {}).items.length, 1);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
