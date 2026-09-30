@@ -1406,6 +1406,15 @@
   //                    ズームが行ったり来たりしないように）
   var REPLAY_CAMERA_SCREEN_TOLERANCE = 0.06;
   var REPLAY_CAMERA_ZOOM_TOLERANCE_SNAPPED = 0.5; // 縮尺は整数刻み（zoomSnap=1）なので、半段未満は同じ
+  // 「地図でふりかえる」と「動画でシェア」が同じ規則でカメラを動かすための値（2026-09-30。動画は時間割を圧縮しただけにする）
+  var REPLAY_CAMERA_LEAD_SEC = 0.9;   // カメラの移動が、区間の動き出しまでに終わるように早めに始める
+  var REPLAY_TINY_LEG_KM = 0.4;       // これより近い区間は、両端が見えていればカメラを動かさない（空港の中など）
+  var REPLAY_SHORT_STAY_SEC = 1.2;    // 着いてからこれ以内に次の遠い移動が始まるなら、着いた地点へ寄せない
+  var REPLAY_FAR_LEG_KM = 50;         // 「遠い移動」の目安
+  var REPLAY_LEG_MAX_ZOOM = 15;       // 区間を収める縮尺の上限
+  var REPLAY_ZOOMED_OUT = 10;         // 着いたときこれより広いままなら、着いた地点へ寄せ直す
+  var REPLAY_ARRIVAL_MIN_ZOOM = 12;   // 寄せ直すときの縮尺（いまがこれより寄っていればそのまま）
+  var REPLAY_START_ZOOM = 13;         // 最初の地点の縮尺
   function cameraMoveDecision(view, target, o) {
     o = o || {};
     var needed;
@@ -2802,10 +2811,15 @@
   var VIDEO_OUTRO_SEC = 2;     // アプリ名・URL
   var VIDEO_HEAD_SEC = 0.3;    // 道のりの最初のピンが立つまで
   var VIDEO_TAIL_SEC = 0.7;    // 最後のピンのあと、全体に引くまで
-  var VIDEO_MIN_ZOOM = 2, VIDEO_MAX_ZOOM = 13; // 13より寄るとタイルが増えるので寄らない（OSMのタイルを取りすぎない）
+  // 動画のカメラは「地図でふりかえる」と同じ決め方（2026-09-30）。区間は両端が入る縮尺（最大15。REPLAY_LEG_MAX_ZOOM）、
+  // 遠い移動のあとは着いた地点へ12まで寄せ直す。寄りすぎるとタイルが増えるので、上限を超えるときはこの上限を下げる（OSMのタイルを取りすぎない）
+  var VIDEO_MIN_ZOOM = 2.33, VIDEO_MAX_ZOOM = 15; // 下限2.33：世界の高さ（256×2^ズーム）が動画の高さ1280pxを下回ると、上下に地図の外が見えるため
+  var VIDEO_TILE_MARGIN_PX = 32;  // タイルを数えるとき、画面の外にこれだけ余分に見ておく（サンプルの間に動いても足りるように）
+  var VIDEO_TILE_SAMPLE_FPS = 30;
+  var VIDEO_CHAIN_SEC = 1.1;      // 次の区間の動き出しまでがこれ未満なら、続く区間を1つの見え方にまとめる（カメラを動かす時間が無い）
   // 地図の「見せたい範囲」の余白（px）。上はSNSの表示に隠れやすく、下は吹き出しのカードが載る
   var VIDEO_PAD = { top: 230, right: 80, bottom: 420, left: 80 };
-  var VIDEO_CAMERA_GROUP_SEC = 0.5; // これより短い区間はまとめて1つの見え方にする（カメラが細かく揺れないように）
+
   var VIDEO_PATH_MAX_POINTS = 300;  // 1区間の線の点の数の上限（毎コマ描くので間引く）
 
   // 緯度経度→ウェブメルカトルの「世界座標」（x, yとも0〜1。経度が±180を越えても連続）
@@ -2822,6 +2836,79 @@
 
   function videoClamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
   function videoEase(u) { u = videoClamp(u, 0, 1); return u * u * (3 - 2 * u); }
+
+  // ---- カメラの純粋な計算（地図でふりかえる＝Leaflet と 動画でシェア＝canvas の両方が使う。2026-09-30） ----
+  // 点（[lat, lng]の並び）が、w×hの画面の余白（pad）の内側に収まる見え方（世界座標の中心x,y・ズーム）。
+  // Leafletの fitBounds／flyToBounds が内部で使う _getBoundsCenterZoom と同じ計算：ズームは整数刻み（zoomSnap=1。
+  // 小数第2位に丸めてから切り捨て）、1点だけ（範囲が0）なら上限（maxZoom）、中心は余白の差の半分だけずらす。
+  // o: { minZoom, maxZoom, snap }。snapを0にすると刻まない（連続）。
+  function cameraFitView(points, w, h, pad, o) {
+    o = o || {};
+    pad = pad || { top: 0, right: 0, bottom: 0, left: 0 };
+    var minZoom = typeof o.minZoom === 'number' ? o.minZoom : 0;
+    var maxZoom = typeof o.maxZoom === 'number' ? o.maxZoom : 19;
+    var snap = typeof o.snap === 'number' ? o.snap : 1;
+    if (!points || !points.length) return { x: 0.5, y: 0.5, zoom: minZoom };
+    var minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+    points.forEach(function (p) {
+      var m = mercatorWorld(p[0], p[1]);
+      if (m.x < minx) minx = m.x;
+      if (m.x > maxx) maxx = m.x;
+      if (m.y < miny) miny = m.y;
+      if (m.y > maxy) maxy = m.y;
+    });
+    var availW = Math.max(1, w - pad.left - pad.right), availH = Math.max(1, h - pad.top - pad.bottom);
+    var need = Math.max((maxx - minx) / availW, (maxy - miny) / availH); // 1pxあたりの世界座標の幅
+    var zoom;
+    if (!(need > 1e-12)) zoom = maxZoom;
+    else {
+      zoom = Math.log(1 / (need * 256)) / Math.LN2;
+      if (snap > 0) { zoom = Math.round(zoom / (snap / 100)) * (snap / 100); zoom = Math.floor(zoom / snap) * snap; }
+      zoom = Math.min(maxZoom, videoClamp(zoom, minZoom, 99));
+    }
+    var scale = videoWorldScale(zoom);
+    return {
+      x: (minx + maxx) / 2 - ((pad.left - pad.right) / 2) / scale,
+      y: (miny + maxy) / 2 - ((pad.top - pad.bottom) / 2) / scale,
+      zoom: zoom
+    };
+  }
+
+  // Leafletの flyTo と同じ、なめらかなカメラの動き（van Wijkの「ズームして、パンして、ズームする」）。
+  // 遠くへ移るときは、いったん引いてから寄る（縮尺が変わらなくても、遠ければ少し引く）。
+  // from/to: { x, y, zoom }（世界座標）、u: 0〜1の進み具合、sizePx: 画面の大きい方の辺（Leafletはmax(幅, 高さ)）。
+  var CAMERA_FLY_RHO = 1.42;
+  function cameraFlyAt(from, to, u, sizePx) {
+    if (!(u > 0)) return { x: from.x, y: from.y, zoom: from.zoom };
+    if (u >= 1) return { x: to.x, y: to.y, zoom: to.zoom };
+    var z0 = from.zoom, sc = videoWorldScale(z0);
+    var dx = (to.x - from.x) * sc, dy = (to.y - from.y) * sc;
+    var u1 = Math.sqrt(dx * dx + dy * dy);
+    if (u1 < 1) { // ほとんど動かない（その場でズームだけ変える）ときは、縮尺だけをなめらかに変える（式が定まらないため）
+      var ez = 1 - Math.pow(1 - u, 1.5);
+      return { x: from.x + (to.x - from.x) * ez, y: from.y + (to.y - from.y) * ez, zoom: z0 + (to.zoom - z0) * ez };
+    }
+    var rho = CAMERA_FLY_RHO, rho2 = rho * rho;
+    var w0 = Math.max(1, sizePx), w1 = w0 * Math.pow(2, z0 - to.zoom); // 見える幅（ズームインすると狭まる）
+    var r = function (i) {
+      var s1 = i ? -1 : 1, s2 = i ? w1 : w0;
+      var t1 = w1 * w1 - w0 * w0 + s1 * rho2 * rho2 * u1 * u1, b1 = 2 * s2 * rho2 * u1, b = t1 / b1;
+      var sq = Math.sqrt(b * b + 1) - b;
+      return sq < 1e-9 ? -18 : Math.log(sq);
+    };
+    var r0 = r(0), S = (r(1) - r0) / rho;
+    var e = 1 - Math.pow(1 - u, 1.5); // Leafletの easeOut
+    if (!isFinite(S) || Math.abs(S) < 1e-9) {
+      return { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e, zoom: z0 + (to.zoom - z0) * e };
+    }
+    var s = e * S;
+    var frac = w0 * ((Math.cosh(r0) * Math.tanh(r0 + rho * s) - Math.sinh(r0)) / rho2) / u1;
+    return {
+      x: from.x + (to.x - from.x) * frac,
+      y: from.y + (to.y - from.y) * frac,
+      zoom: z0 + Math.log(Math.cosh(r0 + rho * s) / Math.cosh(r0)) / Math.LN2
+    };
+  }
 
   // 点（[lat, lng]の並び）がすべて画面の余白の内側に収まる、いちばん寄った見え方（世界座標の中心x,y・ズーム）。
   // 余白（pad）が上下左右で違うので、点の中心を「余白を除いた領域」の真ん中に置く
@@ -2856,12 +2943,16 @@
 
   // 見え方に必要なタイル。ズームは四捨五入した整数zで、小数ぶんはsize（タイル1枚の画面上の大きさ）で吸収する。
   // x, yは実際のタイル番号（経度は一周で折り返す）、px, pyは画面上の左上
-  function videoViewTiles(view, w, h) {
-    var z = videoClamp(Math.round(view.zoom), 0, 19);
+  // margin: 画面の外にこのpxだけ余分に含める（必要なタイルを数えるとき用。描くときは0）
+  // view.fly（カメラが動いている最中）は、タイルのズームを切り捨てる（拡大は1〜2倍。2倍を超えてぼけない）。動いている間は
+  // 細かさより動きが目に入るので、大きめのタイルで済ませて取る数を減らす。止まっている間は四捨五入（0.7〜1.4倍）
+  function videoViewTiles(view, w, h, margin) {
+    var z = view.fly ? Math.floor(view.zoom + 1e-6) : Math.round(view.zoom), mg = margin || 0;
+    z = videoClamp(z, 0, 19);
     var n = Math.pow(2, z), size = 256 * Math.pow(2, view.zoom - z);
     var cx = view.x * n, cy = view.y * n;
-    var tx0 = Math.floor(cx - (w / 2) / size), tx1 = Math.floor(cx + (w / 2) / size);
-    var ty0 = Math.floor(cy - (h / 2) / size), ty1 = Math.floor(cy + (h / 2) / size);
+    var tx0 = Math.floor(cx - (w / 2 + mg) / size), tx1 = Math.floor(cx + (w / 2 + mg) / size);
+    var ty0 = Math.floor(cy - (h / 2 + mg) / size), ty1 = Math.floor(cy + (h / 2 + mg) / size);
     var list = [];
     for (var ty = ty0; ty <= ty1; ty++) {
       if (ty < 0 || ty >= n) continue;
@@ -2903,10 +2994,12 @@
     return { days: d, routeSec: route, perDay: route / d, total: fixed + route };
   }
 
-  // 動画のタイルの取得上限。30秒までは260枚（15秒のとき決めた値を据え置き）、長いほど広い範囲を通るので
-  // 1秒あたり6枚ずつ増やし、上限の45秒で350枚。OSMのタイル利用ポリシーに配慮し、これを超えたら寄りすぎないようにする。
+  // 動画のタイルの取得上限。30秒までは800枚、長いほど広い範囲を通るので1秒あたり30枚ずつ増やし、上限の45秒で1250枚。
+  // （2026-09-30：カメラを地図でふりかえると同じ寄り方にしたので、以前の260〜350枚では足りない。実際のスイス・ベルギー旅行
+  // 〈8日・26地点〉で約1,090枚、似せた合成データで約1,060枚。）OSMのタイル利用ポリシーに配慮し、これを超えたら
+  // 寄る上限の縮尺を1段ずつ下げる（全体を引いたりはしない）。
   function videoTileLimit(totalSec) {
-    return Math.round(260 + Math.max(0, totalSec - 30) * 6);
+    return Math.round(800 + Math.max(0, totalSec - 30) * 30);
   }
 
   // 1日ぶんの地名の数：その日の旅の時間（最初の地点〜最後の地点の分）2時間につき1つ（最低1つ）。
@@ -3090,6 +3183,87 @@
     return out;
   }
 
+  // 動画のカメラの動き。「地図でふりかえる」のカメラ（replayCameraMove とその呼び出し）と同じ規則で、時間割を圧縮したもの
+  // （2026-09-30。オーナー「地図の振り返りをぎゅっとするだけでもいい」）：
+  //  - 最初は最初の地点（縮尺13）。区間ごとに、動き出しの少し前（REPLAY_CAMERA_LEAD_SEC）から0.8秒で、その区間の道のり全体が
+  //    余白の内側に入る縮尺（整数刻み・最大15）へ flyTo する。近い区間（0.4km未満）は両端がもう見えていれば動かさない。
+  //    もう収まっている（cameraMoveDecision が skip）ときも動かさない。
+  //  - 着いたとき縮尺が10より広いまま（飛行機など）なら、着いた地点へ12まで寄せ直す（着いて0.2秒後から0.8秒）。
+  //    ただし、着いてすぐ次の遠い移動があるとき・動画に出さない地点は寄せない。
+  //  - 縮尺の上限は maxZoom（タイルが多すぎるときに呼び出し側が下げる）。
+  // wps: [{ lat, lng, hidden, arrive }]、segs: [{ path, moveStart }]（arrive・moveStartは道のりの先頭からの秒）。
+  // timed=false のときは時刻を使わず、寄せ直す地点だけを数える（吹き出しに待ち時間を足すため）。
+  // 返す値: { start（最初の見え方）, moves: [{ t, dur, from, to }]（時刻順で重ならない）, arrivals: { 地点の番号: その動き }, last }
+  function videoPlanCamera(segs, wps, o) {
+    o = o || {};
+    var W = VIDEO_W, H = VIDEO_H, PAD = VIDEO_PAD, timed = !!o.timed;
+    var maxZoom = Math.min(VIDEO_MAX_ZOOM, typeof o.maxZoom === 'number' ? o.maxZoom : VIDEO_MAX_ZOOM);
+    var flight = REPLAY_CAMERA_FLIGHT_SEC, minFlight = 0.3;
+    var first = wps[0];
+    var start = cameraFitView([[first.lat, first.lng]], W, H, PAD, { minZoom: VIDEO_MIN_ZOOM, maxZoom: Math.min(REPLAY_START_ZOOM, maxZoom) });
+    var cur = start, moves = [], arrivals = {}, prevEnd = -Infinity;
+    var toLL = function (v) { var ll = mercatorLatLng(v.x, v.y); return { lat: ll.lat, lng: ll.lng, zoom: v.zoom }; };
+    var inView = function (v, pts) {
+      return pts.every(function (p) {
+        var q = videoProject(v, W, H, p[0], p[1]);
+        return q.x >= PAD.left && q.y >= PAD.top && q.x <= W - PAD.right && q.y <= H - PAD.bottom;
+      });
+    };
+    var add = function (target, t, dur) {
+      var m = { t: t, dur: dur, from: cur, to: target };
+      moves.push(m); cur = target; prevEnd = t + dur;
+      return m;
+    };
+    // 動画は時間を圧縮しているので、区間と区間の間が短く（次の区間の動き出しまでVIDEO_CHAIN_SEC未満）、カメラを1つ動かすのが
+    // やっとのときは、続く区間をまとめて1つの見え方にする（動きが細かく揺れないように）。まとめても縮尺が1段までしか下がらないときだけ
+    var k = 0;
+    while (k < segs.length) {
+      var j = k, sg = segs[k], pts = sg.path;
+      var fitOf = function (p, mz) { return cameraFitView(p, W, H, PAD, { minZoom: VIDEO_MIN_ZOOM, maxZoom: mz }); };
+      var tiny = distanceKm(wps[k], wps[k + 1]) < REPLAY_TINY_LEG_KM;
+      var legMax = Math.min(maxZoom, tiny ? Math.max(12, Math.min(15, cur.zoom)) : REPLAY_LEG_MAX_ZOOM);
+      var fit = fitOf(pts, legMax);
+      if (timed) {
+        while (j + 1 < segs.length && segs[j + 1].moveStart - segs[j].moveStart < VIDEO_CHAIN_SEC) {
+          var more = pts.concat(segs[j + 1].path), f2 = fitOf(more, legMax);
+          // まとめて縮尺が1段より下がる、または次の区間だけなら3段より寄れる（飛行機と、そのあとの街の区間など）ときは、まとめない
+          if (f2.zoom < fit.zoom - 1 || fitOf(segs[j + 1].path, legMax).zoom > f2.zoom + 3) break;
+          pts = more; fit = f2; j++;
+        }
+      }
+      var a = wps[k], b = wps[j + 1];
+      // 区間の前：両端（道のり全体）が入る見え方へ
+      var tinyInView = j === k && tiny && cur.zoom >= REPLAY_ZOOMED_OUT && inView(cur, [[a.lat, a.lng], [b.lat, b.lng]]);
+      var decision = cameraMoveDecision(toLL(cur), toLL(fit), { urgent: true, viewWidthPx: W, alreadyVisible: inView(cur, pts) });
+      // 動画では、0.5秒に満たない短い区間のために、見えているものへ寄せることはしない（行って戻るような揺れになる）
+      var shortZoomIn = timed && decision === 'go' && fit.zoom > cur.zoom && segs[j].moveEnd - sg.moveStart < 0.5 && inView(cur, pts);
+      if (!tinyInView && !shortZoomIn && decision === 'go') {
+        if (timed) {
+          var endT = sg.moveStart - 0.1;
+          var t0 = Math.max(prevEnd, endT - flight, -0.4);
+          add(fit, t0, videoClamp(endT - t0, minFlight, flight));
+        } else add(fit, 0, flight);
+      }
+      // 着いたあと：広いままなら、着いた地点へ寄せ直す
+      if (cur.zoom < REPLAY_ZOOMED_OUT && !b.hidden) {
+        var az = Math.min(maxZoom, Math.max(cur.zoom, REPLAY_ARRIVAL_MIN_ZOOM));
+        var skip = az <= cur.zoom + 0.5;
+        var next = segs[j + 1];
+        if (timed && next && !skip) {
+          var stay = next.moveStart - b.arrive;
+          if (stay < REPLAY_CAMERA_LEAD_SEC + REPLAY_SHORT_STAY_SEC && distanceKm(b, wps[j + 2]) >= REPLAY_FAR_LEG_KM) skip = true;
+          if (stay < 0.6) skip = true; // 動画では短い滞在の寄せ直しは間に合わない
+        }
+        if (!skip) {
+          var target = cameraFitView([[b.lat, b.lng]], W, H, PAD, { minZoom: VIDEO_MIN_ZOOM, maxZoom: az });
+          arrivals[j + 1] = timed ? add(target, Math.max(prevEnd, b.arrive + REPLAY_ARRIVAL_ZOOM_DELAY_SEC), flight) : add(target, 0, flight);
+        }
+      }
+      k = j + 1;
+    }
+    return { start: start, moves: moves, arrivals: arrivals, last: cur };
+  }
+
   // 地図でふりかえるの時間割（buildReplayTimelineの結果。道のりは届いたぶんだけ入っている）から、動画の絵コンテを作る。
   // opts: { photos: 記録の写真を入れる, title, dateText, maxZoom }。地点が2つ未満ならnull（動画にできない）。
   // - 地名は、replayが吹き出しを出す地点（到着の仮地点・見出しが空の地点は出さない）だけ。多いときは均等に間引く
@@ -3150,13 +3324,16 @@
     // 時間割は日ごとの窓（daySec）の中で組む。2日目以降の窓は、前日の最後の地点を出るところ（移動の始まり）から
     // 始まり、前日からの移動→その日の地点、の順。前日の最後の地点は、その日の窓が始まるまで留まる
     var introSec = VIDEO_INTRO_SEC;
+    // 遠い移動のあと寄せ直す地点は、カメラが落ち着いてから吹き出しを出すので、その分だけ止まる時間を足す
+    var planPre = videoPlanCamera(segs, idx.map(function (si) { var s = stops[si]; return { lat: s.lat, lng: s.lng, hidden: !!s.videoExclude }; }), { maxZoom: maxZoom, timed: false });
+    var settleSec = REPLAY_ARRIVAL_ZOOM_DELAY_SEC + REPLAY_CAMERA_FLIGHT_SEC;
     var arrive = [], leave = [], capEnd = [], dayStart = [];
     groups.forEach(function (g, gi) {
       var anchor = gi > 0;
       var items = [];
       if (anchor) items.push({ dwell: 0, moveWeight: segs[g.ks[0] - 1].moveWeight });
       g.ks.forEach(function (k) {
-        items.push({ dwell: capByK[k] ? capByK[k].dwell : 0, moveWeight: k < segs.length ? segs[k].moveWeight : 0 });
+        items.push({ dwell: capByK[k] ? capByK[k].dwell + (planPre.arrivals[k] ? settleSec : 0) : 0, moveWeight: k < segs.length ? segs[k].moveWeight : 0 });
       });
       var sc = videoSchedule(items, daySec), off = gi * daySec, sh = anchor ? 1 : 0;
       if (anchor) leave[g.ks[0] - 1] = off + sc.leave[0];
@@ -3175,56 +3352,51 @@
     });
     segs.forEach(function (sg, k) { sg.moveStart = wps[k].leave; sg.moveEnd = wps[k + 1].arrive; });
 
-    // カメラ：全体→最初の区間→…と、区間ごとに「その区間と次の区間が入る」見え方へ動く。地点で止まっている
-    // あいだは動かさず（保持のキー）、動き出したら次の見え方へ。最後は全体に引く
+    // カメラ：地図でふりかえると同じ規則（videoPlanCamera）。最後は全体に引く
     var allPoints = [];
     segs.forEach(function (sg) { allPoints = allPoints.concat(sg.path); });
     var overview = videoFitView(allPoints, VIDEO_W, VIDEO_H, VIDEO_PAD, VIDEO_MIN_ZOOM, maxZoom);
-    var keys = [{ t: 0, x: overview.x, y: overview.y, zoom: overview.zoom },
-      { t: introSec - 0.4, x: overview.x, y: overview.y, zoom: overview.zoom }];
-    var k = 0, first = true;
-    while (k < segs.length) {
-      var j = k;
-      while (j + 1 < segs.length && segs[j].moveEnd - segs[k].moveStart < VIDEO_CAMERA_GROUP_SEC) j++;
-      var pts = [];
-      for (var m = k; m <= Math.min(j + 1, segs.length - 1); m++) pts = pts.concat(segs[m].path);
-      var v = videoFitView(pts, VIDEO_W, VIDEO_H, VIDEO_PAD, VIDEO_MIN_ZOOM, maxZoom);
-      var span = segs[j].moveEnd - segs[k].moveStart;
-      var tIn = first ? wps[0].arrive : segs[k].moveStart + 0.3 * span;
-      var tOut = j + 1 < segs.length ? segs[j + 1].moveStart : wps[wps.length - 1].leave;
-      keys.push({ t: introSec + tIn, x: v.x, y: v.y, zoom: v.zoom });
-      if (tOut > tIn + 1e-6) keys.push({ t: introSec + tOut, x: v.x, y: v.y, zoom: v.zoom });
-      first = false;
-      k = j + 1;
+    var plan2 = videoPlanCamera(segs, wps, { maxZoom: maxZoom, timed: true });
+    var moves = plan2.moves.slice();
+    var lastMoveEnd = moves.length ? moves[moves.length - 1].t + moves[moves.length - 1].dur : -Infinity;
+    var pullT = Math.max(lastMoveEnd, wps[wps.length - 1].leave), pullEnd = plan.routeSec - 0.05;
+    if (overview.zoom < plan2.last.zoom - 0.3 && pullEnd - pullT >= 0.3) {
+      moves.push({ t: pullT, dur: Math.min(1, pullEnd - pullT), from: plan2.last, to: { x: overview.x, y: overview.y, zoom: overview.zoom } });
     }
-    keys.push({ t: introSec + plan.routeSec - 0.25, x: overview.x, y: overview.y, zoom: overview.zoom });
-    var lastT = -1;
-    keys.forEach(function (key) { if (key.t <= lastT) key.t = lastT + 1e-4; lastT = key.t; });
+    moves.forEach(function (m) { m.t += introSec; });
+    // 吹き出しは、着いた地点へ寄せ直す間は出さず、カメラが落ち着いてから（ただし0.6秒は見せる）
+    wps.forEach(function (w, k) {
+      var mv = plan2.arrivals[k];
+      if (mv && w.caption) w.capStart = videoClamp(mv.t - introSec + mv.dur, w.arrive, Math.max(w.arrive, w.capEnd - 0.6));
+    });
 
     return {
       w: VIDEO_W, h: VIDEO_H, fps: VIDEO_FPS,
       introSec: introSec, routeSec: plan.routeSec, outroSec: VIDEO_OUTRO_SEC,
       total: introSec + plan.routeSec + VIDEO_OUTRO_SEC, days: groups.length, daySec: daySec,
       title: String(opts.title || '').trim(), dateText: opts.dateText || '',
-      wps: wps, segs: segs, cameraKeys: keys, overview: overview,
+      wps: wps, segs: segs, cameraStart: plan2.start, cameraMoves: moves, overview: overview,
       maxDay: wps.reduce(function (mx, w) { return Math.max(mx, w.dayNumber); }, 1),
       hasPhotos: chosen.some(function (c) { return !!c.photo; })
     };
   }
 
-  // t秒時点のカメラ（キーの間はなめらかに）
+  // t秒時点のカメラ。動き（cameraMoves）の間は Leaflet の flyTo と同じ動き、それ以外は止まっている。
+  // 縮尺は下限（VIDEO_MIN_ZOOM）より引かず、中心は地図の外（北極・南極より先）が映らない範囲に収める
   function videoCameraAt(story, t) {
-    var keys = story.cameraKeys;
-    if (t <= keys[0].t) return { x: keys[0].x, y: keys[0].y, zoom: keys[0].zoom };
-    for (var i = 0; i < keys.length - 1; i++) {
-      var a = keys[i], b = keys[i + 1];
-      if (t <= b.t) {
-        var e = videoEase((t - a.t) / Math.max(1e-9, b.t - a.t));
-        return { x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e, zoom: a.zoom + (b.zoom - a.zoom) * e };
-      }
+    var cam = story.cameraStart, moves = story.cameraMoves || [], size = Math.max(story.w, story.h), out = null;
+    for (var i = 0; i < moves.length && !out; i++) {
+      var m = moves[i];
+      if (t >= m.t + m.dur) { cam = m.to; continue; }
+      if (t <= m.t) break;
+      out = cameraFlyAt(m.from, m.to, (t - m.t) / m.dur, size);
+      out.fly = true;
     }
-    var l = keys[keys.length - 1];
-    return { x: l.x, y: l.y, zoom: l.zoom };
+    if (!out) out = { x: cam.x, y: cam.y, zoom: cam.zoom };
+    out.zoom = Math.max(out.zoom, VIDEO_MIN_ZOOM);
+    var half = story.h / 2 / videoWorldScale(out.zoom);
+    if (half < 0.5) out.y = videoClamp(out.y, half, 1 - half);
+    return out;
   }
 
   // t秒時点の絵：カメラ、各区間の進み具合、立っているピン、今動いている先頭、何日目、地名の吹き出し、導入・締めの暗幕
@@ -3254,8 +3426,9 @@
     var caption = null;
     story.wps.forEach(function (w, k) {
       var end = typeof w.capEnd === 'number' ? w.capEnd : w.leave;
-      if (caption || !w.caption || rt < w.arrive || rt > end) return;
-      var a = Math.min(1, (rt - w.arrive) / 0.18, (end - rt) / 0.15);
+      var from = typeof w.capStart === 'number' ? w.capStart : w.arrive;
+      if (caption || !w.caption || rt < from || rt > end) return;
+      var a = Math.min(1, (rt - from) / 0.18, (end - rt) / 0.15);
       if (a > 0) caption = { k: k, label: w.caption.label, photo: w.caption.photo, alpha: videoClamp(a, 0, 1) };
     });
     return {
@@ -3270,12 +3443,13 @@
   }
 
   // 動画で使う地図のタイル（重複なし）。録画の前に全部取っておく（録画中に足りなくならないように）。
-  // 30fpsの全コマで必要な分を数える
+  // カメラの動きを VIDEO_TILE_SAMPLE_FPS（動画と同じ30fps）で調べ、そのときの画面（と、サンプルの間に動いても足りるよう余白VIDEO_TILE_MARGIN_PX）が
+  // 要る整数ズームのタイルを集める。小数のズームは近い整数のタイルを拡大縮小して描く（0.7〜1.4倍）
   function videoTilesNeeded(story) {
     var seen = {}, out = [];
-    var frames = Math.ceil(story.total * story.fps);
+    var frames = Math.ceil(story.total * VIDEO_TILE_SAMPLE_FPS);
     for (var f = 0; f <= frames; f++) {
-      var vt = videoViewTiles(videoCameraAt(story, f / story.fps), story.w, story.h);
+      var vt = videoViewTiles(videoCameraAt(story, Math.min(story.total, f / VIDEO_TILE_SAMPLE_FPS)), story.w, story.h, VIDEO_TILE_MARGIN_PX);
       vt.list.forEach(function (tile) {
         var key = vt.z + '/' + tile.x + '/' + tile.y;
         if (!seen[key]) { seen[key] = true; out.push({ z: vt.z, x: tile.x, y: tile.y }); }
@@ -3439,6 +3613,17 @@
     videoWorldScale: videoWorldScale,
     videoEase: videoEase,
     videoFitView: videoFitView,
+    cameraFitView: cameraFitView,
+    cameraFlyAt: cameraFlyAt,
+    videoPlanCamera: videoPlanCamera,
+    REPLAY_CAMERA_LEAD_SEC: REPLAY_CAMERA_LEAD_SEC,
+    REPLAY_TINY_LEG_KM: REPLAY_TINY_LEG_KM,
+    REPLAY_SHORT_STAY_SEC: REPLAY_SHORT_STAY_SEC,
+    REPLAY_LEG_MAX_ZOOM: REPLAY_LEG_MAX_ZOOM,
+    REPLAY_FAR_LEG_KM: REPLAY_FAR_LEG_KM,
+    REPLAY_ZOOMED_OUT: REPLAY_ZOOMED_OUT,
+    REPLAY_ARRIVAL_MIN_ZOOM: REPLAY_ARRIVAL_MIN_ZOOM,
+    REPLAY_START_ZOOM: REPLAY_START_ZOOM,
     videoProject: videoProject,
     videoViewTiles: videoViewTiles,
     videoPickEvenly: videoPickEvenly,
@@ -9922,7 +10107,7 @@
   }
 
   var REPLAY_PLANE_DASH = '8 10';
-  var REPLAY_CAMERA_LEAD_SEC = 0.9; // カメラの移動（0.8秒）が、区間の動き出しまでに終わるように
+  var REPLAY_CAMERA_LEAD_SEC = Core.REPLAY_CAMERA_LEAD_SEC; // カメラの移動（0.8秒）が、区間の動き出しまでに終わるように（動画と共通）
   var REPLAY_CAPTION_HIDE_LEAD_SEC = Core.REPLAY_CAPTION_HIDE_LEAD_SEC; // 写真の吹き出しは、カメラが動き出す少し前に消しておく
   var PLAY_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M6 4.5v11l9-5.5z"/></svg>';
   var PAUSE_ICON = '<svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="4.5" width="3.5" height="11" rx="1"/><rect x="11.5" y="4.5" width="3.5" height="11" rx="1"/></svg>';
@@ -10137,8 +10322,8 @@
   }
   // アニメーションつきでboundsへ寄せる（途中も線は毎コマ描き直すので、隠さない）。
   var REPLAY_ARRIVAL_ZOOM_DELAY_SEC = 0.25; // 着陸してから着いた地点へズームし直すまでの間
-  var REPLAY_TINY_LEG_KM = 0.4; // これより近い区間は、両端が見えていればカメラを動かさない（空港の中など）
-  var REPLAY_SHORT_STAY_SEC = 1.2; // 着いてからこれ以内に次の遠い移動が始まるなら、着いた地点へ寄せない
+  var REPLAY_TINY_LEG_KM = Core.REPLAY_TINY_LEG_KM; // これより近い区間は、両端が見えていればカメラを動かさない（空港の中など。動画と共通）
+  var REPLAY_SHORT_STAY_SEC = Core.REPLAY_SHORT_STAY_SEC; // 着いてからこれ以内に次の遠い移動が始まるなら、着いた地点へ寄せない（動画と共通）
   // 点がすべて、見える部分（吹き出し・操作ボタンを除いた部分）に入っているか
   function replayPointsInView(points, padOpts) {
     try {
@@ -10154,13 +10339,16 @@
   // 以前は「区間の両端の真ん中・縮尺15」という目安を判定に使っていて、実際のカメラ（縮尺は整数刻みに丸められる）と
   // 食い違っていた。実際の結果で比べるので、もう合っているかを正しく判定できる。
   function replayFitFor(points, maxZoom) {
-    var L = window.L, opts = replayViewPadding();
+    var opts = replayViewPadding();
     opts.maxZoom = maxZoom;
-    var b = L.latLngBounds(points);
-    var cz = replayMap._getBoundsCenterZoom(b, opts); // flyToBounds／fitBoundsが内部で使うものと同じ計算
-    var z = Math.min(maxZoom, cz.zoom);
-    if (!isFinite(z)) z = maxZoom;
-    return { lat: cz.center.lat, lng: cz.center.lng, zoom: z, points: points, pad: opts };
+    // Leafletの _getBoundsCenterZoom（flyToBounds／fitBoundsが内部で使う計算）と同じ結果を、Coreの純粋関数で出す。
+    // 動画（Core.videoPlanCamera）も同じ関数を使うので、ふりかえりと動画で同じ枠取り・縮尺になる（2026-09-30）
+    var size = replayMap.getSize(), tl = opts.paddingTopLeft, br = opts.paddingBottomRight;
+    var minZ = replayMap.getMinZoom(), maxZ = replayMap.getMaxZoom();
+    var v = Core.cameraFitView(points, size.x, size.y, { left: tl[0], top: tl[1], right: br[0], bottom: br[1] },
+      { minZoom: isFinite(minZ) ? minZ : 0, maxZoom: Math.min(maxZoom, isFinite(maxZ) ? maxZ : 99) });
+    var ll = Core.mercatorLatLng(v.x, v.y);
+    return { lat: ll.lat, lng: ll.lng, zoom: v.zoom, points: points, pad: opts };
   }
 
   // 1点を見える部分の真ん中に出す（アニメーションなし。最初と、シーク先へ合わせるとき）
@@ -10196,7 +10384,7 @@
   function resetReplayCamera() {
     var first = replay.tl.stops.filter(function (s) { return s.located; })[0];
     replayMap.stop();
-    replayCenterOn(first.lat, first.lng, 13);
+    replayCenterOn(first.lat, first.lng, Core.REPLAY_START_ZOOM);
     replay.cameraFlying = null;
     replay.cameraPending = null;
     replay.cameraMoving = false;
@@ -10373,9 +10561,9 @@
       // 地図が手振れのように揺れていた（2026-09-27）
       var tinyLeg = Core.distanceKm(legFrom, legTo) < REPLAY_TINY_LEG_KM;
       // 飛行機のあとで大きく引いたままなら、街を見る大きさ（12）までは寄せる。以後の近い区間では動かさない
-      var legMaxZoom = tinyLeg ? Math.max(12, Math.min(15, replayMap.getZoom())) : 15;
+      var legMaxZoom = tinyLeg ? Math.max(12, Math.min(15, replayMap.getZoom())) : Core.REPLAY_LEG_MAX_ZOOM;
       var legFit = replayFitFor(legPoints, legMaxZoom);
-      var tinyInView = tinyLeg && replayMap.getZoom() >= 10 && replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legFit.pad);
+      var tinyInView = tinyLeg && replayMap.getZoom() >= Core.REPLAY_ZOOMED_OUT && replayPointsInView([[legFrom.lat, legFrom.lng], [legTo.lat, legTo.lng]], legFit.pad);
       // 動かすかどうか（もう収まっている／アニメ中）は replayCameraMove（Core.cameraMoveDecision）が決める。
       // 移動の直前なので急ぎ（アニメ中でも始め直す）
       if (!tinyInView) replayCameraMove(legFit, { urgent: true });
@@ -10389,7 +10577,7 @@
       // その先の予定が地図の無い（座標が分からない）予定続きだと次の区間が作られず、広域のまま止まって
       // 見えてしまうため、着いた地点のズームが街を見る大きさ（目安10）より広いままなら、着いた地点へ寄せ直す
       // （次の区間があるかどうかによらない。2026-09-26）。
-      var zoomedOut = replayMap.getZoom() < 10;
+      var zoomedOut = replayMap.getZoom() < Core.REPLAY_ZOOMED_OUT;
       var needZoom = arrived && arrived.located && replay.lastStop !== -2 && (!cameFromLeg || zoomedOut);
       // 乗り継ぎのように、着いてすぐ次の遠い移動（飛行機など）に出るなら、寄せずに引いたままにする。
       // 寄せた直後にまた大きく引くことになり、地図が揺れて見えていた（2026-09-27）
@@ -10397,7 +10585,7 @@
         var nextLeg = tl.legs.filter(function (l) { return l.from === st.stopIndex && l.r0 >= r; })[0];
         if (nextLeg && nextLeg.r0 - r < REPLAY_CAMERA_LEAD_SEC + REPLAY_SHORT_STAY_SEC) {
           var nextTo = tl.stops[nextLeg.to];
-          if (nextTo && nextTo.located && Core.distanceKm(arrived, nextTo) >= 50) needZoom = false;
+          if (nextTo && nextTo.located && Core.distanceKm(arrived, nextTo) >= Core.REPLAY_FAR_LEG_KM) needZoom = false;
         }
       }
       // 飛行機などで引いた地図から寄せ直すときは、着いてすぐではなく少し（REPLAY_ARRIVAL_ZOOM_DELAY_SEC）
@@ -10407,7 +10595,7 @@
         // まだ待つ
       } else {
         if (needZoom) {
-          var arriveZoom = Math.max(replayMap.getZoom(), 12);
+          var arriveZoom = Math.max(replayMap.getZoom(), Core.REPLAY_ARRIVAL_MIN_ZOOM);
           replayCameraMove(replayFitFor([[arrived.lat, arrived.lng]], arriveZoom), { urgent: false });
         }
         replay.lastStop = st.stopIndex;
@@ -11075,8 +11263,9 @@
     routesReady.then(function () {
       if (token.cancelled) return null;
       var dateText = Core.videoDateRange(trip.startDate || replay.dates[0], trip.endDate || replay.dates[replay.dates.length - 1]);
-      var maxZoom = 13, tiles;
-      // 寄りすぎるとタイルが増える。OSMに負担をかけないよう、上限を超えるときは寄る上限を下げる
+      var maxZoom = Core.VIDEO_MAX_ZOOM, tiles;
+      // 寄りすぎるとタイルが増える。OSMに負担をかけないよう、上限を超えるときは、まず寄る上限（区間・着いた地点の縮尺）を
+      // 1段ずつ下げる（全体を引いたりはしない。2026-09-30）
       for (;;) {
         story = Core.buildVideoStory(tl, { photos: usePhotos, title: (trip.title || '旅の記録') + (state.viewAccountId && $('#replayViewer').textContent ? '（' + $('#replayViewer').textContent + '）' : ''), dateText: dateText, maxZoom: maxZoom });
         if (!story) throw new Error('no_story');
