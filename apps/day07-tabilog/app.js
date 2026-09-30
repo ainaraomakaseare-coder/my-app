@@ -3650,6 +3650,44 @@
     });
   }
 
+  // ページの一番下（上）でさらに引っぱっても、ページ全体を動かさない（2026-09-30、TestFlight 100の報告
+  // 「一番下まで行くと下タブが浮かび上がる」）。ネイティブのbounces=falseとCSSのoverscroll-behaviorを
+  // 入れても残ったため、JS側でも止める。端にいて、さらに端の向きへ指を動かしている間のtouchmoveだけ
+  // preventDefaultする（端以外の通常スクロール・シート等の内側のスクロール・横スワイプには触れない）。
+  (function installEdgeScrollGuard() {
+    var startY = 0, startX = 0;
+    function inInnerScroller(el) {
+      for (; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+        if (el.scrollHeight > el.clientHeight + 1) {
+          var oy = getComputedStyle(el).overflowY;
+          if (oy === 'auto' || oy === 'scroll') return true;
+        }
+      }
+      return false;
+    }
+    document.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) return;
+      startY = e.touches[0].clientY; startX = e.touches[0].clientX;
+    }, { passive: true });
+    document.addEventListener('touchmove', function (e) {
+      if (e.touches.length !== 1 || e.defaultPrevented) return;
+      var t = e.touches[0];
+      var dy = t.clientY - startY, dx = t.clientX - startX;
+      if (Math.abs(dy) < Math.abs(dx)) return;
+      var root = document.scrollingElement || document.documentElement;
+      var max = root.scrollHeight - window.innerHeight;
+      var atBottom = window.scrollY >= max - 1 && dy < 0;
+      var atTop = window.scrollY <= 0 && dy > 0;
+      if ((atBottom || atTop) && !inInnerScroller(e.target)) e.preventDefault();
+    }, { passive: false });
+    // 念のため、行き過ぎたスクロール位置になっていたら端に戻す
+    window.addEventListener('scroll', function () {
+      var root = document.scrollingElement || document.documentElement;
+      var max = Math.max(0, root.scrollHeight - window.innerHeight);
+      if (window.scrollY > max + 1) window.scrollTo(window.scrollX, max);
+    }, { passive: true });
+  })();
+
   // タブ名から、その画面を開く処理そのものへ（ボトムタブバーのタップ・下のタブの横スワイプの
   // 両方から呼ぶ。2026-09-29〜）。マイログ・旅先一覧はログインが要る（未ログインならログイン画面へ）。
   function openTabScreen(name) {

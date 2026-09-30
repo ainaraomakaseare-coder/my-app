@@ -18,6 +18,11 @@ _Avoid_: `wrangler tail`の「Ok」表示だけで「サーバー側は成功し
 新しい列（例：`trips.trip_type`）を足す機能は、コード側（Workerのcreate/update）を直して`wrangler deploy`しただけでは動かない。`schema.sql`の一度きりのALTER TABLE文をユーザー自身が`wrangler d1 execute --remote`で実行するまで、本番のテーブルにその列は存在しない。旅行区分（`trip_type`）を追加した回、まさにこのマイグレーションが実行されないまま数日経ってしまい、「旅行を編集できない（保存がSQLエラーで丸ごと失敗する）」「旅行区分が保存されない」という、一見バラバラに見える2つの不具合報告を招いた（実体は同じ1つの原因）。`PRAGMA table_info(<テーブル名>)`で列の有無をいつでも確認できる。
 _Avoid_: 新しい列を足す機能をリリースしたとき、「Workerのデプロイだけでは終わらない」ことを一度伝えて終わりにしないこと。マイグレーションは`schema.sql`にコメントで残すだけでなく、その場でユーザーに実行してもらう（または実行済みか確認する）ところまでやり切る。数コミット後に忘れられて、無関係に見える不具合として再浮上することがある。
 
+## iOSアプリの安全領域（ステータスバー・ホームバー）はWeb側のCSSが持つ
+
+Capacitorのiosアプリ（`apps/day07-tabilog-ios/capacitor.config.json`）は`"contentInset": "never"`。以前の`"automatic"`だと、UIKitがWKWebViewのスクロールビューに安全領域ぶんのcontentInsetを足すため、（1）ページの一番下でスクロール範囲が余分にでき、`position: fixed`の下タブが浮き上がって見える、（2）通常のフローの中身だけがステータスバーの下へ押し下げられ、fixedの要素（地図でふりかえる等）は押し下げられずに時計・電池と重なり、さらにenv(safe-area-inset-*)も小さく（0に）報告される、という不具合が出た。`never`にした代わりに、上の余白は`.app { padding-top: env(safe-area-inset-top) }`で一括して確保し、`position: fixed`の全画面（ライトボックス・時差診断など）や下タブ・トースト・シートは各自で`env(safe-area-inset-top/bottom)`を足す。旅行詳細のカバー写真は、`.app`の余白を負のmarginで打ち消してステータスバーの下まで回り込ませ、丸ボタンは`14px + env(top)`だけ下げる。ブラウザではenv()が0なので見た目は変わらない。
+_Avoid_: `contentInset`を`automatic`に戻さないこと（fixed要素の位置とenv()が壊れる）。新しく全画面のfixed要素を足すときは、上下にenv(safe-area-inset-*)を必ず足す。
+
 ## 見た目の方向性
 
 「TimeTree風・線の少ないモダン」（薄いグレーの背景`#F5F6F8`・白いカード＋線を使わず控えめな影（`--card-shadow`）だけで区切る・TimeTreeのグリーン系アクセント`#00BF8F`・丸ゴシック体をやめてOSの標準サンセリフ体`-apple-system`系・カードや入力欄は角丸多め）。3代目の方向性（DAY29〜）。1代目「Slack・Confluence風のモダンなSaaSツール」（薄いグレー・鮮やかな青・角丸12px＋薄いぼかし影）、2代目「ポップ・カラフル」（クリーム色の背景`#FFF7E8`・コーラルオレンジのアクセント`#FF6B4A`・Zen Maru Gothic・フラットなオフセット影）を経て、「TimeTreeを参考にした、線をなくしたきれいでモダンな感じにしたい」という要望を受け、Claude Design（Artifact）でホーム画面・旅行詳細（タイムライン）の2画面をTimeTree風でモックアップし、確認してもらってから全画面に反映した。**カード・行の類（trip-card／entry-card／stat-card／sheet／balance-rowなど）は`border`を持たず、`box-shadow: var(--card-shadow)`だけで区切る**。入力欄（`.field input`など）も枠線は持たず、`var(--input-bg)`の塗りつぶしで区別する（ページ地の上に直接置かれるログイン画面の入力欄・絞り込みプルダウンだけは、白地（`var(--card)`）＋影で区別する。白いカードの上に白い入力欄を置くと区別できなくなるため）。色・角丸・影・フォントはCSSカスタムプロパティ（`--bg`・`--accent`・`--radius-card`・`--radius-control`など）にまとめてあるため、今後また方向性を変えるときも`:root`を中心に直せばよい。

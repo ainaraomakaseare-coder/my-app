@@ -61,6 +61,10 @@ a:hover { text-decoration: underline; }
 /* どこかの要素が画面幅をはみ出しても、ページが横にずれないようにする安全策（clipはスクロール領域を作らないので、
    position: stickyなどに影響しない） */
 .app { min-height: 100dvh; overflow-x: clip; }
+/* iOSアプリ（Capacitor）はcontentInset:"never"で、WebViewの上下に自動の余白を足さない。ステータスバー
+   （時計・電池）を避ける上の余白は、ここで一括して確保する（通常のフローに並ぶ全画面が対象。
+   position:fixedの画面は各自でenv(safe-area-inset-top)を足す）。ブラウザではenv()は0なので変化なし。 */
+.app { padding-top: env(safe-area-inset-top, 0px); }
 .screen { display: none; }
 .screen.active { display: block; }
 /* タブバーの4画面（マイログ・旅先一覧・旅の足跡・プロフィール）を切り替えたときだけ、ふわっと
@@ -365,7 +369,7 @@ a:hover { text-decoration: underline; }
    写真の下の白いシート（角丸20px、写真に16px重ねる）に置く。戻る／編集ボタンだけ写真の上に
    丸い白ボタンで重ねる（safe-area-inset-topの分だけ下げる）。 */
 .trip-cover:has(.trip-cover-photo:not([hidden])) {
-  display: block; margin: -20px -16px 0; padding-bottom: 0;
+  display: block; margin: calc(-20px - env(safe-area-inset-top, 0px)) -16px 0; padding-bottom: 0;
 }
 .trip-cover:has(.trip-cover-photo:not([hidden])) .trip-cover-photo {
   width: 100%; height: clamp(220px, 40vh, 340px); border-radius: 0; margin-bottom: 0;
