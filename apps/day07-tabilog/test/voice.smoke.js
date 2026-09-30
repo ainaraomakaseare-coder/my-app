@@ -58,8 +58,8 @@ async function launch() {
   // AIへの送信の同意確認（confirmAiDataSharing）には同意して進める
   page.on('dialog', (d) => d.accept());
 
-  // 音声入力は有料プラン専用（docs/adr/0004）になったため、テストでも
-  // ログイン済み・プレミア＋プラン契約中のアカウントとして進める。
+  // 音声入力はログイン済みアカウントの月の回数まで使える（docs/adr/0004）ため、テストでも
+  // ログイン済みのアカウントとして進める（planフィールドは古いアプリ互換で残っているだけ）。
   const TEST_USER = { email: 'tester@example.com', name: 'テスト太郎', accountId: '123456' };
   await page.addInitScript((user) => {
     localStorage.setItem('tabilog:user', JSON.stringify(user));
@@ -218,7 +218,7 @@ async function launch() {
   await page.waitForFunction(() => document.querySelectorAll('.block').length === 6);
   check('2回目の送信もタイムラインに積み増される（3件→6件）', (await page.$$('.block')).length === 6);
 
-  // ---- 1回の録音は3分まで（プレミアムプランの上限に合わせて、時間そのものをアプリ側で強制する） ----
+  // ---- 1回の録音は3分まで（1回3分までの上限を、時間そのものをアプリ側で強制する） ----
   await page.click('.block-add >> text=音声・メモでまとめて記録する');
   await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
   await page.clock.install();

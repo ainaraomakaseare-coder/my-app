@@ -160,7 +160,7 @@ const SAMPLE = [
   check("ログインなしは401で外部APIを呼ばない", [anon.status, fetched.length], [401, 0]);
   sqlite.prepare("UPDATE accounts SET memo_uses_this_period = 10 WHERE email = 'bob@example.com'").run();
   const full = await call("POST", "/trips/t1/text-scan", "bob", { text: "x", email: "bob@example.com", date: "2026-10-04" });
-  check("メモの枠が切れていれば403で外部APIを呼ばない", [full.status, full.data.error, fetched.length], [403, "premium_required", 0]);
+  check("メモの枠が切れていれば403で外部APIを呼ばない", [full.status, full.data.error, fetched.length], [403, "quota_exceeded", 0]);
   const noKey = await worker.fetch(new Request("https://api.example/trips/t1/text-scan", { method: "POST", headers: { origin: "https://app.example", "content-type": "application/json", authorization: "Bearer " + tokens.alice }, body: JSON.stringify({ text: "x", date: "2026-10-04" }) }), { ...env, OPENAI_API_KEY: "" }, { waitUntil() {} });
   check("OpenAIのキーが無ければ503", noKey.status, 503);
   const noDates = await call("POST", "/trips/t1/text-scan", "alice", { text: "x", email: "alice@example.com", date: "2026-13-99" });

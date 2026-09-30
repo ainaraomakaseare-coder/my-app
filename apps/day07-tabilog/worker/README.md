@@ -868,3 +868,15 @@ npx wrangler deploy
 - 旧`voice-entries`・`text-entries`・`memo-blocks`は、古いアプリのために残してあります（今のアプリは使いません）。
 - **サブリクエスト**：音声は 文字起こし最大2＋OpenAI最大2＋場所検索最大12＋D1約12（別行動は約16）＝最大28（別行動32）、メモ（AI）は最大26（別行動30）。`worker/src/import-proposals.js`の`estimateProposalSubrequests`で数えています。`GOOGLE_API_KEY`が無いときは、音声・メモは場所検索を飛ばして地図なしで候補を返します。
 - ローカルの確認：`node worker/test/import-proposals.test.mjs`（純粋関数）、`node worker/test/import-handler.test.mjs`（Workerの入口から通し。`node:sqlite`の本物のSQLite・OpenAIとPlacesはモック。有料APIは呼びません）。
+
+## 有料プラン・回数券の販売停止（2026-09-30 追加、App Review 3.1.1）
+
+App Reviewの Guideline 3.1.1 で却下されたため、有料プランと回数券の販売を止めた（docs/adr/0004 の「有料プランの販売をいったん止める」）。
+
+- `effectivePlan(account)`：どのアカウントも常に`'free'`（DBの`plan`列は無視）。音声・メモ・スクショの回数の確認（`checkVoiceQuota`）と `/accounts/ensure` の返す `plan`・上限がこれを通る。`/accounts/ensure` のフィールド名は変えていないので、古いアプリでも壊れない。
+- `POST /billing/checkout`・`POST /billing/portal`・`/billing/ticket*`：**410 `{"error":"billing_disabled"}`**（`BILLING_ENABLED = false`）。
+- `POST /billing/webhook`：経路は残し、署名も見ずに200を返して何もしない（Stripe側の再送を止め、アカウントを変えないため）。
+- 回数が足りないときの理由は `quota_exceeded` だけ（`premium_required` は返さない）。おまけの回数（`ticket_credits`、新規登録の特典3回分）は今までどおり月の枠のあとに消費される。購入で増やす経路は無い。
+- Stripeのシークレット（`STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET`）は設定したままでよいが、使われない。消したくなったら `npx wrangler secret delete` で消してよい（アカウント削除時の「契約中のStripe定期購入の解約」だけは、`stripe_subscription_id` がある人が居れば動くので、その間は`STRIPE_SECRET_KEY`があると安心）。
+- **復活させるとき**：Appleのアプリ内課金（RevenueCat）に切り替える想定。`effectivePlan` を課金状態（RevenueCatのWebhookで`plan`列を更新）から返す形に戻し、`BILLING_ENABLED`とStripe系の経路を見直す。詳しくは docs/adr/0004。
+- ローカルの確認：`node worker/test/billing-disabled.test.mjs`（node:sqliteの上で、plan列がpremium_plusでも上限が無料のままであること・購入の入口が410であること・Webhookが何も変えないことを確かめる）

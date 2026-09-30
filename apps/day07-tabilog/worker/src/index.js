@@ -3325,6 +3325,20 @@ var PLAN_MONTHLY_LIMIT = { free: 10, basic: 20, premium_plus: 50 };
 // 決まった形（「10:00 新宿」のような行）のメモは、AIを使わずアプリ側で分けるので回数を使わない。
 var MEMO_MONTHLY_LIMIT = { free: 10, basic: 30, premium_plus: 100 };
 
+// 【有料プランの販売停止中（2026-09-30、docs/adr/0004、App Review 3.1.1）】
+// どのアカウントも、DBに保存されているplan列の値に関係なく無料の上限で扱う。
+// 有料プランをAppleのアプリ内課金（RevenueCat）で復活させるときは、この関数だけを
+// 「account.planが有効なプラン名ならそれを返す」に戻し、BILLING_ENABLEDをtrueにする。
+var BILLING_ENABLED = false;
+function effectivePlan(account) {
+  void account;
+  return "free";
+}
+
+function billingDisabled(headers) {
+  return json({ error: "billing_disabled" }, 410, headers);
+}
+
 function currentPeriodStart() {
   var now = new Date();
   return now.getUTCFullYear() + "-" + String(now.getUTCMonth() + 1).padStart(2, "0") + "-01";
@@ -3341,17 +3355,19 @@ async function resetPeriodIfNeeded(env, row) {
 }
 
 function rowToAccount(row) {
-  var limit = PLAN_MONTHLY_LIMIT[row.plan] || 0;
+  var plan = effectivePlan(row);
+  var limit = PLAN_MONTHLY_LIMIT[plan] || 0;
   return {
     accountId: row.account_id,
     email: row.email,
     name: row.name,
-    plan: row.plan || "free",
+    plan: plan,
     voiceUsesThisPeriod: row.voice_uses_this_period || 0,
     voiceMonthlyLimit: limit,
     voiceRemainingThisPeriod: Math.max(0, limit - (row.voice_uses_this_period || 0)),
-    memoMonthlyLimit: MEMO_MONTHLY_LIMIT[row.plan] || MEMO_MONTHLY_LIMIT.free,
-    memoRemainingThisPeriod: Math.max(0, (MEMO_MONTHLY_LIMIT[row.plan] || MEMO_MONTHLY_LIMIT.free) - (row.memo_uses_this_period || 0)),
+    memoMonthlyLimit: MEMO_MONTHLY_LIMIT[plan],
+    memoRemainingThisPeriod: Math.max(0, MEMO_MONTHLY_LIMIT[plan] - (row.memo_uses_this_period || 0)),
+    // おまけの回数（新規登録の特典3回分。購入ではない無料の回数）。購入で増える経路は無い。
     ticketCredits: row.ticket_credits || 0,
   };
 }
@@ -3518,6 +3534,7 @@ function stripeFormBody(params) {
 }
 
 async function createCheckoutSession(request, env, headers) {
+  if (!BILLING_ENABLED) return billingDisabled(headers);
   if (!env.STRIPE_SECRET_KEY) return json({ error: "server_not_configured" }, 503, headers);
   let data;
   try {
@@ -3579,6 +3596,7 @@ async function createCheckoutSession(request, env, headers) {
 // を開くためのセッションを作る。解約そのものはこのポータル側の操作で行われ、
 // 実際のプラン変更はStripeのWebhook（handleStripeWebhook）経由で反映される。
 async function createPortalSession(request, env, headers) {
+  if (!BILLING_ENABLED) return billingDisabled(headers);
   if (!env.STRIPE_SECRET_KEY) return json({ error: "server_not_configured" }, 503, headers);
   let data;
   try {
@@ -3648,6 +3666,8 @@ async function verifyStripeSignature(rawBody, sigHeader, secret) {
 }
 
 async function handleStripeWebhook(request, env, headers) {
+  // 販売停止中は何も反映しない（アカウントのplanを変えない）。Stripe側の再送を止めるため200で返す。
+  if (!BILLING_ENABLED) return json({ received: true, ignored: true }, 200, headers);
   if (!env.STRIPE_WEBHOOK_SECRET) return json({ error: "server_not_configured" }, 503, headers);
   const rawBody = await request.text();
   const valid = await verifyStripeSignature(rawBody, request.headers.get("stripe-signature"), env.STRIPE_WEBHOOK_SECRET);
@@ -3983,11 +4003,13 @@ async function checkVoiceQuota(env, email, kind) {
   if (!account) return { ok: false, reason: "login_required" };
   const reset = await resetPeriodIfNeeded(env, account);
   const memo = kind === "memo";
-  const limit = memo ? (MEMO_MONTHLY_LIMIT[reset.plan] || MEMO_MONTHLY_LIMIT.free) : (PLAN_MONTHLY_LIMIT[reset.plan] || 0);
+  const plan = effectivePlan(reset);
+  const limit = memo ? MEMO_MONTHLY_LIMIT[plan] : PLAN_MONTHLY_LIMIT[plan];
   const used = memo ? (reset.memo_uses_this_period || 0) : reset.voice_uses_this_period;
   if (used < limit) return { ok: true, via: "plan", email: normalized, kind: memo ? "memo" : "voice" };
   if ((reset.ticket_credits || 0) > 0) return { ok: true, via: "ticket", email: normalized, kind: memo ? "memo" : "voice" };
-  return { ok: false, reason: reset.plan === "free" ? "premium_required" : "quota_exceeded" };
+  // 販売停止中は有料プランへの案内（premium_required）を返さない
+  return { ok: false, reason: "quota_exceeded" };
 }
 
 async function consumeVoiceQuota(env, email, via, kind) {
@@ -5536,6 +5558,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/leave$/))) return leaveTrip(m[1], request, env, headers);
 
+    if (path.startsWith("/billing/ticket")) return billingDisabled(headers);
     if (method === "POST" && path === "/billing/checkout") return createCheckoutSession(request, env, headers);
     if (method === "POST" && path === "/billing/portal") return createPortalSession(request, env, headers);
     if (method === "POST" && path === "/billing/webhook") return handleStripeWebhook(request, env, headers);

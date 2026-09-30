@@ -34,3 +34,18 @@
 ## 無料プランの音声入力を月2回→月10回に引き上げ（2026-09-28）
 
 docs/adr/0012で試作したCloudflare Workers AIへの文字起こし切り替えを本番採用した（詳細は0012の追記参照）。文字起こしの実費がほぼ無料になったため（整理（`organizeTextIntoBlocks`）は引き続きOpenAIを使うので実費はゼロではない）、無料プランの月間上限（`PLAN_MONTHLY_LIMIT.free`）を月2回から月10回に引き上げた。有料プランが無料プランを下回らないよう、basicも10回→20回に上げている（premium_plusは50回のまま）。新規登録時の回数券3回分ボーナスは変更なし。
+
+## 有料プランの販売をいったん止める（2026-09-30、App Review 3.1.1）
+
+**決定**：ベーシック（月300円）・プレミア＋（月1000円）・回数券の販売を、Web版・iOSアプリの両方で**いったん全部止める**。全員が同じ無料の回数（音声入力 月10回・メモ／スクショのAI整理 月10回）を使う。上の各節（有料化の方針・回数券・プラン別の上限）は、復活させるときの設計資料として残す。
+
+**きっかけ**：App Reviewが2回続けて Guideline 3.1.1 で却下した。「アプリ内課金の仕組みを実装しないと、アプリの外で買った有料コンテンツにアプリからアクセスできてしまう」という指摘。iOSアプリ内では購入ボタンを隠していた（`isNativeApp()`）が、Webで Stripe 払いしたプラン・回数券の上限がiOSアプリにも効いてしまう作りだったため、「外で買ったものをアプリで使える」と判断された。実際には Stripe で払った人は誰もいなかった。
+
+**やったこと**
+- Worker：`effectivePlan(account)`（`worker/src/index.js`）が、DBの`plan`列に何が入っていても常に `'free'` を返す。回数の確認（`checkVoiceQuota`）と `/accounts/ensure` の返す上限・`plan` はこの関数を通る。使い切ったときの理由は `premium_required` ではなく `quota_exceeded` だけにした。
+- `/billing/checkout`・`/billing/portal`・回数券の購入（`/billing/ticket*`）は **410 `{"error":"billing_disabled"}`**。`/billing/webhook` は経路を残して **何もせず200**（Stripeの再送を止めるため。アカウントは変わらない）。切り替えは `BILLING_ENABLED = false`。
+- **おまけの回数（`ticket_credits`）**：新規登録の特典（3回分）は購入ではない無料の回数なので、今までどおり、月の枠を使い切ったあとに1回ずつ消費する。購入で増える経路（Stripe Webhook・回数券の購入）は上のとおり全部止まっているので、有料で増えた回数は存在しない。画面では「おまけの回数：○回」と呼ぶ。
+- フロント：プランを選ぶボタン・「プランを見る」・支払い管理へのリンク・回数券・プラン名バッジ（ベーシック／プレミア＋）を全部外した。プロフィールと音声・メモ・スクショの画面は「あと○回（月10回まで）」だけを出す。使い切ったら「今月の回数を使い切りました。来月1日にまた使えます」（購入への案内は無し）。`Core.canUseBranches` は常に true のまま（コメントだけ更新）。
+- `privacy.html` に、現在は有料の機能が無くお支払い情報は取得しないことを追記。iOSアプリは `webDir: ../day07-tabilog` で同じファイルを同梱するので、別のコピーは無い。Capacitorの `allowNavigation` から Stripe のホストも外した。
+
+**復活させるとき**（Appleのアプリ内課金＋RevenueCat を想定）：(1) `effectivePlan` を、アプリ内課金の状態（RevenueCatのWebhookで`plan`列を更新する）を見て `'basic'`／`'premium_plus'` を返す形に戻し、`BILLING_ENABLED` を見直す。(2) 購入導線はiOSアプリではApple課金だけにする。Webで買った分をiOSで使わせる（リーダー系）のは別途審査要件を確認する。(3) Stripe関連のコード（`createCheckoutSession`・`createPortalSession`・`handleStripeWebhook`）はWorkerに残してあるので参考にできる。画面側の購入UI（旧 `PLAN_OPTIONS`・`startCheckout`）は削除済みなので、git履歴（2026-09-30より前）から拾う。

@@ -101,7 +101,7 @@ const CONSUME = /memo_uses_this_period = memo_uses_this_period \+ 1/;
   const fetched = [];
   mockFetch(fetched, {});
   const res = await worker.fetch(scanRequest([img]), env, ctx);
-  check("枠切れ: 403 premium_required", [res.status, (await res.json()).error], [403, "premium_required"]);
+  check("枠切れ: 403 quota_exceeded（有料プランへの案内は返さない）", [res.status, (await res.json()).error], [403, "quota_exceeded"]);
   check("枠切れ: 外部APIを呼ばない", fetched.length, 0);
 }
 

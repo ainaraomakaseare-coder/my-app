@@ -2428,7 +2428,7 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   var ids = function (list) { return list.map(function (b) { return b.id; }); };
 
   eq('canUseBranches: いまはログインしていれば誰でも使える', T.canUseBranches({ email: 'a@b.c' }), true);
-  eq('canUseBranches: 有料プランの人も使える', T.canUseBranches({ plan: 'premium_plus' }), true);
+  eq('canUseBranches: DBにプランが入っていても関係なく使える（有料プランの販売は停止中）', T.canUseBranches({ plan: 'premium_plus' }), true);
 
   eq('blocksInBranchWindow: 開始時刻ちょうどを含み、終了時刻ちょうどは含まない',
     ids(T.blocksInBranchWindow(shared, branches[0])), ['s2', 's3']);

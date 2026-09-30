@@ -396,9 +396,10 @@
   // 「見せる予定の並び」だけを使う。サーバー側の同じ規則は worker/src/branches.js。
 
   // 自分だけの道を作ってよい人か。いまは無料機能なのでログインしていれば誰でも true。
-  // 課金（有料プラン）を始めたら、ここだけを「有料プランの人だけ true」に変える（画面側はこの関数だけを見る）。
+  // 将来、条件つきの機能にするときは、ここだけを変える（画面側はこの関数だけを見る）。
+  // 有料プランの販売は停止中（2026-09-30）なので、常に true を返す。
   function canUseBranches(account) {
-    void account; // 有料プランの判定に使う予定（accountのplanなど）
+    void account;
     return true;
   }
 
@@ -5431,16 +5432,9 @@
     other: 'その他ログ'
   };
 
-  // ---------- 音声入力の有料プラン（docs/adr/0004） ----------
-  var PLAN_LABELS = { free: '無料', basic: 'ベーシック', premium_plus: 'プレミア＋' };
-  var PLAN_OPTIONS = [
-    { plan: 'basic', name: 'ベーシック', detail: '月300円・音声入力 月10回まで' },
-    { plan: 'premium_plus', name: 'プレミア＋', detail: '月1000円・音声入力 月50回まで' }
-  ];
-
   // ---------- 状態 ----------
   var state = {
-    account: null,            // ログイン中アカウントのプラン状況（{plan, voiceRemainingThisPeriod, ticketCredits, ...}）
+    account: null,            // ログイン中アカウントの残り回数（{voiceRemainingThisPeriod, ticketCredits（おまけの回数）, ...}）
     trip: null,
     blocks: [],               // みんなの予定（別行動の中の予定は含まない）
     branchBlocks: [],         // 別行動（自分だけの道）の中の予定（block.branchIdが空でないもの）
@@ -6438,7 +6432,7 @@
   var voiceStartedAt = 0;
   var voiceTimerInterval = null;
   var voiceAutoStopped = false;
-  // プレミアムプランの「1回3分まで」に合わせて、録音時間そのものをアプリ側で強制する
+  // 1回3分までに合わせて、録音時間そのものをアプリ側で強制する
   // （時間の上限を超えられないようにしておけば、費用の見積もりが崩れない）
   var VOICE_MAX_MS = 3 * 60 * 1000;
 
@@ -6496,8 +6490,8 @@
     return ok;
   }
 
-  // 音声入力は有料プラン専用（docs/adr/0004）。ログインしていない、またはプラン・回数券が
-  // 無い場合は、録音の代わりに案内とプランへの導線を出す。
+  // 音声入力は月の回数（と、おまけの回数）まで使える（docs/adr/0004。有料プランの販売は停止中）。
+  // 使い切ったときは、録音の代わりに案内だけを出す（購入への導線は出さない）。
   // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
   // 旅行の日程全体に対してAIが各予定の日も判定する（state.voiceEntryMultiDayで保持し、
   // 取り込み時にscanVoiceBlob/scanTextMemoへ渡すdateを空にする分岐に使う）。
@@ -6540,20 +6534,19 @@
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
     if (!user) {
-      $('#memoAiInfo').textContent = 'AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月10回まで無料）。';
+      $('#memoAiInfo').textContent = 'AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月10回まで）。';
       return;
     }
     $('#memoAiInfo').textContent = '';
     fetchAccountStatus().then(function (account) {
       if (!account) return;
-      var tickets = account.ticketCredits ? '（回数券の残り' + account.ticketCredits + '回）' : '';
-      $('#memoAiInfo').textContent = 'AIでの整理：今月あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで無料）' + tickets;
+      var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
+      $('#memoAiInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
       var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
       if (!voiceOk) {
         // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
         $('#voicePremiumRequired').hidden = false;
-        $('#voicePremiumMessage').textContent = '今月の音声入力の回数を使い切りました。メモの取り込みはこのまま使えます。';
-        $('#btnGoToPlans').hidden = isNativeApp(); // iOSアプリでは購入の画面へ案内しない（3.1.1）
+        $('#voicePremiumMessage').textContent = '今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。';
         $('#btnVoiceRecord').disabled = true;
       }
     });
@@ -6665,7 +6658,7 @@
     }).catch(function (e) {
       var msg = (e && e.message) || '';
       $('#btnCreateVoiceEntries').disabled = false;
-      if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
+      if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') { // premium_requiredは古いサーバー応答の互換用
         $('#voiceEntryStatus').textContent = '';
         openVoiceEntryForm(state.voiceEntryMultiDay);
       } else if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
@@ -6722,7 +6715,7 @@
       $('#btnCreateTextEntries').disabled = false;
       $('#btnOrganizeMemoAi').disabled = false;
       if (msg === 'premium_required' || msg === 'quota_exceeded') {
-        $('#textEntryStatus').textContent = '今月のAIでの整理の回数を使い切りました。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
+        $('#textEntryStatus').textContent = '今月の回数を使い切りました。来月1日にまた使えます。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
       } else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = importScanErrorMessage(msg);
     });
@@ -6910,8 +6903,8 @@
     showScreen('screenshotImport');
     fetchAccountStatus().then(function (account) {
       if (!account) return;
-      var tickets = account.ticketCredits ? '（回数券の残り' + account.ticketCredits + '回）' : '';
-      $('#ssInfo').textContent = '今月あと' + account.memoRemainingThisPeriod + '回使えます（月' + account.memoMonthlyLimit + '回まで無料）' + tickets;
+      var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
+      $('#ssInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
     });
   }
 
@@ -7005,7 +6998,7 @@
         $('#btnSsScan').disabled = false;
         var msg = (e && e.message) || '';
         if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
-          $('#ssStatus').textContent = msg === 'login_required' ? 'ログインし直してください。' : '今月のAIの回数を使い切りました。';
+          $('#ssStatus').textContent = msg === 'login_required' ? 'ログインし直してください。' : '今月の回数を使い切りました。来月1日にまた使えます。';
           return;
         }
         $('#ssStatus').textContent = ssErrorMessage(msg);
@@ -7509,7 +7502,7 @@
   function appendBranchAddArea(el) {
     if (!state.selectedDate) return;
     var user = loadCurrentUser();
-    if (!Core.canUseBranches(user)) return; // 課金を始めたら、有料プランでない人はここで止まる
+    if (!Core.canUseBranches(user)) return; // 条件つきの機能にするときは canUseBranches を変える
     var note = function (text) {
       var p = document.createElement('p');
       p.className = 'branch-hint';
@@ -10074,14 +10067,14 @@
       if (handleLoginRequired(e, 'mylog')) return;
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
     });
-    // プランの状態はプロフィール画面がメインだが、マイログ見出しのplanBadgeTop（残り回数の
+    // 残り回数はプロフィール画面がメインだが、マイログ見出しのplanBadgeTop（残り回数の
     // 一目バッジ）もここで最新化しておく（renderPlanStatusはプロフィール画面のDOMも一緒に更新するが、
     // 今アクティブな画面がどちらでも副作用は無い）。
     fetchAccountStatus().then(renderPlanStatus);
   }
 
-  // ---------- 音声入力プラン（docs/adr/0004） ----------
-  // アカウントのプラン・利用状況は/accounts/ensureがまとめて返すので、それをそのまま使い回す
+  // ---------- 音声入力・AI整理の残り回数（docs/adr/0004） ----------
+  // アカウントの利用状況は/accounts/ensureがまとめて返すので、それをそのまま使い回す
   // （ログインのたびに呼んでいる処理と同じもので、ここでは最新化のために呼び直しているだけ）。
   function fetchAccountStatus() {
     var user = loadCurrentUser();
@@ -10092,54 +10085,28 @@
     }).catch(function () { state.account = null; return null; });
   }
 
+  // 残り回数の表示だけ（有料プラン・購入の画面は無い。2026-09-30〜、docs/adr/0004）。
   function renderPlanStatus() {
     var statusEl = $('#planStatus');
-    var optionsEl = $('#planOptions');
     var msgEl = $('#planStatusMessage');
     var badgeEl = $('#planBadgeTop');
-    var manageBtn = $('#btnManageBilling');
     var account = state.account;
     if (!account) {
       statusEl.innerHTML = '';
-      optionsEl.innerHTML = '';
       msgEl.textContent = '';
       badgeEl.hidden = true;
-      manageBtn.hidden = true;
       return;
     }
-    // Appleの審査ガイドライン3.1.1（アプリ内課金の対象になる機能は、Appleの仕組み以外の購入導線を
-    // アプリ内に出せない）のため、iOSアプリ内では「登録する」ボタン・支払い方法の変更（Stripeへの
-    // 外部リンク）は出さない（2026-09-28〜。プロフィール画面には残り回数などの状況表示だけ残す）。
-    var native = isNativeApp();
-    manageBtn.hidden = native || account.plan === 'free';
-    var planName = PLAN_LABELS[account.plan] || PLAN_LABELS.free;
-    var usageText = '今月の音声入力：残り' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）' +
-      (typeof account.memoRemainingThisPeriod === 'number' ? '・メモのAI整理：残り' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' : '');
+    var lines = ['<div class="plan-usage">今月の音声入力：あと' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）</div>'];
+    if (typeof account.memoRemainingThisPeriod === 'number') {
+      lines.push('<div class="plan-usage">メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）</div>');
+    }
+    if (account.ticketCredits) lines.push('<div class="plan-usage">おまけの回数：' + account.ticketCredits + '回</div>');
+    statusEl.innerHTML = lines.join('');
 
     badgeEl.hidden = false;
-    badgeEl.classList.toggle('is-free', account.plan === 'free');
-    badgeEl.textContent = planName + '・残り' + account.voiceRemainingThisPeriod + '回';
-
-    statusEl.innerHTML =
-      '<div class="plan-name">今のプラン：' + escapeHtml(planName) + '</div>' +
-      '<div class="plan-usage">' + escapeHtml(usageText) +
-      (account.ticketCredits ? '・回数券の残り' + account.ticketCredits + '回' : '') + '</div>';
-
-    optionsEl.innerHTML = '';
-    // iOSアプリの中では、有料プラン・回数券の購入（Stripe）を出さない（審査ガイドライン3.1.1）。
-    if (!native) {
-      PLAN_OPTIONS.forEach(function (opt) {
-        if (account.plan === opt.plan) return;
-        var card = document.createElement('div');
-        card.className = 'plan-card';
-        card.innerHTML =
-          '<div><div class="plan-card-name">' + escapeHtml(opt.name) + '</div>' +
-          '<div class="plan-card-detail">' + escapeHtml(opt.detail) + '</div></div>' +
-          '<button class="btn primary" type="button">登録する</button>';
-        card.querySelector('button').addEventListener('click', function () { startCheckout(opt.plan); });
-        optionsEl.appendChild(card);
-      });
-    }
+    badgeEl.classList.add('is-free');
+    badgeEl.textContent = '音声入力 あと' + account.voiceRemainingThisPeriod + '回';
     msgEl.textContent = '';
   }
 
@@ -10154,43 +10121,6 @@
     return location.hostname === 'tabinoashiato.pages.dev'
       ? location.origin + location.pathname
       : PUBLIC_WEB_BASE;
-  }
-
-  function startCheckout(plan) {
-    var user = loadCurrentUser();
-    if (!user) { openLogin('mylog'); return; }
-    var msgEl = $('#planStatusMessage');
-    msgEl.textContent = '決済ページに移動しています…';
-    var returnUrl = publicPageUrl();
-    api('/billing/checkout', 'POST', {
-      email: user.email,
-      plan: plan,
-      successUrl: returnUrl + '?billing=success',
-      cancelUrl: returnUrl + '?billing=cancel'
-    }).then(function (res) {
-      if (res && res.url) location.href = res.url;
-      else msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
-    }).catch(function (e) {
-      if (handleLoginRequired(e, 'profile')) return;
-      msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
-    });
-  }
-
-  function startBillingPortal() {
-    var user = loadCurrentUser();
-    if (!user) { openLogin('mylog'); return; }
-    var msgEl = $('#planStatusMessage');
-    msgEl.textContent = '支払い管理ページに移動しています…';
-    api('/billing/portal', 'POST', {
-      email: user.email,
-      returnUrl: publicPageUrl()
-    }).then(function (res) {
-      if (res && res.url) location.href = res.url;
-      else msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
-    }).catch(function (e) {
-      if (handleLoginRequired(e, 'profile')) return;
-      msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
-    });
   }
 
   // ---------- プロフィール（Airbnbのプロフィール画面を手本にした、アカウントまわりのまとめ。2026-09-28〜） ----------
@@ -10209,7 +10139,7 @@
       renderProfileStats();
     }).catch(function (e) {
       if (handleLoginRequired(e, 'profile')) return;
-      // 集計が読み込めなくても、名前・アバターやプラン・アカウント操作は使えるようにしておく
+      // 集計が読み込めなくても、名前・アバター・アカウント操作は使えるようにしておく
     });
     fetchAccountStatus().then(renderPlanStatus);
   }
@@ -10255,7 +10185,7 @@
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
-  // アカウント本体（名前・プラン・回数券・参加した旅行への紐付け）だけを消す。
+  // アカウント本体（名前・おまけの回数・参加した旅行への紐付け）だけを消す。
   // メールアドレスは、削除→再登録を繰り返した無料枠の不正な繰り返し取得を防ぐため残す（worker側の実装を参照）。
   // この端末に残しているデータ（旅行一覧・非表示にした旅行・AI送信の同意など、tabilog:で始まるキー）も
   // 一緒に消す。消さないと削除後のホームに同じ旅行が並んだままになり、「削除できていない」ように見える
@@ -10263,7 +10193,7 @@
   function deleteMyAccount() {
     var user = loadCurrentUser();
     if (!user) return;
-    if (!confirm('アカウントを削除しますか？\n（名前・プラン・回数券の情報と、この端末の旅行一覧が削除されます。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
+    if (!confirm('アカウントを削除しますか？\n（名前・おまけの回数の情報と、この端末の旅行一覧が削除されます。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
     api('/accounts/delete', 'POST', { email: user.email }).then(function () {
       Object.keys(localStorage).forEach(function (k) {
         if (k.indexOf('tabilog:') === 0) localStorage.removeItem(k);
@@ -10279,17 +10209,11 @@
     });
   }
 
-  // ページに戻ってきたときのURL（?billing=success/cancel）を見て、決済結果を伝える
+  // 以前のStripe決済から戻ってきたURL（?billing=...）が残っていたら、黙って取り除くだけ（案内は出さない）
   function checkBillingReturn() {
     var params = new URLSearchParams(location.search);
-    var billing = params.get('billing');
-    if (!billing) return;
+    if (!params.get('billing')) return;
     history.replaceState(null, '', location.pathname);
-    if (billing === 'success') {
-      fetchAccountStatus().then(function () {
-        alert('プレミアムになりました！音声入力が使えるようになりました。');
-      });
-    }
   }
 
   function renderMyLog() {
@@ -12740,14 +12664,9 @@
       state.visitedSel = null;
       renderVisitedPlaces();
     });
-    // プラン（音声入力プラン）はプロフィール画面に移した（2026-09-28〜、ボトムタブバー導入）
-    $('#btnGoToPlans').addEventListener('click', function () {
-      if (loadCurrentUser()) openProfile(); else openLogin('profile');
-    });
     $('#planBadgeTop').addEventListener('click', function () {
       if (loadCurrentUser()) openProfile(); else openLogin('profile');
     });
-    $('#btnManageBilling').addEventListener('click', startBillingPortal);
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
     initSocial();
     $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
