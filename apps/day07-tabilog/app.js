@@ -1145,6 +1145,8 @@
       out.push({
         blockId: b.id, date: stopDate, dayIndex: dayIndex, dayNumber: dayIndex + 1,
         minute: minute, estimated: estimated, label: b.label || '', captions: captions, photos: photos,
+        // 「動画でシェアに出さない」予定（block.videoExclude、migrations/0031〜）。動画では地名・写真・ピンを出さない
+        videoExclude: !!b.videoExclude,
         transport: arriving, query: placeEntry ? placeEntry.url : '',
         // 記録のid・サーバーがすでに求めてある座標（Part A）。geocodeQueriesがこれを見て、
         // 分かっていれば/geocodeを呼ばずに使い、無ければ&entry=を付けて呼ぶ
@@ -1179,7 +1181,7 @@
           knownLat: typeof arr.lat === 'number' ? arr.lat : null,
           knownLng: typeof arr.lng === 'number' ? arr.lng : null,
           offset: typeof b._arriveOffset === 'number' ? b._arriveOffset : lastOffset,
-          arrival: true
+          arrival: true, videoExclude: !!b.videoExclude
         });
         // 到着でその移動は終わり。次の場所へは、移動手段を引き継がない（飛行機の続きで飛ばない）
         pendingTransport = ''; pendingMove = 0;
@@ -2910,6 +2912,23 @@
     return null;
   }
 
+  // ---- できた動画を、この端末（IndexedDB）に残しておく（docs/adr/0020、2026-09-30）----
+  // 旅行ごと・写真あり/なしごとに最新の1本だけ。全体で最大VIDEO_SAVE_MAX本、超えたら作った日時の古いものから消す。
+  var VIDEO_SAVE_MAX = 5;
+  function videoSaveKey(tripId, photos) { return String(tripId) + ':' + (photos ? 'p' : 'n'); }
+  // list: [{ key, createdAt }]（保存済みの全部）。保存したあとに消すキー（新しい順にmax本だけ残す）
+  function videoEvictKeys(list, max) {
+    var sorted = (list || []).slice().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    return sorted.slice(typeof max === 'number' ? max : VIDEO_SAVE_MAX).map(function (r) { return r.key; });
+  }
+  // 「9/30 14:05」（端末の時刻で）
+  function videoMadeAtText(ms) {
+    var d = new Date(ms);
+    if (isNaN(d.getTime())) return '';
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
   function videoFirstImageId(photos) {
     var list = photos || [];
     for (var i = 0; i < list.length; i++) { if (list[i] && !/\.(mp4|mov|m4v|webm)$/i.test(list[i])) return list[i]; }
@@ -2940,6 +2959,7 @@
     idx.forEach(function (si, k) {
       var s = stops[si];
       if (s.arrival) return;
+      if (s.videoExclude) return; // 「動画に出さない」予定：地名も写真も出さない（道のりはこの場所を通る）
       var label = String(s.label || '').replace(/\s+/g, ' ').trim();
       var img = videoFirstImageId(s.photos);
       var photo = opts.photos ? img : '';
@@ -3003,7 +3023,7 @@
     var wps = idx.map(function (si, k) {
       var s = stops[si], cap = capByK[k];
       return {
-        stopIndex: si, lat: s.lat, lng: s.lng, dayNumber: s.dayNumber || 1,
+        stopIndex: si, lat: s.lat, lng: s.lng, dayNumber: s.dayNumber || 1, hidden: !!s.videoExclude,
         arrive: arrive[k], leave: leave[k], capEnd: capEnd[k], dayStart: dayStart[k],
         caption: cap ? { label: cap.label, photo: cap.photo } : null
       };
@@ -3074,7 +3094,8 @@
       return { k: k, f: rt < 0 ? 0 : f };
     });
     var pins = story.wps.map(function (w, k) {
-      return { k: k, pop: rt >= w.arrive ? videoClamp((rt - w.arrive) / 0.3, 0, 1) : 0, captioned: !!w.caption };
+      // hidden（動画に出さない予定）のピンは出さない。道のりだけがこの場所を通る
+      return { k: k, pop: !w.hidden && rt >= w.arrive ? videoClamp((rt - w.arrive) / 0.3, 0, 1) : 0, captioned: !!w.caption };
     });
     var head = null;
     segs.forEach(function (sg) {
@@ -3275,6 +3296,10 @@
     videoCameraAt: videoCameraAt,
     videoFrameAt: videoFrameAt,
     videoTilesNeeded: videoTilesNeeded,
+    videoSaveKey: videoSaveKey,
+    videoEvictKeys: videoEvictKeys,
+    videoMadeAtText: videoMadeAtText,
+    VIDEO_SAVE_MAX: VIDEO_SAVE_MAX,
     videoDurationPlan: videoDurationPlan,
     videoTileLimit: videoTileLimit,
     videoCaptionCount: videoCaptionCount,
@@ -4092,6 +4117,7 @@
     var plan = Core.planHistoryRemoval(loadMyTrips(), loadHiddenTripIds(), ids);
     localStorage.setItem(MY_TRIPS_KEY, JSON.stringify(plan.trips));
     saveHiddenTripIds(plan.hidden);
+    videoSaveDeleteTrips(plan.removedIds); // この端末に残した動画も消す
     return plan.removedIds.length;
   }
   function hideTripFromHistory() {
@@ -6677,7 +6703,7 @@
         'own=' + short((info.byBlock || {})[b.id]),
         'arr=' + (arr ? (typeof arr.lat === 'number' ? '座標' : 'url') + '/' + short((info.byArrive || {})[b.id]) + '/' + (arr.time || '') : 'なし'),
         'mv=' + (b.moveMinutes || ''), 'c=' + (b.createdAt || '').slice(5, 16),
-        'ov=' + (b.tzOverride || ''),
+        'ov=' + (b.tzOverride || ''), 'vx=' + (b.videoExclude ? 1 : ''),
         '→' + short(zones[b.id])
       ].join(' '));
     });
@@ -6730,7 +6756,9 @@
       (block.category === 'transport' && (block.transport || block.moveMinutes)
         ? '<span class="block-move">' + (block.transport ? transportIconSvg(block.transport, 13) : '') +
           escapeHtml([Core.transportLabel(block.transport), block.moveMinutes ? '約' + Core.minutesText(block.moveMinutes) : ''].filter(Boolean).join('・')) + '</span>'
-        : '');
+        : '') +
+      // 「動画でシェアに出さない」予定は、メンバーにも分かるよう小さく印を出す
+      (block.videoExclude ? '<span class="block-video-off">動画に出さない</span>' : '');
     head.addEventListener('click', function (e) {
       if (e.target.closest('.block-drag-handle')) return;
       openBlockForm(block);
@@ -7240,6 +7268,7 @@
     $('#blkDate').value = block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10));
     $('#blkTime').value = block ? block.time : '';
     $('#blkLabel').value = block ? block.label : '';
+    $('#blkVideoExclude').checked = !!(block && block.videoExclude);
     $('#blkFormStatus').textContent = '';
     $('#btnDeleteBlock').hidden = !block;
     renderCategoryChips();
@@ -7303,7 +7332,8 @@
       // 移動手段を選べるのは種類が「移動」のときだけ。種類を切り替えたら選んでいた移動手段は消す
       // （以前のデータの「ここまでの移動手段」は、種類を変えない限りそのまま）
       transport: state.formCategory === 'transport' ? (state.formTransport || '') : (state.formLegacyTransport || ''),
-      moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
+      moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0,
+      videoExclude: $('#blkVideoExclude').checked
     };
     var req = state.editingBlockId
       ? api('/blocks/' + encodeURIComponent(state.editingBlockId), 'PATCH', payload)
@@ -10159,7 +10189,71 @@
 
   var videoTiles = {};       // 'z/x/y' → 読み込めた<img>、または'fail'（このあいだ使い回す）
   var videoPhotoImages = {}; // 写真ID → 読み込めた<img>（読めなかったものは入れない）
-  var rsv = { busy: false, recording: false, token: null, recorder: null, blob: null, file: null, mime: null, objectUrl: '' };
+  var rsv = { busy: false, recording: false, token: null, recorder: null, blob: null, file: null, mime: null, objectUrl: '',
+    current: null,          // いま結果画面に出している動画の情報 { photos, createdAt, saved }
+    saved: { n: null, p: null }, // この旅行の、この端末に保存済みの動画（n=写真なし / p=写真あり）。中身は { blob, mime, createdAt }
+    openSeq: 0 };           // シートを開くたびに増やす。保存済みの動画を調べている間に閉じられたら、結果を捨てるため
+
+  // ---------- できた動画をこの端末に残す（IndexedDB。アップロードはしない。docs/adr/0020） ----------
+  // 保存できない環境（プライベートブラウズ・WKWebViewの癖など）でも動画づくりは止めない：
+  // どの操作も失敗したら「保存なし」として扱い、いつもどおり作る。
+  var VIDEO_DB_NAME = 'tabilog-video', VIDEO_STORE = 'videos';
+  function videoDbOpen() {
+    return new Promise(function (resolve) {
+      try {
+        if (typeof indexedDB === 'undefined' || !indexedDB) { resolve(null); return; }
+        var req = indexedDB.open(VIDEO_DB_NAME, 1);
+        req.onupgradeneeded = function () {
+          try { req.result.createObjectStore(VIDEO_STORE, { keyPath: 'key' }); } catch (e) { /* 何もしない */ }
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { resolve(null); };
+        req.onblocked = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  }
+  // fn(store)がIDBRequestを返す。成功したらその結果、失敗なら null を返す（書き込み系は完了まで待つ）
+  function videoDbRun(mode, fn) {
+    return videoDbOpen().then(function (db) {
+      if (!db) return null;
+      return new Promise(function (resolve) {
+        var result = null, done = false;
+        var finish = function () { if (done) return; done = true; try { db.close(); } catch (e) { /* 何もしない */ } resolve(result); };
+        try {
+          var tx = db.transaction(VIDEO_STORE, mode);
+          var req = fn(tx.objectStore(VIDEO_STORE));
+          if (req) req.onsuccess = function () { result = req.result === undefined ? null : req.result; };
+          tx.oncomplete = finish; tx.onerror = finish; tx.onabort = finish;
+        } catch (e) { finish(); }
+      });
+    }).catch(function () { return null; });
+  }
+  function videoSaveGet(tripId, photos) {
+    return videoDbRun('readonly', function (st) { return st.get(Core.videoSaveKey(tripId, photos)); }).then(function (rec) {
+      return rec && rec.blob && rec.blob.size ? rec : null;
+    });
+  }
+  // 保存する（同じ旅行・同じ写真設定は置き換え）。全体がVIDEO_SAVE_MAX本を超えたら、作った日時の古いものを消す。成功でtrue
+  function videoSavePut(tripId, photos, blob, mime, createdAt, title) {
+    var rec = { key: Core.videoSaveKey(tripId, photos), tripId: String(tripId), photos: !!photos, blob: blob,
+      type: mime.type, ext: mime.ext, isMp4: !!mime.isMp4, createdAt: createdAt, title: title || '' };
+    var stored = false;
+    return videoDbRun('readwrite', function (st) { return st.put(rec); }).then(function (r) {
+      stored = r !== null;
+      return videoDbRun('readonly', function (st) { return st.getAll(); });
+    }).then(function (all) {
+      if (!stored || !all) return false;
+      var evict = Core.videoEvictKeys(all.map(function (r) { return { key: r.key, createdAt: r.createdAt }; }), Core.VIDEO_SAVE_MAX);
+      if (!evict.length) return true;
+      return videoDbRun('readwrite', function (st) { evict.forEach(function (k) { st.delete(k); }); return null; }).then(function () { return true; });
+    });
+  }
+  // 旅行の履歴を整理したとき、その旅行の保存動画も消す（端末の容量を空けるため。失敗しても何もしない）
+  function videoSaveDeleteTrips(tripIds) {
+    (tripIds || []).forEach(function (id) {
+      videoDbRun('readwrite', function (st) { st.delete(Core.videoSaveKey(id, false)); st.delete(Core.videoSaveKey(id, true)); return null; });
+    });
+  }
 
   function videoShareText() { return 'この旅行の足跡をみんなに共有 #旅の足跡\n' + PUBLIC_WEB_BASE; }
   function videoAppHost() { return PUBLIC_WEB_BASE.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
@@ -10199,6 +10293,8 @@
     if (!replay || Core.videoLocatedStops(replay.tl).length < 2) return;
     setReplayPlaying(false); // 動画を作っているあいだ、ふりかえりの地図は止めておく（重い処理を重ねない）
     rsvReleaseVideo();
+    rsv.saved = { n: null, p: null };
+    var seq = ++rsv.openSeq;
     // この旅行に写真つきの場所が無ければ、写真の選択肢そのものを出さない
     var withPhotos = Core.buildVideoStory(replay.tl, { photos: true });
     var lenEl = $('#rsvLength');
@@ -10207,20 +10303,52 @@
     $('#rsvPhotosNote').hidden = $('#rsvPhotosRow').hidden;
     $('#rsvPhotos').checked = false; // 同行者の顔が写ることがあるので、いつもOFFから
     $('#rsvStatus').textContent = '';
-    rsvShowPanel('options');
+    rsvShowPanel('none'); // 保存済みの動画があるかを調べるあいだ（一瞬）は、どの画面も出さない
+    rsvRefreshSavedLink();
     $('#rsvSheet').hidden = false;
     document.body.classList.add('sheet-open');
+    // 作った動画がこの端末に残っていれば、作り直さずすぐ見せる（「作り直す」を押したときだけ、また作る）
+    var tripId = (state.trip || {}).id;
+    Promise.all([videoSaveGet(tripId, false), videoSaveGet(tripId, true)]).catch(function () { return [null, null]; }).then(function (recs) {
+      if (seq !== rsv.openSeq || $('#rsvSheet').hidden || rsv.busy) return;
+      var toSaved = function (r) { return r ? { blob: r.blob, mime: { type: r.type, ext: r.ext, isMp4: r.isMp4 }, createdAt: r.createdAt } : null; };
+      rsv.saved = { n: toSaved(recs[0]), p: toSaved(recs[1]) };
+      // 写真ありの選択肢が出せない旅行（写真が無くなった等）では、写真ありの動画があっても出さない
+      if (rsv.saved.p && $('#rsvPhotosRow').hidden) rsv.saved.p = null;
+      var latest = rsv.saved.n && rsv.saved.p ? (rsv.saved.p.createdAt > rsv.saved.n.createdAt ? 'p' : 'n') : (rsv.saved.p ? 'p' : (rsv.saved.n ? 'n' : ''));
+      if (latest) rsvShowSaved(latest === 'p');
+      else { rsvShowPanel('options'); rsvRefreshSavedLink(); }
+    });
+  }
+
+  // 保存済みの動画（photos: 写真ありか）を結果画面に出す
+  function rsvShowSaved(photos) {
+    var s = photos ? rsv.saved.p : rsv.saved.n;
+    if (!s) { rsvShowPanel('options'); rsvRefreshSavedLink(); return; }
+    rsvShowResult(s.blob, s.mime, { photos: photos, createdAt: s.createdAt, saved: true });
+  }
+
+  // 選択肢の画面に「保存した動画を見る」を出す（いまの写真の選択と同じ設定の動画が保存されているとき）
+  function rsvRefreshSavedLink() {
+    var btn = $('#btnRsvSavedView');
+    if (!btn) return;
+    var photos = !$('#rsvPhotosRow').hidden && $('#rsvPhotos').checked;
+    var s = photos ? rsv.saved.p : rsv.saved.n;
+    btn.hidden = !s;
+    if (s) btn.textContent = '保存した動画を見る（' + Core.videoMadeAtText(s.createdAt) + ' に作った' + (photos ? '写真あり' : '写真なし') + '）';
   }
 
   function rsvReleaseVideo() {
     var v = $('#rsvVideo');
     if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
     if (rsv.objectUrl) { try { URL.revokeObjectURL(rsv.objectUrl); } catch (e) { /* 何もしない */ } }
-    rsv.objectUrl = ''; rsv.blob = null; rsv.file = null;
+    rsv.objectUrl = ''; rsv.blob = null; rsv.file = null; rsv.current = null;
   }
 
   function closeReplayVideoSheet() {
     if (rsv.busy) return; // 作っている最中は「キャンセル」だけで閉じる
+    rsv.openSeq++;
+    rsv.saved = { n: null, p: null };
     $('#rsvSheet').hidden = true;
     document.body.classList.remove('sheet-open');
     rsvReleaseVideo();
@@ -10572,17 +10700,17 @@
       rsv.busy = false; rsv.recording = false;
       if (token.cancelled || !blob) { rsvShowPanel('options'); return; }
       if (!blob.size) throw new Error('empty');
-      rsv.blob = blob; rsv.mime = mime;
-      rsv.file = new File([blob], 'tabinoashiato-trip.' + mime.ext, { type: mime.type });
-      rsv.objectUrl = URL.createObjectURL(blob);
-      var v = $('#rsvVideo');
-      v.src = rsv.objectUrl;
-      var p = v.play(); if (p && p.catch) p.catch(function () {});
-      var canFile = !!(navigator.canShare && navigator.canShare({ files: [rsv.file] }));
-      $('#btnRsvShare').textContent = canFile ? '共有する' : '動画を保存する';
-      $('#rsvResultNote').textContent = (mime.isMp4 ? '' : 'この端末ではWebM形式で作られました。XやInstagramなど、WebMを受け付けないSNSがあります。') +
-        (canFile ? '' : ' このブラウザは動画の共有に対応していないため、保存して投稿してください（投稿用の文章はコピーします）。');
-      rsvShowPanel('result');
+      var madeAt = Date.now(), tripId = trip.id;
+      // 画面に出すのが先。この端末への保存は裏で行い、失敗しても（保存なしの表示になるだけで）動画は見せる
+      rsvShowResult(blob, mime, { photos: usePhotos, createdAt: madeAt, saved: false });
+      var seq = rsv.openSeq;
+      videoSavePut(tripId, usePhotos, blob, mime, madeAt, trip.title).then(function (ok) {
+        if (!ok) return;
+        var entry = { blob: blob, mime: mime, createdAt: madeAt };
+        if (seq === rsv.openSeq) { if (usePhotos) rsv.saved.p = entry; else rsv.saved.n = entry; }
+        // まだその動画を見ているなら、「この端末に保存」の表示に切り替える
+        if (seq === rsv.openSeq && rsv.current && rsv.current.createdAt === madeAt) { rsv.current.saved = true; rsvUpdateResultInfo(); }
+      });
     }).catch(function (err) {
       rsv.busy = false; rsv.recording = false;
       rsvShowPanel('options');
@@ -10590,6 +10718,36 @@
         ? '地図や写真の画像を取り込めませんでした。写真を外してもう一度お試しください。'
         : '動画を作れませんでした。通信環境を確認して、もう一度お試しください。';
     });
+  }
+
+  // 動画を結果画面に出す。meta: { photos: 写真ありか, createdAt: 作った日時(ms), saved: この端末に保存済みか }
+  function rsvShowResult(blob, mime, meta) {
+    rsvReleaseVideo();
+    rsv.blob = blob; rsv.mime = mime;
+    rsv.file = new File([blob], 'tabinoashiato-trip.' + mime.ext, { type: mime.type });
+    rsv.objectUrl = URL.createObjectURL(blob);
+    rsv.current = { photos: !!meta.photos, createdAt: meta.createdAt, saved: !!meta.saved };
+    var v = $('#rsvVideo');
+    v.src = rsv.objectUrl;
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+    var canFile = !!(navigator.canShare && navigator.canShare({ files: [rsv.file] }));
+    $('#btnRsvShare').textContent = canFile ? '共有する' : '動画を保存する';
+    $('#rsvResultNote').textContent = (mime.isMp4 ? '' : 'この端末ではWebM形式で作られました。XやInstagramなど、WebMを受け付けないSNSがあります。') +
+      (canFile ? '' : ' このブラウザは動画の共有に対応していないため、保存して投稿してください（投稿用の文章はコピーします）。');
+    rsvUpdateResultInfo();
+    rsvShowPanel('result');
+  }
+
+  // 「写真なし・9/30 14:05 に作った動画」と、もう一方の保存済み動画へ切り替えるボタン
+  function rsvUpdateResultInfo() {
+    var cur = rsv.current;
+    if (!cur) return;
+    $('#rsvSavedInfo').textContent = (cur.photos ? '写真あり' : '写真なし') + '・' + Core.videoMadeAtText(cur.createdAt) + ' に作った動画' +
+      (cur.saved ? '（この端末に保存しています）' : '');
+    var other = cur.photos ? rsv.saved.n : rsv.saved.p;
+    var btn = $('#btnRsvOther');
+    btn.hidden = !other;
+    if (other) btn.textContent = (cur.photos ? '写真なし' : '写真あり') + 'の動画を見る（' + Core.videoMadeAtText(other.createdAt) + '）';
   }
 
   // 共有シートで動画を渡す（ボタンを押した直後でないと開けないので、動画ができた画面のボタンから）。
@@ -10831,7 +10989,17 @@
     $('#btnRsvStart').addEventListener('click', startReplayVideo);
     $('#btnRsvCancel').addEventListener('click', function () { rsvCancel('キャンセルしました'); });
     $('#btnRsvShare').addEventListener('click', shareReplayVideo);
-    $('#btnRsvAgain').addEventListener('click', function () { rsvReleaseVideo(); rsvShowPanel('options'); });
+    // 作り直す：いま見ていた動画と同じ写真の設定で、選択肢の画面へ戻る（「動画を作る」で作り直し、保存も置き換わる）
+    $('#btnRsvAgain').addEventListener('click', function () {
+      var photos = !!(rsv.current && rsv.current.photos);
+      rsvReleaseVideo();
+      if (!$('#rsvPhotosRow').hidden) $('#rsvPhotos').checked = photos;
+      rsvRefreshSavedLink();
+      rsvShowPanel('options');
+    });
+    $('#btnRsvOther').addEventListener('click', function () { rsvShowSaved(!(rsv.current && rsv.current.photos)); });
+    $('#btnRsvSavedView').addEventListener('click', function () { rsvShowSaved(!$('#rsvPhotosRow').hidden && $('#rsvPhotos').checked); });
+    $('#rsvPhotos').addEventListener('change', rsvRefreshSavedLink);
     // 録画中に画面を離れると、ブラウザが描画を止めて動画が固まる。作り直せるよう中止する
     document.addEventListener('visibilitychange', function () {
       if (rsv.recording && document.hidden) rsvCancel('画面を離れたので、動画づくりを中止しました');

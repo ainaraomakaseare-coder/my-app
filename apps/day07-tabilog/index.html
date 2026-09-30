@@ -488,6 +488,10 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           </div>
         </div>
 
+        <!-- 動画でシェアに、この予定の地名・写真・ピンを出さない（道のりはこの場所を通る）。メンバー全員に共通 -->
+        <label class="post-option" id="blkVideoExcludeRow"><input type="checkbox" id="blkVideoExclude"> 動画でシェアに出さない</label>
+        <p class="hint">チェックすると、動画にはこの予定の地名・写真・ピンが出ません（地図でふりかえるには出ます）。一緒に旅行しているメンバー全員に反映されます。</p>
+
         <p class="hint" id="blkFormStatus"></p>
         <div class="sheet-actions">
           <button class="btn danger ghost" id="btnDeleteBlock" hidden>この予定を削除</button>
@@ -877,6 +881,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <div class="post-actions">
         <button class="btn primary wide" id="btnRsvStart" type="button">動画を作る</button>
       </div>
+      <button class="btn ghost wide" id="btnRsvSavedView" type="button" hidden>保存した動画を見る</button>
       <p class="hint comment-status" id="rsvStatus"></p>
     </div>
     <div class="rsv-panel" id="rsvProgress" hidden>
@@ -888,11 +893,13 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     </div>
     <div class="rsv-panel" id="rsvResult" hidden>
       <video class="rsv-video" id="rsvVideo" playsinline muted loop controls></video>
+      <p class="rsv-saved-info" id="rsvSavedInfo"></p>
       <p class="hint" id="rsvResultNote"></p>
       <div class="post-actions">
         <button class="btn primary" id="btnRsvShare" type="button">共有する</button>
         <button class="btn ghost" id="btnRsvAgain" type="button">作り直す</button>
       </div>
+      <button class="btn ghost wide" id="btnRsvOther" type="button" hidden>もう一方の動画を見る</button>
     </div>
   </div>
 </div>

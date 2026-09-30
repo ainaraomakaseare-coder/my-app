@@ -443,6 +443,7 @@ var rpBlocks = [
   { id: 'e', date: '', time: '', label: '日付なし', transport: '', entries: [] }
 ];
 var rpStops = T.replayStops(rpTrip, rpBlocks);
+eq('replayStops: 「動画に出さない」（videoExclude）の印を地点に引き継ぐ', T.replayStops(rpTrip, [{ id: 'x', date: '2026-04-01', time: '10:00', label: '秘密', videoExclude: true, entries: [] }, { id: 'y', date: '2026-04-01', time: '11:00', label: '普通', entries: [] }]).map(function (s) { return s.videoExclude; }), [true, false]);
 eq('replayStops: 日付のない予定は含めない', rpStops.map(function (s) { return s.blockId; }), ['a', 'b', 'c', 'd']);
 eq('replayStops: 何日目か', rpStops.map(function (s) { return s.dayNumber; }), [1, 1, 1, 2]);
 eq('replayStops: 時刻なしの予定は直前の時刻の30分後と推定する', rpStops.map(function (s) { return s.minute; }), [600, 720, 750, 540]);
@@ -2036,6 +2037,24 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   eq('buildVideoStory: 見出しが空の地点は地名を出さない', T.buildVideoStory(tlNoLabel, {}).wps.map(function (w) { return !!w.caption; }), [false, true]);
   var tlSame = mkTl([mkStop('宿', 35, 139), mkStop('宿', 35.001, 139.001), mkStop('駅', 35.2, 139.2)]);
   eq('buildVideoStory: 同じ地名が続くときは1回だけ', T.buildVideoStory(tlSame, {}).wps.map(function (w) { return !!w.caption; }), [true, false, true]);
+  // 保存した動画（IndexedDB）のキー・入れ替え
+  eq('videoSaveKey: 旅行ID＋写真あり/なしで別のキー', [T.videoSaveKey('t1', false), T.videoSaveKey('t1', true)], ['t1:n', 't1:p']);
+  eq('videoEvictKeys: 上限以内なら何も消さない', T.videoEvictKeys([{ key: 'a', createdAt: 1 }, { key: 'b', createdAt: 2 }], 5), []);
+  eq('videoEvictKeys: 上限を超えたら作った日時の古いものから消す', T.videoEvictKeys([{ key: 'a', createdAt: 3 }, { key: 'b', createdAt: 1 }, { key: 'c', createdAt: 2 }, { key: 'd', createdAt: 4 }], 2), ['c', 'b']);
+  eq('videoEvictKeys: 上限の既定は' + T.VIDEO_SAVE_MAX + '本', T.videoEvictKeys([1, 2, 3, 4, 5, 6].map(function (n) { return { key: 'k' + n, createdAt: n }; })), ['k1']);
+  eq('videoMadeAtText: 月/日 時:分（分は2桁）', T.videoMadeAtText(new Date(2026, 8, 30, 14, 5).getTime()), '9/30 14:05');
+  eq('videoMadeAtText: 不正な値は空', T.videoMadeAtText(NaN), '');
+  // 「動画に出さない」予定（videoExclude）：地名・写真・ピンは出さないが、道のりはその場所を通る
+  var tlEx = mkTl([mkStop('A', 35, 139), mkStop('秘密の場所', 35.1, 139.1, { videoExclude: true, photos: ['secret.jpg'] }), mkStop('C', 35.2, 139.2)]);
+  var stEx = T.buildVideoStory(tlEx, { photos: true });
+  eq('buildVideoStory: 動画に出さない予定も地点（道のりの通過点）には残る', stEx.wps.map(function (w) { return w.stopIndex; }), [0, 1, 2]);
+  eq('buildVideoStory: 動画に出さない予定の地名は出さない', stEx.wps.map(function (w) { return !!w.caption; }), [true, false, true]);
+  eq('buildVideoStory: 動画に出さない予定の地名・写真IDは絵コンテのどこにも入らない', JSON.stringify(stEx).indexOf('秘密') === -1 && JSON.stringify(stEx).indexOf('secret.jpg') === -1, true);
+  eq('buildVideoStory: 動画に出さない予定の写真は「写真あり」にも数えない', stEx.hasPhotos, false);
+  eq('buildVideoStory: 動画に出さない予定は隠す印（hidden）が付く', stEx.wps.map(function (w) { return w.hidden; }), [false, true, false]);
+  eq('buildVideoStory: 動画に出さない予定の前後にも道のりはつながっている（区間は2つ）', stEx.segs.length, 2);
+  var frEx = T.videoFrameAt(stEx, stEx.introSec + stEx.routeSec - 0.5);
+  eq('videoFrameAt: 動画に出さない予定のピンは最後まで出ない', frEx.pins.map(function (p) { return p.pop > 0; }), [true, false, true]);
   // 写真
   var tlPh = mkTl([mkStop('A', 35, 139, { photos: ['photo_a.jpg', 'photo_a2.jpg'] }), mkStop('', 35.1, 139.1, { photos: ['clip.mp4', 'photo_b.png'] }), mkStop('C', 35.2, 139.2, { photos: ['clip2.mov'] })]);
   var stPhOff = T.buildVideoStory(tlPh, { photos: false });

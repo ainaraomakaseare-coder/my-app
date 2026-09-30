@@ -394,6 +394,8 @@ function validBlockInput(x) {
   // moveMinutes：移動の予定の移動時間（分）。0は未入力（v19）
   if (x.moveMinutes !== undefined && !(Number.isInteger(x.moveMinutes) && x.moveMinutes >= 0 && x.moveMinutes <= 14400)) return false;
   if (x.tzOverride !== undefined && x.tzOverride !== "" && x.tzOverride !== "inherit" && !TZ_OVERRIDE_RE.test(x.tzOverride)) return false;
+  // videoExclude：「動画でシェアに出さない」予定（migrations/0031〜）
+  if (x.videoExclude !== undefined && typeof x.videoExclude !== "boolean") return false;
   return true;
 }
 
@@ -411,6 +413,8 @@ function rowToBlock(row) {
     manualOrder: typeof row.manual_order === "number" ? row.manual_order : null,
     // 時差の区切りを手で直した値（migrations/0027〜）。列がまだ無い環境ではundefinedなので空文字にそろえる
     tzOverride: row.tz_override || "",
+    // 「動画でシェアに出さない」（migrations/0031〜）。列がまだ無い環境ではundefinedなのでfalseにそろえる
+    videoExclude: !!row.video_exclude,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -444,6 +448,13 @@ async function createBlock(tripId, request, env, headers) {
   )
     .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.move_minutes, row.created_at, row.updated_at)
     .run();
+  // 「動画に出さない」（migrations/0031〜）。列がまだ無い環境では保存されず、通常の予定として作られる
+  if (data.videoExclude === true) {
+    try {
+      await env.DB.prepare("UPDATE blocks SET video_exclude = 1 WHERE id = ?").bind(row.id).run();
+      row.video_exclude = 1;
+    } catch { /* 列が無い */ }
+  }
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, tripId).run();
   return json({ ...rowToBlock(row), entries: [] }, 201, headers);
 }
@@ -474,6 +485,10 @@ async function updateBlock(id, request, env, headers) {
   // 自動のままになる。docs/adr/0009）
   if (data.tzOverride !== undefined) {
     try { await env.DB.prepare("UPDATE blocks SET tz_override = ? WHERE id = ?").bind(data.tzOverride || null, id).run(); } catch { /* 列が無い */ }
+  }
+  // 「動画でシェアに出さない」（migrations/0031〜）。列がまだ無い環境では、切り替えても何も起きない
+  if (data.videoExclude !== undefined) {
+    try { await env.DB.prepare("UPDATE blocks SET video_exclude = ? WHERE id = ?").bind(data.videoExclude ? 1 : 0, id).run(); } catch { /* 列が無い */ }
   }
   const updated = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   return json(rowToBlock(updated), 200, headers);

@@ -801,3 +801,18 @@ npx wrangler deploy
 ### REQUIRE_SESSION（トークン必須）の準備状況
 
 `release/tabilog-1.1.0`ブランチのapp.jsを確認したところ、`authHeaders()`が`authorization: Bearer <token>`を`api()`・`nativeApi()`・`postBinary()`のすべてに付けており、iOSアプリ（1.1.0）側はトークン必須に切り替えても送れる状態。**切り替える（`vars`に`"REQUIRE_SESSION": "1"`）かどうかは、1.0.x以前の古いアプリが使われなくなったかを見て別途判断する**（この作業ではオンにしていない）。
+
+## 予定を「動画でシェアに出さない」にする列（migration 0031）
+
+予定に`blocks.video_exclude`（0＝出す／1＝動画に出さない）の列を足した（`docs/adr/0020` 2026-09-30追記）。APIは、予定の作成・更新（`POST /trips/:id/blocks`、`PATCH /blocks/:id`）で`videoExclude`（true/false）を受け取り、旅行の取得と予定のレスポンスで返す。
+
+**デプロイの順番：先にmigration、そのあとにwrangler deploy**。
+
+```sh
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD COLUMN video_exclude INTEGER NOT NULL DEFAULT 0;"
+npx wrangler deploy
+```
+
+（`--file`は0024〜のときと同じ認証エラーが出る環境があるため`--command`。同じSQLは`migrations/0031_block_video_exclude.sql`にもある。1回だけ実行。2回目は`duplicate column name`になるが害はない。）
+
+先にデプロイしてしまっても壊れない：`video_exclude`の書き込みは別のUPDATEで`try/catch`（列が無ければ印が付かないだけ）、読み出しは列が無ければfalse。逆に、migrationだけ先に流しても、古いWorkerは列を知らないだけで動く。
