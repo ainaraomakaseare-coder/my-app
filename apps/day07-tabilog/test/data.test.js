@@ -2130,5 +2130,69 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   })());
 })();
 
+/* ---- 移動の予定の唯一のピンが到着地のとき、その予定は前の時差のまま（2026-09-30） ---- */
+(function () {
+  var LA = 'America/Los_Angeles', CH = 'America/Chicago', TK = 'Asia/Tokyo';
+  var LAXP = { mapLat: 33.94, mapLng: -118.40 }, HOUP = { mapLat: 29.65, mapLng: -95.28 };
+  function houstonDay() {
+    return [
+      { id: 'lax', date: '2026-06-28', time: '04:00', category: 'transport', label: 'ロサンゼルス国際空港', createdAt: '1', entries: [Object.assign({}, LAXP)] },
+      { id: 'fl', date: '2026-06-28', time: '05:45', category: 'transport', label: 'ヒューストンへのフライト', createdAt: '2', entries: [Object.assign({}, HOUP)] },
+      { id: 'arr', date: '2026-06-28', time: '11:12', category: 'transport', label: 'ヒューストン到着', createdAt: '3', entries: [Object.assign({}, HOUP)] }
+    ];
+  }
+  var by = { lax: LA, fl: CH, arr: CH };
+  var z = T.assignBlockZones(houstonDay(), by, TK);
+  eq('到着地だけのフライト: 出発時刻は前の時差（ロサンゼルス）、到着から新しい時差', [z.lax, z.fl, z.arr], [LA, LA, CH]);
+  var cp = houstonDay(); T.applyBlockZones(cp, z);
+  eq('到着地だけのフライト: 並びは出発→到着のまま（フライトが空港より前に来ない）', T.sortBlocks(cp).map(function (b) { return b.id; }), ['lax', 'fl', 'arr']);
+  eq('到着地だけのフライト: 時差の区切りはフライトのあと（到着の前）だけ', cp.map(function (b) { return b._offset; }), [-420, -420, -300]);
+
+  // 出発地のピン（ロサンゼルス）のフライトは今までどおり。到着は別のピン
+  var dep = houstonDay(); dep[1].entries = [Object.assign({}, LAXP)];
+  var z2 = T.assignBlockZones(dep, { lax: LA, fl: LA, arr: CH }, TK);
+  eq('出発地のピンのフライトは変わらない', [z2.lax, z2.fl, z2.arr], [LA, LA, CH]);
+
+  // 旅の最初の予定なら、前の時差が無いので自分のピンをそのまま使う
+  var first = houstonDay().slice(1);
+  var z3 = T.assignBlockZones(first, { fl: CH, arr: CH }, TK);
+  eq('旅の最初の予定は自分のピンの時差', [z3.fl, z3.arr], [CH, CH]);
+
+  // 手で直した時差は今までどおり最優先
+  var ov = houstonDay(); ov[1].tzOverride = CH;
+  eq('tzOverrideのIANA名が優先', T.assignBlockZones(ov, by, TK).fl, CH);
+  var ih = houstonDay(); ih[1].tzOverride = 'inherit';
+  eq("tzOverride='inherit'は前と同じ", T.assignBlockZones(ih, by, TK).fl, LA);
+
+  // 次の予定のピンが別の場所（ホテルなど）なら、到着地とは判断できないので今までどおり自分のピンの時差
+  var elsewhere = houstonDay(); elsewhere[2].entries = [{ mapLat: 29.98, mapLng: -95.34 }];
+  var z4 = T.assignBlockZones(elsewhere, by, TK);
+  eq('次の予定が別の場所のピンなら、自分のピンの時差のまま（推測しない）', [z4.fl, z4.arr], [CH, CH]);
+
+  // 前後から遠く離れたピン（違う場所）は、今までどおり無視される
+  var out = [
+    { id: 'a', date: '2026-06-28', time: '09:00', category: 'other', label: 'a', createdAt: '1', entries: [Object.assign({}, HOUP)] },
+    { id: 'fl', date: '2026-06-28', time: '10:00', category: 'transport', label: 'b', createdAt: '2', entries: [Object.assign({}, LAXP)] },
+    { id: 'c', date: '2026-06-28', time: '11:00', category: 'other', label: 'c', createdAt: '3', entries: [{ mapLat: 29.7, mapLng: -95.3 }] }
+  ];
+  eq('遠く離れたピンは無視', T.assignBlockZones(out, { a: CH, fl: LA, c: CH }, TK).fl, CH);
+
+  // 時刻も矛盾しない別のピンの移動（着いた先の地図を入れた移動の予定）は、今までどおり
+  var sep = [
+    { id: 'h', date: '2026-06-26', time: '18:30', category: 'other', label: 'h', createdAt: '1', entries: [{ mapLat: 35.55, mapLng: 139.78 }] },
+    { id: 'lax', date: '2026-06-26', time: '18:50', category: 'transport', label: 'LAX', createdAt: '2', entries: [Object.assign({}, LAXP)] }
+  ];
+  eq('時刻が合う別のピンの移動は自分のピンの時差', T.assignBlockZones(sep, { h: TK, lax: LA }, TK).lax, LA);
+})();
+
+/* ---- ログインし直しが必要かの判定（REQUIRE_SESSION後、2026-09-30） ---- */
+eq('needsFreshLogin: tokenの無い保存済みユーザーは再ログインが必要', T.needsFreshLogin({ email: 'a@b.c', name: 'x' }), true);
+eq('needsFreshLogin: 空文字のtokenも再ログインが必要', T.needsFreshLogin({ email: 'a@b.c', token: '' }), true);
+eq('needsFreshLogin: tokenがあれば不要', T.needsFreshLogin({ email: 'a@b.c', token: 'abc' }), false);
+eq('needsFreshLogin: 未ログイン（null）はログイン画面へ行くだけなので対象外', T.needsFreshLogin(null), false);
+eq('isLoginRequiredError: login_requiredのエラー', T.isLoginRequiredError(new Error('login_required')), true);
+eq('isLoginRequiredError: 別のエラーは対象外（通信失敗など）', T.isLoginRequiredError(new Error('http_500')), false);
+eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null), false);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

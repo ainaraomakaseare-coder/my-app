@@ -225,6 +225,26 @@
     return !b.transport && /フライト|飛行機|航空便|flight/i.test(b.label || '');
   }
 
+  var ARRIVAL_PIN_SAME_PLACE_KM = 3; // 次の予定の地図とこれ未満なら「同じ場所」
+
+  // 移動の予定の唯一のピンが、出発地ではなく到着地を指していると判断できるか（地図だけで決める）。
+  // 次の予定のピンとほぼ同じ場所なら、到着の予定に同じ場所を入れている＝この予定のピンも到着地。
+  // そうでなければ今までどおり出発地として読む（着いた先を別の移動の予定として入れた場合など）。
+  // 時刻の前後（出発が直前の予定より前になる等）では判断しない：日付変更線をまたぐ日は、時差が決まる前の
+  // 並びが当てにならないため。
+  function isArrivalOnlyPin(b, next) {
+    var e = (b.entries || [])[0], ne = next && (next.entries || [])[0];
+    return !!(e && ne && typeof e.mapLat === 'number' && typeof e.mapLng === 'number' &&
+      typeof ne.mapLat === 'number' && typeof ne.mapLng === 'number' &&
+      distanceKm({ lat: e.mapLat, lng: e.mapLng }, { lat: ne.mapLat, lng: ne.mapLng }) < ARRIVAL_PIN_SAME_PLACE_KM);
+  }
+
+  // ---------- ログインし直しが必要かどうか（セッショントークン導入前のログイン、docs/adr/0005） ----------
+  // REQUIRE_SESSION導入後、トークン無しでログインした端末（tabilog:userにtokenが無い）や、トークンが
+  // 無効になった端末では、マイログなどのアカウント系APIが401 login_requiredを返す。
+  function needsFreshLogin(user) { return !!user && !user.token; }
+  function isLoginRequiredError(e) { return !!e && e.message === 'login_required'; }
+
   // 予定ごとのタイムゾーンは、その予定「自身」の地図（記録の地図。移動の予定は出発地）だけで決める。
   // 見出しの文言（「〜到着」「〜へ」）・その日の場所（天気の場所）・予定を入れた順は一切見ない
   // （オーナー方針、2026-09-29：「マップが正。マップ入れてなかったら前の予定と一緒で大丈夫。
@@ -251,9 +271,19 @@
       if (z0) { firstPinned = z0; break; }
     }
     var zones = {}, carry = firstPinned || fallback || '';
-    order.forEach(function (b) {
+    order.forEach(function (b, idx) {
       var own = ownZone(b);
       var auto = own || carry;
+      // 移動の予定の時刻は出発の時刻。到着地の地図が別に無く、唯一のピンが今いる場所と違うタイムゾーンで、
+      // しかも次の予定が同じ場所のピンを持つ（isArrivalOnlyPin）ときは、そのピンは到着地と
+      // みなす：この予定は今いる場所（直前のタイムゾーン）の時間で読み、新しいタイムゾーンは次の予定から
+      // 使う（docs/adr/0009、2026-09-30）
+      var arrivalOnlyPin = '';
+      if (b.category === 'transport' && own && carry && own !== carry && !byArrive[b.id] &&
+          !b.tzOverride && isArrivalOnlyPin(b, order[idx + 1])) {
+        arrivalOnlyPin = own;
+        auto = carry;
+      }
       var zone;
       if (b.tzOverride === 'inherit') zone = carry;
       else if (b.tzOverride) zone = b.tzOverride;
@@ -263,6 +293,7 @@
       // （到着地が分かっているのに出発地のままだと、あとの地図の無い予定が出発地に巻き戻ってしまう）。
       // それ以外は、いま決めたタイムゾーン（手で直したものも含む。取り消せば直前へ戻る＝そのまま連鎖する）。
       carry = (b.category === 'transport' && byArrive[b.id]) ? byArrive[b.id] : zone;
+      if (arrivalOnlyPin) carry = arrivalOnlyPin;
     });
     return zones;
   }
@@ -3057,6 +3088,8 @@
     replayNeighborStop: replayNeighborStop,
     tzOffsetMinutes: tzOffsetMinutes,
     assignBlockZones: assignBlockZones,
+    needsFreshLogin: needsFreshLogin,
+    isLoginRequiredError: isLoginRequiredError,
     isPlaneMove: isPlaneMove,
     wrapLng: wrapLng,
     lodgingNightOptions: lodgingNightOptions,
@@ -5243,6 +5276,31 @@
     var user = loadCurrentUser();
     if (user) saveCurrentUser(Object.assign({}, user, { token: '' }));
     requireSocialLogin();
+  }
+
+  // アカウント系の画面（マイログ・行ったことある旅先・プロフィールなど）でログインが古いと分かったとき、
+  // 古いログイン状態を消してログイン画面を開く。ログインし終わったら元の画面（returnTo）へ戻る。
+  // すでにログイン画面が開いていれば開き直さない（同時に走った複数のAPIが一斉に401になっても1回だけ）。
+  // 画面を開いたときの操作から呼ぶ。裏で走る自動の取得（ホームの旅行同期など）からは呼ばない。
+  var RELOGIN_MESSAGE = '安全のため、もう一度ログインしてください';
+  function forceRelogin(returnTo) {
+    var user = loadCurrentUser();
+    if (user) state.staleLoginUser = user; // ログイン画面のメール欄の入力補助にだけ使う
+    clearCurrentUser();
+    state.account = null;
+    renderAccountRow();
+    var active = $('.screen.active');
+    if (!(active && active.dataset.screen === 'login')) openLogin(returnTo);
+    $('#loginLead').textContent = RELOGIN_MESSAGE;
+  }
+  // 画面を開いたときのAPI失敗で呼ぶ：login_requiredなら再ログインへ案内してtrueを返す（呼び出し側は何もしない）
+  function handleLoginRequired(e, returnTo) {
+    if (!Core.isLoginRequiredError(e)) return false;
+    // 返事が遅れて届いたとき、本人がもう別の画面へ移っていたら、ログイン画面に引き戻さない
+    var active = $('.screen.active');
+    var here = active && active.dataset.screen;
+    if (here === returnTo || here === 'login') forceRelogin(returnTo);
+    return true;
   }
 
   function openCommentSheet(type, id) {
@@ -8215,6 +8273,7 @@
   function openMyLog() {
     var user = loadCurrentUser();
     if (!user) { openLogin('mylog'); return; }
+    if (Core.needsFreshLogin(user)) { forceRelogin('mylog'); return; }
     showScreen('mylog');
     $('#mylogTripList').innerHTML = skeletonCardsHtml(2);
     $('#mylogList').innerHTML = skeletonCardsHtml(3);
@@ -8223,7 +8282,8 @@
       state.myLogTrips = data.trips || [];
       state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [] };
       renderMyLog();
-    }).catch(function () {
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'mylog')) return;
       $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
     });
     // プランの状態はプロフィール画面がメインだが、マイログ見出しのplanBadgeTop（残り回数の
@@ -8322,7 +8382,8 @@
     }).then(function (res) {
       if (res && res.url) location.href = res.url;
       else msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
-    }).catch(function () {
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
       msgEl.textContent = '決済ページの作成に失敗しました。もう一度お試しください。';
     });
   }
@@ -8338,7 +8399,8 @@
     }).then(function (res) {
       if (res && res.url) location.href = res.url;
       else msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
-    }).catch(function () {
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
       msgEl.textContent = '支払い管理ページを開けませんでした。もう一度お試しください。';
     });
   }
@@ -8348,6 +8410,7 @@
   function openProfile() {
     var user = loadCurrentUser();
     if (!user) { openLogin('profile'); return; }
+    if (Core.needsFreshLogin(user)) { forceRelogin('profile'); return; }
     showScreen('profile');
     renderProfileIdentity(user);
     $('#profileStats').innerHTML = '';
@@ -8356,7 +8419,8 @@
       state.myLogTrips = data.trips || [];
       state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [] };
       renderProfileStats();
-    }).catch(function () {
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
       // 集計が読み込めなくても、名前・アバターやプラン・アカウント操作は使えるようにしておく
     });
     fetchAccountStatus().then(renderPlanStatus);
@@ -8421,7 +8485,8 @@
       renderAccountRow();
       alert('アカウントを削除しました。');
       goHome();
-    }).catch(function () {
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
       alert('アカウントの削除に失敗しました。もう一度お試しください。');
     });
   }
@@ -8477,8 +8542,9 @@
     api('/mylog/trip-places', 'POST', { email: user.email, tripId: tripId, kind: kind, name: name, mode: mode }).then(function (res) {
       state.myLogPlaces = res.places || state.myLogPlaces;
       renderMyLogTrips();
-    }).catch(function () {
+    }).catch(function (e) {
       btn.disabled = false;
+      if (handleLoginRequired(e, 'mylog')) return;
       alert(mode === 'exclude' ? '外せませんでした。通信状況を確認して、もう一度お試しください。' : '戻せませんでした。通信状況を確認して、もう一度お試しください。');
     });
   }
@@ -8652,12 +8718,14 @@
   function openVisitedPlaces() {
     var user = loadCurrentUser();
     if (!user) { openLogin('visited'); return; }
+    if (Core.needsFreshLogin(user)) { forceRelogin('visited'); return; }
     showScreen('visited');
     $('#visitedPanel').innerHTML = skeletonCardsHtml(4);
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [], details: { prefectures: [], countries: [] } };
       renderVisitedPlaces();
-    }).catch(function () {
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'visited')) return;
       $('#visitedPanel').innerHTML = '<div class="empty">読み込みに失敗しました。通信状況を確認して、もう一度お試しください。</div>';
     });
   }
@@ -10753,7 +10821,7 @@
     }).catch(function () {
       // 取れなくてもメールログインは使える
     });
-    var existing = loadCurrentUser();
+    var existing = loadCurrentUser() || state.staleLoginUser;
     $('#loginName').value = (existing && existing.provider === 'email') ? existing.name : '';
     $('#loginEmail').value = (existing && existing.provider === 'email') ? existing.email : '';
     $('#loginOtpCode').value = '';
