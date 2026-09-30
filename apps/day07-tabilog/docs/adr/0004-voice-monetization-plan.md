@@ -74,3 +74,15 @@ docs/adr/0012で試作したCloudflare Workers AIへの文字起こし切り替�
   - `com.hiroyaapps.tabilog.ticket30`：30回 1,200円
 - 回数券に有効期限は付けない。アカウントを削除すると残りの回数も消えるので、削除画面でそのことを知らせる
 - 決済はRevenueCat経由のアプリ内課金。RevenueCatのWebhookで購入を受け取り、`ticket_credits` に足す（同じ取引を二重に足さない）。最初はiOSアプリだけで売り、Web版では売らない
+
+## 回数券のアプリ内課金の実装メモ（2026-09-30）
+
+上の「無料枠を月3回にし、有料は回数券だけにする」を実装した（ブランチ `feature/tabilog-iap-tickets`。1.2.0で出す想定。審査中の1.1.0には入れない）。
+
+- **Worker**：`POST /billing/revenuecat-webhook`。`NON_RENEWING_PURCHASE`だけを処理し、商品→回数の表（`IAP_TICKET_PRODUCTS`）で回数を決めて`ticket_credits`に足す。二重加算は、処理した`transaction_id`を`iap_transactions`（主キー）に記録し、記録と加算を1つのbatchで行って防ぐ。認証は`Authorization`ヘッダーと`REVENUECAT_WEBHOOK_AUTH`の一定時間比較（未設定なら404）。`SANDBOX`は`REVENUECAT_ACCEPT_SANDBOX="true"`のときだけ反映する。`effectivePlan`・月の回数・プラン（すべて`free`）は変えていない。Stripe系の経路は410／何もしないままにした。
+- **RevenueCatの利用者ID（`app_user_id`）は`accounts.account_id`**（サーバーが採番する6桁）。理由：①サーバーがこの人を指すのに使っている変わらない番号で、ログイン方法（Google／Apple／メール）を変えても同じ。②メールアドレスや名前をRevenueCatに渡さずに済む。③メールアドレスは利用者が別のものでログインし直せるうえ、個人情報になる。アカウントを削除しても`accounts`の行は残る（`deleteAccount`はUPDATEで空にするだけ）ので、IDは再利用されない。6桁は推測できるが、IDを知っても他人の回数を増やせる経路は無い（回数が増えるのは、そのIDで実際に購入が成立したときだけ）。
+- **未知のユーザー・未知の商品は200で返す**（ログだけ残す）。再送しても直らない失敗で500を返すと、RevenueCatが再送を繰り返すため。ログインしてからしか買えない作りなので、未知のユーザーはRevenueCatの匿名ID（ログイン前の購入）くらいしか無く、その場合は取引IDのログを見て手で足す。DBの書き込みに失敗したときだけ500にして再送させる。
+- **iOSアプリ**：`@revenuecat/purchases-capacitor`（Capacitor 6対応の9.x）。公開SDKキーは`app.js`の`REVENUECAT_IOS_API_KEY`（空なら購入画面ごと隠す）。ログイン後に`Purchases.logIn(accountId)`、ログアウト時に`logOut`。購入画面はプロフィールと、音声・メモ・スクショの回数を使い切った状態にだけ出し、値段はStoreKitの表示用文字列を使う。購入後は`/accounts/ensure`を数回取り直して反映を待つ。**Web版には購入の画面も案内も出さない**（3.1.1）。
+- アカウント削除の確認に、残っている回数券は消えて払い戻しできないことを追記した（残りがあるときは回数も出す）。
+- `privacy.html`に、お支払いはAppleが処理すること、購入記録（アカウントID・商品・取引ID）がRevenueCat, Inc.経由で届くこと、カード情報は受け取らないことを追記した。
+- **やっていないこと**：返金（`CANCELLATION`／`REFUND`）で回数を戻す処理（消耗型は返金されても使い終わっていることがあるため。必要になったら別に決める）。プランの再開。
