@@ -56,11 +56,12 @@ export const UNREADABLE_REASONS = {
 // 1回の取り込みで使うサブリクエスト数の見積もり。
 // vision：画像を1リクエストにまとめる（10枚以内なら1回）／openai：整理は1回／places：場所検索の件数
 // d1：D1へのアクセスの見積もり。合計がlimit（50）以下なら ok
-export function estimateSubrequests(imageCount, placeLookups) {
+// opts.branch：別行動の中から取り込むときは、分岐の取得とログイン確認（セッション）でD1が約4回増える
+export function estimateSubrequests(imageCount, placeLookups, opts) {
   const vision = imageCount > 0 ? Math.ceil(imageCount / VISION_MAX_IMAGES_PER_REQUEST) : 0;
   const openai = 1;
   const places = Math.max(0, Math.min(placeLookups, SCREENSHOT_MAX_PLACE_LOOKUPS));
-  const d1 = SCREENSHOT_D1_QUERY_ESTIMATE;
+  const d1 = SCREENSHOT_D1_QUERY_ESTIMATE + (opts && opts.branch ? 4 : 0);
   const total = vision + openai + places + d1;
   return { vision, openai, places, d1, total, limit: WORKERS_FREE_SUBREQUEST_LIMIT, ok: total <= WORKERS_FREE_SUBREQUEST_LIMIT };
 }

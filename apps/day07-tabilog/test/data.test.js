@@ -2338,6 +2338,68 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('スクショ: 日程未設定の旅行なら日付は何でも通る', T.screenshotItemsToSavePayload([{ date: '2030-01-01', label: 'x', category: 'other' }], {}).items.length, 1);
 })();
 
+/* ---- 音声・メモも同じ確認画面で保存する（docs/adr/0022 2026-09-30追記） ---- */
+(function () {
+  // メモの文章から金額を拾う（円・¥・$・ドルなどの印があるものだけ）
+  var c = T.parseCostsFromLine('ランチ 天丼1,500円、お土産 ￥2000、タクシー $12、コーヒー€3.5');
+  eq('メモ: 1,500円・￥2000・$12・€3.5を費用にする', c.costs, [
+    { label: '天丼', amount: 1500 }, { label: 'お土産', amount: 2000 },
+    { label: 'タクシー', amount: 12, currency: 'USD' }, { label: 'コーヒー', amount: 3.5, currency: 'EUR' }
+  ]);
+  eq('メモ: 金額の部分を取り除いた文章', T.parseCostsFromLine('天丼1,500円').rest, '天丼');
+  eq('メモ: 印のない数字（10時・3人・2日目）は費用にしない', T.parseCostsFromLine('10時に3人で2日目の予定 12:30').costs, []);
+  eq('メモ: 12ドルは外貨（USD）', T.parseCostsFromLine('入場料 12ドル').costs, [{ label: '入場料', amount: 12, currency: 'USD' }]);
+  eq('メモ: 金額の前に言葉が無ければfallbackの見出し', T.parseCostsFromLine('¥800', 'カフェ').costs, [{ label: 'カフェ', amount: 800 }]);
+  eq('メモ: 0円・巨額は拾わない', T.parseCostsFromLine('0円 99999999円').costs, []);
+
+  // 決まった形のメモ → 確認画面の候補
+  var dates = ['2026-10-03', '2026-10-04'];
+  var parsed = T.parseMemo('10時 浅草寺\n12時 ランチ 天丼1,500円\n混んでいた\n入場料 ￥800\n14時 スカイツリー https://maps.app.goo.gl/abc\n15時 お店 https://tabelog.com/x\n4/4\n9時 朝ごはん', dates, '2026-10-03');
+  eq('メモ: 決まった形として読める', parsed.ok, true);
+  var items = T.memoBlocksToProposals(parsed.blocks);
+  eq('メモ: 候補の件数・時刻', items.map(function (i) { return i.time; }), ['10:00', '12:00', '14:00', '15:00', '09:00']);
+  eq('メモ: 日付（「10/4」の行で変わる）', items.map(function (i) { return i.date; }), ['2026-10-03', '2026-10-03', '2026-10-03', '2026-10-03', '2026-10-04']);
+  eq('メモ: 金額は書いてある分だけ（ほかは空のまま）', items.map(function (i) { return i.costItems.length; }), [0, 2, 0, 0, 0]);
+  eq('メモ: 見出しから金額を取り除く', items[1].label, 'ランチ 天丼');
+  eq('メモ: GoogleマップのURLは地図、そのほかのURLはお店のURL', [items[2].mapUrl, items[3].mapUrl, items[3].shopUrl], ['https://maps.app.goo.gl/abc', undefined, 'https://tabelog.com/x']);
+  eq('メモ: 場所は勝手に探さない（place空・座標なし）', [items[0].place, items[0].mapUrl, items[0].mapLat], ['', undefined, undefined]);
+  eq('メモ: 確認画面の候補の形（スクショと同じ項目）', ['category', 'transport', 'fromPlace', 'toPlace', 'costItems', 'note', 'warnings'].every(function (k) { return k in items[0]; }), true);
+  // 自分のAIのJSON：costItemsはそのまま使い、文章から拾い直さない
+  var j = T.memoBlocksToProposals([{ date: '2026-10-03', time: '10:00', label: '昼食 500円', category: 'food', entry: { episode: 'x 300円', costItems: [{ label: '定食', amount: 900, currency: 'USD', rate: 150 }] } }], { extractCosts: false });
+  eq('JSON: costItemsをそのまま使う（レートも持ち越す）', [j[0].label, j[0].costItems], ['昼食 500円', [{ label: '定食', amount: 900, currency: 'USD', rate: 150 }]]);
+
+  // 保存の形：お店のURL・費用・地図
+  var payload = T.screenshotItemsToSavePayload(items, { startDate: '2026-10-03', endDate: '2026-10-04' });
+  eq('メモ: 保存の形（費用・お店のURL）', [payload.errors.length, payload.items[1].costItems, payload.items[3].shopUrl, payload.items[2].mapUrl], [0, [{ label: '天丼', amount: 1500 }, { label: '入場料', amount: 800 }], 'https://tabelog.com/x', 'https://maps.app.goo.gl/abc']);
+  eq('費用を追加しただけ（金額が空）の行は送らない', T.screenshotItemsToSavePayload([{ date: '2026-10-03', label: 'x', category: 'food', costItems: [{ label: '費用', amount: undefined }] }], {}).items[0].costItems, []);
+
+  // 自分だけの道への取り込み先
+  var A = '111111', B = '222222';
+  var branches = [
+    { id: 'b1', accountId: A, date: '2026-10-03', endDate: '2026-10-04', startTime: '20:00', endTime: '12:00', title: '夜行' },
+    { id: 'b2', accountId: B, date: '2026-10-05', endDate: '2026-10-05', startTime: '10:00', endTime: '15:00', title: '' }
+  ];
+  eq('取り込み先: 自分の道を見ていて、日が自分の別行動の中ならその別行動', T.importTargetBranch(branches, A, A, '2026-10-04').id, 'b1');
+  eq('取り込み先: 別行動の始まりの日も対象', T.importTargetBranch(branches, A, A, '2026-10-03').id, 'b1');
+  eq('取り込み先: 別行動の外の日はみんなの予定（null）', T.importTargetBranch(branches, A, A, '2026-10-05'), null);
+  eq('取り込み先: みんなの表示（viewAccountId空）ならnull', T.importTargetBranch(branches, '', A, '2026-10-04'), null);
+  eq('取り込み先: 他人の道を見ているならnull', T.importTargetBranch(branches, B, A, '2026-10-05'), null);
+  eq('取り込み先: ログインしていない（自分のidが空）ならnull', T.importTargetBranch(branches, A, '', '2026-10-04'), null);
+
+  // 別行動に入れる候補の検証（サーバーのvalidateBranchBlockPlacementと同じ規則）
+  var br = branches[0];
+  var bp = T.screenshotItemsToSavePayload([
+    { date: '2026-10-03', time: '19:00', label: '始まる前', category: 'food' },
+    { date: '2026-10-03', time: '21:00', label: '夜', category: 'food' },
+    { date: '2026-10-04', time: '09:00', label: '朝', category: 'food' },
+    { date: '2026-10-04', time: '12:30', label: '終わった後', category: 'food' },
+    { date: '2026-10-04', time: '', label: '時刻なし', category: 'food' },
+    { date: '2026-10-05', time: '', label: '日の外', category: 'food' }
+  ], { startDate: '2026-10-03', endDate: '2026-10-06' }, br);
+  eq('別行動: 時間帯の中と時刻なしだけ送る', bp.items.map(function (i) { return i.label; }), ['夜', '朝', '時刻なし']);
+  eq('別行動: 外れた理由（日付・時刻）', bp.errors.map(function (e) { return e.reason; }), ['時刻が別行動の時間帯（20:00〜12:00）の外です', '時刻が別行動の時間帯（20:00〜12:00）の外です', '日付が別行動の日程の外です']);
+})();
+
 /* ---- 自分だけの道（別行動の分岐。docs/adr/0021） ---- */
 (function () {
   var A = '111111', B = '222222';

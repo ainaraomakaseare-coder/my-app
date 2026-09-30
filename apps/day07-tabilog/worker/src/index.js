@@ -4482,6 +4482,16 @@ async function scanScreenshots(tripId, request, env, headers) {
   const v = validateImagesInput(data && data.images);
   if (!v.ok) return json({ error: v.error }, SCREENSHOT_AI_ERRORS[v.error] || 400, headers);
   const count = v.images.length;
+  // 自分だけの道（別行動）の中から取り込むとき：持ち主だけ（セッション）。候補の日付の置き場所を別行動の初日にし、
+  // 別行動の時間帯の外の候補に警告する（保存のときも同じ規則で検証する）
+  if (!optStr(data.branchId, 100)) return json({ error: "invalid_input" }, 400, headers);
+  let branch = null;
+  if (data.branchId) {
+    branch = await findBranch(env, data.branchId);
+    if (!branch || branch.trip_id !== tripId) return json({ error: "branch_not_found" }, 404, headers);
+    const denied = await branchWriteGuard(env, request, headers, { branch_id: branch.id });
+    if (denied) return denied;
+  }
 
   const auth = await resolveEmail(request, env, optStr(data.email, 200) && data.email ? String(data.email) : "");
   if (auth.error) return json({ error: auth.error }, auth.status, headers);
@@ -4522,7 +4532,11 @@ async function scanScreenshots(tripId, request, env, headers) {
   const tripInfo = { startDate: trip.start_date, endDate: trip.end_date };
   const ai = await organizeScreenshotsWithOpenAi(env, buildScreenshotPrompt(readable, tripInfo));
   if (ai.error) return json({ error: ai.error }, ai.error === "ai_quota_exhausted" ? 503 : 502, headers);
-  const norm = normalizeScreenshotResult(ai.parsed, { trip: tripInfo, imageCount: count, today: nowIso().slice(0, 10) });
+  const branchInfo = branch ? { title: branch.title || "", date: branch.date, endDate: branchEndDateOf(branch), startTime: branch.start_time, endTime: branch.end_time } : null;
+  const norm = normalizeScreenshotResult(ai.parsed, {
+    trip: tripInfo, imageCount: count, today: nowIso().slice(0, 10),
+    defaultDate: branchInfo ? branchInfo.date : "", branch: branchInfo,
+  });
 
   // 3) 場所検索：名前ごとに1回（最大12回、並べて同時に呼ぶ）
   const { queries, skipped } = collectPlaceQueries(norm.items);
@@ -4542,7 +4556,7 @@ async function scanScreenshots(tripId, request, env, headers) {
   if (norm.items.length) await consumeVoiceQuota(env, quota.email, quota.via, "memo");
   return json({
     items: norm.items, unreadable, dropped: norm.dropped,
-    usage: { images: count, placeLookups: queries.length, placesSkipped: skipped, subrequests: estimateSubrequests(count, queries.length) },
+    usage: { images: count, placeLookups: queries.length, placesSkipped: skipped, subrequests: estimateSubrequests(count, queries.length, { branch: !!branch }) },
   }, 200, headers);
 }
 

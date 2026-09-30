@@ -2710,7 +2710,7 @@
   // Geminiなど）にbuildAiImportPromptの文面＋自分のメモを渡し、返ってきたJSONをここで
   // 読み取る。サーバー側の有料AI（voiceBlocksSchema/multiDayBlocksSchema、
   // worker/src/index.js）と同じBlockの形（date・time・label・category・transport・
-  // entry{episode,mapUrl,shopUrl,costItems}）を受け付け、/trips/:id/memo-blocksという
+  // entry{episode,mapUrl,shopUrl,costItems}）を受け付け、確認画面（Core.memoBlocksToProposals）から/trips/:id/import-blocksという
   // 既存のAIなし取り込みエンドポイントにそのまま渡せるようにする（新しいエンドポイントは作らない）。
   var IMPORT_MAX_BLOCKS = 100; // worker側のMEMO_MAX_BLOCKSと合わせる
   var IMPORT_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -2748,7 +2748,7 @@
 
   // trip: {startDate, endDate}。複数日の旅行はBlockごとにdateが旅行期間内であることを必須にし、
   // 1日（または日程未設定）の旅行はdateを省略できる（そのときは選択中の日をそのまま使う）。
-  // 戻り値のblocksは、そのまま/trips/:id/memo-blocksに渡せる形。warningsは取り込みはしたが
+  // 戻り値のblocksは、Core.memoBlocksToProposalsで確認画面の候補にできる形。warningsは取り込みはしたが
   // 補正した項目、errorsは取り込めずに省いた項目（件数分の理由つき）。
   function parseImportedBlocksJson(text, trip) {
     var payload = extractOutermostJson(text);
@@ -3583,7 +3583,8 @@
 
   // ---------- スクショから予定を作る（docs/adr/0022） ----------
   // 確認画面用の純粋関数。サーバー（POST /trips/:id/screenshot-scan）が返した予定の候補を
-  // 日ごとにまとめ、確認・修正のあと「この内容で追加」で送る形（POST /trips/:id/screenshot-blocks）にする。
+  // 日ごとにまとめ、確認・修正のあと「この内容で追加」で送る形（POST /trips/:id/import-blocks。旧名screenshot-blocks）にする。
+  // 音声・メモ（memoBlocksToProposals）・自分のAIの答えも、同じ候補の形にして同じ確認画面で保存する。
   // 候補の形（サーバーのnormalizeScreenshotResult）：date・time・label・category・transport・place・
   // fromPlace/toPlace・company・routeNumber・departTime/arriveTime・costItems・note・mapUrl…。
   // 確認画面で本人が直した値がそのまま入る。use===false（除外）の候補は送らない。
@@ -3609,7 +3610,9 @@
   // 確認画面の候補を、保存のリクエスト用にする。日程の外の日付・見出しが空・日付が不正なものは
   // 送らずerrorsに理由を積む（サーバーも同じ検証をするが、先に画面で教えるため）。
   // 戻り値 { items, errors:[{index（配列の位置）, label, reason}] }
-  function screenshotItemsToSavePayload(items, trip) {
+  // branch（自分だけの道に入れるとき）を渡すと、日付・時刻が別行動の時間帯に収まらない候補も送らずerrorsにする
+  // （サーバーのvalidateBranchBlockPlacementと同じ規則。Core.validateBranchBlock）
+  function screenshotItemsToSavePayload(items, trip, branch) {
     var dates = allDatesForTrip(trip || {}, []).filter(function (d) { return d; });
     var out = [], errors = [];
     (items || []).forEach(function (it, index) {
@@ -3619,6 +3622,11 @@
       if (!/^\d{4}-\d{2}-\d{2}$/.test(it.date || '')) { errors.push({ index: index, label: label, reason: '日付を入れてください' }); return; }
       if (dates.length && dates.indexOf(it.date) === -1) { errors.push({ index: index, label: label, reason: '日付が旅行の日程の外です' }); return; }
       var time = /^([01]\d|2[0-3]):[0-5]\d$/.test(it.time || '') ? it.time : '';
+      if (branch) {
+        var why = validateBranchBlock(branch, it.date, time);
+        if (why === 'date_out_of_branch') { errors.push({ index: index, label: label, reason: '日付が別行動の日程の外です' }); return; }
+        if (why === 'time_out_of_branch') { errors.push({ index: index, label: label, reason: '時刻が別行動の時間帯（' + branch.startTime + '〜' + branch.endTime + '）の外です' }); return; }
+      }
       var p = {
         date: it.date, time: time, label: label, category: it.category, transport: it.transport || '',
         note: it.note || '', costItems: (it.costItems || []).filter(function (c) { return c && isFinite(c.amount) && Number(c.amount) >= 0; }).map(function (c) {
@@ -3629,6 +3637,7 @@
         })
       };
       if (it.mapUrl) { p.mapUrl = it.mapUrl; p.mapPlaceName = it.mapPlaceName || ''; p.mapLat = it.mapLat; p.mapLng = it.mapLng; }
+      if (it.shopUrl) p.shopUrl = it.shopUrl;
       if (it.category === 'transport') {
         p.from = it.fromPlace || ''; p.to = it.toPlace || '';
         p.company = [it.company, it.routeNumber].filter(Boolean).join(' ');
@@ -3640,7 +3649,95 @@
     return { items: out, errors: errors };
   }
 
+  // ---------- 音声・メモも同じ確認画面で保存する（docs/adr/0022 2026-09-30追記） ----------
+  // メモの文章に書かれた金額（「1,500円」「¥1500」「$12」「12ドル」）を、費用の候補にする。
+  // 「円」「¥」「$」「€」「£」など、お金だと分かる印が付いているものだけ拾う（ただの数字は拾わない）。
+  // 戻り値 { costs:[{label, amount, currency?}], rest }。restは金額の部分を取り除いた文章。
+  // labelは金額の直前の言葉（区切りまで・20字まで）。無ければfallbackLabel（無ければ「費用」）
+  var COST_TEXT_CURRENCY = { '$': 'USD', 'US$': 'USD', 'ドル': 'USD', 'USD': 'USD', '€': 'EUR', 'ユーロ': 'EUR', 'EUR': 'EUR', '£': 'GBP', 'GBP': 'GBP', '¥': '', '円': '' };
+  function parseCostsFromLine(text, fallbackLabel) {
+    var line = String(text || '').normalize('NFKC');
+    var re = /(US\$|[$¥€£])\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(円|ドル|ユーロ|USD|EUR|GBP)/g;
+    var costs = [], rest = '', cursor = 0, m;
+    while ((m = re.exec(line))) {
+      var unit = m[1] || m[4];
+      var amount = Number(String(m[2] || m[3]).replace(/,/g, ''));
+      var before = line.slice(cursor, m.index);
+      rest += before;
+      cursor = m.index + m[0].length;
+      if (!isFinite(amount) || amount <= 0 || amount > 1000000) { rest += m[0]; continue; }
+      var currency = COST_TEXT_CURRENCY[unit] || '';
+      var chunk = before.replace(/[\s、,，。・:：\/／]+$/, '').split(/[\s、,，。・:：\/／]+/).filter(Boolean).pop() || '';
+      var label = chunk.slice(0, 20) || fallbackLabel || '費用';
+      var c = { label: label, amount: currency ? Math.round(amount * 100) / 100 : Math.round(amount) };
+      if (currency) c.currency = currency;
+      costs.push(c);
+    }
+    rest += line.slice(cursor);
+    return { costs: costs, rest: rest.replace(/\s{2,}/g, ' ').trim() };
+  }
+
+  function dedupeCosts(list) {
+    var seen = {}, out = [];
+    list.forEach(function (c) {
+      var k = c.label + '|' + c.amount + '|' + (c.currency || '');
+      if (!seen[k]) { seen[k] = true; out.push(c); }
+    });
+    return out;
+  }
+
+  // 決まった形のメモ（parseMemo）・自分のAIのJSON（parseImportedBlocksJson）のblocks（date・time・label・category・
+  // entry{episode,mapUrl,shopUrl,costItems}）を、確認画面の候補（サーバーのAIが返すものと同じ形）にする。
+  // 時刻・金額は、メモの文章に書かれているものだけを拾う（opts.extractCosts===falseなら金額は拾わない＝JSONの
+  // costItemsだけを使う）。場所は探さない（有料の場所検索を勝手に走らせない）：地図はメモに書かれたGoogleマップのURL
+  // だけ。あとは確認画面の「場所を探す」で本人が探す。GoogleマップでないURLはお店のURLにする
+  var GOOGLE_MAP_URL_RE = /^https:\/\/(www\.google\.com\/maps|maps\.google\.com|maps\.app\.goo\.gl|goo\.gl\/maps)/;
+  function memoBlocksToProposals(blocks, opts) {
+    opts = opts || {};
+    return (blocks || []).map(function (b, i) {
+      var entry = b.entry || {};
+      var label = String(b.label || '').trim();
+      var episode = String(entry.episode || '');
+      var costs = [];
+      if (entry.costItems && entry.costItems.length) {
+        costs = entry.costItems.map(function (c) { var x = { label: c.label || '費用', amount: c.amount }; if (c.currency) x.currency = c.currency; if (c.rate) x.rate = c.rate; return x; });
+      } else if (opts.extractCosts !== false) {
+        var fromLabel = parseCostsFromLine(label);
+        costs = fromLabel.costs.slice();
+        if (fromLabel.costs.length && fromLabel.rest) label = fromLabel.rest;
+        episode.split('\n').forEach(function (l) { costs = costs.concat(parseCostsFromLine(l, label).costs); });
+        costs = dedupeCosts(costs);
+      }
+      var url = String(entry.mapUrl || '').trim();
+      var item = {
+        id: 'm' + (i + 1), sourceImage: null,
+        category: b.category || 'other', transport: b.transport || '',
+        date: b.date || '', time: /^([01]\d|2[0-3]):[0-5]\d$/.test(b.time || '') ? b.time : '', label: label || '予定',
+        place: '', placeGuessed: false, fromPlace: '', toPlace: '', company: '', routeNumber: '',
+        departTime: '', arriveTime: '', arriveDate: b.date || '',
+        costItems: costs, note: episode, warnings: [], timeEstimated: false, nightIndex: 0
+      };
+      if (url && GOOGLE_MAP_URL_RE.test(url)) item.mapUrl = url;
+      var shop = String(entry.shopUrl || '').trim() || (url && !item.mapUrl && /^https?:\/\//.test(url) ? url : '');
+      if (shop && /^https?:\/\/\S+$/.test(shop)) item.shopUrl = shop;
+      return item;
+    });
+  }
+
+  // 取り込みの行き先になる自分だけの道（別行動）。自分の道（viewAccountId＝自分）を見ていて、選んでいる日が
+  // 自分の別行動のどれかの日々の中なら、その別行動（日が重なる別行動が2つあれば、早く始まるほう）。
+  // そうでなければnull（みんなの予定に入れる）。サーバーでも持ち主かどうか確かめる
+  function importTargetBranch(branches, viewAccountId, myAccountId, date) {
+    if (!myAccountId || viewAccountId !== myAccountId || !date) return null;
+    var mine = (branches || []).filter(function (br) { return br.accountId === myAccountId && !!branchWindowOn(br, date); });
+    mine.sort(function (a, b) { return (a.date + ' ' + a.startTime) < (b.date + ' ' + b.startTime) ? -1 : 1; });
+    return mine[0] || null;
+  }
+
   var Core = {
+    parseCostsFromLine: parseCostsFromLine,
+    memoBlocksToProposals: memoBlocksToProposals,
+    importTargetBranch: importTargetBranch,
     CATEGORIES: CATEGORIES,
     blockDragTargetIndex: blockDragTargetIndex,
     blockDragShifts: blockDragShifts,
@@ -5095,24 +5192,19 @@
     return postBinary('/photos', blob);
   }
 
-  // meta（notes・author）はUTF-8を含みうるので、ヘッダーに載せる前にBase64化する
-  // （atob/btoaはLatin1前提のため、encodeURIComponent/unescapeで橋渡しする）。
-  // date省略時は「複数日をまとめて記録する」（DAY30〜）：特定の日タブに紐づけず、
-  // 旅行そのものに対して呼ぶ（AI自身が各予定の日を判定する）。
-  function createVoiceEntries(tripId, date, blob, meta) {
+  // 音声（録音）を文字にして、予定の候補にしてもらう（保存はしない。確認画面のあと import-blocks で保存する。
+  // docs/adr/0022 2026-09-30追記）。meta（notes・email・date・branchId）はUTF-8を含みうるので、ヘッダーに載せる前に
+  // Base64化する（atob/btoaはLatin1前提のため、encodeURIComponent/unescapeで橋渡しする）。
+  // dateが空なら「複数日をまとめて記録する」（DAY30〜）：旅行（別行動の中なら別行動）の日々に対して、AI自身が各予定の日も判定する。
+  // branchId：自分だけの道（別行動）の中の取り込みのとき、その別行動のid
+  function scanVoiceBlob(tripId, blob, meta) {
     var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify(meta))));
-    var path = date
-      ? '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/voice-entries'
-      : '/trips/' + encodeURIComponent(tripId) + '/voice-entries';
-    return postBinary(path, blob, { 'x-voice-meta': metaHeader });
+    return postBinary('/trips/' + encodeURIComponent(tripId) + '/voice-scan', blob, { 'x-voice-meta': metaHeader });
   }
 
-  // 音声の文字起こし版と違い、貼り付けたテキストをそのままJSONで送るだけなのでbase64化は不要
-  function createTextEntries(tripId, date, text, meta) {
-    var path = date
-      ? '/trips/' + encodeURIComponent(tripId) + '/days/' + encodeURIComponent(date) + '/text-entries'
-      : '/trips/' + encodeURIComponent(tripId) + '/text-entries';
-    return api(path, 'POST', { text: text, notes: meta.notes, author: meta.author, email: meta.email });
+  // 貼り付けたメモをAIで予定の候補にしてもらう（保存はしない）。meta：{ text, notes, email, date, branchId }
+  function scanTextMemo(tripId, meta) {
+    return api('/trips/' + encodeURIComponent(tripId) + '/text-scan', 'POST', meta);
   }
 
   // レシート・領収書の写真をAIに読み取らせ、費用明細の候補（{label, amount}の配列）を返してもらう。
@@ -6284,7 +6376,7 @@
   // 無い場合は、録音の代わりに案内とプランへの導線を出す。
   // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
   // 旅行の日程全体に対してAIが各予定の日も判定する（state.voiceEntryMultiDayで保持し、
-  // 保存時にcreateVoiceEntries/createTextEntriesへ渡すdateをnullにする分岐に使う）。
+  // 取り込み時にscanVoiceBlob/scanTextMemoへ渡すdateを空にする分岐に使う）。
   // 音声・メモでまとめて記録する画面。メモの「決まった形」の取り込みはAIを使わず無料なので、ログインや
   // 回数に関係なく誰でも開ける（以前はログインとAIの残り回数が無いと、画面ごと使えなかった）。
   // 音声入力とAIでの整理は、使うときにログイン・AIへの送信の同意・月の回数を確かめる。
@@ -6293,9 +6385,14 @@
     state.voiceEntryMultiDay = !!multiDay;
     $('#voiceEntryTitle').textContent = multiDay ? '複数日をまとめて記録する' : '音声・メモでまとめて記録する';
     $('#voiceEntryLead').textContent = multiDay
-      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、予定・記録に分けて保存します（評価や費用はあとで入力してください）'
-      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定・記録に分けて保存します（評価や費用はあとで入力してください）';
+      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます'
+      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます';
+    // 自分の道を見ていて、選んでいる日が自分の別行動の中なら、取り込みは別行動に入る（docs/adr/0021）
+    state.voiceBranch = currentImportBranch();
+    $('#voiceTargetNote').hidden = !state.voiceBranch;
+    if (state.voiceBranch) $('#voiceTargetNote').textContent = importTargetText(state.voiceBranch) + 'します（' + Core.branchRangeText(state.voiceBranch) + '）。日付・時刻は別行動の時間帯の中だけ使えます。';
     showScreen('voiceEntryForm');
+    voiceBlob = null;    showScreen('voiceEntryForm');
     voiceBlob = null;
     $('#voiceNotes').value = '';
     setVoiceRecordLabel(MIC_ICON, '話しはじめる');
@@ -6315,7 +6412,6 @@
     $('#importPreview').hidden = true;
     $('#importPreview').innerHTML = '';
     $('#btnImportJson').disabled = false;
-    state.pendingImportBlocks = null;
     $('#voicePremiumRequired').hidden = true;
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
@@ -6404,43 +6500,63 @@
     });
   }
 
+  // 音声・メモのAIのエラーを、画面に出す文にする（音声・メモ共通。statusEl：出す場所）
+  function importScanErrorMessage(msg) {
+    var map = {
+      server_not_configured: 'この機能はまだ使えません（サーバー側の設定が必要です）。',
+      rate_limited: '少し時間をおいてからもう一度お試しください。',
+      trip_dates_required: '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。',
+      output_too_long: '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。',
+      ai_quota_exhausted: 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。',
+      upstream_error: 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。',
+      invalid_model_output: 'うまく処理できませんでした。もう一度お試しください。',
+      transcription_failed: '音声の文字起こしに失敗しました。もう一度お試しください。',
+      empty_transcript: '音声から言葉を聞き取れませんでした。もう一度、はっきりめに話してみてください。',
+      empty_text: '先にスケジュールやメモを入力してください。',
+      forbidden: 'この別行動は、持ち主だけが追加できます。',
+      branch_not_found: '別行動が見つかりません（消された可能性があります）。「みんな」の表示に戻して、もう一度お試しください。',
+      date_out_of_branch: '選んでいる日が別行動の日程の外です。',
+      invalid_size: '録音が大きすぎます。短く区切って録音してください。',
+      unsupported_type: 'この録音の形式は使えません。'
+    };
+    return map[msg] || '失敗しました。もう一度お試しください。';
+  }
+
   function handleCreateVoiceEntries() {
     if (!voiceBlob) { $('#voiceEntryStatus').textContent = '先に録音してください。'; return; }
     var user = loadCurrentUser();
-    var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
+    var branch = state.voiceBranch || null;
+    var date = state.voiceEntryMultiDay ? '' : state.selectedDate;
+    var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '', date: date, branchId: branch ? branch.id : '' };
     $('#btnCreateVoiceEntries').disabled = true;
     $('#voiceEntryStatus').textContent = 'AIが内容を確認しています…（数十秒かかることがあります）';
-    createVoiceEntries(state.trip.id, state.voiceEntryMultiDay ? null : state.selectedDate, voiceBlob, meta).then(function () {
-      return refreshTrip();
-    }).then(function () {
+    scanVoiceBlob(state.trip.id, voiceBlob, meta).then(function (res) {
       $('#btnCreateVoiceEntries').disabled = false;
-      showScreen('tripDetail');
-      renderDaySection();
+      $('#voiceEntryStatus').textContent = '';
+      // 文字起こしは、確認して追加したときにその日の欄へ残す（1日だけの取り込みで、別行動でないときだけ。今までどおり）
+      openImportConfirm({
+        source: 'voice', ai: true, items: res.items || [], dropped: res.dropped || 0, branch: branch,
+        transcript: res.transcript || '', transcriptDate: !branch && date ? date : '', back: 'voiceEntryForm'
+      });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
       $('#btnCreateVoiceEntries').disabled = false;
-      if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
-      else if (msg === 'rate_limited') $('#voiceEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
-      else if (msg === 'trip_dates_required') $('#voiceEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
-      else if (msg === 'output_too_long') $('#voiceEntryStatus').textContent = '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。';
-      else if (msg === 'ai_quota_exhausted') $('#voiceEntryStatus').textContent = 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。';
-      else if (msg === 'upstream_error') $('#voiceEntryStatus').textContent = 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。';
-      else if (msg === 'invalid_model_output') $('#voiceEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
-      else if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
+      if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#voiceEntryStatus').textContent = '';
         openVoiceEntryForm(state.voiceEntryMultiDay);
-      }
-      else $('#voiceEntryStatus').textContent = '失敗しました。もう一度お試しください。';
+      } else if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
+      else $('#voiceEntryStatus').textContent = importScanErrorMessage(msg);
     });
   }
 
-  // 「この内容で予定を作る」：決まった形ならAIを使わず無料で取り込み、そうでなければAIで整理する
+  // 「この内容で予定を作る」：決まった形ならAIを使わず無料で確認画面へ、そうでなければAIで整理して確認画面へ
   function handleCreateTextEntries() {
     var text = $('#textMemoInput').value.trim();
     if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
     var dates = Core.allDatesForTrip(state.trip, state.blocks).filter(function (d) { return d; });
-    var parsed = Core.parseMemo(text, dates, state.voiceEntryMultiDay ? '' : state.selectedDate);
-    if (parsed.ok) { importMemoWithoutAi(parsed); return; }
+    var branch = state.voiceBranch || null;
+    var parsed = Core.parseMemo(text, dates, state.voiceEntryMultiDay ? (branch ? branch.date : '') : state.selectedDate);
+    if (parsed.ok) { openMemoRuleConfirm(parsed); return; }
     if (!confirm('決まった形（「10時 新宿」のように時刻で始まる行）になっていないので、AIで整理します（今月のAIの回数を1回使います）。よろしいですか？')) {
       $('#textEntryStatus').textContent = '時刻で始まる行の形に直すと、AIを使わず無料で取り込めます。';
       return;
@@ -6448,22 +6564,14 @@
     organizeMemoWithAi(text);
   }
 
-  function importMemoWithoutAi(parsed) {
-    var user = loadCurrentUser();
-    $('#btnCreateTextEntries').disabled = true;
-    $('#textEntryStatus').textContent = 'AIを使わずに取り込んでいます…（無料）';
-    api('/trips/' + encodeURIComponent(state.trip.id) + '/memo-blocks', 'POST', { blocks: parsed.blocks, author: (user && user.name) || '' })
-      .then(function () { return refreshTrip(); })
-      .then(function () {
-        $('#btnCreateTextEntries').disabled = false;
-        if (parsed.blocks[0] && parsed.blocks[0].date) state.selectedDate = parsed.blocks[0].date;
-        showScreen('tripDetail');
-        renderTripDetail();
-      })
-      .catch(function () {
-        $('#btnCreateTextEntries').disabled = false;
-        $('#textEntryStatus').textContent = '取り込みに失敗しました。もう一度お試しください。';
-      });
+  // 決まった形のメモ：AIも場所検索も使わない（無料）。時刻と、書いてある金額・GoogleマップのURLだけを候補にして
+  // 確認画面へ。場所は確認画面の「場所を探す」で本人が探す
+  function openMemoRuleConfirm(parsed) {
+    $('#textEntryStatus').textContent = '';
+    openImportConfirm({
+      source: 'memo', ai: false, items: Core.memoBlocksToProposals(parsed.blocks, { extractCosts: true }),
+      branch: state.voiceBranch || null, back: 'voiceEntryForm'
+    });
   }
 
   function organizeMemoWithAi(text) {
@@ -6471,33 +6579,28 @@
     if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
     if (!requireAiReady()) return;
     var user = loadCurrentUser();
-    var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '' };
+    var branch = state.voiceBranch || null;
+    var date = state.voiceEntryMultiDay ? '' : state.selectedDate;
+    var meta = { text: text, notes: $('#voiceNotes').value.trim(), email: (user && user.email) || '', date: date, branchId: branch ? branch.id : '' };
     $('#btnCreateTextEntries').disabled = true;
     $('#btnOrganizeMemoAi').disabled = true;
     $('#textEntryStatus').textContent = 'AIが内容を確認しています…';
-    createTextEntries(state.trip.id, state.voiceEntryMultiDay ? null : state.selectedDate, text, meta).then(function () {
-      return refreshTrip();
-    }).then(function () {
+    scanTextMemo(state.trip.id, meta).then(function (res) {
       $('#btnCreateTextEntries').disabled = false;
       $('#btnOrganizeMemoAi').disabled = false;
-      showScreen('tripDetail');
-      renderDaySection();
+      $('#textEntryStatus').textContent = '';
+      openImportConfirm({
+        source: 'memo', ai: true, items: res.items || [], dropped: res.dropped || 0, branch: branch,
+        transcript: text, transcriptDate: !branch && date ? date : '', back: 'voiceEntryForm'
+      });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
       $('#btnCreateTextEntries').disabled = false;
       $('#btnOrganizeMemoAi').disabled = false;
-      if (msg === 'server_not_configured') $('#textEntryStatus').textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
-      else if (msg === 'rate_limited') $('#textEntryStatus').textContent = '少し時間をおいてからもう一度お試しください。';
-      else if (msg === 'trip_dates_required') $('#textEntryStatus').textContent = '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。';
-      else if (msg === 'output_too_long') $('#textEntryStatus').textContent = '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。';
-      else if (msg === 'ai_quota_exhausted') $('#textEntryStatus').textContent = 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。';
-      else if (msg === 'upstream_error') $('#textEntryStatus').textContent = 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。';
-      else if (msg === 'invalid_model_output') $('#textEntryStatus').textContent = 'うまく処理できませんでした。もう一度お試しください。';
-      else if (msg === 'premium_required' || msg === 'quota_exceeded') {
+      if (msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#textEntryStatus').textContent = '今月のAIでの整理の回数を使い切りました。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
-      }
-      else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
-      else $('#textEntryStatus').textContent = '失敗しました。もう一度お試しください。';
+      } else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
+      else $('#textEntryStatus').textContent = importScanErrorMessage(msg);
     });
   }
 
@@ -6528,48 +6631,25 @@
     }
   }
 
-  // 「取り込む」：まずCore.parseImportedBlocksJsonで読み取ってプレビューを見せるだけにし、
-  // 実際にBlock/Entryを作るのは確認後（confirmImportJsonBlocks）にする。ログイン・AIの回数と
-  // 無関係に使えるよう、既存のAIなし取り込みエンドポイント（/trips/:id/memo-blocks）だけを使う。
+  // 「確認画面へ」：Core.parseImportedBlocksJsonで読み取って、スクショ・音声・メモと同じ確認画面に渡す
+  // （そこで直して「この内容で追加」で保存する）。ログイン・AIの回数とは無関係（AIを呼ばない）。
   function handleImportJson() {
     var text = $('#importJsonInput').value.trim();
     if (!text) { $('#importJsonStatus').textContent = '先にAIの答え（JSON）を貼り付けてください。'; return; }
     var result = Core.parseImportedBlocksJson(text, state.trip);
-    renderImportPreview(result);
-  }
-
-  function renderImportPreview(result) {
-    var el = $('#importPreview');
     if (!result.blocks.length) {
-      state.pendingImportBlocks = null;
-      el.hidden = true;
-      el.innerHTML = '';
       $('#importJsonStatus').textContent = '取り込めませんでした：' + (result.errors[0] || '内容を確認してください。');
       return;
     }
-    state.pendingImportBlocks = result.blocks;
     $('#importJsonStatus').textContent = '';
-    var rows = result.blocks.map(function (b) {
-      var costText = (b.entry.costItems || []).map(function (ci) {
-        return ci.currency ? (ci.currency + ' ' + ci.amount) : Core.formatYen(ci.amount);
-      }).join('・');
-      return '<li>' + (b.time ? '<strong>' + escapeHtml(b.time) + '</strong> ' : '')
-        + escapeHtml(b.label) + '（' + escapeHtml(Core.categoryLabel(b.category)) + '）'
-        + (costText ? ' ' + escapeHtml(costText) : '') + '</li>';
-    }).join('');
-    var warnings = result.warnings.length
-      ? '<p class="hint">' + result.warnings.map(escapeHtml).join('<br>') + '</p>' : '';
-    var errors = result.errors.length
-      ? '<p class="hint">省いた項目：<br>' + result.errors.map(escapeHtml).join('<br>') + '</p>' : '';
-    el.innerHTML = '<p class="hint">この内容で作ります（' + result.blocks.length + '件）：</p>'
-      + '<ul class="import-preview-list">' + rows + '</ul>'
-      + warnings + errors
-      + '<button class="btn primary wide" id="btnConfirmImportJson" type="button">この内容で取り込む</button>';
-    el.hidden = false;
-    $('#btnConfirmImportJson').addEventListener('click', confirmImportJsonBlocks);
+    var notes = result.warnings.concat(result.errors.map(function (er) { return '省いた項目：' + er; }));
+    openImportConfirm({
+      source: 'json', ai: false, items: Core.memoBlocksToProposals(result.blocks, { extractCosts: false }),
+      branch: state.voiceBranch || null, notes: notes, back: 'voiceEntryForm'
+    });
   }
 
-  // parseImportedBlocksJsonが読み取るcostItemsは、外貨（currency付き）でもrateを持たない
+  // parseImportedBlocksJsonが読み取るcostItemsは  // parseImportedBlocksJsonが読み取るcostItemsは、外貨（currency付き）でもrateを持たない
   // （自分のAIには外貨レートまで求めていないため）。手入力の行と同じく「初期値でレートを見せる」
   // 体験に揃え、レート抜けのまま合計・精算が黙って0円扱いになる事故を防ぐため、POSTする前に
   // /ratesから自動取得してrateを付けておく（renderCostItems内のensureRateForItemと同じAPI）。
@@ -6602,49 +6682,34 @@
     return Promise.all(waits).then(function () { return failedCurrencies; });
   }
 
-  function confirmImportJsonBlocks() {
-    var blocks = state.pendingImportBlocks;
-    if (!blocks || !blocks.length || !state.trip) return;
-    var user = loadCurrentUser();
-    $('#btnImportJson').disabled = true;
-    $('#importJsonStatus').textContent = '外貨のレートを確認しています…';
-    fetchRatesForImportBlocks(blocks, state.trip).then(function (failedCurrencies) {
-      $('#importJsonStatus').textContent = 'AIを使わずに取り込んでいます…（無料）';
-      return api('/trips/' + encodeURIComponent(state.trip.id) + '/memo-blocks', 'POST', { blocks: blocks, author: (user && user.name) || '' })
-        .then(function () { return refreshTrip(); })
-        .then(function () {
-          $('#btnImportJson').disabled = false;
-          if (blocks[0] && blocks[0].date) state.selectedDate = blocks[0].date;
-          $('#importJsonInput').value = '';
-          $('#importPreview').hidden = true;
-          $('#importPreview').innerHTML = '';
-          state.pendingImportBlocks = null;
-          showScreen('tripDetail');
-          renderTripDetail();
-          showToast('取り込みました');
-          if (failedCurrencies.length) {
-            alert(failedCurrencies.join('・') + 'のレートを取得できませんでした。記録を開いてレートを入れてください。');
-          }
-        });
-    }).catch(function () {
-      $('#btnImportJson').disabled = false;
-      $('#importJsonStatus').textContent = '取り込みに失敗しました。もう一度お試しください。';
-    });
-  }
-
   // ---------- スクショから予定を作る（docs/adr/0022） ----------
   // 画像（最大10枚）を選ぶ → 長辺1600pxのJPEGに縮めて送る（POST /trips/:id/screenshot-scan。サーバーが
   // Cloud Visionで文字にし、AIで予定の候補にして、場所を探して返す。ここではまだ何も保存されない）
   // → 確認画面で日・時刻・見出し・種類・場所・費用を直す／要らない候補を外す
-  // → 「この内容で追加」で保存（POST /trips/:id/screenshot-blocks。AIは使わず1回のD1バッチ）。
+  // → 「この内容で追加」で保存（POST /trips/:id/import-blocks。AIは使わず1回のD1バッチ）。確認画面（importConfirm）は
+  // 音声・メモ・自分のAIの答えと共通（2026-09-30。openImportConfirm）。
   // 候補の並び替え・保存前の検証はCore.groupScreenshotItemsByDay／Core.screenshotItemsToSavePayload。
   var SS_MAX_IMAGES = 10;
   var SS_CONSENT_KEY = 'tabilog:ai-consent-screenshots';
   var IMAGE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><circle cx="7" cy="8" r="1.4"/><path d="M3 15l4.5-4.5 3 3 2.5-2.5 4 4"/></svg>';
   var ssPlaceSession = '';
 
+  // 3つの取り込み（スクショ・音声・メモ）と自分のAIの答えが、同じ確認画面（importConfirm）で候補を直して保存する
+  // （docs/adr/0022 2026-09-30追記）。state.ssが確認画面の状態：source・ai（AIを使ったか）・items（候補）・
+  // branch（自分だけの道に入れるときの別行動）・transcript（文字起こし）・back（やめたとき戻る画面）
+  var IMPORT_SOURCES = {
+    screenshot: { title: 'スクショから予定を作る', label: 'スクショ' },
+    voice: { title: '音声から予定を作る', label: '音声' },
+    memo: { title: 'メモから予定を作る', label: 'メモ' },
+    json: { title: '自分のAIの答えから予定を作る', label: '自分のAIの答え' }
+  };
+
+  function ssNewState() {
+    return { source: 'screenshot', ai: true, files: [], items: null, unreadable: [], dropped: 0, branch: null, transcript: '', transcriptDate: '', notes: [], back: 'tripDetail' };
+  }
+
   function ssState() {
-    if (!state.ss) state.ss = { files: [], items: null, unreadable: [], dropped: 0 };
+    if (!state.ss) state.ss = ssNewState();
     return state.ss;
   }
 
@@ -6652,6 +6717,43 @@
     var s = ssState();
     s.files.forEach(function (f) { try { URL.revokeObjectURL(f.url); } catch (e) {} });
     s.files = [];
+  }
+
+  // 「自分だけの道（美術館）に追加」（確認画面と各入口の案内で使う）
+  function importTargetText(branch) {
+    return '自分だけの道（' + (branch.title || Core.branchRangeText(branch)) + '）に追加';
+  }
+
+  // いま自分の道を見ていて、選んでいる日が自分の別行動の中なら、その別行動（取り込みの行き先）。なければnull＝みんなの予定
+  function currentImportBranch() {
+    return Core.importTargetBranch(state.branches, state.viewAccountId, myAccountId(), state.selectedDate);
+  }
+
+  // 確認画面を開く。o：{ source, ai, items, unreadable, dropped, branch, transcript, transcriptDate, notes, back }
+  function openImportConfirm(o) {
+    var s = ssState();
+    if (o.source !== 'screenshot') { ssRevokeFiles(); }
+    s.source = o.source;
+    s.ai = !!o.ai;
+    s.items = (o.items || []).map(function (it) { it.use = true; return it; });
+    s.unreadable = o.unreadable || [];
+    s.dropped = o.dropped || 0;
+    s.branch = o.branch || null;
+    s.transcript = o.transcript || '';
+    s.transcriptDate = o.transcriptDate || '';
+    s.notes = o.notes || [];
+    s.back = o.back || 'tripDetail';
+    renderSsResult();
+    showScreen('importConfirm');
+  }
+
+  // やめる：保存せずに、入力の画面（画像選び・音声・メモ）へ戻る。AIを使っていたら、回数は戻らないことを伝える
+  function cancelImportConfirm() {
+    var s = ssState();
+    if (s.ai && s.items && s.items.length && !confirm('保存せずに戻ります。AIによる整理はすでに行ったため、今月の利用回数は戻りません。よろしいですか？')) return;
+    if (s.back === 'screenshotImport') { $('#ssStatus').textContent = ''; showScreen('screenshotImport'); }
+    else if (s.back === 'voiceEntryForm') showScreen('voiceEntryForm');
+    else { showScreen('tripDetail'); renderTripDetail(); }
   }
 
   // 入口。ログインしていなければログインへ（AIを使う機能のため。ログイン後はここに戻る）
@@ -6663,7 +6765,10 @@
       return;
     }
     ssRevokeFiles();
-    state.ss = { files: [], items: null, unreadable: [], dropped: 0 };
+    state.ss = ssNewState();
+    state.ss.branch = currentImportBranch();
+    $('#ssTargetNote').hidden = !state.ss.branch;
+    if (state.ss.branch) $('#ssTargetNote').textContent = importTargetText(state.ss.branch) + 'します（' + Core.branchRangeText(state.ss.branch) + '）。日付・時刻は別行動の時間帯の中だけ使えます。';
     $('#ssPickArea').hidden = false;
     $('#ssResult').hidden = true;
     $('#ssResult').innerHTML = '';
@@ -6735,7 +6840,9 @@
       ai_quota_exhausted: 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。',
       upstream_error: 'AIのサービスにつながりませんでした。少し時間をおいてもう一度お試しください。',
       invalid_model_output: 'うまく処理できませんでした。もう一度お試しください。',
-      output_too_long: '内容が多すぎて整理しきれませんでした。画像を分けて、何回かに分けてお試しください。'
+      output_too_long: '内容が多すぎて整理しきれませんでした。画像を分けて、何回かに分けてお試しください。',
+      forbidden: 'この別行動は、持ち主だけが追加できます。',
+      branch_not_found: '別行動が見つかりません（消された可能性があります）。「みんな」の表示に戻して、もう一度お試しください。'
     };
     return map[msg] || '失敗しました。もう一度お試しください。';
   }
@@ -6750,15 +6857,17 @@
     $('#ssStatus').textContent = '画像を読み取っています…（数十秒かかることがあります）';
     Promise.all(s.files.map(function (f) { return blobToBase64(f.blob).then(function (data) { return { type: 'image/jpeg', data: data }; }); }))
       .then(function (images) {
-        return api('/trips/' + encodeURIComponent(state.trip.id) + '/screenshot-scan', 'POST', { images: images, email: user.email || '' });
+        var body = { images: images, email: user.email || '' };
+        if (s.branch) body.branchId = s.branch.id;
+        return api('/trips/' + encodeURIComponent(state.trip.id) + '/screenshot-scan', 'POST', body);
       })
       .then(function (res) {
         $('#btnSsScan').disabled = false;
-        s.items = (res.items || []).map(function (it) { it.use = true; return it; });
-        s.unreadable = res.unreadable || [];
-        s.dropped = res.dropped || 0;
         $('#ssStatus').textContent = '';
-        renderSsResult();
+        openImportConfirm({
+          source: 'screenshot', ai: true, items: res.items || [], unreadable: res.unreadable || [], dropped: res.dropped || 0,
+          branch: s.branch, back: 'screenshotImport'
+        });
       })
       .catch(function (e) {
         $('#btnSsScan').disabled = false;
@@ -6776,37 +6885,62 @@
     return f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="元の画像">' : '';
   }
 
+  // 場所の行。地図が付いていれば名前、無ければ「地図なし」＋「場所を探す」（記録フォームの「場所名で検索」と同じ
+  // /places/search を使う）。音声・メモの決まった形（AIも場所検索も使わない）は、ここで本人が探す。
+  // 探す欄の初めの文字は、AIが見つけた名前（無ければ見出し）
   function ssPlaceLine(item, which) {
     var isArrive = which === 'arrive';
     var name = isArrive ? item.arrivePlaceName : item.mapPlaceName;
-    var query = isArrive ? item.toPlace : (item.category === 'transport' ? item.fromPlace : item.place);
+    var given = isArrive ? item.toPlace : (item.category === 'transport' ? item.fromPlace : item.place);
+    var query = given || (isArrive ? '' : item.label) || '';
     var label = isArrive ? '到着地' : (item.category === 'transport' ? '出発地' : '場所');
-    if (!name && !query) return '';
-    return '<div class="ss-place"><span class="ss-place-label">' + label + '</span> ' +
-      (name ? '<strong>' + escapeHtml(name) + '</strong>' : '<span class="ss-nomap">' + escapeHtml(query || '') + '（地図なし）</span>') +
-      ' <button type="button" class="btn text small" data-ss-place="' + which + '">' + (name ? '変える' : '場所を探す') + '</button>' +
+    var hasMap = isArrive ? !!item.arriveMapUrl : !!item.mapUrl;
+    if (isArrive && !name && !given) return '';
+    var shown = name ? '<strong>' + escapeHtml(name) + '</strong>'
+      : (hasMap ? '<span>メモのURLの地図</span>'
+        : '<span class="ss-nomap">' + (given ? escapeHtml(given) + '（地図なし）' : '地図なし') + '</span>');
+    return '<div class="ss-place"><span class="ss-place-label">' + label + '</span> ' + shown +
+      ' <button type="button" class="btn text small" data-ss-place="' + which + '">' + (name || hasMap ? '変える' : '場所を探す') + '</button>' +
       '<div class="ss-place-search" data-ss-place-box="' + which + '" hidden>' +
-      '<div class="field-row"><div class="field"><input type="text" data-ss-place-q="' + which + '" value="' + escapeHtml(query || '') + '" placeholder="場所の名前"></div>' +
+      '<div class="field-row"><div class="field"><input type="text" data-ss-place-q="' + which + '" value="' + escapeHtml(query) + '" placeholder="場所の名前"></div>' +
       '<button type="button" class="btn ghost small" data-ss-place-go="' + which + '">探す</button></div>' +
       '<div class="ss-place-list" data-ss-place-list="' + which + '"></div>' +
       '<button type="button" class="btn text small" data-ss-place-clear="' + which + '">地図を外す</button></div></div>';
   }
 
+  // 日付として選べる範囲：別行動に入れるときは別行動の日々、そうでなければ旅行の日々
+  function ssDateChoices() {
+    var s = ssState();
+    return s.branch ? Core.branchDates(s.branch) : Core.allDatesForTrip(state.trip, []).filter(function (d) { return d; });
+  }
+
+  // サーバーが付けた「別行動の…」の警告は、本人が直したあとに古くならないよう、ここで数え直す
+  function ssWarningsOf(item) {
+    var s = ssState();
+    var warns = (item.warnings || []).filter(function (w) { return w.indexOf('別行動の') !== 0; });
+    if (s.branch) {
+      var why = Core.validateBranchBlock(s.branch, item.date, item.time || '');
+      if (why === 'date_out_of_branch') warns.push('別行動の日程の外の日付です。日付を直さないと追加できません');
+      else if (why === 'time_out_of_branch') warns.push('別行動の時間帯（' + s.branch.startTime + '〜' + s.branch.endTime + '）の外の時刻です。時刻を直さないと追加できません');
+    }
+    return warns;
+  }
+
   function ssCard(item) {
     var s = ssState();
     var i = s.items.indexOf(item);
-    var tripDates = Core.allDatesForTrip(state.trip, []).filter(function (d) { return d; });
-    var range = tripDates.length ? ' min="' + tripDates[0] + '" max="' + tripDates[tripDates.length - 1] + '"' : '';
+    var choices = ssDateChoices();
+    var range = choices.length ? ' min="' + choices[0] + '" max="' + choices[choices.length - 1] + '"' : '';
     var cats = Core.CATEGORIES.map(function (c) { return c.key; }).filter(function (c) { return c !== 'arrival'; }).map(function (c) {
       return '<option value="' + c + '"' + (item.category === c ? ' selected' : '') + '>' + escapeHtml(Core.categoryLabel(c)) + '</option>';
     }).join('');
     var costs = (item.costItems || []).map(function (c, k) {
       return '<div class="ss-cost-row"><input type="text" data-ss-cost-label="' + k + '" value="' + escapeHtml(c.label) + '">' +
-        '<input type="number" inputmode="decimal" min="0" step="any" data-ss-cost-amount="' + k + '" value="' + c.amount + '">' +
+        '<input type="number" inputmode="decimal" min="0" step="any" data-ss-cost-amount="' + k + '" value="' + (c.amount === undefined ? '' : c.amount) + '">' +
         '<span class="ss-cost-unit">' + escapeHtml(c.currency || '円') + '</span>' +
         '<button type="button" class="ss-cost-x" data-ss-cost-remove="' + k + '" aria-label="この費用を外す">×</button></div>';
     }).join('');
-    var warns = (item.warnings || []).map(function (w) { return '<p class="ss-warn">' + escapeHtml(w) + '</p>'; }).join('');
+    var warns = ssWarningsOf(item).map(function (w) { return '<p class="ss-warn">' + escapeHtml(w) + '</p>'; }).join('');
     var routeText = item.category === 'transport' && (item.fromPlace || item.toPlace)
       ? '<p class="hint ss-route">' + escapeHtml((item.fromPlace || '?') + '→' + (item.toPlace || '?')) +
         (item.departTime || item.arriveTime ? '（' + escapeHtml((item.departTime || '') + '〜' + (item.arriveTime || '')) + '）' : '') + '</p>'
@@ -6820,7 +6954,8 @@
       '<div class="field"><label>種類</label><select data-ss="category">' + cats + '</select></div>' +
       routeText +
       (item.category === 'transport' ? ssPlaceLine(item, 'main') + ssPlaceLine(item, 'arrive') : ssPlaceLine(item, 'main')) +
-      (costs ? '<div class="ss-costs"><label class="ss-cost-title">費用</label>' + costs + '</div>' : '') +
+      '<div class="ss-costs"><label class="ss-cost-title">費用（分かったものだけ）</label>' + costs +
+      '<button type="button" class="btn text small ss-cost-add" data-ss-cost-add="1">＋ 費用を追加</button></div>' +
       (item.note ? '<p class="hint ss-note">' + escapeHtml(item.note) + '</p>' : '') +
       '</div></div>';
   }
@@ -6828,13 +6963,17 @@
   function renderSsResult() {
     var s = ssState();
     var el = $('#ssResult');
-    $('#ssPickArea').hidden = true;
+    var src = IMPORT_SOURCES[s.source] || IMPORT_SOURCES.screenshot;
+    $('#icTitle').textContent = src.title;
+    $('#icLead').textContent = src.label + 'から作った候補です。保存する前に、内容を確認して直してください。時刻・費用・場所は、分かったものだけ入っています（空欄は分からなかったものです）。';
     var used = s.items.filter(function (it) { return it.use !== false; }).length;
-    var html = '';
+    var html = '<span class="ss-source">' + escapeHtml(src.label) + 'から</span>';
+    if (s.branch) html += '<div class="branch-band ss-target">' + BRANCH_ICON + '<span class="branch-band-text">' + escapeHtml(importTargetText(s.branch)) + '（' + escapeHtml(Core.branchRangeText(s.branch)) + '）</span></div>';
+    (s.notes || []).forEach(function (n) { html += '<p class="hint">' + escapeHtml(n) + '</p>'; });
     if (!s.items.length) {
       html += '<p class="hint">予定として使える情報を読み取れませんでした。</p>';
     } else {
-      html += '<p class="hint">' + s.items.length + '件の候補です。内容を確認して、直すところは直してください。要らない候補は「追加する」を外します。</p>';
+      html += '<p class="hint">' + s.items.length + '件の候補です。直すところは直してください。要らない候補は「追加する」を外します。</p>';
       Core.groupScreenshotItemsByDay(s.items).forEach(function (g) {
         html += '<h2 class="ss-day">' + escapeHtml(g.date ? Core.formatDateJp(g.date) + '（' + Core.dayLabel(state.trip, g.date) + '）' : '日付未設定') + '</h2>';
         g.items.forEach(function (it) { html += ssCard(s.items[it._index]); });
@@ -6849,8 +6988,9 @@
       }).join('') + '</div>';
     }
     html += '<p class="hint" id="ssSaveStatus"></p>' +
-      (s.items.length ? '<button type="button" class="btn primary wide" id="btnSsSave"' + (used ? '' : ' disabled') + '>この内容で追加（' + used + '件）</button>' : '') +
-      '<button type="button" class="btn ghost wide" id="btnSsRetry">画像を選び直す</button>';
+      (s.items.length ? '<button type="button" class="btn primary wide" id="btnSsSave"' + (used ? '' : ' disabled') + '>' + (s.branch ? '自分だけの道に追加（' : 'この内容で追加（') + used + '件）</button>' : '') +
+      '<button type="button" class="btn ghost wide" id="btnSsCancel">やめて入力に戻る（何も保存しません）</button>' +
+      '<p class="hint">' + (s.ai ? 'やめると、この候補は保存されません。AIによる整理はすでに行ったため、今月の利用回数は戻りません。' : 'やめると、この候補は保存されません（AIは使っていないので、利用回数は減っていません）。') + '</p>';
     el.innerHTML = html;
     el.hidden = false;
   }
@@ -6861,9 +7001,10 @@
   }
 
   function ssRefreshSaveButton() {
-    var used = ssState().items.filter(function (it) { return it.use !== false; }).length;
+    var s = ssState();
+    var used = s.items.filter(function (it) { return it.use !== false; }).length;
     var btn = $('#btnSsSave');
-    if (btn) { btn.disabled = !used; btn.textContent = 'この内容で追加（' + used + '件）'; }
+    if (btn) { btn.disabled = !used; btn.textContent = (s.branch ? '自分だけの道に追加（' : 'この内容で追加（') + used + '件）'; }
   }
 
   // 場所を探し直す：既存の /places/search と /places/details（記録フォームの「場所名で検索」と同じ）を使う
@@ -6914,7 +7055,7 @@
   function handleSsResultClick(e) {
     var t = e.target;
     var item = ssItemOf(t);
-    if (t.id === 'btnSsRetry') { openScreenshotImport(); return; }
+    if (t.id === 'btnSsCancel') { cancelImportConfirm(); return; }
     if (t.id === 'btnSsSave') { handleSsSave(); return; }
     if (!item) return;
     var btn = t.closest('[data-ss-place]');
@@ -6932,11 +7073,14 @@
       renderSsResult();
       return;
     }
+    var add = t.closest('[data-ss-cost-add]');
+    if (add) { item.costItems = item.costItems || []; item.costItems.push({ label: '費用', amount: undefined }); renderSsResult(); return; }
     var rm = t.closest('[data-ss-cost-remove]');
     if (rm) { item.costItems.splice(Number(rm.getAttribute('data-ss-cost-remove')), 1); renderSsResult(); }
   }
 
-  // 入力欄の値を候補に反映する。日付・種類を変えたときだけ描き直す（並びや入力欄が変わるため）
+  // 入力欄の値を候補に反映する。日付・種類を変えたときだけ描き直す（並びや入力欄が変わるため）。
+  // 別行動に入れるときは、時刻を変えたときも描き直す（時間帯の外の警告を数え直すため）
   function handleSsResultChange(e) {
     var t = e.target;
     var item = ssItemOf(t);
@@ -6948,7 +7092,7 @@
       if (card) card.classList.toggle('off', !t.checked);
       ssRefreshSaveButton();
     } else if (field === 'date') { item.date = t.value; renderSsResult(); }
-    else if (field === 'time') { item.time = t.value; item.timeEstimated = false; }
+    else if (field === 'time') { item.time = t.value; item.timeEstimated = false; if (ssState().branch) renderSsResult(); }
     else if (field === 'label') { item.label = t.value; }
     else if (field === 'category') {
       item.category = t.value;
@@ -6958,14 +7102,25 @@
     else if (t.hasAttribute('data-ss-cost-amount')) {
       var c = item.costItems[Number(t.getAttribute('data-ss-cost-amount'))];
       var n = Number(t.value);
-      c.amount = isFinite(n) && n >= 0 ? n : 0;
+      c.amount = t.value === '' ? undefined : (isFinite(n) && n >= 0 ? n : 0);
     }
+  }
+
+  // 保存のエラーを画面に出す文にする
+  function ssSaveErrorMessage(msg) {
+    var map = {
+      forbidden: 'この別行動は、持ち主だけが追加できます。',
+      login_required: 'ログインし直してください。',
+      branch_not_found: '別行動が見つかりません（消された可能性があります）。',
+      invalid_input: '追加できる候補がありません。日付・時刻（別行動なら別行動の時間帯の中）を確認してください。'
+    };
+    return map[msg] || '追加に失敗しました。もう一度お試しください。';
   }
 
   function handleSsSave() {
     var s = ssState();
     var user = loadCurrentUser();
-    var payload = Core.screenshotItemsToSavePayload(s.items, state.trip);
+    var payload = Core.screenshotItemsToSavePayload(s.items, state.trip, s.branch);
     var status = $('#ssSaveStatus');
     if (payload.errors.length) {
       status.textContent = '直してから追加してください：' + payload.errors.map(function (er) { return '「' + (er.label || '（見出しなし）') + '」' + er.reason; }).join('、');
@@ -6978,7 +7133,11 @@
     var shaped = payload.items.map(function (p) { return { date: p.date, entry: { costItems: p.costItems } }; });
     fetchRatesForImportBlocks(shaped, state.trip).then(function (failedCurrencies) {
       status.textContent = '追加しています…';
-      return api('/trips/' + encodeURIComponent(state.trip.id) + '/screenshot-blocks', 'POST', { items: payload.items, author: (user && user.name) || '' })
+      var body = { items: payload.items, author: (user && user.name) || '' };
+      if (s.branch) body.branchId = s.branch.id;
+      // 文字起こし（音声・メモのAI）は、追加したときにその日の欄へ残す（別行動では残さない）
+      if (s.transcript && s.transcriptDate && !s.branch) { body.transcript = s.transcript; body.transcriptDate = s.transcriptDate; }
+      return api('/trips/' + encodeURIComponent(state.trip.id) + '/import-blocks', 'POST', body)
         .then(function (res) { return refreshTrip().then(function () { return { res: res, failed: failedCurrencies }; }); });
     }).then(function (r) {
       var first = payload.items.map(function (p) { return p.date; }).sort()[0];
@@ -6988,10 +7147,11 @@
       showScreen('tripDetail');
       renderTripDetail();
       showToast((r.res.blocks || []).length + '件の予定を追加しました');
+      if (r.res.errors && r.res.errors.length) alert(r.res.errors.length + '件は、日付・時刻が合わず追加できませんでした。');
       if (r.failed.length) alert(r.failed.join('・') + 'のレートを取得できませんでした。記録を開いてレートを入れてください。');
-    }).catch(function () {
+    }).catch(function (e) {
       $('#btnSsSave').disabled = false;
-      status.textContent = '追加に失敗しました。もう一度お試しください。';
+      status.textContent = ssSaveErrorMessage((e && e.message) || '');
     });
   }
 
@@ -7007,6 +7167,7 @@
       renderSsThumbs();
     });
     $('#btnSsScan').addEventListener('click', handleSsScan);
+    $('#btnIcBack').addEventListener('click', cancelImportConfirm);
     $('#ssResult').addEventListener('click', handleSsResultClick);
     $('#ssResult').addEventListener('change', handleSsResultChange);
   }

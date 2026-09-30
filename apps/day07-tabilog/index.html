@@ -247,7 +247,9 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
         <h1 id="voiceEntryTitle">音声・メモでまとめて記録する</h1>
-        <p class="lead" id="voiceEntryLead">その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、AIが予定・記録に分けて保存します（評価や費用はあとで入力してください）</p>
+        <p class="lead" id="voiceEntryLead">その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます</p>
+        <!-- 自分だけの道（別行動）の中から始めたときだけ出る（app.jsのopenVoiceEntryForm） -->
+        <p class="hint" id="voiceTargetNote" hidden></p>
       </header>
 
       <div class="notice" id="voicePremiumRequired" hidden>
@@ -273,7 +275,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <label for="textMemoInput">スケジュールやメモをそのまま貼り付ける</label>
           <textarea id="textMemoInput" rows="8" placeholder="例：&#10;10時 東京駅&#10;新幹線で京都へ&#10;13時 清水寺&#10;抹茶パフェを食べた&#10;18時 旅館にチェックイン"></textarea>
           <!-- 決まった形ならAIを使わず無料で分ける（app.jsのCore.parseMemo） -->
-          <p class="hint memo-help">「13時 清水寺」のように<strong>時刻で始まる行</strong>が予定、その下の行が記録になります。この形なら<strong>AIを使わず無料・何回でも</strong>取り込めます。「2日目」「4/2」の行で日付を変えられます。</p>
+          <p class="hint memo-help">「13時 清水寺」のように<strong>時刻で始まる行</strong>が予定、その下の行が記録になります。この形なら<strong>AIを使わず無料・何回でも</strong>取り込めます。「2日目」「4/2」の行で日付を変えられます。「ランチ 1,500円」のように金額（円・¥・$）が書いてあれば費用の候補にします。場所は確認画面の「場所を探す」で選べます。</p>
         </div>
         <button class="btn primary wide" id="btnCreateTextEntries">この内容で予定を作る</button>
         <button class="btn text memo-ai-btn" id="btnOrganizeMemoAi" type="button">形が崩れていてうまく分かれないときは → AIで整理する</button>
@@ -285,14 +287,14 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <!-- 「自分のAIで整理して貼り付ける（無料）」（docs/adr/0015）：ChatGPT・Claude・Geminiなど
              自分のAIにapp.jsのCore.buildAiImportPromptの文面＋自分のメモを渡し、返ってきたJSONを
              貼り付ける。ログインも運営側の月10回の枠も使わない（Core.parseImportedBlocksJsonで
-             読み取り、既存の/trips/:id/memo-blocksにそのまま渡すだけのため）。 -->
+             読み取り、確認画面に渡して保存するだけのため）。 -->
         <div class="field">
           <p class="hint">自分のAI（ChatGPT・Claude・Geminiなど）に整理してもらってから貼り付けます。ログイン不要・無料・回数の上限なし。</p>
           <button class="btn ghost wide" id="btnCopyAiPrompt" type="button">AIへのお願い文をコピー</button>
           <label for="importJsonInput">AIの答え（JSON）を貼り付け</label>
           <textarea id="importJsonInput" rows="8" placeholder='{"blocks": [...]}'></textarea>
         </div>
-        <button class="btn primary wide" id="btnImportJson" type="button">取り込む</button>
+        <button class="btn primary wide" id="btnImportJson" type="button">確認画面へ</button>
         <p class="hint" id="importJsonStatus"></p>
         <div id="importPreview" hidden></div>
       </div>
@@ -308,6 +310,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
         <h1>スクショから予定を作る</h1>
         <p class="lead">航空券・新幹線のきっぷ・ホテルの予約画面・乗換案内・チケット・レシートなどのスクリーンショットを選ぶと、予定の候補を作ります。保存する前に、内容を確認して直せます。</p>
+        <!-- 自分だけの道（別行動）の中から始めたときだけ出る（app.jsのopenScreenshotImport） -->
+        <p class="hint" id="ssTargetNote" hidden></p>
       </header>
 
       <div id="ssPickArea">
@@ -320,6 +324,18 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <p class="hint" id="ssStatus"></p>
       </div>
 
+    </div>
+  </section>
+
+  <!-- ============ 取り込みの確認画面（スクショ・音声・メモの3つ共通。docs/adr/0022 2026-09-30追記） ============
+       候補の日付・時刻・見出し・種類・場所・費用を直して、「この内容で追加」で保存する。#ssResultはapp.jsが描く -->
+  <section class="screen" data-screen="importConfirm">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" id="btnIcBack" type="button">← 戻る</button>
+        <h1 id="icTitle">予定の候補の確認</h1>
+        <p class="lead" id="icLead"></p>
+      </header>
       <div id="ssResult" hidden></div>
     </div>
   </section>

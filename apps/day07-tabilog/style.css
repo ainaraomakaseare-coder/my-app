@@ -1467,6 +1467,9 @@ body.viewer-open { overflow: hidden; }
 .ss-cost-row input[type="number"] { flex: 1; width: auto; }
 .ss-cost-unit { font-size: 12px; color: var(--ink-muted); min-width: 24px; }
 .ss-cost-x { width: 24px; height: 24px; color: var(--ink-soft); font-size: 16px; text-align: center; }
+.ss-source { display: inline-block; margin: 0 0 8px; padding: 3px 10px; border-radius: 999px; background: var(--border-soft); color: var(--ink-muted); font-size: 12px; font-weight: 700; }
+.ss-target { margin-bottom: 12px; }
+.ss-cost-add { margin-bottom: 8px; }
 .ss-unreadable-row { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-muted); margin-bottom: 8px; }
 
 
