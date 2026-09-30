@@ -2354,7 +2354,7 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
 
   // 決まった形のメモ → 確認画面の候補
   var dates = ['2026-10-03', '2026-10-04'];
-  var parsed = T.parseMemo('10時 浅草寺\n12時 ランチ 天丼1,500円\n混んでいた\n入場料 ￥800\n14時 スカイツリー https://maps.app.goo.gl/abc\n15時 お店 https://tabelog.com/x\n4/4\n9時 朝ごはん', dates, '2026-10-03');
+  var parsed = T.parseMemo('10時 浅草寺\n12時 ランチ 天丼1,500円\n混んでいた\n入場料 ￥800\n14時 スカイツリー https://maps.app.goo.gl/abc\n15時 お店 https://tabelog.com/x\n10/4\n9時 朝ごはん', dates, '2026-10-03');
   eq('メモ: 決まった形として読める', parsed.ok, true);
   var items = T.memoBlocksToProposals(parsed.blocks);
   eq('メモ: 候補の件数・時刻', items.map(function (i) { return i.time; }), ['10:00', '12:00', '14:00', '15:00', '09:00']);
