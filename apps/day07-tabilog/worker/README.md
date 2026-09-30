@@ -851,3 +851,20 @@ npx wrangler deploy
 （`--file`は0024〜のときと同じ認証エラーが出る環境があるため`--command`。同じSQLは`migrations/0031_block_video_exclude.sql`にもある。1回だけ実行。2回目は`duplicate column name`になるが害はない。）
 
 先にデプロイしてしまっても壊れない：`video_exclude`の書き込みは別のUPDATEで`try/catch`（列が無ければ印が付かないだけ）、読み出しは列が無ければfalse。逆に、migrationだけ先に流しても、古いWorkerは列を知らないだけで動く。
+
+
+## 音声・メモも確認画面つきに（2026-09-30 追加、docs/adr/0002・0022・0021）
+
+音声入力とメモ（AIで整理）は、スクショと同じ「候補を返す（保存しない）→確認画面→保存」になりました。**新しいシークレット・`wrangler.jsonc`の変更・DBのマイグレーションはありません**（0033は使っていません）。
+
+| エンドポイント | 役目 |
+|---|---|
+| `POST /trips/:id/voice-scan` | 音声→文字起こし→AIで候補→場所検索。何も保存しない。音声の枠を1回消費 |
+| `POST /trips/:id/text-scan` | メモ→AIで候補→場所検索。何も保存しない。メモの枠を1回消費 |
+| `POST /trips/:id/import-blocks` | 確認後の保存（スクショ・音声・メモ共通。旧名`/screenshot-blocks`も同じ）。AIなし・1回のD1バッチ |
+| `POST /trips/:id/screenshot-scan` | 従来どおり。`branchId`を受けるようになった |
+
+- 自分だけの道（別行動）：上の4つは`branchId`を受けます。**持ち主（セッション）だけ**が使え（他人は403、存在しない・別の旅行の別行動は404）、`import-blocks`は日付・時刻が別行動の窓の外の項目を`errors`で返して保存しません。`voice-scan`・`text-scan`は`date`が別行動の日々の外なら400です。
+- 旧`voice-entries`・`text-entries`・`memo-blocks`は、古いアプリのために残してあります（今のアプリは使いません）。
+- **サブリクエスト**：音声は 文字起こし最大2＋OpenAI最大2＋場所検索最大12＋D1約12（別行動は約16）＝最大28（別行動32）、メモ（AI）は最大26（別行動30）。`worker/src/import-proposals.js`の`estimateProposalSubrequests`で数えています。`GOOGLE_API_KEY`が無いときは、音声・メモは場所検索を飛ばして地図なしで候補を返します。
+- ローカルの確認：`node worker/test/import-proposals.test.mjs`（純粋関数）、`node worker/test/import-handler.test.mjs`（Workerの入口から通し。`node:sqlite`の本物のSQLite・OpenAIとPlacesはモック。有料APIは呼びません）。

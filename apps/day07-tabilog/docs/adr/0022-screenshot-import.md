@@ -88,3 +88,70 @@
 
 - 検証した：Workerの入口から通しのテスト（`worker/test/screenshot-handler.test.mjs`。D1・Vision・OpenAI・Placesをモックして、サブリクエストの回数・枠の消費・全部読めないときは枠を消費しない・入力の検証・保存のバッチを確認。実際のD1アクセスは1回の取り込みで3〜4回だった）、純粋関数のテスト（`worker/test/screenshot-import.test.mjs`。JAL航空券・ホテル・新幹線EX・乗換案内・野球・漫才劇場・レシートの現実的なOCR文章とAI出力のモックで、日付・年の補い・チェックイン時刻・宿泊の泊数展開・場所検索の絞り込み・地図付け・保存前の検証・画像入力の検証・サブリクエストの見積もりを確認）、`Core.groupScreenshotItemsByDay`・`Core.screenshotItemsToSavePayload`（`test/data.test.js`）、ブラウザでの確認画面の通し操作（画像選択→読み取り→編集→除外→追加。API・AIはモックサーバー）。
 - **していない**：本物のCloud Vision・OpenAI・Places APIの呼び出し（有料APIのため。オーナーが少数のスクリーンショットで実際に試す必要がある）、本物のD1への保存（`saveScreenshotBlocks`のバッチはスタブのD1で列数と引数の数が合うことだけ確認した。SQLは既存の`INSERT`と列を照らして書いたが、`wrangler dev`でのローカルD1確認はしていない）、iOSアプリ（WKWebView）での画像選択・大きなJSONの送信、Workers Freeでの実際のサブリクエスト数。
+
+## 2026-09-30追記：音声・メモ（AI／決まった形）も同じ候補づくりと確認画面にした
+
+オーナーの要望：音声入力と「メモから記録する」も、スクショと同じように**時刻・費用（金額・通貨）・場所（地図のピン）を、分かるときだけ入れ**、**同じ確認画面**を通してから保存する。分からないことは無理に埋めず空欄のままにする。
+
+### 共有の候補づくり
+
+3つの取り込みは、同じ形の候補（日付・時刻・見出し・種類・移動手段・出発地/到着地と時刻・費用・場所・記録のひとこと）を作り、同じ検証と場所検索を通る。
+
+| | 入力 | 候補を作る所 | 場所 | 枠 |
+|---|---|---|---|---|
+| スクショ | 画像 | Vision→OpenAI（`screenshot-scan`） | 自動で検索（最大12回） | メモの枠 |
+| 音声 | 録音 | 文字起こし→OpenAI（`voice-scan`） | 自動で検索（最大12回） | 音声の枠 |
+| メモ（AI） | 貼り付け | OpenAI（`text-scan`） | 自動で検索（最大12回） | メモの枠 |
+| メモ（決まった形） | 貼り付け | ブラウザだけ（`Core.parseMemo`→`Core.memoBlocksToProposals`） | **自動では探さない**。確認画面の「場所を探す」で本人が探す | 使わない（無料） |
+| 自分のAIの答え（JSON） | 貼り付け | ブラウザだけ（`Core.parseImportedBlocksJson`→同上） | 同上 | 使わない |
+
+- **検証と補正は1つ**：`screenshot-import.js`の`normalizeProposalItems`（`normalizeScreenshotResult`はその薄い呼び出し）。ctxで動きを切り替える：音声・メモは`fixedDate`（「この日」はAIの日付を見ず固定）／`allowedDates`（複数日・別行動の日々。外れた日付は初日に置いて警告）／`allowGuess:false`（会場を推測しない）／`checkInDefaults:false`（宿の時刻が無くても15:00を作らない＝**分からない時刻は空のまま**）／`noteMax:1000`／`maxItems:60`。時刻の形が壊れたもの・マイナスや文字の金額は捨てて空にする。
+- **プロンプトと出力スキーマ**：`worker/src/import-proposals.js`の`buildProposalPrompt`／`proposalSchema`。時刻は「10時に」のように具体的に話されたときだけ、金額は「ランチ1500円」のように話されたときだけ（外貨は`currency`）、場所は具体的な施設名・店名が話されたときだけ入れさせる。**料理名やあいまいな言葉（「ランチ」「ホテル」）ではなく、店名・施設名を場所にする**。推測で埋めさせず、分からない項目は空にさせる。話したURL（`mapUrl`＝Googleマップ、`shopUrl`＝それ以外）は、既存の「URLやお店の名前など」欄の仕組みを引き継ぐ（URLの地図がある候補は場所検索しない）。スキーマはスクショの項目から`image`・`checkOutDate`・`placeGuessed`を除き、`mapUrl`・`shopUrl`を足したもの。
+- **場所検索**：スクショと同じ`collectPlaceQueries`→`googleTextSearchOne`→`attachPlaces`（名前ごとに1回、同じ名前は1回、**最大12回**、溢れたぶんは地図なしで出して本人が探す）。`GOOGLE_API_KEY`が無いときは、音声・メモは地図なしで候補を返す（機能自体は`server_not_configured`にしない）。
+- **決まった形のメモ・JSONの取り込み**（クライアントだけ）：`Core.memoBlocksToProposals`。時刻は`parseMemo`が読んだもの、費用は`Core.parseCostsFromLine`が文章から拾う（`1,500円`・`¥1500`・`＄12`・`12ドル`・`€3.5`など、お金の印が付いているものだけ。ただの数字は拾わない。見出しに書かれた金額は見出しから取り除く）。GoogleマップのURLは地図、それ以外のURLはお店のURL。**有料の場所検索は自動では走らせない**（無料の経路のため）。場所は確認画面の各候補の「場所を探す」（スクショと同じ`/places/search`・`/places/details`。探す欄の初期値は見出し）。
+
+### エンドポイント（変更）
+
+| | 役目 | 変更 |
+|---|---|---|
+| `POST /trips/:id/voice-scan` | 音声→候補（保存しない） | **新規**。本文は録音（`x-voice-meta`に`{email,notes,date,branchId}`。`date`が空なら複数日）。応答`{items,dropped,transcript,dates,usage}` |
+| `POST /trips/:id/text-scan` | メモ（AI）→候補（保存しない） | **新規**。JSON`{text,notes,email,date,branchId}` |
+| `POST /trips/:id/import-blocks` | 確認後の保存（3つ共通） | **新規名**。旧名`/screenshot-blocks`も同じ処理。`branchId`・`transcript`/`transcriptDate`・`shopUrl`を受ける。上限100件 |
+| `POST /trips/:id/screenshot-scan` | スクショ→候補 | `branchId`を受ける |
+| `voice-entries`・`text-entries`（1日／複数日）・`memo-blocks` | 旧・直接保存 | **残す**（古いアプリ用）。今のアプリは使わない |
+
+マイグレーションは**不要**（既存の列だけ。`entries.shop_url`・`blocks.branch_id`は既にある）。0033は使っていない。
+
+### 枠・取り消し・文字起こし
+
+- 枠の消費は今までどおり：音声＝音声の枠（文字起こし〜整理が成功して候補ができたあとに1回）、メモ（AI）＝メモの枠、決まった形のメモ・JSON＝使わない。`voice-scan`・`text-scan`が候補を返した時点で1回消費し、**確認画面で取り消しても戻らない**（AIはすでに動いたため）。画面に「やめると保存されません。AIによる整理はすでに行ったため、今月の利用回数は戻りません」と書く。
+- 音声の**文字起こし**は、これまでどおりその日の欄（`day_infos.voice_transcript`）に残す。ただし保存のタイミングを「AIが整理した直後」から「確認画面で追加したとき」に移した（`import-blocks`の`transcript`／`transcriptDate`）。取り消したら何も残らない（文字起こしも消える）。メモ（AI）の元の文章も、1日だけの取り込みでは従来どおり同じ欄に残す。複数日・別行動では残さない（複数日は日が決まらないため。別行動は、その日の欄がみんなに見える情報で、別行動の中身が漏れるため）。
+
+### サブリクエストの見積もり（`estimateProposalSubrequests`）
+
+| | 文字起こし | OpenAI | 場所検索 | D1 | 合計（最大） |
+|---|---|---|---|---|---|
+| 音声 | 2（Workers AI→だめならOpenAI） | 2（切れたときの再試行） | 12 | 12（別行動は16） | 28（別行動32） |
+| メモ（AI） | 0 | 2 | 12 | 12（別行動は16） | 26（別行動30） |
+
+スクショは従来どおり（別行動のときはD1が約4回増える。`estimateSubrequests(…, {branch:true})`）。いずれも50回以内。テストで、モックしたfetchの呼び出し（OpenAI1・場所検索は名前があるものだけ）とD1のアクセス回数を数えて確認している。
+
+### 別行動（自分だけの道）に入れる
+
+`docs/adr/0021`の追記を参照。3つの取り込みとも、自分の道を見ていて選んでいる日が自分の別行動の中なら、別行動に入る。確認画面に「自分だけの道（<名前>）に追加」と出し、日付は別行動の日々から選び、時刻は別行動の時間帯の中だけ。サーバーは`branchId`付きの`*-scan`・`import-blocks`で、持ち主（セッション）だけを通し、保存のとき`validateBranchBlockPlacement`で日付・時刻を検証し直す（外れた項目は`errors`で返して保存しない）。
+
+### 確認画面
+
+スクショ専用だった画面（`ssResult`）を、独立した画面`importConfirm`に移し、3つ（と自分のAIの答え）で共有する。画面の見出しと「スクショから／音声から／メモから」の印だけが違う。費用は「＋ 費用を追加」で足せる（分からなかった費用を本人が入れられる）。やめる／戻るは保存せずに入力の画面へ戻る。
+
+### 避けたこと
+
+- **決まった形のメモで、有料の場所検索を自動で走らせる**こと（無料の経路だったため。場所は本人が「場所を探す」で選ぶ）。
+- **話していない時刻・金額・場所を作る**こと。宿のチェックイン15:00の既定も、音声・メモでは付けない（スクショの予約画面には書かれているのが普通だが、話には無い）。会場の推測（`placeGuessed`）も、音声・メモでは認めない。
+- **音声の確認画面だけ別に作る**こと。画面は1つに統合した。
+- **別行動の文字起こしを共有のDayInfoに残す**こと。
+
+### 検証した／していないこと（この追記ぶん）
+
+- 検証した：`worker/test/import-proposals.test.mjs`（「10時に浅草寺、ランチは天丼1500円、そのあとスカイツリー」のモックのAI出力で、時刻・費用・場所が取れる／分からない項目は空のまま／壊れた時刻・金額は捨てる／複数日の日付／別行動の時間帯の警告と保存前の検証／URL／場所検索の上限とサブリクエストの見積もり）、`worker/test/import-handler.test.mjs`（`node:sqlite`の本物のSQLiteの上で、`text-scan`・`voice-scan`・`screenshot-scan`・`import-blocks`をWorkerの入口から通し。OpenAI・Placesはモック。何も保存しない／枠の消費／fetchとD1の回数／別行動の持ち主だけ・日程外・時間帯外／保存時の`branch_id`・文字起こし・費用・お店のURL・座標）、`test/data.test.js`（`parseCostsFromLine`・`memoBlocksToProposals`・`importTargetBranch`・別行動の保存前の検証）。ブラウザでの確認画面の通し操作は、ローカルの静的サーバー＋モックAPIで、決まった形のメモ（場所を探す→保存）・メモ（AI）・別行動（時間帯の外の警告→時刻を直して保存）を確かめた。
+- **していない**：本物のOpenAI・Vision・Places・D1への呼び出し、音声の実際の録音と文字起こし（ブラウザの確認画面は録音を使わない経路で確かめた。`test/voice.smoke.js`は新しい流れに合わせて書き換えたが、この環境にplaywrightが無く実行していない）、スクショ画像を選ぶ操作の画面確認、iOSアプリ（WKWebView）での動作、Workers Freeでの実際のサブリクエスト数、日をまたぐ別行動の画面上の通し操作。
