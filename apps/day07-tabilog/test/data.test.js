@@ -2818,5 +2818,13 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   ok('buildAiImportPrompt: 「日程のいずれか」と限る古い言い回しは無い', prompt.indexOf('のいずれか。') === -1 || prompt.indexOf('いずれかに') === -1);
 })();
 
+/* ---- 地図に図形が無い小さな国も大陸に入れる（2026-09-30：シンガポールが「その他」になっていた） ---- */
+(function () {
+  eq('alpha2ForCountryName: シンガポール→SG→アジア', [T.alpha2ForCountryName('シンガポール'), T.continentForAlpha2(T.alpha2ForCountryName('シンガポール'))], ['SG', 'アジア']);
+  eq('alpha2ForCountryName: モルディブ・マルタも引ける', [T.continentForAlpha2(T.alpha2ForCountryName('モルディブ')), T.continentForAlpha2(T.alpha2ForCountryName('マルタ'))], ['アジア', 'ヨーロッパ']);
+  eq('alpha2ForCountryName: 香港は決め打ちのまま', T.alpha2ForCountryName('香港'), 'HK');
+  eq('alpha2ForCountryName: 知らない名前はnull', T.alpha2ForCountryName('存在しない国'), null);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
