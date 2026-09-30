@@ -25,6 +25,7 @@ import {
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
+import { validateBranchInput, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
 import {
   PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, randomHex,
   pkceChallenge, buildAuthorizeUrl, buildAppleClientSecret, decodeJwtPayload, checkIdTokenClaims, extractProfile, revokeAppleTokens,
@@ -271,7 +272,17 @@ async function getTrip(id, env, headers) {
   const days = dayRows.map(rowToDayInfo);
   const { results: memberRows } = await env.DB.prepare("SELECT * FROM trip_members WHERE trip_id = ?").bind(id).all();
   const members = memberRows.map(rowToMember);
-  return json({ trip: rowToTrip(tripRow), blocks, days, members }, 200, headers);
+  // 自分だけの道（別行動の分岐、migrations/0030〜）。テーブルがまだ無い環境では「分岐なし」として返す
+  // （マイグレーション前にデプロイしても旅行が開けなくなるのを避ける。docs/adr/0021）
+  let branches = [];
+  try {
+    const { results: branchRows } = await env.DB.prepare(
+      "SELECT b.*, a.name AS owner_name FROM branches b LEFT JOIN accounts a ON a.account_id = b.account_id " +
+      "WHERE b.trip_id = ? ORDER BY b.date ASC, b.start_time ASC"
+    ).bind(id).all();
+    branches = branchRows.map(rowToBranch);
+  } catch { /* branchesテーブルが無い */ }
+  return json({ trip: rowToTrip(tripRow), blocks, days, members, branches }, 200, headers);
 }
 
 async function updateTrip(id, request, env, headers, ctx) {
@@ -312,6 +323,11 @@ async function updateTrip(id, request, env, headers, ctx) {
     // 旅行の更新と日付の移動を1つのbatch（D1では1トランザクション）で行い、途中で止まって
     // 予定の半分だけがずれた状態を残さない。
     await env.DB.batch([tripUpdate, ...shiftTripDateStatements(env, id, shiftDays, next.updated_at)]);
+    // 分岐（別行動）の日付もいっしょにずらす（分岐の中の予定はblocksの文でずれている。テーブルが無ければ何もしない）
+    try {
+      await env.DB.prepare("UPDATE branches SET date = date(date, ?), updated_at = ? WHERE trip_id = ? AND date != ''")
+        .bind((shiftDays > 0 ? "+" : "") + shiftDays + " days", next.updated_at, id).run();
+    } catch { /* branchesテーブルが無い */ }
     if (ctx) ctx.waitUntil(refetchShiftedWeather(env, id));
   } else {
     await tripUpdate.run();
@@ -367,6 +383,7 @@ async function deleteTrip(id, env, headers) {
     await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(b.id).run();
   }
   await env.DB.prepare("DELETE FROM blocks WHERE trip_id = ?").bind(id).run();
+  try { await env.DB.prepare("DELETE FROM branches WHERE trip_id = ?").bind(id).run(); } catch { /* branchesテーブルが無い */ }
   await env.DB.prepare("DELETE FROM day_infos WHERE trip_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE trip_id = ?").bind(id).run();
   await deleteSocialForTrip(env, id);
@@ -394,6 +411,8 @@ function validBlockInput(x) {
   // moveMinutes：移動の予定の移動時間（分）。0は未入力（v19）
   if (x.moveMinutes !== undefined && !(Number.isInteger(x.moveMinutes) && x.moveMinutes >= 0 && x.moveMinutes <= 14400)) return false;
   if (x.tzOverride !== undefined && x.tzOverride !== "" && x.tzOverride !== "inherit" && !TZ_OVERRIDE_RE.test(x.tzOverride)) return false;
+  // branchId：自分だけの道（別行動）の中に作る予定のとき、その分岐のid（作るときだけ意味を持つ。docs/adr/0021）
+  if (!optStr(x.branchId, 100)) return false;
   return true;
 }
 
@@ -411,6 +430,8 @@ function rowToBlock(row) {
     manualOrder: typeof row.manual_order === "number" ? row.manual_order : null,
     // 時差の区切りを手で直した値（migrations/0027〜）。列がまだ無い環境ではundefinedなので空文字にそろえる
     tzOverride: row.tz_override || "",
+    // 自分だけの道（別行動）の中の予定なら、その分岐のid。空文字は「みんなの予定」。列がまだ無い環境では空文字
+    branchId: row.branch_id || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -426,11 +447,19 @@ async function createBlock(tripId, request, env, headers) {
     return json({ error: "invalid_json" }, 400, headers);
   }
   if (!validBlockInput(data)) return json({ error: "invalid_input" }, 400, headers);
+  // 分岐（別行動）の中に作る予定は、その分岐の持ち主だけが作れる。日付は分岐の日に固定する（docs/adr/0021）
+  let branch = null;
+  if (data.branchId) {
+    branch = await findBranch(env, data.branchId);
+    if (!branch || branch.trip_id !== tripId) return json({ error: "branch_not_found" }, 404, headers);
+    const denied = await branchWriteGuard(env, request, headers, { branch_id: branch.id });
+    if (denied) return denied;
+  }
   const t = nowIso();
   const row = {
     id: uid("blk"),
     trip_id: tripId,
-    date: data.date || "",
+    date: branch ? branch.date : (data.date || ""),
     time: data.time || "",
     label: (data.label || "").trim(),
     category: data.category || "sightseeing",
@@ -439,11 +468,20 @@ async function createBlock(tripId, request, env, headers) {
     created_at: t,
     updated_at: t,
   };
-  await env.DB.prepare(
-    "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, move_minutes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
-  )
-    .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.move_minutes, row.created_at, row.updated_at)
-    .run();
+  if (branch) {
+    await env.DB.prepare(
+      "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, move_minutes, branch_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+    )
+      .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.move_minutes, branch.id, row.created_at, row.updated_at)
+      .run();
+    row.branch_id = branch.id;
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, move_minutes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    )
+      .bind(row.id, row.trip_id, row.date, row.time, row.label, row.category, row.transport, row.move_minutes, row.created_at, row.updated_at)
+      .run();
+  }
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, tripId).run();
   return json({ ...rowToBlock(row), entries: [] }, 201, headers);
 }
@@ -451,6 +489,9 @@ async function createBlock(tripId, request, env, headers) {
 async function updateBlock(id, request, env, headers) {
   const existing = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   if (!existing) return json({ error: "not_found" }, 404, headers);
+  // 分岐（別行動）の中の予定は持ち主だけが直せる（docs/adr/0021）
+  const denied = await branchWriteGuard(env, request, headers, existing);
+  if (denied) return denied;
   let data;
   try {
     data = await request.json();
@@ -460,6 +501,8 @@ async function updateBlock(id, request, env, headers) {
   if (!validBlockInput(data)) return json({ error: "invalid_input" }, 400, headers);
   const cur = rowToBlock(existing);
   const merged = { ...cur, ...data };
+  // 分岐の中の予定は、分岐の日から動かさない。どの分岐に属するかも変えない（UPDATEでbranch_idは触らない）
+  if (cur.branchId) merged.date = cur.date;
   const t = nowIso();
   await env.DB.prepare(
     "UPDATE blocks SET date=?, time=?, label=?, category=?, transport=?, move_minutes=?, updated_at=? WHERE id=?"
@@ -479,7 +522,10 @@ async function updateBlock(id, request, env, headers) {
   return json(rowToBlock(updated), 200, headers);
 }
 
-async function deleteBlock(id, env, headers) {
+async function deleteBlock(id, request, env, headers) {
+  const blockRow = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
+  const denied = await branchWriteGuard(env, request, headers, blockRow);
+  if (denied) return denied;
   const { results: entryRows } = await env.DB.prepare("SELECT id FROM entries WHERE block_id = ?").bind(id).all();
   for (const e of entryRows) {
     await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(e.id).run();
@@ -513,9 +559,17 @@ async function reorderBlocks(tripId, date, request, env, headers) {
   }
   if (!data.blockIds.every((id) => isStr(id, 100))) return json({ error: "invalid_input" }, 400, headers);
 
-  const { results: rows } = await env.DB.prepare("SELECT id FROM blocks WHERE trip_id = ? AND date = ?")
-    .bind(tripId, date)
-    .all();
+  // 並べ替えの対象は「みんなの予定」だけ（分岐の中の予定は含めない。列が無い環境では全部が対象）
+  let rows;
+  try {
+    rows = (await env.DB.prepare("SELECT id FROM blocks WHERE trip_id = ? AND date = ? AND branch_id = ''")
+      .bind(tripId, date)
+      .all()).results;
+  } catch {
+    rows = (await env.DB.prepare("SELECT id FROM blocks WHERE trip_id = ? AND date = ?")
+      .bind(tripId, date)
+      .all()).results;
+  }
   const validIds = new Set(rows.map((r) => r.id));
   // 時刻どおりでなく、手で決めた並びにする（時差の区切りがある日。v22〜）。その日の予定の並びを
   // manual_orderに0から順に入れる（created_atは変えない）
@@ -538,6 +592,163 @@ async function reorderBlocks(tripId, date, request, env, headers) {
     i++;
   }
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
+  return json({ ok: true }, 200, headers);
+}
+
+/* ---------- branches（自分だけの道＝別行動の分岐。docs/adr/0021） ----------
+ * 「この人が、この日のこの時間帯だけ、みんなと別行動した」という区間。中には、その人だけの予定
+ * （blocks.branch_id がこの分岐のid）を作れる。読むのは旅行のほかのデータと同じ（URLを知っていれば誰でも）、
+ * 作る・直す・消すのは持ち主（ログイン中のアカウント参加者）だけ。持ち主はセッション（Bearerトークン）から決める。
+ * migrations/0030を実行する前のDBでは、作ろうとすると503（branches_not_ready）を返し、読む側は「分岐なし」になる。
+ */
+
+function rowToBranch(row) {
+  return {
+    id: row.id,
+    tripId: row.trip_id,
+    accountId: row.account_id,
+    // 持ち主の名前（accounts.name）。メールアドレスは返さない
+    name: row.owner_name || "",
+    date: row.date,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    title: row.title || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function findBranch(env, id) {
+  if (!isStr(id, 100) || !id) return null;
+  try {
+    return await env.DB.prepare("SELECT * FROM branches WHERE id = ?").bind(id).first();
+  } catch {
+    return null; // branchesテーブルが無い
+  }
+}
+
+// 分岐の中の予定（blockRow.branch_idが空でないもの）を書き換えようとしている人が、その分岐の持ち主か確かめる。
+// 問題なければnull、だめならそのまま返せるエラー応答。みんなの予定（branch_idが空）は何も確かめない（今までどおり）。
+async function branchWriteGuard(env, request, headers, blockRow) {
+  if (!blockRow || !blockRow.branch_id) return null;
+  const branch = await findBranch(env, blockRow.branch_id);
+  if (!branch) return json({ error: "branch_not_found" }, 404, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  if (!canEditBranchBlock(blockRow.branch_id, branch.account_id, who.account.account_id)) {
+    return json({ error: "forbidden" }, 403, headers);
+  }
+  return null;
+}
+
+// 同じ人・同じ日の、ほかの分岐（重なりの確認用）。テーブルが無ければnull。
+async function sameDayBranchesOfOwner(env, tripId, accountId, date) {
+  try {
+    const { results } = await env.DB.prepare("SELECT * FROM branches WHERE trip_id = ? AND account_id = ? AND date = ?")
+      .bind(tripId, accountId, date).all();
+    return results;
+  } catch {
+    return null;
+  }
+}
+
+function branchInputFrom(data, base) {
+  return {
+    date: data.date !== undefined ? data.date : base.date,
+    startTime: data.startTime !== undefined ? data.startTime : base.startTime,
+    endTime: data.endTime !== undefined ? data.endTime : base.endTime,
+    title: data.title !== undefined ? data.title : base.title,
+  };
+}
+
+async function createBranch(tripId, request, env, headers) {
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const accountId = who.account.account_id;
+  // アカウント参加者だけが作れる（ゲスト参加者・参加していない人は不可）
+  const member = await env.DB.prepare("SELECT 1 AS x FROM trip_members WHERE trip_id = ? AND account_id = ?").bind(tripId, accountId).first();
+  if (!member) return json({ error: "not_member" }, 403, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  const input = branchInputFrom(data || {}, { title: "" });
+  const others = await sameDayBranchesOfOwner(env, tripId, accountId, input.date);
+  if (others === null) return json({ error: "branches_not_ready" }, 503, headers);
+  const reason = validateBranchInput(input, others.map((r) => ({ id: r.id, date: r.date, start_time: r.start_time, end_time: r.end_time })));
+  if (reason) return json({ error: reason }, 400, headers);
+  const t = nowIso();
+  const row = {
+    id: uid("br"), trip_id: tripId, account_id: accountId, date: input.date,
+    start_time: input.startTime, end_time: input.endTime, title: (input.title || "").trim(),
+    created_at: t, updated_at: t, owner_name: who.account.name || "",
+  };
+  await env.DB.prepare(
+    "INSERT INTO branches (id, trip_id, account_id, date, start_time, end_time, title, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+  ).bind(row.id, row.trip_id, row.account_id, row.date, row.start_time, row.end_time, row.title, row.created_at, row.updated_at).run();
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, tripId).run();
+  return json(rowToBranch(row), 201, headers);
+}
+
+async function updateBranch(id, request, env, headers) {
+  const existing = await findBranch(env, id);
+  if (!existing) return json({ error: "not_found" }, 404, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  if (existing.account_id !== who.account.account_id) return json({ error: "forbidden" }, 403, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  data = data || {};
+  // 日付は変えない（分岐の中の予定は分岐の日に固定されているため）。変えたいときは作り直す
+  if (data.date !== undefined && data.date !== existing.date) return json({ error: "invalid_input" }, 400, headers);
+  const base = { date: existing.date, startTime: existing.start_time, endTime: existing.end_time, title: existing.title };
+  const input = branchInputFrom(data, base);
+  const others = await sameDayBranchesOfOwner(env, existing.trip_id, existing.account_id, existing.date);
+  if (others === null) return json({ error: "branches_not_ready" }, 503, headers);
+  const reason = validateBranchInput(input, others.map((r) => ({ id: r.id, date: r.date, start_time: r.start_time, end_time: r.end_time })), id);
+  if (reason) return json({ error: reason }, 400, headers);
+  const t = nowIso();
+  await env.DB.prepare("UPDATE branches SET start_time=?, end_time=?, title=?, updated_at=? WHERE id=?")
+    .bind(input.startTime, input.endTime, (input.title || "").trim(), t, id).run();
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(t, existing.trip_id).run();
+  const updated = await env.DB.prepare("SELECT * FROM branches WHERE id = ?").bind(id).first();
+  return json(rowToBranch({ ...updated, owner_name: who.account.name || "" }), 200, headers);
+}
+
+// 分岐と、その中の予定・記録・評価・いいね・コメントを消すSQL文の列（1つのbatch＝1リクエストで済ませ、
+// 50サブリクエストの上限を気にしなくてよいようにする）。branchIdsSqlは「消す分岐のidを返すSELECT」で、
+// 中の?にはparamをそのまま入れる（アカウント削除では「この人の分岐すべて」、分岐の削除では「このid」）。
+function branchDeleteStatements(env, branchIdsSql, param) {
+  const blockIds = `SELECT id FROM blocks WHERE branch_id IN (${branchIdsSql})`;
+  const entryIds = `SELECT id FROM entries WHERE block_id IN (${blockIds})`;
+  const stmt = (sql) => env.DB.prepare(sql).bind(...new Array((sql.match(/\?/g) || []).length).fill(param));
+  return [
+    stmt(`DELETE FROM comment_reports WHERE comment_id IN (SELECT id FROM comments WHERE target_type = 'entry' AND target_id IN (${entryIds}))`),
+    stmt(`DELETE FROM comments WHERE target_type = 'entry' AND target_id IN (${entryIds})`),
+    stmt(`DELETE FROM likes WHERE target_type = 'entry' AND target_id IN (${entryIds})`),
+    stmt(`DELETE FROM ratings WHERE entry_id IN (${entryIds})`),
+    stmt(`DELETE FROM entries WHERE block_id IN (${blockIds})`),
+    stmt(`DELETE FROM blocks WHERE branch_id IN (${branchIdsSql})`),
+    stmt(`DELETE FROM branches WHERE id IN (${branchIdsSql})`),
+  ];
+}
+
+async function deleteBranch(id, request, env, headers) {
+  const existing = await findBranch(env, id);
+  if (!existing) return json({ error: "not_found" }, 404, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  if (existing.account_id !== who.account.account_id) return json({ error: "forbidden" }, 403, headers);
+  await env.DB.batch(branchDeleteStatements(env, "SELECT id FROM branches WHERE id = ?", id));
+  await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), existing.trip_id).run();
   return json({ ok: true }, 200, headers);
 }
 
@@ -701,8 +912,11 @@ function parseJsonObject(text) {
 }
 
 async function createEntry(blockId, request, env, headers, ctx) {
-  const block = await env.DB.prepare("SELECT id FROM blocks WHERE id = ?").bind(blockId).first();
+  const block = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(blockId).first();
   if (!block) return json({ error: "block_not_found" }, 404, headers);
+  // 分岐（別行動）の中の予定への記録は、持ち主だけが書ける（docs/adr/0021）
+  const denied = await branchWriteGuard(env, request, headers, block);
+  if (denied) return denied;
   let data;
   try {
     data = await request.json();
@@ -766,6 +980,9 @@ async function createEntry(blockId, request, env, headers, ctx) {
 async function updateEntry(id, request, env, headers, ctx) {
   const existing = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
   if (!existing) return json({ error: "not_found" }, 404, headers);
+  const parentBlock = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(existing.block_id).first();
+  const denied = await branchWriteGuard(env, request, headers, parentBlock);
+  if (denied) return denied;
   let data;
   try {
     data = await request.json();
@@ -821,7 +1038,13 @@ async function updateEntry(id, request, env, headers, ctx) {
   return json(rowToEntry(updated), 200, headers);
 }
 
-async function deleteEntry(id, env, headers) {
+async function deleteEntry(id, request, env, headers) {
+  const entryRow = await env.DB.prepare("SELECT block_id FROM entries WHERE id = ?").bind(id).first();
+  if (entryRow) {
+    const parentBlock = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(entryRow.block_id).first();
+    const denied = await branchWriteGuard(env, request, headers, parentBlock);
+    if (denied) return denied;
+  }
   await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(id).run();
   await deleteSocialForTarget(env, "entry", id);
   await env.DB.prepare("DELETE FROM entries WHERE id = ?").bind(id).run();
@@ -841,9 +1064,13 @@ async function moveEntry(id, request, env, headers) {
   }
   if (!isStr(data.blockId, 100)) return json({ error: "invalid_input" }, 400, headers);
 
-  const currentBlock = await env.DB.prepare("SELECT trip_id, date FROM blocks WHERE id = ?").bind(entry.block_id).first();
-  const targetBlock = await env.DB.prepare("SELECT id, trip_id, date FROM blocks WHERE id = ?").bind(data.blockId).first();
+  const currentBlock = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(entry.block_id).first();
+  const targetBlock = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(data.blockId).first();
   if (!currentBlock || !targetBlock) return json({ error: "block_not_found" }, 404, headers);
+  // 分岐（別行動）をまたぐ移動はできない。分岐の中どうしの移動は持ち主だけ（docs/adr/0021）
+  if (!canMoveEntryBetween(currentBlock.branch_id, targetBlock.branch_id)) return json({ error: "different_branch" }, 400, headers);
+  const denied = await branchWriteGuard(env, request, headers, currentBlock);
+  if (denied) return denied;
   if (targetBlock.trip_id !== currentBlock.trip_id || targetBlock.date !== currentBlock.date) {
     return json({ error: "different_day" }, 400, headers);
   }
@@ -3151,6 +3378,8 @@ async function deleteAccount(request, env, headers) {
 
   await env.DB.prepare("DELETE FROM ratings WHERE rater_email = ?").bind(email).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
+  // この人の自分だけの道（別行動）と、その中の予定・記録も消す（docs/adr/0021。テーブルが無ければ何もしない）
+  try { await env.DB.batch(branchDeleteStatements(env, "SELECT id FROM branches WHERE account_id = ?", account.account_id)); } catch { /* branchesテーブルが無い */ }
   await deleteSocialForAccount(env, account.account_id);
   await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
   // Sign in with Appleのトークンを取り消す（5.1.1(v)）。identitiesを消す前に行う。失敗しても削除は続ける。
@@ -4777,7 +5006,10 @@ export default {
 
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/blocks$/))) return createBlock(m[1], request, env, headers);
     if (method === "PATCH" && (m = path.match(/^\/blocks\/([^/]+)$/))) return updateBlock(m[1], request, env, headers);
-    if (method === "DELETE" && (m = path.match(/^\/blocks\/([^/]+)$/))) return deleteBlock(m[1], env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/blocks\/([^/]+)$/))) return deleteBlock(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/branches$/))) return createBranch(m[1], request, env, headers);
+    if (method === "PATCH" && (m = path.match(/^\/branches\/([^/]+)$/))) return updateBranch(m[1], request, env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/branches\/([^/]+)$/))) return deleteBranch(m[1], request, env, headers);
     if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/blocks\/reorder$/))) {
       return reorderBlocks(m[1], m[2], request, env, headers);
     }
@@ -4785,7 +5017,7 @@ export default {
     if (method === "POST" && (m = path.match(/^\/blocks\/([^/]+)\/entries$/))) return createEntry(m[1], request, env, headers, ctx);
     if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)$/))) return updateEntry(m[1], request, env, headers, ctx);
     if (method === "PATCH" && (m = path.match(/^\/entries\/([^/]+)\/move$/))) return moveEntry(m[1], request, env, headers);
-    if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)$/))) return deleteEntry(m[1], env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)$/))) return deleteEntry(m[1], request, env, headers);
 
     if (method === "PUT" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return setRating(m[1], request, env, headers);
     if (method === "DELETE" && (m = path.match(/^\/entries\/([^/]+)\/rating$/))) return deleteRating(m[1], request, env, headers);
