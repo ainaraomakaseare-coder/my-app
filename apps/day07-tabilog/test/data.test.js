@@ -2075,7 +2075,7 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   ok('buildVideoStory: 60地点でも最後の地点を出る時刻が道のりの秒数に収まる', stBig.wps[59].leave <= stBig.routeSec + 1e-9);
   ok('buildVideoStory: 各日の窓の中に、その日の地点への到着が収まる', stBig.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * bigPer - 1e-9 && w.arrive <= (d + 1) * bigPer + 1e-9; }));
   ok('buildVideoStory: 各地名を0.85秒以上は見せる', stBig.wps.every(function (w) { return !w.caption || w.leave - w.arrive >= 0.85; }));
-  ok('buildVideoStory: カメラのキーは時刻が単調に増える', stBig.cameraKeys.every(function (k, i) { return i === 0 || k.t > stBig.cameraKeys[i - 1].t; }));
+  ok('buildVideoStory: カメラの動きは時刻順で、重ならない', stBig.cameraMoves.every(function (m, i) { return m.dur > 0 && (i === 0 || m.t >= stBig.cameraMoves[i - 1].t + stBig.cameraMoves[i - 1].dur - 1e-9); }));
   ok('buildVideoStory: 1区間の線の点は間引かれる', (function () {
     var longPath = []; for (var q = 0; q < 2000; q++) longPath.push([35 + q * 0.0001, 139 + q * 0.0001]);
     var t2 = mkTl([mkStop('a', 35, 139), mkStop('b', 35.2, 139.2)]); t2.legs[0].path = longPath;
@@ -2115,9 +2115,9 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   eq('videoFrameAt: 1日だけの旅行では日を出さない', T.videoFrameAt(T.buildVideoStory(mkTl([mkStop('a', 35, 139), mkStop('b', 35.2, 139.2)]), {}), 5).showDay, false);
   ok('videoFrameAt: 範囲外の時刻でも落ちない', !!T.videoFrameAt(st, -5) && !!T.videoFrameAt(st, 999));
   // カメラ：全区間で、立っているピンが画面に入っている
-  ok('videoCameraAt: 導入は全体、最後も全体（同じ見え方）', (function () {
+  ok('videoCameraAt: 導入は最初の地点（縮尺13）、最後は全体', (function () {
     var a = T.videoCameraAt(st, 0), b = T.videoCameraAt(st, st.total);
-    return near(a.x, b.x) && near(a.y, b.y) && near(a.zoom, b.zoom);
+    return near(a.zoom, 13) && near(b.x, st.overview.x) && near(b.y, st.overview.y) && near(b.zoom, st.overview.zoom);
   })());
   ok('videoCameraAt: 道のりの間、移動中の先頭は画面（余白を含む）の中に入っている', (function () {
     for (var t = 1.5; t < st.total - 2; t += 0.05) {
@@ -2140,8 +2140,8 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   // 必要なタイル
   var tiles = T.videoTilesNeeded(st);
   ok('videoTilesNeeded: タイルが重複しない', (function () { var seen = {}; return tiles.every(function (t) { var k = t.z + '/' + t.x + '/' + t.y; if (seen[k]) return false; seen[k] = 1; return true; }); })());
-  ok('videoTilesNeeded: 必要なタイルの数が現実的（300枚以内）', tiles.length > 0 && tiles.length <= 300);
-  ok('videoTilesNeeded: ズームの上限（13）を超えない', tiles.every(function (t) { return t.z <= 13; }));
+  ok('videoTilesNeeded: 必要なタイルの数が現実的（400枚以内）', tiles.length > 0 && tiles.length <= 400);
+  ok('videoTilesNeeded: ズームの上限（15）を超えない', tiles.every(function (t) { return t.z <= 15; }));
   // 日付変更線をまたぐ旅（経度が±360されている）でも絵コンテができる
   var tlDate = mkTl([mkStop('羽田', 35.55, 139.78), mkStop('ロサンゼルス', 33.94, -118.4 + 360)]);
   var stDate = T.buildVideoStory(tlDate, {});
@@ -2163,8 +2163,8 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   ok('videoDurationPlan: 5日以上は全体を45秒に収め、1日ぶんは均等に縮む', [5, 8, 14, 20, 30, 100].every(function (d) { var p = T.videoDurationPlan(d); return near(p.total, 45) && near(p.perDay * d, p.routeSec) && p.perDay < 10; }));
   eq('videoDurationPlan: 20日は1日2.075秒', T.videoDurationPlan(20).perDay, 2.075);
   eq('videoDurationPlan: 日数が不正でも1日として扱う', T.videoDurationPlan(0).total, 30);
-  eq('videoTileLimit: 30秒までは260枚', [T.videoTileLimit(15), T.videoTileLimit(30)], [260, 260]);
-  eq('videoTileLimit: 長いほど増える（140秒で920枚）', [T.videoTileLimit(43.5), T.videoTileLimit(140)], [341, 920]);
+  eq('videoTileLimit: 30秒までは800枚', [T.videoTileLimit(15), T.videoTileLimit(30)], [800, 800]);
+  eq('videoTileLimit: 長いほど増える（45秒で1250枚）', [T.videoTileLimit(43.5), T.videoTileLimit(45)], [1205, 1250]);
   // 地名の数：2時間に1つ
   eq('videoCaptionCount: 8:00〜22:00（14時間）は7つ', T.videoCaptionCount(14 * 60, 30), 7);
   eq('videoCaptionCount: 短い日でも最低1つ', T.videoCaptionCount(30, 10), 1);
@@ -2546,6 +2546,166 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
     { id: 'c2', date: '2026-10-01', entries: [{ costItems: [{ label: '入館料', amount: 500 }] }], branchId: 'br1' }
   ];
   eq('分岐の予定の費用も合計に入る（合わせて渡したとき）', T.tripTotalCost(costed), 1500);
+})();
+
+/* ---- 動画でシェア：カメラは「地図でふりかえる」と同じ規則（Leaflet の fitBounds／flyTo と同じ計算。2026-09-30） ---- */
+(function () {
+  function near(a, b, eps) { return Math.abs(a - b) <= (eps || 1e-6); }
+  var PAD = { top: 230, right: 80, bottom: 420, left: 80 };
+  // cameraFitView（Leafletの_getBoundsCenterZoomと同じ）
+  eq('cameraFitView: 点が1つだけなら上限の縮尺', T.cameraFitView([[47.37, 8.54]], 720, 1280, PAD, { maxZoom: 13 }).zoom, 13);
+  eq('cameraFitView: 点が無ければ下限', T.cameraFitView([], 720, 1280, PAD, { minZoom: 2 }).zoom, 2);
+  var zf = T.cameraFitView([[47.0, 8.0], [46.0, 9.5]], 720, 1280, PAD, { maxZoom: 15 });
+  ok('cameraFitView: 縮尺は整数刻み（Leafletのzoomsnap=1）', zf.zoom === Math.floor(zf.zoom));
+  var zc = T.cameraFitView([[47.0, 8.0], [46.0, 9.5]], 720, 1280, PAD, { maxZoom: 15, snap: 0 });
+  ok('cameraFitView: 刻まなければ連続。刻んだ縮尺はそれ以下で、1段未満しか違わない', zc.zoom >= zf.zoom && zc.zoom - zf.zoom < 1);
+  ok('cameraFitView: 刻んだ縮尺でも、点は余白の内側に収まる', [[47.0, 8.0], [46.0, 9.5]].every(function (p) {
+    var q = T.videoProject(zf, 720, 1280, p[0], p[1]);
+    return q.x >= 80 - 1e-6 && q.x <= 640 + 1e-6 && q.y >= 230 - 1e-6 && q.y <= 860 + 1e-6;
+  }));
+  ok('cameraFitView: 刻まないときは videoFitView と同じ', (function () {
+    var a = T.cameraFitView([[47.0, 8.0], [46.0, 9.5]], 720, 1280, PAD, { minZoom: 2, maxZoom: 15, snap: 0 }), b = T.videoFitView([[47.0, 8.0], [46.0, 9.5]], 720, 1280, PAD, 2, 15);
+    return near(a.x, b.x) && near(a.y, b.y) && near(a.zoom, b.zoom);
+  })());
+  eq('cameraFitView: 上限より寄らない', T.cameraFitView([[47.0, 8.0], [47.001, 8.001]], 720, 1280, PAD, { maxZoom: 15 }).zoom, 15);
+  eq('cameraFitView: 世界規模でも下限より引かない', T.cameraFitView([[-60, -170], [60, 170]], 720, 1280, PAD, { minZoom: 2, maxZoom: 15 }).zoom, 2);
+  ok('cameraFitView: 1点は余白を除いた領域の真ん中に来る', (function () {
+    var v = T.cameraFitView([[47.37, 8.54]], 720, 1280, PAD, { maxZoom: 13 }), q = T.videoProject(v, 720, 1280, 47.37, 8.54);
+    return near(q.x, 360, 0.01) && near(q.y, 230 + (1280 - 230 - 420) / 2, 0.01);
+  })());
+  // ふりかえりの画面（幅390・高さ800）と余白でも、点が余白の内側に入る
+  ok('cameraFitView: 画面の大きさ・余白が違っても収まる（ふりかえりの画面）', (function () {
+    var pad2 = { left: 36, top: 110, right: 36, bottom: 200 }, pts2 = [[35.68, 139.76], [34.7, 135.5]];
+    var v = T.cameraFitView(pts2, 390, 800, pad2, { maxZoom: 15 });
+    return pts2.every(function (p) { var q = T.videoProject(v, 390, 800, p[0], p[1]); return q.x >= 36 - 1e-6 && q.x <= 354 + 1e-6 && q.y >= 110 - 1e-6 && q.y <= 600 + 1e-6; });
+  })());
+  // cameraFlyAt（Leafletのflyto）
+  var A = { x: 0.5, y: 0.3, zoom: 12 }, B = { x: 0.5004, y: 0.3002, zoom: 12 }, FAR = { x: 0.9, y: 0.4, zoom: 12 };
+  eq('cameraFlyAt: 始まりは出発の見え方、終わりは目的地', [T.cameraFlyAt(A, FAR, 0, 1280), T.cameraFlyAt(A, FAR, 1, 1280)], [{ x: 0.5, y: 0.3, zoom: 12 }, { x: 0.9, y: 0.4, zoom: 12 }]);
+  ok('cameraFlyAt: 終わりのすぐ手前は目的地にほぼ一致（式が正しく閉じる）', [[A, B], [A, FAR], [{ x: 0.5, y: 0.3, zoom: 3 }, { x: 0.52, y: 0.31, zoom: 12 }], [{ x: 0.5, y: 0.3, zoom: 12 }, { x: 0.5, y: 0.3, zoom: 4 }]].every(function (p) {
+    var c = T.cameraFlyAt(p[0], p[1], 0.9999, 1280);
+    return near(c.x, p[1].x, 1e-4) && near(c.y, p[1].y, 1e-4) && near(c.zoom, p[1].zoom, 0.02);
+  }));
+  ok('cameraFlyAt: 遠くへ同じ縮尺で移るときは、いったん引いてから寄る', (function () {
+    var minZ = 99;
+    for (var u = 0.02; u < 1; u += 0.02) minZ = Math.min(minZ, T.cameraFlyAt(A, FAR, u, 1280).zoom);
+    return minZ < 12 - 2;
+  })());
+  ok('cameraFlyAt: 近くへ移るときは（ほとんど）引かない', (function () {
+    var minZ = 99;
+    for (var u = 0.02; u < 1; u += 0.02) minZ = Math.min(minZ, T.cameraFlyAt(A, B, u, 1280).zoom);
+    return minZ > 11.5;
+  })());
+  ok('cameraFlyAt: 引いた見え方から同じ場所へ寄るときは、縮尺が増えるだけ（行き過ぎない）', (function () {
+    var last = 2, from = { x: 0.5, y: 0.3, zoom: 2 }, to = { x: 0.5, y: 0.3, zoom: 12 };
+    for (var u = 0.02; u <= 1; u += 0.02) { var z = T.cameraFlyAt(from, to, u, 1280).zoom; if (z < last - 1e-9 || z > 12 + 1e-9) return false; last = z; }
+    return true;
+  })());
+  ok('cameraFlyAt: 中心は目的地へ向かって進む（行き過ぎない）', (function () {
+    var last = 0.5;
+    for (var u = 0.02; u <= 1; u += 0.02) { var x = T.cameraFlyAt(A, FAR, u, 1280).x; if (x < last - 1e-9 || x > 0.9 + 1e-9) return false; last = x; }
+    return true;
+  })());
+  eq('cameraFlyAt: 出発と目的地が同じなら動かない', T.cameraFlyAt(A, A, 0.5, 1280), { x: 0.5, y: 0.3, zoom: 12 });
+
+  // 動画のカメラ：スイス・ベルギー旅行に似た合成データ（8日）
+  function stop(label, lat, lng, day, minute, extra) {
+    return Object.assign({ label: label, lat: lat, lng: lng, located: true, dayNumber: day, minute: minute, photos: [], captions: [] }, extra || {});
+  }
+  var swiss = [
+    stop('羽田空港出発', 35.55, 139.78, 1, 120), stop('仁川国際空港', 37.46, 126.44, 1, 300), stop('チューリッヒ空港', 47.46, 8.55, 1, 840),
+    stop('チューリッヒ駅', 47.378, 8.54, 1, 960), stop('ルツェルン', 47.05, 8.31, 1, 1080), stop('グリンデルヴァルトのホテル', 46.62, 8.04, 1, 1260),
+    stop('ユングフラウヨッホ', 46.548, 7.985, 2, 540), stop('チーズフォンデュ', 46.626, 8.033, 2, 1080), stop('ツェルマットへの移動', 46.63, 8.03, 2, 1200),
+    stop('ツェルマット駅', 46.02, 7.747, 2, 1320), stop('日本人橋', 46.03, 7.75, 3, 540), stop('マッターホルン周辺', 46.0, 7.74, 3, 720),
+    stop('リッフェルホテル', 45.999, 7.77, 3, 1020), stop('ツェルマット下山', 46.02, 7.747, 4, 600), stop('ジュネーブ駅', 46.21, 6.142, 4, 900),
+    stop('ジュネーブ市内', 46.2, 6.15, 5, 600), stop('ジュネーブ空港', 46.238, 6.109, 5, 900), stop('ブリュッセル', 50.845, 4.36, 7, 600),
+    stop('上海', 31.14, 121.8, 8, 600)
+  ];
+  var swissTl = { stops: swiss, keyframes: [{ t: 0, r: 0 }], totalReal: 10, legs: [] };
+  for (var si = 1; si < swiss.length; si++) {
+    var sa = swiss[si - 1], sb = swiss[si], far = T.distanceKm(sa, sb) > 500;
+    swissTl.legs.push({ from: si - 1, to: si, transport: far ? 'plane' : 'rail', path: [[sa.lat, sa.lng], [sb.lat, sb.lng]] });
+  }
+  var sw = T.buildVideoStory(swissTl, { photos: false });
+  var swMoves = sw.cameraMoves;
+  ok('動画のカメラ: 最初は最初の地点を縮尺13で', near(sw.cameraStart.zoom, 13) && (function () {
+    var q = T.videoProject(sw.cameraStart, 720, 1280, 35.55, 139.78); return near(q.x, 360, 0.5);
+  })());
+  ok('動画のカメラ: 動きは時刻順で重ならず、動画の外へはみ出さない', swMoves.length > 0 && swMoves.every(function (m, i) {
+    return m.dur >= 0.3 - 1e-9 && m.dur <= 0.8 + 1e-9 && m.t >= -1e-9 && m.t + m.dur <= sw.total + 1e-9 && (i === 0 || m.t >= swMoves[i - 1].t + swMoves[i - 1].dur - 1e-9);
+  }));
+  ok('動画のカメラ: 止まっているときの縮尺は整数（最後の全体は除く。世界規模は下限2.33）で、2.33〜15以内', swMoves.slice(0, -1).every(function (m) { return (m.to.zoom === Math.round(m.to.zoom) || near(m.to.zoom, 2.33)) && m.to.zoom <= 15 && m.to.zoom >= 2.33 - 1e-9; }));
+  ok('動画のカメラ: 世界規模まで引いても、地図の外（上下）は映らない', (function () {
+    for (var t = 0; t <= sw.total; t += 0.05) {
+      var c = T.videoCameraAt(sw, t), half = 640 / T.videoWorldScale(c.zoom);
+      if (c.y - half < -1e-9 || c.y + half > 1 + 1e-9) return false;
+    }
+    return true;
+  })());
+  ok('動画のカメラ: 飛行機の区間は、その区間が入るだけ引く（世界まで引かない）', (function () {
+    var c = T.videoCameraAt(sw, sw.introSec + sw.segs[1].moveStart + 0.05); // 仁川→チューリッヒ（約8,800km）
+    return c.zoom >= 2 && c.zoom <= 3;
+  })());
+  ok('動画のカメラ: 羽田→仁川（約1,200km）は仁川→チューリッヒより寄る', (function () {
+    var c1 = T.videoCameraAt(sw, sw.introSec + sw.segs[0].moveStart + 0.05), c2 = T.videoCameraAt(sw, sw.introSec + sw.segs[1].moveStart + 0.05);
+    return c1.zoom > c2.zoom;
+  })());
+  ok('動画のカメラ: 飛行機で引いたあと、着いた地点へ12まで寄せ直す', (function () {
+    var c = T.videoCameraAt(sw, sw.introSec + sw.wps[2].arrive + 1.0 + 0.05); // チューリッヒ空港に着いて、寄せ直し（0.2秒後から0.8秒）が終わったころ
+    return c.zoom >= 12 - 0.05;
+  })());
+  ok('動画のカメラ: 区間の動き出しには、その区間の両端が余白の内側に入っている（近い区間は、まとめた見え方の中）', sw.segs.every(function (sg, k) {
+    var c = T.videoCameraAt(sw, sw.introSec + sg.moveStart + 0.05);
+    return [sw.wps[k], sw.wps[k + 1]].every(function (w) {
+      var q = T.videoProject(c, 720, 1280, w.lat, w.lng);
+      return q.x >= 80 - 1 && q.x <= 640 + 1 && q.y >= 230 - 1 && q.y <= 860 + 1;
+    }) || T.distanceKm(sw.wps[k], sw.wps[k + 1]) < 60;
+  }));
+  ok('動画のカメラ: 着いた地点へ寄せ直す間は、吹き出しを出さない（落ち着いてから）', sw.wps.every(function (w) {
+    return !w.caption || typeof w.capStart !== 'number' || (w.capStart >= w.arrive - 1e-9 && w.capStart <= w.capEnd - 0.6 + 1e-9);
+  }));
+  ok('動画のカメラ: 最後は全体に引く', (function () {
+    var c = T.videoCameraAt(sw, sw.total);
+    return near(c.zoom, sw.overview.zoom, 1e-6) && near(c.x, sw.overview.x, 1e-6);
+  })());
+  ok('動画のカメラ: 全期間の縮尺が2.33〜15に収まる', (function () {
+    for (var t = 0; t <= sw.total; t += 0.05) { var c = T.videoCameraAt(sw, t); if (!(c.zoom >= 2.33 - 1e-9 && c.zoom <= 15 + 1e-9)) return false; }
+    return true;
+  })());
+  // 寄る上限を下げたとき（タイルが多すぎるとき）は、全体を引くのではなく上限だけが下がる
+  var sw12 = T.buildVideoStory(swissTl, { photos: false, maxZoom: 12 });
+  ok('動画のカメラ: maxZoomを下げると、止まっているときの縮尺の上限だけが下がる（広い区間はそのまま）', sw12.cameraMoves.slice(0, -1).every(function (m) { return m.to.zoom <= 12; }) &&
+    T.videoCameraAt(sw12, sw12.introSec + sw12.segs[1].moveStart + 0.05).zoom === T.videoCameraAt(sw, sw.introSec + sw.segs[1].moveStart + 0.05).zoom);
+  // タイル
+  var swTiles = T.videoTilesNeeded(sw), swTiles12 = T.videoTilesNeeded(sw12);
+  ok('動画のタイル: 8日・19地点のスイス・ベルギー旅行でも上限（' + T.videoTileLimit(sw.total) + '枚）に収まる', swTiles.length > 0 && swTiles.length <= T.videoTileLimit(sw.total));
+  ok('動画のタイル: 寄る上限を下げるとタイルが減る', swTiles12.length < swTiles.length);
+  ok('動画のタイル: 拡大縮小は0.7〜2倍に収まる', (function () {
+    for (var t = 0; t <= sw.total; t += 0.03) {
+      var c = T.videoCameraAt(sw, t), vt = T.videoViewTiles(c, 720, 1280);
+      if (vt.size / 256 > 2 + 1e-6 || vt.size / 256 < 0.7 - 1e-6) return false;
+    }
+    return true;
+  })());
+  ok('動画のタイル: 30fpsのどのコマも、必要なタイルは集めたタイルに含まれる', (function () {
+    var have = {}; swTiles.forEach(function (t) { have[t.z + '/' + t.x + '/' + t.y] = 1; });
+    for (var t = 0; t <= sw.total; t += 1 / 30) {
+      var vt = T.videoViewTiles(T.videoCameraAt(sw, t), 720, 1280);
+      if (!vt.list.every(function (q) { return have[vt.z + '/' + q.x + '/' + q.y]; })) return false;
+    }
+    return true;
+  })());
+  eq('videoViewTiles: 動いている間（fly）は縮尺を切り捨て、止まっているときは四捨五入', [T.videoViewTiles({ x: 0.5, y: 0.5, zoom: 7.9, fly: true }, 720, 1280).z, T.videoViewTiles({ x: 0.5, y: 0.5, zoom: 7.9 }, 720, 1280).z], [7, 8]);
+  ok('videoViewTiles: 余白を付けるとタイルが増える', T.videoViewTiles({ x: 0.5, y: 0.5, zoom: 8 }, 720, 1280, 200).list.length > T.videoViewTiles({ x: 0.5, y: 0.5, zoom: 8 }, 720, 1280).list.length);
+  // 動画に出さない地点：着いた地点へ寄せ直さない（引いたまま。その場所を映さない）
+  var swHidden = swiss.map(function (s, i) { return i === 2 ? Object.assign({}, s, { videoExclude: true }) : s; });
+  var swH = T.buildVideoStory({ stops: swHidden, keyframes: [{ t: 0, r: 0 }], totalReal: 10, legs: swissTl.legs }, {});
+  var onHidden = function (st) {
+    return st.cameraMoves.filter(function (m) { var q = T.videoProject(m.to, 720, 1280, 47.46, 8.55); return m.to.zoom >= 12 && Math.abs(q.x - 360) < 1 && Math.abs(q.y - 545) < 1; }).length;
+  };
+  eq('動画のカメラ: 動画に出さない地点へは寄せ直さない（出す地点ならチューリッヒ空港へ寄せ直す）', [onHidden(sw), onHidden(swH)], [1, 0]);
+  // ふりかえりと共有する値
+  eq('ふりかえりと動画で共有するカメラの値', [T.REPLAY_CAMERA_LEAD_SEC, T.REPLAY_TINY_LEG_KM, T.REPLAY_LEG_MAX_ZOOM, T.REPLAY_ZOOMED_OUT, T.REPLAY_ARRIVAL_MIN_ZOOM, T.REPLAY_START_ZOOM], [0.9, 0.4, 15, 10, 12, 13]);
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
