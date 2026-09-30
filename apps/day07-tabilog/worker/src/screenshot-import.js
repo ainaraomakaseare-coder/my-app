@@ -13,12 +13,17 @@
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
+import { validateBranchBlockPlacement } from "./branches.js";
 
 /* ---------- 上限（Workers Freeのサブリクエスト50回以内に収めるための数字） ---------- */
 
 export const SCREENSHOT_MAX_IMAGES = 10; // 1回の取り込みで送れる画像の枚数
 export const SCREENSHOT_MAX_PLACE_LOOKUPS = 12; // 場所検索（Text Search）を呼ぶ回数の上限
 export const SCREENSHOT_MAX_ITEMS = 30; // 確認画面に出す予定の上限（宿泊の泊数展開を含む）
+// 音声・メモ（AI）の候補の上限。スクショより長い文章から作るので多めにする（docs/adr/0022 2026-09-30追記）
+export const PROPOSAL_MAX_ITEMS = 60;
+// 確認画面から保存できる件数の上限（決まった形のメモは最大100件。docs/adr/0002）
+export const IMPORT_MAX_ITEMS = 100;
 export const SCREENSHOT_MAX_NIGHTS = 14; // 宿泊1件を何泊ぶんの予定に展開するかの上限
 export const VISION_MAX_IMAGES_PER_REQUEST = 16; // Cloud Visionが1リクエストで受け付ける画像の上限
 export const WORKERS_FREE_SUBREQUEST_LIMIT = 50; // Workers Freeの1リクエストあたりのサブリクエスト上限
@@ -338,11 +343,31 @@ function cleanPlace(x) { return cleanStr(x, 100); }
 // - dropped：捨てた候補の数（見出しが作れない・壊れたもの）
 // ctx：{ trip:{startDate,endDate}, imageCount, today }
 export function normalizeScreenshotResult(parsed, ctx) {
+  return normalizeProposalItems(parsed && Array.isArray(parsed.items) ? parsed.items : [], ctx, parsed);
+}
+
+// スクショ・音声・メモ（AI）が共有する、候補の検証と補正（docs/adr/0022 2026-09-30追記）。
+// ctx（すべて任意。無ければスクショの動き）：
+// - trip:{startDate,endDate}／today／imageCount（0なら画像なし＝sourceImageはnull）
+// - fixedDate：この日に固定する（音声・メモの「この日」モード。AIの日付は見ない）
+// - allowedDates：候補の日付がこの中に無ければ、defaultDate（無ければ先頭）に置いて警告する
+//   （音声・メモの複数日モード・別行動の日々）
+// - defaultDate：日付が読めなかったときの置き場所（無ければ旅行の初日）
+// - noteMax：note（記録のひとこと）の最大文字数（スクショ300／音声・メモ1000）
+// - maxItems：候補の上限
+// - allowGuess：会場の推測（placeGuessed）を許すか。音声・メモはfalse＝話していない場所は作らない
+// - checkInDefaults：宿の時刻が無いときに15:00などの目安を入れるか。音声・メモはfalse＝分からない時刻は空のまま
+// - branch：自分だけの道（別行動）に入れるとき、その分岐（date・endDate・startTime・endTime）。時間帯の外は警告する
+export function normalizeProposalItems(rawItems, ctx, parsed) {
   const trip = ctx.trip || {};
-  const rawItems = parsed && Array.isArray(parsed.items) ? parsed.items : [];
   const items = [];
   let dropped = 0;
   const { start } = tripDatesOf(trip);
+  const imageCount = ctx.imageCount || 0;
+  const allowed = Array.isArray(ctx.allowedDates) && ctx.allowedDates.length ? ctx.allowedDates : null;
+  const fallbackDate = ctx.fixedDate || ctx.defaultDate || (allowed ? allowed[0] : "") || start || "";
+  const noteMax = ctx.noteMax || 300;
+  const allowGuess = ctx.allowGuess !== false;
 
   for (const r of rawItems) {
     if (!r || typeof r !== "object") { dropped++; continue; }
@@ -351,7 +376,7 @@ export function normalizeScreenshotResult(parsed, ctx) {
     let transport = SCREENSHOT_TRANSPORTS.includes(r.transport) ? r.transport : "";
     if (transport && category !== "transport") category = "transport";
     if (category !== "transport") transport = "";
-    const image = Number.isInteger(r.image) && r.image >= 1 && r.image <= ctx.imageCount ? r.image - 1 : null;
+    const image = Number.isInteger(r.image) && r.image >= 1 && r.image <= imageCount ? r.image - 1 : null;
 
     const fromPlace = category === "transport" ? cleanPlace(r.fromPlace) : "";
     const toPlace = category === "transport" ? cleanPlace(r.toPlace) : "";
@@ -371,29 +396,35 @@ export function normalizeScreenshotResult(parsed, ctx) {
     const arriveTime = category === "transport" ? normalizeTime(r.arriveTime) : "";
     let time = normalizeTime(r.time) || departTime;
 
-    // 日付：読めなければ空のままにせず「旅行の初日」に置き、警告して確認してもらう
-    const resolved = resolveDate(r.date, trip, ctx.today);
-    let date = resolved ? resolved.date : "";
-    if (!date) {
-      date = start || "";
-      warnings.push("日付が読み取れませんでした。日付を確認してください");
-    } else if (resolved.yearInferred) {
-      warnings.push("年が書かれていないため、旅行の日程から" + date.slice(0, 4) + "年としました");
+    // 日付：読めなければ空のままにせず「旅行の初日」（別行動なら別行動の初日）に置き、警告して確認してもらう
+    let date = "";
+    if (ctx.fixedDate) {
+      date = ctx.fixedDate;
+    } else {
+      const resolved = resolveDate(r.date, trip, ctx.today);
+      date = resolved ? resolved.date : "";
+      if (date && allowed && !allowed.includes(date)) date = ""; // 対象の日々に無い日付は信用しない
+      if (!date) {
+        date = fallbackDate;
+        warnings.push("日付が読み取れませんでした。日付を確認してください");
+      } else if (resolved.yearInferred) {
+        warnings.push("年が書かれていないため、旅行の日程から" + date.slice(0, 4) + "年としました");
+      }
     }
     if (date && !dateInTrip(date, trip)) warnings.push("旅行の日程の外の日付です。日付を直さないと追加できません");
 
     let arriveDate = "";
     if (category === "transport") {
-      const ra = resolveDate(r.arriveDate, trip, ctx.today);
-      arriveDate = ra && ra.date >= date ? ra.date : date;
+      const ra = ctx.fixedDate ? null : resolveDate(r.arriveDate, trip, ctx.today);
+      arriveDate = ra && ra.date >= date && (!allowed || allowed.includes(ra.date)) ? ra.date : date;
     }
 
     const costItems = cleanCostItems(r.costItems);
-    let note = cleanStr(r.note, 300);
+    let note = cleanStr(r.note, noteMax);
     if (category === "transport" && arriveDate && arriveDate > date) {
       note = (note ? note + " " : "") + "到着は" + Number(arriveDate.slice(5, 7)) + "/" + Number(arriveDate.slice(8, 10)) + "。";
     }
-    const placeGuessed = r.placeGuessed === true && !!place;
+    const placeGuessed = allowGuess && r.placeGuessed === true && !!place;
     if (placeGuessed) warnings.push("会場を推測しました。場所を確認してください");
 
     const item = {
@@ -402,6 +433,11 @@ export function normalizeScreenshotResult(parsed, ctx) {
       departTime, arriveTime, arriveDate,
       costItems, note, warnings, timeEstimated: false, nightIndex: 0,
     };
+    // 話した／書いたURL（音声・メモ）：Googleの地図のURLなら地図に、そのほかのURLはお店のURLにする
+    const mapUrl = cleanStr(r.mapUrl, 500);
+    if (mapUrl && validMapUrl(mapUrl)) item.mapUrl = mapUrl;
+    const shopUrl = cleanStr(r.shopUrl, 500);
+    if (shopUrl && SHOP_URL_RE.test(shopUrl)) item.shopUrl = shopUrl;
 
     // 宿泊：チェックアウト日までの泊数ぶんの予定に展開する（旅行詳細の「宿泊先」は泊ごとの予定で数える）
     if (category === "lodging") {
@@ -422,21 +458,35 @@ export function normalizeScreenshotResult(parsed, ctx) {
     }
   }
 
-  applyCheckInDefaults(items);
+  if (ctx.checkInDefaults !== false) applyCheckInDefaults(items);
+  if (ctx.branch) applyBranchPlacement(items, ctx.branch);
 
   const unreadable = [];
   const rawUn = parsed && Array.isArray(parsed.unreadableImages) ? parsed.unreadableImages : [];
   for (const u of rawUn) {
-    if (u && Number.isInteger(u.image) && u.image >= 1 && u.image <= ctx.imageCount) {
+    if (u && Number.isInteger(u.image) && u.image >= 1 && u.image <= imageCount) {
       unreadable.push({ image: u.image - 1, reason: "no_event" });
     }
   }
 
   // 上限。宿泊の泊数展開で超えたぶんは黙って捨てず、捨てた数に数える
+  const maxItems = ctx.maxItems || SCREENSHOT_MAX_ITEMS;
   let kept = items;
-  if (items.length > SCREENSHOT_MAX_ITEMS) { dropped += items.length - SCREENSHOT_MAX_ITEMS; kept = items.slice(0, SCREENSHOT_MAX_ITEMS); }
+  if (items.length > maxItems) { dropped += items.length - maxItems; kept = items.slice(0, maxItems); }
   kept.forEach((it, i) => { it.id = "p" + (i + 1); });
   return { items: kept, unreadable, dropped };
+}
+
+// 別行動（自分だけの道）に入れる候補の日付・時刻が、その別行動の時間帯に収まっているか確かめ、
+// 外れていれば警告を足す（直すまで追加できない。サーバーの保存時も同じ規則 validateBranchBlockPlacement）。
+// 警告は「別行動の」で始める（画面は、本人が直したあとこの種類の警告を消して数え直す）
+export function applyBranchPlacement(items, branch) {
+  for (const it of items) {
+    const reason = validateBranchBlockPlacement(branch, it.date, it.time);
+    if (reason === "date_out_of_branch") it.warnings.push("別行動の日程の外の日付です。日付を直さないと追加できません");
+    else if (reason === "time_out_of_branch") it.warnings.push("別行動の時間帯の外の時刻です。時刻を直さないと追加できません");
+  }
+  return items;
 }
 
 // 宿泊の1泊目にチェックイン時刻が無いとき、15:00にする。ただし、同じ日に到着する移動
@@ -474,6 +524,7 @@ export function collectPlaceQueries(items, max) {
   const cap = max === undefined ? SCREENSHOT_MAX_PLACE_LOOKUPS : max;
   const ranked = [];
   for (const it of items) {
+    if (it.mapUrl) continue; // 話した／書いたURLの地図があるものは探さない
     if (it.category === "transport") {
       if (it.fromPlace) ranked.push({ rank: 1, q: it.fromPlace });
       if (it.toPlace) ranked.push({ rank: 2, q: it.toPlace });
@@ -525,7 +576,7 @@ export function coordMapUrl(lat, lng) {
 export function attachPlaces(items, results) {
   const find = (q) => (q ? results[placeKey(q)] || null : null);
   for (const it of items) {
-    const main = it.category === "transport" ? find(it.fromPlace) : find(it.place);
+    const main = it.mapUrl ? null : (it.category === "transport" ? find(it.fromPlace) : find(it.place));
     if (main) {
       it.mapUrl = coordMapUrl(main.lat, main.lng);
       it.mapPlaceName = main.name;
@@ -548,6 +599,8 @@ export function attachPlaces(items, results) {
 
 const MAP_URL_RE = /^https:\/\/(www\.google\.com\/maps|maps\.google\.com|maps\.app\.goo\.gl|goo\.gl\/maps)[^\s]{0,450}$/;
 
+const SHOP_URL_RE = /^https?:\/\/[^\s]{1,490}$/;
+
 function validMapUrl(x) { return typeof x === "string" && x.length <= 500 && MAP_URL_RE.test(x); }
 function latLngOf(lat, lng) {
   const a = Number(lat), b = Number(lng);
@@ -557,7 +610,10 @@ function latLngOf(lat, lng) {
 // 確認画面で直したあとの候補の配列を検証する。サーバーは画面の値をそのまま信用しない。
 // 日程の外の日付・見出しが空・壊れた項目はerrorsに積んで保存しない（他の正しい項目は保存する）。
 // 戻り値 { items（保存する形）, errors:[{index, reason}] }
-export function validateSaveItems(rawItems, trip) {
+// opts.branch：別行動（自分だけの道）に保存するとき、その分岐。日付・時刻が分岐の時間帯に収まらない項目は
+// date_out_of_branch／time_out_of_branch としてerrorsに積む（validateBranchBlockPlacementと同じ規則）
+export function validateSaveItems(rawItems, trip, opts) {
+  const branch = opts && opts.branch ? opts.branch : null;
   const items = [];
   const errors = [];
   const list = Array.isArray(rawItems) ? rawItems : [];
@@ -571,10 +627,15 @@ export function validateSaveItems(rawItems, trip) {
     const category = SCREENSHOT_CATEGORIES.includes(r.category) ? r.category : "other";
     const transport = category === "transport" && SCREENSHOT_TRANSPORTS.includes(r.transport) ? r.transport : "";
     const time = typeof r.time === "string" && TIME_RE.test(r.time) ? r.time : "";
+    if (branch) {
+      const placed = validateBranchBlockPlacement(branch, date, time);
+      if (placed) { errors.push({ index, reason: placed }); return; }
+    }
 
     const out = {
       date, time, label, category, transport,
-      episode: cleanStr(r.note, 1000),
+      episode: cleanStr(r.note, 4000),
+      shopUrl: typeof r.shopUrl === "string" && SHOP_URL_RE.test(r.shopUrl.trim()) ? r.shopUrl.trim() : "",
       mapUrl: "", mapPlaceName: "",
       costItems: cleanCostItems(r.costItems),
     };

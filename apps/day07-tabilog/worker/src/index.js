@@ -15,10 +15,11 @@ import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture, isTransi
 import { parseWorkersAiOutput, describeWorkersAiOutputForDebug } from "./ai-parse.js";
 import { isUsableTranscript } from "./transcribe-provider.js";
 import {
-  SCREENSHOT_MAX_ITEMS, UNREADABLE_REASONS, estimateSubrequests, buildVisionBatchBody, parseVisionBatchResponse,
+  IMPORT_MAX_ITEMS, UNREADABLE_REASONS, estimateSubrequests, buildVisionBatchBody, parseVisionBatchResponse,
   buildScreenshotPrompt, screenshotSchema, normalizeScreenshotResult, collectPlaceQueries, buildTextSearchRequest,
   parseTextSearchResponse, attachPlaces, placeKey, validateSaveItems, validateImagesInput,
 } from "./screenshot-import.js";
+import { buildProposalPrompt, proposalSchema, normalizeProposalResult, estimateProposalSubrequests, branchDateList } from "./import-proposals.js";
 import {
   s2ToLatLng, extractFeatureS2,
   distanceKm, nearestCandidate, pickNominatimCandidate, placeNameRank, pickWikiHit,
@@ -4407,8 +4408,13 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
 
 const SCREENSHOT_AI_ERRORS = { too_many_images: 400, invalid_input: 400, invalid_size: 413 };
 
-// OpenAIに、OCR結果から予定の候補を作ってもらう。切れたとき（incomplete）だけ考える量を減らして1回やり直す
-async function organizeScreenshotsWithOpenAi(env, prompt) {
+// OpenAIに、OCR結果（スクショ）・文字起こし（音声）・メモから予定の候補を作ってもらう。
+// 切れたとき（incomplete）だけ考える量を減らして1回やり直す。schema／schemaName／maxTokensで
+// スクショ用（screenshotSchema）と音声・メモ用（proposalSchema）を切り替える
+async function organizeScreenshotsWithOpenAi(env, prompt, opts) {
+  const schema = (opts && opts.schema) || screenshotSchema();
+  const schemaName = (opts && opts.schemaName) || "screenshot_items";
+  const maxTokens = (opts && opts.maxTokens) || 12000;
   const attempt = async (effort) => {
     const upstream = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
@@ -4417,9 +4423,9 @@ async function organizeScreenshotsWithOpenAi(env, prompt) {
         model: env.OPENAI_MODEL || "gpt-5.6-sol",
         input: prompt,
         reasoning: { effort },
-        max_output_tokens: 12000,
+        max_output_tokens: maxTokens,
         store: false,
-        text: { format: { type: "json_schema", name: "screenshot_items", strict: true, schema: screenshotSchema() } },
+        text: { format: { type: "json_schema", name: schemaName, strict: true, schema } },
       }),
     });
     if (!upstream.ok) {
@@ -4540,9 +4546,150 @@ async function scanScreenshots(tripId, request, env, headers) {
   }, 200, headers);
 }
 
-// 確認画面で「この内容で追加」を押したあとの保存。AIを使わないのでログイン・回数は要らない
-// （メモの決まった形の取り込み＝createBlocksFromMemoと同じ扱い）。届いた値は
-// validateSaveItemsで検証し直し、予定（blocks）とその記録（entries）を1回のD1バッチで保存する
+/* ---------- 音声・メモ（AI）を確認画面につなぐ（docs/adr/0022 2026-09-30追記、docs/adr/0002、docs/adr/0021） ----------
+ * voice-scan：音声→文字起こし→AIで候補→場所検索→返す。text-scan：メモ→AIで候補→場所検索→返す。
+ * どちらも保存しない。枠は今までどおり（音声＝音声の枠、メモのAI＝メモの枠）で、AIを呼んで候補ができたあとに
+ * 1回だけ消費する（確認画面で取り消しても戻らない）。保存は saveScreenshotBlocks（import-blocks）。
+ *
+ * サブリクエスト（Workers Freeは1リクエスト50回まで。estimateProposalSubrequests）：
+ *   音声：文字起こし最大2（Workers AI→だめならOpenAI）＋OpenAI最大2（切れたときの再試行）
+ *   メモ：文字起こし無し。どちらも場所検索は最大12＋D1（ログイン・回数・旅行・別行動）約12〜16 → 最大でも約32
+ */
+
+// 対象（この日／複数日／別行動）を決める。戻り値：{ error（そのまま返せる応答） } か
+// { branch（DB行か null）, dates（対象の日の一覧。1件＝この日）, trip }
+async function resolveProposalTarget(env, request, headers, tripId, { date, branchId }) {
+  const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return { error: json({ error: "trip_not_found" }, 404, headers) };
+  if (date !== undefined && date !== null && date !== "" && !(isStr(date, 10) && DATE_RE.test(date))) return { error: json({ error: "invalid_date" }, 400, headers) };
+  if (!optStr(branchId, 100)) return { error: json({ error: "invalid_input" }, 400, headers) };
+  let branch = null;
+  let dates;
+  if (branchId) {
+    branch = await findBranch(env, branchId);
+    if (!branch || branch.trip_id !== tripId) return { error: json({ error: "branch_not_found" }, 404, headers) };
+    const denied = await branchWriteGuard(env, request, headers, { branch_id: branch.id });
+    if (denied) return { error: denied };
+    const days = branchDateList(branch);
+    if (date) {
+      if (!days.includes(date)) return { error: json({ error: "date_out_of_branch" }, 400, headers) };
+      dates = [date];
+    } else {
+      dates = days;
+    }
+  } else if (date) {
+    dates = [date];
+  } else {
+    dates = tripDateList(trip.start_date, trip.end_date);
+    if (dates.length < 2) return { error: json({ error: "trip_dates_required" }, 400, headers) };
+  }
+  if (!dates.length) return { error: json({ error: "invalid_date" }, 400, headers) };
+  return { trip, branch, dates };
+}
+
+// 文字（文字起こし・メモ）→ 候補（場所検索つき）。AIの失敗は { error }
+async function buildProposalsFromText(env, kind, text, notes, target) {
+  const tripInfo = { startDate: target.trip.start_date, endDate: target.trip.end_date };
+  const branchInfo = target.branch
+    ? { title: target.branch.title || "", date: target.branch.date, endDate: branchEndDateOf(target.branch), startTime: target.branch.start_time, endTime: target.branch.end_time }
+    : null;
+  const prompt = buildProposalPrompt({ kind, text, notes, dates: target.dates, branch: branchInfo });
+  const multi = target.dates.length > 1;
+  const ai = await organizeScreenshotsWithOpenAi(env, prompt, { schema: proposalSchema(), schemaName: "import_proposals", maxTokens: multi ? 16000 : 8000 });
+  if (ai.error) return { error: ai.error };
+  const norm = normalizeProposalResult(ai.parsed, { trip: tripInfo, dates: target.dates, branch: branchInfo, today: nowIso().slice(0, 10) });
+  // 場所検索（スクショと同じ。名前ごとに1回・最大12回）。Googleのキーが無ければ地図なしで返す（本人が場所を探せる）
+  let queries = [], skipped = 0;
+  if (env.GOOGLE_API_KEY) {
+    const c = collectPlaceQueries(norm.items);
+    queries = c.queries; skipped = c.skipped;
+    const found = {};
+    await Promise.all(queries.map(async (q) => { found[placeKey(q)] = await googleTextSearchOne(q, env); }));
+    attachPlaces(norm.items, found);
+  }
+  return { items: norm.items, dropped: norm.dropped, queries, skipped, kind, branch: !!target.branch };
+}
+
+function proposalResponse(built, extra, headers) {
+  return json({
+    items: built.items, dropped: built.dropped, ...extra,
+    usage: { placeLookups: built.queries.length, placesSkipped: built.skipped, subrequests: estimateProposalSubrequests(built.kind, built.queries.length, { branch: built.branch }) },
+  }, 200, headers);
+}
+
+async function scanVoiceProposals(tripId, request, env, headers) {
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  const { buf, contentType, getHeader } = await readBinaryBody(request);
+  const format = VOICE_AUDIO_FORMATS[contentType];
+  if (!format) return json({ error: "unsupported_type" }, 415, headers);
+  if (buf.byteLength === 0 || buf.byteLength > MAX_VOICE_AUDIO_BYTES) return json({ error: "invalid_size" }, 413, headers);
+
+  const meta = decodeVoiceMeta(getHeader("x-voice-meta"));
+  const notes = optStr(meta.notes, 4000) && meta.notes ? String(meta.notes).trim() : "";
+  const target = await resolveProposalTarget(env, request, headers, tripId, { date: meta.date, branchId: meta.branchId });
+  if (target.error) return target.error;
+  const auth = await resolveEmail(request, env, optStr(meta.email, 200) && meta.email ? String(meta.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+
+  const quota = await checkVoiceQuota(env, auth.email);
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  const transcript = await transcribeAudioForProduction(env, buf, contentType, format);
+  if (transcript && transcript.quotaExhausted) return json({ error: "ai_quota_exhausted" }, 503, headers);
+  if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
+  if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
+
+  const built = await buildProposalsFromText(env, "voice", transcript, notes, target);
+  if (built.error) return json({ error: built.error }, built.error === "ai_quota_exhausted" ? 503 : 502, headers);
+  await consumeVoiceQuota(env, quota.email, quota.via);
+  return proposalResponse(built, { transcript, dates: target.dates }, headers);
+}
+
+async function scanTextProposals(tripId, request, env, headers) {
+  if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
+  let data;
+  try {
+    data = await request.json();
+  } catch {
+    return json({ error: "invalid_json" }, 400, headers);
+  }
+  const text = isStr(data && data.text, MAX_MULTI_DAY_TEXT_CHARS) ? data.text.trim() : "";
+  if (!text) return json({ error: "empty_text" }, 422, headers);
+  const notes = optStr(data.notes, 4000) && data.notes ? String(data.notes).trim() : "";
+  const target = await resolveProposalTarget(env, request, headers, tripId, { date: data.date, branchId: data.branchId });
+  if (target.error) return target.error;
+  const auth = await resolveEmail(request, env, optStr(data.email, 200) && data.email ? String(data.email) : "");
+  if (auth.error) return json({ error: auth.error }, auth.status, headers);
+
+  const quota = await checkVoiceQuota(env, auth.email, "memo");
+  if (!quota.ok) return json({ error: quota.reason }, 403, headers);
+
+  if (env.AI_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.AI_RATE_LIMITER.limit({ key: actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+
+  const built = await buildProposalsFromText(env, "memo", text, notes, target);
+  if (built.error) return json({ error: built.error }, built.error === "ai_quota_exhausted" ? 503 : 502, headers);
+  await consumeVoiceQuota(env, quota.email, quota.via, "memo");
+  return proposalResponse(built, { transcript: text, dates: target.dates }, headers);
+}
+
+// 確認画面で「この内容で追加」を押したあとの保存（スクショ・音声・メモの3つ共通。
+// POST /trips/:id/import-blocks。旧名 /screenshot-blocks も同じ処理）。AIを使わないのでログイン・回数は
+// 要らない（メモの決まった形の取り込み＝createBlocksFromMemoと同じ扱い）。届いた値は
+// validateSaveItemsで検証し直し、予定（blocks）とその記録（entries）を1回のD1バッチで保存する。
+// branchId付きなら自分だけの道（別行動）に保存する：その分岐の持ち主（セッション）だけが保存でき、
+// 日付・時刻は分岐の時間帯の中だけ（validateBranchBlockPlacement。外れた項目はerrorsに積んで保存しない）。
+// transcript／transcriptDate（音声・メモAI）：確認のあと、その日の文字起こし欄（DayInfo）に残す。
+// 別行動への保存では残さない（DayInfoは「みんなの」日の情報で、別行動の中身が漏れるため）
 async function saveScreenshotBlocks(tripId, request, env, headers) {
   const trip = await env.DB.prepare("SELECT start_date, end_date FROM trips WHERE id = ?").bind(tripId).first();
   if (!trip) return json({ error: "trip_not_found" }, 404, headers);
@@ -4552,15 +4699,24 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
   } catch {
     return json({ error: "invalid_json" }, 400, headers);
   }
-  if (!data || !Array.isArray(data.items) || !data.items.length || data.items.length > SCREENSHOT_MAX_ITEMS) return json({ error: "invalid_input" }, 400, headers);
+  if (!data || !Array.isArray(data.items) || !data.items.length || data.items.length > IMPORT_MAX_ITEMS) return json({ error: "invalid_input" }, 400, headers);
+  if (!optStr(data.branchId, 100)) return json({ error: "invalid_input" }, 400, headers);
   const author = optStr(data.author, 50) && data.author ? String(data.author).trim() : "";
-  const checked = validateSaveItems(data.items, { startDate: trip.start_date, endDate: trip.end_date });
+  let branch = null;
+  if (data.branchId) {
+    branch = await findBranch(env, data.branchId);
+    if (!branch || branch.trip_id !== tripId) return json({ error: "branch_not_found" }, 404, headers);
+    const denied = await branchWriteGuard(env, request, headers, { branch_id: branch.id });
+    if (denied) return denied;
+  }
+  const checked = validateSaveItems(data.items, { startDate: trip.start_date, endDate: trip.end_date }, { branch });
   if (!checked.items.length) return json({ error: "invalid_input", errors: checked.errors }, 400, headers);
 
   const baseTime = Date.now();
   const built = checked.items.map((it, i) => {
     const t = new Date(baseTime + i * 10).toISOString(); // 並びが安定するよう少しずつずらす
     const blockRow = { id: uid("blk"), trip_id: tripId, date: it.date, time: it.time, label: it.label, category: it.category, transport: it.transport, created_at: t, updated_at: t };
+    if (branch) blockRow.branch_id = branch.id;
     const hasMap = !!it.mapUrl;
     const entryRow = {
       id: uid("ent"), block_id: blockRow.id, episode: it.episode, comment: "", detail: "",
@@ -4572,15 +4728,19 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
       map_lng: hasMap && typeof it.mapLng === "number" ? it.mapLng : null,
       map_geocoded_url: hasMap && typeof it.mapLat === "number" ? it.mapUrl : null,
       map_geocoded_at: hasMap && typeof it.mapLat === "number" ? t : null,
-      shop_url: "", other_url: "", author, travel: JSON.stringify(cleanTravel(it.travel)), created_at: t, updated_at: t,
+      shop_url: it.shopUrl || "", other_url: "", author, travel: JSON.stringify(cleanTravel(it.travel)), created_at: t, updated_at: t,
     };
     return { blockRow, entryRow };
   });
 
   const statements = (withPlaceName) => built.flatMap(({ blockRow: b, entryRow: e }) => [
-    env.DB.prepare(
-      "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
-    ).bind(b.id, b.trip_id, b.date, b.time, b.label, b.category, b.transport, b.created_at, b.updated_at),
+    b.branch_id
+      ? env.DB.prepare(
+        "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, branch_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+      ).bind(b.id, b.trip_id, b.date, b.time, b.label, b.category, b.transport, b.branch_id, b.created_at, b.updated_at)
+      : env.DB.prepare(
+        "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+      ).bind(b.id, b.trip_id, b.date, b.time, b.label, b.category, b.transport, b.created_at, b.updated_at),
     env.DB.prepare(
       `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url,${withPlaceName ? " map_place_name," : ""} map_lat, map_lng, map_geocoded_url, map_geocoded_at, shop_url, other_url, author, travel, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,${withPlaceName ? "?," : ""}?,?,?,?,?,?,?,?,?,?)`
@@ -4597,6 +4757,13 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
     // migrations/0026（map_place_name列）を実行する前のDBでは、その列無しで保存する
     if (!/no such column/i.test(String((e && e.message) || ""))) throw e;
     await env.DB.batch(statements(false));
+  }
+  // 音声・メモ（AI）の文字起こしを、その日の欄に残す（今までは整理した直後に残していた。確認して追加した
+  // ときだけ残す。取り消したら何も残さない）。失敗しても予定の保存は成功のまま
+  const tDate = typeof data.transcriptDate === "string" ? data.transcriptDate : "";
+  const transcript = typeof data.transcript === "string" ? data.transcript.trim() : "";
+  if (!branch && transcript && transcript.length <= MAX_MULTI_DAY_TEXT_CHARS && DATE_RE.test(tDate)) {
+    try { await saveVoiceTranscript(env, tripId, tDate, transcript); } catch (e) { console.error(JSON.stringify({ event: "save_transcript_failed", message: String((e && e.message) || e).slice(0, 200) })); }
   }
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
 
@@ -5373,7 +5540,10 @@ export default {
     }
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/memo-blocks$/))) return createBlocksFromMemo(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/screenshot-scan$/))) return scanScreenshots(m[1], request, env, headers);
-    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/screenshot-blocks$/))) return saveScreenshotBlocks(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/(?:screenshot-blocks|import-blocks)$/))) return saveScreenshotBlocks(m[1], request, env, headers);
+    // 音声・メモ（AI）を、スクショと同じ「候補を返すだけ（保存しない）」にしたもの（docs/adr/0022 2026-09-30追記）
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/voice-scan$/))) return scanVoiceProposals(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/text-scan$/))) return scanTextProposals(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/text-entries$/))) {
       return createBlocksFromTextMultiDay(m[1], request, env, headers);
     }
