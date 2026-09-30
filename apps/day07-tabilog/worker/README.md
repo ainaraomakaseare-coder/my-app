@@ -817,3 +817,18 @@ npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD CO
 - **実行前にデプロイしても壊れない**：`GET /trips/:id`は`branches: []`を返し、分岐を作ろうとしたときだけ503（`branches_not_ready`）になる。
 - API：`POST /trips/:id/branches`・`PATCH /branches/:id`・`DELETE /branches/:id`（持ち主だけ・ログイン必須）。`POST /trips/:id/blocks`の`branchId`。分岐の中の予定・記録の書き込みは持ち主だけ（403）。
 - テスト：`node worker/test/branches.test.mjs`（入力チェック・権限の純粋関数）と`node worker/test/branches-api.test.mjs`（`node:sqlite`の本物のSQLiteの上で、APIを通しで確認。Node 22.5以降）。
+
+## 予定を「動画でシェアに出さない」にする列（migration 0031）
+
+予定に`blocks.video_exclude`（0＝出す／1＝動画に出さない）の列を足した（`docs/adr/0020` 2026-09-30追記）。APIは、予定の作成・更新（`POST /trips/:id/blocks`、`PATCH /blocks/:id`）で`videoExclude`（true/false）を受け取り、旅行の取得と予定のレスポンスで返す。
+
+**デプロイの順番：先にmigration、そのあとにwrangler deploy**。
+
+```sh
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD COLUMN video_exclude INTEGER NOT NULL DEFAULT 0;"
+npx wrangler deploy
+```
+
+（`--file`は0024〜のときと同じ認証エラーが出る環境があるため`--command`。同じSQLは`migrations/0031_block_video_exclude.sql`にもある。1回だけ実行。2回目は`duplicate column name`になるが害はない。）
+
+先にデプロイしてしまっても壊れない：`video_exclude`の書き込みは別のUPDATEで`try/catch`（列が無ければ印が付かないだけ）、読み出しは列が無ければfalse。逆に、migrationだけ先に流しても、古いWorkerは列を知らないだけで動く。
