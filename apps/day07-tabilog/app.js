@@ -2511,7 +2511,28 @@
   // （2026-09-28〜、visited-places.jsのcanonicalCountryが中国と分けて数えるようになった分）。
   // これが無いとcontinentForAlpha2が引けず「その他」に落ちてしまうので、一覧では「アジア」・国旗🇭🇰🇲🇴で
   // 出せるよう、名前→alpha2を決め打ちで足す（drawVisitedWorldMapのvisitedCountryAlpha2ByNameに合流）。
-  var EXTRA_COUNTRY_ALPHA2_BY_NAME = { '香港': 'HK', 'マカオ': 'MO' };
+  var EXTRA_COUNTRY_ALPHA2_BY_NAME = { '香港': 'HK', 'マカオ': 'MO', 'シンガポール': 'SG' };
+
+  // 地図データ（110m）に図形が無い小さな国（シンガポール・モルディブ・マルタ・バーレーンなど）でも、
+  // 国名からalpha2を引けるようにする。ブラウザのIntl.DisplayNames（日本語の地域名）で、大陸表にある
+  // すべてのalpha2の日本語名→alpha2の表を作る（2026-09-30、シンガポールが「その他」に入っていた）。
+  // Intlが使えない環境では空の表になり、今までどおりEXTRA_COUNTRY_ALPHA2_BY_NAMEだけが効く。
+  var intlCountryAlpha2ByName = null;
+  function alpha2ForCountryName(name) {
+    if (!name) return null;
+    if (EXTRA_COUNTRY_ALPHA2_BY_NAME[name]) return EXTRA_COUNTRY_ALPHA2_BY_NAME[name];
+    if (intlCountryAlpha2ByName === null) {
+      intlCountryAlpha2ByName = {};
+      try {
+        var dn = new Intl.DisplayNames(['ja'], { type: 'region' });
+        Object.keys(VISITED_CONTINENT_BY_ALPHA2).forEach(function (a2) {
+          var ja = dn.of(a2);
+          if (ja && ja !== a2) intlCountryAlpha2ByName[ja] = a2;
+        });
+      } catch (e) { /* Intl.DisplayNamesが無い古い環境 */ }
+    }
+    return intlCountryAlpha2ByName[name] || null;
+  }
 
   // alpha-2コード（例："JP"）→ 国旗絵文字（例："🇯🇵"）。画像は使わず、Unicodeの
   // 地域表示記号（Regional Indicator Symbol、A=U+1F1E6）を2文字組み合わせて作る。
@@ -3967,6 +3988,7 @@
     continentForAlpha2: continentForAlpha2,
     flagEmojiForAlpha2: flagEmojiForAlpha2,
     EXTRA_COUNTRY_ALPHA2_BY_NAME: EXTRA_COUNTRY_ALPHA2_BY_NAME,
+    alpha2ForCountryName: alpha2ForCountryName,
     visitedPercentage: visitedPercentage,
     groupVisitedByOrder: groupVisitedByOrder,
     decideSwipe: decideSwipe,
@@ -10505,7 +10527,7 @@
   // （地方・大陸ごとの一覧の見出しと国旗絵文字は、これが埋まってから出せる）。
   var visitedCountryAlpha2ByName = {};
   function visitedFlagForName(name) {
-    var a2 = visitedCountryAlpha2ByName[name];
+    var a2 = visitedCountryAlpha2ByName[name] || Core.alpha2ForCountryName(name);
     return a2 ? Core.flagEmojiForAlpha2(a2) : '';
   }
 
@@ -10793,7 +10815,8 @@
           // 絶対に落とさない（continentForAlphaが分からなければ「その他」に入る＝groupVisitedByOrder
           // 側の既定の挙動）。
           var groups = Core.groupVisitedByOrder(visited, function (x) {
-            return Core.continentForAlpha2(visitedCountryAlpha2ByName[x.name]);
+            // 地図に図形が無い小さな国（シンガポールなど）は、国名から引き直す（Core.alpha2ForCountryName）
+            return Core.continentForAlpha2(visitedCountryAlpha2ByName[x.name] || Core.alpha2ForCountryName(x.name));
           }, Core.VISITED_CONTINENT_ORDER);
           listWrap.innerHTML = visitedGroupedListHtml('country', groups, true);
           wireVisitedListRows(listWrap);
