@@ -6534,7 +6534,7 @@
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
     if (!user) {
-      $('#memoAiInfo').textContent = 'AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月10回まで）。';
+      $('#memoAiInfo').textContent = 'AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月3回まで）。';
       return;
     }
     $('#memoAiInfo').textContent = '';

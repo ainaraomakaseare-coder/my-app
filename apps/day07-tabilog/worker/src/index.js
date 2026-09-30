@@ -3319,11 +3319,12 @@ function generateAccountId() {
 // 引き続きOpenAIを呼ぶため実費はゼロではない）ため、free（無料）を月2回→月10回に引き上げた
 // （新規登録時にticket_creditsへ3回分のボーナスを付与するため、登録した最初の月だけ実質13回）。
 // 有料プランがfreeを下回らないよう、basicも10→20に上げている（premium_plusは50のまま）。
-var PLAN_MONTHLY_LIMIT = { free: 10, basic: 20, premium_plus: 50 };
+// 2026-09-30：無料ユーザーが増えたときのOpenAIの実費を抑えるため、freeを月10回→月3回に下げた（メモの枠も同じ）。
+var PLAN_MONTHLY_LIMIT = { free: 3, basic: 20, premium_plus: 50 };
 // メモをAIで整理する回数（音声とは別の枠、2026-09-26〜）。メモは文字起こしが要らないぶん音声より安いので、
-// 無料でも月10回まで使えるようにした。有料プランは、以前（音声と共通の枠）より減らないようにしている。
+// 無料でも月10回まで使えるようにした（2026-09-30に月3回へ下げた）。有料プランは、以前（音声と共通の枠）より減らないようにしている。
 // 決まった形（「10:00 新宿」のような行）のメモは、AIを使わずアプリ側で分けるので回数を使わない。
-var MEMO_MONTHLY_LIMIT = { free: 10, basic: 30, premium_plus: 100 };
+var MEMO_MONTHLY_LIMIT = { free: 3, basic: 30, premium_plus: 100 };
 
 // 【有料プランの販売停止中（2026-09-30、docs/adr/0004、App Review 3.1.1）】
 // どのアカウントも、DBに保存されているplan列の値に関係なく無料の上限で扱う。
