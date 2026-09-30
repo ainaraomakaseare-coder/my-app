@@ -263,6 +263,18 @@ a:hover { text-decoration: underline; }
   height: 46px;
 }
 .field textarea { resize: vertical; }
+/* フォームの中の選択欄（別行動の日付など）。OS標準の見た目だと、枠線つきの小さな箱になって
+   まわりの入力欄から浮いていたため、テキストの入力欄と同じ塗り・角丸・高さにそろえ、
+   右端に自前の下向き矢印を描く（2026-09-30） */
+.field select.field-select {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; min-width: 0; height: 46px; box-sizing: border-box;
+  border: none; border-radius: var(--radius-control); padding: 11px 36px 11px 13px;
+  background-color: var(--input-bg); color: var(--ink); font-size: 16px; font-family: inherit;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%239CA3AF' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+}
+.field select.field-select[hidden] { display: none; }
 .open-link .row { display: flex; gap: 8px; }
 .open-link input { flex: 1; }
 .map-search-row { display: flex; gap: 8px; margin-top: 6px; }
