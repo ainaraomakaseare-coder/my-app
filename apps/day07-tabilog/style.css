@@ -1421,3 +1421,34 @@ body.viewer-open { overflow: hidden; }
 .profile-stat { display: flex; flex-direction: column; }
 .profile-stat-num { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .profile-stat-label { font-size: 10.5px; color: var(--ink-soft); }
+
+/* ---------- 自分だけの道（別行動の分岐。docs/adr/0021） ---------- */
+/* 「みんな／○○」の切り替え。日タブと同じ丸いチップ。分岐がある旅行だけ出る */
+.branch-switch { display: flex; align-items: center; gap: 8px; padding: 10px 0 0; overflow-x: auto; }
+.branch-switch-label { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); white-space: nowrap; flex-shrink: 0; }
+.branch-switch-chip { padding: 6px 14px; border: none; border-radius: 999px; background: var(--border-soft); color: var(--ink-muted); font-size: 12.5px; font-weight: 600; font-family: inherit; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
+.branch-switch-chip.on { background: var(--accent-soft-bg); color: var(--accent-deep); font-weight: 700; }
+/* ほかの人の別行動の小さなカード（みんなの表示で、開始時刻の位置に出る）。押すとその人の道に切り替わる */
+.branch-card {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 14px; border: none; border-radius: var(--radius-control);
+  background: var(--card); box-shadow: var(--card-shadow); color: var(--ink); font-family: inherit; font-size: 12.5px; font-weight: 700; text-align: left; cursor: pointer;
+}
+.branch-card svg { flex-shrink: 0; color: var(--accent-deep); }
+.branch-card-text { flex: 1; min-width: 0; }
+.branch-card-go { font-size: 11px; font-weight: 700; color: var(--accent-deep); white-space: nowrap; }
+/* 選んだ人の分岐の見出し（帯）。持ち主には「予定を追加」「編集」が付く */
+.branch-band {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-radius: var(--radius-control);
+  background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 12.5px; font-weight: 700;
+}
+.branch-band-text { flex: 1; min-width: 0; }
+.branch-band-btn { padding: 5px 10px; border: none; border-radius: 999px; background: var(--card); color: var(--accent-deep); font-family: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer; }
+/* 分岐の中の予定は、うすい色の面で「別行動の中」だと分かるようにする（線は使わない） */
+.block.branch-block { padding: 10px 12px; border-radius: var(--radius-control); background: var(--accent-soft-bg); }
+.block-head.readonly { cursor: default; }
+.branch-add { margin-top: -4px; }
+.branch-hint { margin: 0; font-size: 12px; color: var(--ink-muted); text-align: center; }
+.branch-date-text { padding: 10px 12px; border-radius: var(--radius-control); background: var(--input-bg); font-size: 14px; }
+.branch-block-note { color: var(--accent-deep); font-weight: 700; }
+.replay-viewer { margin-top: 2px; font-size: 11px; font-weight: 700; color: var(--ink-muted); }
+#branchSheet .sheet { overflow-y: auto; -webkit-overflow-scrolling: touch; }

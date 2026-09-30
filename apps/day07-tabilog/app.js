@@ -4066,8 +4066,9 @@
   }
 
   function findEntryById(id) {
-    for (var i = 0; i < state.blocks.length; i++) {
-      var entries = state.blocks[i].entries || [];
+    var searchBlocks = allBlocks();
+    for (var i = 0; i < searchBlocks.length; i++) {
+      var entries = searchBlocks[i].entries || [];
       for (var j = 0; j < entries.length; j++) {
         if (entries[j].id === id) return entries[j];
       }
@@ -4357,7 +4358,7 @@
 
   function renderAlbum() {
     var items = [];
-    (state.blocks || []).forEach(function (block) {
+    allBlocks().forEach(function (block) {
       (block.entries || []).forEach(function (entry) {
         (entry.photoIds || []).forEach(function (id) {
           items.push({ type: 'photo', id: id, date: block.date || '' });
@@ -4426,7 +4427,7 @@
   }
 
   function renderSettlement() {
-    var expenses = Core.tripExpenseList(state.blocks);
+    var expenses = Core.tripExpenseList(allBlocks());
     var hasExpenses = expenses.length > 0;
     $('#settlementEmpty').hidden = hasExpenses;
     $('#settlementBody').hidden = !hasExpenses;
@@ -4434,7 +4435,7 @@
     if (!hasExpenses) return;
 
     var unit = currentSettleUnit();
-    var balance = Core.tripBalances(state.trip, state.blocks);
+    var balance = Core.tripBalances(state.trip, allBlocks());
     var names = Object.keys(balance).filter(function (n) { return Core.roundToUnit(balance[n], 1) !== 0; });
     // 貸し借りが無い（＝0円の）参加者も、参加していることが分かるよう一覧には残す
     (state.trip.companions || []).forEach(function (n) { if (names.indexOf(n) === -1) names.push(n); });
@@ -4686,7 +4687,11 @@
   var state = {
     account: null,            // ログイン中アカウントのプラン状況（{plan, voiceRemainingThisPeriod, ticketCredits, ...}）
     trip: null,
-    blocks: [],
+    blocks: [],               // みんなの予定（別行動の中の予定は含まない）
+    branchBlocks: [],         // 別行動（自分だけの道）の中の予定（block.branchIdが空でないもの）
+    branches: [],             // 別行動（{id, accountId, name, date, startTime, endTime, title}）。docs/adr/0021
+    viewAccountId: '',        // 旅行の画面で「見ている道」の持ち主のaccountId。空文字＝みんな
+    editingBranchId: '',      // 予定フォームで、別行動の中の予定を作る・直しているときの別行動のid
     days: [],                // 旅行の日ごとの場所・天気（{date, place, weatherCode, tempMax, tempMin, isForecast}）
     members: [],             // アカウント参加者（{accountId, name, joinedAt}）。ゲスト参加者(companions)とは別
     selectedDate: null,
@@ -4883,10 +4888,7 @@
   function openTrip(id, returnTo, onScreenReady) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
-      state.trip = data.trip;
-      state.blocks = data.blocks;
-      state.days = data.days || [];
-      state.members = data.members || [];
+      applyTripData(data, false);
       state.social = emptySocial();
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
@@ -4928,10 +4930,7 @@
 
   function refreshTrip() {
     return api('/trips/' + encodeURIComponent(state.trip.id)).then(function (data) {
-      state.trip = data.trip;
-      state.blocks = data.blocks;
-      state.days = data.days || [];
-      state.members = data.members || [];
+      applyTripData(data, true);
       // 地図を足した・日程を変えたあとも時差を調べ直す。以前は旅行を開いたときにしか調べず、あとから入れた
       // 地図（ニューヨークの「英語表現の疑問」）が前の時差（ブラジル）のままだった（2026-09-27）。
       // 調べ終わったら並びと区切りを描き直す（loadTripZones）。調べた結果は端末に覚えているので通信は少ない
@@ -5254,7 +5253,7 @@
     var panel = $('#costBreakdownPanel');
     if (!panel.hidden) { panel.hidden = true; syncStatRows(); return; }
     $('#lodgingBreakdownPanel').hidden = true;
-    var breakdown = Core.costBreakdownByPerson(state.blocks);
+    var breakdown = Core.costBreakdownByPerson(allBlocks());
     var names = Object.keys(breakdown).sort(function (a, b) { return breakdown[b] - breakdown[a]; });
     panel.innerHTML = names.length
       ? names.map(function (name) {
@@ -5286,7 +5285,7 @@
     var lodging = formatLodgingStat(Core.lodgingByNight(trip, state.blocks));
     // 名前が長くても「ほか○か所」が切れないよう、別の行に出す（名前は2行まで）
     var lodgingParts = Core.lodgingSummaryParts(Core.lodgingByNight(trip, state.blocks));
-    var total = Core.tripTotalCost(state.blocks);
+    var total = Core.tripTotalCost(allBlocks());
     // 宿泊先・総費用は横幅いっぱいの行を縦に並べ、押すとその下に詳細が開く（日程は旅行名の下に
     // 「9泊10日」と出ているのでカードは出さない。2026-09-27）
     var lodgingPanel = $('#lodgingBreakdownPanel'), costPanel = $('#costBreakdownPanel');
@@ -5625,7 +5624,7 @@
   function openPostSheet() {
     if (!state.trip) return;
     var user = loadCurrentUser();
-    var text = Core.buildTripPostText(state.trip, state.blocks, state.days, user ? user.email : '', { legend: $('#postLegend').checked });
+    var text = Core.buildTripPostText(state.trip, allBlocks(), state.days, user ? user.email : '', { legend: $('#postLegend').checked });
     $('#postText').value = text;
     $('#postSheetNote').textContent = user
       ? 'あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。'
@@ -6111,9 +6110,218 @@
     });
   }
 
+  // ---------- 自分だけの道（別行動の分岐。docs/adr/0021） ----------
+  // 旅行のデータは、みんなの予定（state.blocks）・別行動の中の予定（state.branchBlocks）・別行動そのもの
+  // （state.branches）に分けて持つ。時差・宿泊・並べ替えなど「みんなの予定」を前提にした既存の機能は
+  // state.blocksだけを見るので、そのまま動く。費用・アルバム・記録の検索は allBlocks()（両方）を見る。
+  // 見せる予定の並びは、選んだ人（state.viewAccountId。空＝みんな）に応じて Core が決める。
+  var BRANCH_VIEW_KEY_PREFIX = 'tabilog:branch-view:';
+  var BRANCH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 7v10M18 11c0 4-6 3-12 6"/></svg>';
+
+  function loadBranchView(tripId) {
+    try { return localStorage.getItem(BRANCH_VIEW_KEY_PREFIX + tripId) || ''; } catch (e) { return ''; }
+  }
+  function saveBranchView(tripId, accountId) {
+    try {
+      if (accountId) localStorage.setItem(BRANCH_VIEW_KEY_PREFIX + tripId, accountId);
+      else localStorage.removeItem(BRANCH_VIEW_KEY_PREFIX + tripId);
+    } catch (e) { /* 保存できなくても、その回の表示には困らない */ }
+  }
+
+  // サーバーから届いた旅行のデータを state に入れる。keepView：読み直し（refreshTrip）のときは、いま選んでいる人を保つ。
+  function applyTripData(data, keepView) {
+    state.trip = data.trip;
+    var blocks = data.blocks || [];
+    state.blocks = blocks.filter(function (b) { return !b.branchId; });
+    state.branchBlocks = blocks.filter(function (b) { return b.branchId; });
+    state.branches = data.branches || [];
+    state.days = data.days || [];
+    state.members = data.members || [];
+    var wanted = keepView ? state.viewAccountId : loadBranchView(data.trip.id);
+    state.viewAccountId = Core.resolveViewAccountId(wanted, state.branches);
+  }
+
+  function allBlocks() { return (state.blocks || []).concat(state.branchBlocks || []); }
+  // 選んでいる人の道で見た、旅行全体の予定（地図でふりかえる・動画・時差の計算に使う）
+  function activeBlocks() {
+    return Core.visibleBlocksForView(state.blocks, state.branchBlocks, state.branches, state.viewAccountId);
+  }
+  function branchById(id) { return (state.branches || []).filter(function (b) { return b.id === id; })[0] || null; }
+  function myAccountId() {
+    var u = loadCurrentUser();
+    return u && u.token && u.accountId ? u.accountId : '';
+  }
+  function amTripMember() {
+    var me = myAccountId();
+    return !!me && (state.members || []).some(function (m) { return m.accountId === me; });
+  }
+  function isMyBranch(branchId) {
+    var br = branchById(branchId), me = myAccountId();
+    return !!br && !!me && br.accountId === me;
+  }
+  // 画面から直せる予定か（別行動の中の予定は、持ち主だけ。サーバーでも同じ確認をしている）
+  function canEditBlockUi(block) { return !block.branchId || isMyBranch(block.branchId); }
+  function branchOwnerName(branch) {
+    var m = (state.members || []).filter(function (x) { return x.accountId === branch.accountId; })[0];
+    return (m && m.name) || branch.name || 'だれか';
+  }
+
+  function currentDayItems() {
+    return Core.dayTimelineItems(state.blocks, state.branchBlocks, state.branches, state.viewAccountId, state.selectedDate || '');
+  }
   function currentDayBlocks() {
-    var byDate = Core.groupBlocksByDate(state.blocks);
-    return byDate[state.selectedDate || ''] || [];
+    return currentDayItems().filter(function (i) { return i.type === 'block'; }).map(function (i) { return i.block; });
+  }
+
+  function setBranchView(accountId) {
+    state.viewAccountId = Core.resolveViewAccountId(accountId, state.branches);
+    if (state.trip) saveBranchView(state.trip.id, state.viewAccountId);
+    renderDaySection();
+  }
+
+  // 「表示する道：みんな／○○」の切り替え。別行動がある旅行だけ出す
+  function renderBranchSwitcher() {
+    var el = $('#branchSwitcher');
+    var opts = Core.branchViewOptions(state.branches, state.members);
+    if (!opts.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    var chip = function (id, name) {
+      return '<button type="button" class="branch-switch-chip' + (state.viewAccountId === id ? ' on' : '') + '" data-account="' + escapeHtml(id) + '">' + escapeHtml(name) + '</button>';
+    };
+    el.innerHTML = '<span class="branch-switch-label">表示する道</span>' + chip('', 'みんな') +
+      opts.map(function (o) { return chip(o.accountId, o.name); }).join('');
+    $all('.branch-switch-chip', el).forEach(function (b) {
+      b.addEventListener('click', function () { setBranchView(b.dataset.account); });
+    });
+  }
+
+  // ほかの人の別行動の小さなカード。押すとその人の道に切り替わる
+  function renderBranchCard(branch) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'branch-card';
+    var text = Core.branchCardText(Object.assign({}, branch, { name: branchOwnerName(branch) }), state.branchBlocks);
+    b.innerHTML = BRANCH_ICON + '<span class="branch-card-text">' + escapeHtml(text) + '</span><span class="branch-card-go">この道を見る</span>';
+    b.addEventListener('click', function () { setBranchView(branch.accountId); });
+    return b;
+  }
+
+  // 選んだ人の別行動の見出し。持ち主（自分）には「予定を追加」「編集」を出す
+  function renderBranchBand(branch) {
+    var d = document.createElement('div');
+    d.className = 'branch-band';
+    d.innerHTML = BRANCH_ICON + '<span class="branch-band-text">' +
+      escapeHtml(branchOwnerName(branch) + 'の別行動 ' + branch.startTime + '〜' + branch.endTime + (branch.title ? '（' + branch.title + '）' : '')) + '</span>';
+    if (isMyBranch(branch.id)) {
+      var add = document.createElement('button');
+      add.type = 'button'; add.className = 'branch-band-btn'; add.textContent = '予定を追加';
+      add.addEventListener('click', function () { openBlockForm(null, branch); });
+      var edit = document.createElement('button');
+      edit.type = 'button'; edit.className = 'branch-band-btn'; edit.textContent = '編集';
+      edit.addEventListener('click', function () { openBranchSheet(branch); });
+      d.appendChild(add);
+      d.appendChild(edit);
+    }
+    return d;
+  }
+
+  // タイムラインの下の「ここから別行動」。ログインしていない・参加していない人には、案内の文だけを出す
+  function appendBranchAddArea(el) {
+    if (!state.selectedDate) return;
+    var user = loadCurrentUser();
+    if (!Core.canUseBranches(user)) return; // 課金を始めたら、有料プランでない人はここで止まる
+    var note = function (text) {
+      var p = document.createElement('p');
+      p.className = 'branch-hint';
+      p.textContent = text;
+      el.appendChild(p);
+    };
+    if (!user || !user.token) { note('ログインすると自分の別行動を追加できます'); return; }
+    if (!amTripMember()) { note('この旅行に「参加する」と、自分の別行動を追加できます'); return; }
+    var btn = document.createElement('button');
+    btn.className = 'block-add branch-add';
+    btn.innerHTML = BRANCH_ICON + '<span>ここから別行動</span>';
+    btn.addEventListener('click', function () { openBranchSheet(null); });
+    el.appendChild(btn);
+  }
+
+  // ---------- 別行動の追加・編集シート ----------
+  var branchSheetTarget = null; // { id（編集のとき）, date }
+
+  function defaultBranchRange(date) {
+    var me = myAccountId();
+    var starts = [13, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20];
+    for (var i = 0; i < starts.length; i++) {
+      var s = String(starts[i]).padStart(2, '0') + ':00', e = String(Math.min(23, starts[i] + 3)).padStart(2, '0') + ':00';
+      if (!Core.validateBranch({ date: date, startTime: s, endTime: e }, state.branches, me)) return { start: s, end: e };
+    }
+    return { start: '', end: '' };
+  }
+
+  function openBranchSheet(branch) {
+    var date = branch ? branch.date : state.selectedDate;
+    if (!date) return;
+    branchSheetTarget = { id: branch ? branch.id : '', date: date };
+    var range = branch ? { start: branch.startTime, end: branch.endTime } : defaultBranchRange(date);
+    $('#branchSheetTitle').textContent = branch ? '別行動を編集' : 'ここから別行動';
+    $('#brDateText').textContent = Core.formatDateJp(date);
+    $('#brStart').value = range.start;
+    $('#brEnd').value = range.end;
+    $('#brTitle').value = branch ? (branch.title || '') : '';
+    $('#brStatus').textContent = '';
+    $('#btnDeleteBranch').hidden = !branch;
+    $('#branchSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+
+  function closeBranchSheet() {
+    $('#branchSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+    branchSheetTarget = null;
+  }
+
+  function saveBranch() {
+    if (!branchSheetTarget || !state.trip) return;
+    var status = $('#brStatus');
+    var target = branchSheetTarget;
+    var me = myAccountId();
+    var input = { date: target.date, startTime: $('#brStart').value || '', endTime: $('#brEnd').value || '', title: $('#brTitle').value.trim() };
+    var reason = Core.validateBranch(input, state.branches, me, target.id);
+    if (reason) { status.textContent = Core.branchErrorText(reason); return; }
+    status.textContent = '保存中…';
+    var req = target.id
+      ? api('/branches/' + encodeURIComponent(target.id), 'PATCH', { startTime: input.startTime, endTime: input.endTime, title: input.title })
+      : api('/trips/' + encodeURIComponent(state.trip.id) + '/branches', 'POST', input);
+    req.then(function () { return refreshTrip(); }).then(function () {
+      closeBranchSheet();
+      // 作った・直したあとは、自分の道に切り替えて、その結果が見えるようにする
+      state.viewAccountId = Core.resolveViewAccountId(me, state.branches);
+      saveBranchView(state.trip.id, state.viewAccountId);
+      renderTripDetail();
+    }).catch(function (e) {
+      if (Core.isLoginRequiredError(e)) { closeBranchSheet(); handleLoginRequired(e, 'tripDetail'); return; }
+      status.textContent = Core.branchErrorText(e && e.message);
+    });
+  }
+
+  function removeBranch() {
+    if (!branchSheetTarget || !branchSheetTarget.id) return;
+    if (!confirm('この別行動と、中の予定・記録をすべて削除しますか？')) return;
+    var id = branchSheetTarget.id;
+    api('/branches/' + encodeURIComponent(id), 'DELETE').then(function () { return refreshTrip(); }).then(function () {
+      closeBranchSheet();
+      saveBranchView(state.trip.id, state.viewAccountId);
+      renderTripDetail();
+    }).catch(function (e) {
+      if (Core.isLoginRequiredError(e)) { closeBranchSheet(); handleLoginRequired(e, 'tripDetail'); return; }
+      $('#brStatus').textContent = '削除に失敗しました。';
+    });
+  }
+
+  // 「地図でふりかえる」「動画でシェア」に渡す予定：選んでいる人の道。時差はその並びで計算し直してから渡す
+  function replayBlocks() {
+    applyTripZones();
+    return activeBlocks();
   }
 
   // 画面の左端（EDGE_SWIPE_BACK_PX以内）から始まったスワイプだけを「戻る」操作として扱うための
@@ -6232,7 +6440,8 @@
   function renderDaySection() {
     applyTripZones();
     $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
-    renderTimeline(currentDayBlocks());
+    renderBranchSwitcher();
+    renderTimeline(currentDayItems());
     renderDayWeather();
     renderVoiceTranscript();
   }
@@ -6366,7 +6575,7 @@
   }
 
   function openTzOverrideSheet(blockId) {
-    var block = (state.blocks || []).filter(function (b) { return b.id === blockId; })[0];
+    var block = allBlocks().filter(function (b) { return b.id === blockId; })[0];
     if (!block) return;
     tzOverrideTarget = blockId;
     $('#tzOverrideStatus').textContent = '';
@@ -6457,6 +6666,11 @@
     if (!state.trip) return;
     var info = state.zoneInfo || { byBlock: {} };
     Core.applyBlockZones(state.blocks, Core.assignBlockZones(state.blocks, info.byBlock, DEVICE_TZ, info.byArrive));
+    // 人ごとの道を見ているときは、その道の並び（別行動の予定を含む）で時差を計算し直す
+    if (state.viewAccountId) {
+      var visible = activeBlocks();
+      Core.applyBlockZones(visible, Core.assignBlockZones(visible, info.byBlock, DEVICE_TZ, info.byArrive));
+    }
   }
 
   function timezoneAt(lat, lng, cache) {
@@ -6487,7 +6701,7 @@
     };
     // ① 座標がすぐ分かるものは同時に。entry.mapLat/mapLng（サーバーがすでに求めてある座標、Part A）が
     // あれば最優先で使い、/geocodeを呼ばない
-    var quick = (state.blocks || []).map(function (b) {
+    var quick = allBlocks().map(function (b) {
       var pe = Core.replayPlaceEntry(b);
       if (!pe) return null;
       var q = pe.url;
@@ -6509,7 +6723,7 @@
         return p.then(function (needWait) {
           if (!stillHere()) return false;
           return (needWait ? wait(1100) : Promise.resolve()).then(function () {
-            var order = Core.sortBlocks(state.blocks);
+            var order = Core.sortBlocks(allBlocks());
             var stops = order.map(function (b) { return { date: b.date, transport: b.transport, coords: coordsByBlock[b.id] || null }; });
             return api(geocodeFullPath(it.q, it.b.label || '', stops, order.indexOf(it.b)) + geocodeEntryParam(it.entryId)).then(function (res) {
               var c = remember(it.q, res); if (c) coordsByBlock[it.b.id] = c;
@@ -6547,7 +6761,7 @@
       if (!stillHere()) return;
       var byBlock = {}, byArrive = {};
       // 移動の予定の到着地の地図（2026-09-27〜）。座標が保存されていればそれを、無ければ/geocodeで求める
-      var arriveJobs = (state.blocks || []).map(function (b) {
+      var arriveJobs = allBlocks().map(function (b) {
         var a = Core.travelArrival(b);
         if (!a) return null;
         var coords = typeof a.lat === 'number' && typeof a.lng === 'number' ? Promise.resolve({ lat: a.lat, lng: a.lng })
@@ -6608,10 +6822,12 @@
     }, Promise.resolve());
   }
 
-  function renderTimeline(blocks) {
+  function renderTimeline(items) {
     var el = $('#timeline');
     el.innerHTML = '';
-    if (!blocks.length) {
+    // items：Core.dayTimelineItemsの結果（予定・ほかの人の別行動のカード・選んだ人の別行動の帯）
+    var blocks = items.filter(function (i) { return i.type === 'block'; }).map(function (i) { return i.block; });
+    if (!items.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = 'この日の記録はまだありません。下のボタンから追加できます。';
@@ -6619,7 +6835,7 @@
     }
     // 時差の違う場所に移ったところに「ここから現地時間（時差）」の区切りを入れる（docs/adr/0009）。
     // この日の最初の予定は、旅行全体の並びで直前の予定と比べる（前の日から続く移動のため）。
-    var all = Core.sortBlocks(state.blocks);
+    var all = Core.sortBlocks(activeBlocks());
     var base = all.filter(function (b) { return typeof b._offset === 'number'; })[0];
     var prevOffset = null;
     if (blocks.length) {
@@ -6636,8 +6852,12 @@
       if (typeof chkPrev === 'number' && b._offset !== chkPrev) zoneChange = true;
       chkPrev = b._offset;
     });
-    state.manualDay = !!dayDate && (hasManual || zoneChange);
-    blocks.forEach(function (block) {
+    // 人ごとの道を見ているあいだは、並べ替え（みんなの予定の順番を変える操作）は出さない
+    state.manualDay = !!dayDate && !state.viewAccountId && (hasManual || zoneChange);
+    items.forEach(function (item) {
+      if (item.type === 'card') { el.appendChild(renderBranchCard(item.branch)); return; }
+      if (item.type === 'band') { el.appendChild(renderBranchBand(item.branch)); return; }
+      var block = item.block;
       var dividerShown = false;
       if (base && typeof block._offset === 'number' && typeof prevOffset === 'number' && block._offset !== prevOffset) {
         el.appendChild(renderZoneDivider(block, base));
@@ -6662,6 +6882,7 @@
     addBtn.innerHTML = plusIcon() + '<span>予定を追加</span>';
     addBtn.addEventListener('click', function () { openBlockForm(null); });
     el.appendChild(addBtn);
+    appendBranchAddArea(el);
 
     var voiceBtn = document.createElement('button');
     voiceBtn.className = 'block-add';
@@ -6741,15 +6962,17 @@
 
   function renderBlockEl(block, dividerShown) {
     var wrap = document.createElement('div');
-    wrap.className = 'block';
+    wrap.className = 'block' + (block.branchId ? ' branch-block' : '');
     wrap.dataset.blockId = block.id;
+    // 別行動の中の予定は持ち主だけが直せる。ほかの人には見るだけ（サーバーでも同じ確認をしている）
+    var editable = canEditBlockUi(block);
 
     var head = document.createElement('div');
-    head.className = 'block-head';
+    head.className = 'block-head' + (editable ? '' : ' readonly');
     head.innerHTML =
       // 時刻ありのBlockは常にその時刻の位置に固定するため、持ち手（ドラッグでの並べ替え）は
       // 時刻未設定のBlockにだけ出す
-      (!block.time || state.manualDay ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
+      (!block.branchId && !state.viewAccountId && (!block.time || state.manualDay) ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
       '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>' +
@@ -6759,7 +6982,7 @@
         : '');
     head.addEventListener('click', function (e) {
       if (e.target.closest('.block-drag-handle')) return;
-      openBlockForm(block);
+      if (editable) openBlockForm(block);
     });
     wrap.appendChild(head);
 
@@ -6782,11 +7005,13 @@
     });
     wrap.appendChild(entriesWrap);
 
-    var addEntryBtn = document.createElement('button');
-    addEntryBtn.className = 'entry-add';
-    addEntryBtn.innerHTML = plusIcon() + '<span>' + ((block.entries || []).length ? '別の記録を追加（別行動など）' : '記録を追加') + '</span>';
-    addEntryBtn.addEventListener('click', function (e) { e.stopPropagation(); openEntryForm(block.id, null); });
-    wrap.appendChild(addEntryBtn);
+    if (editable) {
+      var addEntryBtn = document.createElement('button');
+      addEntryBtn.className = 'entry-add';
+      addEntryBtn.innerHTML = plusIcon() + '<span>' + ((block.entries || []).length ? '別の記録を追加（別行動など）' : '記録を追加') + '</span>';
+      addEntryBtn.addEventListener('click', function (e) { e.stopPropagation(); openEntryForm(block.id, null); });
+      wrap.appendChild(addEntryBtn);
+    }
 
     return wrap;
   }
@@ -7028,6 +7253,9 @@
     card.className = 'entry-card' + (block.category === 'lodging' ? ' lodging' : '');
     card.dataset.entryId = entry.id;
     card.dataset.blockId = block.id;
+    // 別行動の中の記録は持ち主だけが直せる（ほかの人には写真を見るだけ）。別の予定への移動もみんなの予定だけ
+    var editable = canEditBlockUi(block);
+    var canMove = editable && !block.branchId;
 
     var photosHtml = (entry.photoIds || []).length
       ? '<div class="entry-photos">' + entry.photoIds.map(function (id) {
@@ -7085,11 +7313,13 @@
     // 別の予定の「記録」として移したい、という要望より）。持ち手をドラッグするか、
     // 「移動」ボタンから移動先の予定を選んでも移せる。同じ日の予定にだけ移動できる。
     card.innerHTML =
-      '<div class="entry-card-head">' +
-        '<button type="button" class="entry-move-btn" aria-label="別の予定に移動">' + MOVE_ICON + '<span>移動</span></button>' +
-        '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
-      '</div>' +
-      '<div class="entry-move-menu" hidden></div>' +
+      (canMove
+        ? '<div class="entry-card-head">' +
+            '<button type="button" class="entry-move-btn" aria-label="別の予定に移動">' + MOVE_ICON + '<span>移動</span></button>' +
+            '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
+          '</div>' +
+          '<div class="entry-move-menu" hidden></div>'
+        : '') +
       (entry.time ? '<div class="entry-time">' + escapeHtml(entry.time) + '</div>' : '') +
       (entry.episode ? '<div class="entry-episode">' + escapeHtml(entry.episode) + '</div>' : '') +
       (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
@@ -7121,12 +7351,14 @@
         return;
       }
       if (e.target.closest('.entry-card-head') || e.target.closest('.entry-move-menu') || e.target.closest('.entry-social')) return;
-      openEntryForm(block.id, entry);
+      if (editable) openEntryForm(block.id, entry);
     });
-    $('.entry-move-btn', card).addEventListener('click', function (e) {
-      e.stopPropagation();
-      toggleEntryMoveMenu(card, entry.id, block.id);
-    });
+    if (canMove) {
+      $('.entry-move-btn', card).addEventListener('click', function (e) {
+        e.stopPropagation();
+        toggleEntryMoveMenu(card, entry.id, block.id);
+      });
+    }
     return card;
   }
 
@@ -7138,7 +7370,11 @@
     $all('.entry-move-menu').forEach(function (m) { m.hidden = true; m.innerHTML = ''; });
     if (wasOpen) return;
 
-    var targets = currentDayBlocks().filter(function (b) { return b.id !== currentBlockId; });
+    // 移動先は、同じ日の、同じ別行動の中（みんなの予定どうし）の予定だけ
+    var currentBlock = allBlocks().filter(function (b) { return b.id === currentBlockId; })[0];
+    var targets = currentDayBlocks().filter(function (b) {
+      return b.id !== currentBlockId && (b.branchId || '') === ((currentBlock && currentBlock.branchId) || '');
+    });
     if (!targets.length) {
       menu.innerHTML = '<p class="hint">この日には他に移動先の予定がありません。</p>';
     } else {
@@ -7201,7 +7437,7 @@
 
       var under = document.elementFromPoint(e.clientX, e.clientY);
       var blockEl = under && under.closest('.block');
-      if (blockEl && blockEl.dataset.blockId === entryDragState.sourceBlockId) blockEl = null;
+      if (blockEl && (blockEl.dataset.blockId === entryDragState.sourceBlockId || blockEl.classList.contains('branch-block'))) blockEl = null;
       if (entryDragState.targetEl !== blockEl) {
         if (entryDragState.targetEl) entryDragState.targetEl.classList.remove('drop-target');
         if (blockEl) blockEl.classList.add('drop-target');
@@ -7251,8 +7487,11 @@
   }
 
   // ---------- 大項目（予定）の追加・編集 ----------
-  function openBlockForm(block) {
+  // branch：別行動の中に新しい予定を作るときの、その別行動（編集のときは予定自身のbranchIdから決まる）
+  function openBlockForm(block, branch) {
     state.editingBlockId = block ? block.id : null;
+    var br = block && block.branchId ? branchById(block.branchId) : (branch || null);
+    state.editingBranchId = br ? br.id : '';
     state.formCategory = block ? block.category : 'sightseeing';
     // 移動手段が保存されているのは種類「移動」のときだけ（以前のデータで他の種類に付いていても出さない）
     state.formTransport = block && block.category === 'transport' ? (block.transport || '') : '';
@@ -7262,8 +7501,13 @@
     var mm = block ? (block.moveMinutes || 0) : 0;
     $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
     $('#blkMoveMins').value = mm ? mm % 60 : '';
-    $('#blkFormTitle').textContent = block ? '予定を編集' : '予定を追加';
-    $('#blkDate').value = block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10));
+    $('#blkFormTitle').textContent = (br ? '別行動の予定を' : '予定を') + (block ? '編集' : '追加');
+    $('#blkDate').value = br ? br.date : (block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10)));
+    // 別行動の中の予定は、別行動の日から動かせない（サーバーでも固定している）
+    $('#blkDate').disabled = !!br;
+    var branchNote = $('#blkBranchNote');
+    branchNote.hidden = !br;
+    branchNote.textContent = br ? branchOwnerName(br) + 'の別行動（' + br.startTime + '〜' + br.endTime + '）の中の予定です。時刻は、この時間帯の中で入れてください。' : '';
     $('#blkTime').value = block ? block.time : '';
     $('#blkLabel').value = block ? block.label : '';
     $('#blkFormStatus').textContent = '';
@@ -7320,6 +7564,13 @@
     if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
     var label = $('#blkLabel').value.trim();
     if (!label) { status.textContent = '見出しを入力してください。'; return; }
+    // 別行動の中の予定の時刻は、別行動の時間帯の中に入れる（外だと、その人の道の並びと合わなくなるため）
+    var editBranch = state.editingBranchId ? branchById(state.editingBranchId) : null;
+    var timeVal = $('#blkTime').value || '';
+    if (editBranch && timeVal && (timeVal < editBranch.startTime || timeVal > editBranch.endTime)) {
+      status.textContent = '時刻は、別行動の時間帯（' + editBranch.startTime + '〜' + editBranch.endTime + '）の中で入れてください。';
+      return;
+    }
     status.textContent = '保存中…';
     var payload = {
       date: $('#blkDate').value || '',
@@ -7331,6 +7582,7 @@
       transport: state.formCategory === 'transport' ? (state.formTransport || '') : (state.formLegacyTransport || ''),
       moveMinutes: state.formCategory === 'transport' ? readMoveMinutes() : 0
     };
+    if (!state.editingBlockId && state.editingBranchId) payload.branchId = state.editingBranchId;
     var req = state.editingBlockId
       ? api('/blocks/' + encodeURIComponent(state.editingBlockId), 'PATCH', payload)
       : api('/trips/' + encodeURIComponent(state.trip.id) + '/blocks', 'POST', payload);
@@ -7346,7 +7598,9 @@
           openEntryForm(block.id, null);
         }
       });
-    }).catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
+    }).catch(function (e) {
+      status.textContent = e && e.message === 'forbidden' ? Core.branchErrorText('forbidden') : '保存に失敗しました。もう一度お試しください。';
+    });
   }
 
   function deleteBlock() {
@@ -7394,7 +7648,7 @@
     $('#entMoreFields').open = !!(entry && (entry.comment || entry.detail || entry.waitTime || entry.shopUrl || entry.otherUrl ||
       (entry.travel && Object.keys(entry.travel).length)));
     // 壊れた地図を直しに来たときは、予定の見出しで探せるよう検索欄に入れておく
-    var formBlock = brokenMapUrl ? (state.blocks || []).filter(function (b) { return b.id === blockId; })[0] : null;
+    var formBlock = brokenMapUrl ? allBlocks().filter(function (b) { return b.id === blockId; })[0] : null;
     $('#entPlaceSearch').value = formBlock && formBlock.category !== 'transport' ? (formBlock.label || '') : '';
     $('#entMapPreview').hidden = true;
     $('#entPlaceCandidates').hidden = true;
@@ -7415,7 +7669,7 @@
   }
 
   function entryFormBlock() {
-    return (state.blocks || []).filter(function (b) { return b.id === state.entryBlockId; })[0] || null;
+    return allBlocks().filter(function (b) { return b.id === state.entryBlockId; })[0] || null;
   }
 
   // ---------- 移動の情報（紹介文用。docs/adr/0007） ----------
@@ -7452,8 +7706,11 @@
   // 古い記録の値をそのまま保存し直すためだけに残してある）
   function updateTravelDuration() {
     var block = entryFormBlock();
-    var all = Core.sortBlocks(state.blocks);
-    var next = block ? all[all.indexOf(block) + 1] : null;
+    // 別行動の中の予定なら、同じ別行動の中で次の予定を探す（みんなの予定の並びには入っていない）
+    var all = Core.sortBlocks(block && block.branchId
+      ? (state.branchBlocks || []).filter(function (b) { return b.branchId === block.branchId; })
+      : state.blocks);
+    var next = block && all.indexOf(block) !== -1 ? all[all.indexOf(block) + 1] : null;
     var depOff = block ? block._offset : undefined, arrOff = next ? next._offset : undefined;
     var dep = block ? (block.time || '') : '', arr = $('#entTravelArrive').value;
     var d = Core.travelDurationText(dep, arr, depOff, arrOff);
@@ -9527,7 +9784,12 @@
     // が一瞬でも見えてしまわないよう、新しい旅行の地図ができるまで隠す（2026-09-26）。
     var mapEl = $('#replayMap');
     if (mapEl) mapEl.style.visibility = 'hidden';
-    var stops = Core.replayStops(state.trip, state.blocks);
+    // 選んでいる人の道で再生する（みんな＝今までどおり。別行動の時間帯は、その人の予定のルートになる）
+    var stops = Core.replayStops(state.trip, replayBlocks());
+    var viewerEl = $('#replayViewer');
+    var viewerBranch = state.viewAccountId ? (state.branches || []).filter(function (b) { return b.accountId === state.viewAccountId; })[0] : null;
+    viewerEl.hidden = !viewerBranch;
+    viewerEl.textContent = viewerBranch ? branchOwnerName(viewerBranch) + 'の道' : '';
     var status = $('#replayStatus');
     var statusSub = $('#replayStatusSub');
     statusSub.hidden = true;
@@ -9540,7 +9802,7 @@
     // 「到着した移動手段」（前の移動区間から引き継いだもの）ではなく、予定そのものの値を見る
     // （成田空港出発の区間＝飛行機を、間に挟まっているかどうかの判定に使うため。docs/adr/0008）。
     var blockById = {};
-    (state.blocks || []).forEach(function (b) { blockById[b.id] = b; });
+    allBlocks().forEach(function (b) { blockById[b.id] = b; });
     Promise.all([
       loadLeaflet(),
       geocodeQueries(stops.map(function (s) {
@@ -10544,7 +10806,7 @@
       var maxZoom = 13, tiles;
       // 寄りすぎるとタイルが増える。OSMに負担をかけないよう、上限を超えるときは寄る上限を下げる
       for (;;) {
-        story = Core.buildVideoStory(tl, { photos: usePhotos, title: trip.title || '旅の記録', dateText: dateText, maxZoom: maxZoom });
+        story = Core.buildVideoStory(tl, { photos: usePhotos, title: (trip.title || '旅の記録') + (state.viewAccountId && $('#replayViewer').textContent ? '（' + $('#replayViewer').textContent + '）' : ''), dateText: dateText, maxZoom: maxZoom });
         if (!story) throw new Error('no_story');
         tiles = Core.videoTilesNeeded(story);
         if (tiles.length <= VIDEO_TILE_LIMIT || maxZoom <= 4) break;
@@ -10966,6 +11228,12 @@
     initSocial();
     $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
     $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });
+    // 自分だけの道（別行動）の追加・編集シート（docs/adr/0021）
+    $('#btnCloseBranchSheet').addEventListener('click', closeBranchSheet);
+    $('#btnCancelBranch').addEventListener('click', closeBranchSheet);
+    $('#btnSaveBranch').addEventListener('click', saveBranch);
+    $('#btnDeleteBranch').addEventListener('click', removeBranch);
+    $('#branchSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeBranchSheet(); });
 
     // ---------- ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール。2026-09-28〜） ----------
     // タップした瞬間だけ.popを付けてアイコンのバウンス演出をやり直させる（連続タップでも毎回動くよう、

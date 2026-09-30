@@ -361,6 +361,9 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <span>紹介文を作る</span>
       </button>
 
+      <!-- 自分だけの道（別行動）の切り替え：みんな／人ごと。分岐がある旅行だけ、app.jsのrenderBranchSwitcherが出す（docs/adr/0021） -->
+      <div class="branch-switch" id="branchSwitcher" hidden></div>
+
       <div class="day-tabs" id="dayTabs"></div>
 
       <div class="section-label">
@@ -463,6 +466,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
             <input type="time" id="blkTime">
           </div>
         </div>
+        <p class="hint branch-block-note" id="blkBranchNote" hidden></p>
         <p class="hint">日付・時間は、その場所の現地時間で入れてください（チケットや現地の時計のとおり）。時差や日付変更線をまたぐ移動の順番は、アプリが自動で合わせます。</p>
 
         <div class="field">
@@ -505,6 +509,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <div class="replay-clock" id="replayClock" hidden>
         <div class="replay-day" id="replayDay"></div>
         <div class="replay-time" id="replayTime"></div>
+        <!-- 人ごとの道（別行動）を選んでいるときだけ「○○の道」と出す（app.jsのopenReplay） -->
+        <div class="replay-viewer" id="replayViewer" hidden></div>
       </div>
       <button class="icon-btn replay-close" id="btnCloseReplay" aria-label="閉じる">
         <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
@@ -909,6 +915,41 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="btn danger" id="btnRemoveSelectedHistory" type="button" disabled>選んだ旅行を履歴から消す（0件）</button>
       <button class="btn danger ghost" id="btnClearAllHistory" type="button">すべて消す</button>
       <button class="btn ghost" id="btnCancelTripHistory" type="button">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 自分だけの道（別行動）の追加・編集（docs/adr/0021） ============ -->
+<div class="sheet-backdrop" id="branchSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="branchSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="branchSheetTitle">ここから別行動</div>
+      <button class="sheet-close" id="btnCloseBranchSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint" id="branchSheetNote">みんなと別行動した時間帯を入れます。この時間帯のあいだ、あなたの道の表示では「みんなの予定」のかわりに、あなたが書いた予定が並びます。みんなにも見えますが、直せるのはあなただけです。</p>
+    <div class="field">
+      <label>日付</label>
+      <div class="branch-date-text" id="brDateText"></div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="brStart">始まり</label>
+        <input type="time" id="brStart">
+      </div>
+      <div class="field">
+        <label for="brEnd">終わり</label>
+        <input type="time" id="brEnd">
+      </div>
+    </div>
+    <div class="field">
+      <label for="brTitle">タイトル（任意）</label>
+      <input type="text" id="brTitle" maxlength="100" placeholder="例：美術館とカフェ">
+    </div>
+    <p class="hint comment-status" id="brStatus"></p>
+    <div class="sheet-actions">
+      <button class="btn primary" id="btnSaveBranch" type="button">保存する</button>
+      <button class="btn danger ghost" id="btnDeleteBranch" type="button" hidden>この別行動を削除</button>
+      <button class="btn ghost" id="btnCancelBranch" type="button">キャンセル</button>
     </div>
   </div>
 </div>

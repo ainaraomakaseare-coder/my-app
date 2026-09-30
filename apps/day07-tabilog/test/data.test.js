@@ -2284,6 +2284,21 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('branchErrorText: overlapは日本語の案内', /重なって/.test(T.branchErrorText('overlap')), true);
   eq('branchErrorText: 知らない理由でも空にならない', T.branchErrorText('mystery').length > 0, true);
 
+  // 地図でふりかえる・動画：選んだ人の道の予定で再生地点を作る
+  (function () {
+    var trip2 = { startDate: '2026-10-01', endDate: '2026-10-01' };
+    var mk = function (id, time, label, url, branchId) {
+      return { id: id, date: '2026-10-01', time: time, label: label, category: 'sightseeing', createdAt: id, branchId: branchId || '',
+        entries: [{ id: 'e' + id, mapUrl: url, episode: label + 'の話', photoIds: [], costItems: [] }] };
+    };
+    var sh = [mk('s1', '09:00', '朝', 'https://maps.app.goo.gl/a'), mk('s2', '14:00', '海', 'https://maps.app.goo.gl/b'), mk('s4', '18:00', '夕食', 'https://maps.app.goo.gl/c')];
+    var bk = [mk('b1', '14:30', '美術館', 'https://maps.app.goo.gl/d', 'br1')];
+    var brs = [{ id: 'br1', accountId: 'A', name: 'a', date: '2026-10-01', startTime: '14:00', endTime: '17:00' }];
+    var stopIds = function (v) { return T.replayStops(trip2, T.visibleBlocksForView(sh, bk, brs, v)).map(function (s) { return s.blockId; }); };
+    eq('replayStops: みんなの道は今までどおり', stopIds(''), ['s1', 's2', 's4']);
+    eq('replayStops: 人の道では、別行動の時間帯がその人の予定の地点になる', stopIds('A'), ['s1', 'b1', 's4']);
+  })();
+
   // 費用：分岐の予定も精算・合計に入る（みんなの予定と同じ式）
   var costed = [
     { id: 'c1', date: '2026-10-01', entries: [{ costItems: [{ label: 'ランチ', amount: 1000 }] }], branchId: '' },
