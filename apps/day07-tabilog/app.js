@@ -10316,7 +10316,9 @@
         (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
         tripPlaceChipsHtml(placesByTrip[t.id]) +
         '</div></div>';
-      var open = function () { openTripFromCard(card, t.id, 'mylog'); };
+      // 「行ったことある旅先」と同じ普通の画面切り替えで開く。カードが広がる演出（openTripFromCard）は、
+      // マイログでは一覧がぼやけて白い画面をはさんでから詳細が出るので違和感があった（2026-09-30、オーナー報告）
+      var open = function () { openTrip(t.id, 'mylog'); };
       card.addEventListener('click', function (e) {
         if (e.target.closest('.trip-place-action')) return;
         open();
