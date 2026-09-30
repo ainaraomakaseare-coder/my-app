@@ -40,7 +40,7 @@ Problem it solves: fans who attend many games tend to forget which games they sa
 Recording two or three games is enough to see all statistics screens.
 
 4. External services
-The app does not use any external service for its core functionality: no server, no accounts, no analytics, no advertising, no AI services and no payment processors. All records and photos are stored only on the device. The only network request is loading a Japanese web font from Google Fonts; when offline, the system font is used and every feature works the same. Sharing uses the standard iOS share sheet.
+The app does not use any external service: no server, no accounts, no analytics, no advertising, no AI services and no payment processors. The app makes no network requests; all screens are bundled in the app, and all records and photos are stored only on the device, so every feature works offline. Sharing uses the standard iOS share sheet.
 
 5. Regional differences
 The app is distributed only in Japan and is in Japanese. It works the same way everywhere; there is no region-dependent feature or content.
