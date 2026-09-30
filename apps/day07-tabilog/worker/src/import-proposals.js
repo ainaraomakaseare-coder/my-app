@@ -12,7 +12,7 @@
  */
 
 import {
-  SCREENSHOT_CATEGORIES, SCREENSHOT_TRANSPORTS, SCREENSHOT_MAX_PLACE_LOOKUPS, WORKERS_FREE_SUBREQUEST_LIMIT,
+  SCREENSHOT_CATEGORIES, PROPOSAL_CATEGORIES, SCREENSHOT_TRANSPORTS, SCREENSHOT_MAX_PLACE_LOOKUPS, WORKERS_FREE_SUBREQUEST_LIMIT,
   PROPOSAL_MAX_ITEMS, normalizeProposalItems, addDays,
 } from "./screenshot-import.js";
 import { branchEndDateOf } from "./branches.js";
@@ -68,7 +68,7 @@ export function buildProposalPrompt({ kind, text, notes, dates, branch }) {
     lines.push("- dateは常に" + ((dates && dates[0]) || "対象の日") + "にすること");
   }
   lines.push(
-    "- categoryは transport（移動）/ lodging（宿泊）/ food（食事）/ sightseeing（観光・イベント）/ other のいずれか。transportには移動手段（plane, shinkansen, train, bus, car, taxi, walk, bicycle のいずれか。移動以外は空文字）を入れること",
+    "- categoryは transport（移動・出発）/ arrival（到着：空港・駅・ホテルなどに着いたこと）/ lodging（宿泊）/ food（食事）/ sightseeing（観光・イベント）/ other のいずれか。transportには移動手段（plane, shinkansen, train, bus, car, taxi, walk, bicycle のいずれか。移動・到着以外は空文字）を入れること",
     "- labelは短い見出し。体言止め（名詞で終える）にすること（例：「浅草寺」「天丼でランチ」「羽田→那覇 JAL903」）。「〜する」「〜した」のような文にしないこと。宿泊（lodging）は宿の名前だけにすること",
     "- timeは、「10時に」「18時ごろ」のように具体的な時刻が話された／書かれたときだけ、24時間表記のHH:MM（例：10:00）で入れること。話されていなければ空文字。時刻を推測で作らないこと（「昼」「夕方」のようなあいまいな言葉は空文字）",
     "- costItemsは、「ランチ1500円」「入場料800円」「タクシー$12」のように金額が話された／書かれたときだけ、品目名と金額を1件以上で入れること。amountは数字、currencyは日本円なら空文字、外貨ならISO 4217の3文字（USD、EURなど）。「一人5000円で3人」のように計算が必要なときは合計を入れ、品目名は「合計」などにしてよい。金額が無ければ空配列。金額を推測で作らないこと",
@@ -94,7 +94,7 @@ export function proposalSchema() {
         items: {
           type: "object",
           properties: {
-            category: { type: "string", enum: SCREENSHOT_CATEGORIES },
+            category: { type: "string", enum: PROPOSAL_CATEGORIES },
             transport: { type: "string", enum: SCREENSHOT_TRANSPORTS },
             date: str,
             time: str,

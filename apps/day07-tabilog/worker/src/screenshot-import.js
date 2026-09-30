@@ -42,6 +42,9 @@ export const DEFAULT_CHECK_IN_TIME = "15:00";
 export const CHECK_IN_BUFFER_MINUTES = 60;
 
 export const SCREENSHOT_CATEGORIES = ["transport", "lodging", "food", "sightseeing", "other"];
+// 音声・メモ・自分のAIの答えと、保存のときは「到着」（arrival：着いた場所の予定。地図はその場所）も使う。
+// スクショは移動を出発・到着つきの1件で表すので、AIへの指定（SCREENSHOT_CATEGORIES）には入れない（2026-09-30）
+export const PROPOSAL_CATEGORIES = SCREENSHOT_CATEGORIES.concat(["arrival"]);
 export const SCREENSHOT_TRANSPORTS = ["", "plane", "shinkansen", "train", "bus", "car", "taxi", "walk", "bicycle"];
 
 // 読み取れなかった画像の理由（画面にそのまま出す）
@@ -373,10 +376,11 @@ export function normalizeProposalItems(rawItems, ctx, parsed) {
   for (const r of rawItems) {
     if (!r || typeof r !== "object") { dropped++; continue; }
     const warnings = [];
-    let category = SCREENSHOT_CATEGORIES.includes(r.category) ? r.category : "other";
+    let category = PROPOSAL_CATEGORIES.includes(r.category) ? r.category : "other";
     let transport = SCREENSHOT_TRANSPORTS.includes(r.transport) ? r.transport : "";
-    if (transport && category !== "transport") category = "transport";
-    if (category !== "transport") transport = "";
+    // 到着（arrival）は移動手段を持ってよい（どの手段で着いたか）。それ以外で手段があれば移動にする
+    if (transport && category !== "transport" && category !== "arrival") category = "transport";
+    if (category !== "transport" && category !== "arrival") transport = "";
     const image = Number.isInteger(r.image) && r.image >= 1 && r.image <= imageCount ? r.image - 1 : null;
 
     const fromPlace = category === "transport" ? cleanPlace(r.fromPlace) : "";
@@ -625,8 +629,8 @@ export function validateSaveItems(rawItems, trip, opts) {
     const date = typeof r.date === "string" && DATE_RE.test(r.date) && isRealDate(...r.date.split("-").map(Number)) ? r.date : "";
     if (!date) { errors.push({ index, reason: "invalid_date" }); return; }
     if (!dateInTrip(date, trip)) { errors.push({ index, reason: "date_out_of_range" }); return; }
-    const category = SCREENSHOT_CATEGORIES.includes(r.category) ? r.category : "other";
-    const transport = category === "transport" && SCREENSHOT_TRANSPORTS.includes(r.transport) ? r.transport : "";
+    const category = PROPOSAL_CATEGORIES.includes(r.category) ? r.category : "other";
+    const transport = (category === "transport" || category === "arrival") && SCREENSHOT_TRANSPORTS.includes(r.transport) ? r.transport : "";
     const time = typeof r.time === "string" && TIME_RE.test(r.time) ? r.time : "";
     if (branch) {
       const placed = validateBranchBlockPlacement(branch, date, time);

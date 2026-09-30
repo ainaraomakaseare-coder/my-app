@@ -7009,7 +7009,8 @@
     var i = s.items.indexOf(item);
     var choices = ssDateChoices();
     var range = choices.length ? ' min="' + choices[0] + '" max="' + choices[choices.length - 1] + '"' : '';
-    var cats = Core.CATEGORIES.map(function (c) { return c.key; }).filter(function (c) { return c !== 'arrival'; }).map(function (c) {
+    // 「到着」も選べるようにする（音声・メモ・自分のAIの答えでは到着の予定が来る。2026-09-30）
+    var cats = Core.CATEGORIES.map(function (c) { return c.key; }).map(function (c) {
       return '<option value="' + c + '"' + (item.category === c ? ' selected' : '') + '>' + escapeHtml(Core.categoryLabel(c)) + '</option>';
     }).join('');
     var costs = (item.costItems || []).map(function (c, k) {
