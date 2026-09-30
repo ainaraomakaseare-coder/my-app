@@ -801,3 +801,19 @@ npx wrangler deploy
 ### REQUIRE_SESSION（トークン必須）の準備状況
 
 `release/tabilog-1.1.0`ブランチのapp.jsを確認したところ、`authHeaders()`が`authorization: Bearer <token>`を`api()`・`nativeApi()`・`postBinary()`のすべてに付けており、iOSアプリ（1.1.0）側はトークン必須に切り替えても送れる状態。**切り替える（`vars`に`"REQUIRE_SESSION": "1"`）かどうかは、1.0.x以前の古いアプリが使われなくなったかを見て別途判断する**（この作業ではオンにしていない）。
+
+
+## 自分だけの道（別行動の分岐）：マイグレーションは1文ずつ（2026-09-30 追加、docs/adr/0021）
+
+新しいテーブル`branches`と、`blocks`の新しい列`branch_id`が要る。`--file`は認証エラーになる環境があるので、**次の3つを1文ずつ**`--command`で実行する（`worker`フォルダで。デプロイの前でも後でもよい。`migrations/0030_branches.sql`にも同じものがある）。
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id);"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';"
+```
+
+- 3つ目のALTER TABLEは1回だけ（2回目は`duplicate column name`エラーになるが害はない）。列の有無は`PRAGMA table_info(blocks)`で確かめられる。
+- **実行前にデプロイしても壊れない**：`GET /trips/:id`は`branches: []`を返し、分岐を作ろうとしたときだけ503（`branches_not_ready`）になる。
+- API：`POST /trips/:id/branches`・`PATCH /branches/:id`・`DELETE /branches/:id`（持ち主だけ・ログイン必須）。`POST /trips/:id/blocks`の`branchId`。分岐の中の予定・記録の書き込みは持ち主だけ（403）。
+- テスト：`node worker/test/branches.test.mjs`（入力チェック・権限の純粋関数）と`node worker/test/branches-api.test.mjs`（`node:sqlite`の本物のSQLiteの上で、APIを通しで確認。Node 22.5以降）。

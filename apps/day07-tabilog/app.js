@@ -4996,7 +4996,7 @@
     if (!title) { status.textContent = 'タイトルを入力してください。'; return; }
     var newStart = $('#teStart').value, newEnd = $('#teEnd').value;
     // 日程を変えたら、予定もいっしょにずらすかを確かめる（2026-09-26。Core.tripScheduleShift）
-    var shift = Core.tripScheduleShift(state.trip, newStart, newEnd, state.blocks);
+    var shift = Core.tripScheduleShift(state.trip, newStart, newEnd, allBlocks());
     var shiftDays = 0;
     if (shift) {
       var dir = shift.days > 0 ? Math.abs(shift.days) + '日後' : Math.abs(shift.days) + '日前';
