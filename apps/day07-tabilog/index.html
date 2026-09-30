@@ -870,7 +870,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="sheet-close" id="btnCloseRsv" type="button" aria-label="閉じる">×</button>
     </div>
     <div class="rsv-panel" id="rsvOptions">
-      <p class="hint">この旅行の足跡を、15秒ほどの縦向きの動画にします。旅行名・日付・地名と地図の動きだけが入り、費用や一緒に行った人の名前は出ません。</p>
+      <p class="hint">この旅行の足跡を、縦向きの動画にします（日帰り〜3日の旅行は約30秒、4日以上は1日10秒ずつ、最長2分20秒）。旅行名・日付・地名と地図の動きだけが入り、費用や一緒に行った人の名前は出ません。</p>
+      <p class="hint" id="rsvLength"></p>
       <label class="post-option" id="rsvPhotosRow"><input type="checkbox" id="rsvPhotos"> 記録の写真を入れる</label>
       <p class="hint" id="rsvPhotosNote">写真を入れると、同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。</p>
       <div class="post-actions">
@@ -882,7 +883,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <p class="rsv-percent" id="rsvPercent">0%</p>
       <p class="rsv-progress-text" id="rsvProgressText">動画を作っています…</p>
       <div class="rsv-bar"><div class="rsv-bar-fill" id="rsvBarFill"></div></div>
-      <p class="hint">動画は実際の時間をかけて作るので、30秒ほどかかります。この画面を開いたままお待ちください。</p>
+      <p class="hint" id="rsvProgressHint">動画は実際の時間をかけて作るので、動画の長さと同じだけ時間がかかります。この画面を開いたままお待ちください。</p>
       <button class="btn ghost wide" id="btnRsvCancel" type="button">キャンセル</button>
     </div>
     <div class="rsv-panel" id="rsvResult" hidden>

@@ -2647,11 +2647,14 @@
   // 何を・いつ出すかは、地図でふりかえるの時間割（buildReplayTimeline）から作る（replayと二重に持たない）。
   var VIDEO_W = 720, VIDEO_H = 1280, VIDEO_FPS = 30;
   var VIDEO_INTRO_SEC = 1.5;   // 旅行名と日付
-  var VIDEO_ROUTE_SEC = 11.5;  // 旅の長さによらず、道のりの動画はこの秒数に収める
+  var VIDEO_SHORT_TOTAL_SEC = 30;  // 日帰り・1〜2泊（1〜3日）の動画は全体でこの秒数
+  var VIDEO_SEC_PER_DAY = 10;      // 3泊以上（4日以上）は、道のりを1日あたりこの秒数にする
+  var VIDEO_MAX_TOTAL_SEC = 140;   // 全体の上限。Xは通常のアカウントで2分20秒（140秒）まで
+  var VIDEO_CAPTION_MIN_SEC = 0.9; // 地名1つを見せる最短
+  var VIDEO_CAPTION_EVERY_MIN = 120; // 地名は、その日の旅の時間2時間につき1つ
   var VIDEO_OUTRO_SEC = 2;     // アプリ名・URL
   var VIDEO_HEAD_SEC = 0.3;    // 道のりの最初のピンが立つまで
   var VIDEO_TAIL_SEC = 0.7;    // 最後のピンのあと、全体に引くまで
-  var VIDEO_MAX_CAPTIONS = 7;  // 地名を出す数の上限（1つ1秒ほど見せたいので、11.5秒の半分ほどで7つ）
   var VIDEO_MIN_ZOOM = 2, VIDEO_MAX_ZOOM = 13; // 13より寄るとタイルが増えるので寄らない（OSMのタイルを取りすぎない）
   // 地図の「見せたい範囲」の余白（px）。上はSNSの表示に隠れやすく、下は吹き出しのカードが載る
   var VIDEO_PAD = { top: 230, right: 80, bottom: 420, left: 80 };
@@ -2743,6 +2746,89 @@
     return out;
   }
 
+  // 動画の長さ。days=旅の日数（地点のある日の数）。日帰り・1〜2泊（1〜3日）は全体で30秒、3泊以上（4日以上）は
+  // 道のりを1日10秒。ただし全体は140秒（Xの上限）に収める＝13日までは10秒/日、それ以上は全体を均等に縮める。
+  function videoDurationPlan(days) {
+    var d = Math.max(1, Math.floor(days || 1));
+    var fixed = VIDEO_INTRO_SEC + VIDEO_OUTRO_SEC;
+    var route = d >= 4 ? d * VIDEO_SEC_PER_DAY : VIDEO_SHORT_TOTAL_SEC - fixed;
+    route = Math.min(route, VIDEO_MAX_TOTAL_SEC - fixed);
+    return { days: d, routeSec: route, perDay: route / d, total: fixed + route };
+  }
+
+  // 動画のタイルの取得上限。30秒までは260枚（15秒のとき決めた値を据え置き）、長いほど広い範囲を通るので
+  // 1秒あたり6枚ずつ増やし、140秒で920枚。OSMのタイル利用ポリシーに配慮し、これを超えたら寄りすぎないようにする。
+  function videoTileLimit(totalSec) {
+    return Math.round(260 + Math.max(0, totalSec - 30) * 6);
+  }
+
+  // 1日ぶんの地名の数：その日の旅の時間（最初の地点〜最後の地点の分）2時間につき1つ（最低1つ）。
+  // 1日の秒数に収まらないとき（1つ0.9秒、止まる時間は日の55%まで）は減らす
+  function videoCaptionCount(spanMinutes, daySec) {
+    var n = Math.max(1, Math.round((spanMinutes || 0) / VIDEO_CAPTION_EVERY_MIN));
+    var fit = Math.max(1, Math.floor(daySec * 0.55 / VIDEO_CAPTION_MIN_SEC));
+    return Math.min(n, fit);
+  }
+
+  // 写真のある出来事を優先し、残りを時間（minute）で均等になるよう選ぶ。cands: [{ minute, hasImage }]（時刻順）。
+  // 選んだ添字を昇順で返す
+  function videoPickEvents(cands, n) {
+    var count = cands.length;
+    if (n >= count) return cands.map(function (c, i) { return i; });
+    var photo = [];
+    cands.forEach(function (c, i) { if (c.hasImage) photo.push(i); });
+    if (photo.length >= n) return videoPickEvenly(photo.length, n).map(function (i) { return photo[i]; });
+    var chosen = photo.slice();
+    while (chosen.length < n) {
+      var best = -1, bestD = -1;
+      for (var i = 0; i < count; i++) {
+        if (chosen.indexOf(i) !== -1) continue;
+        var d = Infinity;
+        chosen.forEach(function (j) { d = Math.min(d, Math.abs(cands[i].minute - cands[j].minute)); });
+        if (!chosen.length) d = count - i; // 何も選んでいなければ先頭から
+        if (d > bestD) { bestD = d; best = i; }
+      }
+      chosen.push(best);
+    }
+    return chosen.sort(function (a, b) { return a - b; });
+  }
+
+  // 旅行名を1行に収める。maxSizeからminSizeへ2pxずつ縮めて1行に入る大きさを探し、最小でも入らなければ
+  // 「・」「、」空白の切れ目で折り返す（最大maxLines行、入りきらなければ最後を「…」で終える）。
+  // measure(文字列, フォントサイズ)は描画側が渡す幅の計測関数。返り値: { size, lines }
+  function videoFitTitle(text, maxWidth, measure, opts) {
+    opts = opts || {};
+    var maxSize = opts.maxSize || 68, minSize = opts.minSize || 40, maxLines = opts.maxLines || 2;
+    var raw = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return { size: maxSize, lines: [] };
+    for (var size = maxSize; size >= minSize; size -= 2) {
+      if (measure(raw, size) <= maxWidth) return { size: size, lines: [raw] };
+    }
+    var m = function (s) { return measure(s, minSize); };
+    var tokens = raw.match(/(?:[^・、\s]+[・、]?|[・、])\s*/g) || [raw];
+    var lines = [], cur = '', i = 0, tooWide = false;
+    tokens.forEach(function (tk) { if (m(tk.replace(/\s+$/, '')) > maxWidth) tooWide = true; });
+    if (tooWide) return { size: minSize, lines: videoWrapLines(raw, maxWidth, m, maxLines) };
+    for (; i < tokens.length; i++) {
+      var next = cur + tokens[i];
+      if (cur && m(next.replace(/\s+$/, '')) > maxWidth) {
+        if (lines.length === maxLines - 1) break;
+        lines.push(cur.replace(/\s+$/, ''));
+        cur = tokens[i];
+      } else {
+        cur = next;
+      }
+    }
+    if (i < tokens.length) {
+      cur = (cur + tokens.slice(i).join('')).replace(/\s+$/, '');
+      while (cur && m(cur + '…') > maxWidth) cur = cur.slice(0, -1);
+      lines.push(cur + '…');
+    } else if (cur) {
+      lines.push(cur.replace(/\s+$/, ''));
+    }
+    return { size: minSize, lines: lines };
+  }
+
   // 各地点の「着いてから出るまで」と、次の地点までの移動の時間割（秒）。
   // items: [{ dwell: 止まる秒数（地名を出す地点だけ）, moveWeight: 次の地点までの移動の重さ }]。
   // 止まる秒数の合計は全体の55%まで、残りを移動の重さで分ける。
@@ -2831,6 +2917,9 @@
   }
 
   // 動画に使う地点（地図に点が出る地点。座標が分からない・外れ値の予定は出来事なので入らない）
+  // 出来事の「その日の何分か」。時刻の無い（テストなどの）地点は、並び順に2時間おきとみなす
+  function videoStopMinute(s, k) { return typeof s.minute === 'number' ? s.minute : k * VIDEO_CAPTION_EVERY_MIN; }
+
   function videoLocatedStops(tl) {
     var out = [];
     ((tl && tl.stops) || []).forEach(function (s, i) { if (s.located) out.push(i); });
@@ -2852,16 +2941,35 @@
       var s = stops[si];
       if (s.arrival) return;
       var label = String(s.label || '').replace(/\s+/g, ' ').trim();
-      var photo = opts.photos ? videoFirstImageId(s.photos) : '';
+      var img = videoFirstImageId(s.photos);
+      var photo = opts.photos ? img : '';
       if (!label && !photo) return;
       if (label && label === lastLabel && !photo) return; // 同じ地名が続くときは1回だけ
       lastLabel = label || lastLabel;
-      cand.push({ k: k, label: label, photo: photo });
+      // hasImage: 写真のある出来事は旅のハイライトなので、間引くときは（写真を入れる設定によらず）優先する
+      cand.push({ k: k, label: label, photo: photo, hasImage: !!img, minute: videoStopMinute(s, k) });
     });
-    var chosen = videoPickEvenly(cand.length, VIDEO_MAX_CAPTIONS).map(function (i) { return cand[i]; });
-    var base = videoClamp(VIDEO_ROUTE_SEC * 0.5 / Math.max(1, chosen.length), 0.9, 1.6);
-    var capByK = {};
-    chosen.forEach(function (c) { capByK[c.k] = { label: c.label, photo: c.photo, dwell: c.photo ? Math.max(base, 1.4) : base }; });
+
+    // 日ごとに区切る（連続する同じ日番号のまとまり）。動画の長さは日数で決まり、1日に同じ秒数の窓を割り当てる
+    var groups = [];
+    idx.forEach(function (si, k) {
+      var dn = stops[si].dayNumber || 1, last = groups[groups.length - 1];
+      if (last && last.day === dn) last.ks.push(k); else groups.push({ day: dn, ks: [k] });
+    });
+    var plan = videoDurationPlan(groups.length);
+    var daySec = plan.routeSec / groups.length;
+    var capByK = {}, chosen = [];
+    groups.forEach(function (g) {
+      var mins = g.ks.map(function (k) { return videoStopMinute(stops[idx[k]], k); });
+      var span = Math.max.apply(null, mins) - Math.min.apply(null, mins);
+      var gc = cand.filter(function (c) { return g.ks.indexOf(c.k) !== -1; });
+      var pick = videoPickEvents(gc, videoCaptionCount(span, daySec)).map(function (i) { return gc[i]; });
+      var base = videoClamp(daySec * 0.5 / Math.max(1, pick.length), VIDEO_CAPTION_MIN_SEC, 1.6);
+      pick.forEach(function (c) {
+        chosen.push(c);
+        capByK[c.k] = { label: c.label, photo: c.photo, dwell: c.photo ? Math.max(base, 1.4) : base };
+      });
+    });
 
     var segs = idx.slice(0, -1).map(function (si, k) {
       var a = stops[si], b = stops[idx[k + 1]];
@@ -2874,15 +2982,29 @@
         moveWeight: km < REPLAY_STAY_KM ? 0 : 1 + Math.min(2, Math.log(1 + km) / Math.LN10)
       };
     });
-    var sched = videoSchedule(idx.map(function (si, k) {
-      return { dwell: capByK[k] ? capByK[k].dwell : 0, moveWeight: k < segs.length ? segs[k].moveWeight : 0 };
-    }), VIDEO_ROUTE_SEC);
+    // 時間割は日ごとの窓（daySec）の中で組む。2日目以降の窓は、前日の最後の地点を出るところ（移動の始まり）から
+    // 始まり、前日からの移動→その日の地点、の順。前日の最後の地点は、その日の窓が始まるまで留まる
     var introSec = VIDEO_INTRO_SEC;
+    var arrive = [], leave = [], capEnd = [], dayStart = [];
+    groups.forEach(function (g, gi) {
+      var anchor = gi > 0;
+      var items = [];
+      if (anchor) items.push({ dwell: 0, moveWeight: segs[g.ks[0] - 1].moveWeight });
+      g.ks.forEach(function (k) {
+        items.push({ dwell: capByK[k] ? capByK[k].dwell : 0, moveWeight: k < segs.length ? segs[k].moveWeight : 0 });
+      });
+      var sc = videoSchedule(items, daySec), off = gi * daySec, sh = anchor ? 1 : 0;
+      if (anchor) leave[g.ks[0] - 1] = off + sc.leave[0];
+      g.ks.forEach(function (k, j) {
+        arrive[k] = off + sc.arrive[j + sh]; leave[k] = off + sc.leave[j + sh];
+        capEnd[k] = leave[k]; dayStart[k] = off;
+      });
+    });
     var wps = idx.map(function (si, k) {
       var s = stops[si], cap = capByK[k];
       return {
         stopIndex: si, lat: s.lat, lng: s.lng, dayNumber: s.dayNumber || 1,
-        arrive: sched.arrive[k], leave: sched.leave[k],
+        arrive: arrive[k], leave: leave[k], capEnd: capEnd[k], dayStart: dayStart[k],
         caption: cap ? { label: cap.label, photo: cap.photo } : null
       };
     });
@@ -2910,14 +3032,14 @@
       first = false;
       k = j + 1;
     }
-    keys.push({ t: introSec + VIDEO_ROUTE_SEC - 0.25, x: overview.x, y: overview.y, zoom: overview.zoom });
+    keys.push({ t: introSec + plan.routeSec - 0.25, x: overview.x, y: overview.y, zoom: overview.zoom });
     var lastT = -1;
     keys.forEach(function (key) { if (key.t <= lastT) key.t = lastT + 1e-4; lastT = key.t; });
 
     return {
       w: VIDEO_W, h: VIDEO_H, fps: VIDEO_FPS,
-      introSec: introSec, routeSec: VIDEO_ROUTE_SEC, outroSec: VIDEO_OUTRO_SEC,
-      total: introSec + VIDEO_ROUTE_SEC + VIDEO_OUTRO_SEC,
+      introSec: introSec, routeSec: plan.routeSec, outroSec: VIDEO_OUTRO_SEC,
+      total: introSec + plan.routeSec + VIDEO_OUTRO_SEC, days: groups.length, daySec: daySec,
       title: String(opts.title || '').trim(), dateText: opts.dateText || '',
       wps: wps, segs: segs, cameraKeys: keys, overview: overview,
       maxDay: wps.reduce(function (mx, w) { return Math.max(mx, w.dayNumber); }, 1),
@@ -2961,11 +3083,13 @@
       head = { lat: p.lat, lng: p.lng, transport: s.transport, bearing: bearingDeg(p, q), seg: sg.k };
     });
     var day = story.wps[0].dayNumber;
-    story.wps.forEach(function (w) { if (rt >= w.arrive) day = w.dayNumber; });
+    // 何日目かは、その日の窓が始まった（前日から移動を始めた）ところで変わる
+    story.wps.forEach(function (w) { if (rt >= (typeof w.dayStart === 'number' ? w.dayStart : w.arrive)) day = w.dayNumber; });
     var caption = null;
     story.wps.forEach(function (w, k) {
-      if (caption || !w.caption || rt < w.arrive || rt > w.leave) return;
-      var a = Math.min(1, (rt - w.arrive) / 0.18, (w.leave - rt) / 0.15);
+      var end = typeof w.capEnd === 'number' ? w.capEnd : w.leave;
+      if (caption || !w.caption || rt < w.arrive || rt > end) return;
+      var a = Math.min(1, (rt - w.arrive) / 0.18, (end - rt) / 0.15);
       if (a > 0) caption = { k: k, label: w.caption.label, photo: w.caption.photo, alpha: videoClamp(a, 0, 1) };
     });
     return {
@@ -3133,7 +3257,7 @@
     visitedPercentage: visitedPercentage,
     groupVisitedByOrder: groupVisitedByOrder,
     decideSwipe: decideSwipe,
-    VIDEO_W: VIDEO_W, VIDEO_H: VIDEO_H, VIDEO_FPS: VIDEO_FPS, VIDEO_MAX_CAPTIONS: VIDEO_MAX_CAPTIONS, VIDEO_MAX_ZOOM: VIDEO_MAX_ZOOM,
+    VIDEO_W: VIDEO_W, VIDEO_H: VIDEO_H, VIDEO_FPS: VIDEO_FPS, VIDEO_MAX_ZOOM: VIDEO_MAX_ZOOM,
     mercatorWorld: mercatorWorld,
     mercatorLatLng: mercatorLatLng,
     videoWorldScale: videoWorldScale,
@@ -3150,7 +3274,12 @@
     buildVideoStory: buildVideoStory,
     videoCameraAt: videoCameraAt,
     videoFrameAt: videoFrameAt,
-    videoTilesNeeded: videoTilesNeeded
+    videoTilesNeeded: videoTilesNeeded,
+    videoDurationPlan: videoDurationPlan,
+    videoTileLimit: videoTileLimit,
+    videoCaptionCount: videoCaptionCount,
+    videoPickEvents: videoPickEvents,
+    videoFitTitle: videoFitTitle
   };
 
   root.TabiLog = Core;
@@ -10022,9 +10151,9 @@
   // 編集もできてしまうので、SNSには絶対に載せない）。
   var VIDEO_FONT = '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif';
   var VIDEO_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'; // 地図でふりかえると同じタイル
-  var VIDEO_TILE_LIMIT = 260;  // 1本の動画で取るタイルの上限（OSMのタイル利用ポリシーに配慮。超えたら寄りすぎないようにする）
+  // 1本の動画で取るタイルの上限は、動画の長さで決める（Core.videoTileLimit。OSMのタイル利用ポリシーに配慮。超えたら寄りすぎないようにする）
   var VIDEO_TILE_CONCURRENCY = 6;
-  var VIDEO_BITRATE = 3000000; // 3Mbps（15秒で5MBほど。地図は細かいので下げすぎない）
+  var VIDEO_BITRATE = 3000000; // 3Mbps（30秒で11MB、140秒で52MBほど。地図は細かいので下げすぎない）
   var VIDEO_INK = '#1C1E21';
   var VIDEO_ACCENT = '#00BF8F';
 
@@ -10047,6 +10176,15 @@
     hint.textContent = ok ? '' : '場所が2か所以上ないと動画にできません';
   }
 
+  // 録画は実時間なので、動画の長さ（story.total）がそのままかかる時間になる。あとどれくらいかを出す
+  function videoDurationText(sec) {
+    var s = Math.max(0, Math.round(sec));
+    return s >= 60 ? Math.floor(s / 60) + '分' + (s % 60 ? (s % 60) + '秒' : '') : s + '秒';
+  }
+  function videoRecordingText(story, frac) {
+    return '動画を作っています…（あと約' + videoDurationText(story.total * (1 - frac)) + '）';
+  }
+
   function rsvShowPanel(name) {
     ['options', 'progress', 'result'].forEach(function (p) { $('#rsv' + p.charAt(0).toUpperCase() + p.slice(1)).hidden = p !== name; });
   }
@@ -10063,6 +10201,8 @@
     rsvReleaseVideo();
     // この旅行に写真つきの場所が無ければ、写真の選択肢そのものを出さない
     var withPhotos = Core.buildVideoStory(replay.tl, { photos: true });
+    var lenEl = $('#rsvLength');
+    if (lenEl) lenEl.textContent = withPhotos ? '動画の長さは約' + videoDurationText(withPhotos.total) + '、作るのに同じくらいの時間がかかります。' : '';
     $('#rsvPhotosRow').hidden = !(withPhotos && withPhotos.hasPhotos);
     $('#rsvPhotosNote').hidden = $('#rsvPhotosRow').hidden;
     $('#rsvPhotos').checked = false; // 同行者の顔が写ることがあるので、いつもOFFから
@@ -10285,11 +10425,15 @@
       ctx.fillRect(0, 0, W, H);
       ctx.globalAlpha = Math.min(fs.introAlpha, fs.introTextAlpha);
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#FFFFFF';
-      ctx.font = '800 68px ' + VIDEO_FONT;
-      var tl = Core.videoWrapLines(story.title || '旅の記録', 600, function (s) { return ctx.measureText(s).width; }, 3);
-      var top = 500 - (tl.length - 1) * 44;
-      tl.forEach(function (l, i) { ctx.fillText(l, W / 2, top + i * 88); });
-      var by = top + (tl.length - 1) * 88 + 44;
+      // 旅行名は1行に収まるまで縮める（下限を超えたら「・」「、」空白で最大2行）
+      var fit = Core.videoFitTitle(story.title || '旅の記録', 600, function (s, size) {
+        ctx.font = '800 ' + size + 'px ' + VIDEO_FONT; return ctx.measureText(s).width;
+      }, { maxSize: 68, minSize: 40, maxLines: 2 });
+      ctx.font = '800 ' + fit.size + 'px ' + VIDEO_FONT;
+      var lh = Math.round(fit.size * 1.3), tl = fit.lines;
+      var top = 500 - (tl.length - 1) * lh / 2;
+      tl.forEach(function (l, i) { ctx.fillText(l, W / 2, top + i * lh); });
+      var by = top + (tl.length - 1) * lh + 44;
       ctx.fillStyle = VIDEO_ACCENT; ctx.fillRect(W / 2 - 36, by, 72, 6);
       if (story.dateText) {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; ctx.font = '600 40px ' + VIDEO_FONT;
@@ -10392,9 +10536,11 @@
         story = Core.buildVideoStory(tl, { photos: usePhotos, title: trip.title || '旅の記録', dateText: dateText, maxZoom: maxZoom });
         if (!story) throw new Error('no_story');
         tiles = Core.videoTilesNeeded(story);
-        if (tiles.length <= VIDEO_TILE_LIMIT || maxZoom <= 4) break;
+        if (tiles.length <= Core.videoTileLimit(story.total) || maxZoom <= 4) break;
         maxZoom--;
       }
+      var hintEl = $('#rsvProgressHint');
+      if (hintEl) hintEl.textContent = '動画は実際の時間をかけて作るので、約' + videoDurationText(story.total) + 'かかります（地図の読み込みは別に少しかかります）。この画面を開いたままお待ちください。';
       canvas.width = story.w; canvas.height = story.h;
       ctx = canvas.getContext('2d');
       var photoIds = [];
@@ -10419,8 +10565,8 @@
       }).then(function (ok) {
         if (!ok || token.cancelled) return null;
         rsv.recording = true;
-        rsvSetProgress(0.45, '動画を作っています…');
-        return videoRecord(canvas, ctx, story, mime, token, function (f) { rsvSetProgress(0.45 + f * 0.55, '動画を作っています…'); });
+        rsvSetProgress(0.45, videoRecordingText(story, 0));
+        return videoRecord(canvas, ctx, story, mime, token, function (f) { rsvSetProgress(0.45 + f * 0.55, videoRecordingText(story, f)); });
       });
     }).then(function (blob) {
       rsv.busy = false; rsv.recording = false;
