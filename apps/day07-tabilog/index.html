@@ -288,8 +288,18 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
              読み取り、既存の/trips/:id/memo-blocksにそのまま渡すだけのため）。 -->
         <div class="field">
           <p class="hint">自分のAI（ChatGPT・Claude・Geminiなど）に整理してもらってから貼り付けます。ログイン不要・無料・回数の上限なし。</p>
-          <button class="btn ghost wide" id="btnCopyAiPrompt" type="button">AIへのお願い文をコピー</button>
-          <label for="importJsonInput">AIの答え（JSON）を貼り付け</label>
+          <!-- 何をAIに送ればよいか分からない、という声を受けて手順を番号つきで出す（2026-09-30） -->
+          <ol class="byo-steps">
+            <li><b>下のボタンで「お願い文」をコピー</b>します（この旅行の日程と、答えの形の指定が入っています）。</li>
+            <li>ChatGPTなどを開き、<b>お願い文を貼り付け</b>、そのすぐ下に<b>旅のメモ</b>（予定・行った場所・金額など）を貼るか書いて送ります。予約画面やチケットのスクショを一緒に送ってもかまいません。</li>
+            <li>AIが返した<b>「{」で始まる答え</b>をまるごとコピーして、下の欄に貼り付け、「取り込む」を押します。</li>
+          </ol>
+          <button class="btn wide" id="btnCopyAiPrompt" type="button">① お願い文をコピー</button>
+          <details class="byo-preview" id="byoPromptPreview">
+            <summary>お願い文の中身を見る</summary>
+            <pre id="byoPromptText"></pre>
+          </details>
+          <label for="importJsonInput">③ AIの答え（JSON）を貼り付け</label>
           <textarea id="importJsonInput" rows="8" placeholder='{"blocks": [...]}'></textarea>
         </div>
         <button class="btn primary wide" id="btnImportJson" type="button">取り込む</button>

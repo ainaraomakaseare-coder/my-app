@@ -6508,7 +6508,14 @@
   function copyAiImportPrompt() {
     if (!state.trip) return;
     var text = Core.buildAiImportPrompt(state.trip);
-    var done = function () { showToast('お願い文をコピーしました'); };
+    $('#byoPromptText').textContent = text;
+    var done = function () { showToast('お願い文をコピーしました。ChatGPTなどに貼り付けて、下に旅のメモを足して送ってください'); };
+    // コピーできない環境（アプリ内ブラウザなど）では、中身を開いて見せ、選んでコピーしてもらう
+    // （以前はalert()に全文を出していたが、alertが出せない環境では何も起きないように見えていた）
+    var showInstead = function () {
+      $('#byoPromptPreview').open = true;
+      showToast('自動でコピーできませんでした。下に開いたお願い文を選んでコピーしてください');
+    };
     var fallback = function () {
       var ta = document.createElement('textarea');
       ta.value = text;
@@ -6517,9 +6524,10 @@
       ta.style.opacity = '0';
       document.body.appendChild(ta);
       ta.select();
-      try { document.execCommand('copy'); done(); }
-      catch (e) { alert('コピーできませんでした。表示された文章を選んでコピーしてください。\n\n' + text); }
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
       document.body.removeChild(ta);
+      if (ok) done(); else showInstead();
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done).catch(fallback);
@@ -12276,6 +12284,10 @@
     $('#btnCreateTextEntries').addEventListener('click', handleCreateTextEntries);
     $('#btnOrganizeMemoAi').addEventListener('click', function () { organizeMemoWithAi(); });
     $('#btnCopyAiPrompt').addEventListener('click', copyAiImportPrompt);
+    // 「お願い文の中身を見る」を開いたときに、この旅行の日程入りの文面を入れる
+    $('#byoPromptPreview').addEventListener('toggle', function () {
+      if ($('#byoPromptPreview').open && state.trip) $('#byoPromptText').textContent = Core.buildAiImportPrompt(state.trip);
+    });
     $('#btnImportJson').addEventListener('click', handleImportJson);
     setupScreenshotImport();
 
