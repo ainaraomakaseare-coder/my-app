@@ -44,7 +44,10 @@ final class BayDiaryViewController: UIViewController, UITabBarDelegate {
             contentBottom,
             tabs.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tabs.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tabs.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+            // Pin to the screen edge, not the safe area: UITabBar extends its own
+            // background under the home indicator, so pinning to the safe area left
+            // an empty strip below the tabs.
+            tabs.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
         // Let UITabBar size itself (intrinsicContentSize) instead of forcing a fixed
         // 49pt height: a hardcoded height clipped the icon+label pair on current iOS,
