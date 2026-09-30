@@ -695,6 +695,18 @@ npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXIST
 npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS auth_codes (code_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);"
 ```
 
+### 手順0b：Appleトークンの取り消し用の列を足す（アカウント削除対応。migration → deploy の順）
+
+アカウント削除時にSign in with Appleのトークンを取り消す（App Storeガイドライン5.1.1(v)。docs/adr/0019の追記）ため、Appleのrefresh_tokenを保存する列を足す。**`wrangler deploy`より先に**1回だけ実行する（このオーナーの環境では`--file`が認証エラーになるので`--command`で）。
+
+```sh
+cd apps/day07-tabilog/worker
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE auth_identities ADD COLUMN refresh_token TEXT NOT NULL DEFAULT '';"
+npx wrangler deploy
+```
+
+先にdeployしてしまってもログインや削除は壊れない（列が無いあいだはトークンを保存しないだけ）。ただしその間にAppleでログインした人は取り消せなくなるので、順番は守る。対応前にログインした人のトークンは無いため取り消せない（再ログインで保存される）。取り消しに失敗した場合はログに`apple_revoke_failed`が出るが、アカウント削除は続行される。
+
 ### 手順1：Google（Google Cloud Console）
 
 1. https://console.cloud.google.com/ を開き、プロジェクトを選ぶ（無ければ作る。すでにGoogleマップ用のAPIキーを作ったプロジェクトでよい）
@@ -784,7 +796,7 @@ npx wrangler deploy
 - メールアドレス・Apple・Google・LINEのどれで入っても、**確認済みのメールアドレスが同じなら同じアカウント**（旅行・マイログ・プランは共通）。
 - LINEなどでメールが受け取れないときは、ログイン後にメールの確認コード入力が一度だけ入る。確認したメールに、そのLINEの人が結びつく。
 - Appleで「メールを非表示」を選んだ人は、Apple専用の中継アドレスが使われるため、普段のメールとは**別のアカウント**になる。
-- アカウントを削除すると、そのアカウントに結びついたログイン情報（`auth_identities`）も消える。
+- アカウントを削除すると、そのアカウントに結びついたログイン情報（`auth_identities`）も消える。Appleで入っていた人は、消す前にAppleのトークン取り消しAPIも呼ぶ（失敗しても削除は続ける）。
 
 ### REQUIRE_SESSION（トークン必須）の準備状況
 

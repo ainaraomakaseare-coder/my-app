@@ -301,3 +301,56 @@ export function nativeResultPage(kind, value) {
           : "ログインに失敗しました。もう一度お試しください。";
   return authMessagePage(kind !== "error", message, nativeAuthUrl(kind, value), true);
 }
+
+/* ---------- アカウント削除時のSign in with Appleトークンの取り消し ---------- */
+// App Storeの規約（5.1.1(v)）とAppleの要件：Sign in with Appleで作ったアカウントを削除するときは、
+// Appleのトークン取り消しAPI（POST https://appleid.apple.com/auth/revoke）でトークンを無効にする。
+// 取り消すのはAppleのコールバックで受け取って保存しておいたrefresh_token（docs/adr/0019）。
+
+export const APPLE_REVOKE_URL = "https://appleid.apple.com/auth/revoke";
+
+// 取り消しAPIに送るフォーム本文を作る。
+export function buildAppleRevokeBody(servicesId, clientSecret, refreshToken) {
+  const body = new URLSearchParams();
+  body.set("client_id", servicesId);
+  body.set("client_secret", clientSecret);
+  body.set("token", refreshToken);
+  body.set("token_type_hint", "refresh_token");
+  return body.toString();
+}
+
+// auth_identitiesの行のうち、取り消す対象（Appleで、refresh_tokenが空でないもの）だけを返す。
+// 対応前にログインした人の行はrefresh_tokenが空なので対象外（取り消しようがない）。
+export function selectAppleRevocations(identities) {
+  return (identities || []).filter(
+    (r) => r && r.provider === "apple" && typeof r.refresh_token === "string" && r.refresh_token !== ""
+  );
+}
+
+// 対象のトークンを1件ずつ取り消す。1件の失敗（通信エラー・Appleのエラー）でも例外は投げず、
+// アカウント削除を止めないために結果（{ok, failed}の件数）だけ返す。
+// ネットワークとログはfetchFn・logFnとして外から渡す（テストで差し替えられるように）。
+// 1件につきsubrequestは1回（Workers無料プランの50回上限に対して十分小さい）。
+export async function revokeAppleTokens(identities, { servicesId, clientSecret, fetchFn, logFn }) {
+  const targets = selectAppleRevocations(identities);
+  let ok = 0;
+  let failed = 0;
+  for (const t of targets) {
+    try {
+      const res = await fetchFn(APPLE_REVOKE_URL, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: buildAppleRevokeBody(servicesId, clientSecret, t.refresh_token),
+      });
+      if (res.ok) ok++;
+      else {
+        failed++;
+        if (logFn) logFn({ event: "apple_revoke_failed", status: res.status });
+      }
+    } catch (e) {
+      failed++;
+      if (logFn) logFn({ event: "apple_revoke_failed", status: 0, error: String((e && e.message) || "") });
+    }
+  }
+  return { ok, failed };
+}

@@ -27,7 +27,7 @@ import {
 import { isAllowedOrigin, cors } from "./cors.js";
 import {
   PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, randomHex,
-  pkceChallenge, buildAuthorizeUrl, buildAppleClientSecret, decodeJwtPayload, checkIdTokenClaims, extractProfile,
+  pkceChallenge, buildAuthorizeUrl, buildAppleClientSecret, decodeJwtPayload, checkIdTokenClaims, extractProfile, revokeAppleTokens,
   decideIdentity, nativeResultPage, authMessagePage,
 } from "./oauth.js";
 
@@ -2958,6 +2958,17 @@ async function authCallback(provider, request, url, env) {
       .bind(provider, profile.subject, decision.email, nowIso())
       .run();
   }
+  // Appleだけ、アカウント削除時のトークン取り消しに使うrefresh_tokenを保存する（毎回ログインで最新に更新）。
+  // migration 0029より先にデプロイされても列が無いだけでログインを止めないよう、失敗は握りつぶす。
+  if (provider === "apple" && tokenJson && typeof tokenJson.refresh_token === "string" && tokenJson.refresh_token) {
+    try {
+      await env.DB.prepare("UPDATE auth_identities SET refresh_token = ? WHERE provider = ? AND subject = ?")
+        .bind(tokenJson.refresh_token, provider, profile.subject)
+        .run();
+    } catch (e) {
+      console.error(JSON.stringify({ event: "apple_refresh_token_store_failed", error: String((e && e.message) || "").slice(0, 200) }));
+    }
+  }
   const sessionCode = await createAuthCode(env, { kind: "session", email: decision.email, provider, name: profile.name });
   return finishAuth(env, stateRow, { kind: "session", code: sessionCode });
 }
@@ -3142,6 +3153,25 @@ async function deleteAccount(request, env, headers) {
   await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
   await deleteSocialForAccount(env, account.account_id);
   await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
+  // Sign in with Appleのトークンを取り消す（5.1.1(v)）。identitiesを消す前に行う。失敗しても削除は続ける。
+  try {
+    let rows = [];
+    try {
+      rows = (await env.DB.prepare("SELECT provider, refresh_token FROM auth_identities WHERE provider = 'apple' AND email = ?").bind(email).all()).results || [];
+    } catch {
+      rows = []; // migration 0029が未適用（refresh_token列なし）なら取り消せるものは無い
+    }
+    if (rows.some((r) => r.refresh_token)) {
+      await revokeAppleTokens(rows, {
+        servicesId: env.APPLE_SERVICES_ID,
+        clientSecret: await buildAppleClientSecret(env, Math.floor(Date.now() / 1000)),
+        fetchFn: fetch,
+        logFn: (o) => console.error(JSON.stringify(o)),
+      });
+    }
+  } catch (e) {
+    console.error(JSON.stringify({ event: "apple_revoke_failed", status: 0, error: String((e && e.message) || "").slice(0, 200) }));
+  }
   await env.DB.prepare("DELETE FROM auth_identities WHERE email = ?").bind(email).run();
   // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
   // 「削除→再登録」を繰り返すだけで無料プランの月間上限(月10回)が毎回復活してしまう

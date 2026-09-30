@@ -10,6 +10,7 @@ import {
   configuredProviders, parseReturnTarget, buildAuthorizeUrl, checkIdTokenClaims, extractProfile,
   decideIdentity, decodeJwtPayload, toBase64Url, fromBase64Url, pkceChallenge, buildAppleClientSecret,
   nativeResultPage, nativeAuthUrl, authMessagePage, PROVIDER_ENDPOINTS,
+  APPLE_REVOKE_URL, buildAppleRevokeBody, selectAppleRevocations, revokeAppleTokens,
 } from "../src/oauth.js";
 
 let pass = 0, fail = 0;

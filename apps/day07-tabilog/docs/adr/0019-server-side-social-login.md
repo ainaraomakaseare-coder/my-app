@@ -34,3 +34,43 @@
 - **iOSにGoogle・LINEのネイティブSDKを組み込む**（Capacitorのプラグインとビルド手順の変更が要る。審査・保守の負担が大きい）。Safariで開いてカスタムURLスキームで戻す方式なら、プラグイン無しで3社とも同じ仕組みで動く。`@capacitor/browser`（アプリ内Safariシート）も、追加すればビルドの手順が変わるので使わなかった。
 - **アカウントのキーをメールアドレスからアカウントIDに変える**（ratings・sessions・accountsなどメール前提のテーブルが多く、影響が大きい。identityの表を1枚足すだけで4つの方式を同じアカウントにまとめられる）。
 - **同じ人が複数のメールを持つ場合の名寄せ・アカウント統合UI**：メールが違えば別アカウント（従来どおり）。
+
+## 追記（2026-09-30）：アカウント削除時にSign in with Appleのトークンを取り消す
+
+### 背景
+App Storeのガイドライン5.1.1(v)とAppleの要件では、Sign in with Appleで作ったアカウントをアプリ内から削除するとき、
+Appleのトークン取り消しAPI（`POST https://appleid.apple.com/auth/revoke`）でトークンを無効にすることが求められる。
+これまでの削除処理（`deleteAccount`）は`auth_identities`を消すだけで、Apple側にはトークンが残ったままだった。
+
+### 決めたこと
+- Appleのコールバックでトークンエンドポイントが返す`refresh_token`を、`auth_identities.refresh_token`列に保存する
+  （`migrations/0029_apple_refresh_token.sql`。`NOT NULL DEFAULT ''`）。**Appleのときだけ**保存し、Google・LINEは保存しない
+  （取り消しの義務があるのはAppleだけで、持たなくてよいものは持たない）。
+- ログインのたびに最新のrefresh_tokenで上書きする（Appleは古いものも有効なままだが、最新のものを取り消せば十分）。
+- アカウント削除時、そのメールに結びついたAppleの行のうち`refresh_token`が空でないものについて、
+  `client_id`（`APPLE_SERVICES_ID`）・`client_secret`（ログインと同じES256のJWT）・`token`・`token_type_hint=refresh_token`を
+  フォーム形式で送る。`auth_identities`を消す**前**に行う。
+- 取り消しに失敗しても（通信エラー・Appleのエラー）**アカウント削除は止めない**。`apple_revoke_failed`（`status`付き）をログに出して続ける。
+  ユーザーが削除できなくなるほうが、規約上も体験上も悪いため。
+- 1つのアイデンティティにつきAppleへの通信は1回。Workers無料プランのsubrequest上限（50回）に対して十分小さい。
+- 純粋な部分（本文の組み立て・対象の選別・取り消しの繰り返し）は`oauth.js`に置き、`worker/test/oauth.test.mjs`でfetchを差し替えてテストする。
+
+### refresh_tokenをD1にそのまま保存してよい理由
+refresh_tokenだけでは使えない。Appleのトークンを更新・取り消しするには、**うちのApple秘密鍵（`APPLE_PRIVATE_KEY`）で署名した
+client_secret**が必要で、その鍵はWorkerのsecretにしか無い。つまりD1のデータが漏れてもトークン単体では悪用できない。
+暗号化して保存する手もあるが、暗号鍵をどこに置くかという同じ問題が残るため、複雑さに見合わないと判断した。
+
+### 制限・注意
+- **この対応より前にAppleでログインした人**は`refresh_token`が空のまま（後から取り出す方法が無い）。取り消せないのでスキップする。
+  その人が再びAppleでログインすれば保存され、以後は取り消せる。
+- メールの確認コードで結びつけたAppleの行（待ちコード経由）は、ログインの流れ上refresh_tokenを持たないので、この時点では取り消せない。
+- **migration 0029より先にデプロイしても壊れない**：保存のUPDATEが「no such column」で失敗してもログインは続け、
+  削除時の取得も失敗したら「取り消すものなし」として続ける。ただし列が無い間はトークンが保存されないので、
+  先にmigrationを実行する（migration → deploy）。
+
+### 反映手順
+```sh
+cd apps/day07-tabilog/worker
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE auth_identities ADD COLUMN refresh_token TEXT NOT NULL DEFAULT '';"
+npx wrangler deploy
+```

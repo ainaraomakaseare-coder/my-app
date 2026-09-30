@@ -148,6 +148,8 @@ _Avoid_: 移動手段を「ここまで」と「ここから」で混同しな�
 Worker側の認可コードフロー（docs/adr/0019、純粋な部分は`worker/src/oauth.js`）。`GET /auth/providers`（設定済みの方式の一覧）→`GET /auth/<provider>/start?return=<戻り先ページのURL|app>`（state・nonce・PKCEをD1の`auth_states`に置いてプロバイダーへ302）→`/auth/<provider>/callback`（GoogleとLINEはGET、AppleだけPOST＝form_post）でコードをidトークンに交換し、iss・aud・exp・nonceを確認する。結果は**セッショントークンをURLに載せず**、使い捨てコード（`auth_codes`、ハッシュ保存・5分・1回だけ）で渡し、アプリが`POST /auth/exchange`でセッションに交換する（返す形はメールOTPの確認と同じ）。Webは戻り先に`#auth=<コード>`（メール確認が要るときは`#auth_link=<コード>`、失敗は`#auth_error=…`）を付けて戻し、アプリはハッシュをすぐ消す。**iOSアプリは、Googleが埋め込みWebViewを拒否するため、Safariでログインし**（`return=app`）、終わるとWorkerの「旅の足跡アプリに戻る」ページが同じ使い捨てコードをカスタムURLスキーム`tabilog://auth?code=<コード>`（メール確認は`?link=`、失敗は`?error=`）でアプリに渡す（`appUrlOpen`／`getLaunchUrl`で受ける。Capacitorのプラグインは使わない）。ポーリング（`req`で結果を取りに行く方式）は、`req`を知る第三者にコードを盗まれるため廃止した。ログイン画面の待機表示にはキャンセルボタンがある。
 
 **（iOS審査・WebView制約についてのメモ）**:
+**アカウント削除とAppleのトークン取り消し**：Appleでログインしたとき、Appleが返す`refresh_token`を`auth_identities.refresh_token`に保存しておき（Appleだけ。Google/LINEは保存しない）、アカウント削除時に`https://appleid.apple.com/auth/revoke`で取り消す（ガイドライン5.1.1(v)）。取り消しに失敗しても削除は続ける。対応前にログインした人はトークンが無く取り消せない（docs/adr/0019の追記）。
+
 App Store Review Guideline 4.8は「第三者・ソーシャルログインを使うなら、Sign in with Appleも同格の選択肢として用意する」ことを求める。Googleログインを提供しているため、Appleでのサインインは既に用意済み（`apps/day07-tabilog-ios/README.md`参照）。**加えて、GoogleはOAuthログインをアプリ内蔵WebViewから行うことをセキュリティ上ブロックしている**ため、CapacitorでこのWeb版を包んだiOSアプリの中では、以前のクライアント側だけのGoogleログイン（Web向けJSライブラリ）は動かなかった。今は、ログインをWorker側のフローに作り替え、iOSアプリではSafariで開いて結果をカスタムURLスキームで受け取る形にしたので、Apple・Google・LINE・メールの4つがiOSアプリでも使える（docs/adr/0019）。Google/LINEを出すならAppleも同格で並べる必要があるため、Appleを設定してから他社を公開する。メールログインは外部サービスへの認証委譲ではなく、埋め込みWebView制約を受けないシンプルなフォーム+コード確認なので、4.8を新たに発生させるものではないと考えている。
 
 **評価（Rating）**:
