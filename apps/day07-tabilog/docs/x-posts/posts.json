@@ -1,0 +1,276 @@
+{
+  "timezone": "Asia/Tokyo",
+  "lp": "https://tabinoashiato.pages.dev/lp/",
+  "posts": [
+    {
+      "no": 1,
+      "id": "1-1",
+      "category": "はじめに",
+      "scheduled_at": "2026-10-05T20:00:00+09:00",
+      "text": "旅行のあと「あのお店どこだっけ…？」ってなるやつ🤔\n旅の足跡なら、写真・費用・ひとことを時間ごとに残せて、一緒に行った人とみんなで書き足せるよ✍️\n基本無料です🙌\n#旅の足跡 #旅行記録\nhttps://tabinoashiato.pages.dev/lp/",
+      "image": "https://tabinoashiato.pages.dev/lp/img/trip-top.jpg",
+      "weighted_length": 205
+    },
+    {
+      "no": 2,
+      "id": "2-1",
+      "category": "みんなで書き足す",
+      "scheduled_at": "2026-10-07T20:00:00+09:00",
+      "text": "旅行のリンクをLINEに貼るだけでOK🔗\nもらった人はアプリなし・ログインなしで、そのまま見たり書き足したりできるよ👌\n#旅の足跡 #家族旅行\nhttps://tabinoashiato.pages.dev/lp/",
+      "image": "",
+      "weighted_length": 156
+    },
+    {
+      "no": 3,
+      "id": "4-1",
+      "category": "地図でふりかえる",
+      "scheduled_at": "2026-10-09T20:00:00+09:00",
+      "text": "記録した場所をつないで、旅の足跡が地図の上を走り出す🗺️💨\n電車は線路に沿って🚃 飛行機は空を越えて✈️ 着いた場所ではその時の写真が出てくるよ📸\n#旅の足跡 #旅の思い出\nhttps://tabinoashiato.pages.dev/lp/",
+      "image": "",
+      "weighted_length": 190
+    },
+    {
+      "no": 4,
+      "id": "7-1",
+      "category": "マイログ・旅先",
+      "scheduled_at": "2026-10-11T20:00:00+09:00",
+      "text": "行った都道府県が日本地図に塗られていく🗾🖍️\n参加した旅行の記録から自動で集計だから入力いらず！全国制覇まであと何県？👀\n#旅の足跡 #47都道府県\nhttps://tabinoashiato.pages.dev/lp/",
+      "image": "https://tabinoashiato.pages.dev/lp/img/visited.jpg",
+      "weighted_length": 166
+    },
+    {
+      "no": 5,
+      "id": "3-1",
+      "category": "日ごとのきろく",
+      "scheduled_at": "2026-10-12T20:00:00+09:00",
+      "text": "予定ごとに写真・動画・ひとこと・費用をまとめて残せる📸🎥\n並べるだけで、旅の1日がそのままアルバムに📖✨\n#旅の足跡 #旅行記録",
+      "image": "https://tabinoashiato.pages.dev/lp/img/timeline.jpg",
+      "weighted_length": 122
+    },
+    {
+      "no": 6,
+      "id": "5-1",
+      "category": "まとめて取り込む",
+      "scheduled_at": "2026-10-14T20:00:00+09:00",
+      "text": "航空券・ホテル予約・新幹線のきっぷのスクショを最大10枚ポイっ📱✈️🏨\nAIが日付と時刻ごとの予定に分けてくれる🤖 確認して追加するだけ！\n#旅の足跡 #旅行準備\nhttps://tabinoashiato.pages.dev/lp/",
+      "image": "",
+      "weighted_length": 177
+    },
+    {
+      "no": 7,
+      "id": "6-1",
+      "category": "割り勘・精算",
+      "scheduled_at": "2026-10-16T20:00:00+09:00",
+      "text": "旅行の割り勘、帰ってから電卓たたいてない？🧮😵\n費用ごとに「払った人」「割る人」を選んどくだけで、だれがだれにいくら払えばいいかまで出るよ💸\n#旅の足跡 #割り勘\nhttps://tabinoashiato.pages.dev/lp/",
+      "image": "https://tabinoashiato.pages.dev/lp/img/settle.jpg",
+      "weighted_length": 182
+    },
+    {
+      "no": 8,
+      "id": "4-3",
+      "category": "地図でふりかえる",
+      "scheduled_at": "2026-10-18T20:00:00+09:00",
+      "text": "ふりかえりの地図、そのまま縦長動画にできる🎬\nストーリーズやTikTokに旅のダイジェスト載せたいときにどうぞ📲\n#旅の足跡 #旅行動画\nhttps://tabinoashiato.pages.dev/lp/",
+      "image": "",
+      "weighted_length": 150
+    },
+    {
+      "no": 9,
+      "id": "8-1",
+      "category": "海外旅行",
+      "scheduled_at": "2026-10-19T20:00:00+09:00",
+      "text": "海外旅行の記録で地味に困るのが時差🕐🌏\n旅の足跡は地図の場所から現地時刻で並べて、時差が変わるところに区切りを入れてくれるよ✨\n#旅の足跡 #海外旅行",
+      "image": "",
+      "weighted_length": 145
+    },
+    {
+      "no": 10,
+      "id": "5-2",
+      "category": "まとめて取り込む",
+      "scheduled_at": "2026-10-21T20:00:00+09:00",
+      "text": "書くのめんどい日は、しゃべるだけでOK🎙️\nその日あったことを話すと、話した順に予定と記録に分けて保存してくれるよ🙌\n#旅の足跡",
+      "image": "",
+      "weighted_length": 123
+    },
+    {
+      "no": 11,
+      "id": "3-3",
+      "category": "日ごとのきろく",
+      "scheduled_at": "2026-10-23T20:00:00+09:00",
+      "text": "行ったお店・宿・スポットに★1〜5つけられるよ⭐\n一緒に行った人もそれぞれ★をつけられて、旅の中では平均点で出るの地味に楽しい😆\n#旅の足跡 #グルメ記録",
+      "image": "",
+      "weighted_length": 147
+    },
+    {
+      "no": 12,
+      "id": "1-3",
+      "category": "はじめに",
+      "scheduled_at": "2026-10-25T20:00:00+09:00",
+      "text": "旅の足跡でできること👇\n📝 時間ごとの記録\n🔗 リンクで共有\n🗺️ 地図でふりかえる\n💰 割り勘の精算\n🌏 行った国・都道府県の集計\niPhoneはアプリ、Android・PCはブラウザで！\n#旅の足跡\nhttps://tabinoashiato.pages.dev/lp/",
+      "image": "",
+      "weighted_length": 199
+    },
+    {
+      "no": 13,
+      "id": "2-2",
+      "category": "みんなで書き足す",
+      "scheduled_at": "2026-10-26T20:00:00+09:00",
+      "text": "写真はママのスマホ📸 お店のメモはパパ📝 感想は子ども🧒\n旅の記録、1人でがんばらなくていいんです☺️ みんなの記録が1つの旅に集まっていくよ。\n#旅の足跡",
+      "image": "",
+      "weighted_length": 148
+    },
+    {
+      "no": 14,
+      "id": "3-2",
+      "category": "日ごとのきろく",
+      "scheduled_at": "2026-10-28T20:00:00+09:00",
+      "text": "「この旅、結局いくらだった？」💸\n費用を明細ごとに入れとけば自動で合計！旅行全体の総費用もすぐ出るよ🧮\n#旅の足跡 #旅行費用",
+      "image": "https://tabinoashiato.pages.dev/lp/img/trip-top.jpg",
+      "weighted_length": 121
+    },
+    {
+      "no": 15,
+      "id": "7-2",
+      "category": "マイログ・旅先",
+      "scheduled_at": "2026-10-30T20:00:00+09:00",
+      "text": "海外の旅先は世界地図に🌍\n「アメリカ」と「アメリカ合衆国」はちゃんと1か国にまとめて、乗り継ぎで寄っただけの国は数えないよ✈️\n#旅の足跡 #海外旅行",
+      "image": "https://tabinoashiato.pages.dev/lp/img/visited-overseas.jpg",
+      "weighted_length": 144
+    },
+    {
+      "no": 16,
+      "id": "4-2",
+      "category": "地図でふりかえる",
+      "scheduled_at": "2026-11-01T20:00:00+09:00",
+      "text": "「地図でふりかえる」、自分たちの旅を空から眺めてる気分になれるやつ🛰️✨\n旅行から帰った夜、家族でワイワイ見るのおすすめです🏠\n#旅の足跡",
+      "image": "",
+      "weighted_length": 135
+    },
+    {
+      "no": 17,
+      "id": "5-4",
+      "category": "まとめて取り込む",
+      "scheduled_at": "2026-11-02T20:00:00+09:00",
+      "text": "旅先のレシート、財布にたまりがち問題🧾💦\n撮るだけで品目と金額を読み取って、費用の明細に入れてくれるよ📸✨\n#旅の足跡 #旅行費用",
+      "image": "",
+      "weighted_length": 125
+    },
+    {
+      "no": 18,
+      "id": "6-2",
+      "category": "割り勘・精算",
+      "scheduled_at": "2026-11-04T20:00:00+09:00",
+      "text": "精算は送金回数がいちばん少なくなる組み合わせで出してくれる🙆‍♂️\n端数は1円・10円・100円単位で丸められるから、現金でも払いやすい💴\n#旅の足跡 #割り勘",
+      "image": "https://tabinoashiato.pages.dev/lp/img/settle.jpg",
+      "weighted_length": 149
+    },
+    {
+      "no": 19,
+      "id": "2-3",
+      "category": "みんなで書き足す",
+      "scheduled_at": "2026-11-06T20:00:00+09:00",
+      "text": "「午後だけ別行動〜」もそのまま残せる🚶‍♀️🚶\n予定の下に記録を分けたり、ひとりだけの道を作ったり。あとから「その人の道」に切り替えて見られるよ👀\n#旅の足跡",
+      "image": "",
+      "weighted_length": 155
+    },
+    {
+      "no": 20,
+      "id": "4-4",
+      "category": "地図でふりかえる",
+      "scheduled_at": "2026-11-08T20:00:00+09:00",
+      "text": "動画は日帰りなら約30秒、長い旅でも45秒以内⏱️\n地名と日付は出るけど、費用や同行者の名前は入らないから安心🙆 写真を入れるかも選べるよ。\n#旅の足跡",
+      "image": "",
+      "weighted_length": 144
+    },
+    {
+      "no": 21,
+      "id": "8-3",
+      "category": "海外旅行",
+      "scheduled_at": "2026-11-09T20:00:00+09:00",
+      "text": "乗り継ぎで寄っただけの国は「行った国」に数えないよ🛬\nもし違ってたら、タップしてどの旅から入ったか見て外せる👌\n#旅の足跡",
+      "image": "https://tabinoashiato.pages.dev/lp/img/visited-overseas.jpg",
+      "weighted_length": 119
+    },
+    {
+      "no": 22,
+      "id": "7-3",
+      "category": "マイログ・旅先",
+      "scheduled_at": "2026-11-11T20:00:00+09:00",
+      "text": "★をつけたごはん🍜・宿🏨・アクティビティ🎢は、旅をまたいで「飯ログ」「ほてログ」に！\n自分だけに見えるから、正直な★でOK🤫\n#旅の足跡 #グルメ記録",
+      "image": "https://tabinoashiato.pages.dev/lp/img/mylog.jpg",
+      "weighted_length": 143
+    },
+    {
+      "no": 23,
+      "id": "5-3",
+      "category": "まとめて取り込む",
+      "scheduled_at": "2026-11-13T20:00:00+09:00",
+      "text": "メモ帳に書いた旅程、貼り付けるだけで予定にまとめて取り込めるよ📋\n書いてないことは勝手に埋めないから、あとで安心して直せる👍\n#旅の足跡",
+      "image": "",
+      "weighted_length": 133
+    },
+    {
+      "no": 24,
+      "id": "3-4",
+      "category": "日ごとのきろく",
+      "scheduled_at": "2026-11-15T20:00:00+09:00",
+      "text": "宿は「1〜2泊目はここ、3泊目は同上」みたいに夜ごとに整理できる🏨🌙\n旅の上に宿泊先と総費用がまとまって出るから、あとで見返すときラク！\n#旅の足跡",
+      "image": "https://tabinoashiato.pages.dev/lp/img/trip-top.jpg",
+      "weighted_length": 142
+    },
+    {
+      "no": 25,
+      "id": "6-3",
+      "category": "割り勘・精算",
+      "scheduled_at": "2026-11-16T20:00:00+09:00",
+      "text": "海外で払った分は外貨のまま入れてOK💵💶\nその日のレートで円に換算して、ほかの費用とまとめて精算できるよ🌏\n#旅の足跡 #海外旅行",
+      "image": "",
+      "weighted_length": 123
+    },
+    {
+      "no": 26,
+      "id": "8-2",
+      "category": "海外旅行",
+      "scheduled_at": "2026-11-18T20:00:00+09:00",
+      "text": "東京→ロサンゼルスみたいに日付変更線をまたぐ旅も、地図でふりかえるとちゃんと太平洋を越えていく✈️🌊\n#旅の足跡 #海外旅行",
+      "image": "",
+      "weighted_length": 120
+    },
+    {
+      "no": 27,
+      "id": "9-2",
+      "category": "料金・安心",
+      "scheduled_at": "2026-11-20T20:00:00+09:00",
+      "text": "旅行の記録は、その旅のリンクを知ってる人だけが見られる仕組み🔒\nリンクは一緒に行った人どうしで送り合ってね🤝\n#旅の足跡",
+      "image": "",
+      "weighted_length": 117
+    },
+    {
+      "no": 28,
+      "id": "9-3",
+      "category": "料金・安心",
+      "scheduled_at": "2026-11-22T20:00:00+09:00",
+      "text": "ログインがいるのは★評価とマイログのときだけ🔑\n見る・書き足すだけならアカウントなしで使えるよ🙆‍♀️\n#旅の足跡",
+      "image": "",
+      "weighted_length": 111
+    },
+    {
+      "no": 29,
+      "id": "1-2",
+      "category": "はじめに",
+      "scheduled_at": "2026-11-23T20:00:00+09:00",
+      "text": "家族旅行の写真、カメラロールに埋もれてない？📱💦\n「11:00 首里城🏯」「12:30 沖縄そば🍜」みたいに1日の流れで残しとくと、何年たっても旅をなぞれるよ✨\n#旅の足跡 #家族旅行",
+      "image": "https://tabinoashiato.pages.dev/lp/img/timeline.jpg",
+      "weighted_length": 166
+    }
+  ],
+  "on_hold": [
+    {
+      "id": "9-1",
+      "category": "料金・安心",
+      "status": "hold",
+      "reason": "AIの無料枠（月10回→月3回）がWorkerに反映されるまで投稿しない。反映後に{N}を3にして予約する",
+      "text_template": "旅の足跡は基本無料🙌\n記録・共有・地図でふりかえる・精算・マイログは回数制限なし！AIの取り込み（声・メモ・スクショ）だけ毎月{N}回までです🤖\n#旅の足跡\nhttps://tabinoashiato.pages.dev/lp/"
+    }
+  ]
+}
