@@ -1123,6 +1123,49 @@
     return mine ? mine.score : 0;
   }
 
+  // ---------- /mylog・アカウント状況の「前回の結果を覚えておく」ための純粋な関数（2026-10-01〜） ----------
+  // 画面を開くたびにスケルトンを出して取り直すのをやめ、前回の結果をすぐ描いてから裏で取り直す
+  // （stale-while-revalidate）。ここは判断だけ（保存・通信は持たない）。
+  var MYLOG_CACHE_PREFIX = 'tabilog:mylog-cache:';
+  var MYLOG_CACHE_MAX_CHARS = 1500000; // localStorageの割り当て（約5MB）を圧迫しない上限。超えたら端末には保存しない（メモリだけ）
+  var MYLOG_REFRESH_AFTER_MS = 60 * 1000; // この時間内に取得済みなら、タブを行き来しても取り直さない
+  // アカウントごとの保存キー（メールは小文字にそろえる。別アカウントの結果を見せないため）
+  function myLogCacheKey(user) {
+    var id = user && (user.accountId || user.id || user.email);
+    return id ? MYLOG_CACHE_PREFIX + String(id).trim().toLowerCase() : '';
+  }
+  // 同じ内容かどうかを比べるための署名（安いのでJSON文字列そのまま）
+  function myLogSignature(data) {
+    try { return JSON.stringify({ i: data.items || [], t: data.trips || [], p: data.places || null }); } catch (e) { return ''; }
+  }
+  function sameMyLogData(a, b) {
+    if (!a || !b) return false;
+    return myLogSignature(a) === myLogSignature(b);
+  }
+  // 'none'＝覚えが無い／'fresh'＝新しいので取り直さない／'stale'＝見せつつ裏で取り直す。
+  // dirty（評価・場所の外す戻す・参加などで変わった）なら、いつでも'stale'
+  function myLogFreshness(entry, now, dirty, ttlMs) {
+    if (!entry || !entry.data) return 'none';
+    if (dirty) return 'stale';
+    var ttl = typeof ttlMs === 'number' ? ttlMs : MYLOG_REFRESH_AFTER_MS;
+    var age = now - (entry.fetchedAt || 0);
+    return age >= 0 && age < ttl ? 'fresh' : 'stale';
+  }
+  // 端末に保存する文字列を作る。大きすぎる・作れないときはnull
+  function serializeMyLogCache(data, fetchedAt) {
+    try {
+      var str = JSON.stringify({ v: 1, fetchedAt: fetchedAt, data: { items: data.items || [], trips: data.trips || [], places: data.places || null } });
+      return str.length > MYLOG_CACHE_MAX_CHARS ? null : str;
+    } catch (e) { return null; }
+  }
+  function parseMyLogCache(str) {
+    try {
+      var o = JSON.parse(str);
+      if (!o || o.v !== 1 || !o.data || typeof o.fetchedAt !== 'number') return null;
+      return { data: o.data, fetchedAt: o.fetchedAt };
+    } catch (e) { return null; }
+  }
+
   // マイログの並べ替え。sortKeyは'score'（評価が高い順、同点なら新しい順）か'date'（新しい順）
   function sortMyLogItems(items, sortKey) {
     var out = (items || []).slice();
@@ -3933,6 +3976,13 @@
     ratingSummary: ratingSummary,
     myRatingScore: myRatingScore,
     sortMyLogItems: sortMyLogItems,
+    myLogCacheKey: myLogCacheKey,
+    MYLOG_CACHE_PREFIX: MYLOG_CACHE_PREFIX,
+    myLogSignature: myLogSignature,
+    sameMyLogData: sameMyLogData,
+    myLogFreshness: myLogFreshness,
+    serializeMyLogCache: serializeMyLogCache,
+    parseMyLogCache: parseMyLogCache,
     weatherLabel: weatherLabel,
     MANUAL_WEATHER_OPTIONS: MANUAL_WEATHER_OPTIONS,
     manualWeatherDisplay: manualWeatherDisplay,
@@ -4505,11 +4555,15 @@
     }, TRIP_OPEN_ANIM_MS);
   }
 
-  function skeletonCardsHtml(n) {
-    var card = '<div class="skeleton-card" aria-hidden="true">' +
-      '<div class="skeleton-line skeleton-line-title"></div>' +
-      '<div class="skeleton-line skeleton-line-sub"></div>' +
-      '</div>';
+  // variantが'trip'のときはホームの旅行カード（写真を大きく＋下にタイトル・日程）と同じ形で出す
+  function skeletonCardsHtml(n, variant) {
+    var card = variant === 'trip'
+      ? '<div class="skeleton-card skeleton-card-trip" aria-hidden="true"><div class="skeleton-photo"></div>' +
+        '<div class="skeleton-info"><div class="skeleton-line skeleton-line-title"></div><div class="skeleton-line skeleton-line-sub"></div></div></div>'
+      : '<div class="skeleton-card" aria-hidden="true">' +
+        '<div class="skeleton-line skeleton-line-title"></div>' +
+        '<div class="skeleton-line skeleton-line-sub"></div>' +
+        '</div>';
     var out = '';
     for (var i = 0; i < (n || 3); i++) out += card;
     return '<div class="skeleton-wrap">' + out + '</div>';
@@ -4526,7 +4580,7 @@
   // （マイログは2026-09-28〜。旅行を開いてまた「← 戻る」で戻ったとき、スクロールした先のカードを
   // 探し直さなくて済むように）。別の旅行を開いたとき（openTrip）はいちばん上から。
   var screenScroll = {};
-  var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1 };
+  var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1, visited: 1 };
   function showScreen(name) {
     var leaving = $('.screen.active');
     var leavingName = leaving && leaving.dataset.screen;
@@ -4804,7 +4858,70 @@
     try { return JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null'); } catch (e) { return null; }
   }
   function saveCurrentUser(u) { localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(u)); }
-  function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); }
+  function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); clearMyLogCache(); clearAccountStatusCache(); }
+
+  // ---------- /mylogの前回結果（メモリ＋端末）。マイログ・行ったことある旅先・プロフィール・ホームの同期で共有する ----------
+  // 同時に何本も/mylogを取らない（飛行中のPromiseを共有）。評価・場所の外す戻す・参加などの書き込み（api）の
+  // あとは「古い」印を付け、次に画面を開いたとき見せつつ取り直す。ログアウト・401・アカウント削除で全部消す。
+  function newMyLogStore(key) { return { key: key || '', data: null, fetchedAt: 0, dirty: false, dirtyGen: 0, inflight: null, inflightKey: '' }; }
+  var myLogStore = newMyLogStore('');
+  function clearMyLogCache() {
+    myLogStore = newMyLogStore('');
+    try {
+      Object.keys(localStorage).forEach(function (k) {
+        if (k.indexOf(Core.MYLOG_CACHE_PREFIX) === 0) localStorage.removeItem(k);
+      });
+    } catch (e) {}
+  }
+  function markMyLogDirty() { myLogStore.dirty = true; myLogStore.dirtyGen++; }
+  // いま覚えている結果（無ければ端末の保存から読む）。{data, fetchedAt}かnull
+  function getMyLogEntry(user) {
+    var key = Core.myLogCacheKey(user);
+    if (!key) return null;
+    if (myLogStore.key !== key) myLogStore = newMyLogStore(key); // アカウントが変わった
+    if (!myLogStore.data) {
+      try {
+        var raw = localStorage.getItem(key);
+        var parsed = raw ? Core.parseMyLogCache(raw) : null;
+        if (parsed) { myLogStore.data = parsed.data; myLogStore.fetchedAt = parsed.fetchedAt; myLogStore.dirty = true; } // 端末から戻した分は必ず一度取り直す
+      } catch (e) {}
+    }
+    return myLogStore.data ? { data: myLogStore.data, fetchedAt: myLogStore.fetchedAt } : null;
+  }
+  // /mylogを取る（同時の呼び出しは1本にまとめる）。{data, changed}で返す。401などは例外のまま。
+  // opts.force：新しくても取り直す
+  function fetchMyLog(user, opts) {
+    var key = Core.myLogCacheKey(user);
+    var entry = getMyLogEntry(user);
+    if (!(opts && opts.force) && Core.myLogFreshness(entry, Date.now(), myLogStore.dirty) === 'fresh') {
+      return Promise.resolve({ data: entry.data, changed: false });
+    }
+    if (myLogStore.inflight && myLogStore.inflightKey === key) return myLogStore.inflight;
+    var before = entry && entry.data;
+    var gen = myLogStore.dirtyGen;
+    var p = api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
+      if (myLogStore.inflight === p) { myLogStore.inflight = null; myLogStore.inflightKey = ''; }
+      var current = loadCurrentUser();
+      if (!current || Core.myLogCacheKey(current) !== key || myLogStore.key !== key) return { data: data, changed: false, discarded: true }; // 取っている間にログアウト・切り替え
+      var changed = !Core.sameMyLogData(before, data);
+      myLogStore.data = data; myLogStore.fetchedAt = Date.now();
+      if (myLogStore.dirtyGen === gen) myLogStore.dirty = false; // 取っている間にまた書き込みがあれば印は残す
+      var str = Core.serializeMyLogCache(data, myLogStore.fetchedAt);
+      try { if (str) localStorage.setItem(key, str); else localStorage.removeItem(key); } catch (e) {}
+      return { data: data, changed: changed };
+    }, function (e) {
+      if (myLogStore.inflight === p) { myLogStore.inflight = null; myLogStore.inflightKey = ''; }
+      if (Core.isLoginRequiredError(e)) clearMyLogCache();
+      throw e;
+    });
+    myLogStore.inflight = p; myLogStore.inflightKey = key;
+    return p;
+  }
+  function applyMyLogData(data) {
+    state.myLogItems = data.items || [];
+    state.myLogTrips = data.trips || [];
+    state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [], details: { prefectures: [], countries: [] } };
+  }
 
   // メールでのログインは常に使えるため、ログイン機能自体は常に有効。
   // Apple・Google・LINEのボタンは、Workerに設定があるものだけ追加で出る（GET /auth/providers）。
@@ -5265,6 +5382,9 @@
   }
 
   function api(path, method, body) {
+    // 書き込み（評価・場所の外す戻す・参加・取り込みなど）のあとは、/mylogの前回結果を「古い」扱いにする
+    if (method && method !== 'GET' && path.indexOf('/accounts/ensure') !== 0) markMyLogDirty();
+    if (method && method !== 'GET') accountStatusAt = 0; // 音声・AI整理などで残り回数が変わるので、次に見るとき裏で取り直す
     if (isNativeApp()) return nativeApi(path, method, body);
     return fetch(API_BASE + path, {
       method: method || 'GET',
@@ -5530,6 +5650,34 @@
       }).join('');
   }
 
+  // 旅行カードの中身（ホームとマイログの「参加した旅行」で共通。見た目をそろえるためにここ1か所で作る）。
+  // サムネイル画像がある旅行は、写真を大きく見せてその上に旅行区分バッジを重ね、写真の下にタイトル・日程・
+  // 参加者のアイコンを並べる。extraHtmlはカードの情報欄の下に足す部品（マイログの訪れた場所チップ）。
+  function tripCardParts(t, extraHtml) {
+    var extra = extraHtml || '';
+    var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
+    var infoHtml =
+      '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
+      (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>';
+    if (t.coverPhotoId) {
+      return { className: 'trip-card has-photo', html:
+        '<div class="trip-card-photo" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')">' +
+        (t.tripType ? '<span class="trip-card-photo-badge">' + escapeHtml(t.tripType) + '</span>' : '') +
+        '</div>' +
+        '<div class="trip-card-info">' + infoHtml +
+        '<div class="trip-card-people">' + tripCardAvatarsHtml(t.companions) +
+        '<span class="trip-card-people-text">' +
+        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+        '</span></div>' + extra + '</div>' };
+    }
+    return { className: 'trip-card', html:
+      infoHtml +
+      '<div class="trip-card-companions">' +
+      ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+      (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
+      '</div>' + extra };
+  }
+
   function renderHomeTripList() {
     var allTrips = loadMyTrips();
     $('#tripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない
@@ -5551,33 +5699,9 @@
     var revealCards = [];
     list.forEach(function (t) {
       var card = document.createElement('button');
-      var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
-      var infoHtml =
-        '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
-        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>';
-      // サムネイル画像がある旅行は、写真を大きく見せてその上に旅行区分バッジを重ね、
-      // 写真の下にタイトル・日程・参加者のアイコンを並べる（ホーム画面だけの見た目。
-      // マイログの「参加した旅行一覧」は今までどおりの小さいサムネイルの一覧のまま）。
-      if (t.coverPhotoId) {
-        card.className = 'trip-card has-photo';
-        card.innerHTML =
-          '<div class="trip-card-photo" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')">' +
-          (t.tripType ? '<span class="trip-card-photo-badge">' + escapeHtml(t.tripType) + '</span>' : '') +
-          '</div>' +
-          '<div class="trip-card-info">' + infoHtml +
-          '<div class="trip-card-people">' + tripCardAvatarsHtml(t.companions) +
-          '<span class="trip-card-people-text">' +
-          ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
-          '</span></div></div>';
-      } else {
-        card.className = 'trip-card';
-        card.innerHTML =
-          infoHtml +
-          '<div class="trip-card-companions">' +
-          ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
-          (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
-          '</div>';
-      }
+      var parts = tripCardParts(t);
+      card.className = parts.className;
+      card.innerHTML = parts.html;
       card.addEventListener('click', function () { openTripFromCard(card, t.id); });
       el.appendChild(card);
       revealCards.push(card);
@@ -5592,7 +5716,8 @@
   function syncAccountTripsIntoHome() {
     var user = loadCurrentUser();
     if (!API_BASE || !user) return;
-    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
+    fetchMyLog(user).then(function (res) {
+      var data = res.data;
       var known = loadMyTrips();
       var knownIds = {};
       known.forEach(function (t) { knownIds[t.id] = true; });
@@ -6538,7 +6663,7 @@
       return;
     }
     $('#memoAiInfo').textContent = '';
-    fetchAccountStatus().then(function (account) {
+    fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
       var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
       $('#memoAiInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
@@ -6901,7 +7026,7 @@
     $('#ssInfo').textContent = '';
     renderSsThumbs();
     showScreen('screenshotImport');
-    fetchAccountStatus().then(function (account) {
+    fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
       var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
       $('#ssInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
@@ -10056,31 +10181,55 @@
     if (!user) { openLogin('mylog'); return; }
     if (Core.needsFreshLogin(user)) { forceRelogin('mylog'); return; }
     showScreen('mylog');
-    $('#mylogTripList').innerHTML = skeletonCardsHtml(2);
-    $('#mylogList').innerHTML = skeletonCardsHtml(3);
-    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
-      state.myLogItems = data.items || [];
-      state.myLogTrips = data.trips || [];
-      state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [] };
+    // 前回の結果があればすぐ描く（スケルトンは覚えが全く無いときだけ）。そのあと裏で取り直し、
+    // 中身が変わっていたときだけ描き直す（renderMyLogはタブ・並び順・絞り込みをstateから読むので保たれる）
+    var cached = getMyLogEntry(user);
+    if (cached) {
+      applyMyLogData(cached.data);
       renderMyLog();
+    } else {
+      $('#mylogTripList').innerHTML = skeletonCardsHtml(2, 'trip');
+      $('#mylogList').innerHTML = skeletonCardsHtml(3);
+    }
+    fetchMyLog(user).then(function (res) {
+      if (res.discarded) return;
+      if (cached && !res.changed) return;
+      applyMyLogData(res.data);
+      var active = $('.screen.active');
+      if (active && active.dataset.screen === 'mylog') renderMyLogKeepScroll();
     }).catch(function (e) {
       if (handleLoginRequired(e, 'mylog')) return;
-      $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
+      if (!cached) $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
     });
     // 残り回数はプロフィール画面がメインだが、マイログ見出しのplanBadgeTop（残り回数の
     // 一目バッジ）もここで最新化しておく（renderPlanStatusはプロフィール画面のDOMも一緒に更新するが、
     // 今アクティブな画面がどちらでも副作用は無い）。
-    fetchAccountStatus().then(renderPlanStatus);
+    fetchAccountStatus(renderPlanStatus).then(renderPlanStatus);
   }
 
   // ---------- 音声入力・AI整理の残り回数（docs/adr/0004） ----------
   // アカウントの利用状況は/accounts/ensureがまとめて返すので、それをそのまま使い回す
   // （ログインのたびに呼んでいる処理と同じもので、ここでは最新化のために呼び直しているだけ）。
-  function fetchAccountStatus() {
+  var accountStatusKey = '', accountStatusAt = 0;
+  function clearAccountStatusCache() { accountStatusKey = ''; accountStatusAt = 0; state.account = null; }
+  // すでに覚えている残り回数があれば、それをすぐ返し（呼び出し側は先に描ける）、裏で取り直した結果が
+  // 変わっていればonUpdateで知らせる。30秒以内に取得済みなら取り直さない。
+  function fetchAccountStatus(onUpdate, force) {
     var user = loadCurrentUser();
-    if (!user) { state.account = null; return Promise.resolve(null); }
+    if (!user) { clearAccountStatusCache(); return Promise.resolve(null); }
+    var key = Core.myLogCacheKey(user);
+    if (!force && state.account && accountStatusKey === key) {
+      if (Date.now() - accountStatusAt < 30000) return Promise.resolve(state.account);
+      var shown = JSON.stringify(state.account);
+      api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
+        if (accountStatusKey !== key) return;
+        state.account = account; accountStatusAt = Date.now();
+        if (onUpdate && JSON.stringify(account) !== shown) onUpdate(account);
+      }).catch(function () {});
+      return Promise.resolve(state.account);
+    }
     return api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
-      state.account = account;
+      state.account = account; accountStatusKey = key; accountStatusAt = Date.now();
       return account;
     }).catch(function () { state.account = null; return null; });
   }
@@ -10132,16 +10281,17 @@
     showScreen('profile');
     renderProfileIdentity(user);
     $('#profileStats').innerHTML = '';
-    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
-      state.myLogItems = data.items || [];
-      state.myLogTrips = data.trips || [];
-      state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [] };
+    var cachedP = getMyLogEntry(user);
+    if (cachedP) { applyMyLogData(cachedP.data); renderProfileStats(); }
+    fetchMyLog(user).then(function (res) {
+      if (res.discarded) return;
+      applyMyLogData(res.data);
       renderProfileStats();
     }).catch(function (e) {
       if (handleLoginRequired(e, 'profile')) return;
       // 集計が読み込めなくても、名前・アバター・アカウント操作は使えるようにしておく
     });
-    fetchAccountStatus().then(renderPlanStatus);
+    fetchAccountStatus(renderPlanStatus).then(renderPlanStatus);
   }
 
   function avatarInitial(user) {
@@ -10253,6 +10403,8 @@
     btn.disabled = true;
     api('/mylog/trip-places', 'POST', { email: user.email, tripId: tripId, kind: kind, name: name, mode: mode }).then(function (res) {
       state.myLogPlaces = res.places || state.myLogPlaces;
+      if (myLogStore.data && res.places) myLogStore.data = Object.assign({}, myLogStore.data, { places: res.places });
+      markMyLogDirty(); // 外す・戻すで総計が変わるので、旅先一覧は次に開くとき取り直す
       renderMyLogTrips();
     }).catch(function (e) {
       btn.disabled = false;
@@ -10304,18 +10456,12 @@
     var revealCards = [];
     trips.forEach(function (t) {
       var card = document.createElement('div');
-      card.className = 'trip-card';
+      // ホームと同じカード（写真が大きい見た目）。訪れた場所のチップは情報欄の下に足す
+      var parts = tripCardParts(t, tripPlaceChipsHtml(placesByTrip[t.id]));
+      card.className = parts.className;
       card.setAttribute('role', 'button');
       card.tabIndex = 0;
-      var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
-      card.innerHTML =
-        '<div class="trip-card-row">' +
-        tripThumbHtml(t.coverPhotoId) +
-        '<div class="trip-card-body">' +
-        '<div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
-        (dateText ? '<span class="trip-card-date">' + escapeHtml(dateText) + '</span>' : '') + '</div>' +
-        tripPlaceChipsHtml(placesByTrip[t.id]) +
-        '</div></div>';
+      card.innerHTML = parts.html;
       // 「行ったことある旅先」と同じ普通の画面切り替えで開く。カードが広がる演出（openTripFromCard）は、
       // マイログでは一覧がぼやけて白い画面をはさんでから詳細が出るので違和感があった（2026-09-30、オーナー報告）
       var open = function () { openTrip(t.id, 'mylog'); };
@@ -10418,6 +10564,14 @@
     return visitedGeoLibsLoading;
   }
   var visitedJapanTopoCache = null, visitedWorldTopoCache = null, visitedIsoAlpha2Cache = null;
+  var visitedFeatureCache = {};
+  function visitedFeatureOnce(name, topo, objName) {
+    var c = visitedFeatureCache[name];
+    if (c && c.topo === topo) return c.fc;
+    var fc = topojson.feature(topo, topo.objects[objName]);
+    visitedFeatureCache[name] = { topo: topo, fc: fc };
+    return fc;
+  }
   function loadVisitedJson(url, cacheKey) {
     var cache = { japan: visitedJapanTopoCache, world: visitedWorldTopoCache, iso: visitedIsoAlpha2Cache }[cacheKey];
     if (cache) return Promise.resolve(cache);
@@ -10434,14 +10588,46 @@
     if (!user) { openLogin('visited'); return; }
     if (Core.needsFreshLogin(user)) { forceRelogin('visited'); return; }
     showScreen('visited');
-    $('#visitedPanel').innerHTML = skeletonCardsHtml(4);
-    api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
-      state.myLogPlaces = data.places || { prefectures: [], countries: [], tripPlaces: [], details: { prefectures: [], countries: [] } };
-      renderVisitedPlaces();
+    // 前回の結果があればすぐ描く。中身が変わっていなければ描き直さない（地図のSVGもそのまま）
+    var cached = getMyLogEntry(user);
+    var shownSig = '';
+    if (cached) {
+      var panel0 = $('#visitedPanel');
+      var sameAsShown = visitedRenderedSig && visitedRenderedSig === visitedRenderSignature(cached.data) && panel0.firstChild && !panel0.querySelector('.skeleton-wrap');
+      applyMyLogData(cached.data);
+      if (!sameAsShown) renderVisitedPlaces();
+      shownSig = visitedRenderSignature(cached.data);
+    } else {
+      $('#visitedPanel').innerHTML = skeletonCardsHtml(4);
+    }
+    fetchMyLog(user).then(function (res) {
+      if (res.discarded) return;
+      if (cached && visitedRenderSignature(res.data) === shownSig) return;
+      applyMyLogData(res.data);
+      var active = $('.screen.active');
+      if (active && active.dataset.screen === 'visited') renderVisitedKeepScroll();
     }).catch(function (e) {
       if (handleLoginRequired(e, 'visited')) return;
+      if (cached) return;
       $('#visitedPanel').innerHTML = '<div class="empty">読み込みに失敗しました。通信状況を確認して、もう一度お試しください。</div>';
     });
+  }
+
+  // 「行ったことある旅先」が描いた内容の署名（placesとタブ）。同じなら再オープンで描き直さない
+  var visitedRenderedSig = '';
+  function visitedRenderSignature(data) {
+    try { return state.visitedTab + '|' + JSON.stringify((data && data.places) || null); } catch (e) { return ''; }
+  }
+  // 中身が変わって描き直すとき、スクロール位置は保つ（選んでいるタブはstateにあるのでそのまま）
+  function renderVisitedKeepScroll() {
+    var y = window.scrollY;
+    renderVisitedPlaces();
+    window.scrollTo(0, y);
+  }
+  function renderMyLogKeepScroll() {
+    var y = window.scrollY;
+    renderMyLog();
+    window.scrollTo(0, y);
   }
 
   function visitedDetails() {
@@ -10455,6 +10641,7 @@
     });
     var details = visitedDetails();
     var panel = $('#visitedPanel');
+    visitedRenderedSig = visitedRenderSignature({ places: state.myLogPlaces });
     if (state.visitedTab === 'overseas') renderVisitedOverseas(panel, (details.countries || []).filter(function (x) { return x.status === 'visible'; }));
     else renderVisitedDomestic(panel, (details.prefectures || []).filter(function (x) { return x.status === 'visible'; }));
   }
@@ -10638,7 +10825,7 @@
       var container = $('#visitedMapDomestic');
       if (!container) return; // 読み込み中にタブが切り替わっていた
       var topo = r[1];
-      var fc = topojson.feature(topo, topo.objects.japan);
+      var fc = visitedFeatureOnce('japan', topo, 'japan'); // 変換結果は覚えておき、タブを切り替えるたびに作り直さない
       var okinawaFeature = fc.features.filter(function (f) { return f.properties.nam_ja === '沖縄県'; })[0];
       var mainFeatures = fc.features.filter(function (f) { return f.properties.nam_ja !== '沖縄県'; });
       var mainFC = { type: 'FeatureCollection', features: mainFeatures };
@@ -10720,7 +10907,7 @@
       var idx = { idToName: {}, nameToId: {} };
       var fc = null;
       try {
-        fc = topojson.feature(topo, topo.objects.countries);
+        fc = visitedFeatureOnce('world', topo, 'countries');
         var ids = fc.features.map(function (f) { return f.id; });
         idx = Core.buildCountryIsoIndex(ids, alpha2Table);
       } catch (e) {
