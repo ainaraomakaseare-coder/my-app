@@ -880,3 +880,49 @@ App Reviewの Guideline 3.1.1 で却下されたため、有料プランと回�
 - Stripeのシークレット（`STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET`）は設定したままでよいが、使われない。消したくなったら `npx wrangler secret delete` で消してよい（アカウント削除時の「契約中のStripe定期購入の解約」だけは、`stripe_subscription_id` がある人が居れば動くので、その間は`STRIPE_SECRET_KEY`があると安心）。
 - **復活させるとき**：Appleのアプリ内課金（RevenueCat）に切り替える想定。`effectivePlan` を課金状態（RevenueCatのWebhookで`plan`列を更新）から返す形に戻し、`BILLING_ENABLED`とStripe系の経路を見直す。詳しくは docs/adr/0004。
 - ローカルの確認：`node worker/test/billing-disabled.test.mjs`（node:sqliteの上で、plan列がpremium_plusでも上限が無料のままであること・購入の入口が410であること・Webhookが何も変えないことを確かめる）
+
+## 旅行の公開範囲・プロフィール・フォロー（2026-10-01 追加、docs/adr/0010）
+
+旅行の持ち主・公開範囲（見るだけの公開画面を誰に見せるか）と、プロフィール・フォロー（承認制）・親しい友人を追加した。**新しいmigrationは2つ**（`migrations/0034_trip_owner_visibility.sql`・`0035_profiles_follows.sql`）。ほかのセッションが`0033`を使っているので、番号は0034・0035。
+
+**反映手順（順番厳守：D1の文 → `wrangler deploy`）**。`--file`は認証エラーになる環境があるので、**1文ずつ**`--command`で流す。ALTER TABLEは1回だけ（2回目は「duplicate column name」エラーになるが害はない）。先にデプロイしても壊れない作りにしてある（列・テーブルが無ければ、全部の旅行が「一緒に行った人だけ」・フォローなしとして動き、書き込みは503）。
+
+```
+# 0034：持ち主・公開範囲・公開用ID
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE trips ADD COLUMN owner_account_id TEXT NOT NULL DEFAULT '';"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE trips ADD COLUMN visibility TEXT NOT NULL DEFAULT 'members';"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE trips ADD COLUMN public_id TEXT NOT NULL DEFAULT '';"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_trips_public_id ON trips(public_id);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_trips_owner ON trips(owner_account_id);"
+# 0035：プロフィール・フォロー・親しい友人・通報
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE accounts ADD COLUMN bio TEXT NOT NULL DEFAULT '';"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE accounts ADD COLUMN avatar_photo_id TEXT NOT NULL DEFAULT '';"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE accounts ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0;"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE accounts ADD COLUMN visited_visibility TEXT NOT NULL DEFAULT 'followers';"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE accounts ADD COLUMN show_counts INTEGER NOT NULL DEFAULT 0;"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS follows (follower_id TEXT NOT NULL, followee_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'approved', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (follower_id, followee_id));"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id, status);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS close_friends (owner_account_id TEXT NOT NULL, friend_account_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (owner_account_id, friend_account_id));"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE TABLE IF NOT EXISTS profile_reports (id TEXT PRIMARY KEY, reported_account_id TEXT NOT NULL, reporter_account_id TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE (reported_account_id, reporter_account_id));"
+```
+
+**エンドポイント**（書き込みはすべて`Authorization: Bearer <セッション>`が必須。持ち主・本人のチェックはサーバー側）：
+
+| メソッド・パス | 内容 |
+|---|---|
+| `PUT /trips/:id/visibility` `{visibility}` | 公開範囲を変える（持ち主だけ。`members`\|`close_friends`\|`followers`\|`public`）。初公開で公開用IDを作る。持ち主なしは403 `no_owner`、持ち主以外は403 `forbidden` |
+| `POST /trips/:id/claim-owner` | 持ち主のいない旅行で、最初に参加したアカウントが持ち主になる（それ以外は403 `not_first_member`、持ち主がいれば409 `already_owned`） |
+| `GET /public/trips/:publicId` | 見るだけの公開画面。ログインは任意（全体向けは不要）。費用・名前・メール・各種idを許可リスト方式で除く。見られないときは404／401 `login_required`／403 `not_allowed`（持ち主の名前・アイコン・関係だけ付く） |
+| `GET /profiles/:accountId`（`me`も可） | プロフィール＋旅行の一覧（見せてよいもの）＋行ったことある旅先（国・都道府県の名前だけ。`visited`）。ログイン必須。フォロー数は本人か、本人が表示をオンにしたときだけ。ブロックされていれば404、ブロックしていれば`blockedByMe`だけ |
+| `PATCH /me/profile` | `name`・`bio`・`avatarPhotoId`・`isPrivate`・`showCounts`・`visitedVisibility`（`public`\|`followers`\|`none`）。暴言は422 |
+| `PUT /follows/:accountId` / `DELETE /follows/:accountId` | フォローする（承認制なら申請→`requested`）／やめる・申請の取り消し |
+| `POST /me/follow-requests/:accountId/approve`・`/decline` | 申請の承認・断る |
+| `DELETE /me/followers/:accountId` | フォロワーから外す |
+| `PUT /me/close-friends/:accountId` / `DELETE` | 親しい友人に入れる（フォロワーの中から。それ以外は409 `not_a_follower`）／外す |
+| `GET /me/connections?kind=followers\|following\|requests\|close_friends` | 自分のフォロワー・フォロー中・承認待ち・親しい友人の一覧（本人のものだけ） |
+| `POST /profiles/:accountId/report` | プロフィールの通報（`REPORT_NOTIFY_EMAIL`へメール） |
+| `PUT/DELETE /user-blocks`（既存） | ブロックすると互いのフォロー・親しい友人も外れる |
+
+**サブリクエスト**：プロフィールの閲覧は、D1のクエリが十数回（フォロー関係3＋数2＋旅行1＋旅先の集計5前後）で、外部への通信は無い（旅先は`getVisitedPlaces`の読むだけモード＝逆ジオコーディングなし）。公開画面は旅行の通常の読み込み＋関係3回。
+
+**テスト**：`node worker/test/visibility.test.mjs`（判定表・フォローの状態遷移・許可リスト・Coreとの総当たり照合）、`node worker/test/visibility-api.test.mjs`（node:sqliteの上で、持ち主・公開範囲・公開画面の出し分けと漏れ・フォロー・親しい友人・ブロック・旅先・フォロー数・マイグレーション前の動き）。
