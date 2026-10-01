@@ -1513,3 +1513,24 @@ body.viewer-open { overflow: hidden; }
 .branch-block-note { color: var(--accent-deep); font-weight: 700; }
 .replay-viewer { margin-top: 2px; font-size: 11px; font-weight: 700; color: var(--ink-muted); }
 #branchSheet .sheet { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* ---------- 読み込み→表示の動き（ホーム・タブ切り替えとそろえる。2026-10-01〜） ----------
+   スケルトンから中身に入れ替わった区画だけ、タブ切り替えと同じ.22sのフェード（tab-switch-in）を1回かける。
+   裏の取り直しで中身が変わったときはその場で静かに入れ替える（app.jsのrenderSection・fadeInOnce）。 */
+.fade-in-once { animation: tab-switch-in .22s ease both; }
+@keyframes visited-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.visited-fade { animation: visited-fade-in .22s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .fade-in-once, .visited-fade { animation: none; }
+}
+/* 地図の枠は描く前から縦横比で高さを確保する（地図が出ても下の一覧が動かない） */
+.visited-map-ph { width: 100%; max-width: 340px; border-radius: var(--radius-control); background: var(--border-soft); }
+.visited-map-ph.skeleton-photo { height: auto; }
+.visited-skeleton { margin-top: 12px; gap: 12px; }
+.visited-skeleton-totals { height: 96px; box-sizing: border-box; justify-content: center; }
+.visited-skeleton .visited-map { margin-top: 0; }
+/* プロフィール：集計・残り回数は、読み込み前から高さを確保しておく */
+.profile-stats { min-height: 16px; }
+.plan-status { min-height: 46px; }
+/* プロフィールカードの出現アニメーションはタブ切り替えのフェードと二重になるため付けない */
+.profile-card { animation: none; }

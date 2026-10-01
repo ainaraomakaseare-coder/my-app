@@ -4152,6 +4152,27 @@
   function prefersReducedMotion() {
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
+  // 読み込み中の見た目（スケルトン・空欄）から中身に入れ替わった部分だけ、タブ切り替えと同じ
+  // ふわっとしたフェード（tab-switch-in）を1回かける。裏での取り直しで中身が変わったときは使わない
+  // （その場で静かに入れ替える）。prefers-reduced-motionのときはCSS側で動かない。
+  function fadeInOnce(el) {
+    if (!el || prefersReducedMotion()) return;
+    el.classList.remove('fade-in-once');
+    void el.offsetWidth;
+    el.classList.add('fade-in-once');
+  }
+  // 一覧などの区画を、中身（sig）が前回と同じなら触らずに、変わったときだけ作り直す。
+  // スケルトンから入れ替わるときは区画ごとフェードする。buildFnには「スケルトンからの入れ替えか」を渡す。
+  function renderSection(el, sig, buildFn) {
+    var wasSkeleton = !!el.querySelector('.skeleton-wrap');
+    if (el._sig === sig && !wasSkeleton) return false;
+    el._sig = sig;
+    buildFn(wasSkeleton);
+    if (wasSkeleton) fadeInOnce(el);
+    return true;
+  }
+  function sigOf(x) { try { return JSON.stringify(x); } catch (e) { return String(Math.random()); } }
+
   function revealCardsOnScroll(cards) {
     if (!cards || !cards.length) return;
     if (prefersReducedMotion() || typeof IntersectionObserver !== 'function') return;
@@ -10199,7 +10220,7 @@
       if (active && active.dataset.screen === 'mylog') renderMyLogKeepScroll();
     }).catch(function (e) {
       if (handleLoginRequired(e, 'mylog')) return;
-      if (!cached) $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>';
+      if (!cached) { $('#mylogTripList')._sig = null; $('#mylogList')._sig = null; $('#mylogTripList').innerHTML = ''; $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>'; }
     });
     // 残り回数はプロフィール画面がメインだが、マイログ見出しのplanBadgeTop（残り回数の
     // 一目バッジ）もここで最新化しておく（renderPlanStatusはプロフィール画面のDOMも一緒に更新するが、
@@ -10240,6 +10261,7 @@
     var msgEl = $('#planStatusMessage');
     var badgeEl = $('#planBadgeTop');
     var account = state.account;
+    var wasEmpty = !statusEl.firstChild, badgeWasHidden = badgeEl.hidden;
     if (!account) {
       statusEl.innerHTML = '';
       msgEl.textContent = '';
@@ -10251,9 +10273,14 @@
       lines.push('<div class="plan-usage">メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）</div>');
     }
     if (account.ticketCredits) lines.push('<div class="plan-usage">おまけの回数：' + account.ticketCredits + '回</div>');
-    statusEl.innerHTML = lines.join('');
+    var linesHtml = lines.join('');
+    if (statusEl.innerHTML !== linesHtml) {
+      statusEl.innerHTML = linesHtml;
+      if (wasEmpty) fadeInOnce(statusEl);
+    }
 
     badgeEl.hidden = false;
+    if (badgeWasHidden) fadeInOnce(badgeEl);
     badgeEl.classList.add('is-free');
     badgeEl.textContent = '音声入力 あと' + account.voiceRemainingThisPeriod + '回';
     msgEl.textContent = '';
@@ -10280,8 +10307,8 @@
     if (Core.needsFreshLogin(user)) { forceRelogin('profile'); return; }
     showScreen('profile');
     renderProfileIdentity(user);
-    $('#profileStats').innerHTML = '';
     var cachedP = getMyLogEntry(user);
+    if (!cachedP) $('#profileStats').innerHTML = ''; // 前回の結果があるときは消さずにそのまま見せる
     if (cachedP) { applyMyLogData(cachedP.data); renderProfileStats(); }
     fetchMyLog(user).then(function (res) {
       if (res.discarded) return;
@@ -10329,9 +10356,14 @@
       { num: items.length, label: '評価 ' + items.length + '件' },
       { num: profileYearsSinceEarliestTrip(trips), label: '記録の年数 ' + profileYearsSinceEarliestTrip(trips) + '年' }
     ];
-    $('#profileStats').innerHTML = stats.map(function (s) {
+    var statsEl = $('#profileStats');
+    var html = stats.map(function (s) {
       return '<div class="profile-stat"><span class="profile-stat-label">' + escapeHtml(s.label) + '</span></div>';
     }).join('');
+    if (statsEl.innerHTML === html) return; // 同じなら触らない
+    var wasEmpty = !statsEl.firstChild;
+    statsEl.innerHTML = html;
+    if (wasEmpty) fadeInOnce(statsEl);
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
@@ -10366,8 +10398,8 @@
     history.replaceState(null, '', location.pathname);
   }
 
-  function renderMyLog() {
-    renderMyLogTrips();
+  function renderMyLog(quiet) {
+    renderMyLogTrips(quiet);
     renderMyLogTabs();
     renderMyLogSort();
     renderMyLogList();
@@ -10405,7 +10437,7 @@
       state.myLogPlaces = res.places || state.myLogPlaces;
       if (myLogStore.data && res.places) myLogStore.data = Object.assign({}, myLogStore.data, { places: res.places });
       markMyLogDirty(); // 外す・戻すで総計が変わるので、旅先一覧は次に開くとき取り直す
-      renderMyLogTrips();
+      renderMyLogTrips(true);
     }).catch(function (e) {
       btn.disabled = false;
       if (handleLoginRequired(e, 'mylog')) return;
@@ -10434,8 +10466,13 @@
       }).join('');
   }
 
-  function renderMyLogTrips() {
+  function renderMyLogTrips(quiet) {
     var el = $('#mylogTripList');
+    renderSection(el, sigOf([state.myLogTrips, state.mylogFilters, (state.myLogPlaces && state.myLogPlaces.tripPlaces) || null]), function (wasSkeleton) {
+      renderMyLogTripsBody(el, quiet || wasSkeleton);
+    });
+  }
+  function renderMyLogTripsBody(el, quiet) {
     var allTrips = state.myLogTrips || [];
     $('#mylogTripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない（ホーム画面と同じ基準）
     if (allTrips.length >= 2) renderMyLogTripFilterOptions(allTrips);
@@ -10482,12 +10519,15 @@
       el.appendChild(card);
       revealCards.push(card);
     });
-    revealCardsOnScroll(revealCards);
+    if (!quiet) revealCardsOnScroll(revealCards);
   }
 
   function myLogCategoryOf(it) { return it.category === 'arrival' ? 'transport' : it.category; }
   function renderMyLogTabs() {
     var el = $('#mylogTabs');
+    var tabsSig = sigOf([state.myLogCategory, Core.CATEGORIES.map(function (c) { return state.myLogItems.filter(function (it) { return myLogCategoryOf(it) === c.key; }).length; })]);
+    if (el._sig === tabsSig && el.firstChild) return;
+    el._sig = tabsSig;
     // 「到着」は「移動」のタブにまとめる（種類の選択と同じ。2026-09-27）
     el.innerHTML = Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) {
       var on = c.key === state.myLogCategory;
@@ -10514,6 +10554,9 @@
       state.myLogItems.filter(function (it) { return myLogCategoryOf(it) === state.myLogCategory; }),
       state.myLogSort
     );
+    renderSection(el, sigOf([state.myLogCategory, state.myLogSort, items]), function () { renderMyLogListBody(el, items); });
+  }
+  function renderMyLogListBody(el, items) {
     if (!items.length) {
       el.innerHTML = '<div class="empty">まだ' + escapeHtml(MYLOG_LABELS[state.myLogCategory] || '') + 'に評価がありません。記録を開いて★を付けてみてください。</div>';
       return;
@@ -10598,7 +10641,7 @@
       if (!sameAsShown) renderVisitedPlaces();
       shownSig = visitedRenderSignature(cached.data);
     } else {
-      $('#visitedPanel').innerHTML = skeletonCardsHtml(4);
+      $('#visitedPanel').innerHTML = visitedSkeletonHtml();
     }
     fetchMyLog(user).then(function (res) {
       if (res.discarded) return;
@@ -10626,7 +10669,7 @@
   }
   function renderMyLogKeepScroll() {
     var y = window.scrollY;
-    renderMyLog();
+    renderMyLog(true); // 裏の取り直しは、変わった区画だけ静かに入れ替える（出現演出は付けない）
     window.scrollTo(0, y);
   }
 
@@ -10635,12 +10678,24 @@
     return places.details || { prefectures: [], countries: [] };
   }
 
+  // 集計カード＋地図の枠＋一覧の形をしたスケルトン（中身に入れ替わっても高さが大きく動かないように）
+  function visitedSkeletonHtml() {
+    return '<div class="skeleton-wrap visited-skeleton" aria-hidden="true">' +
+      '<div class="skeleton-card visited-skeleton-totals"><div class="skeleton-line skeleton-line-title"></div><div class="skeleton-line skeleton-line-sub"></div></div>' +
+      '<div class="visited-map"><div class="visited-map-ph skeleton-photo" style="aspect-ratio:' + (state.visitedTab === 'overseas' ? '320 / 190' : VISITED_JAPAN_MAP_ASPECT) + '"></div></div>' +
+      '</div>';
+  }
   function renderVisitedPlaces() {
     $all('.visited-tab', $('#visitedTabs')).forEach(function (b) {
       b.classList.toggle('on', b.dataset.tab === state.visitedTab);
     });
     var details = visitedDetails();
     var panel = $('#visitedPanel');
+    var wasSkeleton = !!panel.querySelector('.skeleton-wrap');
+    renderVisitedPanelBody(panel, details);
+    if (wasSkeleton) fadeInOnce(panel);
+  }
+  function renderVisitedPanelBody(panel, details) {
     visitedRenderedSig = visitedRenderSignature({ places: state.myLogPlaces });
     if (state.visitedTab === 'overseas') renderVisitedOverseas(panel, (details.countries || []).filter(function (x) { return x.status === 'visible'; }));
     else renderVisitedDomestic(panel, (details.prefectures || []).filter(function (x) { return x.status === 'visible'; }));
@@ -10785,6 +10840,13 @@
   }
 
   var VISITED_PREFECTURE_TOTAL = 47;
+  // 日本地図SVGの縦横比（viewBoxの幅÷高さ。描く前から枠の高さを確保して、地図が出ても下が動かないように）
+  var VISITED_JAPAN_MAP_ASPECT = '320 / 442';
+  // 地図の部品（ライブラリ・地図データ）が読み込み済みなら、描画は同じ処理の中で終わるのでフェードは付けない
+  function visitedGeoReady(kind) {
+    var libs = window.d3 && window.d3.geoPath && window.topojson && window.topojson.feature;
+    return !!libs && (kind === 'japan' ? !!visitedJapanTopoCache : !!(visitedWorldTopoCache && visitedIsoAlpha2Cache));
+  }
   // 国連加盟国数（193）を分母にする。オブザーバー国家（バチカン・パレスチナ）を含めた195で
   // 数えたい、という要望が来たら、ここを195に変えれば表示も一緒に変わる。
   var VISITED_COUNTRY_TOTAL = 193;
@@ -10795,7 +10857,7 @@
     var groups = Core.groupVisitedByOrder(visited, function (x) { return Core.regionForPrefecture(x.name); }, Core.VISITED_REGION_ORDER);
     panel.innerHTML =
       visitedTotalsCardHtml(frac, '', pct) +
-      '<div class="visited-map" id="visitedMapDomestic"><div class="empty">地図を読み込み中…</div></div>' +
+      '<div class="visited-map" id="visitedMapDomestic"><div class="visited-map-ph" style="aspect-ratio:' + VISITED_JAPAN_MAP_ASPECT + '"></div></div>' +
       '<div class="visited-caption" id="visitedCaption" hidden></div>' +
       visitedGroupedListHtml('prefecture', groups, false) +
       '<p class="hint visited-credit">地図データ: simplify-japan-geojson（ricewin、CC BY 4.0）</p>';
@@ -10808,9 +10870,9 @@
     var frac = '<strong>' + visited.length + '</strong> <span class="visited-totals-unit">か国</span>';
     panel.innerHTML =
       visitedTotalsCardHtml(frac, '国連加盟' + VISITED_COUNTRY_TOTAL + 'か国中', pct) +
-      '<div class="visited-map" id="visitedMapOverseas"><div class="empty">地図を読み込み中…</div></div>' +
+      '<div class="visited-map" id="visitedMapOverseas"><div class="visited-map-ph" style="aspect-ratio:320 / 190"></div></div>' +
       '<div class="visited-caption" id="visitedCaption" hidden></div>' +
-      '<div class="visited-list-wrap" id="visitedListOverseas"><div class="empty">読み込み中…</div></div>';
+      '<div class="visited-list-wrap" id="visitedListOverseas"></div>';
     drawVisitedWorldMap(visited);
   }
 
@@ -10821,6 +10883,7 @@
   function drawVisitedJapanMap(visited) {
     var visitedNames = {};
     visited.forEach(function (x) { visitedNames[x.name] = true; });
+    var fade = !visitedGeoReady('japan');
     Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/japan-prefectures.topojson', 'japan')]).then(function (r) {
       var container = $('#visitedMapDomestic');
       if (!container) return; // 読み込み中にタブが切り替わっていた
@@ -10879,7 +10942,7 @@
           '</g>';
       }
 
-      container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた都道府県の地図">' +
+      container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="訪れた都道府県の地図">' +
         mainSvg + insetSvg + '</svg>';
       wireVisitedMapRegions(container);
     }).catch(function (e) {
@@ -10899,6 +10962,7 @@
   function drawVisitedWorldMap(visited) {
     var visitedNames = {};
     visited.forEach(function (x) { visitedNames[x.name] = true; });
+    var fade = !visitedGeoReady('world');
     Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/countries-110m.json', 'world'), loadVisitedJson('vendor/geo/iso-numeric-alpha2.json', 'iso')]).then(function (r) {
       var container = $('#visitedMapOverseas');
       var listWrap = $('#visitedListOverseas');
@@ -10946,7 +11010,7 @@
                 return ''; // 1つの地物がおかしくても地図全体は描く
               }
             }).join('');
-            container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg" role="img" aria-label="訪れた国の地図">' + paths + '</svg>';
+            container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="訪れた国の地図">' + paths + '</svg>';
             wireVisitedMapRegions(container);
           } catch (eMap) {
             console.error('drawVisitedWorldMap: map render failed', eMap);
@@ -10968,6 +11032,7 @@
           }, Core.VISITED_CONTINENT_ORDER);
           listWrap.innerHTML = visitedGroupedListHtml('country', groups, true);
           wireVisitedListRows(listWrap);
+          if (fade) fadeInOnce(listWrap);
         } catch (eList) {
           console.error('drawVisitedWorldMap: list render failed', eList);
           listWrap.innerHTML = '<div class="empty">一覧の読み込みに失敗しました。</div>';
@@ -12867,9 +12932,11 @@
     $('#visitedTabs').addEventListener('click', function (e) {
       var btn = e.target.closest('.visited-tab');
       if (!btn) return;
+      if (state.visitedTab === btn.dataset.tab && $('#visitedPanel').firstChild) return;
       state.visitedTab = btn.dataset.tab;
       state.visitedSel = null;
       renderVisitedPlaces();
+      fadeInOnce($('#visitedPanel'));
     });
     $('#planBadgeTop').addEventListener('click', function () {
       if (loadCurrentUser()) openProfile(); else openLogin('profile');
