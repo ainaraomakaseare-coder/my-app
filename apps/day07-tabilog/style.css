@@ -1504,3 +1504,120 @@ body.viewer-open { overflow: hidden; }
 .branch-block-note { color: var(--accent-deep); font-weight: 700; }
 .replay-viewer { margin-top: 2px; font-size: 11px; font-weight: 700; color: var(--ink-muted); }
 #branchSheet .sheet { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* ============ 公開範囲・プロフィール・フォロー（docs/adr/0010。2026-10-01〜） ============
+   枠線は使わず、カードは影（--card-shadow）で浮かせる。アイコンはSVG（絵文字は国旗だけ＝行ったことある旅先と同じ） */
+.member-link { color: var(--accent-deep); font-weight: 600; text-decoration: underline; text-decoration-color: rgba(4, 152, 115, .35); text-underline-offset: 2px; }
+
+/* 公開範囲の選択（旅行の編集画面・プロフィールの編集） */
+.vis-section-label { margin-top: 26px; }
+.vis-options { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px; }
+.vis-option {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left;
+  background: var(--card); border-radius: var(--radius-control); box-shadow: var(--card-shadow); padding: 12px 14px;
+}
+.vis-option.on { background: var(--accent-soft-bg); }
+.vis-option-compact { align-items: center; padding: 10px 14px; }
+.vis-radio {
+  flex: none; width: 18px; height: 18px; margin-top: 2px; border-radius: 50%; background: var(--input-bg);
+  box-shadow: inset 0 0 0 2px var(--visited-unfilled);
+}
+.vis-option-compact .vis-radio { margin-top: 0; }
+.vis-option.on .vis-radio { background: var(--accent); box-shadow: inset 0 0 0 4px var(--accent-soft-bg), 0 0 0 2px var(--accent); }
+.vis-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vis-text b { font-size: 14px; }
+.vis-text span { font-size: 12px; color: var(--ink-muted); line-height: 1.5; }
+.vis-badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
+  background: var(--border-soft); color: var(--ink-muted);
+}
+.vis-badge.vis-public { background: var(--accent-soft-bg); color: var(--accent-deep); }
+.vis-badge.vis-followers { background: #E8EEFF; color: #3563C9; }
+.vis-badge.vis-close_friends { background: #F0E7FB; color: #6B3FA0; }
+.trip-card-badges { margin-top: 6px; }
+
+/* プロフィール */
+.profile-bio { margin: 0 0 12px; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.up-card { margin-bottom: 10px; }
+.up-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.up-trips-label { margin-top: 22px; }
+.follow-counts { display: flex; gap: 8px; margin: 0 0 12px; }
+.follow-count {
+  display: flex; flex-direction: column; align-items: center; min-width: 84px; padding: 9px 14px;
+  background: var(--card); border-radius: var(--radius-control); box-shadow: var(--card-shadow);
+}
+.follow-count b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.follow-count span { font-size: 10.5px; color: var(--ink-soft); }
+.follow-count.is-alert b { color: var(--danger); }
+.profile-actions { display: flex; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
+
+/* 人の一覧（フォロー中・フォロワー・承認待ち・親しい友人） */
+.person-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.person-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 10px 12px;
+}
+.person-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.person-name { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.person-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex: none; }
+.person-avatar {
+  flex: none; width: 40px; height: 40px; border-radius: 50%; overflow: hidden;
+  background: var(--accent-soft-bg); color: var(--accent-deep);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800;
+}
+.person-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* プロフィールの編集 */
+.pe-avatar-row { display: flex; align-items: center; gap: 12px; }
+.pe-avatar { width: 72px; height: 72px; font-size: 26px; }
+.pe-count { font-size: 11px; color: var(--ink-soft); text-align: right; }
+.pe-visited-field { margin-top: 14px; }
+
+/* 行ったことある旅先（プロフィール。国は大陸ごと・都道府県は地方ごと） */
+.pv-card { background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 14px 16px 6px; margin-bottom: 14px; }
+.pv-total { font-size: 12.5px; color: var(--ink-muted); margin: 0 0 8px; }
+.pv-total b { font-size: 20px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pv-group { margin-bottom: 12px; }
+.pv-group-name { font-size: 11.5px; font-weight: 700; color: var(--ink-muted); margin-bottom: 5px; display: flex; gap: 6px; align-items: baseline; }
+.pv-group-name span { font-weight: 500; color: var(--ink-soft); }
+.pv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pv-chip { padding: 4px 11px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: 12.5px; font-weight: 600; }
+.pv-flag { margin-right: 4px; }
+
+/* 公開された旅行（見るだけの画面） */
+.pub-head .hd-row { align-items: center; }
+.pub-cover { height: 180px; border-radius: var(--radius-card); background-color: var(--border-soft); background-size: cover; background-position: center; box-shadow: var(--card-shadow); margin-bottom: 12px; }
+.pub-title { font-family: var(--font-display); font-size: 22px; font-weight: 800; margin: 4px 0 2px; line-height: 1.35; overflow-wrap: anywhere; }
+.pub-dates { font-size: 12.5px; color: var(--ink-muted); margin-bottom: 10px; }
+.pub-owner { display: inline-flex; align-items: center; gap: 8px; margin: 2px 0 12px; padding: 4px 12px 4px 4px; border-radius: 999px; background: var(--card); box-shadow: var(--card-shadow); max-width: 100%; }
+.pub-owner .person-avatar { width: 30px; height: 30px; font-size: 13px; }
+.pub-owner-name { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pub-owner-note { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--ink-muted); background: var(--accent-soft-bg); border-radius: var(--radius-control); padding: 10px 12px; margin-bottom: 14px; }
+.pub-day { margin: 18px 0 6px; }
+.pub-day-head { display: flex; align-items: baseline; gap: 8px; }
+.pub-day-label { font-family: var(--font-display); font-size: 16px; font-weight: 800; }
+.pub-day-date { font-size: 12px; color: var(--ink-soft); }
+.pub-weather { font-size: 12px; color: var(--ink-muted); margin: 2px 0 8px; }
+.pub-block { background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 12px 14px; margin: 0 0 10px; }
+.pub-block-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pub-time { font-size: 12px; font-weight: 700; color: var(--accent-deep); font-variant-numeric: tabular-nums; }
+.pub-label { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.pub-cat { margin-left: auto; font-size: 10.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--border-soft); color: var(--ink-muted); }
+.pub-move { font-size: 11.5px; color: var(--ink-muted); margin-top: 4px; }
+.pub-entry { margin-top: 10px; }
+.pub-photos { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 8px; -webkit-overflow-scrolling: touch; }
+.pub-photo { flex: none; width: 104px; height: 104px; border-radius: var(--radius-control); overflow: hidden; background: var(--border-soft); }
+.pub-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pub-video { display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--ink-muted); }
+.pub-episode, .pub-comment, .pub-detail { margin: 0 0 6px; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pub-comment { color: var(--ink-muted); }
+.pub-detail { color: var(--ink-muted); font-size: 12.5px; }
+.pub-place { font-size: 11.5px; font-weight: 700; color: var(--accent-deep); margin-bottom: 4px; }
+.pub-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--ink-muted); }
+.pub-rating { color: var(--warn); font-weight: 700; }
+.pub-note { margin-top: 20px; text-align: center; }
+.pub-gate { text-align: center; padding: 28px 8px; }
+.pub-gate .pub-owner { margin-bottom: 14px; }
+.pub-gate-title { font-size: 16px; font-weight: 800; margin: 0 0 8px; }
+.screen[data-screen="publicTrip"] .wrap, .screen[data-screen="userProfile"] .wrap, .screen[data-screen="connections"] .wrap { padding-bottom: 80px; }
+#userProfileBody .section-label { margin-top: 20px; }

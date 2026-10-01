@@ -5378,7 +5378,10 @@
     }).then(function (res) {
       if (res.status < 200 || res.status >= 300) {
         var e = (res.data && typeof res.data === 'object' && res.data.error) || ('http_' + res.status);
-        throw new Error(e);
+        var nativeErr = new Error(e);
+        nativeErr.status = res.status;
+        nativeErr.data = res.data;
+        throw nativeErr;
       }
       return res.status === 204 ? null : res.data;
     });
@@ -5392,7 +5395,10 @@
       body: body !== undefined ? JSON.stringify(body) : undefined
     }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
-        throw new Error(e.error || ('http_' + res.status));
+        var err = new Error(e.error || ('http_' + res.status));
+        err.status = res.status;
+        err.data = e;
+        throw err;
       });
       return res.status === 204 ? null : res.json();
     });
@@ -5765,7 +5771,7 @@
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       state.zoneInfo = { byBlock: {} };
       screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
-      state.tripReturnScreen = (returnTo === 'visited' || returnTo === 'mylog') ? returnTo : null;
+      state.tripReturnScreen = (returnTo === 'visited' || returnTo === 'mylog' || returnTo === 'profile') ? returnTo : null;
       showScreen('tripDetail');
       renderTripDetail();
       loadSocial();
@@ -5792,6 +5798,10 @@
     if (target === 'mylog') {
       showScreen('mylog');
       renderMyLog();
+      return;
+    }
+    if (target === 'profile') {
+      openProfile();
       return;
     }
     goHome();
@@ -5856,6 +5866,7 @@
     $('#tripEditStatus').textContent = '';
     resetCoverPhotoDraft(trip.coverPhotoId || '');
     renderCoverPhotoPreview('te');
+    renderTripVisibility();
     showScreen('tripEditForm');
   }
 
@@ -6202,8 +6213,11 @@
     var members = state.members || [];
     var namesEl = $('#tripMembers');
     namesEl.hidden = !members.length;
-    namesEl.textContent = members.length
-      ? 'アカウント参加：' + members.map(function (m) { return m.name || 'アカウント参加者'; }).join('・')
+    // 名前をタップするとプロフィールが開く（フォローはそこから。docs/adr/0010）
+    namesEl.innerHTML = members.length
+      ? 'アカウント参加：' + members.map(function (m) {
+          return '<button type="button" class="member-link" data-account="' + escapeHtml(m.accountId) + '">' + escapeHtml(m.name || 'アカウント参加者') + '</button>';
+        }).join('・')
       : '';
     var btn = $('#btnJoinTrip');
     var joined = user && user.accountId && members.some(function (m) { return m.accountId === user.accountId; });
@@ -7526,6 +7540,7 @@
     state.branches = data.branches || [];
     state.days = data.days || [];
     state.members = data.members || [];
+    state.tripOwner = data.owner || null; // 持ち主の表示名・アイコン（docs/adr/0010）。持ち主なしならnull
     var wanted = keepView ? state.viewAccountId : loadBranchView(data.trip.id);
     state.viewAccountId = Core.resolveViewAccountId(wanted, state.branches);
   }
@@ -10252,6 +10267,9 @@
     showScreen('profile');
     renderProfileIdentity(user);
     $('#profileStats').innerHTML = '';
+    $('#profileSocial').innerHTML = '';
+    sgSetUrl('');
+    loadOwnProfileSocial();
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogItems = data.items || [];
       state.myLogTrips = data.trips || [];
@@ -10271,7 +10289,10 @@
 
   function renderProfileIdentity(user) {
     var avatar = $('#profileAvatar');
-    if (user.picture) {
+    var serverAvatar = sg && sg.me && sg.me.profile && sg.me.profile.avatarPhotoId;
+    if (serverAvatar) {
+      avatar.innerHTML = '<img src="' + escapeHtml(photoUrl(serverAvatar)) + '" alt="">';
+    } else if (user.picture) {
       avatar.innerHTML = '<img src="' + escapeHtml(user.picture) + '" alt="">';
     } else {
       avatar.innerHTML = '';
@@ -10326,6 +10347,845 @@
     }).catch(function (e) {
       if (handleLoginRequired(e, 'profile')) return;
       alert('アカウントの削除に失敗しました。もう一度お試しください。');
+    });
+  }
+
+  // ==========================================================
+  // 公開範囲・プロフィール・フォロー（docs/adr/0010）
+  // ==========================================================
+  // 旅行は「一緒に行った人」のリンク（?trip=、見る＋編集）のまま。公開範囲は、別の公開用ID（?p=）の
+  // 「見るだけの画面」を誰に見せるかだけを決める（持ち主だけが変えられる）。費用・精算・一緒に行った人の名前・
+  // 別行動の予定は、見るだけの画面には出ない（サーバーが許可リスト方式で消してから返す）。
+  // プロフィール（?u=アカウントID）・フォロー（承認制なら申請→承認）・親しい友人もここ。
+  var sg = {
+    back: [],         // 戻る先（関数）の積み重ね。外から入ったときはsgStartでリセットする
+    pubId: '',        // 開いている公開画面の公開用ID（ログインし直したあとの再読み込み用）
+    profileId: '',    // 開いている他人のプロフィールのアカウントID（同上）
+    pub: null,        // 公開画面のレスポンス
+    pubMedia: [],     // 公開画面の記録ごとの写真・動画（ビューア用）
+    up: null,         // 他人のプロフィールのレスポンス
+    me: null,         // 自分のプロフィール（GET /profiles/me）
+    connKind: 'followers',
+    action: null,     // 通報・ブロックのシートの対象 { accountId, name }
+    avatar: { blob: null, previewUrl: '', existingId: '', removed: false },
+    visitedVis: 'followers'   // プロフィール編集中の「行ったことある旅先」の公開範囲
+  };
+
+  function sgStart(backFn) { sg.back = backFn ? [backFn] : []; }
+  function sgPush(backFn) { if (backFn) sg.back.push(backFn); }
+  function sgBack() {
+    var fn = sg.back.pop();
+    try { history.replaceState(null, '', location.pathname); } catch (e) { /* 消せなくても続行 */ }
+    if (fn) fn(); else goHome();
+  }
+  function sgSetUrl(search) {
+    try { history.replaceState(null, '', location.pathname + search); } catch (e) { /* 変えられなくても続行 */ }
+  }
+
+  function sgErrorText(e) {
+    var m = (e && e.message) || '';
+    if (m === 'inappropriate') return '不適切な表現が含まれているため保存できません。';
+    if (m === 'invalid_bio') return 'ひとことは' + Core.BIO_MAX + '文字までです。';
+    if (m === 'invalid_name') return '名前は1〜40文字で入力してください。';
+    if (m === 'invalid_avatar') return 'アイコンの写真を保存できませんでした。もう一度選んでください。';
+    if (m === 'profile_not_ready' || m === 'social_not_ready' || m === 'visibility_not_ready') return 'サーバーの準備がまだ終わっていません。しばらくしてからお試しください。';
+    if (m === 'forbidden') return 'この操作は持ち主だけができます。';
+    if (m === 'no_owner') return 'この旅行にはまだ持ち主がいません。';
+    if (m === 'not_first_member') return '最初に「参加する」を押した人だけが、持ち主になれます。';
+    if (m === 'already_owned') return 'この旅行にはすでに持ち主がいます。';
+    if (m === 'not_a_follower') return 'フォロワーの中からだけ選べます。';
+    if (m === 'not_found') return '見つかりませんでした。相手がブロックしているか、アカウントが無くなった可能性があります。';
+    return '通信に失敗しました。もう一度お試しください。';
+  }
+
+  // ログイン済み（セッションあり）の本人。無ければログイン画面を開く（ログインしたらreturnToへ戻る）
+  function sgUser(returnTo) {
+    var user = loadCurrentUser();
+    if (user && user.token) return user;
+    if (user) forceRelogin(returnTo); else openLogin(returnTo);
+    return null;
+  }
+
+  function sgCopy(text, doneMessage) {
+    var done = function () { showToast(doneMessage); };
+    var legacy = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      if (ok) done(); else window.prompt('このリンクをコピーしてください', text);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
+    else legacy();
+  }
+  // 共有シートが使えるなら開き、なければコピーする（リンクは本文に入れる。copyShareLinkと同じ理由）
+  function sgShareOrCopy(title, message, copyMessage) {
+    if (navigator.share) {
+      navigator.share({ title: title, text: message }).catch(function (err) {
+        if (!err || err.name !== 'AbortError') sgCopy(message, copyMessage);
+      });
+      return;
+    }
+    sgCopy(message, copyMessage);
+  }
+  function publicTripLink(publicId) { return Core.buildPublicUrl(publicPageUrl(), '', publicId); }
+  function profileLink(accountId) { return Core.buildProfileUrl(publicPageUrl(), '', accountId); }
+
+  function personAvatarHtml(p, extraClass) {
+    var inner = p && p.avatarPhotoId
+      ? '<img src="' + escapeHtml(photoUrl(p.avatarPhotoId)) + '" alt="">'
+      : escapeHtml(Core.nameInitial(p && p.name));
+    return '<span class="person-avatar ' + (extraClass || '') + '">' + inner + '</span>';
+  }
+
+  function profileTripCardHtml(t, own) {
+    var date = t.startDate ? Core.formatDateJp(t.startDate) : '';
+    var badge = own && t.id
+      ? '<div class="trip-card-badges"><span class="vis-badge vis-' + Core.normalizeVisibility(t.visibility) + '">' + escapeHtml(Core.visibilityLabel(t.visibility)) + '</span></div>'
+      : '';
+    var attr = own ? 'data-own-trip="' + escapeHtml(t.id) + '"' : 'data-pub-trip="' + escapeHtml(t.publicId) + '"';
+    return '<button type="button" class="trip-card" ' + attr + '><div class="trip-card-row">' + tripThumbHtml(t.coverPhotoId) +
+      '<div class="trip-card-body"><div class="trip-card-top"><div class="trip-card-title">' + escapeHtml(t.title) + '</div>' +
+      '<div class="trip-card-date">' + escapeHtml(date) + '</div></div>' + badge + '</div></div></button>';
+  }
+
+  // ---------- 持ち主・公開範囲（旅行の編集画面） ----------
+  function renderTripVisibility() {
+    var box = $('#teVisibility');
+    var trip = state.trip;
+    if (!box || !trip) return;
+    var user = loadCurrentUser();
+    var me = user && user.token && user.accountId ? user.accountId : '';
+    var status = Core.tripOwnerStatus(trip, state.members, me);
+    var cur = Core.normalizeVisibility(trip.visibility);
+    var html = '';
+    if (status === 'login') {
+      html = '<p class="hint">公開範囲は、旅行の持ち主がログインして決めます。今は「' + escapeHtml(Core.visibilityLabel(cur)) + '」です。</p>' +
+        '<button type="button" class="chip-btn" id="btnVisLogin">ログインする</button>';
+    } else if (status === 'claimable') {
+      html = '<p class="hint">この旅行にはまだ持ち主がいません。持ち主になると、この旅行を見られる人の範囲を決められます。最初に「参加する」を押した人だけがなれます。</p>' +
+        '<button type="button" class="btn primary small" id="btnClaimOwner">この旅行の持ち主になる</button>';
+    } else if (status === 'unclaimable') {
+      html = '<p class="hint">この旅行にはまだ持ち主がいません。最初に「参加する」を押した人が「持ち主になる」を押すと、公開範囲を変えられます。今は「' + escapeHtml(Core.visibilityLabel(cur)) + '」です。</p>';
+    } else if (status === 'other') {
+      var ownerName = (state.tripOwner && state.tripOwner.name) || 'ほかの人';
+      html = '<p class="hint">この旅行の持ち主は' + escapeHtml(ownerName) + 'さんです。公開範囲は持ち主だけが変えられます。今は「' + escapeHtml(Core.visibilityLabel(cur)) + '」です。</p>';
+    } else {
+      html = '<div class="vis-options" role="radiogroup" aria-label="公開範囲">' + Core.VISIBILITY_OPTIONS.map(function (o) {
+        var on = o.key === cur;
+        return '<button type="button" class="vis-option' + (on ? ' on' : '') + '" role="radio" aria-checked="' + on + '" data-vis="' + o.key + '">' +
+          '<span class="vis-radio" aria-hidden="true"></span>' +
+          '<span class="vis-text"><b>' + escapeHtml(o.label) + '</b><span>' + escapeHtml(o.desc) + '</span></span></button>';
+      }).join('') + '</div>' +
+        '<p class="hint">見るだけの画面には、費用・精算、一緒に行った人の名前、別行動の予定は出ません。編集できるのは、今までどおり旅行のリンクを持つ人（一緒に行った人）だけです。</p>';
+      if (cur !== 'members' && trip.publicId) {
+        html += '<div class="profile-actions"><button type="button" class="chip-btn" id="btnCopyPublicLink">見るだけの画面のリンクを共有する</button>' +
+          '<button type="button" class="chip-btn" id="btnPreviewPublic">見え方を確かめる</button></div>';
+      }
+    }
+    box.innerHTML = html;
+  }
+
+  var VIS_CONFIRM = {
+    close_friends: '「親しい友人」にすると、あなたが親しい友人に入れた人が、この旅行を見るだけの画面で見られるようになります。\n費用・精算、一緒に行った人の名前、別行動の予定は表示されません。よろしいですか？',
+    followers: '「フォロワー」にすると、あなたをフォローしている人が、この旅行を見るだけの画面で見られるようになります。\n費用・精算、一緒に行った人の名前、別行動の予定は表示されません。よろしいですか？',
+    public: '「全体」にすると、リンクを知っている誰もが（ログインなしで）、この旅行を見るだけの画面で見られるようになります。\n費用・精算、一緒に行った人の名前、別行動の予定は表示されません。よろしいですか？'
+  };
+
+  function changeTripVisibility(v) {
+    var trip = state.trip;
+    if (!trip || Core.normalizeVisibility(trip.visibility) === v) return;
+    if (VIS_CONFIRM[v] && !confirm(VIS_CONFIRM[v])) return;
+    var status = $('#tripEditStatus');
+    status.textContent = '公開範囲を変更中…';
+    api('/trips/' + encodeURIComponent(trip.id) + '/visibility', 'PUT', { visibility: v }).then(function (res) {
+      trip.visibility = res.visibility;
+      trip.publicId = res.publicId || '';
+      rememberTrip(trip);
+      status.textContent = '';
+      renderTripVisibility();
+      showToast('公開範囲を「' + Core.visibilityLabel(res.visibility) + '」にしました');
+    }).catch(function (e) {
+      status.textContent = sgErrorText(e);
+      renderTripVisibility();
+    });
+  }
+
+  function claimTripOwnership() {
+    var user = sgUser('tripDetail');
+    if (!user) return;
+    api('/trips/' + encodeURIComponent(state.trip.id) + '/claim-owner', 'POST', {}).then(function (res) {
+      state.trip.ownerAccountId = res.ownerAccountId;
+      state.tripOwner = { accountId: res.ownerAccountId, name: user.name || '' };
+      renderTripVisibility();
+      showToast('この旅行の持ち主になりました');
+    }).catch(function (e) {
+      $('#tripEditStatus').textContent = sgErrorText(e);
+    });
+  }
+
+  // ---------- 公開された旅行（見るだけ） ----------
+  function openPublicTrip(publicId) {
+    sg.pubId = publicId;
+    sg.pub = null;
+    sgSetUrl('?p=' + encodeURIComponent(publicId));
+    showScreen('publicTrip');
+    $('#btnPublicTripMenu').hidden = true;
+    $('#publicTripBody').innerHTML = '<div class="empty">読み込み中…</div>';
+    if (!API_BASE) { apiNoticeCheck(); return; }
+    api('/public/trips/' + encodeURIComponent(publicId)).then(function (res) {
+      if (sg.pubId !== publicId) return;
+      sg.pub = res;
+      renderPublicTrip();
+    }).catch(function (e) {
+      if (sg.pubId !== publicId) return;
+      renderPublicGate(e);
+    });
+  }
+
+  function renderPublicGate(e) {
+    var box = $('#publicTripBody');
+    var data = (e && e.data) || {};
+    $('#btnPublicTripMenu').hidden = true;
+    if (e && e.message === 'login_required') {
+      box.innerHTML = '<div class="pub-gate"><p class="pub-gate-title">ログインすると見られるかもしれません</p>' +
+        '<p class="hint">この旅行は、持ち主と関係のある人だけに公開されています。ログインして、見られるか確認しましょう。</p>' +
+        '<button type="button" class="btn primary wide" id="btnPubLogin">ログインする</button></div>';
+      return;
+    }
+    if (e && e.message === 'not_allowed' && data.owner) {
+      sg.pub = { owner: data.owner, relation: data.relation || { state: 'none' }, gate: true };
+      var who = data.visibility === 'close_friends'
+        ? '持ち主が「親しい友人」に入れた人だけが見られる旅行です。'
+        : '持ち主をフォローしている人だけが見られる旅行です。';
+      var info = data.visibility === 'followers' ? Core.followButtonInfo(sg.pub.relation.state, data.owner.isPrivate) : null;
+      box.innerHTML = '<div class="pub-gate">' +
+        '<button type="button" class="pub-owner" data-pub-owner>' + personAvatarHtml(data.owner) + '<span class="pub-owner-name">' + escapeHtml(data.owner.name || '名前未設定') + '</span></button>' +
+        '<p class="pub-gate-title">この旅行は、見られる人が限られています</p>' +
+        '<p class="hint">' + escapeHtml(who) + '</p>' +
+        (info ? '<button type="button" class="btn ' + (info.primary ? 'primary' : '') + ' wide" id="btnPubFollow">' + escapeHtml(info.label) + '</button>' : '') + '</div>';
+      $('#btnPublicTripMenu').hidden = false;
+      return;
+    }
+    box.innerHTML = '<div class="pub-gate"><p class="pub-gate-title">この旅行は見つかりませんでした</p>' +
+      '<p class="hint">公開が終わったか、あなたには見られない設定の旅行です。</p>' +
+      '<button type="button" class="btn wide" id="btnPubHome">ホームへ</button></div>';
+  }
+
+  function pubEntryHtml(e, idx) {
+    var media = (e.photoIds || []).map(function (id) { return { type: 'photo', id: id }; })
+      .concat((e.videoIds || []).map(function (id) { return { type: 'video', id: id }; }));
+    sg.pubMedia[idx] = media;
+    var photos = media.length
+      ? '<div class="pub-photos">' + media.map(function (m, i) {
+          return m.type === 'photo'
+            ? '<button type="button" class="pub-photo" data-pm="' + idx + '" data-i="' + i + '"><img src="' + escapeHtml(photoUrl(m.id)) + '" alt="" loading="lazy"></button>'
+            : '<button type="button" class="pub-photo pub-video" data-pm="' + idx + '" data-i="' + i + '"><span>動画</span></button>';
+        }).join('') + '</div>'
+      : '';
+    var meta = [];
+    if (e.ratingAvg !== null && e.ratingAvg !== undefined) meta.push('<span class="pub-rating">★' + e.ratingAvg.toFixed(1) + '（' + e.ratingCount + '件）</span>');
+    if (e.waitTime) meta.push('<span>待ち時間 ' + escapeHtml(e.waitTime) + '</span>');
+    var tr = e.travel || {};
+    if (tr.from || tr.to) meta.push('<span>' + escapeHtml((tr.from || '') + ' → ' + (tr.to || '')) + (tr.company ? '（' + escapeHtml(tr.company) + '）' : '') + '</span>');
+    var links = [['mapUrl', '地図'], ['shopUrl', 'お店のページ'], ['otherUrl', '参考リンク']].filter(function (l) { return e[l[0]]; })
+      .map(function (l) { return '<a href="' + escapeHtml(e[l[0]]) + '" target="_blank" rel="noopener noreferrer">' + l[1] + '</a>'; });
+    return '<div class="pub-entry">' + photos +
+      (e.episode ? '<p class="pub-episode">' + escapeHtml(e.episode) + '</p>' : '') +
+      (e.comment ? '<p class="pub-comment">' + escapeHtml(e.comment) + '</p>' : '') +
+      (e.detail ? '<p class="pub-detail">' + escapeHtml(e.detail) + '</p>' : '') +
+      (e.mapPlaceName ? '<div class="pub-place">' + escapeHtml(e.mapPlaceName) + '</div>' : '') +
+      (meta.length || links.length ? '<div class="pub-meta">' + meta.concat(links).join('') + '</div>' : '') + '</div>';
+  }
+
+  function renderPublicTrip() {
+    var res = sg.pub;
+    var t = res.trip, owner = res.owner, blocks = res.blocks || [];
+    var dayInfo = {};
+    (res.days || []).forEach(function (d) { dayInfo[d.date] = d; });
+    sg.pubMedia = [];
+    var nights = Core.tripNights(t);
+    var dateText = t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') + (nights ? '（' + nights + '）' : '') : '';
+    var html = '';
+    if (t.coverPhotoId) html += '<div class="pub-cover" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')"></div>';
+    html += '<h1 class="pub-title">' + escapeHtml(t.title) + '</h1>';
+    if (dateText) html += '<div class="pub-dates">' + escapeHtml(dateText) + '</div>';
+    html += '<button type="button" class="pub-owner" data-pub-owner>' + personAvatarHtml(owner) +
+      '<span class="pub-owner-name">' + escapeHtml(owner.name || '名前未設定') + '</span>' +
+      '<span class="vis-badge vis-' + Core.normalizeVisibility(t.visibility) + '">' + escapeHtml(Core.visibilityLabel(t.visibility)) + '</span></button>';
+    if (res.viewer && res.viewer.isOwner) {
+      html += '<div class="pub-owner-note">あなたの旅行です。これは、公開範囲「' + escapeHtml(Core.visibilityLabel(t.visibility)) + '」の人から見える画面です。' +
+        '<button type="button" class="chip-btn" id="btnPubShare">リンクを共有する</button></div>';
+    }
+    var byDate = Core.groupBlocksByDate(blocks);
+    var mediaIdx = 0;
+    var dates = Core.allDatesForTrip(t, blocks);
+    var any = false;
+    dates.forEach(function (date) {
+      var dayBlocks = byDate[date] || [];
+      var info = dayInfo[date];
+      if (!dayBlocks.length && !(info && info.place)) return;
+      any = true;
+      var weather = info ? [info.place || '', Core.weatherLabel(info.weatherCode, info.precipSum), typeof info.tempMax === 'number' ? Math.round(info.tempMax) + '° / ' + Math.round(info.tempMin) + '°' : ''].filter(Boolean).join('　') : '';
+      html += '<section class="pub-day"><div class="pub-day-head"><span class="pub-day-label">' + escapeHtml(date ? Core.dayLabel(t, date) : '日付未設定') + '</span>' +
+        (date ? '<span class="pub-day-date">' + escapeHtml(Core.formatDateJp(date)) + '</span>' : '') + '</div>' +
+        (weather ? '<div class="pub-weather">' + escapeHtml(weather) + '</div>' : '');
+      dayBlocks.forEach(function (b) {
+        var move = b.transport ? Core.transportLabel(b.transport) + (b.moveMinutes ? ' ' + Core.minutesText(b.moveMinutes) : '') : '';
+        html += '<div class="pub-block"><div class="pub-block-head">' +
+          (b.time ? '<span class="pub-time">' + escapeHtml(b.time) + '</span>' : '') +
+          '<span class="pub-label">' + escapeHtml(b.label) + '</span>' +
+          '<span class="pub-cat">' + escapeHtml(Core.categoryLabel(b.category)) + '</span></div>' +
+          (move ? '<div class="pub-move">' + escapeHtml(move) + '</div>' : '') +
+          (b.entries || []).map(function (e) { return pubEntryHtml(e, mediaIdx++); }).join('') + '</div>';
+      });
+      html += '</section>';
+    });
+    if (!any) html += '<div class="empty">まだ記録がありません。</div>';
+    html += '<p class="hint pub-note">この画面は見るだけです。費用・精算、一緒に行った人の名前、別行動の予定は表示されません。</p>';
+    $('#publicTripBody').innerHTML = html;
+    $('#btnPublicTripMenu').hidden = !!(res.viewer && res.viewer.isOwner);
+  }
+
+  // ---------- プロフィールの「行ったことある旅先」（国・都道府県の名前だけ。旅行名・時期は出ない） ----------
+  // 国は大陸ごと・都道府県は地方ごとに分ける（「行ったことある旅先」の画面と同じ分け方。Core.groupVisitedByOrder）。
+  // 国名→国旗・大陸は、国名から引く（Core.alpha2ForCountryName）。引けない国は「その他」に入る
+  function pvGroupsHtml(groups, withFlag) {
+    return groups.map(function (g) {
+      return '<div class="pv-group"><div class="pv-group-name">' + escapeHtml(g.group) + '<span>' + g.items.length + '</span></div><div class="pv-chips">' +
+        g.items.map(function (x) {
+          var a2 = withFlag ? Core.alpha2ForCountryName(x.name) : null;
+          var flag = a2 ? Core.flagEmojiForAlpha2(a2) : '';
+          return '<span class="pv-chip">' + (flag ? '<span class="pv-flag" aria-hidden="true">' + flag + '</span>' : '') + escapeHtml(x.name) + '</span>';
+        }).join('') + '</div></div>';
+    }).join('');
+  }
+
+  function profileVisitedHtml(v, isSelf, visitedVisibility) {
+    if (!v) return '';
+    var head = '<div class="section-label"><div class="section-title">行ったことある旅先</div></div>';
+    if (!v.visible) return head + '<p class="hint">フォロワーにだけ公開されています。フォローすると見られます。</p>';
+    var prefs = (v.prefectures || []).map(function (n) { return { name: n }; });
+    var countries = (v.countries || []).filter(function (n) { return n !== '日本'; }).map(function (n) { return { name: n }; });
+    var note = '';
+    if (isSelf) {
+      var label = '';
+      Core.VISITED_VISIBILITY_OPTIONS.forEach(function (o) { if (o.key === Core.normalizeVisitedVisibility(visitedVisibility)) label = o.label; });
+      note = '<p class="hint">プロフィールに出す範囲：' + escapeHtml(label) + '（「プロフィールを編集」で変えられます）。国と都道府県の名前だけが表示され、どの旅行か・いつ行ったかは出ません。</p>';
+    }
+    if (!prefs.length && !countries.length) return isSelf ? head + note + '<p class="hint">まだ記録がありません。旅行に「参加する」を押して地図つきの記録を残すと、ここに集まります。</p>' : '';
+    var html = head + note + '<div class="pv-card">';
+    if (countries.length) {
+      html += '<div class="pv-total"><b>' + countries.length + '</b> か国（海外）</div>' +
+        pvGroupsHtml(Core.groupVisitedByOrder(countries, function (x) { return Core.continentForAlpha2(Core.alpha2ForCountryName(x.name)); }, Core.VISITED_CONTINENT_ORDER), true);
+    }
+    if (prefs.length) {
+      html += '<div class="pv-total"><b>' + prefs.length + '</b> / 47 都道府県（国内）</div>' +
+        pvGroupsHtml(Core.groupVisitedByOrder(prefs, function (x) { return Core.regionForPrefecture(x.name); }, Core.VISITED_REGION_ORDER), false);
+    }
+    return html + '</div>';
+  }
+
+  // ---------- プロフィール（他の人） ----------
+  function openUserProfile(accountId) {
+    sg.profileId = accountId;
+    sg.up = null;
+    var me = loadCurrentUser();
+    if (me && me.token && me.accountId === accountId) { sgStart(); openProfile(); return; }
+    var user = sgUser('userProfile');
+    if (!user) return;
+    sgSetUrl('?u=' + encodeURIComponent(accountId));
+    showScreen('userProfile');
+    $('#btnUserProfileMenu').hidden = true;
+    $('#userProfileBody').innerHTML = '<div class="empty">読み込み中…</div>';
+    loadUserProfile();
+  }
+
+  function loadUserProfile() {
+    var id = sg.profileId;
+    return api('/profiles/' + encodeURIComponent(id)).then(function (res) {
+      if (sg.profileId !== id) return;
+      if (res.relation && res.relation.state === 'self') { sgStart(); openProfile(); return; }
+      sg.up = res;
+      renderUserProfile();
+    }).catch(function (e) {
+      if (sg.profileId !== id) return;
+      if (handleLoginRequired(e, 'userProfile')) return;
+      $('#userProfileBody').innerHTML = (e && e.message === 'not_found')
+        ? '<div class="pub-gate"><p class="pub-gate-title">プロフィールが見つかりませんでした</p><p class="hint">アカウントが無くなったか、見られない設定です。</p></div>'
+        : '<div class="empty">読み込めませんでした。通信状況を確認して、もう一度お試しください。</div>';
+    });
+  }
+
+  function profileHeaderHtml(p) {
+    return '<div class="profile-card up-card"><div class="profile-avatar">' +
+      (p.avatarPhotoId ? '<img src="' + escapeHtml(photoUrl(p.avatarPhotoId)) + '" alt="">' : escapeHtml(Core.nameInitial(p.name))) + '</div>' +
+      '<div class="profile-info"><div class="profile-name">' + escapeHtml(p.name || '名前未設定') + '</div>' +
+      (typeof p.followerCount === 'number'
+        ? '<div class="profile-stats"><div class="profile-stat"><span class="profile-stat-label">フォロワー ' + p.followerCount + '</span></div>' +
+          '<div class="profile-stat"><span class="profile-stat-label">フォロー中 ' + p.followingCount + '</span></div></div>'
+        : '') + '</div></div>';
+  }
+
+  function renderUserProfile() {
+    var res = sg.up, box = $('#userProfileBody');
+    var p = res.profile;
+    if (res.blockedByMe) {
+      $('#btnUserProfileMenu').hidden = true;
+      box.innerHTML = profileHeaderHtml(p) +
+        '<p class="hint">この人をブロックしています。お互いのプロフィールは見えず、フォローもできません。</p>' +
+        '<button type="button" class="btn wide" id="btnUnblockUser">ブロックを解除する</button>';
+      return;
+    }
+    $('#btnUserProfileMenu').hidden = false;
+    var info = Core.followButtonInfo(res.relation.state, p.isPrivate);
+    var html = profileHeaderHtml(p);
+    var tags = [];
+    if (p.isPrivate) tags.push('承認制');
+    if (res.relation.followsMe) tags.push('あなたをフォローしています');
+    if (tags.length) html += '<div class="up-tags">' + tags.map(function (t) { return '<span class="vis-badge">' + escapeHtml(t) + '</span>'; }).join('') + '</div>';
+    if (p.bio) html += '<p class="profile-bio">' + escapeHtml(p.bio) + '</p>';
+    if (info) html += '<button type="button" class="btn ' + (info.primary ? 'primary' : '') + ' wide" id="btnFollow">' + escapeHtml(info.label) + '</button>';
+    html += profileVisitedHtml(res.visited, false);
+    html += '<div class="section-label up-trips-label"><div class="section-title">旅行</div></div>';
+    if (res.tripsHidden) {
+      html += '<p class="hint">承認制のアカウントです。フォローが承認されると、旅行を見られます。</p>';
+    } else if (!res.trips.length) {
+      html += '<p class="hint">あなたに見せている旅行は、まだありません。</p>';
+    } else {
+      html += '<div class="trip-list">' + res.trips.map(function (t) { return profileTripCardHtml(t, false); }).join('') + '</div>';
+    }
+    box.innerHTML = html;
+  }
+
+  function toggleFollow() {
+    var res = sg.up;
+    if (!res) return;
+    var user = sgUser('userProfile');
+    if (!user) return;
+    var info = Core.followButtonInfo(res.relation.state, res.profile.isPrivate);
+    if (!info) return;
+    if (info.confirm && !confirm(info.confirm)) return;
+    var btn = $('#btnFollow');
+    if (btn) btn.disabled = true;
+    api('/follows/' + encodeURIComponent(res.profile.accountId), info.action === 'follow' ? 'PUT' : 'DELETE', info.action === 'follow' ? {} : undefined)
+      .then(function () { return loadUserProfile(); })
+      .catch(function (e) {
+        if (btn) btn.disabled = false;
+        if (handleLoginRequired(e, 'userProfile')) return;
+        alert(sgErrorText(e));
+      });
+  }
+
+  // 公開画面の門前払い画面から、持ち主をフォローする
+  function followFromPublicGate() {
+    var pub = sg.pub;
+    if (!pub || !pub.owner) return;
+    var user = sgUser('publicTrip');
+    if (!user) return;
+    var info = Core.followButtonInfo(pub.relation.state, pub.owner.isPrivate);
+    if (info.confirm && !confirm(info.confirm)) return;
+    api('/follows/' + encodeURIComponent(pub.owner.accountId), info.action === 'follow' ? 'PUT' : 'DELETE', info.action === 'follow' ? {} : undefined)
+      .then(function () { openPublicTrip(sg.pubId); })
+      .catch(function (e) { alert(sgErrorText(e)); });
+  }
+
+  function unblockUser() {
+    var res = sg.up;
+    if (!res) return;
+    api('/user-blocks', 'DELETE', { accountId: res.profile.accountId }).then(function () { return loadUserProfile(); })
+      .catch(function () { alert('ブロックを解除できませんでした。もう一度お試しください。'); });
+  }
+
+  // ---------- 通報・ブロック（Appleのガイドライン1.2。プロフィールと公開画面の「…」から） ----------
+  function openUserActionSheet(accountId, name) {
+    var user = sgUser(sg.up && sg.up.profile && sg.up.profile.accountId === accountId ? 'userProfile' : 'publicTrip');
+    if (!user) return;
+    sg.action = { accountId: accountId, name: name || '' };
+    $('#userActionSheetTitle').textContent = (name || 'この人') + 'さん';
+    $('#userActionNote').textContent = '不適切なプロフィール・投稿は通報してください。運営者が24時間以内に確認します。ブロックすると、お互いのプロフィールが見えなくなり、フォローもできなくなります。';
+    $('#userActionSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+
+  function closeUserActionSheet() {
+    $('#userActionSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+  }
+
+  function blockUserNow(accountId, name) {
+    api('/user-blocks', 'PUT', { accountId: accountId }).then(function () {
+      closeUserActionSheet();
+      showToast('ブロックしました');
+      if ($('.screen.active').dataset.screen === 'userProfile') loadUserProfile();
+      else sgBack();
+    }).catch(function () { alert('ブロックできませんでした。もう一度お試しください。'); });
+  }
+
+  function reportUser() {
+    var a = sg.action;
+    if (!a) return;
+    if (!confirm('このプロフィールを通報しますか？\n運営者が内容を確認し、必要なら対応します。')) return;
+    api('/profiles/' + encodeURIComponent(a.accountId) + '/report', 'POST', {}).then(function () {
+      closeUserActionSheet();
+      showToast('通報しました。ご協力ありがとうございます');
+      if (confirm((a.name || 'この人') + 'さんをブロックしますか？\n（お互いのプロフィールが見えなくなります）')) blockUserNow(a.accountId, a.name);
+    }).catch(function () { alert('通報できませんでした。もう一度お試しください。'); });
+  }
+
+  function blockUserFromSheet() {
+    var a = sg.action;
+    if (!a) return;
+    if (!confirm((a.name || 'この人') + 'さんをブロックしますか？\nお互いのプロフィールが見えなくなり、フォローもできなくなります。')) return;
+    blockUserNow(a.accountId, a.name);
+  }
+
+  // ---------- 自分のプロフィール（プロフィールタブの下半分） ----------
+  function loadOwnProfileSocial() {
+    return api('/profiles/me').then(function (res) {
+      sg.me = res;
+      var user = loadCurrentUser();
+      var p = res.profile || {};
+      if (user && p.accountId && (user.accountId !== p.accountId || (p.name && user.name !== p.name))) {
+        saveCurrentUser(Object.assign({}, user, { accountId: p.accountId, name: p.name || user.name }));
+      }
+      renderProfileIdentity(loadCurrentUser());
+      renderOwnProfileSocial();
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
+      $('#profileSocial').innerHTML = '';
+    });
+  }
+
+  function renderOwnProfileSocial() {
+    var res = sg.me;
+    if (!res) return;
+    var p = res.profile;
+    var html = '';
+    if (p.bio) html += '<p class="profile-bio">' + escapeHtml(p.bio) + '</p>';
+    html += '<div class="follow-counts">' +
+      '<button type="button" class="follow-count" data-conn="following"><b>' + p.followingCount + '</b><span>フォロー中</span></button>' +
+      '<button type="button" class="follow-count" data-conn="followers"><b>' + p.followerCount + '</b><span>フォロワー</span></button>' +
+      (res.pendingRequestCount ? '<button type="button" class="follow-count is-alert" data-conn="requests"><b>' + res.pendingRequestCount + '</b><span>承認待ち</span></button>' : '') +
+      '</div>';
+    html += '<div class="profile-actions"><button type="button" class="chip-btn" id="btnEditProfile">プロフィールを編集</button>' +
+      '<button type="button" class="chip-btn" id="btnShareProfile">プロフィールを共有</button></div>';
+    if (p.isPrivate) html += '<p class="hint">承認制です。フォローされるには、あなたの承認が必要です。</p>';
+    html += '<p class="hint">' + (p.showCounts
+      ? 'フォロー数・フォロワー数は、ほかの人にも表示されています（人数の一覧は、あなたにしか見えません）。'
+      : 'フォロー数・フォロワー数・一覧は、あなたにしか見えません（「プロフィールを編集」で、数だけをほかの人にも表示できます）。') + '</p>';
+    html += profileVisitedHtml(res.visited, true, p.visitedVisibility);
+    html += '<div class="section-label"><div class="section-title">あなたの旅行</div></div>';
+    if (!res.trips.length) {
+      html += '<p class="hint">持ち主になっている旅行はまだありません。旅行をログインして作ると、ここに並びます。持ち主がいない今までの旅行は、旅行の編集画面で「持ち主になる」を押してください。</p>';
+    } else {
+      html += '<p class="hint">ラベルは、その旅行を見るだけの画面で見られる人の範囲です。変えるには、旅行の編集画面を開いてください。</p>' +
+        '<div class="trip-list">' + res.trips.map(function (t) { return profileTripCardHtml(t, true); }).join('') + '</div>';
+    }
+    $('#profileSocial').innerHTML = html;
+  }
+
+  // ---------- フォロー中・フォロワー・承認待ち・親しい友人 ----------
+  var CONN_TABS = [
+    { key: 'followers', label: 'フォロワー' },
+    { key: 'following', label: 'フォロー中' },
+    { key: 'requests', label: '承認待ち' },
+    { key: 'close_friends', label: '親しい友人' }
+  ];
+  var CONN_HINTS = {
+    followers: '「親しい友人」に入れると、公開範囲が「親しい友人」の旅行を見てもらえます（フォロワーの中から選べます）。',
+    following: 'あなたがフォローしている人です。',
+    requests: 'あなたをフォローしたい人です。承認すると、フォロワーになります。',
+    close_friends: '公開範囲が「親しい友人」の旅行を見られる人です。フォロワーの中から選べます。'
+  };
+
+  function openConnections(kind) {
+    var user = sgUser('profile');
+    if (!user) return;
+    sg.connKind = kind || 'followers';
+    showScreen('connections');
+    renderConnTabs();
+    loadConnections();
+  }
+
+  function renderConnTabs() {
+    $('#connTabs').innerHTML = CONN_TABS.map(function (t) {
+      return '<button type="button" class="mylog-tab' + (t.key === sg.connKind ? ' on' : '') + '" data-conn-tab="' + t.key + '">' + t.label + '</button>';
+    }).join('');
+    $('#connHint').textContent = CONN_HINTS[sg.connKind] || '';
+  }
+
+  function loadConnections() {
+    var kind = sg.connKind;
+    var list = $('#connList');
+    list.innerHTML = '<div class="empty">読み込み中…</div>';
+    api('/me/connections?kind=' + encodeURIComponent(kind)).then(function (res) {
+      if (sg.connKind !== kind) return;
+      if (!res.items.length) {
+        list.innerHTML = '<div class="empty">' + ({ followers: 'まだフォロワーはいません。', following: 'まだ誰もフォローしていません。旅行のメンバーや、公開された旅行の持ち主のプロフィールから、フォローできます。', requests: '承認待ちの申請はありません。', close_friends: 'まだ親しい友人はいません。「フォロワー」から選べます。' }[kind] || '') + '</div>';
+        return;
+      }
+      list.innerHTML = res.items.map(function (p) {
+        var actions = '';
+        if (kind === 'followers') {
+          actions = '<button type="button" class="chip-btn' + (p.closeFriend ? ' is-joined' : '') + '" data-act="' + (p.closeFriend ? 'cf-off' : 'cf-on') + '">' + (p.closeFriend ? '親しい友人' : '親しい友人に入れる') + '</button>' +
+            '<button type="button" class="chip-btn" data-act="remove">外す</button>';
+        } else if (kind === 'following') {
+          actions = '<button type="button" class="chip-btn" data-act="unfollow">やめる</button>';
+        } else if (kind === 'requests') {
+          actions = '<button type="button" class="chip-btn is-joined" data-act="approve">承認</button><button type="button" class="chip-btn" data-act="decline">断る</button>';
+        } else {
+          actions = '<button type="button" class="chip-btn" data-act="cf-off">外す</button>';
+        }
+        return '<div class="person-row" data-id="' + escapeHtml(p.accountId) + '" data-name="' + escapeHtml(p.name) + '">' +
+          '<button type="button" class="person-main" data-person>' + personAvatarHtml(p) + '<span class="person-name">' + escapeHtml(p.name || '名前未設定') + '</span></button>' +
+          '<div class="person-actions">' + actions + '</div></div>';
+      }).join('');
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
+      list.innerHTML = '<div class="empty">読み込めませんでした。もう一度お試しください。</div>';
+    });
+  }
+
+  function connectionAction(act, id, name) {
+    var who = name || 'この人';
+    var req;
+    var enc = encodeURIComponent(id);
+    if (act === 'approve') req = api('/me/follow-requests/' + enc + '/approve', 'POST', {});
+    else if (act === 'decline') req = api('/me/follow-requests/' + enc + '/decline', 'POST', {});
+    else if (act === 'remove') {
+      if (!confirm(who + 'さんをフォロワーから外しますか？\n（相手には通知されません）')) return;
+      req = api('/me/followers/' + enc, 'DELETE');
+    } else if (act === 'unfollow') {
+      if (!confirm(who + 'さんのフォローをやめますか？')) return;
+      req = api('/follows/' + enc, 'DELETE');
+    } else if (act === 'cf-on') req = api('/me/close-friends/' + enc, 'PUT', {});
+    else if (act === 'cf-off') req = api('/me/close-friends/' + enc, 'DELETE');
+    else return;
+    req.then(function () { loadConnections(); loadOwnProfileSocial(); })
+      .catch(function (e) { alert(sgErrorText(e)); });
+  }
+
+  // ---------- プロフィールの編集 ----------
+  function openProfileEdit() {
+    var user = sgUser('profile');
+    if (!user) return;
+    var p = (sg.me && sg.me.profile) || { name: user.name || '', bio: '', avatarPhotoId: '', isPrivate: false };
+    $('#peName').value = p.name || '';
+    $('#peBio').value = p.bio || '';
+    $('#pePrivate').checked = !!p.isPrivate;
+    $('#peShowCounts').checked = !!p.showCounts;
+    sg.visitedVis = Core.normalizeVisitedVisibility(p.visitedVisibility);
+    renderPeVisited();
+    $('#peStatus').textContent = '';
+    sg.avatar = { blob: null, previewUrl: '', existingId: p.avatarPhotoId || '', removed: false };
+    renderProfileEditAvatar();
+    updateBioCount();
+    showScreen('profileEdit');
+  }
+
+  function renderPeVisited() {
+    $('#peVisited').innerHTML = Core.VISITED_VISIBILITY_OPTIONS.map(function (o) {
+      var on = o.key === sg.visitedVis;
+      return '<button type="button" class="vis-option vis-option-compact' + (on ? ' on' : '') + '" role="radio" aria-checked="' + on + '" data-visited="' + o.key + '">' +
+        '<span class="vis-radio" aria-hidden="true"></span><span class="vis-text"><b>' + escapeHtml(o.label) + '</b></span></button>';
+    }).join('');
+  }
+
+  function renderProfileEditAvatar() {
+    var a = sg.avatar;
+    var url = a.blob ? a.previewUrl : (!a.removed && a.existingId ? photoUrl(a.existingId) : '');
+    var name = $('#peName').value;
+    $('#peAvatar').innerHTML = url ? '<img src="' + escapeHtml(url) + '" alt="">' : escapeHtml(Core.nameInitial(name));
+    $('#btnPeAvatarRemove').hidden = !url;
+  }
+
+  function updateBioCount() {
+    var n = $('#peBio').value.length;
+    $('#peBioCount').textContent = n + ' / ' + Core.BIO_MAX;
+  }
+
+  function saveProfileEdit() {
+    var status = $('#peStatus');
+    var name = $('#peName').value.trim();
+    var bio = $('#peBio').value.trim();
+    if (!name) { status.textContent = '名前を入力してください。'; return; }
+    var bioErr = Core.bioError(bio);
+    if (bioErr) { status.textContent = bioErr; return; }
+    status.textContent = '保存中…';
+    var btn = $('#btnSaveProfileEdit');
+    btn.disabled = true;
+    var avatarStep = sg.avatar.blob
+      ? uploadPhotoBlob(sg.avatar.blob).then(function (p) { return p.id; })
+      : Promise.resolve(sg.avatar.removed ? '' : sg.avatar.existingId);
+    avatarStep.then(function (avatarId) {
+      return api('/me/profile', 'PATCH', {
+        name: name, bio: bio, avatarPhotoId: avatarId, isPrivate: $('#pePrivate').checked,
+        showCounts: $('#peShowCounts').checked, visitedVisibility: sg.visitedVis
+      });
+    }).then(function () {
+      btn.disabled = false;
+      var user = loadCurrentUser();
+      if (user) saveCurrentUser(Object.assign({}, user, { name: name }));
+      renderAccountRow();
+      showToast('プロフィールを保存しました');
+      openProfile();
+    }).catch(function (e) {
+      btn.disabled = false;
+      if (handleLoginRequired(e, 'profile')) return;
+      status.textContent = sgErrorText(e);
+    });
+  }
+
+  // ログインし直したあとに、開いていた公開画面・プロフィールを読み込み直す
+  function sgReloadIfActive() {
+    var active = $('.screen.active');
+    var here = active && active.dataset.screen;
+    if (here === 'publicTrip' && sg.pubId) openPublicTrip(sg.pubId);
+    else if (here === 'userProfile' && sg.profileId) openUserProfile(sg.profileId);
+  }
+
+  // 旅行の「アカウント参加」の名前から、その人のプロフィールを開く
+  function openMemberProfile(accountId) {
+    sgStart(function () { showScreen('tripDetail'); renderTripDetail(); });
+    openUserProfile(accountId); // 自分の名前なら、openUserProfileが自分のプロフィールを開く
+  }
+
+  function initSocialGraph() {
+    // 旅行の編集画面：公開範囲
+    $('#teVisibility').addEventListener('click', function (e) {
+      var opt = e.target.closest('[data-vis]');
+      if (opt) { changeTripVisibility(opt.dataset.vis); return; }
+      if (e.target.closest('#btnClaimOwner')) { claimTripOwnership(); return; }
+      if (e.target.closest('#btnVisLogin')) { openLogin('tripDetail'); return; }
+      if (e.target.closest('#btnCopyPublicLink') && state.trip && state.trip.publicId) {
+        sgShareOrCopy(state.trip.title || '旅の足跡', '旅の足跡で旅行を公開しました\n' + publicTripLink(state.trip.publicId), '共有用リンクをコピーしました');
+        return;
+      }
+      if (e.target.closest('#btnPreviewPublic') && state.trip && state.trip.publicId) {
+        sgStart(function () { showScreen('tripEditForm'); renderTripVisibility(); });
+        openPublicTrip(state.trip.publicId);
+      }
+    });
+    // 旅行の詳細：アカウント参加の名前 → プロフィール
+    $('#tripMembers').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-account]');
+      if (b) openMemberProfile(b.dataset.account);
+    });
+
+    // 公開された旅行
+    $('#btnPublicTripBack').addEventListener('click', sgBack);
+    $('#btnPublicTripMenu').addEventListener('click', function () {
+      var o = sg.pub && sg.pub.owner;
+      if (o) openUserActionSheet(o.accountId, o.name);
+    });
+    $('#publicTripBody').addEventListener('click', function (e) {
+      if (e.target.closest('#btnPubLogin')) { sgUser('publicTrip'); return; }
+      if (e.target.closest('#btnPubHome')) { goHome(); return; }
+      if (e.target.closest('#btnPubFollow')) { followFromPublicGate(); return; }
+      if (e.target.closest('[data-pub-owner]') && sg.pub && sg.pub.owner) {
+        var ownerId = sg.pub.owner.accountId, pid = sg.pubId;
+        sgPush(function () { openPublicTrip(pid); });
+        openUserProfile(ownerId);
+        return;
+      }
+      if (e.target.closest('#btnPubShare') && sg.pub) {
+        sgShareOrCopy(sg.pub.trip.title || '旅の足跡', '旅の足跡で旅行を公開しました\n' + publicTripLink(sg.pubId), '共有用リンクをコピーしました');
+        return;
+      }
+      var ph = e.target.closest('[data-pm]');
+      if (ph) {
+        var items = sg.pubMedia[Number(ph.dataset.pm)] || [];
+        openMediaViewer(items, Number(ph.dataset.i));
+      }
+    });
+
+    // 他の人のプロフィール
+    $('#btnUserProfileBack').addEventListener('click', sgBack);
+    $('#btnUserProfileMenu').addEventListener('click', function () {
+      var p = sg.up && sg.up.profile;
+      if (p) openUserActionSheet(p.accountId, p.name);
+    });
+    $('#userProfileBody').addEventListener('click', function (e) {
+      if (e.target.closest('#btnFollow')) { toggleFollow(); return; }
+      if (e.target.closest('#btnUnblockUser')) { unblockUser(); return; }
+      var card = e.target.closest('[data-pub-trip]');
+      if (card) {
+        var uid = sg.profileId;
+        sgPush(function () { openUserProfile(uid); });
+        openPublicTrip(card.dataset.pubTrip);
+      }
+    });
+
+    // 通報・ブロックのシート
+    $('#btnCloseUserActionSheet').addEventListener('click', closeUserActionSheet);
+    $('#btnCancelUserAction').addEventListener('click', closeUserActionSheet);
+    $('#userActionSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeUserActionSheet(); });
+    $('#btnUserReport').addEventListener('click', reportUser);
+    $('#btnUserBlock').addEventListener('click', blockUserFromSheet);
+
+    // 自分のプロフィール
+    $('#profileSocial').addEventListener('click', function (e) {
+      var conn = e.target.closest('[data-conn]');
+      if (conn) { sgStart(function () { openProfile(); }); openConnections(conn.dataset.conn); return; }
+      if (e.target.closest('#btnEditProfile')) { openProfileEdit(); return; }
+      if (e.target.closest('#btnShareProfile') && sg.me) {
+        var u = loadCurrentUser();
+        sgShareOrCopy('旅の足跡', ((u && u.name) || 'わたし') + 'のプロフィール（旅の足跡）\n' + profileLink(sg.me.profile.accountId), 'プロフィールのリンクをコピーしました');
+        return;
+      }
+      var own = e.target.closest('[data-own-trip]');
+      if (own) openTrip(own.dataset.ownTrip, 'profile');
+    });
+
+    // フォロー中・フォロワー・承認待ち・親しい友人
+    $('#btnConnectionsBack').addEventListener('click', function () { openProfile(); });
+    $('#connTabs').addEventListener('click', function (e) {
+      var tab = e.target.closest('[data-conn-tab]');
+      if (!tab) return;
+      sg.connKind = tab.dataset.connTab;
+      renderConnTabs();
+      loadConnections();
+    });
+    $('#connList').addEventListener('click', function (e) {
+      var row = e.target.closest('.person-row');
+      if (!row) return;
+      var act = e.target.closest('[data-act]');
+      if (act) { connectionAction(act.dataset.act, row.dataset.id, row.dataset.name); return; }
+      if (e.target.closest('[data-person]')) {
+        sgStart(function () { openConnections(sg.connKind); });
+        openUserProfile(row.dataset.id);
+      }
+    });
+
+    // プロフィールの編集
+    $('#btnProfileEditBack').addEventListener('click', function () { openProfile(); });
+    $('#btnSaveProfileEdit').addEventListener('click', saveProfileEdit);
+    $('#peBio').addEventListener('input', updateBioCount);
+    $('#peVisited').addEventListener('click', function (e) {
+      var opt = e.target.closest('[data-visited]');
+      if (!opt) return;
+      sg.visitedVis = opt.dataset.visited;
+      renderPeVisited();
+    });
+    $('#peName').addEventListener('input', function () { if (!sg.avatar.blob && (sg.avatar.removed || !sg.avatar.existingId)) renderProfileEditAvatar(); });
+    $('#btnPeAvatarPick').addEventListener('click', function () { $('#peAvatarFile').click(); });
+    $('#peAvatarFile').addEventListener('change', function (e) {
+      var file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      fileToCompressedBlob(file, 512, 0.8).then(function (blob) {
+        sg.avatar.blob = blob;
+        sg.avatar.previewUrl = URL.createObjectURL(blob);
+        sg.avatar.removed = false;
+        renderProfileEditAvatar();
+      }).catch(function () { $('#peStatus').textContent = '画像を読み込めませんでした。別の写真をお試しください。'; });
+    });
+    $('#btnPeAvatarRemove').addEventListener('click', function () {
+      sg.avatar.blob = null; sg.avatar.previewUrl = ''; sg.avatar.removed = true;
+      renderProfileEditAvatar();
     });
   }
 
@@ -12809,6 +13669,7 @@
     });
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
     initSocial();
+    initSocialGraph();
     $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
     $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });
     // 自分だけの道（別行動）の追加・編集シート（docs/adr/0021）
@@ -12933,7 +13794,7 @@
       // アカウントIDが取れなくてもログインは成立させる
     }).then(function () {
       // Webでプロバイダーから戻ってきた直後は、いま開いている画面（共有された旅行など）を動かさない
-      if (opts && opts.stay) { renderAccountRow(); if (state.trip) loadSocial(); return; }
+      if (opts && opts.stay) { renderAccountRow(); if (state.trip) loadSocial(); sgReloadIfActive(); return; }
       goToReturnScreen(state.loginReturnTo, true);
     });
   }
@@ -12961,6 +13822,10 @@
       openVisitedPlaces();
     } else if (target === 'profile' && loggedIn) {
       openProfile();
+    } else if (target === 'publicTrip' && sg.pubId) {
+      openPublicTrip(sg.pubId); // ログインしなくても読める旅行もあるので、ログインせず閉じたときも開き直す
+    } else if (target === 'userProfile' && loggedIn && sg.profileId) {
+      openUserProfile(sg.profileId);
     } else {
       goHome();
     }
@@ -13078,7 +13943,7 @@
       if (saved) target = saved;
     } catch (e) { /* 読めなくてもホームへ */ }
     state.loginReturnTo = target;
-    var hasTrip = !!Core.getTripIdFromSearch(location.search);
+    var hasTrip = !!Core.getTripIdFromSearch(location.search) || !!Core.getPublicIdFromSearch(location.search) || !!Core.getProfileIdFromSearch(location.search);
     if (m[1] === 'auth_error') {
       handleSocialResult('error', '', decodeURIComponent(m[2]));
       return true;
@@ -13096,7 +13961,11 @@
       try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* 外せなくても続行 */ }
     }
     var tripId = Core.getTripIdFromSearch(location.search);
+    var pubId = Core.getPublicIdFromSearch(location.search);
+    var profId = Core.getProfileIdFromSearch(location.search);
     if (tripId) openTrip(tripId);
+    else if (pubId) { sgStart(); openPublicTrip(pubId); }
+    else if (profId) { sgStart(); openUserProfile(profId); }
     else { showScreen('home'); renderHome(); }
     handleAuthRedirectHash();
     listenForAppLinks();
@@ -13175,7 +14044,14 @@
   function handleAppUrl(url) {
     if (!url || handleAuthAppUrl(url)) return;
     var id = tripIdFromUrl(url);
-    if (id) openTrip(id);
+    if (id) { openTrip(id); return; }
+    // 公開された旅行（?p=）・プロフィール（?u=）のリンク
+    var search = '';
+    try { search = new URL(url).search; } catch (e) { search = ''; }
+    var pubId = Core.getPublicIdFromSearch(search);
+    if (pubId) { sgStart(); openPublicTrip(pubId); return; }
+    var profId = Core.getProfileIdFromSearch(search);
+    if (profId) { sgStart(); openUserProfile(profId); }
   }
 
   function listenForAppLinks() {

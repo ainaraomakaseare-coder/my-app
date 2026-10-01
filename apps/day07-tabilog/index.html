@@ -913,7 +913,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <input type="file" id="peAvatarFile" accept="image/*" hidden>
         <div class="pe-avatar-row">
           <div class="profile-avatar pe-avatar" id="peAvatar"></div>
-          <button class="btn ghost small" id="btnPeAvatarPick" type="button">写真を選ぶ</button>
+          <button class="chip-btn" id="btnPeAvatarPick" type="button">写真を選ぶ</button>
           <button class="btn text" id="btnPeAvatarRemove" type="button">写真をやめる</button>
         </div>
       </div>
@@ -927,6 +927,13 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <div class="pe-count" id="peBioCount">0 / 160</div>
       </div>
       <label class="post-option"><input type="checkbox" id="pePrivate"> フォローを承認制にする（フォローするには、あなたの承認が必要になります）</label>
+      <label class="post-option"><input type="checkbox" id="peShowCounts"> フォロー数・フォロワー数を、ほかの人にも表示する</label>
+      <p class="hint">初期値はオフです。オフのあいだ、数も一覧も、あなたにしか見えません。オンにしても、見えるのは数だけで、一覧は見えません。</p>
+      <div class="field pe-visited-field">
+        <label>行ったことある旅先をプロフィールに出す</label>
+        <div class="vis-options" id="peVisited" role="radiogroup" aria-label="行ったことある旅先をプロフィールに出す範囲"></div>
+        <p class="hint">国と都道府県の名前だけが表示されます。どの旅行か、いつ行ったかは表示されません。ブロックした人・された人には出ません。</p>
+      </div>
       <p class="hint">名前・アイコン・ひとことは、プロフィールを見た人全員に表示されます。メールアドレスは表示されません。</p>
       <p class="hint" id="peStatus"></p>
       <button class="btn primary wide" id="btnSaveProfileEdit" type="button">保存する</button>
