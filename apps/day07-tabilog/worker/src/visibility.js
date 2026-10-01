@@ -6,6 +6,9 @@
  */
 
 export const VISIBILITIES = ["members", "close_friends", "followers", "public"];
+// いま選べる公開範囲（2026-10-01：SNSなし。public は「リンクを知っている人だけが見られる」見るだけの公開リンクで、一覧・検索はどこにも無い）。
+// 親しい友人・フォロワーを復活させるときはここに足す（docs/adr/0010）
+export const ENABLED_VISIBILITIES = ["members", "public"];
 export const BIO_MAX = 160;
 export const NAME_MAX = 40;
 

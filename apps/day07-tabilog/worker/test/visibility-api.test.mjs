@@ -1,10 +1,9 @@
 /*
- * 旅行の公開範囲・プロフィール・フォローのAPIを、node:sqlite（Node 22.5+）で作った本物のSQLiteの上で通しで確かめるテスト
- * （docs/adr/0010）。D1の代わりに、prepare/bind/first/all/run/batchだけ真似た薄い入れ物を使う。
- * 確かめること：持ち主だけが公開範囲を変えられる／持ち主になれるのは最初に参加した人だけ／公開の画面は見る人との関係
- * （全体・フォロワー・親しい友人・一緒に行った人だけ）で出し分ける／費用・名前・メール・本物のtrip.id・予定と記録のid・
- * 別行動の予定が一切漏れない／フォローの申請・承認・断る・外す／親しい友人はフォロワーの中から／ブロックの効き方／
- * プロフィールの入力チェックと通報／アカウント削除の後始末／マイグレーション前（テーブル・列なし）でも壊れない。
+ * 見るだけの公開リンクのAPIを、node:sqlite（Node 22.5+）で作った本物のSQLiteの上で通しで確かめるテスト（docs/adr/0010 の2026-10-01の節）。
+ * D1の代わりに、prepare/bind/first/all/run/batchだけ真似た薄い入れ物を使う。SNSのテーブル（0035）は作らない。
+ * 確かめること：アカウント参加者なら誰でも入り切りできる（ゲスト・未参加・ログインなしは不可）／親しい友人・フォロワー向けは400／
+ * 公開の画面はログイン不要で、費用・名前・メール・本物のtrip.id・予定と記録のid・別行動の予定が一切漏れない／
+ * SNS系ルートは410／マイグレーション前・SNSのテーブルなしでも壊れない／アカウント削除の後始末。
  * 実行: node worker/test/visibility-api.test.mjs
  */
 import assert from "node:assert/strict";
@@ -112,412 +111,128 @@ async function call(method, path, who, body) {
 }
 const sqlOf = (name) => readFileSync(new URL("../migrations/" + name, import.meta.url), "utf8");
 
-// ---------- マイグレーション前（列・テーブルなし）でも壊れない ----------
+// ---------- マイグレーション前（trips に列なし）でも壊れない ----------
 {
   let x = await call("GET", "/trips/trip_secret1");
-  check("[前] 旅行は開ける。持ち主なし・一緒に行った人だけ・未公開", [x.status, x.data.trip.ownerAccountId, x.data.trip.visibility, x.data.trip.publicId, x.data.owner], [200, "", "members", "", null]);
+  check("[前] 旅行は開ける。一緒に行った人だけ・未公開", [x.status, x.data.trip.visibility, x.data.trip.publicId], [200, "members", ""]);
   x = await call("POST", "/trips", "alice", { title: "新しい旅" });
-  check("[前] ログイン中でも旅行は作れる（持ち主は書けないだけ）", [x.status, x.data.ownerAccountId], [201, ""]);
+  check("[前] ログイン中でも旅行は作れる", [x.status, x.data.visibility], [201, "members"]);
   x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "public" });
-  check("[前] 公開範囲の変更は503（わかるエラー）", [x.status, x.data.error], [503, "visibility_not_ready"]);
-  x = await call("POST", "/trips/trip_secret1/claim-owner", "alice");
-  check("[前] 持ち主になるも503", [x.status, x.data.error], [503, "visibility_not_ready"]);
+  check("[前] リンクの入り切りは503（わかるエラー）", [x.status, x.data.error], [503, "visibility_not_ready"]);
   x = await call("GET", "/public/trips/pub_" + "0".repeat(32));
   check("[前] 公開の画面は404", [x.status, x.data.error], [404, "not_found"]);
-  x = await call("GET", "/profiles/me", "alice");
-  check("[前] 自分のプロフィールは読める（フォローなし・旅行なし）", [x.status, x.data.profile.name, x.data.profile.followerCount, x.data.profile.followingCount, x.data.trips], [200, "アリス", 0, 0, []]);
-  x = await call("PUT", "/follows/222222", "alice");
-  check("[前] フォローは503", [x.status, x.data.error], [503, "social_not_ready"]);
-  x = await call("PATCH", "/me/profile", "alice", { bio: "こんにちは" });
-  check("[前] ひとことの保存は503", [x.status, x.data.error], [503, "profile_not_ready"]);
-  x = await call("PATCH", "/me/profile", "alice", { visitedVisibility: "public" });
-  check("[前] 旅先の公開範囲の保存は503", [x.status, x.data.error], [503, "profile_not_ready"]);
-  x = await call("PATCH", "/me/profile", "alice", { showCounts: true });
-  check("[前] フォロワー数の表示の保存は503", [x.status, x.data.error], [503, "profile_not_ready"]);
-  x = await call("GET", "/profiles/me", "alice");
-  check("[前] 旅先は初期値（フォロワー）として出る（本人）", [x.status, x.data.profile.visitedVisibility, x.data.visited.visible], [200, "followers", true]);
-  x = await call("PATCH", "/me/profile", "alice", { name: "アリス2" });
-  check("[前] 名前だけなら直せる", [x.status, x.data.profile.name], [200, "アリス2"]);
-  await call("PATCH", "/me/profile", "alice", { name: "アリス" });
-  x = await call("GET", "/me/connections?kind=followers", "alice");
-  check("[前] フォロワー一覧は空", [x.status, x.data.items], [200, []]);
-  x = await call("PUT", "/user-blocks", "carol", { accountId: id("dave") });
-  check("[前] ブロックはできる（フォロー・親しい友人のテーブルが無くても）", x.status, 200);
-  await call("DELETE", "/user-blocks", "carol", { accountId: id("dave") });
 }
 
-for (const f of ["0034_trip_owner_visibility.sql", "0035_profiles_follows.sql"]) sqlite.exec(sqlOf(f));
-{
-  // 同じマイグレーションを2回流すと重複列エラー（害はない）。CREATEは何度でも通る
-  let dup = "";
-  try { sqlite.exec(sqlOf("0034_trip_owner_visibility.sql")); } catch (e) { dup = String(e.message); }
-  check("0034を2回流すと重複列エラー（害はない）", /duplicate column/i.test(dup), true);
-}
+// 見るだけのリンクに要るのは 0034（trips の3列とindex）だけ。0035（SNSのテーブル）は流さない
+sqlite.exec(sqlOf("0034_trip_owner_visibility.sql"));
 
-// ---------- 持ち主 ----------
+// ---------- 入り切り：アカウント参加者なら誰でも ----------
+let PID = "";
 {
   let x = await call("POST", "/trips", "alice", { title: "アリスの旅" });
-  check("ログインして作った旅行は、作った人が持ち主・初期は一緒に行った人だけ", [x.status, x.data.ownerAccountId, x.data.visibility, x.data.publicId], [201, id("alice"), "members", ""]);
-  const ownTrip = x.data.id;
-  x = await call("POST", "/trips", null, { title: "ログインなしの旅" });
-  check("ログインなしで作った旅行は持ち主なし", [x.status, x.data.ownerAccountId], [201, ""]);
+  check("初期値は一緒に行った人だけ・公開用IDなし", [x.status, x.data.visibility, x.data.publicId], [201, "members", ""]);
   x = await call("GET", "/trips/trip_secret1");
-  check("今ある旅行はすべて一緒に行った人だけ・持ち主なし", [x.data.trip.visibility, x.data.trip.ownerAccountId, x.data.trip.publicId], ["members", "", ""]);
+  check("今ある旅行はすべて一緒に行った人だけ", [x.data.trip.visibility, x.data.trip.publicId], ["members", ""]);
 
-  x = await call("POST", "/trips/trip_secret1/claim-owner", "bob");
-  check("最初に参加したのではない人は持ち主になれない", [x.status, x.data.error], [403, "not_first_member"]);
-  x = await call("POST", "/trips/trip_secret1/claim-owner", "carol");
-  check("参加していない人は持ち主になれない", [x.status, x.data.error], [403, "not_first_member"]);
-  x = await call("POST", "/trips/trip_secret1/claim-owner", null);
-  check("ログインなしは401", [x.status, x.data.error], [401, "login_required"]);
-  x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "public" });
-  check("持ち主がいない間は公開範囲を変えられない", [x.status, x.data.error], [403, "no_owner"]);
-  x = await call("POST", "/trips/trip_secret1/claim-owner", "alice");
-  check("最初に参加したアリスは持ち主になれる", [x.status, x.data.ownerAccountId], [200, id("alice")]);
-  x = await call("POST", "/trips/trip_secret1/claim-owner", "alice");
-  check("持ち主がもう一度押しても同じ（冪等）", [x.status, x.data.ownerAccountId], [200, id("alice")]);
-  x = await call("POST", "/trips/trip_secret1/claim-owner", "bob");
-  check("持ち主がいる旅行には、ほかの人は持ち主になれない", [x.status, x.data.error], [409, "already_owned"]);
-  x = await call("GET", "/trips/trip_secret1");
-  check("旅行の取得に持ち主の表示名が付く（メールは無い）", [x.data.trip.ownerAccountId, x.data.owner.name, "email" in x.data.owner], [id("alice"), "アリス", false]);
-
-  // 公開範囲を変えられるのは持ち主だけ
-  x = await call("PUT", "/trips/trip_secret1/visibility", "bob", { visibility: "public" });
-  check("持ち主でない人は公開範囲を変えられない", [x.status, x.data.error], [403, "forbidden"]);
   x = await call("PUT", "/trips/trip_secret1/visibility", null, { visibility: "public" });
-  check("ログインなしは公開範囲を変えられない", x.status, 401);
+  check("ログインなしは401", [x.status, x.data.error], [401, "login_required"]);
+  x = await call("PUT", "/trips/trip_secret1/visibility", "carol", { visibility: "public" });
+  check("参加していないアカウントは403", [x.status, x.data.error], [403, "forbidden"]);
   x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "everyone" });
-  check("知らない公開範囲は400", x.status, 400);
-  x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "followers" });
-  const publicId = x.data.publicId;
-  check("初めて公開すると公開用IDができる", [x.status, x.data.visibility, /^pub_[0-9a-f]{32}$/.test(publicId)], [200, "followers", true]);
-  x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "members" });
-  check("一緒に行った人だけに戻すと、公開用IDは返さない", [x.data.visibility, x.data.publicId], ["members", ""]);
-  x = await call("GET", "/trips/trip_secret1");
-  check("一緒に行った人だけの旅行の取得に公開用IDは出ない", x.data.trip.publicId, "");
-  x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "public" });
-  check("再公開しても同じ公開用ID（同じリンクに戻る）", x.data.publicId, publicId);
-  check("旅行の取得は編集用のidを持つ人にだけ公開用IDを出す", (await call("GET", "/trips/trip_secret1")).data.trip.publicId, publicId);
-  x = await call("PUT", "/trips/" + ownTrip + "/visibility", "bob", { visibility: "public" });
-  check("他人の旅行は変えられない", x.status, 403);
-  globalThis.__publicId = publicId;
-}
-const PID = globalThis.__publicId;
+  check("知らない値は400", [x.status, x.data.error], [400, "invalid_input"]);
+  for (const v of ["close_friends", "followers"]) {
+    x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: v });
+    check("親しい友人・フォロワー向けは今は使えない（" + v + "）", [x.status, x.data.error], [400, "visibility_unavailable"]);
+  }
+  check("拒否された操作では何も変わらない", sqlite.prepare("SELECT visibility FROM trips WHERE id='trip_secret1'").get().visibility, "members");
 
-// ---------- 公開の画面：出してよいものだけ・漏れない ----------
+  // bobは2番目に参加した人。「持ち主になる」なしで入れられ、最初に公開した人が owner_account_id に記録される
+  x = await call("PUT", "/trips/trip_secret1/visibility", "bob", { visibility: "public" });
+  PID = x.data.publicId;
+  check("参加者（2番目に参加したbob）がオンにできる。公開用IDができる", [x.status, x.data.visibility, /^pub_[0-9a-f]{32}$/.test(PID)], [200, "public", true]);
+  check("最初に公開した人が owner_account_id に記録される", sqlite.prepare("SELECT owner_account_id FROM trips WHERE id='trip_secret1'").get().owner_account_id, id("bob"));
+  x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "members" });
+  check("別の参加者（alice）がオフにできる", [x.status, x.data.visibility, x.data.publicId], [200, "members", ""]);
+  check("オフにしても owner は変わらず、public_id は残る", { ...sqlite.prepare("SELECT owner_account_id, public_id FROM trips WHERE id='trip_secret1'").get() }, { owner_account_id: id("bob"), public_id: PID });
+  x = await call("GET", "/public/trips/" + PID);
+  check("オフのあいだ、リンクは見えない（404）", [x.status, x.data.error], [404, "not_found"]);
+  x = await call("GET", "/trips/trip_secret1");
+  check("オフの旅行の取得に公開用IDは出ない", x.data.trip.publicId, "");
+  x = await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "public" });
+  check("もう一度オンにすると同じリンクに戻る（ownerは変わらない）", [x.data.publicId, sqlite.prepare("SELECT owner_account_id FROM trips WHERE id='trip_secret1'").get().owner_account_id], [PID, id("bob")]);
+  check("オンの旅行の取得（編集用）に公開用IDが出る", (await call("GET", "/trips/trip_secret1")).data.trip.publicId, PID);
+
+  const own = (await call("POST", "/trips", "alice", { title: "アリスだけの旅" })).data;
+  x = await call("PUT", "/trips/" + own.id + "/visibility", "bob", { visibility: "public" });
+  check("参加していない旅行は、他人は入り切りできない", [x.status, x.data.error], [403, "forbidden"]);
+  x = await call("PUT", "/trips/nope/visibility", "alice", { visibility: "public" });
+  check("存在しない旅行の入り切りは404", x.status, 404);
+}
+
+// ---------- 公開の画面：出してよいものだけ・漏れない・ログイン不要 ----------
 {
   let x = await call("GET", "/public/trips/" + PID);
-  check("全体向けはログインなしで見られる", x.status, 200);
+  check("ログインなしで見られる", x.status, 200);
   const body = JSON.stringify(x.data);
   check("本物のtrip.idは出ない", body.includes("trip_secret1"), false);
   check("block・entry・rating・day_infoのidは出ない", /blk_|ent_|rt_secret|di_secret|br_secret/.test(body), false);
   check("ゲスト参加者の名前・記録した人は出ない", body.includes("ゲスト太郎"), false);
+  check("アカウント参加者の名前（アリス・ボブ）・アカウントIDは出ない", /アリス|ボブ|111111|222222/.test(body), false);
   check("メールアドレスは出ない", /@example\.com/.test(body), false);
   check("費用・精算・移動の金額は出ない", /入場料|40000|777|costItems|settleUnit|amount|payer/.test(body), false);
   check("評価のレビュー本文・評価した人の名前は出ない", /秘密のレビュー|raterName|raterEmail|review/.test(body), false);
   check("音声の文字起こし・座標は出ない", /音声の文字起こし本文|"lat"|"lon"|voiceTranscript/.test(body), false);
   check("別行動の予定・記録（自分だけの道）は出ない", /ひとりだけの寄り道|別行動の秘密のメモ|branch/.test(body), false);
-  check("メンバー一覧・companionsは出ない", /"members"|companions|"author"/.test(body), false);
+  check("メンバー一覧・companions・持ち主・見る人の情報は出ない", /"members"|companions|"author"|"owner"|"viewer"|"relation"|ownerAccountId/.test(body), false);
   check("予定・記録・写真・評価の平均は出る", [x.data.blocks.length, x.data.blocks[0].label, x.data.blocks[0].entries[0].episode, x.data.blocks[0].entries[0].photoIds.length, x.data.blocks[0].entries[0].ratingAvg, x.data.blocks[0].entries[0].ratingCount, x.data.blocks[0].entries[0].travel],
     [1, "首里城", "朝いちで行った", 1, 4.5, 2, { from: "那覇", to: "首里" }]);
-  check("持ち主の名前と、見る人の関係が付く", [x.data.owner.accountId, x.data.owner.name, x.data.viewer.isOwner, x.data.trip.publicId, x.data.trip.visibility, x.data.relation.state], [id("alice"), "アリス", false, PID, "public", "none"]);
+  check("公開用IDと公開範囲が付く", [x.data.trip.publicId, x.data.trip.visibility], [PID, "public"]);
   check("日ごとの天気・場所は出る", [x.data.days[0].place, x.data.days[0].weatherCode], ["那覇", 1]);
+  const withSession = await call("GET", "/public/trips/" + PID, "carol");
+  check("ログインしていても同じ内容（見る人で出し分けない）", JSON.stringify(withSession.data), body);
 
   x = await call("GET", "/public/trips/pub_" + "f".repeat(32));
   check("存在しない公開用IDは404", x.status, 404);
   x = await call("GET", "/public/trips/trip_secret1");
-  check("trip.idを公開用IDとしては使えない（編集用idでは公開の画面を開けない）", x.status, 404);
+  check("trip.idを公開用IDとしては使えない", x.status, 404);
   x = await call("GET", "/public/trips/x");
   check("形が違うIDは404", x.status, 404);
+  check("公開の旅行の一覧・検索のAPIは無い", [(await call("GET", "/public/trips")).status === 200, (await call("GET", "/public/trips/")).status === 200], [false, false]);
 }
 
-// ---------- 見る人との関係ごとの出し分け ----------
+// ---------- SNS系は止まっている（SOCIAL_ENABLED=false）。テーブルが無くても壊れない ----------
 {
-  const set = (v) => call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: v });
-  const view = async (who) => { const r = await call("GET", "/public/trips/" + PID, who); return [r.status, r.data && r.data.error]; };
-  await set("followers");
-  check("[フォロワー向け] ログインなしは401", await view(null), [401, "login_required"]);
-  check("[フォロワー向け] フォロワーでない人は403", await view("carol"), [403, "not_allowed"]);
-  let x = await call("GET", "/public/trips/" + PID, "carol");
-  check("[フォロワー向け] 403には持ち主の名前だけ付く（旅行の中身・タイトルは無い）", [x.data.owner.name, x.data.visibility, x.data.relation.state, x.data.trip, x.data.blocks, JSON.stringify(x.data).includes("沖縄")], ["アリス", "followers", "none", undefined, undefined, false]);
-  check("[フォロワー向け] 持ち主は見られる（確認用）", await view("alice"), [200, undefined]);
-  x = await call("PUT", "/follows/" + id("alice"), "bob");
-  check("承認制でないアカウントは、フォローするとすぐフォロー中", [x.status, x.data.state], [200, "following"]);
-  check("[フォロワー向け] フォロワーは見られる", await view("bob"), [200, undefined]);
-  await set("close_friends");
-  check("[親しい友人向け] フォロワーだけでは見られない", await view("bob"), [403, "not_allowed"]);
-  x = await call("PUT", "/me/close-friends/" + id("bob"), "alice");
-  check("[親しい友人] フォロワーの中から入れられる", [x.status, x.data.closeFriend], [200, true]);
-  check("[親しい友人向け] 親しい友人は見られる", await view("bob"), [200, undefined]);
-  check("[親しい友人向け] ほかの人は見られない", await view("carol"), [403, "not_allowed"]);
-  await set("followers");
-  check("[フォロワー向け] 親しい友人はフォロワーでもあるので見られる", await view("bob"), [200, undefined]);
-  await set("members");
-  check("[一緒に行った人だけ] 公開の画面では誰にも見せない（持ち主・フォロワー・ログインなし）", [await view("alice"), await view("bob"), await view(null)], [[404, "not_found"], [404, "not_found"], [404, "not_found"]]);
-  await set("public");
-  check("[全体向け] 戻すとまた見られる", await view(null), [200, undefined]);
+  const routes = [
+    ["GET", "/profiles/me", "alice"], ["GET", "/profiles/222222", "alice"], ["POST", "/profiles/222222/report", "alice"],
+    ["PATCH", "/me/profile", "alice"], ["GET", "/me/connections?kind=followers", "alice"],
+    ["PUT", "/follows/222222", "alice"], ["DELETE", "/follows/222222", "alice"],
+    ["POST", "/me/follow-requests/222222/approve", "alice"], ["DELETE", "/me/followers/222222", "alice"],
+    ["PUT", "/me/close-friends/222222", "alice"], ["DELETE", "/me/close-friends/222222", "alice"],
+    ["POST", "/trips/trip_secret1/claim-owner", "alice"],
+  ];
+  for (const [m, p, who] of routes) {
+    const x = await call(m, p, who, m === "GET" || m === "DELETE" ? undefined : {});
+    check("SNS系は410 feature_disabled：" + m + " " + p, [x.status, x.data && x.data.error], [410, "feature_disabled"]);
+  }
+  const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('follows','close_friends','profile_reports')").all();
+  check("SNSのテーブル（0035）は作っていない", tables, []);
+  const cols = sqlite.prepare("PRAGMA table_info(accounts)").all().map((c) => c.name);
+  check("accountsにSNSの列（bio・is_private…）も無い", cols.filter((c) => /bio|avatar|private|visited|show_counts/.test(c)), []);
 }
 
-// ---------- フォロー（承認制）の流れ ----------
-{
-  let x = await call("PATCH", "/me/profile", "alice", { isPrivate: true });
-  check("承認制にする", [x.status, x.data.profile.isPrivate], [200, true]);
-  x = await call("PUT", "/follows/" + id("alice"), "carol");
-  check("承認制の相手には、申請になる", [x.status, x.data.state], [200, "requested"]);
-  x = await call("PUT", "/follows/" + id("alice"), "carol");
-  check("申請の繰り返しは同じ状態のまま", x.data.state, "requested");
-  x = await call("GET", "/me/connections?kind=requests", "alice");
-  check("申請の一覧に出る", x.data.items.map((i) => i.accountId), [id("carol")]);
-  x = await call("GET", "/profiles/" + id("alice"), "alice");
-  check("自分のプロフィールに承認待ちの件数が出る", [x.data.pendingRequestCount, x.data.profile.followerCount, x.data.profile.followingCount], [1, 1, 0]);
-  x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("申請中の人から見たプロフィール（フォロー数は他の人には出ない）", [x.data.relation.state, x.data.profile.followerCount, x.data.profile.followingCount], ["requested", undefined, undefined]);
-  x = await call("POST", "/me/follow-requests/" + id("carol") + "/approve", "bob");
-  check("他の人は承認できない（その人あての申請ではない）", x.status, 404);
-  x = await call("POST", "/me/follow-requests/" + id("carol") + "/approve", null);
-  check("ログインなしは承認できない", x.status, 401);
-  x = await call("POST", "/me/follow-requests/" + id("carol") + "/approve", "alice");
-  check("承認するとフォロワーになる", [x.status, x.data.state], [200, "approved"]);
-  x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("承認されたあとの関係", [x.data.relation.state, x.data.profile.followerCount], ["following", undefined]);
-  x = await call("GET", "/me/connections?kind=followers", "alice");
-  check("フォロワーの一覧（親しい友人の印つき）", x.data.items.map((i) => [i.accountId, i.closeFriend]).sort(), [[id("bob"), true], [id("carol"), false]]);
-  x = await call("GET", "/me/connections?kind=following", "carol");
-  check("フォロー中の一覧", x.data.items.map((i) => i.name), ["アリス"]);
-  x = await call("POST", "/me/follow-requests/" + id("carol") + "/decline", "alice");
-  check("承認したあとの「断る」はできない（外すを使う）", [x.status, x.data.error], [409, "invalid_transition"]);
-
-  x = await call("PUT", "/follows/" + id("alice"), "dave");
-  x = await call("POST", "/me/follow-requests/" + id("dave") + "/decline", "alice");
-  check("断ると申請が消える", [x.status, x.data.state], [200, "none"]);
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("断られた人の関係は「なし」に戻る", x.data.relation.state, "none");
-  x = await call("PUT", "/follows/" + id("alice"), "dave");
-  x = await call("DELETE", "/follows/" + id("alice"), "dave");
-  check("申請の取り消し", [x.status, x.data.state], [200, "none"]);
-  x = await call("DELETE", "/follows/" + id("alice"), "dave");
-  check("何もしていなくても取り消しは失敗しない", [x.status, x.data.state], [200, "none"]);
-  x = await call("POST", "/me/follow-requests/" + id("dave") + "/approve", "alice");
-  check("申請が無い人は承認できない", x.status, 404);
-
-  x = await call("PUT", "/me/close-friends/" + id("dave"), "alice");
-  check("フォロワーでない人は親しい友人に入れられない", [x.status, x.data.error], [409, "not_a_follower"]);
-  x = await call("PUT", "/me/close-friends/" + id("alice"), "alice");
-  check("自分は親しい友人に入れられない", x.status, 400);
-  x = await call("DELETE", "/me/followers/" + id("bob"), "alice");
-  check("フォロワーから外す", [x.status, x.data.state], [200, "none"]);
-  x = await call("GET", "/me/connections?kind=close_friends", "alice");
-  check("フォロワーから外すと、親しい友人の印も消える", x.data.items, []);
-  x = await call("PUT", "/follows/" + id("alice"), "bob");
-  check("外された人は承認制のアカウントを、申請から始め直す", x.data.state, "requested");
-
-  // 承認制をやめると、承認待ちは自動でフォローになる
-  x = await call("PATCH", "/me/profile", "alice", { isPrivate: false });
-  x = await call("GET", "/profiles/" + id("alice"), "bob");
-  check("承認制をやめると承認待ちの申請は自動でフォローになる", x.data.relation.state, "following");
-  x = await call("PUT", "/follows/" + id("alice"), "alice");
-  check("自分はフォローできない", x.status, 400);
-  x = await call("PUT", "/follows/999999", "bob");
-  check("いないアカウントは404", x.status, 404);
-  x = await call("DELETE", "/follows/" + id("alice"), "carol");
-  check("フォローをやめる", x.data.state, "none");
-}
-
-// ---------- プロフィール・旅行の一覧 ----------
-{
-  let x = await call("GET", "/profiles/" + id("alice"));
-  check("プロフィールはログインなしだと401", x.status, 401);
-  x = await call("GET", "/profiles/abc", "bob");
-  check("形が違うIDは404", x.status, 404);
-  // aliceの旅行：trip_secret1（全体）、ownTrip（一緒に行った人だけ）に加えて followers 向け・親しい友人向けを作る
-  const mk = async (title, vis) => {
-    const t = (await call("POST", "/trips", "alice", { title })).data;
-    if (vis !== "members") await call("PUT", "/trips/" + t.id + "/visibility", "alice", { visibility: vis });
-    return t;
-  };
-  await mk("フォロワー旅", "followers");
-  await mk("親しい友人旅", "close_friends");
-  x = await call("GET", "/profiles/" + id("alice"), "alice");
-  check("自分のプロフィールには全部の旅行が公開範囲つきで並ぶ（編集用idつき）",
-    [x.data.trips.some((t) => t.id === "trip_secret1"), x.data.trips.map((t) => t.visibility).sort()],
-    [true, ["close_friends", "followers", "members", "public"]]);
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("フォローしていない人には全体向けの旅行だけ。編集用idは出ない", [x.data.trips.map((t) => t.title), x.data.trips.some((t) => "id" in t), JSON.stringify(x.data).includes("trip_secret1")], [["沖縄"], false, false]);
-  await call("PUT", "/follows/" + id("alice"), "carol");
-  x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("フォロワーには全体向け＋フォロワー向け", x.data.trips.map((t) => t.title).sort(), ["フォロワー旅", "沖縄"]);
-  await call("PUT", "/me/close-friends/" + id("carol"), "alice");
-  x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("親しい友人には全部（一緒に行った人だけの旅行を除く）", x.data.trips.map((t) => t.title).sort(), ["フォロワー旅", "沖縄", "親しい友人旅"]);
-  check("一緒に行った人だけの旅行は誰の一覧にも出ない（公開用IDも無い）", x.data.trips.some((t) => t.title === "アリスの旅"), false);
-
-  // 承認制のアカウントの旅行一覧は、承認されたフォロワーにだけ
-  await call("PATCH", "/me/profile", "alice", { isPrivate: true });
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("承認制のアカウントは、フォロワーでない人に旅行の一覧を見せない", [x.data.tripsHidden, x.data.trips, x.data.profile.isPrivate], [true, [], true]);
-  x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("承認制でも、承認されたフォロワーには見える", [x.data.tripsHidden, x.data.trips.length], [false, 3]);
-  x = await call("GET", "/public/trips/" + PID, "dave");
-  check("承認制でも、全体向けの旅行を直接のリンクで開くことはできる", x.status, 200);
-  await call("PATCH", "/me/profile", "alice", { isPrivate: false });
-
-  // 入力チェック
-  x = await call("PATCH", "/me/profile", "alice", { bio: "旅が好きです" });
-  check("ひとことを保存", [x.status, x.data.profile.bio], [200, "旅が好きです"]);
-  x = await call("PATCH", "/me/profile", "alice", { bio: "あ".repeat(161) });
-  check("ひとことは160字まで", [x.status, x.data.error], [400, "invalid_bio"]);
-  x = await call("PATCH", "/me/profile", "alice", { bio: "お前はしね" });
-  check("ひとこと・名前の暴言は保存しない", [x.status, x.data.error], [422, "inappropriate"]);
-  x = await call("PATCH", "/me/profile", "alice", { name: "fuck you" });
-  check("名前の暴言も保存しない", x.status, 422);
-  x = await call("PATCH", "/me/profile", "alice", { name: "  " });
-  check("名前は空にできない", [x.status, x.data.error], [400, "invalid_name"]);
-  x = await call("PATCH", "/me/profile", "alice", { avatarPhotoId: "../secret" });
-  check("アイコンは写真のID以外を受け付けない", [x.status, x.data.error], [400, "invalid_avatar"]);
-  const avatar = "photo_" + "b".repeat(32) + ".jpg";
-  x = await call("PATCH", "/me/profile", "alice", { avatarPhotoId: avatar });
-  check("アイコンの写真IDを保存", [x.status, x.data.profile.avatarPhotoId], [200, avatar]);
-  x = await call("PATCH", "/me/profile", "alice", { isPrivate: "yes" });
-  check("承認制の値は真偽だけ", x.status, 400);
-  x = await call("PATCH", "/me/profile", null, { bio: "x" });
-  check("ログインなしはプロフィールを直せない", x.status, 401);
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("他の人から見たプロフィールにメール・プランは出ない", [x.data.profile.avatarPhotoId, /email|plan|@/.test(JSON.stringify(x.data))], [avatar, false]);
-  x = await call("GET", "/trips/trip_secret1");
-  check("旅行の取得の持ち主カードに、プロフィールの名前が出る", x.data.owner.name, "アリス");
-
-  // 通報
-  x = await call("POST", "/profiles/" + id("alice") + "/report", "dave", { reason: "なりすまし" });
-  check("プロフィールを通報できる", [x.status, x.data.ok], [200, true]);
-  x = await call("POST", "/profiles/" + id("alice") + "/report", "dave", { reason: "なりすまし" });
-  check("同じ通報の繰り返しも失敗しない", x.status, 200);
-  check("通報が1件だけ記録される", sqlite.prepare("SELECT COUNT(*) AS n FROM profile_reports").get().n, 1);
-  x = await call("POST", "/profiles/" + id("dave") + "/report", "dave");
-  check("自分は通報できない", x.status, 404);
-  x = await call("POST", "/profiles/" + id("alice") + "/report", null);
-  check("ログインなしは通報できない", x.status, 401);
-}
-
-// ---------- フォロー数の表示設定（初期値オフ。他の人には数も一覧も返さない） ----------
-{
-  let x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("初期値では、他の人にフォロー数・フォロワー数を返さない", ["followerCount" in x.data.profile, "followingCount" in x.data.profile, "showCounts" in x.data.profile], [false, false, false]);
-  x = await call("GET", "/profiles/" + id("alice"), "alice");
-  check("本人には数が出る（設定の値も）", [typeof x.data.profile.followerCount, typeof x.data.profile.followingCount, x.data.profile.showCounts], ["number", "number", false]);
-  x = await call("PATCH", "/me/profile", "alice", { showCounts: "yes" });
-  check("フォロワー数の表示は真偽だけ", x.status, 400);
-  x = await call("PATCH", "/me/profile", "alice", { showCounts: true });
-  check("フォロワー数の表示をオンにする", [x.status, x.data.profile.showCounts], [200, true]);
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("オンにすると、他の人にも数だけ見える（一覧は返さない）", [typeof x.data.profile.followerCount, typeof x.data.profile.followingCount, "followers" in x.data, "following" in x.data, "showCounts" in x.data.profile], ["number", "number", false, false, false]);
-  x = await call("GET", "/me/connections?kind=followers", null);
-  check("一覧はログインなしでは返さない", x.status, 401);
-  x = await call("GET", "/me/connections?kind=followers", "dave");
-  check("一覧は本人のものだけ（他の人のフォロワーは見えない）", x.data.items, []);
-  await call("PATCH", "/me/profile", "alice", { showCounts: false });
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("オフに戻すとまた隠れる", "followerCount" in x.data.profile, false);
-}
-
-// ---------- 行ったことある旅先（国・都道府県の名前だけ。公開範囲は本人が決める） ----------
-{
-  const realFetch = globalThis.fetch;
-  let fetched = 0;
-  globalThis.fetch = (...a) => { fetched++; return realFetch(...a); };
-  let x = await call("GET", "/profiles/" + id("alice"), "alice");
-  check("本人には、初期値の公開範囲（フォロワー）と中身が出る", [x.data.profile.visitedVisibility, x.data.visited.visible, x.data.visited.countries.slice().sort(), x.data.visited.prefectures], ["followers", true, ["スイス"], ["沖縄県"]]);
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("初期値（フォロワー）：フォロワーでない人には中身を返さない（案内の印だけ）", [x.data.visited, "visitedVisibility" in x.data.profile], [{ visible: false, needsFollow: true }, false]);
-  check("フォロワーでない人への返事に、国名・都道府県名が含まれない", /スイス|沖縄県/.test(JSON.stringify(x.data)), false);
-  x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("初期値（フォロワー）：フォロワーには見える", [x.data.visited.visible, x.data.visited.countries.slice().sort(), x.data.visited.prefectures], [true, ["スイス"], ["沖縄県"]]);
-  const body = JSON.stringify(x.data.visited);
-  check("どの旅行か・いつかは返さない（名前だけ）", [Object.keys(x.data.visited).sort(), /スイス周遊|trip_|2025|2026|沖縄"|Zermatt|ツェルマット|ヴァレー/.test(body)], [["countries", "prefectures", "visible"], false]);
-  check("プロフィールの閲覧では、逆ジオコーディングのfetchを呼ばない（サブリクエストを増やさない）", fetched, 0);
-  check("未解決の座標を書き戻さない（読むだけ）", sqlite.prepare("SELECT map_admin1, map_country FROM entries WHERE id = 'ent_stale1'").get().map_country, null);
-
-  x = await call("PATCH", "/me/profile", "alice", { visitedVisibility: "everyone" });
-  check("知らない公開範囲は400", x.status, 400);
-  x = await call("PATCH", "/me/profile", "alice", { visitedVisibility: "public" });
-  check("全体に変える", [x.status, x.data.profile.visitedVisibility], [200, "public"]);
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("全体：フォロワーでない人にも見える", [x.data.visited.visible, x.data.visited.prefectures], [true, ["沖縄県"]]);
-  await call("PATCH", "/me/profile", "alice", { visitedVisibility: "none" });
-  x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("出さない：フォロワーにも見えない（案内の印も出さない）", x.data.visited, null);
-  x = await call("GET", "/profiles/" + id("alice"), "alice");
-  check("出さない：本人には見える", [x.data.visited.visible, x.data.profile.visitedVisibility], [true, "none"]);
-
-  // ブロック：設定が全体でも、ブロックしている・されている人には見えない
-  await call("PATCH", "/me/profile", "alice", { visitedVisibility: "public" });
-  await call("PUT", "/user-blocks", "alice", { accountId: id("dave") });
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("ブロックされた人には、全体向けでもプロフィールごと見えない", [x.status, JSON.stringify(x.data).includes("沖縄県")], [404, false]);
-  await call("DELETE", "/user-blocks", "alice", { accountId: id("dave") });
-  await call("PUT", "/user-blocks", "dave", { accountId: id("alice") });
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("ブロックした人には、旅先は返さない（解除用の最小限だけ）", [x.data.blockedByMe, "visited" in x.data, JSON.stringify(x.data).includes("沖縄県")], [true, false, false]);
-  await call("DELETE", "/user-blocks", "dave", { accountId: id("alice") });
-  await call("PATCH", "/me/profile", "alice", { visitedVisibility: "followers" });
-  globalThis.fetch = realFetch;
-}
-
-// ---------- ブロック ----------
-{
-  let x = await call("PUT", "/follows/" + id("alice"), "bob");
-  await call("PUT", "/me/close-friends/" + id("bob"), "alice");
-  await call("PUT", "/follows/" + id("bob"), "alice");
-  check("ブロック前：お互いにフォローしている", (await call("GET", "/profiles/" + id("alice"), "bob")).data.relation.followsMe, true);
-  x = await call("PUT", "/user-blocks", "alice", { accountId: id("bob") });
-  check("ブロックできる", x.status, 200);
-  check("ブロックするとお互いのフォロー・親しい友人が外れる",
-    [sqlite.prepare("SELECT COUNT(*) AS n FROM follows WHERE (follower_id=? AND followee_id=?) OR (follower_id=? AND followee_id=?)").get(id("alice"), id("bob"), id("bob"), id("alice")).n,
-      sqlite.prepare("SELECT COUNT(*) AS n FROM close_friends WHERE owner_account_id=? AND friend_account_id=?").get(id("alice"), id("bob")).n], [0, 0]);
-  x = await call("GET", "/profiles/" + id("alice"), "bob");
-  check("ブロックされた人にはプロフィールが見えない（404）", x.status, 404);
-  x = await call("GET", "/profiles/" + id("bob"), "alice");
-  check("ブロックした人には、相手のプロフィールが「ブロック中」の最小限で出る（解除できるように）", [x.status, x.data.blockedByMe, x.data.profile, x.data.trips], [200, true, { accountId: id("bob"), name: "ボブ" }, undefined]);
-  x = await call("PUT", "/follows/" + id("alice"), "bob");
-  check("ブロックされた人はフォローできない", x.status, 404);
-  x = await call("PUT", "/follows/" + id("bob"), "alice");
-  check("ブロックした人も相手をフォローできない", x.status, 404);
-  x = await call("GET", "/me/connections?kind=followers", "alice");
-  check("ブロックした人はフォロワーの一覧に出ない", x.data.items.some((i) => i.accountId === id("bob")), false);
-  x = await call("GET", "/public/trips/" + PID, "bob");
-  check("ブロックされた人も、全体向けの旅行は見られる（ログインなしでも見られるため）", x.status, 200);
-  await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "followers" });
-  x = await call("GET", "/public/trips/" + PID, "bob");
-  check("ブロックされた人は、非公開（フォロワー向け）は見られない", x.status, 404);
-  await call("PUT", "/trips/trip_secret1/visibility", "alice", { visibility: "public" });
-  // 見る人が持ち主をブロックしているとき
-  await call("PUT", "/user-blocks", "dave", { accountId: id("alice") });
-  x = await call("GET", "/public/trips/" + PID, "dave");
-  check("持ち主をブロックした人には、全体向けでも見せない", x.status, 404);
-  x = await call("GET", "/profiles/" + id("alice"), "dave");
-  check("持ち主をブロックした人には、持ち主のプロフィールは最小限（解除用）", x.data.blockedByMe, true);
-  x = await call("DELETE", "/user-blocks", "dave", { accountId: id("alice") });
-  x = await call("GET", "/public/trips/" + PID, "dave");
-  check("ブロックを解除すると見られる", x.status, 200);
-  await call("DELETE", "/user-blocks", "alice", { accountId: id("bob") });
-  check("ブロック解除後、プロフィールがまた見える", (await call("GET", "/profiles/" + id("alice"), "bob")).status, 200);
-}
-
-// ---------- アカウント削除の後始末 ----------
+// ---------- アカウント削除（SNSのテーブルが無くても動く） ----------
 {
   const t = (await call("POST", "/trips", "erin", { title: "エリンの旅" })).data;
-  await call("PUT", "/trips/" + t.id + "/visibility", "erin", { visibility: "public" });
-  await call("PUT", "/follows/" + id("erin"), "bob");
-  await call("PUT", "/follows/" + id("bob"), "erin");
-  await call("PATCH", "/me/profile", "erin", { bio: "消えるひとこと", avatarPhotoId: "photo_" + "d".repeat(32) + ".png" });
-  const pid = (await call("GET", "/trips/" + t.id)).data.trip.publicId;
-  let x = await call("POST", "/accounts/delete", "erin", { email: "erin@example.com" });
-  check("アカウントを削除できる", x.status, 200);
-  check("削除したアカウントのフォロー・親しい友人は消える", sqlite.prepare("SELECT COUNT(*) AS n FROM follows WHERE follower_id=? OR followee_id=?").get(id("erin"), id("erin")).n, 0);
-  check("削除したアカウントのひとこと・アイコン・表示設定は初期値に戻る", { ...sqlite.prepare("SELECT bio, avatar_photo_id, visited_visibility, show_counts FROM accounts WHERE account_id=?").get(id("erin")) }, { bio: "", avatar_photo_id: "", visited_visibility: "followers", show_counts: 0 });
+  sqlite.prepare("INSERT OR IGNORE INTO trip_members (id, trip_id, account_id, name, joined_at) VALUES ('m9',?,?,?,?)").run(t.id, id("erin"), "エリン", now);
+  let x = await call("PUT", "/trips/" + t.id + "/visibility", "erin", { visibility: "public" });
+  const pid = x.data.publicId;
+  check("erinがオンにできる", [x.status, !!pid], [200, true]);
+  x = await call("POST", "/accounts/delete", "erin", { email: "erin@example.com" });
+  check("アカウントを削除できる（SNSのテーブルが無くても）", x.status, 200);
   x = await call("GET", "/trips/" + t.id);
-  check("旅行は残り、持ち主なし・一緒に行った人だけに戻る", [x.status, x.data.trip.ownerAccountId, x.data.trip.visibility], [200, "", "members"]);
+  check("旅行は残り、一緒に行った人だけに戻る", [x.status, x.data.trip.visibility], [200, "members"]);
   x = await call("GET", "/public/trips/" + pid);
-  check("削除した人の旅行の公開の画面は見られなくなる", x.status, 404);
+  check("削除した人が公開した旅行のリンクは見られなくなる", x.status, 404);
 }
 
 console.log("visibility-api: " + pass + " passed, " + fail + " failed");

@@ -881,6 +881,34 @@ App Reviewの Guideline 3.1.1 で却下されたため、有料プランと回�
 - **復活させるとき**：Appleのアプリ内課金（RevenueCat）に切り替える想定。`effectivePlan` を課金状態（RevenueCatのWebhookで`plan`列を更新）から返す形に戻し、`BILLING_ENABLED`とStripe系の経路を見直す。詳しくは docs/adr/0004。
 - ローカルの確認：`node worker/test/billing-disabled.test.mjs`（node:sqliteの上で、plan列がpremium_plusでも上限が無料のままであること・購入の入口が410であること・Webhookが何も変えないことを確かめる）
 
+## 見るだけの公開リンク（2026-10-01、docs/adr/0010「SNSなし」の節）
+
+**SNSは当面やらない**と決めたので、出すのは「リンクを知っている人だけが見られる、見るだけの公開リンク」だけ。**必要なmigrationは0034（tripsの3列と2つのindex）だけ**。`0035_profiles_follows.sql`（プロフィール・フォロー・親しい友人・通報）は**SNSを復活させるまで流さなくてよい**（ファイルは残してある。Workerは0035のテーブル・列が無くても動く）。
+
+**D1に流す最小のコマンド**（順番：D1 → `wrangler deploy`。`--file`は認証エラーになる環境があるので1文ずつ`--command`。ALTER TABLEは1回だけで、2回目は「duplicate column name」エラーになるが害はない）：
+
+```
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE trips ADD COLUMN owner_account_id TEXT NOT NULL DEFAULT '';"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE trips ADD COLUMN visibility TEXT NOT NULL DEFAULT 'members';"
+npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE trips ADD COLUMN public_id TEXT NOT NULL DEFAULT '';"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_trips_public_id ON trips(public_id);"
+npx wrangler d1 execute tabilog-db --remote --command "CREATE INDEX IF NOT EXISTS idx_trips_owner ON trips(owner_account_id);"
+```
+
+先にデプロイしても壊れない（列が無ければ、全部の旅行が「一緒に行った人だけ」として動き、リンクの入り切りは503 `visibility_not_ready`）。
+
+| メソッド・パス | 内容 |
+|---|---|
+| `PUT /trips/:id/visibility` `{visibility}` | 見るだけのリンクの入り切り。`public`（オン）\|`members`（オフ）。**その旅行にアカウントで参加している人（`trip_members`）なら誰でも**（ログインなし401・未参加403 `forbidden`・存在しない旅行404）。`close_friends`・`followers`は400 `visibility_unavailable`、知らない値は400 `invalid_input`。初めてオンにするとき公開用ID（`pub_`＋乱数）を作り、`owner_account_id`が空なら最初に公開した人を記録する（判定には使わない）。オフにしても`public_id`は残り、またオンにすると同じリンク |
+| `GET /public/trips/:publicId` | 見るだけの画面。**ログイン不要・見る人で内容は変わらない**。オフ・知らないIDは404。費用・名前・メール・各種idを許可リスト方式で除く |
+| SNS系（`/profiles/*`・`/follows/*`・`/me/profile`・`/me/connections`・`/me/follow-requests/*`・`/me/followers/*`・`/me/close-friends/*`・`/trips/:id/claim-owner`） | `index.js`の`SOCIAL_ENABLED = false`のあいだ**410 `feature_disabled`** |
+
+**SNSを復活させるとき**：`SOCIAL_ENABLED`（worker）・`SOCIAL_UI`（app.js）を`true`、0035を流す、`ENABLED_VISIBILITIES`（`src/visibility.js`）と`ENABLED_VISIBILITY_KEYS`（app.jsのCore）に`close_friends`・`followers`を足し、公開の画面の出し分けは`feat/tabilog-follow-visibility`（b860aa1）の実装に戻す。
+
+**テスト**：`node worker/test/visibility.test.mjs`（判定表・許可リスト・Coreとの照合）、`node worker/test/visibility-api.test.mjs`（node:sqliteの上で、参加者なら誰でも入り切り・未参加/ゲスト不可・友人/フォロワー向けは400・公開画面に漏れなし・SNS系は410・SNSのテーブルなしでも動く・アカウント削除）。
+
+### 以下は、SNSを復活させるときのための記録（**今は不要**。0035も流さない）
+
 ## 旅行の公開範囲・プロフィール・フォロー（2026-10-01 追加、docs/adr/0010）
 
 旅行の持ち主・公開範囲（見るだけの公開画面を誰に見せるか）と、プロフィール・フォロー（承認制）・親しい友人を追加した。**新しいmigrationは2つ**（`migrations/0034_trip_owner_visibility.sql`・`0035_profiles_follows.sql`）。ほかのセッションが`0033`を使っているので、番号は0034・0035。

@@ -32,7 +32,7 @@ import {
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
 import {
-  VISIBILITIES, BIO_MAX, NAME_MAX, normalizeVisibility, canViewByVisibility, nextFollowStatus, followStateLabel,
+  VISIBILITIES, ENABLED_VISIBILITIES, BIO_MAX, NAME_MAX, normalizeVisibility, canViewByVisibility, nextFollowStatus, followStateLabel,
   validAvatarId, newPublicId, validPublicId, stripTripForPublic,
   VISITED_VISIBILITIES, normalizeVisitedVisibility, canViewVisited,
 } from "./visibility.js";
@@ -202,7 +202,7 @@ function rowToTrip(row) {
     // 「持ち主なし・一緒に行った人だけ・未公開」にそろえる。公開用IDは公開中のときだけ返す
     ownerAccountId: row.owner_account_id || "",
     visibility: normalizeVisibility(row.visibility),
-    publicId: normalizeVisibility(row.visibility) !== "members" ? (row.public_id || "") : "",
+    publicId: normalizeVisibility(row.visibility) === "public" ? (row.public_id || "") : "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -5489,6 +5489,15 @@ async function deleteSocialForAccount(env, accountId) {
     .bind(accountId, accountId).run();
 }
 
+/*
+ * SNS機能（プロフィール・フォロー・親しい友人・プロフィール通報・「持ち主になる」）のスイッチ。
+ * 2026-10-01：個人・家族の記録アプリ（セトログと同じ位置づけ）としてSNSは当面やらないと決めたので false。
+ * false のあいだは該当ルートが 410 feature_disabled を返し、migrations/0035 のテーブルも不要。
+ * 復活させるとき：true にして、0035を流し、visibility.js の ENABLED_VISIBILITIES に "close_friends"・"followers" を足し、
+ * app.js の SOCIAL_UI（クライアント側の同名スイッチ）を戻す。履歴は branch feat/tabilog-follow-visibility（docs/adr/0010）。
+ */
+const SOCIAL_ENABLED = false;
+
 /* ---------- 旅行の公開範囲・プロフィール・フォロー（docs/adr/0010） ----------
  * 旅行のURL（trip.id）は「一緒に行った人」の権限（見る＋編集）のまま。公開範囲は「別の公開用ID（?p=）の、見るだけの画面」を
  * 誰に見せるかだけを決める。持ち主（trips.owner_account_id）だけが変えられる。
@@ -5616,58 +5625,46 @@ async function getPublicTrip(publicId, request, env, headers) {
   const h = noStore(headers);
   if (!validPublicId(publicId)) return json({ error: "not_found" }, 404, h);
   const row = await tolerant(() => env.DB.prepare("SELECT * FROM trips WHERE public_id = ?").bind(publicId).first(), null);
-  const visibility = row ? normalizeVisibility(row.visibility) : "members";
-  // 一緒に行った人だけ（公開をやめた旅行を含む）・持ち主なしは、公開の画面では存在しないものとして扱う
-  if (!row || !row.public_id || visibility === "members" || !row.owner_account_id) return json({ error: "not_found" }, 404, h);
-  const owner = await accountCard(env, row.owner_account_id);
-  if (!owner) return json({ error: "not_found" }, 404, h);
-  const viewer = await optionalViewer(request, env);
-  const viewerId = viewer ? viewer.account_id : "";
-  const isOwner = !!viewerId && viewerId === owner.accountId;
-  const rel = await relationBetween(env, viewerId, owner.accountId);
-  if (!isOwner && (rel.blockedByViewer || (rel.blockedByOther && visibility !== "public"))) return json({ error: "not_found" }, 404, h);
-  if (!canViewByVisibility(viewInputs(visibility, isOwner, rel))) {
-    if (!viewerId) return json({ error: "login_required" }, 401, h);
-    return json({
-      error: "not_allowed",
-      visibility,
-      owner: { accountId: owner.accountId, name: owner.name, avatarPhotoId: owner.avatarPhotoId, isPrivate: owner.isPrivate },
-      relation: { state: followStateLabel(rel.viewerFollows) },
-    }, 403, h);
-  }
+  // 公開をやめた旅行（visibility='members'）・知らないIDは、存在しないものとして扱う。ログイン不要（リンクを知っている人は誰でも見られる）。
+  // 持ち主・フォロー・ブロックは見ない（2026-10-01：SNSなし。復活のしかたは docs/adr/0010）
+  if (!row || !row.public_id || normalizeVisibility(row.visibility) !== "public") return json({ error: "not_found" }, 404, h);
   const { blocks, days } = await loadTripContent(env, row.id);
   const view = stripTripForPublic({ trip: rowToTrip(row), blocks, days, publicId: row.public_id });
-  view.trip.visibility = visibility;
-  return json({
-    ...view,
-    owner,
-    viewer: { accountId: viewerId, isOwner },
-    relation: { state: followStateLabel(rel.viewerFollows) },
-  }, 200, h);
+  view.trip.visibility = "public";
+  return json(view, 200, h);
 }
 
-// 公開範囲を変える（持ち主だけ）。初めて公開するときに公開用IDを作る（公開をやめても同じIDを残し、再公開で同じリンクに戻る）
+// 見るだけの公開リンクを入り切りする。その旅行にアカウントで参加している人（trip_members）なら誰でもできる
+// （ログインしていないゲスト参加者・参加していない人は不可。サーバーがセッションから確かめる）。
+// 初めて公開するときに公開用IDを作る（止めても同じIDを残し、また入れると同じリンクに戻る）。
+// owner_account_idが空なら、最初に公開した人を記録する（将来のために残すだけで、可否の判定には使わない）。
 async function setTripVisibility(tripId, request, env, headers) {
   const data = await readSocialBody(request);
   if (!data) return json({ error: "invalid_json" }, 400, headers);
   if (!VISIBILITIES.includes(data.visibility)) return json({ error: "invalid_input" }, 400, headers);
+  // 親しい友人・フォロワー向けは今は使えない（SNSなし）。復活させるときは ENABLED_VISIBILITIES に足す（docs/adr/0010）
+  if (!ENABLED_VISIBILITIES.includes(data.visibility)) return json({ error: "visibility_unavailable" }, 400, headers);
   const who = await requireAccount(request, env);
   if (who.error) return json({ error: who.error }, who.status, headers);
   const row = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(tripId).first();
   if (!row) return json({ error: "not_found" }, 404, headers);
-  if (!("owner_account_id" in row)) return json({ error: "visibility_not_ready" }, 503, headers);
-  if (!row.owner_account_id) return json({ error: "no_owner" }, 403, headers);
-  if (row.owner_account_id !== who.account.account_id) return json({ error: "forbidden" }, 403, headers);
-  const publicId = row.public_id || (data.visibility !== "members" ? newPublicId() : "");
+  if (!("visibility" in row) || !("public_id" in row)) return json({ error: "visibility_not_ready" }, 503, headers);
+  const member = await env.DB.prepare("SELECT 1 AS x FROM trip_members WHERE trip_id = ? AND account_id = ?").bind(tripId, who.account.account_id).first();
+  if (!member) return json({ error: "forbidden" }, 403, headers);
+  const on = data.visibility === "public";
+  const publicId = row.public_id || (on ? newPublicId() : "");
   try {
     await env.DB.prepare("UPDATE trips SET visibility = ?, public_id = ? WHERE id = ?").bind(data.visibility, publicId, tripId).run();
+    if (on && "owner_account_id" in row && !row.owner_account_id) {
+      await env.DB.prepare("UPDATE trips SET owner_account_id = ? WHERE id = ? AND owner_account_id = ''").bind(who.account.account_id, tripId).run();
+    }
   } catch (e) {
     return notReady(e, headers, "visibility_not_ready");
   }
-  return json({ visibility: data.visibility, publicId: data.visibility !== "members" ? publicId : "" }, 200, headers);
+  return json({ visibility: data.visibility, publicId: on ? publicId : "" }, 200, headers);
 }
 
-// 持ち主のいない旅行で、最初に参加したアカウントが「持ち主になる」
+// 持ち主のいない旅行で、最初に参加したアカウントが「持ち主になる」（SNS用。今は SOCIAL_ENABLED=false で止めてある）
 async function claimTripOwner(tripId, request, env, headers) {
   const who = await requireAccount(request, env);
   if (who.error) return json({ error: who.error }, who.status, headers);
@@ -6028,6 +6025,12 @@ export default {
     // 公開範囲・プロフィール・フォロー（docs/adr/0010）
     if (method === "GET" && (m = path.match(/^\/public\/trips\/([^\/]+)$/))) return getPublicTrip(m[1], request, env, headers);
     if (method === "PUT" && (m = path.match(/^\/trips\/([^\/]+)\/visibility$/))) return setTripVisibility(m[1], request, env, headers);
+    // SNS系はスイッチ（SOCIAL_ENABLED）が false のあいだ全部止める。旅行の公開リンク（public/trips・visibility）は別
+    if (!SOCIAL_ENABLED && (path.startsWith("/profiles/") || path.startsWith("/follows/") ||
+        /^\/me\/(profile|connections|follow-requests|followers|close-friends)(\/|$)/.test(path) ||
+        /^\/trips\/[^\/]+\/claim-owner$/.test(path))) {
+      return json({ error: "feature_disabled" }, 410, headers);
+    }
     if (method === "POST" && (m = path.match(/^\/trips\/([^\/]+)\/claim-owner$/))) return claimTripOwner(m[1], request, env, headers);
     if (method === "GET" && (m = path.match(/^\/profiles\/([^\/]+)$/))) return getProfile(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/profiles\/([^\/]+)\/report$/))) return reportProfile(m[1], request, env, headers, ctx);

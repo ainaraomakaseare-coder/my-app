@@ -1621,3 +1621,10 @@ body.viewer-open { overflow: hidden; }
 .pub-gate-title { font-size: 16px; font-weight: 800; margin: 0 0 8px; }
 .screen[data-screen="publicTrip"] .wrap, .screen[data-screen="userProfile"] .wrap, .screen[data-screen="connections"] .wrap { padding-bottom: 80px; }
 #userProfileBody .section-label { margin-top: 20px; }
+
+/* 見るだけのリンク（旅行の編集画面・公開画面。docs/adr/0010 の2026-10-01の節） */
+.pub-link-box { margin: 8px 0; }
+.pub-link-box input { width: 100%; box-sizing: border-box; font-size: 13px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: inherit; }
+.pub-app-banner { margin: 28px 0 8px; padding: 14px; text-align: center; border: 1px solid var(--border); border-radius: 12px; }
+.pub-app-banner p { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+.pub-app-banner a { text-decoration: none; display: inline-block; }

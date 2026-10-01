@@ -238,9 +238,9 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <p class="hint" id="tripEditStatus"></p>
       <button class="btn primary wide" id="btnSaveTripEdit">保存する</button>
 
-      <!-- 公開範囲（docs/adr/0010）。「保存する」とは別に、選んだ時点で保存する。持ち主だけが変えられる -->
+      <!-- 見るだけのリンク（docs/adr/0010）。「保存する」とは別に、スイッチを切り替えた時点で保存する。アカウント参加者なら誰でも入り切りできる -->
       <div class="section-label vis-section-label">
-        <div class="section-title">公開範囲</div>
+        <div class="section-title">見るだけのリンク</div>
       </div>
       <div id="teVisibility"></div>
       <button class="btn danger ghost wide forget-trip-btn" id="btnForgetTrip" type="button">この旅行を履歴から消す</button>

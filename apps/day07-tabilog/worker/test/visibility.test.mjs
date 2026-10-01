@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import {
+  ENABLED_VISIBILITIES,
   VISITED_VISIBILITIES, normalizeVisitedVisibility, canViewVisited,
   VISIBILITIES, BIO_MAX, normalizeVisibility, canViewByVisibility, nextFollowStatus, followStateLabel,
   validAvatarId, newPublicId, validPublicId, stripTripForPublic,
@@ -134,6 +135,7 @@ check("公開用IDの形・毎回違う・trip.idとは別物", [validPublicId(p
   }
   check("フォローの状態遷移：サーバーとCoreが一致", sdiffs, 0);
   check("公開範囲の一覧：サーバーとCoreが一致", T.VISIBILITY_OPTIONS.map((o) => o.key), VISIBILITIES);
+  check("いま選べる公開範囲：サーバーとCoreが一致（2026-10-01：一緒に行った人だけ・リンクを知っている人）", [T.VISIBILITY_CHOICES.map((o) => o.key), ENABLED_VISIBILITIES], [["members", "public"], ["members", "public"]]);
   check("旅先の公開範囲の一覧：サーバーとCoreが一致", T.VISITED_VISIBILITY_OPTIONS.map((o) => o.key), VISITED_VISIBILITIES);
   let vdiffs = 0, vn = 0;
   for (const v of [...VISITED_VISIBILITIES, "junk", undefined]) {

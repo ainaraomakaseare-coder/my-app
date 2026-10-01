@@ -3857,11 +3857,21 @@
   // サーバー側の同じ規則は worker/src/visibility.js（判定表・フォローの状態遷移）。直すときは両方とテストを直すこと。
   // 公開範囲：旅行ごとに「見るだけの画面（?p=）」を誰に見せるか。編集は今までどおり旅行のリンク（招待リンク）を持つ人。
   var VISIBILITY_OPTIONS = [
-    { key: 'members', label: '一緒に行った人だけ', desc: '旅行のリンクを知っている人だけ（今までどおり）。見るだけの公開画面は出しません。' },
+    { key: 'members', label: '一緒に行った人だけ', desc: '旅行のリンク（招待リンク）を知っている人だけ（今までどおり）。見るだけのリンクは使えません。' },
     { key: 'close_friends', label: '親しい友人', desc: '「親しい友人」に入れた人だけが、見るだけの画面で見られます。' },
     { key: 'followers', label: 'フォロワー', desc: 'あなたをフォローしている人が、見るだけの画面で見られます。' },
-    { key: 'public', label: '全体', desc: '誰でも、見るだけの画面で見られます（ログイン不要）。' }
+    { key: 'public', label: 'リンクを知っている人（見るだけ）', desc: 'リンクを知っている人だけが、ログインなしで見られます（一覧・検索にはどこにも出ません）。編集はできません。' }
   ];
+  // 2026-10-01：SNSなしで、いま選べるのは「一緒に行った人だけ」と「リンクを知っている人（見るだけ）」の2つだけ。
+  // 親しい友人・フォロワーを復活させるときはここに足す（docs/adr/0010。サーバーの ENABLED_VISIBILITIES と同じ）
+  var ENABLED_VISIBILITY_KEYS = ['members', 'public'];
+  var VISIBILITY_CHOICES = VISIBILITY_OPTIONS.filter(function (o) { return ENABLED_VISIBILITY_KEYS.indexOf(o.key) >= 0; });
+  // 見るだけのリンクを入り切りできるか。その旅行にアカウントで参加している人なら誰でもできる（ゲスト参加者・未参加は不可）
+  // 戻り値：login（未ログイン）｜ok（参加者）｜not_member（参加していない）
+  function publicLinkStatus(members, myAccountId) {
+    if (!myAccountId) return 'login';
+    return (members || []).some(function (m) { return m.accountId === myAccountId; }) ? 'ok' : 'not_member';
+  }
   function normalizeVisibility(v) {
     for (var i = 0; i < VISIBILITY_OPTIONS.length; i++) if (VISIBILITY_OPTIONS[i].key === v) return v;
     return 'members';
@@ -3958,6 +3968,8 @@
 
   var Core = {
     VISIBILITY_OPTIONS: VISIBILITY_OPTIONS,
+    VISIBILITY_CHOICES: VISIBILITY_CHOICES,
+    publicLinkStatus: publicLinkStatus,
     normalizeVisibility: normalizeVisibility,
     visibilityLabel: visibilityLabel,
     canViewByVisibility: canViewByVisibility,
@@ -6213,9 +6225,10 @@
     var members = state.members || [];
     var namesEl = $('#tripMembers');
     namesEl.hidden = !members.length;
-    // 名前をタップするとプロフィールが開く（フォローはそこから。docs/adr/0010）
+    // 名前をタップするとプロフィールが開く（SOCIAL_UI のときだけ。いまは名前を文字で出すだけ。docs/adr/0010）
     namesEl.innerHTML = members.length
       ? 'アカウント参加：' + members.map(function (m) {
+          if (!SOCIAL_UI) return escapeHtml(m.name || 'アカウント参加者');
           return '<button type="button" class="member-link" data-account="' + escapeHtml(m.accountId) + '">' + escapeHtml(m.name || 'アカウント参加者') + '</button>';
         }).join('・')
       : '';
@@ -10269,7 +10282,7 @@
     $('#profileStats').innerHTML = '';
     $('#profileSocial').innerHTML = '';
     sgSetUrl('');
-    loadOwnProfileSocial();
+    if (SOCIAL_UI) loadOwnProfileSocial();
     api('/mylog?email=' + encodeURIComponent(user.email)).then(function (data) {
       state.myLogItems = data.items || [];
       state.myLogTrips = data.trips || [];
@@ -10357,6 +10370,9 @@
   // 「見るだけの画面」を誰に見せるかだけを決める（持ち主だけが変えられる）。費用・精算・一緒に行った人の名前・
   // 別行動の予定は、見るだけの画面には出ない（サーバーが許可リスト方式で消してから返す）。
   // プロフィール（?u=アカウントID）・フォロー（承認制なら申請→承認）・親しい友人もここ。
+  // SNS系の画面（プロフィール・フォロー・親しい友人・通報）のスイッチ。2026-10-01：当面やらないので false。
+  // false のあいだはどの画面からも入れない（コードは復活用に残している。サーバー側の SOCIAL_ENABLED と一緒に戻す。docs/adr/0010）
+  var SOCIAL_UI = false;
   var sg = {
     back: [],         // 戻る先（関数）の積み重ね。外から入ったときはsgStartでリセットする
     pubId: '',        // 開いている公開画面の公開用ID（ログインし直したあとの再読み込み用）
@@ -10389,7 +10405,8 @@
     if (m === 'invalid_name') return '名前は1〜40文字で入力してください。';
     if (m === 'invalid_avatar') return 'アイコンの写真を保存できませんでした。もう一度選んでください。';
     if (m === 'profile_not_ready' || m === 'social_not_ready' || m === 'visibility_not_ready') return 'サーバーの準備がまだ終わっていません。しばらくしてからお試しください。';
-    if (m === 'forbidden') return 'この操作は持ち主だけができます。';
+    if (m === 'forbidden') return '見るだけのリンクは、この旅行にアカウントで参加している人だけが入り切りできます。先に「参加する」を押してください。';
+    if (m === 'visibility_unavailable' || m === 'feature_disabled') return 'この機能は、いまは使えません。';
     if (m === 'no_owner') return 'この旅行にはまだ持ち主がいません。';
     if (m === 'not_first_member') return '最初に「参加する」を押した人だけが、持ち主になれます。';
     if (m === 'already_owned') return 'この旅行にはすでに持ち主がいます。';
@@ -10415,7 +10432,7 @@
       var ok = false;
       try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
       document.body.removeChild(ta);
-      if (ok) done(); else window.prompt('このリンクをコピーしてください', text);
+      if (ok) done(); else showInviteUrlBox(text, 'このメッセージをコピーして、見せたい人に送ってください');
     };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
     else legacy();
@@ -10451,68 +10468,67 @@
       '<div class="trip-card-date">' + escapeHtml(date) + '</div></div>' + badge + '</div></div></button>';
   }
 
-  // ---------- 持ち主・公開範囲（旅行の編集画面） ----------
+  // ---------- 見るだけのリンク（旅行の編集画面） ----------
+  // 2026-10-01：SNSなし。公開範囲は「一緒に行った人だけ」（初期値）と「リンクを知っている人（見るだけ）」の2つだけ。
+  // 入り切りできるのは、その旅行にアカウントで参加している人なら誰でも（サーバーもセッションと参加者で確かめる）。
+  // 持ち主・フォロワー・親しい友人の画面は、SOCIAL_UI を戻すときのためにコードだけ残してある（docs/adr/0010）。
+  function publicLinkMessage(url) { return '旅の足跡で旅行を見てね\n' + url; }
+
   function renderTripVisibility() {
     var box = $('#teVisibility');
     var trip = state.trip;
     if (!box || !trip) return;
     var user = loadCurrentUser();
     var me = user && user.token && user.accountId ? user.accountId : '';
-    var status = Core.tripOwnerStatus(trip, state.members, me);
-    var cur = Core.normalizeVisibility(trip.visibility);
-    var html = '';
+    var status = Core.publicLinkStatus(state.members, me);
+    var on = Core.normalizeVisibility(trip.visibility) === 'public' && !!trip.publicId;
+    var html = '<p class="hint">家族や友だちに、この旅行を「見るだけ」で見せるためのリンクです。リンクを知っている人はログインなしで見られますが、編集はできません。' +
+      '一緒に記録・編集したい人には、旅行の画面の「メンバーを招待」を使ってください（こちらは編集もできます）。</p>';
     if (status === 'login') {
-      html = '<p class="hint">公開範囲は、旅行の持ち主がログインして決めます。今は「' + escapeHtml(Core.visibilityLabel(cur)) + '」です。</p>' +
+      html += '<p class="hint">見るだけのリンクは、ログインして旅行に「参加する」を押した人が入り切りできます。</p>' +
         '<button type="button" class="chip-btn" id="btnVisLogin">ログインする</button>';
-    } else if (status === 'claimable') {
-      html = '<p class="hint">この旅行にはまだ持ち主がいません。持ち主になると、この旅行を見られる人の範囲を決められます。最初に「参加する」を押した人だけがなれます。</p>' +
-        '<button type="button" class="btn primary small" id="btnClaimOwner">この旅行の持ち主になる</button>';
-    } else if (status === 'unclaimable') {
-      html = '<p class="hint">この旅行にはまだ持ち主がいません。最初に「参加する」を押した人が「持ち主になる」を押すと、公開範囲を変えられます。今は「' + escapeHtml(Core.visibilityLabel(cur)) + '」です。</p>';
-    } else if (status === 'other') {
-      var ownerName = (state.tripOwner && state.tripOwner.name) || 'ほかの人';
-      html = '<p class="hint">この旅行の持ち主は' + escapeHtml(ownerName) + 'さんです。公開範囲は持ち主だけが変えられます。今は「' + escapeHtml(Core.visibilityLabel(cur)) + '」です。</p>';
+    } else if (status === 'not_member') {
+      html += '<p class="hint">この旅行に「参加する」を押すと、見るだけのリンクを入り切りできます。' + (on ? '（今はオンです）' : '') + '</p>';
     } else {
-      html = '<div class="vis-options" role="radiogroup" aria-label="公開範囲">' + Core.VISIBILITY_OPTIONS.map(function (o) {
-        var on = o.key === cur;
-        return '<button type="button" class="vis-option' + (on ? ' on' : '') + '" role="radio" aria-checked="' + on + '" data-vis="' + o.key + '">' +
-          '<span class="vis-radio" aria-hidden="true"></span>' +
-          '<span class="vis-text"><b>' + escapeHtml(o.label) + '</b><span>' + escapeHtml(o.desc) + '</span></span></button>';
-      }).join('') + '</div>' +
-        '<p class="hint">見るだけの画面には、費用・精算、一緒に行った人の名前、別行動の予定は出ません。編集できるのは、今までどおり旅行のリンクを持つ人（一緒に行った人）だけです。</p>';
-      if (cur !== 'members' && trip.publicId) {
-        html += '<div class="profile-actions"><button type="button" class="chip-btn" id="btnCopyPublicLink">見るだけの画面のリンクを共有する</button>' +
-          '<button type="button" class="chip-btn" id="btnPreviewPublic">見え方を確かめる</button></div>';
+      html += '<label class="post-option"><input type="checkbox" id="pubLinkToggle"' + (on ? ' checked' : '') + '> 見るだけのリンクを使う</label>';
+      if (on) {
+        var url = publicTripLink(trip.publicId);
+        html += '<div class="pub-link-box"><input type="text" id="pubLinkUrl" readonly value="' + escapeHtml(url) + '" aria-label="見るだけのリンク"></div>' +
+          '<div class="profile-actions"><button type="button" class="chip-btn" id="btnCopyPublicLink">リンクを共有する</button>' +
+          '<button type="button" class="chip-btn" id="btnPreviewPublic">見え方を確かめる</button></div>' +
+          '<p class="hint">見るだけの画面に出ないもの：費用・精算、一緒に行った人の名前、記録した人、評価のコメント、別行動の予定。' +
+          'オフにするとリンクは見えなくなります。もう一度オンにすると、同じリンクに戻ります。</p>';
+      } else {
+        html += '<p class="hint">いまはオフです。オンにすると、リンクを知っている人が見るだけで見られます（費用・精算、一緒に行った人の名前、記録した人、別行動の予定は出ません）。' +
+          '一度オンにしてからオフにしても、同じリンクを残しておくので、もう一度オンにすれば同じリンクで見られます。</p>';
       }
     }
     box.innerHTML = html;
   }
 
-  var VIS_CONFIRM = {
-    close_friends: '「親しい友人」にすると、あなたが親しい友人に入れた人が、この旅行を見るだけの画面で見られるようになります。\n費用・精算、一緒に行った人の名前、別行動の予定は表示されません。よろしいですか？',
-    followers: '「フォロワー」にすると、あなたをフォローしている人が、この旅行を見るだけの画面で見られるようになります。\n費用・精算、一緒に行った人の名前、別行動の予定は表示されません。よろしいですか？',
-    public: '「全体」にすると、リンクを知っている誰もが（ログインなしで）、この旅行を見るだけの画面で見られるようになります。\n費用・精算、一緒に行った人の名前、別行動の予定は表示されません。よろしいですか？'
-  };
+  var PUBLIC_LINK_CONFIRM = 'リンクを知っている人は誰でも、ログインなしでこの旅行を見られるようになります（編集はできません）。\n' +
+    '費用・精算、一緒に行った人の名前、記録した人、別行動の予定は表示されません。\nリンクを送る相手には気をつけてください。\n\n見るだけのリンクをオンにしますか？';
 
   function changeTripVisibility(v) {
     var trip = state.trip;
     if (!trip || Core.normalizeVisibility(trip.visibility) === v) return;
-    if (VIS_CONFIRM[v] && !confirm(VIS_CONFIRM[v])) return;
+    if (v === 'public' && !confirm(PUBLIC_LINK_CONFIRM)) { renderTripVisibility(); return; }
     var status = $('#tripEditStatus');
-    status.textContent = '公開範囲を変更中…';
+    status.textContent = v === 'public' ? 'リンクをオンにしています…' : 'リンクをオフにしています…';
     api('/trips/' + encodeURIComponent(trip.id) + '/visibility', 'PUT', { visibility: v }).then(function (res) {
       trip.visibility = res.visibility;
       trip.publicId = res.publicId || '';
       rememberTrip(trip);
       status.textContent = '';
       renderTripVisibility();
-      showToast('公開範囲を「' + Core.visibilityLabel(res.visibility) + '」にしました');
+      showToast(res.visibility === 'public' ? '見るだけのリンクをオンにしました' : '見るだけのリンクをオフにしました');
     }).catch(function (e) {
       status.textContent = sgErrorText(e);
       renderTripVisibility();
     });
   }
 
+  // 「持ち主になる」（SNS用。SOCIAL_UI が false のあいだはどこからも呼ばれない）
   function claimTripOwnership() {
     var user = sgUser('tripDetail');
     if (!user) return;
@@ -10526,13 +10542,20 @@
     });
   }
 
-  // ---------- 公開された旅行（見るだけ） ----------
+  // ---------- 公開された旅行（見るだけ。ログイン不要） ----------
+  function publicAppBannerHtml() {
+    return '<div class="pub-app-banner"><p>旅の足跡で作った旅の記録です</p>' +
+      '<a class="chip-btn" href="' + escapeHtml(PUBLIC_WEB_BASE) + '" target="_blank" rel="noopener noreferrer">旅の足跡を見る</a></div>';
+  }
+
   function openPublicTrip(publicId) {
     sg.pubId = publicId;
     sg.pub = null;
     sgSetUrl('?p=' + encodeURIComponent(publicId));
     showScreen('publicTrip');
     $('#btnPublicTripMenu').hidden = true;
+    // 外から開いた（戻る先がない）ときは「← 戻る」を出さない。編集画面の「見え方を確かめる」から来たときだけ出す
+    $('#btnPublicTripBack').hidden = !sg.back.length;
     $('#publicTripBody').innerHTML = '<div class="empty">読み込み中…</div>';
     if (!API_BASE) { apiNoticeCheck(); return; }
     api('/public/trips/' + encodeURIComponent(publicId)).then(function (res) {
@@ -10547,31 +10570,14 @@
 
   function renderPublicGate(e) {
     var box = $('#publicTripBody');
-    var data = (e && e.data) || {};
     $('#btnPublicTripMenu').hidden = true;
-    if (e && e.message === 'login_required') {
-      box.innerHTML = '<div class="pub-gate"><p class="pub-gate-title">ログインすると見られるかもしれません</p>' +
-        '<p class="hint">この旅行は、持ち主と関係のある人だけに公開されています。ログインして、見られるか確認しましょう。</p>' +
-        '<button type="button" class="btn primary wide" id="btnPubLogin">ログインする</button></div>';
+    if (e && e.message === 'not_found') {
+      box.innerHTML = '<div class="pub-gate"><p class="pub-gate-title">この旅行は見つかりませんでした</p>' +
+        '<p class="hint">リンクが間違っているか、公開が止められました。</p></div>' + publicAppBannerHtml();
       return;
     }
-    if (e && e.message === 'not_allowed' && data.owner) {
-      sg.pub = { owner: data.owner, relation: data.relation || { state: 'none' }, gate: true };
-      var who = data.visibility === 'close_friends'
-        ? '持ち主が「親しい友人」に入れた人だけが見られる旅行です。'
-        : '持ち主をフォローしている人だけが見られる旅行です。';
-      var info = data.visibility === 'followers' ? Core.followButtonInfo(sg.pub.relation.state, data.owner.isPrivate) : null;
-      box.innerHTML = '<div class="pub-gate">' +
-        '<button type="button" class="pub-owner" data-pub-owner>' + personAvatarHtml(data.owner) + '<span class="pub-owner-name">' + escapeHtml(data.owner.name || '名前未設定') + '</span></button>' +
-        '<p class="pub-gate-title">この旅行は、見られる人が限られています</p>' +
-        '<p class="hint">' + escapeHtml(who) + '</p>' +
-        (info ? '<button type="button" class="btn ' + (info.primary ? 'primary' : '') + ' wide" id="btnPubFollow">' + escapeHtml(info.label) + '</button>' : '') + '</div>';
-      $('#btnPublicTripMenu').hidden = false;
-      return;
-    }
-    box.innerHTML = '<div class="pub-gate"><p class="pub-gate-title">この旅行は見つかりませんでした</p>' +
-      '<p class="hint">公開が終わったか、あなたには見られない設定の旅行です。</p>' +
-      '<button type="button" class="btn wide" id="btnPubHome">ホームへ</button></div>';
+    box.innerHTML = '<div class="pub-gate"><p class="pub-gate-title">読み込めませんでした</p>' +
+      '<p class="hint">通信状況を確認して、もう一度開いてください。</p></div>' + publicAppBannerHtml();
   }
 
   function pubEntryHtml(e, idx) {
@@ -10602,7 +10608,7 @@
 
   function renderPublicTrip() {
     var res = sg.pub;
-    var t = res.trip, owner = res.owner, blocks = res.blocks || [];
+    var t = res.trip, blocks = res.blocks || [];
     var dayInfo = {};
     (res.days || []).forEach(function (d) { dayInfo[d.date] = d; });
     sg.pubMedia = [];
@@ -10612,13 +10618,6 @@
     if (t.coverPhotoId) html += '<div class="pub-cover" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')"></div>';
     html += '<h1 class="pub-title">' + escapeHtml(t.title) + '</h1>';
     if (dateText) html += '<div class="pub-dates">' + escapeHtml(dateText) + '</div>';
-    html += '<button type="button" class="pub-owner" data-pub-owner>' + personAvatarHtml(owner) +
-      '<span class="pub-owner-name">' + escapeHtml(owner.name || '名前未設定') + '</span>' +
-      '<span class="vis-badge vis-' + Core.normalizeVisibility(t.visibility) + '">' + escapeHtml(Core.visibilityLabel(t.visibility)) + '</span></button>';
-    if (res.viewer && res.viewer.isOwner) {
-      html += '<div class="pub-owner-note">あなたの旅行です。これは、公開範囲「' + escapeHtml(Core.visibilityLabel(t.visibility)) + '」の人から見える画面です。' +
-        '<button type="button" class="chip-btn" id="btnPubShare">リンクを共有する</button></div>';
-    }
     var byDate = Core.groupBlocksByDate(blocks);
     var mediaIdx = 0;
     var dates = Core.allDatesForTrip(t, blocks);
@@ -10644,9 +10643,9 @@
       html += '</section>';
     });
     if (!any) html += '<div class="empty">まだ記録がありません。</div>';
-    html += '<p class="hint pub-note">この画面は見るだけです。費用・精算、一緒に行った人の名前、別行動の予定は表示されません。</p>';
+    html += '<p class="hint pub-note">この画面は見るだけです。費用・精算、一緒に行った人の名前、別行動の予定は表示されません。</p>' + publicAppBannerHtml();
     $('#publicTripBody').innerHTML = html;
-    $('#btnPublicTripMenu').hidden = !!(res.viewer && res.viewer.isOwner);
+    $('#btnPublicTripMenu').hidden = true;
   }
 
   // ---------- プロフィールの「行ったことある旅先」（国・都道府県の名前だけ。旅行名・時期は出ない） ----------
@@ -10690,6 +10689,7 @@
 
   // ---------- プロフィール（他の人） ----------
   function openUserProfile(accountId) {
+    if (!SOCIAL_UI) { goHome(); return; }
     sg.profileId = accountId;
     sg.up = null;
     var me = loadCurrentUser();
@@ -11058,16 +11058,21 @@
     $('#teVisibility').addEventListener('click', function (e) {
       var opt = e.target.closest('[data-vis]');
       if (opt) { changeTripVisibility(opt.dataset.vis); return; }
-      if (e.target.closest('#btnClaimOwner')) { claimTripOwnership(); return; }
+      if (e.target.closest('#pubLinkUrl')) { e.target.select(); return; }
+      if (SOCIAL_UI && e.target.closest('#btnClaimOwner')) { claimTripOwnership(); return; }
       if (e.target.closest('#btnVisLogin')) { openLogin('tripDetail'); return; }
       if (e.target.closest('#btnCopyPublicLink') && state.trip && state.trip.publicId) {
-        sgShareOrCopy(state.trip.title || '旅の足跡', '旅の足跡で旅行を公開しました\n' + publicTripLink(state.trip.publicId), '共有用リンクをコピーしました');
+        sgShareOrCopy(state.trip.title || '旅の足跡', publicLinkMessage(publicTripLink(state.trip.publicId)), 'リンク付きのメッセージをコピーしました');
         return;
       }
       if (e.target.closest('#btnPreviewPublic') && state.trip && state.trip.publicId) {
         sgStart(function () { showScreen('tripEditForm'); renderTripVisibility(); });
         openPublicTrip(state.trip.publicId);
       }
+    });
+    // 見るだけのリンクのスイッチ（チェックボックス）
+    $('#teVisibility').addEventListener('change', function (e) {
+      if (e.target && e.target.id === 'pubLinkToggle') changeTripVisibility(e.target.checked ? 'public' : 'members');
     });
     // 旅行の詳細：アカウント参加の名前 → プロフィール
     $('#tripMembers').addEventListener('click', function (e) {
@@ -13965,7 +13970,7 @@
     var profId = Core.getProfileIdFromSearch(location.search);
     if (tripId) openTrip(tripId);
     else if (pubId) { sgStart(); openPublicTrip(pubId); }
-    else if (profId) { sgStart(); openUserProfile(profId); }
+    else if (profId && SOCIAL_UI) { sgStart(); openUserProfile(profId); }
     else { showScreen('home'); renderHome(); }
     handleAuthRedirectHash();
     listenForAppLinks();
@@ -14051,7 +14056,7 @@
     var pubId = Core.getPublicIdFromSearch(search);
     if (pubId) { sgStart(); openPublicTrip(pubId); return; }
     var profId = Core.getProfileIdFromSearch(search);
-    if (profId) { sgStart(); openUserProfile(profId); }
+    if (profId && SOCIAL_UI) { sgStart(); openUserProfile(profId); }
   }
 
   function listenForAppLinks() {
@@ -14135,13 +14140,13 @@
     }
   }
 
-  function showInviteUrlBox(text) {
+  function showInviteUrlBox(text, label) {
     var old = document.getElementById('inviteUrlBox');
     if (old) old.remove();
     var box = document.createElement('div');
     box.id = 'inviteUrlBox';
     box.className = 'invite-url-box';
-    box.innerHTML = '<p>このメッセージをコピーして、一緒に行く人に送ってください</p>' +
+    box.innerHTML = '<p>' + (label || 'このメッセージをコピーして、一緒に行く人に送ってください') + '</p>' +
       '<textarea rows="3" readonly></textarea>' +
       '<button type="button" class="chip-btn">閉じる</button>';
     var input = box.querySelector('textarea');

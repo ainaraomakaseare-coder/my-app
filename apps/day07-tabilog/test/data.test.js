@@ -2917,6 +2917,10 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('normalizeVisibility / visibilityLabel', [T.normalizeVisibility('x'), T.normalizeVisibility('followers'), T.visibilityLabel('close_friends'), T.visibilityLabel(undefined)], ['members', 'followers', '親しい友人', '一緒に行った人だけ']);
   eq('公開範囲は4つ・初期値（先頭）は一緒に行った人だけ', T.VISIBILITY_OPTIONS.map(function (o) { return o.key; }), ['members', 'close_friends', 'followers', 'public']);
 
+  // 2026-10-01：SNSなし。いま選べるのは「一緒に行った人だけ」と「リンクを知っている人（見るだけ）」の2つ
+  eq('公開範囲の選択肢（いま選べるもの）は2つ・初期値は一緒に行った人だけ', T.VISIBILITY_CHOICES.map(function (o) { return o.key + ':' + o.label; }), ['members:一緒に行った人だけ', 'public:リンクを知っている人（見るだけ）']);
+  eq('見るだけのリンクを入り切りできるのは、アカウントで参加している人だけ', [T.publicLinkStatus([{ accountId: '111111' }], ''), T.publicLinkStatus([{ accountId: '111111' }], '111111'), T.publicLinkStatus([{ accountId: '111111' }], '222222'), T.publicLinkStatus([], '111111')], ['login', 'ok', 'not_member', 'not_member']);
+
   eq('フォロー: 通常の相手はすぐフォロー中', T.nextFollowStatus('none', 'follow', { targetPrivate: false }), 'approved');
   eq('フォロー: 承認制の相手は承認待ち', T.nextFollowStatus('none', 'follow', { targetPrivate: true }), 'pending');
   eq('フォロー: 申請中に押し直しても承認待ちのまま', T.nextFollowStatus('pending', 'follow', { targetPrivate: true }), 'pending');
