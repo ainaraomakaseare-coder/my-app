@@ -3912,6 +3912,25 @@
     (members || []).forEach(function (m) { if (!first || (m.joinedAt || '') < (first.joinedAt || '')) first = m; });
     return first && first.accountId === myAccountId ? 'claimable' : 'unclaimable';
   }
+  // 「行ったことある旅先」をプロフィールに出す範囲（国・都道府県の名前だけ。旅行名・時期は出さない）。初期値はフォロワー
+  var VISITED_VISIBILITY_OPTIONS = [
+    { key: 'public', label: '全体' },
+    { key: 'followers', label: 'フォロワー' },
+    { key: 'none', label: '出さない' }
+  ];
+  function normalizeVisitedVisibility(v) {
+    for (var i = 0; i < VISITED_VISIBILITY_OPTIONS.length; i++) if (VISITED_VISIBILITY_OPTIONS[i].key === v) return v;
+    return 'followers';
+  }
+  // o: { visibility, isSelf, isFollower, blockedByOwner, blockedByViewer }
+  function canViewVisited(o) {
+    if (o.isSelf) return true;
+    if (o.blockedByOwner || o.blockedByViewer) return false;
+    var v = normalizeVisitedVisibility(o.visibility);
+    if (v === 'public') return true;
+    if (v === 'followers') return !!o.isFollower;
+    return false;
+  }
   var BIO_MAX = 160;
   function bioError(text) {
     var t = (text || '').trim();
@@ -3946,6 +3965,9 @@
     followButtonInfo: followButtonInfo,
     tripOwnerStatus: tripOwnerStatus,
     BIO_MAX: BIO_MAX,
+    VISITED_VISIBILITY_OPTIONS: VISITED_VISIBILITY_OPTIONS,
+    normalizeVisitedVisibility: normalizeVisitedVisibility,
+    canViewVisited: canViewVisited,
     bioError: bioError,
     getPublicIdFromSearch: getPublicIdFromSearch,
     getProfileIdFromSearch: getProfileIdFromSearch,

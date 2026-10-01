@@ -237,6 +237,12 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
       <p class="hint" id="tripEditStatus"></p>
       <button class="btn primary wide" id="btnSaveTripEdit">保存する</button>
+
+      <!-- 公開範囲（docs/adr/0010）。「保存する」とは別に、選んだ時点で保存する。持ち主だけが変えられる -->
+      <div class="section-label vis-section-label">
+        <div class="section-title">公開範囲</div>
+      </div>
+      <div id="teVisibility"></div>
       <button class="btn danger ghost wide forget-trip-btn" id="btnForgetTrip" type="button">この旅行を履歴から消す</button>
     </div>
   </section>
@@ -848,6 +854,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <div class="profile-stats" id="profileStats"></div>
         </div>
       </div>
+      <!-- ひとこと・フォロー数・プロフィールの編集・自分の旅行（公開範囲つき）。app.jsのrenderOwnProfileSocial -->
+      <div id="profileSocial"></div>
 
       <div class="section-label">
         <div class="section-title">今月の残り回数</div>
@@ -862,6 +870,81 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
       <p class="hint">アカウント（名前・おまけの回数・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
       <p class="hint"><a href="privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a></p>
+    </div>
+  </section>
+
+  <!-- ============ 他の人のプロフィール（?u=アカウントID。docs/adr/0010） ============ -->
+  <section class="screen" data-screen="userProfile">
+    <div class="wrap">
+      <header class="hd">
+        <div class="hd-row">
+          <button class="btn text back" id="btnUserProfileBack" type="button">← 戻る</button>
+          <button class="icon-btn" id="btnUserProfileMenu" type="button" aria-label="通報・ブロック" hidden>
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>
+          </button>
+        </div>
+      </header>
+      <div id="userProfileBody"></div>
+    </div>
+  </section>
+
+  <!-- ============ フォロー中・フォロワー・申請・親しい友人 ============ -->
+  <section class="screen" data-screen="connections">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" id="btnConnectionsBack" type="button">← 戻る</button>
+        <h1>フォロー</h1>
+      </header>
+      <div class="mylog-tabs" id="connTabs"></div>
+      <p class="hint" id="connHint"></p>
+      <div class="person-list" id="connList"></div>
+    </div>
+  </section>
+
+  <!-- ============ プロフィールの編集 ============ -->
+  <section class="screen" data-screen="profileEdit">
+    <div class="wrap narrow">
+      <header class="hd">
+        <button class="btn text back" id="btnProfileEditBack" type="button">← 戻る</button>
+        <h1>プロフィールを編集</h1>
+      </header>
+      <div class="field">
+        <label>アイコン</label>
+        <input type="file" id="peAvatarFile" accept="image/*" hidden>
+        <div class="pe-avatar-row">
+          <div class="profile-avatar pe-avatar" id="peAvatar"></div>
+          <button class="btn ghost small" id="btnPeAvatarPick" type="button">写真を選ぶ</button>
+          <button class="btn text" id="btnPeAvatarRemove" type="button">写真をやめる</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="peName">名前</label>
+        <input type="text" id="peName" maxlength="40" placeholder="例：たびすけ">
+      </div>
+      <div class="field">
+        <label for="peBio">ひとこと（160文字まで）</label>
+        <textarea id="peBio" rows="3" maxlength="160" placeholder="例：週末はだいたいどこかへ。京都と温泉が好きです。"></textarea>
+        <div class="pe-count" id="peBioCount">0 / 160</div>
+      </div>
+      <label class="post-option"><input type="checkbox" id="pePrivate"> フォローを承認制にする（フォローするには、あなたの承認が必要になります）</label>
+      <p class="hint">名前・アイコン・ひとことは、プロフィールを見た人全員に表示されます。メールアドレスは表示されません。</p>
+      <p class="hint" id="peStatus"></p>
+      <button class="btn primary wide" id="btnSaveProfileEdit" type="button">保存する</button>
+    </div>
+  </section>
+
+  <!-- ============ 公開された旅行（見るだけ。?p=公開用ID。docs/adr/0010） ============ -->
+  <section class="screen" data-screen="publicTrip">
+    <div class="wrap">
+      <header class="hd pub-head">
+        <div class="hd-row">
+          <button class="btn text back" id="btnPublicTripBack" type="button">← 戻る</button>
+          <button class="icon-btn" id="btnPublicTripMenu" type="button" aria-label="通報・ブロック" hidden>
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>
+          </button>
+        </div>
+      </header>
+      <div id="publicTripBody"></div>
     </div>
   </section>
 
@@ -886,6 +969,22 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <span class="tabbar-label">プロフィール</span>
   </button>
 </nav>
+
+<!-- ============ 人への操作（プロフィールの通報・ブロック。Appleのガイドライン1.2。docs/adr/0010） ============ -->
+<div class="sheet-backdrop" id="userActionSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="userActionSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="userActionSheetTitle">この人について</div>
+      <button class="sheet-close" id="btnCloseUserActionSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint" id="userActionNote"></p>
+    <div class="sheet-actions">
+      <button class="btn danger" id="btnUserReport" type="button">通報する</button>
+      <button class="btn danger ghost" id="btnUserBlock" type="button">ブロックする</button>
+      <button class="btn ghost" id="btnCancelUserAction" type="button">キャンセル</button>
+    </div>
+  </div>
+</div>
 
 <!-- ============ コメント（旅行・記録ごと。画面を切り替えず下から出すシート） ============ -->
 <div class="sheet-backdrop" id="commentSheet" hidden>

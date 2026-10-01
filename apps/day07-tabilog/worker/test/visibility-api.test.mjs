@@ -12,6 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import worker from "../src/index.js";
+import { MAP_COORDS_VALID_SINCE } from "../src/geo-decode.js";
 
 let pass = 0, fail = 0;
 function check(label, got, want) {
@@ -27,9 +28,9 @@ const sqlite = new DatabaseSync(":memory:");
 sqlite.exec(`
 CREATE TABLE trips (id TEXT PRIMARY KEY, title TEXT NOT NULL, start_date TEXT NOT NULL DEFAULT '', end_date TEXT NOT NULL DEFAULT '', companions TEXT NOT NULL DEFAULT '[]', cover_photo_id TEXT NOT NULL DEFAULT '', trip_type TEXT NOT NULL DEFAULT '', settle_unit INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE blocks (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, date TEXT NOT NULL DEFAULT '', time TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'sightseeing', transport TEXT NOT NULL DEFAULT '', move_minutes INTEGER NOT NULL DEFAULT 0, manual_order INTEGER, tz_override TEXT, branch_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE entries (id TEXT PRIMARY KEY, block_id TEXT NOT NULL, episode TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', photo_ids TEXT NOT NULL DEFAULT '[]', video_ids TEXT NOT NULL DEFAULT '[]', cost_items TEXT NOT NULL DEFAULT '[]', wait_time TEXT NOT NULL DEFAULT '', map_url TEXT NOT NULL DEFAULT '', map_place_name TEXT NOT NULL DEFAULT '', shop_url TEXT NOT NULL DEFAULT '', other_url TEXT NOT NULL DEFAULT '', time TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', travel TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE entries (id TEXT PRIMARY KEY, block_id TEXT NOT NULL, map_lat REAL, map_lng REAL, map_admin1 TEXT, map_country TEXT, map_geocoded_at TEXT, map_geocoded_url TEXT, episode TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', photo_ids TEXT NOT NULL DEFAULT '[]', video_ids TEXT NOT NULL DEFAULT '[]', cost_items TEXT NOT NULL DEFAULT '[]', wait_time TEXT NOT NULL DEFAULT '', map_url TEXT NOT NULL DEFAULT '', map_place_name TEXT NOT NULL DEFAULT '', shop_url TEXT NOT NULL DEFAULT '', other_url TEXT NOT NULL DEFAULT '', time TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', travel TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE ratings (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, rater_email TEXT NOT NULL, rater_name TEXT NOT NULL DEFAULT '', score REAL, review TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL DEFAULT '');
-CREATE TABLE day_infos (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, date TEXT NOT NULL, place TEXT NOT NULL DEFAULT '', lat REAL, lon REAL, weather_code INTEGER, temp_max REAL, temp_min REAL, precip_sum REAL, is_forecast INTEGER NOT NULL DEFAULT 0, fetched_at TEXT NOT NULL DEFAULT '', voice_transcript TEXT NOT NULL DEFAULT '', weather_manual INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '');
+CREATE TABLE day_infos (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, date TEXT NOT NULL, place TEXT NOT NULL DEFAULT '', admin1 TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '', lat REAL, lon REAL, weather_code INTEGER, temp_max REAL, temp_min REAL, precip_sum REAL, is_forecast INTEGER NOT NULL DEFAULT 0, fetched_at TEXT NOT NULL DEFAULT '', voice_transcript TEXT NOT NULL DEFAULT '', weather_manual INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '');
 CREATE TABLE accounts (email TEXT PRIMARY KEY, account_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '', plan TEXT NOT NULL DEFAULT 'free', ticket_credits INTEGER NOT NULL DEFAULT 0, plan_period_start TEXT NOT NULL DEFAULT '', voice_uses_this_period INTEGER NOT NULL DEFAULT 0, memo_uses_this_period INTEGER NOT NULL DEFAULT 0, stripe_customer_id TEXT NOT NULL DEFAULT '', stripe_subscription_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE trip_members (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', joined_at TEXT NOT NULL, UNIQUE(trip_id, account_id));
 CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, email TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
@@ -92,6 +93,14 @@ sqlite.prepare("INSERT INTO ratings (id, entry_id, rater_email, rater_name, scor
 sqlite.prepare("INSERT INTO ratings (id, entry_id, rater_email, rater_name, score) VALUES ('rt_secret2','ent_secret1','bob@example.com','ボブ',5)").run();
 sqlite.prepare("INSERT INTO day_infos (id, trip_id, date, place, lat, lon, weather_code, voice_transcript, updated_at) VALUES ('di_secret1','trip_secret1','2026-10-01','那覇',26.2,127.6,1,'音声の文字起こし本文',?)").run(now);
 
+sqlite.prepare("UPDATE day_infos SET admin1 = '沖縄県', country = '日本' WHERE id = 'di_secret1'").run();
+sqlite.prepare("INSERT INTO trips (id, title, start_date, end_date, created_at, updated_at) VALUES ('trip_swiss1','スイス周遊','2025-08-01','2025-08-05',?,?)").run(now, now);
+sqlite.prepare("INSERT INTO trip_members (id, trip_id, account_id, name, joined_at) VALUES ('m3','trip_swiss1',?,?,?)").run(id("alice"), "アリス", "2026-09-03T00:00:00.000Z");
+sqlite.prepare("INSERT INTO day_infos (id, trip_id, date, place, admin1, country, lat, lon, updated_at) VALUES ('di_swiss1','trip_swiss1','2025-08-02','ツェルマット','ヴァレー州','スイス',46.02,7.75,?)").run(now);
+sqlite.prepare("INSERT INTO blocks (id, trip_id, date, time, label, category, created_at, updated_at) VALUES ('blk_swiss1','trip_swiss1','2025-08-02','10:00','マッターホルン','sightseeing',?,?)").run(now, now);
+// 地域がまだ未解決の座標つきの記録（プロフィールの閲覧では、逆ジオコーディングをしない＝fetchを呼ばない）
+sqlite.prepare("INSERT INTO entries (id, block_id, map_url, map_lat, map_lng, map_geocoded_at, map_geocoded_url, created_at, updated_at) VALUES ('ent_stale1','blk_swiss1','https://maps.example/x',46.0,7.7,?,'https://maps.example/x',?,?)").run(new Date(Math.max(Date.now(), Date.parse(MAP_COORDS_VALID_SINCE) + 1)).toISOString(), now, now);
+
 async function call(method, path, who, body) {
   const headers = { origin: "https://app.example" };
   if (body !== undefined) headers["content-type"] = "application/json";
@@ -121,6 +130,12 @@ const sqlOf = (name) => readFileSync(new URL("../migrations/" + name, import.met
   check("[前] フォローは503", [x.status, x.data.error], [503, "social_not_ready"]);
   x = await call("PATCH", "/me/profile", "alice", { bio: "こんにちは" });
   check("[前] ひとことの保存は503", [x.status, x.data.error], [503, "profile_not_ready"]);
+  x = await call("PATCH", "/me/profile", "alice", { visitedVisibility: "public" });
+  check("[前] 旅先の公開範囲の保存は503", [x.status, x.data.error], [503, "profile_not_ready"]);
+  x = await call("PATCH", "/me/profile", "alice", { showCounts: true });
+  check("[前] フォロワー数の表示の保存は503", [x.status, x.data.error], [503, "profile_not_ready"]);
+  x = await call("GET", "/profiles/me", "alice");
+  check("[前] 旅先は初期値（フォロワー）として出る（本人）", [x.status, x.data.profile.visitedVisibility, x.data.visited.visible], [200, "followers", true]);
   x = await call("PATCH", "/me/profile", "alice", { name: "アリス2" });
   check("[前] 名前だけなら直せる", [x.status, x.data.profile.name], [200, "アリス2"]);
   await call("PATCH", "/me/profile", "alice", { name: "アリス" });
@@ -256,7 +271,7 @@ const PID = globalThis.__publicId;
   x = await call("GET", "/profiles/" + id("alice"), "alice");
   check("自分のプロフィールに承認待ちの件数が出る", [x.data.pendingRequestCount, x.data.profile.followerCount, x.data.profile.followingCount], [1, 1, 0]);
   x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("申請中の人から見たプロフィール", [x.data.relation.state, x.data.profile.followerCount], ["requested", 1]);
+  check("申請中の人から見たプロフィール（フォロー数は他の人には出ない）", [x.data.relation.state, x.data.profile.followerCount, x.data.profile.followingCount], ["requested", undefined, undefined]);
   x = await call("POST", "/me/follow-requests/" + id("carol") + "/approve", "bob");
   check("他の人は承認できない（その人あての申請ではない）", x.status, 404);
   x = await call("POST", "/me/follow-requests/" + id("carol") + "/approve", null);
@@ -264,7 +279,7 @@ const PID = globalThis.__publicId;
   x = await call("POST", "/me/follow-requests/" + id("carol") + "/approve", "alice");
   check("承認するとフォロワーになる", [x.status, x.data.state], [200, "approved"]);
   x = await call("GET", "/profiles/" + id("alice"), "carol");
-  check("承認されたあとの関係", [x.data.relation.state, x.data.profile.followerCount], ["following", 2]);
+  check("承認されたあとの関係", [x.data.relation.state, x.data.profile.followerCount], ["following", undefined]);
   x = await call("GET", "/me/connections?kind=followers", "alice");
   check("フォロワーの一覧（親しい友人の印つき）", x.data.items.map((i) => [i.accountId, i.closeFriend]).sort(), [[id("bob"), true], [id("carol"), false]]);
   x = await call("GET", "/me/connections?kind=following", "carol");
@@ -383,6 +398,70 @@ const PID = globalThis.__publicId;
   check("ログインなしは通報できない", x.status, 401);
 }
 
+// ---------- フォロー数の表示設定（初期値オフ。他の人には数も一覧も返さない） ----------
+{
+  let x = await call("GET", "/profiles/" + id("alice"), "dave");
+  check("初期値では、他の人にフォロー数・フォロワー数を返さない", ["followerCount" in x.data.profile, "followingCount" in x.data.profile, "showCounts" in x.data.profile], [false, false, false]);
+  x = await call("GET", "/profiles/" + id("alice"), "alice");
+  check("本人には数が出る（設定の値も）", [typeof x.data.profile.followerCount, typeof x.data.profile.followingCount, x.data.profile.showCounts], ["number", "number", false]);
+  x = await call("PATCH", "/me/profile", "alice", { showCounts: "yes" });
+  check("フォロワー数の表示は真偽だけ", x.status, 400);
+  x = await call("PATCH", "/me/profile", "alice", { showCounts: true });
+  check("フォロワー数の表示をオンにする", [x.status, x.data.profile.showCounts], [200, true]);
+  x = await call("GET", "/profiles/" + id("alice"), "dave");
+  check("オンにすると、他の人にも数だけ見える（一覧は返さない）", [typeof x.data.profile.followerCount, typeof x.data.profile.followingCount, "followers" in x.data, "following" in x.data, "showCounts" in x.data.profile], ["number", "number", false, false, false]);
+  x = await call("GET", "/me/connections?kind=followers", null);
+  check("一覧はログインなしでは返さない", x.status, 401);
+  x = await call("GET", "/me/connections?kind=followers", "dave");
+  check("一覧は本人のものだけ（他の人のフォロワーは見えない）", x.data.items, []);
+  await call("PATCH", "/me/profile", "alice", { showCounts: false });
+  x = await call("GET", "/profiles/" + id("alice"), "dave");
+  check("オフに戻すとまた隠れる", "followerCount" in x.data.profile, false);
+}
+
+// ---------- 行ったことある旅先（国・都道府県の名前だけ。公開範囲は本人が決める） ----------
+{
+  const realFetch = globalThis.fetch;
+  let fetched = 0;
+  globalThis.fetch = (...a) => { fetched++; return realFetch(...a); };
+  let x = await call("GET", "/profiles/" + id("alice"), "alice");
+  check("本人には、初期値の公開範囲（フォロワー）と中身が出る", [x.data.profile.visitedVisibility, x.data.visited.visible, x.data.visited.countries.slice().sort(), x.data.visited.prefectures], ["followers", true, ["スイス"], ["沖縄県"]]);
+  x = await call("GET", "/profiles/" + id("alice"), "dave");
+  check("初期値（フォロワー）：フォロワーでない人には中身を返さない（案内の印だけ）", [x.data.visited, "visitedVisibility" in x.data.profile], [{ visible: false, needsFollow: true }, false]);
+  check("フォロワーでない人への返事に、国名・都道府県名が含まれない", /スイス|沖縄県/.test(JSON.stringify(x.data)), false);
+  x = await call("GET", "/profiles/" + id("alice"), "carol");
+  check("初期値（フォロワー）：フォロワーには見える", [x.data.visited.visible, x.data.visited.countries.slice().sort(), x.data.visited.prefectures], [true, ["スイス"], ["沖縄県"]]);
+  const body = JSON.stringify(x.data.visited);
+  check("どの旅行か・いつかは返さない（名前だけ）", [Object.keys(x.data.visited).sort(), /スイス周遊|trip_|2025|2026|沖縄"|Zermatt|ツェルマット|ヴァレー/.test(body)], [["countries", "prefectures", "visible"], false]);
+  check("プロフィールの閲覧では、逆ジオコーディングのfetchを呼ばない（サブリクエストを増やさない）", fetched, 0);
+  check("未解決の座標を書き戻さない（読むだけ）", sqlite.prepare("SELECT map_admin1, map_country FROM entries WHERE id = 'ent_stale1'").get().map_country, null);
+
+  x = await call("PATCH", "/me/profile", "alice", { visitedVisibility: "everyone" });
+  check("知らない公開範囲は400", x.status, 400);
+  x = await call("PATCH", "/me/profile", "alice", { visitedVisibility: "public" });
+  check("全体に変える", [x.status, x.data.profile.visitedVisibility], [200, "public"]);
+  x = await call("GET", "/profiles/" + id("alice"), "dave");
+  check("全体：フォロワーでない人にも見える", [x.data.visited.visible, x.data.visited.prefectures], [true, ["沖縄県"]]);
+  await call("PATCH", "/me/profile", "alice", { visitedVisibility: "none" });
+  x = await call("GET", "/profiles/" + id("alice"), "carol");
+  check("出さない：フォロワーにも見えない（案内の印も出さない）", x.data.visited, null);
+  x = await call("GET", "/profiles/" + id("alice"), "alice");
+  check("出さない：本人には見える", [x.data.visited.visible, x.data.profile.visitedVisibility], [true, "none"]);
+
+  // ブロック：設定が全体でも、ブロックしている・されている人には見えない
+  await call("PATCH", "/me/profile", "alice", { visitedVisibility: "public" });
+  await call("PUT", "/user-blocks", "alice", { accountId: id("dave") });
+  x = await call("GET", "/profiles/" + id("alice"), "dave");
+  check("ブロックされた人には、全体向けでもプロフィールごと見えない", [x.status, JSON.stringify(x.data).includes("沖縄県")], [404, false]);
+  await call("DELETE", "/user-blocks", "alice", { accountId: id("dave") });
+  await call("PUT", "/user-blocks", "dave", { accountId: id("alice") });
+  x = await call("GET", "/profiles/" + id("alice"), "dave");
+  check("ブロックした人には、旅先は返さない（解除用の最小限だけ）", [x.data.blockedByMe, "visited" in x.data, JSON.stringify(x.data).includes("沖縄県")], [true, false, false]);
+  await call("DELETE", "/user-blocks", "dave", { accountId: id("alice") });
+  await call("PATCH", "/me/profile", "alice", { visitedVisibility: "followers" });
+  globalThis.fetch = realFetch;
+}
+
 // ---------- ブロック ----------
 {
   let x = await call("PUT", "/follows/" + id("alice"), "bob");
@@ -434,7 +513,7 @@ const PID = globalThis.__publicId;
   let x = await call("POST", "/accounts/delete", "erin", { email: "erin@example.com" });
   check("アカウントを削除できる", x.status, 200);
   check("削除したアカウントのフォロー・親しい友人は消える", sqlite.prepare("SELECT COUNT(*) AS n FROM follows WHERE follower_id=? OR followee_id=?").get(id("erin"), id("erin")).n, 0);
-  check("削除したアカウントのひとこと・アイコンは消える", { ...sqlite.prepare("SELECT bio, avatar_photo_id FROM accounts WHERE account_id=?").get(id("erin")) }, { bio: "", avatar_photo_id: "" });
+  check("削除したアカウントのひとこと・アイコン・表示設定は初期値に戻る", { ...sqlite.prepare("SELECT bio, avatar_photo_id, visited_visibility, show_counts FROM accounts WHERE account_id=?").get(id("erin")) }, { bio: "", avatar_photo_id: "", visited_visibility: "followers", show_counts: 0 });
   x = await call("GET", "/trips/" + t.id);
   check("旅行は残り、持ち主なし・一緒に行った人だけに戻る", [x.status, x.data.trip.ownerAccountId, x.data.trip.visibility], [200, "", "members"]);
   x = await call("GET", "/public/trips/" + pid);

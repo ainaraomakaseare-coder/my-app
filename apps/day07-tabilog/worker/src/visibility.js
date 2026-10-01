@@ -38,6 +38,26 @@ export function canViewByVisibility(o) {
   return false; // members（と知らない値）
 }
 
+// 「行ったことある旅先」をプロフィールに出す範囲。初期値・知らない値は「フォロワー」
+export const VISITED_VISIBILITIES = ["public", "followers", "none"];
+export function normalizeVisitedVisibility(v) {
+  return VISITED_VISIBILITIES.includes(v) ? v : "followers";
+}
+
+/*
+ * プロフィールの「行ったことある旅先」を、この人に見せてよいか（国・都道府県の名前だけ。旅行名・時期は出さない）。
+ * 本人はいつでも見られる。ブロックしている・されている人には、設定に関わらず見せない。
+ * public＝見られる／followers＝承認済みのフォロワー（親しい友人もフォロワー）だけ／none＝本人だけ。
+ */
+export function canViewVisited(o) {
+  if (o.isSelf) return true;
+  if (o.blockedByOwner || o.blockedByViewer) return false;
+  const v = normalizeVisitedVisibility(o.visibility);
+  if (v === "public") return true;
+  if (v === "followers") return !!o.isFollower;
+  return false;
+}
+
 /*
  * フォローの状態遷移。状態は 'none'（フォローしていない）｜'pending'（承認待ち）｜'approved'（フォロー中）。
  * 操作は follow（フォローする／申請する）｜unfollow（やめる／申請を取り消す）｜

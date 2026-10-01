@@ -2939,6 +2939,12 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('持ち主の立場: 最初の参加者でなければなれない', T.tripOwnerStatus({ ownerAccountId: '' }, members, '222222'), 'unclaimable');
   eq('持ち主の立場: 参加していなければなれない', T.tripOwnerStatus({ ownerAccountId: '' }, [], '333333'), 'unclaimable');
 
+  function vrow(o) { return ['public', 'followers', 'none', 'junk'].map(function (v) { return T.canViewVisited(Object.assign({ visibility: v }, o)); }); }
+  eq('旅先の公開範囲: 本人はいつでも見られる', vrow({ isSelf: true }), [true, true, true, true]);
+  eq('旅先の公開範囲: 関係のない人は「全体」だけ', vrow({}), [true, false, false, false]);
+  eq('旅先の公開範囲: フォロワーは「全体」「フォロワー」（知らない値はフォロワー扱い）', vrow({ isFollower: true }), [true, true, false, true]);
+  eq('旅先の公開範囲: ブロックしている・されている人には何も見せない', [vrow({ isFollower: true, blockedByOwner: true }), vrow({ isFollower: true, blockedByViewer: true })], [[false, false, false, false], [false, false, false, false]]);
+  eq('旅先の公開範囲: 初期値はフォロワー・選択肢は3つ', [T.normalizeVisitedVisibility(undefined), T.normalizeVisitedVisibility('x'), T.VISITED_VISIBILITY_OPTIONS.map(function (o) { return o.label; })], ['followers', 'followers', ['全体', 'フォロワー', '出さない']]);
   eq('ひとこと: 160字までは通る', [T.bioError(''), T.bioError('あ'.repeat(160)), T.bioError('あ'.repeat(161)) !== ''], ['', '', true]);
   eq('公開画面のIDをURLから取る', [T.getPublicIdFromSearch('?p=pub_' + 'a'.repeat(32)), T.getPublicIdFromSearch('?trip=abc&p=pub_' + 'b'.repeat(32)), T.getPublicIdFromSearch('?p=trip_abc'), T.getPublicIdFromSearch('?p=pub_zz')], ['pub_' + 'a'.repeat(32), 'pub_' + 'b'.repeat(32), '', '']);
   eq('プロフィールのIDをURLから取る', [T.getProfileIdFromSearch('?u=123456'), T.getProfileIdFromSearch('?u=12345'), T.getProfileIdFromSearch('?u=123456789'), T.getProfileIdFromSearch('')], ['123456', '', '', '']);

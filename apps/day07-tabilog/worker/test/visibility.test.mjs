@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import {
+  VISITED_VISIBILITIES, normalizeVisitedVisibility, canViewVisited,
   VISIBILITIES, BIO_MAX, normalizeVisibility, canViewByVisibility, nextFollowStatus, followStateLabel,
   validAvatarId, newPublicId, validPublicId, stripTripForPublic,
 } from "../src/visibility.js";
@@ -45,6 +46,17 @@ for (const [who, base] of Object.entries(viewers)) {
 check("判定表：知らない公開範囲は一緒に行った人だけ扱い（持ち主以外は見えない）", canViewByVisibility({ visibility: "world", isFollower: true }), false);
 check("normalizeVisibility：壊れた値はmembers", [normalizeVisibility(undefined), normalizeVisibility("x"), normalizeVisibility("public")], ["members", "members", "public"]);
 check("公開範囲は4つ", VISIBILITIES, ["members", "close_friends", "followers", "public"]);
+
+/* ---- 行ったことある旅先の公開範囲 ---- */
+{
+  const row = (o) => ["public", "followers", "none", "junk"].map((v) => canViewVisited({ visibility: v, ...o }));
+  check("旅先：本人", row({ isSelf: true }), [true, true, true, true]);
+  check("旅先：関係のない人", row({}), [true, false, false, false]);
+  check("旅先：フォロワー（知らない値は初期値のフォロワー扱い）", row({ isFollower: true }), [true, true, false, true]);
+  check("旅先：持ち主にブロックされた人", row({ isFollower: true, blockedByOwner: true }), [false, false, false, false]);
+  check("旅先：持ち主をブロックした人", row({ isFollower: true, blockedByViewer: true }), [false, false, false, false]);
+  check("旅先：初期値と一覧", [normalizeVisitedVisibility(undefined), normalizeVisitedVisibility("none"), VISITED_VISIBILITIES], ["followers", "none", ["public", "followers", "none"]]);
+}
 
 /* ---- フォローの状態遷移 ---- */
 const S = ["none", "pending", "approved"];
@@ -122,6 +134,16 @@ check("公開用IDの形・毎回違う・trip.idとは別物", [validPublicId(p
   }
   check("フォローの状態遷移：サーバーとCoreが一致", sdiffs, 0);
   check("公開範囲の一覧：サーバーとCoreが一致", T.VISIBILITY_OPTIONS.map((o) => o.key), VISIBILITIES);
+  check("旅先の公開範囲の一覧：サーバーとCoreが一致", T.VISITED_VISIBILITY_OPTIONS.map((o) => o.key), VISITED_VISIBILITIES);
+  let vdiffs = 0, vn = 0;
+  for (const v of [...VISITED_VISIBILITIES, "junk", undefined]) {
+    for (let mask = 0; mask < 16; mask++) {
+      const o = { visibility: v, isSelf: !!(mask & 1), isFollower: !!(mask & 2), blockedByOwner: !!(mask & 4), blockedByViewer: !!(mask & 8) };
+      vn++;
+      if (canViewVisited(o) !== T.canViewVisited(o)) vdiffs++;
+    }
+  }
+  check("旅先の公開範囲の判定：サーバーとCoreが全" + vn + "通りで一致", vdiffs, 0);
   check("ひとことの上限：サーバーとCoreが一致", T.BIO_MAX, BIO_MAX);
 }
 

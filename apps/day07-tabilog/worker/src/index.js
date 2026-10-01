@@ -34,6 +34,7 @@ import { isAllowedOrigin, cors } from "./cors.js";
 import {
   VISIBILITIES, BIO_MAX, NAME_MAX, normalizeVisibility, canViewByVisibility, nextFollowStatus, followStateLabel,
   validAvatarId, newPublicId, validPublicId, stripTripForPublic,
+  VISITED_VISIBILITIES, normalizeVisitedVisibility, canViewVisited,
 } from "./visibility.js";
 import { validateBranchInput, validateBranchBlockPlacement, dateToDays, branchEndDateOf, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
 import {
@@ -1430,7 +1431,10 @@ function roundRobinByTrip(staleByTrip, wantTransit) {
   return out;
 }
 
-async function getVisitedPlaces(env, tripIds, accountId, tripTitles, tripBounds, ctx) {
+// opts.readOnly：プロフィールの表示用（他の人の閲覧で呼ばれる）。座標→地域の逆ジオコーディング（Nominatim・UPDATE）と
+// 壊れた座標の書き戻しをしない。D1に保存済みのmap_admin1/map_country・day_infosだけで集計する（サブリクエストを増やさない）。
+async function getVisitedPlaces(env, tripIds, accountId, tripTitles, tripBounds, ctx, opts) {
+  const readOnly = !!(opts && opts.readOnly);
   const empty = { prefectures: [], countries: [], details: { prefectures: [], countries: [] }, tripPlaces: [] };
   if (!tripIds.length) return empty;
 
@@ -1483,7 +1487,7 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, tripBounds,
     if (r.entry_id && (r.lat != null || r.lng != null || r.admin1 || r.country)) brokenEntryIds.push(r.entry_id);
     return false;
   });
-  if (brokenEntryIds.length) {
+  if (brokenEntryIds.length && !readOnly) {
     try {
       await env.DB.prepare(
         "UPDATE entries SET map_lat=NULL, map_lng=NULL, map_admin1=NULL, map_country=NULL WHERE id IN ("
@@ -1522,7 +1526,7 @@ async function getVisitedPlaces(env, tripIds, accountId, tripTitles, tripBounds,
       else if (!isTransit) points.get(key).transit = false; // 同じ地点に乗り継ぎ・非乗り継ぎ両方あれば非乗り継ぎ優先
     });
   }
-  const orderedStalePoints = roundRobinByTrip(staleByTrip, false).concat(roundRobinByTrip(staleByTrip, true))
+  const orderedStalePoints = readOnly ? [] : roundRobinByTrip(staleByTrip, false).concat(roundRobinByTrip(staleByTrip, true))
     .slice(0, STALE_REGION_BUDGET);
   const resolvedNow = await resolveStaleEntryRegions(env, orderedStalePoints);
   const regionFor = (r) => {
@@ -5522,17 +5526,44 @@ function noStore(headers) {
 const ACCOUNT_ID_RE = /^\d{6}$/;
 
 // 他の人に見せてよい範囲のアカウント情報（メールアドレス・プランなどは含めない）。無ければnull
-async function accountCard(env, accountId) {
+// opts.settings：プロフィールの表示設定（行ったことある旅先の公開範囲・フォロー数の表示）も付ける。getProfileだけが使い、
+// 本人以外へは返さない（他の呼び出しには含めない）
+async function accountCard(env, accountId, opts) {
   if (!ACCOUNT_ID_RE.test(String(accountId || ""))) return null;
   const row = await env.DB.prepare("SELECT * FROM accounts WHERE account_id = ?").bind(accountId).first();
   if (!row) return null;
-  return {
+  const card = {
     accountId: row.account_id,
     name: row.name || "",
     avatarPhotoId: row.avatar_photo_id || "",
     bio: row.bio || "",
     isPrivate: !!row.is_private,
   };
+  if (opts && opts.settings) {
+    card.visitedVisibility = normalizeVisitedVisibility(row.visited_visibility);
+    card.showCounts = !!row.show_counts;
+  }
+  return card;
+}
+
+// プロフィールに出す「行ったことある旅先」。国・都道府県の名前だけ（どの旅行か・いつかは返さない）。
+// 本人が参加した旅行（trip_members）の集計で、マイログの「行ったことある旅先」と同じロジック（getVisitedPlaces）。
+// 他の人の閲覧でも呼ばれるので読むだけモード（逆ジオコーディングなし）。失敗しても空で返す（プロフィールは開けるように）
+async function profileVisitedPlaces(env, accountId) {
+  const empty = { countries: [], prefectures: [] };
+  try {
+    const rows = await tolerant(async () => (await env.DB.prepare(
+      "SELECT t.id AS id, t.start_date AS start_date, t.end_date AS end_date FROM trip_members m JOIN trips t ON t.id = m.trip_id WHERE m.account_id = ?"
+    ).bind(accountId).all()).results, []);
+    if (!rows.length) return empty;
+    const bounds = {};
+    rows.forEach((r) => { bounds[r.id] = { startDate: r.start_date, endDate: r.end_date }; });
+    const places = await getVisitedPlaces(env, rows.map((r) => r.id), accountId, {}, bounds, null, { readOnly: true });
+    return { countries: (places.countries || []).slice(), prefectures: (places.prefectures || []).slice() };
+  } catch (e) {
+    console.error(JSON.stringify({ event: "profile_visited_error", message: String((e && e.message) || e).slice(0, 200) }));
+    return empty;
+  }
 }
 
 // ログインしていれば、その人のアカウント（無ければnull）。ログインしていなくても読める画面用
@@ -5666,7 +5697,7 @@ async function getProfile(idParam, request, env, headers) {
   const viewer = await optionalViewer(request, env);
   if (!viewer) return json({ error: "login_required" }, 401, h);
   const targetId = idParam === "me" ? viewer.account_id : idParam;
-  const card = await accountCard(env, targetId);
+  const card = await accountCard(env, targetId, { settings: true });
   if (!card) return json({ error: "not_found" }, 404, h);
   const self = card.accountId === viewer.account_id;
   const rel = await relationBetween(env, viewer.account_id, card.accountId);
@@ -5674,15 +5705,33 @@ async function getProfile(idParam, request, env, headers) {
   if (!self && rel.blockedByViewer) {
     return json({ blockedByMe: true, profile: { accountId: card.accountId, name: card.name } }, 200, h);
   }
-  const followerCount = await countFollows(env, "followee_id", card.accountId, "approved");
-  const followingCount = await countFollows(env, "follower_id", card.accountId, "approved");
+  // フォロー数・フォロワー数は本人にだけ返す。他の人には、本人が「フォロワー数をプロフィールに表示する」をオンにしたときだけ
+  // （数だけ。一覧は返さない）。人数が少ないうちは数字が寂しく見えるので、初期値はオフ
+  const profile = { accountId: card.accountId, name: card.name, avatarPhotoId: card.avatarPhotoId, bio: card.bio, isPrivate: card.isPrivate };
+  if (self || card.showCounts) {
+    profile.followerCount = await countFollows(env, "followee_id", card.accountId, "approved");
+    profile.followingCount = await countFollows(env, "follower_id", card.accountId, "approved");
+  }
+  if (self) {
+    profile.visitedVisibility = card.visitedVisibility;
+    profile.showCounts = card.showCounts;
+  }
   const out = {
-    profile: { ...card, followerCount, followingCount },
+    profile,
     relation: { state: self ? "self" : followStateLabel(rel.viewerFollows), followsMe: rel.otherFollows === "approved", isCloseFriend: rel.isCloseFriend },
     blockedByMe: false,
     trips: [],
     tripsHidden: false,
+    visited: null,
   };
+  // 「行ったことある旅先」：本人が決めた範囲の人にだけ（ブロックしている・されている人には、ここまで来る前に返さない）。
+  // フォロワー限定で、見る人がフォロワーでないときは、フォローすると見られると案内するための印だけ返す
+  const mayViewVisited = canViewVisited({
+    visibility: card.visitedVisibility, isSelf: self, isFollower: rel.viewerFollows === "approved",
+    blockedByOwner: rel.blockedByOther, blockedByViewer: rel.blockedByViewer,
+  });
+  if (mayViewVisited) out.visited = { visible: true, ...(await profileVisitedPlaces(env, card.accountId)) };
+  else if (card.visitedVisibility === "followers") out.visited = { visible: false, needsFollow: true };
   if (self) {
     const pending = await tolerant(() => env.DB.prepare("SELECT COUNT(*) AS n FROM follows WHERE followee_id = ? AND status = 'pending'").bind(card.accountId).first(), null);
     out.pendingRequestCount = pending ? pending.n : 0;
@@ -5737,6 +5786,14 @@ async function updateMyProfile(request, env, headers) {
     if (typeof data.isPrivate !== "boolean") return json({ error: "invalid_input" }, 400, headers);
     extra.push(["is_private", data.isPrivate ? 1 : 0]);
   }
+  if (data.visitedVisibility !== undefined) {
+    if (!VISITED_VISIBILITIES.includes(data.visitedVisibility)) return json({ error: "invalid_input" }, 400, headers);
+    extra.push(["visited_visibility", data.visitedVisibility]);
+  }
+  if (data.showCounts !== undefined) {
+    if (typeof data.showCounts !== "boolean") return json({ error: "invalid_input" }, 400, headers);
+    extra.push(["show_counts", data.showCounts ? 1 : 0]);
+  }
   if (name !== undefined) {
     await env.DB.prepare("UPDATE accounts SET name = ?, updated_at = ? WHERE account_id = ?").bind(name, nowIso(), me).run();
   }
@@ -5752,7 +5809,7 @@ async function updateMyProfile(request, env, headers) {
       await tolerantRun(env, "UPDATE follows SET status = 'approved', updated_at = ? WHERE followee_id = ? AND status = 'pending'", nowIso(), me);
     }
   }
-  return json({ profile: await accountCard(env, me) }, 200, headers);
+  return json({ profile: await accountCard(env, me, { settings: true }) }, 200, headers);
 }
 
 // プロフィールの通報（Appleのガイドライン1.2）。運営者へメールが届く（24時間以内に確認）。メールが送れなくても記録は残す。
@@ -5901,7 +5958,7 @@ async function deleteProfileDataForAccount(env, accountId) {
   await tolerantRun(env, "DELETE FROM follows WHERE follower_id = ? OR followee_id = ?", accountId, accountId);
   await tolerantRun(env, "DELETE FROM close_friends WHERE owner_account_id = ? OR friend_account_id = ?", accountId, accountId);
   await tolerantRun(env, "DELETE FROM profile_reports WHERE reported_account_id = ? OR reporter_account_id = ?", accountId, accountId);
-  await tolerantRun(env, "UPDATE accounts SET bio = '', avatar_photo_id = '', is_private = 0 WHERE account_id = ?", accountId);
+  await tolerantRun(env, "UPDATE accounts SET bio = '', avatar_photo_id = '', is_private = 0, visited_visibility = 'followers', show_counts = 0 WHERE account_id = ?", accountId);
   await tolerantRun(env, "UPDATE trips SET owner_account_id = '', visibility = 'members' WHERE owner_account_id = ?", accountId);
 }
 
