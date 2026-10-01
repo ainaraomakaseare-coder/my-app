@@ -2903,5 +2903,49 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('replayRouteFractions: 区間が無くても落ちない', T.replayRouteFractions({ legs: [] }, 5), []);
 })();
 
+/* ---- 公開範囲・フォロー・プロフィール（docs/adr/0010。サーバー側のコピーは worker/src/visibility.js） ---- */
+(function () {
+  var vis = ['members', 'close_friends', 'followers', 'public'];
+  function row(o) { return vis.map(function (v) { return T.canViewByVisibility(Object.assign({ visibility: v }, o)); }); }
+  eq('公開範囲の判定: 持ち主はどの範囲でも見られる', row({ isOwner: true }), [true, true, true, true]);
+  eq('公開範囲の判定: 関係のない人は全体向けだけ', row({}), [false, false, false, true]);
+  eq('公開範囲の判定: フォロワーはフォロワー向け・全体向け', row({ isFollower: true }), [false, false, true, true]);
+  eq('公開範囲の判定: 親しい友人はフォロワー向けにも見える', row({ isFollower: true, isCloseFriend: true }), [false, true, true, true]);
+  eq('公開範囲の判定: 持ち主にブロックされた人は全体向けだけ', row({ isFollower: true, isCloseFriend: true, blockedByOwner: true }), [false, false, false, true]);
+  eq('公開範囲の判定: 持ち主をブロックした人は何も見ない', row({ isFollower: true, blockedByViewer: true }), [false, false, false, false]);
+  eq('公開範囲の判定: 知らない値は一緒に行った人だけ扱い', T.canViewByVisibility({ visibility: 'x', isFollower: true }), false);
+  eq('normalizeVisibility / visibilityLabel', [T.normalizeVisibility('x'), T.normalizeVisibility('followers'), T.visibilityLabel('close_friends'), T.visibilityLabel(undefined)], ['members', 'followers', '親しい友人', '一緒に行った人だけ']);
+  eq('公開範囲は4つ・初期値（先頭）は一緒に行った人だけ', T.VISIBILITY_OPTIONS.map(function (o) { return o.key; }), ['members', 'close_friends', 'followers', 'public']);
+
+  eq('フォロー: 通常の相手はすぐフォロー中', T.nextFollowStatus('none', 'follow', { targetPrivate: false }), 'approved');
+  eq('フォロー: 承認制の相手は承認待ち', T.nextFollowStatus('none', 'follow', { targetPrivate: true }), 'pending');
+  eq('フォロー: 申請中に押し直しても承認待ちのまま', T.nextFollowStatus('pending', 'follow', { targetPrivate: true }), 'pending');
+  eq('フォロー: やめる・申請の取り消しは常にnone', ['none', 'pending', 'approved'].map(function (s) { return T.nextFollowStatus(s, 'unfollow'); }), ['none', 'none', 'none']);
+  eq('フォロー: 承認は承認待ちだけ', ['none', 'pending', 'approved'].map(function (s) { return T.nextFollowStatus(s, 'approve'); }), [null, 'approved', 'approved']);
+  eq('フォロー: 断るは承認待ちだけ（フォロー中は外すを使う）', ['none', 'pending', 'approved'].map(function (s) { return T.nextFollowStatus(s, 'decline'); }), ['none', 'none', null]);
+  eq('フォロー: 外すはフォロー中だけ', ['none', 'pending', 'approved'].map(function (s) { return T.nextFollowStatus(s, 'remove'); }), ['none', null, 'none']);
+  eq('フォロー: 知らない操作はnull', T.nextFollowStatus('approved', 'block'), null);
+  eq('フォローボタン: 自分には出ない', T.followButtonInfo('self', false), null);
+  eq('フォローボタン: 通常', [T.followButtonInfo('none', false).label, T.followButtonInfo('none', false).action], ['フォローする', 'follow']);
+  eq('フォローボタン: 承認制の相手', T.followButtonInfo('none', true).label, 'フォローをリクエスト');
+  eq('フォローボタン: リクエスト済みは取り消し', [T.followButtonInfo('requested', true).label, T.followButtonInfo('requested', true).action], ['リクエスト済み', 'unfollow']);
+  eq('フォローボタン: フォロー中はやめる（確認つき）', [T.followButtonInfo('following', false).label, T.followButtonInfo('following', false).action, !!T.followButtonInfo('following', false).confirm], ['フォロー中', 'unfollow', true]);
+
+  var members = [{ accountId: '222222', joinedAt: '2026-09-02T00:00:00Z' }, { accountId: '111111', joinedAt: '2026-09-01T00:00:00Z' }];
+  eq('持ち主の立場: 未ログイン', T.tripOwnerStatus({ ownerAccountId: '' }, members, ''), 'login');
+  eq('持ち主の立場: 自分が持ち主', T.tripOwnerStatus({ ownerAccountId: '111111' }, members, '111111'), 'owner');
+  eq('持ち主の立場: ほかの人が持ち主', T.tripOwnerStatus({ ownerAccountId: '111111' }, members, '222222'), 'other');
+  eq('持ち主の立場: 持ち主がいなくて、自分が最初の参加者なら持ち主になれる', T.tripOwnerStatus({ ownerAccountId: '' }, members, '111111'), 'claimable');
+  eq('持ち主の立場: 最初の参加者でなければなれない', T.tripOwnerStatus({ ownerAccountId: '' }, members, '222222'), 'unclaimable');
+  eq('持ち主の立場: 参加していなければなれない', T.tripOwnerStatus({ ownerAccountId: '' }, [], '333333'), 'unclaimable');
+
+  eq('ひとこと: 160字までは通る', [T.bioError(''), T.bioError('あ'.repeat(160)), T.bioError('あ'.repeat(161)) !== ''], ['', '', true]);
+  eq('公開画面のIDをURLから取る', [T.getPublicIdFromSearch('?p=pub_' + 'a'.repeat(32)), T.getPublicIdFromSearch('?trip=abc&p=pub_' + 'b'.repeat(32)), T.getPublicIdFromSearch('?p=trip_abc'), T.getPublicIdFromSearch('?p=pub_zz')], ['pub_' + 'a'.repeat(32), 'pub_' + 'b'.repeat(32), '', '']);
+  eq('プロフィールのIDをURLから取る', [T.getProfileIdFromSearch('?u=123456'), T.getProfileIdFromSearch('?u=12345'), T.getProfileIdFromSearch('?u=123456789'), T.getProfileIdFromSearch('')], ['123456', '', '', '']);
+  eq('旅行のURL（?trip=）は公開画面・プロフィールのURLとは取り違えない', [T.getTripIdFromSearch('?p=pub_' + 'a'.repeat(32)), T.getProfileIdFromSearch('?trip=trip_x')], ['', '']);
+  eq('リンクの組み立て', [T.buildPublicUrl('https://x.example', '/app/', 'pub_abc'), T.buildProfileUrl('https://x.example', '/app/', '123456')], ['https://x.example/app/?p=pub_abc', 'https://x.example/app/?u=123456']);
+  eq('頭文字', [T.nameInitial('たろう'), T.nameInitial('abc'), T.nameInitial('  '), T.nameInitial('')], ['た', 'A', '？', '？']);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

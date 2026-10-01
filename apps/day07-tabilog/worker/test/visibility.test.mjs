@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import {
-  VISIBILITIES, normalizeVisibility, canViewByVisibility, nextFollowStatus, followStateLabel,
+  VISIBILITIES, BIO_MAX, normalizeVisibility, canViewByVisibility, nextFollowStatus, followStateLabel,
   validAvatarId, newPublicId, validPublicId, stripTripForPublic,
 } from "../src/visibility.js";
 
@@ -95,6 +95,34 @@ check("公開用IDの形・毎回違う・trip.idとは別物", [validPublicId(p
   check("許可リスト：表示用の通し番号", out.blocks.map((b) => b.n), [0]);
   const empty = stripTripForPublic({ trip, blocks: [{ date: "d", label: "x", entries: [{ ratings: [] }] }], days: [], publicId: "p" });
   check("評価が無い記録の平均はnull", [empty.blocks[0].entries[0].ratingAvg, empty.blocks[0].entries[0].ratingCount], [null, 0]);
+}
+
+/* ---- クライアント（app.jsのCore）との総当たり照合：判定表・状態遷移が食い違わない ---- */
+{
+  const { createRequire } = await import("node:module");
+  globalThis.window = {};
+  createRequire(import.meta.url)("../../app.js");
+  const T = globalThis.window.TabiLog;
+  let diffs = 0, n = 0;
+  const flags = ["isOwner", "isFollower", "isCloseFriend", "blockedByOwner", "blockedByViewer"];
+  for (const v of [...VISIBILITIES, "junk", undefined]) {
+    for (let mask = 0; mask < 32; mask++) {
+      const o = { visibility: v };
+      flags.forEach((k, i) => { o[k] = !!(mask & (1 << i)); });
+      n++;
+      if (canViewByVisibility(o) !== T.canViewByVisibility(o)) diffs++;
+    }
+  }
+  check("判定表：サーバーとCoreが全" + n + "通りで一致", diffs, 0);
+  let sdiffs = 0;
+  for (const s of ["none", "pending", "approved", "junk", undefined]) {
+    for (const a of ["follow", "unfollow", "approve", "decline", "remove", "block"]) {
+      for (const priv of [true, false]) if (nextFollowStatus(s, a, { targetPrivate: priv }) !== T.nextFollowStatus(s, a, { targetPrivate: priv })) sdiffs++;
+    }
+  }
+  check("フォローの状態遷移：サーバーとCoreが一致", sdiffs, 0);
+  check("公開範囲の一覧：サーバーとCoreが一致", T.VISIBILITY_OPTIONS.map((o) => o.key), VISIBILITIES);
+  check("ひとことの上限：サーバーとCoreが一致", T.BIO_MAX, BIO_MAX);
 }
 
 console.log("visibility: " + pass + " passed, " + fail + " failed");

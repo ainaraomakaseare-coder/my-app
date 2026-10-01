@@ -3853,7 +3853,105 @@
     return mine[0] || null;
   }
 
+  // ---------- 公開範囲・プロフィール・フォロー（docs/adr/0010） ----------
+  // サーバー側の同じ規則は worker/src/visibility.js（判定表・フォローの状態遷移）。直すときは両方とテストを直すこと。
+  // 公開範囲：旅行ごとに「見るだけの画面（?p=）」を誰に見せるか。編集は今までどおり旅行のリンク（招待リンク）を持つ人。
+  var VISIBILITY_OPTIONS = [
+    { key: 'members', label: '一緒に行った人だけ', desc: '旅行のリンクを知っている人だけ（今までどおり）。見るだけの公開画面は出しません。' },
+    { key: 'close_friends', label: '親しい友人', desc: '「親しい友人」に入れた人だけが、見るだけの画面で見られます。' },
+    { key: 'followers', label: 'フォロワー', desc: 'あなたをフォローしている人が、見るだけの画面で見られます。' },
+    { key: 'public', label: '全体', desc: '誰でも、見るだけの画面で見られます（ログイン不要）。' }
+  ];
+  function normalizeVisibility(v) {
+    for (var i = 0; i < VISIBILITY_OPTIONS.length; i++) if (VISIBILITY_OPTIONS[i].key === v) return v;
+    return 'members';
+  }
+  function visibilityLabel(v) {
+    var key = normalizeVisibility(v);
+    for (var i = 0; i < VISIBILITY_OPTIONS.length; i++) if (VISIBILITY_OPTIONS[i].key === key) return VISIBILITY_OPTIONS[i].label;
+    return '';
+  }
+  // 見るだけの画面を、この人が見てよいか（持ち主は確認用にいつでも見られる。「一緒に行った人だけ」は公開画面では誰にも見せない）
+  // o: { visibility, isOwner, isFollower, isCloseFriend, blockedByOwner, blockedByViewer }
+  function canViewByVisibility(o) {
+    var v = normalizeVisibility(o.visibility);
+    if (o.isOwner) return true;
+    if (o.blockedByViewer) return false;
+    if (v === 'public') return true;
+    if (o.blockedByOwner) return false;
+    if (v === 'followers') return !!(o.isFollower || o.isCloseFriend);
+    if (v === 'close_friends') return !!o.isCloseFriend;
+    return false;
+  }
+  // フォローの状態遷移。状態は none｜pending（承認待ち）｜approved（フォロー中）。操作は
+  // follow｜unfollow｜approve｜decline｜remove。できない操作はnull
+  function nextFollowStatus(current, action, opts) {
+    var cur = current === 'pending' || current === 'approved' ? current : 'none';
+    var targetPrivate = !!(opts && opts.targetPrivate);
+    if (action === 'follow') return cur !== 'none' ? cur : (targetPrivate ? 'pending' : 'approved');
+    if (action === 'unfollow') return 'none';
+    if (action === 'approve') return cur === 'none' ? null : 'approved';
+    if (action === 'decline') return cur === 'approved' ? null : 'none';
+    if (action === 'remove') return cur === 'pending' ? null : 'none';
+    return null;
+  }
+  // サーバーが返す関係（self｜none｜requested｜following）に合わせた、フォローボタンの表示と押したときの操作
+  function followButtonInfo(state, targetPrivate) {
+    if (state === 'self') return null;
+    if (state === 'following') return { label: 'フォロー中', action: 'unfollow', primary: false, confirm: 'フォローをやめますか？' };
+    if (state === 'requested') return { label: 'リクエスト済み', action: 'unfollow', primary: false, confirm: 'フォローのリクエストを取り消しますか？' };
+    return { label: targetPrivate ? 'フォローをリクエスト' : 'フォローする', action: 'follow', primary: true, confirm: '' };
+  }
+  // この旅行での「自分」の立場。持ち主がいない旅行は、最初に参加したアカウントだけが持ち主になれる
+  // 戻り値：login（未ログイン）｜owner｜other（別の人が持ち主）｜claimable（持ち主になれる）｜unclaimable（持ち主がいない・自分は最初の参加者でない）
+  function tripOwnerStatus(trip, members, myAccountId) {
+    if (!myAccountId) return 'login';
+    var owner = (trip && trip.ownerAccountId) || '';
+    if (owner) return owner === myAccountId ? 'owner' : 'other';
+    var first = null;
+    (members || []).forEach(function (m) { if (!first || (m.joinedAt || '') < (first.joinedAt || '')) first = m; });
+    return first && first.accountId === myAccountId ? 'claimable' : 'unclaimable';
+  }
+  var BIO_MAX = 160;
+  function bioError(text) {
+    var t = (text || '').trim();
+    return t.length > BIO_MAX ? 'ひとことは' + BIO_MAX + '文字までです。' : '';
+  }
+  // 公開画面（?p=）・プロフィール（?u=）のリンク
+  function getPublicIdFromSearch(search) {
+    var m = /(?:^\?|&)p=(pub_[0-9a-f]{32})(?:&|$)/.exec(search || '');
+    return m ? m[1] : '';
+  }
+  function getProfileIdFromSearch(search) {
+    var m = /(?:^\?|&)u=(\d{6})(?:&|$)/.exec(search || '');
+    return m ? m[1] : '';
+  }
+  function buildPublicUrl(origin, pathname, publicId) {
+    return origin + pathname + '?p=' + encodeURIComponent(publicId);
+  }
+  function buildProfileUrl(origin, pathname, accountId) {
+    return origin + pathname + '?u=' + encodeURIComponent(accountId);
+  }
+  function nameInitial(name) {
+    var t = (name || '').trim();
+    return t ? t.slice(0, 1).toUpperCase() : '？';
+  }
+
   var Core = {
+    VISIBILITY_OPTIONS: VISIBILITY_OPTIONS,
+    normalizeVisibility: normalizeVisibility,
+    visibilityLabel: visibilityLabel,
+    canViewByVisibility: canViewByVisibility,
+    nextFollowStatus: nextFollowStatus,
+    followButtonInfo: followButtonInfo,
+    tripOwnerStatus: tripOwnerStatus,
+    BIO_MAX: BIO_MAX,
+    bioError: bioError,
+    getPublicIdFromSearch: getPublicIdFromSearch,
+    getProfileIdFromSearch: getProfileIdFromSearch,
+    buildPublicUrl: buildPublicUrl,
+    buildProfileUrl: buildProfileUrl,
+    nameInitial: nameInitial,
     parseCostsFromLine: parseCostsFromLine,
     memoBlocksToProposals: memoBlocksToProposals,
     importTargetBranch: importTargetBranch,
