@@ -31,6 +31,10 @@ import {
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
+import {
+  VISIBILITIES, BIO_MAX, NAME_MAX, normalizeVisibility, canViewByVisibility, nextFollowStatus, followStateLabel,
+  validAvatarId, newPublicId, validPublicId, stripTripForPublic,
+} from "./visibility.js";
 import { validateBranchInput, validateBranchBlockPlacement, dateToDays, branchEndDateOf, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
 import {
   PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, randomHex,
@@ -193,6 +197,11 @@ function rowToTrip(row) {
     tripType: row.trip_type || "",
     coverPhotoId: row.cover_photo_id || "",
     settleUnit: SETTLE_UNITS.includes(row.settle_unit) ? row.settle_unit : 1,
+    // 持ち主・公開範囲・公開用ID（migrations/0034〜。docs/adr/0010）。列がまだ無い環境では
+    // 「持ち主なし・一緒に行った人だけ・未公開」にそろえる。公開用IDは公開中のときだけ返す
+    ownerAccountId: row.owner_account_id || "",
+    visibility: normalizeVisibility(row.visibility),
+    publicId: normalizeVisibility(row.visibility) !== "members" ? (row.public_id || "") : "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -224,6 +233,15 @@ async function createTrip(request, env, headers) {
   )
     .bind(trip.id, trip.title, trip.start_date, trip.end_date, trip.companions, trip.cover_photo_id, trip.trip_type, trip.settle_unit, trip.created_at, trip.updated_at)
     .run();
+  // ログインして作った旅行には、作った人を持ち主として記録する（docs/adr/0010）。ログインしていない旅行は持ち主なし
+  try {
+    const email = await sessionEmail(request, env);
+    if (email) {
+      const account = await getOrCreateAccount(env, email, "");
+      await env.DB.prepare("UPDATE trips SET owner_account_id = ? WHERE id = ?").bind(account.account_id, trip.id).run();
+      trip.owner_account_id = account.account_id;
+    }
+  } catch { /* 列が無い（migrations/0034の前）・アカウントを作れない：持ち主なしのまま旅行は作る */ }
   return json(rowToTrip(trip), 201, headers);
 }
 
@@ -248,9 +266,8 @@ async function selectWhereIn(env, sqlBeforeIn, ids, sqlAfterIn) {
   return all;
 }
 
-async function getTrip(id, env, headers) {
-  const tripRow = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
-  if (!tripRow) return json({ error: "not_found" }, 404, headers);
+// 旅行1件の中身（予定・記録・評価・日ごとの情報）をまとめて読む。getTripと公開の画面（getPublicTrip）が共有する
+async function loadTripContent(env, id) {
   const { results: blockRows } = await env.DB.prepare(
     "SELECT * FROM blocks WHERE trip_id = ? ORDER BY date ASC, time ASC, created_at ASC"
   )
@@ -275,7 +292,13 @@ async function getTrip(id, env, headers) {
   });
   const blocks = blockRows.map((row) => ({ ...rowToBlock(row), entries: entriesByBlock[row.id] || [] }));
   const { results: dayRows } = await env.DB.prepare("SELECT * FROM day_infos WHERE trip_id = ?").bind(id).all();
-  const days = dayRows.map(rowToDayInfo);
+  return { blocks, days: dayRows.map(rowToDayInfo) };
+}
+
+async function getTrip(id, env, headers) {
+  const tripRow = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
+  if (!tripRow) return json({ error: "not_found" }, 404, headers);
+  const { blocks, days } = await loadTripContent(env, id);
   const { results: memberRows } = await env.DB.prepare("SELECT * FROM trip_members WHERE trip_id = ?").bind(id).all();
   const members = memberRows.map(rowToMember);
   // 自分だけの道（別行動の分岐、migrations/0030〜）。テーブルがまだ無い環境では「分岐なし」として返す
@@ -288,7 +311,9 @@ async function getTrip(id, env, headers) {
     ).bind(id).all();
     branches = branchRows.map(rowToBranch);
   } catch { /* branchesテーブルが無い */ }
-  return json({ trip: rowToTrip(tripRow), blocks, days, members, branches }, 200, headers);
+  // 持ち主の表示名・アイコン（メールアドレスは返さない）。持ち主なしなら null
+  const owner = tripRow.owner_account_id ? await accountCard(env, tripRow.owner_account_id) : null;
+  return json({ trip: rowToTrip(tripRow), blocks, days, members, branches, owner }, 200, headers);
 }
 
 async function updateTrip(id, request, env, headers, ctx) {
@@ -3473,6 +3498,7 @@ async function deleteAccount(request, env, headers) {
   // この人の自分だけの道（別行動）と、その中の予定・記録も消す（docs/adr/0021。テーブルが無ければ何もしない）
   try { await env.DB.batch(branchDeleteStatements(env, "SELECT id FROM branches WHERE account_id = ?", account.account_id)); } catch { /* branchesテーブルが無い */ }
   await deleteSocialForAccount(env, account.account_id);
+  await deleteProfileDataForAccount(env, account.account_id);
   await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
   // Sign in with Appleのトークンを取り消す（5.1.1(v)）。identitiesを消す前に行う。失敗しても削除は続ける。
   try {
@@ -5421,6 +5447,10 @@ async function setUserBlock(request, env, headers, on) {
     await env.DB.prepare(
       "INSERT OR IGNORE INTO user_blocks (blocker_account_id, blocked_account_id, created_at) VALUES (?,?,?)"
     ).bind(who.account.account_id, target, nowIso()).run();
+    // ブロックしたら、お互いのフォロー・親しい友人も外す（docs/adr/0010。テーブルが無ければ何もしない）
+    const me = who.account.account_id;
+    await tolerantRun(env, "DELETE FROM follows WHERE (follower_id = ? AND followee_id = ?) OR (follower_id = ? AND followee_id = ?)", me, target, target, me);
+    await tolerantRun(env, "DELETE FROM close_friends WHERE (owner_account_id = ? AND friend_account_id = ?) OR (owner_account_id = ? AND friend_account_id = ?)", me, target, target, me);
   } else {
     await env.DB.prepare("DELETE FROM user_blocks WHERE blocker_account_id = ? AND blocked_account_id = ?")
       .bind(who.account.account_id, target).run();
@@ -5453,6 +5483,426 @@ async function deleteSocialForAccount(env, accountId) {
   await env.DB.prepare("DELETE FROM likes WHERE account_id = ?").bind(accountId).run();
   await env.DB.prepare("DELETE FROM user_blocks WHERE blocker_account_id = ? OR blocked_account_id = ?")
     .bind(accountId, accountId).run();
+}
+
+/* ---------- 旅行の公開範囲・プロフィール・フォロー（docs/adr/0010） ----------
+ * 旅行のURL（trip.id）は「一緒に行った人」の権限（見る＋編集）のまま。公開範囲は「別の公開用ID（?p=）の、見るだけの画面」を
+ * 誰に見せるかだけを決める。持ち主（trips.owner_account_id）だけが変えられる。
+ * 書き込みはすべてセッション必須（resolveEmailのstrict）。テーブル・列が無い環境（migrations/0034・0035の前に
+ * デプロイしたとき）でも壊れず、「全部の旅行は一緒に行った人だけ・フォローなし」として動く（tolerant）か、
+ * 書き込みは503（*_not_ready）を返す。
+ */
+function isMissingSchema(e) {
+  return /no such (table|column)/i.test(String((e && e.message) || ""));
+}
+
+// テーブル・列が無いときだけfallbackを返す（それ以外のエラーはそのまま投げる）
+async function tolerant(fn, fallback) {
+  try {
+    return await fn();
+  } catch (e) {
+    if (isMissingSchema(e)) return fallback;
+    throw e;
+  }
+}
+
+async function tolerantRun(env, sql, ...params) {
+  return tolerant(() => env.DB.prepare(sql).bind(...params).run(), null);
+}
+
+function notReady(e, headers, code) {
+  if (isMissingSchema(e)) return json({ error: code }, 503, headers);
+  throw e;
+}
+
+function noStore(headers) {
+  return { ...headers, "cache-control": "private, no-store" };
+}
+
+const ACCOUNT_ID_RE = /^\d{6}$/;
+
+// 他の人に見せてよい範囲のアカウント情報（メールアドレス・プランなどは含めない）。無ければnull
+async function accountCard(env, accountId) {
+  if (!ACCOUNT_ID_RE.test(String(accountId || ""))) return null;
+  const row = await env.DB.prepare("SELECT * FROM accounts WHERE account_id = ?").bind(accountId).first();
+  if (!row) return null;
+  return {
+    accountId: row.account_id,
+    name: row.name || "",
+    avatarPhotoId: row.avatar_photo_id || "",
+    bio: row.bio || "",
+    isPrivate: !!row.is_private,
+  };
+}
+
+// ログインしていれば、その人のアカウント（無ければnull）。ログインしていなくても読める画面用
+async function optionalViewer(request, env) {
+  const email = await sessionEmail(request, env);
+  if (!email) return null;
+  return (await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(email).first()) || null;
+}
+
+// 見る人(viewer)と相手(other)の関係。フォロー・親しい友人・ブロックの3回のクエリだけ
+async function relationBetween(env, viewerId, otherId) {
+  const rel = { viewerFollows: "none", otherFollows: "none", isCloseFriend: false, blockedByViewer: false, blockedByOther: false };
+  if (!viewerId || !otherId || viewerId === otherId) return rel;
+  const blocks = await tolerant(async () => (await env.DB.prepare(
+    "SELECT blocker_account_id FROM user_blocks WHERE (blocker_account_id = ? AND blocked_account_id = ?) OR (blocker_account_id = ? AND blocked_account_id = ?)"
+  ).bind(viewerId, otherId, otherId, viewerId).all()).results, []);
+  for (const b of blocks) {
+    if (b.blocker_account_id === viewerId) rel.blockedByViewer = true;
+    else rel.blockedByOther = true;
+  }
+  const follows = await tolerant(async () => (await env.DB.prepare(
+    "SELECT follower_id, status FROM follows WHERE (follower_id = ? AND followee_id = ?) OR (follower_id = ? AND followee_id = ?)"
+  ).bind(viewerId, otherId, otherId, viewerId).all()).results, []);
+  for (const f of follows) {
+    const st = f.status === "approved" ? "approved" : f.status === "pending" ? "pending" : "none";
+    if (f.follower_id === viewerId) rel.viewerFollows = st;
+    else rel.otherFollows = st;
+  }
+  const cf = await tolerant(() => env.DB.prepare(
+    "SELECT 1 AS x FROM close_friends WHERE owner_account_id = ? AND friend_account_id = ?"
+  ).bind(otherId, viewerId).first(), null);
+  rel.isCloseFriend = !!cf;
+  return rel;
+}
+
+function viewInputs(visibility, isOwner, rel) {
+  return {
+    visibility,
+    isOwner,
+    isFollower: rel.viewerFollows === "approved",
+    isCloseFriend: rel.isCloseFriend,
+    blockedByOwner: rel.blockedByOther,
+    blockedByViewer: rel.blockedByViewer,
+  };
+}
+
+/* ----- 公開の画面（見るだけ） ----- */
+
+async function getPublicTrip(publicId, request, env, headers) {
+  const h = noStore(headers);
+  if (!validPublicId(publicId)) return json({ error: "not_found" }, 404, h);
+  const row = await tolerant(() => env.DB.prepare("SELECT * FROM trips WHERE public_id = ?").bind(publicId).first(), null);
+  const visibility = row ? normalizeVisibility(row.visibility) : "members";
+  // 一緒に行った人だけ（公開をやめた旅行を含む）・持ち主なしは、公開の画面では存在しないものとして扱う
+  if (!row || !row.public_id || visibility === "members" || !row.owner_account_id) return json({ error: "not_found" }, 404, h);
+  const owner = await accountCard(env, row.owner_account_id);
+  if (!owner) return json({ error: "not_found" }, 404, h);
+  const viewer = await optionalViewer(request, env);
+  const viewerId = viewer ? viewer.account_id : "";
+  const isOwner = !!viewerId && viewerId === owner.accountId;
+  const rel = await relationBetween(env, viewerId, owner.accountId);
+  if (!isOwner && (rel.blockedByViewer || (rel.blockedByOther && visibility !== "public"))) return json({ error: "not_found" }, 404, h);
+  if (!canViewByVisibility(viewInputs(visibility, isOwner, rel))) {
+    if (!viewerId) return json({ error: "login_required" }, 401, h);
+    return json({
+      error: "not_allowed",
+      visibility,
+      owner: { accountId: owner.accountId, name: owner.name, avatarPhotoId: owner.avatarPhotoId, isPrivate: owner.isPrivate },
+      relation: { state: followStateLabel(rel.viewerFollows) },
+    }, 403, h);
+  }
+  const { blocks, days } = await loadTripContent(env, row.id);
+  const view = stripTripForPublic({ trip: rowToTrip(row), blocks, days, publicId: row.public_id });
+  view.trip.visibility = visibility;
+  return json({
+    ...view,
+    owner,
+    viewer: { accountId: viewerId, isOwner },
+    relation: { state: followStateLabel(rel.viewerFollows) },
+  }, 200, h);
+}
+
+// 公開範囲を変える（持ち主だけ）。初めて公開するときに公開用IDを作る（公開をやめても同じIDを残し、再公開で同じリンクに戻る）
+async function setTripVisibility(tripId, request, env, headers) {
+  const data = await readSocialBody(request);
+  if (!data) return json({ error: "invalid_json" }, 400, headers);
+  if (!VISIBILITIES.includes(data.visibility)) return json({ error: "invalid_input" }, 400, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const row = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(tripId).first();
+  if (!row) return json({ error: "not_found" }, 404, headers);
+  if (!("owner_account_id" in row)) return json({ error: "visibility_not_ready" }, 503, headers);
+  if (!row.owner_account_id) return json({ error: "no_owner" }, 403, headers);
+  if (row.owner_account_id !== who.account.account_id) return json({ error: "forbidden" }, 403, headers);
+  const publicId = row.public_id || (data.visibility !== "members" ? newPublicId() : "");
+  try {
+    await env.DB.prepare("UPDATE trips SET visibility = ?, public_id = ? WHERE id = ?").bind(data.visibility, publicId, tripId).run();
+  } catch (e) {
+    return notReady(e, headers, "visibility_not_ready");
+  }
+  return json({ visibility: data.visibility, publicId: data.visibility !== "members" ? publicId : "" }, 200, headers);
+}
+
+// 持ち主のいない旅行で、最初に参加したアカウントが「持ち主になる」
+async function claimTripOwner(tripId, request, env, headers) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const me = who.account.account_id;
+  const row = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(tripId).first();
+  if (!row) return json({ error: "not_found" }, 404, headers);
+  if (!("owner_account_id" in row)) return json({ error: "visibility_not_ready" }, 503, headers);
+  if (row.owner_account_id === me) return json({ ownerAccountId: me }, 200, headers);
+  if (row.owner_account_id) return json({ error: "already_owned" }, 409, headers);
+  const first = await env.DB.prepare("SELECT account_id FROM trip_members WHERE trip_id = ? ORDER BY joined_at ASC, id ASC LIMIT 1").bind(tripId).first();
+  if (!first || first.account_id !== me) return json({ error: "not_first_member" }, 403, headers);
+  await env.DB.prepare("UPDATE trips SET owner_account_id = ? WHERE id = ? AND owner_account_id = ''").bind(me, tripId).run();
+  const after = await env.DB.prepare("SELECT owner_account_id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!after || after.owner_account_id !== me) return json({ error: "already_owned" }, 409, headers);
+  return json({ ownerAccountId: me }, 200, headers);
+}
+
+/* ----- プロフィール ----- */
+
+async function countFollows(env, column, accountId, status) {
+  const row = await tolerant(() => env.DB.prepare("SELECT COUNT(*) AS n FROM follows WHERE " + column + " = ? AND status = ?").bind(accountId, status).first(), null);
+  return row ? row.n : 0;
+}
+
+async function getProfile(idParam, request, env, headers) {
+  const h = noStore(headers);
+  const viewer = await optionalViewer(request, env);
+  if (!viewer) return json({ error: "login_required" }, 401, h);
+  const targetId = idParam === "me" ? viewer.account_id : idParam;
+  const card = await accountCard(env, targetId);
+  if (!card) return json({ error: "not_found" }, 404, h);
+  const self = card.accountId === viewer.account_id;
+  const rel = await relationBetween(env, viewer.account_id, card.accountId);
+  if (!self && rel.blockedByOther) return json({ error: "not_found" }, 404, h);
+  if (!self && rel.blockedByViewer) {
+    return json({ blockedByMe: true, profile: { accountId: card.accountId, name: card.name } }, 200, h);
+  }
+  const followerCount = await countFollows(env, "followee_id", card.accountId, "approved");
+  const followingCount = await countFollows(env, "follower_id", card.accountId, "approved");
+  const out = {
+    profile: { ...card, followerCount, followingCount },
+    relation: { state: self ? "self" : followStateLabel(rel.viewerFollows), followsMe: rel.otherFollows === "approved", isCloseFriend: rel.isCloseFriend },
+    blockedByMe: false,
+    trips: [],
+    tripsHidden: false,
+  };
+  if (self) {
+    const pending = await tolerant(() => env.DB.prepare("SELECT COUNT(*) AS n FROM follows WHERE followee_id = ? AND status = 'pending'").bind(card.accountId).first(), null);
+    out.pendingRequestCount = pending ? pending.n : 0;
+  }
+  const rows = await tolerant(async () => (await env.DB.prepare(
+    "SELECT * FROM trips WHERE owner_account_id = ? ORDER BY start_date DESC, created_at DESC LIMIT 100"
+  ).bind(card.accountId).all()).results, []);
+  if (self) {
+    out.trips = rows.map((r) => ({
+      id: r.id, publicId: normalizeVisibility(r.visibility) !== "members" ? (r.public_id || "") : "", visibility: normalizeVisibility(r.visibility),
+      title: r.title, startDate: r.start_date, endDate: r.end_date, coverPhotoId: r.cover_photo_id || "", tripType: r.trip_type || "",
+    }));
+  } else if (card.isPrivate && rel.viewerFollows !== "approved") {
+    // 承認制のアカウントは、承認されたフォロワーにだけ旅行の一覧を見せる（個別の公開用リンクは今までどおり有効）
+    out.tripsHidden = true;
+  } else {
+    out.trips = rows
+      .filter((r) => r.public_id && canViewByVisibility(viewInputs(normalizeVisibility(r.visibility), false, rel)))
+      .map((r) => ({
+        publicId: r.public_id, title: r.title, startDate: r.start_date, endDate: r.end_date,
+        coverPhotoId: r.cover_photo_id || "", tripType: r.trip_type || "",
+      }));
+  }
+  return json(out, 200, h);
+}
+
+// 自分のプロフィール（名前・ひとこと・アイコン・承認制）を直す
+async function updateMyProfile(request, env, headers) {
+  const data = await readSocialBody(request);
+  if (!data) return json({ error: "invalid_json" }, 400, headers);
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const me = who.account.account_id;
+  let name;
+  if (data.name !== undefined) {
+    name = typeof data.name === "string" ? data.name.trim() : "";
+    if (!name || name.length > NAME_MAX) return json({ error: "invalid_name" }, 400, headers);
+    if (containsBannedWord(name)) return json({ error: "inappropriate" }, 422, headers);
+  }
+  const extra = [];
+  if (data.bio !== undefined) {
+    const bio = typeof data.bio === "string" ? data.bio.trim() : null;
+    if (bio === null || bio.length > BIO_MAX) return json({ error: "invalid_bio" }, 400, headers);
+    if (containsBannedWord(bio)) return json({ error: "inappropriate" }, 422, headers);
+    extra.push(["bio", bio]);
+  }
+  if (data.avatarPhotoId !== undefined) {
+    if (typeof data.avatarPhotoId !== "string" || !validAvatarId(data.avatarPhotoId)) return json({ error: "invalid_avatar" }, 400, headers);
+    extra.push(["avatar_photo_id", data.avatarPhotoId]);
+  }
+  if (data.isPrivate !== undefined) {
+    if (typeof data.isPrivate !== "boolean") return json({ error: "invalid_input" }, 400, headers);
+    extra.push(["is_private", data.isPrivate ? 1 : 0]);
+  }
+  if (name !== undefined) {
+    await env.DB.prepare("UPDATE accounts SET name = ?, updated_at = ? WHERE account_id = ?").bind(name, nowIso(), me).run();
+  }
+  if (extra.length) {
+    try {
+      await env.DB.prepare("UPDATE accounts SET " + extra.map((e) => e[0] + " = ?").join(", ") + ", updated_at = ? WHERE account_id = ?")
+        .bind(...extra.map((e) => e[1]), nowIso(), me).run();
+    } catch (e) {
+      return notReady(e, headers, "profile_not_ready");
+    }
+    // 承認制をやめたら、承認待ちの申請は自動でフォローに変える（Instagramと同じ）
+    if (data.isPrivate === false) {
+      await tolerantRun(env, "UPDATE follows SET status = 'approved', updated_at = ? WHERE followee_id = ? AND status = 'pending'", nowIso(), me);
+    }
+  }
+  return json({ profile: await accountCard(env, me) }, 200, headers);
+}
+
+// プロフィールの通報（Appleのガイドライン1.2）。運営者へメールが届く（24時間以内に確認）。メールが送れなくても記録は残す。
+// 通報した人が相手を見たくないときは、画面で同時にブロックを案内する（ブロックすると互いのプロフィールが見えなくなる）
+async function reportProfile(targetId, request, env, headers, ctx) {
+  const data = (await readSocialBody(request)) || {};
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const card = await accountCard(env, targetId);
+  if (!card || card.accountId === who.account.account_id) return json({ error: "not_found" }, 404, headers);
+  const reason = typeof data.reason === "string" ? data.reason.trim().slice(0, 200) : "";
+  await tolerantRun(
+    env,
+    "INSERT OR IGNORE INTO profile_reports (id, reported_account_id, reporter_account_id, reason, created_at) VALUES (?,?,?,?,?)",
+    uid("pr"), card.accountId, who.account.account_id, reason, nowIso()
+  );
+  if (env.RESEND_API_KEY && env.REPORT_NOTIFY_EMAIL && ctx) {
+    ctx.waitUntil(fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        from: env.RESEND_FROM || "旅の足跡 <onboarding@resend.dev>",
+        to: [env.REPORT_NOTIFY_EMAIL],
+        subject: "旅の足跡：プロフィールが通報されました",
+        text: "通報されたアカウントID: " + card.accountId + "\n名前: " + card.name + "\nひとこと: " + card.bio
+          + "\n通報した人のアカウントID: " + who.account.account_id + "\n理由: " + (reason || "（未記入）")
+          + "\n\n24時間以内に内容を確認し、必要ならD1で対応してください。",
+      }),
+    }).catch(() => {}));
+  }
+  return json({ ok: true }, 200, headers);
+}
+
+/* ----- フォロー・承認・親しい友人 ----- */
+
+async function readFollowStatus(env, followerId, followeeId) {
+  const row = await tolerant(() => env.DB.prepare("SELECT status FROM follows WHERE follower_id = ? AND followee_id = ?").bind(followerId, followeeId).first(), null);
+  return row && (row.status === "approved" || row.status === "pending") ? row.status : "none";
+}
+
+// 次の状態をD1に反映する。noneなら行（と、親しい友人の印）を消す
+async function applyFollowStatus(env, followerId, followeeId, next) {
+  if (next === "none") {
+    await env.DB.prepare("DELETE FROM follows WHERE follower_id = ? AND followee_id = ?").bind(followerId, followeeId).run();
+    await tolerantRun(env, "DELETE FROM close_friends WHERE owner_account_id = ? AND friend_account_id = ?", followeeId, followerId);
+    return;
+  }
+  const t = nowIso();
+  await env.DB.prepare(
+    "INSERT INTO follows (follower_id, followee_id, status, created_at, updated_at) VALUES (?,?,?,?,?) " +
+    "ON CONFLICT(follower_id, followee_id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at"
+  ).bind(followerId, followeeId, next, t, t).run();
+}
+
+// フォローする／やめる（自分から相手への操作）
+async function setFollow(targetId, request, env, headers, action) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const me = who.account.account_id;
+  if (!ACCOUNT_ID_RE.test(targetId) || targetId === me) return json({ error: "invalid_input" }, 400, headers);
+  const target = await accountCard(env, targetId);
+  if (!target) return json({ error: "not_found" }, 404, headers);
+  const rel = await relationBetween(env, me, targetId);
+  // ブロックしている・されている相手は、存在しないものとして扱う（フォローできない）
+  if (rel.blockedByViewer || rel.blockedByOther) return json({ error: "not_found" }, 404, headers);
+  try {
+    const next = nextFollowStatus(rel.viewerFollows, action, { targetPrivate: target.isPrivate });
+    if (next === null) return json({ error: "invalid_transition" }, 409, headers);
+    await applyFollowStatus(env, me, targetId, next);
+    return json({ state: followStateLabel(next) }, 200, headers);
+  } catch (e) {
+    return notReady(e, headers, "social_not_ready");
+  }
+}
+
+// 自分へのフォロワーへの操作：approve（承認）・decline（断る）・remove（フォロワーから外す）
+async function manageFollower(followerId, request, env, headers, action) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const me = who.account.account_id;
+  if (!ACCOUNT_ID_RE.test(followerId) || followerId === me) return json({ error: "invalid_input" }, 400, headers);
+  try {
+    const current = await readFollowStatus(env, followerId, me);
+    if (current === "none") return json({ error: "not_found" }, 404, headers);
+    const next = nextFollowStatus(current, action);
+    if (next === null) return json({ error: "invalid_transition" }, 409, headers);
+    await applyFollowStatus(env, followerId, me, next);
+    return json({ ok: true, state: next }, 200, headers);
+  } catch (e) {
+    return notReady(e, headers, "social_not_ready");
+  }
+}
+
+// 親しい友人に入れる（フォロワーの中からだけ）／外す
+async function setCloseFriend(friendId, request, env, headers, on) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const me = who.account.account_id;
+  if (!ACCOUNT_ID_RE.test(friendId) || friendId === me) return json({ error: "invalid_input" }, 400, headers);
+  try {
+    if (on) {
+      if ((await readFollowStatus(env, friendId, me)) !== "approved") return json({ error: "not_a_follower" }, 409, headers);
+      await env.DB.prepare("INSERT OR IGNORE INTO close_friends (owner_account_id, friend_account_id, created_at) VALUES (?,?,?)").bind(me, friendId, nowIso()).run();
+    } else {
+      await env.DB.prepare("DELETE FROM close_friends WHERE owner_account_id = ? AND friend_account_id = ?").bind(me, friendId).run();
+    }
+  } catch (e) {
+    return notReady(e, headers, "social_not_ready");
+  }
+  return json({ ok: true, closeFriend: on }, 200, headers);
+}
+
+// フォロー中／フォロワー／申請（承認待ち）／親しい友人の一覧（自分のものだけ。ブロックしている・されている人は出さない）
+const CONNECTION_QUERIES = {
+  following: { join: "f.followee_id", where: "f.follower_id = ? AND f.status = 'approved'", from: "follows f", order: "f.updated_at DESC" },
+  followers: { join: "f.follower_id", where: "f.followee_id = ? AND f.status = 'approved'", from: "follows f", order: "f.updated_at DESC" },
+  requests: { join: "f.follower_id", where: "f.followee_id = ? AND f.status = 'pending'", from: "follows f", order: "f.created_at DESC" },
+  close_friends: { join: "f.friend_account_id", where: "f.owner_account_id = ?", from: "close_friends f", order: "f.created_at DESC" },
+};
+
+async function listConnections(kind, request, env, headers) {
+  const h = noStore(headers);
+  const q = Object.prototype.hasOwnProperty.call(CONNECTION_QUERIES, kind) ? CONNECTION_QUERIES[kind] : null;
+  if (!q) return json({ error: "invalid_input" }, 400, h);
+  const viewer = await optionalViewer(request, env);
+  if (!viewer) return json({ error: "login_required" }, 401, h);
+  const me = viewer.account_id;
+  const rows = await tolerant(async () => (await env.DB.prepare(
+    "SELECT a.account_id, a.name, a.avatar_photo_id, a.is_private, " +
+    "(SELECT 1 FROM close_friends c WHERE c.owner_account_id = ? AND c.friend_account_id = a.account_id) AS cf " +
+    "FROM " + q.from + " JOIN accounts a ON a.account_id = " + q.join + " WHERE " + q.where +
+    " AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE (b.blocker_account_id = ? AND b.blocked_account_id = a.account_id) OR (b.blocker_account_id = a.account_id AND b.blocked_account_id = ?))" +
+    " ORDER BY " + q.order + " LIMIT 200"
+  ).bind(me, me, me, me).all()).results, []);
+  return json({
+    kind,
+    items: rows.map((r) => ({
+      accountId: r.account_id, name: r.name || "", avatarPhotoId: r.avatar_photo_id || "", isPrivate: !!r.is_private, closeFriend: !!r.cf,
+    })),
+  }, 200, h);
+}
+
+// アカウントを消したとき、プロフィール・フォロー・親しい友人・通報と、その人が持ち主だった旅行の公開範囲を片づける。
+// 旅行そのものは一緒に行った人のために残し、持ち主なし・一緒に行った人だけに戻す
+async function deleteProfileDataForAccount(env, accountId) {
+  await tolerantRun(env, "DELETE FROM follows WHERE follower_id = ? OR followee_id = ?", accountId, accountId);
+  await tolerantRun(env, "DELETE FROM close_friends WHERE owner_account_id = ? OR friend_account_id = ?", accountId, accountId);
+  await tolerantRun(env, "DELETE FROM profile_reports WHERE reported_account_id = ? OR reporter_account_id = ?", accountId, accountId);
+  await tolerantRun(env, "UPDATE accounts SET bio = '', avatar_photo_id = '', is_private = 0 WHERE account_id = ?", accountId);
+  await tolerantRun(env, "UPDATE trips SET owner_account_id = '', visibility = 'members' WHERE owner_account_id = ?", accountId);
 }
 
 export default {
@@ -5518,6 +5968,20 @@ export default {
     if (method === "POST" && (m = path.match(/^\/comments\/([^/]+)\/report$/))) return reportComment(m[1], request, env, headers, ctx);
     if (method === "PUT" && path === "/user-blocks") return setUserBlock(request, env, headers, true);
     if (method === "DELETE" && path === "/user-blocks") return setUserBlock(request, env, headers, false);
+    // 公開範囲・プロフィール・フォロー（docs/adr/0010）
+    if (method === "GET" && (m = path.match(/^\/public\/trips\/([^\/]+)$/))) return getPublicTrip(m[1], request, env, headers);
+    if (method === "PUT" && (m = path.match(/^\/trips\/([^\/]+)\/visibility$/))) return setTripVisibility(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/trips\/([^\/]+)\/claim-owner$/))) return claimTripOwner(m[1], request, env, headers);
+    if (method === "GET" && (m = path.match(/^\/profiles\/([^\/]+)$/))) return getProfile(m[1], request, env, headers);
+    if (method === "POST" && (m = path.match(/^\/profiles\/([^\/]+)\/report$/))) return reportProfile(m[1], request, env, headers, ctx);
+    if (method === "PATCH" && path === "/me/profile") return updateMyProfile(request, env, headers);
+    if (method === "GET" && path === "/me/connections") return listConnections(url.searchParams.get("kind") || "", request, env, headers);
+    if (method === "PUT" && (m = path.match(/^\/follows\/([^\/]+)$/))) return setFollow(m[1], request, env, headers, "follow");
+    if (method === "DELETE" && (m = path.match(/^\/follows\/([^\/]+)$/))) return setFollow(m[1], request, env, headers, "unfollow");
+    if (method === "POST" && (m = path.match(/^\/me\/follow-requests\/([^\/]+)\/(approve|decline)$/))) return manageFollower(m[1], request, env, headers, m[2]);
+    if (method === "DELETE" && (m = path.match(/^\/me\/followers\/([^\/]+)$/))) return manageFollower(m[1], request, env, headers, "remove");
+    if (method === "PUT" && (m = path.match(/^\/me\/close-friends\/([^\/]+)$/))) return setCloseFriend(m[1], request, env, headers, true);
+    if (method === "DELETE" && (m = path.match(/^\/me\/close-friends\/([^\/]+)$/))) return setCloseFriend(m[1], request, env, headers, false);
     if (method === "GET" && path === "/geocode" && url.searchParams.get("name") === "1") return geocodeEntryNameOnly(url.searchParams.get("q"), url.searchParams.get("entry"), env, headers);
     if (method === "GET" && path === "/geocode") return geocodeForReplay(url.searchParams.get("q"), headers, ctx, url.searchParams.get("quick") === "1", url.searchParams.get("near"), url.searchParams.get("hint"), url.searchParams.get("entry"), env);
     if (method === "GET" && path === "/route") return getRoute(url, headers, ctx, env);
