@@ -12863,18 +12863,51 @@
   function startSocialLogin(provider) {
     var base = API_BASE + '/auth/' + provider + '/start';
     if (isNativeApp()) {
-      // iOSアプリ：WKWebViewの中ではGoogleなどがログインをブロックするので、システムのブラウザ（Safari）で
-      // 開く。Workerのホストはcapacitor.config.jsonのallowNavigationに無いため、Capacitorが自動で
-      // Safariに渡す（プラグインの追加は不要）。ログインが終わると、Workerが出す「アプリに戻る」ページが
-      // tabilog://auth?code=…でこのアプリを起動する（listenForAppLinks→handleAuthAppUrl）。
+      // iOSアプリ：WKWebViewの中ではGoogleなどがログインをブロックするので、アプリの中で開くSafariの画面
+      // （SFSafariViewController、@capacitor/browser）で開く。以前は標準のSafari（別アプリ）に渡していたが、
+      // App Reviewで「ログインのために既定のブラウザへ移動させるのは体験が悪い」と指摘された（Guideline 4、
+      // 2026-10-01）。SFSafariViewControllerはAppleが案内している方法で、URLと証明書を本人が確かめられる。
+      // ログインが終わると、Workerが出す「アプリに戻る」ページがtabilog://auth?code=…でこのアプリを起動し
+      // （listenForAppLinks→handleAuthAppUrl）、そこでこの画面を閉じる。
       // ポーリングはしない：待ち合わせIDで結果を取りに行く方式は、IDを知る第三者にコードを盗まれる（docs/adr/0019）。
       showSocialWaiting(provider);
-      window.open(base + '?return=app', '_blank');
+      openAuthBrowser(base + '?return=app');
       return;
     }
     // Web：このページごとプロバイダーへ移動し、終わると #auth=... を付けてこのページに戻ってくる
     try { sessionStorage.setItem(LOGIN_RETURN_KEY, state.loginReturnTo || 'home'); } catch (e) { /* 保存できなくても続行 */ }
     location.href = base + '?return=' + encodeURIComponent(location.origin + location.pathname + location.search);
+  }
+
+  // ログインの画面をアプリの中のSafari（SFSafariViewController）で開く。プラグインが無い古いビルドでは、
+  // 今までどおり標準のSafariで開く。本人が「完了」で閉じたら、待ち画面からログイン画面に戻す。
+  var authBrowserOpen = false;
+  function nativeBrowser() {
+    return isNativeApp() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser;
+  }
+  function openAuthBrowser(url) {
+    var Browser = nativeBrowser();
+    if (!Browser) { window.open(url, '_blank'); return; }
+    if (!openAuthBrowser.listening && Browser.addListener) {
+      openAuthBrowser.listening = true;
+      Browser.addListener('browserFinished', function () {
+        var wasOpen = authBrowserOpen;
+        authBrowserOpen = false;
+        // ログインの結果が届く前に閉じられた（キャンセル）ときだけ、ログイン画面に戻す
+        if (wasOpen && !$('#socialWaiting').hidden) cancelSocialWaiting();
+      });
+    }
+    authBrowserOpen = true;
+    Browser.open({ url: url, presentationStyle: 'fullscreen' }).catch(function () {
+      authBrowserOpen = false;
+      window.open(url, '_blank');
+    });
+  }
+  function closeAuthBrowser() {
+    var Browser = nativeBrowser();
+    if (!Browser || !authBrowserOpen) return;
+    authBrowserOpen = false; // 自分で閉じるときは、上のbrowserFinishedでログイン画面に戻さない
+    Browser.close().catch(function () {});
   }
 
   function showSocialWaiting(provider) {
@@ -12883,7 +12916,7 @@
     $('#emailLoginForm').hidden = true;
     $('#emailOtpForm').hidden = true;
     $('#socialWaiting').hidden = false;
-    $('#socialWaitingText').textContent = 'ブラウザで' + (SOCIAL_NAMES[provider] || '') + 'のログインを進めてください。終わると自動でこのアプリに戻ります。戻らないときは、ブラウザの「旅の足跡アプリに戻る」ボタンを押してください。';
+    $('#socialWaitingText').textContent = (SOCIAL_NAMES[provider] || '') + 'のログイン画面でログインを進めてください。終わると自動でこのアプリに戻ります。戻らないときは、ログイン画面の「旅の足跡アプリに戻る」ボタンを押してください。';
     $('#loginStatus').textContent = '';
   }
 
@@ -13043,6 +13076,7 @@
     var u;
     try { u = new URL(url); } catch (e) { return false; }
     if (u.protocol !== 'tabilog:' || u.hostname !== 'auth') return false;
+    closeAuthBrowser(); // アプリの中で開いていたログインの画面を閉じる
     var p = u.searchParams;
     state.loginReturnTo = state.loginReturnTo || 'home';
     if (p.get('error')) handleSocialResult('error', '', p.get('error'));
