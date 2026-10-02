@@ -50,17 +50,19 @@ module.exports = async function handler(req, res) {
 
 async function list() {
   // 投稿と、SNSごとの状態と、履歴をまとめて1回で取る
-  const [posts, accounts, groups] = await Promise.all([
+  const select = '*,post_targets(*),post_events(at,network,event,detail)';
+  const [recent, waiting, accounts, groups] = await Promise.all([
+    db.rest('posts', { query: { select, order: 'created_at.desc', limit: 100 } }),
+    // ★ これから出る予約は、作った日が古くても必ず返す。
+    //   新しい100件だけだと、古い予約が画面から消えて直せなくなり、
+    //   「予約がある日は飛ばす」も効かずに同じ日へ二重に仕込んでしまう。
     db.rest('posts', {
-      query: {
-        select: '*,post_targets(*),post_events(at,network,event,detail)',
-        order: 'created_at.desc',
-        limit: 100,
-      },
+      query: { select, status: 'eq.scheduled', order: 'scheduled_at.asc', limit: 500 },
     }),
     db.listAccounts(),
     db.listGroups(),
   ]);
+  const posts = mergeWaiting(recent, waiting);
   // ★ 受け渡しの手順は、SNSごとの事情（下書きで止まるか、即公開か）で決まる。
   //   画面側にも同じ表を置くと必ずずれるので、ここで組み立てて渡す。
   const byId = new Map(accounts.map((a) => [a.id, a]));
@@ -76,7 +78,16 @@ async function list() {
     p.after_send = handoff.afterSend(p.handoff);
   }
 
-  return { posts: posts || [], accounts, groups, now: new Date().toISOString() };
+  return { posts, accounts, groups, now: new Date().toISOString() };
+}
+
+/** 新しい100件に、そこから漏れた予約を足す。並びは作った日の新しい順のまま。 */
+function mergeWaiting(recent, waiting) {
+  const posts = (recent || []).slice();
+  const seen = new Set(posts.map((p) => p.id));
+  const extra = (waiting || []).filter((p) => !seen.has(p.id));
+  extra.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  return posts.concat(extra);
 }
 
 async function save(req, id) {
