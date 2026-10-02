@@ -10,7 +10,7 @@
 --     すでに作られているものは飛ばし、足りないものだけ足します。
 --     いま動いている投稿・連携・予約は、そのまま残ります。
 --
---   ★ 中身は下の13個を順番につないだものです。
+--   ★ 中身は下の14個を順番につないだものです。
 --     個別に見たいときは supabase/ の各ファイルをどうぞ。
 --
 --       1. schema.sql
@@ -26,6 +26,7 @@
 --      11. schema_v11_series.sql
 --      12. schema_v12_threads_affiliate.sql
 --      13. schema_v13_benchmark.sql
+--      14. schema_v14_reply.sql
 -- ============================================================================
 
 
@@ -1333,3 +1334,30 @@ create table if not exists research_runs (
 create index if not exists research_runs_genre_day_idx on research_runs (genre, created_at desc);
 
 alter table research_runs enable row level security;   -- 許可ルールを作らない＝サーバー専用
+
+
+-- ############################################################################
+-- ## schema_v14_reply.sql
+-- ############################################################################
+
+-- ============================================================================
+-- 投稿卓 NEO / v14 … 本文のあとに、自分の投稿への返信を1つ付ける
+--
+-- ★ 何が変わるか
+--   X と Threads で、本文が出たあとに返信を1本付けられるようにする。
+--   リンクを本文から外して返信に回すための欄（リンクつきの本文は返信が付きにくい）。
+--
+-- ★ 二重投稿を防ぐための持ち方
+--   post_targets.external_id は、これまでどおり「本文の投稿ID」。
+--   返信のID（Threads では返信のコンテナ → 公開後のID）は別の列に持つ。
+--   本文のIDを保存してから返信に進むので、返信でつまずいて再実行しても
+--   本文には二度と触らない。
+--
+-- ★ 何度流しても壊れません。
+-- ============================================================================
+
+-- 1. 返信の文（空なら付けない。長さは api/posts.js で見る）
+alter table posts add column if not exists reply_text text default '';
+
+-- 2. 付けた返信のID
+alter table post_targets add column if not exists reply_external_id text;

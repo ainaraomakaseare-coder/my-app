@@ -157,6 +157,26 @@ async function save(req, id) {
     if (problems.length) throw bad(problems[0]);
   }
 
+  // ★ 返信（本文が出たあと、自分の投稿に付ける1本）。付けられるのは X と Threads だけ。
+  //   リンクを本文から外して返信に回すための欄なので、案件つきの投稿では受け付けない
+  //   （X は案件リンクを載せられず、Threads も本文同様にリンクを控える決まりのため）。
+  const replyText = String(body.reply_text || '').trim();
+  if (replyText) {
+    if (choice.hasAffiliateLink) {
+      throw bad('案件リンクを含む投稿には、返信を付けられません。返信の欄を空にしてください。');
+    }
+    if (!toX && !toThreads) {
+      throw bad('返信を付けられるのは X と Threads だけです。投稿先に選ぶか、返信の欄を空にしてください。');
+    }
+    const replyLen = drafts.xLength(replyText);
+    if (toX && replyLen > 280) {
+      throw bad(`返信が長すぎます（X の数え方で ${replyLen}／280。日本語は1文字＝2、URLは23として数えます）。`);
+    }
+    if (toThreads && replyText.length > THREADS_MAX) {
+      throw bad(`返信が長すぎます（${replyText.length}文字／Threads の上限${THREADS_MAX}文字）。`);
+    }
+  }
+
   // ★ TikTok の直接投稿の設定。null なら下書き送信（いままでどおり）。
   //   直接投稿できる連携が選ばれていないのに設定だけ残すと、あとで連携を
   //   差し替えたときに本人の知らない設定で公開されうるので、持たない。
@@ -181,6 +201,11 @@ async function save(req, id) {
     // ★ 直接投稿を選んだときだけ書く。schema_v9 を流す前に本番へ出ても、
     //   いままでどおりの投稿（下書き送信）は「列が無い」で壊れないようにする。
     ...(ttSettings || id ? { tt_settings: ttSettings } : {}),
+    // ★ 返信を付けたときだけ書く。schema_v14 を流す前に本番へ出ても、
+    //   返信を使わない投稿は「列が無い」で壊れないようにする。
+    //   書き換え（PATCH）で reply_text を空で渡されたら、返信を外す。
+    ...(replyText || (id && Object.prototype.hasOwnProperty.call(body, 'reply_text'))
+      ? { reply_text: replyText } : {}),
     draft: body.draft || null,
     media_path: body.media_path || null,
     media_kind: body.media_kind || null,

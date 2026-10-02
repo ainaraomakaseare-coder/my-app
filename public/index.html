@@ -354,6 +354,10 @@
         <textarea id="th"></textarea>
       </details>
 
+      <label for="rp">返信に付ける文（X・Threads。リンクはここに）</label>
+      <textarea id="rp" placeholder="空なら返信は付けません"></textarea>
+      <div class="muted">本文が出たあと、自分の投稿への返信として付けます。X はリンクつきの投稿が1本 約30円かかります。案件リンクを含む投稿には付けられません。</div>
+
       <div class="row" style="margin-top:12px">
         <label style="display:flex;align-items:center;gap:6px;margin:0">
           <input type="checkbox" id="affiFlag"> この投稿は案件リンクを含む
@@ -766,6 +770,7 @@ function collect(status) {
     x_text: $('xt').value || $('common').value,
     tt_caption: $('tt').value || $('common').value,
     th_text: $('th').value || $('common').value,
+    reply_text: $('rp').value,
     scheduled_at_jst: $('when').value,
     group_id: currentGroup,
     has_affiliate_link: $('affiFlag').checked,
@@ -794,7 +799,7 @@ async function save(status) {
 
   try {
     await api('/api/posts', { method:'POST', body: collect(status) });
-    ['title','common','ig','ytt','ytd','xt','tt','th','when'].forEach((id) => { $(id).value = ''; });
+    ['title','common','ig','ytt','ytd','xt','tt','th','rp','when'].forEach((id) => { $(id).value = ''; });
     $('file').value = ''; uploaded = null; appliedDraft = null; $('fileInfo').textContent = '';
     renderTargets();   // 選んだ投稿先を外すので、TikTok の投稿設定も閉じて最初からにする
     resetTt();
