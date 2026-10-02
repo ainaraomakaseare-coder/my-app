@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>おもいでWiki｜家族の人生を、百科事典の1ページに</title>
+<meta name="description" content="Wikipediaに載るのは有名人だけ。でも、おじいちゃんやお父さんの人生にも、残しておきたい話がある。AIのインタビュアーに聞かれるまま答えるだけで、その人の人生が百科事典のような1ページになるアプリ。無料・登録なし。">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="おもいでWiki">
+<meta property="og:title" content="おもいでWiki｜家族の人生を、百科事典の1ページに">
+<meta property="og:description" content="AIのインタビュアーに聞かれるまま答えるだけで、おじいちゃん・おばあちゃん、お父さん・お母さんの人生が、百科事典のような1ページに。無料・登録なし。">
+<meta property="og:url" content="https://ainaraomakaseare-coder.github.io/my-app/apps/day18-omoide-wiki/lp/">
+<meta property="og:image" content="https://ainaraomakaseare-coder.github.io/my-app/apps/day18-omoide-wiki/lp/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="apple-itunes-app" content="app-id=6815641976">
+<link rel="canonical" href="https://ainaraomakaseare-coder.github.io/my-app/apps/day18-omoide-wiki/lp/">
+<link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@600;700&display=swap">
+<!-- LP（紹介ページ）。アプリ本体（../）とは独立した1枚のページ。
+     画面の画像（img/）は、架空の人物「山田 花子」さんのデータを入れたアプリを make-shots.js で撮ったもの。 -->
+<style>
+  :root {
+    --bg: #fafaf9; --card: #ffffff; --ink: #18181b; --ink-muted: #52525b; --ink-soft: #71717a;
+    --border: #e4e4e7; --paper: #f4f1ea;
+    --accent: #b45309; --accent-soft: #fef3e2;
+    --shadow: 0 1px 2px rgba(24,24,27,.05), 0 12px 32px rgba(24,24,27,.08);
+    --sans: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
+    --serif: "Noto Serif JP", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.85; font-feature-settings: "palt"; overflow-x: hidden; }
+  img { max-width: 100%; display: block; }
+  a { color: inherit; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+  @media (min-width: 640px) { .wrap { padding: 0 24px; } }
+
+  /* ヘッダー */
+  .top { position: sticky; top: 0; z-index: 10; background: rgba(250,250,249,.88); backdrop-filter: saturate(1.3) blur(12px); -webkit-backdrop-filter: saturate(1.3) blur(12px); border-bottom: 1px solid rgba(24,24,27,.06); padding-top: env(safe-area-inset-top); }
+  .top .wrap { display: flex; align-items: center; justify-content: space-between; height: 58px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16.5px; text-decoration: none; }
+  .brand img { width: 30px; height: 30px; border-radius: 8px; }
+  .top-cta { font-size: 13.5px; font-weight: 700; text-decoration: none; background: var(--ink); color: #fff; padding: 8px 15px; border-radius: 999px; white-space: nowrap; }
+
+  /* ファーストビュー */
+  .hero { padding: 48px 0 56px; }
+  .hero .wrap { display: grid; gap: 40px; align-items: center; }
+  @media (min-width: 860px) { .hero { padding: 72px 0 80px; } .hero .wrap { grid-template-columns: 1.15fr .85fr; gap: 56px; } }
+  .hook { font-family: var(--serif); font-size: clamp(15px, 2vw, 18px); color: var(--ink-muted); margin: 0 0 6px; }
+  h1 { font-family: var(--serif); font-weight: 700; font-size: clamp(32px, 6vw, 56px); line-height: 1.32; letter-spacing: .01em; margin: 0 0 20px; }
+  .nw { display: inline-block; }
+  h1 em { font-style: normal; background: linear-gradient(transparent 64%, rgba(180,83,9,.18) 64%); }
+  .lead { font-size: clamp(15px, 1.8vw, 17px); color: var(--ink-muted); margin: 0 0 28px; max-width: 34em; }
+  .ctas { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 52px; padding: 0 22px; border-radius: 12px; font-weight: 700; font-size: 15.5px; text-decoration: none; }
+  .btn svg { width: 20px; height: 20px; flex: none; }
+  .btn-primary { background: var(--ink); color: #fff; box-shadow: 0 6px 18px rgba(24,24,27,.2); }
+  .btn-ghost { background: #fff; color: var(--ink); border: 1.5px solid var(--border); }
+  .cta-note { flex: 1 0 100%; font-size: 13px; color: var(--ink-soft); margin: 4px 0 0; }
+
+  /* スマホの枠 */
+  .phone { position: relative; width: 100%; max-width: 290px; margin: 0 auto; border-radius: 42px; background: #18181b; padding: 9px; box-shadow: 0 28px 56px rgba(24,24,27,.2), 0 2px 6px rgba(24,24,27,.18); }
+  .phone::after { content: ""; position: absolute; top: 17px; left: 50%; transform: translateX(-50%); width: 80px; height: 22px; border-radius: 999px; background: #18181b; }
+  .phone img { border-radius: 34px; aspect-ratio: 390 / 844; object-fit: cover; object-position: top; width: 100%; height: auto; background: #fff; }
+  .phone.bottom img { object-position: bottom; }
+
+  /* 見出し */
+  section.block { padding: 72px 0; }
+  .kicker { font-size: 12.5px; font-weight: 700; letter-spacing: .14em; color: var(--accent); margin: 0 0 10px; }
+  h2 { font-family: var(--serif); font-weight: 700; font-size: clamp(24px, 3.6vw, 36px); line-height: 1.45; margin: 0 0 16px; }
+  .sec-lead { color: var(--ink-muted); margin: 0; max-width: 36em; }
+
+  /* 物語 */
+  .story { background: var(--paper); }
+  .story .wrap { max-width: 760px; }
+  .story p.body { font-size: clamp(15.5px, 1.9vw, 17.5px); margin: 0 0 18px; }
+  .story .quote { font-family: var(--serif); font-size: clamp(18px, 2.4vw, 22px); line-height: 1.8; margin: 28px 0 0; padding-left: 18px; border-left: 3px solid var(--accent); }
+
+  /* 機能（画像と文章を交互に） */
+  .feature { display: grid; gap: 28px; align-items: center; padding: 40px 0; border-top: 1px solid var(--border); }
+  .feature:first-of-type { border-top: 0; }
+  @media (min-width: 760px) { .feature { grid-template-columns: .8fr 1.2fr; gap: 56px; padding: 56px 0; } .feature.flip .feature-img { order: 2; } }
+  .feature h3 { font-family: var(--serif); font-size: clamp(21px, 2.8vw, 27px); line-height: 1.5; margin: 0 0 12px; }
+  .feature p { color: var(--ink-muted); margin: 0 0 16px; }
+  .checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .checks li { position: relative; padding-left: 28px; font-size: 15px; }
+  .checks li::before { content: ""; position: absolute; left: 0; top: .5em; width: 16px; height: 16px; border-radius: 50%; background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .checks li::after { content: ""; position: absolute; left: 5px; top: calc(.5em + 4px); width: 5px; height: 8px; border: solid var(--accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+  /* 安心 */
+  .cards { display: grid; gap: 14px; margin-top: 32px; }
+  @media (min-width: 760px) { .cards { grid-template-columns: repeat(3, 1fr); } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 22px 20px; box-shadow: var(--shadow); }
+  .card .ico { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); margin-bottom: 12px; }
+  .card .ico svg { width: 22px; height: 22px; }
+  .card b { display: block; font-size: 16.5px; margin-bottom: 4px; }
+  .card p { margin: 0; font-size: 14px; color: var(--ink-muted); line-height: 1.75; }
+
+  /* こんなときに */
+  .scenes { display: grid; gap: 10px; margin-top: 28px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (min-width: 760px) { .scenes { grid-template-columns: repeat(4, 1fr); } }
+  .scene { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+  .scene b { display: block; font-size: 15px; }
+  .scene span { font-size: 13px; color: var(--ink-soft); }
+
+  /* FAQ */
+  .faq { max-width: 760px; }
+  details { border-bottom: 1px solid var(--border); padding: 4px 0; }
+  summary { cursor: pointer; list-style: none; font-weight: 700; padding: 16px 32px 16px 0; position: relative; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; position: absolute; right: 4px; top: 12px; font-size: 22px; font-weight: 400; color: var(--ink-soft); }
+  details[open] summary::after { content: "−"; }
+  details p { margin: 0 0 18px; color: var(--ink-muted); font-size: 15px; }
+
+  /* 最後の呼びかけ */
+  .final { background: var(--ink); color: #fafafa; text-align: center; padding: 80px 0; }
+  .final h2 { color: #fff; }
+  .final p { color: #d4d4d8; margin: 0 auto 28px; max-width: 30em; }
+  .final .ctas { justify-content: center; }
+  .final .btn-primary { background: #fff; color: var(--ink); }
+  .final .btn-ghost { background: transparent; color: #fff; border-color: #52525b; }
+  .final .cta-note { color: #a1a1aa; max-width: none; margin: 4px 0 0; }
+
+  footer { padding: 32px 0 calc(40px + env(safe-area-inset-bottom)); font-size: 13px; color: var(--ink-soft); }
+  footer .links { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 10px; }
+  footer a { text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  footer small { display: block; line-height: 1.7; }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><img src="../icons/icon.svg" alt="">おもいでWiki</a>
+    <a class="top-cta" href="https://apps.apple.com/jp/app/id6815641976">App Storeで入手</a>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <p class="hook">Wikipediaに載るのは、有名人だけ。でも――</p>
+        <h1><span class="nw">おじいちゃんの</span><span class="nw">人生にも、</span><br><em>1ページ</em>を。</h1>
+        <p class="lead">AIのインタビュアーが質問を読み上げて、話を聞きます。聞かれるままに答えるだけで、生い立ちも、仕事も、好きなものも、百科事典のような「その人だけの1ページ」にまとまります。</p>
+        <div class="ctas">
+          <a class="btn btn-primary" href="https://apps.apple.com/jp/app/id6815641976">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 12.6c-.02-2.2 1.8-3.26 1.88-3.31-1.03-1.5-2.62-1.7-3.18-1.73-1.35-.14-2.64.8-3.33.8-.69 0-1.74-.78-2.86-.76-1.47.02-2.83.86-3.59 2.17-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.73 2.2 1.1-.05 1.51-.71 2.84-.71 1.32 0 1.7.71 2.86.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.41 1.2-2.47-.03-.01-2.3-.88-2.32-3.5zM14.2 6.13c.6-.73 1.01-1.75.9-2.76-.87.04-1.92.58-2.54 1.31-.56.64-1.05 1.67-.92 2.66.97.08 1.96-.49 2.56-1.21z"/></svg>
+            App Storeでダウンロード
+          </a>
+          <a class="btn btn-ghost" href="../">ブラウザで試す</a>
+          <p class="cta-note">無料・アカウント登録なし。iPhone のほか、ブラウザ版はパソコンや Android でも使えます。</p>
+        </div>
+      </div>
+      <div class="phone bottom"><img src="img/chat.jpg" alt="インタビューの画面。AIの質問に答えると、あいづちを打って次の質問をしてくれる" width="390" height="844"></div>
+    </div>
+  </section>
+
+  <section class="block story">
+    <div class="wrap">
+      <p class="kicker">STORY</p>
+      <h2>知っているようで、知らない。<br>家族の人生のこと。</h2>
+      <p class="body">父がどんな仕事をしてきたのか。祖父が若いころ、何に夢中だったのか。祖母はどこで生まれて、どんな子どもだったのか。毎日顔を合わせていても、改まって聞く機会は意外とありません。</p>
+      <p class="body">おもいでWikiは、その「改まって聞く」を、AIのインタビュアーが代わりにやってくれるアプリです。質問に答えていくと、思い出が少しずつたまって、いつの間にか一冊の人物記事のようなページになります。</p>
+      <p class="quote">「聞いておけばよかった」に、なる前に。</p>
+    </div>
+  </section>
+
+  <section class="block" id="features">
+    <div class="wrap">
+      <p class="kicker">FEATURES</p>
+      <h2>インタビュアーに聞かれる感じで、<br>答えるだけ。</h2>
+
+      <div class="feature">
+        <div class="feature-img"><div class="phone bottom"><img src="img/chat.jpg" alt="チャット形式のインタビュー画面" width="390" height="844" loading="lazy"></div></div>
+        <div>
+          <h3>質問を読み上げて、<br>声で答えられる</h3>
+          <p>文字を打つのが苦手でも大丈夫。質問を聞いて、話すだけ。話し終わりに「次」と言えば、ボタンを押さずに次の質問へ進みます。</p>
+          <ul class="checks">
+            <li>AIが答えにあいづちを打って、もう一歩深く聞き返す</li>
+            <li>1回5問ずつ。疲れたらそこで終わり、続きはまた今度</li>
+            <li>答えた質問は二度と聞かないので、少しずつ増えていく</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="feature flip">
+        <div class="feature-img"><div class="phone"><img src="img/page.jpg" alt="完成した百科事典風のページ" width="390" height="844" loading="lazy"></div></div>
+        <div>
+          <h3>答えが、百科事典のような<br>1ページにまとまる</h3>
+          <p>目次・概要・年譜・人物像・好きなもの。集まった答えをAIが読みやすい文章に整えて、その人だけの人物記事にします。</p>
+          <ul class="checks">
+            <li>生い立ちや経歴は、年代順の年譜に</li>
+            <li>プロフィール表や写真も添えられる</li>
+            <li>ファイルにして家族に送れば、アプリがなくても読める</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-img"><div class="phone"><img src="img/records.jpg" alt="集まった記録の一覧。編集・削除ができる" width="390" height="844" loading="lazy"></div></div>
+        <div>
+          <h3>家族みんなで持ち寄って、<br>あとから書き直せる</h3>
+          <p>本人の話だけでなく、子どもや孫が覚えているエピソードも一緒に残せます。誰が書いたかも記録されます。</p>
+          <ul class="checks">
+            <li>集まった記録は、あとからいつでも編集・削除</li>
+            <li>送り合ったファイルを読み込めば、別の端末で続きを書ける</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="feature flip">
+        <div class="feature-img"><div class="phone"><img src="img/trip.jpg" alt="家族旅行の一日を時間ごとに残した画面" width="390" height="844" loading="lazy"></div></div>
+        <div>
+          <h3>家族旅行の一日も、<br>みんなで残せる</h3>
+          <p>金婚式の温泉旅行、帰省の思い出。時間ごとに、誰が何を感じたかを書き足していけます。別行動した時間も、それぞれの思い出として。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" style="padding-top:0">
+    <div class="wrap">
+      <p class="kicker">PRIVACY</p>
+      <h2>家族の話だから、<br>安心して話せるように。</h2>
+      <div class="cards">
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
+          <b>記録は端末の中だけ</b>
+          <p>答えはスマホやパソコンの中だけに保存されます。アプリの作り手にも見えません。アカウント登録もいりません。</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></div>
+          <b>住所や電話番号は聞きません</b>
+          <p>聞くのは人生の思い出だけ。住所は市区町村まで、電話番号やメールアドレスのような連絡先は聞かない作りです。</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></div>
+          <b>AIは、同意してから</b>
+          <p>AIの機能を使う前に、何をどこへ送るかを表示して確認します。使わない場合も、決まった質問と端末の声でインタビューできます。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" style="padding-top:0">
+    <div class="wrap">
+      <p class="kicker">SCENES</p>
+      <h2>こんなときに。</h2>
+      <div class="scenes">
+        <div class="scene"><b>敬老の日に</b><span>おじいちゃんの話を、孫と一緒に</span></div>
+        <div class="scene"><b>帰省したときに</b><span>親の若いころを、改めて聞く</span></div>
+        <div class="scene"><b>誕生日・記念日に</b><span>完成ページを贈りものに</span></div>
+        <div class="scene"><b>自分の自分史に</b><span>自分の人生を、自分で1ページに</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" style="padding-top:0">
+    <div class="wrap faq">
+      <p class="kicker">FAQ</p>
+      <h2>よくある質問</h2>
+      <details><summary>無料ですか？</summary><p>はい、無料で使えます。アカウント登録もいりません。</p></details>
+      <details><summary>スマホが苦手な親でも使えますか？</summary><p>質問を読み上げて、声で答えられます。最初は家族が隣で一緒に始めてあげるのがおすすめです。1回に聞く数も3問・5問から選べるので、疲れないうちに終われます。</p></details>
+      <details><summary>話した内容はどこに保存されますか？</summary><p>使っている端末の中だけです。アプリの作り手のサーバーには保存しません。AIの機能を使うときだけ、質問づくりや読み上げのために文章が AI のサービス（OpenAI・Google）へ送られます。くわしくは<a href="../privacy.html">プライバシーポリシー</a>をご覧ください。</p></details>
+      <details><summary>Android でも使えますか？</summary><p>アプリは iPhone 向けですが、<a href="../">ブラウザ版</a>は Android やパソコンでも使えます。</p></details>
+      <details><summary>機種変更したらデータは消えますか？</summary><p>「JSONで書き出す」や完成ページの「ファイルで送る」でファイルにしておけば、新しい端末の「ファイルを読み込んで合体する」で続きから使えます。</p></details>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="wrap">
+      <h2>「聞いておけばよかった」に、<br>なる前に。</h2>
+      <p>今度の休みに、おじいちゃんに聞いてみませんか。</p>
+      <div class="ctas">
+        <a class="btn btn-primary" href="https://apps.apple.com/jp/app/id6815641976">App Storeでダウンロード</a>
+        <a class="btn btn-ghost" href="../">ブラウザで試す</a>
+        <p class="cta-note">無料・アカウント登録なし</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="../privacy.html">プライバシーポリシー</a>
+      <a href="https://github.com/ainaraomakaseare-coder/my-app/issues">お問い合わせ</a>
+    </div>
+    <small>画面の画像に出てくる人物・内容は、説明のための架空のものです。</small>
+    <small>Wikipedia は Wikimedia Foundation の登録商標です。おもいでWiki は Wikipedia とは関係ありません。</small>
+    <small>© 2026 おもいでWiki</small>
+  </div>
+</footer>
+
+</body>
+</html>
