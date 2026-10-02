@@ -343,6 +343,26 @@ const post = (over) => Object.assign({
     groups: [G_AFFI],
   };
 
+  // ★ 新しい100件から漏れた古い予約が画面から消え、同じ日に二重で仕込まれた（10/2）。
+  await check('一覧は、新しい100件から漏れた古い予約も返す', async () => {
+    const { handler } = loadPosts(state);
+    const row = (id, created_at, status) => ({ id, created_at, status, group_id: 'g3', post_targets: [] });
+    const recent = [row('new', '2026-10-01T00:00:00Z', 'scheduled'), row('done', '2026-09-30T00:00:00Z', 'done')];
+    const waiting = [row('old1', '2026-09-01T00:00:00Z', 'scheduled'), row('new', '2026-10-01T00:00:00Z', 'scheduled'),
+                     row('old2', '2026-09-02T00:00:00Z', 'scheduled')];
+    const asked = [];
+    require('../lib/db.js').rest = async (table, opt) => {
+      asked.push(opt.query);
+      return opt.query.status ? waiting : recent;
+    };
+    const res = fakeRes();
+    await handler({ method: 'GET', query: {}, headers: { cookie: 'td_session=' + auth.issue() } }, res);
+    assert.strictEqual(res.code, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(res.body.posts.map((p) => p.id), ['new', 'done', 'old2', 'old1']);
+    assert.ok(asked.some((q) => q.status === 'eq.scheduled'), '予約だけを別に取りに行っていない');
+    assert.ok(res.body.posts.every((p) => Array.isArray(p.handoff)), '足した予約に受け渡しの手順が付いていない');
+  });
+
   await check('許していないときは、Instagram を含む予約投稿を断る', async () => {
     const { handler } = loadPosts(state);
     const res = fakeRes();
