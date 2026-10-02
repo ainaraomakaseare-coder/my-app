@@ -9,7 +9,7 @@ const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
   body { margin: 0; width: 1200px; height: 630px; background: #f4f1ea; font-family: "Noto Sans JP", sans-serif; color: #18181b; display: flex; overflow: hidden; }
   .text { flex: 1; padding: 0 0 0 84px; display: flex; flex-direction: column; justify-content: center; }
   .hook { font-family: "Noto Serif JP", serif; font-size: 30px; color: #52525b; margin: 0 0 14px; }
-  h1 { font-family: "Noto Serif JP", serif; font-size: 54px; white-space: nowrap; line-height: 1.32; margin: 0 0 36px; font-weight: 700; }
+  h1 { font-family: "Noto Serif JP", serif; font-size: 64px; white-space: nowrap; line-height: 1.32; margin: 0 0 36px; font-weight: 700; }
   h1 em { font-style: normal; background: linear-gradient(transparent 64%, rgba(180,83,9,.2) 64%); }
   .brand { display: flex; align-items: center; gap: 14px; font-size: 30px; font-weight: 700; }
   .brand img { width: 52px; height: 52px; border-radius: 13px; }
@@ -19,7 +19,7 @@ const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
 </style></head><body>
   <div class="text">
     <p class="hook">Wikipediaに載るのは、有名人だけ。でも――</p>
-    <h1>おじいちゃんの人生にも、<br><em>1ページ</em>を。</h1>
+    <h1>おじいちゃんにも、<br><em>Wikipedia</em>を。</h1>
     <div class="brand"><img src="${img('../icons/icon.svg')}">おもいでWiki<span>無料・登録なし</span></div>
   </div>
   <div class="phone"><img src="${img('img/chat.jpg')}"></div>
