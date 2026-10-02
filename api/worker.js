@@ -149,6 +149,7 @@ async function runOne(target) {
       permalink: out.permalink || null,
       posted_at: new Date().toISOString(),
       last_error: null,
+      ...replyColumn(out),
     });
     await db.logEvent(target.post_id, target.network, 'success', out.permalink || '投稿しました');
     return { ...label, result: 'success', permalink: out.permalink || null };
@@ -173,8 +174,18 @@ async function continueLater(target, out) {
     external_id: out.externalId || target.external_id,
     attempt: Math.max(0, target.attempt - 1),
     next_attempt_at: new Date(Date.now() + seconds * 1000).toISOString(),
+    ...replyColumn(out),
   });
   if (out.note) await db.logEvent(target.post_id, target.network, 'progress', out.note);
+}
+
+/**
+ * 返信のIDを残す。
+ * ★ 返信を付けたときだけ書く。schema_v14 を流す前に本番へ出ても、
+ *   返信を使わない投稿は「列が無い」で壊れないようにする。
+ */
+function replyColumn(out) {
+  return out && out.replyId ? { reply_external_id: String(out.replyId) } : {};
 }
 
 /** 時間切れで手をつけなかった行を、そのまま次回に返す。 */
