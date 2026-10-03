@@ -14,8 +14,7 @@
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<!-- App Storeで公開されたら、下の行のコメントを外し、「近日公開」の3か所（.btn-soon・.top-cta・FAQ）をApp Storeへのリンクに戻す（https://apps.apple.com/jp/app/id6812715883） -->
-<!-- <meta name="apple-itunes-app" content="app-id=6812715883"> -->
+<meta name="apple-itunes-app" content="app-id=6812715883">
 <link rel="canonical" href="https://tabinoashiato.pages.dev/lp/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%2300BF8F'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
 <!-- LP（紹介ページ）。アプリ本体（../）とは独立した1枚のページで、画面の画像は lp/img/ の
@@ -54,8 +53,6 @@
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 52px; padding: 0 22px; border-radius: 14px; font-weight: 800; font-size: 15.5px; text-decoration: none; }
   .btn-primary { background: var(--ink); color: #fff; box-shadow: 0 6px 18px rgba(28,30,33,.22); }
   .btn-primary svg { width: 20px; height: 20px; }
-  .btn-soon { background: #fff; color: var(--ink-soft); border: 1.5px dashed var(--border); cursor: default; font-size: 14px; }
-  .btn-soon svg { width: 18px; height: 18px; }
   .btn-ghost { background: #fff; color: var(--ink); border: 1.5px solid var(--border); }
   .cta-note { width: 100%; font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
 
@@ -178,7 +175,7 @@
 <header class="top">
   <div class="wrap">
     <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">旅</span>旅の足跡</a>
-    <a class="top-cta" href="../">ブラウザで使う</a>
+    <a class="top-cta" href="https://apps.apple.com/jp/app/id6812715883">アプリを入れる</a>
   </div>
 </header>
 
@@ -191,9 +188,12 @@
         <h1>あの旅のきろくを、<br><span class="hl">一緒に行った人と</span><br>書き足していく。</h1>
         <p class="lead">いつ・どこで・何を食べて・いくら使ったか。写真も動画も費用も、旅の1日を時間ごとに残せます。リンクを送るだけで、同行者みんなで見たり書き足したりできます。</p>
         <div class="ctas">
-          <a class="btn btn-primary" href="../">いますぐブラウザで使う</a>
-          <span class="btn btn-soon" aria-disabled="true"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.7-1-2.7-4.1zM13.9 4.9c.7-.9 1.2-2.1 1.1-3.3-1 0-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.2 1.2.1 2.3-.6 3-1.5z"/></svg>iPhoneアプリは近日公開</span>
-          <span class="cta-note">基本無料・インストール不要。スマホでもパソコンでも、ブラウザでそのまま使えます</span>
+          <a class="btn btn-primary" href="https://apps.apple.com/jp/app/id6812715883">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.7-1-2.7-4.1zM13.9 4.9c.7-.9 1.2-2.1 1.1-3.3-1 0-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.2 1.2.1 2.3-.6 3-1.5z"/></svg>
+            App Storeで入手
+          </a>
+          <a class="btn btn-ghost" href="../">ブラウザで使う</a>
+          <span class="cta-note">基本無料・Androidやパソコンはブラウザ版で使えます</span>
         </div>
       </div>
       <div class="hero-visual">
@@ -376,7 +376,7 @@
       <div class="faq">
         <details class="reveal"><summary>一緒に行った人も、アプリを入れる必要がありますか？</summary><p>いいえ。旅行のリンクを送れば、アプリが無くてもブラウザでそのまま見たり書き足したりできます。ログインも要りません。</p></details>
         <details class="reveal"><summary>写真や記録は、知らない人に見られませんか？</summary><p>旅行の記録は、その旅行のリンクを知っている人だけが見られる仕組みです。リンクを知っている人は書き足しもできるので、一緒に行った人どうしで送り合ってください。</p></details>
-        <details class="reveal"><summary>アプリのインストールは必要ですか？</summary><p>いいえ。iPhone・Android・パソコンのどれでも、ブラウザ版（<a href="../">tabinoashiato.pages.dev</a>）ですべての機能が使えます。iPhoneアプリは近日公開予定です。</p></details>
+        <details class="reveal"><summary>Androidやパソコンでも使えますか？</summary><p>はい。ブラウザ版（<a href="../">tabinoashiato.pages.dev</a>）で同じ機能が使えます。iPhoneはApp Storeのアプリも使えます。</p></details>
         <details class="reveal"><summary>AIに送ったデータはどうなりますか？</summary><p>声・メモ・スクショの取り込みとレシートの読み取りは、使う前に確認を出してから送ります。送った内容がAIの学習に使われることはありません。詳しくは<a href="../privacy.html">プライバシーポリシー</a>をご覧ください。</p></details>
       </div>
     </div>
@@ -387,7 +387,8 @@
       <h2>次の旅から、足跡を残そう。</h2>
       <p>旅行を作って、リンクを家族に送るだけ。</p>
       <div class="ctas">
-        <a class="btn btn-primary" href="../">いますぐブラウザで使う</a>
+        <a class="btn btn-primary" href="https://apps.apple.com/jp/app/id6812715883">App Storeで入手</a>
+        <a class="btn btn-ghost" href="../">ブラウザで使う</a>
       </div>
     </div>
   </section>
