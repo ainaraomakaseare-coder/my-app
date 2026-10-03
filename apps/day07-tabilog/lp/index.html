@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>旅の足跡｜みんなで書き足す、旅のきろくアプリ</title>
+<meta name="description" content="一緒に行った人とリンクを送り合うだけで、写真・費用・思い出をみんなで書き足せる旅行記録アプリ。地図でふりかえる、割り勘の精算、行った国・都道府県の集計まで。基本無料。">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="旅の足跡">
+<meta property="og:title" content="旅の足跡｜みんなで書き足す、旅のきろくアプリ">
+<meta property="og:description" content="写真・費用・思い出を、一緒に行った人とみんなで書き足す旅行記録アプリ。地図でふりかえる・割り勘の精算・行った国の集計まで。">
+<meta property="og:url" content="https://tabinoashiato.pages.dev/lp/">
+<meta property="og:image" content="https://tabinoashiato.pages.dev/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<!-- App Storeで公開されたら、下の行のコメントを外し、「近日公開」の3か所（.btn-soon・.top-cta・FAQ）をApp Storeへのリンクに戻す（https://apps.apple.com/jp/app/id6812715883） -->
+<!-- <meta name="apple-itunes-app" content="app-id=6812715883"> -->
+<link rel="canonical" href="https://tabinoashiato.pages.dev/lp/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%2300BF8F'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='white'%3E旅%3C/text%3E%3C/svg%3E">
+<!-- LP（紹介ページ）。アプリ本体（../）とは独立した1枚のページで、画面の画像は lp/img/ の
+     サンプルの旅行（実在の人物・写真は使っていない）をアプリの画面で撮ったもの。 -->
+<style>
+  :root {
+    --bg: #F5F6F8; --card: #FFFFFF; --ink: #1C1E21; --ink-muted: #5F6672; --ink-soft: #9CA3AF;
+    --border: #E7E9EC; --accent: #00BF8F; --accent-deep: #049873; --accent-soft: #E3F8F0;
+    --sun: #FFB547; --sea: #2EA7E0;
+    --shadow: 0 1px 2px rgba(20,20,30,.06), 0 10px 30px rgba(20,20,30,.10);
+    --font: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); line-height: 1.75; font-feature-settings: "palt"; overflow-x: hidden; }
+  img { max-width: 100%; display: block; }
+  a { color: inherit; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+
+  /* ヘッダー */
+  .top { position: sticky; top: 0; z-index: 10; background: rgba(245,246,248,.86); backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid rgba(0,0,0,.04); padding-top: env(safe-area-inset-top); }
+  .top .wrap { display: flex; align-items: center; justify-content: space-between; height: 58px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 17px; text-decoration: none; letter-spacing: .02em; }
+  .brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 16px; }
+  .top-cta { font-size: 13.5px; font-weight: 700; text-decoration: none; background: var(--ink); color: #fff; padding: 8px 15px; border-radius: 999px; }
+
+  /* ファーストビュー */
+  .hero { position: relative; padding: 56px 0 40px; overflow: hidden; }
+  .hero::before { content: ""; position: absolute; inset: -20% -10% auto auto; width: 620px; height: 620px; border-radius: 50%; background: radial-gradient(circle, rgba(0,191,143,.18), rgba(0,191,143,0) 65%); pointer-events: none; }
+  .hero .wrap { display: grid; grid-template-columns: 1.1fr .9fr; gap: 40px; align-items: center; position: relative; }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--accent-deep); background: var(--accent-soft); padding: 6px 13px; border-radius: 999px; }
+  h1 { font-size: clamp(32px, 5.2vw, 54px); line-height: 1.28; margin: 18px 0 18px; letter-spacing: .01em; font-weight: 800; }
+  h1 .hl { background: linear-gradient(transparent 62%, rgba(0,191,143,.28) 62%); }
+  .lead { font-size: clamp(15px, 1.7vw, 17.5px); color: var(--ink-muted); margin: 0 0 26px; }
+  .ctas { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 52px; padding: 0 22px; border-radius: 14px; font-weight: 800; font-size: 15.5px; text-decoration: none; }
+  .btn-primary { background: var(--ink); color: #fff; box-shadow: 0 6px 18px rgba(28,30,33,.22); }
+  .btn-primary svg { width: 20px; height: 20px; }
+  .btn-soon { background: #fff; color: var(--ink-soft); border: 1.5px dashed var(--border); cursor: default; font-size: 14px; }
+  .btn-soon svg { width: 18px; height: 18px; }
+  .btn-ghost { background: #fff; color: var(--ink); border: 1.5px solid var(--border); }
+  .cta-note { width: 100%; font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
+
+  /* スマホの枠 */
+  .phone { position: relative; width: 100%; max-width: 300px; margin: 0 auto; border-radius: 44px; background: #111; padding: 10px; box-shadow: 0 30px 60px rgba(20,20,30,.22), 0 2px 6px rgba(20,20,30,.2); }
+  .phone::after { content: ""; position: absolute; top: 18px; left: 50%; transform: translateX(-50%); width: 84px; height: 24px; border-radius: 999px; background: #111; }
+  .phone img { border-radius: 35px; aspect-ratio: 390 / 844; object-fit: cover; object-position: top; width: 100%; height: auto; background: var(--bg); }
+  .hero .phone { transform: rotate(2.5deg); }
+  .float-card { position: absolute; background: #fff; border-radius: 16px; box-shadow: var(--shadow); padding: 11px 14px; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 9px; white-space: nowrap; }
+  .float-card .dot { width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; font-size: 16px; }
+  .fc-1 { left: -6%; top: 22%; }
+  .fc-2 { right: -4%; bottom: 18%; }
+  .hero-visual { position: relative; }
+
+  /* 3つのポイント */
+  .points { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0 8px; }
+  .point { background: #fff; border-radius: 18px; padding: 18px 18px 16px; box-shadow: var(--shadow); }
+  .point b { display: block; font-size: 16px; margin: 8px 0 2px; }
+  .point p { margin: 0; font-size: 13.5px; color: var(--ink-muted); line-height: 1.65; }
+  .ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-deep); }
+  .ico svg { width: 22px; height: 22px; }
+
+  /* 機能 */
+  section.block { padding: 72px 0; }
+  .sec-head { text-align: center; max-width: 640px; margin: 0 auto 40px; }
+  .sec-head .kicker { font-size: 12.5px; font-weight: 800; letter-spacing: .14em; color: var(--accent-deep); }
+  h2 { font-size: clamp(25px, 3.4vw, 36px); line-height: 1.4; margin: 6px 0 12px; font-weight: 800; }
+  .sec-head p { color: var(--ink-muted); margin: 0; }
+  .feature { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; padding: 34px 0; }
+  .feature.rev .f-text { order: 2; }
+  .f-num { font-size: 13px; font-weight: 800; color: var(--accent-deep); letter-spacing: .08em; }
+  h3 { font-size: clamp(22px, 2.8vw, 29px); line-height: 1.45; margin: 6px 0 14px; font-weight: 800; }
+  .f-text p { margin: 0 0 14px; color: var(--ink-muted); }
+  .checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 9px; }
+  .checks li { position: relative; padding-left: 28px; font-size: 15px; }
+  .checks li::before { content: ""; position: absolute; left: 0; top: 5px; width: 18px; height: 18px; border-radius: 50%; background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5.5 10.5l3 3 6-7' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/14px no-repeat; }
+  .f-visual { display: flex; justify-content: center; gap: 16px; }
+  .f-visual .phone { max-width: 270px; }
+  .f-visual.two .phone { max-width: 230px; }
+  .f-visual.two .phone:nth-child(2) { margin-top: 48px; }
+
+  /* 地図でふりかえる（イラスト） */
+  .map-ill { width: 100%; max-width: 440px; border-radius: 26px; background: #fff; box-shadow: var(--shadow); padding: 14px; }
+  .map-ill svg { width: 100%; height: auto; display: block; border-radius: 16px; }
+  .route { stroke-dasharray: 900; stroke-dashoffset: 900; animation: draw 5s ease-in-out infinite; }
+  @keyframes draw { 0% { stroke-dashoffset: 900; } 60%, 100% { stroke-dashoffset: 0; } }
+  @media (prefers-reduced-motion: reduce) { .route { animation: none; stroke-dashoffset: 0; } }
+
+  /* AIで取り込む（イラスト） */
+  .import-ill { width: 100%; max-width: 440px; display: grid; gap: 12px; }
+  .src-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .src { background: #fff; border-radius: 16px; box-shadow: var(--shadow); padding: 14px 10px; text-align: center; font-size: 13px; font-weight: 700; }
+  .src .ico { margin: 0 auto 6px; }
+  .arrow-down { text-align: center; color: var(--accent-deep); font-weight: 800; font-size: 13px; }
+  .result { background: #fff; border-radius: 18px; box-shadow: var(--shadow); padding: 6px 16px; }
+  .result-row { display: grid; grid-template-columns: 52px 1fr auto; gap: 10px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .result-row:last-child { border-bottom: 0; }
+  .result-row time { font-weight: 800; font-variant-numeric: tabular-nums; }
+  .tag { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+  .tag.move { background: #E8ECFB; color: #4457B8; }
+  .tag.stay { background: #DDF1F2; color: #10707A; }
+  .tag.see { background: #E3F2E6; color: #2F7A45; }
+
+  /* そのほか */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .mini { background: #fff; border-radius: 18px; padding: 20px; box-shadow: var(--shadow); }
+  .mini b { display: block; font-size: 16px; margin: 10px 0 4px; }
+  .mini p { margin: 0; font-size: 13.5px; color: var(--ink-muted); line-height: 1.7; }
+
+  /* 料金 */
+  .price { background: var(--ink); color: #fff; border-radius: 28px; padding: 44px 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 30px; align-items: center; }
+  .price h2 { color: #fff; margin-top: 0; }
+  .price p { color: rgba(255,255,255,.72); margin: 0; }
+  .price-list { display: grid; gap: 10px; }
+  .price-item { display: flex; justify-content: space-between; gap: 12px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 13px 16px; font-size: 14.5px; }
+  .price-item span:last-child { font-weight: 800; color: #7BE6C6; white-space: nowrap; }
+
+  /* よくある質問 */
+  .faq { max-width: 760px; margin: 0 auto; display: grid; gap: 10px; }
+  details { background: #fff; border-radius: 16px; box-shadow: var(--shadow); padding: 4px 20px; }
+  summary { cursor: pointer; font-weight: 800; padding: 15px 0; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "＋"; color: var(--accent-deep); }
+  details[open] summary::after { content: "－"; }
+  details p { margin: 0 0 16px; color: var(--ink-muted); font-size: 14.5px; }
+
+  /* 最後のCTA */
+  .final { text-align: center; padding: 80px 0 96px; }
+  .final h2 { margin-bottom: 10px; }
+  .final p { color: var(--ink-muted); margin: 0 0 26px; }
+  .final .ctas { justify-content: center; }
+
+  footer { border-top: 1px solid var(--border); padding: 28px 0 calc(36px + env(safe-area-inset-bottom)); font-size: 13px; color: var(--ink-soft); }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer a { color: var(--ink-muted); }
+
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }
+
+  @media (max-width: 860px) {
+    .hero { padding: 34px 0 20px; }
+    .hero .wrap, .feature, .price { grid-template-columns: 1fr; }
+    .hero .wrap { gap: 34px; }
+    .hero-visual { max-width: 330px; margin: 0 auto; width: 100%; }
+    .feature { gap: 26px; padding: 26px 0; }
+    .feature.rev .f-text { order: 0; }
+    .points, .grid { grid-template-columns: 1fr; }
+    section.block { padding: 52px 0; }
+    .price { padding: 32px 22px; }
+    .fc-1 { left: -2%; } .fc-2 { right: -2%; }
+    .f-visual.two .phone { max-width: 46%; }
+    .f-visual.two .phone:nth-child(2) { margin-top: 30px; }
+    .phone { border-radius: 34px; padding: 7px; } .phone img { border-radius: 28px; } .phone::after { top: 13px; width: 60px; height: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">旅</span>旅の足跡</a>
+    <a class="top-cta" href="../">ブラウザで使う</a>
+  </div>
+</header>
+
+<main>
+  <!-- ファーストビュー -->
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">家族・友だちとの旅行記録アプリ</span>
+        <h1>あの旅のきろくを、<br><span class="hl">一緒に行った人と</span><br>書き足していく。</h1>
+        <p class="lead">いつ・どこで・何を食べて・いくら使ったか。写真も動画も費用も、旅の1日を時間ごとに残せます。リンクを送るだけで、同行者みんなで見たり書き足したりできます。</p>
+        <div class="ctas">
+          <a class="btn btn-primary" href="../">いますぐブラウザで使う</a>
+          <span class="btn btn-soon" aria-disabled="true"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.7-1-2.7-4.1zM13.9 4.9c.7-.9 1.2-2.1 1.1-3.3-1 0-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.2 1.2.1 2.3-.6 3-1.5z"/></svg>iPhoneアプリは近日公開</span>
+          <span class="cta-note">基本無料・インストール不要。スマホでもパソコンでも、ブラウザでそのまま使えます</span>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <div class="phone"><img src="img/trip-top.jpg" alt="旅行の画面。沖縄 家族旅行の日程・宿泊先・総費用と、1日目のきろく" width="390" height="844"></div>
+        <div class="float-card fc-1"><span class="dot" style="background:#FFF1DC">📸</span>写真も動画も</div>
+        <div class="float-card fc-2"><span class="dot" style="background:var(--accent-soft)">🗺️</span>地図でふりかえる</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <div class="points">
+      <div class="point reveal">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></span>
+        <b>リンクを送るだけ</b><p>見る・書き足すのにログインは要りません。家族のLINEに貼るだけで始められます。</p>
+      </div>
+      <div class="point reveal">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg></span>
+        <b>足跡が地図を走る</b><p>旅のルートが地図の上で動き出して、写真と一緒にもう一度旅をなぞれます。</p>
+      </div>
+      <div class="point reveal">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/></svg></span>
+        <b>割り勘まで1つで</b><p>だれが立て替えたかを入れておけば、帰ってから精算方法まで出してくれます。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 機能 -->
+  <section class="block" id="features">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">FEATURES</div>
+        <h2>旅の「あれ、どこだっけ？」を<br>ぜんぶ残しておける</h2>
+        <p>旅行中のメモから、帰ってからのふりかえり・精算まで。</p>
+      </div>
+
+      <div class="feature reveal">
+        <div class="f-text">
+          <div class="f-num">01 ／ 日ごとのきろく</div>
+          <h3>1日の流れを、<br>時間ごとに残す</h3>
+          <p>「11:00 首里城公園」「12:30 首里そば」のように、予定ごとに写真・ひとこと・費用・★評価をまとめて残せます。</p>
+          <ul class="checks">
+            <li>写真と動画をそのまま添付</li>
+            <li>費用は明細ごとに入れて自動で合計</li>
+            <li>別行動した時間は、記録を分けて並べられる</li>
+            <li>宿泊先・総費用は旅の上にまとめて表示</li>
+          </ul>
+        </div>
+        <div class="f-visual"><div class="phone"><img src="img/timeline.jpg" alt="1日目のきろく。予定ごとに写真・評価・費用の明細が並ぶ" loading="lazy" width="390" height="844"></div></div>
+      </div>
+
+      <div class="feature rev reveal">
+        <div class="f-text">
+          <div class="f-num">02 ／ 地図でふりかえる</div>
+          <h3>旅の足跡が、<br>地図の上を走り出す</h3>
+          <p>記録した場所をつないで、移動手段ごとのアイコンが地図の上を進みます。電車は線路に沿って、飛行機は空を越えて。着いた場所では、その時の写真が出てきます。</p>
+          <ul class="checks">
+            <li>海外の時差をまたぐ旅も、現地時間のまま</li>
+            <li>縦長の動画にして、SNSにそのままシェア</li>
+          </ul>
+        </div>
+        <div class="f-visual">
+          <div class="map-ill" role="img" aria-label="地図の上を旅のルートが伸びていくイラスト">
+            <svg viewBox="0 0 400 300">
+              <rect width="400" height="300" fill="#EAF4F8"/>
+              <path d="M0 210 Q70 190 120 220 T240 230 T400 200 V300 H0Z" fill="#D7EDF5"/>
+              <path d="M40 40 Q120 10 190 50 Q240 80 300 60 Q360 40 380 90 Q390 140 330 160 Q270 180 230 150 Q170 120 120 150 Q60 180 30 130 Q10 80 40 40Z" fill="#F3EFE6"/>
+              <path d="M60 70 L340 70 M80 120 L330 130 M150 40 L170 170 M260 50 L250 175" stroke="#fff" stroke-width="6" opacity=".9"/>
+              <path class="route" d="M70 110 C110 60 160 70 190 95 S250 140 280 105 S330 80 345 120" fill="none" stroke="#2F6BFF" stroke-width="6" stroke-linecap="round"/>
+              <g><circle cx="70" cy="110" r="9" fill="#fff" stroke="#00BF8F" stroke-width="4"/><circle cx="190" cy="95" r="9" fill="#fff" stroke="#00BF8F" stroke-width="4"/><circle cx="280" cy="105" r="9" fill="#fff" stroke="#00BF8F" stroke-width="4"/><circle cx="345" cy="120" r="9" fill="#00BF8F" stroke="#fff" stroke-width="3"/></g>
+              <g transform="translate(232 196)"><rect width="150" height="64" rx="12" fill="#fff"/><rect x="8" y="8" width="48" height="48" rx="8" fill="#2EC4B6"/><path d="M8 44 Q30 34 56 46 V56 H8Z" fill="#F3E2B8"/><text x="66" y="28" font-size="12" font-weight="700" fill="#1C1E21">美ら海水族館</text><text x="66" y="46" font-size="11" fill="#6B7280">2日目 09:30</text></g>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature reveal">
+        <div class="f-text">
+          <div class="f-num">03 ／ まとめて取り込む</div>
+          <h3>スクショ・声・メモから、<br>予定をまとめて作る</h3>
+          <p>航空券やホテル予約のスクショ、旅のあとに話した声、メモ帳の箇条書き。AIが日付・時刻・場所ごとの予定に分けて、確認画面に並べます。直してから追加するだけ。</p>
+          <ul class="checks">
+            <li>航空券・ホテル・きっぷ・乗換案内のスクショに対応</li>
+            <li>話していない・書いていないことは推測で埋めない</li>
+            <li>レシートを撮れば、費用の明細に</li>
+          </ul>
+        </div>
+        <div class="f-visual">
+          <div class="import-ill" aria-hidden="true">
+            <div class="src-row">
+              <div class="src"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg></span>スクショ</div>
+              <div class="src"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>声で話す</div>
+              <div class="src"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>メモ</div>
+            </div>
+            <div class="arrow-down">▼ 予定に分けて並べる</div>
+            <div class="result">
+              <div class="result-row"><time>08:05</time><span>羽田 → 那覇（飛行機）</span><span class="tag move">移動</span></div>
+              <div class="result-row"><time>11:00</time><span>首里城公園</span><span class="tag see">観光</span></div>
+              <div class="result-row"><time>15:00</time><span>恩納村のホテル（2泊）</span><span class="tag stay">宿泊</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature rev reveal">
+        <div class="f-text">
+          <div class="f-num">04 ／ 割り勘・精算</div>
+          <h3>「だれがいくら払う？」を<br>旅のあとに悩まない</h3>
+          <p>費用ごとに「払った人」と「割る人」を選んでおくだけ。送金の回数がいちばん少なくなる精算方法を出します。</p>
+          <ul class="checks">
+            <li>端数は1円・10円・100円単位で丸められる</li>
+            <li>外貨の支払いも、その日のレートで円に換算</li>
+            <li>立て替えた分だけを集計（個人の記録は混ざらない）</li>
+          </ul>
+        </div>
+        <div class="f-visual"><div class="phone"><img src="img/settle.jpg" alt="精算の画面。貸し借りと、みほからゆうとへ19,800円という精算方法" loading="lazy" width="390" height="844"></div></div>
+      </div>
+
+      <div class="feature reveal">
+        <div class="f-text">
+          <div class="f-num">05 ／ マイログ・旅先一覧</div>
+          <h3>行った都道府県・国が、<br>地図に塗られていく</h3>
+          <p>参加した旅行の記録から、行ったことのある都道府県と国を自動で集計。★をつけたごはん・宿・アクティビティは、旅をまたいで「飯ログ」「ほてログ」として見返せます。</p>
+          <ul class="checks">
+            <li>乗り継ぎで立ち寄っただけの国は数えない</li>
+            <li>違う場所は「外す」でいつでも直せる</li>
+            <li>評価は自分だけに見える記録</li>
+          </ul>
+        </div>
+        <div class="f-visual two">
+          <div class="phone"><img src="img/visited.jpg" alt="行ったことある旅先。15/47都道府県が日本地図に塗られている" loading="lazy" width="390" height="844"></div>
+          <div class="phone"><img src="img/visited-overseas.jpg" alt="海外の旅先。7か国が世界地図に塗られている" loading="lazy" width="390" height="844"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- そのほか -->
+  <section class="block" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">AND MORE</div>
+        <h2>ほかにも、旅にうれしい機能</h2>
+      </div>
+      <div class="grid">
+        <div class="mini reveal"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><b>時差をまたいでも正しい順番</b><p>海外の予定は、地図の場所から現地の時刻で並びます。時差の境目には区切りが入ります。</p></div>
+        <div class="mini reveal"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M6 4h11l-2 4 2 4H6"/></svg></span><b>別行動もそのまま残る</b><p>「午後だけ美術館へ」のような、ひとりだけ違う道も、その人の道として切り替えて見られます。</p></div>
+        <div class="mini reveal"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg></span><b>みんなで★評価</b><p>同じお店でも、同行者それぞれが★をつけられます。旅行としては平均点で表示。</p></div>
+        <div class="mini reveal"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16v12H4z"/><path d="M8 7V5h8v2"/></svg></span><b>宿泊先を泊まる夜ごとに</b><p>「1〜2泊目はこの宿、3泊目は同上」のように、泊まった宿を夜ごとに整理できます。</p></div>
+        <div class="mini reveal"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 16l-5-5-8 8"/></svg></span><b>アルバムで写真を一気に</b><p>旅行中に撮った写真・動画を、日付順のアルバムでまとめて見返せます。</p></div>
+        <div class="mini reveal"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 15v4h14v-4"/></svg></span><b>ログインは必要なときだけ</b><p>評価やマイログを使うときだけログイン。見る・書き足すだけならアカウントは要りません。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 料金 -->
+  <section class="block" style="padding-top:0">
+    <div class="wrap">
+      <div class="price reveal">
+        <div>
+          <div class="kicker" style="color:#7BE6C6;font-size:12.5px;font-weight:800;letter-spacing:.14em">PRICE</div>
+          <h2>基本無料で、ずっと使える</h2>
+          <p>旅行の記録・共有・地図でふりかえる・精算は、回数の制限なく無料です。AIを使う取り込みだけ、毎月の回数があります。</p>
+        </div>
+        <div class="price-list">
+          <div class="price-item"><span>旅行の記録・写真・動画・共有</span><span>無料</span></div>
+          <div class="price-item"><span>地図でふりかえる・動画でシェア</span><span>無料</span></div>
+          <div class="price-item"><span>割り勘・精算・マイログ</span><span>無料</span></div>
+          <div class="price-item"><span>声で記録する（AI）</span><span>月10回まで無料</span></div>
+          <div class="price-item"><span>メモ・スクショの取り込み（AI）</span><span>月10回まで無料</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- よくある質問 -->
+  <section class="block" style="padding-top:0">
+    <div class="wrap">
+      <div class="sec-head reveal"><div class="kicker">FAQ</div><h2>よくある質問</h2></div>
+      <div class="faq">
+        <details class="reveal"><summary>一緒に行った人も、アプリを入れる必要がありますか？</summary><p>いいえ。旅行のリンクを送れば、アプリが無くてもブラウザでそのまま見たり書き足したりできます。ログインも要りません。</p></details>
+        <details class="reveal"><summary>写真や記録は、知らない人に見られませんか？</summary><p>旅行の記録は、その旅行のリンクを知っている人だけが見られる仕組みです。リンクを知っている人は書き足しもできるので、一緒に行った人どうしで送り合ってください。</p></details>
+        <details class="reveal"><summary>アプリのインストールは必要ですか？</summary><p>いいえ。iPhone・Android・パソコンのどれでも、ブラウザ版（<a href="../">tabinoashiato.pages.dev</a>）ですべての機能が使えます。iPhoneアプリは近日公開予定です。</p></details>
+        <details class="reveal"><summary>AIに送ったデータはどうなりますか？</summary><p>声・メモ・スクショの取り込みとレシートの読み取りは、使う前に確認を出してから送ります。送った内容がAIの学習に使われることはありません。詳しくは<a href="../privacy.html">プライバシーポリシー</a>をご覧ください。</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="wrap reveal">
+      <h2>次の旅から、足跡を残そう。</h2>
+      <p>旅行を作って、リンクを家族に送るだけ。</p>
+      <div class="ctas">
+        <a class="btn btn-primary" href="../">いますぐブラウザで使う</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 旅の足跡</span>
+    <span><a href="../privacy.html">プライバシーポリシー</a></span>
+  </div>
+</footer>
+
+<script>
+  // スクロールで表示（IntersectionObserverが無い環境ではそのまま表示）
+  (function () {
+    var els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, { rootMargin: '0px 0px -8% 0px' });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>
+</body>
+</html>

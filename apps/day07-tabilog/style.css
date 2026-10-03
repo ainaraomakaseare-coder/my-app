@@ -355,6 +355,14 @@ a:hover { text-decoration: underline; }
   background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow);
   padding: 16px; display: flex; flex-direction: column; gap: 10px;
 }
+/* ホームの旅行カード（写真を大きく＋下に文字）と同じ形のスケルトン */
+.skeleton-card-trip { padding: 0; gap: 0; overflow: hidden; }
+.skeleton-photo {
+  height: 140px;
+  background: linear-gradient(90deg, var(--border-soft) 25%, var(--border) 37%, var(--border-soft) 63%);
+  background-size: 400% 100%; animation: skeleton-shimmer 1.4s ease infinite;
+}
+.skeleton-info { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
 .skeleton-line {
   height: 12px; border-radius: 6px;
   background: linear-gradient(90deg, var(--border-soft) 25%, var(--border) 37%, var(--border-soft) 63%);
@@ -368,7 +376,7 @@ a:hover { text-decoration: underline; }
   100% { background-position: 0 50%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .skeleton-line { animation: none; background: var(--border-soft); }
+  .skeleton-line, .skeleton-photo { animation: none; background: var(--border-soft); }
 }
 
 /* ---------- trip detail header ---------- */
@@ -790,12 +798,13 @@ a:hover { text-decoration: underline; }
    ブラウザ標準のまま、横方向のジェスチャーだけJS側へ渡す（2026-09-29〜、docs/adr/0018）。
    画面内に横スクロールする子要素は無いので、ここに付けても他の操作とはぶつからない。 */
 .screen[data-screen="visited"] { touch-action: pan-y; }
-.visited-tabs { display: flex; gap: 6px; padding: 10px 0 4px; }
-.visited-tab { flex: 1; padding: 9px 0; border-radius: 999px; text-align: center; color: var(--ink-muted); font-size: 13px; font-weight: 700; background: var(--border-soft); }
+/* 国内／海外は、ホームのカードと同じ白地・影のセグメント（選んだ側だけアクセント色） */
+.visited-tabs { display: flex; gap: 4px; margin: 10px 0 4px; padding: 4px; border-radius: 999px; background: var(--card); box-shadow: var(--card-shadow); }
+.visited-tab { flex: 1; padding: 9px 0; border-radius: 999px; text-align: center; color: var(--ink-muted); font-size: 13px; font-weight: 700; background: transparent; }
 .visited-tab.on { background: var(--accent); color: white; }
 
 /* 集計カード（大きい数字＋ドーナツ）。行ったことある旅先の一番上、地図より前に出す */
-.visited-totals { display: flex; align-items: center; gap: 14px; margin: 12px 0 6px; padding: 12px 14px; border-radius: 14px; background: var(--card); box-shadow: var(--card-shadow); }
+.visited-totals { display: flex; align-items: center; gap: 14px; margin: 12px 0 12px; padding: 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--card-shadow); }
 .visited-donut { width: 64px; height: 64px; flex: none; }
 .visited-donut-bg { stroke: var(--visited-unfilled); }
 .visited-donut-fg { stroke: var(--accent); transition: stroke-dashoffset .3s ease; }
@@ -806,7 +815,7 @@ a:hover { text-decoration: underline; }
 .visited-totals-unit { font-size: 13px; font-weight: 500; color: var(--ink-muted); }
 .visited-totals-pct { font-size: 12.5px; color: var(--ink-muted); }
 
-.visited-map { display: flex; justify-content: center; padding: 10px 0; background: var(--visited-map-bg); border-radius: 14px; margin-top: 4px; }
+.visited-map { display: flex; justify-content: center; padding: 10px 0; background: var(--card); box-shadow: var(--card-shadow); border-radius: var(--radius-card); margin-top: 4px; }
 .visited-svg { width: 100%; max-width: 340px; height: auto; }
 .visited-region { fill: var(--visited-unfilled); stroke: #FFFFFF; stroke-width: .5; }
 .visited-region.is-visited { fill: var(--accent); cursor: pointer; }
@@ -816,7 +825,7 @@ a:hover { text-decoration: underline; }
 /* 選択サマリー（地図タップでも一覧の行ハイライトと同じ場所がひと目で分かるように、
    小さな見出し「選んだ場所」付きのカードにした。一覧の行の強調と役割が分かれて見えるよう、
    アクセント色の枠だけで背景は控えめにする。2026-09-28〜 */
-.visited-caption { margin: 4px 0 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--accent); background: var(--card); }
+.visited-caption { margin: 10px 0 10px; padding: 12px 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--card-shadow); }
 .visited-caption-label { font-size: 10.5px; font-weight: 700; color: var(--accent-deep); letter-spacing: .02em; }
 .visited-caption-name { font-size: 14.5px; font-weight: 700; color: var(--ink); margin-top: 2px; }
 .visited-caption-trips { font-size: 12.5px; color: var(--ink-muted); margin-top: 3px; }
@@ -836,12 +845,12 @@ a:hover { text-decoration: underline; }
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   padding: 0 4px 8px; border-bottom: 1px solid var(--border-soft);
 }
-.visited-group-title { font-size: 17px; font-weight: 700; color: var(--ink); }
+.visited-group-title { font-size: 16px; font-weight: 700; color: var(--ink); }
 .visited-group-count { font-size: 12.5px; font-weight: 600; color: var(--ink-muted); }
-.visited-list { display: flex; flex-direction: column; }
-.visited-row { display: flex; flex-direction: column; gap: 3px; padding: 10px 4px; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+.visited-list { display: flex; flex-direction: column; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 4px 16px; overflow: hidden; }
+.visited-row { display: flex; flex-direction: column; gap: 3px; padding: 12px 0; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
 .visited-group:last-child .visited-row:last-child { border-bottom: none; }
-.visited-row.on { background: var(--accent-soft-bg); }
+.visited-row.on { background: var(--accent-soft-bg); margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
 .visited-row-name { font-size: 15px; font-weight: 700; color: var(--ink); }
 .visited-row-flag { margin-right: 4px; }
 .visited-row-trips { font-size: 13px; color: var(--ink-muted); }
@@ -1508,3 +1517,24 @@ body.viewer-open { overflow: hidden; }
 .branch-block-note { color: var(--accent-deep); font-weight: 700; }
 .replay-viewer { margin-top: 2px; font-size: 11px; font-weight: 700; color: var(--ink-muted); }
 #branchSheet .sheet { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* ---------- 読み込み→表示の動き（ホーム・タブ切り替えとそろえる。2026-10-01〜） ----------
+   スケルトンから中身に入れ替わった区画だけ、タブ切り替えと同じ.22sのフェード（tab-switch-in）を1回かける。
+   裏の取り直しで中身が変わったときはその場で静かに入れ替える（app.jsのrenderSection・fadeInOnce）。 */
+.fade-in-once { animation: tab-switch-in .22s ease both; }
+@keyframes visited-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.visited-fade { animation: visited-fade-in .22s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .fade-in-once, .visited-fade { animation: none; }
+}
+/* 地図の枠は描く前から縦横比で高さを確保する（地図が出ても下の一覧が動かない） */
+.visited-map-ph { width: 100%; max-width: 340px; border-radius: var(--radius-control); background: var(--border-soft); }
+.visited-map-ph.skeleton-photo { height: auto; }
+.visited-skeleton { margin-top: 12px; gap: 12px; }
+.visited-skeleton-totals { height: 96px; box-sizing: border-box; justify-content: center; }
+.visited-skeleton .visited-map { margin-top: 0; }
+/* プロフィール：集計・残り回数は、読み込み前から高さを確保しておく */
+.profile-stats { min-height: 16px; }
+.plan-status { min-height: 46px; }
+/* プロフィールカードの出現アニメーションはタブ切り替えのフェードと二重になるため付けない */
+.profile-card { animation: none; }

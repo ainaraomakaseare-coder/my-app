@@ -2903,5 +2903,29 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('replayRouteFractions: 区間が無くても落ちない', T.replayRouteFractions({ legs: [] }, 5), []);
 })();
 
+/* ---- /mylogの前回結果キャッシュ（stale-while-revalidate） ---- */
+(function () {
+  eq('myLogCacheKey: メールは小文字にそろえる', T.myLogCacheKey({ email: ' A@B.com ' }), T.MYLOG_CACHE_PREFIX + 'a@b.com');
+  eq('myLogCacheKey: accountIdがあればそちら', T.myLogCacheKey({ accountId: 'X1', email: 'a@b.com' }), T.MYLOG_CACHE_PREFIX + 'x1');
+  eq('myLogCacheKey: 別アカウントは別キー', T.myLogCacheKey({ email: 'a@b.com' }) !== T.myLogCacheKey({ email: 'c@d.com' }), true);
+  eq('myLogCacheKey: ユーザー無しは空', T.myLogCacheKey(null), '');
+  var d1 = { items: [{ id: 1 }], trips: [{ id: 't' }], places: { prefectures: ['東京'] } };
+  var d2 = JSON.parse(JSON.stringify(d1));
+  ok('sameMyLogData: 同じ内容はtrue', T.sameMyLogData(d1, d2));
+  d2.places.prefectures.push('大阪');
+  ok('sameMyLogData: 場所が増えたらfalse', !T.sameMyLogData(d1, d2));
+  ok('sameMyLogData: 片方無しはfalse', !T.sameMyLogData(null, d1));
+  eq('myLogFreshness: 覚え無し', T.myLogFreshness(null, 1000, false), 'none');
+  eq('myLogFreshness: 新しい', T.myLogFreshness({ data: d1, fetchedAt: 1000 }, 1000 + 59000, false), 'fresh');
+  eq('myLogFreshness: 古い', T.myLogFreshness({ data: d1, fetchedAt: 1000 }, 1000 + 60000, false), 'stale');
+  eq('myLogFreshness: 書き込み後(dirty)は新しくても古い扱い', T.myLogFreshness({ data: d1, fetchedAt: 1000 }, 1500, true), 'stale');
+  eq('myLogFreshness: 時計が戻っていたら古い扱い', T.myLogFreshness({ data: d1, fetchedAt: 5000 }, 1000, false), 'stale');
+  var str = T.serializeMyLogCache(d1, 123);
+  eq('serialize/parse: 往復できる', T.parseMyLogCache(str), { data: d1, fetchedAt: 123 });
+  eq('parseMyLogCache: 壊れた文字列はnull', T.parseMyLogCache('{oops'), null);
+  eq('parseMyLogCache: 形が違うらしいものはnull', T.parseMyLogCache('{"v":2}'), null);
+  eq('serializeMyLogCache: 大きすぎたらnull', T.serializeMyLogCache({ items: [new Array(1600000).join('x')] }, 1), null);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
