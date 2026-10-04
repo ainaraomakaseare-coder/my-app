@@ -2764,10 +2764,96 @@
     return tripDates.filter(function (d) { return d.slice(5) === md && (!m[1] || d.slice(0, 4) === m[1]); })[0] || null;
   }
 
+  // ---------- 移動の見出しの読み取り（出発地・到着地・手段・到着時刻） ----------
+  // 「羽田から那覇へ」「東京→新大阪（9:53着）」「ホテルから空港へ」のような見出しを読む。
+  // 推測は控えめにする：駅や空港という言葉だけでは移動にしない（「駅でランチ」「空港見学」は移動ではない）
+  var ROUTE_TAIL = '(?:\\s*(?:[A-Za-z]{2,3}\\s?\\d{1,4}便?|新幹線|在来線|特急|電車|バス|飛行機|フェリー|船|タクシー|車|移動|\\S{0,8}号|\\S{0,6}便))*';
+  var ROUTE_FROM_TO_RE = new RegExp('^(.+?)\\s*から\\s*(.+?)\\s*へ' + ROUTE_TAIL + '$');
+  var ROUTE_ARROW_RE = /^(.+?)\s*(?:→|->|=>|⇒|⇨)\s*(.+)$/;
+  var ROUTE_WAVE_RE = /^(.+?)\s*[〜~]\s*(.+)$/;
+  var ROUTE_WORD_RE = /新幹線|在来線|特急|電車|フェリー|船|空港[発着]|バス|飛行機|フライト|タクシー|レンタカー|便/;
+
+  function cleanRoutePlace(text) {
+    return String(text || '')
+      .replace(/[(（][^)）]*[)）]/g, '')
+      .replace(/\s*\d{1,2}:\d{2}\s*[発着]?\s*$/, '')
+      .replace(/(?:を|に|で)?(?:出発|到着)$/, '')
+      .replace(/[発着]$/, '')
+      .replace(/^[\s、,：:・\-]+|[\s、,：:・\-]+$/g, '')
+      .trim().slice(0, 60);
+  }
+
+  // 戻り値 { route:'strict'|'loose'|'', fromPlace, toPlace, arriveTime, mode }。routeが空なら移動の形ではない
+  function parseTransportLabel(label) {
+    var raw = String(label || '').normalize('NFKC').trim();
+    var res = { route: '', fromPlace: '', toPlace: '', arriveTime: '', mode: '' };
+    if (!raw) return res;
+    var at = /(\d{1,2}):(\d{2})\s*着/.exec(raw) || /着\s*[:：]?\s*(\d{1,2}):(\d{2})/.exec(raw);
+    if (at && Number(at[1]) <= 23 && Number(at[2]) <= 59) res.arriveTime = String(Number(at[1])).padStart(2, '0') + ':' + at[2];
+    // かっこ書き（時刻・便名など）と「9:53着」を除いた本体
+    var core = raw.replace(/[(（][^)）]*[)）]/g, ' ').replace(/\d{1,2}:\d{2}\s*着/g, ' ').replace(/\s+/g, ' ').trim();
+    var m = ROUTE_FROM_TO_RE.exec(core);
+    if (m && cleanRoutePlace(m[1]) && cleanRoutePlace(m[2])) {
+      res.route = 'strict'; res.fromPlace = cleanRoutePlace(m[1]); res.toPlace = cleanRoutePlace(m[2]);
+    } else if ((m = ROUTE_ARROW_RE.exec(core)) && cleanRoutePlace(m[1]) && cleanRoutePlace(m[2])) {
+      res.route = 'strict'; res.fromPlace = cleanRoutePlace(m[1]); res.toPlace = cleanRoutePlace(m[2]);
+    } else if ((m = ROUTE_WAVE_RE.exec(core)) && cleanRoutePlace(m[1]) && cleanRoutePlace(m[2]) && (res.arriveTime || ROUTE_WORD_RE.test(raw))) {
+      // 「渋谷〜原宿散策」のような範囲の〜と区別するため、到着時刻か移動の言葉があるときだけ
+      res.route = 'strict'; res.fromPlace = cleanRoutePlace(m[1]); res.toPlace = cleanRoutePlace(m[2]);
+    } else if (/へ$/.test(core) && core.length > 1) {
+      res.route = 'loose'; res.toPlace = cleanRoutePlace(core.replace(/へ$/, ''));
+    } else if ((m = /^(.+?)\s*から\s*(?:新幹線|在来線|特急|電車|バス|飛行機|フェリー|船|タクシー)/.exec(core)) && cleanRoutePlace(m[1])) {
+      res.route = 'loose'; res.fromPlace = cleanRoutePlace(m[1]);
+    }
+    if (res.route && res.fromPlace && res.fromPlace === res.toPlace) res.fromPlace = '';
+    res.mode = guessTransportMode(raw);
+    return res;
+  }
+
+  // 見出しから移動手段を推測する（分からなければ''）。駅だけでは電車にしない
+  function guessTransportMode(label) {
+    var s = String(label || '').normalize('NFKC');
+    if (/新幹線/.test(s)) return 'shinkansen';
+    if (/電車|在来線|特急|JR|地下鉄|モノレール/.test(s)) return 'train';
+    if (/飛行機|フライト|JAL|ANA|便/.test(s)) return 'plane';
+    if (/空港.*(?:から|→|->).*空港/.test(s)) return 'plane';
+    if (/バス/.test(s)) return 'bus';
+    if (/タクシー|Uber/i.test(s)) return 'taxi';
+    if (/レンタカー|ドライブ|車/.test(s)) return 'car';
+    if (/徒歩/.test(s)) return 'walk';
+    return ''; // フェリー・船は選べる手段が無いので空
+  }
+
+  // 「到着：9:53」「9:53着」のような行から到着時刻を探す（記録の文章から）
+  function findArriveTimeInLines(text) {
+    var lines = String(text || '').normalize('NFKC').split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      var m = /^\s*(?:到着|着)\s*[:：]?\s*(\d{1,2}):(\d{2})/.exec(lines[i]) || /(\d{1,2}):(\d{2})\s*着/.exec(lines[i]);
+      if (m && Number(m[1]) <= 23 && Number(m[2]) <= 59) return String(Number(m[1])).padStart(2, '0') + ':' + m[2];
+    }
+    return '';
+  }
+
+  // 出発・到着のHH:MMから所要分を出す。到着が出発より前なら翌日とみなす（12時間未満のときだけ）。
+  // 戻り値 { minutes, nextDay }。出せなければminutes=0
+  function moveMinutesBetween(dep, arr) {
+    var d = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(dep || ''), a = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(arr || '');
+    if (!d || !a) return { minutes: 0, nextDay: false };
+    var diff = (Number(a[1]) * 60 + Number(a[2])) - (Number(d[1]) * 60 + Number(d[2]));
+    if (diff > 0) return { minutes: diff, nextDay: false };
+    if (diff < 0 && diff + 1440 < 720) return { minutes: diff + 1440, nextDay: true };
+    return { minutes: 0, nextDay: false };
+  }
+
   function guessMemoCategory(label) {
-    if (/ホテル|旅館|宿|チェックイン|チェックアウト|泊/.test(label)) return 'lodging';
-    if (/ランチ|昼食|夕食|朝食|朝ごはん|昼ごはん|夜ごはん|ご飯|ごはん|ディナー|カフェ|そば|ラーメン|寿司|すし|焼肉|居酒屋|レストラン|食べ|飲み/.test(label)) return 'food';
-    if (/移動|新幹線|飛行機|フライト|便|バス|電車|タクシー|レンタカー|ドライブ/.test(label) || /へ$/.test(label)) return 'transport';
+    var s = String(label || '').normalize('NFKC');
+    var tl = parseTransportLabel(s);
+    // 「A から B へ」「A→B」の形は、ホテル・食事の言葉が入っていても移動にする（「ホテルから空港へ」）。
+    // ただしチェックイン・宿泊の言葉があるときは宿を優先する
+    if (tl.route === 'strict' && !/チェックイン|チェックアウト|泊/.test(s)) return 'transport';
+    if (/ホテル|旅館|宿|チェックイン|チェックアウト|泊/.test(s)) return 'lodging';
+    if (/ランチ|昼食|夕食|朝食|朝ごはん|昼ごはん|夜ごはん|ご飯|ごはん|ディナー|カフェ|そば|ラーメン|寿司|すし|焼肉|居酒屋|レストラン|食べ|飲み/.test(s)) return 'food';
+    if (/移動|新幹線|飛行機|フライト|便|バス|電車|タクシー|レンタカー|ドライブ/.test(s) || tl.route) return 'transport';
     return 'sightseeing';
   }
 
@@ -2902,6 +2988,20 @@
       if (typeof raw.time === 'string' && raw.time && IMPORT_TIME_RE.test(raw.time)) time = raw.time;
       else if (raw.time) warnings.push(n + '件目「' + label + '」：timeの形式が正しくないため空にしました。');
 
+      // 移動のときだけ、到着時刻（arriveTime）と所要時間（moveMinutes、分）も受け付ける
+      var arriveTime = '', moveMinutes = 0;
+      if (category === 'transport') {
+        if (typeof raw.arriveTime === 'string' && raw.arriveTime) {
+          if (IMPORT_TIME_RE.test(raw.arriveTime)) arriveTime = raw.arriveTime;
+          else warnings.push(n + '件目「' + label + '」：arriveTimeの形式が正しくないため空にしました。');
+        }
+        if (raw.moveMinutes !== undefined && raw.moveMinutes !== null && raw.moveMinutes !== '') {
+          var mm = Number(raw.moveMinutes);
+          if (isFinite(mm) && mm > 0 && mm <= 14400) moveMinutes = Math.round(mm);
+          else warnings.push(n + '件目「' + label + '」：moveMinutesが正しくないため空にしました。');
+        }
+      }
+
       var entryData = (raw.entry && typeof raw.entry === 'object') ? raw.entry : {};
       var episode = typeof entryData.episode === 'string' ? entryData.episode.trim().slice(0, 4000) : '';
       var mapUrl = typeof entryData.mapUrl === 'string' ? entryData.mapUrl.trim().slice(0, 500) : '';
@@ -2933,10 +3033,13 @@
         });
       }
 
-      blocks.push({
+      var parsedBlock = {
         date: date, time: time, label: label, category: category, transport: transport,
         entry: { episode: episode, mapUrl: mapUrl, shopUrl: shopUrl, costItems: costItems }
-      });
+      };
+      if (arriveTime) parsedBlock.arriveTime = arriveTime;
+      if (moveMinutes) parsedBlock.moveMinutes = moveMinutes;
+      blocks.push(parsedBlock);
     });
 
     return { blocks: blocks, warnings: warnings, errors: errors, outOfRange: outOfRange };
@@ -2960,6 +3063,8 @@
         label: '東京駅',
         category: 'transport',
         transport: 'shinkansen',
+        arriveTime: '12:30',
+        moveMinutes: 150,
         entry: {
           episode: '新幹線で移動した',
           mapUrl: '',
@@ -2984,6 +3089,7 @@
       'ルール：',
       '- categoryは次のいずれか一つだけ：' + categoryList,
       '- transportは移動手段がはっきり分かるときだけ次のいずれかを入れ、分からなければ空文字（""）にする：' + transportList,
+      '- 移動（transport）で到着時刻が分かるときだけ、arriveTime（"HH:MM"）と、所要時間moveMinutes（分の整数。出発から到着までの時間）を入れる。分からなければ省略する（推測で作らない）',
       '- timeは24時間表記の"HH:MM"（例："09:30"）。はっきりしなければ空文字（""）にする（推測で作らない）',
       '- entry.costItemsは、具体的な金額が書かれているものだけ配列で入れる（無ければ空配列[]）。amountは円の整数（小数点なし）。海外通貨で書かれているときだけcurrency（ISO 4217、例："USD"）を付け、amountはその通貨での金額（例：12.5）にする',
       '- entry.episodeには、メモの内容をもとにした説明を書く（メモに書かれていないことを推測で付け足さない）',
@@ -3743,6 +3849,7 @@
         p.from = it.fromPlace || ''; p.to = it.toPlace || '';
         p.company = [it.company, it.routeNumber].filter(Boolean).join(' ');
         p.depart = time; p.arrive = it.arriveTime || '';
+        if (it.moveMinutes > 0) p.moveMinutes = Math.round(it.moveMinutes); // サーバーは受け取らないので、保存後にクライアントが予定へ書き足す
         if (it.arriveMapUrl) { p.arriveMapUrl = it.arriveMapUrl; p.arriveLat = it.arriveLat; p.arriveLng = it.arriveLng; }
       }
       out.push(p);
@@ -3818,6 +3925,24 @@
         departTime: '', arriveTime: '', arriveDate: b.date || '',
         costItems: costs, note: episode, warnings: [], timeEstimated: false, nightIndex: 0
       };
+      if (item.category === 'transport') {
+        // 見出しの「A から B へ」「A→B（9:53着）」と、記録の「到着：9:53」から、出発地・到着地・手段・到着時刻・所要時間を埋める
+        var tl = parseTransportLabel(label);
+        if (!item.transport) item.transport = tl.mode;
+        item.fromPlace = tl.fromPlace; item.toPlace = tl.toPlace;
+        var arr = (/^([01]\d|2[0-3]):[0-5]\d$/.test(b.arriveTime || '') ? b.arriveTime : '') || tl.arriveTime || findArriveTimeInLines(episode);
+        if (arr) {
+          item.arriveTime = arr;
+          var span = moveMinutesBetween(item.time, arr);
+          if (span.minutes) {
+            item.moveMinutes = span.minutes;
+            if (span.nextDay && parseDate(item.date)) item.arriveDate = addDaysToDate(item.date, 1);
+          }
+        }
+        var givenMove = Math.round(Number(b.moveMinutes));
+        if (givenMove > 0 && givenMove <= 14400) item.moveMinutes = givenMove;
+        if (item.time) item.departTime = item.time;
+      }
       if (url && GOOGLE_MAP_URL_RE.test(url)) item.mapUrl = url;
       var shop = String(entry.shopUrl || '').trim() || (url && !item.mapUrl && /^https?:\/\//.test(url) ? url : '');
       if (shop && /^https?:\/\/\S+$/.test(shop)) item.shopUrl = shop;
@@ -3899,6 +4024,10 @@
   var Core = {
     parseCostsFromLine: parseCostsFromLine,
     memoBlocksToProposals: memoBlocksToProposals,
+    parseTransportLabel: parseTransportLabel,
+    guessTransportMode: guessTransportMode,
+    moveMinutesBetween: moveMinutesBetween,
+    guessMemoCategory: guessMemoCategory,
     importTargetBranch: importTargetBranch,
     proposalDateStatus: proposalDateStatus,
     planTripRangeFit: planTripRangeFit,
@@ -7163,10 +7292,13 @@
     var isArrive = which === 'arrive';
     var name = isArrive ? item.arrivePlaceName : item.mapPlaceName;
     var given = isArrive ? item.toPlace : (item.category === 'transport' ? item.fromPlace : item.place);
-    var query = given || (isArrive ? '' : item.label) || '';
+    // 移動の見出し（「羽田から那覇へ」）がそのまま検索語にならないよう、見出しから出発地・到着地を取り出す
+    var tl = item.category === 'transport' ? Core.parseTransportLabel(item.label) : null;
+    var guess = isArrive ? (tl ? tl.toPlace : '') : (tl ? (tl.route ? tl.fromPlace : item.label) : item.label);
+    var query = given || guess || '';
     var label = isArrive ? '到着地' : (item.category === 'transport' ? '出発地' : '場所');
     var hasMap = isArrive ? !!item.arriveMapUrl : !!item.mapUrl;
-    if (isArrive && !name && !given) return '';
+    if (isArrive && !name && !given && !query) return '';
     var shown = name ? '<strong>' + escapeHtml(name) + '</strong>'
       : (hasMap ? '<span>メモのURLの地図</span>'
         : '<span class="ss-nomap">' + (given ? escapeHtml(given) + '（地図なし）' : '地図なし') + '</span>');
@@ -7453,6 +7585,24 @@
     return map[msg] || '追加に失敗しました。もう一度お試しください。';
   }
 
+  // 保存した予定（サーバーの返したblocks）に、候補のmoveMinutesを書き足す。
+  // 日付・時刻・見出しが同じ候補を探して合わせる（同じものが複数あれば先頭から順に）
+  function ssSaveMoveMinutes(blocks, items) {
+    var pending = items.filter(function (p) { return p.category === 'transport' && p.moveMinutes > 0; });
+    var jobs = [];
+    blocks.forEach(function (b) {
+      for (var i = 0; i < pending.length; i++) {
+        var p = pending[i];
+        if (p.date === b.date && (p.time || '') === (b.time || '') && p.label === b.label) {
+          pending.splice(i, 1);
+          jobs.push(api('/blocks/' + encodeURIComponent(b.id), 'PATCH', { moveMinutes: p.moveMinutes }));
+          return;
+        }
+      }
+    });
+    return Promise.all(jobs);
+  }
+
   function handleSsSave() {
     var s = ssState();
     var user = loadCurrentUser();
@@ -7474,6 +7624,11 @@
       // 文字起こし（音声・メモのAI）は、追加したときにその日の欄へ残す（別行動では残さない）
       if (s.transcript && s.transcriptDate && !s.branch) { body.transcript = s.transcript; body.transcriptDate = s.transcriptDate; }
       return api('/trips/' + encodeURIComponent(state.trip.id) + '/import-blocks', 'POST', body)
+        .then(function (res) {
+          // 取り込みのAPIは移動時間（moveMinutes）を保存しないので、移動の予定には保存後に書き足す。
+          // 失敗しても予定の追加は成功のまま（所要時間は予定の編集で入れられる）
+          return ssSaveMoveMinutes(res.blocks || [], payload.items).catch(function () {}).then(function () { return res; });
+        })
         .then(function (res) { return refreshTrip().then(function () { return { res: res, failed: failedCurrencies }; }); });
     }).then(function (r) {
       var first = payload.items.map(function (p) { return p.date; }).sort()[0];
@@ -8776,7 +8931,7 @@
     card.innerHTML =
       (canMove
         ? '<div class="entry-card-head">' +
-            '<button type="button" class="entry-move-btn" aria-label="別の予定に移動">' + MOVE_ICON + '<span>移動</span></button>' +
+            '<button type="button" class="entry-move-btn" aria-label="この記録を別の予定へ移す">' + MOVE_ICON + '<span>別の予定へ</span></button>' +
             '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
           '</div>' +
           '<div class="entry-move-menu" hidden></div>'
@@ -8836,28 +8991,39 @@
     var targets = currentDayBlocks().filter(function (b) {
       return b.id !== currentBlockId && (b.branchId || '') === ((currentBlock && currentBlock.branchId) || '');
     });
+    var closeBtnHtml = '<button type="button" class="entry-move-cancel">キャンセル</button>';
     if (!targets.length) {
-      menu.innerHTML = '<p class="hint">この日には他に移動先の予定がありません。</p>';
+      menu.innerHTML = '<p class="hint">この日には他に移動先の予定がありません。</p>' + closeBtnHtml;
     } else {
-      menu.innerHTML = targets.map(function (b) {
+      menu.innerHTML = '<p class="entry-move-title">移動先の予定を選んでください</p>' + targets.map(function (b) {
         return '<button type="button" class="entry-move-target" data-block-id="' + escapeHtml(b.id) + '">' +
           (b.time ? escapeHtml(b.time) + ' ' : '') + escapeHtml(b.label || Core.categoryLabel(b.category)) +
           '</button>';
-      }).join('');
+      }).join('') + closeBtnHtml;
       $all('.entry-move-target', menu).forEach(function (btn) {
         btn.addEventListener('click', function (e) {
           e.stopPropagation();
-          moveEntryTo(entryId, btn.dataset.blockId);
+          moveEntryTo(entryId, btn.dataset.blockId, currentBlockId);
         });
       });
     }
+    var cancelBtn = $('.entry-move-cancel', menu);
+    if (cancelBtn) cancelBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      menu.hidden = true; menu.innerHTML = '';
+    });
     menu.hidden = false;
   }
 
-  function moveEntryTo(entryId, targetBlockId) {
+  // fromBlockId：移す前の予定。分かっていれば、移したあとに「元に戻す」を出す（undoのときは出さない）
+  function moveEntryTo(entryId, targetBlockId, fromBlockId, isUndo) {
     api('/entries/' + encodeURIComponent(entryId) + '/move', 'PATCH', { blockId: targetBlockId })
       .then(function () { return refreshTrip(); })
-      .then(function () { renderDaySection(); })
+      .then(function () {
+        renderDaySection();
+        if (isUndo) showToast('元に戻しました');
+        else if (fromBlockId) showToast('記録を別の予定へ移しました', { label: '元に戻す', onClick: function () { moveEntryTo(entryId, fromBlockId, '', true); } });
+      })
       .catch(function () { alert('記録の移動に失敗しました。もう一度お試しください。'); });
   }
 
@@ -8917,7 +9083,7 @@
       ds.draggedEl.style.width = '';
       if (ds.targetEl) {
         ds.targetEl.classList.remove('drop-target');
-        moveEntryTo(ds.draggedEl.dataset.entryId, ds.targetEl.dataset.blockId);
+        moveEntryTo(ds.draggedEl.dataset.entryId, ds.targetEl.dataset.blockId, ds.sourceBlockId);
       }
     }
     timelineEl.addEventListener('pointerup', endEntryDrag);
@@ -11295,6 +11461,7 @@
     $('#replayCaption').hidden = true;
     $('#replayDayBanner').hidden = true;
     $('#replayDays').hidden = true;
+    showReplayNote('');
     updateReplayVideoButton(); // 準備ができるまでは動画ボタンを出さない（stopReplayでreplayはnullになっている）
     // 前の旅行の再生を開いたあと、この旅行の場所を探し終える（数秒かかりうる）までのあいだ、
     // 地図そのもの（stopReplayで線・マーカーは消しているが、タイルの表示位置＝カメラは前の旅行のまま）
@@ -11341,12 +11508,17 @@
       var tl = Core.buildReplayTimeline(stops, res[1]);
       if (!tl.stops.some(function (s) { return s.located; })) {
         status.textContent = '地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。';
+        statusSub.hidden = false;
+        statusSub.textContent = '地図は場所を設定した記録をたどります';
         return;
       }
       // 道のりがそろうのを待たずに始める（以前は全区間の道のりを待ってから始めていて、準備が長かった）。
       // 道のりは裏で調べ、届いた区間から直線を道路に沿った青い線に切り替える
       status.textContent = '';
       startReplay(res[0], tl);
+      // 場所が1か所だけだと動かないので、理由を一言。移動手段が未設定の区間は仮定で描いていることを伝える
+      if (tl.stops.filter(function (s) { return s.located; }).length < 2) showReplayNote('地図は場所を設定した記録をたどります');
+      else if (tl.legs.some(function (l) { return l.assumed; })) showReplayNote('移動手段が未設定の区間は、距離から車・飛行機などと仮定して点線で描いています（予定の編集で変えられます）');
       replay.routesDone = fetchReplayRoutes(tl, function (l) {
         if (replayToken !== token || !replay || replay.tl !== tl) return;
         var set = replay.lines[tl.legs.indexOf(l)];
@@ -11357,6 +11529,13 @@
     }).catch(function () {
       if (replayToken === token) { status.textContent = '地図を読み込めませんでした。通信環境を確認してください。'; statusSub.hidden = true; }
     });
+  }
+
+  function showReplayNote(text) {
+    var el = $('#replayNote');
+    if (!el) return;
+    el.textContent = text || '';
+    el.hidden = !text;
   }
 
   function startReplay(L, tl) {
@@ -11405,9 +11584,10 @@
         // 切り落とす（clip）。全体の線と途中までの線とで間引き方・切り落とし方が変わると、点線の位置がずれて
         // 「薄い青の上に少しずれて濃い青が乗る」ように見えていた（56で間隔をそろえても残った。2026-09-27）。
         // 飛行機の線は点が少ない（弧の32点ほど）ので、間引きも切り落としもしない。
-        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
-        casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
-        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
+        // 移動手段が未設定で仮定した区間（assumed）は、車・徒歩も点線にして「仮の線」と分かるようにする
+        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : (l.assumed ? '2 10' : null), smoothFactor: plane ? 0 : 1, noClip: plane }),
+        casing: (plane || l.assumed) ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
+        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : (l.assumed ? '2 10' : null), smoothFactor: plane ? 0 : 1, noClip: plane }),
         planeLine: plane, lastF: null
       };
     });
@@ -12550,6 +12730,8 @@
     var p = v.play(); if (p && p.catch) p.catch(function () {});
     var canFile = !!(navigator.canShare && navigator.canShare({ files: [rsv.file] }));
     $('#btnRsvShare').textContent = canFile ? '共有する' : '動画を保存する';
+    // 共有できる環境でも、端末へ保存したい人のために別の保存ボタンを出す（iOSアプリではダウンロードできないので出さない）
+    $('#btnRsvSave').hidden = !(canFile && !isNativeApp());
     $('#rsvResultNote').textContent = (mime.isMp4 ? '' : 'この端末ではWebM形式で作られました。XやInstagramなど、WebMを受け付けないSNSがあります。') +
       (canFile ? '' : ' このブラウザは動画の共有に対応していないため、保存して投稿してください（投稿用の文章はコピーします）。');
     rsvUpdateResultInfo();
@@ -12807,6 +12989,7 @@
     $('#btnRsvStart').addEventListener('click', startReplayVideo);
     $('#btnRsvCancel').addEventListener('click', function () { rsvCancel('キャンセルしました'); });
     $('#btnRsvShare').addEventListener('click', shareReplayVideo);
+    $('#btnRsvSave').addEventListener('click', function () { saveReplayVideo(videoShareText()); });
     // 作り直す：いま見ていた動画と同じ写真の設定で、選択肢の画面へ戻る（「動画を作る」で作り直し、保存も置き換わる）
     $('#btnRsvAgain').addEventListener('click', function () {
       var photos = !!(rsv.current && rsv.current.photos);
@@ -13356,11 +13539,26 @@
   // 画面下中央に出す小さな通知。約2.5秒でフェードして消える（トップ右のアイコンとの重複を
   // やめ、#tripDetailStatusのように気づかれにくい場所ではなく、必ず目に入る場所に出す。2026-09-26）。
   var toastTimer = null;
-  function showToast(text) {
+  // action（{label, onClick}）を渡すと、文のあとに押せるボタン（「元に戻す」など）を付ける。長めに表示する
+  function showToast(text, action) {
     var el = $('#toast');
     if (!el) return;
     clearTimeout(toastTimer);
     el.textContent = text;
+    el.classList.toggle('toast-action', !!action);
+    if (action) {
+      var ab = document.createElement('button');
+      ab.type = 'button';
+      ab.className = 'toast-action-btn';
+      ab.textContent = action.label;
+      ab.addEventListener('click', function () {
+        clearTimeout(toastTimer);
+        el.hidden = true;
+        el.classList.remove('toast-show');
+        action.onClick();
+      });
+      el.appendChild(ab);
+    }
     el.hidden = false;
     // 直前のフェードアウト中にもう一度呼ばれても、確実に表示状態からやり直す
     el.classList.remove('toast-hide');
@@ -13370,7 +13568,7 @@
       el.classList.remove('toast-show');
       el.classList.add('toast-hide');
       setTimeout(function () { el.hidden = true; el.classList.remove('toast-hide'); }, 300);
-    }, 2500);
+    }, action ? 6000 : 2500);
   }
 
   function copyShareLink() {

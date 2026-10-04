@@ -585,6 +585,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       </div>
 
       <div class="replay-bottom">
+        <!-- 移動手段が未設定の区間の仮定・場所が1か所だけのときの案内（app.jsのshowReplayNote） -->
+        <p class="replay-note" id="replayNote" hidden></p>
         <div class="replay-caption" id="replayCaption" hidden>
           <!-- 着いた地点の写真（Reliveのように、エピソードと一緒に見せる） -->
           <div class="replay-caption-photos" id="replayCaptionPhotos" hidden></div>
@@ -952,6 +954,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <p class="hint" id="rsvResultNote"></p>
       <div class="post-actions">
         <button class="btn primary" id="btnRsvShare" type="button">共有する</button>
+        <!-- 共有に対応しているときだけ出す、共有とは別の保存ボタン（app.jsのrsvShowResult） -->
+        <button class="btn ghost" id="btnRsvSave" type="button" hidden>動画を保存</button>
         <button class="btn ghost" id="btnRsvAgain" type="button">作り直す</button>
       </div>
       <button class="btn ghost wide" id="btnRsvOther" type="button" hidden>もう一方の動画を見る</button>
