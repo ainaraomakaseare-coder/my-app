@@ -2927,5 +2927,47 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('serializeMyLogCache: 大きすぎたらnull', T.serializeMyLogCache({ items: [new Array(1600000).join('x')] }, 1), null);
 })();
 
+/* ---- 移動のメモ読み取り（種類・手段・出発地/到着地・到着時刻・所要時間） ---- */
+(function () {
+  var g = T.guessMemoCategory;
+  eq('category: 羽田から那覇へ', g('羽田空港から那覇空港へ'), 'transport');
+  eq('category: A→B', g('東京→新大阪'), 'transport');
+  eq('category: A->B', g('東京->新大阪'), 'transport');
+  eq('category: A〜B（9:53着）', g('東京〜新大阪（9:53着）'), 'transport');
+  eq('category: ホテルから空港へ', g('ホテルから空港へ'), 'transport');
+  eq('category: 駅へ', g('バス停から駅へ'), 'transport');
+  eq('category: 便名つき', g('那覇から羽田へ JAL100便'), 'transport');
+  eq('category: 駅でランチ', g('駅でランチ'), 'food');
+  eq('category: 空港見学', g('空港見学'), 'sightseeing');
+  eq('category: 駅前ホテル', g('駅前ホテル'), 'lodging');
+  eq('category: チェックインは宿優先', g('ホテルから駅へ向かいチェックイン'), 'lodging');
+  eq('category: 渋谷〜銀座散策は移動にしない', g('渋谷〜銀座散策'), 'sightseeing');
+  var tl = T.parseTransportLabel('東京から新大阪へ（のぞみ5号）');
+  eq('route: from/to', [tl.fromPlace, tl.toPlace], ['東京', '新大阪']);
+  tl = T.parseTransportLabel('東京→新大阪（9:53着）');
+  eq('route: arrow+arrive', [tl.fromPlace, tl.toPlace, tl.arriveTime], ['東京', '新大阪', '09:53']);
+  eq('mode: 新幹線', T.guessTransportMode('東京から新大阪へ新幹線'), 'shinkansen');
+  eq('mode: 特急', T.guessTransportMode('特急で移動'), 'train');
+  eq('mode: 便', T.guessTransportMode('JAL100便'), 'plane');
+  eq('mode: 空港から空港', T.guessTransportMode('羽田空港から那覇空港へ'), 'plane');
+  eq('mode: バス', T.guessTransportMode('バスで移動'), 'bus');
+  eq('mode: 駅だけでは決めない', T.guessTransportMode('駅へ'), '');
+  eq('mode: フェリーは空', T.guessTransportMode('フェリーで島へ'), '');
+  eq('moveMinutes: 同日', T.moveMinutesBetween('08:00', '09:53'), { minutes: 113, nextDay: false });
+  eq('moveMinutes: 翌日', T.moveMinutesBetween('23:00', '06:30'), { minutes: 450, nextDay: true });
+  eq('moveMinutes: 12時間以上戻るなら出さない', T.moveMinutesBetween('20:00', '03:00').minutes, 420);
+  eq('moveMinutes: 出せない', T.moveMinutesBetween('20:00', '09:00').minutes, 0);
+  var memo = T.parseMemo('8:00 東京から新大阪へ 新幹線\n・到着：10:30\n10:30 ユニバ', ['2026-10-01'], '2026-10-01');
+  var props = T.memoBlocksToProposals(memo.blocks);
+  eq('proposal: 手段', props[0].transport, 'shinkansen');
+  eq('proposal: 出発/到着地', [props[0].fromPlace, props[0].toPlace], ['東京', '新大阪']);
+  eq('proposal: 到着時刻と所要時間', [props[0].arriveTime, props[0].moveMinutes], ['10:30', 150]);
+  eq('proposal: 移動以外は手段なし', props[1].transport, '');
+  var js = T.parseImportedBlocksJson('{"blocks":[{"date":"2026-10-01","time":"08:00","label":"東京駅","category":"transport","transport":"train","arriveTime":"09:00","moveMinutes":60}]}', { startDate: '2026-10-01', endDate: '2026-10-01' });
+  eq('json: arriveTime/moveMinutes', [js.blocks[0].arriveTime, js.blocks[0].moveMinutes], ['09:00', 60]);
+  var p2 = T.memoBlocksToProposals(js.blocks);
+  eq('json proposal: 引き継ぐ', [p2[0].arriveTime, p2[0].moveMinutes, p2[0].transport], ['09:00', 60, 'train']);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
