@@ -384,7 +384,76 @@ async function refetchShiftedWeather(env, tripId) {
   void env; void tripId;
 }
 
+/* ---------- 写真・動画（R2）の掃除 ----------
+ * 記録・予定・旅行・別行動・アカウントを消したとき、参照していたR2のオブジェクトも消す。
+ * DBの行を消した「あと」に、他の行がまだ同じキーを参照していないか確かめてから消す
+ * （表紙写真が記録の写真と同じIDのことがある）。失敗はログに出すだけで、DBの削除は失敗させない。
+ * Workers Freeは1リクエスト50サブリクエストまでなので、確認クエリは30キーごと、R2削除は1回にまとめる。
+ */
+const MEDIA_KEY_RE = /^photo_[0-9a-f]{32}\.[a-z0-9]{2,5}$/;
+const MEDIA_CLEAN_MAX_KEYS = 600;
+
+function parseJsonArray(text) {
+  try {
+    const v = JSON.parse(text || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+// entriesの行（photo_ids・video_ids）と、任意の表紙写真IDから、R2のキーを集める
+function collectMediaKeys(entryRows, coverIds) {
+  const keys = new Set();
+  const add = (k) => { if (typeof k === "string" && MEDIA_KEY_RE.test(k)) keys.add(k); };
+  for (const r of entryRows || []) {
+    parseJsonArray(r.photo_ids).forEach(add);
+    parseJsonArray(r.video_ids).forEach(add);
+  }
+  for (const c of coverIds || []) add(c);
+  return [...keys];
+}
+
+async function deleteUnreferencedMedia(env, keys) {
+  try {
+    if (!env.PHOTOS_BUCKET || !keys || !keys.length) return;
+    let list = keys.filter((k) => MEDIA_KEY_RE.test(k));
+    if (list.length > MEDIA_CLEAN_MAX_KEYS) {
+      console.error(JSON.stringify({ event: "media_cleanup_truncated", total: list.length }));
+      list = list.slice(0, MEDIA_CLEAN_MAX_KEYS);
+    }
+    const stillUsed = new Set();
+    for (let i = 0; i < list.length; i += 30) {
+      const chunk = list.slice(i, i + 30);
+      const likes = chunk.map(() => "(photo_ids LIKE ? OR video_ids LIKE ?)").join(" OR ");
+      const marks = chunk.map(() => "?").join(",");
+      const { results } = await env.DB.prepare(
+        `SELECT photo_ids AS p, video_ids AS v FROM entries WHERE ${likes} UNION ALL SELECT cover_photo_id AS p, '[]' AS v FROM trips WHERE cover_photo_id IN (${marks})`
+      )
+        .bind(...chunk.flatMap((k) => ["%" + k + "%", "%" + k + "%"]), ...chunk)
+        .all();
+      for (const r of results || []) {
+        parseJsonArray(r.p).forEach((k) => stillUsed.add(k));
+        parseJsonArray(r.v).forEach((k) => stillUsed.add(k));
+        if (typeof r.p === "string" && r.p && r.p[0] !== "[") stillUsed.add(r.p);
+      }
+    }
+    const toDelete = list.filter((k) => !stillUsed.has(k));
+    if (toDelete.length) await env.PHOTOS_BUCKET.delete(toDelete);
+  } catch (e) {
+    console.error(JSON.stringify({ event: "media_cleanup_failed", error: String((e && e.message) || "").slice(0, 200) }));
+  }
+}
+
 async function deleteTrip(id, env, headers) {
+  let mediaKeys = [];
+  try {
+    const { results: mediaRows } = await env.DB.prepare(
+      "SELECT e.photo_ids, e.video_ids FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id = ?"
+    ).bind(id).all();
+    const tripRow = await env.DB.prepare("SELECT cover_photo_id FROM trips WHERE id = ?").bind(id).first();
+    mediaKeys = collectMediaKeys(mediaRows, tripRow ? [tripRow.cover_photo_id] : []);
+  } catch { /* 掃除の準備に失敗しても削除は続ける */ }
   const { results: blockRows } = await env.DB.prepare("SELECT id FROM blocks WHERE trip_id = ?").bind(id).all();
   for (const b of blockRows) {
     const { results: entryRows } = await env.DB.prepare("SELECT id FROM entries WHERE block_id = ?").bind(b.id).all();
@@ -399,6 +468,7 @@ async function deleteTrip(id, env, headers) {
   await env.DB.prepare("DELETE FROM trip_members WHERE trip_id = ?").bind(id).run();
   await deleteSocialForTrip(env, id);
   await env.DB.prepare("DELETE FROM trips WHERE id = ?").bind(id).run();
+  await deleteUnreferencedMedia(env, mediaKeys);
   return json({ ok: true }, 200, headers);
 }
 
@@ -562,13 +632,15 @@ async function deleteBlock(id, request, env, headers) {
   const blockRow = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(id).first();
   const denied = await branchWriteGuard(env, request, headers, blockRow);
   if (denied) return denied;
-  const { results: entryRows } = await env.DB.prepare("SELECT id FROM entries WHERE block_id = ?").bind(id).all();
+  const { results: entryRows } = await env.DB.prepare("SELECT id, photo_ids, video_ids FROM entries WHERE block_id = ?").bind(id).all();
+  const mediaKeys = collectMediaKeys(entryRows);
   for (const e of entryRows) {
     await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(e.id).run();
     await deleteSocialForTarget(env, "entry", e.id);
   }
   await env.DB.prepare("DELETE FROM entries WHERE block_id = ?").bind(id).run();
   await env.DB.prepare("DELETE FROM blocks WHERE id = ?").bind(id).run();
+  await deleteUnreferencedMedia(env, mediaKeys);
   return json({ ok: true }, 200, headers);
 }
 
@@ -801,6 +873,17 @@ async function updateBranch(id, request, env, headers) {
 // 分岐と、その中の予定・記録・評価・いいね・コメントを消すSQL文の列（1つのbatch＝1リクエストで済ませ、
 // 50サブリクエストの上限を気にしなくてよいようにする）。branchIdsSqlは「消す分岐のidを返すSELECT」で、
 // 中の?にはparamをそのまま入れる（アカウント削除では「この人の分岐すべて」、分岐の削除では「このid」）。
+// 別行動を消す前に、中の記録が持つ写真・動画のキーを集める（branchDeleteStatementsと同じ入れ子のSQL）
+async function branchMediaKeys(env, branchIdsSql, param) {
+  try {
+    const sql = `SELECT photo_ids, video_ids FROM entries WHERE block_id IN (SELECT id FROM blocks WHERE branch_id IN (${branchIdsSql}))`;
+    const { results } = await env.DB.prepare(sql).bind(...new Array((sql.match(/\?/g) || []).length).fill(param)).all();
+    return collectMediaKeys(results);
+  } catch {
+    return []; // branchesテーブルなどが無い
+  }
+}
+
 function branchDeleteStatements(env, branchIdsSql, param) {
   const blockIds = `SELECT id FROM blocks WHERE branch_id IN (${branchIdsSql})`;
   const entryIds = `SELECT id FROM entries WHERE block_id IN (${blockIds})`;
@@ -822,7 +905,9 @@ async function deleteBranch(id, request, env, headers) {
   const who = await requireAccount(request, env);
   if (who.error) return json({ error: who.error }, who.status, headers);
   if (existing.account_id !== who.account.account_id) return json({ error: "forbidden" }, 403, headers);
+  const mediaKeys = await branchMediaKeys(env, "SELECT id FROM branches WHERE id = ?", id);
   await env.DB.batch(branchDeleteStatements(env, "SELECT id FROM branches WHERE id = ?", id));
+  await deleteUnreferencedMedia(env, mediaKeys);
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), existing.trip_id).run();
   return json({ ok: true }, 200, headers);
 }
@@ -1109,12 +1194,18 @@ async function updateEntry(id, request, env, headers, ctx) {
   if (ctx && entryNeedsGeocode(existing.map_url, existing.map_geocoded_url, newMapUrl, existing.map_geocoded_at)) {
     ctx.waitUntil(backgroundGeocodeEntry(env, id, newMapUrl));
   }
+  // 編集で外された写真・動画は、ほかのどこからも参照されていなければR2からも消す
+  {
+    const keep = new Set(collectMediaKeys([{ photo_ids: JSON.stringify(merged.photoIds || []), video_ids: JSON.stringify(merged.videoIds || []) }]));
+    const removed = collectMediaKeys([existing]).filter((k) => !keep.has(k));
+    await deleteUnreferencedMedia(env, removed);
+  }
   const updated = await env.DB.prepare("SELECT * FROM entries WHERE id = ?").bind(id).first();
   return json(rowToEntry(updated), 200, headers);
 }
 
 async function deleteEntry(id, request, env, headers) {
-  const entryRow = await env.DB.prepare("SELECT block_id FROM entries WHERE id = ?").bind(id).first();
+  const entryRow = await env.DB.prepare("SELECT block_id, photo_ids, video_ids FROM entries WHERE id = ?").bind(id).first();
   if (entryRow) {
     const parentBlock = await env.DB.prepare("SELECT * FROM blocks WHERE id = ?").bind(entryRow.block_id).first();
     const denied = await branchWriteGuard(env, request, headers, parentBlock);
@@ -1123,6 +1214,7 @@ async function deleteEntry(id, request, env, headers) {
   await env.DB.prepare("DELETE FROM ratings WHERE entry_id = ?").bind(id).run();
   await deleteSocialForTarget(env, "entry", id);
   await env.DB.prepare("DELETE FROM entries WHERE id = ?").bind(id).run();
+  if (entryRow) await deleteUnreferencedMedia(env, collectMediaKeys([entryRow]));
   return json({ ok: true }, 200, headers);
 }
 
@@ -2978,6 +3070,41 @@ async function deleteDayPlace(tripId, date, env, headers) {
 const OTP_EXPIRES_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
 const OTP_RESEND_COOLDOWN_SECONDS = 60;
+// 再送で試行回数が0に戻っても総当たりできないよう、メールごとの失敗回数は別テーブル（otp_limits）で数える
+const OTP_FAIL_BUDGET_PER_HOUR = 10;
+const OTP_SENDS_PER_EMAIL_PER_DAY = 10;
+const OTP_SENDS_PER_IP_PER_HOUR = 20;
+const HOUR_MS = 3600000;
+
+// 窓（windowMs）の中の回数を1増やして返す（INSERT..ON CONFLICTで原子的に増やす）。
+// テーブルが無い環境（migrations/0033前）では null を返し、呼び出し側は制限なしで通す。
+async function bumpOtpLimit(env, key, windowMs) {
+  try {
+    const now = Date.now();
+    const cutoff = new Date(now - windowMs).toISOString();
+    const t = new Date(now).toISOString();
+    const row = await env.DB.prepare(
+      "INSERT INTO otp_limits (key, count, window_start) VALUES (?,1,?) "
+      + "ON CONFLICT(key) DO UPDATE SET count = CASE WHEN window_start < ? THEN 1 ELSE count + 1 END, "
+      + "window_start = CASE WHEN window_start < ? THEN excluded.window_start ELSE window_start END "
+      + "RETURNING count, window_start"
+    ).bind(key, t, cutoff, cutoff).first();
+    return row ? { count: row.count, windowStart: row.window_start } : null;
+  } catch (e) {
+    console.error(JSON.stringify({ event: "otp_limit_error", error: String((e && e.message) || "").slice(0, 200) }));
+    return null;
+  }
+}
+
+async function readOtpLimit(env, key, windowMs) {
+  try {
+    const row = await env.DB.prepare("SELECT count, window_start FROM otp_limits WHERE key = ?").bind(key).first();
+    if (!row || new Date(row.window_start).getTime() < Date.now() - windowMs) return 0;
+    return row.count;
+  } catch {
+    return 0;
+  }
+}
 
 function generateOtpCode() {
   const bytes = new Uint32Array(1);
@@ -3030,6 +3157,19 @@ async function sendEmailOtp(request, env, headers) {
     }
   }
 
+  // メール送信の乱用対策：IPごと（1時間）とメールごと（1日）の送信回数に上限を設ける
+  const ip = request.headers.get("cf-connecting-ip") || "anonymous";
+  const ipUse = await bumpOtpLimit(env, "send_ip:" + ip, HOUR_MS);
+  if (ipUse && ipUse.count > OTP_SENDS_PER_IP_PER_HOUR) {
+    const retry = Math.max(1, Math.ceil((new Date(ipUse.windowStart).getTime() + HOUR_MS - Date.now()) / 1000));
+    return json({ error: "too_soon", retryAfterSeconds: retry }, 429, headers);
+  }
+  const emailUse = await bumpOtpLimit(env, "send_email:" + email, 24 * HOUR_MS);
+  if (emailUse && emailUse.count > OTP_SENDS_PER_EMAIL_PER_DAY) {
+    const retry = Math.max(1, Math.ceil((new Date(emailUse.windowStart).getTime() + 24 * HOUR_MS - Date.now()) / 1000));
+    return json({ error: "too_soon", retryAfterSeconds: retry }, 429, headers);
+  }
+
   const code = generateOtpCode();
   const t = nowIso();
   const expiresAt = new Date(Date.now() + OTP_EXPIRES_MINUTES * 60000).toISOString();
@@ -3064,12 +3204,24 @@ async function verifyEmailOtp(request, env, headers) {
     await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
     return json({ error: "expired" }, 410, headers);
   }
+  // 再送しても戻らない、メールごとの1時間あたりの失敗回数の上限
+  if ((await readOtpLimit(env, "fail:" + email, HOUR_MS)) >= OTP_FAIL_BUDGET_PER_HOUR) {
+    return json({ error: "too_many_attempts" }, 429, headers);
+  }
   if (row.attempts >= OTP_MAX_ATTEMPTS) {
     await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
     return json({ error: "too_many_attempts" }, 429, headers);
   }
-  if (row.code !== code) {
-    await env.DB.prepare("UPDATE email_otps SET attempts = attempts + 1 WHERE email = ?").bind(email).run();
+  // 試行回数は比較の前に原子的に増やす（同時に大量に試されても上限を超えない）
+  const bumped = await env.DB.prepare("UPDATE email_otps SET attempts = attempts + 1 WHERE email = ? AND attempts < ?")
+    .bind(email, OTP_MAX_ATTEMPTS)
+    .run();
+  if (bumped && bumped.meta && bumped.meta.changes === 0) {
+    await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
+    return json({ error: "too_many_attempts" }, 429, headers);
+  }
+  if (!timingSafeEqualStrings(String(row.code), code)) {
+    await bumpOtpLimit(env, "fail:" + email, HOUR_MS);
     return json({ error: "wrong_code" }, 401, headers);
   }
   await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
@@ -3471,7 +3623,9 @@ async function deleteAccount(request, env, headers) {
   await env.DB.prepare("DELETE FROM ratings WHERE rater_email = ?").bind(email).run();
   await env.DB.prepare("DELETE FROM trip_members WHERE account_id = ?").bind(account.account_id).run();
   // この人の自分だけの道（別行動）と、その中の予定・記録も消す（docs/adr/0021。テーブルが無ければ何もしない）
+  const accountMediaKeys = await branchMediaKeys(env, "SELECT id FROM branches WHERE account_id = ?", account.account_id);
   try { await env.DB.batch(branchDeleteStatements(env, "SELECT id FROM branches WHERE account_id = ?", account.account_id)); } catch { /* branchesテーブルが無い */ }
+  await deleteUnreferencedMedia(env, accountMediaKeys);
   await deleteSocialForAccount(env, account.account_id);
   await env.DB.prepare("DELETE FROM sessions WHERE email = ?").bind(email).run();
   // Sign in with Appleのトークンを取り消す（5.1.1(v)）。identitiesを消す前に行う。失敗しても削除は続ける。

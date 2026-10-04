@@ -309,3 +309,5 @@ CREATE TABLE IF NOT EXISTS auth_codes (code_hash TEXT PRIMARY KEY, kind TEXT NOT
 CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id);
 ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';
+-- v34（2026-10-04）：メールOTPの乱用対策（失敗回数・送信回数の上限）。詳しい説明は migrations/0034_otp_limits.sql
+CREATE TABLE IF NOT EXISTS otp_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0, window_start TEXT NOT NULL);
