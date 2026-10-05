@@ -5,96 +5,223 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>草野球マスタ</title>
 <meta name="description" content="草野球の打席結果を記録するだけで、打率・出塁率・長打率を自動計算。シーズン・大会ごとの成績を振り返れる、草野球プレイヤーのための記録アプリ。">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23173420'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23F4EEDD'/%3E%3Cpath d='M16 7.5c1.2 2 1.2 15.5 0 17.5M8.9 10.4c2.4 1.2 12.4 10.4 14.2 11.2M8.9 21.6c2.4-1.2 12.4-10.4 14.2-11.2' stroke='%23B5402C' stroke-width='.9' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#F3EFE6">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2315171B'/%3E%3Ccircle cx='16' cy='16' r='10' fill='%23F3EFE6'/%3E%3Cpath d='M11.2 7.8c1.7 2.3 2.6 5.1 2.6 8.2s-.9 5.9-2.6 8.2M20.8 7.8c-1.7 2.3-2.6 5.1-2.6 8.2s.9 5.9 2.6 8.2' stroke='%23D23F1C' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap">
 <style>
+  /* =========================================================
+     草野球マスタ — "Scorebook" design
+     紙のスコアブック（生成り紙 × 墨 × 朱の色鉛筆）を下敷きにした配色と組版
+     ========================================================= */
   :root{
-    --field:#173420; --field-deep:#102518; --chalk:#F4EEDD; --chalk-dim:#C9C2AC;
-    --ink:#132018; --ink-dim:#51614F;
-    --clay:#B5402C; --clay-soft:#F0DAC9; --mustard:#D9A441;
-    --card:#FFFFFF; --line:#E4DFCC;
-    --display:"Teko","Zen Kaku Gothic New",sans-serif;
-    --sans:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+    color-scheme: light;
+    /* paper & ink */
+    --paper:#F3EFE6;      /* 生成りのスコアブック用紙 */
+    --paper-2:#E8E2D4;
+    --sheet:#FCFAF5;
+    --ink:#15171B;        /* 墨 */
+    --ink-2:#3A3E45;
+    --ink-dim:#5F636B;
+    --rule:#D8D1C2;
+    --grid:rgba(21,23,27,.055);
+    /* accent: 朱（記録係の赤鉛筆） */
+    --red:#D23F1C;
+    --red-ink:#A93015;    /* small text on paper (AA) */
+    --red-glow:#F06A45;   /* on dark */
+    /* night (dark band) */
+    --night:#14161A;
+    --night-2:#1C1F25;
+    --night-line:rgba(243,239,230,.12);
+    --night-text:#EEEAE1;
+    --night-dim:#A6A9B0;
+
+    --display:"Dela Gothic One","IBM Plex Sans JP","Hiragino Sans",sans-serif;
+    --sans:"IBM Plex Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+
+    --gutter:20px;
+    --max:1120px;
   }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--chalk);color:var(--ink);font-family:var(--sans);line-height:1.75;
-    -webkit-text-size-adjust:100%}
+  *,*::before,*::after{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.8;-webkit-font-smoothing:antialiased}
   a{color:inherit}
-  .wrap{max-width:720px;margin:0 auto;padding:0 24px}
-  img,svg{display:block}
+  svg{display:block}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 var(--gutter)}
 
-  /* ---- header ---- */
-  header{background:var(--field);color:var(--chalk)}
-  .header-in{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;
-    max-width:720px;margin:0 auto}
-  .brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:700;
-    font-size:22px;letter-spacing:.02em;text-decoration:none;color:var(--chalk)}
-  .brand svg{width:26px;height:26px;flex:0 0 auto}
+  h1,h2,.display{font-family:var(--display);font-weight:400;font-feature-settings:"palt";
+    letter-spacing:.01em}
+  .nb{display:inline-block} /* 文節単位で改行させる */
 
-  /* ---- hero ---- */
-  .hero{background:var(--field);background-image:
-      radial-gradient(ellipse 70% 50% at 50% 0%, rgba(217,164,65,.14), transparent 65%);
-    color:var(--chalk);padding:8px 0 56px;position:relative;overflow:hidden}
-  .hero::after{content:"";position:absolute;left:50%;bottom:-180px;width:560px;height:560px;
-    margin-left:-280px;border-radius:50%;border:2px solid rgba(244,238,221,.08);pointer-events:none}
-  .hero-in{position:relative;z-index:1;padding:28px 0 0;text-align:center}
-  .kicker{font-size:12px;letter-spacing:.3em;color:var(--mustard);font-weight:700}
-  h1{font-family:var(--display);font-weight:700;font-size:56px;line-height:1.08;margin:16px 0 18px;
-    letter-spacing:.01em;text-wrap:balance}
-  h1 b{color:var(--mustard);font-weight:700}
-  .lead{font-size:15.5px;line-height:1.9;color:var(--chalk-dim);max-width:46ch;margin:0 auto 32px}
-  .cta-row{display:flex;flex-direction:column;align-items:center;gap:12px}
-  .btn{display:inline-flex;align-items:center;gap:9px;font-size:15px;font-weight:700;
-    letter-spacing:.03em;padding:15px 30px;border-radius:999px;text-decoration:none}
-  .btn-main{background:var(--mustard);color:var(--field-deep)}
-  .btn-main:hover{opacity:.9}
-  .btn-main svg{width:16px;height:16px}
-  .status-note{font-size:12px;color:var(--chalk-dim);letter-spacing:.02em}
+  /* ---------- header ---------- */
+  header{border-bottom:1px solid var(--rule);background:var(--paper);position:relative;z-index:2}
+  .header-in{display:flex;align-items:center;justify-content:space-between;gap:16px;
+    max-width:var(--max);margin:0 auto;padding:14px var(--gutter)}
+  .brand{display:flex;align-items:center;gap:10px;text-decoration:none;
+    font-family:var(--display);font-size:18px;letter-spacing:.04em;line-height:1}
+  .brand svg{width:28px;height:28px;flex:0 0 auto}
+  .tag{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.12em;
+    color:var(--ink-2);border:1px solid var(--ink);border-radius:999px;padding:5px 11px 5px 10px;
+    display:inline-flex;align-items:center;gap:7px;line-height:1;white-space:nowrap}
+  .tag::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--red)}
 
-  /* ---- stat strip ---- */
-  .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);
-    border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-  .stat{background:var(--card);padding:22px 10px;text-align:center}
-  .stat .n{font-family:var(--display);font-weight:600;font-size:34px;color:var(--clay);line-height:1}
-  .stat .l{font-size:11.5px;color:var(--ink-dim);letter-spacing:.04em;margin-top:6px}
+  /* ---------- hero ---------- */
+  .hero{position:relative;overflow:hidden;padding:44px 0 64px}
+  .hero::before{ /* 方眼のスコア用紙 */
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background-image:
+      linear-gradient(var(--grid) 1px,transparent 1px),
+      linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:24px 24px;background-position:-1px -1px;
+    -webkit-mask-image:linear-gradient(#000 55%,transparent);
+            mask-image:linear-gradient(#000 55%,transparent)}
+  .hero-grid{position:relative;display:grid;gap:56px}
 
-  /* ---- sections ---- */
-  section{padding:56px 0}
-  .section-head{text-align:center;margin-bottom:34px}
-  .section-kicker{font-size:11.5px;letter-spacing:.24em;color:var(--clay);font-weight:700}
-  h2{font-family:var(--display);font-weight:600;font-size:32px;margin:10px 0 0;letter-spacing:.01em;
-    text-wrap:balance}
+  .kicker{display:inline-flex;align-items:center;gap:12px;font-size:12.5px;font-weight:700;
+    letter-spacing:.16em;color:var(--red-ink);line-height:1.4}
+  .kicker::before{content:"";width:28px;height:2px;background:var(--red);flex:0 0 auto}
 
-  .pains{display:flex;flex-direction:column;gap:12px}
-  .pain{display:flex;gap:14px;align-items:flex-start;background:var(--card);border:1px solid var(--line);
-    border-radius:14px;padding:18px 20px}
-  .pain svg{width:20px;height:20px;flex:0 0 auto;margin-top:2px;color:var(--clay)}
-  .pain p{margin:0;font-size:14px;color:var(--ink)}
-  .pain b{display:block;font-size:14.5px;margin-bottom:2px}
+  h1{font-size:clamp(33px,9.3vw,44px);line-height:1.28;margin:22px 0 22px;color:var(--ink)}
+  h1 b{font-weight:400;color:var(--red)}
+  .lead{font-size:15.5px;line-height:1.95;color:var(--ink-2);max-width:34em;margin:0 0 32px}
 
-  .features{display:flex;flex-direction:column;gap:16px}
-  .feature{display:grid;grid-template-columns:52px 1fr;gap:18px;align-items:start;
-    background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}
-  .feature-icon{width:52px;height:52px;border-radius:13px;background:var(--field);
-    display:grid;place-items:center}
-  .feature-icon svg{width:26px;height:26px;color:var(--mustard)}
-  .feature h3{font-family:var(--display);font-weight:600;font-size:21px;margin:0 0 6px;letter-spacing:.01em}
-  .feature p{margin:0;font-size:13.5px;color:var(--ink-dim);line-height:1.8}
+  .status{display:inline-flex;align-items:center;gap:12px;background:var(--ink);color:var(--paper);
+    border-radius:999px;padding:13px 24px 13px 18px;font-weight:700;font-size:15px;letter-spacing:.08em;
+    line-height:1.2;cursor:default;user-select:none}
+  .status .dot{width:8px;height:8px;border-radius:50%;background:var(--red-glow);
+    box-shadow:0 0 0 4px rgba(240,106,69,.22)}
 
-  .final-cta{text-align:center}
-  .final-cta .lead{color:var(--ink-dim)}
-  .final-cta h2{margin-bottom:8px}
+  /* scoresheet visual */
+  .sheet-wrap{position:relative;width:100%;max-width:400px;margin:0 auto;padding:0 6px}
+  .sheet-wrap::before{content:"";position:absolute;inset:12px -2px 30px 14px;background:var(--paper-2);
+    border:1.5px solid var(--ink);border-radius:6px;transform:rotate(3.2deg)}
+  .sheet{position:relative;background:var(--sheet);border:1.5px solid var(--ink);border-radius:6px;
+    padding:12px 14px 34px;transform:rotate(-1.6deg)}
+  .sheet-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.18em;color:var(--ink-dim);
+    padding:2px 2px 10px;border-bottom:1.5px solid var(--ink);margin-bottom:8px}
+  .sheet-head span:last-child{font-family:var(--sans);letter-spacing:.12em}
+  .sheet svg{width:100%;height:auto}
+  .sg-rule{stroke:var(--ink);stroke-opacity:.16;stroke-width:1;fill:none}
+  .sg-num{font-family:var(--mono);font-size:12px;font-weight:600;fill:var(--ink-dim);text-anchor:middle}
+  .sg-dia{fill:none;stroke:var(--ink);stroke-opacity:.26;stroke-width:1.2}
+  .sg-hit{fill:none;stroke:var(--red);stroke-width:3.4;stroke-linecap:round;stroke-linejoin:round}
+  .sg-hr{fill:var(--red);stroke:var(--red);stroke-width:2;stroke-linejoin:round}
+  .sg-mark{font-family:var(--mono);font-size:14px;font-weight:600;fill:var(--ink);text-anchor:middle}
 
-  footer{border-top:1px solid var(--line);padding:30px 0 50px;text-align:center}
-  footer p{font-size:12px;color:var(--ink-dim);line-height:1.9;margin:0}
-  footer a{color:var(--ink-dim);text-decoration:underline}
+  .sheet-tab{position:relative;margin:-22px 0 0 auto;width:calc(100% - 22px);background:var(--ink);
+    color:var(--night-text);border-radius:6px;display:grid;grid-template-columns:auto repeat(3,1fr);
+    align-items:center;padding:12px 6px 12px 14px;box-shadow:0 14px 30px -18px rgba(21,23,27,.55)}
+  .tab-label{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--red-glow);
+    line-height:1.25;width:3.6em;padding-right:10px;border-right:1px solid var(--night-line);
+    align-self:stretch;display:flex;align-items:center}
+  .metric{display:flex;flex-direction:column;align-items:center;gap:3px;line-height:1.2;
+    border-left:1px solid var(--night-line)}
+  .metric:nth-child(2){border-left:0}
+  .metric b{font-size:14px;font-weight:700;letter-spacing:.06em}
+  .metric span{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.16em;color:var(--night-dim)}
 
-  @media (max-width:480px){
-    h1{font-size:42px}
-    .stats{grid-template-columns:repeat(3,1fr)}
-    h2{font-size:27px}
+  /* ---------- stat band ---------- */
+  .stats{background:var(--sheet);border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink)}
+  .stats-in{max-width:var(--max);margin:0 auto;display:grid;grid-template-columns:1fr 1fr}
+  .stat{display:flex;flex-direction:column;gap:10px;padding:22px var(--gutter) 24px}
+  .stat + .stat{border-left:1px solid var(--rule)}
+  .stat .n{font-family:var(--display);font-size:46px;line-height:.9;color:var(--red)}
+  .stat .l{font-size:12.5px;line-height:1.65;color:var(--ink-2);font-weight:500}
+
+  /* ---------- sections ---------- */
+  section{padding:72px 0}
+  .section-head{margin-bottom:36px;max-width:820px}
+  .section-kicker{display:flex;align-items:center;gap:12px;font-size:12.5px;font-weight:700;
+    letter-spacing:.14em;color:var(--red-ink);line-height:1.4}
+  .section-kicker .num{font-family:var(--mono);font-weight:600;letter-spacing:.06em;color:var(--ink);
+    border:1px solid currentColor;border-radius:4px;padding:3px 6px 2px;font-size:11px;line-height:1}
+  h2{font-size:clamp(25px,6.7vw,44px);line-height:1.4;margin:16px 0 0;color:var(--ink)}
+
+  /* pains — ledger rows */
+  .pains{border-top:1.5px solid var(--ink);border-bottom:1px solid var(--rule)}
+  .pain{display:grid;grid-template-columns:44px 1fr;gap:18px;padding:24px 0}
+  .pain + .pain{border-top:1px solid var(--rule)}
+  .ico{width:44px;height:44px;border:1.5px solid var(--ink);border-radius:8px;background:var(--sheet);
+    display:grid;place-items:center;color:var(--red)}
+  .ico svg{width:22px;height:22px}
+  .pain p{margin:0;font-size:14.5px;line-height:1.9;color:var(--ink-dim)}
+  /* 日本語を文節単位で改行（対応ブラウザのみ。非対応でも通常の改行になるだけ） */
+  .pain b,.feature h3,.lead,.status,.metric b{word-break:auto-phrase}
+  .pain b{display:block;font-size:16.5px;line-height:1.55;color:var(--ink);margin-bottom:6px;font-weight:700}
+
+  /* features — dark band */
+  .features-sec{background:var(--night);color:var(--night-text);position:relative;overflow:hidden}
+  .features-sec::before,.features-sec::after{ /* 内野のダイヤモンド */
+    content:"";position:absolute;pointer-events:none;border:1px solid var(--night-line);
+    transform:rotate(45deg);border-radius:4px}
+  .features-sec::before{width:520px;height:520px;right:-300px;top:-260px}
+  .features-sec::after{width:360px;height:360px;right:-220px;top:-180px;border-color:rgba(240,106,69,.22)}
+  .features-sec .wrap{position:relative}
+  .features-sec h2{color:var(--night-text)}
+  .features-sec .section-kicker{color:var(--red-glow)}
+  .features-sec .section-kicker .num{color:var(--night-text)}
+
+  .features{display:grid;gap:12px}
+  .feature{display:grid;grid-template-columns:48px 1fr;gap:18px;align-items:start;
+    background:var(--night-2);border:1px solid var(--night-line);border-radius:10px;padding:22px 20px 24px}
+  .feature-icon{width:48px;height:48px;border-radius:10px;border:1.5px solid rgba(240,106,69,.5);
+    color:var(--red-glow);display:grid;place-items:center;background:rgba(240,106,69,.06)}
+  .feature-icon svg{width:24px;height:24px}
+  .feature h3{font-size:17px;line-height:1.5;margin:2px 0 8px;font-weight:700;letter-spacing:.02em}
+  .feature p{margin:0;font-size:14.5px;line-height:1.9;color:var(--night-dim)}
+
+  /* final */
+  .final-cta{text-align:center;padding:88px 0 96px;position:relative}
+  .final-cta .section-head{margin:0 auto}
+  .plate{width:52px;height:52px;margin:0 auto 22px;color:var(--red)}
+  .final-cta h2{margin:0}
+  .final-cta .lead{margin:16px auto 0;color:var(--ink-dim)}
+
+  footer{border-top:1.5px solid var(--ink)}
+  .footer-in{max-width:var(--max);margin:0 auto;padding:22px var(--gutter) 40px;
+    display:flex;align-items:center;gap:10px}
+  .footer-in svg{width:22px;height:22px}
+  footer p{margin:0;font-family:var(--display);font-size:14px;letter-spacing:.04em;line-height:1}
+
+  /* ---------- ≥ 640px ---------- */
+  @media (min-width:640px){
+    :root{--gutter:32px}
+    .stat{flex-direction:row;align-items:center;gap:22px;padding:30px var(--gutter)}
+    .stat .n{font-size:68px}
+    .stat .l{font-size:14px}
+    .lead{font-size:16.5px}
+    .pain{grid-template-columns:52px 1fr;gap:22px;padding:28px 0}
+    .ico{width:52px;height:52px}
+    .ico svg{width:24px;height:24px}
+  }
+
+  /* ---------- ≥ 960px ---------- */
+  @media (min-width:960px){
+    .hero{padding:80px 0 112px}
+    .hero-grid{grid-template-columns:1.15fr .85fr;align-items:center;gap:64px}
+    h1{font-size:clamp(46px,4.5vw,58px);margin:26px 0 28px}
+    .lead{font-size:17px;margin-bottom:40px}
+    .sheet-wrap{max-width:430px}
+    .sheet{transform:rotate(-2.4deg)}
+
+    section{padding:112px 0}
+    .section-head{margin-bottom:52px}
+
+    .pains{display:grid;grid-template-columns:repeat(3,1fr)}
+    .pain{grid-template-columns:1fr;gap:22px;padding:34px 32px 38px}
+    .pain + .pain{border-top:0;border-left:1px solid var(--rule)}
+    .pain:first-child{padding-left:0}
+    .pain:last-child{padding-right:0}
+
+    .features{grid-template-columns:repeat(3,1fr);gap:16px}
+    .feature{grid-template-columns:1fr;gap:26px;padding:30px 28px 34px}
+    .feature h3{font-size:19px}
+
+    .final-cta{padding:128px 0 136px}
   }
 </style>
 </head>
@@ -103,64 +230,134 @@
 <header>
   <div class="header-in">
     <a class="brand" href="#top">
-      <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="13" fill="#F4EEDD"/>
-        <path d="M16 3v26M5.5 8.2c3.6 1.8 18.6 15.6 21.3 16.8M5.5 23.8c3.6-1.8 18.6-15.6 21.3-16.8"
-          stroke="#B5402C" stroke-width="1.1" stroke-linecap="round"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" fill="#FCFAF5" stroke="#15171B" stroke-width="1.75"/>
+        <path d="M7.6 4.9c1.4 2 2.2 4.4 2.2 7.1s-.8 5.1-2.2 7.1M16.4 4.9c-1.4 2-2.2 4.4-2.2 7.1s.8 5.1 2.2 7.1" stroke="#D23F1C" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
       草野球マスタ
     </a>
-    <span class="status-note">近日公開</span>
+    <span class="tag">近日公開</span>
   </div>
 </header>
 
 <div class="hero" id="top">
-  <div class="wrap hero-in">
-    <div class="kicker">草野球専用・打率記録アプリ</div>
-    <h1>草野球の打率を、<br><b>ちゃんと</b>記録する。</h1>
-    <p class="lead">手書きのスコア表、バラバラのExcel、「なんとなく打てた気がする」で終わるシーズン。草野球マスタは、打席結果を入力するだけで打率・出塁率・長打率を自動計算し、積み上げていく記録アプリです。</p>
-    <div class="cta-row">
-      <span class="btn btn-main" aria-disabled="true">近日公開予定</span>
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <div class="kicker">草野球専用・打率記録アプリ</div>
+      <h1>草野球の打率を、<br><b>ちゃんと</b>記録する。</h1>
+      <p class="lead">手書きのスコア表、バラバラのExcel、「なんとなく打てた気がする」で終わるシーズン。草野球マスタは、打席結果を入力するだけで打率・出塁率・長打率を自動計算し、積み上げていく記録アプリです。</p>
+      <span class="status" aria-disabled="true"><span class="dot" aria-hidden="true"></span>近日公開予定</span>
+    </div>
+
+    <div class="sheet-wrap" aria-hidden="true">
+      <div class="sheet">
+        <div class="sheet-head"><span>SCORE BOOK</span><span>打席記録</span></div>
+        <svg viewBox="0 0 360 352" fill="none">
+          <defs>
+            <symbol id="dia" viewBox="-32 -32 64 64"><path class="sg-dia" d="M0 18 18 0 0-18-18 0Z"/></symbol>
+          </defs>
+          <path class="sg-rule" d="M40 0V352M104 0V352M168 0V352M232 0V352M296 0V352M0 32H360M0 96H360M0 160H360M0 224H360M0 288H360"/>
+          <text class="sg-num" x="72" y="21">1</text>
+          <text class="sg-num" x="136" y="21">2</text>
+          <text class="sg-num" x="200" y="21">3</text>
+          <text class="sg-num" x="264" y="21">4</text>
+          <text class="sg-num" x="328" y="21">5</text>
+          <text class="sg-num" x="20" y="68">1</text>
+          <text class="sg-num" x="20" y="132">2</text>
+          <text class="sg-num" x="20" y="196">3</text>
+          <text class="sg-num" x="20" y="260">4</text>
+          <text class="sg-num" x="20" y="324">5</text>
+          <use href="#dia" x="40" y="32" width="64" height="64"/>
+          <use href="#dia" x="104" y="32" width="64" height="64"/>
+          <use href="#dia" x="168" y="32" width="64" height="64"/>
+          <use href="#dia" x="232" y="32" width="64" height="64"/>
+          <use href="#dia" x="296" y="32" width="64" height="64"/>
+          <use href="#dia" x="40" y="96" width="64" height="64"/>
+          <use href="#dia" x="104" y="96" width="64" height="64"/>
+          <use href="#dia" x="168" y="96" width="64" height="64"/>
+          <use href="#dia" x="232" y="96" width="64" height="64"/>
+          <use href="#dia" x="296" y="96" width="64" height="64"/>
+          <use href="#dia" x="40" y="160" width="64" height="64"/>
+          <use href="#dia" x="104" y="160" width="64" height="64"/>
+          <use href="#dia" x="168" y="160" width="64" height="64"/>
+          <use href="#dia" x="232" y="160" width="64" height="64"/>
+          <use href="#dia" x="296" y="160" width="64" height="64"/>
+          <use href="#dia" x="40" y="224" width="64" height="64"/>
+          <use href="#dia" x="104" y="224" width="64" height="64"/>
+          <use href="#dia" x="168" y="224" width="64" height="64"/>
+          <use href="#dia" x="232" y="224" width="64" height="64"/>
+          <use href="#dia" x="296" y="224" width="64" height="64"/>
+          <use href="#dia" x="40" y="288" width="64" height="64"/>
+          <use href="#dia" x="104" y="288" width="64" height="64"/>
+          <use href="#dia" x="168" y="288" width="64" height="64"/>
+          <use href="#dia" x="232" y="288" width="64" height="64"/>
+          <use href="#dia" x="296" y="288" width="64" height="64"/>
+          <path class="sg-hit" transform="translate(72 64)" d="M0 18 18 0"/>
+          <path class="sg-hit" transform="translate(136 128)" d="M0 18 18 0 0-18"/>
+          <path class="sg-hit" transform="translate(264 128)" d="M0 18 18 0"/>
+          <path class="sg-hr" transform="translate(200 192)" d="M0 18 18 0 0-18-18 0Z"/>
+          <path class="sg-hit" transform="translate(72 256)" d="M0 18 18 0"/>
+          <path class="sg-hit" transform="translate(136 320)" d="M0 18 18 0"/>
+          <path class="sg-hit" transform="translate(328 320)" d="M0 18 18 0 0-18"/>
+          <text class="sg-mark" x="136" y="69">6-3</text>
+          <text class="sg-mark" x="200" y="69">K</text>
+          <text class="sg-mark" x="264" y="69">F7</text>
+          <text class="sg-mark" x="72" y="133">F8</text>
+          <text class="sg-mark" x="328" y="197">K</text>
+          <text class="sg-mark" x="200" y="261">K</text>
+          <text class="sg-mark" x="264" y="261">4-3</text>
+        </svg>
+      </div>
+      <div class="sheet-tab">
+        <span class="tab-label">自動計算</span>
+        <span class="metric"><b>打率</b><span>AVG</span></span>
+        <span class="metric"><b>出塁率</b><span>OBP</span></span>
+        <span class="metric"><b>長打率</b><span>SLG</span></span>
+      </div>
     </div>
   </div>
 </div>
 
 <div class="stats">
-  <div class="stat"><div class="n">3</div><div class="l">自動計算する指標<br>（打率・出塁率・長打率）</div></div>
-  <div class="stat"><div class="n">1</div><div class="l">タップで記録できる<br>打席結果の入力</div></div>
+  <div class="stats-in">
+    <div class="stat"><div class="n">3</div><div class="l">自動計算する指標<br>（打率・出塁率・長打率）</div></div>
+    <div class="stat"><div class="n">1</div><div class="l">タップで記録できる<br>打席結果の入力</div></div>
+  </div>
 </div>
 
 <section>
   <div class="wrap">
     <div class="section-head">
-      <div class="section-kicker">こんな悩み、ありませんか</div>
-      <h2>記録は続かない。だから数字が残らない。</h2>
+      <div class="section-kicker"><span class="num">01</span>こんな悩み、ありませんか</div>
+      <h2><span class="nb">記録は続かない。</span><span class="nb">だから数字が残らない。</span></h2>
     </div>
     <div class="pains">
       <div class="pain">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.6"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span>
         <p><b>紙のスコア表は、失くすか読めなくなる</b>試合のたびに書いても、カバンの中でシーズンの途中に行方不明になりがち。</p>
       </div>
       <div class="pain">
-        <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M3 9h18M8 4v16" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9 4v16"/></svg></span>
         <p><b>自作のExcelは、大会をまたぐと崩れる</b>関数を組んでも、集計のたびに直すうちに、どのセルが正しいか分からなくなる。</p>
       </div>
       <div class="pain">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M4 19V11M11 19V5M18 19v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.5M12 17h.01"/></svg></span>
         <p><b>シーズンの振り返りが、感覚で終わる</b>「今年は調子よかった気がする」を、実際の数字で確かめる手段がない。</p>
       </div>
     </div>
   </div>
 </section>
 
-<section>
+<section class="features-sec">
   <div class="wrap">
     <div class="section-head">
-      <div class="section-kicker">できること</div>
-      <h2>打席結果を入れるだけで、あとは自動。</h2>
+      <div class="section-kicker"><span class="num">02</span>できること</div>
+      <h2><span class="nb">打席結果を入れるだけで、</span><span class="nb">あとは自動。</span></h2>
     </div>
     <div class="features">
       <div class="feature">
         <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/><path d="M12 9v6M9 12h6"/></svg>
         </div>
         <div>
           <h3>打席結果をその場で記録</h3>
@@ -169,7 +366,7 @@
       </div>
       <div class="feature">
         <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M4 19V11M11 19V5M18 19v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16M7 16v-3M12 16V7M17 16v-6"/></svg>
         </div>
         <div>
           <h3>打率・出塁率・長打率を自動計算</h3>
@@ -178,7 +375,7 @@
       </div>
       <div class="feature">
         <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="15" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M3 10h18M8 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/></svg>
         </div>
         <div>
           <h3>シーズン・大会ごとに振り返る</h3>
@@ -192,6 +389,7 @@
 <section class="final-cta">
   <div class="wrap">
     <div class="section-head">
+      <svg class="plate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M5 4.5h14v7.5l-7 7.5-7-7.5z"/></svg>
       <h2>近日公開予定です。</h2>
       <p class="lead">草野球マスタは現在アプリ本体を開発中です。公開まで今しばらくお待ちください。</p>
     </div>
@@ -199,7 +397,11 @@
 </section>
 
 <footer>
-  <div class="wrap">
+  <div class="footer-in">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" fill="#FCFAF5" stroke="#15171B" stroke-width="1.75"/>
+      <path d="M7.6 4.9c1.4 2 2.2 4.4 2.2 7.1s-.8 5.1-2.2 7.1M16.4 4.9c-1.4 2-2.2 4.4-2.2 7.1s.8 5.1 2.2 7.1" stroke="#D23F1C" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
     <p>草野球マスタ</p>
   </div>
 </footer>
