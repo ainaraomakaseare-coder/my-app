@@ -123,6 +123,7 @@
   details summary{cursor:pointer;font-size:13px;color:var(--muted)}
   .hist{font-size:12px;color:var(--muted);margin:2px 0}
   .hide{display:none}
+  #growApps th, #growApps td { padding: 4px 18px 4px 0; }
 </style>
   <!-- 動画に使う書体。端末のフォント任せだと太さが変わってしまうので固定する。
        読めなかったときは reel.js が端末のフォントに落として、そのことを画面に出す。 -->
@@ -440,6 +441,16 @@
 
       <div class="view hide" id="v-grow">
     <!-- のび（分析） -->
+    <div class="card">
+      <h2>アプリのダウンロード数（App Store）</h2>
+      <div class="muted">App Store Connect の「売上とトレンド」と同じ数え方（新規ダウンロードのみ。再ダウンロードとアップデートは含みません）。
+        Apple の数字は1日ほど遅れて出ます。</div>
+      <div id="growApps" class="muted" style="margin-top:12px">読み込み中…</div>
+      <div class="row hide" id="growAppsTools" style="margin-top:10px;align-items:center">
+        <button type="button" id="growAppsCopy">動画用にコピー</button>
+        <span class="muted" id="growAppsState"></span>
+      </div>
+    </div>
     <div class="card">
       <h2>気づいたこと</h2>
       <div class="muted">数字から言えることだけを、根拠の数字つきで出します。
@@ -1793,6 +1804,7 @@ function daysBetween(a, b) {
 }
 
 async function loadGrow() {
+  loadApps();
   const obs = $('growObs');
   const accBox = $('growAccounts');
   const postBox = $('growPosts');
@@ -1815,6 +1827,70 @@ async function loadGrow() {
     loadBenchStatus();
   }
 }
+
+/**
+ * アプリのダウンロード数（GET /api/insights?apps=1 → lib/appstore.js）。
+ * ★ Apple から毎回取るので、ほかの数字とは別に読む（遅くても他の表示を待たせない）。
+ */
+let appsLast = null;
+
+const mdOf = (d) => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : '';
+
+async function loadApps() {
+  const box = $('growApps');
+  const tools = $('growAppsTools');
+  box.className = 'muted'; box.textContent = 'Apple から取得中…';
+  tools.classList.add('hide');
+  try {
+    const out = await api('/api/insights?apps=1');
+    appsLast = out;
+    if (!out.configured) {
+      box.innerHTML = 'まだ App Store Connect とつながっていません。Vercel の環境変数に '
+        + (out.missing || []).map((k) => `<code>${escapeHtml(k)}</code>`).join('・')
+        + ' を入れて再デプロイしてください（手順は docs/APPSTORE_SETUP.md）。';
+      return;
+    }
+    if (!out.apps.length) {
+      box.textContent = 'Apple の記録に、まだダウンロードがありません（' + out.since + ' 以降）。';
+      return;
+    }
+    const latest = out.latestDate ? `${mdOf(out.latestDate)}` : '—';
+    const rows = out.apps.map((a) => `<tr><td>${escapeHtml(a.title || a.appleId)}</td>`
+      + `<td style="text-align:right">${jpNum(a.total)}</td>`
+      + `<td style="text-align:right">${jpNum(a.latest)}</td>`
+      + `<td style="text-align:right">${jpNum(a.last7)}</td></tr>`).join('');
+    const sum = out.apps.reduce((n, a) => n + a.total, 0);
+    box.className = '';
+    box.innerHTML = `<table><thead><tr><th>アプリ</th><th style="text-align:right">累計</th>`
+      + `<th style="text-align:right">${escapeHtml(latest)}</th><th style="text-align:right">直近7日</th></tr></thead>`
+      + `<tbody>${rows}<tr><td><strong>合計</strong></td><td style="text-align:right"><strong>${jpNum(sum)}</strong></td><td></td><td></td></tr></tbody></table>`
+      + (out.pending && out.pending.length
+        ? `<div class="muted" style="margin-top:6px">${out.pending.map(mdOf).join('・')} のぶんは、まだ Apple から出ていません。</div>` : '');
+    tools.classList.remove('hide');
+    $('growAppsState').textContent = '';
+  } catch (e) {
+    box.className = '';
+    box.innerHTML = `<span class="err">${escapeHtml(e.message)}${e.hint ? '\n' + escapeHtml(e.hint) : ''}</span>`;
+  }
+}
+
+/** 動画やメモに貼る一行ずつの文。数字は Apple のものをそのまま使い、こちらで作らない。 */
+function appsText(out) {
+  const lines = [`【アプリのダウンロード数】${mdOf(out.latestDate)}まで`];
+  for (const a of out.apps) lines.push(`${a.title || a.appleId}：累計${a.total}（${mdOf(out.latestDate)} +${a.latest}）`);
+  lines.push(`合計：${out.apps.reduce((n, a) => n + a.total, 0)}`);
+  return lines.join('\n');
+}
+
+document.addEventListener('click', async (ev) => {
+  if (!ev.target || ev.target.id !== 'growAppsCopy' || !appsLast || !appsLast.configured) return;
+  try {
+    await navigator.clipboard.writeText(appsText(appsLast));
+    $('growAppsState').textContent = 'コピーしました。';
+  } catch (_) {
+    $('growAppsState').textContent = 'コピーできませんでした。';
+  }
+});
 
 /**
  * 気づいたこと。confidence で枠の色を変える。
