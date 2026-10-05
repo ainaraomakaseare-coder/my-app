@@ -5605,19 +5605,20 @@
   // dateが空なら「複数日をまとめて記録する」（DAY30〜）：旅行（別行動の中なら別行動）の日々に対して、AI自身が各予定の日も判定する。
   // branchId：自分だけの道（別行動）の中の取り込みのとき、その別行動のid
   function scanVoiceBlob(tripId, blob, meta) {
+    meta = Object.assign({}, meta, { lang: (window.I18N && I18N.lang) || 'ja' });
     var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify(meta))));
     return postBinary('/trips/' + encodeURIComponent(tripId) + '/voice-scan', blob, { 'x-voice-meta': metaHeader });
   }
 
   // 貼り付けたメモをAIで予定の候補にしてもらう（保存はしない）。meta：{ text, notes, email, date, branchId }
   function scanTextMemo(tripId, meta) {
-    return api('/trips/' + encodeURIComponent(tripId) + '/text-scan', 'POST', meta);
+    return api('/trips/' + encodeURIComponent(tripId) + '/text-scan', 'POST', Object.assign({}, meta, { lang: (window.I18N && I18N.lang) || 'ja' }));
   }
 
   // レシート・領収書の写真をAIに読み取らせ、費用明細の候補（{label, amount}の配列）を返してもらう。
   // 音声入力・テキストメモと同じ利用枠を消費するため、メールアドレスをmetaヘッダーで送る。
   function scanReceiptBlob(blob, email) {
-    var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify({ email: email }))));
+    var metaHeader = btoa(unescape(encodeURIComponent(JSON.stringify({ email: email, lang: (window.I18N && I18N.lang) || 'ja' }))));
     return postBinary('/receipts/scan', blob, { 'x-receipt-meta': metaHeader });
   }
 
@@ -7269,7 +7270,7 @@
     $('#ssStatus').textContent = tr('画像を読み取っています…（数十秒かかることがあります）');
     Promise.all(s.files.map(function (f) { return blobToBase64(f.blob).then(function (data) { return { type: 'image/jpeg', data: data }; }); }))
       .then(function (images) {
-        var body = { images: images, email: user.email || '' };
+        var body = { images: images, email: user.email || '', lang: (window.I18N && I18N.lang) || 'ja' };
         if (s.branch) body.branchId = s.branch.id;
         return api('/trips/' + encodeURIComponent(state.trip.id) + '/screenshot-scan', 'POST', body);
       })
@@ -8853,7 +8854,7 @@
     api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(date) + '/blocks/reorder', 'PATCH', { clear: true })
       .then(function () { return refreshTrip(); })
       .then(function () { renderDaySection(); })
-      .catch(function () { alert('元に戻せませんでした。もう一度お試しください。'); });
+      .catch(function () { alert(tr('元に戻せませんでした。もう一度お試しください。')); });
   }
 
   function persistBlockOrder(blockIds) {
@@ -8870,7 +8871,7 @@
         });
       })
       .catch(function () {
-        alert('並べ替えの保存に失敗しました。もう一度お試しください。');
+        alert(tr('並べ替えの保存に失敗しました。もう一度お試しください。'));
         renderDaySection();
       });
   }
@@ -8908,31 +8909,31 @@
         costItems.map(function (it) {
           return '<div class="cost-line"><span>' + escapeHtml(it.label) + '</span><span>' + escapeHtml(Core.formatCostItemAmount(it)) + '</span></div>';
         }).join('') +
-        '<div class="cost-line total"><span>計</span><span>' + escapeHtml(Core.formatYen(Core.entryCostTotal(entry))) + '</span></div>' +
+        '<div class="cost-line total"><span>' + tr('計') + '</span><span>' + escapeHtml(Core.formatYen(Core.entryCostTotal(entry))) + '</span></div>' +
         '</div>'
       : '';
 
     var metaBits = [];
-    if (entry.waitTime) metaBits.push('<span>待ち時間 ' + escapeHtml(entry.waitTime) + '</span>');
+    if (entry.waitTime) metaBits.push('<span>' + tr('待ち時間 {t}', { t: escapeHtml(entry.waitTime) }) + '</span>');
     // 地図のリンクが壊れている（以前の不具合で query=undefined,undefined になった等）・URLでないときは、
     // 普通の「地図」リンクに見せず、直すよう案内する。押すと記録の編集が開き、見出しで場所を探し直せる。
     // 壊れた地図は、地図でふりかえる・時差でも使えない（場所が分からない）ため（2026-09-27）
     var mapUnusable = entry.mapUrl && (!/^https?:\/\//i.test(entry.mapUrl.trim()) || Core.hasBrokenMapQuery(entry.mapUrl.trim()));
-    if (mapUnusable) metaBits.push('<span class="map-broken">地図の場所が読み取れません・押して直す</span>');
-    else if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">地図</a>');
+    if (mapUnusable) metaBits.push('<span class="map-broken">' + tr('地図の場所が読み取れません・押して直す') + '</span>');
+    else if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + tr('地図') + '</a>');
     // この記録がその日いちばん最初の記録（＝Blockの代表の地図）で、前後の予定から800km以上離れた
     // ピンを持っている（かつ前後どうしは300km未満）ときは、ピンを間違えている可能性が高い
     // （例：別の都市に泊まっている日に、前の街の家のピンが残っていた）。押して直せるよう、記録の
     // 編集導線がある「地図」リンクのすぐ下に注意書きを出す（Core.findFarMapOutlierBlockIds、2026-09-29）。
     if (!mapUnusable && (block.entries || [])[0] === entry && Core.findFarMapOutlierBlockIds(state.blocks || [])[block.id]) {
-      metaBits.push('<span class="map-far-outlier">この地図は前後の予定から遠く離れています（地図が違うかもしれません）</span>');
+      metaBits.push('<span class="map-far-outlier">' + tr('この地図は前後の予定から遠く離れています（地図が違うかもしれません）') + '</span>');
     }
-    if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">お店のHP</a>');
-    if (entry.otherUrl) metaBits.push('<a href="' + escapeHtml(entry.otherUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">リンク</a>');
+    if (entry.shopUrl) metaBits.push('<a href="' + escapeHtml(entry.shopUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + tr('お店のHP') + '</a>');
+    if (entry.otherUrl) metaBits.push('<a href="' + escapeHtml(entry.otherUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + tr('リンク') + '</a>');
 
     var ratingSummary = Core.ratingSummary(entry.ratings);
     var ratingHtml = ratingSummary.count
-      ? '<div class="entry-rating">★ ' + ratingSummary.avg.toFixed(1) + '<span class="count">（' + ratingSummary.count + '人）</span></div>'
+      ? '<div class="entry-rating">★ ' + ratingSummary.avg.toFixed(1) + '<span class="count">' + tr('（{n}人）', { n: ratingSummary.count }) + '</span></div>'
       : '';
 
     // 詳細（detail）は一覧には出さない。タップして記録編集を開けば見られる。
@@ -8942,8 +8943,8 @@
     card.innerHTML =
       (canMove
         ? '<div class="entry-card-head">' +
-            '<button type="button" class="entry-move-btn" aria-label="この記録を別の予定へ移す">' + MOVE_ICON + '<span>別の予定へ</span></button>' +
-            '<button type="button" class="entry-drag-handle" aria-label="ドラッグで別の予定に移動">' + DRAG_HANDLE_ICON + '</button>' +
+            '<button type="button" class="entry-move-btn" aria-label="' + tr('この記録を別の予定へ移す') + '">' + MOVE_ICON + '<span>' + tr('別の予定へ') + '</span></button>' +
+            '<button type="button" class="entry-drag-handle" aria-label="' + tr('ドラッグで別の予定に移動') + '">' + DRAG_HANDLE_ICON + '</button>' +
           '</div>' +
           '<div class="entry-move-menu" hidden></div>'
         : '') +
@@ -8952,7 +8953,7 @@
       (entry.comment ? '<div class="entry-comment">「' + escapeHtml(entry.comment) + '」</div>' : '') +
       photosHtml +
       videosHtml +
-      '<div class="entry-author">記録：' + escapeHtml(entry.author || '匿名') + '</div>' +
+      '<div class="entry-author">' + tr('記録：{name}', { name: escapeHtml(entry.author || tr('匿名')) }) + '</div>' +
       ratingHtml +
       costHtml +
       (metaBits.length ? '<div class="entry-meta">' + metaBits.join('') + '</div>' : '') +
@@ -9002,11 +9003,11 @@
     var targets = currentDayBlocks().filter(function (b) {
       return b.id !== currentBlockId && (b.branchId || '') === ((currentBlock && currentBlock.branchId) || '');
     });
-    var closeBtnHtml = '<button type="button" class="entry-move-cancel">キャンセル</button>';
+    var closeBtnHtml = '<button type="button" class="entry-move-cancel">' + tr('キャンセル') + '</button>';
     if (!targets.length) {
-      menu.innerHTML = '<p class="hint">この日には他に移動先の予定がありません。</p>' + closeBtnHtml;
+      menu.innerHTML = '<p class="hint">' + tr('この日には他に移動先の予定がありません。') + '</p>' + closeBtnHtml;
     } else {
-      menu.innerHTML = '<p class="entry-move-title">移動先の予定を選んでください</p>' + targets.map(function (b) {
+      menu.innerHTML = '<p class="entry-move-title">' + tr('移動先の予定を選んでください') + '</p>' + targets.map(function (b) {
         return '<button type="button" class="entry-move-target" data-block-id="' + escapeHtml(b.id) + '">' +
           (b.time ? escapeHtml(b.time) + ' ' : '') + escapeHtml(b.label || Core.categoryLabel(b.category)) +
           '</button>';
@@ -9032,10 +9033,10 @@
       .then(function () { return refreshTrip(); })
       .then(function () {
         renderDaySection();
-        if (isUndo) showToast('元に戻しました');
-        else if (fromBlockId) showToast('記録を別の予定へ移しました', { label: '元に戻す', onClick: function () { moveEntryTo(entryId, fromBlockId, '', true); } });
+        if (isUndo) showToast(tr('元に戻しました'));
+        else if (fromBlockId) showToast(tr('記録を別の予定へ移しました'), { label: tr('元に戻す'), onClick: function () { moveEntryTo(entryId, fromBlockId, '', true); } });
       })
-      .catch(function () { alert('記録の移動に失敗しました。もう一度お試しください。'); });
+      .catch(function () { alert(tr('記録の移動に失敗しました。もう一度お試しください。')); });
   }
 
   // ---------- 記録（entry）のドラッグでの移動（別の予定へ）----------
@@ -9140,7 +9141,7 @@
     var mm = block ? (block.moveMinutes || 0) : 0;
     $('#blkMoveHours').value = mm ? Math.floor(mm / 60) : '';
     $('#blkMoveMins').value = mm ? mm % 60 : '';
-    $('#blkFormTitle').textContent = (br ? '別行動の予定を' : '予定を') + (block ? '編集' : '追加');
+    $('#blkFormTitle').textContent = br ? (block ? tr('別行動の予定を編集') : tr('別行動の予定を追加')) : (block ? tr('予定を編集') : tr('予定を追加'));
     $('#blkDate').value = br ? br.date : (block ? block.date : (state.selectedDate || new Date().toISOString().slice(0, 10)));
     // 別行動の中の予定の日付は、別行動の日々（始まりの日〜終わりの日）から選ぶ（サーバーでも確かめている）
     var brSel = $('#blkBranchDate');
@@ -9155,7 +9156,7 @@
     }
     var branchNote = $('#blkBranchNote');
     branchNote.hidden = !br;
-    branchNote.textContent = br ? branchOwnerName(br) + 'の別行動（' + Core.branchRangeText(br) + '）の中の予定です。日付は別行動の日から選び、時刻はこの時間帯の中で入れてください。' : '';
+    branchNote.textContent = br ? tr('{name}の別行動（{range}）の中の予定です。日付は別行動の日から選び、時刻はこの時間帯の中で入れてください。', { name: branchOwnerName(br), range: Core.branchRangeText(br) }) : '';
     $('#blkTime').value = block ? block.time : '';
     $('#blkLabel').value = block ? block.label : '';
     $('#blkVideoExclude').checked = !!(block && block.videoExclude);
@@ -9210,9 +9211,9 @@
 
   function saveBlock() {
     var status = $('#blkFormStatus');
-    if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
+    if (!API_BASE) { status.textContent = tr('サーバーが未設定のため保存できません。'); return; }
     var label = $('#blkLabel').value.trim();
-    if (!label) { status.textContent = '見出しを入力してください。'; return; }
+    if (!label) { status.textContent = tr('見出しを入力してください。'); return; }
     // 別行動の中の予定の時刻は、別行動の時間帯の中に入れる（外だと、その人の道の並びと合わなくなるため）
     var editBranch = state.editingBranchId ? branchById(state.editingBranchId) : null;
     var timeVal = $('#blkTime').value || '';
@@ -9220,11 +9221,11 @@
     var placeReason = editBranch ? Core.validateBranchBlock(editBranch, dateVal, timeVal) : '';
     if (placeReason) {
       status.textContent = placeReason === 'time_out_of_branch'
-        ? '時刻は、別行動の時間帯（' + Core.branchRangeText(editBranch) + '）の中で入れてください。'
+        ? tr('時刻は、別行動の時間帯（{range}）の中で入れてください。', { range: Core.branchRangeText(editBranch) })
         : Core.branchErrorText(placeReason);
       return;
     }
-    status.textContent = '保存中…';
+    status.textContent = tr('保存中…');
     var payload = {
       date: dateVal || '',
       time: $('#blkTime').value || '',
@@ -9253,19 +9254,19 @@
         }
       });
     }).catch(function (e) {
-      status.textContent = e && e.message === 'forbidden' ? Core.branchErrorText('forbidden') : '保存に失敗しました。もう一度お試しください。';
+      status.textContent = e && e.message === 'forbidden' ? Core.branchErrorText('forbidden') : tr('保存に失敗しました。もう一度お試しください。');
     });
   }
 
   function deleteBlock() {
     if (!state.editingBlockId) return;
-    if (!confirm('この予定と、ぶら下がる記録をすべて削除しますか？')) return;
+    if (!confirm(tr('この予定と、ぶら下がる記録をすべて削除しますか？'))) return;
     api('/blocks/' + encodeURIComponent(state.editingBlockId), 'DELETE').then(function () {
       return refreshTrip();
     }).then(function () {
       showScreen('tripDetail');
       renderTripDetail();
-    }).catch(function () { $('#blkFormStatus').textContent = '削除に失敗しました。'; });
+    }).catch(function () { $('#blkFormStatus').textContent = tr('削除に失敗しました。'); });
   }
 
   // ---------- 小項目（記録）の追加・編集 ----------
@@ -9286,7 +9287,7 @@
     }) : [];
     $('#receiptScanStatus').textContent = '';
 
-    $('#entFormTitle').textContent = entry ? '記録を編集' : '記録を追加';
+    $('#entFormTitle').textContent = entry ? tr('記録を編集') : tr('記録を追加');
     $('#entEpisode').value = entry ? entry.episode : '';
     $('#entComment').value = entry ? entry.comment : '';
     $('#entDetail').value = entry ? entry.detail : '';
@@ -9308,7 +9309,7 @@
     $('#entPlaceCandidates').hidden = true;
     placeCandidates = []; placeChoice = '';
     selectedPlaceName = ''; selectedPlaceNameUrl = '';
-    $('#entPlaceStatus').textContent = brokenMapUrl ? '地図のリンクが壊れていたので、選び直してください' : '';
+    $('#entPlaceStatus').textContent = brokenMapUrl ? tr('地図のリンクが壊れていたので、選び直してください') : '';
     var loggedInUser = loadCurrentUser();
     $('#entAuthor').value = entry ? entry.author : (loggedInUser ? (loggedInUser.name || loggedInUser.email) : '');
     $('#entFormStatus').textContent = '';
@@ -9337,7 +9338,7 @@
     $('#entTravelField').hidden = !(isMove && Core.isPlaneMove(block));
     $('#entArriveField').hidden = !isMove;
     // 移動の予定では、上の地図の欄は出発地、下の欄が到着地（2026-09-27〜）
-    $('#entMapLabel').textContent = isMove ? '出発地の地図（任意）' : '地図のURL（任意）';
+    $('#entMapLabel').textContent = isMove ? tr('出発地の地図（任意）') : tr('地図のURL（任意）');
     $('#entArriveCandidates').hidden = true;
     $('#entArriveSearch').value = '';
     arrivePlaces = [];
@@ -9370,9 +9371,9 @@
     var d = Core.travelDurationText(dep, arr, depOff, arrOff);
     var info = Core.travelDuration(dep, arr, depOff, arrOff);
     var notes = [];
-    if (typeof depOff === 'number' && typeof arrOff === 'number' && depOff !== arrOff) notes.push('時差' + Core.offsetDiffText(arrOff - depOff));
-    if (info && info.dayShift) notes.push('到着は現地の' + (Core.dayShiftPrefix(info.dayShift) === '翌' ? '翌日' : Core.dayShiftPrefix(info.dayShift)));
-    $('#entTravelDuration').textContent = d ? '所要時間：' + d + (notes.length ? '（' + notes.join('・') + '）' : '') : '';
+    if (typeof depOff === 'number' && typeof arrOff === 'number' && depOff !== arrOff) notes.push(tr('時差{diff}', { diff: Core.offsetDiffText(arrOff - depOff) }));
+    if (info && info.dayShift) notes.push(tr('到着は現地の{day}', { day: info.dayShift === 1 ? tr('翌日') : Core.dayShiftPrefix(info.dayShift) }));
+    $('#entTravelDuration').textContent = d ? tr('所要時間：') + d + (notes.length ? '（' + notes.join('・') + '）' : '') : '';
   }
 
   function readTravelFields() {
@@ -9406,24 +9407,24 @@
     var q = $('#entArriveSearch').value.trim();
     if (!q) return;
     var status = $('#entArriveStatus'), list = $('#entArriveCandidates');
-    status.textContent = '候補を探しています…';
+    status.textContent = tr('候補を探しています…');
     arriveSession = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'pl-' + Date.now().toString(36);
     api('/places/search?q=' + encodeURIComponent(q) + '&session=' + encodeURIComponent(arriveSession)).then(function (res) {
       arrivePlaces = (res && res.places) || [];
       if (!arrivePlaces.length) {
         list.hidden = true;
-        status.textContent = '候補が見つかりませんでした。地図のURLを直接貼り付けることもできます。';
+        status.textContent = tr('候補が見つかりませんでした。地図のURLを直接貼り付けることもできます。');
         return;
       }
-      list.innerHTML = '<div class="place-list-head"><span>到着地を選ぶ</span><span class="place-count">' + arrivePlaces.length + '件</span></div>' +
+      list.innerHTML = '<div class="place-list-head"><span>' + tr('到着地を選ぶ') + '</span><span class="place-count">' + tr('{n}件', { n: arrivePlaces.length }) + '</span></div>' +
         arrivePlaces.map(function (p, i) {
           return '<div class="place-card" data-arrive-choice="' + i + '" role="button" tabindex="0"><span class="place-num">' + (i + 1) + '</span>' +
             '<div class="place-text"><div class="place-name">' + escapeHtml(p.name) + '</div>' +
-            (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">選択</span></div>';
+            (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">' + tr('選択') + '</span></div>';
         }).join('');
       list.hidden = false;
-      status.textContent = '到着地を選んでください。';
-    }).catch(function () { status.textContent = '候補を取得できませんでした。地図のURLを直接貼り付けることもできます。'; });
+      status.textContent = tr('到着地を選んでください。');
+    }).catch(function () { status.textContent = tr('候補を取得できませんでした。地図のURLを直接貼り付けることもできます。'); });
   }
   function chooseArrivePlace(i) {
     var p = arrivePlaces[i];
@@ -9431,7 +9432,7 @@
     $all('[data-arrive-choice]', $('#entArriveCandidates')).forEach(function (el) {
       var on = el.getAttribute('data-arrive-choice') === String(i);
       el.classList.toggle('on', on);
-      el.querySelector('.place-pick').textContent = on ? '選択中' : '選択';
+      el.querySelector('.place-pick').textContent = on ? tr('選択中') : tr('選択');
     });
     var status = $('#entArriveStatus');
     var need = !(isFinite(p.lat) && isFinite(p.lng)) && p.placeId;
@@ -9440,14 +9441,14 @@
         if (res && res.found && isFinite(res.lat) && isFinite(res.lng)) { p.lat = res.lat; p.lng = res.lng; }
       }).catch(function () {})
       : Promise.resolve();
-    if (need) status.textContent = '場所を確かめています…';
+    if (need) status.textContent = tr('場所を確かめています…');
     arrivePending = req.then(function () {
       arrivePending = null;
       var url = Core.placeMapUrl(p, $('#entArriveSearch').value);
       if (!url) return;
       $('#entArriveMapUrl').value = url;
       formArrive = { url: url, lat: isFinite(p.lat) ? p.lat : null, lng: isFinite(p.lng) ? p.lng : null };
-      status.textContent = '到着地に「' + p.name + '」を入れました。';
+      status.textContent = tr('到着地に「{name}」を入れました。', { name: p.name });
     });
   }
 
@@ -9460,16 +9461,16 @@
     var block = entryFormBlock();
     var kind = Core.reviewKindForCategory(block ? block.category : '');
     $('#entReviewFields').hidden = true;
-    $('#entMoreSummary').textContent = 'もっと書く（ひとこと・詳細・URLなど）';
+    $('#entMoreSummary').textContent = tr('もっと書く（ひとこと・詳細・URLなど）');
     if (!loginEnabled() || !entry || !kind) { field.hidden = true; return; }
     field.hidden = false;
     var user = loadCurrentUser();
     var widget = $('#entRatingWidget');
     var summary = Core.ratingSummary(entry.ratings);
-    var summaryText = summary.count ? ('みんなの平均：★' + summary.avg.toFixed(1) + '（' + summary.count + '人）') : 'まだ誰も評価していません';
+    var summaryText = summary.count ? tr('みんなの平均：★{avg}（{n}人）', { avg: summary.avg.toFixed(1), n: summary.count }) : tr('まだ誰も評価していません');
 
     if (!user) {
-      widget.innerHTML = '<button type="button" class="btn ghost small" id="btnRatingLogin">ログインして評価する</button>';
+      widget.innerHTML = '<button type="button" class="btn ghost small" id="btnRatingLogin">' + tr('ログインして評価する') + '</button>';
       $('#btnRatingLogin').addEventListener('click', function () { openLogin('entryForm'); });
       $('#entRatingSummary').textContent = summaryText;
       return;
@@ -9489,7 +9490,7 @@
         '<button type="button" class="btn ghost small" id="ratingFinePlus">＋0.1</button>' +
         '</div>' +
         '<div class="rating-level' + (Core.isReviewPublic(mine) ? '' : ' private') + '">' + escapeHtml(level) +
-        (Core.isReviewPublic(mine) ? '' : '（★3.0未満なので紹介文には出ません）') + '</div>'
+        (Core.isReviewPublic(mine) ? '' : tr('（★3.0未満なので紹介文には出ません）')) + '</div>'
       : '';
     widget.innerHTML = '<div class="stars">' + stars + '</div>' + fine;
     $all('.star-btn', widget).forEach(function (btn) {
@@ -9514,14 +9515,21 @@
   // ★をつけた人だけが、自分のレビュー項目（◎〇△×・金額・立地など）を書ける。どの項目を出すかは
   // 予定の種類（ホテログ・レクログ・飯ログ）で変わる。★は押した瞬間に保存されるが、レビュー項目は
   // 「レビューを保存」を押したときに★と一緒に保存する。
+  // 「予約」「混み具合」の選択肢。保存される値は日本語のまま（optionのvalue）で、見せる文字だけ訳す
+  var REVIEW_CHOICE_LABELS = {
+    '不要': tr('不要'), '推奨': tr('推奨'), '必須': tr('必須'),
+    '空いている': tr('空いている'), '普通': tr('普通'), '混んでいる': tr('混んでいる')
+  };
+  function reviewChoiceLabel(o) { return REVIEW_CHOICE_LABELS[o] || o; }
+
   function renderReviewFields(kind, review) {
     var el = $('#entReviewFields');
     var k = Core.REVIEW_KINDS[kind];
     var summary = $('#entMoreSummary');
-    if (!k || !review) { el.hidden = true; summary.textContent = 'もっと書く（ひとこと・詳細・URLなど）'; return; }
+    if (!k || !review) { el.hidden = true; summary.textContent = tr('もっと書く（ひとこと・詳細・URLなど）'); return; }
     el.hidden = false;
     // ★以外の細かいレビュー項目は、たたんだ「詳細」の欄の中に出す。すでに書いてあれば開いておく
-    summary.textContent = 'もっと書く（' + k.label + 'のレビュー・ひとこと・詳細など）';
+    summary.textContent = tr('もっと書く（{label}のレビュー・ひとこと・詳細など）', { label: k.label });
     if (Object.keys(review).length) $('#entMoreFields').open = true;
     var gradeSelect = function (key, label) {
       return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
@@ -9532,28 +9540,28 @@
     var choiceSelect = function (key, label) {
       return '<label class="review-row"><span>' + label + '</span><select data-review-key="' + key + '">' +
         '<option value="">―</option>' +
-        Core.REVIEW_CHOICE_OPTIONS[key].map(function (o) { return '<option' + (review[key] === o ? ' selected' : '') + '>' + o + '</option>'; }).join('') +
+        Core.REVIEW_CHOICE_OPTIONS[key].map(function (o) { return '<option value="' + escapeHtml(o) + '"' + (review[key] === o ? ' selected' : '') + '>' + escapeHtml(reviewChoiceLabel(o)) + '</option>'; }).join('') +
         '</select></label>';
     };
     var textInput = function (key, label, placeholder, max) {
       return '<label class="review-row review-row-wide"><span>' + label + '</span><input type="text" data-review-key="' + key + '" maxlength="' + max +
         '" placeholder="' + escapeHtml(placeholder) + '" value="' + escapeHtml(review[key] || '') + '"></label>';
     };
-    var unitLabel = { hotel: '泊数', activity: '回数', food: '人数' }[kind];
-    var html = '<div class="review-title">' + escapeHtml(k.label) + 'のレビュー（紹介文に使います）</div>';
+    var unitLabel = { hotel: tr('泊数'), activity: tr('回数'), food: tr('人数') }[kind];
+    var html = '<div class="review-title">' + tr('{label}のレビュー（紹介文に使います）', { label: escapeHtml(k.label) }) + '</div>';
     html += '<div class="review-grid">' + k.grades.map(function (g) { return gradeSelect(g[0], g[1]); }).join('') +
       (k.choices || []).map(function (c) { return choiceSelect(c[0], c[1]); }).join('') + '</div>';
     html += '<div class="review-grid">' +
-      '<label class="review-row"><span>金額（円）</span><input type="number" min="0" inputmode="numeric" data-review-key="amount" data-number placeholder="明細の合計" value="' + (typeof review.amount === 'number' ? review.amount : '') + '"></label>' +
+      '<label class="review-row"><span>' + tr('金額（円）') + '</span><input type="number" min="0" inputmode="numeric" data-review-key="amount" data-number placeholder="' + escapeHtml(tr('明細の合計')) + '" value="' + (typeof review.amount === 'number' ? review.amount : '') + '"></label>' +
       '<label class="review-row"><span>' + unitLabel + '</span><input type="number" min="1" max="365" inputmode="numeric" data-review-key="units" data-number value="' + (review.units || '') + '"></label>' +
       '</div>';
-    html += textInput('access', '立地（行き方）', '例：〇〇駅から徒歩5分', 60);
+    html += textInput('access', tr('立地（行き方）'), tr('例：〇〇駅から徒歩5分'), 60);
     (k.texts || []).forEach(function (t) {
-      var ph = { roomType: '例：ダブル・オーシャンビュー', duration: '例：2時間', bestTime: '例：夕方（夕日がきれい）', menu: '例：クロワッサン' }[t[0]] || '';
+      var ph = { roomType: tr('例：ダブル・オーシャンビュー'), duration: tr('例：2時間'), bestTime: tr('例：夕方（夕日がきれい）'), menu: tr('例：クロワッサン') }[t[0]] || '';
       html += textInput(t[0], t[1], ph, t[0] === 'menu' ? 200 : 60);
     });
-    html += '<label class="review-row review-row-wide"><span>その他</span><textarea data-review-key="other" maxlength="300" rows="2" placeholder="例：ベッドがふかふか、浴槽あり">' + escapeHtml(review.other || '') + '</textarea></label>';
-    html += '<button type="button" class="btn ghost small" id="btnSaveReview">レビューを保存</button><span class="hint review-status" id="reviewStatus"></span>';
+    html += '<label class="review-row review-row-wide"><span>' + tr('その他') + '</span><textarea data-review-key="other" maxlength="300" rows="2" placeholder="' + escapeHtml(tr('例：ベッドがふかふか、浴槽あり')) + '">' + escapeHtml(review.other || '') + '</textarea></label>';
+    html += '<button type="button" class="btn ghost small" id="btnSaveReview">' + tr('レビューを保存') + '</button><span class="hint review-status" id="reviewStatus"></span>';
     el.innerHTML = html;
     $('#btnSaveReview').addEventListener('click', saveMyReview);
   }
@@ -9576,22 +9584,22 @@
     var score = Core.myRatingScore(entry.ratings, user.email);
     if (!(score > 0)) return;
     var status = $('#reviewStatus');
-    status.textContent = '保存中…';
+    status.textContent = tr('保存中…');
     api('/entries/' + encodeURIComponent(entry.id) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: score, review: readReviewFields() })
       .then(function () { return refreshTrip(); })
       .then(function () {
         state.editingEntry = findEntryById(entry.id);
         renderEntryRatingSection();
-        $('#reviewStatus').textContent = '保存しました';
+        $('#reviewStatus').textContent = tr('保存しました');
       })
-      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
+      .catch(function () { status.textContent = tr('保存に失敗しました。もう一度お試しください。'); });
   }
 
   function setMyRating(score) {
     var user = loadCurrentUser();
     if (!user || !state.editingEntryId) return;
     var status = $('#entRatingSummary');
-    status.textContent = '保存中…';
+    status.textContent = tr('保存中…');
     var req = score > 0
       ? api('/entries/' + encodeURIComponent(state.editingEntryId) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: score })
       : api('/entries/' + encodeURIComponent(state.editingEntryId) + '/rating', 'DELETE', { raterEmail: user.email });
@@ -9600,7 +9608,7 @@
     }).then(function () {
       state.editingEntry = findEntryById(state.editingEntryId);
       renderEntryRatingSection();
-    }).catch(function () { status.textContent = '評価の保存に失敗しました。もう一度お試しください。'; });
+    }).catch(function () { status.textContent = tr('評価の保存に失敗しました。もう一度お試しください。'); });
   }
 
   var ROTATE_ICON = '<svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 8A6 6 0 1 0 16 11"/><path d="M16 4v4h-4"/></svg>';
@@ -9616,9 +9624,9 @@
       ph.className = 'ph';
       ph.dataset.index = idx;
       ph.innerHTML = '<img src="' + escapeHtml(item.id ? photoUrl(item.id) : item.url) + '" draggable="false">' +
-        (idx === 0 && state.formPhotos.length > 1 ? '<span class="ph-first">先頭</span>' : '') +
-        '<button type="button" class="ph-rotate" aria-label="90度回す">' + ROTATE_ICON + '</button>' +
-        '<button type="button" class="ph-remove" aria-label="削除">×</button>';
+        (idx === 0 && state.formPhotos.length > 1 ? '<span class="ph-first">' + tr('先頭') + '</span>' : '') +
+        '<button type="button" class="ph-rotate" aria-label="' + tr('90度回す') + '">' + ROTATE_ICON + '</button>' +
+        '<button type="button" class="ph-remove" aria-label="' + tr('削除') + '">×</button>';
       ph.querySelector('.ph-remove').addEventListener('click', function () {
         if (item.url) URL.revokeObjectURL(item.url);
         state.formPhotos.splice(idx, 1);
@@ -9634,7 +9642,7 @@
             .then(function (blob) { return rotateImageBlob(blob, 90); })
             .then(function (rotated) { return uploadPhotoBlob(rotated); })
             .then(function (up) { item.id = up.id; renderPhotoPreview(); })
-            .catch(function () { btn.disabled = false; alert('写真の回転に失敗しました。もう一度お試しください。'); });
+            .catch(function () { btn.disabled = false; alert(tr('写真の回転に失敗しました。もう一度お試しください。')); });
         } else {
           rotateImageBlob(item.blob, 90).then(function (rotated) {
             URL.revokeObjectURL(item.url);
@@ -9758,26 +9766,26 @@
     var panel = document.createElement('div');
     panel.className = 'cost-payer-row';
     if (!people.length) {
-      panel.innerHTML = '<p class="hint">参加者が未設定です。旅行の編集画面で参加者を入力する、または「記録した人」欄に名前を入れると選べるようになります。</p>';
+      panel.innerHTML = '<p class="hint">' + tr('参加者が未設定です。旅行の編集画面で参加者を入力する、または「記録した人」欄に名前を入れると選べるようになります。') + '</p>';
       return panel;
     }
     function currentItem() { return state.formCostItems[idx]; }
     function updateToggleButton() {
       var btn = row.querySelector('.cost-payer-toggle');
       var paidBy = currentItem().paidBy;
-      btn.textContent = paidBy ? (paidBy + 'が立替') : '立て替えを設定';
+      btn.textContent = paidBy ? tr('{name}が立替', { name: paidBy }) : tr('立て替えを設定');
       btn.classList.toggle('on', !!paidBy);
     }
 
     var payerSection = document.createElement('div');
     payerSection.className = 'cost-payer-section';
-    payerSection.innerHTML = '<span class="cost-payer-label">払った人</span><div class="chip-select" data-role="payer"></div>';
+    payerSection.innerHTML = '<span class="cost-payer-label">' + tr('払った人') + '</span><div class="chip-select" data-role="payer"></div>';
     var splitSection = document.createElement('div');
     splitSection.className = 'cost-payer-section';
     splitSection.innerHTML =
-      '<span class="cost-payer-label">割る人（未選択なら払った人だけ）</span>' +
+      '<span class="cost-payer-label">' + tr('割る人（未選択なら払った人だけ）') + '</span>' +
       '<div class="chip-select" data-role="split"></div>' +
-      '<button type="button" class="btn ghost small cost-split-even">参加者全員で均等割り</button>';
+      '<button type="button" class="btn ghost small cost-split-even">' + tr('参加者全員で均等割り') + '</button>';
     var payerChipWrap = payerSection.querySelector('[data-role="payer"]');
     var splitChipWrap = splitSection.querySelector('[data-role="split"]');
 
@@ -9817,7 +9825,7 @@
     var clearBtn = document.createElement('button');
     clearBtn.type = 'button';
     clearBtn.className = 'btn ghost small cost-payer-clear';
-    clearBtn.textContent = '立て替えの設定を外す';
+    clearBtn.textContent = tr('立て替えの設定を外す');
     clearBtn.addEventListener('click', function () {
       var item = currentItem();
       delete item.paidBy;
@@ -9879,31 +9887,31 @@
     state.formCostItems.forEach(function (item, idx) {
       var row = document.createElement('div');
       row.className = 'cost-item-row';
-      var payerLabel = item.paidBy ? (item.paidBy + 'が立替') : '立て替えを設定';
+      var payerLabel = item.paidBy ? tr('{name}が立替', { name: item.paidBy }) : tr('立て替えを設定');
       var currency = item.currency || 'JPY';
       var isForeign = currency !== 'JPY';
       var isKnown = Core.COST_CURRENCIES.indexOf(currency) !== -1;
       var showOther = item._customCurrency || !isKnown;
       var selectVal = showOther ? '__other' : currency;
       var options = Core.COST_CURRENCIES.map(function (c) {
-        return '<option value="' + c + '"' + (c === selectVal ? ' selected' : '') + '>' + (c === 'JPY' ? '円' : c) + '</option>';
-      }).join('') + '<option value="__other"' + (selectVal === '__other' ? ' selected' : '') + '>その他</option>';
+        return '<option value="' + c + '"' + (c === selectVal ? ' selected' : '') + '>' + (c === 'JPY' ? tr('円') : c) + '</option>';
+      }).join('') + '<option value="__other"' + (selectVal === '__other' ? ' selected' : '') + '>' + tr('その他') + '</option>';
       // 375px幅のiPhoneで「内容・金額・通貨・×」を1行に詰め込むと金額欄が数文字幅まで潰れて
       // プレースホルダーが縦の線のようにしか見えなくなっていた（オーナー指摘）ため、
       // 1行目＝内容（幅いっぱい）、2行目＝金額・通貨・×、の2段に分ける（2026-09-28）。
       row.innerHTML =
         '<div class="cost-item-line1">' +
-          '<input type="text" class="cost-item-label" placeholder="内容（例：そば）" value="' + escapeHtml(item.label) + '">' +
+          '<input type="text" class="cost-item-label" placeholder="' + escapeHtml(tr('内容（例：そば）')) + '" value="' + escapeHtml(item.label) + '">' +
         '</div>' +
         '<div class="cost-item-line2">' +
-          '<input type="number" class="cost-item-amount" min="0" step="' + (isForeign ? '0.01' : '1') + '" inputmode="decimal" placeholder="' + (isForeign ? '金額' : '円') + '" value="' + (typeof item.amount === 'number' && item.amount ? item.amount : '') + '">' +
+          '<input type="number" class="cost-item-amount" min="0" step="' + (isForeign ? '0.01' : '1') + '" inputmode="decimal" placeholder="' + (isForeign ? tr('金額') : tr('円')) + '" value="' + (typeof item.amount === 'number' && item.amount ? item.amount : '') + '">' +
           '<select class="cost-currency-select">' + options + '</select>' +
-          '<input type="text" class="cost-currency-other" placeholder="例：ISK" maxlength="3" value="' + ((showOther && currency !== 'JPY') ? escapeHtml(currency) : '') + '"' + (showOther ? '' : ' hidden') + '>' +
-          '<button type="button" aria-label="削除">×</button>' +
+          '<input type="text" class="cost-currency-other" placeholder="' + escapeHtml(tr('例：ISK')) + '" maxlength="3" value="' + ((showOther && currency !== 'JPY') ? escapeHtml(currency) : '') + '"' + (showOther ? '' : ' hidden') + '>' +
+          '<button type="button" aria-label="' + tr('削除') + '">×</button>' +
         '</div>' +
         '<div class="cost-rate-row" hidden></div>' +
         '<div class="cost-item-row-actions">' +
-          '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="立て替えを設定">' + escapeHtml(payerLabel) + '</button>' +
+          '<button type="button" class="cost-payer-toggle' + (item.paidBy ? ' on' : '') + '" aria-label="' + tr('立て替えを設定') + '">' + escapeHtml(payerLabel) + '</button>' +
         '</div>';
       var inputs = row.querySelectorAll('input');
       var textInput = inputs[0], amountInput = inputs[1], otherInput = row.querySelector('.cost-currency-other');
@@ -9956,7 +9964,7 @@
         if (existing && existing.classList.contains('cost-payer-row')) { existing.remove(); return; }
         row.insertAdjacentElement('afterend', buildCostPayerRow(idx, row));
       });
-      row.querySelector('[aria-label="削除"]').addEventListener('click', function () {
+      row.querySelector('[aria-label="' + tr('削除') + '"]').addEventListener('click', function () {
         state.formCostItems.splice(idx, 1);
         renderCostItems();
       });
@@ -10006,21 +10014,21 @@
     var currency = item && item.currency;
     if (!item || !currency || currency === 'JPY') { rateRow.hidden = true; rateRow.innerHTML = ''; return; }
     rateRow.hidden = false;
-    if (opts.loading) { rateRow.innerHTML = '<p class="hint">レートを取得中…</p>'; return; }
+    if (opts.loading) { rateRow.innerHTML = '<p class="hint">' + tr('レートを取得中…') + '</p>'; return; }
     var hasRate = typeof item.rate === 'number' && item.rate > 0;
     var warn = '';
     // 保存しようとしたのにレートが入っていないとき、行のすぐ下に出す（saveEntry。2026-09-27）
-    if (opts.blockedSave) warn = 'レートを入れてください（1 ' + currency + ' = ◯円）';
-    else if (opts.failed || !hasRate) warn = 'レートを取得できませんでした。手入力してください。';
-    else if (item._rateSource === 'currency-api-latest') warn = 'この日のレートが無いため最新のレートです。明細に合わせて直してください。';
+    if (opts.blockedSave) warn = tr('レートを入れてください（1 {cur} = ◯円）', { cur: currency });
+    else if (opts.failed || !hasRate) warn = tr('レートを取得できませんでした。手入力してください。');
+    else if (item._rateSource === 'currency-api-latest') warn = tr('この日のレートが無いため最新のレートです。明細に合わせて直してください。');
     var dateText = item._rateDate ? item._rateDate.slice(0, 4) + '/' + item._rateDate.slice(5, 7) + '/' + item._rateDate.slice(8, 10) : '';
     var rateLine = hasRate
-      ? ('1 ' + currency + ' = ' + item.rate.toLocaleString('ja-JP', { maximumFractionDigits: 4 }) + '円' + (dateText ? '（' + dateText + 'のレート）' : ''))
-      : ('1 ' + currency + ' のレートを入力してください');
+      ? ('1 ' + currency + ' = ' + item.rate.toLocaleString('ja-JP', { maximumFractionDigits: 4 }) + tr('円') + (dateText ? tr('（{date}のレート）', { date: dateText }) : ''))
+      : tr('1 {cur} のレートを入力してください', { cur: currency });
     rateRow.innerHTML =
       '<div class="cost-rate-line">' + escapeHtml(rateLine) + '</div>' +
       '<div class="cost-rate-edit"><span>1 ' + escapeHtml(currency) + ' =</span>' +
-      '<input type="number" class="cost-rate-input" step="0.0001" min="0" value="' + (hasRate ? item.rate : '') + '"><span>円</span></div>' +
+      '<input type="number" class="cost-rate-input" step="0.0001" min="0" value="' + (hasRate ? item.rate : '') + '"><span>' + tr('円') + '</span></div>' +
       '<div class="cost-rate-converted">→ ' + escapeHtml(Core.formatYen(Core.costItemJpy(item))) + '</div>' +
       (warn ? '<p class="hint cost-rate-warn">' + escapeHtml(warn) + '</p>' : '');
     rateRow.querySelector('.cost-rate-input').addEventListener('input', function (e) {
@@ -10032,7 +10040,7 @@
 
   function renderCostTotal() {
     var total = state.formCostItems.reduce(function (s, it) { return s + Core.costItemJpy(it); }, 0);
-    $('#entCostTotal').textContent = state.formCostItems.length ? '計 ' + Core.formatYen(total) : '';
+    $('#entCostTotal').textContent = state.formCostItems.length ? tr('計 {amount}', { amount: Core.formatYen(total) }) : '';
   }
 
   // レシートの写真から読み取った内訳を費用明細欄に追加するだけで、まだ何も保存はしない。
@@ -10041,18 +10049,18 @@
   function handleScanReceipt(file) {
     var user = loadCurrentUser();
     if (!user) {
-      $('#receiptScanStatus').textContent = 'ログインすると使えます。';
+      $('#receiptScanStatus').textContent = tr('ログインすると使えます。');
       return;
     }
     var status = $('#receiptScanStatus');
-    status.textContent = '読み取り中…（数十秒かかることがあります）';
+    status.textContent = tr('読み取り中…（数十秒かかることがあります）');
     $('#btnScanReceipt').disabled = true;
     fileToCompressedBlob(file, 1600, 0.85).then(function (blob) {
       return scanReceiptBlob(blob, user.email);
     }).then(function (res) {
       $('#btnScanReceipt').disabled = false;
       var items = (res && res.items) || [];
-      if (!items.length) { status.textContent = '品目を読み取れませんでした。写真を変えてお試しください。'; return; }
+      if (!items.length) { status.textContent = tr('品目を読み取れませんでした。写真を変えてお試しください。'); return; }
       // レシート読み取り結果の通貨は、今このフォームで使っている通貨（この旅行で最後に選んだ
       // 通貨。無ければ円）に合わせる（読み取り自体はまだ通貨を判定していないため）。
       var scanCurrency = lastCostCurrencyForTrip();
@@ -10067,16 +10075,16 @@
         state.formCostItems.push(newItem);
       });
       renderCostItems();
-      status.textContent = items.length + '件の明細を追加しました。内容を確認してください。';
+      status.textContent = tr('{n}件の明細を追加しました。内容を確認してください。', { n: items.length });
     }).catch(function (e) {
       $('#btnScanReceipt').disabled = false;
       var msg = (e && e.message) || '';
-      if (msg === 'server_not_configured') status.textContent = 'この機能はまだ使えません（サーバー側の設定が必要です）。';
-      else if (msg === 'rate_limited') status.textContent = '少し時間をおいてからもう一度お試しください。';
-      else if (msg === 'ai_quota_exhausted') status.textContent = 'AIの利用枠がいっぱいのため、今は読み取れません（運営側で対応します）。明細は手で入力できます。';
-      else if (msg === 'invalid_model_output' || msg === 'upstream_error') status.textContent = 'うまく読み取れませんでした。もう一度お試しください。';
-      else if (msg === 'login_required') status.textContent = 'ログインすると使えます。';
-      else status.textContent = '失敗しました。もう一度お試しください。';
+      if (msg === 'server_not_configured') status.textContent = tr('この機能はまだ使えません（サーバー側の設定が必要です）。');
+      else if (msg === 'rate_limited') status.textContent = tr('少し時間をおいてからもう一度お試しください。');
+      else if (msg === 'ai_quota_exhausted') status.textContent = tr('AIの利用枠がいっぱいのため、今は読み取れません（運営側で対応します）。明細は手で入力できます。');
+      else if (msg === 'invalid_model_output' || msg === 'upstream_error') status.textContent = tr('うまく読み取れませんでした。もう一度お試しください。');
+      else if (msg === 'login_required') status.textContent = tr('ログインすると使えます。');
+      else status.textContent = tr('失敗しました。もう一度お試しください。');
     });
   }
 
@@ -10118,7 +10126,7 @@
     var p = selectedPlace();
     if (!p || (isFinite(p.lat) && isFinite(p.lng)) || !p.placeId) return Promise.resolve(p);
     var status = $('#entPlaceStatus');
-    status.textContent = '場所を確かめています…';
+    status.textContent = tr('場所を確かめています…');
     var req = api('/places/details?id=' + encodeURIComponent(p.placeId) + '&session=' + encodeURIComponent(placeSessionToken))
       .then(function (res) {
         // res.found でも座標が数値でなければ（壊れた応答の保険）、undefined/NaNのまま入れない
@@ -10130,7 +10138,7 @@
         status.textContent = '';
         return p;
       }).catch(function () {
-        status.textContent = '場所の座標を取得できませんでした。';
+        status.textContent = tr('場所の座標を取得できませんでした。');
         return p;
       });
     placeCoordsPending = req.then(function (r) { placeCoordsPending = null; return r; });
@@ -10147,11 +10155,11 @@
         '<span class="place-num">' + num + '</span>' +
         '<div class="place-text"><div class="place-name">' + escapeHtml(name) + '</div>' +
         (sub ? '<div class="place-address">' + escapeHtml(sub) + '</div>' : '') + '</div>' +
-        '<span class="place-pick">' + (on ? '選択中' : '選択') + '</span></div>';
+        '<span class="place-pick">' + (on ? tr('選択中') : tr('選択')) + '</span></div>';
     };
-    list.innerHTML = '<div class="place-list-head"><span>候補から選ぶ</span><span class="place-count">' + placeCandidates.length + '件</span></div>' +
+    list.innerHTML = '<div class="place-list-head"><span>' + tr('候補から選ぶ') + '</span><span class="place-count">' + tr('{n}件', { n: placeCandidates.length }) + '</span></div>' +
       placeCandidates.map(function (p, i) { return card(String(i), i + 1, p.name, p.address); }).join('') +
-      card(PLACE_GOOGLE, '?', '候補にない場合', '「' + place + '」をGoogleマップで検索');
+      card(PLACE_GOOGLE, '?', tr('候補にない場合'), tr('「{place}」をGoogleマップで検索', { place: place }));
     list.hidden = false;
   }
 
@@ -10160,7 +10168,7 @@
     if (!place) return;
     var list = $('#entPlaceCandidates');
     var status = $('#entPlaceStatus');
-    status.textContent = '候補を探しています…';
+    status.textContent = tr('候補を探しています…');
     list.hidden = true;
     var session = newPlaceSession(); // 検索し直すたびに新しいセッション（Autocomplete〜Detailsの一連）にする
     api('/places/search?q=' + encodeURIComponent(place) + '&session=' + encodeURIComponent(session)).then(function (res) {
@@ -10168,8 +10176,8 @@
       placeChoice = placeCandidates.length ? '0' : PLACE_GOOGLE;
       renderPlaceCandidates(place);
       status.textContent = placeCandidates.length
-        ? '1番目の場所を地図に出しています。違う場所なら、候補から選び直してください。'
-        : '候補が見つかりませんでした。Googleマップの検索結果を表示しています。';
+        ? tr('1番目の場所を地図に出しています。違う場所なら、候補から選び直してください。')
+        : tr('候補が見つかりませんでした。Googleマップの検索結果を表示しています。');
       return ensureSelectedPlaceCoords();
     }).then(function () {
       previewSelectedPlace();
@@ -10283,8 +10291,8 @@
 
   function saveEntry() {
     var status = $('#entFormStatus');
-    if (!API_BASE) { status.textContent = 'サーバーが未設定のため保存できません。'; return; }
-    status.textContent = '確認中…';
+    if (!API_BASE) { status.textContent = tr('サーバーが未設定のため保存できません。'); return; }
+    status.textContent = tr('確認中…');
     // 座標を取りに行っている最中（候補を選んだ直後など）なら、届くのを待ってから地図欄を確定させる。
     // 待たずに保存すると、座標付きの正しいURLではなく検索文字列のURLで保存されてしまう（2026-09-27）
     var missingRate = costItemsMissingRate();
@@ -10298,7 +10306,7 @@
       var stillMissing = costItemsMissingRate();
       if (stillMissing.length) {
         stillMissing.forEach(function (x) { buildRateRow(x.idx, { blockedSave: true }); });
-        status.textContent = 'レートを入れてください（1 ' + stillMissing[0].it.currency + ' = ◯円）';
+        status.textContent = tr('レートを入れてください（1 {cur} = ◯円）', { cur: stillMissing[0].it.currency });
         var rowEl = costRateRowEls[stillMissing[0].idx];
         if (rowEl && rowEl.scrollIntoView) rowEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
         return;
@@ -10310,7 +10318,7 @@
   function continueSaveEntry(status) {
     var author = $('#entAuthor').value.trim();
     // 新しく選んだ動画があるときは、アップロードに時間がかかることを添える（2026-09-27）
-    status.textContent = (state.pendingVideos || []).length ? '保存中…（動画の保存は時間がかかります）' : '保存中…';
+    status.textContent = (state.pendingVideos || []).length ? tr('保存中…（動画の保存は時間がかかります）') : tr('保存中…');
 
     var payload = {
       episode: $('#entEpisode').value.trim(),
@@ -10320,7 +10328,7 @@
         .map(function (it) {
           var currency = (it.currency && it.currency !== 'JPY') ? it.currency : undefined;
           var amount = currency ? Math.round((it.amount || 0) * 100) / 100 : Math.round(it.amount || 0);
-          var out = { label: it.label.trim() || '費用', amount: amount };
+          var out = { label: it.label.trim() || tr('費用'), amount: amount };
           if (currency) out.currency = currency;
           if (currency && typeof it.rate === 'number' && it.rate > 0) out.rate = Math.round(it.rate * 10000) / 10000;
           if (it.paidBy) out.paidBy = it.paidBy;
@@ -10359,18 +10367,18 @@
           renderTripDetail();
         });
       })
-      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
+      .catch(function () { status.textContent = tr('保存に失敗しました。もう一度お試しください。'); });
   }
 
   function deleteEntry() {
     if (!state.editingEntryId) return;
-    if (!confirm('この記録を削除しますか？')) return;
+    if (!confirm(tr('この記録を削除しますか？'))) return;
     api('/entries/' + encodeURIComponent(state.editingEntryId), 'DELETE').then(function () {
       return refreshTrip();
     }).then(function () {
       showScreen('tripDetail');
       renderTripDetail();
-    }).catch(function () { $('#entFormStatus').textContent = '削除に失敗しました。'; });
+    }).catch(function () { $('#entFormStatus').textContent = tr('削除に失敗しました。'); });
   }
 
   // ---------- マイログ（ログイン中の自分の評価を、旅行をまたいで振り返る） ----------
@@ -10397,7 +10405,7 @@
       if (active && active.dataset.screen === 'mylog') renderMyLogKeepScroll();
     }).catch(function (e) {
       if (handleLoginRequired(e, 'mylog')) return;
-      if (!cached) { $('#mylogTripList')._sig = null; $('#mylogList')._sig = null; $('#mylogTripList').innerHTML = ''; $('#mylogList').innerHTML = '<div class="empty">マイログの読み込みに失敗しました。</div>'; }
+      if (!cached) { $('#mylogTripList')._sig = null; $('#mylogList')._sig = null; $('#mylogTripList').innerHTML = ''; $('#mylogList').innerHTML = '<div class="empty">' + tr('マイログの読み込みに失敗しました。') + '</div>'; }
     });
     // 残り回数はプロフィール画面がメインだが、マイログ見出しのplanBadgeTop（残り回数の
     // 一目バッジ）もここで最新化しておく（renderPlanStatusはプロフィール画面のDOMも一緒に更新するが、
@@ -10445,11 +10453,11 @@
       badgeEl.hidden = true;
       return;
     }
-    var lines = ['<div class="plan-usage">今月の音声入力：あと' + account.voiceRemainingThisPeriod + '回（月' + account.voiceMonthlyLimit + '回まで）</div>'];
+    var lines = ['<div class="plan-usage">' + tr('今月の音声入力：あと{n}回（月{limit}回まで）', { n: account.voiceRemainingThisPeriod, limit: account.voiceMonthlyLimit }) + '</div>'];
     if (typeof account.memoRemainingThisPeriod === 'number') {
-      lines.push('<div class="plan-usage">メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）</div>');
+      lines.push('<div class="plan-usage">' + tr('メモ・スクショのAI整理：あと{n}回（月{limit}回まで）', { n: account.memoRemainingThisPeriod, limit: account.memoMonthlyLimit }) + '</div>');
     }
-    if (account.ticketCredits) lines.push('<div class="plan-usage">おまけの回数：' + account.ticketCredits + '回</div>');
+    if (account.ticketCredits) lines.push('<div class="plan-usage">' + tr('おまけの回数：{n}回', { n: account.ticketCredits }) + '</div>');
     var linesHtml = lines.join('');
     if (statusEl.innerHTML !== linesHtml) {
       statusEl.innerHTML = linesHtml;
@@ -10459,7 +10467,7 @@
     badgeEl.hidden = false;
     if (badgeWasHidden) fadeInOnce(badgeEl);
     badgeEl.classList.add('is-free');
-    badgeEl.textContent = '音声入力 あと' + account.voiceRemainingThisPeriod + '回';
+    badgeEl.textContent = tr('音声入力 あと{n}回', { n: account.voiceRemainingThisPeriod });
     msgEl.textContent = '';
   }
 
@@ -10529,9 +10537,9 @@
     var trips = state.myLogTrips || [];
     var items = state.myLogItems || [];
     var stats = [
-      { num: trips.length, label: '旅行 ' + trips.length + '回' },
-      { num: items.length, label: '評価 ' + items.length + '件' },
-      { num: profileYearsSinceEarliestTrip(trips), label: '記録の年数 ' + profileYearsSinceEarliestTrip(trips) + '年' }
+      { num: trips.length, label: tr('旅行 {n}回', { n: trips.length }) },
+      { num: items.length, label: tr('評価 {n}件', { n: items.length }) },
+      { num: profileYearsSinceEarliestTrip(trips), label: tr('記録の年数 {n}年', { n: profileYearsSinceEarliestTrip(trips) }) }
     ];
     var statsEl = $('#profileStats');
     var html = stats.map(function (s) {
@@ -10552,7 +10560,7 @@
   function deleteMyAccount() {
     var user = loadCurrentUser();
     if (!user) return;
-    if (!confirm('アカウントを削除しますか？\n（名前・おまけの回数の情報と、この端末の旅行一覧が削除されます。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）')) return;
+    if (!confirm(tr('アカウントを削除しますか？\n（名前・おまけの回数の情報と、この端末の旅行一覧が削除されます。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）'))) return;
     api('/accounts/delete', 'POST', { email: user.email }).then(function () {
       Object.keys(localStorage).forEach(function (k) {
         if (k.indexOf('tabilog:') === 0) localStorage.removeItem(k);
@@ -10560,11 +10568,11 @@
       state.homeFilters = { companion: '', year: '', tripType: '', sort: '' };
       state.mylogFilters = { companion: '', year: '', sort: '' };
       renderAccountRow();
-      alert('アカウントを削除しました。');
+      alert(tr('アカウントを削除しました。'));
       goHome();
     }).catch(function (e) {
       if (handleLoginRequired(e, 'profile')) return;
-      alert('アカウントの削除に失敗しました。もう一度お試しください。');
+      alert(tr('アカウントの削除に失敗しました。もう一度お試しください。'));
     });
   }
 
@@ -10594,7 +10602,7 @@
       return '<span class="' + cls + '">' +
         '<span class="trip-place-name">' + escapeHtml(x.name) + '</span>' +
         '<button type="button" class="trip-place-action" data-trip="' + escapeHtml(t.tripId) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
-        '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? '戻す' : '外す') + '</button></span>';
+        '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? tr('戻す') : tr('外す')) + '</button></span>';
     };
     var items = (t.prefectures || []).map(function (x) { return { kind: 'prefecture', x: x }; })
       .concat((t.countries || []).map(function (x) { return { kind: 'country', x: x }; }));
@@ -10618,7 +10626,7 @@
     }).catch(function (e) {
       btn.disabled = false;
       if (handleLoginRequired(e, 'mylog')) return;
-      alert(mode === 'exclude' ? '外せませんでした。通信状況を確認して、もう一度お試しください。' : '戻せませんでした。通信状況を確認して、もう一度お試しください。');
+      alert(mode === 'exclude' ? tr('外せませんでした。通信状況を確認して、もう一度お試しください。') : tr('戻せませんでした。通信状況を確認して、もう一度お試しください。'));
     });
   }
 
@@ -10633,13 +10641,13 @@
   function renderMyLogTripFilterOptions(allTrips) {
     var opts = Core.tripFilterOptions(allTrips);
     var f = state.mylogFilters;
-    $('#mylogFilterCompanion').innerHTML = '<option value="">誰と一緒か：すべて</option>' +
+    $('#mylogFilterCompanion').innerHTML = '<option value="">' + tr('誰と一緒か：すべて') + '</option>' +
       opts.companions.map(function (c) {
         return '<option value="' + escapeHtml(c) + '"' + (f.companion === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
       }).join('');
-    $('#mylogFilterYear').innerHTML = '<option value="">年：すべて</option>' +
+    $('#mylogFilterYear').innerHTML = '<option value="">' + tr('年：すべて') + '</option>' +
       opts.years.map(function (y) {
-        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + escapeHtml(y) + '年</option>';
+        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + tr('{year}年', { year: escapeHtml(y) }) + '</option>';
       }).join('');
   }
 
@@ -10654,14 +10662,14 @@
     $('#mylogTripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない（ホーム画面と同じ基準）
     if (allTrips.length >= 2) renderMyLogTripFilterOptions(allTrips);
     if (!allTrips.length) {
-      el.innerHTML = '<div class="empty">まだ参加した旅行がありません。旅行のページで「参加する」を押すとここに表示されます。</div>';
+      el.innerHTML = '<div class="empty">' + tr('まだ参加した旅行がありません。旅行のページで「参加する」を押すとここに表示されます。') + '</div>';
       return;
     }
     // 絞り込み・並び順は表示する一覧だけに効く（「行ったことある旅先」の総計は全旅行のまま変わらない）
     var trips = Core.sortTrips(Core.filterTrips(allTrips, state.mylogFilters), state.mylogFilters.sort);
     $('#mylogSortTripOrder').value = state.mylogFilters.sort;
     if (!trips.length) {
-      el.innerHTML = '<div class="empty">条件に一致する旅行がありません。</div>';
+      el.innerHTML = '<div class="empty">' + tr('条件に一致する旅行がありません。') + '</div>';
       return;
     }
     var placesByTrip = {};
@@ -10735,7 +10743,7 @@
   }
   function renderMyLogListBody(el, items) {
     if (!items.length) {
-      el.innerHTML = '<div class="empty">まだ' + escapeHtml(MYLOG_LABELS[state.myLogCategory] || '') + 'に評価がありません。記録を開いて★を付けてみてください。</div>';
+      el.innerHTML = '<div class="empty">' + tr('まだ{label}に評価がありません。記録を開いて★を付けてみてください。', { label: escapeHtml(MYLOG_LABELS[state.myLogCategory] || '') }) + '</div>';
       return;
     }
     el.innerHTML = '';
@@ -10829,7 +10837,7 @@
     }).catch(function (e) {
       if (handleLoginRequired(e, 'visited')) return;
       if (cached) return;
-      $('#visitedPanel').innerHTML = '<div class="empty">読み込みに失敗しました。通信状況を確認して、もう一度お試しください。</div>';
+      $('#visitedPanel').innerHTML = '<div class="empty">' + tr('読み込みに失敗しました。通信状況を確認して、もう一度お試しください。') + '</div>';
     });
   }
 
@@ -10906,6 +10914,34 @@
   // 海外の国名→alpha2の対応表。世界地図データ（idx.nameToId）が読み終わってから埋まる
   // （地方・大陸ごとの一覧の見出しと国旗絵文字は、これが埋まってから出せる）。
   var visitedCountryAlpha2ByName = {};
+  // 訪れた場所の表示名。集計・選択の鍵（x.name、data-name）は日本語のままにして、画面に出すときだけ繁体字（台湾）にする。
+  // 都道府県・国名・大陸名は辞書（i18n/zh-Hant-app-4.js）で引く。辞書に無い国は、ブラウザのIntl.DisplayNamesの台湾の言い方で補う。
+  var VISITED_REGION_LABELS = I18N_ZH ? {
+    '北海道': tr('北海道'), '東北': tr('東北地方'), '関東': tr('関東地方'), '中部': tr('中部地方'),
+    '近畿': tr('近畿地方'), '中国': tr('中国地方'), '四国': tr('四国地方'), '九州・沖縄': tr('九州・沖縄')
+  } : {};
+  var visitedIntlZh = null;
+  function visitedPlaceLabel(kind, name) {
+    if (!I18N_ZH) return name;
+    if (kind === 'prefecture') return tr(name);
+    var zh = tr(name);
+    if (zh !== name) return zh;
+    var a2 = visitedCountryAlpha2ByName[name] || Core.alpha2ForCountryName(name);
+    if (a2) {
+      try {
+        if (!visitedIntlZh) visitedIntlZh = new Intl.DisplayNames(['zh-Hant-TW'], { type: 'region' });
+        var r = visitedIntlZh.of(a2);
+        if (r && r !== a2) return r;
+      } catch (e) { /* Intl.DisplayNamesが使えない環境は日本語のまま */ }
+    }
+    return name;
+  }
+  // 一覧の見出し（地方・大陸・「その他」）の表示名
+  function visitedGroupLabel(kind, group) {
+    if (!I18N_ZH) return group;
+    if (kind === 'prefecture') return VISITED_REGION_LABELS[group] || group;
+    return tr(group);
+  }
   function visitedFlagForName(name) {
     var a2 = visitedCountryAlpha2ByName[name] || Core.alpha2ForCountryName(name);
     return a2 ? Core.flagEmojiForAlpha2(a2) : '';
@@ -10916,7 +10952,7 @@
   // 複数の旅行にまたがる場所は、新しい旅行が上に来るよう年（最大値）で降順に並べ、1行ずつ出す
   // （・でつなげると同じ場所に何度も行った人ほど読みにくくなるため）。年が分からない旅行は最後に回す。
   function visitedTripLinksHtml(trips) {
-    if (!trips.length) return '記録が見つかりませんでした';
+    if (!trips.length) return tr('記録が見つかりませんでした');
     var sorted = trips.map(function (t, i) { return { t: t, i: i }; }).sort(function (a, b) {
       var ay = (a.t.years && a.t.years.length) ? Math.max.apply(null, a.t.years.map(Number)) : -1;
       var by = (b.t.years && b.t.years.length) ? Math.max.apply(null, b.t.years.map(Number)) : -1;
@@ -10945,7 +10981,7 @@
       var total = (Core.VISITED_PREFECTURE_REGIONS[group] || []).length;
       return count + ' / ' + total;
     }
-    return count + 'か国';
+    return tr('{n}か国', { n: count });
   }
 
   // 場所の一覧HTML（都道府県／国のどちらも共通）。地方・大陸ごとに見出し（タイトル＋件数＋区切り線）を
@@ -10954,13 +10990,13 @@
   // 国は先頭に国旗絵文字を出す（showFlagがtrueのとき）。行の下には訪れた旅行名（年つき）のリンクを出す。
   function visitedGroupedListHtml(kind, groups, showFlag) {
     if (!groups.length) {
-      return '<div class="empty">まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。</div>';
+      return '<div class="empty">' + tr('まだ訪れた場所がありません。旅行に地図付きの記録を入れると、ここに自動で集計されます。') + '</div>';
     }
     var sel = state.visitedSel;
     return groups.map(function (g) {
       return '<div class="visited-group">' +
         '<div class="visited-group-header">' +
-        '<span class="visited-group-title">' + escapeHtml(g.group) + '</span>' +
+        '<span class="visited-group-title">' + escapeHtml(visitedGroupLabel(kind, g.group)) + '</span>' +
         '<span class="visited-group-count">' + escapeHtml(visitedGroupCountLabel(kind, g.group, g.items.length)) + '</span>' +
         '</div>' +
         '<div class="visited-list">' + g.items.map(function (x) {
@@ -10968,7 +11004,7 @@
           var on = sel && sel.kind === kind && sel.name === x.name;
           var flag = showFlag ? visitedFlagForName(x.name) : '';
           return '<div class="visited-row' + (on ? ' on' : '') + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) + '">' +
-            '<div class="visited-row-name">' + (flag ? '<span class="visited-row-flag">' + flag + '</span>' : '') + escapeHtml(x.name) + '</div>' +
+            '<div class="visited-row-name">' + (flag ? '<span class="visited-row-flag">' + flag + '</span>' : '') + escapeHtml(visitedPlaceLabel(kind, x.name)) + '</div>' +
             '<div class="visited-row-trips">' + visitedTripLinksHtml(trips) + '</div>' +
             '</div>';
         }).join('') + '</div>' +
@@ -11010,8 +11046,8 @@
     var item = list.filter(function (x) { return x.name === sel.name; })[0];
     var trips = item ? Core.visitedPlaceTrips(item) : [];
     caption.hidden = false;
-    caption.innerHTML = '<div class="visited-caption-label">選んだ場所</div>' +
-      '<div class="visited-caption-name">' + escapeHtml(sel.name) + '</div>' +
+    caption.innerHTML = '<div class="visited-caption-label">' + tr('選んだ場所') + '</div>' +
+      '<div class="visited-caption-name">' + escapeHtml(visitedPlaceLabel(sel.kind, sel.name)) + '</div>' +
       '<div class="visited-caption-trips">' + visitedTripLinksHtml(trips) + '</div>';
     wireVisitedTripLinks(caption);
   }
@@ -11030,23 +11066,23 @@
 
   function renderVisitedDomestic(panel, visited) {
     var pct = Core.visitedPercentage(visited.length, VISITED_PREFECTURE_TOTAL);
-    var frac = '<strong>' + visited.length + '</strong> / ' + VISITED_PREFECTURE_TOTAL + ' <span class="visited-totals-unit">都道府県</span>';
+    var frac = '<strong>' + visited.length + '</strong> / ' + VISITED_PREFECTURE_TOTAL + ' <span class="visited-totals-unit">' + tr('都道府県') + '</span>';
     var groups = Core.groupVisitedByOrder(visited, function (x) { return Core.regionForPrefecture(x.name); }, Core.VISITED_REGION_ORDER);
     panel.innerHTML =
       visitedTotalsCardHtml(frac, '', pct) +
       '<div class="visited-map" id="visitedMapDomestic"><div class="visited-map-ph" style="aspect-ratio:' + VISITED_JAPAN_MAP_ASPECT + '"></div></div>' +
       '<div class="visited-caption" id="visitedCaption" hidden></div>' +
       visitedGroupedListHtml('prefecture', groups, false) +
-      '<p class="hint visited-credit">地図データ: simplify-japan-geojson（ricewin、CC BY 4.0）</p>';
+      '<p class="hint visited-credit">' + tr('地図データ: simplify-japan-geojson（ricewin、CC BY 4.0）') + '</p>';
     wireVisitedListRows(panel);
     drawVisitedJapanMap(visited);
   }
 
   function renderVisitedOverseas(panel, visited) {
     var pct = Core.visitedPercentage(visited.length, VISITED_COUNTRY_TOTAL);
-    var frac = '<strong>' + visited.length + '</strong> <span class="visited-totals-unit">か国</span>';
+    var frac = '<strong>' + visited.length + '</strong> <span class="visited-totals-unit">' + tr('か国') + '</span>';
     panel.innerHTML =
-      visitedTotalsCardHtml(frac, '国連加盟' + VISITED_COUNTRY_TOTAL + 'か国中', pct) +
+      visitedTotalsCardHtml(frac, tr('国連加盟{n}か国中', { n: VISITED_COUNTRY_TOTAL }), pct) +
       '<div class="visited-map" id="visitedMapOverseas"><div class="visited-map-ph" style="aspect-ratio:320 / 190"></div></div>' +
       '<div class="visited-caption" id="visitedCaption" hidden></div>' +
       '<div class="visited-list-wrap" id="visitedListOverseas"></div>';
@@ -11090,7 +11126,7 @@
         var isVisited = !!visitedNames[name];
         var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
         return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
-          (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>';
+          (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(visitedPlaceLabel('prefecture', name)) + '</title></path>';
       }).join('');
 
       // 沖縄は別枠のインセットに出す。以前は下に大きく空いた枠（本土と重ならないよう高さを余分に
@@ -11113,19 +11149,19 @@
         var d = okiPath(okinawaFeature);
         insetSvg = '<g class="visited-inset">' +
           '<rect x="' + insetX + '" y="' + insetY + '" width="' + insetW + '" height="' + insetH + '" class="visited-inset-box" rx="4"/>' +
-          '<text x="' + (insetX + 5) + '" y="' + (insetY + 11) + '" class="visited-inset-label">沖縄</text>' +
+          '<text x="' + (insetX + 5) + '" y="' + (insetY + 11) + '" class="visited-inset-label">' + tr('沖縄') + '</text>' +
           (d ? '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
-            (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(name) + '</title></path>' : '') +
+            (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(visitedPlaceLabel('prefecture', name)) + '</title></path>' : '') +
           '</g>';
       }
 
-      container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="訪れた都道府県の地図">' +
+      container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="' + tr('訪れた都道府県の地図') + '">' +
         mainSvg + insetSvg + '</svg>';
       wireVisitedMapRegions(container);
     }).catch(function (e) {
       console.error('drawVisitedJapanMap failed', e);
       var container = $('#visitedMapDomestic');
-      if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+      if (container) container.innerHTML = '<div class="empty">' + tr('地図の読み込みに失敗しました。') + '</div>';
     });
   }
 
@@ -11181,20 +11217,20 @@
                 var on = isVisited && sel && sel.kind === 'country' && sel.name === name;
                 return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
                   (isVisited ? ' data-kind="country" data-name="' + escapeHtml(name) + '"' : '') +
-                  '>' + (name ? '<title>' + escapeHtml(name) + '</title>' : '') + '</path>';
+                  '>' + (name ? '<title>' + escapeHtml(visitedPlaceLabel('country', name)) + '</title>' : '') + '</path>';
               } catch (eFeature) {
                 console.error('drawVisitedWorldMap: skipped a feature', f && f.id, eFeature);
                 return ''; // 1つの地物がおかしくても地図全体は描く
               }
             }).join('');
-            container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="訪れた国の地図">' + paths + '</svg>';
+            container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="' + tr('訪れた国の地図') + '">' + paths + '</svg>';
             wireVisitedMapRegions(container);
           } catch (eMap) {
             console.error('drawVisitedWorldMap: map render failed', eMap);
-            container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+            container.innerHTML = '<div class="empty">' + tr('地図の読み込みに失敗しました。') + '</div>';
           }
         } else {
-          container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+          container.innerHTML = '<div class="empty">' + tr('地図の読み込みに失敗しました。') + '</div>';
         }
       }
 
@@ -11212,15 +11248,15 @@
           if (fade) fadeInOnce(listWrap);
         } catch (eList) {
           console.error('drawVisitedWorldMap: list render failed', eList);
-          listWrap.innerHTML = '<div class="empty">一覧の読み込みに失敗しました。</div>';
+          listWrap.innerHTML = '<div class="empty">' + tr('一覧の読み込みに失敗しました。') + '</div>';
         }
       }
     }).catch(function (e) {
       console.error('drawVisitedWorldMap failed', e);
       var container = $('#visitedMapOverseas');
-      if (container) container.innerHTML = '<div class="empty">地図の読み込みに失敗しました。</div>';
+      if (container) container.innerHTML = '<div class="empty">' + tr('地図の読み込みに失敗しました。') + '</div>';
       var listWrap = $('#visitedListOverseas');
-      if (listWrap) listWrap.innerHTML = '<div class="empty">一覧の読み込みに失敗しました。</div>';
+      if (listWrap) listWrap.innerHTML = '<div class="empty">' + tr('一覧の読み込みに失敗しました。') + '</div>';
     });
   }
 
@@ -11484,13 +11520,13 @@
     var viewerEl = $('#replayViewer');
     var viewerBranch = state.viewAccountId ? (state.branches || []).filter(function (b) { return b.accountId === state.viewAccountId; })[0] : null;
     viewerEl.hidden = !viewerBranch;
-    viewerEl.textContent = viewerBranch ? branchOwnerName(viewerBranch) + 'の道' : '';
+    viewerEl.textContent = viewerBranch ? tr('{name}の道', { name: branchOwnerName(viewerBranch) }) : '';
     var status = $('#replayStatus');
     var statusSub = $('#replayStatusSub');
     statusSub.hidden = true;
     statusSub.textContent = '';
-    if (!stops.length) { status.textContent = '日付の入った予定がまだありません。'; return; }
-    status.textContent = '地図を準備しています…';
+    if (!stops.length) { status.textContent = tr('日付の入った予定がまだありません。'); return; }
+    status.textContent = tr('地図を準備しています…');
     var token = {};
     replayToken = token;
     // 「近く」の判定（Core.geocodeNearIndexes）に使う予定自身の移動手段は、replayStopsが持つ
@@ -11506,21 +11542,21 @@
           entryId: s.entryId, lat: s.knownLat, lng: s.knownLng
         };
       }), function (done, total) {
-        if (replayToken === token) status.textContent = '地図で場所を探しています…（' + done + '/' + total + '）';
+        if (replayToken === token) status.textContent = tr('地図で場所を探しています…（{done}/{total}）', { done: done, total: total });
       }, function (todoCount) {
         // まだ座標を1つも覚えていない（サーバー保存済み・端末キャッシュのどちらにも無い）場所が
         // 1つでもあるときだけ、初回だけ時間がかかることの補足を出す（全部わかっていれば出さない＝
         // 次回からはこの補足なしですぐ始まる）
-        if (replayToken === token) { statusSub.hidden = !todoCount; statusSub.textContent = todoCount ? '初めて開くときは、場所を調べて覚えるので少し時間がかかります。次からはすぐに始まります。' : ''; }
+        if (replayToken === token) { statusSub.hidden = !todoCount; statusSub.textContent = todoCount ? tr('初めて開くときは、場所を調べて覚えるので少し時間がかかります。次からはすぐに始まります。') : ''; }
       })
     ]).then(function (res) {
       if (replayToken !== token) return; // 準備中に閉じられた
       statusSub.hidden = true;
       var tl = Core.buildReplayTimeline(stops, res[1]);
       if (!tl.stops.some(function (s) { return s.located; })) {
-        status.textContent = '地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。';
+        status.textContent = tr('地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。');
         statusSub.hidden = false;
-        statusSub.textContent = '地図は場所を設定した記録をたどります';
+        statusSub.textContent = tr('地図は場所を設定した記録をたどります');
         return;
       }
       // 道のりがそろうのを待たずに始める（以前は全区間の道のりを待ってから始めていて、準備が長かった）。
@@ -11528,8 +11564,8 @@
       status.textContent = '';
       startReplay(res[0], tl);
       // 場所が1か所だけだと動かないので、理由を一言。移動手段が未設定の区間は仮定で描いていることを伝える
-      if (tl.stops.filter(function (s) { return s.located; }).length < 2) showReplayNote('地図は場所を設定した記録をたどります');
-      else if (tl.legs.some(function (l) { return l.assumed; })) showReplayNote('移動手段が未設定の区間は、距離から車・飛行機などと仮定して点線で描いています（予定の編集で変えられます）');
+      if (tl.stops.filter(function (s) { return s.located; }).length < 2) showReplayNote(tr('地図は場所を設定した記録をたどります'));
+      else if (tl.legs.some(function (l) { return l.assumed; })) showReplayNote(tr('移動手段が未設定の区間は、距離から車・飛行機などと仮定して点線で描いています（予定の編集で変えられます）'));
       replay.routesDone = fetchReplayRoutes(tl, function (l) {
         if (replayToken !== token || !replay || replay.tl !== tl) return;
         var set = replay.lines[tl.legs.indexOf(l)];
@@ -11538,7 +11574,7 @@
         renderReplay();
       });
     }).catch(function () {
-      if (replayToken === token) { status.textContent = '地図を読み込めませんでした。通信環境を確認してください。'; statusSub.hidden = true; }
+      if (replayToken === token) { status.textContent = tr('地図を読み込めませんでした。通信環境を確認してください。'); statusSub.hidden = true; }
     });
   }
 
@@ -11796,7 +11832,7 @@
   }
 
   function showReplayDayBanner(dayNumber) {
-    showReplayBanner(dayNumber + '日目');
+    showReplayBanner(tr('{n}日目', { n: dayNumber }));
   }
 
   // sub：下に小さく添える一言（時差のときの「ここから現地時間」など）。1行ずつ途中で折り返さない
@@ -11896,11 +11932,11 @@
     var L = replay.L, tl = replay.tl, r = replay.r;
     var st = Core.replayStateAt(tl, r);
 
-    $('#replayDay').textContent = st.dayNumber + '日目　' + replayShortDate(replay.dates[st.dayNumber - 1]);
+    $('#replayDay').textContent = tr('{n}日目', { n: st.dayNumber }) + '　' + replayShortDate(replay.dates[st.dayNumber - 1]);
     highlightReplayDay(st.dayNumber);
     $('#replayTime').textContent = st.hhmm;
     if (replay.lastOffsetDiff !== undefined && st.offsetDiff !== replay.lastOffsetDiff && replay.playing) {
-      showReplayBanner('時差 ' + Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff), 'ここから現地時間');
+      showReplayBanner(tr('時差 {diff}', { diff: Core.offsetDiffText(st.offsetDiff - replay.lastOffsetDiff) }), tr('ここから現地時間'));
     }
     replay.lastOffsetDiff = st.offsetDiff;
     if (st.dayNumber !== replay.lastDay) {
@@ -12058,7 +12094,7 @@
     replay.lastTs = null;
     var btn = $('#btnReplayToggle');
     btn.innerHTML = on ? PAUSE_ICON : PLAY_ICON;
-    btn.setAttribute('aria-label', on ? '一時停止' : '再生');
+    btn.setAttribute('aria-label', on ? tr('一時停止') : tr('再生'));
     if (replay.raf) cancelAnimationFrame(replay.raf);
     replay.raf = on ? requestAnimationFrame(replayTick) : null;
   }
@@ -12143,7 +12179,7 @@
     replay.dayStarts = days;
     el.hidden = days.length < 2;
     el.innerHTML = days.map(function (d) {
-      return '<button type="button" class="replay-day-chip" data-day="' + d.dayNumber + '">' + d.dayNumber + '日目' +
+      return '<button type="button" class="replay-day-chip" data-day="' + d.dayNumber + '">' + tr('{n}日目', { n: d.dayNumber }) +
         (d.date ? '<span>' + escapeHtml(replayShortDate(d.date)) + '</span>' : '') + '</button>';
     }).join('');
   }
@@ -12263,7 +12299,7 @@
     });
   }
 
-  function videoShareText() { return 'この旅行の足跡をみんなに共有 #旅の足跡\n' + PUBLIC_WEB_BASE; }
+  function videoShareText() { return tr('この旅行の足跡をみんなに共有 #旅の足跡\n{url}', { url: PUBLIC_WEB_BASE }); }
   function videoAppHost() { return PUBLIC_WEB_BASE.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
 
   // 動画にできるのは、地図に出せる場所が2か所以上あるとき。ボタンはふりかえりの準備ができてから出す
@@ -12275,16 +12311,17 @@
     btn.hidden = false;
     btn.disabled = !ok;
     hint.hidden = ok;
-    hint.textContent = ok ? '' : '場所が2か所以上ないと動画にできません';
+    hint.textContent = ok ? '' : tr('場所が2か所以上ないと動画にできません');
   }
 
   // 録画は実時間なので、動画の長さ（story.total）がそのままかかる時間になる。あとどれくらいかを出す
   function videoDurationText(sec) {
     var s = Math.max(0, Math.round(sec));
-    return s >= 60 ? Math.floor(s / 60) + '分' + (s % 60 ? (s % 60) + '秒' : '') : s + '秒';
+    if (s < 60) return tr('{s}秒', { s: s });
+    return s % 60 ? tr('{m}分{s}秒', { m: Math.floor(s / 60), s: s % 60 }) : tr('{n}分', { n: Math.floor(s / 60) });
   }
   function videoRecordingText(story, frac) {
-    return '動画を作っています…（あと約' + videoDurationText(story.total * (1 - frac)) + '）';
+    return tr('動画を作っています…（あと約{d}）', { d: videoDurationText(story.total * (1 - frac)) });
   }
 
   function rsvShowPanel(name) {
@@ -12306,7 +12343,7 @@
     // この旅行に写真つきの場所が無ければ、写真の選択肢そのものを出さない
     var withPhotos = Core.buildVideoStory(replay.tl, { photos: true });
     var lenEl = $('#rsvLength');
-    if (lenEl) lenEl.textContent = withPhotos ? '動画の長さは約' + videoDurationText(withPhotos.total) + '、作るのに同じくらいの時間がかかります。' : '';
+    if (lenEl) lenEl.textContent = withPhotos ? tr('動画の長さは約{d}、作るのに同じくらいの時間がかかります。', { d: videoDurationText(withPhotos.total) }) : '';
     $('#rsvPhotosRow').hidden = !(withPhotos && withPhotos.hasPhotos);
     $('#rsvPhotosNote').hidden = $('#rsvPhotosRow').hidden;
     $('#rsvPhotos').checked = false; // 同行者の顔が写ることがあるので、いつもOFFから
@@ -12343,7 +12380,7 @@
     var photos = !$('#rsvPhotosRow').hidden && $('#rsvPhotos').checked;
     var s = photos ? rsv.saved.p : rsv.saved.n;
     btn.hidden = !s;
-    if (s) btn.textContent = '保存した動画を見る（' + Core.videoMadeAtText(s.createdAt) + ' に作った' + (photos ? '写真あり' : '写真なし') + '）';
+    if (s) btn.textContent = tr('保存した動画を見る（{time} に作った{label}）', { time: Core.videoMadeAtText(s.createdAt), label: photos ? tr('写真あり') : tr('写真なし') });
   }
 
   function rsvReleaseVideo() {
@@ -12374,7 +12411,7 @@
   function videoWaitUntilVisible(token) {
     return new Promise(function (resolve) {
       if (!document.hidden) { resolve(true); return; }
-      rsvSetProgress(0.45, '画面に戻ると録画を始めます');
+      rsvSetProgress(0.45, tr('画面に戻ると録画を始めます'));
       var timer = setInterval(function () {
         if (token.cancelled) { clearInterval(timer); resolve(false); return; }
         if (!document.hidden) { clearInterval(timer); resolve(true); }
@@ -12545,7 +12582,7 @@
     }
 
     if (fs.showDay) {
-      var dayText = fs.day + '日目';
+      var dayText = tr('{n}日目', { n: fs.day });
       ctx.font = '800 34px ' + VIDEO_FONT;
       var dw = ctx.measureText(dayText).width + 48;
       videoRoundRect(ctx, 36, 150, dw, 62, 31);
@@ -12562,7 +12599,7 @@
       ctx.globalAlpha = Math.min(fs.introAlpha, fs.introTextAlpha);
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#FFFFFF';
       // 旅行名は1行に収まるまで縮める（下限を超えたら「・」「、」空白で最大2行）
-      var fit = Core.videoFitTitle(story.title || '旅の記録', 600, function (s, size) {
+      var fit = Core.videoFitTitle(story.title || tr('旅の記録'), 600, function (s, size) {
         ctx.font = '800 ' + size + 'px ' + VIDEO_FONT; return ctx.measureText(s).width;
       }, { maxSize: 68, minSize: 40, maxLines: 2 });
       ctx.font = '800 ' + fit.size + 'px ' + VIDEO_FONT;
@@ -12647,18 +12684,18 @@
     status.textContent = '';
     var canvas = document.createElement('canvas');
     if (typeof MediaRecorder === 'undefined' || !canvas.captureStream) {
-      status.textContent = 'この端末（ブラウザ）は動画の作成に対応していません。';
+      status.textContent = tr('この端末（ブラウザ）は動画の作成に対応していません。');
       return;
     }
     var mime = Core.pickVideoMimeType(function (m) { return MediaRecorder.isTypeSupported(m); });
-    if (!mime) { status.textContent = 'この端末（ブラウザ）は動画の作成に対応していません。'; return; }
+    if (!mime) { status.textContent = tr('この端末（ブラウザ）は動画の作成に対応していません。'); return; }
     var tl = replay.tl, trip = state.trip || {};
     var usePhotos = !$('#rsvPhotosRow').hidden && $('#rsvPhotos').checked;
     var token = { cancelled: false };
     rsv.token = token; rsv.busy = true; rsv.recording = false;
     rsvReleaseVideo();
     rsvShowPanel('progress');
-    rsvSetProgress(0, 'ルートを確認しています…');
+    rsvSetProgress(0, tr('ルートを確認しています…'));
     var routesReady = replay.routesDone
       ? Promise.race([replay.routesDone.catch(function () {}), new Promise(function (r) { setTimeout(r, 8000); })])
       : Promise.resolve();
@@ -12670,20 +12707,20 @@
       // 寄りすぎるとタイルが増える。OSMに負担をかけないよう、上限を超えるときは、まず寄る上限（区間・着いた地点の縮尺）を
       // 1段ずつ下げる（全体を引いたりはしない。2026-09-30）
       for (;;) {
-        story = Core.buildVideoStory(tl, { photos: usePhotos, title: (trip.title || '旅の記録') + (state.viewAccountId && $('#replayViewer').textContent ? '（' + $('#replayViewer').textContent + '）' : ''), dateText: dateText, maxZoom: maxZoom });
+        story = Core.buildVideoStory(tl, { photos: usePhotos, title: (trip.title || tr('旅の記録')) + (state.viewAccountId && $('#replayViewer').textContent ? '（' + $('#replayViewer').textContent + '）' : ''), dateText: dateText, maxZoom: maxZoom });
         if (!story) throw new Error('no_story');
         tiles = Core.videoTilesNeeded(story);
         if (tiles.length <= Core.videoTileLimit(story.total) || maxZoom <= 4) break;
         maxZoom--;
       }
       var hintEl = $('#rsvProgressHint');
-      if (hintEl) hintEl.textContent = '動画は実際の時間をかけて作るので、約' + videoDurationText(story.total) + 'かかります（地図の読み込みは別に少しかかります）。この画面を開いたままお待ちください。';
+      if (hintEl) hintEl.textContent = tr('動画は実際の時間をかけて作るので、約{d}かかります（地図の読み込みは別に少しかかります）。この画面を開いたままお待ちください。', { d: videoDurationText(story.total) });
       canvas.width = story.w; canvas.height = story.h;
       ctx = canvas.getContext('2d');
       var photoIds = [];
       story.wps.forEach(function (w) { if (w.caption && w.caption.photo && photoIds.indexOf(w.caption.photo) === -1) photoIds.push(w.caption.photo); });
       // 準備（地図のタイルと写真を先に全部取る）は全体の45%、録画が残り
-      var prep = function (frac) { rsvSetProgress(frac * 0.45, '地図を読み込んでいます…'); };
+      var prep = function (frac) { rsvSetProgress(frac * 0.45, tr('地図を読み込んでいます…')); };
       prep(0);
       var jobs = tiles.map(function (t) { return { tile: t }; }).concat(photoIds.map(function (id) { return { photo: id }; }));
       return videoRunPool(jobs, VIDEO_TILE_CONCURRENCY, function (job) {
@@ -12724,8 +12761,8 @@
       rsv.busy = false; rsv.recording = false;
       rsvShowPanel('options');
       $('#rsvStatus').textContent = err && err.message === 'tainted'
-        ? '地図や写真の画像を取り込めませんでした。写真を外してもう一度お試しください。'
-        : '動画を作れませんでした。通信環境を確認して、もう一度お試しください。';
+        ? tr('地図や写真の画像を取り込めませんでした。写真を外してもう一度お試しください。')
+        : tr('動画を作れませんでした。通信環境を確認して、もう一度お試しください。');
     });
   }
 
@@ -12740,11 +12777,11 @@
     v.src = rsv.objectUrl;
     var p = v.play(); if (p && p.catch) p.catch(function () {});
     var canFile = !!(navigator.canShare && navigator.canShare({ files: [rsv.file] }));
-    $('#btnRsvShare').textContent = canFile ? '共有する' : '動画を保存する';
+    $('#btnRsvShare').textContent = canFile ? tr('共有する') : tr('動画を保存する');
     // 共有できる環境でも、端末へ保存したい人のために別の保存ボタンを出す（iOSアプリではダウンロードできないので出さない）
     $('#btnRsvSave').hidden = !(canFile && !isNativeApp());
-    $('#rsvResultNote').textContent = (mime.isMp4 ? '' : 'この端末ではWebM形式で作られました。XやInstagramなど、WebMを受け付けないSNSがあります。') +
-      (canFile ? '' : ' このブラウザは動画の共有に対応していないため、保存して投稿してください（投稿用の文章はコピーします）。');
+    $('#rsvResultNote').textContent = (mime.isMp4 ? '' : tr('この端末ではWebM形式で作られました。XやInstagramなど、WebMを受け付けないSNSがあります。')) +
+      (canFile ? '' : ' ' + tr('このブラウザは動画の共有に対応していないため、保存して投稿してください（投稿用の文章はコピーします）。'));
     rsvUpdateResultInfo();
     rsvShowPanel('result');
   }
@@ -12753,12 +12790,11 @@
   function rsvUpdateResultInfo() {
     var cur = rsv.current;
     if (!cur) return;
-    $('#rsvSavedInfo').textContent = (cur.photos ? '写真あり' : '写真なし') + '・' + Core.videoMadeAtText(cur.createdAt) + ' に作った動画' +
-      (cur.saved ? '（この端末に保存しています）' : '');
+    $('#rsvSavedInfo').textContent = tr('{label}・{time} に作った動画{saved}', { label: cur.photos ? tr('写真あり') : tr('写真なし'), time: Core.videoMadeAtText(cur.createdAt), saved: cur.saved ? tr('（この端末に保存しています）') : '' });
     var other = cur.photos ? rsv.saved.n : rsv.saved.p;
     var btn = $('#btnRsvOther');
     btn.hidden = !other;
-    if (other) btn.textContent = (cur.photos ? '写真なし' : '写真あり') + 'の動画を見る（' + Core.videoMadeAtText(other.createdAt) + '）';
+    if (other) btn.textContent = tr('{label}の動画を見る（{time}）', { label: cur.photos ? tr('写真なし') : tr('写真あり'), time: Core.videoMadeAtText(other.createdAt) });
   }
 
   // 共有シートで動画を渡す（ボタンを押した直後でないと開けないので、動画ができた画面のボタンから）。
@@ -12779,12 +12815,12 @@
   function saveReplayVideo(text) {
     if (!rsv.blob) return;
     // iOSアプリ（WKWebView）ではダウンロードが動かない。共有シートに対応していなければ、ここでは何もできない
-    if (isNativeApp()) { showToast('この環境では動画を共有できませんでした。'); return; }
+    if (isNativeApp()) { showToast(tr('この環境では動画を共有できませんでした。')); return; }
     downloadBlob(rsv.blob, rsv.file.name);
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () { showToast('動画を保存しました。投稿用の文章をコピーしました'); }, function () { showToast('動画を保存しました'); });
+      navigator.clipboard.writeText(text).then(function () { showToast(tr('動画を保存しました。投稿用の文章をコピーしました')); }, function () { showToast(tr('動画を保存しました')); });
     } else {
-      showToast('動画を保存しました');
+      showToast(tr('動画を保存しました'));
     }
   }
 
@@ -12829,7 +12865,7 @@
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'input-clear-btn';
-    btn.setAttribute('aria-label', '入力を消す');
+    btn.setAttribute('aria-label', tr('入力を消す'));
     btn.textContent = '×';
     btn.hidden = !input.value;
     // 押したときに入力欄からフォーカスが外れる前に処理する
@@ -12998,7 +13034,7 @@
     $('#btnCloseRsv').addEventListener('click', closeReplayVideoSheet);
     $('#rsvSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeReplayVideoSheet(); });
     $('#btnRsvStart').addEventListener('click', startReplayVideo);
-    $('#btnRsvCancel').addEventListener('click', function () { rsvCancel('キャンセルしました'); });
+    $('#btnRsvCancel').addEventListener('click', function () { rsvCancel(tr('キャンセルしました')); });
     $('#btnRsvShare').addEventListener('click', shareReplayVideo);
     $('#btnRsvSave').addEventListener('click', function () { saveReplayVideo(videoShareText()); });
     // 作り直す：いま見ていた動画と同じ写真の設定で、選択肢の画面へ戻る（「動画を作る」で作り直し、保存も置き換わる）
@@ -13014,7 +13050,7 @@
     $('#rsvPhotos').addEventListener('change', rsvRefreshSavedLink);
     // 録画中に画面を離れると、ブラウザが描画を止めて動画が固まる。作り直せるよう中止する
     document.addEventListener('visibilitychange', function () {
-      if (rsv.recording && document.hidden) rsvCancel('画面を離れたので、動画づくりを中止しました');
+      if (rsv.recording && document.hidden) rsvCancel(tr('画面を離れたので、動画づくりを中止しました'));
     });
 
     $('#btnReplayToggle').addEventListener('click', function () { if (replay) setReplayPlaying(!replay.playing); });
@@ -13063,7 +13099,7 @@
     $('#btnAddCostItem').addEventListener('click', function () {
       var newItem = { label: '', amount: 0 };
       var lastCur = lastCostCurrencyForTrip();
-      if (lastCur && lastCur !== 'JPY') newItem.currency = lastCur;
+      if (lastCur) { if (lastCur !== 'JPY') newItem.currency = lastCur; } else if (I18N_ZH) newItem.currency = 'TWD'; // 台湾の利用者は、新しい明細の通貨を最初から台湾ドルにしておく（保存済みの旅行・日本語表示は変えない）
       state.formCostItems.push(newItem);
       renderCostItems();
     });
@@ -13088,7 +13124,7 @@
         state.pendingVideos.push({ blob: f, name: f.name, size: f.size });
       });
       renderVideoPreview();
-      if (tooBig.length) alert('200MBを超える動画は追加できませんでした：' + tooBig.map(function (f) { return f.name; }).join('、'));
+      if (tooBig.length) alert(tr('200MBを超える動画は追加できませんでした：{names}', { names: tooBig.map(function (f) { return f.name; }).join('、') }));
       e.target.value = '';
     });
 
@@ -13188,7 +13224,7 @@
     state.loginReturnTo = returnTo || 'home';
     showScreen('login');
     $('#loginStatus').textContent = '';
-    $('#loginLead').textContent = 'ログインすると、評価をつけたりマイログを見たりできます';
+    $('#loginLead').textContent = tr('ログインすると、評価をつけたりマイログを見たりできます');
 
     // 前回の途中状態（待機表示・メール確認の待ち）を消してから、使えるログイン方法を並べる
     state.linkCode = '';
@@ -13217,22 +13253,22 @@
     var name = $('#loginName').value.trim();
     var email = $('#loginEmail').value.trim();
     if (!email || email.indexOf('@') === -1) {
-      $('#loginStatus').textContent = 'メールアドレスを入力してください。';
+      $('#loginStatus').textContent = tr('メールアドレスを入力してください。');
       return;
     }
-    $('#loginStatus').textContent = '送信中…';
+    $('#loginStatus').textContent = tr('送信中…');
     api('/auth/email/send', 'POST', { name: name, email: email }).then(function () {
       $('#loginStatus').textContent = '';
-      $('#emailOtpSentTo').textContent = email + ' に確認コードを送りました。';
+      $('#emailOtpSentTo').textContent = tr('{email} に確認コードを送りました。', { email: email });
       $('#emailLoginForm').hidden = true;
       $('#emailOtpForm').hidden = false;
       $('#emailOtpForm').dataset.name = name;
       $('#emailOtpForm').dataset.email = email;
     }).catch(function (e) {
       var msg = (e && e.message) || '';
-      if (msg === 'too_soon') $('#loginStatus').textContent = 'コードを送ったばかりです。少し時間をおいてから再度お試しください。';
-      else if (msg === 'email_not_configured') $('#loginStatus').textContent = 'メールログインがまだ設定されていません。他のログイン方法をお試しください。';
-      else $('#loginStatus').textContent = 'コードの送信に失敗しました。メールアドレスを確認してもう一度お試しください。';
+      if (msg === 'too_soon') $('#loginStatus').textContent = tr('コードを送ったばかりです。少し時間をおいてから再度お試しください。');
+      else if (msg === 'email_not_configured') $('#loginStatus').textContent = tr('メールログインがまだ設定されていません。他のログイン方法をお試しください。');
+      else $('#loginStatus').textContent = tr('コードの送信に失敗しました。メールアドレスを確認してもう一度お試しください。');
     });
   }
 
@@ -13241,18 +13277,18 @@
     var email = form.dataset.email;
     var name = form.dataset.name;
     var code = $('#loginOtpCode').value.trim();
-    if (!code) { $('#loginStatus').textContent = 'コードを入力してください。'; return; }
-    $('#loginStatus').textContent = '確認中…';
+    if (!code) { $('#loginStatus').textContent = tr('コードを入力してください。'); return; }
+    $('#loginStatus').textContent = tr('確認中…');
     var verifyBody = { email: email, code: code };
     if (state.linkCode) verifyBody.link = state.linkCode; // ソーシャルログインで受け取れなかったメールを、ここで結びつける
     api('/auth/email/verify', 'POST', verifyBody).then(function (res) {
       ensureAccountAndProceed({ name: name || res.name || email, email: res.email, provider: 'email', token: res.token || '' });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
-      if (msg === 'wrong_code') $('#loginStatus').textContent = 'コードが正しくありません。';
-      else if (msg === 'expired') $('#loginStatus').textContent = 'コードの有効期限が切れました。もう一度送信してください。';
-      else if (msg === 'too_many_attempts') $('#loginStatus').textContent = '間違いが多いため、コードを無効にしました。もう一度送信してください。';
-      else $('#loginStatus').textContent = '確認に失敗しました。もう一度お試しください。';
+      if (msg === 'wrong_code') $('#loginStatus').textContent = tr('コードが正しくありません。');
+      else if (msg === 'expired') $('#loginStatus').textContent = tr('コードの有効期限が切れました。もう一度送信してください。');
+      else if (msg === 'too_many_attempts') $('#loginStatus').textContent = tr('間違いが多いため、コードを無効にしました。もう一度送信してください。');
+      else $('#loginStatus').textContent = tr('確認に失敗しました。もう一度お試しください。');
     });
   }
 
@@ -13372,7 +13408,7 @@
     $('#emailLoginForm').hidden = true;
     $('#emailOtpForm').hidden = true;
     $('#socialWaiting').hidden = false;
-    $('#socialWaitingText').textContent = (SOCIAL_NAMES[provider] || '') + 'のログイン画面でログインを進めてください。終わると自動でこのアプリに戻ります。戻らないときは、ログイン画面の「旅の足跡アプリに戻る」ボタンを押してください。';
+    $('#socialWaitingText').textContent = tr('{name}のログイン画面でログインを進めてください。終わると自動でこのアプリに戻ります。戻らないときは、ログイン画面の「旅の足跡アプリに戻る」ボタンを押してください。', { name: SOCIAL_NAMES[provider] || '' });
     $('#loginStatus').textContent = '';
   }
 
@@ -13385,7 +13421,7 @@
   }
 
   function socialErrorMessage(error) {
-    return error === 'cancelled' ? 'ログインをキャンセルしました。' : 'ログインに失敗しました。もう一度お試しください。';
+    return error === 'cancelled' ? tr('ログインをキャンセルしました。') : tr('ログインに失敗しました。もう一度お試しください。');
   }
 
   // プロバイダーでの操作が終わった結果（アプリではtabilog://auth?…、Webでは#auth=…）を受け取る
@@ -13400,13 +13436,13 @@
       }
       return;
     }
-    $('#loginStatus').textContent = 'ログインしています…';
+    $('#loginStatus').textContent = tr('ログインしています…');
     api('/auth/exchange', 'POST', { code: code }).then(function (res) {
       if (res && res.needEmail) { enterLinkMode(code, res); return; }
       ensureAccountAndProceed({ name: res.name || res.email, email: res.email, provider: res.provider || 'email', token: res.token || '' }, opts);
     }).catch(function () {
       if (!$('.screen[data-screen="login"]').classList.contains('active')) openLogin(state.loginReturnTo);
-      $('#loginStatus').textContent = 'ログインの有効期限が切れました。もう一度お試しください。';
+      $('#loginStatus').textContent = tr('ログインの有効期限が切れました。もう一度お試しください。');
     });
   }
 
@@ -13425,7 +13461,7 @@
     $('#socialWaiting').hidden = true;
     $('#socialLogin').hidden = true;
     $('#emailLoginDivider').hidden = true;
-    $('#loginLinkNote').textContent = (SOCIAL_NAMES[info.provider] || 'ログイン元') + 'からメールアドレスを受け取れなかったので、一度だけメールで確認します。確認できたら、次回からは' + (SOCIAL_NAMES[info.provider] || 'そのログイン') + 'だけでログインできます。';
+    $('#loginLinkNote').textContent = tr('{name}からメールアドレスを受け取れなかったので、一度だけメールで確認します。確認できたら、次回からは{name2}だけでログインできます。', { name: SOCIAL_NAMES[info.provider] || tr('ログイン元'), name2: SOCIAL_NAMES[info.provider] || tr('そのログイン') });
     $('#loginLinkNote').hidden = false;
     $('#loginName').value = info.name || '';
     $('#loginEmail').value = '';
@@ -13606,7 +13642,7 @@
     // urlをtextの中に含め、urlキー自体は渡さないことで、どの共有先でも必ずリンクが本文に乗る
     // ようにする（textを見る側はそのままリンク入りの本文になり、urlだけを見る側と重複表示にも
     // ならない）。
-    var message = '旅の足跡で旅行を一緒に記録しよう\n' + url;
+    var message = tr('旅の足跡で旅行を一緒に記録しよう\n{url}', { url: url });
     if (navigator.share) {
       navigator.share({ title: state.trip.title || '旅の足跡', text: message })
         .catch(function (err) {
@@ -13623,7 +13659,7 @@
   // 見えていた（2026-09-30）。古いコピー方法（execCommand）も試し、それでもだめなら
   // メッセージを選んでコピーできる欄を画面に出す。
   function copyInviteUrl(text) {
-    var done = function () { showToast('招待メッセージ（リンク付き）をコピーしました'); };
+    var done = function () { showToast(tr('招待メッセージ（リンク付き）をコピーしました')); };
     var legacyCopy = function () {
       var ta = document.createElement('textarea');
       ta.value = text;
@@ -13650,9 +13686,9 @@
     var box = document.createElement('div');
     box.id = 'inviteUrlBox';
     box.className = 'invite-url-box';
-    box.innerHTML = '<p>このメッセージをコピーして、一緒に行く人に送ってください</p>' +
+    box.innerHTML = '<p>' + tr('このメッセージをコピーして、一緒に行く人に送ってください') + '</p>' +
       '<textarea rows="3" readonly></textarea>' +
-      '<button type="button" class="chip-btn">閉じる</button>';
+      '<button type="button" class="chip-btn">' + tr('閉じる') + '</button>';
     var input = box.querySelector('textarea');
     input.value = text;
     input.addEventListener('focus', function () { input.select(); });
