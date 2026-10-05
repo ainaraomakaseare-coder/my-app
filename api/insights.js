@@ -5,6 +5,7 @@
  *   POST /api/insights            … 毎晩1回。数字を集めてDBに書く（cronの鍵で守る）
  *   GET  /api/insights?group=…    … 画面が読む。数字と、気づいたこと
  *   GET  /api/insights?probe=…    … 接続テスト。SNSが何を返したかをそのまま見せる
+ *   GET  /api/insights?apps=1     … App Store のダウンロード数（lib/appstore.js）
  *
  * ★ 1つのSNSが失敗しても、他を巻き込まない。
  *   lib/insights.js が throw せずに ok:false を返すので、ここは素直に
@@ -27,6 +28,7 @@ const benchmark = require('../lib/benchmark');
 const benchmarkYoutube = require('../lib/benchmark-youtube');
 const benchmarkStore = require('../lib/benchmark-store');
 const benchmarkIntake = require('../scripts/benchmark-intake');
+const appstore = require('../lib/appstore');
 
 // Vercel の制限時間より手前で自分から切り上げる。
 const TIME_BUDGET_MS = 45_000;
@@ -49,6 +51,7 @@ module.exports = async function handler(req, res) {
 
     if (!auth.guard(req, res)) return;
     if (q.probe) return res.status(200).json(await probe(String(q.probe)));
+    if (q.apps) return res.status(200).json(await appstore.downloads());
     if (q.benchmark === 'youtube') return res.status(200).json(await collectYoutubeBenchmark(q));
     if (q.benchmark === 'status') return res.status(200).json(await benchmarkStatus(q));
     return res.status(200).json(await read(q.group ? String(q.group) : null));
