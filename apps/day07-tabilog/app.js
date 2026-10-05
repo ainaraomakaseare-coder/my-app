@@ -16,6 +16,7 @@
     return s.replace(/\{(\w+)\}/g, function (m, k) { return Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; });
   };
   var I18N_ZH = typeof window !== 'undefined' && !!window.I18N && window.I18N.lang === 'zh-Hant';
+  var I18N_EN = typeof window !== 'undefined' && !!window.I18N && window.I18N.lang === 'en';
 
   // 機能フラグ（2026-09-26〜）：ユーザーの希望で「紹介文を作る」「いいね・コメント」の入り口を
   // 一時的に隠す。サーバー側のAPI・データはそのまま残しており、trueに戻すだけで元通り出せる。
@@ -54,7 +55,9 @@
   ];
 
   // 繁体字中国語のときは「週日・週一…」（呼び出し側は '（' + WEEKDAYS_JA[i] + '）' と使う）
-  var WEEKDAYS_JA = I18N_ZH ? ['週日', '週一', '週二', '週三', '週四', '週五', '週六'] : ['日', '月', '火', '水', '木', '金', '土'];
+  var WEEKDAYS_JA = I18N_ZH ? ['週日', '週一', '週二', '週三', '週四', '週五', '週六'] : I18N_EN ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] : ['日', '月', '火', '水', '木', '金', '土'];
+  // 日付のうしろに付ける曜日。英語は全角かっこを使わない
+  function weekdaySuffix(i) { return I18N_EN ? ' (' + WEEKDAYS_JA[i] + ')' : '（' + WEEKDAYS_JA[i] + '）'; }
 
   // 費用の明細（costItems）に選べる通貨（DAY31〜、docs/adr/0014）。一覧に無い通貨は
   // 「その他」から3文字コード（ISO 4217）を自由入力できるので、ここは「よく使う」ものだけに絞る。
@@ -138,7 +141,7 @@
   function formatDateJp(dateStr) {
     var d = parseDate(dateStr);
     if (!d) return '';
-    return d.getUTCFullYear() + '.' + (d.getUTCMonth() + 1) + '.' + d.getUTCDate() + '（' + WEEKDAYS_JA[d.getUTCDay()] + '）';
+    return d.getUTCFullYear() + '.' + (d.getUTCMonth() + 1) + '.' + d.getUTCDate() + weekdaySuffix(d.getUTCDay());
   }
 
   function dayLabel(trip, dateStr) {
@@ -4744,6 +4747,7 @@
   var screenScroll = {};
   var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1, visited: 1 };
   function showScreen(name) {
+    closeMyPageSheets();
     var leaving = $('.screen.active');
     var leavingName = leaving && leaving.dataset.screen;
     if (leaving && leavingName !== name) screenScroll[leavingName] = window.scrollY;
@@ -10447,6 +10451,8 @@
     var badgeEl = $('#planBadgeTop');
     var account = state.account;
     var wasEmpty = !statusEl.firstChild, badgeWasHidden = badgeEl.hidden;
+    var subEl = $('#mpQuotaSub');
+    if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: account.voiceRemainingThisPeriod }) : '';
     if (!account) {
       statusEl.innerHTML = '';
       msgEl.textContent = '';
@@ -10484,14 +10490,15 @@
       : PUBLIC_WEB_BASE;
   }
 
-  // ---------- プロフィール（Airbnbのプロフィール画面を手本にした、アカウントまわりのまとめ。2026-09-28〜） ----------
-  // マイログと同じ /mylog を読んで、旅行数・評価件数・最初の旅行の年を集計するだけ（新しいAPIは無い）。
+  // ---------- マイページ（旧プロフィール。Airbnbのプロフィール画面を手本にした、アカウントまわりのまとめ。2026-09-28〜） ----------
+  // マイログと同じ /mylog を読んで、旅行数・行った都道府県・国を集計するだけ（新しいAPIは無い）。
+  // 未ログインでも開ける（カードに「ログインする」を出す）。
   function openProfile() {
     var user = loadCurrentUser();
-    if (!user) { openLogin('profile'); return; }
-    if (Core.needsFreshLogin(user)) { forceRelogin('profile'); return; }
+    if (user && Core.needsFreshLogin(user)) { forceRelogin('profile'); return; }
     showScreen('profile');
     renderProfileIdentity(user);
+    if (!user) { renderProfileStats(); renderPlanStatus(); return; }
     var cachedP = getMyLogEntry(user);
     if (!cachedP) $('#profileStats').innerHTML = ''; // 前回の結果があるときは消さずにそのまま見せる
     if (cachedP) { applyMyLogData(cachedP.data); renderProfileStats(); }
@@ -10513,42 +10520,79 @@
 
   function renderProfileIdentity(user) {
     var avatar = $('#profileAvatar');
-    if (user.picture) {
+    if (user && user.picture) {
       avatar.innerHTML = '<img src="' + escapeHtml(user.picture) + '" alt="">';
     } else {
       avatar.innerHTML = '';
-      avatar.textContent = avatarInitial(user);
+      avatar.textContent = user ? avatarInitial(user) : '？';
     }
-    $('#profileName').textContent = user.name || user.email || '';
+    $('#profileName').textContent = user ? (user.name || user.email || '') : tr('ログインしていません');
+    $('#btnProfileAccount').textContent = user ? tr('アカウント') : tr('ログインする');
   }
 
-  // 「記録の年数」：参加した旅行のうち、いちばん古い出発日の年から今年まで（初年も1年と数える）
-  function profileYearsSinceEarliestTrip(trips) {
-    var years = (trips || [])
-      .map(function (t) { return t.startDate ? Number(String(t.startDate).slice(0, 4)) : NaN; })
-      .filter(function (y) { return !isNaN(y); });
-    if (!years.length) return 0;
-    var earliest = Math.min.apply(null, years);
-    var current = new Date().getFullYear();
-    return Math.max(1, current - earliest + 1);
+  // マイページの「最近の旅行」（開始日が新しい順）。ログイン中は/mylogの参加した旅行、なければこの端末の履歴
+  function mypageRecentTrip() {
+    var trips = Core.sortTrips(state.myLogTrips || [], 'date_desc');
+    if (!trips.length) trips = Core.sortTrips(loadMyTrips(), 'date_desc');
+    return trips[0] || null;
   }
 
   function renderProfileStats() {
-    var trips = state.myLogTrips || [];
-    var items = state.myLogItems || [];
-    var stats = [
-      { num: trips.length, label: tr('旅行 {n}回', { n: trips.length }) },
-      { num: items.length, label: tr('評価 {n}件', { n: items.length }) },
-      { num: profileYearsSinceEarliestTrip(trips), label: tr('記録の年数 {n}年', { n: profileYearsSinceEarliestTrip(trips) }) }
-    ];
+    var user = loadCurrentUser();
     var statsEl = $('#profileStats');
-    var html = stats.map(function (s) {
-      return '<div class="profile-stat"><span class="profile-stat-label">' + escapeHtml(s.label) + '</span></div>';
-    }).join('');
+    var recent = mypageRecentTrip();
+    $('#mpVideo').hidden = !recent;
+    if (!user) { statsEl.innerHTML = ''; return; }
+    var details = visitedDetails();
+    var visibleCount = function (list) { return (list || []).filter(function (x) { return x.status === 'visible'; }).length; };
+    var html = escapeHtml(tr('旅行 {n}・都道府県 {p}・国 {c}', {
+      n: (state.myLogTrips || []).length, p: visibleCount(details.prefectures), c: visibleCount(details.countries)
+    }));
     if (statsEl.innerHTML === html) return; // 同じなら触らない
     var wasEmpty = !statsEl.firstChild;
     statsEl.innerHTML = html;
     if (wasEmpty) fadeInOnce(statsEl);
+  }
+
+  // マイページのシート（アカウント・AIの残り回数）。画面を切り替えたら閉じる（showScreenから呼ぶ）
+  var MYPAGE_SHEETS = ['#accountSheet', '#quotaSheet'];
+  function openMyPageSheet(sel) { $(sel).hidden = false; document.body.classList.add('sheet-open'); }
+  function closeMyPageSheets() {
+    var closed = false;
+    MYPAGE_SHEETS.forEach(function (sel) {
+      var el = $(sel);
+      if (el && !el.hidden) { el.hidden = true; closed = true; }
+    });
+    if (closed) document.body.classList.remove('sheet-open');
+  }
+  function openTutorial() { showToast(tr('近日追加')); } // 使い方：中身は後日追加するための入り口
+  function openMyPageVideo() {
+    var t = mypageRecentTrip();
+    if (!t) { showToast(tr('まだ旅行がありません')); return; }
+    openTrip(t.tripId || t.id, '', function () { showToast(tr('「地図でふりかえる」から動画を作れます')); });
+  }
+  function wireMyPage() {
+    var needLogin = function (fn) { return function () { if (loadCurrentUser()) fn(); else openLogin('profile'); }; };
+    $('#btnProfileAccount').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
+    $('#mpAccountRow').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
+    $('#mpMylog').addEventListener('click', function () { openTabScreen('mylog'); });
+    $('#mpVisited').addEventListener('click', function () { openTabScreen('visited'); });
+    $('#mpHistory').addEventListener('click', function () {
+      if (!loadMyTrips().length) { showToast(tr('この端末の履歴に旅行がありません')); return; }
+      openTripHistorySheet();
+    });
+    $('#mpVideo').addEventListener('click', openMyPageVideo);
+    $('#mpQuota').addEventListener('click', needLogin(function () {
+      openMyPageSheet('#quotaSheet');
+      fetchAccountStatus(renderPlanStatus).then(renderPlanStatus);
+    }));
+    $('#mpTutorial').addEventListener('click', openTutorial);
+    ['Account', 'Quota'].forEach(function (n) {
+      $('#btnClose' + n + 'Sheet').addEventListener('click', closeMyPageSheets);
+      $('#' + n.toLowerCase() + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
+    });
+    if (I18N_ZH) $('#mpPrivacy').setAttribute('href', 'privacy-zh.html');
+    else if (I18N_EN) $('#mpPrivacy').setAttribute('href', 'privacy-en.html');
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
@@ -10916,20 +10960,20 @@
   var visitedCountryAlpha2ByName = {};
   // 訪れた場所の表示名。集計・選択の鍵（x.name、data-name）は日本語のままにして、画面に出すときだけ繁体字（台湾）にする。
   // 都道府県・国名・大陸名は辞書（i18n/zh-Hant-app-4.js）で引く。辞書に無い国は、ブラウザのIntl.DisplayNamesの台湾の言い方で補う。
-  var VISITED_REGION_LABELS = I18N_ZH ? {
+  var VISITED_REGION_LABELS = (I18N_ZH || I18N_EN) ? {
     '北海道': tr('北海道'), '東北': tr('東北地方'), '関東': tr('関東地方'), '中部': tr('中部地方'),
     '近畿': tr('近畿地方'), '中国': tr('中国地方'), '四国': tr('四国地方'), '九州・沖縄': tr('九州・沖縄')
   } : {};
   var visitedIntlZh = null;
   function visitedPlaceLabel(kind, name) {
-    if (!I18N_ZH) return name;
+    if (!I18N_ZH && !I18N_EN) return name;
     if (kind === 'prefecture') return tr(name);
     var zh = tr(name);
     if (zh !== name) return zh;
     var a2 = visitedCountryAlpha2ByName[name] || Core.alpha2ForCountryName(name);
     if (a2) {
       try {
-        if (!visitedIntlZh) visitedIntlZh = new Intl.DisplayNames(['zh-Hant-TW'], { type: 'region' });
+        if (!visitedIntlZh) visitedIntlZh = new Intl.DisplayNames([I18N_EN ? 'en' : 'zh-Hant-TW'], { type: 'region' });
         var r = visitedIntlZh.of(a2);
         if (r && r !== a2) return r;
       } catch (e) { /* Intl.DisplayNamesが使えない環境は日本語のまま */ }
@@ -10938,7 +10982,7 @@
   }
   // 一覧の見出し（地方・大陸・「その他」）の表示名
   function visitedGroupLabel(kind, group) {
-    if (!I18N_ZH) return group;
+    if (!I18N_ZH && !I18N_EN) return group;
     if (kind === 'prefecture') return VISITED_REGION_LABELS[group] || group;
     return tr(group);
   }
@@ -11828,7 +11872,7 @@
 
   function replayShortDate(ymd) {
     var d = parseDate(ymd);
-    return d ? (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '（' + WEEKDAYS_JA[d.getUTCDay()] + '）' : '';
+    return d ? (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + weekdaySuffix(d.getUTCDay()) : '';
   }
 
   function showReplayDayBanner(dayNumber) {
@@ -13180,6 +13224,7 @@
       if (loadCurrentUser()) openProfile(); else openLogin('profile');
     });
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
+    wireMyPage();
     initSocial();
     $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
     $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });
