@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>草野球マスタ</title>
+<meta name="description" content="草野球の打席結果を記録するだけで、打率・出塁率・長打率を自動計算。シーズン・大会ごとの成績を振り返れる、草野球プレイヤーのための記録アプリ。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23173420'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23F4EEDD'/%3E%3Cpath d='M16 7.5c1.2 2 1.2 15.5 0 17.5M8.9 10.4c2.4 1.2 12.4 10.4 14.2 11.2M8.9 21.6c2.4-1.2 12.4-10.4 14.2-11.2' stroke='%23B5402C' stroke-width='.9' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<style>
+  :root{
+    --field:#173420; --field-deep:#102518; --chalk:#F4EEDD; --chalk-dim:#C9C2AC;
+    --ink:#132018; --ink-dim:#51614F;
+    --clay:#B5402C; --clay-soft:#F0DAC9; --mustard:#D9A441;
+    --card:#FFFFFF; --line:#E4DFCC;
+    --display:"Teko","Zen Kaku Gothic New",sans-serif;
+    --sans:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic","Noto Sans JP",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--chalk);color:var(--ink);font-family:var(--sans);line-height:1.75;
+    -webkit-text-size-adjust:100%}
+  a{color:inherit}
+  .wrap{max-width:720px;margin:0 auto;padding:0 24px}
+  img,svg{display:block}
+
+  /* ---- header ---- */
+  header{background:var(--field);color:var(--chalk)}
+  .header-in{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;
+    max-width:720px;margin:0 auto}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:700;
+    font-size:22px;letter-spacing:.02em;text-decoration:none;color:var(--chalk)}
+  .brand svg{width:26px;height:26px;flex:0 0 auto}
+  .back{font-size:12px;letter-spacing:.06em;color:var(--chalk-dim);text-decoration:none;
+    border:1px solid rgba(244,238,221,.3);border-radius:999px;padding:6px 13px;white-space:nowrap}
+  .back:hover{border-color:var(--chalk-dim)}
+
+  /* ---- hero ---- */
+  .hero{background:var(--field);background-image:
+      radial-gradient(ellipse 70% 50% at 50% 0%, rgba(217,164,65,.14), transparent 65%);
+    color:var(--chalk);padding:8px 0 56px;position:relative;overflow:hidden}
+  .hero::after{content:"";position:absolute;left:50%;bottom:-180px;width:560px;height:560px;
+    margin-left:-280px;border-radius:50%;border:2px solid rgba(244,238,221,.08);pointer-events:none}
+  .hero-in{position:relative;z-index:1;padding:28px 0 0;text-align:center}
+  .kicker{font-size:12px;letter-spacing:.3em;color:var(--mustard);font-weight:700}
+  h1{font-family:var(--display);font-weight:700;font-size:56px;line-height:1.08;margin:16px 0 18px;
+    letter-spacing:.01em;text-wrap:balance}
+  h1 b{color:var(--mustard);font-weight:700}
+  .lead{font-size:15.5px;line-height:1.9;color:var(--chalk-dim);max-width:46ch;margin:0 auto 32px}
+  .cta-row{display:flex;flex-direction:column;align-items:center;gap:12px}
+  .btn{display:inline-flex;align-items:center;gap:9px;font-size:15px;font-weight:700;
+    letter-spacing:.03em;padding:15px 30px;border-radius:999px;text-decoration:none}
+  .btn-main{background:var(--mustard);color:var(--field-deep)}
+  .btn-main:hover{opacity:.9}
+  .btn-main svg{width:16px;height:16px}
+  .status-note{font-size:12px;color:var(--chalk-dim);letter-spacing:.02em}
+
+  /* ---- stat strip ---- */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .stat{background:var(--card);padding:22px 10px;text-align:center}
+  .stat .n{font-family:var(--display);font-weight:600;font-size:34px;color:var(--clay);line-height:1}
+  .stat .l{font-size:11.5px;color:var(--ink-dim);letter-spacing:.04em;margin-top:6px}
+
+  /* ---- sections ---- */
+  section{padding:56px 0}
+  .section-head{text-align:center;margin-bottom:34px}
+  .section-kicker{font-size:11.5px;letter-spacing:.24em;color:var(--clay);font-weight:700}
+  h2{font-family:var(--display);font-weight:600;font-size:32px;margin:10px 0 0;letter-spacing:.01em;
+    text-wrap:balance}
+
+  .pains{display:flex;flex-direction:column;gap:12px}
+  .pain{display:flex;gap:14px;align-items:flex-start;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;padding:18px 20px}
+  .pain svg{width:20px;height:20px;flex:0 0 auto;margin-top:2px;color:var(--clay)}
+  .pain p{margin:0;font-size:14px;color:var(--ink)}
+  .pain b{display:block;font-size:14.5px;margin-bottom:2px}
+
+  .features{display:flex;flex-direction:column;gap:16px}
+  .feature{display:grid;grid-template-columns:52px 1fr;gap:18px;align-items:start;
+    background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}
+  .feature-icon{width:52px;height:52px;border-radius:13px;background:var(--field);
+    display:grid;place-items:center}
+  .feature-icon svg{width:26px;height:26px;color:var(--mustard)}
+  .feature h3{font-family:var(--display);font-weight:600;font-size:21px;margin:0 0 6px;letter-spacing:.01em}
+  .feature p{margin:0;font-size:13.5px;color:var(--ink-dim);line-height:1.8}
+
+  .story{background:var(--field);color:var(--chalk);border-radius:20px;padding:36px 28px}
+  .story .section-kicker{color:var(--mustard)}
+  .story h2{color:var(--chalk)}
+  .story p{font-size:14px;line-height:1.9;color:var(--chalk-dim);margin:16px 0 0}
+  .story .timeline{display:flex;align-items:center;gap:8px;margin:24px 0 0;font-family:var(--display);
+    font-size:15px;color:var(--chalk-dim);flex-wrap:wrap}
+  .story .timeline b{color:var(--mustard);font-weight:700}
+  .story .timeline svg{width:14px;height:14px;opacity:.5}
+  .story-cta{margin-top:26px}
+  .btn-ghost{border:1px solid rgba(244,238,221,.35);color:var(--chalk)}
+  .btn-ghost:hover{border-color:var(--chalk)}
+
+  .final-cta{text-align:center}
+  .final-cta .lead{color:var(--ink-dim)}
+  .final-cta h2{margin-bottom:8px}
+
+  footer{border-top:1px solid var(--line);padding:30px 0 50px;text-align:center}
+  footer p{font-size:12px;color:var(--ink-dim);line-height:1.9;margin:0}
+  footer a{color:var(--ink-dim);text-decoration:underline}
+
+  @media (max-width:480px){
+    h1{font-size:42px}
+    .stats{grid-template-columns:repeat(3,1fr)}
+    h2{font-size:27px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-in">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="13" fill="#F4EEDD"/>
+        <path d="M16 3v26M5.5 8.2c3.6 1.8 18.6 15.6 21.3 16.8M5.5 23.8c3.6-1.8 18.6-15.6 21.3-16.8"
+          stroke="#B5402C" stroke-width="1.1" stroke-linecap="round"/></svg>
+      草野球マスタ
+    </a>
+    <a class="back" href="../../index.html">← 30日で30アプリ</a>
+  </div>
+</header>
+
+<div class="hero" id="top">
+  <div class="wrap hero-in">
+    <div class="kicker">DAY 30 ・ 30日で30アプリ、最終章</div>
+    <h1>草野球の打率を、<br><b>ちゃんと</b>記録する。</h1>
+    <p class="lead">手書きのスコア表、バラバラのExcel、「なんとなく打てた気がする」で終わるシーズン。草野球マスタは、打席結果を入力するだけで打率・出塁率・長打率を自動計算し、積み上げていく記録アプリです。</p>
+    <div class="cta-row">
+      <a class="btn btn-main" href="../../index.html">
+        30日間の開発記録を見る
+        <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <span class="status-note">現在開発中・近日公開予定</span>
+    </div>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="n">30</div><div class="l">日間の開発企画の最終日</div></div>
+  <div class="stat"><div class="n">3</div><div class="l">自動計算する指標<br>（打率・出塁率・長打率）</div></div>
+  <div class="stat"><div class="n">1</div><div class="l">タップで記録できる<br>打席結果の入力</div></div>
+</div>
+
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-kicker">こんな悩み、ありませんか</div>
+      <h2>記録は続かない。だから数字が残らない。</h2>
+    </div>
+    <div class="pains">
+      <div class="pain">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.6"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.6"/></svg>
+        <p><b>紙のスコア表は、失くすか読めなくなる</b>試合のたびに書いても、カバンの中でシーズンの途中に行方不明になりがち。</p>
+      </div>
+      <div class="pain">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M3 9h18M8 4v16" stroke="currentColor" stroke-width="1.6"/></svg>
+        <p><b>自作のExcelは、大会をまたぐと崩れる</b>関数を組んでも、集計のたびに直すうちに、どのセルが正しいか分からなくなる。</p>
+      </div>
+      <div class="pain">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 19V11M11 19V5M18 19v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <p><b>シーズンの振り返りが、感覚で終わる</b>「今年は調子よかった気がする」を、実際の数字で確かめる手段がない。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-kicker">できること</div>
+      <h2>打席結果を入れるだけで、あとは自動。</h2>
+    </div>
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M8 12l3 3 5-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div>
+          <h3>打席結果をその場で記録</h3>
+          <p>安打・四球・三振・犠打などをタップして記録。試合が終わってからまとめて入力する手間を減らします。</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 19V11M11 19V5M18 19v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+        <div>
+          <h3>打率・出塁率・長打率を自動計算</h3>
+          <p>単純な打率だけでなく、出塁率・長打率まで複合的な集計ロジックでその場で確認できます。</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="15" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M3 10h18M8 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+        <div>
+          <h3>シーズン・大会ごとに振り返る</h3>
+          <p>大会やシーズンをまたいで成績を管理し、自分の調子の波を数字で見返せます。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="story">
+      <div class="section-kicker">30日で30アプリ ・ DAY 30</div>
+      <h2>この企画の、最後のアプリです。</h2>
+      <p>草野球マスタは、AIアプリ開発初心者が30日間で30個のアプリを作る挑戦「30日で30アプリ」の最終日に作られています。くじ引きアプリから始まった30日間で積み上げてきた、「複合的なデータ集計ロジックを持つ実用アプリを完成させる」という挑戦の集大成です。</p>
+      <div class="timeline">
+        <span>DAY 1 くじ引き</span>
+        <svg viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>…</span>
+        <svg viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <b>DAY 30 草野球マスタ</b>
+      </div>
+      <div class="story-cta">
+        <a class="btn btn-ghost" href="../../index.html">
+          全30日の記録を見る
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <div class="section-head">
+      <h2>開発中です。</h2>
+      <p class="lead">草野球マスタは現在アプリ本体を開発中です。このページは紹介ページとして先行公開しています。公開され次第、このページからアプリへ移動できるようになります。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>草野球マスタは「30日で30アプリ」企画 DAY30のアプリです。<br>
+    企画全体の記録は <a href="../../index.html">トップページ</a> から見られます。</p>
+  </div>
+</footer>
+
+</body>
+</html>
