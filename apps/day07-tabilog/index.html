@@ -859,6 +859,16 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <p class="hint" id="planStatusMessage"></p>
 
       <div class="section-label">
+        <div class="section-title">言語 / 語言</div>
+      </div>
+      <div class="field">
+        <select class="field-select" id="langSelect" aria-label="言語 / 語言">
+          <option value="ja">日本語</option>
+          <option value="zh-Hant">繁體中文</option>
+        </select>
+      </div>
+
+      <div class="section-label">
         <div class="section-title">アカウント</div>
       </div>
       <button class="btn text" id="btnLogout" type="button">ログアウト</button>
@@ -1062,6 +1072,12 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 <!-- 小さな通知（app.jsのshowToast）。画面下中央にフェードイン・アウトする -->
 <div class="toast" id="toast" hidden aria-live="polite"></div>
 
+<script src="i18n.js"></script>
+<script src="i18n/zh-Hant-html.js"></script>
+<script src="i18n/zh-Hant-app-1.js"></script>
+<script src="i18n/zh-Hant-app-2.js"></script>
+<script src="i18n/zh-Hant-app-3.js"></script>
+<script src="i18n/zh-Hant-app-4.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

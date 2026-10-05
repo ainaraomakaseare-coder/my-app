@@ -13,6 +13,7 @@
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
+import { langDirective } from "./lang.js";
 import { validateBranchBlockPlacement } from "./branches.js";
 
 /* ---------- 上限（Workers Freeのサブリクエスト50回以内に収めるための数字） ---------- */
@@ -118,7 +119,7 @@ export function buildOcrSection(ocr) {
   }).join("\n\n");
 }
 
-export function buildScreenshotPrompt(ocr, trip) {
+export function buildScreenshotPrompt(ocr, trip, lang) {
   const start = (trip && trip.startDate) || "";
   const end = (trip && trip.endDate) || "";
   const period = start ? (end && end !== start ? start + " 〜 " + end : start) : "（日程は未設定）";
@@ -146,7 +147,7 @@ export function buildScreenshotPrompt(ocr, trip) {
     "- costItemsは、画像に書かれた金額だけを入れること。チケット・運賃・宿泊料金は「運賃」「チケット代」「宿泊料金」などの品目名で1件、レシートは品目ごと（読み分けられなければ「合計」で1件）。amountは数字、currencyは日本円なら空文字、外貨ならISO 4217の3文字（USD、EURなど）。金額が無ければ空配列。割引・マイナスの行や、ポイント・お預り・お釣りは入れないこと",
     "- noteには、座席・ゲート・注意事項など、旅行の記録として役立つ短い補足を1〜2文で入れること。予約番号・確認番号・搭乗者や宿泊者の氏名・電話番号・メールアドレス・カード番号は、画像に書かれていても絶対に書かないこと",
     "- 予定として使える情報が読み取れなかった画像は、unreadableImagesにその画像の番号とreason（no_event）を入れること。画像に書かれていないことは絶対に作らないこと",
-  ].join("\n");
+  ].join("\n") + langDirective(lang);
 }
 
 export function screenshotSchema() {

@@ -11,6 +11,7 @@
  */
 
 import { parseReceiptText } from "./receipt-parse.js";
+import { detectLang, langDirective } from "./lang.js";
 import { aggregateVisitedPlaces, canonicalCountry, canonicalPrefecture, isTransitBlock, filterFallbackDayRows } from "./visited-places.js";
 import { parseWorkersAiOutput, describeWorkersAiOutputForDebug } from "./ai-parse.js";
 import { isUsableTranscript } from "./transcribe-provider.js";
@@ -4010,7 +4011,7 @@ function outputText(response) {
   return "";
 }
 
-function voicePrompt(transcript, notes) {
+function voicePrompt(transcript, notes, lang) {
   return [
     "あなたは旅行記録アプリのアシスタントです。旅行者がその日の出来事をまとめて話した音声の文字起こしを読んで、",
     "予定（Block）とその記録（Entry）の配列に分割してください。",
@@ -4031,14 +4032,14 @@ function voicePrompt(transcript, notes) {
     notes
       ? "- 次のメモ（URLや店名が雑多に書かれている）の中に、Blockの内容と対応しそうなものがあれば、entry.mapUrlまたはentry.shopUrlに入れること。対応するものが無ければ空文字のままにすること。\n\nメモ:\n" + notes
       : "- entry.mapUrl・entry.shopUrlは、音声内で明確なURLが無ければ空文字にすること",
-  ].join("\n");
+  ].join("\n") + langDirective(lang);
 }
 
 // 複数日ぶんをまとめて話す／書くときに使うプロンプト（DAY30〜）。「1日目は〜、次の日は〜」
 // のような表現から、AI自身にその出来事が何日目のことかも判定させ、Blockごとにdate
 // （YYYY-MM-DD）を付けてもらう。1日固定のvoicePromptと違い、日の判定を誤るリスクがあるため、
 // 「複数日をまとめて記録する」という別の入り口を明示的に選んだときだけ使う。
-function multiDayPrompt(transcript, notes, dates) {
+function multiDayPrompt(transcript, notes, dates, lang) {
   const dayList = dates.map(function (d, i) { return (i + 1) + "日目：" + d; }).join("\n");
   return [
     "あなたは旅行記録アプリのアシスタントです。旅行者が複数日にわたる出来事をまとめて話した（または書いた）内容を読んで、",
@@ -4063,7 +4064,7 @@ function multiDayPrompt(transcript, notes, dates) {
     notes
       ? "- 次のメモ（URLや店名が雑多に書かれている）の中に、Blockの内容と対応しそうなものがあれば、entry.mapUrlまたはentry.shopUrlに入れること。対応するものが無ければ空文字のままにすること。\n\nメモ:\n" + notes
       : "- entry.mapUrl・entry.shopUrlは、音声内で明確なURLが無ければ空文字にすること",
-  ].join("\n");
+  ].join("\n") + langDirective(lang);
 }
 
 function voiceBlocksSchema() {
@@ -4182,7 +4183,7 @@ async function consumeVoiceQuota(env, email, via, kind) {
 // 予定（Block）とその記録（Entry）の配列に整理してもらう。音声入力・メモ入力の共通処理。
 // datesを渡すと「複数日をまとめて記録する」用のプロンプト・スキーマ（Blockごとにdateも
 // 判定させる）に切り替わる（DAY30〜、渡さなければ今までどおり1日固定のまま）。
-async function organizeTextIntoBlocks(env, text, notes, dates) {
+async function organizeTextIntoBlocks(env, text, notes, dates, lang) {
   const multiDay = Array.isArray(dates) && dates.length > 1;
   // 出力の上限（考える分＝reasoningトークンもこの中に含まれる）。1日分は以前2000で、長めのメモだと
   // 考える分で使い切って出力が途中で切れ、「うまく処理できませんでした」になっていた（2026-09-27）。
@@ -4193,7 +4194,7 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
       headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5.6-sol",
-        input: multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes),
+        input: multiDay ? multiDayPrompt(text, notes, dates, lang) : voicePrompt(text, notes, lang),
         reasoning: { effort },
         // 複数日モードは1回のレスポンスに何日ぶんものBlock/Entryが収まるため、ずっと大きな出力になる
         // （DAY30、5日分程度で尻切れになったことがあり12000に上げた。さらに余裕を持たせる）
@@ -4251,11 +4252,11 @@ async function organizeTextIntoBlocks(env, text, notes, dates) {
 // トークンもこの上限に含まれるため、2000では考えている途中でJSONが切れて
 // invalid_model_outputになっていた（2026-09-27に実機で確認）。OpenAI側
 // （organizeTextIntoBlocksのmax_output_tokens）と同程度まで引き上げた。
-async function organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates) {
+async function organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates, lang) {
   const multiDay = Array.isArray(dates) && dates.length > 1;
   const schema = multiDay ? multiDayBlocksSchema() : voiceBlocksSchema();
   const schemaName = multiDay ? "voice_blocks_multi_day" : "voice_blocks";
-  const basePrompt = multiDay ? multiDayPrompt(text, notes, dates) : voicePrompt(text, notes);
+  const basePrompt = multiDay ? multiDayPrompt(text, notes, dates, lang) : voicePrompt(text, notes, lang);
   const maxTokens = multiDay ? 16000 : 6000;
   const jsonOnlyPrompt = basePrompt
     + "\n\n出力は必ずJSONのみとし、説明文やコードブロックの記号（```）や<think>のような思考過程を付けないこと。";
@@ -4405,7 +4406,7 @@ async function createBlocksFromVoice(tripId, date, request, env, headers) {
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
 
-  const result = await organizeTextIntoBlocks(env, transcript, notes);
+  const result = await organizeTextIntoBlocks(env, transcript, notes, undefined, detectLang(request, meta));
   if (result.error) return json({ error: result.error }, 502, headers);
   const created = await saveOrganizedBlocks(env, tripId, date, result.blocks, author);
 
@@ -4472,7 +4473,7 @@ async function createBlocksFromText(tripId, date, request, env, headers) {
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
   }
 
-  const result = await organizeTextIntoBlocks(env, text, notes);
+  const result = await organizeTextIntoBlocks(env, text, notes, undefined, detectLang(request, data));
   if (result.error) return json({ error: result.error }, 502, headers);
   const created = await saveOrganizedBlocks(env, tripId, date, result.blocks, author);
 
@@ -4523,7 +4524,7 @@ async function createBlocksFromVoiceMultiDay(tripId, request, env, headers) {
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
 
-  const result = await organizeTextIntoBlocks(env, transcript, notes, dates);
+  const result = await organizeTextIntoBlocks(env, transcript, notes, dates, detectLang(request, meta));
   if (result.error) return json({ error: result.error }, 502, headers);
   const created = await saveOrganizedBlocks(env, tripId, dates, result.blocks, author);
 
@@ -4562,7 +4563,7 @@ async function createBlocksFromTextMultiDay(tripId, request, env, headers) {
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
   }
 
-  const result = await organizeTextIntoBlocks(env, text, notes, dates);
+  const result = await organizeTextIntoBlocks(env, text, notes, dates, detectLang(request, data));
   if (result.error) return json({ error: result.error }, 502, headers);
   const created = await saveOrganizedBlocks(env, tripId, dates, result.blocks, author);
 
@@ -4707,7 +4708,7 @@ async function scanScreenshots(tripId, request, env, headers) {
 
   // 2) OpenAI：予定の候補にする（サブリクエスト1回）
   const tripInfo = { startDate: trip.start_date, endDate: trip.end_date };
-  const ai = await organizeScreenshotsWithOpenAi(env, buildScreenshotPrompt(readable, tripInfo));
+  const ai = await organizeScreenshotsWithOpenAi(env, buildScreenshotPrompt(readable, tripInfo, detectLang(request, data)));
   if (ai.error) return json({ error: ai.error }, ai.error === "ai_quota_exhausted" ? 503 : 502, headers);
   const branchInfo = branch ? { title: branch.title || "", date: branch.date, endDate: branchEndDateOf(branch), startTime: branch.start_time, endTime: branch.end_time } : null;
   const norm = normalizeScreenshotResult(ai.parsed, {
@@ -4779,12 +4780,12 @@ async function resolveProposalTarget(env, request, headers, tripId, { date, bran
 }
 
 // 文字（文字起こし・メモ）→ 候補（場所検索つき）。AIの失敗は { error }
-async function buildProposalsFromText(env, kind, text, notes, target) {
+async function buildProposalsFromText(env, kind, text, notes, target, lang) {
   const tripInfo = { startDate: target.trip.start_date, endDate: target.trip.end_date };
   const branchInfo = target.branch
     ? { title: target.branch.title || "", date: target.branch.date, endDate: branchEndDateOf(target.branch), startTime: target.branch.start_time, endTime: target.branch.end_time }
     : null;
-  const prompt = buildProposalPrompt({ kind, text, notes, dates: target.dates, branch: branchInfo });
+  const prompt = buildProposalPrompt({ kind, text, notes, dates: target.dates, branch: branchInfo, lang });
   const multi = target.dates.length > 1;
   const ai = await organizeScreenshotsWithOpenAi(env, prompt, { schema: proposalSchema(), schemaName: "import_proposals", maxTokens: multi ? 16000 : 8000 });
   if (ai.error) return { error: ai.error };
@@ -4836,7 +4837,7 @@ async function scanVoiceProposals(tripId, request, env, headers) {
   if (!transcript) return json({ error: "transcription_failed" }, 502, headers);
   if (!transcript.length) return json({ error: "empty_transcript" }, 422, headers);
 
-  const built = await buildProposalsFromText(env, "voice", transcript, notes, target);
+  const built = await buildProposalsFromText(env, "voice", transcript, notes, target, detectLang(request, meta));
   if (built.error) return json({ error: built.error }, built.error === "ai_quota_exhausted" ? 503 : 502, headers);
   await consumeVoiceQuota(env, quota.email, quota.via);
   return proposalResponse(built, { transcript, dates: target.dates }, headers);
@@ -4867,7 +4868,7 @@ async function scanTextProposals(tripId, request, env, headers) {
     if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
   }
 
-  const built = await buildProposalsFromText(env, "memo", text, notes, target);
+  const built = await buildProposalsFromText(env, "memo", text, notes, target, detectLang(request, data));
   if (built.error) return json({ error: built.error }, built.error === "ai_quota_exhausted" ? 503 : 502, headers);
   await consumeVoiceQuota(env, quota.email, quota.via, "memo");
   return proposalResponse(built, { transcript: text, dates: target.dates }, headers);
@@ -4986,7 +4987,7 @@ async function aiCompareMemo(request, env, headers) {
   const openaiResult = { result: null, ms: 0, error: undefined };
   if (env.OPENAI_API_KEY) {
     const t0 = Date.now();
-    const r = await organizeTextIntoBlocks(env, text, notes, dates);
+    const r = await organizeTextIntoBlocks(env, text, notes, dates, detectLang(request, data));
     openaiResult.ms = Date.now() - t0;
     if (r.error) openaiResult.error = r.error; else openaiResult.result = r;
   } else {
@@ -4998,7 +4999,7 @@ async function aiCompareMemo(request, env, headers) {
     Object.entries(WORKERS_AI_LLM_MODELS).map(async ([key, model]) => {
       const t0 = Date.now();
       try {
-        const r = await organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates);
+        const r = await organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, dates, detectLang(request, data));
         const ms = Date.now() - t0;
         // debugは/ai-compareのレスポンスにだけ載せる診断用の抜粋（利用者データではなく、
         // モデルが返した生の出力の形・先頭部分のみ）。docs/adr/0012参照
@@ -5076,7 +5077,7 @@ function arrayBufferToBase64(buf) {
   return btoa(binary);
 }
 
-function receiptPrompt() {
+function receiptPrompt(lang) {
   return [
     "あなたは旅行記録アプリのアシスタントです。添付されたレシート・領収書の写真を読み取り、",
     "費用の内訳（品目名と金額）を配列で返してください。",
@@ -5087,7 +5088,7 @@ function receiptPrompt() {
     "- 割引・値引きの行がある場合は、金額をマイナスにして1件の品目として入れること",
     "- レシートに書かれていない品目や金額を推測で作らないこと。写真が不鮮明で読み取れない場合は、読み取れた範囲だけを返すこと",
     "- 店名・日付など、品目名と金額以外の情報は含めないこと",
-  ].join("\n");
+  ].join("\n") + langDirective(lang);
 }
 
 function receiptItemsSchema() {
@@ -5182,7 +5183,7 @@ async function scanReceipt(request, env, headers) {
         {
           role: "user",
           content: [
-            { type: "input_text", text: receiptPrompt() },
+            { type: "input_text", text: receiptPrompt(detectLang(request, meta)) },
             { type: "input_image", image_url: `data:${contentType};base64,${base64}` },
           ],
         },
@@ -5244,7 +5245,7 @@ async function recoverEntriesForDay(env, tripId, date) {
       headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({
         model: env.OPENAI_MODEL || "gpt-5.6-sol",
-        input: voicePrompt(segment, ""),
+        input: voicePrompt(segment, "", "ja"),
         reasoning: { effort: "medium" },
         max_output_tokens: 2000,
         store: false,
