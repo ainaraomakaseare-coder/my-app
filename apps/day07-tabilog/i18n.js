@@ -1,49 +1,59 @@
 /*
- * 多言語化（i18n）の土台。日本語が元の文章で、繁体字中国語（台湾）を追加で持つ。
+ * 多言語化（i18n）の土台。日本語が元の文章で、繁体字中国語（台湾）と英語を追加で持つ。
  *
- *   I18N.lang          'ja' | 'zh-Hant'
+ *   I18N.lang          'ja' | 'zh-Hant' | 'en'
  *   I18N.t(ja, vars)   日本語の文章を、いまの言語の文章にして返す。{key} は vars[key] に置き換える。
  *                      辞書に無ければ日本語のまま返す（常に文字列）。
- *   I18N.add(obj)      辞書（日本語→繁体字）に追加する。i18n/zh-Hant-*.js から呼ぶ。
+ *   I18N.add(obj)      繁体字の辞書（日本語→繁体字）に追加する。i18n/zh-Hant-*.js から呼ぶ。
+ *   I18N.addLang(l, obj) 言語lの辞書に追加する。i18n/en-*.js は addLang('en', {...}) を呼ぶ。
  *   I18N.setLang(l)    言語を保存してページを再読み込みする。
  *   I18N.translateDom(root)  root以下のテキスト・placeholder・aria-label・title・alt・ボタンのvalueを辞書で置き換える。
  *
- * 読み込み順：i18n.js → i18n/zh-Hant-*.js → app.js。app.jsはI18Nが無くても（node のテストなど）日本語のまま動く。
+ * 読み込み順：i18n.js → i18n/zh-Hant-*.js → i18n/en-*.js → app.js。app.jsはI18Nが無くても（node のテストなど）日本語のまま動く。
  */
 (function (root) {
   'use strict';
 
   var STORAGE_KEY = 'tabilog.lang';
 
+  var LANGS = { 'ja': 1, 'zh-Hant': 1, 'en': 1 };
+
   function detectLang() {
     try {
       var saved = root.localStorage && root.localStorage.getItem(STORAGE_KEY);
-      if (saved === 'ja' || saved === 'zh-Hant') return saved;
+      if (LANGS[saved] === 1) return saved;
     } catch (e) { /* localStorageが使えない環境 */ }
     var nav = root.navigator || {};
     var langs = nav.languages && nav.languages.length ? nav.languages : [nav.language || ''];
     for (var i = 0; i < langs.length; i++) {
-      if (/^zh-(TW|HK|MO|Hant)/i.test(langs[i] || '')) return 'zh-Hant';
+      var l = langs[i] || '';
+      if (!l) continue;
+      if (/^ja/i.test(l)) return 'ja';
+      if (/^zh-(TW|HK|MO|Hant)/i.test(l)) return 'zh-Hant';
+      return 'en'; // 日本語・繁体字以外の言語（海外の人）は英語
     }
     return 'ja';
   }
 
   var I18N = {
     lang: detectLang(),
-    dict: {},
-    add: function (obj) {
-      for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) I18N.dict[k] = obj[k];
+    dicts: { 'zh-Hant': {}, 'en': {} },
+    add: function (obj) { I18N.addLang('zh-Hant', obj); },
+    addLang: function (lang, obj) {
+      var d = I18N.dicts[lang] || (I18N.dicts[lang] = {});
+      for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) d[k] = obj[k];
     },
     t: function (ja, vars) {
       var s = String(ja);
-      if (I18N.lang === 'zh-Hant' && Object.prototype.hasOwnProperty.call(I18N.dict, s)) s = I18N.dict[s];
+      var d = I18N.dicts[I18N.lang];
+      if (d && Object.prototype.hasOwnProperty.call(d, s)) s = d[s];
       if (!vars) return s;
       return s.replace(/\{(\w+)\}/g, function (m, k) {
         return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m;
       });
     },
     setLang: function (l) {
-      try { root.localStorage.setItem(STORAGE_KEY, l === 'zh-Hant' ? 'zh-Hant' : 'ja'); } catch (e) { /* 保存できなくても再読み込みはする */ }
+      try { root.localStorage.setItem(STORAGE_KEY, LANGS[l] === 1 ? l : 'ja'); } catch (e) { /* 保存できなくても再読み込みはする */ }
       if (root.location) root.location.reload();
     },
     translateDom: translateDom
@@ -54,7 +64,8 @@
   function lookup(s) {
     var k = norm(s);
     if (!k) return null;
-    return Object.prototype.hasOwnProperty.call(I18N.dict, k) ? I18N.dict[k] : null;
+    var d = I18N.dicts[I18N.lang];
+    return d && Object.prototype.hasOwnProperty.call(d, k) ? d[k] : null;
   }
 
   var ATTRS = ['placeholder', 'aria-label', 'title', 'alt'];
@@ -75,7 +86,7 @@
   }
 
   function translateDom(rootNode) {
-    if (I18N.lang !== 'zh-Hant') return;
+    if (I18N.lang === 'ja') return;
     var doc = root.document;
     if (!doc) return;
     rootNode = rootNode || doc.body || doc.documentElement;
@@ -110,16 +121,17 @@
 
   function translatePageMeta() {
     var doc = root.document;
-    if (!doc || I18N.lang !== 'zh-Hant') return;
+    if (!doc || I18N.lang === 'ja') return;
     var meta = doc.querySelector('meta[name="description"]');
     if (meta) { var d = lookup(meta.getAttribute('content') || ''); if (d !== null) meta.setAttribute('content', d); }
     var tt = lookup(doc.title || '');
     if (tt !== null) doc.title = tt;
   }
 
+  Object.defineProperty(I18N, 'dict', { get: function () { return I18N.dicts[I18N.lang] || {}; } });
   root.I18N = I18N;
   if (root.document) {
-    root.document.documentElement.lang = I18N.lang === 'zh-Hant' ? 'zh-Hant' : 'ja';
+    root.document.documentElement.lang = I18N.lang;
     root.document.addEventListener('DOMContentLoaded', function () {
       translateDom(root.document.body);
       translatePageMeta();

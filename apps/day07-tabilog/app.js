@@ -16,6 +16,7 @@
     return s.replace(/\{(\w+)\}/g, function (m, k) { return Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; });
   };
   var I18N_ZH = typeof window !== 'undefined' && !!window.I18N && window.I18N.lang === 'zh-Hant';
+  var I18N_EN = typeof window !== 'undefined' && !!window.I18N && window.I18N.lang === 'en';
 
   // 機能フラグ（2026-09-26〜）：ユーザーの希望で「紹介文を作る」「いいね・コメント」の入り口を
   // 一時的に隠す。サーバー側のAPI・データはそのまま残しており、trueに戻すだけで元通り出せる。
@@ -54,7 +55,9 @@
   ];
 
   // 繁体字中国語のときは「週日・週一…」（呼び出し側は '（' + WEEKDAYS_JA[i] + '）' と使う）
-  var WEEKDAYS_JA = I18N_ZH ? ['週日', '週一', '週二', '週三', '週四', '週五', '週六'] : ['日', '月', '火', '水', '木', '金', '土'];
+  var WEEKDAYS_JA = I18N_ZH ? ['週日', '週一', '週二', '週三', '週四', '週五', '週六'] : I18N_EN ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] : ['日', '月', '火', '水', '木', '金', '土'];
+  // 日付のうしろに付ける曜日。英語は全角かっこを使わない
+  function weekdaySuffix(i) { return I18N_EN ? ' (' + WEEKDAYS_JA[i] + ')' : '（' + WEEKDAYS_JA[i] + '）'; }
 
   // 費用の明細（costItems）に選べる通貨（DAY31〜、docs/adr/0014）。一覧に無い通貨は
   // 「その他」から3文字コード（ISO 4217）を自由入力できるので、ここは「よく使う」ものだけに絞る。
@@ -138,7 +141,7 @@
   function formatDateJp(dateStr) {
     var d = parseDate(dateStr);
     if (!d) return '';
-    return d.getUTCFullYear() + '.' + (d.getUTCMonth() + 1) + '.' + d.getUTCDate() + '（' + WEEKDAYS_JA[d.getUTCDay()] + '）';
+    return d.getUTCFullYear() + '.' + (d.getUTCMonth() + 1) + '.' + d.getUTCDate() + weekdaySuffix(d.getUTCDay());
   }
 
   function dayLabel(trip, dateStr) {
@@ -10589,6 +10592,7 @@
       $('#' + n.toLowerCase() + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
     });
     if (I18N_ZH) $('#mpPrivacy').setAttribute('href', 'privacy-zh.html');
+    else if (I18N_EN) $('#mpPrivacy').setAttribute('href', 'privacy-en.html');
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
@@ -10956,20 +10960,20 @@
   var visitedCountryAlpha2ByName = {};
   // 訪れた場所の表示名。集計・選択の鍵（x.name、data-name）は日本語のままにして、画面に出すときだけ繁体字（台湾）にする。
   // 都道府県・国名・大陸名は辞書（i18n/zh-Hant-app-4.js）で引く。辞書に無い国は、ブラウザのIntl.DisplayNamesの台湾の言い方で補う。
-  var VISITED_REGION_LABELS = I18N_ZH ? {
+  var VISITED_REGION_LABELS = (I18N_ZH || I18N_EN) ? {
     '北海道': tr('北海道'), '東北': tr('東北地方'), '関東': tr('関東地方'), '中部': tr('中部地方'),
     '近畿': tr('近畿地方'), '中国': tr('中国地方'), '四国': tr('四国地方'), '九州・沖縄': tr('九州・沖縄')
   } : {};
   var visitedIntlZh = null;
   function visitedPlaceLabel(kind, name) {
-    if (!I18N_ZH) return name;
+    if (!I18N_ZH && !I18N_EN) return name;
     if (kind === 'prefecture') return tr(name);
     var zh = tr(name);
     if (zh !== name) return zh;
     var a2 = visitedCountryAlpha2ByName[name] || Core.alpha2ForCountryName(name);
     if (a2) {
       try {
-        if (!visitedIntlZh) visitedIntlZh = new Intl.DisplayNames(['zh-Hant-TW'], { type: 'region' });
+        if (!visitedIntlZh) visitedIntlZh = new Intl.DisplayNames([I18N_EN ? 'en' : 'zh-Hant-TW'], { type: 'region' });
         var r = visitedIntlZh.of(a2);
         if (r && r !== a2) return r;
       } catch (e) { /* Intl.DisplayNamesが使えない環境は日本語のまま */ }
@@ -10978,7 +10982,7 @@
   }
   // 一覧の見出し（地方・大陸・「その他」）の表示名
   function visitedGroupLabel(kind, group) {
-    if (!I18N_ZH) return group;
+    if (!I18N_ZH && !I18N_EN) return group;
     if (kind === 'prefecture') return VISITED_REGION_LABELS[group] || group;
     return tr(group);
   }
@@ -11868,7 +11872,7 @@
 
   function replayShortDate(ymd) {
     var d = parseDate(ymd);
-    return d ? (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '（' + WEEKDAYS_JA[d.getUTCDay()] + '）' : '';
+    return d ? (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + weekdaySuffix(d.getUTCDay()) : '';
   }
 
   function showReplayDayBanner(dayNumber) {

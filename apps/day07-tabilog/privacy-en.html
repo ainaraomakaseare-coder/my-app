@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy | Tabi no Ashiato</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+  body { margin: 0; background: #F8F8FA; color: #1D1C23; font-family: 'Zen Kaku Gothic New', system-ui, -apple-system, 'Segoe UI', sans-serif; line-height: 1.8; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 16px; margin-top: 32px; }
+  p, li { font-size: 14px; color: #333; }
+  .updated { color: #6B6B76; font-size: 12.5px; }
+  .note { background: #fff; border: 1px solid #E3E3E8; border-radius: 8px; padding: 10px 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="note">This page is an English translation of the Japanese Privacy Policy, provided for reference only. If there is any discrepancy between this translation and the Japanese version, the Japanese version prevails. <a href="privacy.html" hreflang="ja" lang="ja">日本語版 (authoritative)</a></p>
+  <h1>Tabi no Ashiato (旅の足跡) Privacy Policy</h1>
+  <p class="updated">Last updated: September 30, 2026</p>
+
+  <p>"Tabi no Ashiato" (the "App") is an app for sharing travel records with family and friends. This policy explains what information the App collects and stores, and how it is handled.</p>
+
+  <h2>1. Information we collect</h2>
+  <ul>
+    <li><strong>Information used for login</strong>: If you log in with a Google, Apple or LINE account, we obtain your name (display name) and email address. If you log in with LINE, we obtain your LINE display name; we do not get your email address from LINE, and instead use the one you confirm with a verification code the first time you log in. If you log in by email, we obtain the email address you enter. These are used only to auto-fill the "Recorded by" field and to treat people who log in with the same email address as the same account.</li>
+    <li><strong>Information you enter</strong>: Trip titles, dates and participant names; activity (major item) dates and times, titles and types; record (minor item) stories, comments, details, cost breakdowns, wait times, photos, videos, shop or map URLs and the name of the person who recorded it; and likes and comments on trips and records. All of this is content you enter of your own volition.</li>
+  </ul>
+
+  <h2>2. Where information is stored</h2>
+  <p>The information you enter (including photos and videos) is stored in Cloudflare's database (D1) and storage (R2). We do not sell or provide it to any third party other than the App's developer. We do not track you for advertising.</p>
+
+  <h2>2-2. Billing and payments</h2>
+  <p>The App currently has no paid features, plans or ticket packs. All features are free to use. For that reason, we do not collect or store payment information such as credit card numbers.</p>
+
+  <h2>3. Who can see your information</h2>
+  <p>Anyone who knows the URL (invite link) issued for each trip can view, edit and delete the contents of that trip (including photos and videos), even without logging in. Send invite links only to people you trust, such as those who traveled with you. Some features, such as likes, comments and AI-assisted import, require logging in (by email, Google, Apple or LINE). The App is designed for sharing among people who know the URL and is not intended for public release to an unspecified audience. Likes and comments on trips and records are also shown, together with the account name, to anyone who knows that trip's URL (email addresses are not shown). Inappropriate comments can be reported; the operator reviews reported content and deletes it when necessary.</p>
+
+  <h2>4. Third-party services</h2>
+  <p>For login, we use Google Identity Services (login with Google), Sign in with Apple (login with Apple) and LINE Login (login with LINE, provided by LY Corporation). The privacy policy of each company also applies when you use them.</p>
+  <ul>
+    <li>Google Privacy Policy: <a href="https://policies.google.com/privacy">https://policies.google.com/privacy</a></li>
+    <li>Apple Privacy Policy: <a href="https://www.apple.com/legal/privacy/">https://www.apple.com/legal/privacy/</a></li>
+    <li>LY Corporation Privacy Policy: <a href="https://www.lycorp.co.jp/ja/company/privacypolicy/">https://www.lycorp.co.jp/ja/company/privacypolicy/</a></li>
+  </ul>
+
+  <p><strong>Voice input, note organizing, receipt scanning and screenshot import</strong>: When you use "Record by voice or notes", the audio you recorded and the note text you entered are sent; when you use "Scan receipt", the receipt photo is sent; and when you use "Create activities from screenshots", the screenshots (images) you chose are sent, to the services below for reading the content and transcription. We do not send information that identifies you, such as your name or email address. The first time you use these features, the App shows an explanation of where the data is sent and asks for your consent before sending (without consent, the features cannot be used).</p>
+  <ul>
+    <li><strong>Voice transcription</strong>: We first try transcription with Cloudflare, Inc.'s Workers AI (an AI model running on Cloudflare's servers), and only if it can't be read well do we send the audio to the API of OpenAI, L.L.C. (United States). Note that the App's record data (including photos and videos) is already stored in Cloudflare's database and storage (D1 and R2) (see also Section 2 of this policy).</li>
+    <li><strong>Organizing transcribed voice and note text into activities and records</strong>: The text is sent to the API of OpenAI, L.L.C.</li>
+    <li><strong>Receipt scanning</strong>: We first read the text with Google LLC's Cloud Vision API, and only if it can't be read well do we send the photo to the API of OpenAI, L.L.C.</li>
+    <li><strong>Creating activities from screenshots</strong>: The screenshots (images) you chose are sent to Google LLC's Cloud Vision API to read the text, and the text read is sent to the API of OpenAI, L.L.C. to organize it into draft activities. Place names in the drafts are sent to Google LLC's place search to look up their positions on the map. The images themselves are not stored by the App (only the activities you review and save are stored as record data).</li>
+  </ul>
+  <p>Under OpenAI's API terms of use, data sent is not used for model training by default.</p>
+  <ul>
+    <li>Cloudflare Privacy Policy: <a href="https://www.cloudflare.com/privacypolicy/">https://www.cloudflare.com/privacypolicy/</a></li>
+    <li>OpenAI Privacy Policy: <a href="https://openai.com/policies/privacy-policy">https://openai.com/policies/privacy-policy</a></li>
+  </ul>
+
+  <p><strong>Place search, maps and route guidance</strong>: Text you enter in the "Search by place name" field, and shop or place names in map links you paste into a record, may be sent to the services below to look up place candidates and coordinates. None of them receive account information (name, email address, etc.).</p>
+  <ul>
+    <li><strong>Google LLC (Google Maps Platform)</strong>: Used for place search and coordinates with the Places API, and for transit directions such as trains and Shinkansen (coordinates along the route) with the Routes API. <a href="https://policies.google.com/privacy">https://policies.google.com/privacy</a></li>
+    <li><strong>OpenStreetMap map tiles and Nominatim (search and reverse lookup)</strong>: Used to display maps (your device loads the tile images directly) and to look up coordinates from place names. <a href="https://osmfoundation.org/wiki/Privacy_Policy">https://osmfoundation.org/wiki/Privacy_Policy</a></li>
+    <li><strong>Wikipedia and Wikidata (Wikimedia Foundation)</strong>: Used as a supplement for looking up coordinates from facility names. <a href="https://foundation.wikimedia.org/wiki/Policy:Privacy_policy">https://foundation.wikimedia.org/wiki/Policy:Privacy_policy</a></li>
+    <li><strong>routing.openstreetmap.de (OSRM) and BRouter (brouter.de)</strong>: Used to calculate routes (coordinates along the route) for driving, walking, cycling and trains.</li>
+    <li><strong>Open-Meteo</strong>: Used to look up coordinates from place names (geocoding) and to determine local time.</li>
+  </ul>
+
+  <p><strong>Foreign currency conversion of costs</strong>: To get exchange rates when you enter cost items in a foreign currency, only the currency code and date are sent to Frankfurter (api.frankfurter.dev) or fawazahmed0/currency-api (served via jsDelivr). Your name, email address and the like are not sent.</p>
+
+  <p>Separately, the feature that lets you have your own AI service create a draft schedule (in JSON format) and import it works by you copying the prompt, pasting it into that AI service yourself, and pasting the answer it returns into the App. The App does not send that content anywhere (that AI service's terms of use apply when you use it).</p>
+
+  <h2>5. Deleting data</h2>
+  <p>You can delete a trip's records at any time with the App's delete features. Information tied to the account you're logged in with (name, bonus uses, links to trips you joined, likes and comments) can be deleted by you at any time from "Delete account" on the My Log screen. To prevent abuse of the free monthly usage allowance by repeated sign-ups, only the email address and that month's voice input usage count are retained for abuse prevention (even if you sign up again with the same email address, that month's usage count is not restored). If you want a complete deletion including the email address, please contact us at the contact below.</p>
+
+  <h2>6. Use by children</h2>
+  <p>The App is intended for use by families, but please create accounts and log in at the family's discretion and under parental supervision.</p>
+
+  <h2>7. Changes to this policy</h2>
+  <p>This policy may be changed as needed. Changes take effect when they are posted on this page.</p>
+
+  <h2>Contact</h2>
+  <p>For any questions about the App, please contact the developer.</p>
+</div>
+</body>
+</html>

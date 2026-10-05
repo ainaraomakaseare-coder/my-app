@@ -23,7 +23,12 @@ check("lang: ja-JPはja", detectLang(req("ja-JP,ja;q=0.9")), "ja");
 check("lang: zh-TW先頭はzh-Hant", detectLang(req("zh-TW,zh;q=0.9,en;q=0.8")), "zh-Hant");
 check("lang: zh-Hant-TWはzh-Hant", detectLang(req("zh-Hant-TW")), "zh-Hant");
 check("lang: zh-HKはzh-Hant", detectLang(req("zh-HK")), "zh-Hant");
-check("lang: 簡体zh-CNはja（対象外）", detectLang(req("zh-CN,zh;q=0.9")), "ja");
+check("lang: 簡体zh-CNはen（日本語・繁体字以外は英語）", detectLang(req("zh-CN,zh;q=0.9")), "en");
+check("lang: en-USはen", detectLang(req("en-US,en;q=0.9")), "en");
+check("lang: fr-FRはen", detectLang(req("fr-FR")), "en");
+check("lang: *はja", detectLang(req("*")), "ja");
+check("lang: 本文のlang=enが優先", detectLang(req("ja-JP"), { lang: "en" }), "en");
+check("lang: 本文のlang=jaがen headerに優先", detectLang(req("en-US"), { lang: "ja" }), "ja");
 check("lang: 先頭がjaならzhが後ろでもja", detectLang(req("ja,zh-TW;q=0.8")), "ja");
 check("lang: 本文のlang=zh-Hantが優先", detectLang(req("ja-JP"), { lang: "zh-Hant" }), "zh-Hant");
 check("lang: 本文のlang=jaが優先", detectLang(req("zh-TW"), { lang: "ja" }), "ja");
@@ -42,6 +47,10 @@ const sBase = buildScreenshotPrompt(ocr, { startDate: "2026-10-03", endDate: "20
 check("prompt(スクショ): ja指定は未指定と同一・指示なし", [buildScreenshotPrompt(ocr, { startDate: "2026-10-03", endDate: "2026-10-05" }, "ja") === sBase, sBase.includes("OUTPUT LANGUAGE")], [true, false]);
 check("prompt(スクショ): zh-Hantは末尾に指示", buildScreenshotPrompt(ocr, { startDate: "2026-10-03", endDate: "2026-10-05" }, "zh-Hant") === sBase + langDirective("zh-Hant"), true);
 check("directive: jaは空文字", langDirective("ja"), "");
+const en = buildProposalPrompt({ kind: "memo", text: "メモ", notes: "", dates, lang: "en" });
+check("prompt(提案): enは日本語版＋英語の指示", [en === base + langDirective("en"), en.includes("natural English"), en.includes("Traditional Chinese")], [true, true, false]);
+check("prompt(スクショ): enは末尾に指示", buildScreenshotPrompt(ocr, { startDate: "2026-10-03", endDate: "2026-10-05" }, "en") === sBase + langDirective("en"), true);
+check("directive: enはenum・通貨コードを変えない指示", langDirective("en").includes("category, transport, currency"), true);
 
 // 入口から通し：メモ（複数日）とスクショで、OpenAIに渡る入力を確かめる
 const period = new Date().toISOString().slice(0, 7) + "-01";
