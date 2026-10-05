@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>草野球マスタ</title>
-<meta name="description" content="草野球の打席結果を記録するだけで、打率・出塁率・長打率を自動計算。シーズン・大会ごとの成績を振り返れる、草野球プレイヤーのための記録アプリ。">
+<meta name="description" content="チーム管理・選手管理・出欠管理・試合管理・打撃成績（打率・本塁打など）・ランキングまで。草野球チームの運営をひとつにまとめるアプリ。">
 <meta name="theme-color" content="#F3EFE6">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2315171B'/%3E%3Ccircle cx='16' cy='16' r='10' fill='%23F3EFE6'/%3E%3Cpath d='M11.2 7.8c1.7 2.3 2.6 5.1 2.6 8.2s-.9 5.9-2.6 8.2M20.8 7.8c-1.7 2.3-2.6 5.1-2.6 8.2s.9 5.9 2.6 8.2' stroke='%23D23F1C' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -113,7 +113,7 @@
   .sg-mark{font-family:var(--mono);font-size:14px;font-weight:600;fill:var(--ink);text-anchor:middle}
 
   .sheet-tab{position:relative;margin:-22px 0 0 auto;width:calc(100% - 22px);background:var(--ink);
-    color:var(--night-text);border-radius:6px;display:grid;grid-template-columns:auto repeat(3,1fr);
+    color:var(--night-text);border-radius:6px;display:grid;grid-template-columns:auto repeat(2,1fr);
     align-items:center;padding:12px 6px 12px 14px;box-shadow:0 14px 30px -18px rgba(21,23,27,.55)}
   .tab-label{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--red-glow);
     line-height:1.25;width:3.6em;padding-right:10px;border-right:1px solid var(--night-line);
@@ -243,9 +243,9 @@
 <div class="hero" id="top">
   <div class="wrap hero-grid">
     <div class="hero-copy">
-      <div class="kicker">草野球専用・打率記録アプリ</div>
-      <h1>草野球の打率を、<br><b>ちゃんと</b>記録する。</h1>
-      <p class="lead">手書きのスコア表、バラバラのExcel、「なんとなく打てた気がする」で終わるシーズン。草野球マスタは、打席結果を入力するだけで打率・出塁率・長打率を自動計算し、積み上げていく記録アプリです。</p>
+      <div class="kicker">草野球チーム運営アプリ</div>
+      <h1>草野球チームの運営を、<br><b>まるごと</b>ひとつに。</h1>
+      <p class="lead">選手の名簿、出欠の確認、対戦相手や試合の情報、打率や本塁打などの成績——バラバラのLINEグループやExcel、手書きのノートに散らばりがちなチーム運営を、草野球マスタでひとつにまとめます。</p>
       <span class="status" aria-disabled="true"><span class="dot" aria-hidden="true"></span>近日公開予定</span>
     </div>
 
@@ -309,10 +309,9 @@
         </svg>
       </div>
       <div class="sheet-tab">
-        <span class="tab-label">自動計算</span>
+        <span class="tab-label">打撃成績</span>
         <span class="metric"><b>打率</b><span>AVG</span></span>
-        <span class="metric"><b>出塁率</b><span>OBP</span></span>
-        <span class="metric"><b>長打率</b><span>SLG</span></span>
+        <span class="metric"><b>本塁打</b><span>HR</span></span>
       </div>
     </div>
   </div>
@@ -320,8 +319,8 @@
 
 <div class="stats">
   <div class="stats-in">
-    <div class="stat"><div class="n">3</div><div class="l">自動計算する指標<br>（打率・出塁率・長打率）</div></div>
-    <div class="stat"><div class="n">1</div><div class="l">タップで記録できる<br>打席結果の入力</div></div>
+    <div class="stat"><div class="n">6</div><div class="l">管理できること<br>（チーム・選手・出欠・試合・成績・ランキング）</div></div>
+    <div class="stat"><div class="n">1</div><div class="l">アプリに<br>まとめて管理</div></div>
   </div>
 </div>
 
@@ -329,20 +328,20 @@
   <div class="wrap">
     <div class="section-head">
       <div class="section-kicker"><span class="num">01</span>こんな悩み、ありませんか</div>
-      <h2><span class="nb">記録は続かない。</span><span class="nb">だから数字が残らない。</span></h2>
+      <h2><span class="nb">情報はバラバラ。</span><span class="nb">だから運営がしんどくなる。</span></h2>
     </div>
     <div class="pains">
       <div class="pain">
-        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg></span>
-        <p><b>紙のスコア表は、失くすか読めなくなる</b>試合のたびに書いても、カバンの中でシーズンの途中に行方不明になりがち。</p>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12h8M8 16h5M7 3h10a2 2 0 0 1 2 2v12l-4-3H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/></svg></span>
+        <p><b>メンバーの情報が、LINEグループに埋もれる</b>連絡先も今季入ったメンバーも、さかのぼって探さないと分からなくなりがち。</p>
       </div>
       <div class="pain">
-        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9 4v16"/></svg></span>
-        <p><b>自作のExcelは、大会をまたぐと崩れる</b>関数を組んでも、集計のたびに直すうちに、どのセルが正しいか分からなくなる。</p>
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M8 14l2 2 4-4"/></svg></span>
+        <p><b>出欠確認が、まとめるだけでひと苦労</b>一人ひとりに聞いて回り、返信を手作業で集計するのが毎回地味に大変。</p>
       </div>
       <div class="pain">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.5M12 17h.01"/></svg></span>
-        <p><b>シーズンの振り返りが、感覚で終わる</b>「今年は調子よかった気がする」を、実際の数字で確かめる手段がない。</p>
+        <p><b>対戦相手や成績の記録が、どこにも残らない</b>今シーズンどこと何回戦ったか、打率がどう推移したかを振り返る手段がない。</p>
       </div>
     </div>
   </div>
@@ -352,16 +351,34 @@
   <div class="wrap">
     <div class="section-head">
       <div class="section-kicker"><span class="num">02</span>できること</div>
-      <h2><span class="nb">打席結果を入れるだけで、</span><span class="nb">あとは自動。</span></h2>
+      <h2><span class="nb">チーム運営に必要なことを、</span><span class="nb">ぜんぶ一か所に。</span></h2>
     </div>
     <div class="features">
       <div class="feature">
         <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 20.5 12 12 20.5 3.5 12Z"/><path d="M12 9v6M9 12h6"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8.5" cy="7.5" r="3"/><path d="M2.5 20c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17" cy="8.5" r="2.5"/><path d="M15 13.5c2.8.4 4.8 2.4 5.5 5.5"/></svg>
         </div>
         <div>
-          <h3>打席結果をその場で記録</h3>
-          <p>安打・四球・三振・犠打などをタップして記録。試合が終わってからまとめて入力する手間を減らします。</p>
+          <h3>チーム・選手管理</h3>
+          <p>チームの名簿と選手ひとりひとりの情報を、ひとつにまとめて管理できます。</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4M8.5 14l1.5 1.5L13.5 12"/></svg>
+        </div>
+        <div>
+          <h3>出欠管理</h3>
+          <p>練習や試合の出欠をメンバーごとに確認・集計。出席人数もひと目で分かります。</p>
+        </div>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/><path d="M8 14h3M13 14h3M8 17h3M13 17h3"/></svg>
+        </div>
+        <div>
+          <h3>試合管理（対戦相手・スケジュール）</h3>
+          <p>対戦相手や試合の予定・結果を記録。今シーズンどこと何回戦ったかも振り返れます。</p>
         </div>
       </div>
       <div class="feature">
@@ -369,17 +386,17 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16M7 16v-3M12 16V7M17 16v-6"/></svg>
         </div>
         <div>
-          <h3>打率・出塁率・長打率を自動計算</h3>
-          <p>単純な打率だけでなく、出塁率・長打率まで複合的な集計ロジックでその場で確認できます。</p>
+          <h3>打撃成績の記録</h3>
+          <p>打席結果を入力すると、打率・本塁打をはじめとした各種成績を記録・集計します。</p>
         </div>
       </div>
       <div class="feature">
         <div class="feature-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v4a5 5 0 0 1-10 0z"/><path d="M7 5H4.5v2a3 3 0 0 0 2.5 3M17 5h2.5v2a3 3 0 0 1-2.5 3M9 17h6v3H9zM10.5 14v3M13.5 14v3"/></svg>
         </div>
         <div>
-          <h3>シーズン・大会ごとに振り返る</h3>
-          <p>大会やシーズンをまたいで成績を管理し、自分の調子の波を数字で見返せます。</p>
+          <h3>ランキング</h3>
+          <p>成績をもとに、チーム内のランキングを自動で作成。チームを盛り上げる材料にもなります。</p>
         </div>
       </div>
     </div>
