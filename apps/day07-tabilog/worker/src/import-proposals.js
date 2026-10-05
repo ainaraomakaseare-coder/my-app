@@ -16,6 +16,7 @@ import {
   PROPOSAL_MAX_ITEMS, normalizeProposalItems, addDays,
 } from "./screenshot-import.js";
 import { branchEndDateOf } from "./branches.js";
+import { langDirective } from "./lang.js";
 
 export const PROPOSAL_MAX_DAYS = 60; // 複数日モードでAIに見せる日数の上限（tripDateListと同じ）
 
@@ -33,7 +34,7 @@ export function branchDateList(branch) {
 // kind：'voice'（音声の文字起こし）か 'memo'（貼り付けたメモ・スケジュール）。
 // dates：対象の日の一覧。1件なら「この日」モード（日付はサーバーが固定する）、2件以上なら複数日モード。
 // branch：別行動に入れるとき { title, date, endDate, startTime, endTime }
-export function buildProposalPrompt({ kind, text, notes, dates, branch }) {
+export function buildProposalPrompt({ kind, text, notes, dates, branch, lang }) {
   const isVoice = kind === "voice";
   const multi = Array.isArray(dates) && dates.length > 1;
   const source = isVoice ? "旅行者が出来事をまとめて話した音声の文字起こし" : "旅行者が貼り付けたスケジュール・メモ";
@@ -79,7 +80,7 @@ export function buildProposalPrompt({ kind, text, notes, dates, branch }) {
       ? "- 次のメモ（URLや店名が雑多に書かれている）の中に、予定の内容と対応しそうなものがあれば、GoogleマップのURLはmapUrl、それ以外のお店などのURLはshopUrlに入れること。対応するものが無ければ空文字のままにすること。\n\nメモ:\n" + notes
       : "- mapUrl・shopUrlは、話された／書かれた中に明確なURLが無ければ空文字にすること",
   );
-  return lines.join("\n");
+  return lines.join("\n") + langDirective(lang);
 }
 
 // スクショの候補の項目のうち、音声・メモに要るものだけ（画像の番号・チェックアウト日・推測フラグは無い）に、

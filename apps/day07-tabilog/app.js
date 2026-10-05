@@ -3837,19 +3837,19 @@
     (items || []).forEach(function (it, index) {
       if (!it || it.use === false) return;
       var label = String(it.label || '').trim();
-      if (!label) { errors.push({ index: index, label: label, reason: '見出しが空です' }); return; }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(it.date || '')) { errors.push({ index: index, label: label, reason: '日付を入れてください' }); return; }
-      if (dates.length && dates.indexOf(it.date) === -1) { errors.push({ index: index, label: label, reason: '日付が旅行の日程の外です' }); return; }
+      if (!label) { errors.push({ index: index, label: label, reason: tr('見出しが空です') }); return; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(it.date || '')) { errors.push({ index: index, label: label, reason: tr('日付を入れてください') }); return; }
+      if (dates.length && dates.indexOf(it.date) === -1) { errors.push({ index: index, label: label, reason: tr('日付が旅行の日程の外です') }); return; }
       var time = /^([01]\d|2[0-3]):[0-5]\d$/.test(it.time || '') ? it.time : '';
       if (branch) {
         var why = validateBranchBlock(branch, it.date, time);
-        if (why === 'date_out_of_branch') { errors.push({ index: index, label: label, reason: '日付が別行動の日程の外です' }); return; }
-        if (why === 'time_out_of_branch') { errors.push({ index: index, label: label, reason: '時刻が別行動の時間帯（' + branch.startTime + '〜' + branch.endTime + '）の外です' }); return; }
+        if (why === 'date_out_of_branch') { errors.push({ index: index, label: label, reason: tr('日付が別行動の日程の外です') }); return; }
+        if (why === 'time_out_of_branch') { errors.push({ index: index, label: label, reason: tr('時刻が別行動の時間帯（{start}〜{end}）の外です', { start: branch.startTime, end: branch.endTime }) }); return; }
       }
       var p = {
         date: it.date, time: time, label: label, category: it.category, transport: it.transport || '',
         note: it.note || '', costItems: (it.costItems || []).filter(function (c) { return c && isFinite(c.amount) && Number(c.amount) >= 0; }).map(function (c) {
-          var x = { label: String(c.label || '費用').trim() || '費用', amount: Number(c.amount) };
+          var x = { label: String(c.label || tr('費用')).trim() || tr('費用'), amount: Number(c.amount) };
           if (c.currency) x.currency = c.currency;
           if (c.rate) x.rate = c.rate;
           return x;
@@ -3874,10 +3874,10 @@
   // 「円」「¥」「$」「€」「£」など、お金だと分かる印が付いているものだけ拾う（ただの数字は拾わない）。
   // 戻り値 { costs:[{label, amount, currency?}], rest }。restは金額の部分を取り除いた文章。
   // labelは金額の直前の言葉（区切りまで・20字まで）。無ければfallbackLabel（無ければ「費用」）
-  var COST_TEXT_CURRENCY = { '$': 'USD', 'US$': 'USD', 'ドル': 'USD', 'USD': 'USD', '€': 'EUR', 'ユーロ': 'EUR', 'EUR': 'EUR', '£': 'GBP', 'GBP': 'GBP', '¥': '', '円': '' };
+  var COST_TEXT_CURRENCY = { '$': 'USD', 'US$': 'USD', 'ドル': 'USD', '美元': 'USD', 'USD': 'USD', '€': 'EUR', 'ユーロ': 'EUR', '歐元': 'EUR', 'EUR': 'EUR', '£': 'GBP', '英鎊': 'GBP', 'GBP': 'GBP', '¥': '', '円': '', '日圓': '' };
   function parseCostsFromLine(text, fallbackLabel) {
     var line = String(text || '').normalize('NFKC');
-    var re = /(US\$|[$¥€£])\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(円|ドル|ユーロ|USD|EUR|GBP)/g;
+    var re = /(US\$|[$¥€£])\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(円|日圓|ドル|美元|ユーロ|歐元|英鎊|USD|EUR|GBP)/g;
     var costs = [], rest = '', cursor = 0, m;
     while ((m = re.exec(line))) {
       var unit = m[1] || m[4];
@@ -3888,7 +3888,7 @@
       if (!isFinite(amount) || amount <= 0 || amount > 1000000) { rest += m[0]; continue; }
       var currency = COST_TEXT_CURRENCY[unit] || '';
       var chunk = before.replace(/[\s、,，。・:：\/／]+$/, '').split(/[\s、,，。・:：\/／]+/).filter(Boolean).pop() || '';
-      var label = chunk.slice(0, 20) || fallbackLabel || '費用';
+      var label = chunk.slice(0, 20) || fallbackLabel || tr('費用');
       var c = { label: label, amount: currency ? Math.round(amount * 100) / 100 : Math.round(amount) };
       if (currency) c.currency = currency;
       costs.push(c);
@@ -3920,7 +3920,7 @@
       var episode = String(entry.episode || '');
       var costs = [];
       if (entry.costItems && entry.costItems.length) {
-        costs = entry.costItems.map(function (c) { var x = { label: c.label || '費用', amount: c.amount }; if (c.currency) x.currency = c.currency; if (c.rate) x.rate = c.rate; return x; });
+        costs = entry.costItems.map(function (c) { var x = { label: c.label || tr('費用'), amount: c.amount }; if (c.currency) x.currency = c.currency; if (c.rate) x.rate = c.rate; return x; });
       } else if (opts.extractCosts !== false) {
         var fromLabel = parseCostsFromLine(label);
         costs = fromLabel.costs.slice();
@@ -3932,7 +3932,7 @@
       var item = {
         id: 'm' + (i + 1), sourceImage: null,
         category: b.category || 'other', transport: b.transport || '',
-        date: b.date || '', time: /^([01]\d|2[0-3]):[0-5]\d$/.test(b.time || '') ? b.time : '', label: label || '予定',
+        date: b.date || '', time: /^([01]\d|2[0-3]):[0-5]\d$/.test(b.time || '') ? b.time : '', label: label || tr('予定'),
         place: '', placeGuessed: false, fromPlace: '', toPlace: '', company: '', routeNumber: '',
         departTime: '', arriveTime: '', arriveDate: b.date || '',
         costItems: costs, note: episode, warnings: [], timeEstimated: false, nightIndex: 0
@@ -5163,7 +5163,7 @@
   }
   function hideTripFromHistory() {
     if (!state.trip) return;
-    if (!confirm('この旅行をホームの一覧（この端末の履歴）から消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。共有URLを開けば、また一覧に戻ります）')) return;
+    if (!confirm(tr('この旅行をホームの一覧（この端末の履歴）から消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。共有URLを開けば、また一覧に戻ります）'))) return;
     removeTripsFromHistory([state.trip.id]);
     goHome();
   }
@@ -5180,7 +5180,7 @@
       return '<label class="history-pick-row">' +
         '<input type="checkbox" class="history-pick-check" value="' + escapeHtml(t.id) + '">' +
         tripThumbHtml(t.coverPhotoId) +
-        '<span class="history-pick-body"><span class="history-pick-title">' + escapeHtml(t.title || '（無題の旅行）') + '</span>' +
+        '<span class="history-pick-body"><span class="history-pick-title">' + escapeHtml(t.title || tr('（無題の旅行）')) + '</span>' +
         (dateText ? '<span class="history-pick-date">' + escapeHtml(dateText) + '</span>' : '') + '</span></label>';
     }).join('');
     updateTripHistorySelection();
@@ -5198,21 +5198,21 @@
     var n = selectedTripHistoryIds().length;
     var btn = $('#btnRemoveSelectedHistory');
     btn.disabled = n === 0;
-    btn.textContent = '選んだ旅行を履歴から消す（' + n + '件）';
+    btn.textContent = tr('選んだ旅行を履歴から消す（{n}件）', { n: n });
   }
   function finishTripHistoryRemoval(count) {
     closeTripHistorySheet();
     renderHomeTripList();
-    showToast(count + '件を履歴から消しました');
+    showToast(tr('{n}件を履歴から消しました', { n: count }));
   }
   function removeSelectedTripHistory() {
     var ids = selectedTripHistoryIds();
     if (!ids.length) return;
-    if (!confirm(ids.length + '件の旅行をこの端末の履歴から消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを開けば、また一覧に戻ります）')) return;
+    if (!confirm(tr('{n}件の旅行をこの端末の履歴から消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを開けば、また一覧に戻ります）', { n: ids.length }))) return;
     finishTripHistoryRemoval(removeTripsFromHistory(ids));
   }
   function clearTripHistory() {
-    if (!confirm('この端末に保存されている「旅行の履歴」をすべて消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを知っていれば引き続き開けます）')) return;
+    if (!confirm(tr('この端末に保存されている「旅行の履歴」をすべて消しますか？\n（旅行そのもの・サーバー上のデータは削除されません。URLを知っていれば引き続き開けます）'))) return;
     finishTripHistoryRemoval(removeTripsFromHistory(loadMyTrips().map(function (t) { return t.id; })));
   }
 
@@ -5384,7 +5384,7 @@
       }
       downloadBlob(blob, filename);
     }).catch(function () {
-      alert('保存に失敗しました。もう一度お試しください。');
+      alert(tr('保存に失敗しました。もう一度お試しください。'));
     }).then(function () {
       if (btn) btn.disabled = false;
     });
@@ -5462,7 +5462,7 @@
         state.trip.settleUnit = prevUnit;
         renderSettleUnitPicker();
         renderSettlement();
-        alert('端数の単位を保存できませんでした。もう一度お試しください。');
+        alert(tr('端数の単位を保存できませんでした。もう一度お試しください。'));
       });
   }
 
@@ -5483,14 +5483,14 @@
     $('#settlementBalances').innerHTML = names.map(function (name) {
       var yen = Core.roundToUnit(balance[name] || 0, 1);
       var cls = yen > 0 ? 'plus' : (yen < 0 ? 'minus' : '');
-      var text = yen > 0 ? '+' + Core.formatYen(yen) + '（もらう）' : (yen < 0 ? '－' + Core.formatYen(-yen) + '（払う）' : '±¥0');
+      var text = yen > 0 ? tr('+{amount}（もらう）', { amount: Core.formatYen(yen) }) : (yen < 0 ? tr('－{amount}（払う）', { amount: Core.formatYen(-yen) }) : '±¥0');
       return '<div class="balance-row ' + cls + '"><span class="name">' + escapeHtml(name) + '</span><span class="amount">' + escapeHtml(text) + '</span></div>';
     }).join('');
 
     var plan = Core.settlementPlan(balance, unit);
     var planEl = $('#settlementPlanList');
     if (!plan.length) {
-      planEl.innerHTML = '<p class="empty">貸し借りはありません。</p>';
+      planEl.innerHTML = '<p class="empty">' + tr('貸し借りはありません。') + '</p>';
     } else {
       planEl.innerHTML = plan.map(function (p) {
         return '<div class="settle-plan-row"><span class="from">' + escapeHtml(p.from) + '</span>' + SETTLE_ARROW_ICON
@@ -5500,15 +5500,15 @@
     var roundNote = $('#settlementRoundNote');
     roundNote.hidden = !(unit > 1 && plan.length);
     if (unit > 1 && plan.length) {
-      roundNote.textContent = unit + '円単位に丸めています（受け取る人の合計が実際と少しずれることがあります）。';
+      roundNote.textContent = tr('{unit}円単位に丸めています（受け取る人の合計が実際と少しずれることがあります）。', { unit: unit });
     }
 
     $('#settlementExpenses').innerHTML = expenses.map(function (e) {
-      var splitText = e.splitAmong.length > 1 ? e.splitAmong.join('・') + 'で割り勘' : e.paidBy + 'の分';
+      var splitText = e.splitAmong.length > 1 ? tr('{names}で割り勘', { names: e.splitAmong.join('・') }) : tr('{name}の分', { name: e.paidBy });
       var dateText = e.date ? e.date.slice(5).replace('-', '/') : '';
       return '<div class="expense-row">' +
-        '<div class="expense-main"><span class="label">' + escapeHtml(e.label || '（内容未入力）') + '</span><span class="amount">' + escapeHtml(Core.formatCostItemAmount(e)) + '</span></div>' +
-        '<div class="expense-sub">' + escapeHtml(dateText) + '　' + escapeHtml(e.paidBy) + 'が立替・' + escapeHtml(splitText) + '</div>' +
+        '<div class="expense-main"><span class="label">' + escapeHtml(e.label || tr('（内容未入力）')) + '</span><span class="amount">' + escapeHtml(Core.formatCostItemAmount(e)) + '</span></div>' +
+        '<div class="expense-sub">' + escapeHtml(dateText) + '　' + tr('{name}が立替・{split}', { name: escapeHtml(e.paidBy), split: escapeHtml(splitText) }) + '</div>' +
         '</div>';
     }).join('');
   }
@@ -5675,7 +5675,7 @@
     var draft = state.coverPhotoDraft;
     var url = draft.blob ? draft.previewUrl : (!draft.removed && draft.existingId ? photoUrl(draft.existingId) : '');
     el.innerHTML = url
-      ? '<div class="ph"><img src="' + escapeHtml(url) + '"><button type="button" class="ph-remove" aria-label="削除">×</button></div>'
+      ? '<div class="ph"><img src="' + escapeHtml(url) + '"><button type="button" class="ph-remove" aria-label="' + tr('削除') + '">×</button></div>'
       : '';
     if (url) {
       el.querySelector('button').addEventListener('click', function () {
@@ -5707,11 +5707,11 @@
 
   // マイログの画面で使う、カテゴリごとの呼び名
   var MYLOG_LABELS = {
-    food: '飯ログ',
-    lodging: 'ほてログ',
-    sightseeing: 'アクティビティーログ',
-    transport: '移動ログ',
-    other: 'その他ログ'
+    food: tr('飯ログ'),
+    lodging: tr('ほてログ'),
+    sightseeing: tr('アクティビティーログ'),
+    transport: tr('移動ログ'),
+    other: tr('その他ログ')
   };
 
   // ---------- 状態 ----------
@@ -5758,7 +5758,7 @@
     var notice = $('#apiNotice');
     if (!API_BASE) {
       notice.hidden = false;
-      notice.textContent = 'サーバー（Worker）が未設定です。apps/day07-tabilog/worker/README.md の手順で公開し、index.html の tabilog-api-endpoint に設定してください。設定するまで旅行の保存はできません。';
+      notice.textContent = tr('サーバー（Worker）が未設定です。apps/day07-tabilog/worker/README.md の手順で公開し、index.html の tabilog-api-endpoint に設定してください。設定するまで旅行の保存はできません。');
     } else {
       notice.hidden = true;
     }
@@ -5798,15 +5798,15 @@
   function renderTripFilterOptions(allTrips) {
     var opts = Core.tripFilterOptions(allTrips);
     var f = state.homeFilters;
-    $('#filterCompanion').innerHTML = '<option value="">誰と一緒か：すべて</option>' +
+    $('#filterCompanion').innerHTML = '<option value="">' + tr('誰と一緒か：すべて') + '</option>' +
       opts.companions.map(function (c) {
         return '<option value="' + escapeHtml(c) + '"' + (f.companion === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
       }).join('');
-    $('#filterYear').innerHTML = '<option value="">年：すべて</option>' +
+    $('#filterYear').innerHTML = '<option value="">' + tr('年：すべて') + '</option>' +
       opts.years.map(function (y) {
-        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + escapeHtml(y) + '年</option>';
+        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + tr('{year}年', { year: escapeHtml(y) }) + '</option>';
       }).join('');
-    $('#filterTripType').innerHTML = '<option value="">旅行区分：すべて</option>' +
+    $('#filterTripType').innerHTML = '<option value="">' + tr('旅行区分：すべて') + '</option>' +
       opts.tripTypes.map(function (tt) {
         return '<option value="' + escapeHtml(tt) + '"' + (f.tripType === tt ? ' selected' : '') + '>' + escapeHtml(tt) + '</option>';
       }).join('');
@@ -5829,13 +5829,13 @@
         '<div class="trip-card-info">' + infoHtml +
         '<div class="trip-card-people">' + tripCardAvatarsHtml(t.companions) +
         '<span class="trip-card-people-text">' +
-        ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+        ((t.companions || []).length ? tr('{names} と一緒', { names: escapeHtml(t.companions.join('・')) }) : tr('参加者は未設定')) +
         '</span></div>' + extra + '</div>' };
     }
     return { className: 'trip-card', html:
       infoHtml +
       '<div class="trip-card-companions">' +
-      ((t.companions || []).length ? escapeHtml(t.companions.join('・')) + ' と一緒' : '参加者は未設定') +
+      ((t.companions || []).length ? tr('{names} と一緒', { names: escapeHtml(t.companions.join('・')) }) : tr('参加者は未設定')) +
       (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
       '</div>' + extra };
   }
@@ -5850,11 +5850,11 @@
     $('#sortTripOrder').value = state.homeFilters.sort;
     var el = $('#tripList');
     if (!allTrips.length) {
-      el.innerHTML = '<div class="empty">まだ旅行がありません。「＋ 新しい旅を記録する」から始めてください。</div>';
+      el.innerHTML = '<div class="empty">' + tr('まだ旅行がありません。「＋ 新しい旅を記録する」から始めてください。') + '</div>';
       return;
     }
     if (!list.length) {
-      el.innerHTML = '<div class="empty">条件に一致する旅行がありません。</div>';
+      el.innerHTML = '<div class="empty">' + tr('条件に一致する旅行がありません。') + '</div>';
       return;
     }
     el.innerHTML = '';
@@ -5940,7 +5940,7 @@
       if (onScreenReady) onScreenReady();
     }).catch(function () {
       forgetTrip(id);
-      alert('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。');
+      alert(tr('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。'));
       goHome();
     });
   }
@@ -5991,9 +5991,9 @@
   function createTrip() {
     var title = $('#ntTitle').value.trim();
     var status = $('#newTripStatus');
-    if (!API_BASE) { status.textContent = 'サーバーが未設定のため作成できません。'; return; }
-    if (!title) { status.textContent = 'タイトルを入力してください。'; return; }
-    status.textContent = '作成中…';
+    if (!API_BASE) { status.textContent = tr('サーバーが未設定のため作成できません。'); return; }
+    if (!title) { status.textContent = tr('タイトルを入力してください。'); return; }
+    status.textContent = tr('作成中…');
     resolveCoverPhotoId().then(function (coverPhotoId) {
       return api('/trips', 'POST', {
         title: title,
@@ -6007,7 +6007,7 @@
       rememberTrip(trip);
       openTrip(trip.id);
     }).catch(function () {
-      status.textContent = '作成に失敗しました。もう一度お試しください。';
+      status.textContent = tr('作成に失敗しました。もう一度お試しください。');
     });
   }
 
@@ -6029,20 +6029,20 @@
   function saveTripEdit() {
     var title = $('#teTitle').value.trim();
     var status = $('#tripEditStatus');
-    if (!title) { status.textContent = 'タイトルを入力してください。'; return; }
+    if (!title) { status.textContent = tr('タイトルを入力してください。'); return; }
     var newStart = $('#teStart').value, newEnd = $('#teEnd').value;
     // 日程を変えたら、予定もいっしょにずらすかを確かめる（2026-09-26。Core.tripScheduleShift）
     var shift = Core.tripScheduleShift(state.trip, newStart, newEnd, allBlocks());
     var shiftDays = 0;
     if (shift) {
-      var dir = shift.days > 0 ? Math.abs(shift.days) + '日後' : Math.abs(shift.days) + '日前';
+      var dir = shift.days > 0 ? tr('{n}日後', { n: Math.abs(shift.days) }) : tr('{n}日前', { n: Math.abs(shift.days) });
       var move = Core.formatDateJp(shift.firstFrom) + ' → ' + Core.formatDateJp(shift.firstTo);
       var msg = shift.reason === 'start'
-        ? '開始日を変えました。予定（' + shift.count + '件）も同じだけ' + dir + 'にずらしますか？\n最初の予定：' + move
-        : '予定が1日目（' + Core.formatDateJp(newStart) + '）からずれています。予定（' + shift.count + '件）をまとめて' + dir + 'にずらして、1日目からにそろえますか？\n最初の予定：' + move;
-      if (confirm(msg + '\n\n「キャンセル」を選ぶと、日程だけを保存します。')) shiftDays = shift.days;
+        ? tr('開始日を変えました。予定（{count}件）も同じだけ{dir}にずらしますか？\n最初の予定：{move}', { count: shift.count, dir: dir, move: move })
+        : tr('予定が1日目（{date}）からずれています。予定（{count}件）をまとめて{dir}にずらして、1日目からにそろえますか？\n最初の予定：{move}', { date: Core.formatDateJp(newStart), count: shift.count, dir: dir, move: move });
+      if (confirm(msg + '\n\n' + tr('「キャンセル」を選ぶと、日程だけを保存します。'))) shiftDays = shift.days;
     }
-    status.textContent = '保存中…';
+    status.textContent = tr('保存中…');
     resolveCoverPhotoId().then(function (coverPhotoId) {
       var body = {
         title: title,
@@ -6060,7 +6060,7 @@
       delete trip.shiftedDays;
       state.trip = trip;
       rememberTrip(trip);
-      if (shiftDays && !shifted) alert('日程は保存しましたが、予定はずらせませんでした。少し時間をおいて、もう一度日程を保存してください。');
+      if (shiftDays && !shifted) alert(tr('日程は保存しましたが、予定はずらせませんでした。少し時間をおいて、もう一度日程を保存してください。'));
       // 予定・日ごとの情報の日付が変わったので、旅行ごと読み直す
       return shifted ? refreshTrip() : null;
     }).then(function () {
@@ -6069,7 +6069,7 @@
       showScreen('tripDetail');
       renderTripDetail();
     }).catch(function () {
-      status.textContent = '保存に失敗しました。もう一度お試しください。';
+      status.textContent = tr('保存に失敗しました。もう一度お試しください。');
     });
   }
 
@@ -6077,7 +6077,7 @@
   // 同じ宿が続く夜はまとめる（lodgingByNight）。宿泊が1か所だけの旅行では、これまでどおり
   // 宿の名前だけをシンプルに出す（範囲表記を付けない）。
   function formatLodgingStat(groups) {
-    return Core.lodgingSummary(groups) || Core.primaryLodgingName(state.blocks) || '未設定';
+    return Core.lodgingSummary(groups) || Core.primaryLodgingName(state.blocks) || tr('未設定');
   }
 
   // 宿泊先の内訳（何泊目にどこへ泊まったか、全件）。統計カードの表示文字列（formatLodgingStat）は
@@ -6110,17 +6110,17 @@
         var cont = prev && prev.label && prev.label === n.label;
         var same = prev && prev.label && prev.label !== n.label;
         return '<div class="cost-breakdown-row lodging-row" role="button" tabindex="0" data-lodging-night="' + n.night + '">' +
-          '<span class="lodging-night">' + n.night + '泊目<small>' + escapeHtml(formatNightDate(n.date)) + '</small></span>' +
-          '<span class="lodging-name' + (cont ? ' cont' : '') + (n.label ? '' : ' none') + '">' + escapeHtml(n.label || '未定') + '</span>' +
+          '<span class="lodging-night">' + tr('{n}泊目', { n: n.night }) + '<small>' + escapeHtml(formatNightDate(n.date)) + '</small></span>' +
+          '<span class="lodging-name' + (cont ? ' cont' : '') + (n.label ? '' : ' none') + '">' + escapeHtml(n.label || tr('未定')) + '</span>' +
           '<span class="lodging-actions">' +
-          (same ? '<button type="button" class="lodging-row-same" data-lodging-same="' + n.night + '">同上</button>' : '') +
-          '<span class="lodging-row-edit">' + (n.label ? '直す' : '入れる') + '</span></span></div>';
+          (same ? '<button type="button" class="lodging-row-same" data-lodging-same="' + n.night + '">' + tr('同上') + '</button>' : '') +
+          '<span class="lodging-row-edit">' + (n.label ? tr('直す') : tr('入れる')) + '</span></span></div>';
       }).join('');
     } else if (primaryName) {
       // 日帰りなど「泊」の無い旅行では日ごとの内訳が作れないため、宿泊カテゴリの見出しをそのまま出す
-      panel.innerHTML = '<div class="cost-breakdown-row"><span class="name">宿泊先</span><span class="amount">' + escapeHtml(primaryName) + '</span></div>';
+      panel.innerHTML = '<div class="cost-breakdown-row"><span class="name">' + tr('宿泊先') + '</span><span class="amount">' + escapeHtml(primaryName) + '</span></div>';
     } else {
-      panel.innerHTML = '<p class="empty">宿泊カテゴリの予定がまだありません。</p>';
+      panel.innerHTML = '<p class="empty">' + tr('宿泊カテゴリの予定がまだありません。') + '</p>';
     }
     panel.insertAdjacentHTML('beforeend', lodgingFormHtml());
   }
@@ -6137,19 +6137,19 @@
     if (!lodgingNightList.length) return '';
     var opts = function (id) {
       return '<select id="' + id + '" class="lodging-select">' + lodgingNightList.map(function (n) {
-        return '<option value="' + n.night + '">' + n.night + '泊目（' + escapeHtml(formatNightDate(n.date)) + '）</option>';
+        return '<option value="' + n.night + '">' + tr('{n}泊目（{date}）', { n: n.night, date: escapeHtml(formatNightDate(n.date)) }) + '</option>';
       }).join('') + '</select>';
     };
-    return '<button type="button" class="entry-add lodging-add-open" id="btnLodgingAddOpen">' + plusIcon() + '<span>宿泊先を追加</span></button>' +
+    return '<button type="button" class="entry-add lodging-add-open" id="btnLodgingAddOpen">' + plusIcon() + '<span>' + tr('宿泊先を追加') + '</span></button>' +
       '<div class="lodging-add" id="lodgingAddForm" hidden>' +
-      '<div class="lodging-add-title" id="lodgingAddTitle">宿泊先を追加</div>' +
-      '<div class="field"><label for="lodgingAddName">宿の名前</label><input type="text" id="lodgingAddName" maxlength="200" placeholder="例：菊の家"></div>' +
-      '<div class="field"><label for="lodgingAddFrom">泊まる夜</label><div class="lodging-range">' + opts('lodgingAddFrom') + '<span>〜</span>' + opts('lodgingAddTo') + '</div></div>' +
-      '<div class="field"><label for="lodgingAddSearch">地図（任意）</label><div class="map-search-row"><input type="text" id="lodgingAddSearch" placeholder="宿の名前や住所で探す"><button type="button" class="btn ghost small" id="btnLodgingSearch">探す</button></div>' +
+      '<div class="lodging-add-title" id="lodgingAddTitle">' + tr('宿泊先を追加') + '</div>' +
+      '<div class="field"><label for="lodgingAddName">' + tr('宿の名前') + '</label><input type="text" id="lodgingAddName" maxlength="200" placeholder="' + tr('例：菊の家') + '"></div>' +
+      '<div class="field"><label for="lodgingAddFrom">' + tr('泊まる夜') + '</label><div class="lodging-range">' + opts('lodgingAddFrom') + '<span>〜</span>' + opts('lodgingAddTo') + '</div></div>' +
+      '<div class="field"><label for="lodgingAddSearch">' + tr('地図（任意）') + '</label><div class="map-search-row"><input type="text" id="lodgingAddSearch" placeholder="' + tr('宿の名前や住所で探す') + '"><button type="button" class="btn ghost small" id="btnLodgingSearch">' + tr('探す') + '</button></div>' +
       '<div class="place-list" id="lodgingAddCandidates" hidden></div></div>' +
       '<p class="hint" id="lodgingAddStatus"></p>' +
-      '<div class="lodging-add-actions"><button type="button" class="btn text" id="btnLodgingAddCancel">やめる</button>' +
-      '<button type="button" class="btn primary" id="btnLodgingAddSave">保存する</button></div>' +
+      '<div class="lodging-add-actions"><button type="button" class="btn text" id="btnLodgingAddCancel">' + tr('やめる') + '</button>' +
+      '<button type="button" class="btn primary" id="btnLodgingAddSave">' + tr('保存する') + '</button></div>' +
       '</div>';
   }
   // night：タップした夜（null＝「宿泊先を追加」）。範囲は、その夜から同じ宿が続く最後の夜まで
@@ -6162,7 +6162,7 @@
     var end = start;
     while (list[end] && list[end].label === cur.label) end++;
     lodgingChosen = null; lodgingPlaces = [];
-    $('#lodgingAddTitle').textContent = night && cur.label ? '宿泊先を直す' : '宿泊先を追加';
+    $('#lodgingAddTitle').textContent = night && cur.label ? tr('宿泊先を直す') : tr('宿泊先を追加');
     $('#lodgingAddName').value = night ? cur.label : '';
     $('#lodgingAddFrom').value = String(start);
     $('#lodgingAddTo').value = String(end);
@@ -6170,8 +6170,8 @@
     $('#lodgingAddCandidates').hidden = true;
     var block = cur.blockId ? (state.blocks || []).filter(function (b) { return b.id === cur.blockId; })[0] : null;
     var pe = night && block ? Core.replayPlaceEntry(block) : null;
-    $('#lodgingAddStatus').textContent = night && cur.label ? (pe ? '地図が入っています。変えるときだけ探してください。' : '地図はまだ入っていません。') +
-      '1泊だけ変えるときは、泊まる夜を「' + start + '泊目〜' + start + '泊目」にしてください。' : '';
+    $('#lodgingAddStatus').textContent = night && cur.label ? (pe ? tr('地図が入っています。変えるときだけ探してください。') : tr('地図はまだ入っていません。')) +
+      tr('1泊だけ変えるときは、泊まる夜を「{n}泊目〜{n}泊目」にしてください。', { n: start }) : '';
     form.hidden = false;
     $('#btnLodgingAddOpen').hidden = true;
     $all('.lodging-row').forEach(function (r) {
@@ -6189,19 +6189,19 @@
     var q = $('#lodgingAddSearch').value.trim() || $('#lodgingAddName').value.trim();
     if (!q) return;
     var status = $('#lodgingAddStatus'), list = $('#lodgingAddCandidates');
-    status.textContent = '候補を探しています…';
+    status.textContent = tr('候補を探しています…');
     lodgingSession = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'pl-' + Date.now().toString(36);
     api('/places/search?q=' + encodeURIComponent(q) + '&session=' + encodeURIComponent(lodgingSession)).then(function (res) {
       lodgingPlaces = (res && res.places) || [];
-      if (!lodgingPlaces.length) { list.hidden = true; status.textContent = '候補が見つかりませんでした。地図なしでも保存できます。'; return; }
+      if (!lodgingPlaces.length) { list.hidden = true; status.textContent = tr('候補が見つかりませんでした。地図なしでも保存できます。'); return; }
       list.innerHTML = lodgingPlaces.map(function (p, i) {
         return '<div class="place-card" data-lodging-choice="' + i + '" role="button" tabindex="0"><span class="place-num">' + (i + 1) + '</span>' +
           '<div class="place-text"><div class="place-name">' + escapeHtml(p.name) + '</div>' +
-          (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">選択</span></div>';
+          (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">' + tr('選択') + '</span></div>';
       }).join('');
       list.hidden = false;
-      status.textContent = '宿を選んでください。';
-    }).catch(function () { status.textContent = '候補を取得できませんでした。地図なしでも保存できます。'; });
+      status.textContent = tr('宿を選んでください。');
+    }).catch(function () { status.textContent = tr('候補を取得できませんでした。地図なしでも保存できます。'); });
   }
   function chooseLodgingPlace(i) {
     var p = lodgingPlaces[i];
@@ -6209,7 +6209,7 @@
     $all('[data-lodging-choice]', $('#lodgingAddCandidates')).forEach(function (el) {
       var on = el.getAttribute('data-lodging-choice') === String(i);
       el.classList.toggle('on', on);
-      el.querySelector('.place-pick').textContent = on ? '選択中' : '選択';
+      el.querySelector('.place-pick').textContent = on ? tr('選択中') : tr('選択');
     });
     if (!$('#lodgingAddName').value.trim()) $('#lodgingAddName').value = p.name || '';
     var need = !(isFinite(p.lat) && isFinite(p.lng)) && p.placeId;
@@ -6220,7 +6220,7 @@
       : Promise.resolve();
     lodgingChosen = req.then(function () {
       var url = Core.placeMapUrl(p, $('#lodgingAddSearch').value);
-      $('#lodgingAddStatus').textContent = url ? '地図に「' + p.name + '」を入れます。' : '';
+      $('#lodgingAddStatus').textContent = url ? tr('地図に「{name}」を入れます。', { name: p.name }) : '';
       return url || '';
     });
   }
@@ -6250,9 +6250,9 @@
     var name = $('#lodgingAddName').value.trim();
     var from = Number($('#lodgingAddFrom').value), to = Number($('#lodgingAddTo').value);
     var status = $('#lodgingAddStatus');
-    if (!name) { status.textContent = '宿の名前を入れてください。'; return; }
-    if (to < from) { status.textContent = '泊まる夜の終わりは、始まりより後にしてください。'; return; }
-    status.textContent = '保存中…';
+    if (!name) { status.textContent = tr('宿の名前を入れてください。'); return; }
+    if (to < from) { status.textContent = tr('泊まる夜の終わりは、始まりより後にしてください。'); return; }
+    status.textContent = tr('保存中…');
     $('#btnLodgingAddSave').disabled = true;
     (lodgingChosen || Promise.resolve('')).then(function (mapUrl) {
       return applyLodgingRange(from, to, name, mapUrl);
@@ -6263,7 +6263,7 @@
       renderTripDetail();
       toggleLodgingBreakdown();
     }).catch(function () {
-      status.textContent = '保存に失敗しました。もう一度お試しください。';
+      status.textContent = tr('保存に失敗しました。もう一度お試しください。');
       $('#btnLodgingAddSave').disabled = false;
     });
   }
@@ -6274,13 +6274,13 @@
     var end = night;
     while (list[end] && list[end].label === cur.label) end++;
     var btn = $('[data-lodging-same="' + night + '"]');
-    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+    if (btn) { btn.disabled = true; btn.textContent = tr('保存中…'); }
     applyLodgingRange(night, end, prev.label, '').then(function () { return refreshTrip(); }).then(function () {
       renderTripDetail();
       toggleLodgingBreakdown();
     }).catch(function () {
-      if (btn) { btn.disabled = false; btn.textContent = '同上'; }
-      alert('保存に失敗しました。もう一度お試しください。');
+      if (btn) { btn.disabled = false; btn.textContent = tr('同上'); }
+      alert(tr('保存に失敗しました。もう一度お試しください。'));
     });
   }
 
@@ -6295,7 +6295,7 @@
       ? names.map(function (name) {
           return '<div class="cost-breakdown-row"><span class="name">' + escapeHtml(name) + '</span><span class="amount">' + escapeHtml(Core.formatYen(breakdown[name])) + '</span></div>';
         }).join('')
-      : '<p class="empty">まだ費用の記録がありません。</p>';
+      : '<p class="empty">' + tr('まだ費用の記録がありません。') + '</p>';
     panel.hidden = false;
     syncStatRows();
   }
@@ -6308,10 +6308,10 @@
     coverEl.hidden = !trip.coverPhotoId;
     coverEl.style.backgroundImage = trip.coverPhotoId ? "url('" + photoUrl(trip.coverPhotoId) + "')" : '';
     $('#tripTitle').textContent = trip.title;
-    var range = trip.startDate ? Core.formatDateJp(trip.startDate) + (trip.endDate ? ' 〜 ' + Core.formatDateJp(trip.endDate) : '') : '日程未設定';
+    var range = trip.startDate ? Core.formatDateJp(trip.startDate) + (trip.endDate ? ' 〜 ' + Core.formatDateJp(trip.endDate) : '') : tr('日程未設定');
     var nights = Core.tripNights(trip);
     $('#tripDates').textContent = range + (nights ? '・' + nights : '');
-    $('#tripCompanions').textContent = (trip.companions || []).length ? trip.companions.join('・') + ' と一緒' : '参加者は未設定';
+    $('#tripCompanions').textContent = (trip.companions || []).length ? tr('{names} と一緒', { names: trip.companions.join('・') }) : tr('参加者は未設定');
     $('#btnOpenReplay').hidden = !(state.blocks || []).some(function (b) { return b.date; });
     // 「紹介文を作る」の入り口は一時的に隠す（FEATURES.post、2026-09-26〜。サーバー機能は残す）
     $('#btnOpenPost').hidden = !FEATURES.post;
@@ -6327,11 +6327,11 @@
     var lodgingPanel = $('#lodgingBreakdownPanel'), costPanel = $('#costBreakdownPanel');
     var stats = $('#tripStats');
     stats.innerHTML =
-      '<button type="button" class="stat-row" id="btnShowLodgingBreakdown" aria-expanded="false"><span class="stat-row-lbl">宿泊先</span><span class="stat-row-val">' +
+      '<button type="button" class="stat-row" id="btnShowLodgingBreakdown" aria-expanded="false"><span class="stat-row-lbl">' + tr('宿泊先') + '</span><span class="stat-row-val">' +
         (lodgingParts
-          ? '<span class="lodging-val">' + escapeHtml(lodgingParts.main) + '</span>' + (lodgingParts.others ? '<span class="lodging-more">ほか' + lodgingParts.others + 'か所</span>' : '')
+          ? '<span class="lodging-val">' + escapeHtml(lodgingParts.main) + '</span>' + (lodgingParts.others ? '<span class="lodging-more">' + tr('ほか{n}か所', { n: lodgingParts.others }) + '</span>' : '')
           : '<span class="lodging-val">' + escapeHtml(lodging) + '</span>') + '</span>' + STAT_CHEVRON + '</button>' +
-      '<button type="button" class="stat-row" id="btnShowCostBreakdown" aria-expanded="false"><span class="stat-row-lbl">総費用</span><span class="stat-row-val"><span class="lodging-val">' +
+      '<button type="button" class="stat-row" id="btnShowCostBreakdown" aria-expanded="false"><span class="stat-row-lbl">' + tr('総費用') + '</span><span class="stat-row-val"><span class="lodging-val">' +
         escapeHtml(Core.formatYen(total) || '¥0') + '</span></span>' + STAT_CHEVRON + '</button>';
     stats.insertBefore(lodgingPanel, $('#btnShowCostBreakdown'));
     stats.appendChild(costPanel);
@@ -6370,13 +6370,13 @@
     var namesEl = $('#tripMembers');
     namesEl.hidden = !members.length;
     namesEl.textContent = members.length
-      ? 'アカウント参加：' + members.map(function (m) { return m.name || 'アカウント参加者'; }).join('・')
+      ? tr('アカウント参加：{names}', { names: members.map(function (m) { return m.name || tr('アカウント参加者'); }).join('・') })
       : '';
     var btn = $('#btnJoinTrip');
     var joined = user && user.accountId && members.some(function (m) { return m.accountId === user.accountId; });
     // 参加済みでも押せるようにし、押すと参加をやめられる（2026-09-27。以前は押せず、やめられなかった）
     btn.disabled = false;
-    btn.textContent = joined ? '参加済み' : '参加する';
+    btn.textContent = joined ? tr('参加済み') : tr('参加する');
     btn.classList.toggle('is-joined', !!joined);
     btn.setAttribute('aria-pressed', String(!!joined));
   }
@@ -6395,19 +6395,19 @@
         renderTripJoin();
       })
       .catch(function () {
-        $('#tripDetailStatus').textContent = '参加に失敗しました。もう一度お試しください。';
+        $('#tripDetailStatus').textContent = tr('参加に失敗しました。もう一度お試しください。');
       });
   }
 
   function handleLeaveTrip(user) {
-    if (!confirm('この旅行への参加をやめますか？\n\nアカウント参加の一覧から外れます。旅行や、あなたが書いた記録は消えません。あとからもう一度「参加する」を押せば戻れます。')) return;
+    if (!confirm(tr('この旅行への参加をやめますか？\n\nアカウント参加の一覧から外れます。旅行や、あなたが書いた記録は消えません。あとからもう一度「参加する」を押せば戻れます。'))) return;
     api('/trips/' + encodeURIComponent(state.trip.id) + '/leave', 'POST', { email: user.email })
       .then(function (res) {
         state.members = res.members || [];
         renderTripJoin();
       })
       .catch(function () {
-        $('#tripDetailStatus').textContent = '参加をやめられませんでした。もう一度お試しください。';
+        $('#tripDetailStatus').textContent = tr('参加をやめられませんでした。もう一度お試しください。');
       });
   }
 
@@ -6448,10 +6448,10 @@
     var like = likeInfo(type, id);
     var n = commentsFor(type, id).length;
     return '<button type="button" class="social-btn like-btn' + (like.liked ? ' liked' : '') + '" data-social-like="' + type +
-        '" data-target-id="' + escapeHtml(id) + '" aria-pressed="' + (like.liked ? 'true' : 'false') + '" aria-label="いいね">' +
+        '" data-target-id="' + escapeHtml(id) + '" aria-pressed="' + (like.liked ? 'true' : 'false') + '" aria-label="' + tr('いいね') + '">' +
         HEART_ICON + '<span>' + (like.count || '') + '</span></button>' +
       '<button type="button" class="social-btn" data-social-comment="' + type + '" data-target-id="' + escapeHtml(id) +
-        '" aria-label="コメント">' + COMMENT_ICON + '<span>' + (n || '') + '</span></button>';
+        '" aria-label="' + tr('コメント') + '">' + COMMENT_ICON + '<span>' + (n || '') + '</span></button>';
   }
 
   function renderTripSocialBar() {
@@ -6474,8 +6474,8 @@
     closeCommentSheet();
     openLogin('tripDetail');
     $('#loginLead').textContent = user
-      ? 'いいね・コメントするには、もう一度ログインしてください（本人確認のしくみを新しくしました）'
-      : 'ログインすると、いいねやコメントができます';
+      ? tr('いいね・コメントするには、もう一度ログインしてください（本人確認のしくみを新しくしました）')
+      : tr('ログインすると、いいねやコメントができます');
     return false;
   }
 
@@ -6510,7 +6510,7 @@
   // 古いログイン状態を消してログイン画面を開く。ログインし終わったら元の画面（returnTo）へ戻る。
   // すでにログイン画面が開いていれば開き直さない（同時に走った複数のAPIが一斉に401になっても1回だけ）。
   // 画面を開いたときの操作から呼ぶ。裏で走る自動の取得（ホームの旅行同期など）からは呼ばない。
-  var RELOGIN_MESSAGE = '安全のため、もう一度ログインしてください';
+  var RELOGIN_MESSAGE = tr('安全のため、もう一度ログインしてください');
   function forceRelogin(returnTo) {
     var user = loadCurrentUser();
     if (user) state.staleLoginUser = user; // ログイン画面のメール欄の入力補助にだけ使う
@@ -6533,7 +6533,7 @@
 
   function openCommentSheet(type, id) {
     commentTarget = { type: type, id: id };
-    $('#commentSheetTitle').textContent = type === 'trip' ? 'この旅行へのコメント' : 'この記録へのコメント';
+    $('#commentSheetTitle').textContent = type === 'trip' ? tr('この旅行へのコメント') : tr('この記録へのコメント');
     $('#commentStatus').textContent = '';
     $('#commentSheet').hidden = false;
     document.body.classList.add('sheet-open');
@@ -6558,27 +6558,27 @@
     $('#commentList').innerHTML = list.length
       ? list.map(function (c) {
           var actions = c.mine
-            ? '<button type="button" class="btn text danger" data-comment-delete="' + escapeHtml(c.id) + '">削除</button>'
-            : '<button type="button" class="btn text" data-comment-report="' + escapeHtml(c.id) + '">通報する</button>' +
-              '<button type="button" class="btn text danger" data-comment-block="' + escapeHtml(c.accountId) + '" data-name="' + escapeHtml(c.name || '') + '">この人をブロック</button>';
+            ? '<button type="button" class="btn text danger" data-comment-delete="' + escapeHtml(c.id) + '">' + tr('削除') + '</button>'
+            : '<button type="button" class="btn text" data-comment-report="' + escapeHtml(c.id) + '">' + tr('通報する') + '</button>' +
+              '<button type="button" class="btn text danger" data-comment-block="' + escapeHtml(c.accountId) + '" data-name="' + escapeHtml(c.name || '') + '">' + tr('この人をブロック') + '</button>';
           return '<div class="comment-item">' +
             '<div class="comment-head">' +
-              '<span class="comment-name">' + escapeHtml(c.name || '名前未設定') + '</span>' +
+              '<span class="comment-name">' + escapeHtml(c.name || tr('名前未設定')) + '</span>' +
               '<span class="comment-time">' + escapeHtml(formatCommentTime(c.createdAt)) + '</span>' +
-              '<button type="button" class="comment-menu-btn" aria-label="メニュー" data-comment-menu>…</button>' +
+              '<button type="button" class="comment-menu-btn" aria-label="' + tr('メニュー') + '" data-comment-menu>…</button>' +
             '</div>' +
             '<div class="comment-body">' + escapeHtml(c.body) + '</div>' +
             '<div class="comment-actions" hidden>' + actions + '</div>' +
           '</div>';
         }).join('')
-      : '<div class="empty comment-empty">まだコメントはありません。</div>';
+      : '<div class="empty comment-empty">' + tr('まだコメントはありません。') + '</div>';
   }
 
   function agreeToCommentTerms() {
     try { if (localStorage.getItem(COMMENT_TERMS_KEY)) return true; } catch (e) { /* 読めなければ毎回聞く */ }
-    var ok = confirm('コメントのルール\n\n・誹謗中傷、差別、嫌がらせ、わいせつな内容など、不適切な投稿は禁止です\n' +
-      '・不適切なコメントは誰でも通報でき、運営者が確認して削除します。繰り返す場合は利用を停止することがあります\n\n' +
-      'このルールに同意してコメントしますか？');
+    var ok = confirm(tr('コメントのルール\n\n・誹謗中傷、差別、嫌がらせ、わいせつな内容など、不適切な投稿は禁止です\n') +
+      tr('・不適切なコメントは誰でも通報でき、運営者が確認して削除します。繰り返す場合は利用を停止することがあります\n\n') +
+      tr('このルールに同意してコメントしますか？'));
     if (ok) { try { localStorage.setItem(COMMENT_TERMS_KEY, '1'); } catch (e) { /* 次回また聞くだけ */ } }
     return ok;
   }
@@ -6592,7 +6592,7 @@
     if (!requireSocialLogin() || !agreeToCommentTerms()) return;
     var target = commentTarget;
     var status = $('#commentStatus');
-    status.textContent = '送信中…';
+    status.textContent = tr('送信中…');
     $('#btnSendComment').disabled = true;
     api('/trips/' + encodeURIComponent(state.trip.id) + '/comments', 'POST', { targetType: target.type, targetId: target.id, body: body })
       .then(function (c) {
@@ -6605,8 +6605,8 @@
         var msg = (err && err.message) || '';
         if (msg === 'login_required') { requireSocialLoginAgain(); return; }
         status.textContent = msg === 'inappropriate'
-          ? '不適切な表現が含まれているため投稿できません。'
-          : 'コメントを送れませんでした。もう一度お試しください。';
+          ? tr('不適切な表現が含まれているため投稿できません。')
+          : tr('コメントを送れませんでした。もう一度お試しください。');
       })
       .then(function () { $('#btnSendComment').disabled = false; });
   }
@@ -6620,37 +6620,37 @@
     }
     var del = e.target.closest('[data-comment-delete]');
     if (del) {
-      if (!confirm('このコメントを削除しますか？')) return;
+      if (!confirm(tr('このコメントを削除しますか？'))) return;
       var delId = del.dataset.commentDelete;
       api('/comments/' + encodeURIComponent(delId), 'DELETE').then(function () {
         state.social.comments = state.social.comments.filter(function (c) { return c.id !== delId; });
         renderSocial();
-      }).catch(function () { $('#commentStatus').textContent = '削除できませんでした。もう一度お試しください。'; });
+      }).catch(function () { $('#commentStatus').textContent = tr('削除できませんでした。もう一度お試しください。'); });
       return;
     }
     var rep = e.target.closest('[data-comment-report]');
     if (rep) {
       if (!requireSocialLogin()) return;
-      if (!confirm('このコメントを通報しますか？\n運営者が内容を確認し、必要なら削除します。通報したコメントは、あなたには表示されなくなります。')) return;
+      if (!confirm(tr('このコメントを通報しますか？\n運営者が内容を確認し、必要なら削除します。通報したコメントは、あなたには表示されなくなります。'))) return;
       var repId = rep.dataset.commentReport;
       api('/comments/' + encodeURIComponent(repId) + '/report', 'POST', {}).then(function () {
         state.social.comments = state.social.comments.filter(function (c) { return c.id !== repId; });
         renderSocial();
-        $('#commentStatus').textContent = '通報しました。ご協力ありがとうございます。';
-      }).catch(function () { $('#commentStatus').textContent = '通報できませんでした。もう一度お試しください。'; });
+        $('#commentStatus').textContent = tr('通報しました。ご協力ありがとうございます。');
+      }).catch(function () { $('#commentStatus').textContent = tr('通報できませんでした。もう一度お試しください。'); });
       return;
     }
     var blk = e.target.closest('[data-comment-block]');
     if (blk) {
       if (!requireSocialLogin()) return;
-      var who = blk.dataset.name || 'この人';
-      if (!confirm(who + 'さんをブロックしますか？\nこの人のコメントは、あなたには表示されなくなります。')) return;
+      var who = blk.dataset.name || tr('この人');
+      if (!confirm(tr('{name}さんをブロックしますか？\nこの人のコメントは、あなたには表示されなくなります。', { name: who }))) return;
       var accountId = blk.dataset.commentBlock;
       api('/user-blocks', 'PUT', { accountId: accountId }).then(function () {
         state.social.comments = state.social.comments.filter(function (c) { return c.accountId !== accountId; });
         renderSocial();
-        $('#commentStatus').textContent = 'ブロックしました。';
-      }).catch(function () { $('#commentStatus').textContent = 'ブロックできませんでした。もう一度お試しください。'; });
+        $('#commentStatus').textContent = tr('ブロックしました。');
+      }).catch(function () { $('#commentStatus').textContent = tr('ブロックできませんでした。もう一度お試しください。'); });
     }
   }
 
@@ -6663,8 +6663,8 @@
     var text = Core.buildTripPostText(state.trip, allBlocks(), state.days, user ? user.email : '', { legend: $('#postLegend').checked });
     $('#postText').value = text;
     $('#postSheetNote').textContent = user
-      ? 'あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。'
-      : 'ログインして記録に★とレビューをつけると、ホテログ・飯ログなどが入ります。';
+      ? tr('あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。')
+      : tr('ログインして記録に★とレビューをつけると、ホテログ・飯ログなどが入ります。');
     $('#postStatus').textContent = '';
     $('#btnSharePost').hidden = !navigator.share;
     $('#postSheet').hidden = false;
@@ -6678,7 +6678,7 @@
 
   function copyPostText() {
     var text = $('#postText').value;
-    var done = function () { $('#postStatus').textContent = 'コピーしました。SNSの投稿に貼り付けてください。'; };
+    var done = function () { $('#postStatus').textContent = tr('コピーしました。SNSの投稿に貼り付けてください。'); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done).catch(function () { $('#postText').select(); document.execCommand('copy'); done(); });
     } else {
@@ -6767,11 +6767,11 @@
   function confirmAiDataSharing() {
     if (hasAiConsent()) return true;
     var ok = confirm(
-      '音声入力・レシート読み取りでは、録音した音声・入力したメモの文章・レシートの写真を、' +
-      '内容の読み取り・文字起こしのために外部のAIサービス（Cloudflare・OpenAI・Google）へ送信します' +
-      '（氏名・メールアドレスは送信しません）。\n' +
-      '送信されたデータはOpenAIのモデル学習には使われません（APIの既定ポリシー）。\n\n' +
-      '同意してこの機能を使いますか？'
+      tr('音声入力・レシート読み取りでは、録音した音声・入力したメモの文章・レシートの写真を、') +
+      tr('内容の読み取り・文字起こしのために外部のAIサービス（Cloudflare・OpenAI・Google）へ送信します') +
+      tr('（氏名・メールアドレスは送信しません）。\n') +
+      tr('送信されたデータはOpenAIのモデル学習には使われません（APIの既定ポリシー）。\n\n') +
+      tr('同意してこの機能を使いますか？')
     );
     if (ok) { try { localStorage.setItem(AI_CONSENT_KEY, '1'); } catch (e) {} }
     return ok;
@@ -6786,21 +6786,21 @@
   // 回数に関係なく誰でも開ける（以前はログインとAIの残り回数が無いと、画面ごと使えなかった）。
   // 音声入力とAIでの整理は、使うときにログイン・AIへの送信の同意・月の回数を確かめる。
   function openVoiceEntryForm(multiDay) {
-    if (!multiDay && !state.selectedDate) { alert('先に日付を選んでから記録を始めてください。'); return; }
+    if (!multiDay && !state.selectedDate) { alert(tr('先に日付を選んでから記録を始めてください。')); return; }
     state.voiceEntryMultiDay = !!multiDay;
-    $('#voiceEntryTitle').textContent = multiDay ? '複数日をまとめて記録する' : '音声・メモでまとめて記録する';
+    $('#voiceEntryTitle').textContent = multiDay ? tr('複数日をまとめて記録する') : tr('音声・メモでまとめて記録する');
     $('#voiceEntryLead').textContent = multiDay
-      ? '複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます'
-      : 'その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます';
+      ? tr('複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます')
+      : tr('その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます');
     // 自分の道を見ていて、選んでいる日が自分の別行動の中なら、取り込みは別行動に入る（docs/adr/0021）
     state.voiceBranch = currentImportBranch();
     $('#voiceTargetNote').hidden = !state.voiceBranch;
-    if (state.voiceBranch) $('#voiceTargetNote').textContent = importTargetText(state.voiceBranch) + 'します（' + Core.branchRangeText(state.voiceBranch) + '）。日付・時刻は別行動の時間帯の中だけ使えます。';
+    if (state.voiceBranch) $('#voiceTargetNote').textContent = tr('{target}します（{range}）。日付・時刻は別行動の時間帯の中だけ使えます。', { target: importTargetText(state.voiceBranch), range: Core.branchRangeText(state.voiceBranch) });
     showScreen('voiceEntryForm');
     voiceBlob = null;    showScreen('voiceEntryForm');
     voiceBlob = null;
     $('#voiceNotes').value = '';
-    setVoiceRecordLabel(MIC_ICON, '話しはじめる');
+    setVoiceRecordLabel(MIC_ICON, tr('話しはじめる'));
     $('#btnVoiceRecord').disabled = false;
     $('#btnCreateVoiceEntries').hidden = true;
     $('#btnCreateVoiceEntries').disabled = false;
@@ -6821,19 +6821,19 @@
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
     if (!user) {
-      $('#memoAiInfo').textContent = 'AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月10回まで）。';
+      $('#memoAiInfo').textContent = tr('AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月10回まで）。');
       return;
     }
     $('#memoAiInfo').textContent = '';
     fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
-      var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
-      $('#memoAiInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
+      var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+      $('#memoAiInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
       var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
       if (!voiceOk) {
         // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
         $('#voicePremiumRequired').hidden = false;
-        $('#voicePremiumMessage').textContent = '今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。';
+        $('#voicePremiumMessage').textContent = tr('今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。');
         $('#btnVoiceRecord').disabled = true;
       }
     });
@@ -6844,7 +6844,7 @@
     if (!loadCurrentUser()) {
       state.pendingMemoText = $('#textMemoInput').value;
       openLogin('voiceEntryForm');
-      $('#loginLead').textContent = 'ログインすると、音声入力やAIでの整理が使えます';
+      $('#loginLead').textContent = tr('ログインすると、音声入力やAIでの整理が使えます');
       return false;
     }
     return confirmAiDataSharing();
@@ -6857,10 +6857,10 @@
     }
     if (!requireAiReady()) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
-      $('#voiceRecordStatus').textContent = 'このブラウザは音声の録音に対応していません。';
+      $('#voiceRecordStatus').textContent = tr('このブラウザは音声の録音に対応していません。');
       return;
     }
-    $('#voiceRecordStatus').textContent = 'マイクの使用を許可してください…';
+    $('#voiceRecordStatus').textContent = tr('マイクの使用を許可してください…');
     navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
       voiceStream = stream;
       var mimeType = pickVoiceMimeType();
@@ -6876,18 +6876,18 @@
         voiceStream.getTracks().forEach(function (t) { t.stop(); });
         voiceBlob = new Blob(voiceChunks, { type: voiceRecorder.mimeType || mimeType || 'audio/webm' });
         var seconds = Math.max(1, Math.round((Date.now() - voiceStartedAt) / 1000));
-        setVoiceRecordLabel(MIC_ICON, '話しなおす');
+        setVoiceRecordLabel(MIC_ICON, tr('話しなおす'));
         $('#voiceRecordStatus').classList.remove('is-recording');
-        var doneMessage = '録音できました（約' + seconds + '秒）。内容を確認して「この内容で予定を作る」を押してください。';
+        var doneMessage = tr('録音できました（約{n}秒）。内容を確認して「この内容で予定を作る」を押してください。', { n: seconds });
         $('#voiceRecordStatus').textContent = voiceAutoStopped
-          ? '1回の録音は3分までのため、自動的に止めました。' + doneMessage
+          ? tr('1回の録音は3分までのため、自動的に止めました。') + doneMessage
           : doneMessage;
         $('#btnCreateVoiceEntries').hidden = false;
       });
       voiceRecorder.start();
-      setVoiceRecordLabel(STOP_ICON, '話し終わる');
+      setVoiceRecordLabel(STOP_ICON, tr('話し終わる'));
       $('#voiceRecordStatus').classList.add('is-recording');
-      $('#voiceRecordStatus').textContent = '● 録音中… 0:00';
+      $('#voiceRecordStatus').textContent = tr('● 録音中… 0:00');
       $('#btnCreateVoiceEntries').hidden = true;
       stopVoiceTimer();
       voiceTimerInterval = setInterval(function () {
@@ -6897,43 +6897,43 @@
           if (voiceRecorder && voiceRecorder.state === 'recording') voiceRecorder.stop();
           return;
         }
-        $('#voiceRecordStatus').textContent = '● 録音中… ' + formatVoiceElapsed(elapsed) + ' / ' + formatVoiceElapsed(VOICE_MAX_MS);
+        $('#voiceRecordStatus').textContent = tr('● 録音中… {now} / {max}', { now: formatVoiceElapsed(elapsed), max: formatVoiceElapsed(VOICE_MAX_MS) });
       }, 500);
     }).catch(function () {
-      $('#voiceRecordStatus').textContent = 'マイクを使えませんでした（許可されているか確認してください）。';
+      $('#voiceRecordStatus').textContent = tr('マイクを使えませんでした（許可されているか確認してください）。');
     });
   }
 
   // 音声・メモのAIのエラーを、画面に出す文にする（音声・メモ共通。statusEl：出す場所）
   function importScanErrorMessage(msg) {
     var map = {
-      server_not_configured: 'この機能はまだ使えません（サーバー側の設定が必要です）。',
-      rate_limited: '少し時間をおいてからもう一度お試しください。',
-      trip_dates_required: '複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。',
-      output_too_long: '内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。',
-      ai_quota_exhausted: 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。',
-      upstream_error: 'AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。',
-      invalid_model_output: 'うまく処理できませんでした。もう一度お試しください。',
-      transcription_failed: '音声の文字起こしに失敗しました。もう一度お試しください。',
-      empty_transcript: '音声から言葉を聞き取れませんでした。もう一度、はっきりめに話してみてください。',
-      empty_text: '先にスケジュールやメモを入力してください。',
-      forbidden: 'この別行動は、持ち主だけが追加できます。',
-      branch_not_found: '別行動が見つかりません（消された可能性があります）。「みんな」の表示に戻して、もう一度お試しください。',
-      date_out_of_branch: '選んでいる日が別行動の日程の外です。',
-      invalid_size: '録音が大きすぎます。短く区切って録音してください。',
-      unsupported_type: 'この録音の形式は使えません。'
+      server_not_configured: tr('この機能はまだ使えません（サーバー側の設定が必要です）。'),
+      rate_limited: tr('少し時間をおいてからもう一度お試しください。'),
+      trip_dates_required: tr('複数日をまとめて記録するには、旅行の出発日・帰着日（2日以上）を設定してください。'),
+      output_too_long: tr('内容が長すぎて、AIが整理しきれませんでした。何日かずつ・何回かに分けて入れてください。'),
+      ai_quota_exhausted: tr('AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。時間をおいてもう一度お試しください。'),
+      upstream_error: tr('AIのサービスにつながりませんでした（混み合っている・上限に達しているなど）。少し時間をおいてもう一度お試しください。'),
+      invalid_model_output: tr('うまく処理できませんでした。もう一度お試しください。'),
+      transcription_failed: tr('音声の文字起こしに失敗しました。もう一度お試しください。'),
+      empty_transcript: tr('音声から言葉を聞き取れませんでした。もう一度、はっきりめに話してみてください。'),
+      empty_text: tr('先にスケジュールやメモを入力してください。'),
+      forbidden: tr('この別行動は、持ち主だけが追加できます。'),
+      branch_not_found: tr('別行動が見つかりません（消された可能性があります）。「みんな」の表示に戻して、もう一度お試しください。'),
+      date_out_of_branch: tr('選んでいる日が別行動の日程の外です。'),
+      invalid_size: tr('録音が大きすぎます。短く区切って録音してください。'),
+      unsupported_type: tr('この録音の形式は使えません。')
     };
-    return map[msg] || '失敗しました。もう一度お試しください。';
+    return map[msg] || tr('失敗しました。もう一度お試しください。');
   }
 
   function handleCreateVoiceEntries() {
-    if (!voiceBlob) { $('#voiceEntryStatus').textContent = '先に録音してください。'; return; }
+    if (!voiceBlob) { $('#voiceEntryStatus').textContent = tr('先に録音してください。'); return; }
     var user = loadCurrentUser();
     var branch = state.voiceBranch || null;
     var date = state.voiceEntryMultiDay ? '' : state.selectedDate;
     var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '', date: date, branchId: branch ? branch.id : '' };
     $('#btnCreateVoiceEntries').disabled = true;
-    $('#voiceEntryStatus').textContent = 'AIが内容を確認しています…（数十秒かかることがあります）';
+    $('#voiceEntryStatus').textContent = tr('AIが内容を確認しています…（数十秒かかることがあります）');
     scanVoiceBlob(state.trip.id, voiceBlob, meta).then(function (res) {
       $('#btnCreateVoiceEntries').disabled = false;
       $('#voiceEntryStatus').textContent = '';
@@ -6948,7 +6948,7 @@
       if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') { // premium_requiredは古いサーバー応答の互換用
         $('#voiceEntryStatus').textContent = '';
         openVoiceEntryForm(state.voiceEntryMultiDay);
-      } else if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = '音声入力はまだ使えません（サーバー側の設定が必要です）。';
+      } else if (msg === 'server_not_configured') $('#voiceEntryStatus').textContent = tr('音声入力はまだ使えません（サーバー側の設定が必要です）。');
       else $('#voiceEntryStatus').textContent = importScanErrorMessage(msg);
     });
   }
@@ -6956,13 +6956,13 @@
   // 「この内容で予定を作る」：決まった形ならAIを使わず無料で確認画面へ、そうでなければAIで整理して確認画面へ
   function handleCreateTextEntries() {
     var text = $('#textMemoInput').value.trim();
-    if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
+    if (!text) { $('#textEntryStatus').textContent = tr('先にスケジュールやメモを入力してください。'); return; }
     var dates = Core.allDatesForTrip(state.trip, state.blocks).filter(function (d) { return d; });
     var branch = state.voiceBranch || null;
     var parsed = Core.parseMemo(text, dates, state.voiceEntryMultiDay ? (branch ? branch.date : '') : state.selectedDate);
     if (parsed.ok) { openMemoRuleConfirm(parsed); return; }
-    if (!confirm('決まった形（「10時 新宿」のように時刻で始まる行）になっていないので、AIで整理します（今月のAIの回数を1回使います）。よろしいですか？')) {
-      $('#textEntryStatus').textContent = '時刻で始まる行の形に直すと、AIを使わず無料で取り込めます。';
+    if (!confirm(tr('決まった形（「10時 新宿」のように時刻で始まる行）になっていないので、AIで整理します（今月のAIの回数を1回使います）。よろしいですか？'))) {
+      $('#textEntryStatus').textContent = tr('時刻で始まる行の形に直すと、AIを使わず無料で取り込めます。');
       return;
     }
     organizeMemoWithAi(text);
@@ -6980,7 +6980,7 @@
 
   function organizeMemoWithAi(text) {
     text = text || $('#textMemoInput').value.trim();
-    if (!text) { $('#textEntryStatus').textContent = '先にスケジュールやメモを入力してください。'; return; }
+    if (!text) { $('#textEntryStatus').textContent = tr('先にスケジュールやメモを入力してください。'); return; }
     if (!requireAiReady()) return;
     var user = loadCurrentUser();
     var branch = state.voiceBranch || null;
@@ -6988,7 +6988,7 @@
     var meta = { text: text, notes: $('#voiceNotes').value.trim(), email: (user && user.email) || '', date: date, branchId: branch ? branch.id : '' };
     $('#btnCreateTextEntries').disabled = true;
     $('#btnOrganizeMemoAi').disabled = true;
-    $('#textEntryStatus').textContent = 'AIが内容を確認しています…';
+    $('#textEntryStatus').textContent = tr('AIが内容を確認しています…');
     scanTextMemo(state.trip.id, meta).then(function (res) {
       $('#btnCreateTextEntries').disabled = false;
       $('#btnOrganizeMemoAi').disabled = false;
@@ -7002,7 +7002,7 @@
       $('#btnCreateTextEntries').disabled = false;
       $('#btnOrganizeMemoAi').disabled = false;
       if (msg === 'premium_required' || msg === 'quota_exceeded') {
-        $('#textEntryStatus').textContent = '今月の回数を使い切りました。来月1日にまた使えます。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。';
+        $('#textEntryStatus').textContent = tr('今月の回数を使い切りました。来月1日にまた使えます。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。');
       } else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = importScanErrorMessage(msg);
     });
@@ -7016,12 +7016,12 @@
     if (!state.trip) return;
     var text = Core.buildAiImportPrompt(state.trip);
     $('#byoPromptText').textContent = text;
-    var done = function () { showToast('お願い文をコピーしました。ChatGPTなどに貼り付けて、下に旅のメモを足して送ってください'); };
+    var done = function () { showToast(tr('お願い文をコピーしました。ChatGPTなどに貼り付けて、下に旅のメモを足して送ってください')); };
     // コピーできない環境（アプリ内ブラウザなど）では、中身を開いて見せ、選んでコピーしてもらう
     // （以前はalert()に全文を出していたが、alertが出せない環境では何も起きないように見えていた）
     var showInstead = function () {
       $('#byoPromptPreview').open = true;
-      showToast('自動でコピーできませんでした。下に開いたお願い文を選んでコピーしてください');
+      showToast(tr('自動でコピーできませんでした。下に開いたお願い文を選んでコピーしてください'));
     };
     var fallback = function () {
       var ta = document.createElement('textarea');
@@ -7047,14 +7047,14 @@
   // （そこで直して「この内容で追加」で保存する）。ログイン・AIの回数とは無関係（AIを呼ばない）。
   function handleImportJson() {
     var text = $('#importJsonInput').value.trim();
-    if (!text) { $('#importJsonStatus').textContent = '先にAIの答え（JSON）を貼り付けてください。'; return; }
+    if (!text) { $('#importJsonStatus').textContent = tr('先にAIの答え（JSON）を貼り付けてください。'); return; }
     var result = Core.parseImportedBlocksJson(text, state.trip);
     if (!result.blocks.length) {
-      $('#importJsonStatus').textContent = '取り込めませんでした：' + (result.errors[0] || '内容を確認してください。');
+      $('#importJsonStatus').textContent = tr('取り込めませんでした：{reason}', { reason: result.errors[0] || tr('内容を確認してください。') });
       return;
     }
     $('#importJsonStatus').textContent = '';
-    var notes = result.warnings.concat(result.errors.map(function (er) { return '省いた項目：' + er; }));
+    var notes = result.warnings.concat(result.errors.map(function (er) { return tr('省いた項目：{item}', { item: er }); }));
     openImportConfirm({
       source: 'json', ai: false, items: Core.memoBlocksToProposals(result.blocks, { extractCosts: false }),
       branch: state.voiceBranch || null, notes: notes, back: 'voiceEntryForm'
@@ -7110,10 +7110,10 @@
   // （docs/adr/0022 2026-09-30追記）。state.ssが確認画面の状態：source・ai（AIを使ったか）・items（候補）・
   // branch（自分だけの道に入れるときの別行動）・transcript（文字起こし）・back（やめたとき戻る画面）
   var IMPORT_SOURCES = {
-    screenshot: { title: 'スクショから予定を作る', label: 'スクショ' },
-    voice: { title: '音声から予定を作る', label: '音声' },
-    memo: { title: 'メモから予定を作る', label: 'メモ' },
-    json: { title: '自分のAIの答えから予定を作る', label: '自分のAIの答え' }
+    screenshot: { title: tr('スクショから予定を作る'), label: tr('スクショ') },
+    voice: { title: tr('音声から予定を作る'), label: tr('音声') },
+    memo: { title: tr('メモから予定を作る'), label: tr('メモ') },
+    json: { title: tr('自分のAIの答えから予定を作る'), label: tr('自分のAIの答え') }
   };
 
   function ssNewState() {
@@ -7133,7 +7133,7 @@
 
   // 「自分だけの道（美術館）に追加」（確認画面と各入口の案内で使う）
   function importTargetText(branch) {
-    return '自分だけの道（' + (branch.title || Core.branchRangeText(branch)) + '）に追加';
+    return tr('自分だけの道（{name}）に追加', { name: branch.title || Core.branchRangeText(branch) });
   }
 
   // いま自分の道を見ていて、選んでいる日が自分の別行動の中なら、その別行動（取り込みの行き先）。なければnull＝みんなの予定
@@ -7162,7 +7162,7 @@
   // やめる：保存せずに、入力の画面（画像選び・音声・メモ）へ戻る。AIを使っていたら、回数は戻らないことを伝える
   function cancelImportConfirm() {
     var s = ssState();
-    if (s.ai && s.items && s.items.length && !confirm('保存せずに戻ります。AIによる整理はすでに行ったため、今月の利用回数は戻りません。よろしいですか？')) return;
+    if (s.ai && s.items && s.items.length && !confirm(tr('保存せずに戻ります。AIによる整理はすでに行ったため、今月の利用回数は戻りません。よろしいですか？'))) return;
     if (s.back === 'screenshotImport') { $('#ssStatus').textContent = ''; showScreen('screenshotImport'); }
     else if (s.back === 'voiceEntryForm') showScreen('voiceEntryForm');
     else { showScreen('tripDetail'); renderTripDetail(); }
@@ -7173,14 +7173,14 @@
     if (!state.trip) return;
     if (!loadCurrentUser()) {
       openLogin('screenshotImport');
-      $('#loginLead').textContent = 'ログインすると、スクショから予定を作る機能が使えます';
+      $('#loginLead').textContent = tr('ログインすると、スクショから予定を作る機能が使えます');
       return;
     }
     ssRevokeFiles();
     state.ss = ssNewState();
     state.ss.branch = currentImportBranch();
     $('#ssTargetNote').hidden = !state.ss.branch;
-    if (state.ss.branch) $('#ssTargetNote').textContent = importTargetText(state.ss.branch) + 'します（' + Core.branchRangeText(state.ss.branch) + '）。日付・時刻は別行動の時間帯の中だけ使えます。';
+    if (state.ss.branch) $('#ssTargetNote').textContent = tr('{target}します（{range}）。日付・時刻は別行動の時間帯の中だけ使えます。', { target: importTargetText(state.ss.branch), range: Core.branchRangeText(state.ss.branch) });
     $('#ssPickArea').hidden = false;
     $('#ssResult').hidden = true;
     $('#ssResult').innerHTML = '';
@@ -7190,18 +7190,18 @@
     showScreen('screenshotImport');
     fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
-      var bonus = account.ticketCredits ? '（おまけの回数：' + account.ticketCredits + '回）' : '';
-      $('#ssInfo').textContent = 'メモ・スクショのAI整理：あと' + account.memoRemainingThisPeriod + '回（月' + account.memoMonthlyLimit + '回まで）' + bonus;
+      var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+      $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
     });
   }
 
   function renderSsThumbs() {
     var s = ssState();
     $('#ssThumbs').innerHTML = s.files.map(function (f, i) {
-      return '<div class="ss-thumb-wrap"><img class="ss-thumb" src="' + f.url + '" alt="選んだ画像' + (i + 1) + '">' +
-        '<button type="button" class="ss-thumb-x" data-ss-remove="' + i + '" aria-label="この画像を外す">×</button></div>';
+      return '<div class="ss-thumb-wrap"><img class="ss-thumb" src="' + f.url + '" alt="' + tr('選んだ画像{n}', { n: i + 1 }) + '">' +
+        '<button type="button" class="ss-thumb-x" data-ss-remove="' + i + '" aria-label="' + tr('この画像を外す') + '">×</button></div>';
     }).join('');
-    $('#btnSsPick').textContent = s.files.length ? '画像を追加する（' + s.files.length + '/' + SS_MAX_IMAGES + '枚）' : '画像を選ぶ（最大' + SS_MAX_IMAGES + '枚）';
+    $('#btnSsPick').textContent = s.files.length ? tr('画像を追加する（{n}/{max}枚）', { n: s.files.length, max: SS_MAX_IMAGES }) : tr('画像を選ぶ（最大{max}枚）', { max: SS_MAX_IMAGES });
     $('#btnSsPick').disabled = s.files.length >= SS_MAX_IMAGES;
     $('#btnSsScan').disabled = !s.files.length;
   }
@@ -7212,7 +7212,7 @@
     var room = SS_MAX_IMAGES - s.files.length;
     var over = files.length > room;
     files = files.slice(0, Math.max(0, room));
-    $('#ssStatus').textContent = files.length ? '画像を準備しています…' : '';
+    $('#ssStatus').textContent = files.length ? tr('画像を準備しています…') : '';
     Promise.all(files.map(function (f) {
       return fileToCompressedBlob(f, 1600, 0.8).then(function (blob) { return { blob: blob, url: URL.createObjectURL(blob) }; }).catch(function () { return null; });
     })).then(function (list) {
@@ -7220,8 +7220,8 @@
       list.forEach(function (x) { if (x) s.files.push(x); });
       renderSsThumbs();
       var notes = [];
-      if (over) notes.push('画像は' + SS_MAX_IMAGES + '枚までです。超えた分は追加していません。');
-      if (failed) notes.push(failed + '枚は読み込めませんでした。');
+      if (over) notes.push(tr('画像は{max}枚までです。超えた分は追加していません。', { max: SS_MAX_IMAGES }));
+      if (failed) notes.push(tr('{n}枚は読み込めませんでした。', { n: failed }));
       $('#ssStatus').textContent = notes.join('');
     });
   }
@@ -7232,11 +7232,11 @@
     try { done = localStorage.getItem(SS_CONSENT_KEY) === '1'; } catch (e) {}
     if (done) return true;
     var ok = confirm(
-      '選んだスクリーンショットの画像を、文字の読み取りと予定への整理のために、外部のAIサービス（Google・OpenAI）へ送信します。\n' +
-      '画像には、氏名・予約番号・電話番号などが写っている場合があります。送信前に、写したくない部分は隠してください' +
-      '（予約番号や氏名は、予定には保存しません）。\n' +
-      '送信されたデータはOpenAIのモデル学習には使われません（APIの既定ポリシー）。\n\n' +
-      '同意してこの機能を使いますか？'
+      tr('選んだスクリーンショットの画像を、文字の読み取りと予定への整理のために、外部のAIサービス（Google・OpenAI）へ送信します。\n') +
+      tr('画像には、氏名・予約番号・電話番号などが写っている場合があります。送信前に、写したくない部分は隠してください') +
+      tr('（予約番号や氏名は、予定には保存しません）。\n') +
+      tr('送信されたデータはOpenAIのモデル学習には使われません（APIの既定ポリシー）。\n\n') +
+      tr('同意してこの機能を使いますか？')
     );
     if (ok) { try { localStorage.setItem(SS_CONSENT_KEY, '1'); } catch (e) {} }
     return ok;
@@ -7244,19 +7244,19 @@
 
   function ssErrorMessage(msg) {
     var map = {
-      server_not_configured: 'この機能はまだ使えません（サーバー側の設定が必要です）。',
-      rate_limited: '少し時間をおいてからもう一度お試しください。',
-      too_many_images: '画像は' + SS_MAX_IMAGES + '枚までです。',
-      invalid_size: '画像のサイズが大きすぎます。枚数を減らしてお試しください。',
-      vision_failed: '画像の文字を読み取れませんでした。少し時間をおいてもう一度お試しください。',
-      ai_quota_exhausted: 'AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。',
-      upstream_error: 'AIのサービスにつながりませんでした。少し時間をおいてもう一度お試しください。',
-      invalid_model_output: 'うまく処理できませんでした。もう一度お試しください。',
-      output_too_long: '内容が多すぎて整理しきれませんでした。画像を分けて、何回かに分けてお試しください。',
-      forbidden: 'この別行動は、持ち主だけが追加できます。',
-      branch_not_found: '別行動が見つかりません（消された可能性があります）。「みんな」の表示に戻して、もう一度お試しください。'
+      server_not_configured: tr('この機能はまだ使えません（サーバー側の設定が必要です）。'),
+      rate_limited: tr('少し時間をおいてからもう一度お試しください。'),
+      too_many_images: tr('画像は{max}枚までです。', { max: SS_MAX_IMAGES }),
+      invalid_size: tr('画像のサイズが大きすぎます。枚数を減らしてお試しください。'),
+      vision_failed: tr('画像の文字を読み取れませんでした。少し時間をおいてもう一度お試しください。'),
+      ai_quota_exhausted: tr('AIの利用枠がいっぱいのため、今は使えません（運営側で対応します）。'),
+      upstream_error: tr('AIのサービスにつながりませんでした。少し時間をおいてもう一度お試しください。'),
+      invalid_model_output: tr('うまく処理できませんでした。もう一度お試しください。'),
+      output_too_long: tr('内容が多すぎて整理しきれませんでした。画像を分けて、何回かに分けてお試しください。'),
+      forbidden: tr('この別行動は、持ち主だけが追加できます。'),
+      branch_not_found: tr('別行動が見つかりません（消された可能性があります）。「みんな」の表示に戻して、もう一度お試しください。')
     };
-    return map[msg] || '失敗しました。もう一度お試しください。';
+    return map[msg] || tr('失敗しました。もう一度お試しください。');
   }
 
   function handleSsScan() {
@@ -7266,7 +7266,7 @@
     if (!user) { openScreenshotImport(); return; }
     if (!confirmScreenshotSharing()) return;
     $('#btnSsScan').disabled = true;
-    $('#ssStatus').textContent = '画像を読み取っています…（数十秒かかることがあります）';
+    $('#ssStatus').textContent = tr('画像を読み取っています…（数十秒かかることがあります）');
     Promise.all(s.files.map(function (f) { return blobToBase64(f.blob).then(function (data) { return { type: 'image/jpeg', data: data }; }); }))
       .then(function (images) {
         var body = { images: images, email: user.email || '' };
@@ -7285,7 +7285,7 @@
         $('#btnSsScan').disabled = false;
         var msg = (e && e.message) || '';
         if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
-          $('#ssStatus').textContent = msg === 'login_required' ? 'ログインし直してください。' : '今月の回数を使い切りました。来月1日にまた使えます。';
+          $('#ssStatus').textContent = msg === 'login_required' ? tr('ログインし直してください。') : tr('今月の回数を使い切りました。来月1日にまた使えます。');
           return;
         }
         $('#ssStatus').textContent = ssErrorMessage(msg);
@@ -7294,7 +7294,7 @@
 
   function ssThumbFor(item) {
     var f = item.sourceImage !== null && item.sourceImage !== undefined ? ssState().files[item.sourceImage] : null;
-    return f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="元の画像">' : '';
+    return f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="' + tr('元の画像') + '">' : '';
   }
 
   // 場所の行。地図が付いていれば名前、無ければ「地図なし」＋「場所を探す」（記録フォームの「場所名で検索」と同じ
@@ -7308,19 +7308,19 @@
     var tl = item.category === 'transport' ? Core.parseTransportLabel(item.label) : null;
     var guess = isArrive ? (tl ? tl.toPlace : '') : (tl ? (tl.route ? tl.fromPlace : item.label) : item.label);
     var query = given || guess || '';
-    var label = isArrive ? '到着地' : (item.category === 'transport' ? '出発地' : '場所');
+    var label = isArrive ? tr('到着地') : (item.category === 'transport' ? tr('出発地') : tr('場所'));
     var hasMap = isArrive ? !!item.arriveMapUrl : !!item.mapUrl;
     if (isArrive && !name && !given && !query) return '';
     var shown = name ? '<strong>' + escapeHtml(name) + '</strong>'
-      : (hasMap ? '<span>メモのURLの地図</span>'
-        : '<span class="ss-nomap">' + (given ? escapeHtml(given) + '（地図なし）' : '地図なし') + '</span>');
+      : (hasMap ? '<span>' + tr('メモのURLの地図') + '</span>'
+        : '<span class="ss-nomap">' + (given ? tr('{place}（地図なし）', { place: escapeHtml(given) }) : tr('地図なし')) + '</span>');
     return '<div class="ss-place"><span class="ss-place-label">' + label + '</span> ' + shown +
-      ' <button type="button" class="btn text small" data-ss-place="' + which + '">' + (name || hasMap ? '変える' : '場所を探す') + '</button>' +
+      ' <button type="button" class="btn text small" data-ss-place="' + which + '">' + (name || hasMap ? tr('変える') : tr('場所を探す')) + '</button>' +
       '<div class="ss-place-search" data-ss-place-box="' + which + '" hidden>' +
-      '<div class="field-row"><div class="field"><input type="text" data-ss-place-q="' + which + '" value="' + escapeHtml(query) + '" placeholder="場所の名前"></div>' +
-      '<button type="button" class="btn ghost small" data-ss-place-go="' + which + '">探す</button></div>' +
+      '<div class="field-row"><div class="field"><input type="text" data-ss-place-q="' + which + '" value="' + escapeHtml(query) + '" placeholder="' + tr('場所の名前') + '"></div>' +
+      '<button type="button" class="btn ghost small" data-ss-place-go="' + which + '">' + tr('探す') + '</button></div>' +
       '<div class="ss-place-list" data-ss-place-list="' + which + '"></div>' +
-      '<button type="button" class="btn text small" data-ss-place-clear="' + which + '">地図を外す</button></div></div>';
+      '<button type="button" class="btn text small" data-ss-place-clear="' + which + '">' + tr('地図を外す') + '</button></div></div>';
   }
 
   // 日付として選べる範囲：別行動に入れるときは別行動の日々、そうでなければ旅行の日々
@@ -7335,11 +7335,11 @@
     // 「旅行の日程の外」も、日程を合わせた・日付をずらしたあとに古くならないよう数え直す
     var warns = (item.warnings || []).filter(function (w) { return w.indexOf('別行動の') !== 0 && w.indexOf('旅行の日程の外') !== 0; });
     var tripDays = Core.allDatesForTrip(state.trip, []).filter(function (d) { return d; });
-    if (tripDays.length && item.date && tripDays.indexOf(item.date) === -1) warns.push('旅行の日程の外の日付です。日付を直すか、上の案内から日程・日付を合わせないと追加できません');
+    if (tripDays.length && item.date && tripDays.indexOf(item.date) === -1) warns.push(tr('旅行の日程の外の日付です。日付を直すか、上の案内から日程・日付を合わせないと追加できません'));
     if (s.branch) {
       var why = Core.validateBranchBlock(s.branch, item.date, item.time || '');
-      if (why === 'date_out_of_branch') warns.push('別行動の日程の外の日付です。日付を直さないと追加できません');
-      else if (why === 'time_out_of_branch') warns.push('別行動の時間帯（' + s.branch.startTime + '〜' + s.branch.endTime + '）の外の時刻です。時刻を直さないと追加できません');
+      if (why === 'date_out_of_branch') warns.push(tr('別行動の日程の外の日付です。日付を直さないと追加できません'));
+      else if (why === 'time_out_of_branch') warns.push(tr('別行動の時間帯（{start}〜{end}）の外の時刻です。時刻を直さないと追加できません', { start: s.branch.startTime, end: s.branch.endTime }));
     }
     return warns;
   }
@@ -7356,8 +7356,8 @@
     var costs = (item.costItems || []).map(function (c, k) {
       return '<div class="ss-cost-row"><input type="text" data-ss-cost-label="' + k + '" value="' + escapeHtml(c.label) + '">' +
         '<input type="number" inputmode="decimal" min="0" step="any" data-ss-cost-amount="' + k + '" value="' + (c.amount === undefined ? '' : c.amount) + '">' +
-        '<span class="ss-cost-unit">' + escapeHtml(c.currency || '円') + '</span>' +
-        '<button type="button" class="ss-cost-x" data-ss-cost-remove="' + k + '" aria-label="この費用を外す">×</button></div>';
+        '<span class="ss-cost-unit">' + escapeHtml(c.currency || tr('円')) + '</span>' +
+        '<button type="button" class="ss-cost-x" data-ss-cost-remove="' + k + '" aria-label="' + tr('この費用を外す') + '">×</button></div>';
     }).join('');
     var warns = ssWarningsOf(item).map(function (w) { return '<p class="ss-warn">' + escapeHtml(w) + '</p>'; }).join('');
     var routeText = item.category === 'transport' && (item.fromPlace || item.toPlace)
@@ -7365,16 +7365,16 @@
         (item.departTime || item.arriveTime ? '（' + escapeHtml((item.departTime || '') + '〜' + (item.arriveTime || '')) + '）' : '') + '</p>'
       : '';
     return '<div class="ss-card' + (item.use === false ? ' off' : '') + '" data-ss-idx="' + i + '">' +
-      '<div class="ss-card-head"><label class="ss-use"><input type="checkbox" data-ss="use"' + (item.use === false ? '' : ' checked') + '> 追加する</label>' + ssThumbFor(item) + '</div>' +
+      '<div class="ss-card-head"><label class="ss-use"><input type="checkbox" data-ss="use"' + (item.use === false ? '' : ' checked') + '> ' + tr('追加する') + '</label>' + ssThumbFor(item) + '</div>' +
       '<div class="ss-card-body">' + warns +
-      '<div class="field-row"><div class="field"><label>日付</label><input type="date" data-ss="date" value="' + escapeHtml(item.date) + '"' + range + '></div>' +
-      '<div class="field"><label>時刻' + (item.timeEstimated ? '（目安）' : '') + '</label><input type="time" data-ss="time" value="' + escapeHtml(item.time || '') + '"></div></div>' +
-      '<div class="field"><label>見出し</label><input type="text" data-ss="label" value="' + escapeHtml(item.label) + '"></div>' +
-      '<div class="field"><label>種類</label><select data-ss="category">' + cats + '</select></div>' +
+      '<div class="field-row"><div class="field"><label>' + tr('日付') + '</label><input type="date" data-ss="date" value="' + escapeHtml(item.date) + '"' + range + '></div>' +
+      '<div class="field"><label>' + tr('時刻') + (item.timeEstimated ? tr('（目安）') : '') + '</label><input type="time" data-ss="time" value="' + escapeHtml(item.time || '') + '"></div></div>' +
+      '<div class="field"><label>' + tr('見出し') + '</label><input type="text" data-ss="label" value="' + escapeHtml(item.label) + '"></div>' +
+      '<div class="field"><label>' + tr('種類') + '</label><select data-ss="category">' + cats + '</select></div>' +
       routeText +
       (item.category === 'transport' ? ssPlaceLine(item, 'main') + ssPlaceLine(item, 'arrive') : ssPlaceLine(item, 'main')) +
-      '<div class="ss-costs"><label class="ss-cost-title">費用（分かったものだけ）</label>' + costs +
-      '<button type="button" class="btn text small ss-cost-add" data-ss-cost-add="1">＋ 費用を追加</button></div>' +
+      '<div class="ss-costs"><label class="ss-cost-title">' + tr('費用（分かったものだけ）') + '</label>' + costs +
+      '<button type="button" class="btn text small ss-cost-add" data-ss-cost-add="1">' + tr('＋ 費用を追加') + '</button></div>' +
       (item.note ? '<p class="hint ss-note">' + escapeHtml(item.note) + '</p>' : '') +
       '</div></div>';
   }
@@ -7386,23 +7386,23 @@
     var choices = ssDateChoices();
     var st = Core.proposalDateStatus(s.items, choices);
     if (!st.outside) return '';
-    var what = s.branch ? '別行動の日程' : '旅行の日程';
+    var what = s.branch ? tr('別行動の日程') : tr('旅行の日程');
     var range = choices.length ? mdText(choices[0]) + (choices.length > 1 ? '〜' + mdText(choices[choices.length - 1]) : '') : '';
-    var html = '<div class="ss-fit" role="group" aria-label="日程の外の日付">' +
-      '<p class="ss-fit-text"><strong>' + st.outside + '件の予定が、' + what + '（' + escapeHtml(range) + '）の外の日付です。</strong>' +
-      'メモや画像に書かれていた日付のままにしてあります（' + mdText(st.min) + (st.max !== st.min ? '〜' + mdText(st.max) : '') + '）。合わせ方を選ぶか、1件ずつ日付を直してください。日程の外の候補は、直すまで追加できません。</p>';
+    var html = '<div class="ss-fit" role="group" aria-label="' + tr('日程の外の日付') + '">' +
+      '<p class="ss-fit-text"><strong>' + tr('{n}件の予定が、{what}（{range}）の外の日付です。', { n: st.outside, what: what, range: escapeHtml(range) }) + '</strong>' +
+      tr('メモや画像に書かれていた日付のままにしてあります（{range}）。合わせ方を選ぶか、1件ずつ日付を直してください。日程の外の候補は、直すまで追加できません。', { range: mdText(st.min) + (st.max !== st.min ? '〜' + mdText(st.max) : '') }) + '</p>';
     if (!s.branch) {
       var fit = Core.planTripRangeFit(s.items, state.trip, allBlocks().length > 0);
       if (fit) {
-        html += '<button type="button" class="btn ghost wide" data-ss-fit="trip">旅行の日程を ' + escapeHtml(mdText(fit.startDate) + '〜' + mdText(fit.endDate)) + ' に合わせる</button>' +
-          '<p class="hint">' + (fit.mode === 'replace' ? '旅行の日程を、この予定の日付に置き換えます。' : '今の日程と予定の日付の両方が入るよう、日程を広げます。') + '既存の予定の日付は動きません。</p>';
+        html += '<button type="button" class="btn ghost wide" data-ss-fit="trip">' + tr('旅行の日程を {range} に合わせる', { range: escapeHtml(mdText(fit.startDate) + '〜' + mdText(fit.endDate)) }) + '</button>' +
+          '<p class="hint">' + (fit.mode === 'replace' ? tr('旅行の日程を、この予定の日付に置き換えます。') : tr('今の日程と予定の日付の両方が入るよう、日程を広げます。')) + tr('既存の予定の日付は動きません。') + '</p>';
       }
     }
     var shift = Core.planProposalShift(s.items, choices);
     if (shift) {
-      html += '<button type="button" class="btn ghost wide" data-ss-fit="shift">予定の日付を' + what + 'に合わせてずらす（' + escapeHtml(mdText(shift.from) + ' → ' + mdText(shift.to)) + '）</button>' +
-        '<p class="hint">いちばん早い予定が' + (s.branch ? '別行動' : '旅行') + 'の最初の日になるよう、すべての予定を同じ日数（' + (shift.days > 0 ? shift.days + '日後ろへ' : -shift.days + '日前へ') + '）動かします。日と日の間隔は変わりません。' +
-        (shift.overflow ? 'ずらしても最後の予定（' + escapeHtml(mdText(shift.newMax)) + '）は' + what + 'の終わりを越えます。越えた分は日付を直してください。' : '') + '</p>';
+      html += '<button type="button" class="btn ghost wide" data-ss-fit="shift">' + tr('予定の日付を{what}に合わせてずらす（{range}）', { what: what, range: escapeHtml(mdText(shift.from) + ' → ' + mdText(shift.to)) }) + '</button>' +
+        '<p class="hint">' + tr('いちばん早い予定が{target}の最初の日になるよう、すべての予定を同じ日数（{days}）動かします。日と日の間隔は変わりません。', { target: s.branch ? tr('別行動') : tr('旅行'), days: shift.days > 0 ? tr('{n}日後ろへ', { n: shift.days }) : tr('{n}日前へ', { n: -shift.days }) }) +
+        (shift.overflow ? tr('ずらしても最後の予定（{date}）は{what}の終わりを越えます。越えた分は日付を直してください。', { date: escapeHtml(mdText(shift.newMax)), what: what }) : '') + '</p>';
     }
     return html + '</div>';
   }
@@ -7412,29 +7412,29 @@
     if (kind === 'trip') {
       var fit = Core.planTripRangeFit(s.items, state.trip, allBlocks().length > 0);
       if (!fit) return;
-      var msg = '旅行の日程を ' + fit.startDate + '〜' + fit.endDate + '（' + fit.days + '日間）に' + (fit.mode === 'replace' ? '変えます。' : '広げます。') +
-        '\n今ある予定の日付は動きません。';
-      if (fit.days > 31) msg += '\n\n日程が' + fit.days + '日間と長くなります。日付の間違いではありませんか？';
-      if (!confirm(msg + '\n\nよろしいですか？')) return;
+      var msg = (fit.mode === 'replace' ? tr('旅行の日程を {start}〜{end}（{days}日間）に変えます。', { start: fit.startDate, end: fit.endDate, days: fit.days }) : tr('旅行の日程を {start}〜{end}（{days}日間）に広げます。', { start: fit.startDate, end: fit.endDate, days: fit.days })) +
+        '\n' + tr('今ある予定の日付は動きません。');
+      if (fit.days > 31) msg += '\n\n' + tr('日程が{n}日間と長くなります。日付の間違いではありませんか？', { n: fit.days });
+      if (!confirm(msg + '\n\n' + tr('よろしいですか？'))) return;
       var status = $('#ssSaveStatus');
-      if (status) status.textContent = '日程を変えています…';
+      if (status) status.textContent = tr('日程を変えています…');
       api('/trips/' + encodeURIComponent(state.trip.id), 'PATCH', { startDate: fit.startDate, endDate: fit.endDate }).then(function (trip) {
         delete trip.shiftedDays;
         state.trip = trip;
         rememberTrip(trip);
         renderSsResult();
-        showToast('旅行の日程を変えました');
+        showToast(tr('旅行の日程を変えました'));
       }).catch(function () {
-        if (status) status.textContent = '日程を変えられませんでした。もう一度お試しください。';
+        if (status) status.textContent = tr('日程を変えられませんでした。もう一度お試しください。');
       });
       return;
     }
     var plan = Core.planProposalShift(s.items, ssDateChoices());
     if (!plan) return;
-    if (plan.overflow && !confirm('ずらしても、最後の予定（' + plan.newMax + '）が日程の終わりを越えます。それでもずらしますか？\n（越えた分は、あとで日付を直せます）')) return;
+    if (plan.overflow && !confirm(tr('ずらしても、最後の予定（{date}）が日程の終わりを越えます。それでもずらしますか？\n（越えた分は、あとで日付を直せます）', { date: plan.newMax }))) return;
     Core.shiftProposalDates(s.items, plan.days);
     renderSsResult();
-    showToast('予定の日付をずらしました');
+    showToast(tr('予定の日付をずらしました'));
   }
 
   function renderSsResult() {
@@ -7442,33 +7442,33 @@
     var el = $('#ssResult');
     var src = IMPORT_SOURCES[s.source] || IMPORT_SOURCES.screenshot;
     $('#icTitle').textContent = src.title;
-    $('#icLead').textContent = src.label + 'から作った候補です。保存する前に、内容を確認して直してください。時刻・費用・場所は、分かったものだけ入っています（空欄は分からなかったものです）。';
+    $('#icLead').textContent = tr('{label}から作った候補です。保存する前に、内容を確認して直してください。時刻・費用・場所は、分かったものだけ入っています（空欄は分からなかったものです）。', { label: src.label });
     var used = s.items.filter(function (it) { return it.use !== false; }).length;
-    var html = '<span class="ss-source">' + escapeHtml(src.label) + 'から</span>';
+    var html = '<span class="ss-source">' + tr('{label}から', { label: escapeHtml(src.label) }) + '</span>';
     if (s.branch) html += '<div class="branch-band ss-target">' + BRANCH_ICON + '<span class="branch-band-text">' + escapeHtml(importTargetText(s.branch)) + '（' + escapeHtml(Core.branchRangeText(s.branch)) + '）</span></div>';
     (s.notes || []).forEach(function (n) { html += '<p class="hint">' + escapeHtml(n) + '</p>'; });
     html += ssDateFitBanner(s);
     if (!s.items.length) {
-      html += '<p class="hint">予定として使える情報を読み取れませんでした。</p>';
+      html += '<p class="hint">' + tr('予定として使える情報を読み取れませんでした。') + '</p>';
     } else {
-      html += '<p class="hint">' + s.items.length + '件の候補です。直すところは直してください。要らない候補は「追加する」を外します。</p>';
+      html += '<p class="hint">' + tr('{n}件の候補です。直すところは直してください。要らない候補は「追加する」を外します。', { n: s.items.length }) + '</p>';
       Core.groupScreenshotItemsByDay(s.items).forEach(function (g) {
-        html += '<h2 class="ss-day">' + escapeHtml(g.date ? Core.formatDateJp(g.date) + '（' + Core.dayLabel(state.trip, g.date) + '）' : '日付未設定') + '</h2>';
+        html += '<h2 class="ss-day">' + escapeHtml(g.date ? Core.formatDateJp(g.date) + '（' + Core.dayLabel(state.trip, g.date) + '）' : tr('日付未設定')) + '</h2>';
         g.items.forEach(function (it) { html += ssCard(s.items[it._index]); });
       });
     }
-    if (s.dropped) html += '<p class="hint">' + s.dropped + '件は、内容が足りず候補にできませんでした。</p>';
+    if (s.dropped) html += '<p class="hint">' + tr('{n}件は、内容が足りず候補にできませんでした。', { n: s.dropped }) + '</p>';
     if (s.unreadable.length) {
-      html += '<h2 class="ss-day">読み取れなかった画像</h2><div class="ss-unreadable">' + s.unreadable.map(function (u) {
+      html += '<h2 class="ss-day">' + tr('読み取れなかった画像') + '</h2><div class="ss-unreadable">' + s.unreadable.map(function (u) {
         var f = s.files[u.image];
         return '<div class="ss-unreadable-row">' + (f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="">' : '') +
-          '<span>画像' + (u.image + 1) + '：' + escapeHtml(u.message || '読み取れませんでした') + '</span></div>';
+          '<span>' + tr('画像{n}：{msg}', { n: u.image + 1, msg: escapeHtml(u.message || tr('読み取れませんでした')) }) + '</span></div>';
       }).join('') + '</div>';
     }
     html += '<p class="hint" id="ssSaveStatus"></p>' +
-      (s.items.length ? '<button type="button" class="btn primary wide" id="btnSsSave"' + (used ? '' : ' disabled') + '>' + (s.branch ? '自分だけの道に追加（' : 'この内容で追加（') + used + '件）</button>' : '') +
-      '<button type="button" class="btn ghost wide" id="btnSsCancel">やめて入力に戻る（何も保存しません）</button>' +
-      '<p class="hint">' + (s.ai ? 'やめると、この候補は保存されません。AIによる整理はすでに行ったため、今月の利用回数は戻りません。' : 'やめると、この候補は保存されません（AIは使っていないので、利用回数は減っていません）。') + '</p>';
+      (s.items.length ? '<button type="button" class="btn primary wide" id="btnSsSave"' + (used ? '' : ' disabled') + '>' + tr(s.branch ? '自分だけの道に追加（{n}件）' : 'この内容で追加（{n}件）', { n: used }) + '</button>' : '') +
+      '<button type="button" class="btn ghost wide" id="btnSsCancel">' + tr('やめて入力に戻る（何も保存しません）') + '</button>' +
+      '<p class="hint">' + (s.ai ? tr('やめると、この候補は保存されません。AIによる整理はすでに行ったため、今月の利用回数は戻りません。') : tr('やめると、この候補は保存されません（AIは使っていないので、利用回数は減っていません）。')) + '</p>';
     el.innerHTML = html;
     el.hidden = false;
   }
@@ -7482,7 +7482,7 @@
     var s = ssState();
     var used = s.items.filter(function (it) { return it.use !== false; }).length;
     var btn = $('#btnSsSave');
-    if (btn) { btn.disabled = !used; btn.textContent = (s.branch ? '自分だけの道に追加（' : 'この内容で追加（') + used + '件）'; }
+    if (btn) { btn.disabled = !used; btn.textContent = tr(s.branch ? '自分だけの道に追加（{n}件）' : 'この内容で追加（{n}件）', { n: used }); }
   }
 
   // 場所を探し直す：既存の /places/search と /places/details（記録フォームの「場所名で検索」と同じ）を使う
@@ -7490,16 +7490,16 @@
     var q = $('[data-ss-place-q="' + which + '"]', box).value.trim();
     var list = $('[data-ss-place-list="' + which + '"]', box);
     if (!q) return;
-    list.innerHTML = '<p class="hint">探しています…</p>';
+    list.innerHTML = '<p class="hint">' + tr('探しています…') + '</p>';
     ssPlaceSession = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'ss-' + Date.now().toString(36);
     var session = ssPlaceSession;
     api('/places/search?q=' + encodeURIComponent(q) + '&session=' + encodeURIComponent(session)).then(function (res) {
       var places = (res && res.places) || [];
-      if (!places.length) { list.innerHTML = '<p class="hint">見つかりませんでした。</p>'; return; }
+      if (!places.length) { list.innerHTML = '<p class="hint">' + tr('見つかりませんでした。') + '</p>'; return; }
       list.innerHTML = places.map(function (p, k) {
         return '<div class="place-card" data-ss-choice="' + k + '" role="button" tabindex="0"><span class="place-num">' + (k + 1) + '</span>' +
           '<div class="place-text"><div class="place-name">' + escapeHtml(p.name) + '</div>' +
-          (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">選択</span></div>';
+          (p.address ? '<div class="place-address">' + escapeHtml(p.address) + '</div>' : '') + '</div><span class="place-pick">' + tr('選択') + '</span></div>';
       }).join('');
       $all('[data-ss-choice]', list).forEach(function (card) {
         var pick = function () {
@@ -7527,7 +7527,7 @@
         card.addEventListener('click', pick);
         card.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') pick(); });
       });
-    }).catch(function () { list.innerHTML = '<p class="hint">候補を取得できませんでした。</p>'; });
+    }).catch(function () { list.innerHTML = '<p class="hint">' + tr('候補を取得できませんでした。') + '</p>'; });
   }
 
   function handleSsResultClick(e) {
@@ -7554,7 +7554,7 @@
       return;
     }
     var add = t.closest('[data-ss-cost-add]');
-    if (add) { item.costItems = item.costItems || []; item.costItems.push({ label: '費用', amount: undefined }); renderSsResult(); return; }
+    if (add) { item.costItems = item.costItems || []; item.costItems.push({ label: tr('費用'), amount: undefined }); renderSsResult(); return; }
     var rm = t.closest('[data-ss-cost-remove]');
     if (rm) { item.costItems.splice(Number(rm.getAttribute('data-ss-cost-remove')), 1); renderSsResult(); }
   }
@@ -7589,12 +7589,12 @@
   // 保存のエラーを画面に出す文にする
   function ssSaveErrorMessage(msg) {
     var map = {
-      forbidden: 'この別行動は、持ち主だけが追加できます。',
-      login_required: 'ログインし直してください。',
-      branch_not_found: '別行動が見つかりません（消された可能性があります）。',
-      invalid_input: '追加できる候補がありません。日付・時刻（別行動なら別行動の時間帯の中）を確認してください。'
+      forbidden: tr('この別行動は、持ち主だけが追加できます。'),
+      login_required: tr('ログインし直してください。'),
+      branch_not_found: tr('別行動が見つかりません（消された可能性があります）。'),
+      invalid_input: tr('追加できる候補がありません。日付・時刻（別行動なら別行動の時間帯の中）を確認してください。')
     };
-    return map[msg] || '追加に失敗しました。もう一度お試しください。';
+    return map[msg] || tr('追加に失敗しました。もう一度お試しください。');
   }
 
   // 保存した予定（サーバーの返したblocks）に、候補のmoveMinutesを書き足す。
@@ -7621,16 +7621,16 @@
     var payload = Core.screenshotItemsToSavePayload(s.items, state.trip, s.branch);
     var status = $('#ssSaveStatus');
     if (payload.errors.length) {
-      status.textContent = '直してから追加してください：' + payload.errors.map(function (er) { return '「' + (er.label || '（見出しなし）') + '」' + er.reason; }).join('、');
+      status.textContent = tr('直してから追加してください：{list}', { list: payload.errors.map(function (er) { return tr('「{label}」{reason}', { label: er.label || tr('（見出しなし）'), reason: er.reason }); }).join('、') });
       return;
     }
-    if (!payload.items.length) { status.textContent = '追加する候補がありません。'; return; }
+    if (!payload.items.length) { status.textContent = tr('追加する候補がありません。'); return; }
     $('#btnSsSave').disabled = true;
-    status.textContent = '外貨のレートを確認しています…';
+    status.textContent = tr('外貨のレートを確認しています…');
     // 外貨の費用にはレート（円換算）を付ける。fetchRatesForImportBlocksは{date, entry:{costItems}}の形を読む
     var shaped = payload.items.map(function (p) { return { date: p.date, entry: { costItems: p.costItems } }; });
     fetchRatesForImportBlocks(shaped, state.trip).then(function (failedCurrencies) {
-      status.textContent = '追加しています…';
+      status.textContent = tr('追加しています…');
       var body = { items: payload.items, author: (user && user.name) || '' };
       if (s.branch) body.branchId = s.branch.id;
       // 文字起こし（音声・メモのAI）は、追加したときにその日の欄へ残す（別行動では残さない）
@@ -7649,9 +7649,9 @@
       state.ss = null;
       showScreen('tripDetail');
       renderTripDetail();
-      showToast((r.res.blocks || []).length + '件の予定を追加しました');
-      if (r.res.errors && r.res.errors.length) alert(r.res.errors.length + '件は、日付・時刻が合わず追加できませんでした。');
-      if (r.failed.length) alert(r.failed.join('・') + 'のレートを取得できませんでした。記録を開いてレートを入れてください。');
+      showToast(tr('{n}件の予定を追加しました', { n: (r.res.blocks || []).length }));
+      if (r.res.errors && r.res.errors.length) alert(tr('{n}件は、日付・時刻が合わず追加できませんでした。', { n: r.res.errors.length }));
+      if (r.failed.length) alert(tr('{names}のレートを取得できませんでした。記録を開いてレートを入れてください。', { names: r.failed.join('・') }));
     }).catch(function (e) {
       $('#btnSsSave').disabled = false;
       status.textContent = ssSaveErrorMessage((e && e.message) || '');
@@ -7745,7 +7745,7 @@
   function canEditBlockUi(block) { return !block.branchId || isMyBranch(block.branchId); }
   function branchOwnerName(branch) {
     var m = (state.members || []).filter(function (x) { return x.accountId === branch.accountId; })[0];
-    return (m && m.name) || branch.name || 'だれか';
+    return (m && m.name) || branch.name || tr('だれか');
   }
 
   function currentDayItems() {
@@ -7770,7 +7770,7 @@
     var chip = function (id, name) {
       return '<button type="button" class="branch-switch-chip' + (state.viewAccountId === id ? ' on' : '') + '" data-account="' + escapeHtml(id) + '">' + escapeHtml(name) + '</button>';
     };
-    el.innerHTML = '<span class="branch-switch-label">表示する道</span>' + chip('', 'みんな') +
+    el.innerHTML = '<span class="branch-switch-label">' + tr('表示する道') + '</span>' + chip('', tr('みんな')) +
       opts.map(function (o) { return chip(o.accountId, o.name); }).join('');
     $all('.branch-switch-chip', el).forEach(function (b) {
       b.addEventListener('click', function () { setBranchView(b.dataset.account); });
@@ -7785,7 +7785,7 @@
     b.className = 'branch-card' + (continued ? ' continued' : '');
     var named = Object.assign({}, branch, { name: branchOwnerName(branch) });
     var text = continued ? Core.branchContinuedText(named) : Core.branchCardText(named, state.branchBlocks);
-    b.innerHTML = BRANCH_ICON + '<span class="branch-card-text">' + escapeHtml(text) + '</span><span class="branch-card-go">この道を見る</span>';
+    b.innerHTML = BRANCH_ICON + '<span class="branch-card-text">' + escapeHtml(text) + '</span><span class="branch-card-go">' + tr('この道を見る') + '</span>';
     b.addEventListener('click', function () { setBranchView(branch.accountId); });
     return b;
   }
@@ -7795,15 +7795,15 @@
     var d = document.createElement('div');
     d.className = 'branch-band';
     var bandText = continued
-      ? branchOwnerName(branch) + 'の別行動中（' + Core.branchUntilText(branch) + '）'
-      : branchOwnerName(branch) + 'の別行動 ' + Core.branchRangeText(branch) + (branch.title ? '（' + branch.title + '）' : '');
+      ? tr('{name}の別行動中（{until}）', { name: branchOwnerName(branch), until: Core.branchUntilText(branch) })
+      : tr('{name}の別行動 {range}', { name: branchOwnerName(branch), range: Core.branchRangeText(branch) }) + (branch.title ? '（' + branch.title + '）' : '');
     d.innerHTML = BRANCH_ICON + '<span class="branch-band-text">' + escapeHtml(bandText) + '</span>';
     if (isMyBranch(branch.id)) {
       var add = document.createElement('button');
-      add.type = 'button'; add.className = 'branch-band-btn'; add.textContent = '予定を追加';
+      add.type = 'button'; add.className = 'branch-band-btn'; add.textContent = tr('予定を追加');
       add.addEventListener('click', function () { openBlockForm(null, branch, state.selectedDate); });
       var edit = document.createElement('button');
-      edit.type = 'button'; edit.className = 'branch-band-btn'; edit.textContent = '編集';
+      edit.type = 'button'; edit.className = 'branch-band-btn'; edit.textContent = tr('編集');
       edit.addEventListener('click', function () { openBranchSheet(branch); });
       d.appendChild(add);
       d.appendChild(edit);
@@ -7822,11 +7822,11 @@
       p.textContent = text;
       el.appendChild(p);
     };
-    if (!user || !user.token) { note('ログインすると自分の別行動を追加できます'); return; }
-    if (!amTripMember()) { note('この旅行に「参加する」と、自分の別行動を追加できます'); return; }
+    if (!user || !user.token) { note(tr('ログインすると自分の別行動を追加できます')); return; }
+    if (!amTripMember()) { note(tr('この旅行に「参加する」と、自分の別行動を追加できます')); return; }
     var btn = document.createElement('button');
     btn.className = 'block-add branch-add';
-    btn.innerHTML = BRANCH_ICON + '<span>ここから別行動</span>';
+    btn.innerHTML = BRANCH_ICON + '<span>' + tr('ここから別行動') + '</span>';
     btn.addEventListener('click', function () { openBranchSheet(null); });
     el.appendChild(btn);
   }
@@ -7872,7 +7872,7 @@
     if (!date) return;
     branchSheetTarget = { id: branch ? branch.id : '', date: date };
     var range = branch ? { start: branch.startTime, end: branch.endTime } : defaultBranchRange(date);
-    $('#branchSheetTitle').textContent = branch ? '別行動を編集' : 'ここから別行動';
+    $('#branchSheetTitle').textContent = branch ? tr('別行動を編集') : tr('ここから別行動');
     var choices = branchDateChoices(branch);
     $('#brStartDate').innerHTML = dateOptionsHtml(choices, date);
     $('#brStartDate').value = date;
@@ -7907,7 +7907,7 @@
     };
     var reason = Core.validateBranch(input, state.branches, me, target.id, state.trip);
     if (reason) { status.textContent = Core.branchErrorText(reason); return; }
-    status.textContent = '保存中…';
+    status.textContent = tr('保存中…');
     var req = target.id
       ? api('/branches/' + encodeURIComponent(target.id), 'PATCH', { endDate: input.endDate, startTime: input.startTime, endTime: input.endTime, title: input.title })
       : api('/trips/' + encodeURIComponent(state.trip.id) + '/branches', 'POST', input);
@@ -7925,7 +7925,7 @@
 
   function removeBranch() {
     if (!branchSheetTarget || !branchSheetTarget.id) return;
-    if (!confirm('この別行動と、中の予定・記録をすべて削除しますか？')) return;
+    if (!confirm(tr('この別行動と、中の予定・記録をすべて削除しますか？'))) return;
     var id = branchSheetTarget.id;
     api('/branches/' + encodeURIComponent(id), 'DELETE').then(function () { return refreshTrip(); }).then(function () {
       closeBranchSheet();
@@ -7933,7 +7933,7 @@
       renderTripDetail();
     }).catch(function (e) {
       if (Core.isLoginRequiredError(e)) { closeBranchSheet(); handleLoginRequired(e, 'tripDetail'); return; }
-      $('#brStatus').textContent = '削除に失敗しました。';
+      $('#brStatus').textContent = tr('削除に失敗しました。');
     });
   }
 
@@ -8058,7 +8058,7 @@
 
   function renderDaySection() {
     applyTripZones();
-    $('#dayTitle').textContent = Core.dayLabel(state.trip, state.selectedDate) + 'のきろく';
+    $('#dayTitle').textContent = tr('{day}のきろく', { day: Core.dayLabel(state.trip, state.selectedDate) });
     renderBranchSwitcher();
     renderTimeline(currentDayItems());
     renderDayWeather();
@@ -8092,7 +8092,7 @@
       btn.innerHTML = '<span aria-hidden="true">' + manual.icon + '</span> ' + escapeHtml(manual.label);
     } else {
       btn.classList.remove('has-weather');
-      btn.textContent = '天気を選ぶ';
+      btn.textContent = tr('天気を選ぶ');
     }
     btn.onclick = function () { openWeatherEditPanel(info); };
   }
@@ -8112,14 +8112,14 @@
     if (!state.trip || !state.selectedDate) return;
     var status = $('#weatherEditStatus');
     var payload = { weatherCode: codeStr === '' ? null : Number(codeStr) };
-    status.textContent = '保存中…';
+    status.textContent = tr('保存中…');
     api('/trips/' + encodeURIComponent(state.trip.id) + '/days/' + encodeURIComponent(state.selectedDate) + '/weather', 'PATCH', payload)
       .then(function () { return refreshTrip(); })
       .then(function () {
         $('#weatherEditPanel').hidden = true;
         renderDayWeather();
       })
-      .catch(function () { status.textContent = '保存に失敗しました。もう一度お試しください。'; });
+      .catch(function () { status.textContent = tr('保存に失敗しました。もう一度お試しください。'); });
   }
 
   // タイムゾーンの日本語名（例：「英国夏時間」「ハワイ・アリューシャン標準時」）
@@ -8137,9 +8137,8 @@
     var div = document.createElement('button');
     div.type = 'button';
     div.className = 'zone-divider' + (block.tzOverride ? ' tz-overridden' : '');
-    var from = base._tz === 'Asia/Tokyo' ? '日本' : '出発地';
-    div.textContent = '🕒 ここから現地時間（' + zoneDisplayName(block._tz, block.date) + '・' + from + 'との時差 ' +
-      Core.offsetDiffText(block._offset - base._offset) + '）';
+    var from = base._tz === 'Asia/Tokyo' ? tr('日本') : tr('出発地');
+    div.textContent = tr('🕒 ここから現地時間（{zone}・{from}との時差 {diff}）', { zone: zoneDisplayName(block._tz, block.date), from: from, diff: Core.offsetDiffText(block._offset - base._offset) });
     div.addEventListener('click', function () { openTzOverrideSheet(block.id); });
     return div;
   }
@@ -8150,28 +8149,28 @@
   // できてもいい。時間を変えられるのも、やりすぎない範囲で」（2026-09-29）。
   // 「その他…」で選べる主要なタイムゾーン（約20）。地図から出てこない場所へ行ったときの保険。
   var TZ_OVERRIDE_COMMON = [
-    { tz: 'Asia/Tokyo', label: '日本（東京）' },
-    { tz: 'Asia/Seoul', label: '韓国（ソウル）' },
-    { tz: 'Asia/Shanghai', label: '中国（上海）' },
-    { tz: 'Asia/Hong_Kong', label: '香港' },
-    { tz: 'Asia/Taipei', label: '台湾（台北）' },
-    { tz: 'Asia/Singapore', label: 'シンガポール' },
-    { tz: 'Asia/Bangkok', label: 'タイ（バンコク）' },
-    { tz: 'Asia/Dubai', label: 'ドバイ' },
-    { tz: 'Asia/Kolkata', label: 'インド' },
-    { tz: 'Europe/London', label: 'イギリス（ロンドン）' },
-    { tz: 'Europe/Paris', label: 'フランス（パリ）' },
-    { tz: 'Europe/Berlin', label: 'ドイツ（ベルリン）' },
-    { tz: 'Europe/Rome', label: 'イタリア（ローマ）' },
-    { tz: 'Europe/Moscow', label: 'ロシア（モスクワ）' },
-    { tz: 'America/New_York', label: 'アメリカ東部（ニューヨーク）' },
-    { tz: 'America/Chicago', label: 'アメリカ中部（シカゴ）' },
-    { tz: 'America/Denver', label: 'アメリカ山岳部（デンバー）' },
-    { tz: 'America/Los_Angeles', label: 'アメリカ西部（ロサンゼルス）' },
-    { tz: 'Pacific/Honolulu', label: 'ハワイ' },
-    { tz: 'America/Sao_Paulo', label: 'ブラジル（サンパウロ）' },
-    { tz: 'Australia/Sydney', label: 'オーストラリア（シドニー）' },
-    { tz: 'Pacific/Auckland', label: 'ニュージーランド（オークランド）' }
+    { tz: 'Asia/Tokyo', label: tr('日本（東京）') },
+    { tz: 'Asia/Seoul', label: tr('韓国（ソウル）') },
+    { tz: 'Asia/Shanghai', label: tr('中国（上海）') },
+    { tz: 'Asia/Hong_Kong', label: tr('香港') },
+    { tz: 'Asia/Taipei', label: tr('台湾（台北）') },
+    { tz: 'Asia/Singapore', label: tr('シンガポール') },
+    { tz: 'Asia/Bangkok', label: tr('タイ（バンコク）') },
+    { tz: 'Asia/Dubai', label: tr('ドバイ') },
+    { tz: 'Asia/Kolkata', label: tr('インド') },
+    { tz: 'Europe/London', label: tr('イギリス（ロンドン）') },
+    { tz: 'Europe/Paris', label: tr('フランス（パリ）') },
+    { tz: 'Europe/Berlin', label: tr('ドイツ（ベルリン）') },
+    { tz: 'Europe/Rome', label: tr('イタリア（ローマ）') },
+    { tz: 'Europe/Moscow', label: tr('ロシア（モスクワ）') },
+    { tz: 'America/New_York', label: tr('アメリカ東部（ニューヨーク）') },
+    { tz: 'America/Chicago', label: tr('アメリカ中部（シカゴ）') },
+    { tz: 'America/Denver', label: tr('アメリカ山岳部（デンバー）') },
+    { tz: 'America/Los_Angeles', label: tr('アメリカ西部（ロサンゼルス）') },
+    { tz: 'Pacific/Honolulu', label: tr('ハワイ') },
+    { tz: 'America/Sao_Paulo', label: tr('ブラジル（サンパウロ）') },
+    { tz: 'Australia/Sydney', label: tr('オーストラリア（シドニー）') },
+    { tz: 'Pacific/Auckland', label: tr('ニュージーランド（オークランド）') }
   ];
 
   var tzOverrideTarget = null;
@@ -8212,7 +8211,7 @@
   function renderTzOverrideMain(block) {
     $('#tzOverrideCustom').hidden = true;
     $('#tzOverrideSheetNote').textContent =
-      '自動では、地図の場所だけで時差を決めています。間違っているときだけ、この予定の時差を手で直せます。';
+      tr('自動では、地図の場所だけで時差を決めています。間違っているときだけ、この予定の時差を手で直せます。');
     var opts = $('#tzOverrideOptions');
     opts.innerHTML = '';
     var addBtn = function (text, onClick) {
@@ -8224,9 +8223,9 @@
       opts.appendChild(b);
       return b;
     };
-    addBtn('この時差を取り消す（前の予定と同じ時間にする）', function () { saveTzOverride(block.id, 'inherit'); });
-    addBtn('タイムゾーンを選ぶ', function () { renderTzOverrideZoneList(block); });
-    if (block.tzOverride) addBtn('自動に戻す', function () { saveTzOverride(block.id, ''); });
+    addBtn(tr('この時差を取り消す（前の予定と同じ時間にする）'), function () { saveTzOverride(block.id, 'inherit'); });
+    addBtn(tr('タイムゾーンを選ぶ'), function () { renderTzOverrideZoneList(block); });
+    if (block.tzOverride) addBtn(tr('自動に戻す'), function () { saveTzOverride(block.id, ''); });
   }
 
   function renderTzOverrideZoneList(block) {
@@ -8239,14 +8238,14 @@
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'tz-override-opt' + (block.tzOverride === tz ? ' on' : '');
-      btn.textContent = tz === 'Asia/Tokyo' ? '日本' : tzCityLabel(tz);
+      btn.textContent = tz === 'Asia/Tokyo' ? tr('日本') : tzCityLabel(tz);
       btn.addEventListener('click', function () { saveTzOverride(block.id, tz); });
       opts.appendChild(btn);
     });
     var other = document.createElement('button');
     other.type = 'button';
     other.className = 'tz-override-opt';
-    other.textContent = 'その他…';
+    other.textContent = tr('その他…');
     other.addEventListener('click', function () { showTzOverrideCustomSelect(block); });
     opts.appendChild(other);
   }
@@ -8264,14 +8263,14 @@
   function saveTzOverride(blockId, value) {
     if (!state.trip) return;
     var status = $('#tzOverrideStatus');
-    status.textContent = '保存中…';
+    status.textContent = tr('保存中…');
     api('/blocks/' + encodeURIComponent(blockId), 'PATCH', { tzOverride: value || '' })
       .then(function () { return refreshTrip(); })
       .then(function () {
         closeTzOverrideSheet();
         renderDaySection();
       })
-      .catch(function () { status.textContent = '保存できませんでした。もう一度お試しください。'; });
+      .catch(function () { status.textContent = tr('保存できませんでした。もう一度お試しください。'); });
   }
 
   // ---------- 時差（docs/adr/0009） ----------
@@ -8449,7 +8448,7 @@
     if (!items.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'この日の記録はまだありません。下のボタンから追加できます。';
+      empty.textContent = tr('この日の記録はまだありません。下のボタンから追加できます。');
       el.appendChild(empty);
     }
     // 時差の違う場所に移ったところに「ここから現地時間（時差）」の区切りを入れる（docs/adr/0009）。
@@ -8490,22 +8489,22 @@
       var manualNote = document.createElement('div');
       manualNote.className = 'manual-order-note';
       manualNote.innerHTML = hasManual
-        ? '<span>この日は手で並べた順番で表示しています。</span><button type="button" class="btn text" id="btnResetManualOrder">自動の並びに戻す</button>'
-        : '<span>時差のある日は、⋮⋮ をドラッグすると時刻と関係なく並べ替えられます。</span>';
+        ? '<span>' + tr('この日は手で並べた順番で表示しています。') + '</span><button type="button" class="btn text" id="btnResetManualOrder">' + tr('自動の並びに戻す') + '</button>'
+        : '<span>' + tr('時差のある日は、⋮⋮ をドラッグすると時刻と関係なく並べ替えられます。') + '</span>';
       el.appendChild(manualNote);
       var resetBtn = manualNote.querySelector('#btnResetManualOrder');
       if (resetBtn) resetBtn.addEventListener('click', function () { resetManualOrder(dayDate); });
     }
     var addBtn = document.createElement('button');
     addBtn.className = 'block-add';
-    addBtn.innerHTML = plusIcon() + '<span>予定を追加</span>';
+    addBtn.innerHTML = plusIcon() + '<span>' + tr('予定を追加') + '</span>';
     addBtn.addEventListener('click', function () { openBlockForm(null); });
     el.appendChild(addBtn);
     appendBranchAddArea(el);
 
     var voiceBtn = document.createElement('button');
     voiceBtn.className = 'block-add';
-    voiceBtn.innerHTML = MIC_ICON + '<span>音声・メモでまとめて記録する</span>';
+    voiceBtn.innerHTML = MIC_ICON + '<span>' + tr('音声・メモでまとめて記録する') + '</span>';
     // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
     // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
     // なるバグの元）。必ずラップして呼ぶ。
@@ -8515,14 +8514,14 @@
     // 「複数日をまとめて記録する」（DAY30〜）：日タブを選ばず旅行全体に対して話す・貼り付ける
     var multiDayBtn = document.createElement('button');
     multiDayBtn.className = 'block-add';
-    multiDayBtn.innerHTML = MIC_ICON + '<span>複数日をまとめて記録する</span>';
+    multiDayBtn.innerHTML = MIC_ICON + '<span>' + tr('複数日をまとめて記録する') + '</span>';
     multiDayBtn.addEventListener('click', function () { openVoiceEntryForm(true); });
     el.appendChild(multiDayBtn);
 
     // スクショから予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
     var screenshotBtn = document.createElement('button');
     screenshotBtn.className = 'block-add';
-    screenshotBtn.innerHTML = IMAGE_ICON + '<span>スクショから予定を作る</span>';
+    screenshotBtn.innerHTML = IMAGE_ICON + '<span>' + tr('スクショから予定を作る') + '</span>';
     screenshotBtn.addEventListener('click', function () { openScreenshotImport(); });
     el.appendChild(screenshotBtn);
 
@@ -8530,7 +8529,7 @@
     if (blocks.length && /[?&]zonedebug\b/.test(location.search || '')) {
       var diagBtn = document.createElement('button');
       diagBtn.className = 'zone-diag-btn';
-      diagBtn.textContent = '時差の並びを調べる（開発用）';
+      diagBtn.textContent = tr('時差の並びを調べる（開発用）');
       diagBtn.addEventListener('click', function () { showZoneDiagnostics(blocks[0].date); });
       el.appendChild(diagBtn);
     }
@@ -8566,16 +8565,16 @@
     ta.value = text;
     var copy = document.createElement('button');
     copy.className = 'btn primary wide';
-    copy.textContent = 'コピーする';
+    copy.textContent = tr('コピーする');
     copy.addEventListener('click', function () {
       ta.select();
-      var done = function () { copy.textContent = 'コピーしました'; };
+      var done = function () { copy.textContent = tr('コピーしました'); };
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { try { document.execCommand('copy'); done(); } catch (e) {} });
       else { try { document.execCommand('copy'); done(); } catch (e) {} }
     });
     var close = document.createElement('button');
     close.className = 'btn ghost';
-    close.textContent = '閉じる';
+    close.textContent = tr('閉じる');
     close.addEventListener('click', function () { wrap.remove(); });
     wrap.appendChild(ta); wrap.appendChild(copy); wrap.appendChild(close);
     document.body.appendChild(wrap);
@@ -8598,16 +8597,16 @@
     head.innerHTML =
       // 時刻ありのBlockは常にその時刻の位置に固定するため、持ち手（ドラッグでの並べ替え）は
       // 時刻未設定のBlockにだけ出す
-      (!block.branchId && !state.viewAccountId && (!block.time || state.manualDay) ? '<button type="button" class="block-drag-handle" aria-label="ならべかえる">' + DRAG_HANDLE_ICON + '</button>' : '') +
+      (!block.branchId && !state.viewAccountId && (!block.time || state.manualDay) ? '<button type="button" class="block-drag-handle" aria-label="' + tr('ならべかえる') + '">' + DRAG_HANDLE_ICON + '</button>' : '') +
       (block.time ? '<span class="block-time">' + escapeHtml(block.time) + '</span>' : '') +
       '<span class="block-label">' + escapeHtml(block.label || Core.categoryLabel(block.category)) + '</span>' +
       '<span class="block-cat" style="background:color-mix(in oklch,' + Core.categoryColor(block.category) + ' 18%, white);color:' + Core.categoryColor(block.category) + '">' + escapeHtml(Core.categoryLabel(block.category)) + '</span>' +
       (block.category === 'transport' && (block.transport || block.moveMinutes)
         ? '<span class="block-move">' + (block.transport ? transportIconSvg(block.transport, 13) : '') +
-          escapeHtml([Core.transportLabel(block.transport), block.moveMinutes ? '約' + Core.minutesText(block.moveMinutes) : ''].filter(Boolean).join('・')) + '</span>'
+          escapeHtml([Core.transportLabel(block.transport), block.moveMinutes ? tr('約{time}', { time: Core.minutesText(block.moveMinutes) }) : ''].filter(Boolean).join('・')) + '</span>'
         : '') +
       // 「動画でシェアに出さない」予定は、メンバーにも分かるよう小さく印を出す
-      (block.videoExclude ? '<span class="block-video-off">動画に出さない</span>' : '');
+      (block.videoExclude ? '<span class="block-video-off">' + tr('動画に出さない') + '</span>' : '');
     head.addEventListener('click', function (e) {
       if (e.target.closest('.block-drag-handle')) return;
       if (editable) openBlockForm(block);
@@ -8621,7 +8620,7 @@
       var tzNote = document.createElement('button');
       tzNote.type = 'button';
       tzNote.className = 'tz-overridden-note tz-overridden-note-inline';
-      tzNote.textContent = '時差を手で直しています';
+      tzNote.textContent = tr('時差を手で直しています');
       tzNote.addEventListener('click', function (e) { e.stopPropagation(); openTzOverrideSheet(block.id); });
       wrap.appendChild(tzNote);
     }
@@ -8636,7 +8635,7 @@
     if (editable) {
       var addEntryBtn = document.createElement('button');
       addEntryBtn.className = 'entry-add';
-      addEntryBtn.innerHTML = plusIcon() + '<span>' + ((block.entries || []).length ? '別の記録を追加（別行動など）' : '記録を追加') + '</span>';
+      addEntryBtn.innerHTML = plusIcon() + '<span>' + ((block.entries || []).length ? tr('別の記録を追加（別行動など）') : tr('記録を追加')) + '</span>';
       addEntryBtn.addEventListener('click', function (e) { e.stopPropagation(); openEntryForm(block.id, null); });
       wrap.appendChild(addEntryBtn);
     }
