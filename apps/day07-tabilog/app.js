@@ -7209,6 +7209,9 @@
     $('#btnSsPick').textContent = s.files.length ? tr('画像を追加する（{n}/{max}枚）', { n: s.files.length, max: SS_MAX_IMAGES }) : tr('画像を選ぶ（最大{max}枚）', { max: SS_MAX_IMAGES });
     $('#btnSsPick').disabled = s.files.length >= SS_MAX_IMAGES;
     $('#btnSsScan').disabled = !s.files.length;
+    // 画像を選ぶ前は、選ぶボタンを大きく目立たせ、読み取るボタンは出さない（先に読み取るを押してしまう人が多かった）
+    $('#btnSsPick').classList.toggle('ss-pick-empty', !s.files.length);
+    $('#btnSsScan').hidden = !s.files.length;
   }
 
   function handleSsFilesChosen(fileList) {

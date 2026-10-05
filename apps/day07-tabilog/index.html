@@ -326,11 +326,11 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
       <div id="ssPickArea">
         <input type="file" id="ssFileInput" accept="image/*" multiple hidden>
-        <button class="btn ghost wide" id="btnSsPick" type="button">画像を選ぶ（最大10枚）</button>
+        <button class="btn wide ss-pick ss-pick-empty" id="btnSsPick" type="button">画像を選ぶ（最大10枚）</button>
         <div class="ss-thumbs" id="ssThumbs"></div>
         <p class="hint">画像に写っている氏名・予約番号などは、読み取りのため外部のAIサービス（Google・OpenAI）に送られます（予約番号や氏名は予定には保存しません）。1回の取り込みで、メモのAI整理の回数を1回使います。</p>
         <p class="hint" id="ssInfo"></p>
-        <button class="btn primary wide" id="btnSsScan" type="button" disabled>読み取る</button>
+        <button class="btn primary wide" id="btnSsScan" type="button" disabled hidden>読み取る</button>
         <p class="hint" id="ssStatus"></p>
       </div>
 
