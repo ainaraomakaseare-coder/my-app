@@ -10565,7 +10565,126 @@
     });
     if (closed) document.body.classList.remove('sheet-open');
   }
-  function openTutorial() { showToast(tr('近日追加')); } // 使い方：中身は後日追加するための入り口
+  // ---------- はじめての使い方ガイド（スポットライト） ----------
+  // steps：[{ target: 'CSSセレクタ（省略／見つからない／見えないときは画面中央のカード）', title, body }]
+  // 画面全体を暗くして対象だけ丸く抜き、近くに説明カードを出す。後ろの画面は触れない。
+  var TUTORIAL_DONE_KEY = 'tabilog.tutorialDone';
+  function tutorialSeen() { try { return localStorage.getItem(TUTORIAL_DONE_KEY) === '1'; } catch (e) { return false; } }
+  function markTutorialDone() { try { localStorage.setItem(TUTORIAL_DONE_KEY, '1'); } catch (e) { /* 書けなくても続行 */ } }
+  var tutorialCleanup = null;
+  function startTutorial(steps, onClose) {
+    if (tutorialCleanup) tutorialCleanup();
+    var idx = 0;
+    var root = document.createElement('div');
+    root.className = 'tut-root';
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    root.innerHTML = '<div class="tut-block"></div><div class="tut-ring" hidden></div>' +
+      '<div class="tut-card"><div class="tut-top"><span class="tut-count"></span>' +
+      '<button type="button" class="tut-skip-link"></button></div>' +
+      '<div class="tut-title"></div><div class="tut-body"></div>' +
+      '<div class="tut-actions"><button type="button" class="tut-btn tut-sub"></button>' +
+      '<button type="button" class="tut-btn tut-main"></button></div></div>';
+    var ring = root.querySelector('.tut-ring'), card = root.querySelector('.tut-card');
+    var btnSub = root.querySelector('.tut-sub'), btnMain = root.querySelector('.tut-main');
+    var linkSkip = root.querySelector('.tut-skip-link');
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) root.classList.add('tut-still');
+    function detach() {
+      tutorialCleanup = null;
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+      document.removeEventListener('keydown', onKey, true);
+      root.remove();
+    }
+    function close() {
+      detach();
+      markTutorialDone();
+      if (onClose) onClose();
+    }
+    function targetEl() {
+      var sel = steps[idx].target;
+      var el = sel ? document.querySelector(sel) : null;
+      if (!el || el.hidden) return null;
+      var r = el.getBoundingClientRect();
+      return (r.width > 0 && r.height > 0) ? el : null;
+    }
+    function place() {
+      var vw = window.innerWidth, vh = window.innerHeight, gap = 14, margin = 12;
+      var el = targetEl();
+      var cw = Math.min(vw - margin * 2, 420);
+      card.style.width = cw + 'px';
+      var ch = card.offsetHeight;
+      var left = (vw - cw) / 2, top;
+      if (!el) {
+        ring.hidden = true;
+        top = Math.max(margin, (vh - ch) / 2);
+      } else {
+        var r = el.getBoundingClientRect(), pad = 6;
+        ring.hidden = false;
+        ring.style.left = (r.left - pad) + 'px';
+        ring.style.top = (r.top - pad) + 'px';
+        ring.style.width = (r.width + pad * 2) + 'px';
+        ring.style.height = (r.height + pad * 2) + 'px';
+        var below = vh - (r.bottom + pad) - gap, above = r.top - pad - gap;
+        if (below >= ch + margin || below >= above) top = r.bottom + pad + gap;
+        else top = r.top - pad - gap - ch;
+        top = Math.min(Math.max(margin, top), Math.max(margin, vh - ch - margin));
+      }
+      card.style.left = left + 'px';
+      card.style.top = top + 'px';
+    }
+    function render() {
+      var s = steps[idx], last = idx === steps.length - 1;
+      root.querySelector('.tut-count').textContent = tr('{n} / {total}', { n: idx + 1, total: steps.length });
+      root.querySelector('.tut-title').textContent = tr(s.title);
+      root.querySelector('.tut-body').textContent = tr(s.body);
+      linkSkip.textContent = tr('スキップ');
+      linkSkip.hidden = idx === 0;
+      btnSub.textContent = idx === 0 ? tr('スキップ') : tr('戻る');
+      btnMain.textContent = last ? tr('はじめる') : tr('次へ');
+      var el = targetEl();
+      if (el) { try { el.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch (e) { el.scrollIntoView(); } }
+      place();
+      requestAnimationFrame(place);
+      try { btnMain.focus({ preventScroll: true }); } catch (e) { /* フォーカスできなくても続行 */ }
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+    }
+    btnSub.addEventListener('click', function () { if (idx === 0) close(); else { idx--; render(); } });
+    linkSkip.addEventListener('click', close);
+    btnMain.addEventListener('click', function () { if (idx >= steps.length - 1) close(); else { idx++; render(); } });
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(root);
+    tutorialCleanup = detach;
+    render();
+  }
+  function tutorialSteps() {
+    return [
+      { target: '#btnNewTrip', title: 'まずは旅行を1つ作ろう', body: '旅行の名前と日にちを入れるだけ。行く前の予定づくりにも、行ったあとの思い出の整理にも使えます。' },
+      { target: '.screen.active[data-screen="tripDetail"] #btnShareTrip', title: 'リンクを送って、みんなで書こう', body: 'LINEなどでリンクを送るだけで、一緒に行った人も写真や感想を書き足せます。相手はアプリを入れなくても大丈夫です。' },
+      { title: 'しゃべるだけでも記録できる', body: 'その日のことを話したり、メモやスクショを貼ったりすると、予定と記録に分けて入れてくれます。旅行を開いたら「地図でふりかえる」で旅を再生してみよう。' }
+    ];
+  }
+  function runTutorialOnHome() {
+    history.pushState(null, '', location.pathname);
+    showScreen('home');
+    renderHome();
+    window.scrollTo(0, 0);
+    setTimeout(function () { startTutorial(tutorialSteps()); }, 250);
+  }
+  // 初回だけ自動で出す。共有リンクで開いた人（ゲスト）には出さない（enterAppのホーム分岐でだけ呼ぶ）
+  function maybeAutoTutorial() {
+    if (tutorialSeen() || loadMyTrips().length) return;
+    setTimeout(function () {
+      var cur = document.querySelector('.screen.active');
+      if (cur && cur.dataset.screen === 'home' && !tutorialCleanup) startTutorial(tutorialSteps());
+    }, 600);
+  }
+  function openTutorial() { runTutorialOnHome(); } // 使い方：いつでもホームから最初のガイドを見直せる
   function openMyPageVideo() {
     var t = mypageRecentTrip();
     if (!t) { showToast(tr('まだ旅行がありません')); return; }
@@ -13547,7 +13666,7 @@
     }
     var tripId = Core.getTripIdFromSearch(location.search);
     if (tripId) openTrip(tripId);
-    else { showScreen('home'); renderHome(); }
+    else { showScreen('home'); renderHome(); maybeAutoTutorial(); }
     handleAuthRedirectHash();
     listenForAppLinks();
     setupAppBanner();
