@@ -7,6 +7,16 @@
 (function (root) {
   'use strict';
 
+  // 多言語化（i18n.js）。日本語が元の文章で、tr('原文', {key: 値}) と書くと、繁体字中国語のときだけ
+  // 辞書（i18n/zh-Hant-*.js）の訳に置き換わる。{key}は値に置き換える。i18n.jsが無い環境（node のテストなど）では
+  // そのまま日本語を返す。ここでは t ではなく tr と呼ぶ（app.js内で t を別の意味の変数名に使っている所が多いため）。
+  var tr = (typeof window !== 'undefined' && window.I18N && window.I18N.t) ? window.I18N.t : function (s, v) {
+    s = String(s);
+    if (!v) return s;
+    return s.replace(/\{(\w+)\}/g, function (m, k) { return Object.prototype.hasOwnProperty.call(v, k) ? String(v[k]) : m; });
+  };
+  var I18N_ZH = typeof window !== 'undefined' && !!window.I18N && window.I18N.lang === 'zh-Hant';
+
   // 機能フラグ（2026-09-26〜）：ユーザーの希望で「紹介文を作る」「いいね・コメント」の入り口を
   // 一時的に隠す。サーバー側のAPI・データはそのまま残しており、trueに戻すだけで元通り出せる。
   // コード自体は削らず、呼び出し側でこのフラグを見て出し分ける。
@@ -18,32 +28,33 @@
   var PUBLIC_WEB_BASE = 'https://tabinoashiato.pages.dev/';
 
   var CATEGORIES = [
-    { key: 'sightseeing', label: '観光', color: 'oklch(60% 0.13 150)' },
-    { key: 'food', label: '食事', color: 'oklch(64% 0.15 45)' },
-    { key: 'lodging', label: '宿泊', color: 'oklch(48% 0.1 195)' },
-    { key: 'transport', label: '移動', color: 'oklch(60% 0.12 260)' },
+    { key: 'sightseeing', label: tr('観光'), color: 'oklch(60% 0.13 150)' },
+    { key: 'food', label: tr('食事'), color: 'oklch(64% 0.15 45)' },
+    { key: 'lodging', label: tr('宿泊'), color: 'oklch(48% 0.1 195)' },
+    { key: 'transport', label: tr('移動'), color: 'oklch(60% 0.12 260)' },
     // 「到着」（2026-09-27〜）。種類の選択では「移動」の隣のチップで選ぶ。
     // 移動（＝出発）と違い、着いた場所の予定として扱う：地図はその時刻にいた場所。
     // inMoveはMyLogのタブ（renderMyLogTabs）が「移動」にまとめて出すためのフラグで、種類の選択のチップでは使わない。
-    { key: 'arrival', label: '到着', color: 'oklch(58% 0.12 225)', inMove: true },
-    { key: 'other', label: 'その他', color: 'oklch(55% 0.08 280)' }
+    { key: 'arrival', label: tr('到着'), color: 'oklch(58% 0.12 225)', inMove: true },
+    { key: 'other', label: tr('その他'), color: 'oklch(55% 0.08 280)' }
   ];
 
   // 予定（Block）の場所までの移動手段。「地図でふりかえる」で、どのアイコンがどう動くかに使う。
   // key=''は未設定＝移動の演出なし（Worker側のTRANSPORTSと同じ並び）。
   var TRANSPORTS = [
-    { key: '', label: 'なし' },
-    { key: 'plane', label: '飛行機' },
-    { key: 'car', label: '車（レンタカー）' },
-    { key: 'taxi', label: 'タクシー（Uber）' },
-    { key: 'train', label: '電車' },
-    { key: 'shinkansen', label: '新幹線' },
-    { key: 'bus', label: 'バス' },
-    { key: 'walk', label: '徒歩' },
-    { key: 'bicycle', label: '自転車' }
+    { key: '', label: tr('なし') },
+    { key: 'plane', label: tr('飛行機') },
+    { key: 'car', label: tr('車（レンタカー）') },
+    { key: 'taxi', label: tr('タクシー（Uber）') },
+    { key: 'train', label: tr('電車') },
+    { key: 'shinkansen', label: tr('新幹線') },
+    { key: 'bus', label: tr('バス') },
+    { key: 'walk', label: tr('徒歩') },
+    { key: 'bicycle', label: tr('自転車') }
   ];
 
-  var WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土'];
+  // 繁体字中国語のときは「週日・週一…」（呼び出し側は '（' + WEEKDAYS_JA[i] + '）' と使う）
+  var WEEKDAYS_JA = I18N_ZH ? ['週日', '週一', '週二', '週三', '週四', '週五', '週六'] : ['日', '月', '火', '水', '木', '金', '土'];
 
   // 費用の明細（costItems）に選べる通貨（DAY31〜、docs/adr/0014）。一覧に無い通貨は
   // 「その他」から3文字コード（ISO 4217）を自由入力できるので、ここは「よく使う」ものだけに絞る。
@@ -131,9 +142,9 @@
   }
 
   function dayLabel(trip, dateStr) {
-    if (!dateStr) return '日付未設定';
+    if (!dateStr) return tr('日付未設定');
     var diff = trip && trip.startDate ? dateDiffDays(trip.startDate, dateStr) : null;
-    if (diff !== null && diff >= 0) return (diff + 1) + '日目';
+    if (diff !== null && diff >= 0) return tr('{n}日目', { n: diff + 1 });
     return formatDateJp(dateStr) || dateStr;
   }
 
@@ -141,7 +152,7 @@
     if (!trip) return '';
     var diff = dateDiffDays(trip.startDate, trip.endDate);
     if (diff === null || diff < 0) return '';
-    return diff === 0 ? '日帰り' : diff + '泊' + (diff + 1) + '日';
+    return diff === 0 ? tr('日帰り') : tr('{n}泊{d}日', { n: diff, d: diff + 1 });
   }
 
   // 開始日・終了日から旅行の全日程を作る。無ければ大項目に実際にある日付から作る
@@ -343,7 +354,7 @@
   // 時差の差（分）を「+1時間」「-8時間」「+5時間30分」にする（+に合わせて-も半角）
   function offsetDiffText(diffMin) {
     var sign = diffMin < 0 ? '-' : '+', a = Math.abs(diffMin), h = Math.floor(a / 60), m = a % 60;
-    return sign + (h ? h + '時間' : '') + (m ? m + '分' : '') + (!h && !m ? '0時間' : '');
+    return sign + (h ? tr('{n}時間', { n: h }) : '') + (m ? tr('{n}分', { n: m }) : '') + (!h && !m ? tr('0時間') : '');
   }
 
   function sortBlocks(blocks) {
@@ -509,7 +520,7 @@
     (branches || []).forEach(function (br) {
       if (byId[br.accountId]) { byId[br.accountId].count++; return; }
       var member = (members || []).filter(function (m) { return m.accountId === br.accountId; })[0];
-      byId[br.accountId] = { accountId: br.accountId, name: (member && member.name) || br.name || 'だれか', count: 1 };
+      byId[br.accountId] = { accountId: br.accountId, name: (member && member.name) || br.name || tr('だれか'), count: 1 };
       out.push(byId[br.accountId]);
     });
     return out;
@@ -552,7 +563,8 @@
   // 日をまたぐ別行動の始まりの日：ひろや：6/27 14:00〜6/28 12:00 別行動（…）
   function branchCardText(branch, branchBlocks) {
     var summary = branchSummary(branch, branchBlocks);
-    return (branch.name || 'だれか') + '：' + branchRangeText(branch) + ' 別行動' + (summary ? '（' + summary + '）' : '');
+    var who = branch.name || tr('だれか'), range = branchRangeText(branch);
+    return summary ? tr('{name}：{range} 別行動（{summary}）', { name: who, range: range, summary: summary }) : tr('{name}：{range} 別行動', { name: who, range: range });
   }
 
   // 「〜6/28 12:00」（別行動の終わり）
@@ -562,7 +574,7 @@
 
   // 日をまたぐ別行動の、2日目以降に出す小さなカードの文。例：ひろや：別行動中（〜6/28 12:00）
   function branchContinuedText(branch) {
-    return (branch.name || 'だれか') + '：別行動中（' + branchUntilText(branch) + '）';
+    return tr('{name}：別行動中（{until}）', { name: branch.name || tr('だれか'), until: branchUntilText(branch) });
   }
 
   // その日のタイムラインに並べるもの。type: 'block'（予定）｜'card'（ほかの人の別行動のカード）｜'band'（自分の分岐の見出し。own=true）。
@@ -642,21 +654,21 @@
 
   function branchErrorText(reason) {
     var texts = {
-      invalid_date: '日付が正しくありません。',
-      invalid_time: '始まりと終わりの時刻を入れてください。',
-      end_before_start: '終わりは、始まりより後にしてください。',
-      overlap: 'ほかの自分の別行動と時間が重なっています。',
-      date_out_of_range: '別行動の日付は、旅行の日程の中で選んでください。',
-      date_out_of_branch: '日付は、別行動の日（始まりの日〜終わりの日）の中で選んでください。',
-      time_out_of_branch: '時刻は、別行動の時間帯の中で入れてください。',
-      branch_multiday_not_ready: 'サーバーの準備がまだ終わっていないため、日をまたぐ別行動はまだ作れません。1日ずつに分けるか、少し待ってからお試しください。',
-      invalid_title: 'タイトルは100文字までです。',
-      not_member: 'この旅行に「参加する」と、別行動を追加できます。',
-      login_required: 'ログインすると、自分の別行動を追加できます。',
-      forbidden: '別行動は、その人だけが変更できます。',
-      branches_not_ready: 'サーバーの準備がまだ終わっていません。少し待ってからお試しください。'
+      invalid_date: tr('日付が正しくありません。'),
+      invalid_time: tr('始まりと終わりの時刻を入れてください。'),
+      end_before_start: tr('終わりは、始まりより後にしてください。'),
+      overlap: tr('ほかの自分の別行動と時間が重なっています。'),
+      date_out_of_range: tr('別行動の日付は、旅行の日程の中で選んでください。'),
+      date_out_of_branch: tr('日付は、別行動の日（始まりの日〜終わりの日）の中で選んでください。'),
+      time_out_of_branch: tr('時刻は、別行動の時間帯の中で入れてください。'),
+      branch_multiday_not_ready: tr('サーバーの準備がまだ終わっていないため、日をまたぐ別行動はまだ作れません。1日ずつに分けるか、少し待ってからお試しください。'),
+      invalid_title: tr('タイトルは100文字までです。'),
+      not_member: tr('この旅行に「参加する」と、別行動を追加できます。'),
+      login_required: tr('ログインすると、自分の別行動を追加できます。'),
+      forbidden: tr('別行動は、その人だけが変更できます。'),
+      branches_not_ready: tr('サーバーの準備がまだ終わっていません。少し待ってからお試しください。')
     };
-    return texts[reason] || '保存に失敗しました。もう一度お試しください。';
+    return texts[reason] || tr('保存に失敗しました。もう一度お試しください。');
   }
 
   // costItem 1件分の金額を円に換算する（DAY31〜、docs/adr/0014）。currencyが無い・'JPY'なら
@@ -688,7 +700,7 @@
     if (!item || typeof item.amount !== 'number') return '';
     if (!item.currency || item.currency === 'JPY') return formatYen(item.amount);
     var amountText = costCurrencySymbol(item.currency) + item.amount.toFixed(2);
-    if (!costItemHasRate(item)) return amountText + '（レート未設定）';
+    if (!costItemHasRate(item)) return amountText + tr('（レート未設定）');
     return amountText + '（' + formatYen(costItemJpy(item)) + '）';
   }
 
@@ -937,7 +949,7 @@
   // 詳しくはカードを押したときの1泊1行の内訳で見る。未定の夜は数えない
   function lodgingSummary(groups) {
     var p = lodgingSummaryParts(groups);
-    return !p ? '' : p.others ? p.main + ' ほか' + p.others + 'か所' : p.main;
+    return !p ? '' : p.others ? tr('{main} ほか{n}か所', { main: p.main, n: p.others }) : p.main;
   }
   function lodgingSummaryParts(groups) {
     var nightsBy = {}, order = [];
@@ -1000,7 +1012,7 @@
   function lodgingNightOptions(trip, blocks) {
     var dates = allDatesForTrip(trip, blocks).filter(Boolean);
     if (dates.length < 2) return dates.map(function (d) { return { date: d, label: formatMonthDay(d) }; });
-    return dates.slice(0, -1).map(function (d, i) { return { date: d, label: (i + 1) + '泊目（' + formatMonthDay(d) + '）' }; });
+    return dates.slice(0, -1).map(function (d, i) { return { date: d, label: tr('{n}泊目（{date}）', { n: i + 1, date: formatMonthDay(d) }) }; });
   }
   function formatMonthDay(d) {
     var m = /^\d{4}-(\d{2})-(\d{2})$/.exec(d || '');
@@ -1188,17 +1200,17 @@
     if (code === null || code === undefined) return '';
     var isLightRain = ((code >= 51 && code <= 67) || (code >= 80 && code <= 82))
       && typeof precipSum === 'number' && precipSum <= 1;
-    if (isLightRain) return '曇り';
-    if (code === 0) return '快晴';
-    if (code === 1 || code === 2) return '晴れ';
-    if (code === 3) return '曇り';
-    if (code === 45 || code === 48) return '霧';
-    if (code >= 51 && code <= 57) return '霧雨';
-    if (code >= 61 && code <= 67) return '雨';
-    if (code >= 71 && code <= 77) return '雪';
-    if (code >= 80 && code <= 82) return 'にわか雨';
-    if (code >= 85 && code <= 86) return 'にわか雪';
-    if (code >= 95) return '雷雨';
+    if (isLightRain) return tr('曇り');
+    if (code === 0) return tr('快晴');
+    if (code === 1 || code === 2) return tr('晴れ');
+    if (code === 3) return tr('曇り');
+    if (code === 45 || code === 48) return tr('霧');
+    if (code >= 51 && code <= 57) return tr('霧雨');
+    if (code >= 61 && code <= 67) return tr('雨');
+    if (code >= 71 && code <= 77) return tr('雪');
+    if (code >= 80 && code <= 82) return tr('にわか雨');
+    if (code >= 85 && code <= 86) return tr('にわか雪');
+    if (code >= 95) return tr('雷雨');
     return '';
   }
 
@@ -1207,12 +1219,12 @@
   // コードはWMO weather codeの代表値を流用しているだけで、weatherLabel()の分類とは別物
   // （「晴れ時々くもり」はweatherLabel()には無い区分）。
   var MANUAL_WEATHER_OPTIONS = [
-    { code: 1, icon: '☀️', label: '晴れ' },
-    { code: 2, icon: '🌤️', label: '晴れ時々くもり' },
-    { code: 3, icon: '☁️', label: 'くもり' },
-    { code: 61, icon: '🌧️', label: '雨' },
-    { code: 95, icon: '⛈️', label: '雷雨' },
-    { code: 71, icon: '❄️', label: '雪' },
+    { code: 1, icon: '☀️', label: tr('晴れ') },
+    { code: 2, icon: '🌤️', label: tr('晴れ時々くもり') },
+    { code: 3, icon: '☁️', label: tr('くもり') },
+    { code: 61, icon: '🌧️', label: tr('雨') },
+    { code: 95, icon: '⛈️', label: tr('雷雨') },
+    { code: 71, icon: '❄️', label: tr('雪') },
   ];
 
   // 昔の自動取得・旧手動修正機能（0/45/48/51〜57/80〜82/85〜86など）で入っていたWMOコードも、
@@ -1488,7 +1500,7 @@
         var aDate = dates[aDay] || b.date;
         out.push({
           blockId: b.id + '#arrive', date: aDate, dayIndex: aDay, dayNumber: aDay + 1,
-          minute: aMin, estimated: aEst, label: arr.label || '到着', captions: [], photos: [],
+          minute: aMin, estimated: aEst, label: arr.label || tr('到着'), captions: [], photos: [],
           transport: b.transport || '', query: arr.url || '', entryId: '',
           knownLat: typeof arr.lat === 'number' ? arr.lat : null,
           knownLng: typeof arr.lng === 'number' ? arr.lng : null,
@@ -2230,24 +2242,24 @@
   var REVIEW_GRADES = ['◎', '〇', '△', '×'];
   var REVIEW_KINDS = {
     hotel: {
-      label: 'ホテログ', emoji: '🏨', unit: '泊',
-      levels: ['絶対また泊まりたい', 'また泊まりたい', 'また泊まってもいい', '機会があれば泊まる', 'もう泊まらない'],
-      grades: [['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ'], ['amenity', 'アメニティ'], ['cleanliness', '清潔さ'], ['breakfast', '朝食']],
-      texts: [['roomType', '部屋タイプ']]
+      label: tr('ホテログ'), emoji: '🏨', unit: tr('泊'),
+      levels: [tr('絶対また泊まりたい'), tr('また泊まりたい'), tr('また泊まってもいい'), tr('機会があれば泊まる'), tr('もう泊まらない')],
+      grades: [['price', tr('価格')], ['location', tr('立地')], ['value', tr('価格見合い')], ['hospitality', tr('ホスピタリティ')], ['amenity', tr('アメニティ')], ['cleanliness', tr('清潔さ')], ['breakfast', tr('朝食')]],
+      texts: [['roomType', tr('部屋タイプ')]]
     },
     activity: {
-      label: 'レクログ', emoji: '🎡', unit: '回',
-      levels: ['2回目もまた行きたい', '初めてなら絶対行くべき', '初めてなら行くべき', '時間があれば行く', '行かなくてもいいかな'],
-      grades: [['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ']],
-      choices: [['crowd', '混雑'], ['reservation', '予約']],
-      texts: [['duration', '所要時間'], ['bestTime', 'おすすめの時間帯']]
+      label: tr('レクログ'), emoji: '🎡', unit: tr('回'),
+      levels: [tr('2回目もまた行きたい'), tr('初めてなら絶対行くべき'), tr('初めてなら行くべき'), tr('時間があれば行く'), tr('行かなくてもいいかな')],
+      grades: [['price', tr('価格')], ['location', tr('立地')], ['value', tr('価格見合い')], ['hospitality', tr('ホスピタリティ')]],
+      choices: [['crowd', tr('混雑')], ['reservation', tr('予約')]],
+      texts: [['duration', tr('所要時間')], ['bestTime', tr('おすすめの時間帯')]]
     },
     food: {
-      label: '飯ログ', emoji: '🍴', unit: '人',
-      levels: ['絶対また行きたい', 'また行きたい', '近くに来たらまた行きたい', '機会があれば行く', 'もう行かなくてもいいかな'],
-      grades: [['taste', '美味しさ'], ['price', '価格'], ['location', '立地'], ['value', '価格見合い'], ['hospitality', 'ホスピタリティ']],
-      choices: [['reservation', '予約']],
-      texts: [['menu', 'おすすめメニュー']]
+      label: tr('飯ログ'), emoji: '🍴', unit: tr('人'),
+      levels: [tr('絶対また行きたい'), tr('また行きたい'), tr('近くに来たらまた行きたい'), tr('機会があれば行く'), tr('もう行かなくてもいいかな')],
+      grades: [['taste', tr('美味しさ')], ['price', tr('価格')], ['location', tr('立地')], ['value', tr('価格見合い')], ['hospitality', tr('ホスピタリティ')]],
+      choices: [['reservation', tr('予約')]],
+      texts: [['menu', tr('おすすめメニュー')]]
     }
   };
   var REVIEW_CHOICE_OPTIONS = { reservation: ['不要', '推奨', '必須'], crowd: ['空いている', '普通', '混んでいる'] };
@@ -2292,17 +2304,17 @@
     var r = travelDuration(depart, arrive, depOffset, arrOffset);
     if (!r) return '';
     var h = Math.floor(r.minutes / 60), m = r.minutes % 60;
-    return (h ? h + '時間' : '') + (m ? m + '分' : '');
+    return (h ? tr('{n}時間', { n: h }) : '') + (m ? tr('{n}分', { n: m }) : '');
   }
 
   // 分を「14時間」「1時間30分」「45分」にする
   function minutesText(min) {
     var h = Math.floor(min / 60), m = min % 60;
-    return (h ? h + '時間' : '') + (m ? m + '分' : '') || '0分';
+    return (h ? tr('{n}時間', { n: h }) : '') + (m ? tr('{n}分', { n: m }) : '') || tr('0分');
   }
 
   function dayShiftPrefix(n) {
-    return n === 1 ? '翌' : n === 2 ? '翌々日' : n > 2 ? n + '日後' : n === -1 ? '前日' : '';
+    return n === 1 ? tr('翌') : n === 2 ? tr('翌々日') : n > 2 ? tr('{n}日後', { n: n }) : n === -1 ? tr('前日') : '';
   }
 
   function findMyRating(ratings, email) {
@@ -2310,7 +2322,7 @@
     return (ratings || []).filter(function (r) { return (r.raterEmail || '').toLowerCase() === email.toLowerCase(); })[0] || null;
   }
 
-  function yen(n) { return Number(n).toLocaleString('ja-JP') + '円'; }
+  function yen(n) { return tr('{n}円', { n: Number(n).toLocaleString('ja-JP') }); }
 
   // 1件分のログ（ホテログなど）の文章。表示しないもの（評価なし・3.0未満）は''。
   function reviewLogText(block, entry, rating) {
@@ -2320,7 +2332,7 @@
     var r = rating.review || {};
     // ★の横に評価の言葉を添える（以前は最後に「→ 〇〇」の行と、冒頭に評価の基準のまとまりを出していて、
     // 見た目がくどかった）
-    var lines = [k.emoji + ' ' + k.label + ' ⭐' + (Math.round(rating.score * 10) / 10).toFixed(1) + '（' + reviewLevelLabel(kind, rating.score) + '）', block.label || '（名前なし）'];
+    var lines = [k.emoji + ' ' + k.label + ' ⭐' + (Math.round(rating.score * 10) / 10).toFixed(1) + '（' + reviewLevelLabel(kind, rating.score) + '）', block.label || tr('（名前なし）')];
     var amount = typeof r.amount === 'number' ? r.amount : entryCostTotal(entry);
     k.grades.forEach(function (g) {
       var key = g[0], name = g[1];
@@ -2328,7 +2340,7 @@
       var extra = '';
       if (key === 'price' && amount > 0) {
         var units = r.units > 1 ? r.units : 0;
-        extra = units ? '1' + k.unit + 'あたり' + yen(Math.round(amount / units)) + '／' + units + k.unit + '合計' + yen(amount) : yen(amount);
+        extra = units ? tr('1{unit}あたり{price}／{n}{unit}合計{total}', { unit: k.unit, price: yen(Math.round(amount / units)), n: units, total: yen(amount) }) : yen(amount);
       }
       if (key === 'location' && r.access) extra = r.access;
       if (!grade && !extra) return;
@@ -2343,17 +2355,17 @@
             ? costCurrencySymbol(it.currency) + it.amount.toFixed(2) + '（' + yen(costItemJpy(it)) + '）'
             : yen(it.amount));
         });
-      if (menu.length) lines.push('メニュー：' + menu.join('／'));
-      if (entry.waitTime) lines.push('待ち時間：' + entry.waitTime);
+      if (menu.length) lines.push(tr('メニュー：') + menu.join('／'));
+      if (entry.waitTime) lines.push(tr('待ち時間：') + entry.waitTime);
     }
-    if (r.other) lines.push('その他：' + r.other);
+    if (r.other) lines.push(tr('その他：') + r.other);
     appendEntryExtras(lines, entry);
     return lines.join('\n');
   }
 
   // 紹介文に、記録の「ひとこと」とURL（地図・お店のHP・その他）を添える（入っているものだけ）
   function appendEntryExtras(lines, entry) {
-    if (entry.comment) lines.push('ひとこと：「' + entry.comment + '」');
+    if (entry.comment) lines.push(tr('ひとこと：「{text}」', { text: entry.comment }));
     if (entry.mapUrl) lines.push('📍 ' + entry.mapUrl);
     if (entry.shopUrl) lines.push('🔗 ' + entry.shopUrl);
     if (entry.otherUrl) lines.push('🔗 ' + entry.otherUrl);
@@ -2367,18 +2379,18 @@
     var route = t.from || t.to ? (t.from || '') + '→' + (t.to || '') : '';
     if (!route && !t.company && !t.depart && !t.arrive && !amount && !block.moveMinutes) return '';
     var emoji = { plane: '✈️', car: '🚗', taxi: '🚕', train: '🚃', shinkansen: '🚅', bus: '🚌', walk: '🚶', bicycle: '🚲' }[block.transport] || '🚃';
-    var lines = [emoji + ' 移動' + (mode ? '｜' + mode : ''), route || block.label || ''];
-    if (t.company) lines.push('会社：' + t.company);
+    var lines = [emoji + ' ' + tr('移動') + (mode ? '｜' + mode : ''), route || block.label || ''];
+    if (t.company) lines.push(tr('会社：') + t.company);
     if (t.depart || t.arrive) {
       var info = travelDuration(t.depart, t.arrive, block._offset, arrOffset);
       var dur = travelDurationText(t.depart, t.arrive, block._offset, arrOffset);
       var zoneNote = typeof block._offset === 'number' && typeof arrOffset === 'number' && arrOffset !== block._offset
-        ? '・時差' + offsetDiffText(arrOffset - block._offset) : '';
-      lines.push((t.depart ? t.depart + '発' : '') + (t.depart && t.arrive ? ' → ' : '') +
-        (t.arrive ? (info ? dayShiftPrefix(info.dayShift) : '') + t.arrive + '着' : '') + (dur ? '（' + dur + zoneNote + '）' : ''));
+        ? tr('・時差{diff}', { diff: offsetDiffText(arrOffset - block._offset) }) : '';
+      lines.push((t.depart ? tr('{time}発', { time: t.depart }) : '') + (t.depart && t.arrive ? ' → ' : '') +
+        (t.arrive ? (info ? dayShiftPrefix(info.dayShift) : '') + tr('{time}着', { time: t.arrive }) : '') + (dur ? '（' + dur + zoneNote + '）' : ''));
     }
-    if (!t.depart && !t.arrive && block.moveMinutes) lines.push('所要時間：約' + minutesText(block.moveMinutes));
-    if (amount > 0) lines.push('料金：' + yen(amount));
+    if (!t.depart && !t.arrive && block.moveMinutes) lines.push(tr('所要時間：約{time}', { time: minutesText(block.moveMinutes) }));
+    if (amount > 0) lines.push(tr('料金：{amount}', { amount: yen(amount) }));
     appendEntryExtras(lines, entry);
     return lines.join('\n');
   }
@@ -2658,7 +2670,7 @@
       var id = s.tripId || '';
       if (seen[id]) return;
       seen[id] = 1;
-      out.push({ tripId: id, tripTitle: s.tripTitle || '（無題の旅）', years: visitedYearsFromDates(s.dates) });
+      out.push({ tripId: id, tripTitle: s.tripTitle || tr('（無題の旅）'), years: visitedYearsFromDates(s.dates) });
     });
     return out;
   }
@@ -2697,7 +2709,7 @@
   // opts.legend：trueなら、最後に評価の目安を注釈として付ける（既定は付けない）
   function buildTripPostText(trip, blocks, days, email, opts) {
     var parts = [];
-    var head = ['【' + (trip.title || '旅の記録') + '】'];
+    var head = ['【' + (trip.title || tr('旅の記録')) + '】'];
     var start = parseDate(trip.startDate), end = parseDate(trip.endDate);
     if (start) {
       var range = start.getFullYear() + ' ' + (start.getMonth() + 1) + '/' + start.getDate() +
@@ -2705,7 +2717,7 @@
       head.push(range + (tripNights(trip) ? '（' + tripNights(trip) + '）' : ''));
     }
     var places = tripPlaceNames(days);
-    head.push((places.length ? places.join('・') + ' ' : '') + (tripNights(trip) || '旅') + 'の総額公開！');
+    head.push(tr('{place}{nights}の総額公開！', { place: places.length ? places.join('・') + ' ' : '', nights: tripNights(trip) || tr('旅') }));
     parts.push(head.join('\n'));
 
     var logs = [], usedKinds = [];
@@ -2728,14 +2740,14 @@
     var cost = tripCostByGroup(blocks);
     var total = cost.transport + cost.lodging + cost.other;
     if (total > 0) {
-      var lines = ['💰 合計金額は' + yen(total)];
-      if (cost.transport) lines.push('移動 ' + yen(cost.transport));
-      if (cost.lodging) lines.push('ホテル ' + yen(cost.lodging));
-      if (cost.other) lines.push('食事と観光 ' + yen(cost.other));
+      var lines = [tr('💰 合計金額は{total}', { total: yen(total) })];
+      if (cost.transport) lines.push(tr('移動 {amount}', { amount: yen(cost.transport) }));
+      if (cost.lodging) lines.push(tr('ホテル {amount}', { amount: yen(cost.lodging) }));
+      if (cost.other) lines.push(tr('食事と観光 {amount}', { amount: yen(cost.other) }));
       parts.push(lines.join('\n'));
     }
     if (opts && opts.legend && usedKinds.length) {
-      parts.push('※⭐の目安\n' + usedKinds.map(function (kind) {
+      parts.push(tr('※⭐の目安') + '\n' + usedKinds.map(function (kind) {
         var k = REVIEW_KINDS[kind];
         return k.label + '　4.5〜' + k.levels[0] + '／4.0〜' + k.levels[1] + '／3.5〜' + k.levels[2] + '／3.0〜' + k.levels[3];
       }).join('\n'));
@@ -2752,12 +2764,12 @@
   //   ・予定の行にGoogleマップなどのURLがあれば、その記録の地図にする
   // 1行に「10時 那覇空港／12時 沖縄そば」のように並んでいても分ける。最初の予定より前に文章があるときは
   // 決まった形ではない（ok=false）として、AIでの整理をすすめる。
-  var MEMO_TIME_RE = /^(\d{1,2})(?::(\d{2})|時(?:(\d{1,2})分|(半))?)\s*[〜~\-ー]?\s*(.*)$/;
-  var MEMO_TIME_SPLIT_RE = /(?:[／\/]|\s+)(?=\d{1,2}(?::\d{2}|時))/g; // 全角の／は正規化で/になる
+  var MEMO_TIME_RE = /^(\d{1,2})(?::(\d{2})|[時點点](?:(\d{1,2})分|(半))?)\s*[〜~\-ー]?\s*(.*)$/;
+  var MEMO_TIME_SPLIT_RE = /(?:[／\/]|\s+)(?=\d{1,2}(?::\d{2}|[時點点]))/g; // 全角の／は正規化で/になる
 
   function memoDayHeader(line, tripDates) {
-    var m = /^(\d{1,2})日目$/.exec(line);
-    if (m) return tripDates[Number(m[1]) - 1] || null;
+    var m = /^(?:(\d{1,2})日目|第(\d{1,2})天)$/.exec(line);
+    if (m) return tripDates[Number(m[1] || m[2]) - 1] || null;
     m = /^(?:(\d{4})[-\/年])?(\d{1,2})[\/月](\d{1,2})日?(?:\s*[(（][^)）]*[)）])?$/.exec(line);
     if (!m) return null;
     var md = String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
@@ -2771,7 +2783,7 @@
   var ROUTE_FROM_TO_RE = new RegExp('^(.+?)\\s*から\\s*(.+?)\\s*へ' + ROUTE_TAIL + '$');
   var ROUTE_ARROW_RE = /^(.+?)\s*(?:→|->|=>|⇒|⇨)\s*(.+)$/;
   var ROUTE_WAVE_RE = /^(.+?)\s*[〜~]\s*(.+)$/;
-  var ROUTE_WORD_RE = /新幹線|在来線|特急|電車|フェリー|船|空港[発着]|バス|飛行機|フライト|タクシー|レンタカー|便/;
+  var ROUTE_WORD_RE = /新幹線|在来線|特急|電車|フェリー|船|空港[発着]|バス|飛行機|フライト|タクシー|レンタカー|便|高鐵|火車|捷運|巴士|公車|飛機|航班|計程車|租車/;
 
   function cleanRoutePlace(text) {
     return String(text || '')
@@ -2813,14 +2825,14 @@
   // 見出しから移動手段を推測する（分からなければ''）。駅だけでは電車にしない
   function guessTransportMode(label) {
     var s = String(label || '').normalize('NFKC');
-    if (/新幹線/.test(s)) return 'shinkansen';
-    if (/電車|在来線|特急|JR|地下鉄|モノレール/.test(s)) return 'train';
-    if (/飛行機|フライト|JAL|ANA|便/.test(s)) return 'plane';
+    if (/新幹線|高鐵/.test(s)) return 'shinkansen';
+    if (/電車|在来線|特急|JR|地下鉄|モノレール|火車|捷運|台鐵/.test(s)) return 'train';
+    if (/飛行機|フライト|JAL|ANA|便|飛機|航班/.test(s)) return 'plane';
     if (/空港.*(?:から|→|->).*空港/.test(s)) return 'plane';
-    if (/バス/.test(s)) return 'bus';
-    if (/タクシー|Uber/i.test(s)) return 'taxi';
-    if (/レンタカー|ドライブ|車/.test(s)) return 'car';
-    if (/徒歩/.test(s)) return 'walk';
+    if (/バス|巴士|公車/.test(s)) return 'bus';
+    if (/タクシー|Uber|計程車/i.test(s)) return 'taxi';
+    if (/レンタカー|ドライブ|車|租車|開車/.test(s)) return 'car';
+    if (/徒歩|步行/.test(s)) return 'walk';
     return ''; // フェリー・船は選べる手段が無いので空
   }
 
@@ -2828,7 +2840,7 @@
   function findArriveTimeInLines(text) {
     var lines = String(text || '').normalize('NFKC').split('\n');
     for (var i = 0; i < lines.length; i++) {
-      var m = /^\s*(?:到着|着)\s*[:：]?\s*(\d{1,2}):(\d{2})/.exec(lines[i]) || /(\d{1,2}):(\d{2})\s*着/.exec(lines[i]);
+      var m = /^\s*(?:到着|着|抵達)\s*[:：]?\s*(\d{1,2}):(\d{2})/.exec(lines[i]) || /(\d{1,2}):(\d{2})\s*着/.exec(lines[i]);
       if (m && Number(m[1]) <= 23 && Number(m[2]) <= 59) return String(Number(m[1])).padStart(2, '0') + ':' + m[2];
     }
     return '';
@@ -2850,10 +2862,10 @@
     var tl = parseTransportLabel(s);
     // 「A から B へ」「A→B」の形は、ホテル・食事の言葉が入っていても移動にする（「ホテルから空港へ」）。
     // ただしチェックイン・宿泊の言葉があるときは宿を優先する
-    if (tl.route === 'strict' && !/チェックイン|チェックアウト|泊/.test(s)) return 'transport';
-    if (/ホテル|旅館|宿|チェックイン|チェックアウト|泊/.test(s)) return 'lodging';
-    if (/ランチ|昼食|夕食|朝食|朝ごはん|昼ごはん|夜ごはん|ご飯|ごはん|ディナー|カフェ|そば|ラーメン|寿司|すし|焼肉|居酒屋|レストラン|食べ|飲み/.test(s)) return 'food';
-    if (/移動|新幹線|飛行機|フライト|便|バス|電車|タクシー|レンタカー|ドライブ/.test(s) || tl.route) return 'transport';
+    if (tl.route === 'strict' && !/チェックイン|チェックアウト|泊|入住|退房/.test(s)) return 'transport';
+    if (/ホテル|旅館|宿|チェックイン|チェックアウト|泊|飯店|住宿|入住|退房/.test(s)) return 'lodging';
+    if (/ランチ|昼食|夕食|朝食|朝ごはん|昼ごはん|夜ごはん|ご飯|ごはん|ディナー|カフェ|そば|ラーメン|寿司|すし|焼肉|居酒屋|レストラン|食べ|飲み|午餐|晚餐|早餐|餐廳|咖啡|拉麵|吃/.test(s)) return 'food';
+    if (/移動|新幹線|飛行機|フライト|便|バス|電車|タクシー|レンタカー|ドライブ|高鐵|飛機|航班|巴士|公車|捷運|火車|計程車|租車/.test(s) || tl.route) return 'transport';
     return 'sightseeing';
   }
 
@@ -2875,7 +2887,7 @@
         var rest = m[5] || '';
         var url = (/https?:\/\/\S+/.exec(rest) || [''])[0];
         var label = rest.replace(url, '').replace(/^[にからで、,：:\s]+/, '').trim();
-        cur = { date: curDate, time: String(h).padStart(2, '0') + ':' + String(min).padStart(2, '0'), label: label || '予定', mapUrl: url, lines: [] };
+        cur = { date: curDate, time: String(h).padStart(2, '0') + ':' + String(min).padStart(2, '0'), label: label || tr('予定'), mapUrl: url, lines: [] };
         blocks.push(cur);
         return;
       }
@@ -2938,14 +2950,14 @@
   function parseImportedBlocksJson(text, trip) {
     var payload = extractOutermostJson(text);
     if (payload === null || payload === undefined) {
-      return { blocks: [], warnings: [], errors: ['JSONを読み取れませんでした。AIの答え全体をそのまま貼り付けてください。'] };
+      return { blocks: [], warnings: [], errors: [tr('JSONを読み取れませんでした。AIの答え全体をそのまま貼り付けてください。')] };
     }
     var rawBlocks = Array.isArray(payload) ? payload
       : (payload && typeof payload === 'object' && Array.isArray(payload.blocks)) ? payload.blocks : null;
-    if (!rawBlocks) return { blocks: [], warnings: [], errors: ['blocksの配列が見つかりませんでした。'] };
-    if (!rawBlocks.length) return { blocks: [], warnings: [], errors: ['予定が1件も見つかりませんでした。'] };
+    if (!rawBlocks) return { blocks: [], warnings: [], errors: [tr('blocksの配列が見つかりませんでした。')] };
+    if (!rawBlocks.length) return { blocks: [], warnings: [], errors: [tr('予定が1件も見つかりませんでした。')] };
     if (rawBlocks.length > IMPORT_MAX_BLOCKS) {
-      return { blocks: [], warnings: [], errors: ['予定が多すぎます（' + IMPORT_MAX_BLOCKS + '件まで）。日を分けて取り込んでください。'] };
+      return { blocks: [], warnings: [], errors: [tr('予定が多すぎます（{max}件まで）。日を分けて取り込んでください。', { max: IMPORT_MAX_BLOCKS })] };
     }
 
     var tripDates = allDatesForTrip(trip, []).filter(function (d) { return d; });
@@ -2955,9 +2967,9 @@
 
     rawBlocks.forEach(function (raw, i) {
       var n = i + 1;
-      if (!raw || typeof raw !== 'object') { errors.push(n + '件目：形が正しくありません（オブジェクトではありません）。'); return; }
+      if (!raw || typeof raw !== 'object') { errors.push(tr('{n}件目：形が正しくありません（オブジェクトではありません）。', { n: n })); return; }
       var label = typeof raw.label === 'string' ? raw.label.trim().slice(0, 200) : '';
-      if (!label) { errors.push(n + '件目：labelがありません。'); return; }
+      if (!label) { errors.push(tr('{n}件目：labelがありません。', { n: n })); return; }
 
       // 書かれた日付は旅行の日程の外でも黙って直さない（2026-09-30）。読めるYYYY-MM-DDならそのまま候補にし、
       // 確認画面で「旅行の日程に合わせる／日付をずらす」を選べるようにする（日程の外の数はoutOfRangeで返す）。
@@ -2968,37 +2980,37 @@
         date = d;
         if (tripDates.length && tripDates.indexOf(d) === -1) outOfRange++;
       } else if (multiDay) {
-        errors.push(n + '件目「' + label + '」：dateが読み取れません（' + (d || '(空)') + '）。YYYY-MM-DD形式で入れてください。');
+        errors.push(tr('{n}件目「{label}」：dateが読み取れません（{value}）。YYYY-MM-DD形式で入れてください。', { n: n, label: label, value: d || tr('(空)') }));
         return;
       }
 
       var category = CATEGORIES.some(function (c) { return c.key === raw.category; }) ? raw.category : '';
       if (!category) {
-        warnings.push(n + '件目「' + label + '」：categoryが不明のため「その他」にしました。');
+        warnings.push(tr('{n}件目「{label}」：categoryが不明のため「その他」にしました。', { n: n, label: label }));
         category = 'other';
       }
 
       var transport = '';
       if (typeof raw.transport === 'string' && raw.transport) {
         if (TRANSPORTS.some(function (t) { return t.key === raw.transport; })) transport = raw.transport;
-        else warnings.push(n + '件目「' + label + '」：transportが不明のため空にしました。');
+        else warnings.push(tr('{n}件目「{label}」：transportが不明のため空にしました。', { n: n, label: label }));
       }
 
       var time = '';
       if (typeof raw.time === 'string' && raw.time && IMPORT_TIME_RE.test(raw.time)) time = raw.time;
-      else if (raw.time) warnings.push(n + '件目「' + label + '」：timeの形式が正しくないため空にしました。');
+      else if (raw.time) warnings.push(tr('{n}件目「{label}」：timeの形式が正しくないため空にしました。', { n: n, label: label }));
 
       // 移動のときだけ、到着時刻（arriveTime）と所要時間（moveMinutes、分）も受け付ける
       var arriveTime = '', moveMinutes = 0;
       if (category === 'transport') {
         if (typeof raw.arriveTime === 'string' && raw.arriveTime) {
           if (IMPORT_TIME_RE.test(raw.arriveTime)) arriveTime = raw.arriveTime;
-          else warnings.push(n + '件目「' + label + '」：arriveTimeの形式が正しくないため空にしました。');
+          else warnings.push(tr('{n}件目「{label}」：arriveTimeの形式が正しくないため空にしました。', { n: n, label: label }));
         }
         if (raw.moveMinutes !== undefined && raw.moveMinutes !== null && raw.moveMinutes !== '') {
           var mm = Number(raw.moveMinutes);
           if (isFinite(mm) && mm > 0 && mm <= 14400) moveMinutes = Math.round(mm);
-          else warnings.push(n + '件目「' + label + '」：moveMinutesが正しくないため空にしました。');
+          else warnings.push(tr('{n}件目「{label}」：moveMinutesが正しくないため空にしました。', { n: n, label: label }));
         }
       }
 
@@ -3014,7 +3026,7 @@
           var ciLabel = typeof ci.label === 'string' ? ci.label.trim().slice(0, 60) : '';
           var amount = ci.amount;
           if (!ciLabel || typeof amount !== 'number' || !isFinite(amount) || amount < 0) {
-            warnings.push(n + '件目「' + label + '」：費用の内訳' + (ci_i + 1) + '件目を読み取れなかったので省きました。');
+            warnings.push(tr('{n}件目「{label}」：費用の内訳{k}件目を読み取れなかったので省きました。', { n: n, label: label, k: ci_i + 1 }));
             return;
           }
           var item = { label: ciLabel, amount: amount };
@@ -3023,7 +3035,7 @@
               item.currency = ci.currency.trim().toUpperCase();
               item.amount = Math.round(amount * 100) / 100;
             } else {
-              warnings.push(n + '件目「' + label + '」：通貨コードが不明のため円として扱いました。');
+              warnings.push(tr('{n}件目「{label}」：通貨コードが不明のため円として扱いました。', { n: n, label: label }));
               item.amount = Math.round(amount);
             }
           } else {
@@ -13097,6 +13109,14 @@
       });
     });
 
+    // 言語の切り替え（i18n.js）。選ぶと保存してページを読み込み直す
+    var langSelect = $('#langSelect');
+    if (langSelect) {
+      langSelect.value = (window.I18N && window.I18N.lang) || 'ja';
+      langSelect.addEventListener('change', function () {
+        if (window.I18N) window.I18N.setLang(langSelect.value);
+      });
+    }
     $('#btnLogout').addEventListener('click', function () {
       if (loadCurrentUser() && loadCurrentUser().token) api('/auth/logout', 'POST', {}).catch(function () {});
       clearCurrentUser();
