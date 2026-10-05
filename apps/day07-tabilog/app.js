@@ -4744,6 +4744,7 @@
   var screenScroll = {};
   var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1, visited: 1 };
   function showScreen(name) {
+    closeMyPageSheets();
     var leaving = $('.screen.active');
     var leavingName = leaving && leaving.dataset.screen;
     if (leaving && leavingName !== name) screenScroll[leavingName] = window.scrollY;
@@ -10447,6 +10448,8 @@
     var badgeEl = $('#planBadgeTop');
     var account = state.account;
     var wasEmpty = !statusEl.firstChild, badgeWasHidden = badgeEl.hidden;
+    var subEl = $('#mpQuotaSub');
+    if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: account.voiceRemainingThisPeriod }) : '';
     if (!account) {
       statusEl.innerHTML = '';
       msgEl.textContent = '';
@@ -10484,14 +10487,15 @@
       : PUBLIC_WEB_BASE;
   }
 
-  // ---------- プロフィール（Airbnbのプロフィール画面を手本にした、アカウントまわりのまとめ。2026-09-28〜） ----------
-  // マイログと同じ /mylog を読んで、旅行数・評価件数・最初の旅行の年を集計するだけ（新しいAPIは無い）。
+  // ---------- マイページ（旧プロフィール。Airbnbのプロフィール画面を手本にした、アカウントまわりのまとめ。2026-09-28〜） ----------
+  // マイログと同じ /mylog を読んで、旅行数・行った都道府県・国を集計するだけ（新しいAPIは無い）。
+  // 未ログインでも開ける（カードに「ログインする」を出す）。
   function openProfile() {
     var user = loadCurrentUser();
-    if (!user) { openLogin('profile'); return; }
-    if (Core.needsFreshLogin(user)) { forceRelogin('profile'); return; }
+    if (user && Core.needsFreshLogin(user)) { forceRelogin('profile'); return; }
     showScreen('profile');
     renderProfileIdentity(user);
+    if (!user) { renderProfileStats(); renderPlanStatus(); return; }
     var cachedP = getMyLogEntry(user);
     if (!cachedP) $('#profileStats').innerHTML = ''; // 前回の結果があるときは消さずにそのまま見せる
     if (cachedP) { applyMyLogData(cachedP.data); renderProfileStats(); }
@@ -10513,42 +10517,78 @@
 
   function renderProfileIdentity(user) {
     var avatar = $('#profileAvatar');
-    if (user.picture) {
+    if (user && user.picture) {
       avatar.innerHTML = '<img src="' + escapeHtml(user.picture) + '" alt="">';
     } else {
       avatar.innerHTML = '';
-      avatar.textContent = avatarInitial(user);
+      avatar.textContent = user ? avatarInitial(user) : '？';
     }
-    $('#profileName').textContent = user.name || user.email || '';
+    $('#profileName').textContent = user ? (user.name || user.email || '') : tr('ログインしていません');
+    $('#btnProfileAccount').textContent = user ? tr('アカウント') : tr('ログインする');
   }
 
-  // 「記録の年数」：参加した旅行のうち、いちばん古い出発日の年から今年まで（初年も1年と数える）
-  function profileYearsSinceEarliestTrip(trips) {
-    var years = (trips || [])
-      .map(function (t) { return t.startDate ? Number(String(t.startDate).slice(0, 4)) : NaN; })
-      .filter(function (y) { return !isNaN(y); });
-    if (!years.length) return 0;
-    var earliest = Math.min.apply(null, years);
-    var current = new Date().getFullYear();
-    return Math.max(1, current - earliest + 1);
+  // マイページの「最近の旅行」（開始日が新しい順）。ログイン中は/mylogの参加した旅行、なければこの端末の履歴
+  function mypageRecentTrip() {
+    var trips = Core.sortTrips(state.myLogTrips || [], 'date_desc');
+    if (!trips.length) trips = Core.sortTrips(loadMyTrips(), 'date_desc');
+    return trips[0] || null;
   }
 
   function renderProfileStats() {
-    var trips = state.myLogTrips || [];
-    var items = state.myLogItems || [];
-    var stats = [
-      { num: trips.length, label: tr('旅行 {n}回', { n: trips.length }) },
-      { num: items.length, label: tr('評価 {n}件', { n: items.length }) },
-      { num: profileYearsSinceEarliestTrip(trips), label: tr('記録の年数 {n}年', { n: profileYearsSinceEarliestTrip(trips) }) }
-    ];
+    var user = loadCurrentUser();
     var statsEl = $('#profileStats');
-    var html = stats.map(function (s) {
-      return '<div class="profile-stat"><span class="profile-stat-label">' + escapeHtml(s.label) + '</span></div>';
-    }).join('');
+    var recent = mypageRecentTrip();
+    $('#mpVideo').hidden = !recent;
+    if (!user) { statsEl.innerHTML = ''; return; }
+    var details = visitedDetails();
+    var visibleCount = function (list) { return (list || []).filter(function (x) { return x.status === 'visible'; }).length; };
+    var html = escapeHtml(tr('旅行 {n}・都道府県 {p}・国 {c}', {
+      n: (state.myLogTrips || []).length, p: visibleCount(details.prefectures), c: visibleCount(details.countries)
+    }));
     if (statsEl.innerHTML === html) return; // 同じなら触らない
     var wasEmpty = !statsEl.firstChild;
     statsEl.innerHTML = html;
     if (wasEmpty) fadeInOnce(statsEl);
+  }
+
+  // マイページのシート（アカウント・AIの残り回数）。画面を切り替えたら閉じる（showScreenから呼ぶ）
+  var MYPAGE_SHEETS = ['#accountSheet', '#quotaSheet'];
+  function openMyPageSheet(sel) { $(sel).hidden = false; document.body.classList.add('sheet-open'); }
+  function closeMyPageSheets() {
+    var closed = false;
+    MYPAGE_SHEETS.forEach(function (sel) {
+      var el = $(sel);
+      if (el && !el.hidden) { el.hidden = true; closed = true; }
+    });
+    if (closed) document.body.classList.remove('sheet-open');
+  }
+  function openTutorial() { showToast(tr('近日追加')); } // 使い方：中身は後日追加するための入り口
+  function openMyPageVideo() {
+    var t = mypageRecentTrip();
+    if (!t) { showToast(tr('まだ旅行がありません')); return; }
+    openTrip(t.tripId || t.id, '', function () { showToast(tr('「地図でふりかえる」から動画を作れます')); });
+  }
+  function wireMyPage() {
+    var needLogin = function (fn) { return function () { if (loadCurrentUser()) fn(); else openLogin('profile'); }; };
+    $('#btnProfileAccount').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
+    $('#mpAccountRow').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
+    $('#mpMylog').addEventListener('click', function () { openTabScreen('mylog'); });
+    $('#mpVisited').addEventListener('click', function () { openTabScreen('visited'); });
+    $('#mpHistory').addEventListener('click', function () {
+      if (!loadMyTrips().length) { showToast(tr('この端末の履歴に旅行がありません')); return; }
+      openTripHistorySheet();
+    });
+    $('#mpVideo').addEventListener('click', openMyPageVideo);
+    $('#mpQuota').addEventListener('click', needLogin(function () {
+      openMyPageSheet('#quotaSheet');
+      fetchAccountStatus(renderPlanStatus).then(renderPlanStatus);
+    }));
+    $('#mpTutorial').addEventListener('click', openTutorial);
+    ['Account', 'Quota'].forEach(function (n) {
+      $('#btnClose' + n + 'Sheet').addEventListener('click', closeMyPageSheets);
+      $('#' + n.toLowerCase() + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
+    });
+    if (I18N_ZH) $('#mpPrivacy').setAttribute('href', 'privacy-zh.html');
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
@@ -13180,6 +13220,7 @@
       if (loadCurrentUser()) openProfile(); else openLogin('profile');
     });
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
+    wireMyPage();
     initSocial();
     $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
     $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });

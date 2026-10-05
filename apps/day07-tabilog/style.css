@@ -1437,33 +1437,55 @@ body.viewer-open { overflow: hidden; }
   padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 24px);
 }
 
-/* ============ プロフィール画面（Airbnbのプロフィールカードを手本にした。2026-09-28〜） ============ */
+/* ============ マイページ（旧プロフィール。Airbnbのプロフィールを手本にした。2026-09-28〜） ============ */
+.mp-band {
+  background: var(--accent-deep); color: #fff;
+  padding: 22px 20px 64px; border-radius: 0 0 50% 50% / 0 0 28px 28px;
+}
+.mp-band-title { margin: 0; font-size: 15px; font-weight: 700; opacity: .92; max-width: 460px; margin-inline: auto; padding: 0 16px; }
+.mp-wrap { padding-top: 0; }
 .profile-card {
-  display: flex; align-items: center; gap: 14px;
-  background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow);
-  padding: 18px 16px; margin: 4px 0 18px;
-  animation: profile-card-in .35s ease both;
+  margin: -44px 4px 0; background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px; box-shadow: 0 8px 24px rgba(4, 60, 45, .18);
+  display: flex; flex-direction: column; gap: 14px;
 }
-@keyframes profile-card-in {
-  from { opacity: 0; transform: scale(.96); }
-  to { opacity: 1; transform: scale(1); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .profile-card { animation: none; }
-}
+.mp-card-top { display: flex; align-items: center; gap: 12px; }
 .profile-avatar {
-  flex: none; width: 60px; height: 60px; border-radius: 50%; overflow: hidden;
+  flex: none; width: 52px; height: 52px; border-radius: 50%; overflow: hidden;
   background: var(--accent-soft-bg); color: var(--accent-deep);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 800;
 }
 .profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .profile-info { flex: 1; min-width: 0; }
-.profile-name { font-size: 16px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-stats { display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
-.profile-stat { display: flex; flex-direction: column; }
-.profile-stat-num { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.profile-stat-label { font-size: 10.5px; color: var(--ink-soft); }
+.profile-name { font-size: 19px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-stats { margin-top: 2px; font-size: 13px; color: var(--ink-muted); min-height: 18px; }
+.profile-stats:empty { min-height: 0; margin: 0; }
+.mp-card-btn {
+  min-height: 46px; border-radius: 23px; background: var(--accent-deep); color: #fff;
+  font-size: 15px; font-weight: 700; width: 100%; display: flex; align-items: center; justify-content: center;
+}
+.mp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 22px; padding: 30px 0 18px; }
+.mp-grid-item {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; min-height: 64px; padding: 2px 2px;
+  color: var(--ink); font-size: 13px; font-weight: 700; text-align: center; line-height: 1.3;
+}
+.mp-grid-item[hidden] { display: none; }
+.mp-grid-item svg { width: 34px; height: 34px; color: var(--accent-deep); flex: none; }
+.mp-grid-item small { margin-top: -4px; font-size: 11px; font-weight: 500; color: var(--ink-muted); }
+.mp-grid-item:active { opacity: .6; }
+.mp-list { display: flex; flex-direction: column; padding: 0 4px; }
+.mp-row {
+  display: flex; align-items: center; gap: 10px; min-height: 56px; width: 100%; text-align: left;
+  border-bottom: 1px solid var(--border); font-size: 16px; font-weight: 700; color: var(--ink);
+  position: relative;
+}
+.mp-row-label { flex: 1; min-width: 0; }
+.mp-row:active { opacity: .6; }
+.mp-chev { flex: none; width: 18px; height: 18px; color: var(--accent-deep); }
+.mp-select {
+  appearance: none; -webkit-appearance: none; background: transparent; border: none; min-height: 44px;
+  font: inherit; font-size: 14px; font-weight: 400; color: var(--ink-muted); text-align: right; padding: 0 2px;
+}
 /* ---------- スクショから予定を作る（docs/adr/0022） ---------- */
 .ss-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .ss-thumb-wrap { position: relative; }
@@ -1548,8 +1570,4 @@ body.viewer-open { overflow: hidden; }
 .visited-skeleton { margin-top: 12px; gap: 12px; }
 .visited-skeleton-totals { height: 96px; box-sizing: border-box; justify-content: center; }
 .visited-skeleton .visited-map { margin-top: 0; }
-/* プロフィール：集計・残り回数は、読み込み前から高さを確保しておく */
-.profile-stats { min-height: 16px; }
 .plan-status { min-height: 46px; }
-/* プロフィールカードの出現アニメーションはタブ切り替えのフェードと二重になるため付けない */
-.profile-card { animation: none; }

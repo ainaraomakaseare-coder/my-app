@@ -837,44 +837,60 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     </div>
   </section>
 
-  <!-- ============ プロフィール（Airbnbのプロフィールを手本にした、アカウントまわりのまとめ画面） ============ -->
+  <!-- ============ マイページ（Airbnbのプロフィールを手本にした、アカウントまわりのまとめ画面） ============ -->
   <section class="screen" data-screen="profile">
-    <div class="wrap">
-      <header class="hd">
-        <h1>プロフィール</h1>
-      </header>
-
+    <div class="mp-band"><h1 class="mp-band-title">マイページ</h1></div>
+    <div class="wrap mp-wrap">
       <div class="profile-card" id="profileCard">
-        <div class="profile-avatar" id="profileAvatar"></div>
-        <div class="profile-info">
-          <div class="profile-name" id="profileName"></div>
-          <div class="profile-stats" id="profileStats"></div>
+        <div class="mp-card-top">
+          <div class="profile-avatar" id="profileAvatar"></div>
+          <div class="profile-info">
+            <div class="profile-name" id="profileName"></div>
+            <div class="profile-stats" id="profileStats"></div>
+          </div>
         </div>
+        <button class="mp-card-btn" id="btnProfileAccount" type="button">アカウント</button>
       </div>
 
-      <div class="section-label">
-        <div class="section-title">今月の残り回数</div>
+      <div class="mp-grid">
+        <button class="mp-grid-item" id="mpMylog" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 3h11a3 3 0 0 1 3 3v15H7a3 3 0 0 1-3-3V4a1 1 0 0 1 1-1zm3 4v2h8V7H8zm0 4v2h6v-2H8z"/></svg>
+          <span>マイログ</span>
+        </button>
+        <button class="mp-grid-item" id="mpVisited" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a7 7 0 0 1 7 7c0 5.2-7 13-7 13S5 14.2 5 9a7 7 0 0 1 7-7zm0 4.5A2.5 2.5 0 1 0 12 11.5 2.5 2.5 0 0 0 12 6.5z"/></svg>
+          <span>行った場所</span>
+        </button>
+        <button class="mp-grid-item" id="mpHistory" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1 5v6l5 3 1-1.7-4-2.3V7h-2z"/></svg>
+          <span>旅行の履歴</span>
+        </button>
+        <button class="mp-grid-item" id="mpVideo" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 2h6v2H9zM8 5h8a1 1 0 0 1 1 1v3h-2V7H9v2H7V6a1 1 0 0 1 1-1zm-3 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm7 2.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+          <span>動画でシェア</span>
+        </button>
+        <button class="mp-grid-item" id="mpQuota" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 16.9 6.1 20.1l1.3-6.6L2.5 8.9l6.6-.8z"/></svg>
+          <span>AIの残り回数</span><small id="mpQuotaSub"></small>
+        </button>
+        <button class="mp-grid-item" id="mpTutorial" type="button">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1 14v2h2v-2h-2zm1-10a4 4 0 0 0-4 4h2a2 2 0 1 1 3 1.7c-1.2.7-2 1.6-2 3.3h2c0-1 .4-1.4 1.2-1.9A4 4 0 0 0 12 6z"/></svg>
+          <span>使い方</span>
+        </button>
       </div>
-      <div class="plan-status" id="planStatus"></div>
-      <p class="hint" id="planStatusMessage"></p>
 
-      <div class="section-label">
-        <div class="section-title">言語 / 語言</div>
+      <div class="mp-list">
+        <div class="mp-row">
+          <label for="langSelect" class="mp-row-label">言語 / 語言</label>
+          <select class="mp-select" id="langSelect" aria-label="言語 / 語言">
+            <option value="ja">日本語</option>
+            <option value="zh-Hant">繁體中文</option>
+          </select>
+          <svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </div>
+        <button class="mp-row" id="mpAccountRow" type="button"><span class="mp-row-label">アカウント</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+        <a class="mp-row" id="mpPrivacy" href="privacy.html" target="_blank" rel="noopener"><span class="mp-row-label">プライバシーポリシー</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></a>
       </div>
-      <div class="field">
-        <select class="field-select" id="langSelect" aria-label="言語 / 語言">
-          <option value="ja">日本語</option>
-          <option value="zh-Hant">繁體中文</option>
-        </select>
-      </div>
-
-      <div class="section-label">
-        <div class="section-title">アカウント</div>
-      </div>
-      <button class="btn text" id="btnLogout" type="button">ログアウト</button>
-      <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
-      <p class="hint">アカウント（名前・おまけの回数・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
-      <p class="hint"><a href="privacy.html" target="_blank" rel="noopener">プライバシーポリシー</a></p>
     </div>
   </section>
 
@@ -896,7 +912,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
   </button>
   <button class="tabbar-btn" type="button" data-tab="profile">
     <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.5-4.2 4.4-6.3 7.5-6.3s6 2.1 7.5 6.3"/></svg></span>
-    <span class="tabbar-label">プロフィール</span>
+    <span class="tabbar-label">マイページ</span>
   </button>
 </nav>
 
@@ -971,6 +987,30 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       </div>
       <button class="btn ghost wide" id="btnRsvOther" type="button" hidden>もう一方の動画を見る</button>
     </div>
+  </div>
+</div>
+
+<!-- ============ マイページ：アカウント／AIの残り回数のシート ============ -->
+<div class="sheet-backdrop" id="accountSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="accountSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="accountSheetTitle">アカウント</div>
+      <button class="sheet-close" id="btnCloseAccountSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <button class="btn text" id="btnLogout" type="button">ログアウト</button>
+    <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
+    <p class="hint">アカウント（名前・おまけの回数・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="quotaSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="quotaSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="quotaSheetTitle">今月の残り回数</div>
+      <button class="sheet-close" id="btnCloseQuotaSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div class="plan-status" id="planStatus"></div>
+    <p class="hint" id="planStatusMessage"></p>
   </div>
 </div>
 
