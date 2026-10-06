@@ -10735,9 +10735,10 @@
         return '<tr><td>' + escapeHtml(r.day) + '</td><td>' + escapeHtml(aiUsageFeatureLabel(r.feature)) + '</td><td>' + escapeHtml(aiUsageProviderLabel(r.provider)) + '</td><td>' + escapeHtml(String(r.calls)) + '</td></tr>';
       }).join('') + '</tbody></table>';
     html += '<div class="aiu-h">' + escapeHtml(tr('残高・請求額は、各サービスの画面で確認してください')) + '</div><p class="aiu-links">' +
-      '<a href="https://platform.openai.com/usage" target="_blank" rel="noopener">OpenAI usage</a><br>' +
+      '<a href="https://platform.openai.com/settings/organization/usage" target="_blank" rel="noopener">OpenAI usage</a>' +
+      '（<a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noopener">billing</a>）<br>' +
       '<a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">Google Cloud billing</a><br>' +
-      '<a href="https://dash.cloudflare.com/" target="_blank" rel="noopener">Cloudflare Workers AI</a></p>';
+      '<a href="https://dash.cloudflare.com/?to=/:account/ai/workers-ai" target="_blank" rel="noopener">Cloudflare Workers AI</a></p>';
     el.innerHTML = html;
   }
   function loadAiUsage() {
