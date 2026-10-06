@@ -1,0 +1,93 @@
+name: 旅の足跡 Android ビルド
+
+# Android版（apps/day07-tabilog-android）のビルド。
+# - PRでAndroidまわりを変えたとき：署名なしの確認用APK（debug）だけ作って、ビルドが通るかを確かめる
+# - 手動実行（Actionsタブ →このワークフロー →「Run workflow」）：Google Playに出すAAB（release）も作る
+#   署名の鍵（ANDROID_KEYSTORE_BASE64 など）がGitHubのシークレットにあれば署名する。手順は apps/day07-tabilog-android/README.md
+# iOSと同じく android/ フォルダはリポジトリに入れず、毎回 `npx cap add android` で作り直す。
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "apps/day07-tabilog-android/**"
+      - ".github/workflows/tabilog-android-build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/day07-tabilog-android
+
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Node.jsを準備（Capacitor 8はNode 22以上）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Javaを準備（Capacitor 8はJDK 21）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Android SDKを準備
+        uses: android-actions/setup-android@v3
+
+      - name: Capacitorの依存パッケージをインストール
+        run: npm install
+
+      - name: Androidプロジェクトを生成（毎回作り直す）
+        run: npx cap add android
+
+      - name: アイコン・スプラッシュ画像を生成する（iOSと同じ resources/icon.png・splash.png を使う）
+        run: |
+          cp -r ../day07-tabilog-ios/resources ./resources
+          npx capacitor-assets generate --android
+
+      - name: 署名の鍵を用意する（シークレットがあるときだけ）
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.keystore"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/upload.keystore" >> "$GITHUB_ENV"
+          else
+            echo "署名の鍵が未登録なので、AABは署名なしで作ります（Google Playには上げられません）"
+          fi
+
+      - name: 権限・URLスキーム・バージョン・署名の設定を足す
+        run: python3 scripts/patch-android.py ${{ github.run_number }}
+
+      - name: Webの中身をAndroidプロジェクトへコピー
+        run: npx cap sync android
+
+      - name: 確認用APK（debug）をビルド
+        working-directory: apps/day07-tabilog-android/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Google Play用AAB（release）をビルド
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: apps/day07-tabilog-android/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: 確認用APKを保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabilog-android-debug-apk
+          path: apps/day07-tabilog-android/android/app/build/outputs/apk/debug/*.apk
+
+      - name: AABを保存
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabilog-android-release-aab
+          path: apps/day07-tabilog-android/android/app/build/outputs/bundle/release/*.aab
