@@ -134,6 +134,55 @@ sqlite.exec(readFileSync(new URL("../migrations/0035_ai_usage_daily.sql", import
   check("ADMIN_EMAILS未設定ならisAdminは付かない", "isAdmin" in n.data, false);
 }
 
+// ---------- 使用量の急増アラート（メール） ----------
+{
+  const sent = [];
+  let resendStatus = 200;
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url) === "https://api.resend.com/emails") { sent.push(JSON.parse(init.body)); return new Response("{}", { status: resendStatus }); }
+    return prevFetch(url, init);
+  };
+  const places = () => call("GET", "/places/details?id=ChIJ1234567890abc", alertEnv);
+  const alertEnv = { ...baseEnv, ADMIN_EMAILS: "boss@example.com,other@example.com", RESEND_API_KEY: "k", ALERT_LIMIT_GOOGLE_PLACES: "5" };
+  // ここまでで今日のgoogle_placesは3回。通知ライン5：4回目は鳴らず、5回目で1回だけ鳴る。
+  await places(); await tick();
+  check("通知ライン未満では送らない", sent.length, 0);
+  await places(); await tick();
+  check("越えた回に1通だけ・宛先は運営者全員", [sent.length, sent[0].to, sent[0].subject.includes("google_places：今日5回")], [1, ["boss@example.com", "other@example.com"], true]);
+  await places(); await places(); await tick();
+  check("越えた後は鳴らない", sent.length, 1);
+  for (let i = 0; i < 9; i++) await places();
+  await tick();
+  check("3倍(15回)で2回目の警告", [sent.length, sent[1].subject.includes("今日15回")], [2, true]);
+  await places(); await tick();
+  check("3倍の後は鳴らない", sent.length, 2);
+
+  // 環境変数が不正なら既定値(1000)に戻る＝鳴らない／ADMIN_EMAILS・RESEND_API_KEY未設定は黙ってスキップ
+  const n0 = sent.length;
+  await call("GET", "/places/details?id=ChIJ1234567890abc", { ...alertEnv, ALERT_LIMIT_GOOGLE_PLACES: "abc" }); await tick();
+  await call("GET", "/places/details?id=ChIJ1234567890abc", { ...alertEnv, ALERT_LIMIT_GOOGLE_PLACES: "1", ADMIN_EMAILS: undefined }); await tick();
+  await call("GET", "/places/details?id=ChIJ1234567890abc", { ...alertEnv, ALERT_LIMIT_GOOGLE_PLACES: "1", RESEND_API_KEY: undefined }); await tick();
+  check("不正値は既定値・未設定は送らない", sent.length, n0);
+
+  // Resendが失敗してもリクエストは200（ai_usage_alert_errorをログに出す）
+  resendStatus = 500;
+  const errs = [];
+  const prevErr = console.error;
+  console.error = (m) => errs.push(String(m));
+  const total = sqlite.prepare("SELECT SUM(calls) AS c FROM ai_usage_daily WHERE provider='google_places'").get().c;
+  const r = await call("GET", "/places/details?id=ChIJ1234567890abc", { ...alertEnv, ALERT_LIMIT_GOOGLE_PLACES: String(total + 1) });
+  await tick();
+  console.error = prevErr;
+  check("Resend失敗でも本体は200", [r.status, r.data.found], [200, true]);
+  check("失敗はai_usage_alert_errorに記録", errs.some((m) => m.includes("ai_usage_alert_error")), true);
+
+  // 管理画面のレスポンスに通知ラインが出る
+  const adm = await call("GET", "/admin/ai-usage", alertEnv, adminTok);
+  check("alertLimits（上書きと既定値）", [adm.data.alertLimits.google_places, adm.data.alertLimits.openai, adm.data.alertLimits.google_routes], [5, 150, 1000]);
+  globalThis.fetch = prevFetch;
+}
+
 globalThis.fetch = realFetch;
 console.log(`ai-usage: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

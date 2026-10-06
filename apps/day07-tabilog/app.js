@@ -10718,6 +10718,10 @@
     var html = '';
     if (d.tableMissing) html += '<p class="hint">' + escapeHtml(tr('記録用のテーブルがまだありません（migrationが未実行です）。')) + '</p>';
     html += '<div class="aiu-h">' + escapeHtml(tr('今月の合計（サービス別）')) + '</div>' + aiUsageCards(d.monthTotals && d.monthTotals.byProvider, aiUsageProviderLabel);
+    if (d.alertLimits) {
+      var al = Object.keys(d.alertLimits).map(function (k) { return tr('{label} {n}回', { label: aiUsageProviderLabel(k), n: d.alertLimits[k] }); }).join('・');
+      html += '<p class="hint">' + escapeHtml(tr('1日の通知ライン：{list}', { list: al })) + '</p>';
+    }
     html += '<div class="aiu-h">' + escapeHtml(tr('今月の合計（機能別）')) + '</div>' + aiUsageCards(d.monthTotals && d.monthTotals.byFeature, aiUsageFeatureLabel);
     html += '<div class="aiu-h">' + escapeHtml(tr('今日のVision')) + '</div><p>' +
       escapeHtml(tr('画像 {n} 枚', { n: v.imagesToday || 0 })) + ' / ' + escapeHtml(tr('アプリ側の1日の上限はありません（同じ接続元から1分{n}回まで）。', { n: v.rateLimitPerMinutePerIp || 0 })) + '</p>';
