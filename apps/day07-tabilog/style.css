@@ -481,18 +481,23 @@ a:hover { text-decoration: underline; }
 /* 白い本体クローンは写真クローンより手前（写真の上に16px重なる白いシートを表現するため） */
 .trip-open-clone-body {
   background: var(--card); box-shadow: var(--card-shadow); z-index: 501;
-  position: relative;
 }
 /* 白本体クローンの中に、カードのタイトル・日程をそのまま重ねておく（本物のタイトルは演出が終わるまで
    opacity:0のままなので、これが無いとシートが遷移中ずっと空白に見える）。本物が見えた瞬間
    （revealEnteringScreen）にクローンごと消えるので、フェードは不要（クローンの文字→本物の文字が
    同じ位置に一瞬で入れ替わるだけ）。 */
 .trip-open-clone-text {
-  position: absolute; left: 0; right: 0; top: 0; padding: 18px 16px 4px; pointer-events: none;
+  position: absolute; left: 0; top: 0; box-sizing: border-box; padding: 18px 16px 4px; pointer-events: none;
 }
 .trip-open-clone-text .trip-title { margin-top: 0; }
+/* 文字は枠と同じ時間・同じイージングで、元の位置・大きさ（transform）から最終位置へ動く */
+.trip-open-clone-text .trip-title, .trip-open-clone-text .trip-dates {
+  transform-origin: 0 0; will-change: transform;
+  transition: transform .45s cubic-bezier(.2, .9, .25, 1), opacity .45s cubic-bezier(.2, .9, .25, 1);
+}
 @media (prefers-reduced-motion: reduce) {
-  .trip-open-backdrop, .trip-open-bg-fade, .trip-open-clone { transition: none; }
+  .trip-open-backdrop, .trip-open-bg-fade, .trip-open-clone,
+  .trip-open-clone-text .trip-title, .trip-open-clone-text .trip-dates { transition: none; }
 }
 
 /* ボタン（参加する・招待・アルバム・精算）が画面幅より広いと、ページ全体が横に少しずれて動いていた。
