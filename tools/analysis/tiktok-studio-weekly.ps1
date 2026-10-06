@@ -16,7 +16,8 @@
 # ============================================================================
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
+# claude へ標準入力で渡す文字コード（BOM を付けない UTF-8）
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = (Resolve-Path (Join-Path $here '..\..')).Path
@@ -47,11 +48,16 @@ function Copy-AndSend($name, $promptFile, $kind) {
   $prompt = Get-Content (Join-Path $here $promptFile) -Raw -Encoding UTF8
   $prompt = [regex]::Replace($prompt, '(?s)^\s*<!--.*?-->\s*', '')
   Write-Log "$name を写しています…"
-  $raw = (& claude -p $prompt --chrome --allowedTools 'mcp__claude-in-chrome__*' --output-format text 2>&1) -join "`n"
+  # ★ 指示文は引数でなく標準入力で渡す。Windows の PowerShell は引数の中の " を壊すので、
+  #   JSON の見本が途中で切れて届いていた（10/7 の試しの実行で発覚）。
+  $raw = ($prompt | & claude -p --chrome --allowedTools 'mcp__claude-in-chrome__*' --output-format text 2>&1) -join "`n"
   $raw | Out-File -FilePath (Join-Path $logDir "${kind}_$stamp.raw.txt") -Encoding UTF8
 
-  # 返事の中から JSON 配列だけを取り出す（前後に一言付いても読めるように）
-  $start = $raw.IndexOf('[')
+  # 返事の中から JSON 配列だけを取り出す（前後に一言付いても読めるように）。
+  # ★ 説明文の中の [ を拾わないよう、[{ から探す。無ければ空の [] を探す（0件として扱う）。
+  $m = [regex]::Match($raw, '\[\s*\{')
+  if (-not $m.Success) { $m = [regex]::Match($raw, '\[\s*\]') }
+  $start = if ($m.Success) { $m.Index } else { -1 }
   $end = $raw.LastIndexOf(']')
   if ($start -lt 0 -or $end -le $start) { Write-Log "$name：JSON が返ってきませんでした。${kind}_$stamp.raw.txt を見てください。"; return $false }
   $json = $raw.Substring($start, $end - $start + 1)
