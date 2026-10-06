@@ -74,13 +74,15 @@ const bootstrap = function () {
     async rpc(name, args) {
       let result = null;
       const code = 'demo-' + Math.random().toString(36).slice(2, 10);
+      data.inviteCode ||= 'demo-community';
       if (name === 'binder_get_invite_status') result = data.invitesEnabled;
-      else if (name === 'binder_set_invites_enabled') { data.invitesEnabled = args.p_enabled; result = { enabled: args.p_enabled, invite_code: args.p_enabled ? code : null }; }
-      else if (name === 'binder_remove_member') { const member = data.binder_members.find(row => row.user_id === args.p_user); if (member) member.status = 'removed'; result = code; }
-      else if (name === 'binder_rotate_invite') result = code;
+      else if (name === 'binder_get_current_invite') result = { enabled: data.invitesEnabled, invite_code: data.invitesEnabled ? data.inviteCode : null };
+      else if (name === 'binder_set_invites_enabled') { data.invitesEnabled = args.p_enabled; data.inviteCode = code; result = { enabled: args.p_enabled, invite_code: args.p_enabled ? code : null }; }
+      else if (name === 'binder_remove_member') { const member = data.binder_members.find(row => row.user_id === args.p_user); if (member) member.status = 'removed'; data.inviteCode = code; result = code; }
+      else if (name === 'binder_rotate_invite') { data.inviteCode = code; result = code; }
       else if (name === 'binder_set_display_name') data.binder_members[0].display_name = args.p_name;
       else if (name === 'binder_join_room') result = room;
-      else if (name === 'binder_create_room') result = { room_id: room, invite_code: code };
+      else if (name === 'binder_create_room') { data.inviteCode = code; result = { room_id: room, invite_code: code }; }
       persist();
       return { data: result, error: null };
     },

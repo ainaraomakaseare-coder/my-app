@@ -935,7 +935,8 @@
     <p>退出させた参加者は、このコミュニティを閲覧・編集できなくなります。招待コードも同時に変更されます。</p>
     <p id="inviteStatus" role="status">参加受付の状態を確認しています…</p>
     <div class="gateActions"><button type="button" class="secondaryBtn" id="pauseInviteBtn" disabled>参加受付を確認中</button><button type="button" class="ghostBtn" id="rotateInviteBtn" disabled>招待コードを新しくする</button></div>
-    <div class="inviteResult" id="inviteResult" hidden><label>新しい招待コード<input id="inviteCodeValue" readonly /></label><button type="button" class="ghostBtn" id="copyInviteBtn">コピー</button><p>新しく招待する人へ送ってください。既に参加している人はそのまま使えます。このコードは画面を閉じる前に控えてください。</p></div>
+    <div class="inviteResult" id="inviteResult" hidden><label>現在の招待コード<input id="inviteCodeValue" readonly /></label><button type="button" class="ghostBtn" id="copyInviteBtn">コピー</button><p>参加したい人にこのコードを送ってください。再発行せず、管理画面からいつでも確認・コピーできます。</p></div>
+    <p id="inviteDisplayStatus" role="status"></p>
     <p id="memberAdminStatus" role="status"></p>
     <ul class="memberList" id="memberList"></ul>
     <button type="button" class="ghostBtn" id="closeMemberAdminBtn">閉じる</button>
@@ -2147,9 +2148,10 @@
   var invitesEnabled = null;
 
   function showInviteCode(code) {
-    if (state.memberRole !== "admin" || !state.roomId || invitesEnabled !== true) return;
+    if (state.memberRole !== "admin" || !state.roomId || invitesEnabled !== true || !code) return;
     document.getElementById("inviteCodeValue").value = code;
     document.getElementById("inviteResult").hidden = false;
+    document.getElementById("inviteDisplayStatus").textContent = "";
   }
 
   async function openMemberAdmin() {
@@ -2176,6 +2178,10 @@
 
   async function loadInviteStatus() {
     var epoch = accessEpoch;
+    var room = state.roomId;
+    document.getElementById("inviteResult").hidden = true;
+    document.getElementById("inviteCodeValue").value = "";
+    document.getElementById("inviteDisplayStatus").textContent = "";
     invitesEnabled = null;
     renderInviteStatus();
     document.getElementById("inviteStatus").textContent = "参加受付の状態を確認しています…";
@@ -2186,6 +2192,21 @@
       invitesEnabled = result.data;
     } catch (e) { if (epoch !== accessEpoch) return; invitesEnabled = null; }
     renderInviteStatus();
+    if (invitesEnabled !== true || state.memberRole !== "admin") return;
+    document.getElementById("inviteDisplayStatus").textContent = "現在の招待コードを読み込んでいます…";
+    try {
+      var current = await supabaseClient.rpc("binder_get_current_invite", { p_room: room });
+      if (epoch !== accessEpoch || room !== state.roomId) return;
+      if (current.error || !current.data || typeof current.data.enabled !== "boolean") throw new Error("invite_display_unavailable");
+      invitesEnabled = current.data.enabled;
+      renderInviteStatus();
+      document.getElementById("inviteDisplayStatus").textContent = "";
+      if (invitesEnabled && current.data.invite_code) showInviteCode(current.data.invite_code);
+      else if (invitesEnabled) document.getElementById("inviteDisplayStatus").textContent = "このコードは以前の保存方式のため再表示できません。コードの控えは引き続き使えます。控えがない場合は「招待コードを新しくする」を選んでください。";
+    } catch (e) {
+      if (epoch !== accessEpoch || room !== state.roomId) return;
+      document.getElementById("inviteDisplayStatus").textContent = "現在の招待コードを取得できませんでした。通信を確認して管理画面を開き直してください。";
+    }
   }
 
   async function loadMembers() {
@@ -2302,7 +2323,10 @@
       showInviteCode(result.data);
       document.getElementById("memberAdminStatus").textContent = "新しい招待コードを発行しました。古いコードは使えません。";
     } catch (e) {
-      if (epoch === accessEpoch) document.getElementById("memberAdminStatus").textContent = "招待コードの更新を確認できませんでした。もう一度発行してください。";
+      if (epoch === accessEpoch) {
+        await loadInviteStatus();
+        if (epoch === accessEpoch) document.getElementById("memberAdminStatus").textContent = "更新結果を確認できませんでした。表示されている現在の招待コードを確認してください。";
+      }
     } finally { setMemberAdminBusy(false); }
   });
   document.getElementById("copyInviteBtn").addEventListener("click", async function () {
