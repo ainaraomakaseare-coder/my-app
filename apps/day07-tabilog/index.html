@@ -110,7 +110,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap">
       <header class="hd">
         <div class="hd-title-row"><h1>旅の足跡</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="homeInfo">？</button></div>
-        <p class="info-pop" id="homeInfo" hidden>旅行はサーバー（データベース）に保存されます。共有リンクを知っている人は誰でも見たり書き足したりできます。</p>
+        <p class="info-pop" id="homeInfo" hidden>共有リンクを知っている人は、見たり書き足したりできます</p>
       </header>
 
       <div class="account-row" id="accountRow" hidden>
@@ -128,13 +128,13 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       </div>
 
       <div class="trip-filters" id="tripFilters" hidden>
-        <select id="filterCompanion"><option value="">誰と一緒か：すべて</option></select>
-        <select id="filterYear"><option value="">年：すべて</option></select>
-        <select id="filterTripType"><option value="">旅行区分：すべて</option></select>
+        <select id="filterCompanion"><option value="">誰と</option></select>
+        <select id="filterYear"><option value="">年</option></select>
+        <select id="filterTripType"><option value="">区分</option></select>
         <select id="sortTripOrder">
-          <option value="">並び順：最近開いた順</option>
-          <option value="date_desc">並び順：日程が新しい順</option>
-          <option value="date_asc">並び順：日程が古い順</option>
+          <option value="">最近順</option>
+          <option value="date_desc">新しい順</option>
+          <option value="date_asc">古い順</option>
         </select>
       </div>
 
@@ -250,7 +250,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
         <div class="hd-title-row"><h1 id="voiceEntryTitle">音声・メモでまとめて記録する</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="voiceEntryLead">？</button></div>
-        <p class="info-pop" id="voiceEntryLead" hidden>その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます</p>
+        <p class="info-pop" id="voiceEntryLead" hidden>話したりメモを貼ると、予定の候補を作ります（保存前に直せます）</p>
         <!-- 自分だけの道（別行動）の中から始めたときだけ出る（app.jsのopenVoiceEntryForm） -->
         <p class="hint" id="voiceTargetNote" hidden></p>
       </header>
@@ -321,7 +321,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
         <div class="hd-title-row"><h1>スクショから予定を作る</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="ssLeadPop">？</button></div>
-        <p class="info-pop" id="ssLeadPop" hidden>航空券・新幹線のきっぷ・ホテルの予約画面・乗換案内・チケット・レシートなどのスクリーンショットを選ぶと、予定の候補を作ります。保存する前に、内容を確認して直せます。</p>
+        <p class="info-pop" id="ssLeadPop" hidden>スクショを選ぶと、予定の候補を作ります（保存前に直せます）</p>
         <!-- 自分だけの道（別行動）の中から始めたときだけ出る（app.jsのopenScreenshotImport） -->
         <p class="hint" id="ssTargetNote" hidden></p>
       </header>
@@ -458,7 +458,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
         <div class="hd-title-row"><h1>アルバム</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="albumInfo">？</button></div>
-        <p class="info-pop" id="albumInfo" hidden>この旅行の写真・動画をまとめて見られます（日付が新しい順）</p>
+        <p class="info-pop" id="albumInfo" hidden>この旅行の写真・動画を新しい順に見られます</p>
       </header>
       <div class="album-grid" id="albumGrid"></div>
       <p class="empty" id="albumEmpty" hidden>まだ写真・動画がありません。</p>
@@ -471,7 +471,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
         <div class="hd-title-row"><h1>精算</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="settleInfo">？</button></div>
-        <p class="info-pop" id="settleInfo" hidden>記録の費用明細で「立て替え」を設定した分だけを集計します。設定していない費用（個人の分だけの記録）は含みません。</p>
+        <p class="info-pop" id="settleInfo" hidden>「立て替え」を設定した費用だけを集計します</p>
       </header>
 
       <div class="settle-unit-row">
@@ -781,6 +781,21 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     </div>
   </section>
 
+  <!-- ============ 年表（参加した旅行を年ごとに並べる。マイログと同じ /mylog の旅行データ） ============ -->
+  <section class="screen" data-screen="timeline">
+    <div class="wrap">
+      <header class="hd">
+        <div class="hd-row">
+          <div>
+            <div class="hd-title-row"><h1>年表</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="timelineInfo">？</button></div>
+            <p class="info-pop" id="timelineInfo" hidden>旅行を年ごとに並べます。場所は「場所を編集」で直せます</p>
+          </div>
+        </div>
+      </header>
+      <div class="timeline-years" id="mylogTripList"></div>
+    </div>
+  </section>
+
   <!-- ============ マイログ（ログイン中の自分の評価を、旅行をまたいで振り返る） ============ -->
   <section class="screen" data-screen="mylog">
     <div class="wrap">
@@ -788,29 +803,12 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <div class="hd-row">
           <div>
             <div class="hd-title-row"><h1>マイログ</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="mylogInfo">？</button></div>
-            <p class="info-pop" id="mylogInfo" hidden>これまで評価したものを振り返る（自分だけに見える記録です）</p>
+            <p class="info-pop" id="mylogInfo" hidden>評価したお店・宿・スポットが旅をまたいでたまります</p>
           </div>
         </div>
       </header>
 
-      <div class="section-label">
-        <div class="section-title">参加した旅行</div><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="mylogTripsInfo">？</button>
-        <p class="info-pop" id="mylogTripsInfo" hidden>場所は記録の地図から自動で集計します。違う場所は「外す」でいつでも外せます（「戻す」で元に戻せます）。</p>
-      </div>
-      <div class="trip-filters" id="mylogTripFilters" hidden>
-        <select id="mylogFilterCompanion"><option value="">誰と一緒か：すべて</option></select>
-        <select id="mylogFilterYear"><option value="">年：すべて</option></select>
-        <select id="mylogSortTripOrder">
-          <option value="">並び順：参加した順</option>
-          <option value="date_desc">並び順：日程が新しい順</option>
-          <option value="date_asc">並び順：日程が古い順</option>
-        </select>
-      </div>
-      <div class="trip-list" id="mylogTripList"></div>
 
-      <div class="section-label">
-        <div class="section-title">評価したもの</div>
-      </div>
       <div class="mylog-tabs" id="mylogTabs"></div>
 
       <div class="mylog-sort" id="mylogSort">
@@ -827,7 +825,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap">
       <header class="hd">
         <div class="hd-title-row"><h1>行った場所</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="visitedInfo">？</button></div>
-        <p class="info-pop" id="visitedInfo" hidden>参加した旅行の記録から自動で集計します（マイログと同じ集計です）。</p>
+        <p class="info-pop" id="visitedInfo" hidden>旅の記録から、行った県と国を自動で数えます</p>
       </header>
 
       <div class="visited-tabs" id="visitedTabs">
@@ -856,26 +854,12 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
             <div class="profile-stats" id="profileStats"></div>
           </div>
         </div>
-        <div class="mp-log-chips" id="profileLogChips" hidden></div>
-        <button class="mp-card-btn" id="btnProfileAccount" type="button">アカウント</button>
       </div>
 
       <div class="mp-grid">
-        <button class="mp-grid-item" id="mpMylog" type="button">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 3h11a3 3 0 0 1 3 3v15H7a3 3 0 0 1-3-3V4a1 1 0 0 1 1-1zm3 4v2h8V7H8zm0 4v2h6v-2H8z"/></svg>
-          <span>マイログ</span>
-        </button>
-        <button class="mp-grid-item" id="mpVisited" type="button">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a7 7 0 0 1 7 7c0 5.2-7 13-7 13S5 14.2 5 9a7 7 0 0 1 7-7zm0 4.5A2.5 2.5 0 1 0 12 11.5 2.5 2.5 0 0 0 12 6.5z"/></svg>
-          <span>行った場所</span>
-        </button>
         <button class="mp-grid-item" id="mpHistory" type="button">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm-1 5v6l5 3 1-1.7-4-2.3V7h-2z"/></svg>
           <span>旅行の履歴</span>
-        </button>
-        <button class="mp-grid-item" id="mpVideo" type="button">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 5.5h10a2.5 2.5 0 0 1 2.5 2.5v1.8l3.9-2.5A.9.9 0 0 1 21.8 8v8a.9.9 0 0 1-1.4.7l-3.9-2.5V16a2.5 2.5 0 0 1-2.5 2.5H4A2.5 2.5 0 0 1 1.5 16V8A2.5 2.5 0 0 1 4 5.5z"/></svg>
-          <span>動画でシェア</span>
         </button>
         <button class="mp-grid-item" id="mpQuota" type="button">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 16.9 6.1 20.1l1.3-6.6L2.5 8.9l6.6-.8z"/></svg>
@@ -887,25 +871,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         </button>
       </div>
 
-      <section class="mp-best" id="mpBest" hidden>
-        <div class="mp-best-head">
-          <div class="hd-title-row"><h2 class="mp-best-title">旅のベストピクチャー</h2><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="mpBestLead">？</button></div>
-          <button class="btn ghost small" id="btnBestPick" type="button">選ぶ</button>
-          <p class="info-pop" id="mpBestLead" hidden>旅の写真から、お気に入りを最大6枚まで選べます。マイページはあなただけに表示されます（ほかの人には見えません）。</p>
-        </div>
-        <div class="mp-best-grid" id="mpBestGrid"></div>
-      </section>
-
       <div class="mp-list">
-        <div class="mp-row">
-          <label for="langSelect" class="mp-row-label">言語 / 語言</label>
-          <select class="mp-select" id="langSelect" aria-label="言語 / 語言">
-            <option value="ja">日本語</option>
-            <option value="zh-Hant">繁體中文</option>
-            <option value="en">English</option>
-          </select>
-          <svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
-        </div>
+        <button class="mp-row" id="mpLangRow" type="button"><span class="mp-row-label">言語 / 語言</span><span class="mp-row-value" id="mpLangValue"></span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
         <button class="mp-row" id="mpAccountRow" type="button"><span class="mp-row-label">アカウント</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
         <button class="mp-row" id="mpAiUsage" type="button" hidden><span class="mp-row-label">AIの使用状況（運営者のみ）</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
         <a class="mp-row" id="mpPrivacy" href="privacy.html" target="_blank" rel="noopener"><span class="mp-row-label">プライバシーポリシー</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></a>
@@ -915,19 +882,23 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
 </div>
 
-<!-- ============ ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィールの4画面だけで表示。app.jsのupdateTabbar） ============ -->
+<!-- ============ ボトムタブバー（旅の足跡・年表・旅先一覧・マイログ・マイページの5画面だけで表示。app.jsのupdateTabbar） ============ -->
 <nav class="tabbar" id="tabbar" aria-label="メイン">
-  <button class="tabbar-btn" type="button" data-tab="mylog">
-    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.2c2.2-1 5-1 7 .3v13.3c-2-1.3-4.8-1.3-7-.3z"/><path d="M20 5.2c-2.2-1-5-1-7 .3v13.3c2-1.3 4.8-1.3 7-.3z"/></svg></span>
-    <span class="tabbar-label">マイログ</span>
+  <button class="tabbar-btn" type="button" data-tab="home">
+    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="8.3" cy="6.8" rx="2.1" ry="2.9" transform="rotate(-16 8.3 6.8)"/><ellipse cx="9.1" cy="14.6" rx="2.4" ry="3.3" transform="rotate(-6 9.1 14.6)"/><ellipse cx="15.7" cy="10.2" rx="2.1" ry="2.9" transform="rotate(16 15.7 10.2)"/><ellipse cx="14.9" cy="18" rx="2.4" ry="3.3" transform="rotate(6 14.9 18)"/></svg></span>
+    <span class="tabbar-label">旅の足跡</span>
+  </button>
+  <button class="tabbar-btn" type="button" data-tab="timeline">
+    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5v17"/><circle cx="7" cy="7" r="2" fill="currentColor"/><circle cx="7" cy="17" r="2" fill="currentColor"/><path d="M12 7h8M12 17h8"/></svg></span>
+    <span class="tabbar-label">年表</span>
   </button>
   <button class="tabbar-btn" type="button" data-tab="visited">
     <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.8 3.3 2.8 13.7 0 17M12 3.5c-2.8 3.3-2.8 13.7 0 17"/></svg></span>
     <span class="tabbar-label">行った場所</span>
   </button>
-  <button class="tabbar-btn" type="button" data-tab="home">
-    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="8.3" cy="6.8" rx="2.1" ry="2.9" transform="rotate(-16 8.3 6.8)"/><ellipse cx="9.1" cy="14.6" rx="2.4" ry="3.3" transform="rotate(-6 9.1 14.6)"/><ellipse cx="15.7" cy="10.2" rx="2.1" ry="2.9" transform="rotate(16 15.7 10.2)"/><ellipse cx="14.9" cy="18" rx="2.4" ry="3.3" transform="rotate(6 14.9 18)"/></svg></span>
-    <span class="tabbar-label">旅の足跡</span>
+  <button class="tabbar-btn" type="button" data-tab="mylog">
+    <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.2c2.2-1 5-1 7 .3v13.3c-2-1.3-4.8-1.3-7-.3z"/><path d="M20 5.2c-2.2-1-5-1-7 .3v13.3c2-1.3 4.8-1.3 7-.3z"/></svg></span>
+    <span class="tabbar-label">マイログ</span>
   </button>
   <button class="tabbar-btn" type="button" data-tab="profile">
     <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.5-4.2 4.4-6.3 7.5-6.3s6 2.1 7.5 6.3"/></svg></span>
@@ -975,7 +946,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="sheet-head">
       <div class="sheet-title" id="rsvSheetTitle">動画でシェア<button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="rsvInfo">？</button></div>
       <button class="sheet-close" id="btnCloseRsv" type="button" aria-label="閉じる">×</button>
-      <p class="info-pop" id="rsvInfo" hidden>この旅行の足跡を、縦向きの動画にします（日帰り〜3日の旅行は約30秒、4日以上は1日10秒ずつ、最長2分20秒）。旅行名・日付・地名と地図の動きだけが入り、費用や一緒に行った人の名前は出ません。</p>
+      <p class="info-pop" id="rsvInfo" hidden>この旅の足跡を縦向きの動画にします（費用や同行者名は出ません）</p>
     </div>
     <div class="rsv-panel" id="rsvOptions">
       <p class="hint" id="rsvLength"></p>
@@ -1016,9 +987,30 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <div class="sheet-title" id="accountSheetTitle">アカウント</div>
       <button class="sheet-close" id="btnCloseAccountSheet" type="button" aria-label="閉じる">×</button>
     </div>
-    <button class="btn text" id="btnLogout" type="button">ログアウト</button>
-    <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
-    <p class="hint">アカウント（名前・おまけの回数・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
+    <p class="account-email" id="accountEmail" hidden></p>
+    <div class="mp-list account-list">
+      <button class="mp-row" id="btnLogout" type="button"><span class="mp-row-label">ログアウト</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+      <button class="mp-row mp-row-danger" id="btnDeleteAccount" type="button"><span class="mp-row-label">アカウントを削除する</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="deleteAccountSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="deleteAccountTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="deleteAccountTitle">アカウントを削除しますか？</div>
+      <button class="sheet-close" id="btnCloseDeleteAccountSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <ul class="confirm-list">
+      <li>名前・おまけの回数など、アカウントの情報が消えます</li>
+      <li>この端末の旅行一覧も消えます</li>
+      <li>一緒に行った人と共有している旅行の記録は残ります</li>
+      <li>同じメールで登録し直しても、音声入力の利用回数は戻りません</li>
+    </ul>
+    <div class="sheet-actions">
+      <button class="btn wide" id="btnDeleteAccountCancel" type="button">キャンセル</button>
+      <button class="btn danger wide" id="btnDeleteAccountConfirm" type="button">削除する</button>
+    </div>
   </div>
 </div>
 
@@ -1036,15 +1028,17 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
   </div>
 </div>
 
-<div class="sheet-backdrop" id="bestSheet" hidden>
-  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="bestSheetTitle">
+<div class="sheet-backdrop" id="langSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="langSheetTitle">
     <div class="sheet-head">
-      <div class="sheet-title" id="bestSheetTitle">ベストピクチャーを選ぶ</div>
-      <button class="sheet-close" id="btnCloseBestSheet" type="button" aria-label="閉じる">×</button>
+      <div class="sheet-title" id="langSheetTitle">言語 / 語言</div>
+      <button class="sheet-close" id="btnCloseLangSheet" type="button" aria-label="閉じる">×</button>
     </div>
-    <p class="hint" id="bestPickCount"></p>
-    <div class="best-pick-grid" id="bestPickGrid"></div>
-    <button class="btn primary wide" id="btnBestSave" type="button">保存</button>
+    <div class="lang-options" id="langOptions">
+      <button type="button" class="lang-option" data-lang="ja"><span>日本語</span><svg class="lang-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+      <button type="button" class="lang-option" data-lang="zh-Hant"><span>繁體中文</span><svg class="lang-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+      <button type="button" class="lang-option" data-lang="en"><span>English</span><svg class="lang-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+    </div>
   </div>
 </div>
 
@@ -1092,7 +1086,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="sheet-head">
       <div class="sheet-title" id="branchSheetTitle">ここから別行動<button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="branchSheetNote">？</button></div>
       <button class="sheet-close" id="btnCloseBranchSheet" type="button" aria-label="閉じる">×</button>
-      <p class="info-pop" id="branchSheetNote" hidden>みんなと別行動した時間帯を入れます。この時間帯のあいだ、あなたの道の表示では「みんなの予定」のかわりに、あなたが書いた予定が並びます。みんなにも見えますが、直せるのはあなただけです。</p>
+      <p class="info-pop" id="branchSheetNote" hidden>みんなと別行動した時間帯を入れます。この間はあなたの予定が並びます</p>
     </div>
     <div class="field-row">
       <div class="field">
