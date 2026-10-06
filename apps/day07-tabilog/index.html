@@ -123,6 +123,10 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
       <p class="notice" id="apiNotice" hidden></p>
 
+      <div class="home-actions">
+        <button class="btn primary wide" id="btnNewTrip">＋ 新しい旅を記録する</button>
+      </div>
+
       <div class="trip-filters" id="tripFilters" hidden>
         <select id="filterCompanion"><option value="">誰と一緒か：すべて</option></select>
         <select id="filterYear"><option value="">年：すべて</option></select>
@@ -137,10 +141,6 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <div id="tripList" class="trip-list"></div>
 
       <button class="btn text" id="btnClearTripHistory" hidden>旅行の履歴を整理</button>
-
-      <div class="home-actions">
-        <button class="btn primary" id="btnNewTrip">＋ 新しい旅を記録する</button>
-      </div>
 
       <div class="field open-link" hidden>
         <label for="openTripId">招待リンクのIDを直接開く</label>

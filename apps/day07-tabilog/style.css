@@ -314,7 +314,8 @@ a:hover { text-decoration: underline; }
 .trip-filters select:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .trip-list { display: flex; flex-direction: column; gap: 12px; margin: 0 0 24px; }
 #btnClearTripHistory { display: block; margin: 0 0 16px; }
-.home-actions { margin-bottom: 8px; }
+.home-actions { margin: 4px 0 16px; }
+.home-actions .btn { justify-content: center; text-align: center; }
 .forget-trip-btn { margin-top: 12px; }
 .trip-card {
   background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow);
