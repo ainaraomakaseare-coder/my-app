@@ -817,7 +817,7 @@
   .quizAnswerName.longAnswer { font-size: 19px; }
   .quizAnswerPhoto { display: block; width: 100px; height: 100px; object-fit: cover; border-radius: 16px; margin: 0 0 12px; }
   .quizYourAnswer, .quizAnswerNote { margin: 12px 0 0; font-size: 14px; line-height: 1.6; }
-  #quizFeedback { scroll-margin-top: calc(16px + env(safe-area-inset-top, 0px)); }
+  #quizFeedback, #nextQuizTopBtn { scroll-margin-top: calc(16px + env(safe-area-inset-top, 0px)); }
   .quizNext { width: 100%; margin-top: 8px; }
   .quizResult { padding: 18px 8px; text-align: center; }
   .quizResult strong { display: block; margin: 5px 0; color: var(--rose); font-size: 38px; line-height: 1.2; }
@@ -2967,6 +2967,7 @@
     }
     container.innerHTML = '<p class="rankingNote">出題範囲：' + esc(session.scopeLabel) + '</p><div class="quizSessionTop"><span>問題 ' + (session.index + 1) + ' / ' + session.questions.length + '</span><strong>今回の正解 ' + session.correct + '</strong></div>' +
       '<p class="quizPrompt">' + prompt + '</p>' + clueHtml +
+      '<button type="button" class="primaryBtn quizNext" id="nextQuizTopBtn" hidden>次の問題へ</button>' +
       '<div class="quizFeedback" id="quizFeedback" aria-live="polite" hidden></div>' +
       '<button type="button" class="primaryBtn quizNext" id="nextQuizBtn" hidden>次の問題へ</button>' +
       '<button type="button" class="ghostBtn quizNext" id="quizReviewChoicesBtn" hidden>選択肢を振り返る</button>' +
@@ -2977,7 +2978,13 @@
     Array.prototype.forEach.call(container.querySelectorAll("[data-choice]"), function (button) {
       button.addEventListener("click", function () { answerQuiz(Number(button.getAttribute("data-choice"))); });
     });
-    document.getElementById("nextQuizBtn").addEventListener("click", function () { session.index += 1; session.locked = false; renderQuizQuestion(); container.scrollIntoView({ behavior: "smooth", block: "start" }); });
+    function nextQuestion() {
+      if (state.quizSession !== session || !session.locked) return;
+      session.index += 1; session.locked = false; renderQuizQuestion();
+      container.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    document.getElementById("nextQuizTopBtn").addEventListener("click", nextQuestion);
+    document.getElementById("nextQuizBtn").addEventListener("click", nextQuestion);
     document.getElementById("quizReviewChoicesBtn").addEventListener("click", function (event) {
       var options = container.querySelector(".quizOptions");
       options.hidden = !options.hidden;
@@ -3044,9 +3051,12 @@
     feedback.hidden = false;
     document.querySelector("#quizSession .quizOptions").hidden = true;
     document.getElementById("quizReviewChoicesBtn").hidden = false;
-    document.getElementById("nextQuizBtn").hidden = false;
-    document.getElementById("nextQuizBtn").textContent = session.index + 1 < session.questions.length ? "次の問題へ" : "結果を見る";
-    feedback.scrollIntoView({ behavior: "smooth", block: "start" });
+    ["nextQuizTopBtn", "nextQuizBtn"].forEach(function (id) {
+      var nextButton = document.getElementById(id);
+      nextButton.hidden = false;
+      nextButton.textContent = session.index + 1 < session.questions.length ? "次の問題へ" : "結果を見る";
+    });
+    document.getElementById("nextQuizTopBtn").scrollIntoView({ behavior: "smooth", block: "start" });
     renderKnownSummary();
     if (!session.practice) { writeLocalQuizScore(); saveQuizScore(); }
   }
