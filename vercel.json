@@ -1,9 +1,18 @@
 {
   "outputDirectory": "public",
   "functions": {
-    "api/*.js": { "maxDuration": 60 }
+    "api/*.js": {
+      "maxDuration": 60
+    }
   },
   "crons": [
-    { "path": "/api/insights?export=drive", "schedule": "0 23 * * 0" }
+    {
+      "path": "/api/insights?export=drive",
+      "schedule": "0 23 * * 0"
+    },
+    {
+      "path": "/api/insights?cleanup=media",
+      "schedule": "0 19 * * *"
+    }
   ]
 }

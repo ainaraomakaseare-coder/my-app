@@ -9,6 +9,7 @@
  *   GET  /api/insights?export=drive          … 毎週月曜の朝。分析用の数字を Google ドライブへ（cronの鍵）
  *   POST /api/insights?export=tiktok-studio  … 本人のPCのClaudeが写した TikTok Studio の数字をドライブへ（cronの鍵）
  *   POST /api/insights?export=a8 / note / x   … 同じくPCが写した A8.net・note・X（ブラウザの表示数）（cronの鍵）
+ *   GET  /api/insights?cleanup=media        … 毎日。投稿が終わった動画を置き場から消す（lib/media-cleanup.js、cronの鍵）
  *   GET  /api/insights?drive=status          … 連携設定に出す「ドライブの書き出し」の状態
  *
  * ★ 1つのSNSが失敗しても、他を巻き込まない。
@@ -35,6 +36,7 @@ const benchmarkIntake = require('../scripts/benchmark-intake');
 const appstore = require('../lib/appstore');
 const drive = require('../lib/drive');
 const analysisExport = require('../lib/analysis-export');
+const mediaCleanup = require('../lib/media-cleanup');
 
 // Vercel の制限時間より手前で自分から切り上げる。
 const TIME_BUDGET_MS = 45_000;
@@ -51,6 +53,11 @@ module.exports = async function handler(req, res) {
     if (req.method === 'POST' && String(q.benchmark || '') === 'intake') {
       if (!auth.guard(req, res)) return;
       return res.status(200).json(await intakeBenchmark(req, q));
+    }
+    // ★ 投稿が終わった動画を置き場から消す（毎日、Vercel の cron）。dry=1 なら消さずに一覧だけ。
+    if (String(q.cleanup || '') === 'media' && req.method === 'GET') {
+      if (!guardCron(req, res)) return;
+      return res.status(200).json(await mediaCleanup.run(db, { dry: String(q.dry || '') === '1' }));
     }
     // ★ 分析用の書き出し。cron（Vercel は GET で叩く）と本人のPCから来るので、cronの鍵で守る。
     if (String(q.export || '') === 'drive' && req.method === 'GET') {
