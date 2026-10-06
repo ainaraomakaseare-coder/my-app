@@ -6,6 +6,9 @@
  *   GET  /api/insights?group=…    … 画面が読む。数字と、気づいたこと
  *   GET  /api/insights?probe=…    … 接続テスト。SNSが何を返したかをそのまま見せる
  *   GET  /api/insights?apps=1     … App Store のダウンロード数（lib/appstore.js）
+ *   GET  /api/insights?export=drive          … 毎週月曜の朝。分析用の数字を Google ドライブへ（cronの鍵）
+ *   POST /api/insights?export=tiktok-studio  … 本人のPCのClaudeが写した TikTok Studio の数字をドライブへ（cronの鍵）
+ *   GET  /api/insights?drive=status          … 連携設定に出す「ドライブの書き出し」の状態
  *
  * ★ 1つのSNSが失敗しても、他を巻き込まない。
  *   lib/insights.js が throw せずに ok:false を返すので、ここは素直に
@@ -29,6 +32,8 @@ const benchmarkYoutube = require('../lib/benchmark-youtube');
 const benchmarkStore = require('../lib/benchmark-store');
 const benchmarkIntake = require('../scripts/benchmark-intake');
 const appstore = require('../lib/appstore');
+const drive = require('../lib/drive');
+const analysisExport = require('../lib/analysis-export');
 
 // Vercel の制限時間より手前で自分から切り上げる。
 const TIME_BUDGET_MS = 45_000;
@@ -46,12 +51,23 @@ module.exports = async function handler(req, res) {
       if (!auth.guard(req, res)) return;
       return res.status(200).json(await intakeBenchmark(req, q));
     }
+    // ★ 分析用の書き出し。cron（Vercel は GET で叩く）と本人のPCから来るので、cronの鍵で守る。
+    if (String(q.export || '') === 'drive' && req.method === 'GET') {
+      if (!guardCron(req, res)) return;
+      return res.status(200).json(await analysisExport.exportOwn({ db, read }));
+    }
+    if (String(q.export || '') === 'tiktok-studio' && req.method === 'POST') {
+      if (!guardCron(req, res)) return;
+      const body = typeof req.body === 'string' ? JSON.parse(req.body || 'null') : req.body;
+      return res.status(200).json(await analysisExport.exportStudio({ db, rows: body }));
+    }
     if (req.method === 'POST') return await collect(req, res);
     if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
 
     if (!auth.guard(req, res)) return;
     if (q.probe) return res.status(200).json(await probe(String(q.probe)));
     if (q.apps) return res.status(200).json(await appstore.downloads());
+    if (q.drive === 'status') return res.status(200).json(await drive.status(db));
     if (q.benchmark === 'youtube') return res.status(200).json(await collectYoutubeBenchmark(q));
     if (q.benchmark === 'status') return res.status(200).json(await benchmarkStatus(q));
     return res.status(200).json(await read(q.group ? String(q.group) : null));

@@ -13,3 +13,6 @@ node_modules/
 tools/video/node_modules/
 tools/video/models/
 tools/video/work/
+
+# 分析の道具（tools/analysis）：写した数字のログは入れない（未公開の数字）
+tools/analysis/logs/
