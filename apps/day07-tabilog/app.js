@@ -11484,8 +11484,9 @@
   }
   function renderVisitedPanelBody(panel, details) {
     visitedRenderedSig = visitedRenderSignature({ places: state.myLogPlaces });
-    if (state.visitedTab === 'overseas') renderVisitedOverseas(panel, (details.countries || []).filter(function (x) { return x.status === 'visible'; }), (details.countries || []).filter(function (x) { return x.status === 'excluded'; }));
-    else renderVisitedDomestic(panel, (details.prefectures || []).filter(function (x) { return x.status === 'visible'; }), (details.prefectures || []).filter(function (x) { return x.status === 'excluded'; }));
+    // すべての旅行で外した場所は、地図にも一覧にも出さない（戻すときは年表の旅行から。2026-10-06）
+    if (state.visitedTab === 'overseas') renderVisitedOverseas(panel, (details.countries || []).filter(function (x) { return x.status === 'visible'; }), []);
+    else renderVisitedDomestic(panel, (details.prefectures || []).filter(function (x) { return x.status === 'visible'; }), []);
   }
 
   // 達成率のドーナツ（インラインSVG。stroke-dasharrayで円弧を作るだけなので、画像もライブラリも不要）
