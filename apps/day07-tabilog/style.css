@@ -1072,10 +1072,17 @@ body.sheet-open { overflow: hidden; }
   display: flex; align-items: flex-end; justify-content: center;
 }
 .sheet-backdrop[hidden] { display: none; }
+/* iPhoneアプリ（WKWebView）では、専用レイヤーに乗せたタブバーがz-indexに関係なくシートの上に描かれ、
+   シートの下が切れて見えた。シートを出している間はタブバーを隠し、シート側も専用レイヤーに乗せる（2026-10-06） */
+.sheet-backdrop { transform: translateZ(0); }
+body.sheet-open .tabbar, body:has(.sheet-backdrop:not([hidden])) .tabbar { visibility: hidden; }
 /* 下から出すシート。.sheet・.sheet-head・.sheet-titleは記録フォームなど既存の画面でも使っている
    クラス名なので、必ず.sheet-backdropの中だけに効かせる（上書きすると記録フォームの表示が崩れる） */
 .sheet-backdrop .sheet {
   width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; margin-top: 0;
+  /* iPhoneのSafari・アプリでは80vhが見えている高さより大きくなり、下が切れていた。見えている高さ（dvh）に収め、
+     はみ出す分はシートの中でスクロールさせる（2026-10-06） */
+  max-height: min(80vh, calc(100dvh - 24px - env(safe-area-inset-top))); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   background: var(--card); border-radius: 20px 20px 0 0; padding: 14px 16px calc(12px + env(safe-area-inset-bottom));
   box-shadow: 0 -4px 20px rgba(20, 20, 30, 0.12);
 }
