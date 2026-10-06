@@ -313,3 +313,8 @@ ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS otp_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0, window_start TEXT NOT NULL);
 -- v35（2026-10-06）：運営者向けのAI使用状況の記録。詳しい説明は migrations/0035_ai_usage_daily.sql
 CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, feature TEXT NOT NULL, provider TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, feature, provider));
+
+-- v36：accountsに avatar_photo_id（プロフィール写真）・best_photo_ids（ベストピクチャー。JSON配列）を追加する一度きりの文。
+-- 本番環境へ反映するまでは migrations/0036_account_photos.sql を1回だけ実行すること。
+-- ALTER TABLE accounts ADD COLUMN avatar_photo_id TEXT NOT NULL DEFAULT '';
+-- ALTER TABLE accounts ADD COLUMN best_photo_ids TEXT NOT NULL DEFAULT '[]';

@@ -847,7 +847,10 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap mp-wrap">
       <div class="profile-card" id="profileCard">
         <div class="mp-card-top">
-          <div class="profile-avatar" id="profileAvatar"></div>
+          <div class="profile-avatar-wrap">
+            <button class="profile-avatar" id="profileAvatar" type="button" aria-label="プロフィール写真を変える"></button>
+            <span class="profile-avatar-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 4l-1.5 2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2.5L15 4H9zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg></span>
+          </div>
           <div class="profile-info">
             <div class="profile-name" id="profileName"></div>
             <div class="profile-stats" id="profileStats"></div>
@@ -856,6 +859,15 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <div class="mp-log-chips" id="profileLogChips" hidden></div>
         <button class="mp-card-btn" id="btnProfileAccount" type="button">アカウント</button>
       </div>
+
+      <section class="mp-best" id="mpBest" hidden>
+        <div class="mp-best-head">
+          <div class="hd-title-row"><h2 class="mp-best-title">旅のベストピクチャー</h2><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="mpBestLead">？</button></div>
+          <button class="btn ghost small" id="btnBestPick" type="button">選ぶ</button>
+          <p class="info-pop" id="mpBestLead" hidden>旅の写真から、お気に入りを最大6枚まで選べます。マイページはあなただけに表示されます（ほかの人には見えません）。</p>
+        </div>
+        <div class="mp-best-grid" id="mpBestGrid"></div>
+      </section>
 
       <div class="mp-grid">
         <button class="mp-grid-item" id="mpMylog" type="button">
@@ -1007,6 +1019,32 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <button class="btn text" id="btnLogout" type="button">ログアウト</button>
     <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
     <p class="hint">アカウント（名前・おまけの回数・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="avatarSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="avatarSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="avatarSheetTitle">プロフィール写真</div>
+      <button class="sheet-close" id="btnCloseAvatarSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn primary wide" id="btnAvatarChoose" type="button">写真を選ぶ</button>
+      <button class="btn danger wide" id="btnAvatarRemove" type="button" hidden>写真を消す</button>
+    </div>
+    <input type="file" id="avatarFile" accept="image/*" hidden>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="bestSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="bestSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="bestSheetTitle">ベストピクチャーを選ぶ</div>
+      <button class="sheet-close" id="btnCloseBestSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint" id="bestPickCount"></p>
+    <div class="best-pick-grid" id="bestPickGrid"></div>
+    <button class="btn primary wide" id="btnBestSave" type="button">保存</button>
   </div>
 </div>
 

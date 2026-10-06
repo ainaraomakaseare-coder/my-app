@@ -10543,7 +10543,22 @@
       if (handleLoginRequired(e, 'profile')) return;
       // 集計が読み込めなくても、名前・アバター・アカウント操作は使えるようにしておく
     });
-    fetchAccountStatus(renderPlanStatus).then(renderPlanStatus);
+    fetchAccountStatus(onProfileAccount).then(onProfileAccount);
+  }
+
+  // マイページに出すアカウントの写真（プロフィール写真・ベストピクチャー）。/accounts/ensureの結果から取る。
+  // emailを持っておいて、別のアカウントでログインし直したときに前の人の写真を出さない
+  var mypagePhotos = { email: '', avatar: '', best: [] };
+  function myPhotos(user) {
+    return user && mypagePhotos.email === user.email ? mypagePhotos : { email: '', avatar: '', best: [] };
+  }
+  function onProfileAccount(account) {
+    renderPlanStatus();
+    var user = loadCurrentUser();
+    if (!account || !user) return;
+    mypagePhotos = { email: user.email, avatar: account.avatarPhotoId || '', best: account.bestPhotoIds || [] };
+    renderProfileIdentity(user);
+    renderBestPictures();
   }
 
   function avatarInitial(user) {
@@ -10553,7 +10568,10 @@
 
   function renderProfileIdentity(user) {
     var avatar = $('#profileAvatar');
-    if (user && user.picture) {
+    var mine = myPhotos(user);
+    if (user && mine.avatar) {
+      avatar.innerHTML = '<img src="' + escapeHtml(photoUrl(mine.avatar)) + '" alt="">';
+    } else if (user && user.picture) {
       avatar.innerHTML = '<img src="' + escapeHtml(user.picture) + '" alt="">';
     } else {
       avatar.innerHTML = '';
@@ -10561,6 +10579,177 @@
     }
     $('#profileName').textContent = user ? (user.name || user.email || '') : tr('ログインしていません');
     $('#btnProfileAccount').textContent = user ? tr('アカウント') : tr('ログインする');
+    renderBestPictures();
+  }
+
+  // ---------- プロフィール写真（マイページのアバター） ----------
+  // 真ん中を正方形に切り抜いて512pxに縮める（記録の写真と同じPOST /photosでアップロードし、PUT /accounts/me/avatarで紐付ける）
+  function fileToSquareBlob(file, size, quality) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('image_failed')); };
+      img.onload = function () {
+        var side = Math.min(img.width, img.height);
+        var out = Math.max(1, Math.min(size, side));
+        var canvas = document.createElement('canvas');
+        canvas.width = out; canvas.height = out;
+        canvas.getContext('2d').drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, out, out);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('toBlob failed')); }, 'image/jpeg', quality);
+      };
+      img.src = url;
+    });
+  }
+
+  function setMyAvatar(photoId) {
+    return api('/accounts/me/avatar', 'PUT', { photoId: photoId }).then(function (res) {
+      var user = loadCurrentUser();
+      if (user) mypagePhotos = { email: user.email, avatar: res.avatarPhotoId || '', best: myPhotos(user).best };
+      if (state.account) state.account.avatarPhotoId = res.avatarPhotoId || '';
+      closeMyPageSheets();
+      renderProfileIdentity(user);
+    });
+  }
+
+  function onAvatarFile(file) {
+    if (!file) return;
+    showToast(tr('アップロードしています…'));
+    fileToSquareBlob(file, 512, 0.85).then(uploadPhotoBlob).then(function (up) {
+      return setMyAvatar(up.id);
+    }).then(function () {
+      showToast(tr('プロフィール写真を変えました'));
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
+      showToast(tr('写真を保存できませんでした'));
+    });
+  }
+
+  // ---------- 旅のベストピクチャー（マイページ。本人だけに見える） ----------
+  var bestPick = { photos: [], selected: [], loaded: false };
+
+  function renderBestPictures() {
+    var user = loadCurrentUser();
+    var sec = $('#mpBest');
+    if (!sec) return;
+    sec.hidden = !user;
+    if (!user) return;
+    var ids = myPhotos(user).best;
+    var grid = $('#mpBestGrid');
+    if (!ids.length) {
+      grid.innerHTML = '<button type="button" class="mp-best-empty" id="mpBestEmpty">' + escapeHtml(tr('お気に入りの写真を選ぶ')) + '</button>';
+      return;
+    }
+    grid.innerHTML = ids.map(function (id, i) {
+      return '<button type="button" class="mp-best-tile" data-i="' + i + '" data-id="' + escapeHtml(id) + '"><img src="' + escapeHtml(photoUrl(id)) + '" alt="" loading="lazy"></button>';
+    }).join('');
+  }
+
+  // 消えた写真（記録や旅行を消したあと）は、読み込めないので見えなくする。全部消えたら空の表示に戻す
+  function onBestImageError(e) {
+    var img = e.target;
+    if (!img || img.tagName !== 'IMG') return;
+    var tile = img.closest('.mp-best-tile');
+    if (!tile) return;
+    tile.remove();
+    var rest = $all('#mpBestGrid .mp-best-tile');
+    if (!rest.length) {
+      mypagePhotos.best = [];
+      renderBestPictures();
+    }
+  }
+
+  function openBestViewer(tile) {
+    var tiles = $all('#mpBestGrid .mp-best-tile');
+    var items = tiles.map(function (t) { return { type: 'photo', id: t.dataset.id }; });
+    openMediaViewer(items, Math.max(0, tiles.indexOf(tile)));
+  }
+
+  function renderBestPicker() {
+    var grid = $('#bestPickGrid');
+    $('#bestPickCount').textContent = tr('{n} / 6 枚を選択中', { n: bestPick.selected.length });
+    if (!bestPick.loaded) { grid.innerHTML = '<p class="best-pick-note">' + escapeHtml(tr('読み込んでいます…')) + '</p>'; return; }
+    if (!bestPick.photos.length) {
+      grid.innerHTML = '<p class="best-pick-note">' + escapeHtml(tr('選べる写真がありません。旅行の記録に写真を足すと、ここに出ます')) + '</p>';
+      return;
+    }
+    grid.innerHTML = bestPick.photos.map(function (id) {
+      var at = bestPick.selected.indexOf(id);
+      return '<button type="button" class="best-pick-tile' + (at >= 0 ? ' selected' : '') + '" data-id="' + escapeHtml(id) + '" aria-pressed="' + (at >= 0) + '">' +
+        '<img src="' + escapeHtml(photoUrl(id)) + '" alt="" loading="lazy">' + (at >= 0 ? '<span class="best-pick-no">' + (at + 1) + '</span>' : '') + '</button>';
+    }).join('');
+  }
+
+  function openBestPicker() {
+    var user = loadCurrentUser();
+    if (!user) { openLogin('profile'); return; }
+    bestPick = { photos: [], selected: myPhotos(user).best.slice(), loaded: false };
+    openMyPageSheet('#bestSheet');
+    renderBestPicker();
+    api('/accounts/me/photos').then(function (res) {
+      var list = (res && res.photoIds) || [];
+      // いま選んでいる写真が一覧（新しい300枚）に無くても、選択を外せるように先頭に足す
+      bestPick.selected.forEach(function (id) { if (list.indexOf(id) < 0) list.unshift(id); });
+      bestPick.photos = list;
+      bestPick.loaded = true;
+      renderBestPicker();
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
+      bestPick.loaded = true;
+      $('#bestPickGrid').innerHTML = '<p class="best-pick-note">' + escapeHtml(tr('写真を読み込めませんでした')) + '</p>';
+    });
+  }
+
+  function saveBestPictures() {
+    var btn = $('#btnBestSave');
+    btn.disabled = true;
+    api('/accounts/me/best-photos', 'PUT', { photoIds: bestPick.selected }).then(function (res) {
+      var user = loadCurrentUser();
+      if (user) mypagePhotos = { email: user.email, avatar: myPhotos(user).avatar, best: res.bestPhotoIds || [] };
+      closeMyPageSheets();
+      renderBestPictures();
+      showToast(tr('ベストピクチャーを保存しました'));
+    }).catch(function (e) {
+      if (handleLoginRequired(e, 'profile')) return;
+      showToast(tr('保存できませんでした'));
+    }).then(function () { btn.disabled = false; });
+  }
+
+  function wireMyPagePhotos() {
+    var needLogin = function (fn) { return function () { if (loadCurrentUser()) fn(); else openLogin('profile'); }; };
+    $('#profileAvatar').addEventListener('click', needLogin(function () {
+      $('#btnAvatarRemove').hidden = !myPhotos(loadCurrentUser()).avatar;
+      openMyPageSheet('#avatarSheet');
+    }));
+    $('#btnAvatarChoose').addEventListener('click', function () { $('#avatarFile').click(); });
+    $('#avatarFile').addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      e.target.value = '';
+      onAvatarFile(f);
+    });
+    $('#btnAvatarRemove').addEventListener('click', function () {
+      setMyAvatar('').then(function () { showToast(tr('プロフィール写真を消しました')); }).catch(function (e) {
+        if (handleLoginRequired(e, 'profile')) return;
+        showToast(tr('保存できませんでした'));
+      });
+    });
+    $('#btnBestPick').addEventListener('click', openBestPicker);
+    $('#mpBestGrid').addEventListener('click', function (e) {
+      if (e.target.closest('#mpBestEmpty')) { openBestPicker(); return; }
+      var tile = e.target.closest('.mp-best-tile');
+      if (tile) openBestViewer(tile);
+    });
+    $('#mpBestGrid').addEventListener('error', onBestImageError, true);
+    $('#bestPickGrid').addEventListener('click', function (e) {
+      var tile = e.target.closest('.best-pick-tile');
+      if (!tile) return;
+      var id = tile.dataset.id, at = bestPick.selected.indexOf(id);
+      if (at >= 0) bestPick.selected.splice(at, 1);
+      else if (bestPick.selected.length >= 6) { showToast(tr('6枚までです')); return; }
+      else bestPick.selected.push(id);
+      renderBestPicker();
+    });
+    $('#btnBestSave').addEventListener('click', saveBestPictures);
   }
 
   // マイページの「最近の旅行」（開始日が新しい順）。ログイン中は/mylogの参加した旅行、なければこの端末の履歴
@@ -10603,7 +10792,7 @@
   }
 
   // マイページのシート（アカウント・AIの残り回数）。画面を切り替えたら閉じる（showScreenから呼ぶ）
-  var MYPAGE_SHEETS = ['#accountSheet', '#quotaSheet', '#aiUsageSheet'];
+  var MYPAGE_SHEETS = ['#accountSheet', '#quotaSheet', '#aiUsageSheet', '#avatarSheet', '#bestSheet'];
   function openMyPageSheet(sel) { $(sel).hidden = false; document.body.classList.add('sheet-open'); }
   function closeMyPageSheets() {
     var closed = false;
@@ -10867,6 +11056,11 @@
     });
     $('#btnCloseAiUsageSheet').addEventListener('click', closeMyPageSheets);
     $('#aiUsageSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
+    ['Avatar', 'Best'].forEach(function (n) {
+      $('#btnClose' + n + 'Sheet').addEventListener('click', closeMyPageSheets);
+      $('#' + n.toLowerCase() + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
+    });
+    wireMyPagePhotos();
     ['Account', 'Quota'].forEach(function (n) {
       $('#btnClose' + n + 'Sheet').addEventListener('click', closeMyPageSheets);
       $('#' + n.toLowerCase() + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });

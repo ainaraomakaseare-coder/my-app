@@ -433,6 +433,11 @@ async function deleteUnreferencedMedia(env, keys) {
       )
         .bind(...chunk.flatMap((k) => ["%" + k + "%", "%" + k + "%"]), ...chunk)
         .all();
+      // プロフィール写真として使われているキーも残す（列が無い間・失敗したときは無視する）
+      try {
+        const { results: av } = await env.DB.prepare(`SELECT avatar_photo_id AS p FROM accounts WHERE avatar_photo_id IN (${marks})`).bind(...chunk).all();
+        for (const a of av || []) if (a.p) stillUsed.add(a.p);
+      } catch { /* migration 0036が未適用 */ }
       for (const r of results || []) {
         parseJsonArray(r.p).forEach((k) => stillUsed.add(k));
         parseJsonArray(r.v).forEach((k) => stillUsed.add(k));
@@ -3528,7 +3533,17 @@ function rowToAccount(row) {
     memoRemainingThisPeriod: Math.max(0, MEMO_MONTHLY_LIMIT[plan] - (row.memo_uses_this_period || 0)),
     // おまけの回数（新規登録の特典3回分。購入ではない無料の回数）。購入で増える経路は無い。
     ticketCredits: row.ticket_credits || 0,
+    // プロフィール写真（R2のキー。無ければ空）とベストピクチャー（マイページ。migration 0036）
+    avatarPhotoId: row.avatar_photo_id || "",
+    bestPhotoIds: parseBestPhotoIds(row.best_photo_ids),
   };
+}
+
+const BEST_PHOTO_MAX = 6;
+const ACCOUNT_PHOTOS_MAX = 300;
+
+function parseBestPhotoIds(raw) {
+  return parseJsonArray(raw).filter((k) => typeof k === "string" && MEDIA_KEY_RE.test(k)).slice(0, BEST_PHOTO_MAX);
 }
 
 function rowToMember(row) {
@@ -3656,6 +3671,13 @@ async function deleteAccount(request, env, headers) {
     console.error(JSON.stringify({ event: "apple_revoke_failed", status: 0, error: String((e && e.message) || "").slice(0, 200) }));
   }
   await env.DB.prepare("DELETE FROM auth_identities WHERE email = ?").bind(email).run();
+  // プロフィール写真（この人だけの写真）はR2からも消す。ベストピクチャーは旅行の記録の写真を指しているだけなので
+  // （旅行は家族と共有しているため消さない）、列を空にするだけ。
+  try {
+    const avatarId = account.avatar_photo_id || "";
+    await env.DB.prepare("UPDATE accounts SET avatar_photo_id='', best_photo_ids='[]' WHERE email = ?").bind(email).run();
+    if (avatarId) await deleteUnreferencedMedia(env, [avatarId]);
+  } catch { /* migration 0036が未適用 */ }
   // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
   // 「削除→再登録」を繰り返すだけで無料プランの月間上限(月10回)が毎回復活してしまう
   // （新規登録特典の抜け道と同じ構図）。月が変わったときのリセットはresetPeriodIfNeeded()に
@@ -3667,6 +3689,88 @@ async function deleteAccount(request, env, headers) {
     .bind(nowIso(), email)
     .run();
   return json({ ok: true }, 200, headers);
+}
+
+/* ---------- マイページの写真（プロフィール写真・旅のベストピクチャー。migration 0036） ----------
+ * どれもログイン済み（セッション必須）の本人だけが読み書きできる。
+ */
+async function readJsonBody(request) {
+  try { return await request.json(); } catch { return null; }
+}
+
+// プロフィール写真を設定・外す。photoIdが空文字なら外す。写真自体は先にPOST /photosでアップロード済みのもの。
+async function setAvatar(request, env, headers) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const data = await readJsonBody(request);
+  if (!data || typeof data.photoId !== "string") return json({ error: "invalid_input" }, 400, headers);
+  const photoId = data.photoId;
+  if (photoId && (!MEDIA_KEY_RE.test(photoId) || !Object.keys(IMAGE_EXT).some((t) => photoId.endsWith(IMAGE_EXT[t])))) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const old = who.account.avatar_photo_id || "";
+  try {
+    await env.DB.prepare("UPDATE accounts SET avatar_photo_id = ?, updated_at = ? WHERE email = ?").bind(photoId, nowIso(), who.account.email).run();
+  } catch (e) {
+    console.error(JSON.stringify({ event: "avatar_update_failed", message: String((e && e.message) || e).slice(0, 200) }));
+    return json({ error: "not_ready" }, 503, headers);
+  }
+  if (old && old !== photoId) await deleteUnreferencedMedia(env, [old]);
+  return json({ avatarPhotoId: photoId }, 200, headers);
+}
+
+// 自分が参加した旅行の記録の写真（新しい順・最大300枚）。ベストピクチャーを選ぶ画面用。
+// 自分だけの道（別行動）の中の写真は、自分の別行動のものだけ。
+async function getMyPhotos(request, env, headers) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const { results } = await env.DB.prepare(
+    `SELECT e.photo_ids AS photo_ids FROM entries e
+     JOIN blocks b ON b.id = e.block_id
+     JOIN trip_members m ON m.trip_id = b.trip_id
+     WHERE m.account_id = ? AND e.photo_ids != '[]'
+       AND (b.branch_id = '' OR b.branch_id IN (SELECT id FROM branches WHERE account_id = ?))
+     ORDER BY e.created_at DESC LIMIT 300`
+  ).bind(who.account.account_id, who.account.account_id).all();
+  const seen = new Set();
+  const photoIds = [];
+  for (const r of results || []) {
+    for (const k of parseJsonArray(r.photo_ids)) {
+      if (typeof k === "string" && MEDIA_KEY_RE.test(k) && !seen.has(k) && !k.endsWith(".mp4")) {
+        seen.add(k);
+        photoIds.push(k);
+      }
+    }
+  }
+  return json({ photoIds: photoIds.slice(0, ACCOUNT_PHOTOS_MAX) }, 200, headers);
+}
+
+// ベストピクチャーを保存する（最大6枚。自分が参加した旅行の記録の写真だけ）。
+async function setBestPhotos(request, env, headers) {
+  const who = await requireAccount(request, env);
+  if (who.error) return json({ error: who.error }, who.status, headers);
+  const data = await readJsonBody(request);
+  const ids = data && data.photoIds;
+  if (!Array.isArray(ids) || ids.length > BEST_PHOTO_MAX || !ids.every((k) => typeof k === "string" && MEDIA_KEY_RE.test(k))) {
+    return json({ error: "invalid_input" }, 400, headers);
+  }
+  const unique = [...new Set(ids)];
+  for (const k of unique) {
+    const hit = await env.DB.prepare(
+      `SELECT e.id FROM entries e JOIN blocks b ON b.id = e.block_id
+       JOIN trip_members m ON m.trip_id = b.trip_id
+       WHERE m.account_id = ? AND e.photo_ids LIKE ?
+         AND (b.branch_id = '' OR b.branch_id IN (SELECT id FROM branches WHERE account_id = ?)) LIMIT 1`
+    ).bind(who.account.account_id, "%" + k + "%", who.account.account_id).first();
+    if (!hit) return json({ error: "photo_not_accessible" }, 403, headers);
+  }
+  try {
+    await env.DB.prepare("UPDATE accounts SET best_photo_ids = ?, updated_at = ? WHERE email = ?").bind(JSON.stringify(unique), nowIso(), who.account.email).run();
+  } catch (e) {
+    console.error(JSON.stringify({ event: "best_photos_update_failed", message: String((e && e.message) || e).slice(0, 200) }));
+    return json({ error: "not_ready" }, 503, headers);
+  }
+  return json({ bestPhotoIds: unique }, 200, headers);
 }
 
 /* ---------- Stripe（音声入力の有料プラン。docs/adr/0004） ----------
@@ -5912,6 +6016,9 @@ const mainHandler = {
 
     if (method === "POST" && path === "/accounts/ensure") return ensureAccount(request, env, headers);
     if (method === "POST" && path === "/accounts/delete") return deleteAccount(request, env, headers);
+    if (method === "PUT" && path === "/accounts/me/avatar") return setAvatar(request, env, headers);
+    if (method === "GET" && path === "/accounts/me/photos") return getMyPhotos(request, env, headers);
+    if (method === "PUT" && path === "/accounts/me/best-photos") return setBestPhotos(request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/join$/))) return joinTrip(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/leave$/))) return leaveTrip(m[1], request, env, headers);
 

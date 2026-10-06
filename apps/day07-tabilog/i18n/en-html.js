@@ -234,4 +234,12 @@ I18N.addLang('en', {
   "言語 / 語言": "Language / 語言",
   "日本語": "日本語",
   "繁體中文": "繁體中文",
+  "プロフィール写真を変える": "Change profile photo",
+  "プロフィール写真": "Profile photo",
+  "写真を選ぶ": "Choose a photo",
+  "写真を消す": "Remove photo",
+  "旅のベストピクチャー": "Best pictures of my trips",
+  "選ぶ": "Choose",
+  "旅の写真から、お気に入りを最大6枚まで選べます。マイページはあなただけに表示されます（ほかの人には見えません）。": "Choose up to 6 favorite photos from your trips. My Page is shown only to you (nobody else can see it).",
+  "ベストピクチャーを選ぶ": "Choose your best pictures",
 });
