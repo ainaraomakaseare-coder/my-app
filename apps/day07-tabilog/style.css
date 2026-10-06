@@ -116,7 +116,7 @@ a:hover { text-decoration: underline; }
 .screen[data-screen="mylog"] > .wrap > .hd,
 .screen[data-screen="visited"] > .wrap > .hd,
 .screen[data-screen="profile"] > .wrap > .hd {
-  padding-top: 8px;
+  padding: 8px 0 16px; /* 4画面とも：上8px・見出しの下16px（内容の最初のブロックはmargin-top:0でそろえる） */
 }
 .screen[data-screen="home"] > .wrap > .hd h1,
 .screen[data-screen="mylog"] > .wrap > .hd h1,
@@ -166,7 +166,7 @@ a:hover { text-decoration: underline; }
 /* 4つ（名前・マイログ・行ったことある旅先・ログアウト）が375px幅でも1行に収まるよう、
    このrowだけ文字を少し小さく・字間を詰め、隣り合う名前は省略記号で切る（2026-09-28〜）。 */
 .account-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 10px 0 0;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 0 8px;
   font-size: var(--fs-xs); color: var(--ink-muted); flex-wrap: nowrap;
 }
 .account-row .btn.text { white-space: nowrap; flex-shrink: 0; padding: 6px 0; font-size: var(--fs-xs); letter-spacing: -.2px; }
@@ -304,13 +304,15 @@ a:hover { text-decoration: underline; }
 @keyframes voice-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 /* ---------- trip list ---------- */
-.trip-filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+/* 絞り込み欄：ホーム・マイログとも2列。余った最後の1つは横いっぱい（文字が切れないように） */
+.trip-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 12px; }
 .trip-filters select {
-  flex: 1; min-width: 100px; border: none; border-radius: var(--radius-control);
-  padding: 9px 9px; font-size: var(--fs-xs); background: var(--card); color: var(--ink-muted); box-shadow: var(--card-shadow);
+  min-width: 0; border: none; border-radius: var(--radius-control);
+  padding: 12px; font-size: var(--fs-sm); background: var(--card); color: var(--ink-muted); box-shadow: var(--card-shadow);
 }
-.trip-list { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 18px; }
-#btnClearTripHistory { display: block; margin: 0 0 14px; }
+.trip-filters select:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.trip-list { display: flex; flex-direction: column; gap: 12px; margin: 0 0 24px; }
+#btnClearTripHistory { display: block; margin: 0 0 16px; }
 .home-actions { margin-bottom: 8px; }
 .forget-trip-btn { margin-top: 12px; }
 .trip-card {
@@ -356,7 +358,8 @@ a:hover { text-decoration: underline; }
 .trip-card-avatar.c4 { background: #E4D4FA; color: #6B3FA0; }
 .trip-card-avatar.c5 { background: #FFE9A8; color: #9C7A0A; }
 .trip-card-people-text { font-size: var(--fs-base); color: var(--ink-muted); }
-.empty { color: var(--ink-soft); font-size: var(--fs-sm); padding: 20px 0; }
+/* 空の状態：4画面とも、中央にそろえた落ち着いた文字だけ */
+.empty { color: var(--ink-muted); font-size: var(--fs-sm); padding: 24px 16px; text-align: center; }
 
 /* 通信待ちのシマー（光が流れる）スケルトン（マイログ・「行ったことある旅先」の初回読み込みで使う。
    2026-09-29〜）。カードの形だけ先に出して、空欄や「読み込み中…」の文字より進行中だと伝わりやすくする。 */
@@ -512,7 +515,9 @@ a:hover { text-decoration: underline; }
 .day-tab { padding: 8px 16px; border-radius: 999px; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
 .day-tab.on { background: var(--accent); color: white; font-weight: 700; }
 
-.section-label { padding: 2px 0 8px; display: flex; align-items: center; gap: 8px; }
+/* 節の見出し（17px太字＋任意の？）。4画面とも同じ：前の内容から24px、見出しの下12px */
+.section-label { margin-top: 24px; padding: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+.hd + .section-label { margin-top: 0; }
 .section-title { font-family: var(--font-display); font-size: var(--fs-md); font-weight: 700; }
 
 .day-weather {
@@ -810,12 +815,12 @@ a:hover { text-decoration: underline; }
    画面内に横スクロールする子要素は無いので、ここに付けても他の操作とはぶつからない。 */
 .screen[data-screen="visited"] { touch-action: pan-y; }
 /* 国内／海外は、ホームのカードと同じ白地・影のセグメント（選んだ側だけアクセント色） */
-.visited-tabs { display: flex; gap: 4px; margin: 10px 0 4px; padding: 4px; border-radius: 999px; background: var(--card); box-shadow: var(--card-shadow); }
-.visited-tab { flex: 1; padding: 9px 0; border-radius: 999px; text-align: center; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; background: transparent; }
-.visited-tab.on { background: var(--accent); color: white; }
+.visited-tabs { display: flex; gap: 4px; margin: 0 0 12px; padding: 4px; border-radius: 999px; background: var(--card); box-shadow: var(--card-shadow); }
+.visited-tab { flex: 1; padding: 8px 0; border-radius: 999px; text-align: center; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; background: transparent; }
+.visited-tab.on { background: var(--accent); color: white; font-weight: 700; }
 
 /* 集計カード（大きい数字＋ドーナツ）。行ったことある旅先の一番上、地図より前に出す */
-.visited-totals { display: flex; align-items: center; gap: 14px; margin: 12px 0 12px; padding: 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--card-shadow); }
+.visited-totals { display: flex; align-items: center; gap: 16px; margin: 0 0 12px; padding: 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--card-shadow); }
 .visited-donut { width: 64px; height: 64px; flex: none; }
 .visited-donut-bg { stroke: var(--visited-unfilled); }
 .visited-donut-fg { stroke: var(--accent); transition: stroke-dashoffset .3s ease; }
@@ -826,7 +831,7 @@ a:hover { text-decoration: underline; }
 .visited-totals-unit { font-size: var(--fs-sm); font-weight: 400; color: var(--ink-muted); }
 .visited-totals-pct { font-size: var(--fs-sm); color: var(--ink-muted); }
 
-.visited-map { display: flex; justify-content: center; padding: 10px 0; background: var(--card); box-shadow: var(--card-shadow); border-radius: var(--radius-card); margin-top: 4px; }
+.visited-map { display: flex; justify-content: center; padding: 10px 0; background: var(--card); box-shadow: var(--card-shadow); border-radius: var(--radius-card); margin-top: 0; }
 .visited-svg { width: 100%; max-width: 340px; height: auto; }
 .visited-region { fill: var(--visited-unfilled); stroke: #FFFFFF; stroke-width: .5; }
 .visited-region.is-visited { fill: var(--accent); cursor: pointer; }
@@ -851,10 +856,10 @@ a:hover { text-decoration: underline; }
 /* 地方・大陸ごとの見出し付き一覧：太字の見出し＋右に件数、下に区切り線（参考にしたアプリと同じ構成）。
    行は見出しと同じ左インデントに揃え、選択中でも余白は変えず背景だけで強調する（2026-09-28〜。
    以前はキャプションと行ハイライトが二重に見えたり、選択中の行だけ余白がずれて見えたりしたため）。 */
-.visited-group { margin-top: 14px; }
+.visited-group { margin-top: 24px; }
 .visited-group-header {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
-  padding: 0 4px 8px; border-bottom: 1px solid var(--border-soft);
+  padding: 0 0 12px;
 }
 .visited-group-title { font-size: var(--fs-md); font-weight: 700; color: var(--ink); }
 .visited-group-count { font-size: var(--fs-sm); font-weight: 400; color: var(--ink-muted); }
@@ -885,21 +890,20 @@ a:hover { text-decoration: underline; }
 }
 .trip-place-action:disabled { opacity: .4; }
 .trip-place-chip.is-excluded .trip-place-action { padding: 8px 9px; opacity: .85; }
-.mylog-tabs { display: flex; gap: 6px; padding: 12px 0 4px; overflow-x: auto; }
-.mylog-tab { padding: 8px 15px; border-radius: 999px; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
-.mylog-tab.on { background: var(--accent); color: white; font-weight: 700; }
+/* ピル（切り替えボタン）は共通：灰地＋8px 16px・13px。選んでいる側はアクセント色の塗り＋白＋太字 */
+.mylog-tabs { display: flex; gap: 8px; padding: 0 0 12px; overflow-x: auto; }
+.mylog-tab, .sort-btn { padding: 8px 16px; border-radius: 999px; border: none; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
+.mylog-tab.on, .sort-btn.on { background: var(--accent); color: white; font-weight: 700; }
 
-.mylog-sort { display: flex; gap: 8px; padding: 8px 0 4px; }
-.sort-btn { padding: 7px 13px; border-radius: 999px; border: none; color: var(--ink-muted); font-size: var(--fs-xs); background: var(--border-soft); }
-.sort-btn.on { background: var(--accent-soft-bg); color: var(--accent-deep); font-weight: 700; }
+.mylog-sort { display: flex; gap: 8px; padding: 0 0 12px; }
 
 /* カテゴリの横スワイプ（app.jsのinitTabSwipe）の対象領域。pan-yで縦スクロールを標準のまま
    残す。兄弟の.mylog-tabs（ピルの横スクロール行）には付けていないので、そちらは影響を受けない
    （2026-09-29〜、docs/adr/0018）。 */
-.mylog-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; touch-action: pan-y; }
+.mylog-list { display: flex; flex-direction: column; gap: 12px; margin-top: 0; touch-action: pan-y; }
 .mylog-row {
-  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
-  background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 10px;
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 12px;
 }
 .mylog-photo { width: 48px; height: 48px; border-radius: var(--radius-control); background-color: var(--border-soft); background-size: cover; background-position: center; flex-shrink: 0; }
 .mylog-info { flex: 1; min-width: 0; }
@@ -1421,7 +1425,7 @@ body.viewer-open { overflow: hidden; }
 .tabbar-icon { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; transition: transform .25s cubic-bezier(.34, 1.56, .64, 1); }
 .tabbar-icon svg { width: 23px; height: 23px; }
 .tabbar-label { transition: color .2s ease, font-weight .2s ease; }
-.tabbar-btn.on { color: var(--accent-deep); }
+.tabbar-btn.on { color: var(--accent); }
 .tabbar-btn.on .tabbar-icon { transform: translateY(-3px) scale(1.05); }
 /* 選択中はラベルも太字にして、アイコン＋アクセント色だけより選択状態が分かりやすいようにする
    （Airbnbアプリのタブを手本にした。2026-09-29〜）。 */
@@ -1455,18 +1459,13 @@ body.viewer-open { overflow: hidden; }
 }
 
 /* ============ マイページ（旧プロフィール。Airbnbのプロフィールを手本にした。2026-09-28〜） ============ */
-.mp-band {
-  background: var(--accent); color: #fff;
-  padding: 22px 20px 64px; border-radius: 0 0 50% 50% / 0 0 28px 28px;
-}
-.mp-band-title { margin: 0; font-size: var(--fs-base); font-weight: 700; opacity: .92; max-width: 460px; margin-inline: auto; padding: 0 16px; }
-.mp-wrap { padding-top: 0; }
+/* マイページも他の3画面と同じ「無地の見出し」（緑の帯は無し）。プロフィールカードは最初のカード */
 .profile-card {
-  margin: -44px 4px 0; background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-  padding: 20px; box-shadow: 0 8px 24px rgba(4, 60, 45, .18);
-  display: flex; flex-direction: column; gap: 14px;
+  margin: 0; background: var(--card); border-radius: var(--radius-card);
+  padding: 16px; box-shadow: var(--card-shadow);
+  display: flex; flex-direction: column; gap: 12px;
 }
-.mp-card-top { display: flex; align-items: center; gap: 12px; }
+.mp-card-top { display: flex; align-items: center; gap: 16px; }
 .profile-avatar {
   flex: none; width: 52px; height: 52px; border-radius: 50%; overflow: hidden;
   background: var(--accent-soft-bg); color: var(--accent-deep);
@@ -1483,10 +1482,10 @@ body.viewer-open { overflow: hidden; }
 }
 .profile-avatar-badge svg { width: 12px; height: 12px; }
 /* マイページの「旅のベストピクチャー」：3列の角丸の正方形、最大6枚 */
-.mp-best { margin: 4px 0 18px; }
+.mp-best { margin: 24px 0; }
 .mp-best[hidden] { display: none; }
-.mp-best-head { position: relative; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.mp-best-title { margin: 0; font-size: var(--fs-base); font-weight: 700; }
+.mp-best-head { position: relative; display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; }
+.mp-best-title { margin: 0; font-family: var(--font-display); font-size: var(--fs-md); font-weight: 700; line-height: 1.6; }
 .best-pick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 /* マイページでは邪魔にならないよう、小さな写真を1行に並べる（2026-10-06） */
 .mp-best-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
@@ -1496,8 +1495,8 @@ body.viewer-open { overflow: hidden; }
 }
 .mp-best-tile img, .best-pick-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .mp-best-empty {
-  grid-column: 1 / -1; min-height: 52px; border: 1.5px dashed var(--ink-soft); border-radius: 14px; background: none;
-  color: var(--ink-muted); font: inherit; font-size: var(--fs-base); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  grid-column: 1 / -1; min-height: 56px; border: 1.5px dashed var(--ink-soft); border-radius: var(--radius-card); background: none;
+  color: var(--ink-muted); font: inherit; font-size: var(--fs-base); text-align: center; cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
 .best-pick-grid { margin: 8px 0 14px; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 120px; }
 .best-pick-tile.selected { box-shadow: 0 0 0 3px var(--accent) inset; }
@@ -1508,13 +1507,13 @@ body.viewer-open { overflow: hidden; }
 .best-pick-note { grid-column: 1 / -1; text-align: center; color: var(--ink-muted); font-size: var(--fs-base); padding: 24px 0; }
 .profile-info { flex: 1; min-width: 0; }
 .profile-name { font-size: var(--fs-lg); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-stats { margin-top: 2px; font-size: var(--fs-base); color: var(--ink-muted); min-height: 18px; }
+.profile-stats { margin-top: 4px; font-size: var(--fs-base); color: var(--ink-muted); min-height: 24px; }
 .profile-stats:empty { min-height: 0; margin: 0; }
 .mp-card-btn {
-  min-height: 46px; border-radius: 23px; background: var(--accent); color: #fff;
+  min-height: 48px; border-radius: var(--radius-control); background: var(--accent); color: #fff;
   font-size: var(--fs-base); font-weight: 700; width: 100%; display: flex; align-items: center; justify-content: center;
 }
-.mp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 22px; padding: 30px 0 18px; }
+.mp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 24px; padding: 24px 0 0; }
 .mp-grid-item {
   display: flex; flex-direction: column; align-items: center; gap: 8px; min-height: 64px; padding: 2px 2px;
   color: var(--ink); font-size: var(--fs-sm); font-weight: 400; text-align: center; line-height: 1.3;
@@ -1523,12 +1522,14 @@ body.viewer-open { overflow: hidden; }
 .mp-grid-item svg { width: 34px; height: 34px; color: var(--accent); flex: none; }
 .mp-grid-item small { margin-top: -4px; font-size: var(--fs-xs); font-weight: 400; color: var(--ink-muted); }
 .mp-grid-item:active { opacity: .6; }
-.mp-list { display: flex; flex-direction: column; padding: 0 4px; }
+/* 設定の行：他の一覧（訪れた場所の一覧など）と同じ白いカード＋細い区切り線 */
+.mp-list { display: flex; flex-direction: column; padding: 4px 16px; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); }
 .mp-row {
-  display: flex; align-items: center; gap: 10px; min-height: 56px; width: 100%; text-align: left;
-  border-bottom: 1px solid var(--border); font-size: var(--fs-md); font-weight: 700; color: var(--ink);
+  display: flex; align-items: center; gap: 12px; min-height: 56px; width: 100%; text-align: left;
+  border-bottom: 1px solid var(--border-soft); font-size: var(--fs-base); font-weight: 700; color: var(--ink);
   position: relative;
 }
+.mp-row:last-child { border-bottom: none; }
 .mp-row[hidden] { display: none; }
 .mp-row-label { flex: 1; min-width: 0; }
 /* 運営者向け：AIの使用状況 */
@@ -1693,9 +1694,9 @@ body.viewer-open { overflow: hidden; }
 .info-pop[hidden] { display: none; }
 
 /* マイページのプロフィールカード：ほてログ・飯ログ・アクティビティーログへの小さなチップ */
-.mp-log-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mp-log-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
 .mp-log-chips[hidden] { display: none; }
 .mp-log-chip {
-  border: none; border-radius: 999px; padding: 5px 11px; background: var(--accent-soft-bg); color: var(--accent-deep);
+  border: none; border-radius: 999px; padding: 8px 12px; background: var(--accent-soft-bg); color: var(--accent-deep);
   font: inherit; font-size: var(--fs-sm); font-weight: 400; cursor: pointer; -webkit-tap-highlight-color: transparent;
 }

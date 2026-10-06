@@ -5882,25 +5882,31 @@
     $('#sortTripOrder').value = state.homeFilters.sort;
     var el = $('#tripList');
     if (!allTrips.length) {
+      el._sig = null;
       el.innerHTML = '<div class="empty">' + tr('まだ旅行がありません。「＋ 新しい旅を記録する」から始めてください。') + '</div>';
       return;
     }
     if (!list.length) {
+      el._sig = null;
       el.innerHTML = '<div class="empty">' + tr('条件に一致する旅行がありません。') + '</div>';
       return;
     }
-    el.innerHTML = '';
-    var revealCards = [];
-    list.forEach(function (t) {
-      var card = document.createElement('button');
-      var parts = tripCardParts(t);
-      card.className = parts.className;
-      card.innerHTML = parts.html;
-      card.addEventListener('click', function () { openTripFromCard(card, t.id); });
-      el.appendChild(card);
-      revealCards.push(card);
+    // ホームへ戻るたびにカードを作り直して出現演出をやり直すと、見えていた一覧が一瞬消えて点滅する。
+    // 中身（旅行の一覧・絞り込み）が前と同じなら触らない（マイログの一覧と同じ renderSection）
+    renderSection(el, sigOf([list, (window.I18N && window.I18N.lang) || 'ja']), function () {
+      el.innerHTML = '';
+      var revealCards = [];
+      list.forEach(function (t) {
+        var card = document.createElement('button');
+        var parts = tripCardParts(t);
+        card.className = parts.className;
+        card.innerHTML = parts.html;
+        card.addEventListener('click', function () { openTripFromCard(card, t.id); });
+        el.appendChild(card);
+        revealCards.push(card);
+      });
+      revealCardsOnScroll(revealCards);
     });
-    revealCardsOnScroll(revealCards);
   }
 
   // ホーム画面の旅行一覧は本来この端末のローカル索引（tabilog:my-trips）だけを見ているため、
@@ -10459,20 +10465,34 @@
     var user = loadCurrentUser();
     if (!user) { clearAccountStatusCache(); return Promise.resolve(null); }
     var key = Core.myLogCacheKey(user);
+    if (!state.account || accountStatusKey !== key) {
+      // 前回の残り回数が端末に残っていれば、通信を待たずにそれを見せる（取り直しは下の「古い」枠でやる）
+      var saved = loadSavedAccountStatus(key);
+      if (saved) { state.account = saved; accountStatusKey = key; accountStatusAt = 0; }
+    }
     if (!force && state.account && accountStatusKey === key) {
       if (Date.now() - accountStatusAt < 30000) return Promise.resolve(state.account);
       var shown = JSON.stringify(state.account);
       api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
         if (accountStatusKey !== key) return;
         state.account = account; accountStatusAt = Date.now();
+        saveAccountStatus(key, account);
         if (onUpdate && JSON.stringify(account) !== shown) onUpdate(account);
       }).catch(function () {});
       return Promise.resolve(state.account);
     }
     return api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
       state.account = account; accountStatusKey = key; accountStatusAt = Date.now();
+      saveAccountStatus(key, account);
       return account;
-    }).catch(function () { state.account = null; return null; });
+    }).catch(function () { return state.account && accountStatusKey === key ? state.account : null; });
+  }
+  // 残り回数・アカウント情報の前回の結果（端末に保存。キーはmylogの保存と同じ接頭辞なので、ログアウト・アカウント削除のclearMyLogCacheで一緒に消える）
+  function loadSavedAccountStatus(key) {
+    try { var o = JSON.parse(localStorage.getItem(key + '#account') || 'null'); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
+  }
+  function saveAccountStatus(key, account) {
+    try { if (key && account) localStorage.setItem(key + '#account', JSON.stringify(account)); } catch (e) {}
   }
 
   // 残り回数の表示だけ（有料プラン・購入の画面は無い。2026-09-30〜、docs/adr/0004）。
@@ -10533,8 +10553,8 @@
     renderProfileIdentity(user);
     if (!user) { renderProfileStats(); renderPlanStatus(); return; }
     var cachedP = getMyLogEntry(user);
-    if (!cachedP) $('#profileStats').innerHTML = ''; // 前回の結果があるときは消さずにそのまま見せる
-    if (cachedP) { applyMyLogData(cachedP.data); renderProfileStats(); }
+    if (cachedP) applyMyLogData(cachedP.data);
+    renderProfileStats(); // 前回の数字（メモリ→端末の保存）があれば、取り直しを待たずにまず描く。無ければ空のまま
     fetchMyLog(user).then(function (res) {
       if (res.discarded) return;
       applyMyLogData(res.data);
@@ -10759,15 +10779,42 @@
     return trips[0] || null;
   }
 
+  // マイページに出す数字（旅行・都道府県・国・各ログの件数）。/mylogの結果から計算し、アカウントごとに端末へも
+  // 保存しておく。次に開いたときは、/mylog本体の取り直しを待たず、この前回の数字で先に描く
+  // （数字が空になって後から出てくる点滅を防ぐ。取り直して数字が変わったときだけ、その場で入れ替える）。
+  function summaryKey(user) { var k = Core.myLogCacheKey(user); return k ? k + '#summary' : ''; }
+  function computeMypageSummary() {
+    var details = visitedDetails();
+    var visibleCount = function (list) { return (list || []).filter(function (x) { return x.status === 'visible'; }).length; };
+    var items = state.myLogItems || [];
+    var count = function (key) { return items.filter(function (it) { return myLogCategoryOf(it) === key; }).length; };
+    return {
+      trips: (state.myLogTrips || []).length, prefs: visibleCount(details.prefectures), countries: visibleCount(details.countries),
+      lodging: count('lodging'), food: count('food'), sightseeing: count('sightseeing')
+    };
+  }
+  var mypageSummaryShown = null; // { key, summary }：いま画面に出している数字（メモリ）
+  function currentMypageSummary(user) {
+    var key = summaryKey(user);
+    if (!key) return null;
+    if (getMyLogEntry(user)) { // 最新に近い結果が手元にある → 計算して保存
+      var s = computeMypageSummary();
+      try { localStorage.setItem(key, JSON.stringify(s)); } catch (e) {}
+      mypageSummaryShown = { key: key, summary: s };
+      return s;
+    }
+    if (mypageSummaryShown && mypageSummaryShown.key === key) return mypageSummaryShown.summary;
+    try { var o = JSON.parse(localStorage.getItem(key) || 'null'); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
+  }
+
   // プロフィールカードの「ほてログ／飯ログ／アクティビティーログ」のチップ。押すと、そのカテゴリを選んだマイログへ
-  function renderProfileLogChips(loggedIn) {
+  function renderProfileLogChips(loggedIn, summary) {
     var el = $('#profileLogChips');
     if (!el) return;
     el.hidden = !loggedIn;
     if (!loggedIn) { el.innerHTML = ''; return; }
-    var items = state.myLogItems || [];
     var html = ['lodging', 'food', 'sightseeing'].map(function (key) {
-      var n = items.filter(function (it) { return myLogCategoryOf(it) === key; }).length;
+      var n = summary ? summary[key] : 0;
       return '<button type="button" class="mp-log-chip" data-cat="' + key + '">' + escapeHtml(MYLOG_LABELS[key]) + (n ? ' ' + n : '') + '</button>';
     }).join('');
     if (el.innerHTML !== html) el.innerHTML = html;
@@ -10778,13 +10825,10 @@
     var statsEl = $('#profileStats');
     var recent = mypageRecentTrip();
     $('#mpVideo').hidden = !recent;
-    renderProfileLogChips(!!loadCurrentUser());
-    if (!user) { statsEl.innerHTML = ''; return; }
-    var details = visitedDetails();
-    var visibleCount = function (list) { return (list || []).filter(function (x) { return x.status === 'visible'; }).length; };
-    var html = escapeHtml(tr('旅行 {n}・都道府県 {p}・国 {c}', {
-      n: (state.myLogTrips || []).length, p: visibleCount(details.prefectures), c: visibleCount(details.countries)
-    }));
+    var summary = user ? currentMypageSummary(user) : null;
+    renderProfileLogChips(!!user, summary);
+    if (!user || !summary) { statsEl.innerHTML = ''; return; }
+    var html = escapeHtml(tr('旅行 {n}・都道府県 {p}・国 {c}', { n: summary.trips, p: summary.prefs, c: summary.countries }));
     if (statsEl.innerHTML === html) return; // 同じなら触らない
     var wasEmpty = !statsEl.firstChild;
     statsEl.innerHTML = html;

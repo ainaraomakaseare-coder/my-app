@@ -109,8 +109,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
   <section class="screen" data-screen="home">
     <div class="wrap">
       <header class="hd">
-        <h1>旅の足跡</h1>
-        <p class="lead">大切な人と過ごした、あの旅の記録。</p>
+        <div class="hd-title-row"><h1>旅の足跡</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="homeInfo">？</button></div>
+        <p class="info-pop" id="homeInfo" hidden>旅行はサーバー（データベース）に保存されます。共有リンクを知っている人は誰でも見たり書き足したりできます。</p>
       </header>
 
       <div class="account-row" id="accountRow" hidden>
@@ -150,7 +150,6 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         </div>
       </div>
 
-      <p class="hint">旅行はサーバー（データベース）に保存されます。共有リンクを知っている人は誰でも見たり書き足したりできます。</p>
     </div>
   </section>
 
@@ -843,8 +842,10 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
   <!-- ============ マイページ（Airbnbのプロフィールを手本にした、アカウントまわりのまとめ画面） ============ -->
   <section class="screen" data-screen="profile">
-    <div class="mp-band"><h1 class="mp-band-title">マイページ</h1></div>
     <div class="wrap mp-wrap">
+      <header class="hd">
+        <div class="hd-title-row"><h1>マイページ</h1></div>
+      </header>
       <div class="profile-card" id="profileCard">
         <div class="mp-card-top">
           <div class="profile-avatar-wrap">
