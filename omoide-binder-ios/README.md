@@ -107,4 +107,3 @@ set role = 'admin', status = 'active', removed_at = null;
 - 配布プロファイル: omoide-binder-appstore（Apple ID: K5TZTX2DF8、2027-09-17期限）
 - GitHub ActionsのOMOIDEBINDER_IOS_PROVISIONING_PROFILE_BASE64登録済み。既存の配布証明書639G8R4VG9を利用。
 - ユーザーは実際のコミュニティ版の配信を指定。SupabaseログインとSQL反映、ビルド・アップロード・テスター設定は未完了。
-

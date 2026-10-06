@@ -242,5 +242,3 @@ jobs:
           path: |
             omoide-binder-ios/build
           retention-days: 5
-
-
