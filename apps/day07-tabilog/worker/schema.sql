@@ -311,3 +311,5 @@ CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id);
 ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';
 -- v34（2026-10-04）：メールOTPの乱用対策（失敗回数・送信回数の上限）。詳しい説明は migrations/0034_otp_limits.sql
 CREATE TABLE IF NOT EXISTS otp_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0, window_start TEXT NOT NULL);
+-- v35（2026-10-06）：運営者向けのAI使用状況の記録。詳しい説明は migrations/0035_ai_usage_daily.sql
+CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, feature TEXT NOT NULL, provider TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, feature, provider));

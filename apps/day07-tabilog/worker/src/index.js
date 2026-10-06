@@ -2123,6 +2123,7 @@ async function googleTextSearchPlace(text, env) {
   if (!env || !env.GOOGLE_API_KEY) return null;
   try {
     const body = { textQuery: text, languageCode: "ja", maxResultCount: 5 };
+    tallyAi(env, "google_places");
     const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
       method: "POST",
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "places.id", "content-type": "application/json" },
@@ -2136,6 +2137,7 @@ async function googleTextSearchPlace(text, env) {
     // displayName（v26、2026-09-29〜）も同じ呼び出しで一緒に聞く（どちらもPlace Details
     // Essentialsの範囲なので、無料枠の消費は増えない）。宿泊先の名前など、見出しが「ホテルに帰宅」の
     // ような一般的な文言だけのとき、地図から場所の名前を出すのに使う（saveEntryGeocodeResult参照）。
+    tallyAi(env, "google_places");
     const res2 = await fetch("https://places.googleapis.com/v1/places/" + encodeURIComponent(id) + "?languageCode=ja", {
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "location,displayName" },
     });
@@ -2219,6 +2221,7 @@ async function geocodeMapUrl(raw, quick, nears, env) {
 // キーが無い・呼び出しが失敗した・0件だったときはnullを返し、呼び出し側でNominatim等の予備に回す。
 async function googleAutocomplete(q, session, env) {
   try {
+    tallyAi(env, "google_places");
     const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
       method: "POST",
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "content-type": "application/json" },
@@ -2252,6 +2255,7 @@ async function placeDetails(id, session, env, headers) {
   try {
     const params = new URLSearchParams({ languageCode: "ja" });
     if (session) params.set("sessionToken", session);
+    tallyAi(env, "google_places");
     const res = await fetch("https://places.googleapis.com/v1/places/" + encodeURIComponent(id) + "?" + params.toString(), {
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "location,displayName,formattedAddress" },
     });
@@ -2666,6 +2670,7 @@ async function googleRoute(env, from, to, travelMode) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GOOGLE_TRANSIT_TIMEOUT_MS);
   try {
+    tallyAi(env, "google_routes");
     const res = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
       method: "POST",
       headers: {
@@ -3582,7 +3587,9 @@ async function ensureAccount(request, env, headers) {
   const email = auth.email;
   const name = (data.name || "").trim();
   const account = await resetPeriodIfNeeded(env, await getOrCreateAccount(env, email, name));
-  return json(rowToAccount(account), 200, headers);
+  const out = rowToAccount(account);
+  if (isAdminEmail(env, email)) out.isAdmin = true;
+  return json(out, 200, headers);
 }
 
 // アカウント削除（Appleのガイドライン5.1.1(v)対応：アカウント作成機能があるアプリは
@@ -3953,6 +3960,7 @@ async function transcribeAudio(env, buf, contentType, format) {
   form.append("file", new Blob([buf], { type: contentType }), "audio." + format);
   form.append("model", "whisper-1");
   form.append("language", "ja");
+  tallyAi(env, "openai_whisper");
   const res = await fetch(OPENAI_TRANSCRIPTION_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}` },
@@ -3976,6 +3984,7 @@ async function transcribeAudio(env, buf, contentType, format) {
 // 引き続きこの関数で比較する。
 async function transcribeAudioWithWorkersAi(env, buf) {
   const audio = arrayBufferToBase64(buf);
+  tallyAi(env, "workers_ai");
   const result = await env.AI.run(WORKERS_AI_WHISPER_MODEL, { audio, language: "ja" });
   const text = result && typeof result.text === "string" ? result.text : (typeof result === "string" ? result : "");
   return text.trim();
@@ -4189,6 +4198,7 @@ async function organizeTextIntoBlocks(env, text, notes, dates, lang) {
   // 考える分で使い切って出力が途中で切れ、「うまく処理できませんでした」になっていた（2026-09-27）。
   // 切れたときは考える量を減らして（effort: low）もう一度だけ頼む
   const attempt = async (effort) => {
+    tallyAi(env, "openai");
     const upstream = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -4269,6 +4279,7 @@ async function organizeTextIntoBlocksWithWorkersAi(env, model, text, notes, date
     if (withResponseFormat) {
       input.response_format = { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } };
     }
+    tallyAi(env, "workers_ai");
     const result = await env.AI.run(model, input);
     return { result, parsed: parseWorkersAiOutput(result) };
   }
@@ -4594,6 +4605,7 @@ async function organizeScreenshotsWithOpenAi(env, prompt, opts) {
   const schemaName = (opts && opts.schemaName) || "screenshot_items";
   const maxTokens = (opts && opts.maxTokens) || 12000;
   const attempt = async (effort) => {
+    tallyAi(env, "openai");
     const upstream = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -4634,6 +4646,7 @@ async function organizeScreenshotsWithOpenAi(env, prompt, opts) {
 async function googleTextSearchOne(q, env) {
   try {
     const req = buildTextSearchRequest(q);
+    tallyAi(env, "google_places");
     const res = await fetch(req.url, {
       method: "POST",
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": req.fieldMask, "content-type": "application/json" },
@@ -4687,6 +4700,7 @@ async function scanScreenshots(tripId, request, env, headers) {
   // 1) Cloud Vision：全画像を1回のimages:annotateにまとめる（サブリクエスト1回）
   let texts;
   try {
+    tallyAi(env, "google_vision"); tallyAi(env, "google_vision_images", v.images.length);
     const res = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + encodeURIComponent(env.GOOGLE_API_KEY), {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -5119,6 +5133,7 @@ function receiptItemsSchema() {
 // 呼び出し側（scanReceipt）が今までどおりOpenAIに回せるようにする。
 async function scanReceiptWithVision(base64, env) {
   try {
+    tallyAi(env, "google_vision"); tallyAi(env, "google_vision_images");
     const res = await fetch("https://vision.googleapis.com/v1/images:annotate?key=" + encodeURIComponent(env.GOOGLE_API_KEY), {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -5174,6 +5189,7 @@ async function scanReceipt(request, env, headers) {
   if (!env.OPENAI_API_KEY) return json({ error: "server_not_configured" }, 503, headers);
 
   void email;
+  tallyAi(env, "openai");
   const upstream = await fetch(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -5240,6 +5256,7 @@ async function recoverEntriesForDay(env, tripId, date) {
   let poolIndex = 0;
 
   for (const segment of segments) {
+    tallyAi(env, "openai");
     const upstream = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
@@ -5610,7 +5627,129 @@ async function deleteSocialForAccount(env, accountId) {
     .bind(accountId, accountId).run();
 }
 
-export default {
+// ---------- AIの使用状況の記録（運営者向け。migrations/0035_ai_usage_daily.sql） ----------
+// 外部のAI・有料API（Workers AI・OpenAI・Google Vision/Places/Routes）を呼ぶたびに、メモリ上のtallyに数えて、
+// リクエストの最後に1回のUPSERTでai_usage_dailyへ足す（1リクエストあたりD1の書き込みは最大1回。
+// Workers Freeのサブリクエスト上限50を食わないため、呼び出しごとには書かない）。
+// 記録の失敗（テーブルが無い・D1の不調）は握りつぶし、利用者のリクエストには影響させない。
+// feature：voice | memo | multiday | screenshot | receipt | places | route | other（リクエストのパスから決める）。
+function aiFeatureForPath(method, path) {
+  if (/^\/trips\/[^/]+\/voice-entries$/.test(path)) return "multiday";
+  if (/^\/trips\/[^/]+\/text-entries$/.test(path)) return "multiday";
+  if (/\/voice-(entries|scan)$/.test(path)) return "voice";
+  if (/\/(text-entries|text-scan|memo-blocks)$/.test(path)) return "memo";
+  if (/\/screenshot-(scan|blocks)$/.test(path) || /\/import-blocks$/.test(path)) return "screenshot";
+  if (path === "/receipts/scan") return "receipt";
+  if (path.indexOf("/places/") === 0 || path === "/geocode") return "places";
+  if (path === "/route") return "route";
+  return "other";
+}
+
+function withAiTally(env, request) {
+  try {
+    const scoped = Object.create(env);
+    scoped.__aiTally = new Map();
+    scoped.__aiFeature = aiFeatureForPath(request.method, new URL(request.url).pathname);
+    return scoped;
+  } catch {
+    return env;
+  }
+}
+
+function tallyAi(env, provider, n) {
+  try {
+    const t = env && env.__aiTally;
+    if (!t) return;
+    const key = env.__aiFeature + "|" + provider;
+    t.set(key, (t.get(key) || 0) + (n === undefined ? 1 : n));
+  } catch { /* 数えられなくても本体の処理は続ける */ }
+}
+
+function flushAiUsage(env, ctx) {
+  try {
+    const t = env && env.__aiTally;
+    if (!t || !t.size || !env.DB) return;
+    const day = nowIso().slice(0, 10);
+    const binds = [];
+    const marks = [];
+    for (const [key, calls] of t) {
+      const i = key.indexOf("|");
+      marks.push("(?,?,?,?)");
+      binds.push(day, key.slice(0, i), key.slice(i + 1), calls);
+    }
+    t.clear();
+    const job = Promise.resolve()
+      .then(() => env.DB.prepare(
+        "INSERT INTO ai_usage_daily (day, feature, provider, calls) VALUES " + marks.join(",") +
+        " ON CONFLICT(day, feature, provider) DO UPDATE SET calls = ai_usage_daily.calls + excluded.calls"
+      ).bind(...binds).run())
+      .catch((e) => { console.error(JSON.stringify({ event: "ai_usage_error", message: String((e && e.message) || e).slice(0, 200) })); });
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
+    return job;
+  } catch { /* 記録の失敗は利用者に見せない */ }
+}
+
+// 運営者のメールアドレス（シークレットADMIN_EMAILS、カンマ区切り。リポジトリには書かない）
+function isAdminEmail(env, email) {
+  const raw = env && env.ADMIN_EMAILS;
+  if (!raw || !email) return false;
+  const e = String(email).trim().toLowerCase();
+  return String(raw).split(",").some((x) => x.trim().toLowerCase() === e);
+}
+
+// GET /admin/ai-usage：運営者だけ。ADMIN_EMAILSが未設定なら存在しないふりをして404。
+// ログインしていない・運営者でない場合も404（存在を教えない）。
+async function getAiUsage(request, env, headers) {
+  if (!env.ADMIN_EMAILS) return json({ error: "not_found" }, 404, headers);
+  const email = await sessionEmail(request, env);
+  if (!isAdminEmail(env, email)) return json({ error: "not_found" }, 404, headers);
+
+  const today = nowIso().slice(0, 10);
+  const period = currentPeriodStart();
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  let rows = [];
+  let tableMissing = false;
+  try {
+    const r = await env.DB.prepare("SELECT day, feature, provider, calls FROM ai_usage_daily WHERE day >= ? ORDER BY day DESC, feature, provider").bind(since).all();
+    rows = r.results || [];
+  } catch {
+    tableMissing = true;
+  }
+  const monthStart = period;
+  const byProvider = {};
+  const byFeature = {};
+  let visionImagesToday = 0;
+  let visionCallsToday = 0;
+  for (const r of rows) {
+    if (r.day >= monthStart) {
+      byProvider[r.provider] = (byProvider[r.provider] || 0) + r.calls;
+      byFeature[r.feature] = (byFeature[r.feature] || 0) + r.calls;
+    }
+    if (r.day === today && r.provider === "google_vision_images") visionImagesToday += r.calls;
+    if (r.day === today && r.provider === "google_vision") visionCallsToday += r.calls;
+  }
+  let accounts = { count: 0, voiceUsesThisPeriod: 0, memoUsesThisPeriod: 0, ticketCredits: 0, usedAiThisMonth: 0 };
+  try {
+    const a = await env.DB.prepare(
+      "SELECT COUNT(*) AS n, " +
+      "COALESCE(SUM(CASE WHEN plan_period_start = ?1 THEN voice_uses_this_period ELSE 0 END),0) AS v, " +
+      "COALESCE(SUM(CASE WHEN plan_period_start = ?1 THEN memo_uses_this_period ELSE 0 END),0) AS m, " +
+      "COALESCE(SUM(ticket_credits),0) AS t, " +
+      "COALESCE(SUM(CASE WHEN plan_period_start = ?1 AND voice_uses_this_period + memo_uses_this_period > 0 THEN 1 ELSE 0 END),0) AS used " +
+      "FROM accounts"
+    ).bind(period).first();
+    if (a) accounts = { count: a.n || 0, voiceUsesThisPeriod: a.v || 0, memoUsesThisPeriod: a.m || 0, ticketCredits: a.t || 0, usedAiThisMonth: a.used || 0 };
+  } catch { /* 集計できなくても残りは返す */ }
+  return json({
+    today, monthStart, rows, tableMissing,
+    monthTotals: { byProvider, byFeature },
+    accounts,
+    // アプリ側にVisionの1日の上限は無い（同じ接続元から1分10回のAI_RATE_LIMITERだけ）。Google側の無料枠は月1,000枚。
+    vision: { callsToday: visionCallsToday, imagesToday: visionImagesToday, dailyCap: null, rateLimitPerMinutePerIp: 10 },
+  }, 200, headers);
+}
+
+const mainHandler = {
   async fetch(request, env, ctx) {
     const origin = request.headers.get("origin") || "";
     const headers = cors(origin, env.ALLOWED_ORIGIN);
@@ -5720,6 +5859,7 @@ export default {
     if (method === "POST" && path === "/billing/webhook") return handleStripeWebhook(request, env, headers);
 
     if (method === "POST" && path === "/admin/recover-entries") return handleRecoverEntries(request, env, headers);
+    if (method === "GET" && path === "/admin/ai-usage") return getAiUsage(request, env, headers);
 
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/days\/([^/]+)\/voice-entries$/))) {
       return createBlocksFromVoice(m[1], m[2], request, env, headers);
@@ -5749,5 +5889,16 @@ export default {
     if (method === "POST" && path === "/ai-compare") return aiCompare(request, env, headers, url);
 
     return json({ error: "not_found" }, 404, headers);
+  },
+};
+
+export default {
+  async fetch(request, env0, ctx) {
+    const env = withAiTally(env0, request);
+    try {
+      return await mainHandler.fetch(request, env, ctx);
+    } finally {
+      flushAiUsage(env, ctx);
+    }
   },
 };

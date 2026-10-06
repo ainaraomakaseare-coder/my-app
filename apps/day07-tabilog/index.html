@@ -890,6 +890,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
         </div>
         <button class="mp-row" id="mpAccountRow" type="button"><span class="mp-row-label">アカウント</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+        <button class="mp-row" id="mpAiUsage" type="button" hidden><span class="mp-row-label">AIの使用状況（運営者のみ）</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
         <a class="mp-row" id="mpPrivacy" href="privacy.html" target="_blank" rel="noopener"><span class="mp-row-label">プライバシーポリシー</span><svg class="mp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></a>
       </div>
     </div>
@@ -1012,6 +1013,16 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     </div>
     <div class="plan-status" id="planStatus"></div>
     <p class="hint" id="planStatusMessage"></p>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="aiUsageSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="aiUsageSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="aiUsageSheetTitle">AIの使用状況</div>
+      <button class="sheet-close" id="btnCloseAiUsageSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div id="aiUsageBody" class="aiu-body"></div>
   </div>
 </div>
 
