@@ -1,0 +1,6 @@
+node_modules/
+omoide-binder-ios/www/
+omoide-binder-ios/ios/
+omoide-binder-ios/build/
+database/tests/artifacts/
+preview-dist/

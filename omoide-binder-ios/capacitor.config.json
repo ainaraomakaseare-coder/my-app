@@ -1,0 +1,11 @@
+{
+  "appId": "com.hiroyaapps.omoidebinder",
+  "appName": "おもいでバインダー",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "automatic"
+  },
+  "server": {
+    "iosScheme": "capacitor"
+  }
+}

@@ -684,17 +684,200 @@
     max-width: calc(100vw - 40px);
     text-align: center;
   }
+
+  /* Community-first visual refresh */
+  :root {
+    --board: #f5f6fa; --board-fiber: transparent; --card: #fff; --card-edge: #e9eaf1;
+    --ink: #242535; --ink-soft: #717386; --ink-faint: #9699aa;
+    --rose: #6658d3; --rose-soft: #eeeafd; --gold: #d89442; --gold-soft: #fff3e4;
+    --teal: #438f82; --teal-soft: #e3f4ef; --danger: #c5525a;
+    --shadow: rgba(34,36,58,.08); --focus: #6658d3; color-scheme: light;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --board: #181923; --card: #232432; --card-edge: #363849; --ink: #f3f3f8;
+      --ink-soft: #b7b8c8; --ink-faint: #888a9e; --rose: #a69bff; --rose-soft: #36314f;
+      --gold: #f1bb74; --gold-soft: #43352a; --teal: #75c0b1; --teal-soft: #233b38;
+      --danger: #ed858a; --shadow: rgba(0,0,0,.24); --focus: #a69bff; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --board: #181923; --card: #232432; --card-edge: #363849; --ink: #f3f3f8;
+    --ink-soft: #b7b8c8; --ink-faint: #888a9e; --rose: #a69bff; --rose-soft: #36314f;
+    --gold: #f1bb74; --gold-soft: #43352a; --teal: #75c0b1; --teal-soft: #233b38;
+    --danger: #ed858a; --shadow: rgba(0,0,0,.24); --focus: #a69bff; color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html { min-height: 100%; background: var(--board); }
+  body { min-height: 100vh; margin: 0; padding: 0 0 calc(30px + env(safe-area-inset-bottom)); background: var(--board); color: var(--ink); font: 15px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif; }
+  #app { width: min(100% - 32px, 760px); margin: 0 auto; padding: max(24px, env(safe-area-inset-top)) 0 36px; }
+  .hand, .title, .personName, .sectionLabel { font-family: inherit !important; letter-spacing: -.025em; }
+  .topbar { padding: 0; margin: 0 0 18px; background: transparent; border: 0; box-shadow: none; }
+  .titleRow { align-items: center; gap: 12px; }
+  .title { margin: 0; color: var(--ink); font-size: clamp(25px, 7vw, 32px); font-weight: 800; line-height: 1.2; }
+  .subtitle { color: var(--ink-soft); font-size: 14px; line-height: 1.6; margin: 8px 0 16px; }
+  .controls { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+  #searchInput { min-width: 0; height: 46px; padding: 0 14px; border: 1px solid var(--card-edge); border-radius: 14px; background: var(--card); box-shadow: 0 2px 8px var(--shadow); font-size: 16px; }
+  .sortToggle { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: #ececf3; }
+  .sortBtn { min-height: 38px; padding: 0 11px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 12px; cursor: pointer; }
+  .sortBtn.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 4px var(--shadow); }
+  .communityHero { display: grid; grid-template-columns: 1fr 142px; gap: 16px; align-items: center; padding: 22px; margin: 20px 0; border-radius: 24px; background: linear-gradient(130deg,#5548b8 0%,#7668e4 58%,#9489f0 100%); color: #fff; box-shadow: 0 12px 28px rgba(87,74,192,.20); }
+  .heroEyebrow { margin: 0 0 6px; color: var(--ink-faint); font-size: 10px; font-weight: 800; letter-spacing: .13em; }
+  .communityHero .heroEyebrow { color: rgba(255,255,255,.76); }
+  .heroCopy h2 { margin: 0; font-size: clamp(19px,5vw,24px); line-height: 1.3; letter-spacing: -.035em; }
+  .heroCopy > p:not(.heroEyebrow) { margin: 6px 0 14px; color: rgba(255,255,255,.84); font-size: 12px; }
+  .heroCta { min-height: 42px; padding: 0 14px; border: 0; border-radius: 12px; background: #fff; color: #5145ae; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; box-shadow: 0 3px 10px rgba(31,24,95,.16); }
+  .heroCta span { padding-left: 7px; font-size: 17px; }
+  .heroProgress { padding: 14px; border-radius: 18px; background: rgba(255,255,255,.14); text-align: center; }
+  .heroProgressNumber { display: flex; align-items: baseline; justify-content: center; gap: 3px; white-space: nowrap; }
+  .heroProgressNumber strong { font-size: 36px; line-height: 1.15; letter-spacing: -.05em; }
+  .heroProgressNumber span { color: rgba(255,255,255,.77); font-size: 11px; }
+  .heroProgressLabel { display: block; margin: 2px 0 10px; color: rgba(255,255,255,.86); font-size: 11px; }
+  .progressTrack { height: 5px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.24); }
+  .progressTrack span { display: block; width: 0; height: 100%; border-radius: inherit; background: #fff; transition: width .25s ease; }
+  .mainNav { display: grid; grid-template-columns: repeat(3,1fr); gap: 4px; padding: 4px; margin: 0 0 16px; border-radius: 15px; background: #e9eaf1; }
+  .navTab { min-height: 42px; border: 0; border-radius: 12px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+  .navTab.active { background: var(--card); color: var(--ink); box-shadow: 0 2px 7px var(--shadow); }
+  .navTab span { display: inline-flex; min-width: 20px; height: 20px; align-items: center; justify-content: center; margin-left: 3px; padding: 0 5px; border-radius: 99px; background: var(--rose-soft); color: var(--rose); font-size: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 0; }
+  .personCard { min-width: 0; padding: 10px; border: 1px solid var(--card-edge); border-radius: 18px; background: var(--card); box-shadow: 0 3px 12px var(--shadow); cursor: pointer; transform: none !important; transition: transform .16s ease,box-shadow .16s ease; }
+  .personCard:hover, .personCard:focus-visible { transform: translateY(-2px) !important; box-shadow: 0 8px 20px var(--shadow); outline: 2px solid var(--rose); outline-offset: 2px; }
+  .personCard .tape { display: none; }
+  .thumbWrap { width: 100%; height: auto; aspect-ratio: 1 / .88; margin: 0 0 10px; border-radius: 13px; background: var(--rose-soft); }
+  .thumbWrap img { border-radius: inherit; }
+  .thumbPlaceholder { font-size: 2.1rem; }
+  .personName { overflow: hidden; color: var(--ink); font-size: 15px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+  .personNickname { overflow: hidden; color: var(--ink-soft); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .personTags { gap: 5px; margin-top: 7px; }
+  .miniTag { padding: 3px 8px; border: 0; border-radius: 99px; background: var(--teal-soft); color: var(--teal); font-size: 10px; font-weight: 650; }
+  .filterBar { gap: 7px; margin: 12px 0 2px; }
+  .chip { min-height: 34px; padding: 0 12px; border: 1px solid var(--card-edge); border-radius: 99px; background: var(--card); color: var(--ink-soft); font: inherit; font-size: 12px; }
+  .chip.active { border-color: var(--rose); background: var(--rose); color: #fff; }
+  .emptyState { grid-column: 1 / -1; padding: 32px 20px; border: 1px dashed var(--card-edge); border-radius: 18px; background: var(--card); color: var(--ink-soft); text-align: center; }
+  .emptyState .hand { font-size: 15px; }
+  .fab { right: max(20px,calc((100vw - 760px) / 2)); bottom: max(22px,env(safe-area-inset-bottom)); width: 58px; height: 58px; border: 0; border-radius: 20px; background: var(--rose); color: #fff; box-shadow: 0 9px 22px rgba(88,72,186,.28); font-size: 30px; }
+  .overlay { align-items: flex-end; padding: 12px; background: rgba(22,23,38,.48); backdrop-filter: blur(5px); }
+  .overlayInner { width: min(100%,620px); max-height: calc(100dvh - 24px - env(safe-area-inset-top)); overflow: auto; padding: 20px; border: 1px solid var(--card-edge); border-radius: 24px 24px 18px 18px; background: var(--board); box-shadow: 0 18px 55px rgba(20,20,38,.24); }
+  .detailHero { gap: 14px; align-items: center; }
+  .detailPhoto { width: 94px; height: 94px; flex: 0 0 94px; overflow: hidden; border-radius: 20px; background: var(--rose-soft); box-shadow: none; }
+  .detailName { width: 100%; border: 0; border-bottom: 2px solid var(--card-edge); border-radius: 0; background: transparent; font-size: 22px; font-weight: 800; }
+  .detailNickname { width: 100%; border: 0; border-bottom: 1px solid var(--card-edge); border-radius: 0; background: transparent; font-size: 14px; }
+  .galleryItem, .episode, .historyTableWrap { border: 1px solid var(--card-edge); border-radius: 15px; background: var(--card); box-shadow: none; }
+  .sectionLabel { margin: 22px 0 8px; color: var(--ink); font-size: 17px; font-weight: 800; }
+  .sectionHint, .noEpisodes, .noHistory { color: var(--ink-soft); font-size: 12px; }
+  .episode { padding: 14px; }
+  .episode p { color: var(--ink); font-size: 14px; }
+  .primaryBtn, .ghostBtn, .dangerBtn, .backBtn, .secondaryBtn { min-height: 44px; border-radius: 13px; font: inherit; font-weight: 700; cursor: pointer; }
+  .primaryBtn { border: 0; background: var(--rose); color: #fff; }
+  .ghostBtn, .backBtn, .secondaryBtn { border: 1px solid var(--card-edge); background: var(--card); color: var(--ink); }
+  .dangerBtn { border: 1px solid rgba(197,82,90,.22); background: rgba(197,82,90,.08); color: var(--danger); }
+  .gate .overlayInner { align-self: center; max-width: 420px; text-align: left !important; padding-top: 26px !important; }
+  .gate .hand { font-size: 24px !important; font-weight: 800; }
+  .gateInput { width: 100%; min-height: 48px; padding: 0 14px; border: 1px solid var(--card-edge); border-radius: 13px; background: var(--card); font-size: 16px; }
+  .visibilityPanel { padding: 14px; margin: 14px 0; border: 1px solid var(--card-edge); border-radius: 17px; background: var(--card); }
+  .visibilityPanel h3 { margin: 0; color: var(--ink); font-size: 13px; font-weight: 800; }
+  .visibilityPanel p { margin: 3px 0 10px; color: var(--ink-soft); font-size: 11px; }
+  .visibilityOptions { display: flex; flex-wrap: wrap; gap: 7px; }
+  .visibilityOption { position: relative; }
+  .visibilityOption input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .visibilityOption span { display: inline-flex; min-height: 34px; align-items: center; padding: 0 11px; border: 1px solid var(--card-edge); border-radius: 99px; background: var(--board); color: var(--ink-soft); font-size: 11px; font-weight: 650; cursor: pointer; }
+  .visibilityOption input:checked + span { border-color: var(--teal); background: var(--teal-soft); color: var(--teal); }
+  .visibilityOption input:focus-visible + span { outline: 3px solid color-mix(in srgb,var(--focus) 35%,transparent); outline-offset: 2px; }
+  .pageView { padding: 6px 0 24px; }
+  .pageHeading { display: flex; align-items: end; justify-content: space-between; margin: 8px 0 18px; }
+  .pageHeading h2 { margin: 0; color: var(--ink); font-size: 25px; font-weight: 800; line-height: 1.25; }
+  .pageHeading p:not(.heroEyebrow) { margin: 5px 0 0; color: var(--ink-soft); font-size: 13px; }
+  .quizModeGrid { display: grid; gap: 10px; }
+  .quizModeCard { display: grid; grid-template-columns: 48px minmax(0,1fr) 20px; gap: 12px; align-items: center; width: 100%; min-height: 76px; padding: 12px 14px; border: 1px solid var(--card-edge); border-radius: 18px; background: var(--card); color: var(--ink); text-align: left; cursor: pointer; box-shadow: 0 2px 8px var(--shadow); }
+  .quizModeCard.featured { border-color: transparent; background: var(--rose); color: #fff; }
+  .modeIcon { display: grid; width: 46px; height: 46px; place-items: center; border-radius: 15px; background: var(--rose-soft); font-size: 21px; }
+  .quizModeCard.featured .modeIcon { background: rgba(255,255,255,.2); }
+  .quizModeCard b, .quizModeCard small { display: block; }
+  .quizModeCard b { font-size: 14px; }
+  .quizModeCard small { margin-top: 2px; color: var(--ink-soft); font-size: 11px; }
+  .quizModeCard.featured small { color: rgba(255,255,255,.8); }
+  .modeArrow { color: var(--ink-faint); font-size: 24px; }
+  .quizSession { padding: 16px; border: 1px solid var(--card-edge); border-radius: 20px; background: var(--card); }
+  .quizSessionTop { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; color: var(--ink-soft); font-size: 12px; }
+  .quizPrompt { margin: 10px 0; color: var(--ink); font-size: 15px; font-weight: 750; text-align: center; }
+  .quizSessionTop strong { color: var(--ink); font-size: 14px; }
+  .quizClue { margin: 14px 0; padding: 16px; border-radius: 16px; background: var(--board); color: var(--ink); font-size: 15px; font-weight: 650; text-align: center; }
+  .quizClueImage { display: block; width: min(100%,290px); aspect-ratio: 1 / .9; margin: 4px auto 14px; border-radius: 18px; object-fit: cover; }
+  .quizOptions { display: grid; gap: 8px; }
+  .quizOption[hidden] { display: none; }
+  .quizModeCard[hidden] { display: none; }
+  .quizNameSearch { width: 100%; box-sizing: border-box; margin-bottom: 12px; padding: 12px; border: 1px solid var(--card-edge); border-radius: 12px; font: inherit; }
+  .quizOption { min-height: 48px; padding: 10px 14px; border: 1px solid var(--card-edge); border-radius: 14px; background: var(--card); color: var(--ink); font: inherit; font-weight: 650; text-align: left; cursor: pointer; }
+  .quizOption.correct { border-color: #5aa18e; background: var(--teal-soft); color: var(--teal); }
+  .quizOption.incorrect { border-color: #d77a80; background: rgba(215,122,128,.12); color: var(--danger); }
+  .quizFeedback { min-height: 26px; padding: 9px 2px 2px; color: var(--ink-soft); font-size: 13px; font-weight: 650; }
+  .quizNext { width: 100%; margin-top: 8px; }
+  .quizResult { padding: 18px 8px; text-align: center; }
+  .quizResult strong { display: block; margin: 5px 0; color: var(--rose); font-size: 38px; line-height: 1.2; }
+  .quizResult p { color: var(--ink-soft); }
+  .myScoreCard { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 18px; margin-bottom: 14px; border-radius: 20px; background: var(--card); box-shadow: 0 3px 12px var(--shadow); }
+  .myScoreLabel, .playerNameField { color: var(--ink-soft); font-size: 12px; }
+  #myKnownCount { display: block; color: var(--rose); font-size: 36px; line-height: 1.25; }
+  #myKnownCount span { margin-left: 4px; font-size: 16px; }
+  .playerNameField input { display: block; width: 100%; min-height: 44px; padding: 0 12px; margin-top: 6px; border: 1px solid var(--card-edge); border-radius: 12px; background: var(--board); font-size: 16px; }
+  .leaderboardList { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .leaderboardItem { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; min-height: 62px; padding: 10px 14px; border: 1px solid var(--card-edge); border-radius: 16px; background: var(--card); }
+  .rankBadge { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 11px; background: var(--board); color: var(--ink-soft); font-size: 12px; font-weight: 800; }
+  .leaderboardItem:first-child .rankBadge { background: var(--gold-soft); color: var(--gold); }
+  .leaderboardName { min-width: 0; overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+  .leaderboardScore { color: var(--rose); font-size: 13px; font-weight: 800; }
+  .leaderboardEmpty, .rankingNote { padding: 14px; color: var(--ink-soft); font-size: 12px; text-align: center; }
+  .bulkBar { padding-bottom: env(safe-area-inset-bottom); background: var(--card); box-shadow: 0 -8px 28px var(--shadow); }
+  @media (min-width: 620px) { .grid { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; } .quizModeGrid { grid-template-columns: 1fr 1fr; } .myScoreCard { grid-template-columns: 1fr 1.5fr auto; align-items: end; } }
+  @media (max-width: 390px) { #app { width: min(100% - 24px,760px); } .communityHero { grid-template-columns: 1fr 116px; gap: 10px; padding: 17px; } .heroProgress { padding: 11px 8px; } .heroProgressNumber strong { font-size: 31px; } .controls { grid-template-columns: 1fr; } .sortToggle { width: max-content; } }
+</style>
+<style>
+  .gate .overlayInner { max-width:420px; text-align:center; padding-top:10vh; }
+  .gate label { display:block; text-align:left; margin-top:16px; font-size:13px; }
+  .gate input { width:100%; box-sizing:border-box; margin-top:6px; }
+  .gateActions { display:flex; flex-wrap:wrap; justify-content:center; gap:10px; margin-top:18px; }
+  .memberAdmin { background:var(--card); border-radius:20px; padding:20px; margin:18px 0; }
+  .memberAdmin h2 { margin-top:0; }
+  .memberList { padding:0; list-style:none; }
+  .memberRow { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 0; border-bottom:1px solid var(--card-edge); }
+  .memberRow small { display:block; color:var(--ink-soft); margin-top:4px; }
+  .memberRemove { color:#bd303e; flex-shrink:0; min-height:44px; }
+  .inviteResult { margin:16px 0; padding:14px; background:var(--teal-soft); border-radius:12px; }
+  .inviteResult input { width:100%; box-sizing:border-box; font:14px monospace; }
+  #memberAdminStatus { min-height:1.5em; }
+  #gateAccountId { overflow-wrap:anywhere; font-size:11px; color:var(--ink-soft); }
+  .quizScope { padding:18px; margin:0 0 18px; background:var(--card); border-radius:18px; border:1px solid var(--card-edge); }
+  .quizScope h3 { margin:0 0 6px; font-size:16px; }
+  .quizScope p { margin:8px 0; font-size:13px; color:var(--ink-soft); }
+  .quizScopeActions { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  .quizScopeGroups { display:grid; gap:8px; }
+  .quizScopeGroup { display:flex; gap:10px; align-items:center; min-height:48px; padding:10px; background:var(--board); border-radius:12px; cursor:pointer; }
+  .quizScopeGroup input { width:20px; height:20px; accent-color:var(--teal); flex-shrink:0; }
+  .quizScopeGroup span { flex:1; overflow-wrap:anywhere; }
+  .quizScopeGroup small { color:var(--ink-soft); white-space:nowrap; }
+  #quizScopeSummary { font-weight:700; color:var(--ink); }
+  .fictionEditor { margin:16px 0; padding:16px; border:1px solid var(--card-edge); border-radius:16px; background:var(--card); }
+  .fictionEditor textarea, .fictionEditor select { width:100%; box-sizing:border-box; margin:8px 0 12px; }
+  .fictionEditor label { display:block; margin-top:10px; }
+  .fictionEditor p { font-size:13px; color:var(--ink-soft); }
+  .fictionEditor li { margin:10px 0; overflow-wrap:anywhere; }
+  .quizOption.noneChoice { grid-column:1 / -1; }
+  [hidden] { display:none !important; }
 </style>
 </head>
 <body>
 
 <div class="overlay gate" id="gateOverlay">
-  <div class="overlayInner" style="max-width:360px;text-align:center;padding-top:18vh;">
-    <h2 class="hand" style="font-size:1.6rem;">合言葉を入力</h2>
-    <p class="subtitle">同じ合言葉を使った人同士だけで、内容を共有できます。新しい合言葉を使うと、新しい保管庫になります。</p>
-    <input type="password" id="gateInput" class="gateInput" placeholder="合言葉" autocomplete="off" />
-    <button class="primaryBtn" id="gateSubmit" style="margin-top:14px;">入る</button>
-    <p class="gateError" id="gateError"></p>
+  <div class="overlayInner">
+    <h2>コミュニティに参加</h2>
+    <p class="subtitle">管理者から届いた招待コードで参加できます。</p>
+    <label>参加者としての名前<input id="gateDisplayName" class="gateInput" maxlength="24" placeholder="みんなに分かる名前" autocomplete="nickname" /></label>
+    <label>招待コード<input type="text" id="gateInput" class="gateInput" placeholder="招待コードを貼り付け" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
+    <div class="gateActions"><button class="primaryBtn" id="gateSubmit">参加する</button><button class="ghostBtn" id="gateCreate">新しく作る</button></div>
+    <p class="gateError" id="gateError" role="status"></p>
+    <button class="ghostBtn" id="gateResume" hidden>参加済みコミュニティに戻る</button>
+    <details><summary>管理者に伝える参加者ID</summary><p id="gateAccountId"></p></details>
   </div>
 </div>
 
@@ -713,10 +896,89 @@
     </div>
     <div class="filterBar" id="tagFilterBar" hidden></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+      <button type="button" class="ghostBtn" id="bulkImportBtn">名簿から一括追加</button>
+      <button type="button" class="ghostBtn" id="downloadTemplateBtn">入力テンプレート</button>
       <button type="button" class="ghostBtn" id="bulkTagToggleBtn">所属をまとめて付ける</button>
-      <button type="button" class="ghostBtn" id="switchRoomBtn">別の合言葉に切り替える</button>
+      <button type="button" class="ghostBtn" id="manageMembersBtn" hidden>参加者を管理</button>
+      <button type="button" class="ghostBtn" id="switchRoomBtn">コミュニティを切り替える</button>
     </div>
   </header>
+
+  <section class="communityHero" aria-labelledby="heroTitle">
+    <div class="heroCopy">
+      <p class="heroEyebrow">COMMUNITY MEMORY</p>
+      <h2 id="heroTitle">会うたび、もっと仲良く。</h2>
+      <p>みんなの顔とエピソードを、クイズで覚えてみよう。</p>
+      <button type="button" class="heroCta" id="startQuizBtn">覚えているかクイズ <span aria-hidden="true">→</span></button>
+    </div>
+    <div class="heroProgress" aria-label="覚えた友達の人数">
+      <div class="heroProgressNumber"><strong id="knownPeopleCount">0</strong><span>/ 100人</span></div>
+      <span class="heroProgressLabel">覚えた友達</span>
+      <div class="progressTrack"><span id="knownPeopleProgress"></span></div>
+    </div>
+  </section>
+
+  <nav class="mainNav" id="mainNav" aria-label="メインメニュー">
+    <button type="button" class="navTab active" data-view="people">メンバー <span id="peopleCount">0</span></button>
+    <button type="button" class="navTab" data-view="quiz">クイズ</button>
+    <button type="button" class="navTab" data-view="ranking">ランキング</button>
+  </nav>
+
+  <section class="memberAdmin" id="memberAdmin" hidden aria-labelledby="memberAdminTitle">
+    <h2 id="memberAdminTitle">参加者を管理</h2>
+    <p>退出させた参加者は、このコミュニティを閲覧・編集できなくなります。招待コードも同時に変更されます。</p>
+    <p id="inviteStatus" role="status">参加受付の状態を確認しています…</p>
+    <div class="gateActions"><button type="button" class="secondaryBtn" id="pauseInviteBtn" disabled>参加受付を確認中</button><button type="button" class="ghostBtn" id="rotateInviteBtn" disabled>招待コードを新しくする</button></div>
+    <div class="inviteResult" id="inviteResult" hidden><label>新しい招待コード<input id="inviteCodeValue" readonly /></label><button type="button" class="ghostBtn" id="copyInviteBtn">コピー</button><p>新しく招待する人へ送ってください。既に参加している人はそのまま使えます。このコードは画面を閉じる前に控えてください。</p></div>
+    <p id="memberAdminStatus" role="status"></p>
+    <ul class="memberList" id="memberList"></ul>
+    <button type="button" class="ghostBtn" id="closeMemberAdminBtn">閉じる</button>
+  </section>
+
+  <section class="pageView quizView" id="quizView" hidden>
+    <div class="pageHeading"><div><p class="heroEyebrow">GET TO KNOW EACH OTHER</p><h2>友達クイズ</h2><p>共有されている写真やエピソードから出題します。</p></div></div>
+    <section class="quizScope" aria-labelledby="quizScopeTitle">
+      <h3 id="quizScopeTitle">覚える区分を選ぶ</h3>
+      <p>チェックした区分を出題対象にします。複数選べます。今は覚えなくてよい区分は外せます。</p>
+      <div class="quizScopeActions"><button type="button" class="ghostBtn" id="quizScopeAll">すべて覚える</button><button type="button" class="ghostBtn" id="quizScopeNone">すべて外す</button></div>
+      <div class="quizScopeGroups" id="quizScopeGroups"></div>
+      <p id="quizScopeSummary" aria-live="polite"></p>
+      <p>区分はプロフィールの「所属」で追加できます（例：放送研究会・大学・バイト先）。この選択は自分の端末に保存されます。</p>
+    </section>
+    <section class="quizScope">
+      <label for="quizLevel"><b>クイズのレベル</b></label>
+      <select id="quizLevel" class="quizNameSearch"><option value="beginner">初級：写真から名前を4択</option><option value="intermediate">中級：写真・特徴・エピソードを4択</option><option value="advanced" selected>上級：全員から選ぶ＋そんな人いない</option></select>
+      <p id="quizLevelNote">選んだ区分の全員から回答します。架空のエピソードも出題します。</p>
+    </section>
+    <div class="quizModeGrid" id="quizModeGrid">
+      <button type="button" class="quizModeCard" data-quiz-mode="photo"><span class="modeIcon">📷</span><span><b>写真だけで、この人は誰？</b><small>ヒントは写真だけ。対象の全員から選ぶ</small></span><span class="modeArrow">›</span></button>
+      <button type="button" class="quizModeCard" data-quiz-mode="feature"><span class="modeIcon">✨</span><span><b>特徴から名前</b><small>好きなこと・所属から当てよう</small></span><span class="modeArrow">›</span></button>
+      <button type="button" class="quizModeCard" data-quiz-mode="person-episode"><span class="modeIcon">👤</span><span><b>この人のエピソードは？</b><small>写真・名前を見て、話を4択で選ぶ</small></span><span class="modeArrow">›</span></button>
+      <button type="button" class="quizModeCard" data-quiz-mode="episode"><span class="modeIcon">💬</span><span><b>このエピソードは誰？</b><small>対象の全員＋「そんな人いない」</small></span><span class="modeArrow">›</span></button>
+      <button type="button" class="quizModeCard" data-quiz-mode="truefalse"><span class="modeIcon">○×</span><span><b>エピソード○×</b><small>登録された話？ それとも架空？</small></span><span class="modeArrow">›</span></button>
+      <button type="button" class="quizModeCard featured" data-quiz-mode="mixed"><span class="modeIcon">🎲</span><span><b>おまかせ10問</b><small>いろんな問題にチャレンジ</small></span><span class="modeArrow">›</span></button>
+    </div>
+    <div class="quizSession" id="quizSession" hidden></div>
+    <details class="fictionEditor" id="fictionEditor">
+      <summary>架空のエピソードを出題用に追加</summary>
+      <p>ここに追加する話の正解は「そんな人いない」または「×」です。人物プロフィールには追加されません。</p>
+      <label>架空の話<textarea id="fictionText" maxlength="2000" rows="5" placeholder="実際には起きていない、出題用の話"></textarea></label>
+      <label>出題する区分<select id="fictionTag"><option value="">区分の共有なし</option></select></label>
+      <button type="button" class="secondaryBtn" id="saveFictionBtn">架空の問題として追加</button>
+      <p id="fictionStatus" role="status"></p>
+      <div class="quizScopeActions"><button type="button" class="ghostBtn" id="fictionExampleOne">恵比寿の例文を使う</button><button type="button" class="ghostBtn" id="fictionExampleTwo">エンゼルスの例文を使う</button><button type="button" class="ghostBtn" data-quiz-mode="sample-truefalse">架空の例題2問を試す（記録なし）</button></div>
+      <ul id="fictionList"></ul>
+    </details>
+  </section>
+
+  <section class="pageView rankingView" id="rankingView" hidden>
+    <div class="pageHeading"><div><p class="heroEyebrow">COMMUNITY CHALLENGE</p><h2>みんなの記憶力</h2><p>何人の友達を覚えたかな？</p></div></div>
+    <div class="myScoreCard"><div><span class="myScoreLabel">あなたが覚えた友達</span><strong id="myKnownCount">0<span>人</span></strong></div><label class="playerNameField">ランキングの名前<input id="playerNameInput" type="text" maxlength="24" placeholder="表示名を入力" autocomplete="nickname" /></label><button type="button" class="secondaryBtn" id="savePlayerNameBtn">名前を保存</button></div>
+    <label for="rankingLevel">ランキングのレベル</label>
+    <select id="rankingLevel" class="quizNameSearch"><option value="beginner">初級</option><option value="intermediate">中級</option><option value="advanced" selected>上級</option></select>
+    <ol class="leaderboardList" id="leaderboardList"><li class="leaderboardEmpty">ランキングを読み込んでいます</li></ol>
+    <p class="rankingNote" id="rankingNote"></p>
+  </section>
 
   <main class="grid" id="grid">
     <div class="emptyState">
@@ -736,6 +998,7 @@
 
 <datalist id="tagOptions"></datalist>
 <datalist id="hobbyOptions"></datalist>
+<input type="file" id="bulkImportFile" accept=".tsv,.txt,text/tab-separated-values" hidden />
 
 <div class="overlay detail" id="detailPanel" hidden>
   <div class="overlayInner" id="detailInner"></div>
@@ -760,52 +1023,155 @@
   var supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var pollTimer = null;
 
-  // ============ 合言葉ゲート ============
-  // 合言葉ごとにSHA-256で「保管庫ID」を作り、そのIDのデータだけを見せる。
-  // 同じ合言葉を使えば同じ保管庫、違う合言葉なら自動的に別の保管庫になる。
-
-  async function sha256Hex(text) {
-    var enc = new TextEncoder().encode(text);
-    var buf = await crypto.subtle.digest("SHA-256", enc);
-    return Array.prototype.map.call(new Uint8Array(buf), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
-  }
-
+  // ============ 招待・会員権限ゲート ============
   var gateOverlay = document.getElementById("gateOverlay");
   var gateInput = document.getElementById("gateInput");
   var gateError = document.getElementById("gateError");
+  var gateBusy = false;
+  var accessEpoch = 0;
+  var photoObjects = new Map();
+  var lastRoomId = null;
 
-  function passGate(roomId) {
+  async function ensureIdentity() {
+    var session = await supabaseClient.auth.getSession();
+    if (session.error) throw session.error;
+    var user = session.data.session && session.data.session.user;
+    if (!user) {
+      var signIn = await supabaseClient.auth.signInAnonymously();
+      if (signIn.error) throw signIn.error;
+      user = signIn.data.user;
+    }
+    state.userId = user.id;
+    state.db = supabaseClient;
+    document.getElementById("gateAccountId").textContent = user.id;
+  }
+
+  function membershipMessage(error) {
+    var message = String(error && error.message || "");
+    if (message.indexOf("membership_removed") !== -1) return "管理者により退出済みです。このコミュニティには参加できません。";
+    if (message.indexOf("invite_invalid") !== -1) return "招待コードが無効です。管理者に新しいコードを確認してください。";
+    if (message.indexOf("membership_required") !== -1) return "参加権限を確認できません。既存コミュニティの移行中の場合は管理者に確認してください。";
+    if (message.indexOf("admin_required") !== -1) return "この操作には管理者権限が必要です。";
+    return "接続または参加設定を確認できません。通信状態を確認して、もう一度お試しください。";
+  }
+
+  function setGateBusy(busy) {
+    gateBusy = busy;
+    ["gateSubmit", "gateCreate", "gateResume"].forEach(function (id) { document.getElementById(id).disabled = busy; });
+  }
+
+  async function readMembership(roomId) {
+    var result = await supabaseClient.from("binder_members").select("role,status,display_name")
+      .eq("room_id", roomId).eq("user_id", state.userId).maybeSingle();
+    if (result.error) throw result.error;
+    if (!result.data) throw new Error("membership_required");
+    if (result.data.status !== "active") {
+      try {
+        localStorage.removeItem("omoide_quiz_v1:" + roomId + ":" + state.userId);
+        localStorage.removeItem("omoide_quiz_name_v1:" + roomId);
+        localStorage.removeItem("omoide_quiz_scope_v1:" + roomId + ":" + state.userId);
+        if (localStorage.getItem("omoide_room_id_v1") === roomId) localStorage.removeItem("omoide_room_id_v1");
+      } catch (e) {}
+      if (lastRoomId === roomId) lastRoomId = null;
+      throw new Error("membership_removed");
+    }
+    return result.data;
+  }
+
+  async function passGate(roomId) {
+    var membership = await readMembership(roomId);
+    accessEpoch += 1;
     state.roomId = roomId;
+    state.memberRole = membership.role;
+    state.memberName = membership.display_name;
+    state.quizScope = readQuizScope();
+    lastRoomId = roomId;
     try { localStorage.setItem("omoide_room_id_v1", roomId); } catch (e) {}
     gateOverlay.hidden = true;
-    init();
+    document.getElementById("app").hidden = false;
+    document.getElementById("manageMembersBtn").hidden = membership.role !== "admin";
+    setView("people");
+    await init();
   }
 
   async function trySubmitGate() {
+    if (gateBusy) return;
     var val = gateInput.value.trim();
-    if (!val) { gateError.textContent = "合言葉を入力してください"; return; }
-    var roomId = await sha256Hex(val);
-    passGate(roomId);
+    var name = document.getElementById("gateDisplayName").value.trim();
+    if (!val || !name) { gateError.textContent = "参加者の名前と招待コードを入力してください"; return; }
+    setGateBusy(true);
+    try {
+      await ensureIdentity();
+      var joined = await supabaseClient.rpc("binder_join_room", { p_code: val, p_display_name: name });
+      if (joined.error) throw joined.error;
+      await passGate(joined.data);
+    } catch (e) { showGate(membershipMessage(e)); }
+    finally { setGateBusy(false); }
   }
 
   document.getElementById("gateSubmit").addEventListener("click", trySubmitGate);
   gateInput.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.isComposing) trySubmitGate(); });
 
-  function showGate() {
+  function showGate(message) {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    accessEpoch += 1;
+    photoObjects.forEach(function (url) { URL.revokeObjectURL(url); });
+    photoObjects.clear();
+    state.roomId = null;
+    state.memberRole = null;
+    state.memberName = "";
+    state.people = [];
+    state.knownPeople = [];
+    state.levelScores = {};
+    state.playerName = "";
+    state.quizSession = null;
+    state.fictionalEpisodes = [];
+    state.quizScope = { all: true, tags: [], untagged: false };
+    state.selectedId = null;
+    state.tagFilters.clear();
+    state.bulkSelected.clear();
+    state.bulkMode = false;
+    tagPanelState.tagName = null;
+    tagPanelState.notes = [];
+    ["detailPanel", "tagPanel", "memberAdmin", "inviteResult"].forEach(function (id) { document.getElementById(id).hidden = true; });
+    ["grid", "detailInner", "tagInner", "quizSession", "leaderboardList", "memberList", "quizScopeGroups", "quizScopeSummary", "fictionList", "fictionStatus"].forEach(function (id) { document.getElementById(id).innerHTML = ""; });
+    document.getElementById("fictionText").value = "";
+    document.getElementById("fictionTag").innerHTML = '<option value="">区分の共有なし</option>';
+    document.getElementById("fictionEditor").open = false;
+    document.getElementById("inviteCodeValue").value = "";
+    invitesEnabled = null;
+    document.getElementById("app").hidden = true;
+    document.getElementById("gateResume").hidden = !lastRoomId;
     gateInput.value = "";
-    gateError.textContent = "";
+    gateError.textContent = message || "";
     gateOverlay.hidden = false;
     setTimeout(function () { gateInput.focus(); }, 50);
   }
 
-  (function checkSavedGate() {
+  document.getElementById("gateCreate").addEventListener("click", async function () {
+    if (gateBusy) return;
+    var displayName = document.getElementById("gateDisplayName").value.trim();
+    if (!displayName) { gateError.textContent = "参加者の名前を入力してください"; return; }
+    var name = prompt("新しいコミュニティの名前を入力してください（60文字以内）");
+    if (!name || !name.trim()) return;
+    if (name.trim().length > 60) { gateError.textContent = "コミュニティ名は60文字以内で入力してください"; return; }
+    setGateBusy(true);
     try {
-      var saved = localStorage.getItem("omoide_room_id_v1");
-      if (saved) { passGate(saved); return; }
-    } catch (e) {}
-    setTimeout(function () { gateInput.focus(); }, 50);
-  })();
+      await ensureIdentity();
+      var result = await supabaseClient.rpc("binder_create_room", { p_name: name.trim(), p_display_name: displayName });
+      if (result.error) throw result.error;
+      await passGate(result.data.room_id);
+      if (state.memberRole === "admin") { await openMemberAdmin(); showInviteCode(result.data.invite_code); }
+    } catch (e) { showGate(membershipMessage(e)); }
+    finally { setGateBusy(false); }
+  });
+  document.getElementById("gateResume").addEventListener("click", async function () {
+    if (gateBusy || !lastRoomId) return;
+    setGateBusy(true);
+    try { await ensureIdentity(); await passGate(lastRoomId); }
+    catch (e) { showGate(membershipMessage(e)); }
+    finally { setGateBusy(false); }
+  });
 
   // ============ アプリ本体 ============
 
@@ -813,6 +1179,20 @@
     db: null,
     roomId: null,
     people: [],
+    userId: null,
+    memberRole: null,
+    memberName: "",
+    knownPeople: [],
+    playerName: "",
+    correctCount: 0,
+    answerCount: 0,
+    quizSession: null,
+    quizLevel: "advanced",
+    levelScores: {},
+    quizScope: { all: true, tags: [], untagged: false },
+    fictionalEpisodes: [],
+    activeView: "people",
+    scoreReady: false,
     sort: "recent",
     search: "",
     tagFilters: new Set(),
@@ -853,7 +1233,7 @@
   function esc(s) {
     var d = document.createElement("div");
     d.textContent = s == null ? "" : String(s);
-    return d.innerHTML;
+    return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   function formatDate(iso) {
@@ -890,20 +1270,57 @@
   }
 
   async function uploadPhoto(file) {
+    var epoch = accessEpoch;
+    if (!await checkAccess()) throw new Error("membership_required");
     var safeName = (file.name || "photo").replace(/[^\w.\-]/g, "_");
-    var path = cryptoId() + "_" + safeName;
+    var path = state.roomId + "/" + state.userId + "/" + cryptoId() + "_" + safeName;
     var up = await supabaseClient.storage.from(PHOTOS_BUCKET).upload(path, file);
     if (up.error) throw up.error;
+    if (epoch !== accessEpoch) throw new Error("membership_required");
+    // Store a stable reference, not a signed URL or local object URL.
     var pub = supabaseClient.storage.from(PHOTOS_BUCKET).getPublicUrl(path);
+    photoObjects.set(pub.data.publicUrl, URL.createObjectURL(file));
     return pub.data.publicUrl;
+  }
+
+  function photoPath(url) {
+    try {
+      var parsed = new URL(url);
+      var prefix = new URL(SUPABASE_URL).origin + "/storage/v1/object/public/" + PHOTOS_BUCKET + "/";
+      if (parsed.href.indexOf(prefix) !== 0) return null;
+      return decodeURIComponent(parsed.pathname.slice(new URL(prefix).pathname.length));
+    } catch (e) { return null; }
+  }
+
+  function photoSrc(url) {
+    return photoObjects.get(url) || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' fill='%23e8e5f1'/%3E%3C/svg%3E";
+  }
+
+  async function loadPrivatePhotos(rows, epoch) {
+    var urls = new Set();
+    rows.forEach(function (row) { if (visibilityFor(row).photo) (row.photo_urls || []).forEach(function (url) { urls.add(url); }); });
+    photoObjects.forEach(function (objectUrl, url) {
+      if (!urls.has(url)) { URL.revokeObjectURL(objectUrl); photoObjects.delete(url); }
+    });
+    var pending = Array.from(urls).filter(function (url) { return !photoObjects.has(url); });
+    // Bound concurrent downloads for large communities and iPhone memory usage.
+    for (var offset = 0; offset < pending.length; offset += 4) {
+      if (epoch !== accessEpoch) return;
+      await Promise.all(pending.slice(offset, offset + 4).map(async function (url) {
+        var path = photoPath(url);
+        if (!path) return;
+        try {
+          var result = await supabaseClient.storage.from(PHOTOS_BUCKET).download(path);
+          if (!result.error && result.data && epoch === accessEpoch) photoObjects.set(url, URL.createObjectURL(result.data));
+        } catch (e) { /* Render a placeholder; never fall back to a public URL. */ }
+      }));
+    }
   }
 
   async function deletePhotoByUrl(url) {
     try {
-      var marker = "/" + PHOTOS_BUCKET + "/";
-      var idx = url.indexOf(marker);
-      if (idx === -1) return;
-      var path = decodeURIComponent(url.slice(idx + marker.length).split("?")[0]);
+      var path = photoPath(url);
+      if (!path) return;
       await supabaseClient.storage.from(PHOTOS_BUCKET).remove([path]);
     } catch (e) {}
   }
@@ -989,6 +1406,15 @@
     if (btn) btn.addEventListener("click", function () { window.location.reload(); });
   }
 
+  var DEFAULT_VISIBILITY = { name: true, nickname: true, photo: true, tags: true, hobbies: true, history: true, episodes: true };
+
+  function visibilityFor(person) {
+    var raw = person && person.visibility && typeof person.visibility === "object" ? person.visibility : {};
+    var result = {};
+    Object.keys(DEFAULT_VISIBILITY).forEach(function (key) { result[key] = raw[key] === undefined ? true : raw[key] === true; });
+    return result;
+  }
+
   function rowToPerson(row) {
     return {
       id: row.id,
@@ -999,36 +1425,63 @@
       photoUrls: row.photo_urls || [],
       episodes: row.episodes || [],
       history: row.history || [],
+      visibility: row.visibility || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
   }
 
   async function init() {
-    try {
-      var signIn = await supabaseClient.auth.signInAnonymously();
-      if (signIn.error) throw signIn.error;
-    } catch (e) {
-      showConnectFailed();
-      return;
-    }
-    state.db = supabaseClient;
+    var epoch = accessEpoch;
     await loadPeople();
+    if (epoch !== accessEpoch) return;
+    await loadQuizScore();
+    if (epoch !== accessEpoch) return;
+    await loadFictionalEpisodes();
+    if (epoch !== accessEpoch) return;
+    renderKnownSummary();
     if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(function () {
-      // 詳細画面を開いている間は、入力中のものを消さないよう自動更新しない
+    pollTimer = setInterval(async function () {
+      // Check membership even while editing or answering a quiz.
+      if (!await checkAccess()) return;
       if (!state.selectedId && !tagPanelState.tagName) loadPeople();
     }, 12000);
   }
 
+  async function checkAccess() {
+    if (!state.roomId) return false;
+    var epoch = accessEpoch;
+    try {
+      var member = await readMembership(state.roomId);
+      if (epoch !== accessEpoch) return false;
+      state.memberRole = member.role;
+      document.getElementById("manageMembersBtn").hidden = member.role !== "admin";
+      if (member.role !== "admin") document.getElementById("memberAdmin").hidden = true;
+      return true;
+    } catch (e) {
+      if (epoch !== accessEpoch) return false;
+      if (String(e.message).indexOf("membership_removed") !== -1) {
+        try { localStorage.removeItem(quizStorageKey()); localStorage.removeItem(playerNameStorageKey()); localStorage.removeItem("omoide_room_id_v1"); } catch (ignore) {}
+        lastRoomId = null;
+      }
+      showGate(membershipMessage(e));
+      return false;
+    }
+  }
+
   async function loadPeople() {
+    var epoch = accessEpoch;
+    if (!state.roomId) return;
     var ascending = state.sort === "name";
     var orderCol = state.sort === "name" ? "name" : "created_at";
     var res = await supabaseClient.from("people").select("*").eq("room_id", state.roomId).order(orderCol, { ascending: ascending });
+    if (epoch !== accessEpoch) return;
     if (res.error) {
       showToast("読み込みでエラーが起きました: " + res.error.message);
       return;
     }
+    await loadPrivatePhotos(res.data || [], epoch);
+    if (epoch !== accessEpoch) return;
     state.people = res.data.map(rowToPerson);
     render();
   }
@@ -1037,7 +1490,7 @@
 
   function distinctTags() {
     var set = {};
-    state.people.forEach(function (p) { personTags(p).forEach(function (t) { set[t] = true; }); });
+    state.people.forEach(function (p) { if (visibilityFor(p).tags) personTags(p).forEach(function (t) { set[t] = true; }); });
     return Object.keys(set).sort();
   }
 
@@ -1077,7 +1530,7 @@
 
   function distinctHobbies() {
     var set = {};
-    state.people.forEach(function (p) { (p.hobbies || []).forEach(function (h) { set[h] = true; }); });
+    state.people.forEach(function (p) { if (visibilityFor(p).hobbies) (p.hobbies || []).forEach(function (h) { set[h] = true; }); });
     return Object.keys(set).sort();
   }
 
@@ -1089,18 +1542,19 @@
     renderTagFilterBar();
     renderTagOptions();
     renderHobbyOptions();
+    renderKnownSummary();
     if (state.bulkMode) els.bulkCount.textContent = state.bulkSelected.size + "人選択中";
 
     var list = state.people.slice();
     if (state.tagFilters.size > 0) {
       list = list.filter(function (p) {
-        var tags = personTags(p);
+        var tags = visibilityFor(p).tags ? personTags(p) : [];
         for (var t of state.tagFilters) if (tags.indexOf(t) !== -1) return true;
         return false;
       });
     }
     var q = state.search.trim().toLowerCase();
-    if (q) list = list.filter(function (p) { return (p.name || "").toLowerCase().indexOf(q) !== -1; });
+    if (q) list = list.filter(function (p) { return visibilityFor(p).name && (p.name || "").toLowerCase().indexOf(q) !== -1; });
 
     if (list.length === 0) {
       els.grid.className = "grid";
@@ -1118,11 +1572,12 @@
 
     els.grid.className = "grid";
     els.grid.innerHTML = list.map(function (p) {
-      var cover = p.photoUrls && p.photoUrls[0];
+      var visibility = visibilityFor(p);
+      var cover = visibility.photo && p.photoUrls && p.photoUrls[0];
       var thumb = cover
-        ? '<img src="' + esc(cover) + '" alt="" loading="lazy" />'
+        ? '<img src="' + esc(photoSrc(cover)) + '" alt="" loading="lazy" />'
         : '<span class="thumbPlaceholder">🙂</span>';
-      var tags = personTags(p);
+      var tags = visibility.tags ? personTags(p) : [];
       var tagsHtml = tags.length
         ? '<div class="personTags">' + tags.map(function (t) { return '<span class="miniTag">' + esc(t) + "</span>"; }).join("") + "</div>"
         : "";
@@ -1130,8 +1585,8 @@
         '<div class="personCard" tabindex="0" role="button" data-id="' + esc(p.id) + '">' +
         '<span class="tape"></span>' +
         '<div class="thumbWrap">' + thumb + "</div>" +
-        '<div class="personName hand">' + esc(p.name || "(名前未設定)") + "</div>" +
-        (p.nickname ? '<div class="personNickname">' + esc(p.nickname) + "</div>" : "") +
+        '<div class="personName">' + esc(visibility.name ? (p.name || "(名前未設定)") : "名前非公開") + "</div>" +
+        (visibility.nickname && p.nickname ? '<div class="personNickname">' + esc(p.nickname) + "</div>" : "") +
         tagsHtml +
         "</div>"
       );
@@ -1148,14 +1603,15 @@
   function renderBulkList(list) {
     els.grid.className = "bulkList";
     els.grid.innerHTML = list.map(function (p) {
-      var cover = p.photoUrls && p.photoUrls[0];
-      var thumb = cover ? '<img src="' + esc(cover) + '" alt="" />' : "🙂";
+      var visibility = visibilityFor(p);
+      var cover = visibility.photo && p.photoUrls && p.photoUrls[0];
+      var thumb = cover ? '<img src="' + esc(photoSrc(cover)) + '" alt="" />' : "🙂";
       var checked = state.bulkSelected.has(p.id);
       return (
         '<label class="bulkRow' + (checked ? " selected" : "") + '">' +
         '<input type="checkbox" class="bulkCheckbox" data-id="' + esc(p.id) + '"' + (checked ? " checked" : "") + " />" +
         '<span class="bulkRowThumb">' + thumb + "</span>" +
-        '<span class="bulkRowName">' + esc(p.name || "(名前未設定)") + "</span>" +
+        '<span class="bulkRowName">' + esc(visibility.name ? (p.name || "(名前未設定)") : "名前非公開") + "</span>" +
         "</label>"
       );
     }).join("");
@@ -1204,7 +1660,8 @@
         hobbies: [],
         photo_urls: [],
         episodes: [],
-        history: []
+        history: [],
+        visibility: DEFAULT_VISIBILITY
       }).select();
       if (res.error) throw res.error;
       var newId = res.data && res.data[0] && res.data[0].id;
@@ -1241,22 +1698,23 @@
     var p = findPerson(state.selectedId);
     if (!p) { closeDetail(); return; }
 
-    var photoUrls = p.photoUrls || [];
+    var visibility = visibilityFor(p);
+    var photoUrls = visibility.photo ? (p.photoUrls || []) : [];
     var cover = photoUrls[0];
     var coverHtml = cover
-      ? '<img src="' + esc(cover) + '" alt="" />'
+      ? '<img src="' + esc(photoSrc(cover)) + '" alt="" />'
       : '<span class="thumbPlaceholder">🙂</span>';
 
     var galleryHtml = photoUrls.map(function (url) {
       return (
         '<div class="galleryItem">' +
-        '<img src="' + esc(url) + '" alt="" />' +
+        '<img src="' + esc(photoSrc(url)) + '" alt="" />' +
         '<button class="removePhoto" data-remove-photo="' + esc(url) + '" title="この写真を削除" aria-label="この写真を削除">×</button>' +
         "</div>"
       );
     }).join("") + '<div class="addPhotoTile" id="addPhotoTile" title="写真を追加">＋</div>';
 
-    var episodesSorted = (p.episodes || []).slice().sort(function (a, b) {
+    var episodesSorted = (visibility.episodes ? (p.episodes || []) : []).slice().sort(function (a, b) {
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
     var episodesHtml = episodesSorted.length
@@ -1269,9 +1727,9 @@
             "</div>"
           );
         }).join("")
-      : '<p class="noEpisodes">まだエピソードがありません。下から書き加えてみましょう。</p>';
+      : (visibility.episodes ? '<p class="noEpisodes">まだエピソードがありません。下から書き加えてみましょう。</p>' : '<p class="noEpisodes">エピソードは非公開です。</p>');
 
-    var historySorted = sortedHistory(p);
+    var historySorted = visibility.history ? sortedHistory(p) : [];
     var historyRowsHtml = historySorted.length
       ? historySorted.map(function (h) {
           return (
@@ -1282,32 +1740,37 @@
             "</tr>"
           );
         }).join("")
-      : '<tr><td colspan="3" class="noHistory">まだ経歴が登録されていません。</td></tr>';
+      : '<tr><td colspan="3" class="noHistory">' + (visibility.history ? 'まだ経歴が登録されていません。' : '経歴は非公開です。') + '</td></tr>';
     var historyHtml =
       '<div class="historyTableWrap"><table class="historyTable"><thead><tr><th>年</th><th>できごと</th><th></th></tr></thead><tbody>' +
       historyRowsHtml + "</tbody></table></div>";
 
     els.detailInner.innerHTML =
       '<button class="backBtn" id="detailBack">← 一覧へ</button>' +
+      '<section class="visibilityPanel"><div><h3>共有する項目</h3><p>追加した人が、コミュニティに見せる内容を選べます。</p></div><div class="visibilityOptions">' +
+      [{ key: "name", label: "名前" }, { key: "nickname", label: "呼び名" }, { key: "photo", label: "写真" }, { key: "tags", label: "所属" }, { key: "hobbies", label: "特徴・趣味" }, { key: "history", label: "経歴" }, { key: "episodes", label: "エピソード" }].map(function (field) {
+        return '<label class="visibilityOption"><input type="checkbox" data-visibility-key="' + field.key + '"' + (visibility[field.key] ? ' checked' : '') + '><span>' + field.label + '</span></label>';
+      }).join("") + '</div></section>' +
       '<div class="detailHero">' +
       '<div class="detailPhoto">' + coverHtml + "</div>" +
       '<div style="flex:1;min-width:180px;">' +
-      '<input type="text" class="detailName hand" id="detailNameInput" value="' + esc(p.name || "") + '" placeholder="名前を入力" aria-label="名前" />' +
-      '<input type="text" class="detailNickname" id="detailNicknameInput" value="' + esc(p.nickname || "") + '" placeholder="呼び名（任意）" aria-label="呼び名" />' +
+      '<input type="text" class="detailName" id="detailNameInput" value="' + esc(visibility.name ? (p.name || "") : "") + '" placeholder="' + (visibility.name ? '名前を入力' : '名前は非公開です') + '" aria-label="名前" />' +
+      '<input type="text" class="detailNickname" id="detailNicknameInput" value="' + esc(visibility.nickname ? (p.nickname || "") : "") + '" placeholder="呼び名（任意）" aria-label="呼び名" />' +
       "</div>" +
       "</div>" +
-      '<div class="field" style="margin-top:14px;">' +
+      '<div class="field" style="margin-top:14px;"' + (visibility.tags ? '' : ' hidden') + '>' +
       '<label for="detailTagInput">所属</label>' +
       '<div class="tagChips" id="detailTagChips"></div>' +
       '<input type="text" id="detailTagInput" list="tagOptions" placeholder="例: サークルの音響チーム → Enter" />' +
       "</div>" +
-      '<div class="field">' +
+      '<div class="field"' + (visibility.hobbies ? '' : ' hidden') + '>' +
       '<label for="detailHobbyInput">趣味</label>' +
       '<div class="tagChips" id="detailHobbyChips"></div>' +
       '<input type="text" id="detailHobbyInput" list="hobbyOptions" placeholder="例: ギター → Enter" />' +
       "</div>" +
-      '<div class="gallery" id="galleryArea">' + galleryHtml + "</div>" +
+      '<div class="gallery" id="galleryArea"' + (visibility.photo ? '' : ' hidden') + '>' + galleryHtml + "</div>" +
       '<input type="file" id="detailPhotoInput" accept="image/*" style="display:none" />' +
+      '<div' + (visibility.history ? '' : ' hidden') + '>' +
       '<div class="sectionLabel hand">経歴</div>' +
       '<p class="sectionHint">例: 2014年 早稲田大学法学部卒業 のように、任意でいくつでも追加できます。</p>' +
       '<div class="historyForm">' +
@@ -1320,22 +1783,32 @@
       '<button class="ghostBtn" id="addHistoryBtn">追加</button>' +
       "</div>" +
       "</div>" +
-      '<div id="historyList">' + historyHtml + "</div>" +
+      '<div id="historyList">' + historyHtml + "</div></div>" +
+      '<div' + (visibility.episodes ? '' : ' hidden') + '>' +
       '<div class="sectionLabel hand">エピソード</div>' +
       '<div class="episodeForm">' +
       '<textarea id="newEpisodeInput" placeholder="新しく思い出したことを書く"></textarea>' +
       '<button type="button" class="micBtn" id="newEpisodeMic" title="音声入力" aria-label="音声で入力する">🎤</button>' +
       '<button class="ghostBtn" id="addEpisodeBtn">追加</button>' +
       "</div>" +
-      '<div id="episodeList">' + episodesHtml + "</div>" +
+      '<div id="episodeList">' + episodesHtml + "</div></div>" +
       '<div class="footerActions"><button class="dangerBtn" id="deletePersonBtn">この人を削除する</button></div>';
 
     document.getElementById("detailBack").addEventListener("click", closeDetail);
 
+    Array.prototype.forEach.call(document.querySelectorAll("[data-visibility-key]"), function (input) {
+      input.addEventListener("change", async function () {
+        var next = visibilityFor(p);
+        next[input.getAttribute("data-visibility-key")] = input.checked;
+        await updatePerson(p.id, { visibility: next }, "共有項目を更新しました");
+        renderDetail();
+      });
+    });
+
     var nameInput = document.getElementById("detailNameInput");
     nameInput.addEventListener("change", function () {
       var v = nameInput.value.trim();
-      if (!v) { nameInput.value = p.name || ""; return; }
+      if (!v) { nameInput.value = visibility.name ? (p.name || "") : ""; return; }
       updatePerson(p.id, { name: v }, "名前を保存しました");
     });
     if (state.focusNameOnOpen) {
@@ -1518,15 +1991,19 @@
     if ("photoUrls" in patch) row.photo_urls = patch.photoUrls;
     if ("episodes" in patch) row.episodes = patch.episodes;
     if ("history" in patch) row.history = patch.history;
+    if ("visibility" in patch) row.visibility = patch.visibility;
     row.updated_at = new Date().toISOString();
     return row;
   }
 
   async function updatePerson(id, patch, successMsg) {
+    var epoch = accessEpoch;
     try {
       var res = await state.db.from("people").update(personPatchToRow(patch)).eq("id", id).eq("room_id", state.roomId);
       if (res.error) throw res.error;
+      if (epoch !== accessEpoch) return;
       await loadPeople();
+      if (epoch !== accessEpoch) return;
       showToast(successMsg || "保存しました");
     } catch (e) {
       showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
@@ -1538,6 +2015,7 @@
   var tagPanelState = { tagName: null, notes: [] };
 
   async function openTagDetail(tagName) {
+    var epoch = accessEpoch;
     tagPanelState.tagName = tagName;
     tagPanelState.notes = [];
     els.tagPanel.hidden = false;
@@ -1545,12 +2023,13 @@
     renderTagDetail();
     try {
       var res = await state.db.from("tag_notes").select("*").eq("tag_name", tagName).eq("room_id", state.roomId).maybeSingle();
+      if (epoch !== accessEpoch || tagPanelState.tagName !== tagName) return;
       if (res.error) throw res.error;
       tagPanelState.notes = (res.data && res.data.episodes) || [];
     } catch (e) {
       showToast("読み込みでエラーが起きました: " + (e && e.message ? e.message : ""));
     }
-    renderTagDetail();
+    if (epoch === accessEpoch && tagPanelState.tagName === tagName) renderTagDetail();
   }
 
   function closeTagDetail() {
@@ -1576,14 +2055,14 @@
     var tagName = tagPanelState.tagName;
     if (!tagName) return;
 
-    var peopleWithTag = state.people.filter(function (p) { return personTags(p).indexOf(tagName) !== -1; });
+    var peopleWithTag = state.people.filter(function (p) { return visibilityFor(p).tags && personTags(p).indexOf(tagName) !== -1; });
     var peopleHtml = peopleWithTag.length
       ? peopleWithTag.map(function (p) {
-          var cover = p.photoUrls && p.photoUrls[0];
-          var avatar = cover ? '<img src="' + esc(cover) + '" alt="" />' : '<span>🙂</span>';
+          var cover = visibilityFor(p).photo && p.photoUrls && p.photoUrls[0];
+          var avatar = cover ? '<img src="' + esc(photoSrc(cover)) + '" alt="" />' : '<span>🙂</span>';
           return (
             '<button type="button" class="tagPersonChip" data-open-person="' + esc(p.id) + '">' +
-            '<span class="tagPersonAvatar">' + avatar + "</span>" + esc(p.name || "") +
+            '<span class="tagPersonAvatar">' + avatar + "</span>" + esc(visibilityFor(p).name ? (p.name || "") : "名前非公開") +
             "</button>"
           );
         }).join("")
@@ -1656,17 +2135,180 @@
     });
   }
 
-  // ---------- 合言葉の切り替え ----------
+  // ---------- 管理者の参加者管理 ----------
+
+  var memberAdminBusy = false;
+  var invitesEnabled = null;
+
+  function showInviteCode(code) {
+    if (state.memberRole !== "admin" || !state.roomId || invitesEnabled !== true) return;
+    document.getElementById("inviteCodeValue").value = code;
+    document.getElementById("inviteResult").hidden = false;
+  }
+
+  async function openMemberAdmin() {
+    if (!await checkAccess() || state.memberRole !== "admin") return;
+    document.getElementById("memberAdmin").hidden = false;
+    document.getElementById("memberAdmin").scrollIntoView({ behavior: "smooth", block: "start" });
+    await Promise.all([loadMembers(), loadInviteStatus()]);
+  }
+
+  function renderInviteStatus() {
+    document.getElementById("inviteStatus").textContent = invitesEnabled === true
+      ? "参加受付中です。招待が広まってしまったら、まず参加受付を停止してください。"
+      : invitesEnabled === false
+        ? "参加受付を停止しています。新しい人は参加できません。既存の参加者は利用できます。"
+        : "参加受付の状態を確認できていません。管理画面を開き直してください。";
+    document.getElementById("pauseInviteBtn").textContent = invitesEnabled === true ? "新しい参加を一時停止" : "新しいコードで参加を再開";
+    document.getElementById("pauseInviteBtn").disabled = memberAdminBusy || invitesEnabled === null;
+    document.getElementById("rotateInviteBtn").disabled = memberAdminBusy || invitesEnabled !== true;
+    if (invitesEnabled !== true) {
+      document.getElementById("inviteResult").hidden = true;
+      document.getElementById("inviteCodeValue").value = "";
+    }
+  }
+
+  async function loadInviteStatus() {
+    var epoch = accessEpoch;
+    invitesEnabled = null;
+    renderInviteStatus();
+    document.getElementById("inviteStatus").textContent = "参加受付の状態を確認しています…";
+    try {
+      var result = await supabaseClient.rpc("binder_get_invite_status", { p_room: state.roomId });
+      if (epoch !== accessEpoch) return;
+      if (result.error || typeof result.data !== "boolean") throw new Error("invite_status_unavailable");
+      invitesEnabled = result.data;
+    } catch (e) { if (epoch !== accessEpoch) return; invitesEnabled = null; }
+    renderInviteStatus();
+  }
+
+  async function loadMembers() {
+    var epoch = accessEpoch;
+    var list = document.getElementById("memberList");
+    var status = document.getElementById("memberAdminStatus");
+    if (state.memberRole !== "admin") return;
+    status.textContent = "参加者を読み込んでいます…";
+    try {
+      var members = [];
+      for (var offset = 0; ; offset += 200) {
+        var result = await supabaseClient.from("binder_members")
+          .select("user_id,display_name,role,status,joined_at,removed_at")
+          .eq("room_id", state.roomId).order("joined_at").order("user_id").range(offset, offset + 199);
+        if (epoch !== accessEpoch) return;
+        if (result.error) throw result.error;
+        members = members.concat(result.data);
+        if (result.data.length < 200) break;
+      }
+      list.innerHTML = "";
+      members.forEach(function (member) {
+        var row = document.createElement("li");
+        row.className = "memberRow";
+        var info = document.createElement("div");
+        var title = document.createElement("strong");
+        title.textContent = member.display_name + (member.user_id === state.userId ? "（あなた）" : "");
+        var detail = document.createElement("small");
+        detail.textContent = (member.status === "removed" ? "退出済み" : member.role === "admin" ? "管理者" : "参加者") +
+          " · 参加日 " + formatDate(member.joined_at) + " · ID " + member.user_id.slice(-8);
+        info.append(title, detail);
+        row.append(info);
+        if (member.status === "active" && member.role !== "admin" && member.user_id !== state.userId) {
+          var remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "ghostBtn memberRemove";
+          remove.textContent = "退出させる";
+          remove.disabled = memberAdminBusy;
+          remove.addEventListener("click", function () { removeMember(member); });
+          row.append(remove);
+        }
+        list.append(row);
+      });
+      status.textContent = members.filter(function (member) { return member.status === "active"; }).length + "人が参加しています。登録プロフィールとは別の参加アカウント一覧です。";
+    } catch (e) {
+      if (epoch === accessEpoch) status.textContent = "参加者一覧を取得できませんでした。もう一度開いてください。";
+    }
+  }
+
+  function setMemberAdminBusy(busy) {
+    memberAdminBusy = busy;
+    renderInviteStatus();
+    Array.prototype.forEach.call(document.querySelectorAll(".memberRemove"), function (button) { button.disabled = busy; });
+  }
+
+  async function removeMember(member) {
+    if (memberAdminBusy || state.memberRole !== "admin") return;
+    if (!confirm(member.display_name + "（ID末尾 " + member.user_id.slice(-8) + "）を退出させますか？\nこの人の閲覧・編集を停止し、古い招待コードも無効にします。既存のプロフィールは残ります。")) return;
+    var epoch = accessEpoch;
+    setMemberAdminBusy(true);
+    try {
+      var result = await supabaseClient.rpc("binder_remove_member", { p_room: state.roomId, p_user: member.user_id });
+      if (epoch !== accessEpoch) return;
+      if (result.error) throw result.error;
+      await loadInviteStatus();
+      if (epoch !== accessEpoch) return;
+      showInviteCode(result.data);
+      await loadMembers();
+      if (epoch !== accessEpoch) return;
+      showToast("参加者を退出させ、招待コードを変更しました");
+      if (state.activeView === "ranking") loadLeaderboard();
+    } catch (e) {
+      if (epoch === accessEpoch) document.getElementById("memberAdminStatus").textContent = "退出処理を完了できませんでした。参加者一覧を開き直して状態を確認してください。";
+    } finally { setMemberAdminBusy(false); }
+  }
+
+  document.getElementById("manageMembersBtn").addEventListener("click", openMemberAdmin);
+  document.getElementById("closeMemberAdminBtn").addEventListener("click", function () { document.getElementById("memberAdmin").hidden = true; });
+  document.getElementById("pauseInviteBtn").addEventListener("click", async function () {
+    if (memberAdminBusy || state.memberRole !== "admin" || invitesEnabled === null) return;
+    var enable = !invitesEnabled;
+    var message = enable
+      ? "新しい招待コードを発行して、参加受付を再開しますか？ 以前のコードは使えません。"
+      : "新しい参加を停止して、現在の招待コードを無効にしますか？ 既存の参加者はそのまま利用できます。";
+    if (!confirm(message)) return;
+    var epoch = accessEpoch;
+    setMemberAdminBusy(true);
+    try {
+      var result = await supabaseClient.rpc("binder_set_invites_enabled", { p_room: state.roomId, p_enabled: enable });
+      if (epoch !== accessEpoch) return;
+      if (result.error) throw result.error;
+      invitesEnabled = result.data.enabled;
+      renderInviteStatus();
+      if (enable) showInviteCode(result.data.invite_code);
+      document.getElementById("memberAdminStatus").textContent = enable
+        ? "参加受付を再開しました。新しい招待コードを参加してほしい人に送ってください。"
+        : "新しい参加を停止しました。すでに入った人を退出させる場合は、下の一覧から操作してください。";
+    } catch (e) {
+      if (epoch !== accessEpoch) return;
+      await loadInviteStatus();
+      if (epoch === accessEpoch) document.getElementById("memberAdminStatus").textContent = "操作結果を確認できませんでした。参加受付の状態を確認してください。";
+    } finally { setMemberAdminBusy(false); }
+  });
+  document.getElementById("rotateInviteBtn").addEventListener("click", async function () {
+    if (memberAdminBusy || state.memberRole !== "admin" || invitesEnabled !== true) return;
+    if (!confirm("古い招待コードを無効にして、新しいコードを発行しますか？ 既存の参加者には影響しません。")) return;
+    var epoch = accessEpoch;
+    setMemberAdminBusy(true);
+    try {
+      var result = await supabaseClient.rpc("binder_rotate_invite", { p_room: state.roomId });
+      if (epoch !== accessEpoch) return;
+      if (result.error) throw result.error;
+      await loadInviteStatus();
+      if (epoch !== accessEpoch) return;
+      showInviteCode(result.data);
+      document.getElementById("memberAdminStatus").textContent = "新しい招待コードを発行しました。古いコードは使えません。";
+    } catch (e) {
+      if (epoch === accessEpoch) document.getElementById("memberAdminStatus").textContent = "招待コードの更新を確認できませんでした。もう一度発行してください。";
+    } finally { setMemberAdminBusy(false); }
+  });
+  document.getElementById("copyInviteBtn").addEventListener("click", async function () {
+    var input = document.getElementById("inviteCodeValue");
+    try { await navigator.clipboard.writeText(input.value); showToast("招待コードをコピーしました"); }
+    catch (e) { input.focus(); input.select(); showToast("コードを選択しました。長押ししてコピーできます"); }
+  });
+
+  // ---------- コミュニティの切り替え ----------
 
   els.switchRoomBtn.addEventListener("click", function () {
-    if (!confirm("別の合言葉に切り替えます。今見ている内容は一覧から見えなくなりますが、消えたわけではありません(同じ合言葉を入れればまた見られます)。よろしいですか？")) return;
-    try { localStorage.removeItem("omoide_room_id_v1"); } catch (e) {}
-    state.roomId = null;
-    state.people = [];
-    state.selectedId = null;
-    state.tagFilters = new Set();
-    els.detailPanel.hidden = true;
-    els.tagPanel.hidden = true;
+    if (!confirm("別のコミュニティへの参加画面を開きますか？ 現在の参加権限は残ります。")) return;
     showGate();
   });
 
@@ -1738,6 +2380,837 @@
       els.bulkApplyBtn.textContent = "追加";
     }
   });
+
+  // ---------- 友達クイズ・覚えた人数・ランキング ----------
+
+  function quizStorageKey() {
+    return "omoide_quiz_v1:" + (state.roomId || "") + ":" + (state.userId || "local");
+  }
+
+  function playerNameStorageKey() {
+    return "omoide_quiz_name_v1:" + (state.roomId || "");
+  }
+
+  function readLocalQuizScore() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(quizStorageKey()) || "{}");
+      return {
+        knownPeople: Array.isArray(saved.knownPeople) ? saved.knownPeople.map(String) : [],
+        correctCount: Number(saved.correctCount) || 0,
+        answerCount: Number(saved.answerCount) || 0,
+        levelScores: saved.levelScores || {},
+        playerName: saved.playerName || localStorage.getItem(playerNameStorageKey()) || ""
+      };
+    } catch (e) {
+      return { knownPeople: [], correctCount: 0, answerCount: 0, playerName: "" };
+    }
+  }
+
+  function writeLocalQuizScore() {
+    try {
+      localStorage.setItem(quizStorageKey(), JSON.stringify({
+        knownPeople: state.knownPeople,
+        correctCount: state.correctCount,
+        answerCount: state.answerCount,
+        levelScores: state.levelScores,
+        playerName: state.playerName
+      }));
+      if (state.playerName) localStorage.setItem(playerNameStorageKey(), state.playerName);
+    } catch (e) {}
+  }
+
+  async function loadQuizScore() {
+    var epoch = accessEpoch;
+    var localScore = readLocalQuizScore();
+    state.knownPeople = localScore.knownPeople;
+    state.correctCount = localScore.correctCount;
+    state.answerCount = localScore.answerCount;
+    state.levelScores = localScore.levelScores || {};
+    state.playerName = localScore.playerName;
+    state.scoreReady = false;
+
+    if (!state.db || !state.userId) { renderKnownSummary(); return; }
+    try {
+      var result = await state.db.from("quiz_scores")
+        .select("known_people,correct_count,answer_count,display_name,level_scores")
+        .eq("room_id", state.roomId)
+        .eq("user_id", state.userId)
+        .maybeSingle();
+      if (epoch !== accessEpoch) return;
+      if (result.error) throw result.error;
+      if (result.data) {
+        state.knownPeople = Array.isArray(result.data.known_people) ? result.data.known_people.map(String) : [];
+        state.correctCount = Number(result.data.correct_count) || 0;
+        state.answerCount = Number(result.data.answer_count) || 0;
+        state.levelScores = result.data.level_scores || {};
+        state.playerName = result.data.display_name || state.memberName || state.playerName;
+        state.scoreReady = true;
+        writeLocalQuizScore();
+      }
+    } catch (e) {
+      state.scoreReady = false;
+    }
+    if (epoch !== accessEpoch) return;
+    if (!state.playerName) state.playerName = state.memberName;
+    renderKnownSummary();
+  }
+
+  function renderKnownSummary() {
+    var count = state.knownPeople ? state.knownPeople.length : 0;
+    var knownEl = document.getElementById("knownPeopleCount");
+    var progressEl = document.getElementById("knownPeopleProgress");
+    var myCountEl = document.getElementById("myKnownCount");
+    var peopleCountEl = document.getElementById("peopleCount");
+    if (knownEl) knownEl.textContent = String(count);
+    if (progressEl) progressEl.style.width = Math.min(100, count) + "%";
+    if (myCountEl) myCountEl.innerHTML = count + "<span>人</span>";
+    if (peopleCountEl) peopleCountEl.textContent = String(state.people.length);
+    var nameInput = document.getElementById("playerNameInput");
+    if (nameInput && document.activeElement !== nameInput) nameInput.value = state.playerName || "";
+    renderQuizScope();
+  }
+
+  function quizScopeKey() {
+    return "omoide_quiz_scope_v1:" + state.roomId + ":" + state.userId;
+  }
+
+  function readQuizScope() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(quizScopeKey()));
+      if (saved && saved.all === false && Array.isArray(saved.tags)) {
+        return { all: false, tags: Array.from(new Set(saved.tags.filter(function (tag) { return typeof tag === "string"; }))), untagged: saved.untagged === true };
+      }
+    } catch (e) {}
+    return { all: true, tags: [], untagged: false };
+  }
+
+  function sharedQuizTags(person) {
+    return visibilityFor(person).tags ? personTags(person) : [];
+  }
+
+  function scopedPeople() {
+    var scope = state.quizScope;
+    return state.people.filter(function (person) {
+      if (!displayName(person)) return false;
+      if (scope.all) return true;
+      var tags = sharedQuizTags(person);
+      return tags.length ? tags.some(function (tag) { return scope.tags.indexOf(tag) !== -1; }) : scope.untagged;
+    });
+  }
+
+  function scopeProgress(people) {
+    var ids = new Set(people.map(function (person) { return String(person.id); }));
+    var known = new Set(state.knownPeople.map(String));
+    var count = 0;
+    ids.forEach(function (id) { if (known.has(id)) count += 1; });
+    return { known: count, total: ids.size };
+  }
+
+  function quizScopeLabel() {
+    if (state.quizScope.all) return "すべての区分";
+    var visible = distinctTags();
+    var labels = state.quizScope.tags.filter(function (tag) { return visible.indexOf(tag) !== -1; });
+    if (state.quizScope.untagged) labels.push("区分の共有なし");
+    return labels.length ? labels.join("・") : "区分未選択／対象なし";
+  }
+
+  function renderQuizScope() {
+    var tags = distinctTags();
+    var scope = state.quizScope;
+    var named = state.people.filter(function (person) { return !!displayName(person); });
+    var options = tags.map(function (tag) {
+      return { label: tag, tag: tag, people: named.filter(function (person) { return sharedQuizTags(person).indexOf(tag) !== -1; }) };
+    });
+    options.push({ label: "区分の共有なし", tag: null, people: named.filter(function (person) { return !sharedQuizTags(person).length; }) });
+    var container = document.getElementById("quizScopeGroups");
+    container.innerHTML = options.map(function (option, index) {
+      var selected = scope.all || (option.tag === null ? scope.untagged : scope.tags.indexOf(option.tag) !== -1);
+      var progress = scopeProgress(option.people);
+      return '<label class="quizScopeGroup"><input type="checkbox" data-quiz-group="' + index + '"' + (selected ? ' checked' : '') + '><span>' + esc(option.label) + '</span><small>覚えた ' + progress.known + ' / ' + progress.total + '人</small></label>';
+    }).join("");
+    Array.prototype.forEach.call(container.querySelectorAll("[data-quiz-group]"), function (input) {
+      input.addEventListener("change", function () {
+        var option = options[Number(input.getAttribute("data-quiz-group"))];
+        var next = { all: false, tags: scope.all ? tags.slice() : scope.tags.slice(), untagged: scope.all || scope.untagged };
+        if (option.tag === null) next.untagged = input.checked;
+        else if (input.checked && next.tags.indexOf(option.tag) === -1) next.tags.push(option.tag);
+        else if (!input.checked) next.tags = next.tags.filter(function (tag) { return tag !== option.tag; });
+        changeQuizScope(next);
+      });
+    });
+    var progress = scopeProgress(scopedPeople());
+    document.getElementById("quizScopeSummary").textContent = quizScopeLabel() + "：覚えた " + progress.known + " / " + progress.total + "人（未正解 " + (progress.total - progress.known) + "人）";
+    document.getElementById("quizScopeAll").setAttribute("aria-pressed", String(scope.all));
+    var select = document.getElementById("fictionTag");
+    var previous = select.value;
+    select.innerHTML = '<option value="">区分の共有なし</option>' + tags.map(function (tag) { return '<option value="' + esc(tag) + '"' + (tag === previous ? ' selected' : '') + '>' + esc(tag) + '</option>'; }).join("");
+  }
+
+  function changeQuizScope(next) {
+    var session = state.quizSession;
+    if (session && session.index < session.questions.length && !confirm("区分を変更して、出題を選び直しますか？ ここまでの正解記録は残ります。")) {
+      renderQuizScope();
+      return;
+    }
+    state.quizScope = next;
+    state.quizSession = null;
+    document.getElementById("quizSession").hidden = true;
+    document.getElementById("quizSession").innerHTML = "";
+    document.getElementById("quizModeGrid").hidden = false;
+    try { localStorage.setItem(quizScopeKey(), JSON.stringify(next)); } catch (e) { showToast("選んだ区分を端末に保存できませんでした"); }
+    renderQuizScope();
+  }
+
+  document.getElementById("quizScopeAll").addEventListener("click", function () { changeQuizScope({ all: true, tags: [], untagged: false }); });
+  document.getElementById("quizScopeNone").addEventListener("click", function () { changeQuizScope({ all: false, tags: [], untagged: false }); });
+
+  function setView(view) {
+    state.activeView = view;
+    var peopleView = view === "people";
+    document.querySelector(".communityHero").hidden = !peopleView;
+    els.grid.hidden = !peopleView;
+    document.getElementById("quizView").hidden = view !== "quiz";
+    document.getElementById("rankingView").hidden = view !== "ranking";
+    els.addFab.hidden = !peopleView || state.bulkMode;
+    Array.prototype.forEach.call(document.querySelectorAll("[data-view]"), function (button) {
+      button.classList.toggle("active", button.getAttribute("data-view") === view);
+    });
+    if (view === "ranking") loadLeaderboard();
+    window.scrollTo(0, 0);
+  }
+
+  function shuffle(items) {
+    var copy = items.slice();
+    for (var i = copy.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var temp = copy[i]; copy[i] = copy[j]; copy[j] = temp;
+    }
+    return copy;
+  }
+
+  function displayName(person) {
+    var visibility = visibilityFor(person);
+    return visibility.name ? String(person.name || "").trim() : "";
+  }
+
+  function quizPeople() {
+    var eligible = scopedPeople();
+    var counts = Object.create(null);
+    eligible.forEach(function (person) { var name = displayName(person); counts[name] = (counts[name] || 0) + 1; });
+    return eligible.filter(function (person) { return counts[displayName(person)] === 1; });
+  }
+
+  var FICTION_EXAMPLES = [
+    "ゲノムは道明寺にあこがれて、好きな女に恵比寿集合だけ伝えてずっと待ってたけど終電まで待ったけど全く来なかった",
+    "音響で過ごした時間が無駄だったことで、大谷が無駄な時間を過ごした時代をなぞってエンゼルスと呼ばれている"
+  ];
+  var NONE_ANSWER = "__no_person__";
+
+  function normalizedEpisode(text) { return String(text || "").normalize("NFKC").replace(/\s+/g, "").toLowerCase(); }
+
+  async function loadFictionalEpisodes() {
+    var epoch = accessEpoch;
+    if (!state.roomId) return;
+    try {
+      var rows = [];
+      for (var offset = 0; ; offset += 200) {
+        var result = await state.db.from("binder_fictional_episodes").select("id,text,tags,created_by")
+          .eq("room_id", state.roomId).order("created_at").order("id").range(offset, offset + 199);
+        if (epoch !== accessEpoch) return;
+        if (result.error) throw result.error;
+        rows = rows.concat(result.data || []);
+        if (!result.data || result.data.length < 200) break;
+      }
+      state.fictionalEpisodes = rows;
+      document.getElementById("fictionStatus").textContent = "架空の問題 " + rows.length + "件。選んだ区分のクイズに混ぜて出題します。";
+    } catch (e) {
+      if (epoch !== accessEpoch) return;
+      state.fictionalEpisodes = [];
+      document.getElementById("fictionStatus").textContent = "架空の問題を読み込めません。通信状態やコミュニティの設定を確認してください。";
+    }
+    var list = document.getElementById("fictionList");
+    list.innerHTML = "";
+    state.fictionalEpisodes.forEach(function (episode) {
+      var row = document.createElement("li");
+      var text = document.createElement("p");
+      text.textContent = "【架空】" + episode.text;
+      row.append(text);
+      if (episode.created_by === state.userId || state.memberRole === "admin") {
+        var button = document.createElement("button");
+        button.className = "ghostBtn";
+        button.textContent = "この架空の問題を削除";
+        button.type = "button";
+        button.addEventListener("click", async function () {
+          if (!confirm("この架空の問題を出題から外しますか？")) return;
+          if (!await checkAccess()) return;
+          var requestEpoch = accessEpoch;
+          button.disabled = true;
+          try {
+            var result = await state.db.from("binder_fictional_episodes").delete().eq("id", episode.id).eq("room_id", state.roomId).select("id");
+            if (requestEpoch !== accessEpoch) return;
+            if (result.error || !result.data || !result.data.length) throw new Error("delete_failed");
+            state.quizSession = null;
+            document.getElementById("quizSession").hidden = true;
+            document.getElementById("quizModeGrid").hidden = false;
+            await loadFictionalEpisodes();
+          } catch (e) { if (requestEpoch === accessEpoch) showToast("架空の問題を削除できませんでした"); }
+          finally { button.disabled = false; }
+        });
+        row.append(button);
+      }
+      list.append(row);
+    });
+  }
+
+  document.getElementById("fictionExampleOne").addEventListener("click", function () { document.getElementById("fictionText").value = FICTION_EXAMPLES[0]; });
+  document.getElementById("fictionExampleTwo").addEventListener("click", function () { document.getElementById("fictionText").value = FICTION_EXAMPLES[1]; });
+  document.getElementById("saveFictionBtn").addEventListener("click", async function () {
+    var text = document.getElementById("fictionText").value.trim();
+    if (text.length < 2 || text.length > 2000) { showToast("架空の話を2〜2000文字で入力してください"); return; }
+    if (!confirm("この話を「架空」としてクイズに追加します。正解は「そんな人いない／×」になります。よろしいですか？")) return;
+    if (!await checkAccess()) return;
+    var epoch = accessEpoch;
+    var tag = document.getElementById("fictionTag").value;
+    var button = document.getElementById("saveFictionBtn");
+    button.disabled = true;
+    try {
+      var result = await state.db.from("binder_fictional_episodes").insert({ room_id: state.roomId, text: text, tags: tag ? [tag] : [], created_by: state.userId });
+      if (epoch !== accessEpoch) return;
+      if (result.error) throw result.error;
+      document.getElementById("fictionText").value = "";
+      await loadFictionalEpisodes();
+      if (epoch === accessEpoch) showToast("架空の問題を追加しました");
+    } catch (e) { if (epoch === accessEpoch) showToast("架空の問題を保存できませんでした"); }
+    finally { button.disabled = false; }
+  });
+
+  function scopedFiction() {
+    var realTexts = new Set();
+    state.people.forEach(function (person) {
+      if (visibilityFor(person).episodes) (person.episodes || []).forEach(function (episode) { realTexts.add(normalizedEpisode(episode.text)); });
+    });
+    var seen = new Set();
+    return state.fictionalEpisodes.filter(function (episode) {
+      var tags = episode.tags || [];
+      var inScope = state.quizScope.all || (tags.length ? tags.some(function (tag) { return state.quizScope.tags.indexOf(tag) !== -1; }) : state.quizScope.untagged);
+      var text = normalizedEpisode(episode.text);
+      if (!inScope || !text || realTexts.has(text) || seen.has(text)) return false;
+      seen.add(text);
+      return true;
+    });
+  }
+
+  function combineRealAndFiction(real, fiction) {
+    if (!real.length) return shuffle(fiction).slice(0, 10);
+    if (!fiction.length) return shuffle(real).slice(0, 10);
+    var count = Math.min(5, real.length, fiction.length);
+    return shuffle(shuffle(real).slice(0, 10 - count).concat(shuffle(fiction).slice(0, count)));
+  }
+
+  function trueFalseQuestion(text, realPerson) {
+    return {
+      type: "truefalse", clue: realPerson ? displayName(realPerson) + "の話：\n" + text : text,
+      storyKey: normalizedEpisode(text),
+      personId: null, answerId: realPerson ? "true" : "false", answer: realPerson ? "○（登録された話）" : "×（架空の話）",
+      explanation: realPerson ? displayName(realPerson) + "のプロフィールに登録されているエピソードです。" : "出題用に作られた架空の話です。実際の人物のエピソードではありません。",
+      choices: [{ id: "true", label: "○ 実話として登録された話" }, { id: "false", label: "× 架空の話" }]
+    };
+  }
+
+  function buildPersonEpisodeQuestions() {
+    var people = quizPeople();
+    if (people.length < 4) return [];
+    var owners = new Map();
+    var stories = [];
+    var names = people.reduce(function (all, person) {
+      all.push(normalizedEpisode(displayName(person)));
+      if (visibilityFor(person).nickname && person.nickname) all.push(normalizedEpisode(person.nickname));
+      return all;
+    }, []).filter(function (name) { return name.length > 1; });
+    people.forEach(function (person) {
+      if (!visibilityFor(person).episodes) return;
+      var seen = new Set();
+      (person.episodes || []).forEach(function (episode) {
+        var text = String(episode.text || "").trim();
+        var key = normalizedEpisode(text);
+        if (key.length < 2 || seen.has(key)) return;
+        seen.add(key);
+        if (!owners.has(key)) owners.set(key, new Set());
+        owners.get(key).add(String(person.id));
+        stories.push({ person: person, key: key, text: text });
+      });
+    });
+    stories = stories.filter(function (story) {
+      return owners.get(story.key).size === 1 && !names.some(function (name) { return story.key.indexOf(name) !== -1; });
+    });
+    var asked = new Set();
+    return shuffle(stories).filter(function (story) {
+      var id = String(story.person.id);
+      if (asked.has(id)) return false;
+      asked.add(id);
+      return true;
+    }).map(function (correct) {
+      var usedPeople = new Set([String(correct.person.id)]);
+      var alternatives = shuffle(stories).filter(function (story) {
+        var id = String(story.person.id);
+        if (usedPeople.has(id)) return false;
+        usedPeople.add(id);
+        return true;
+      }).slice(0, 3);
+      if (alternatives.length !== 3) return null;
+      return {
+        type: "person-episode", clue: displayName(correct.person),
+        photoUrl: visibilityFor(correct.person).photo && (correct.person.photoUrls || [])[0] || "",
+        personId: String(correct.person.id), storyKey: correct.key,
+        answerId: "episode:" + correct.key, answer: correct.text,
+        explanation: displayName(correct.person) + "に登録されたエピソードは「" + correct.text + "」です。",
+        choices: shuffle([correct].concat(alternatives)).map(function (story) { return { id: "episode:" + story.key, label: story.text }; })
+      };
+    }).filter(Boolean);
+  }
+
+  function buildMixedQuestions() {
+    if (state.quizLevel === "beginner") return shuffle(buildQuestionPool("photo")).slice(0, 10);
+    var pools = shuffle(["person-episode", "episode", "photo", "feature", "truefalse"].map(function (mode) { return shuffle(buildQuestionPool(mode)); }));
+    var result = [];
+    var usedStories = new Set();
+    // Rotate through formats so people -> story and story -> people both appear
+    // when materials support them. Do not repeat a story in the reverse direction.
+    while (result.length < 10 && pools.some(function (pool) { return pool.length; })) {
+      pools.forEach(function (pool) {
+        while (pool.length && result.length < 10) {
+          var question = pool.pop();
+          if (question.storyKey && usedStories.has(question.storyKey)) continue;
+          if (question.storyKey) usedStories.add(question.storyKey);
+          result.push(question);
+          break;
+        }
+      });
+    }
+    return result;
+  }
+
+  function buildQuestionPool(mode) {
+    if (mode === "person-episode") return buildPersonEpisodeQuestions();
+    if (mode === "mixed") return buildMixedQuestions();
+    if (mode === "sample-truefalse") return shuffle(FICTION_EXAMPLES.map(function (text) { return trueFalseQuestion(text, null); }));
+    if (mode === "truefalse") {
+      var real = [];
+      scopedPeople().forEach(function (person) {
+        if (!visibilityFor(person).episodes) return;
+        var episode = shuffle((person.episodes || []).filter(function (item) { return String(item.text || "").trim().length >= 2; }))[0];
+        if (episode) real.push(trueFalseQuestion(episode.text, person));
+      });
+      return combineRealAndFiction(real, scopedFiction().map(function (episode) { return trueFalseQuestion(episode.text, null); }));
+    }
+    var candidates = [];
+    var people = quizPeople();
+    if (people.length < (state.quizLevel === "advanced" ? 2 : 4)) return [];
+    var nameChoices = people.slice().sort(function (a, b) { return displayName(a).localeCompare(displayName(b), "ja"); }).map(function (person) {
+      return { id: String(person.id), label: displayName(person) };
+    });
+    var allNames = people.map(displayName);
+    var clueOwners = {};
+
+    function addClue(person, type, text, photoUrl) {
+      var clue = String(text || "").trim();
+      if (type !== "photo" && (!clue || clue.length < 2)) return;
+      var key = type === "photo" ? type + "\u0000" + String(person.id) : type + "\u0000" + clue;
+      if (type !== "photo") {
+        if (!clueOwners[key]) clueOwners[key] = {};
+        clueOwners[key][String(person.id)] = true;
+      }
+      candidates.push({ person: person, type: type, clue: clue, photoUrl: photoUrl || "", clueKey: key });
+    }
+
+    people.forEach(function (person) {
+      var visibility = visibilityFor(person);
+      if (visibility.photo && (person.photoUrls || []).length) addClue(person, "photo", "", person.photoUrls[0]);
+      if (visibility.tags) (person.tags || []).forEach(function (tag) { addClue(person, "feature", "所属: " + tag); });
+      if (visibility.hobbies) (person.hobbies || []).forEach(function (hobby) { addClue(person, "feature", "趣味・特徴: " + hobby); });
+      if (visibility.history) (person.history || []).forEach(function (item) {
+        var historyText = [item.year, item.text].filter(Boolean).join(" ");
+        addClue(person, "feature", "経歴: " + historyText);
+      });
+      if (visibility.episodes) (person.episodes || []).forEach(function (episode) { addClue(person, "episode", episode.text); });
+    });
+
+    candidates = candidates.filter(function (candidate) {
+      var visibility = visibilityFor(candidate.person);
+      if (candidate.type === "photo") return visibility.name && visibility.photo && !!candidate.photoUrl;
+      var namesToAvoid = allNames.concat(people.map(function (person) { return visibilityFor(person).nickname ? String(person.nickname || "").trim() : ""; })).filter(function (name) { return name.length > 1; });
+      if (namesToAvoid.some(function (name) { return candidate.clue.toLowerCase().indexOf(name.toLowerCase()) !== -1; })) return false;
+      var owners = clueOwners[candidate.clueKey] || {};
+      return Object.keys(owners).length === 1;
+    });
+
+    var wantedTypes = mode === "photo" ? ["photo"] : mode === "feature" ? ["feature"] : mode === "episode" ? ["episode"] : ["photo", "feature", "episode"];
+    var seenPeople = {};
+    var unique = shuffle(candidates.filter(function (candidate) { return wantedTypes.indexOf(candidate.type) !== -1; }))
+      .filter(function (candidate) {
+        var id = String(candidate.person.id);
+        if (seenPeople[id]) return false;
+        seenPeople[id] = true;
+        return true;
+      });
+
+    var realQuestions = unique.map(function (candidate) {
+      return {
+        type: candidate.type,
+        clue: candidate.clue,
+        photoUrl: candidate.photoUrl,
+        personId: String(candidate.person.id),
+        storyKey: candidate.type === "episode" ? normalizedEpisode(candidate.clue) : null,
+        answerId: String(candidate.person.id),
+        answer: displayName(candidate.person),
+        choices: state.quizLevel === "advanced"
+          ? shuffle(nameChoices).concat(candidate.type === "episode" ? [{ id: NONE_ANSWER, label: "そんな人いない" }] : [])
+          : shuffle([{ id: String(candidate.person.id), label: displayName(candidate.person) }].concat(shuffle(nameChoices.filter(function (choice) { return choice.id !== String(candidate.person.id); })).slice(0, 3)))
+      };
+    }).filter(Boolean);
+    if (state.quizLevel !== "advanced" || (mode !== "episode" && mode !== "mixed")) return realQuestions;
+    var fictionalQuestions = scopedFiction().map(function (episode) {
+      return {
+        type: "episode", clue: episode.text, storyKey: normalizedEpisode(episode.text), personId: null, answerId: NONE_ANSWER, answer: "そんな人いない",
+        explanation: "このエピソードは出題用の架空の話です。該当する人はいません。",
+        choices: shuffle(nameChoices).concat([{ id: NONE_ANSWER, label: "そんな人いない" }])
+      };
+    });
+    return combineRealAndFiction(realQuestions, fictionalQuestions);
+  }
+
+  async function startQuiz(mode) {
+    if (state.quizLevel === "beginner" && mode !== "photo" && mode !== "mixed" && mode !== "sample-truefalse") mode = "photo";
+    if (!await checkAccess()) return;
+    var epoch = accessEpoch;
+    if (mode === "episode" || mode === "mixed" || mode === "truefalse") await loadFictionalEpisodes();
+    if (epoch !== accessEpoch) return;
+    var questions = buildQuestionPool(mode);
+    if (!questions.length) {
+      var needed = mode === "person-episode" ? "選んだ区分に、異なる名前とエピソードを共有する人が4人以上必要です。他の人と同じ話や、名前が答えを示す話は使いません。" : mode === "truefalse" ? "選んだ区分に共有エピソードか、出題用の架空の話を追加してください。○×は1件から遊べます。" : quizPeople().length < 2
+        ? "選んだ区分に、異なる名前を共有しているメンバーが2人以上必要です。覚える区分を追加してください。"
+        : "選んだ区分には、この種類の問題を作れる共有写真・特徴・エピソードがまだありません。";
+      document.querySelector(".quizModeGrid").hidden = false;
+      document.getElementById("quizSession").hidden = false;
+      document.getElementById("quizSession").innerHTML = '<div class="quizResult"><p>' + esc(needed) + '</p></div>';
+      state.quizSession = null;
+      if (state.quizLevel !== "advanced" && quizPeople().length < 4 && mode !== "sample-truefalse") document.getElementById("quizSession").textContent = "初級・中級の4択には、異なる名前を共有するメンバーが4人以上必要です。覚える区分を追加してください。";
+      return;
+    }
+    state.quizSession = { mode: mode, practice: mode === "sample-truefalse", scopeLabel: mode === "sample-truefalse" ? "架空の例題（正解記録には含めません）" : quizScopeLabel(), questions: questions.slice(0, 10), index: 0, correct: 0, answered: 0, newlyKnown: 0, locked: false };
+    state.quizSession.level = state.quizLevel;
+    state.quizSession.scopeLabel = levelLabel(state.quizLevel) + " · " + state.quizSession.scopeLabel;
+    document.querySelector(".quizModeGrid").hidden = true;
+    document.getElementById("quizSession").hidden = false;
+    renderQuizQuestion();
+  }
+
+  function renderQuizQuestion() {
+    var session = state.quizSession;
+    var container = document.getElementById("quizSession");
+    if (!session || session.index >= session.questions.length) {
+      if (!session) return;
+      container.innerHTML = '<div class="quizResult"><p>今回の結果</p><strong>' + session.correct + ' / ' + session.questions.length + '問</strong><p>新しく覚えた友達: ' + session.newlyKnown + '人</p><p>あなたが覚えた友達は合計 ' + state.knownPeople.length + ' 人です。</p><button type="button" class="primaryBtn quizNext" id="restartQuizBtn">もう一度チャレンジ</button><button type="button" class="secondaryBtn quizNext" id="quizModesBtn">問題を選び直す</button></div>';
+      document.getElementById("restartQuizBtn").addEventListener("click", function () { startQuiz(session.mode); });
+      if (!session.practice) {
+        var levelScore = getLevelScore(state.levelScores, session.level);
+        var levelSummary = document.createElement("p");
+        levelSummary.textContent = levelLabel(session.level) + "の記録：覚えた " + levelScore.knownPeople.length + "人 · 正解 " + levelScore.correctCount + " / " + levelScore.answerCount + "問";
+        container.querySelector(".quizResult").prepend(levelSummary);
+      }
+      document.getElementById("quizModesBtn").addEventListener("click", function () { state.quizSession = null; container.hidden = true; document.querySelector(".quizModeGrid").hidden = false; });
+      return;
+    }
+
+    var question = session.questions[session.index];
+    var prompt = question.type === "person-episode" ? "この人にあったエピソードはどれ？" : question.type === "truefalse" ? "この話は実話として登録されている？ ○か×で答えよう" : question.type === "photo" ? "この人は誰？" : question.type === "episode" ? "このエピソードの人は誰？" + (session.level === "advanced" ? " いなければ「そんな人いない」" : "") : "この特徴に当てはまる人は誰？";
+    var clueHtml = question.type === "photo"
+      ? '<img class="quizClueImage" src="' + esc(photoSrc(question.photoUrl)) + '" alt="クイズの写真" />'
+      : '<div class="quizClue">' + esc(question.clue) + '</div>';
+    if (question.type === "person-episode" && question.photoUrl) {
+      clueHtml = '<img class="quizClueImage" src="' + esc(photoSrc(question.photoUrl)) + '" alt="' + esc(question.clue) + 'の写真" />' + clueHtml;
+    }
+    container.innerHTML = '<p class="rankingNote">出題範囲：' + esc(session.scopeLabel) + '</p><div class="quizSessionTop"><span>問題 ' + (session.index + 1) + ' / ' + session.questions.length + '</span><strong>今回の正解 ' + session.correct + '</strong></div>' +
+      '<p class="quizPrompt">' + prompt + '</p>' + clueHtml +
+      (session.level === "advanced" && ["photo", "feature", "episode"].indexOf(question.type) !== -1 ? '<input type="search" class="quizNameSearch" id="quizNameSearch" aria-label="回答する名前を絞り込む" placeholder="名前で絞り込む" /><p id="quizNameEmpty" hidden>一致する名前がありません</p>' : '') +
+      '<div class="quizOptions">' + question.choices.map(function (choice, index) {
+        return '<button type="button" class="quizOption' + (choice.id === NONE_ANSWER ? ' noneChoice' : '') + '" data-choice="' + index + '">' + esc(choice.label) + '</button>';
+      }).join("") + '</div><div class="quizFeedback" id="quizFeedback" aria-live="polite"></div>' +
+      '<button type="button" class="primaryBtn quizNext" id="nextQuizBtn" hidden>次の問題へ</button>';
+    Array.prototype.forEach.call(container.querySelectorAll("[data-choice]"), function (button) {
+      button.addEventListener("click", function () { answerQuiz(Number(button.getAttribute("data-choice"))); });
+    });
+    document.getElementById("nextQuizBtn").addEventListener("click", function () { session.index += 1; session.locked = false; renderQuizQuestion(); });
+    var nameSearch = document.getElementById("quizNameSearch");
+    if (nameSearch) nameSearch.addEventListener("input", function () {
+      var query = normalizedEpisode(nameSearch.value);
+      var found = 0;
+      Array.prototype.forEach.call(container.querySelectorAll("[data-choice]"), function (button) {
+        var choice = question.choices[Number(button.getAttribute("data-choice"))];
+        var matches = normalizedEpisode(choice.label).indexOf(query) !== -1;
+        button.hidden = choice.id !== NONE_ANSWER && !matches;
+        if (choice.id !== NONE_ANSWER && matches) found += 1;
+      });
+      document.getElementById("quizNameEmpty").hidden = found > 0;
+    });
+  }
+
+  function answerQuiz(choiceIndex) {
+    var session = state.quizSession;
+    if (!session || session.locked) return;
+    session.locked = true;
+    session.answered += 1;
+    if (!session.practice) state.answerCount += 1;
+    var question = session.questions[session.index];
+    var choice = question.choices[choiceIndex];
+    var correct = choice && choice.id === question.answerId;
+    if (!session.practice) {
+      var levelScore = getLevelScore(state.levelScores, session.level);
+      levelScore.answerCount += 1;
+      if (correct) {
+        levelScore.correctCount += 1;
+        if (question.personId !== null && levelScore.knownPeople.indexOf(question.personId) === -1) levelScore.knownPeople.push(question.personId);
+      }
+      state.levelScores[session.level] = levelScore;
+    }
+    var newlyKnown = !session.practice && correct && question.personId !== null && state.knownPeople.indexOf(question.personId) === -1;
+    var buttons = Array.prototype.slice.call(document.querySelectorAll(".quizOption"));
+    var nameSearch = document.getElementById("quizNameSearch");
+    if (nameSearch) { nameSearch.disabled = true; document.getElementById("quizNameEmpty").hidden = true; }
+    buttons.forEach(function (button, index) {
+      button.hidden = false;
+      button.disabled = true;
+      if (question.choices[index].id === question.answerId) button.classList.add("correct");
+      else if (index === choiceIndex && !correct) button.classList.add("incorrect");
+    });
+    if (correct) {
+      session.correct += 1;
+      if (!session.practice) state.correctCount += 1;
+      if (newlyKnown) {
+        state.knownPeople.push(question.personId);
+        session.newlyKnown += 1;
+      }
+    }
+    var feedback = document.getElementById("quizFeedback");
+    feedback.textContent = (correct ? "正解！" : "正解は「" + question.answer + "」です。") +
+      (question.explanation || (newlyKnown ? "新しく覚えた友達に追加しました。" : correct ? "この友達はもう覚えています。" : "次の問題で覚えよう。"));
+    document.getElementById("nextQuizBtn").hidden = false;
+    document.getElementById("nextQuizBtn").textContent = session.index + 1 < session.questions.length ? "次の問題へ" : "結果を見る";
+    renderKnownSummary();
+    if (!session.practice) { writeLocalQuizScore(); saveQuizScore(); }
+  }
+
+  async function saveQuizScore() {
+    var epoch = accessEpoch;
+    writeLocalQuizScore();
+    if (!state.db || !state.userId || !state.roomId) return;
+    try {
+      var result = await state.db.from("quiz_scores").upsert({
+        room_id: state.roomId,
+        user_id: state.userId,
+        display_name: (state.playerName || "メンバー").trim().slice(0, 24),
+        known_people: state.knownPeople,
+        correct_count: state.correctCount,
+        answer_count: state.answerCount,
+        level_scores: state.levelScores,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "room_id,user_id" });
+      if (epoch !== accessEpoch) return;
+      if (result.error) throw result.error;
+      state.scoreReady = true;
+    } catch (e) {
+      if (epoch !== accessEpoch) return;
+      state.scoreReady = false;
+      var note = document.getElementById("rankingNote");
+      if (note) note.textContent = "ランキングを保存できませんでした。通信状態を確認してください。個人の記録はこの端末に保存されています。";
+    }
+  }
+
+  async function loadLeaderboard() {
+    var epoch = accessEpoch;
+    var level = document.getElementById("rankingLevel").value;
+    var list = document.getElementById("leaderboardList");
+    var note = document.getElementById("rankingNote");
+    if (!state.db) { list.innerHTML = '<li class="leaderboardEmpty">コミュニティに接続してください。</li>'; return; }
+    list.innerHTML = '<li class="leaderboardEmpty">ランキングを読み込んでいます…</li>';
+    try {
+      var result = await state.db.from("quiz_scores")
+        .select("user_id,display_name,level_scores,updated_at")
+        .eq("room_id", state.roomId);
+      if (epoch !== accessEpoch) return;
+      if (result.error) throw result.error;
+      var scores = (result.data || []).map(function (row) {
+        var score = getLevelScore(row.level_scores, level);
+        return { userId: row.user_id, name: row.display_name || "メンバー", known: score.knownPeople.length, correct: score.correctCount, answered: score.answerCount };
+      }).filter(function (score) { return score.answered > 0; }).sort(function (a, b) { return b.known - a.known || b.correct - a.correct || a.name.localeCompare(b.name, "ja"); });
+      if (level !== document.getElementById("rankingLevel").value) return;
+      if (!scores.length) {
+        list.innerHTML = '<li class="leaderboardEmpty">まだランキングの記録がありません。クイズに挑戦してみましょう。</li>';
+      } else {
+        list.innerHTML = scores.map(function (score, index) {
+          return '<li class="leaderboardItem' + (score.userId === state.userId ? ' isYou' : '') + '"><span class="rankBadge">' + (index + 1) + '</span><span class="leaderboardName">' + esc(score.name) + (score.userId === state.userId ? '（あなた）' : '') + '</span><span class="leaderboardScore">' + score.known + '人</span></li>';
+        }).join("");
+      }
+      note.textContent = levelLabel(level) + "で覚えた友達の人数順です。同点は正解数順。レベル導入前の成績は含みません。";
+    } catch (e) {
+      if (epoch !== accessEpoch) return;
+      list.innerHTML = '<li class="leaderboardEmpty">ランキングを取得できませんでした。時間をおいて、もう一度開いてください。</li>';
+      note.textContent = "個人の正解記録はこの端末に保存されています。";
+    }
+  }
+
+  function levelLabel(level) { return { beginner: "初級", intermediate: "中級", advanced: "上級" }[level] || "上級"; }
+  function getLevelScore(scores, level) {
+    var score = scores && scores[level] || {};
+    return { knownPeople: Array.isArray(score.knownPeople) ? score.knownPeople.map(String) : [], correctCount: Number(score.correctCount) || 0, answerCount: Number(score.answerCount) || 0 };
+  }
+  document.getElementById("quizLevel").addEventListener("change", function (event) {
+    if (state.quizSession && state.quizSession.index < state.quizSession.questions.length && !confirm("今のクイズを終了してレベルを変えますか？ 回答済みの成績は残ります。")) { event.target.value = state.quizLevel; return; }
+    state.quizLevel = event.target.value;
+    state.quizSession = null;
+    document.getElementById("quizSession").hidden = true;
+    document.querySelector(".quizModeGrid").hidden = false;
+    document.getElementById("quizLevelNote").textContent = state.quizLevel === "beginner" ? "写真だけを見て、名前を4択で答えます。" : state.quizLevel === "intermediate" ? "写真・特徴・エピソードを4択で答えます。○×も選べます。" : "選んだ区分の全員から回答します。架空のエピソードも出題します。";
+    Array.prototype.forEach.call(document.querySelectorAll(".quizModeGrid [data-quiz-mode]"), function (button) {
+      var mode = button.getAttribute("data-quiz-mode");
+      button.hidden = state.quizLevel === "beginner" && mode !== "photo" && mode !== "mixed";
+      if (mode === "photo") button.querySelector("small").textContent = state.quizLevel === "advanced" ? "ヒントは写真だけ。対象の全員から選ぶ" : "ヒントは写真だけ。名前を4択で選ぶ";
+      if (mode === "episode") button.querySelector("small").textContent = state.quizLevel === "advanced" ? "対象の全員＋「そんな人いない」" : "この話をした人を名前の4択で選ぶ";
+    });
+  });
+  document.getElementById("rankingLevel").addEventListener("change", loadLeaderboard);
+  Array.prototype.forEach.call(document.querySelectorAll(".navTab"), function (button) {
+    button.addEventListener("click", function () { setView(button.getAttribute("data-view")); });
+  });
+  document.getElementById("startQuizBtn").addEventListener("click", function () { setView("quiz"); renderQuizScope(); });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-quiz-mode]"), function (button) {
+    button.addEventListener("click", function () { startQuiz(button.getAttribute("data-quiz-mode")); });
+  });
+  document.getElementById("savePlayerNameBtn").addEventListener("click", async function () {
+    var input = document.getElementById("playerNameInput");
+    var name = input.value.trim().slice(0, 24);
+    if (!name) { showToast("ランキングに表示する名前を入力してください"); input.focus(); return; }
+    if (!await checkAccess()) return;
+    var epoch = accessEpoch;
+    var result = await supabaseClient.rpc("binder_set_display_name", { p_room: state.roomId, p_name: name });
+    if (epoch !== accessEpoch) return;
+    if (result.error) { showToast("名前を保存できませんでした"); return; }
+    state.memberName = name;
+    state.playerName = name;
+    writeLocalQuizScore();
+    saveQuizScore().then(loadLeaderboard);
+    showToast("ランキングの名前を保存しました");
+  });
+  document.getElementById("playerNameInput").addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.isComposing) document.getElementById("savePlayerNameBtn").click();
+  });
+  // Active room members may import profiles; membership administration is admin-only.
+  document.getElementById("bulkImportBtn").addEventListener("click", function () {
+    if (!state.db) { showToast("コミュニティに接続してください"); return; }
+    document.getElementById("bulkImportFile").click();
+  });
+  document.getElementById("downloadTemplateBtn").addEventListener("click", function () {
+    var header = ["name", "nickname", "tags", "hobbies", "episodes", "share_name", "share_nickname", "share_photo", "share_tags", "share_hobbies", "share_history", "share_episodes"];
+    var blob = new Blob([header.join("\t") + "\n"], { type: "text/tab-separated-values;charset=utf-8" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "omoide-roster-template.tsv";
+    link.click();
+    setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+    showToast("TSVテンプレートを保存します。share_列は true / false で指定できます。");
+  });
+
+  function splitRosterValues(value) {
+    return String(value || "").split(/[;；、,，]/).map(function (item) { return item.trim(); }).filter(Boolean);
+  }
+
+  function rosterFlag(raw, fallback) {
+    var value = String(raw || "").trim().toLowerCase();
+    if (!value) return fallback;
+    return !["false", "0", "no", "n", "off", "非公開", "いいえ"].includes(value);
+  }
+
+  function parseRoster(text) {
+    var lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).filter(function (line) { return line.trim(); });
+    if (lines.length < 2) throw new Error("見出し行と1人以上のデータが必要です。");
+    var headers = lines.shift().split("\t").map(function (header) { return header.trim().toLowerCase(); });
+    var nameIndex = headers.indexOf("name");
+    if (nameIndex < 0) throw new Error("1列目の見出しに name が必要です。");
+    var rows = [];
+    lines.forEach(function (line) {
+      var cells = line.split("\t");
+      function get(key) { var index = headers.indexOf(key); return index < 0 ? "" : String(cells[index] || "").trim(); }
+      var name = get("name");
+      if (!name) return;
+      var tags = splitRosterValues(get("tags"));
+      var hobbies = splitRosterValues(get("hobbies"));
+      var episodeText = get("episodes");
+      var visibility = {
+        name: rosterFlag(get("share_name"), true),
+        nickname: rosterFlag(get("share_nickname"), !!get("nickname")),
+        photo: rosterFlag(get("share_photo"), false),
+        tags: rosterFlag(get("share_tags"), tags.length > 0),
+        hobbies: rosterFlag(get("share_hobbies"), hobbies.length > 0),
+        history: rosterFlag(get("share_history"), false),
+        episodes: rosterFlag(get("share_episodes"), !!episodeText)
+      };
+      var now = new Date().toISOString();
+      rows.push({
+        room_id: state.roomId,
+        name: name.slice(0, 100),
+        nickname: get("nickname").slice(0, 100),
+        tags: tags,
+        hobbies: hobbies,
+        photo_urls: [],
+        episodes: episodeText ? [{ id: cryptoId(), text: episodeText, createdAt: now }] : [],
+        history: [],
+        visibility: visibility
+      });
+    });
+    if (!rows.length) throw new Error("name が入力された行がありません。");
+    if (rows.length > 500) throw new Error("一度に追加できるのは500人までです。ファイルを分けてください。");
+    return rows;
+  }
+
+  document.getElementById("bulkImportFile").addEventListener("change", async function (event) {
+    var file = event.target.files && event.target.files[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      var text = await file.text();
+      var people = parseRoster(text);
+      if (!confirm(people.length + "人をこのコミュニティに追加します。共有項目もファイルの指定どおり公開されます。よろしいですか？")) return;
+      var inserted = 0;
+      for (var i = 0; i < people.length; i += 100) {
+        var result = await state.db.from("people").insert(people.slice(i, i + 100));
+        if (result.error) throw new Error(inserted + "人を追加した後に停止しました: " + result.error.message);
+        inserted += Math.min(100, people.length - i);
+      }
+      await loadPeople();
+      showToast(inserted + "人をコミュニティに追加しました");
+    } catch (e) {
+      showToast("名簿を読み込めませんでした: " + (e && e.message ? e.message : "内容を確認してください"));
+    }
+  });
+  // All state and event handlers must exist before restoring a saved community.
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) checkAccess(); });
+  window.addEventListener("focus", function () { checkAccess(); });
+  (async function bootMembership() {
+    try { lastRoomId = localStorage.getItem("omoide_room_id_v1"); } catch (e) {}
+    showGate();
+    setGateBusy(true);
+    try {
+      await ensureIdentity();
+      if (!lastRoomId) {
+        var existing = await supabaseClient.from("binder_members").select("room_id")
+          .eq("user_id", state.userId).eq("status", "active").order("joined_at", { ascending: false }).limit(1).maybeSingle();
+        if (existing.error) throw existing.error;
+        if (existing.data) lastRoomId = existing.data.room_id;
+      }
+      if (lastRoomId) await passGate(lastRoomId);
+    } catch (e) { showGate(membershipMessage(e)); }
+    finally { setGateBusy(false); }
+  })();
 })();
 </script>
 </body>

@@ -1,0 +1,7 @@
+{
+  "name": "omoide-membership-checks",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test membership.test.mjs ui.test.mjs" },
+  "devDependencies": { "@electric-sql/pglite": "0.5.8", "linkedom": "0.18.13" }
+}
