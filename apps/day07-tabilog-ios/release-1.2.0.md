@@ -18,8 +18,8 @@
 ### 日本語
 ```
 ・繁體中文と英語に対応しました（端末の言語で自動で切り替わり、マイページからも選べます）
-・マイページを、アイコンで選べる形に作り直しました
-・はじめて使う方向けに、3ステップの使い方ガイドを追加しました
+・マイページを、アイコンで選べる形に作り直しました（顔写真と「旅のベストピクチャー」も登録できます）
+・はじめて使う方向けに、ボタンを照らしながら案内する使い方ガイドを追加しました
 ・文字を読みやすいフォントに統一し、大きさを見直しました
 ・スクショから予定を作るとき、画像を選ぶボタンを分かりやすくしました
 ・メモの取り込みで「東京駅から山形駅へ」のような移動を判定し、到着時刻から移動時間を入れるようにしました
@@ -29,8 +29,8 @@
 ### 繁體中文
 ```
 ・新增繁體中文與英文介面（會依手機語言自動切換，也可在「我的頁面」選擇）
-・重新設計「我的頁面」，用圖示就能找到想用的功能
-・為第一次使用的人加入 3 步驟的使用說明
+・重新設計「我的頁面」，用圖示就能找到想用的功能，也能設定大頭貼與「旅行精選照片」
+・為第一次使用的人加入逐步引導的使用說明
 ・統一為更好讀的字型並調整字級
 ・從截圖建立行程時，「選擇圖片」按鈕更清楚
 ・修正其他小問題
@@ -39,8 +39,8 @@
 ### English
 ```
 - Now available in Traditional Chinese and English (follows your device language; you can also switch in My Page)
-- Redesigned My Page with simple icon shortcuts
-- A short 3-step guide for first-time users
+- Redesigned My Page with icon shortcuts, a profile photo and your "best travel pictures"
+- A step-by-step guide for first-time users
 - Easier-to-read fonts and sizes
 - Clearer "Choose images" button when creating plans from screenshots
 - Bug fixes and improvements
