@@ -109,8 +109,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
   <section class="screen" data-screen="home">
     <div class="wrap">
       <header class="hd">
-        <h1>旅の足跡</h1>
-        <p class="lead">大切な人と過ごした、あの旅の記録。</p>
+        <div class="hd-title-row"><h1>旅の足跡</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="homeInfo">？</button></div>
+        <p class="info-pop" id="homeInfo" hidden>旅行はサーバー（データベース）に保存されます。共有リンクを知っている人は誰でも見たり書き足したりできます。</p>
       </header>
 
       <div class="account-row" id="accountRow" hidden>
@@ -122,6 +122,10 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       </div>
 
       <p class="notice" id="apiNotice" hidden></p>
+
+      <div class="home-actions">
+        <button class="btn primary wide" id="btnNewTrip">＋ 新しい旅を記録する</button>
+      </div>
 
       <div class="trip-filters" id="tripFilters" hidden>
         <select id="filterCompanion"><option value="">誰と一緒か：すべて</option></select>
@@ -138,10 +142,6 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
       <button class="btn text" id="btnClearTripHistory" hidden>旅行の履歴を整理</button>
 
-      <div class="home-actions">
-        <button class="btn primary" id="btnNewTrip">＋ 新しい旅を記録する</button>
-      </div>
-
       <div class="field open-link" hidden>
         <label for="openTripId">招待リンクのIDを直接開く</label>
         <div class="row">
@@ -150,7 +150,6 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         </div>
       </div>
 
-      <p class="hint">旅行はサーバー（データベース）に保存されます。共有リンクを知っている人は誰でも見たり書き足したりできます。</p>
     </div>
   </section>
 
@@ -250,8 +249,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap narrow">
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
-        <h1 id="voiceEntryTitle">音声・メモでまとめて記録する</h1>
-        <p class="lead" id="voiceEntryLead">その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます</p>
+        <div class="hd-title-row"><h1 id="voiceEntryTitle">音声・メモでまとめて記録する</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="voiceEntryLead">？</button></div>
+        <p class="info-pop" id="voiceEntryLead" hidden>その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます</p>
         <!-- 自分だけの道（別行動）の中から始めたときだけ出る（app.jsのopenVoiceEntryForm） -->
         <p class="hint" id="voiceTargetNote" hidden></p>
       </header>
@@ -321,8 +320,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap narrow">
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
-        <h1>スクショから予定を作る</h1>
-        <p class="lead">航空券・新幹線のきっぷ・ホテルの予約画面・乗換案内・チケット・レシートなどのスクリーンショットを選ぶと、予定の候補を作ります。保存する前に、内容を確認して直せます。</p>
+        <div class="hd-title-row"><h1>スクショから予定を作る</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="ssLeadPop">？</button></div>
+        <p class="info-pop" id="ssLeadPop" hidden>航空券・新幹線のきっぷ・ホテルの予約画面・乗換案内・チケット・レシートなどのスクリーンショットを選ぶと、予定の候補を作ります。保存する前に、内容を確認して直せます。</p>
         <!-- 自分だけの道（別行動）の中から始めたときだけ出る（app.jsのopenScreenshotImport） -->
         <p class="hint" id="ssTargetNote" hidden></p>
       </header>
@@ -346,8 +345,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap narrow">
       <header class="hd">
         <button class="btn text back" id="btnIcBack" type="button">← 戻る</button>
-        <h1 id="icTitle">予定の候補の確認</h1>
-        <p class="lead" id="icLead"></p>
+        <div class="hd-title-row"><h1 id="icTitle">予定の候補の確認</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="icLead">？</button></div>
+        <p class="info-pop" id="icLead" hidden></p>
       </header>
       <div id="ssResult" hidden></div>
     </div>
@@ -393,6 +392,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
             <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M10 5.5v9M12.8 7.6c0-1.2-1.3-2.1-2.8-2.1-1.7 0-2.8.9-2.8 2 0 1.2 1 1.6 2.8 2 1.8.4 2.8.9 2.8 2.1 0 1.1-1.1 2-2.8 2-1.5 0-2.8-.8-2.8-2.1"/></svg>
             精算
           </button>
+          <button class="chip-btn" id="btnTripTutorial" type="button">この画面の使い方</button>
         </div>
       </div>
 
@@ -457,8 +457,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap">
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
-        <h1>アルバム</h1>
-        <p class="lead">この旅行の写真・動画をまとめて見られます（日付が新しい順）</p>
+        <div class="hd-title-row"><h1>アルバム</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="albumInfo">？</button></div>
+        <p class="info-pop" id="albumInfo" hidden>この旅行の写真・動画をまとめて見られます（日付が新しい順）</p>
       </header>
       <div class="album-grid" id="albumGrid"></div>
       <p class="empty" id="albumEmpty" hidden>まだ写真・動画がありません。</p>
@@ -470,8 +470,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap">
       <header class="hd">
         <button class="btn text back" data-back="tripDetail">← 戻る</button>
-        <h1>精算</h1>
-        <p class="lead">記録の費用明細で「立て替え」を設定した分だけを集計します。設定していない費用（個人の分だけの記録）は含みません。</p>
+        <div class="hd-title-row"><h1>精算</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="settleInfo">？</button></div>
+        <p class="info-pop" id="settleInfo" hidden>記録の費用明細で「立て替え」を設定した分だけを集計します。設定していない費用（個人の分だけの記録）は含みません。</p>
       </header>
 
       <div class="settle-unit-row">
@@ -526,7 +526,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
         <div class="field">
           <label for="blkLabel">見出し</label>
-          <input type="text" id="blkLabel" placeholder="例：那覇空港に集合／首里城公園に到着">
+          <input type="text" id="blkLabel" placeholder="例：那覇空港に集合">
         </div>
 
         <div class="field">
@@ -787,17 +787,16 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <header class="hd">
         <div class="hd-row">
           <div>
-            <h1>マイログ</h1>
-            <p class="lead">これまで評価したものを振り返る（自分だけに見える記録です）</p>
+            <div class="hd-title-row"><h1>マイログ</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="mylogInfo">？</button></div>
+            <p class="info-pop" id="mylogInfo" hidden>これまで評価したものを振り返る（自分だけに見える記録です）</p>
           </div>
-          <button class="plan-badge" id="planBadgeTop" type="button" hidden></button>
         </div>
       </header>
 
       <div class="section-label">
-        <div class="section-title">参加した旅行</div>
+        <div class="section-title">参加した旅行</div><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="mylogTripsInfo">？</button>
+        <p class="info-pop" id="mylogTripsInfo" hidden>場所は記録の地図から自動で集計します。違う場所は「外す」でいつでも外せます（「戻す」で元に戻せます）。</p>
       </div>
-      <p class="hint">場所は記録の地図から自動で集計します。違う場所は「外す」でいつでも外せます（「戻す」で元に戻せます）。</p>
       <div class="trip-filters" id="mylogTripFilters" hidden>
         <select id="mylogFilterCompanion"><option value="">誰と一緒か：すべて</option></select>
         <select id="mylogFilterYear"><option value="">年：すべて</option></select>
@@ -827,8 +826,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
   <section class="screen" data-screen="visited">
     <div class="wrap">
       <header class="hd">
-        <h1>行ったことある旅先</h1>
-        <p class="lead">参加した旅行の記録から自動で集計します（マイログと同じ集計です）。</p>
+        <div class="hd-title-row"><h1>行った場所</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="visitedInfo">？</button></div>
+        <p class="info-pop" id="visitedInfo" hidden>参加した旅行の記録から自動で集計します（マイログと同じ集計です）。</p>
       </header>
 
       <div class="visited-tabs" id="visitedTabs">
@@ -842,16 +841,22 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
   <!-- ============ マイページ（Airbnbのプロフィールを手本にした、アカウントまわりのまとめ画面） ============ -->
   <section class="screen" data-screen="profile">
-    <div class="mp-band"><h1 class="mp-band-title">マイページ</h1></div>
     <div class="wrap mp-wrap">
+      <header class="hd">
+        <div class="hd-title-row"><h1>マイページ</h1></div>
+      </header>
       <div class="profile-card" id="profileCard">
         <div class="mp-card-top">
-          <div class="profile-avatar" id="profileAvatar"></div>
+          <div class="profile-avatar-wrap">
+            <button class="profile-avatar" id="profileAvatar" type="button" aria-label="プロフィール写真を変える"></button>
+            <span class="profile-avatar-badge" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 4l-1.5 2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2.5L15 4H9zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg></span>
+          </div>
           <div class="profile-info">
             <div class="profile-name" id="profileName"></div>
             <div class="profile-stats" id="profileStats"></div>
           </div>
         </div>
+        <div class="mp-log-chips" id="profileLogChips" hidden></div>
         <button class="mp-card-btn" id="btnProfileAccount" type="button">アカウント</button>
       </div>
 
@@ -869,7 +874,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <span>旅行の履歴</span>
         </button>
         <button class="mp-grid-item" id="mpVideo" type="button">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 2h6v2H9zM8 5h8a1 1 0 0 1 1 1v3h-2V7H9v2H7V6a1 1 0 0 1 1-1zm-3 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm7 2.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 5.5h10a2.5 2.5 0 0 1 2.5 2.5v1.8l3.9-2.5A.9.9 0 0 1 21.8 8v8a.9.9 0 0 1-1.4.7l-3.9-2.5V16a2.5 2.5 0 0 1-2.5 2.5H4A2.5 2.5 0 0 1 1.5 16V8A2.5 2.5 0 0 1 4 5.5z"/></svg>
           <span>動画でシェア</span>
         </button>
         <button class="mp-grid-item" id="mpQuota" type="button">
@@ -881,6 +886,15 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <span>使い方</span>
         </button>
       </div>
+
+      <section class="mp-best" id="mpBest" hidden>
+        <div class="mp-best-head">
+          <div class="hd-title-row"><h2 class="mp-best-title">旅のベストピクチャー</h2><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="mpBestLead">？</button></div>
+          <button class="btn ghost small" id="btnBestPick" type="button">選ぶ</button>
+          <p class="info-pop" id="mpBestLead" hidden>旅の写真から、お気に入りを最大6枚まで選べます。マイページはあなただけに表示されます（ほかの人には見えません）。</p>
+        </div>
+        <div class="mp-best-grid" id="mpBestGrid"></div>
+      </section>
 
       <div class="mp-list">
         <div class="mp-row">
@@ -909,7 +923,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
   </button>
   <button class="tabbar-btn" type="button" data-tab="visited">
     <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.8 3.3 2.8 13.7 0 17M12 3.5c-2.8 3.3-2.8 13.7 0 17"/></svg></span>
-    <span class="tabbar-label">旅先一覧</span>
+    <span class="tabbar-label">行った場所</span>
   </button>
   <button class="tabbar-btn" type="button" data-tab="home">
     <span class="tabbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="8.3" cy="6.8" rx="2.1" ry="2.9" transform="rotate(-16 8.3 6.8)"/><ellipse cx="9.1" cy="14.6" rx="2.4" ry="3.3" transform="rotate(-6 9.1 14.6)"/><ellipse cx="15.7" cy="10.2" rx="2.1" ry="2.9" transform="rotate(16 15.7 10.2)"/><ellipse cx="14.9" cy="18" rx="2.4" ry="3.3" transform="rotate(6 14.9 18)"/></svg></span>
@@ -959,11 +973,11 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 <div class="sheet-backdrop rsv-backdrop" id="rsvSheet" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rsvSheetTitle">
     <div class="sheet-head">
-      <div class="sheet-title" id="rsvSheetTitle">動画でシェア</div>
+      <div class="sheet-title" id="rsvSheetTitle">動画でシェア<button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="rsvInfo">？</button></div>
       <button class="sheet-close" id="btnCloseRsv" type="button" aria-label="閉じる">×</button>
+      <p class="info-pop" id="rsvInfo" hidden>この旅行の足跡を、縦向きの動画にします（日帰り〜3日の旅行は約30秒、4日以上は1日10秒ずつ、最長2分20秒）。旅行名・日付・地名と地図の動きだけが入り、費用や一緒に行った人の名前は出ません。</p>
     </div>
     <div class="rsv-panel" id="rsvOptions">
-      <p class="hint">この旅行の足跡を、縦向きの動画にします（日帰り〜3日の旅行は約30秒、4日以上は1日10秒ずつ、最長2分20秒）。旅行名・日付・地名と地図の動きだけが入り、費用や一緒に行った人の名前は出ません。</p>
       <p class="hint" id="rsvLength"></p>
       <label class="post-option" id="rsvPhotosRow"><input type="checkbox" id="rsvPhotos"> 記録の写真を入れる</label>
       <p class="hint" id="rsvPhotosNote">写真を入れると、同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。</p>
@@ -1005,6 +1019,32 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <button class="btn text" id="btnLogout" type="button">ログアウト</button>
     <button class="btn danger ghost" id="btnDeleteAccount" type="button">アカウントを削除する</button>
     <p class="hint">アカウント（名前・おまけの回数・評価・参加した旅行への紐付け）と、この端末の旅行一覧を削除します。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません。</p>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="avatarSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="avatarSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="avatarSheetTitle">プロフィール写真</div>
+      <button class="sheet-close" id="btnCloseAvatarSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn primary wide" id="btnAvatarChoose" type="button">写真を選ぶ</button>
+      <button class="btn danger wide" id="btnAvatarRemove" type="button" hidden>写真を消す</button>
+    </div>
+    <input type="file" id="avatarFile" accept="image/*" hidden>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="bestSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="bestSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="bestSheetTitle">ベストピクチャーを選ぶ</div>
+      <button class="sheet-close" id="btnCloseBestSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint" id="bestPickCount"></p>
+    <div class="best-pick-grid" id="bestPickGrid"></div>
+    <button class="btn primary wide" id="btnBestSave" type="button">保存</button>
   </div>
 </div>
 
@@ -1050,10 +1090,10 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 <div class="sheet-backdrop" id="branchSheet" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="branchSheetTitle">
     <div class="sheet-head">
-      <div class="sheet-title" id="branchSheetTitle">ここから別行動</div>
+      <div class="sheet-title" id="branchSheetTitle">ここから別行動<button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="branchSheetNote">？</button></div>
       <button class="sheet-close" id="btnCloseBranchSheet" type="button" aria-label="閉じる">×</button>
+      <p class="info-pop" id="branchSheetNote" hidden>みんなと別行動した時間帯を入れます。この時間帯のあいだ、あなたの道の表示では「みんなの予定」のかわりに、あなたが書いた予定が並びます。みんなにも見えますが、直せるのはあなただけです。</p>
     </div>
-    <p class="hint" id="branchSheetNote">みんなと別行動した時間帯を入れます。この時間帯のあいだ、あなたの道の表示では「みんなの予定」のかわりに、あなたが書いた予定が並びます。みんなにも見えますが、直せるのはあなただけです。</p>
     <div class="field-row">
       <div class="field">
         <label for="brStartDate">始まり（日付）</label>

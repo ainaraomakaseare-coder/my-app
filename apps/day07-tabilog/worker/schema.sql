@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS blocks (
   -- transport：この予定の場所までの移動手段（'' | plane | taxi | walk | train | bus | bicycle）。
   -- 「地図でふりかえる」の演出専用（v15）。空文字は未設定＝移動の演出なし。
   transport TEXT NOT NULL DEFAULT '',
+  -- 以下は本番では migrations/ のALTERで後から足した列。まっさらなローカルDBでもこのファイル1つで
+  -- 揃うよう、ここにも入れてある（0018・0022・0027・0030・0031）。
+  move_minutes INTEGER NOT NULL DEFAULT 0,
+  manual_order INTEGER,
+  tz_override TEXT,
+  branch_id TEXT NOT NULL DEFAULT '',
+  video_exclude INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -56,6 +63,15 @@ CREATE TABLE IF NOT EXISTS entries (
   other_url TEXT NOT NULL DEFAULT '',
   time TEXT NOT NULL DEFAULT '',
   author TEXT NOT NULL DEFAULT '',
+  -- 以下は本番では migrations/ のALTERで後から足した列（0017・0020・0025・0026）。ローカルDB用にここにも入れてある。
+  travel TEXT NOT NULL DEFAULT '{}',
+  map_lat REAL,
+  map_lng REAL,
+  map_geocoded_url TEXT,
+  map_geocoded_at TEXT,
+  map_admin1 TEXT,
+  map_country TEXT,
+  map_place_name TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -76,6 +92,8 @@ CREATE TABLE IF NOT EXISTS ratings (
   -- score: 1〜5。型はINTEGERだがSQLiteの型親和性により3.7のような0.1刻みの小数もそのまま保存できる
   -- （整数に丸めずに入れられる値はREALとして保存される。マイグレーション不要）。
   score INTEGER NOT NULL,
+  -- review：人ごとのレビュー項目（JSON。migrations/0017。ローカルDB用にここにも入れてある）
+  review TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(entry_id, rater_email)
@@ -158,6 +176,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   ticket_credits INTEGER NOT NULL DEFAULT 0,
   stripe_customer_id TEXT NOT NULL DEFAULT '',
   stripe_subscription_id TEXT NOT NULL DEFAULT '',
+  -- 以下は本番では migrations/ のALTERで後から足した列（0019・0036）。ローカルDB用にここにも入れてある。
+  memo_uses_this_period INTEGER NOT NULL DEFAULT 0,
+  avatar_photo_id TEXT NOT NULL DEFAULT '',
+  best_photo_ids TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -287,6 +309,16 @@ CREATE TABLE IF NOT EXISTS comment_reports (
 -- 本番環境へ反映するまでは migrations/0022_block_manual_order.sql を1回だけ実行すること。
 -- ALTER TABLE blocks ADD COLUMN manual_order INTEGER;
 
+-- v24：旅行ごとの訪問先の外す／数える（migrations/0024_mylog_trip_place_overrides.sql）
+CREATE TABLE IF NOT EXISTS mylog_trip_place_overrides (
+  account_id TEXT NOT NULL,
+  trip_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (account_id, trip_id, kind, name)
+);
+
 -- v23：マイログの訪れた国・都道府県を本人が外す／数える（migrations/0023_mylog_place_overrides.sql）
 CREATE TABLE IF NOT EXISTS mylog_place_overrides (
   account_id TEXT NOT NULL,
@@ -298,18 +330,25 @@ CREATE TABLE IF NOT EXISTS mylog_place_overrides (
 );
 
 -- v28（2026-09-30）：ソーシャルログイン（docs/adr/0019）。詳しい説明は migrations/0028_social_login.sql
-CREATE TABLE IF NOT EXISTS auth_identities (provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (provider, subject));
+-- refresh_token列（v29）は本番ではALTERで足したが、ローカルDB用にCREATE TABLEに最初から入れてある
+CREATE TABLE IF NOT EXISTS auth_identities (provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, refresh_token TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY (provider, subject));
 CREATE INDEX IF NOT EXISTS idx_auth_identities_email ON auth_identities(email);
 -- v29：Appleのrefresh_token（アカウント削除時のトークン取り消し用。migrations/0029_apple_refresh_token.sql）
-ALTER TABLE auth_identities ADD COLUMN refresh_token TEXT NOT NULL DEFAULT '';
+-- ALTER TABLE auth_identities ADD COLUMN refresh_token TEXT NOT NULL DEFAULT '';  -- 上のCREATE TABLEに入れた
 CREATE TABLE IF NOT EXISTS auth_states (state TEXT PRIMARY KEY, provider TEXT NOT NULL, return_to TEXT NOT NULL, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS auth_codes (code_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
 
 -- v30（2026-09-30）：自分だけの道（別行動の分岐）。詳しい説明は migrations/0030_branches.sql、設計は docs/adr/0021
-CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+-- end_date列（v32）・blocks.branch_id（上のblocks）は本番ではALTERで足したが、ローカルDB用に最初から入れてある
+CREATE TABLE IF NOT EXISTS branches (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, account_id TEXT NOT NULL, date TEXT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL, end_date TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_branches_trip ON branches(trip_id);
-ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';
+-- ALTER TABLE blocks ADD COLUMN branch_id TEXT NOT NULL DEFAULT '';  -- 上のCREATE TABLEに入れた
 -- v34（2026-10-04）：メールOTPの乱用対策（失敗回数・送信回数の上限）。詳しい説明は migrations/0034_otp_limits.sql
 CREATE TABLE IF NOT EXISTS otp_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0, window_start TEXT NOT NULL);
 -- v35（2026-10-06）：運営者向けのAI使用状況の記録。詳しい説明は migrations/0035_ai_usage_daily.sql
 CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, feature TEXT NOT NULL, provider TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, feature, provider));
+
+-- v36：accountsに avatar_photo_id（プロフィール写真）・best_photo_ids（ベストピクチャー。JSON配列）を追加する一度きりの文。
+-- 本番環境へ反映するまでは migrations/0036_account_photos.sql を1回だけ実行すること。
+-- ALTER TABLE accounts ADD COLUMN avatar_photo_id TEXT NOT NULL DEFAULT '';
+-- ALTER TABLE accounts ADD COLUMN best_photo_ids TEXT NOT NULL DEFAULT '[]';
