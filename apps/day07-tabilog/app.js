@@ -4668,10 +4668,14 @@
   // かつそのカードがまだ画面上に残っていれば逆再生する。renderHomeTripList()が一覧を作り直すと
   // 古いカードは画面から外れる（document.body.containsが false になる）ので、そのときは
   // 素直に今までどおりの切り替えにする。doNavigateは実際の画面遷移（pushState・showScreen等）そのもの。
+  var swipeBackInProgress = false;
   function maybeAnimateTripCardClose(doNavigate) {
     var info = pendingCardOpenAnim;
     pendingCardOpenAnim = null;
-    if (!info || !CARD_EXPAND_ENABLED() || !state.trip || state.trip.id !== info.tripId) {
+    // 端からのスワイプで戻るときは、カードの逆再生をしない（指の動きと別に旅行のカードだけが浮かんで見えて気持ち悪かった。2026-10-06）
+    var skipForSwipe = swipeBackInProgress;
+    swipeBackInProgress = false;
+    if (skipForSwipe || !info || !CARD_EXPAND_ENABLED() || !state.trip || state.trip.id !== info.tripId) {
       doNavigate();
       return;
     }
@@ -8150,7 +8154,9 @@
       var t = e.changedTouches[0];
       var dx = t.clientX - es.startX;
       if (dx < 60) return; // 左→右に一定以上動いたときだけ
+      swipeBackInProgress = true;
       onBack();
+      swipeBackInProgress = false;
     });
 
     el.addEventListener('touchcancel', function () { edgeSwipeBackState = null; });
