@@ -7,8 +7,9 @@
 # ★ 動く条件
 #   - PCがついていて、ログインしていること（Chrome を使うため）
 #   - Chrome で TikTok Studio・A8.net・note・X にログイン済みで、Claude in Chrome が入っていること
-#   - 投稿卓の鍵（CRON_SECRET）が、環境変数 TOUKOUTAKU_CRON_SECRET か
-#     my-app\.env.local の CRON_SECRET= の行にあること（鍵はリポジトリに入れない）
+#   - 投稿卓のPC専用の鍵が my-app\.env.local の ANALYSIS_UPLOAD_KEY= の行にあり、
+#     同じ値が Vercel の環境変数 ANALYSIS_UPLOAD_KEY にも入っていること（鍵はリポジトリに入れない）
+#     作り方は make-upload-key.ps1
 #
 # ★ 登録は register-weekly-task.ps1。手で試すときは：
 #   powershell -ExecutionPolicy Bypass -File tools\analysis\tiktok-studio-weekly.ps1
@@ -27,16 +28,18 @@ $log = Join-Path $logDir "tiktok-studio_$stamp.log"
 
 function Write-Log($msg) { "$(Get-Date -Format 'HH:mm:ss') $msg" | Tee-Object -FilePath $log -Append }
 
-# --- 鍵 ---
-$secret = $env:TOUKOUTAKU_CRON_SECRET
+# --- 鍵（PC専用の ANALYSIS_UPLOAD_KEY。無ければ CRON_SECRET） ---
+$secret = $env:TOUKOUTAKU_UPLOAD_KEY
 if (-not $secret) {
   $envFile = Join-Path $root '.env.local'
   if (Test-Path $envFile) {
-    $line = Get-Content $envFile -Encoding UTF8 | Where-Object { $_ -match '^\s*CRON_SECRET\s*=' } | Select-Object -First 1
-    if ($line) { $secret = ($line -replace '^\s*CRON_SECRET\s*=\s*', '').Trim().Trim('"') }
+    foreach ($name in @('ANALYSIS_UPLOAD_KEY', 'CRON_SECRET')) {
+      $line = Get-Content $envFile -Encoding UTF8 | Where-Object { $_ -match "^\s*$name\s*=" } | Select-Object -First 1
+      if ($line) { $secret = ($line -replace "^\s*$name\s*=\s*", '').Trim().Trim('"'); break }
+    }
   }
 }
-if (-not $secret) { Write-Log '投稿卓の鍵（CRON_SECRET）が見つかりません。止めます。'; exit 1 }
+if (-not $secret) { Write-Log '投稿卓の鍵（.env.local の ANALYSIS_UPLOAD_KEY）が見つかりません。止めます。'; exit 1 }
 
 # --- 写して送る（1つ失敗しても、ほかは続ける） ---
 Set-Location $root

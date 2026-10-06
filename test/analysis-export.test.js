@@ -198,6 +198,20 @@ const READ = {
     assert.strictEqual(res2.statusCode, 401);
   });
 
+  await check('PCからの入口は PC専用の鍵（ANALYSIS_UPLOAD_KEY）でも通り、cron の書き出しには効かない', async () => {
+    process.env.ANALYSIS_UPLOAD_KEY = 'pc-key-456';
+    const handler = require('../api/insights');
+    fakeGoogle();
+    // 鍵が通れば、その先（ドライブ）で「つながっていません」になる＝401ではない
+    const res = fakeRes();
+    await handler({ method: 'POST', query: { export: 'a8' }, headers: { authorization: 'Bearer pc-key-456' }, body: [] }, res);
+    assert.notStrictEqual(res.statusCode, 401, 'PC専用の鍵で通らない');
+    const res2 = fakeRes();
+    await handler({ method: 'GET', query: { export: 'drive' }, headers: { authorization: 'Bearer pc-key-456' } }, res2);
+    assert.strictEqual(res2.statusCode, 401, 'PC専用の鍵で cron の書き出しが動いてしまう');
+    delete process.env.ANALYSIS_UPLOAD_KEY;
+  });
+
   await check('Vercel の cron が月曜の朝（日本時間）に書き出しを呼ぶ', () => {
     const v = require('../vercel.json');
     const c = (v.crons || []).find((x) => x.path === '/api/insights?export=drive');

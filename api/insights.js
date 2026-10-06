@@ -58,12 +58,12 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(await analysisExport.exportOwn({ db, read }));
     }
     if (String(q.export || '') === 'tiktok-studio' && req.method === 'POST') {
-      if (!guardCron(req, res)) return;
+      if (!guardPcUpload(req, res)) return;
       const body = typeof req.body === 'string' ? JSON.parse(req.body || 'null') : req.body;
       return res.status(200).json(await analysisExport.exportStudio({ db, rows: body }));
     }
     if (['a8', 'note', 'x'].includes(String(q.export || '')) && req.method === 'POST') {
-      if (!guardCron(req, res)) return;
+      if (!guardPcUpload(req, res)) return;
       const body = typeof req.body === 'string' ? JSON.parse(req.body || 'null') : req.body;
       return res.status(200).json(await analysisExport.exportPc({ db, kind: String(q.export), rows: body }));
     }
@@ -89,6 +89,25 @@ module.exports = async function handler(req, res) {
  * ★ 入口は cron の鍵で守る。ログインの紙は cron には無い。
  *   worker と同じ守り方にしてある（同じ鍵、同じ診断）。
  */
+/**
+ * 本人のPCから数字を送ってくる入口（export=tiktok-studio / a8 / note / x）。
+ *
+ * ★ PC専用の鍵 ANALYSIS_UPLOAD_KEY でも通す。
+ *   CRON_SECRET は Vercel で「中身を見られない」設定になっていてPCに写せないうえ、
+ *   Supabase の pg_cron（毎分の worker・毎晩の取り込み）も同じ鍵を使うので、作り直すと本番が止まる。
+ *   PC専用の鍵なら、漏れても作り直すだけで済み、この4つの入口（ドライブに置くだけ）にしか効かない。
+ */
+function guardPcUpload(req, res) {
+  const pcKey = process.env.ANALYSIS_UPLOAD_KEY;
+  if (pcKey) {
+    const got = String(
+      req.headers['x-cron-key'] || (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || ''
+    );
+    if (got.length === pcKey.length && got === pcKey) return true;
+  }
+  return guardCron(req, res);
+}
+
 function guardCron(req, res) {
   const expected = process.env.CRON_SECRET;
   const given =
