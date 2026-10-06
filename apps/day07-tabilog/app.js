@@ -10455,6 +10455,8 @@
     var account = state.account;
     var wasEmpty = !statusEl.firstChild, badgeWasHidden = badgeEl.hidden;
     var subEl = $('#mpQuotaSub');
+    var aiRow = $('#mpAiUsage');
+    if (aiRow) aiRow.hidden = !(account && account.isAdmin === true); // 運営者だけ（サーバーが判定して返す）
     if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: account.voiceRemainingThisPeriod }) : '';
     if (!account) {
       statusEl.innerHTML = '';
@@ -10558,7 +10560,7 @@
   }
 
   // マイページのシート（アカウント・AIの残り回数）。画面を切り替えたら閉じる（showScreenから呼ぶ）
-  var MYPAGE_SHEETS = ['#accountSheet', '#quotaSheet'];
+  var MYPAGE_SHEETS = ['#accountSheet', '#quotaSheet', '#aiUsageSheet'];
   function openMyPageSheet(sel) { $(sel).hidden = false; document.body.classList.add('sheet-open'); }
   function closeMyPageSheets() {
     var closed = false;
@@ -10693,6 +10695,58 @@
     if (!t) { showToast(tr('まだ旅行がありません')); return; }
     openTrip(t.tripId || t.id, '', function () { showToast(tr('「地図でふりかえる」から動画を作れます')); });
   }
+  // ---------- 運営者向け：AIの使用状況（GET /admin/ai-usage。運営者でなければサーバーが404を返す） ----------
+  function aiUsageFeatureLabel(k) {
+    var m = { voice: tr('音声入力'), memo: tr('メモ'), multiday: tr('複数日まとめて'), screenshot: tr('スクショ'), receipt: tr('レシート'), places: tr('場所検索'), route: tr('ルート'), other: tr('その他') };
+    return m[k] || k;
+  }
+  function aiUsageProviderLabel(k) {
+    var m = { workers_ai: 'Cloudflare Workers AI', openai: 'OpenAI', openai_whisper: tr('OpenAI 音声認識'), google_vision: 'Google Vision', google_vision_images: tr('Google Vision（画像の枚数）'), google_places: 'Google Places', google_routes: 'Google Routes' };
+    return m[k] || k;
+  }
+  function aiUsageCards(obj, labelFn) {
+    var keys = Object.keys(obj || {}).sort(function (a, b) { return obj[b] - obj[a]; });
+    if (!keys.length) return '<p class="hint">' + escapeHtml(tr('まだ記録がありません')) + '</p>';
+    return '<div class="aiu-cards">' + keys.map(function (k) {
+      return '<div class="aiu-card"><b>' + escapeHtml(String(obj[k])) + '</b><span>' + escapeHtml(labelFn(k)) + '</span></div>';
+    }).join('') + '</div>';
+  }
+  function renderAiUsage(d) {
+    var el = $('#aiUsageBody');
+    var a = d.accounts || {};
+    var v = d.vision || {};
+    var html = '';
+    if (d.tableMissing) html += '<p class="hint">' + escapeHtml(tr('記録用のテーブルがまだありません（migrationが未実行です）。')) + '</p>';
+    html += '<div class="aiu-h">' + escapeHtml(tr('今月の合計（サービス別）')) + '</div>' + aiUsageCards(d.monthTotals && d.monthTotals.byProvider, aiUsageProviderLabel);
+    html += '<div class="aiu-h">' + escapeHtml(tr('今月の合計（機能別）')) + '</div>' + aiUsageCards(d.monthTotals && d.monthTotals.byFeature, aiUsageFeatureLabel);
+    html += '<div class="aiu-h">' + escapeHtml(tr('今日のVision')) + '</div><p>' +
+      escapeHtml(tr('画像 {n} 枚', { n: v.imagesToday || 0 })) + ' / ' + escapeHtml(tr('アプリ側の1日の上限はありません（同じ接続元から1分{n}回まで）。', { n: v.rateLimitPerMinutePerIp || 0 })) + '</p>';
+    html += '<div class="aiu-h">' + escapeHtml(tr('アカウントの集計')) + '</div><table class="aiu-table"><tbody>' + [
+      [tr('アカウント数'), a.count],
+      [tr('今月の音声入力の使用回数（合計）'), a.voiceUsesThisPeriod],
+      [tr('今月のメモ・スクショの使用回数（合計）'), a.memoUsesThisPeriod],
+      [tr('おまけの回数の合計'), a.ticketCredits],
+      [tr('今月AIを使ったアカウント'), a.usedAiThisMonth]
+    ].map(function (r) { return '<tr><td>' + escapeHtml(r[0]) + '</td><td>' + escapeHtml(String(r[1] || 0)) + '</td></tr>'; }).join('') + '</tbody></table>';
+    html += '<div class="aiu-h">' + escapeHtml(tr('日別（直近31日）')) + '</div>';
+    if (!(d.rows || []).length) html += '<p class="hint">' + escapeHtml(tr('まだ記録がありません')) + '</p>';
+    else html += '<table class="aiu-table"><thead><tr><th>' + escapeHtml(tr('日付')) + '</th><th>' + escapeHtml(tr('機能')) + '</th><th>' + escapeHtml(tr('サービス')) + '</th><th>' + escapeHtml(tr('回数')) + '</th></tr></thead><tbody>' +
+      d.rows.map(function (r) {
+        return '<tr><td>' + escapeHtml(r.day) + '</td><td>' + escapeHtml(aiUsageFeatureLabel(r.feature)) + '</td><td>' + escapeHtml(aiUsageProviderLabel(r.provider)) + '</td><td>' + escapeHtml(String(r.calls)) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+    html += '<div class="aiu-h">' + escapeHtml(tr('残高・請求額は、各サービスの画面で確認してください')) + '</div><p class="aiu-links">' +
+      '<a href="https://platform.openai.com/usage" target="_blank" rel="noopener">OpenAI usage</a><br>' +
+      '<a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">Google Cloud billing</a><br>' +
+      '<a href="https://dash.cloudflare.com/" target="_blank" rel="noopener">Cloudflare Workers AI</a></p>';
+    el.innerHTML = html;
+  }
+  function loadAiUsage() {
+    var el = $('#aiUsageBody');
+    el.innerHTML = '<p class="hint">' + escapeHtml(tr('読み込んでいます…')) + '</p>';
+    api('/admin/ai-usage').then(renderAiUsage).catch(function () {
+      el.innerHTML = '<p class="hint">' + escapeHtml(tr('読み込めませんでした')) + '</p>';
+    });
+  }
   function wireMyPage() {
     var needLogin = function (fn) { return function () { if (loadCurrentUser()) fn(); else openLogin('profile'); }; };
     $('#btnProfileAccount').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
@@ -10709,6 +10763,12 @@
       fetchAccountStatus(renderPlanStatus).then(renderPlanStatus);
     }));
     $('#mpTutorial').addEventListener('click', openTutorial);
+    $('#mpAiUsage').addEventListener('click', function () {
+      openMyPageSheet('#aiUsageSheet');
+      loadAiUsage();
+    });
+    $('#btnCloseAiUsageSheet').addEventListener('click', closeMyPageSheets);
+    $('#aiUsageSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
     ['Account', 'Quota'].forEach(function (n) {
       $('#btnClose' + n + 'Sheet').addEventListener('click', closeMyPageSheets);
       $('#' + n.toLowerCase() + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
