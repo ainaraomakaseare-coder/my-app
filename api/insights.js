@@ -8,6 +8,7 @@
  *   GET  /api/insights?apps=1     … App Store のダウンロード数（lib/appstore.js）
  *   GET  /api/insights?export=drive          … 毎週月曜の朝。分析用の数字を Google ドライブへ（cronの鍵）
  *   POST /api/insights?export=tiktok-studio  … 本人のPCのClaudeが写した TikTok Studio の数字をドライブへ（cronの鍵）
+ *   POST /api/insights?export=a8 / note / x   … 同じくPCが写した A8.net・note・X（ブラウザの表示数）（cronの鍵）
  *   GET  /api/insights?drive=status          … 連携設定に出す「ドライブの書き出し」の状態
  *
  * ★ 1つのSNSが失敗しても、他を巻き込まない。
@@ -60,6 +61,11 @@ module.exports = async function handler(req, res) {
       if (!guardCron(req, res)) return;
       const body = typeof req.body === 'string' ? JSON.parse(req.body || 'null') : req.body;
       return res.status(200).json(await analysisExport.exportStudio({ db, rows: body }));
+    }
+    if (['a8', 'note', 'x'].includes(String(q.export || '')) && req.method === 'POST') {
+      if (!guardCron(req, res)) return;
+      const body = typeof req.body === 'string' ? JSON.parse(req.body || 'null') : req.body;
+      return res.status(200).json(await analysisExport.exportPc({ db, kind: String(q.export), rows: body }));
     }
     if (req.method === 'POST') return await collect(req, res);
     if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
