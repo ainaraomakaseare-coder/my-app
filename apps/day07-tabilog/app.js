@@ -4997,8 +4997,10 @@
 
   // マイログの「評価したもの」のカテゴリ（アクティビティーログ・飯ログ…）の並び。ピルのクリックと
   // 同じCore.CATEGORIES（移動にまとめる種類は除く）を使う。
+  // マイログに出すのは評価のある3つだけ（移動・その他はログにしない。2026-10-06）
+  var MYLOG_CATEGORY_KEYS = ['sightseeing', 'food', 'lodging'];
   function mylogCategoryOrder() {
-    return Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) { return c.key; });
+    return MYLOG_CATEGORY_KEYS.slice();
   }
   function mylogSwipeTargetIndex(dx) {
     var order = mylogCategoryOrder();
@@ -11209,10 +11211,11 @@
     if (el._sig === tabsSig && el.firstChild) return;
     el._sig = tabsSig;
     // 「到着」は「移動」のタブにまとめる（種類の選択と同じ。2026-09-27）
-    el.innerHTML = Core.CATEGORIES.filter(function (c) { return !c.inMove; }).map(function (c) {
+    if (MYLOG_CATEGORY_KEYS.indexOf(state.myLogCategory) < 0) state.myLogCategory = MYLOG_CATEGORY_KEYS[0];
+    el.innerHTML = Core.CATEGORIES.filter(function (c) { return MYLOG_CATEGORY_KEYS.indexOf(c.key) >= 0; }).map(function (c) {
       var on = c.key === state.myLogCategory;
       var count = state.myLogItems.filter(function (it) { return myLogCategoryOf(it) === c.key; }).length;
-      return '<button class="mylog-tab' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(MYLOG_LABELS[c.key] || c.label) + (count ? '（' + count + '）' : '') + '</button>';
+      return '<button class="mylog-tab' + (on ? ' on' : '') + '" data-cat="' + c.key + '">' + escapeHtml(MYLOG_LABELS[c.key] || c.label) + (count ? '<span class="mylog-tab-count">' + count + '</span>' : '') + '</button>';
     }).join('');
     $all('.mylog-tab', el).forEach(function (b) {
       b.addEventListener('click', function () {

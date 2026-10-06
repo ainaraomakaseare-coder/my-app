@@ -883,7 +883,10 @@ a:hover { text-decoration: underline; }
 .visited-credit { margin-top: 10px; font-size: var(--fs-xs); }
 
 /* ピル（切り替えボタン）は共通：灰地＋8px 16px・13px。選んでいる側はアクセント色の塗り＋白＋太字 */
-.mylog-tabs { display: flex; gap: 8px; padding: 0 0 12px; overflow-x: auto; }
+.mylog-tabs { display: flex; gap: 6px; padding: 0 0 12px; }
+/* マイログのカテゴリは3つだけなので、横にスクロールさせず1行に等分で並べる */
+.mylog-tabs .mylog-tab { flex: 1 1 auto; padding: 8px 6px; font-size: var(--fs-xs); text-align: center; }
+.mylog-tab-count { margin-left: 4px; font-weight: 400; opacity: .85; font-variant-numeric: tabular-nums; }
 .mylog-tab, .sort-btn { padding: 8px 16px; border-radius: 999px; border: none; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; background: var(--border-soft); white-space: nowrap; flex-shrink: 0; }
 .mylog-tab.on, .sort-btn.on { background: var(--accent); color: white; font-weight: 700; }
 
