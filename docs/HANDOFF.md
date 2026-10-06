@@ -219,6 +219,7 @@
 ### 自分の数字の週次書き出し（2026-10-07〜）
 - 月曜の「貼るだけ3回」をやめ、数字は Google ドライブの「投稿卓_分析データ」に自動で置く
 - ① 投稿卓の数字：Vercel の cron（`vercel.json`、日曜23:00 UTC＝月曜8:00 JST）が `GET /api/insights?export=drive` を呼び、運用アカウントごとに `own_<日付>_<名前>.json` を置く（`lib/analysis-export.js`・`lib/drive.js`、形は画面の「分析用にコピー」と同じ）
+- ③ A8.net・note・X（ブラウザの表示数）：②と同じPCの実行で続けて写し、`POST /api/insights?export=a8|note|x` → `a8_／note_／x_<日付>.json`（指示文は `tools/analysis/*-prompt.md`。1つ失敗してもほかは続ける）
 - ② TikTok Studio：本人のPCで毎週月曜8:30に `tools/analysis/tiktok-studio-weekly.ps1`（Claude Code＋Claude in Chrome）が写して `POST /api/insights?export=tiktok-studio` へ送り、`tiktok_<日付>.json` で置く。登録は `tools/analysis/register-weekly-task.ps1`
 - 準備（本人・1回だけ）：v15（`app_settings`）を SQL Editor で流す／Google Cloud（toukoutaku-neo）で Google Drive API を有効にする／連携設定の「Google ドライブをつなぐ」
 - 権限は `drive.file`（このアプリが作ったファイルだけ）。戻り先は YouTube と同じ `/api/connect/youtube`（クッキーで見分ける）

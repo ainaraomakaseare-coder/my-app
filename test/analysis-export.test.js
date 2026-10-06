@@ -162,6 +162,32 @@ const READ = {
     assert.deepStrictEqual(JSON.parse(g.files.get('tiktok_2026-10-12.json').content), good);
   });
 
+  await check('A8・note・X の数字：種類ごとのファイル名で置き、文字の数字は止める', async () => {
+    const g = fakeGoogle();
+    const db = fakeDb([], Object.assign({}, CONNECTED));
+    const now = new Date('2026-10-11T23:40:00Z');
+    const a8 = [{ period: '7d', media: 'Instagram', program: '転職サイトA', clicks: 12, occurred: 0, occurred_yen: 0, confirmed: null, confirmed_yen: null }];
+    const out = await ex.exportPc({ db, kind: 'a8', rows: a8, now });
+    assert.strictEqual(out.files[0].name, 'a8_2026-10-12.json');
+    assert.deepStrictEqual(JSON.parse(g.files.get('a8_2026-10-12.json').content), a8);
+    await ex.exportPc({ db, kind: 'note', rows: [{ period: '7d', title: 't', views: 30, sales: null }], now });
+    await ex.exportPc({ db, kind: 'x', rows: [{ period: '7d', account: '@a', views: 120 }], now });
+    assert.ok(g.files.has('note_2026-10-12.json') && g.files.has('x_2026-10-12.json'));
+    assert.throws(() => ex.checkPcRows('a8', [{ clicks: '1,234' }]), /clicks/);
+    assert.throws(() => ex.checkPcRows('x', [{ views: '1.2K' }]), /views/);
+    assert.throws(() => ex.checkPcRows('foo', []), /受け付けていません/);
+    assert.throws(() => ex.checkPcRows('note', {}), /配列/);
+  });
+
+  await check('A8・note・X の入口も cron の鍵が無いと 401', async () => {
+    const handler = require('../api/insights');
+    for (const kind of ['a8', 'note', 'x']) {
+      const res = fakeRes();
+      await handler({ method: 'POST', query: { export: kind }, headers: {}, body: [] }, res);
+      assert.strictEqual(res.statusCode, 401, kind);
+    }
+  });
+
   await check('書き出しの入口は cron の鍵が無いと 401', async () => {
     const handler = require('../api/insights');
     const res = fakeRes();
@@ -170,6 +196,20 @@ const READ = {
     const res2 = fakeRes();
     await handler({ method: 'POST', query: { export: 'tiktok-studio' }, headers: { authorization: 'Bearer nope' }, body: [] }, res2);
     assert.strictEqual(res2.statusCode, 401);
+  });
+
+  await check('PCからの入口は PC専用の鍵（ANALYSIS_UPLOAD_KEY）でも通り、cron の書き出しには効かない', async () => {
+    process.env.ANALYSIS_UPLOAD_KEY = 'pc-key-456';
+    const handler = require('../api/insights');
+    fakeGoogle();
+    // 鍵が通れば、その先（ドライブ）で「つながっていません」になる＝401ではない
+    const res = fakeRes();
+    await handler({ method: 'POST', query: { export: 'a8' }, headers: { authorization: 'Bearer pc-key-456' }, body: [] }, res);
+    assert.notStrictEqual(res.statusCode, 401, 'PC専用の鍵で通らない');
+    const res2 = fakeRes();
+    await handler({ method: 'GET', query: { export: 'drive' }, headers: { authorization: 'Bearer pc-key-456' } }, res2);
+    assert.strictEqual(res2.statusCode, 401, 'PC専用の鍵で cron の書き出しが動いてしまう');
+    delete process.env.ANALYSIS_UPLOAD_KEY;
   });
 
   await check('Vercel の cron が月曜の朝（日本時間）に書き出しを呼ぶ', () => {
