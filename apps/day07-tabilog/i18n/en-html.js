@@ -237,7 +237,7 @@ I18N.addLang('en', {
   "写真を選ぶ": "Choose a photo",
   "写真を消す": "Remove photo",
   "選ぶ": "Choose",
-  "旅行を年ごとに並べます": "Trips are listed by year",
+  "年ごとに旅が並びます。行った場所はここで外せます": "Trips are listed by year. You can remove places you visited right here",
   "アカウントを削除しますか？": "Delete your account?",
   "名前・おまけの回数など、アカウントの情報が消えます": "Your name, bonus credits and other account info will be deleted",
   "この端末の旅行一覧も消えます": "The trip list on this device will also be deleted",

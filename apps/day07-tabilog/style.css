@@ -1684,6 +1684,13 @@ body.viewer-open { overflow: hidden; }
 .tl-text { flex: 1; min-width: 0; }
 .tl-title { font-size: var(--fs-base); font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
 .tl-sub { margin-top: 2px; font-size: var(--fs-xs); color: var(--ink-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.tl-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tl-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: var(--border-soft); font-size: var(--fs-xs); line-height: 1.5; max-width: 100%; }
+.tl-chip-name { overflow-wrap: anywhere; }
+.tl-chip.is-excluded { opacity: .55; }
+.tl-chip.is-excluded .tl-chip-name { text-decoration: line-through; }
+.tl-chip-toggle { flex: none; border: 0; background: none; padding: 0 0 0 2px; font: inherit; font-size: var(--fs-xs); color: var(--accent); cursor: pointer; }
+.tl-chip-toggle:disabled { opacity: .5; }
 .tl-thumb { flex: none; width: 52px; height: 52px; border-radius: 12px; background-color: var(--border-soft); background-size: cover; background-position: center; }
 
 /* 言語を選ぶシート：大きく押しやすい行＋現在の言語にチェック */

@@ -11100,6 +11100,11 @@
     });
     return p;
   }
+  function refreshTripPlaceViews() {
+    var active = $('.screen.active');
+    if (active && active.dataset.screen === 'visited') renderVisitedKeepScroll();
+    else renderMyLogTrips(true);
+  }
   function setMyLogTripPlaceMode(tripId, kind, name, mode) {
     var user = loadCurrentUser();
     if (!user) { openLogin('visited'); return; }
@@ -11110,12 +11115,12 @@
     };
     setPlaces(applyTripPlaceOverrideLocal(before, tripId, kind, name, mode === 'exclude'));
     markMyLogDirty();
-    renderVisitedKeepScroll();
+    refreshTripPlaceViews();
     api('/mylog/trip-places', 'POST', { email: user.email, tripId: tripId, kind: kind, name: name, mode: mode }).then(function (res) {
-      if (res.places) { setPlaces(res.places); markMyLogDirty(); renderVisitedKeepScroll(); }
+      if (res.places) { setPlaces(res.places); markMyLogDirty(); refreshTripPlaceViews(); }
     }).catch(function (e) {
       setPlaces(before);
-      renderVisitedKeepScroll();
+      refreshTripPlaceViews();
       if (handleLoginRequired(e, 'visited')) return;
       alert(mode === 'exclude' ? tr('外せませんでした。通信状況を確認して、もう一度お試しください。') : tr('戻せませんでした。通信状況を確認して、もう一度お試しください。'));
     });
@@ -11124,10 +11129,24 @@
   // 「旅の年表」：アカウント参加者として参加した旅行を、年ごと（新しい年が先）・旅行は開始日が新しい順に並べる。
   // どの端末からログインしても同じ内容が見える。年の見出しには、その年の旅行回数と訪れた都道府県・国の数
   // （/mylogのplaces.tripPlacesから集計。外した場所は数えない）を添える。
-  // 年表は表示だけ。場所の「外す」「戻す」は「行った場所」タブの一覧で行う。
+  // 年表の行にも場所のチップがあり、「外す」「戻す」は「行った場所」タブと同じ関数（setMyLogTripPlaceMode）で行う。
   function tripActivePlaces(tp) {
     var keep = function (a) { return (a || []).filter(function (x) { return !x.excluded; }).map(function (x) { return x.name; }); };
     return { prefs: keep(tp && tp.prefectures), countries: keep(tp && tp.countries) };
+  }
+  // 年表の行に出す、国・都道府県の小さなチップ（外す／戻す付き。外したものは薄く打ち消し線）
+  function tlPlaceChips(tripId, tp) {
+    var out = [];
+    var add = function (arr, kind) {
+      (arr || []).forEach(function (x) {
+        out.push('<span class="tl-chip' + (x.excluded ? ' is-excluded' : '') + '"><span class="tl-chip-name">' + escapeHtml(x.name) + '</span>' +
+          '<button type="button" class="tl-chip-toggle" data-trip="' + escapeHtml(tripId) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
+          '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? tr('戻す') : tr('外す')) + '</button></span>');
+      });
+    };
+    add(tp && tp.prefectures, 'prefecture');
+    add(tp && tp.countries, 'country');
+    return out.join('');
   }
   function tlDateRange(t) {
     var md = function (d) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? (+m[2]) + '/' + (+m[3]) : ''; };
@@ -11176,19 +11195,24 @@
       trips.forEach(function (t) {
         var tp = placesByTrip[t.id];
         var places = tripActivePlaces(tp);
-        var placeNames = places.prefs.concat(places.countries);
-        var sub = [];
-        if (placeNames.length) sub.push(placeNames.join('・'));
-        if ((t.companions || []).length) sub.push(tr('{names} と一緒', { names: t.companions.join('・') }));
+        var chips = tlPlaceChips(t.id, tp);
         var row = document.createElement('div');
         row.className = 'tl-row';
         row.setAttribute('role', 'button');
         row.tabIndex = 0;
         row.innerHTML = '<div class="tl-date">' + escapeHtml(tlDateRange(t)) + '</div><div class="tl-axis"></div>' +
           '<div class="tl-card"><div class="tl-main"><div class="tl-text"><div class="tl-title">' + escapeHtml(t.title) + '</div>' +
-          (sub.length ? '<div class="tl-sub">' + escapeHtml(sub.join(' ／ ')) + '</div>' : '') + '</div>' +
+          ((t.companions || []).length ? '<div class="tl-sub">' + escapeHtml(tr('{names} と一緒', { names: t.companions.join('・') })) + '</div>' : '') +
+          (chips ? '<div class="tl-chips">' + chips + '</div>' : '') + '</div>' +
           (t.coverPhotoId ? '<div class="tl-thumb" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')"></div>' : '') + '</div></div>';
         var go = function () { openTrip(t.id, 'timeline'); };
+        $all('.tl-chip-toggle', row).forEach(function (btn) {
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            btn.disabled = true;
+            setMyLogTripPlaceMode(btn.dataset.trip, btn.dataset.kind, btn.dataset.name, btn.dataset.mode);
+          });
+        });
         row.addEventListener('click', function (e) {
           go();
         });
