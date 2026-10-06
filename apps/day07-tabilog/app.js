@@ -4359,8 +4359,6 @@
     return isNativeApp() && !prefersReducedMotion();
   }
   var TRIP_OPEN_ANIM_MS = 450; // style.cssの.trip-open-cloneのtransition時間と揃える
-  var TRIP_STAGGER_STEP_MS = 40;
-  var TRIP_STAGGER_DUR_MS = 260;
   var pendingCardOpenAnim = null; // { cardEl, tripId } / 直前にカードのアニメーションで開いた旅行だけ覚える
 
   // 詳細ヘッダーの最終的な見た目（カバー写真・白いシートの位置と大きさ）を、タップした瞬間に
@@ -4403,19 +4401,44 @@
   // カードの現在の見た目（写真の有無・角丸・写真のURL、写真部分と白い本体部分それぞれの矩形）を
   // 読み取る。ホーム画面の大きい写真カード（.trip-card.has-photo）だけ「写真」を持ち、マイログの
   // 小さいサムネイル一覧カードは常に「写真なし」扱い（白いカードが広がるだけの演出になる）。
-  function readTripCardVisual(cardEl) {
-    var photoEl = cardEl.querySelector('.trip-card-photo');
-    var bodyEl = photoEl ? cardEl.querySelector('.trip-card-info') : cardEl;
+  // どの入口（ホームのカード・年表の行・行った場所のチップ・マイログの行）から開いても同じ演出にするため、
+  // 「元の要素のどこが写真・白い枠・タイトル・日程か」をsource.pick(root)で教えてもらう。
+  // 省略時はホームの大きい写真カード（.trip-card.has-photo）。サムネイル（thumb:true）は小さい写真が
+  // 枠の中にあるタイプ（年表・マイログ）で、写真クローンはそのサムネイルから広がる。
+  var HOME_CARD_SOURCE = {
+    pick: function (root) {
+      var photoEl = root.querySelector('.trip-card-photo');
+      return {
+        photoEl: photoEl, thumb: false,
+        frameEl: photoEl ? root.querySelector('.trip-card-info') : root,
+        titleEl: root.querySelector('.trip-card-title'), dateEl: root.querySelector('.trip-card-date')
+      };
+    }
+  };
+  function readTripCardVisual(cardEl, source) {
+    var p = (source || HOME_CARD_SOURCE).pick(cardEl) || {};
+    var photoEl = p.photoEl || null;
+    var frameEl = p.frameEl || cardEl;
     var cardRadius = parseFloat(window.getComputedStyle(cardEl).borderRadius) || 0;
+    var photoRadius = '', bodyRadius;
+    if (photoEl && !p.thumb) {
+      // ホームの写真ありカード：写真は上2つの角、本体（.trip-card-info）は下2つの角だけ丸い
+      photoRadius = cardRadius + 'px ' + cardRadius + 'px 0 0';
+      bodyRadius = '0 0 ' + cardRadius + 'px ' + cardRadius + 'px';
+    } else {
+      if (photoEl) photoRadius = window.getComputedStyle(photoEl).borderRadius || '0';
+      bodyRadius = window.getComputedStyle(frameEl).borderRadius || (cardRadius + 'px');
+    }
     return {
       hasPhoto: !!photoEl,
-      photoUrl: photoEl ? photoEl.style.backgroundImage : '',
+      thumb: !!(photoEl && p.thumb),
+      photoUrl: photoEl ? (photoEl.style.backgroundImage || window.getComputedStyle(photoEl).backgroundImage) : '',
       photoRect: photoEl ? photoEl.getBoundingClientRect() : null,
-      // 写真ありカードの本体（.trip-card-info）は写真の下でカードの下2つの角だけ丸い。
-      // 写真なしカード（マイログの小さい一覧・写真のない旅行）はカード自体が本体で4つとも丸い。
-      photoRadius: photoEl ? (cardRadius + 'px ' + cardRadius + 'px 0 0') : '',
-      bodyRect: bodyEl.getBoundingClientRect(),
-      bodyRadius: photoEl ? ('0 0 ' + cardRadius + 'px ' + cardRadius + 'px') : (cardRadius + 'px')
+      photoRadius: photoRadius,
+      bodyRect: frameEl.getBoundingClientRect(),
+      bodyRadius: bodyRadius,
+      titleEl: p.titleEl || null,
+      dateEl: p.dateEl || null
     };
   }
 
@@ -4450,7 +4473,6 @@
     screenEl.style.transition = 'none';
     screenEl.style.opacity = '0';
     screenEl.style.pointerEvents = 'none';
-    if (screenEl.dataset.screen === 'tripDetail') prepareTripDetailStagger(screenEl);
     return screenEl;
   }
   // クローンが最終位置に達した瞬間に、フェード無しで即座に本物を見せる（クローンの最終フレームと
@@ -4463,44 +4485,16 @@
     screenEl.style.pointerEvents = '';
     void screenEl.offsetWidth; // reflow
     screenEl.style.transition = '';
-    if (screenEl.dataset.screen === 'tripDetail') playTripDetailStagger(screenEl);
   }
 
-  // staggerでふわっと出す対象（タイトル→日程→参加者行の順、40msずつ間を空ける）。あらかじめ
-  // opacity:0・8px下にずらしておき（prepare）、本物が見えた直後に透明→表示・8px下→0へ動かす（play）。
-  function tripDetailStaggerTargets() {
-    return [$('#tripTitle'), $('#tripDates'), $('.companions-row')].filter(function (el) { return !!el; });
-  }
-  function prepareTripDetailStagger() {
-    tripDetailStaggerTargets().forEach(function (el) {
-      el.style.transition = 'none';
-      el.style.opacity = '0';
-      el.style.transform = 'translateY(8px)';
-    });
-  }
-  function playTripDetailStagger() {
-    var targets = tripDetailStaggerTargets();
-    targets.forEach(function (el, i) {
-      void el.offsetWidth; // reflow：ここまでの初期状態を確定させてから動かす
-      var delay = i * TRIP_STAGGER_STEP_MS;
-      el.style.transition = 'opacity ' + TRIP_STAGGER_DUR_MS + 'ms ease ' + delay + 'ms, transform ' + TRIP_STAGGER_DUR_MS + 'ms ease ' + delay + 'ms';
-      el.style.opacity = '1';
-      el.style.transform = 'translateY(0)';
-    });
-    setTimeout(function () {
-      targets.forEach(function (el) {
-        el.style.transition = '';
-        el.style.opacity = '';
-        el.style.transform = '';
-      });
-    }, targets.length * TRIP_STAGGER_STEP_MS + TRIP_STAGGER_DUR_MS + 60);
-  }
-
-  // 白本体クローンの中に、カードのタイトル・日程をそのまま重ねる（本物のタイトルは演出が終わるまで
-  // opacity:0のままなので、これが無いとシートがずっと空白の白い板に見えてしまう）。
-  function addCloneText(bodyClone, titleText, dateText) {
+  // 白本体クローンの中に、タイトル・日程を重ねる。文字は常に「詳細画面の最終サイズ・最終位置」で
+  // 組んでおき（折り返しが途中で変わらない）、元の要素の位置・大きさへはtransform（移動＋拡大縮小）で
+  // 合わせる。白い枠と同じ要素の中で同じ時間・同じイージングで動くので、枠と文字は1つの塊として
+  // 動く（別々にフェードしない）。textWidthは最終のシートの幅。
+  function addCloneText(bodyClone, titleText, dateText, textWidth) {
     var textEl = document.createElement('div');
     textEl.className = 'trip-open-clone-text';
+    if (textWidth) textEl.style.width = textWidth + 'px';
     var titleEl = document.createElement('div');
     titleEl.className = 'trip-title';
     titleEl.textContent = titleText || '';
@@ -4510,17 +4504,50 @@
     textEl.appendChild(titleEl);
     textEl.appendChild(datesEl);
     bodyClone.appendChild(textEl);
+    return { titleEl: titleEl, datesEl: datesEl };
+  }
+  // 文字クローンを、元の要素（カードのタイトル・日程）の位置・大きさに合わせるtransformを付ける
+  // （bodyRect＝白い枠クローンがその時点で置かれている矩形）。元の要素が無ければ、タイトルの位置を借りて
+  // 枠と同じ時間で透明→不透明にする。
+  function fitCloneText(parts, bodyRect, srcTitleEl, srcDateEl) {
+    function fit(el, src, fallbackSrc) {
+      var ref = src || fallbackSrc;
+      if (!ref) { el.style.opacity = '0'; return; }
+      var r = ref.getBoundingClientRect();
+      var fs = parseFloat(window.getComputedStyle(ref).fontSize) || 0;
+      var ownFs = parseFloat(window.getComputedStyle(el).fontSize) || fs || 1;
+      var sc = fs && ownFs ? fs / ownFs : 1;
+      var dx = r.left - bodyRect.left - el.offsetLeft;
+      var dy = r.top - bodyRect.top - el.offsetTop;
+      el.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + sc + ')';
+      if (!src) el.style.opacity = '0';
+    }
+    fit(parts.titleEl, srcTitleEl, null);
+    fit(parts.datesEl, srcDateEl, srcTitleEl);
+  }
+  function clearCloneTextFit(parts) {
+    [parts.titleEl, parts.datesEl].forEach(function (el) { el.style.transform = 'none'; el.style.opacity = '1'; });
+  }
+  // 旅行IDから、演出に使うタイトル・日程の文字（ホームのカードと同じ書式）を引く。年表・マイログなど、
+  // 元の行に日程が出ていない入口で、詳細画面と同じ文字を枠の中に出すため。
+  function tripDateText(t) {
+    return t && t.startDate ? Core.formatDateJp(t.startDate) + (t.endDate && t.endDate !== t.startDate ? ' 〜 ' + Core.formatDateJp(t.endDate) : '') : '';
+  }
+  function tripTextById(id) {
+    var found = null;
+    homeAllTrips().concat(state.myLogTrips || []).some(function (t) { if (t.id === id) { found = t; return true; } return false; });
+    return found ? { title: found.title || '', dates: tripDateText(found) } : { title: '', dates: '' };
   }
 
   // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
   // 読み込みを待たずにそのまま進める（読み込みが遅くても、演出は毎回同じ長さで終わる）。
-  function openTripFromCard(cardEl, tripId, returnTo) {
+  function openTripFromCard(cardEl, tripId, returnTo, source) {
     if (!CARD_EXPAND_ENABLED() || !cardEl || typeof cardEl.getBoundingClientRect !== 'function') {
       pendingCardOpenAnim = null;
       openTrip(tripId, returnTo);
       return;
     }
-    var visual = readTripCardVisual(cardEl);
+    var visual = readTripCardVisual(cardEl, source);
     if (!visual.bodyRect.width || !visual.bodyRect.height) { openTrip(tripId, returnTo); return; }
     var leavingScreen = $('.screen.active');
     var leavingScrollY = window.scrollY;
@@ -4531,8 +4558,10 @@
     // 詳細画面の残り全部（写真の下〜画面の下まで）ではない。カードの本体（.trip-card-info等）が
     // シートの見積もりより多少大きくても、ここで底上げするのはあくまでシート1枚分の高さまで
     // （行き過ぎて画面下まで覆う大きさにはならない＝2026-09-29、白い板がでかすぎる不具合の修正）。
-    target.photoRect.width = Math.max(target.photoRect.width, visual.photoRect ? visual.photoRect.width : 0);
-    target.photoRect.height = Math.max(target.photoRect.height, visual.photoRect ? visual.photoRect.height : 0);
+    if (!visual.thumb) {
+      target.photoRect.width = Math.max(target.photoRect.width, visual.photoRect ? visual.photoRect.width : 0);
+      target.photoRect.height = Math.max(target.photoRect.height, visual.photoRect ? visual.photoRect.height : 0);
+    }
     target.sheetRect.width = Math.max(target.sheetRect.width, visual.bodyRect.width);
     target.sheetRect.height = Math.max(target.sheetRect.height, Math.min(visual.bodyRect.height, target.sheetRect.height * 1.6));
 
@@ -4552,15 +4581,21 @@
       setCloneRect(clonePhoto, visual.photoRect);
       clonePhoto.style.borderRadius = visual.photoRadius;
       clonePhoto.style.backgroundImage = visual.photoUrl;
+      // 小さいサムネイルは白い枠の内側にあるので、広がり始めは枠より手前に置き、途中で奥へ回す
+      if (visual.thumb) clonePhoto.style.zIndex = '502';
     }
     // 白本体クローン：カードの白い部分（写真ありなら.trip-card-info、無ければカード自体）
     var cloneBody = document.createElement('div');
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, visual.bodyRect);
     cloneBody.style.borderRadius = visual.bodyRadius;
-    var cardTitleEl = cardEl.querySelector('.trip-card-title');
-    var cardDateEl = cardEl.querySelector('.trip-card-date');
-    addCloneText(cloneBody, cardTitleEl ? cardTitleEl.textContent : '', cardDateEl ? cardDateEl.textContent : '');
+    var srcText = tripTextById(tripId);
+    var titleText = (source && source.title) || (visual.titleEl ? visual.titleEl.textContent : '') || srcText.title;
+    var dateText = (source && source.dates !== undefined) ? source.dates : (visual.dateEl ? visual.dateEl.textContent : srcText.dates);
+    var textParts = addCloneText(cloneBody, titleText, dateText, target.sheetRect.width);
+    // 文字は枠と同じ要素の中で、元の位置・大きさから最終の位置・大きさへ同じ時間・同じ動きで移る
+    textParts.titleEl.style.transition = textParts.datesEl.style.transition = 'none';
+    fitCloneText(textParts, visual.bodyRect, visual.titleEl, visual.dateEl);
 
     document.body.appendChild(backdrop);
     document.body.appendChild(bgFade);
@@ -4609,7 +4644,7 @@
       screenReady = true;
       finishIfReady();
     });
-    pendingCardOpenAnim = { cardEl: cardEl, tripId: tripId };
+    pendingCardOpenAnim = { cardEl: cardEl, tripId: tripId, source: source || null };
 
     requestAnimationFrame(function () {
       void cloneBody.offsetHeight; // reflow。ここまでの初期位置をブラウザに確定させてから終了位置へ動かす
@@ -4621,6 +4656,9 @@
       }
       setCloneRect(cloneBody, target.sheetRect);
       cloneBody.style.borderRadius = '20px 20px 0 0';
+      textParts.titleEl.style.transition = textParts.datesEl.style.transition = '';
+      clearCloneTextFit(textParts);
+      if (clonePhoto && visual.thumb) setTimeout(function () { clonePhoto.style.zIndex = ''; }, TRIP_OPEN_ANIM_MS * 0.35);
     });
 
     setTimeout(function () { minDone = true; finishIfReady(); }, TRIP_OPEN_ANIM_MS);
@@ -4633,26 +4671,32 @@
   function maybeAnimateTripCardClose(doNavigate) {
     var info = pendingCardOpenAnim;
     pendingCardOpenAnim = null;
-    if (!info || !CARD_EXPAND_ENABLED() || !state.trip || state.trip.id !== info.tripId ||
-      !document.body.contains(info.cardEl)) {
+    if (!info || !CARD_EXPAND_ENABLED() || !state.trip || state.trip.id !== info.tripId) {
       doNavigate();
       return;
     }
-    var cardVisual = readTripCardVisual(info.cardEl);
-    if (!cardVisual.bodyRect.width || !cardVisual.bodyRect.height) { doNavigate(); return; }
-    // 今表示中の本物の詳細画面（このあとdoNavigate()で消える直前）から、写真・シートの実際の位置を
-    // 実測する。開くときと違ってこちらは今まさに画面上にあるので実測できる（見積もりに頼らない）。
+    // 今表示中の本物の詳細画面（このあとdoNavigate()で消える直前）から、写真・シートの実際の位置と
+    // 文字を読み取っておく。
     var start = readTripDetailHeaderTarget();
     if (!start.sheetRect) { doNavigate(); return; }
+    var startPhotoUrl = $('#tripCoverPhoto') ? $('#tripCoverPhoto').style.backgroundImage : '';
+    var detailTitleEl = $('#tripTitle');
+    var detailDatesEl = $('#tripDates');
+    var titleText = detailTitleEl ? detailTitleEl.textContent : '';
+    var datesText = detailDatesEl ? detailDatesEl.textContent : '';
+    var leavingScreen = $('.screen.active'); // 旅の詳細（このあとdoNavigate()でホーム等に切り替わる）
+    var leavingScrollY = window.scrollY;
+    doNavigate(); // 実際の画面切り替え（pushState・showScreen・renderHome等）
+    // 戻り先の元の要素は、戻り先の画面が表示されてからでないと位置を測れない（それまでdisplay:none）。
+    // 一覧が作り直されて元の要素が無くなっていたら、同じ旅行の要素を探し直す。
+    var srcEl = document.body.contains(info.cardEl) ? info.cardEl : (info.source && info.source.refind ? info.source.refind() : null);
+    var cardVisual = srcEl ? readTripCardVisual(srcEl, info.source) : null;
+    if (!cardVisual || !cardVisual.bodyRect.width || !cardVisual.bodyRect.height) return;
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop show';
     // 開くときと違い、抜ける画面（frozenになる旅の詳細）はもともと本物の詳細画面そのものなので、
-    // シートの下は最初から本物の--bg色（グレー＋カード）になっている。そのためbg-fadeは「戻る」開始時
-    // から不透明（=グレーが透けて見える状態）にしておき、白本体クローンが縮んでいくあいだも
-    // その下がずっと正しいグレーであり続けるようにする（trip-open-bg-fadeにtransitionは無くても
-    // クラスの有無だけで即座に切り替わる。フェードが要るのは開くときの「ぼやけた一覧→グレー」だけで、
-    // 戻るときは最初からグレーなのでフェードではなく最初からshowでよい）。
+    // シートの下は最初から本物の--bg色になっている。bg-fadeは最初から不透明にしておく。
     var bgFade = document.createElement('div');
     bgFade.className = 'trip-open-bg-fade show';
 
@@ -4662,27 +4706,19 @@
       clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
       setCloneRect(clonePhoto, start.photoRect);
       clonePhoto.style.borderRadius = '0';
-      clonePhoto.style.backgroundImage = $('#tripCoverPhoto').style.backgroundImage;
+      clonePhoto.style.backgroundImage = startPhotoUrl;
     }
     var cloneBody = document.createElement('div');
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, start.sheetRect);
     cloneBody.style.borderRadius = '20px 20px 0 0';
-    // 本物のタイトル・日程クローンを重ねておく（本物の詳細画面はこのあとdoNavigate()で消えるので、
-    // 消える前に今の文字を読み取っておく）。カードへ戻り着くまでこの文字のまま縮む＝カードの文字と
-    // 一瞬で入れ替わる（revealEnteringScreenの瞬間）。
-    var detailTitleEl = $('#tripTitle');
-    var detailDatesEl = $('#tripDates');
-    addCloneText(cloneBody, detailTitleEl ? detailTitleEl.textContent : '', detailDatesEl ? detailDatesEl.textContent : '');
+    var textParts = addCloneText(cloneBody, titleText, datesText, start.sheetRect.width);
 
     document.body.appendChild(backdrop);
     document.body.appendChild(bgFade);
     if (clonePhoto) document.body.appendChild(clonePhoto);
     document.body.appendChild(cloneBody);
 
-    var leavingScreen = $('.screen.active'); // 旅の詳細（このあとdoNavigate()でホーム等に切り替わる）
-    var leavingScrollY = window.scrollY;
-    doNavigate(); // 実際の画面切り替え（pushState・showScreen・renderHome等）
     var enteringScreen = hideEnteringScreen($('.screen.active'));
     freezeLeavingScreen(leavingScreen, leavingScrollY);
 
@@ -4693,9 +4729,9 @@
         if (cardVisual.hasPhoto) {
           setCloneRect(clonePhoto, cardVisual.photoRect);
           clonePhoto.style.borderRadius = cardVisual.photoRadius;
+          if (cardVisual.thumb) setTimeout(function () { clonePhoto.style.zIndex = '502'; }, TRIP_OPEN_ANIM_MS * 0.35);
         } else {
-          // 戻り先のカードに写真が無い（マイログの小さい一覧など）ときは、写真クローンの高さを
-          // 0に潰してカードの上端に吸い込ませる
+          // 戻り先に写真が無いときは、写真クローンの高さを0に潰してカードの上端に吸い込ませる
           setCloneRect(clonePhoto, {
             top: cardVisual.bodyRect.top, left: cardVisual.bodyRect.left,
             width: cardVisual.bodyRect.width, height: 0
@@ -4705,12 +4741,11 @@
       }
       setCloneRect(cloneBody, cardVisual.bodyRect);
       cloneBody.style.borderRadius = cardVisual.bodyRadius;
+      fitCloneText(textParts, cardVisual.bodyRect, cardVisual.titleEl, cardVisual.dateEl);
     });
 
     setTimeout(function () {
-      // 開くときと同じ理由で、本物（ホーム／マイログ）を即座に見せるのと同じフレームで暗幕・
-      // ベタ塗り・クローンを消す（暗幕の消滅を450msのtransitionに任せて別タイミングで消すと、
-      // 本物がぼやけて見える数フレームができてしまう。2026-09-29修正）。
+      // 本物（ホーム／一覧）を即座に見せるのと同じフレームで暗幕・ベタ塗り・クローンを消す
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
       backdrop.remove();
@@ -5925,7 +5960,7 @@
         var parts = tripCardParts(t);
         card.className = parts.className;
         card.innerHTML = parts.html;
-        card.addEventListener('click', function () { openTripFromCard(card, t.id); });
+        card.addEventListener('click', function () { openTripFromCard(card, t.id, undefined, HOME_CARD_SOURCE); });
         el.appendChild(card);
         revealCards.push(card);
       });
@@ -6023,17 +6058,17 @@
   function returnFromTripDetail() {
     var target = state.tripReturnScreen;
     state.tripReturnScreen = null;
-    if (target === 'visited') {
-      showScreen('visited');
-      renderVisitedPlaces();
-      return;
-    }
-    if (target === 'mylog' || target === 'timeline') {
-      showScreen(target);
-      renderMyLog();
-      return;
-    }
-    goHome();
+    if (target !== 'visited' && target !== 'mylog' && target !== 'timeline') { goHome(); return; }
+    // 開いたときのカード演出を逆再生してから、元のタブ（スクロール位置はshowScreenが復元）へ戻る
+    maybeAnimateTripCardClose(function () {
+      if (target === 'visited') {
+        showScreen('visited');
+        renderVisitedPlaces();
+      } else {
+        showScreen(target);
+        renderMyLog();
+      }
+    });
   }
 
   function refreshTrip() {
@@ -11198,6 +11233,7 @@
         var chips = tlPlaceChips(t.id, tp);
         var row = document.createElement('div');
         row.className = 'tl-row';
+        row.dataset.tripId = t.id;
         row.setAttribute('role', 'button');
         row.tabIndex = 0;
         row.innerHTML = '<div class="tl-date">' + escapeHtml(tlDateRange(t)) + '</div><div class="tl-axis"></div>' +
@@ -11205,7 +11241,7 @@
           ((t.companions || []).length ? '<div class="tl-sub">' + escapeHtml(tr('{names} と一緒', { names: t.companions.join('・') })) + '</div>' : '') +
           (chips ? '<div class="tl-chips">' + chips + '</div>' : '') + '</div>' +
           (t.coverPhotoId ? '<div class="tl-thumb" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')"></div>' : '') + '</div></div>';
-        var go = function () { openTrip(t.id, 'timeline'); };
+        var go = function () { openTripFromCard(row, t.id, 'timeline', timelineRowSource(t)); };
         $all('.tl-chip-toggle', row).forEach(function (btn) {
           btn.addEventListener('click', function (e) {
             e.stopPropagation();
@@ -11226,6 +11262,49 @@
       el.appendChild(sec);
     });
     if (!quiet) revealCardsOnScroll(reveal);
+  }
+
+  // 年表の行・マイログの行・行った場所のチップを、ホームのカードと同じ開く演出に載せるための「元の要素の読み方」
+  function timelineRowSource(t) {
+    var sel = '.tl-row[data-trip-id="' + String(t.id).replace(/"/g, '') + '"]';
+    return {
+      title: t.title, dates: tripDateText(t),
+      pick: function (row) {
+        var th = row.querySelector('.tl-thumb');
+        return { photoEl: th, thumb: true, frameEl: row.querySelector('.tl-card') || row, titleEl: row.querySelector('.tl-title'), dateEl: null };
+      },
+      refind: function () { return document.querySelector(sel); }
+    };
+  }
+  function mylogRowSource(it) {
+    var tx = tripTextById(it.tripId);
+    return {
+      title: it.tripTitle || tx.title, dates: tx.dates,
+      pick: function (row) {
+        var ph = row.querySelector('.mylog-photo:not(.empty)');
+        return { photoEl: ph, thumb: true, frameEl: row, titleEl: row.querySelector('.mylog-trip'), dateEl: null };
+      },
+      refind: function () {
+        var rows = document.querySelectorAll('#mylogList .mylog-row');
+        for (var i = 0; i < rows.length; i++) if (rows[i]._tripId === it.tripId && rows[i].getBoundingClientRect().width) return rows[i];
+        return null;
+      }
+    };
+  }
+  function visitedChipSource(id, label) {
+    var tx = tripTextById(id);
+    return {
+      title: tx.title || label, dates: tx.dates,
+      pick: function (chip) { return { photoEl: null, thumb: false, frameEl: chip, titleEl: chip.querySelector('.visited-trip-link') || chip, dateEl: null }; },
+      refind: function () {
+        var links = document.querySelectorAll('.visited-trip-link[data-trip-id="' + String(id).replace(/"/g, '') + '"]');
+        for (var i = 0; i < links.length; i++) {
+          var chip = links[i].closest('.visited-trip-chip') || links[i];
+          if (chip.getBoundingClientRect().width) return chip;
+        }
+        return null;
+      }
+    };
   }
 
   function myLogCategoryOf(it) { return it.category === 'arrival' ? 'transport' : it.category; }
@@ -11272,6 +11351,7 @@
     items.forEach(function (it) {
       var row = document.createElement('button');
       row.className = 'mylog-row';
+      row._tripId = it.tripId;
       var photoHtml = it.photoId ? '<div class="mylog-photo" style="background-image:url(\'' + escapeHtml(photoUrl(it.photoId)) + '\')"></div>' : '<div class="mylog-photo empty"></div>';
       row.innerHTML =
         photoHtml +
@@ -11280,7 +11360,7 @@
         '<div class="mylog-trip">' + escapeHtml(it.tripTitle) + (it.date ? '・' + escapeHtml(Core.formatDateJp(it.date)) : '') + '</div>' +
         '</div>' +
         '<div class="mylog-score">★' + it.score + '</div>';
-      row.addEventListener('click', function () { openTrip(it.tripId); });
+      row.addEventListener('click', function () { openTripFromCard(row, it.tripId, 'mylog', mylogRowSource(it)); });
       el.appendChild(row);
     });
   }
@@ -11503,7 +11583,7 @@
         e.preventDefault();
         e.stopPropagation();
         var id = a.dataset.tripId;
-        if (id) openTrip(id, 'visited');
+        if (id) openTripFromCard(a.closest('.visited-trip-chip') || a, id, 'visited', visitedChipSource(id, a.textContent));
       });
     });
     $all('.visited-trip-toggle', root2).forEach(function (btn) {
