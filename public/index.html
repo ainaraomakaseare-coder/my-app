@@ -1785,6 +1785,56 @@ function renderConn() {
   note.style.whiteSpace = 'pre-wrap';
   add.appendChild(note);
   $('conn').appendChild(add);
+  renderDriveExport();
+}
+
+/**
+ * 分析の数字を毎週 Google ドライブへ書き出す（lib/analysis-export.js）。
+ * ★ SNS の連携とは別物なので、投稿先の一覧とは分けて出す。
+ */
+async function renderDriveExport() {
+  const box = document.createElement('div');
+  box.className = 'row';
+  box.style.cssText = 'padding-top:12px;border-top:1px solid var(--line);margin-top:8px';
+  const title = document.createElement('span');
+  title.className = 'muted';
+  title.style.width = '100%';
+  title.textContent = 'Google ドライブ（分析の数字を毎週月曜の朝に書き出す）';
+  box.appendChild(title);
+  const state = document.createElement('span');
+  state.style.width = '100%';
+  state.textContent = '確認中…';
+  box.appendChild(state);
+  const b = document.createElement('button');
+  b.onclick = () => { location.href = '/api/connect/youtube?drive=1'; };
+  box.appendChild(b);
+  $('conn').appendChild(box);
+  try {
+    const s = await api('/api/insights?drive=status');
+    if (s.error) {
+      state.className = 'err';
+      state.textContent = s.error + (s.hint ? '\n' + s.hint : '');
+      state.style.whiteSpace = 'pre-wrap';
+      b.textContent = 'Google ドライブをつなぐ';
+      return;
+    }
+    if (!s.connected) {
+      state.className = 'muted';
+      state.textContent = 'まだつながっていません。';
+      b.textContent = 'Google ドライブをつなぐ';
+      return;
+    }
+    const last = s.last_export ? new Date(s.last_export.at).toLocaleString('ja-JP') : 'まだ';
+    state.className = s.auth_error ? 'err' : 'muted';
+    state.textContent = `つながっています${s.email ? '（' + s.email + '）' : ''}。最後の書き出し：${last}` +
+      (s.auth_error ? '\n切れています：' + s.auth_error.message : '');
+    state.style.whiteSpace = 'pre-wrap';
+    b.textContent = 'つなぎ直す';
+  } catch (e) {
+    state.className = 'err';
+    state.textContent = '状態を読めませんでした：' + e.message;
+    b.textContent = 'Google ドライブをつなぐ';
+  }
 }
 
 // --------------------------------------------------------------- のび（分析）

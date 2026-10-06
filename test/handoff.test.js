@@ -188,7 +188,7 @@ const post = (over) => Object.assign({
                      'schema_v8_insights.sql', 'schema_v9_tiktok_direct.sql',
                      'schema_v10_threads.sql', 'schema_v11_series.sql',
                      'schema_v12_threads_affiliate.sql', 'schema_v13_benchmark.sql',
-                     'schema_v14_reply.sql']) {
+                     'schema_v14_reply.sql', 'schema_v15_drive_export.sql']) {
       assert.ok(all.includes(fs.readFileSync(dir + f, 'utf8')), f + ' が古い');
     }
     // つなぐ順番も見る。順番が狂うと引き継ぎが効かない。
@@ -202,6 +202,7 @@ const post = (over) => Object.assign({
     assert.ok(at('schema_v11_series.sql') < at('schema_v12_threads_affiliate.sql'), 'v11 と v12 の順が逆');
     assert.ok(at('schema_v12_threads_affiliate.sql') < at('schema_v13_benchmark.sql'), 'v12 と v13 の順が逆');
     assert.ok(at('schema_v13_benchmark.sql') < at('schema_v14_reply.sql'), 'v13 と v14 の順が逆');
+    assert.ok(at('schema_v14_reply.sql') < at('schema_v15_drive_export.sql'), 'v14 と v15 の順が逆');
   });
   // ★ 画面は案件つきのとき掲載対象外（X など）を選べなくしている。
   //   その一覧がサーバーとずれると、選べるのに保存で弾かれる（動画を作った後に）。

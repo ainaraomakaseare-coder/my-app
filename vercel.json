@@ -2,5 +2,8 @@
   "outputDirectory": "public",
   "functions": {
     "api/*.js": { "maxDuration": 60 }
-  }
+  },
+  "crons": [
+    { "path": "/api/insights?export=drive", "schedule": "0 23 * * 0" }
+  ]
 }
