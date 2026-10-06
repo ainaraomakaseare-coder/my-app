@@ -62,6 +62,7 @@ h1, h2, h3, h4 { line-height: 1.35; }
 button { font-family: inherit; color: inherit; cursor: pointer; border: none; background: none; padding: 0; appearance: none; -webkit-appearance: none; text-align: inherit; }
 /* iOSは入力欄のfont-sizeが16px未満だと、タップ時に強制的にズームしてしまう
    （viewportのuser-scalable=noを設定していても発生する既知の挙動）ため16px以上にする */
+input[type="text"], input[type="url"], input[type="search"], input[type="email"] { text-overflow: ellipsis; } /* 長いプレースホルダーが文字の途中で切れないよう「…」にする */
 input, textarea { font-family: inherit; font-size: 16px; /* iOSの自動ズーム防止のため16px固定 */ }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -329,6 +330,7 @@ a:hover { text-decoration: underline; }
 .trip-card-title { font-weight: 700; font-size: var(--fs-md); line-height: 1.35; }
 .trip-card-date { font-size: var(--fs-base); color: var(--ink-soft); white-space: nowrap; flex-shrink: 0; }
 .trip-card-companions { font-size: var(--fs-base); color: var(--ink-muted); margin-top: 6px; }
+.trip-card-companions:empty { display: none; }
 .trip-card-type {
   display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 400;
   background: var(--accent-soft-bg); color: var(--accent-deep);
@@ -753,6 +755,10 @@ a:hover { text-decoration: underline; }
 .cost-payer-clear, .cost-split-even { align-self: flex-start; }
 .cost-total { font-size: var(--fs-sm); font-weight: 700; margin-top: 8px; }
 .cost-item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* 中身が空のヒント・合計の欄が余白だけを作って、費用の明細の下に大きな空きができていた */
+.field .hint:empty, .cost-total:empty { display: none; }
+/* 「明細を追加」「レシートを読み取る」「地図を検索」が、ただの文字に見えないよう、ほかの二次ボタンと同じ色の面と枠をつける */
+.cost-item-actions .btn.ghost, .map-search-row .btn.ghost { background: var(--input-bg); border: 1px solid #D5D9E0; border-color: color-mix(in srgb, var(--ink) 18%, transparent); color: var(--ink); }
 
 /* ---------- 精算（割り勘） ---------- */
 .settle-unit-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }

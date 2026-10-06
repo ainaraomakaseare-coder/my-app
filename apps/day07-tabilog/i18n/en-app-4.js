@@ -190,4 +190,6 @@ I18N.addLang('en', {
   "写真を保存できませんでした": "Couldn't save the photo",
   "保存できませんでした": "Couldn't save",
   "ベストピクチャーを保存しました": "Best pictures saved",
+  "予定を保存しました": "Plan saved",
+  "記録を追加": "Add record",
 });

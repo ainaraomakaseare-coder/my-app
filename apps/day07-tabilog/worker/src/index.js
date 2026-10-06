@@ -225,6 +225,15 @@ async function createTrip(request, env, headers) {
   )
     .bind(trip.id, trip.title, trip.start_date, trip.end_date, trip.companions, trip.cover_photo_id, trip.trip_type, trip.settle_unit, trip.created_at, trip.updated_at)
     .run();
+  // ログイン中の人が作った旅は、その人が「参加する」を押したのと同じ状態にする
+  // （マイログ・マイページの集計・行った場所にすぐ反映するため。ゲストは何もしない。D1書き込みは+1回）
+  const creatorEmail = await sessionEmail(request, env);
+  if (creatorEmail) {
+    const account = await getOrCreateAccount(env, creatorEmail, "");
+    await env.DB.prepare("INSERT INTO trip_members (id, trip_id, account_id, name, joined_at) VALUES (?,?,?,?,?)")
+      .bind(uid("mem"), trip.id, account.account_id, account.name || "", nowIso())
+      .run();
+  }
   return json(rowToTrip(trip), 201, headers);
 }
 
@@ -4468,21 +4477,26 @@ async function saveOrganizedBlocks(env, tripId, dateOrDates, blocksData, author)
     // 別々のrun()にすると、Blockの保存だけ成功して記録の保存だけ失敗した場合に
     // 「予定はあるのに記録が空」という気づきにくい中途半端な状態が残ってしまうため
     // （2026-09-15、実際にこの状態で複数件の記録が失われる事故があった）。
-    await env.DB.batch([
+    // 中身（エピソード・費用・地図・お店のURL）が何も無い予定には、空の記録（「記録：匿名」だけの吹き出し）を作らない
+    const hasEntryContent = !!(episode || costItems.length || mapUrl || shopUrl);
+    const stmts = [
       env.DB.prepare(
         "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
       ).bind(blockRow.id, blockRow.trip_id, blockRow.date, blockRow.time, blockRow.label, blockRow.category, blockRow.transport, blockRow.created_at, blockRow.updated_at),
-      env.DB.prepare(
+    ];
+    if (hasEntryContent) {
+      stmts.push(env.DB.prepare(
         `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, map_url, shop_url, author, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).bind(
         entryRow.id, entryRow.block_id, entryRow.episode, entryRow.comment, entryRow.detail, entryRow.photo_ids,
         entryRow.video_ids, entryRow.cost_items, entryRow.wait_time, entryRow.map_url, entryRow.shop_url,
         entryRow.author, entryRow.created_at, entryRow.updated_at
-      ),
-    ]);
+      ));
+    }
+    await env.DB.batch(stmts);
 
-    created.push({ ...rowToBlock(blockRow), entries: [rowToEntry(entryRow)] });
+    created.push({ ...rowToBlock(blockRow), entries: hasEntryContent ? [rowToEntry(entryRow)] : [] });
   }
   return created;
 }
@@ -5040,7 +5054,10 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
       map_geocoded_at: hasMap && typeof it.mapLat === "number" ? t : null,
       shop_url: it.shopUrl || "", other_url: "", author, travel: JSON.stringify(cleanTravel(it.travel)), created_at: t, updated_at: t,
     };
-    return { blockRow, entryRow };
+    // 中身（エピソード・費用・地図・お店のURL・移動の詳細）が何も無い予定には、空の記録を作らない
+    // （「記録：匿名」だけの空の吹き出しが出てしまうため）
+    const hasEntryContent = !!(entryRow.episode || it.costItems.length || entryRow.map_url || entryRow.shop_url || Object.keys(cleanTravel(it.travel)).length);
+    return { blockRow, entryRow: hasEntryContent ? entryRow : null };
   });
 
   const statements = (withPlaceName) => built.flatMap(({ blockRow: b, entryRow: e }) => [
@@ -5051,14 +5068,14 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
       : env.DB.prepare(
         "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
       ).bind(b.id, b.trip_id, b.date, b.time, b.label, b.category, b.transport, b.created_at, b.updated_at),
-    env.DB.prepare(
+    ...(e ? [env.DB.prepare(
       `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url,${withPlaceName ? " map_place_name," : ""} map_lat, map_lng, map_geocoded_url, map_geocoded_at, shop_url, other_url, author, travel, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,${withPlaceName ? "?," : ""}?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       ...[e.id, e.block_id, e.episode, e.comment, e.detail, e.photo_ids, e.video_ids, e.cost_items, e.wait_time, e.time, e.map_url]
         .concat(withPlaceName ? [e.map_place_name] : [])
         .concat([e.map_lat, e.map_lng, e.map_geocoded_url, e.map_geocoded_at, e.shop_url, e.other_url, e.author, e.travel, e.created_at, e.updated_at])
-    ),
+    )] : []),
   ]);
   // 予定と記録を全部1つのバッチ（D1のトランザクション）にする。途中で失敗して「予定だけ残る」ことを防ぐ
   try {
@@ -5077,7 +5094,7 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
   }
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
 
-  const blocks = built.map(({ blockRow, entryRow }) => ({ ...rowToBlock(blockRow), entries: [rowToEntry(entryRow)] }));
+  const blocks = built.map(({ blockRow, entryRow }) => ({ ...rowToBlock(blockRow), entries: entryRow ? [rowToEntry(entryRow)] : [] }));
   return json({ blocks, errors: checked.errors }, 200, headers);
 }
 

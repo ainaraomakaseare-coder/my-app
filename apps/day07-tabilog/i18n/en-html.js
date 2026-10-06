@@ -208,7 +208,7 @@ I18N.addLang('en', {
   "例：&#10;10時 東京駅&#10;新幹線で京都へ&#10;13時 清水寺&#10;抹茶パフェを食べた&#10;18時 旅館にチェックイン": "e.g.\\n10:00 AM Tokyo Station\\nTook the Shinkansen to Kyoto\\n1:00 PM Kiyomizu-dera\\nHad a matcha parfait\\n6:00 PM Checked in at the ryokan",
   "戻る": "Back",
   "共有": "Share",
-  "例：那覇空港に集合／首里城公園に到着": "e.g. Meet at Naha Airport / Arrived at Shuri Castle Park",
+  "例：那覇空港に集合": "e.g. Meet at Naha Airport",
   "一時停止": "Pause",
   "前の予定へ": "Previous activity",
   "次の予定へ": "Next activity",

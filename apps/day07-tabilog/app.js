@@ -5859,15 +5859,14 @@
         (t.tripType ? '<span class="trip-card-photo-badge">' + escapeHtml(t.tripType) + '</span>' : '') +
         '</div>' +
         '<div class="trip-card-info">' + infoHtml +
-        '<div class="trip-card-people">' + tripCardAvatarsHtml(t.companions) +
-        '<span class="trip-card-people-text">' +
-        ((t.companions || []).length ? tr('{names} と一緒', { names: escapeHtml(t.companions.join('・')) }) : tr('参加者は未設定')) +
-        '</span></div>' + extra + '</div>' };
+        ((t.companions || []).length ? '<div class="trip-card-people">' + tripCardAvatarsHtml(t.companions) +
+        '<span class="trip-card-people-text">' + tr('{names} と一緒', { names: escapeHtml(t.companions.join('・')) }) +
+        '</span></div>' : '') + extra + '</div>' };
     }
     return { className: 'trip-card', html:
       infoHtml +
       '<div class="trip-card-companions">' +
-      ((t.companions || []).length ? tr('{names} と一緒', { names: escapeHtml(t.companions.join('・')) }) : tr('参加者は未設定')) +
+      ((t.companions || []).length ? tr('{names} と一緒', { names: escapeHtml(t.companions.join('・')) }) : '') +
       (t.tripType ? '<span class="trip-card-type">' + escapeHtml(t.tripType) + '</span>' : '') +
       '</div>' + extra };
   }
@@ -5966,6 +5965,10 @@
       state.social = emptySocial();
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
+      // 端末が初めて開く旅行（共有リンクから来た人）は、旅行を作った人ではないので、案内から「リンクを送って」を外す
+      var wasKnownTrip = loadMyTrips().some(function (t) { return (t.tripId || t.id) === state.trip.id; });
+      var asMember = (function () { var u = loadCurrentUser(); return !!(u && u.accountId && (state.members || []).some(function (m) { return m.accountId === u.accountId; })); })();
+      state.tripGuestVisit = !wasKnownTrip && !asMember;
       rememberTrip(state.trip);
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       state.zoneInfo = { byBlock: {} };
@@ -6407,6 +6410,9 @@
     var user = loadCurrentUser();
     var members = state.members || [];
     var namesEl = $('#tripMembers');
+    // 同行者（テキスト）が空でも、アカウント参加者がいるときは「参加者は未設定」を出さない（矛盾して見えるため）
+    var compEl = $('#tripCompanions');
+    if (compEl) compEl.style.display = (state.trip && !(state.trip.companions || []).length && members.length) ? 'none' : '';
     namesEl.hidden = !members.length;
     namesEl.textContent = members.length
       ? tr('アカウント参加：{names}', { names: members.map(function (m) { return m.name || tr('アカウント参加者'); }).join('・') })
@@ -9290,8 +9296,11 @@
           showScreen('tripDetail');
           renderTripDetail();
         } else {
-          // 新規の予定は、続けて最初の記録を書いてもらう
-          openEntryForm(block.id, null);
+          // 新規の予定は、保存後に旅行詳細へ戻り、「記録を追加」を押せるトーストを出す
+          // （以前は記録フォームを自動で開いていたが、予定だけ先に作りたい人が戸惑うため。2026-10-06）
+          showScreen('tripDetail');
+          renderTripDetail();
+          showToast(tr('予定を保存しました'), { label: tr('記録を追加'), onClick: function () { openEntryForm(block.id, null); } });
         }
       });
     }).catch(function (e) {
@@ -9315,6 +9324,7 @@
     state.entryBlockId = blockId;
     state.editingEntryId = entry ? entry.id : null;
     state.editingEntry = entry || null;
+    state.draftRating = 0;
     state.formPhotos = entry ? (entry.photoIds || []).map(function (id) { return { id: id }; }) : [];
     state.formVideoIds = entry ? (entry.videoIds || []).slice() : [];
     state.pendingVideos = [];
@@ -9503,12 +9513,15 @@
     var kind = Core.reviewKindForCategory(block ? block.category : '');
     $('#entReviewFields').hidden = true;
     $('#entMoreSummary').textContent = tr('もっと書く（ひとこと・詳細・URLなど）');
-    if (!loginEnabled() || !entry || !kind) { field.hidden = true; return; }
+    if (!loginEnabled() || !kind) { field.hidden = true; return; }
     field.hidden = false;
     var user = loadCurrentUser();
     var widget = $('#entRatingWidget');
-    var summary = Core.ratingSummary(entry.ratings);
-    var summaryText = summary.count ? tr('みんなの平均：★{avg}（{n}人）', { avg: summary.avg.toFixed(1), n: summary.count }) : tr('まだ誰も評価していません');
+    // 新しい記録はまだ保存前なので、評価は下書きとして持ち、記録を保存した直後にいっしょに送る
+    var isNew = !entry;
+    var ratings = entry ? entry.ratings : [];
+    var summary = Core.ratingSummary(ratings);
+    var summaryText = isNew ? '' : summary.count ? tr('みんなの平均：★{avg}（{n}人）', { avg: summary.avg.toFixed(1), n: summary.count }) : tr('まだ誰も評価していません');
 
     if (!user) {
       widget.innerHTML = '<button type="button" class="btn ghost small" id="btnRatingLogin">' + tr('ログインして評価する') + '</button>';
@@ -9517,7 +9530,7 @@
       return;
     }
 
-    var mine = Core.myRatingScore(entry.ratings, user.email);
+    var mine = isNew ? (state.draftRating || 0) : Core.myRatingScore(ratings, user.email);
     var mineWhole = Math.round(mine); // 星タップの見た目は整数（0.1刻みの端数は微調整ボタンで付ける）
     var stars = '';
     for (var i = 1; i <= 5; i++) {
@@ -9549,7 +9562,7 @@
       });
     }
     $('#entRatingSummary').textContent = summaryText;
-    renderReviewFields(kind, mine > 0 ? (Core.findMyRating(entry.ratings, user.email) || {}).review || {} : null);
+    renderReviewFields(kind, !isNew && mine > 0 ? (Core.findMyRating(ratings, user.email) || {}).review || {} : null);
   }
 
   // ---------- レビュー項目（紹介文用。docs/adr/0007） ----------
@@ -9638,7 +9651,12 @@
 
   function setMyRating(score) {
     var user = loadCurrentUser();
-    if (!user || !state.editingEntryId) return;
+    if (!user) return;
+    if (!state.editingEntryId) { // 新しい記録：保存するまで下書きとして持つ
+      state.draftRating = score;
+      renderEntryRatingSection();
+      return;
+    }
     var status = $('#entRatingSummary');
     status.textContent = tr('保存中…');
     var req = score > 0
@@ -10400,7 +10418,14 @@
         var req = state.editingEntryId
           ? api('/entries/' + encodeURIComponent(state.editingEntryId), 'PATCH', payload)
           : api('/blocks/' + encodeURIComponent(state.entryBlockId) + '/entries', 'POST', payload);
-        return req;
+        var user = loadCurrentUser();
+        var draft = state.editingEntryId ? 0 : (state.draftRating || 0);
+        if (!(draft > 0) || !user) return req;
+        // 新しい記録に付けておいた評価は、記録ができたあとに送る（失敗しても記録は残る）
+        return req.then(function (created) {
+          if (!created || !created.id) return created;
+          return api('/entries/' + encodeURIComponent(created.id) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: draft }).catch(function () {});
+        });
       })
       .then(function () {
         return refreshTrip().then(function () {
@@ -10499,9 +10524,8 @@
   function renderPlanStatus() {
     var statusEl = $('#planStatus');
     var msgEl = $('#planStatusMessage');
-    var badgeEl = $('#planBadgeTop');
     var account = state.account;
-    var wasEmpty = !statusEl.firstChild, badgeWasHidden = badgeEl.hidden;
+    var wasEmpty = !statusEl.firstChild;
     var subEl = $('#mpQuotaSub');
     var aiRow = $('#mpAiUsage');
     if (aiRow) aiRow.hidden = !(account && account.isAdmin === true); // 運営者だけ（サーバーが判定して返す）
@@ -10509,7 +10533,6 @@
     if (!account) {
       statusEl.innerHTML = '';
       msgEl.textContent = '';
-      badgeEl.hidden = true;
       return;
     }
     var lines = ['<div class="plan-usage">' + tr('今月の音声入力：あと{n}回（月{limit}回まで）', { n: account.voiceRemainingThisPeriod, limit: account.voiceMonthlyLimit }) + '</div>'];
@@ -10523,10 +10546,7 @@
       if (wasEmpty) fadeInOnce(statusEl);
     }
 
-    badgeEl.hidden = false;
-    if (badgeWasHidden) fadeInOnce(badgeEl);
-    badgeEl.classList.add('is-free');
-    badgeEl.textContent = tr('音声入力 あと{n}回', { n: account.voiceRemainingThisPeriod });
+    // マイログの見出しにあった「音声入力 あと◯回」のバッジは、マイページの「AIの残り回数」と重複するため外した（2026-10-06）
     msgEl.textContent = '';
   }
 
@@ -10972,7 +10992,7 @@
   // 旅の詳細の案内（旅行をはじめて開いたときに1回だけ自動で出す。「使い方」ボタンからいつでも見直せる）
   function tripTutorialSteps() {
     var d = '.screen.active[data-screen="tripDetail"] ';
-    return [
+    var steps = [
       { target: d + '#btnInvite', title: 'リンクを送って、みんなで書こう', body: 'リンクを送ると、一緒に行った人もアプリ無しで見たり書き足したりできます。' },
       { target: d + '#dayTabs', title: '日ごとに並びます', body: '日ごとに予定と記録が並びます。タブで日を切り替えられます。' },
       { target: d + '.block-add-plan', title: '予定を足して、記録を足す', body: '予定（いつ・どこ）を足して、その中に写真・感想・費用の記録を足していきます。' },
@@ -10980,6 +11000,9 @@
       { target: d + '#btnOpenReplay', title: '地図でふりかえる', body: '旅を地図の上で再生して、動画にしてシェアもできます。' },
       { target: d + '#btnOpenSettlement', title: '精算もおまかせ', body: '立て替えを入れると、誰が誰にいくら払うか自動で計算します。' }
     ];
+    // 共有リンクで開いた人（旅行を作った人ではない人）には、リンクを送る案内は出さない
+    if (state.tripGuestVisit) steps.shift();
+    return steps;
   }
   function runTripTutorial() { startTutorial(tripTutorialSteps(), null, 'trip'); }
   // 旅行を開いたとき、まだ見ていなければ1回だけ出す（最初の案内の最中は出さない）
@@ -13738,9 +13761,6 @@
       renderVisitedPlaces();
       fadeInOnce($('#visitedPanel'));
     });
-    $('#planBadgeTop').addEventListener('click', function () {
-      if (loadCurrentUser()) openProfile(); else openLogin('profile');
-    });
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
     wireMyPage();
     initSocial();
@@ -13879,7 +13899,7 @@
   }
 
   function goToReturnScreen(target, loggedIn) {
-    if (target === 'entryForm' && state.editingEntryId) {
+    if (target === 'entryForm' && (state.editingEntryId || state.entryBlockId)) {
       showScreen('entryForm');
       renderEntryRatingSection();
     } else if (target === 'tripDetail' && state.trip) {
@@ -14157,12 +14177,31 @@
   // 画面下中央に出す小さな通知。約2.5秒でフェードして消える（トップ右のアイコンとの重複を
   // やめ、#tripDetailStatusのように気づかれにくい場所ではなく、必ず目に入る場所に出す。2026-09-26）。
   var toastTimer = null;
+  // トーストを出す高さ。下から出ているシート（アカウント・写真・コメントなど）や、地図でふりかえるの操作バーが
+  // あるときは、それらにかぶらないよう、いちばん上の端の少し上に出す（なければ既定の位置＝CSSの24px）
+  function toastBottomOffset() {
+    var top = null;
+    var consider = function (el) {
+      if (!el || el.hidden) return;
+      var r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0 && (top === null || r.top < top)) top = r.top;
+    };
+    Array.prototype.forEach.call(document.querySelectorAll('.sheet-backdrop:not([hidden]) .sheet'), consider);
+    var active = document.querySelector('.screen.active');
+    if (active && active.dataset.screen === 'replay') { // 操作バー・日のタブ・吹き出しのうち、いま出ているもの
+      Array.prototype.forEach.call(active.querySelectorAll('.replay-bottom > *'), consider);
+    }
+    if (top === null) return '';
+    var gap = window.innerHeight - top + 12;
+    return gap > window.innerHeight * 0.8 ? '' : gap + 'px'; // 画面のほとんどをシートが占めるときは既定の位置のまま
+  }
   // action（{label, onClick}）を渡すと、文のあとに押せるボタン（「元に戻す」など）を付ける。長めに表示する
   function showToast(text, action) {
     var el = $('#toast');
     if (!el) return;
     clearTimeout(toastTimer);
     el.textContent = text;
+    el.style.bottom = toastBottomOffset();
     el.classList.toggle('toast-action', !!action);
     if (action) {
       var ab = document.createElement('button');
