@@ -4745,7 +4745,7 @@
   // （マイログは2026-09-28〜。旅行を開いてまた「← 戻る」で戻ったとき、スクロールした先のカードを
   // 探し直さなくて済むように）。別の旅行を開いたとき（openTrip）はいちばん上から。
   var screenScroll = {};
-  var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1, visited: 1 };
+  var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1, timeline: 1, visited: 1 };
   // 見出し横の「？」ボタン：タップで説明の吹き出し（.info-pop）を開閉する。外側タップ・Escで閉じる。
   function closeInfoPops(except) {
     var pops = document.querySelectorAll('.info-pop');
@@ -4802,7 +4802,7 @@
   // ボトムタブバー（マイログ・旅先一覧・旅の足跡・プロフィール）の表示・ハイライトを、画面の
   // 切り替えのたびにここで一括して更新する（showScreenの呼び出し元がタブの状態を気にしなくてよいように）。
   // トップレベルの4画面だけで出し、旅の詳細・記録フォーム・地図でふりかえる・シート・ログインでは隠す。
-  var TABBAR_SCREENS = { mylog: 1, visited: 1, home: 1, profile: 1 };
+  var TABBAR_SCREENS = { mylog: 1, timeline: 1, visited: 1, home: 1, profile: 1 };
   function updateTabbar(name) {
     var bar = $('#tabbar');
     if (!bar) return;
@@ -4855,6 +4855,7 @@
   function openTabScreen(name) {
     if (name === 'home') goHome();
     else if (name === 'mylog') { if (loadCurrentUser()) openMyLog(); else openLogin('mylog'); }
+    else if (name === 'timeline') { if (loadCurrentUser()) openMyLog('timeline'); else openLogin('timeline'); }
     else if (name === 'visited') { if (loadCurrentUser()) openVisitedPlaces(); else openLogin('visited'); }
     else if (name === 'profile') openProfile();
   }
@@ -5830,15 +5831,15 @@
   function renderTripFilterOptions(allTrips) {
     var opts = Core.tripFilterOptions(allTrips);
     var f = state.homeFilters;
-    $('#filterCompanion').innerHTML = '<option value="">' + tr('誰と一緒か：すべて') + '</option>' +
+    $('#filterCompanion').innerHTML = '<option value="">' + tr('誰と') + '</option>' +
       opts.companions.map(function (c) {
         return '<option value="' + escapeHtml(c) + '"' + (f.companion === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
       }).join('');
-    $('#filterYear').innerHTML = '<option value="">' + tr('年：すべて') + '</option>' +
+    $('#filterYear').innerHTML = '<option value="">' + tr('年') + '</option>' +
       opts.years.map(function (y) {
         return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + tr('{year}年', { year: escapeHtml(y) }) + '</option>';
       }).join('');
-    $('#filterTripType').innerHTML = '<option value="">' + tr('旅行区分：すべて') + '</option>' +
+    $('#filterTripType').innerHTML = '<option value="">' + tr('区分') + '</option>' +
       opts.tripTypes.map(function (tt) {
         return '<option value="' + escapeHtml(tt) + '"' + (f.tripType === tt ? ' selected' : '') + '>' + escapeHtml(tt) + '</option>';
       }).join('');
@@ -5871,8 +5872,29 @@
       '</div>' + extra };
   }
 
+  // ホームに出す旅行：この端末の履歴。ログイン中はアカウントで参加した旅行（/mylog）も足す（旅行IDで重複を除く。
+  // 本人が履歴から消した旅行は足さない）。端末の履歴にある項目を優先する。
+  function homeAllTrips() {
+    var local = loadMyTrips();
+    var user = loadCurrentUser();
+    if (!user) return local;
+    var account = state.myLogTrips || [];
+    if (!account.length) { var c = getMyLogEntry(user); account = (c && c.data && c.data.trips) || []; }
+    if (!account.length) return local;
+    var seen = {};
+    local.forEach(function (t) { seen[t.id] = true; });
+    loadHiddenTripIds().forEach(function (id) { seen[id] = true; });
+    var out = local.slice();
+    account.forEach(function (t) {
+      if (seen[t.id]) return;
+      seen[t.id] = true;
+      out.push({ id: t.id, title: t.title, startDate: t.startDate, endDate: t.endDate, companions: t.companions || [], tripType: t.tripType || '', coverPhotoId: t.coverPhotoId || '' });
+    });
+    return out;
+  }
+
   function renderHomeTripList() {
-    var allTrips = loadMyTrips();
+    var allTrips = homeAllTrips();
     $('#tripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない
     $('#btnClearTripHistory').hidden = !allTrips.length; // 履歴が無ければ削除ボタンも出さない
     if (allTrips.length >= 2) renderTripFilterOptions(allTrips);
@@ -5917,6 +5939,11 @@
     if (!API_BASE || !user) return;
     fetchMyLog(user).then(function (res) {
       var data = res.data;
+      if (JSON.stringify(state.myLogTrips || []) !== JSON.stringify(data.trips || [])) {
+        state.myLogTrips = data.trips || [];
+        var activeScreen = $('.screen.active');
+        if (activeScreen && activeScreen.dataset.screen === 'home') renderHomeTripList();
+      }
       var known = loadMyTrips();
       var knownIds = {};
       known.forEach(function (t) { knownIds[t.id] = true; });
@@ -5973,7 +6000,7 @@
       history.pushState(null, '', Core.buildShareUrl(location.origin, location.pathname, id).replace(location.origin, ''));
       state.zoneInfo = { byBlock: {} };
       screenScroll.tripDetail = 0; // 別の旅行はいちばん上から
-      state.tripReturnScreen = (returnTo === 'visited' || returnTo === 'mylog') ? returnTo : null;
+      state.tripReturnScreen = (returnTo === 'visited' || returnTo === 'mylog' || returnTo === 'timeline') ? returnTo : null;
       showScreen('tripDetail');
       renderTripDetail();
       loadSocial();
@@ -5998,8 +6025,8 @@
       renderVisitedPlaces();
       return;
     }
-    if (target === 'mylog') {
-      showScreen('mylog');
+    if (target === 'mylog' || target === 'timeline') {
+      showScreen(target);
       renderMyLog();
       return;
     }
@@ -6835,8 +6862,8 @@
     state.voiceEntryMultiDay = !!multiDay;
     $('#voiceEntryTitle').textContent = multiDay ? tr('複数日をまとめて記録する') : tr('音声・メモでまとめて記録する');
     $('#voiceEntryLead').textContent = multiDay
-      ? tr('複数日ぶんの出来事をまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます')
-      : tr('その日にあったことをまとめて話す、またはスケジュール・メモを貼り付けると、予定の候補を作ります。時刻・金額・場所は、話した（書いた）ものだけ入ります。保存する前に、確認画面で直せます');
+      ? tr('複数日ぶんを話したりメモを貼ると、予定の候補を作ります（保存前に直せます）')
+      : tr('話したりメモを貼ると、予定の候補を作ります（保存前に直せます）');
     // 自分の道を見ていて、選んでいる日が自分の別行動の中なら、取り込みは別行動に入る（docs/adr/0021）
     state.voiceBranch = currentImportBranch();
     $('#voiceTargetNote').hidden = !state.voiceBranch;
@@ -7490,7 +7517,7 @@
     var el = $('#ssResult');
     var src = IMPORT_SOURCES[s.source] || IMPORT_SOURCES.screenshot;
     $('#icTitle').textContent = src.title;
-    $('#icLead').textContent = tr('{label}から作った候補です。保存する前に、内容を確認して直してください。時刻・費用・場所は、分かったものだけ入っています（空欄は分からなかったものです）。', { label: src.label });
+    $('#icLead').textContent = tr('{label}から作った候補です。保存前に確認して直せます', { label: src.label });
     var used = s.items.filter(function (it) { return it.use !== false; }).length;
     var html = '<span class="ss-source">' + tr('{label}から', { label: escapeHtml(src.label) }) + '</span>';
     if (s.branch) html += '<div class="branch-band ss-target">' + BRANCH_ICON + '<span class="branch-band-text">' + escapeHtml(importTargetText(s.branch)) + '（' + escapeHtml(Core.branchRangeText(s.branch)) + '）</span></div>';
@@ -10448,11 +10475,12 @@
   }
 
   // ---------- マイログ（ログイン中の自分の評価を、旅行をまたいで振り返る） ----------
-  function openMyLog() {
+  function openMyLog(screenName) {
+    var sc = screenName === 'timeline' ? 'timeline' : 'mylog';
     var user = loadCurrentUser();
-    if (!user) { openLogin('mylog'); return; }
-    if (Core.needsFreshLogin(user)) { forceRelogin('mylog'); return; }
-    showScreen('mylog');
+    if (!user) { openLogin(sc); return; }
+    if (Core.needsFreshLogin(user)) { forceRelogin(sc); return; }
+    showScreen(sc);
     // 前回の結果があればすぐ描く（スケルトンは覚えが全く無いときだけ）。そのあと裏で取り直し、
     // 中身が変わっていたときだけ描き直す（renderMyLogはタブ・並び順・絞り込みをstateから読むので保たれる）
     var cached = getMyLogEntry(user);
@@ -10468,7 +10496,7 @@
       if (cached && !res.changed) return;
       applyMyLogData(res.data);
       var active = $('.screen.active');
-      if (active && active.dataset.screen === 'mylog') renderMyLogKeepScroll();
+      if (active && (active.dataset.screen === 'mylog' || active.dataset.screen === 'timeline')) renderMyLogKeepScroll();
     }).catch(function (e) {
       if (handleLoginRequired(e, 'mylog')) return;
       if (!cached) { $('#mylogTripList')._sig = null; $('#mylogList')._sig = null; $('#mylogTripList').innerHTML = ''; $('#mylogList').innerHTML = '<div class="empty">' + tr('マイログの読み込みに失敗しました。') + '</div>'; }
@@ -10586,19 +10614,18 @@
     fetchAccountStatus(onProfileAccount).then(onProfileAccount);
   }
 
-  // マイページに出すアカウントの写真（プロフィール写真・ベストピクチャー）。/accounts/ensureの結果から取る。
+  // マイページに出すアカウントの写真（プロフィール写真）。/accounts/ensureの結果から取る。
   // emailを持っておいて、別のアカウントでログインし直したときに前の人の写真を出さない
-  var mypagePhotos = { email: '', avatar: '', best: [] };
+  var mypagePhotos = { email: '', avatar: '' };
   function myPhotos(user) {
-    return user && mypagePhotos.email === user.email ? mypagePhotos : { email: '', avatar: '', best: [] };
+    return user && mypagePhotos.email === user.email ? mypagePhotos : { email: '', avatar: '' };
   }
   function onProfileAccount(account) {
     renderPlanStatus();
     var user = loadCurrentUser();
     if (!account || !user) return;
-    mypagePhotos = { email: user.email, avatar: account.avatarPhotoId || '', best: account.bestPhotoIds || [] };
+    mypagePhotos = { email: user.email, avatar: account.avatarPhotoId || '' };
     renderProfileIdentity(user);
-    renderBestPictures();
   }
 
   function avatarInitial(user) {
@@ -10618,8 +10645,7 @@
       avatar.textContent = user ? avatarInitial(user) : '？';
     }
     $('#profileName').textContent = user ? (user.name || user.email || '') : tr('ログインしていません');
-    $('#btnProfileAccount').textContent = user ? tr('アカウント') : tr('ログインする');
-    renderBestPictures();
+    $('#mpAccountRow .mp-row-label').textContent = user ? tr('アカウント') : tr('ログインする');
   }
 
   // ---------- プロフィール写真（マイページのアバター） ----------
@@ -10645,7 +10671,7 @@
   function setMyAvatar(photoId) {
     return api('/accounts/me/avatar', 'PUT', { photoId: photoId }).then(function (res) {
       var user = loadCurrentUser();
-      if (user) mypagePhotos = { email: user.email, avatar: res.avatarPhotoId || '', best: myPhotos(user).best };
+      if (user) mypagePhotos = { email: user.email, avatar: res.avatarPhotoId || '' };
       if (state.account) state.account.avatarPhotoId = res.avatarPhotoId || '';
       closeMyPageSheets();
       renderProfileIdentity(user);
@@ -10663,96 +10689,6 @@
       if (handleLoginRequired(e, 'profile')) return;
       showToast(tr('写真を保存できませんでした'));
     });
-  }
-
-  // ---------- 旅のベストピクチャー（マイページ。本人だけに見える） ----------
-  var bestPick = { photos: [], selected: [], loaded: false };
-
-  function renderBestPictures() {
-    var user = loadCurrentUser();
-    var sec = $('#mpBest');
-    if (!sec) return;
-    sec.hidden = !user;
-    if (!user) return;
-    var ids = myPhotos(user).best;
-    var grid = $('#mpBestGrid');
-    if (!ids.length) {
-      grid.innerHTML = '<button type="button" class="mp-best-empty" id="mpBestEmpty">' + escapeHtml(tr('お気に入りの写真を選ぶ')) + '</button>';
-      return;
-    }
-    grid.innerHTML = ids.map(function (id, i) {
-      return '<button type="button" class="mp-best-tile" data-i="' + i + '" data-id="' + escapeHtml(id) + '"><img src="' + escapeHtml(photoUrl(id)) + '" alt="" loading="lazy"></button>';
-    }).join('');
-  }
-
-  // 消えた写真（記録や旅行を消したあと）は、読み込めないので見えなくする。全部消えたら空の表示に戻す
-  function onBestImageError(e) {
-    var img = e.target;
-    if (!img || img.tagName !== 'IMG') return;
-    var tile = img.closest('.mp-best-tile');
-    if (!tile) return;
-    tile.remove();
-    var rest = $all('#mpBestGrid .mp-best-tile');
-    if (!rest.length) {
-      mypagePhotos.best = [];
-      renderBestPictures();
-    }
-  }
-
-  function openBestViewer(tile) {
-    var tiles = $all('#mpBestGrid .mp-best-tile');
-    var items = tiles.map(function (t) { return { type: 'photo', id: t.dataset.id }; });
-    openMediaViewer(items, Math.max(0, tiles.indexOf(tile)));
-  }
-
-  function renderBestPicker() {
-    var grid = $('#bestPickGrid');
-    $('#bestPickCount').textContent = tr('{n} / 6 枚を選択中', { n: bestPick.selected.length });
-    if (!bestPick.loaded) { grid.innerHTML = '<p class="best-pick-note">' + escapeHtml(tr('読み込んでいます…')) + '</p>'; return; }
-    if (!bestPick.photos.length) {
-      grid.innerHTML = '<p class="best-pick-note">' + escapeHtml(tr('選べる写真がありません。旅行の記録に写真を足すと、ここに出ます')) + '</p>';
-      return;
-    }
-    grid.innerHTML = bestPick.photos.map(function (id) {
-      var at = bestPick.selected.indexOf(id);
-      return '<button type="button" class="best-pick-tile' + (at >= 0 ? ' selected' : '') + '" data-id="' + escapeHtml(id) + '" aria-pressed="' + (at >= 0) + '">' +
-        '<img src="' + escapeHtml(photoUrl(id)) + '" alt="" loading="lazy">' + (at >= 0 ? '<span class="best-pick-no">' + (at + 1) + '</span>' : '') + '</button>';
-    }).join('');
-  }
-
-  function openBestPicker() {
-    var user = loadCurrentUser();
-    if (!user) { openLogin('profile'); return; }
-    bestPick = { photos: [], selected: myPhotos(user).best.slice(), loaded: false };
-    openMyPageSheet('#bestSheet');
-    renderBestPicker();
-    api('/accounts/me/photos').then(function (res) {
-      var list = (res && res.photoIds) || [];
-      // いま選んでいる写真が一覧（新しい300枚）に無くても、選択を外せるように先頭に足す
-      bestPick.selected.forEach(function (id) { if (list.indexOf(id) < 0) list.unshift(id); });
-      bestPick.photos = list;
-      bestPick.loaded = true;
-      renderBestPicker();
-    }).catch(function (e) {
-      if (handleLoginRequired(e, 'profile')) return;
-      bestPick.loaded = true;
-      $('#bestPickGrid').innerHTML = '<p class="best-pick-note">' + escapeHtml(tr('写真を読み込めませんでした')) + '</p>';
-    });
-  }
-
-  function saveBestPictures() {
-    var btn = $('#btnBestSave');
-    btn.disabled = true;
-    api('/accounts/me/best-photos', 'PUT', { photoIds: bestPick.selected }).then(function (res) {
-      var user = loadCurrentUser();
-      if (user) mypagePhotos = { email: user.email, avatar: myPhotos(user).avatar, best: res.bestPhotoIds || [] };
-      closeMyPageSheets();
-      renderBestPictures();
-      showToast(tr('ベストピクチャーを保存しました'));
-    }).catch(function (e) {
-      if (handleLoginRequired(e, 'profile')) return;
-      showToast(tr('保存できませんでした'));
-    }).then(function () { btn.disabled = false; });
   }
 
   function wireMyPagePhotos() {
@@ -10773,30 +10709,6 @@
         showToast(tr('保存できませんでした'));
       });
     });
-    $('#btnBestPick').addEventListener('click', openBestPicker);
-    $('#mpBestGrid').addEventListener('click', function (e) {
-      if (e.target.closest('#mpBestEmpty')) { openBestPicker(); return; }
-      var tile = e.target.closest('.mp-best-tile');
-      if (tile) openBestViewer(tile);
-    });
-    $('#mpBestGrid').addEventListener('error', onBestImageError, true);
-    $('#bestPickGrid').addEventListener('click', function (e) {
-      var tile = e.target.closest('.best-pick-tile');
-      if (!tile) return;
-      var id = tile.dataset.id, at = bestPick.selected.indexOf(id);
-      if (at >= 0) bestPick.selected.splice(at, 1);
-      else if (bestPick.selected.length >= 6) { showToast(tr('6枚までです')); return; }
-      else bestPick.selected.push(id);
-      renderBestPicker();
-    });
-    $('#btnBestSave').addEventListener('click', saveBestPictures);
-  }
-
-  // マイページの「最近の旅行」（開始日が新しい順）。ログイン中は/mylogの参加した旅行、なければこの端末の履歴
-  function mypageRecentTrip() {
-    var trips = Core.sortTrips(state.myLogTrips || [], 'date_desc');
-    if (!trips.length) trips = Core.sortTrips(loadMyTrips(), 'date_desc');
-    return trips[0] || null;
   }
 
   // マイページに出す数字（旅行・都道府県・国・各ログの件数）。/mylogの結果から計算し、アカウントごとに端末へも
@@ -10806,11 +10718,8 @@
   function computeMypageSummary() {
     var details = visitedDetails();
     var visibleCount = function (list) { return (list || []).filter(function (x) { return x.status === 'visible'; }).length; };
-    var items = state.myLogItems || [];
-    var count = function (key) { return items.filter(function (it) { return myLogCategoryOf(it) === key; }).length; };
     return {
-      trips: (state.myLogTrips || []).length, prefs: visibleCount(details.prefectures), countries: visibleCount(details.countries),
-      lodging: count('lodging'), food: count('food'), sightseeing: count('sightseeing')
+      trips: (state.myLogTrips || []).length, prefs: visibleCount(details.prefectures), countries: visibleCount(details.countries)
     };
   }
   var mypageSummaryShown = null; // { key, summary }：いま画面に出している数字（メモリ）
@@ -10827,26 +10736,10 @@
     try { var o = JSON.parse(localStorage.getItem(key) || 'null'); return o && typeof o === 'object' ? o : null; } catch (e) { return null; }
   }
 
-  // プロフィールカードの「ほてログ／飯ログ／アクティビティーログ」のチップ。押すと、そのカテゴリを選んだマイログへ
-  function renderProfileLogChips(loggedIn, summary) {
-    var el = $('#profileLogChips');
-    if (!el) return;
-    el.hidden = !loggedIn;
-    if (!loggedIn) { el.innerHTML = ''; return; }
-    var html = ['lodging', 'food', 'sightseeing'].map(function (key) {
-      var n = summary ? summary[key] : 0;
-      return '<button type="button" class="mp-log-chip" data-cat="' + key + '">' + escapeHtml(MYLOG_LABELS[key]) + (n ? ' ' + n : '') + '</button>';
-    }).join('');
-    if (el.innerHTML !== html) el.innerHTML = html;
-  }
-
   function renderProfileStats() {
     var user = loadCurrentUser();
     var statsEl = $('#profileStats');
-    var recent = mypageRecentTrip();
-    $('#mpVideo').hidden = !recent;
     var summary = user ? currentMypageSummary(user) : null;
-    renderProfileLogChips(!!user, summary);
     if (!user || !summary) { statsEl.innerHTML = ''; return; }
     var html = escapeHtml(tr('旅行 {n}・都道府県 {p}・国 {c}', { n: summary.trips, p: summary.prefs, c: summary.countries }));
     if (statsEl.innerHTML === html) return; // 同じなら触らない
@@ -10856,8 +10749,14 @@
   }
 
   // マイページのシート（アカウント・AIの残り回数）。画面を切り替えたら閉じる（showScreenから呼ぶ）
-  var MYPAGE_SHEETS = ['#accountSheet', '#quotaSheet', '#aiUsageSheet', '#avatarSheet', '#bestSheet'];
-  function openMyPageSheet(sel) { $(sel).hidden = false; document.body.classList.add('sheet-open'); }
+  var MYPAGE_SHEETS = ['#accountSheet', '#quotaSheet', '#aiUsageSheet', '#avatarSheet', '#langSheet', '#deleteAccountSheet'];
+  function openMyPageSheet(sel) {
+    if (sel === '#accountSheet') {
+      var u = loadCurrentUser(), em = $('#accountEmail');
+      em.textContent = u && u.email ? u.email : '';
+      em.hidden = !em.textContent;
+    }
+    $(sel).hidden = false; document.body.classList.add('sheet-open'); }
   function closeMyPageSheets() {
     var closed = false;
     MYPAGE_SHEETS.forEach(function (sel) {
@@ -10983,6 +10882,7 @@
   function tutorialSteps() {
     return [
       { target: '#btnNewTrip', title: 'まずは旅行を1つ作ろう', body: '名前と日にちだけでOK。行く前の予定づくりにも、行ったあとの思い出の整理にも使えます。' },
+      { target: '#tabbar .tabbar-btn[data-tab="timeline"]', title: '年ごとに旅がまとまります', body: '参加した旅行が、年ごとの年表に並びます。' },
       { target: '#tabbar .tabbar-btn[data-tab="mylog"]', title: 'マイログに評価がたまっていく', body: '評価をつけたお店・宿・スポットが、旅をまたいでここにたまります。' },
       { target: '#tabbar .tabbar-btn[data-tab="visited"]', title: '行った場所が地図に塗られていく', body: '行った都道府県や国が、旅の記録から自動で地図に塗られていきます。' },
       { target: '#tabbar .tabbar-btn[data-tab="profile"]', title: 'マイページで設定と使い方', body: '言語の切り替えや、この使い方の見直しはここからできます。' },
@@ -11032,11 +10932,6 @@
     }, 600);
   }
   function openTutorial() { runTutorialOnHome(); } // 使い方：いつでもホームから最初のガイドを見直せる
-  function openMyPageVideo() {
-    var t = mypageRecentTrip();
-    if (!t) { showToast(tr('まだ旅行がありません')); return; }
-    openTrip(t.tripId || t.id, '', function () { showToast(tr('「地図でふりかえる」から動画を作れます')); });
-  }
   // ---------- 運営者向け：AIの使用状況（GET /admin/ai-usage。運営者でなければサーバーが404を返す） ----------
   function aiUsageFeatureLabel(k) {
     var m = { voice: tr('音声入力'), memo: tr('メモ'), multiday: tr('複数日まとめて'), screenshot: tr('スクショ'), receipt: tr('レシート'), places: tr('場所検索'), route: tr('ルート'), other: tr('その他') };
@@ -11096,21 +10991,22 @@
   }
   function wireMyPage() {
     var needLogin = function (fn) { return function () { if (loadCurrentUser()) fn(); else openLogin('profile'); }; };
-    $('#btnProfileAccount').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
-    $('#mpAccountRow').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
-    $('#mpMylog').addEventListener('click', function () { openTabScreen('mylog'); });
-    $('#profileLogChips').addEventListener('click', function (e) {
-      var b = e.target.closest && e.target.closest('.mp-log-chip');
-      if (!b) return;
-      state.myLogCategory = b.dataset.cat;
-      openTabScreen('mylog');
+    var curLang = (window.I18N && window.I18N.lang) || 'ja';
+    var LANG_NAMES = { 'ja': '日本語', 'zh-Hant': '繁體中文', 'en': 'English' };
+    $('#mpLangValue').textContent = LANG_NAMES[curLang] || LANG_NAMES.ja;
+    $all('.lang-option', $('#langOptions')).forEach(function (b) {
+      b.classList.toggle('on', b.dataset.lang === curLang);
+      b.addEventListener('click', function () {
+        if (b.dataset.lang === curLang) { closeMyPageSheets(); return; }
+        if (window.I18N) window.I18N.setLang(b.dataset.lang);
+      });
     });
-    $('#mpVisited').addEventListener('click', function () { openTabScreen('visited'); });
+    $('#mpLangRow').addEventListener('click', function () { openMyPageSheet('#langSheet'); });
+    $('#mpAccountRow').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
     $('#mpHistory').addEventListener('click', function () {
       if (!loadMyTrips().length) { showToast(tr('この端末の履歴に旅行がありません')); return; }
       openTripHistorySheet();
     });
-    $('#mpVideo').addEventListener('click', openMyPageVideo);
     $('#mpQuota').addEventListener('click', needLogin(function () {
       openMyPageSheet('#quotaSheet');
       fetchAccountStatus(renderPlanStatus).then(renderPlanStatus);
@@ -11123,14 +11019,16 @@
     });
     $('#btnCloseAiUsageSheet').addEventListener('click', closeMyPageSheets);
     $('#aiUsageSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
-    ['Avatar', 'Best'].forEach(function (n) {
+    ['Avatar'].forEach(function (n) {
       $('#btnClose' + n + 'Sheet').addEventListener('click', closeMyPageSheets);
-      $('#' + n.toLowerCase() + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
+      $('#' + n.charAt(0).toLowerCase() + n.slice(1) + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
     });
     wireMyPagePhotos();
-    ['Account', 'Quota'].forEach(function (n) {
+    $('#btnDeleteAccountCancel').addEventListener('click', closeMyPageSheets);
+    $('#btnDeleteAccountConfirm').addEventListener('click', doDeleteMyAccount);
+    ['Account', 'Quota', 'Lang', 'DeleteAccount'].forEach(function (n) {
       $('#btnClose' + n + 'Sheet').addEventListener('click', closeMyPageSheets);
-      $('#' + n.toLowerCase() + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
+      $('#' + n.charAt(0).toLowerCase() + n.slice(1) + 'Sheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeMyPageSheets(); });
     });
     if (I18N_ZH) $('#mpPrivacy').setAttribute('href', 'privacy-zh.html');
     else if (I18N_EN) $('#mpPrivacy').setAttribute('href', 'privacy-en.html');
@@ -11145,7 +11043,13 @@
   function deleteMyAccount() {
     var user = loadCurrentUser();
     if (!user) return;
-    if (!confirm(tr('アカウントを削除しますか？\n（名前・おまけの回数の情報と、この端末の旅行一覧が削除されます。同行者と共有している旅行の記録自体は、他の参加者のために残ります。同じメールアドレスで登録し直しても、音声入力の利用回数は復活しません）'))) return;
+    closeMyPageSheets();
+    openMyPageSheet('#deleteAccountSheet');
+  }
+  function doDeleteMyAccount() {
+    var user = loadCurrentUser();
+    if (!user) return;
+    closeMyPageSheets();
     api('/accounts/delete', 'POST', { email: user.email }).then(function () {
       Object.keys(localStorage).forEach(function (k) {
         if (k.indexOf('tabilog:') === 0) localStorage.removeItem(k);
@@ -11215,81 +11119,107 @@
     });
   }
 
-  // 「参加した旅行一覧」：アカウント参加者として参加した旅行そのものの一覧（Trip単位）。
-  // 評価の細かいログ（下のカテゴリ別一覧）とは別物で、どの端末からログインしても同じ内容が見える。
-  // 各カードの中に、その旅行で訪れた都道府県・国のチップも出す（旅行が増えるとページが長くなる
-  // ため、前は別セクション「旅行ごとの訪れた場所」に分けていたのを2026-09-28にここへ統合した）。
-  // チップの「外す」「戻す」はカード自体を開く操作とぶつからないよう、カードはボタンではなく
-  // クリック／キー操作を自前で処理するdivにし、チップ側のクリックはstopPropagationで止める。
-  // 誰と一緒か・年の絞り込み欄の選択肢を、実際に参加した旅行データから作り直す（ホーム画面の
-  // renderTripFilterOptionsと同じ考え方・同じCore.tripFilterOptionsを使い回す。旅行区分は対象外）。
-  function renderMyLogTripFilterOptions(allTrips) {
-    var opts = Core.tripFilterOptions(allTrips);
-    var f = state.mylogFilters;
-    $('#mylogFilterCompanion').innerHTML = '<option value="">' + tr('誰と一緒か：すべて') + '</option>' +
-      opts.companions.map(function (c) {
-        return '<option value="' + escapeHtml(c) + '"' + (f.companion === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
-      }).join('');
-    $('#mylogFilterYear').innerHTML = '<option value="">' + tr('年：すべて') + '</option>' +
-      opts.years.map(function (y) {
-        return '<option value="' + escapeHtml(y) + '"' + (f.year === y ? ' selected' : '') + '>' + tr('{year}年', { year: escapeHtml(y) }) + '</option>';
-      }).join('');
+  // 「旅の年表」：アカウント参加者として参加した旅行を、年ごと（新しい年が先）・旅行は開始日が新しい順に並べる。
+  // どの端末からログインしても同じ内容が見える。年の見出しには、その年の旅行回数と訪れた都道府県・国の数
+  // （/mylogのplaces.tripPlacesから集計。外した場所は数えない）を添える。
+  // 場所の「外す」「戻す」は編集用の操作なので、行の「場所を編集」を押したときだけ出す。
+  var tlEditOpen = {};
+  function tripActivePlaces(tp) {
+    var keep = function (a) { return (a || []).filter(function (x) { return !x.excluded; }).map(function (x) { return x.name; }); };
+    return { prefs: keep(tp && tp.prefectures), countries: keep(tp && tp.countries) };
   }
-
+  function tlDateRange(t) {
+    var md = function (d) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? (+m[2]) + '/' + (+m[3]) : ''; };
+    var a = md(t.startDate), e = md(t.endDate);
+    if (!a) return '';
+    return e && e !== a ? a + '〜' + e : a;
+  }
   function renderMyLogTrips(quiet) {
     var el = $('#mylogTripList');
-    renderSection(el, sigOf([state.myLogTrips, state.mylogFilters, (state.myLogPlaces && state.myLogPlaces.tripPlaces) || null]), function (wasSkeleton) {
+    renderSection(el, sigOf([state.myLogTrips, tlEditOpen, (state.myLogPlaces && state.myLogPlaces.tripPlaces) || null, (window.I18N && window.I18N.lang) || 'ja']), function (wasSkeleton) {
       renderMyLogTripsBody(el, quiet || wasSkeleton);
     });
   }
   function renderMyLogTripsBody(el, quiet) {
     var allTrips = state.myLogTrips || [];
-    $('#mylogTripFilters').hidden = allTrips.length < 2; // 1件以下なら絞り込みは出さない（ホーム画面と同じ基準）
-    if (allTrips.length >= 2) renderMyLogTripFilterOptions(allTrips);
     if (!allTrips.length) {
-      el.innerHTML = '<div class="empty">' + tr('まだ参加した旅行がありません。旅行のページで「参加する」を押すとここに表示されます。') + '</div>';
-      return;
-    }
-    // 絞り込み・並び順は表示する一覧だけに効く（「行ったことある旅先」の総計は全旅行のまま変わらない）
-    var trips = Core.sortTrips(Core.filterTrips(allTrips, state.mylogFilters), state.mylogFilters.sort);
-    $('#mylogSortTripOrder').value = state.mylogFilters.sort;
-    if (!trips.length) {
-      el.innerHTML = '<div class="empty">' + tr('条件に一致する旅行がありません。') + '</div>';
+      el.innerHTML = '<div class="empty">' + tr('旅行に参加すると、ここに年表ができます') + '</div>';
       return;
     }
     var placesByTrip = {};
     ((state.myLogPlaces && state.myLogPlaces.tripPlaces) || []).forEach(function (t) { placesByTrip[t.tripId] = t; });
-    el.innerHTML = '';
-    var revealCards = [];
-    trips.forEach(function (t) {
-      var card = document.createElement('div');
-      // ホームと同じカード（写真が大きい見た目）。訪れた場所のチップは情報欄の下に足す
-      var parts = tripCardParts(t, tripPlaceChipsHtml(placesByTrip[t.id]));
-      card.className = parts.className;
-      card.setAttribute('role', 'button');
-      card.tabIndex = 0;
-      card.innerHTML = parts.html;
-      // 「行ったことある旅先」と同じ普通の画面切り替えで開く。カードが広がる演出（openTripFromCard）は、
-      // マイログでは一覧がぼやけて白い画面をはさんでから詳細が出るので違和感があった（2026-09-30、オーナー報告）
-      var open = function () { openTrip(t.id, 'mylog'); };
-      card.addEventListener('click', function (e) {
-        if (e.target.closest('.trip-place-action')) return;
-        open();
-      });
-      card.addEventListener('keydown', function (e) {
-        if (e.target.closest('.trip-place-action')) return;
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
-      });
-      $all('.trip-place-action', card).forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          setMyLogTripPlaceMode(btn.dataset.trip, btn.dataset.kind, btn.dataset.name, btn.dataset.mode, btn);
-        });
-      });
-      el.appendChild(card);
-      revealCards.push(card);
+    var sorted = Core.sortTrips(allTrips, 'date_desc');
+    var years = [], byYear = {};
+    sorted.forEach(function (t) {
+      var y = (t.startDate || '').slice(0, 4) || '';
+      if (!byYear[y]) { byYear[y] = []; years.push(y); }
+      byYear[y].push(t);
     });
-    if (!quiet) revealCardsOnScroll(revealCards);
+    years.sort(function (a, b) { return a === '' ? 1 : b === '' ? -1 : b.localeCompare(a); });
+    el.innerHTML = '';
+    var reveal = [];
+    years.forEach(function (y) {
+      var trips = byYear[y];
+      var prefs = {}, countries = {};
+      trips.forEach(function (t) {
+        var p = tripActivePlaces(placesByTrip[t.id]);
+        p.prefs.forEach(function (n) { prefs[n] = 1; });
+        p.countries.forEach(function (n) { countries[n] = 1; });
+      });
+      var sec = document.createElement('section');
+      sec.className = 'tl-year';
+      var head = '<div class="tl-year-head"><div class="tl-year-title">' + (y ? tr('{year}年', { year: escapeHtml(y) }) : escapeHtml(tr('日付未設定'))) + '</div>' +
+        '<div class="tl-year-sum">' + escapeHtml(tr('旅行{n}回・都道府県{p}・国{c}', { n: trips.length, p: Object.keys(prefs).length, c: Object.keys(countries).length })) + '</div></div>';
+      sec.innerHTML = head + '<div class="tl-rows"></div>';
+      var rows = $('.tl-rows', sec);
+      trips.forEach(function (t) {
+        var tp = placesByTrip[t.id];
+        var places = tripActivePlaces(tp);
+        var placeNames = places.prefs.concat(places.countries);
+        var sub = [];
+        if (placeNames.length) sub.push(placeNames.join('・'));
+        if ((t.companions || []).length) sub.push(tr('{names} と一緒', { names: t.companions.join('・') }));
+        var hasChips = tp && ((tp.prefectures || []).length || (tp.countries || []).length);
+        var open = !!tlEditOpen[t.id];
+        var row = document.createElement('div');
+        row.className = 'tl-row';
+        row.setAttribute('role', 'button');
+        row.tabIndex = 0;
+        row.innerHTML = '<div class="tl-date">' + escapeHtml(tlDateRange(t)) + '</div><div class="tl-axis"></div>' +
+          '<div class="tl-card"><div class="tl-main"><div class="tl-text"><div class="tl-title">' + escapeHtml(t.title) + '</div>' +
+          (sub.length ? '<div class="tl-sub">' + escapeHtml(sub.join(' ／ ')) + '</div>' : '') + '</div>' +
+          (t.coverPhotoId ? '<div class="tl-thumb" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')"></div>' : '') + '</div>' +
+          (hasChips ? '<button type="button" class="tl-edit-link" aria-expanded="' + open + '">' + escapeHtml(tr('場所を編集')) + '</button>' +
+          (open ? '<div class="tl-edit">' + tripPlaceChipsHtml(tp) + '</div>' : '') : '') + '</div>';
+        var go = function () { openTrip(t.id, 'timeline'); };
+        row.addEventListener('click', function (e) {
+          if (e.target.closest('.trip-place-action') || e.target.closest('.tl-edit-link') || e.target.closest('.tl-edit')) return;
+          go();
+        });
+        row.addEventListener('keydown', function (e) {
+          if (e.target !== row) return;
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+        });
+        var link = $('.tl-edit-link', row);
+        if (link) link.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var next = Object.assign({}, tlEditOpen);
+          if (next[t.id]) delete next[t.id]; else next[t.id] = true;
+          tlEditOpen = next;
+          renderMyLogTrips(true);
+        });
+        $all('.trip-place-action', row).forEach(function (btn) {
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            setMyLogTripPlaceMode(btn.dataset.trip, btn.dataset.kind, btn.dataset.name, btn.dataset.mode, btn);
+          });
+        });
+        rows.appendChild(row);
+        reveal.push(row);
+      });
+      el.appendChild(sec);
+    });
+    if (!quiet) revealCardsOnScroll(reveal);
   }
 
   function myLogCategoryOf(it) { return it.category === 'arrival' ? 'transport' : it.category; }
@@ -13522,15 +13452,6 @@
     $('#filterTripType').addEventListener('change', function (e) { state.homeFilters.tripType = e.target.value; renderHomeTripList(); });
     $('#sortTripOrder').addEventListener('change', function (e) { state.homeFilters.sort = e.target.value; renderHomeTripList(); });
 
-    $('#mylogFilterCompanion').addEventListener('change', function (e) {
-      state.mylogFilters.companion = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
-    });
-    $('#mylogFilterYear').addEventListener('change', function (e) {
-      state.mylogFilters.year = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
-    });
-    $('#mylogSortTripOrder').addEventListener('change', function (e) {
-      state.mylogFilters.sort = e.target.value; saveMylogFilters(state.mylogFilters); renderMyLogTrips();
-    });
     $('#btnClearTripHistory').addEventListener('click', openTripHistorySheet);
     $('#btnClearAllHistory').addEventListener('click', clearTripHistory);
     $('#btnRemoveSelectedHistory').addEventListener('click', removeSelectedTripHistory);
@@ -13730,13 +13651,6 @@
     });
 
     // 言語の切り替え（i18n.js）。選ぶと保存してページを読み込み直す
-    var langSelect = $('#langSelect');
-    if (langSelect) {
-      langSelect.value = (window.I18N && window.I18N.lang) || 'ja';
-      langSelect.addEventListener('change', function () {
-        if (window.I18N) window.I18N.setLang(langSelect.value);
-      });
-    }
     $('#btnLogout').addEventListener('click', function () {
       if (loadCurrentUser() && loadCurrentUser().token) api('/auth/logout', 'POST', {}).catch(function () {});
       clearCurrentUser();
@@ -13912,6 +13826,8 @@
       openScreenshotImport();
     } else if (target === 'mylog' && loggedIn) {
       openMyLog();
+    } else if (target === 'timeline' && loggedIn) {
+      openMyLog('timeline');
     } else if (target === 'visited' && loggedIn) {
       openVisitedPlaces();
     } else if (target === 'profile' && loggedIn) {
@@ -13978,6 +13894,22 @@
       window.open(url, '_blank');
     });
   }
+  // target="_blank"のリンク（プライバシーポリシー・地図・お店のHPなど）。iOSアプリ（WKWebView）は
+  // 新しいウィンドウを開けず何も起きないので、アプリのときだけアプリ内のSafariで開く。相対URLは公開サイトのURLに直す。
+  // Webでは何もしない（普通に新しいタブで開く）。
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest && e.target.closest('a[target="_blank"]');
+    if (!a || !isNativeApp()) return;
+    var href = a.getAttribute('href') || '';
+    if (!href || href === '#') return;
+    var url;
+    try { url = new URL(href, PUBLIC_WEB_BASE).href; } catch (err) { return; }
+    if (!/^https?:/i.test(url)) return;
+    var Browser = nativeBrowser();
+    if (!Browser) return;
+    e.preventDefault();
+    Browser.open({ url: url, presentationStyle: 'fullscreen' }).catch(function () { window.open(url, '_blank'); });
+  }, true);
   function closeAuthBrowser() {
     var Browser = nativeBrowser();
     if (!Browser || !authBrowserOpen) return;

@@ -22,12 +22,12 @@
   --font-body: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, sans-serif;
   --font-display: var(--font-body);
   /* 文字サイズは6段階だけ使う（太さは400と700のみ） */
-  --fs-xs: 12px;
-  --fs-sm: 13px;
-  --fs-base: 15px;
-  --fs-md: 17px;
-  --fs-lg: 20px;
-  --fs-xl: 26px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 24px;
   --radius-card: 18px;
   --radius-control: 12px;
 }
@@ -114,12 +114,14 @@ a:hover { text-decoration: underline; }
    Airbnbの「プロフィール」のような大きく太いタイトル＋上の余白にする（2026-09-29〜）。
    他の画面（新しい旅を作る・旅の詳細など）の見出しサイズは変えない。 */
 .screen[data-screen="home"] > .wrap > .hd,
+.screen[data-screen="timeline"] > .wrap > .hd,
 .screen[data-screen="mylog"] > .wrap > .hd,
 .screen[data-screen="visited"] > .wrap > .hd,
 .screen[data-screen="profile"] > .wrap > .hd {
   padding: 8px 0 16px; /* 4画面とも：上8px・見出しの下16px（内容の最初のブロックはmargin-top:0でそろえる） */
 }
 .screen[data-screen="home"] > .wrap > .hd h1,
+.screen[data-screen="timeline"] > .wrap > .hd h1,
 .screen[data-screen="mylog"] > .wrap > .hd h1,
 .screen[data-screen="visited"] > .wrap > .hd h1,
 .screen[data-screen="profile"] > .wrap > .hd h1 {
@@ -212,6 +214,8 @@ a:hover { text-decoration: underline; }
 .btn.ghost.small { padding: 7px 12px; font-size: var(--fs-sm); font-weight: 400; }
 .btn.primary.small { padding: 7px 12px; font-size: var(--fs-sm); font-weight: 700; }
 .btn.danger { color: var(--danger); background: var(--danger-bg); }
+/* 取り消せない操作の最後の確認ボタンは、赤い塗りに白い文字ではっきりさせる */
+#btnDeleteAccountConfirm { color: #fff; background: var(--danger); font-weight: 700; justify-content: center; }
 .btn.text { background: none; border: none; padding: 6px 0; color: var(--ink-muted); font-weight: 400; }
 .btn.wide { width: 100%; }
 #btnVoiceRecord { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
@@ -305,13 +309,12 @@ a:hover { text-decoration: underline; }
 @keyframes voice-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 /* ---------- trip list ---------- */
-/* 絞り込み欄：ホーム・マイログとも2列。余った最後の1つは横いっぱい（文字が切れないように） */
-.trip-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 12px; }
+/* 絞り込み欄：ホームは1行（4つが幅を分け合う。足りなければ折り返さず横スクロール） */
+.trip-filters { display: flex; flex-wrap: nowrap; gap: 6px; margin: 0 0 12px; }
 .trip-filters select {
-  min-width: 0; border: none; border-radius: var(--radius-control);
-  padding: 12px; font-size: var(--fs-sm); background: var(--card); color: var(--ink-muted); box-shadow: var(--card-shadow);
+  flex: 1 1 0; min-width: 0; height: 36px; border: none; border-radius: var(--radius-control); text-overflow: ellipsis;
+  appearance: none; -webkit-appearance: none; padding: 0 18px 0 10px; font-size: var(--fs-xs); background: var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' fill='none' stroke='%239CA3AF' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 6px center; color: var(--ink-muted); box-shadow: var(--card-shadow);
 }
-.trip-filters select:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .trip-list { display: flex; flex-direction: column; gap: 12px; margin: 0 0 24px; }
 #btnClearTripHistory { display: block; margin: 0 0 16px; }
 .home-actions { margin: 4px 0 16px; }
@@ -1459,6 +1462,7 @@ body.viewer-open { overflow: hidden; }
 /* ボトムタブバーが常に出る4画面（マイログ・旅先一覧・ホーム・プロフィール）だけ、
    タブバーの高さ＋セーフエリア分の余白を下に足す（他の画面はタブバー自体が出ないので不要）。 */
 .screen[data-screen="home"] .wrap,
+.screen[data-screen="timeline"] .wrap,
 .screen[data-screen="mylog"] .wrap,
 .screen[data-screen="visited"] .wrap,
 .screen[data-screen="profile"] .wrap {
@@ -1488,39 +1492,11 @@ body.viewer-open { overflow: hidden; }
   display: flex; align-items: center; justify-content: center; pointer-events: none;
 }
 .profile-avatar-badge svg { width: 12px; height: 12px; }
-/* マイページの「旅のベストピクチャー」：3列の角丸の正方形、最大6枚 */
-.mp-best { margin: 24px 0; }
-.mp-best[hidden] { display: none; }
-.mp-best-head { position: relative; display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; }
-.mp-best-title { margin: 0; font-family: var(--font-display); font-size: var(--fs-md); font-weight: 700; line-height: 1.6; }
-.best-pick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-/* マイページでは邪魔にならないよう、小さな写真を1行に並べる（2026-10-06） */
-.mp-best-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
-.mp-best-tile, .best-pick-tile {
-  position: relative; display: block; width: 100%; aspect-ratio: 1 / 1; padding: 0; border: none; border-radius: 10px;
-  overflow: hidden; background: var(--accent-soft-bg); cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.mp-best-tile img, .best-pick-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.mp-best-empty {
-  grid-column: 1 / -1; min-height: 56px; border: 1.5px dashed var(--ink-soft); border-radius: var(--radius-card); background: none;
-  color: var(--ink-muted); font: inherit; font-size: var(--fs-base); text-align: center; cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.best-pick-grid { margin: 8px 0 14px; overflow-y: auto; -webkit-overflow-scrolling: touch; min-height: 120px; }
-.best-pick-tile.selected { box-shadow: 0 0 0 3px var(--accent) inset; }
-.best-pick-no {
-  position: absolute; top: 6px; right: 6px; min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; border-radius: 11px;
-  background: var(--accent); color: #fff; font-size: var(--fs-xs); font-weight: 700; display: flex; align-items: center; justify-content: center;
-}
-.best-pick-note { grid-column: 1 / -1; text-align: center; color: var(--ink-muted); font-size: var(--fs-base); padding: 24px 0; }
 .profile-info { flex: 1; min-width: 0; }
 .profile-name { font-size: var(--fs-lg); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-stats { margin-top: 4px; font-size: var(--fs-base); color: var(--ink-muted); min-height: 24px; }
 .profile-stats:empty { min-height: 0; margin: 0; }
-.mp-card-btn {
-  min-height: 48px; border-radius: var(--radius-control); background: var(--accent); color: #fff;
-  font-size: var(--fs-base); font-weight: 700; width: 100%; display: flex; align-items: center; justify-content: center;
-}
-.mp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 24px; padding: 24px 0 0; }
+.mp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 24px; padding: 24px 0 24px; }
 .mp-grid-item {
   display: flex; flex-direction: column; align-items: center; gap: 8px; min-height: 64px; padding: 2px 2px;
   color: var(--ink); font-size: var(--fs-sm); font-weight: 400; text-align: center; line-height: 1.3;
@@ -1528,11 +1504,13 @@ body.viewer-open { overflow: hidden; }
 .mp-grid-item[hidden] { display: none; }
 .mp-grid-item svg { width: 34px; height: 34px; color: var(--accent); flex: none; }
 .mp-grid-item small { margin-top: -4px; font-size: var(--fs-xs); font-weight: 400; color: var(--ink-muted); }
+.mp-grid-item { -webkit-tap-highlight-color: transparent; }
 .mp-grid-item:active { opacity: .6; }
 /* 設定の行：他の一覧（訪れた場所の一覧など）と同じ白いカード＋細い区切り線 */
-.mp-list { display: flex; flex-direction: column; padding: 4px 16px; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); }
+.mp-list { display: flex; flex-direction: column; padding: 0; overflow: hidden; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); }
 .mp-row {
-  display: flex; align-items: center; gap: 12px; min-height: 56px; width: 100%; text-align: left;
+  display: flex; align-items: center; gap: 12px; min-height: 56px; width: 100%; text-align: left; padding: 0 16px;
+  -webkit-tap-highlight-color: transparent; text-decoration: none; background: none;
   border-bottom: 1px solid var(--border-soft); font-size: var(--fs-base); font-weight: 700; color: var(--ink);
   position: relative;
 }
@@ -1550,12 +1528,12 @@ body.viewer-open { overflow: hidden; }
 .aiu-table th, .aiu-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
 .aiu-table td:last-child, .aiu-table th:last-child { text-align: right; }
 .aiu-links a { color: var(--accent-deep); word-break: break-all; }
-.mp-row:active { opacity: .6; }
+.mp-row:active, .lang-option:active { background: rgba(20, 20, 30, 0.06); opacity: 1; }
+.mp-row, .mp-row:hover, .mp-row:active { text-decoration: none; }
+.mp-row:focus, .lang-option:focus { outline: none; }
+.mp-row:focus-visible, .lang-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mp-row-value { flex: none; font-size: var(--fs-base); font-weight: 400; color: var(--ink-muted); }
 .mp-chev { flex: none; width: 18px; height: 18px; color: var(--accent); }
-.mp-select {
-  appearance: none; -webkit-appearance: none; background: transparent; border: none; min-height: 44px;
-  font: inherit; font-size: var(--fs-base); font-weight: 400; color: var(--ink-muted); text-align: right; padding: 0 2px;
-}
 /* ---------- スクショから予定を作る（docs/adr/0022） ---------- */
 /* スクショから予定を作る：画像を選ぶ前は、選ぶボタンを大きな点線の枠にして一番目立たせる */
 .ss-pick { background: var(--card); color: var(--accent-deep); border: 1.5px solid var(--accent); font-weight: 700; }
@@ -1700,10 +1678,45 @@ body.viewer-open { overflow: hidden; }
 }
 .info-pop[hidden] { display: none; }
 
-/* マイページのプロフィールカード：ほてログ・飯ログ・アクティビティーログへの小さなチップ */
-.mp-log-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
-.mp-log-chips[hidden] { display: none; }
-.mp-log-chip {
-  border: none; border-radius: 999px; padding: 8px 12px; background: var(--accent-soft-bg); color: var(--accent-deep);
-  font: inherit; font-size: var(--fs-sm); font-weight: 400; cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
+
+/* マイログの年表（年ごとの見出し＋細い縦線とドットの旅行行） */
+.tl-year { margin: 0 0 20px; }
+.tl-year-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
+.tl-year-title { font-size: var(--fs-md); font-weight: 700; }
+.tl-year-sum { font-size: var(--fs-xs); color: var(--ink-muted); }
+.tl-rows { position: relative; }
+.tl-row { position: relative; display: flex; gap: 0; padding: 0 0 12px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.tl-row:last-child { padding-bottom: 0; }
+.tl-date { flex: none; width: 74px; padding: 14px 14px 0 0; text-align: right; font-size: var(--fs-xs); color: var(--ink-muted); font-variant-numeric: tabular-nums; line-height: 1.4; }
+.tl-axis { position: relative; flex: none; width: 14px; }
+.tl-axis::before { content: ""; position: absolute; left: 6px; top: 0; bottom: -12px; width: 2px; background: var(--border); }
+.tl-row:last-child .tl-axis::before { bottom: 0; }
+.tl-axis::after { content: ""; position: absolute; left: 2px; top: 17px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--bg); }
+.tl-card { flex: 1; min-width: 0; margin-left: 10px; padding: 12px; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); }
+.tl-main { display: flex; gap: 10px; align-items: center; }
+.tl-text { flex: 1; min-width: 0; }
+.tl-title { font-size: var(--fs-base); font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+.tl-sub { margin-top: 2px; font-size: var(--fs-xs); color: var(--ink-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.tl-thumb { flex: none; width: 52px; height: 52px; border-radius: 12px; background-color: var(--border-soft); background-size: cover; background-position: center; }
+.tl-edit-link { display: inline-block; margin-top: 6px; padding: 2px 0; border: none; background: none; color: var(--accent-deep); font: inherit; font-size: var(--fs-xs); font-weight: 400; cursor: pointer; }
+.tl-edit .trip-place-chips { margin-top: 6px; }
+
+/* 言語を選ぶシート：大きく押しやすい行＋現在の言語にチェック */
+.lang-options { display: flex; flex-direction: column; }
+/* 言語の行：押した色は角丸で切り抜く */
+.lang-options { overflow: hidden; border-radius: var(--radius-control); }
+.lang-option { -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: space-between; min-height: 56px; width: 100%; padding: 0 12px; border-bottom: 1px solid var(--border-soft); font-size: var(--fs-md); font-weight: 400; color: var(--ink); text-align: left; background: none; }
+.lang-option:last-child { border-bottom: none; }
+.lang-option .lang-check { width: 20px; height: 20px; color: var(--accent); visibility: hidden; }
+.lang-option.on { font-weight: 700; }
+.lang-option.on .lang-check { visibility: visible; }
+
+/* アカウントのシート：マイページの一覧と同じ行（同じ高さ・左余白・文字サイズ）。削除は赤い文字だけ */
+.account-email { margin: 0 0 12px; font-size: var(--fs-xs); color: var(--ink-muted); overflow-wrap: anywhere; }
+.account-list { padding: 0; background: var(--bg); box-shadow: none; }
+.mp-row-danger { color: var(--danger); }
+.mp-row-danger .mp-chev { color: var(--danger); }
+
+/* 削除の確認：箇条書き */
+.confirm-list { margin: 4px 0 0; padding-left: 20px; font-size: var(--fs-sm); line-height: 1.7; color: var(--ink); }
+.confirm-list li { margin: 0 0 6px; }
