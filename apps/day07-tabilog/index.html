@@ -257,6 +257,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
       <div class="notice" id="voicePremiumRequired" hidden>
         <p id="voicePremiumMessage"></p>
+        <!-- 回数券を買う（iOSアプリだけ。app.jsのrenderTicketShop。Web版では空のまま） -->
+        <div class="ticket-shop" id="voiceTicketShop" hidden></div>
       </div>
 
       <div id="voiceRecordArea">
@@ -283,6 +285,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <button class="btn text memo-ai-btn" id="btnOrganizeMemoAi" type="button">形が崩れていてうまく分かれないときは → AIで整理する</button>
         <p class="hint" id="memoAiInfo"></p>
         <p class="hint" id="textEntryStatus"></p>
+        <div class="ticket-shop" id="memoTicketShop" hidden></div>
 
         <div class="or-divider">または</div>
 
@@ -334,6 +337,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <p class="hint" id="ssInfo"></p>
         <button class="btn primary wide" id="btnSsScan" type="button" disabled hidden>読み取る</button>
         <p class="hint" id="ssStatus"></p>
+        <div class="ticket-shop" id="ssTicketShop" hidden></div>
       </div>
 
     </div>
@@ -1006,6 +1010,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <li>この端末の旅行一覧も消えます</li>
       <li>一緒に行った人と共有している旅行の記録は残ります</li>
       <li>同じメールで登録し直しても、音声入力の利用回数は戻りません</li>
+      <li>残っている回数券も消え、払い戻しはできません</li>
     </ul>
     <div class="sheet-actions">
       <button class="btn wide" id="btnDeleteAccountCancel" type="button">キャンセル</button>
@@ -1050,6 +1055,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     </div>
     <div class="plan-status" id="planStatus"></div>
     <p class="hint" id="planStatusMessage"></p>
+    <!-- 回数券を買う（iOSアプリだけ。app.jsのrenderTicketShop） -->
+    <div class="ticket-shop" id="profileTicketShop" hidden></div>
   </div>
 </div>
 

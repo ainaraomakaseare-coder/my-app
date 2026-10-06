@@ -352,3 +352,7 @@ CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, feature TEXT NOT N
 -- 本番環境へ反映するまでは migrations/0036_account_photos.sql を1回だけ実行すること。
 -- ALTER TABLE accounts ADD COLUMN avatar_photo_id TEXT NOT NULL DEFAULT '';
 -- ALTER TABLE accounts ADD COLUMN best_photo_ids TEXT NOT NULL DEFAULT '[]';
+
+-- v33（2026-09-30）：回数券のアプリ内課金（RevenueCat）。詳しい説明は migrations/0033_iap_transactions.sql
+CREATE TABLE IF NOT EXISTS iap_transactions (transaction_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, product_id TEXT NOT NULL, credits INTEGER NOT NULL, environment TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_iap_transactions_account ON iap_transactions(account_id);
