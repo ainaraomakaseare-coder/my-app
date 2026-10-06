@@ -108,7 +108,7 @@ I18N.addLang('en', {
   "ブロックしました。": "Blocked.",
   "ブロックできませんでした。もう一度お試しください。": "Couldn't block. Please try again.",
   "あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。": "Made from the records you gave ★ to (anything under ★3.0 isn't included). You can edit the text here before copying.",
-  "ログインして記録に★とレビューをつけると、ホテログ・飯ログなどが入ります。": "Log in and add ★ ratings and reviews to records, and Hotel Log, Food Log and more will appear here.",
+  "ログインして記録に★とレビューをつけると、ほてログ・飯ログなどが入ります。": "Log in and add ★ ratings and reviews to records, and Hotel Log, Food Log and more will appear here.",
   "コピーしました。SNSの投稿に貼り付けてください。": "Copied. Paste it into your social media post.",
   "音声入力・レシート読み取りでは、録音した音声・入力したメモの文章・レシートの写真を、": "For voice input and receipt scanning, the recorded audio, the notes you typed and the receipt photo are sent to external AI services (Cloudflare, OpenAI, Google)",
   "内容の読み取り・文字起こしのために外部のAIサービス（Cloudflare・OpenAI・Google）へ送信します": " to read the content and transcribe it",

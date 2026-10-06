@@ -2245,13 +2245,13 @@
   var REVIEW_GRADES = ['◎', '〇', '△', '×'];
   var REVIEW_KINDS = {
     hotel: {
-      label: tr('ホテログ'), emoji: '🏨', unit: tr('泊'),
+      label: tr('ほてログ'), emoji: '🏨', unit: tr('泊'),
       levels: [tr('絶対また泊まりたい'), tr('また泊まりたい'), tr('また泊まってもいい'), tr('機会があれば泊まる'), tr('もう泊まらない')],
       grades: [['price', tr('価格')], ['location', tr('立地')], ['value', tr('価格見合い')], ['hospitality', tr('ホスピタリティ')], ['amenity', tr('アメニティ')], ['cleanliness', tr('清潔さ')], ['breakfast', tr('朝食')]],
       texts: [['roomType', tr('部屋タイプ')]]
     },
     activity: {
-      label: tr('レクログ'), emoji: '🎡', unit: tr('回'),
+      label: tr('アクティビティーログ'), emoji: '🎡', unit: tr('回'),
       levels: [tr('2回目もまた行きたい'), tr('初めてなら絶対行くべき'), tr('初めてなら行くべき'), tr('時間があれば行く'), tr('行かなくてもいいかな')],
       grades: [['price', tr('価格')], ['location', tr('立地')], ['value', tr('価格見合い')], ['hospitality', tr('ホスピタリティ')]],
       choices: [['crowd', tr('混雑')], ['reservation', tr('予約')]],
@@ -4746,15 +4746,42 @@
   // 探し直さなくて済むように）。別の旅行を開いたとき（openTrip）はいちばん上から。
   var screenScroll = {};
   var SCROLL_RESTORE_SCREENS = { tripDetail: 1, mylog: 1, visited: 1 };
+  // 見出し横の「？」ボタン：タップで説明の吹き出し（.info-pop）を開閉する。外側タップ・Escで閉じる。
+  function closeInfoPops(except) {
+    var pops = document.querySelectorAll('.info-pop');
+    for (var i = 0; i < pops.length; i++) {
+      if (pops[i] === except) continue;
+      pops[i].hidden = true;
+      var b = document.querySelector('.info-btn[aria-controls="' + pops[i].id + '"]');
+      if (b) b.setAttribute('aria-expanded', 'false');
+    }
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.info-btn');
+    if (btn) {
+      e.preventDefault(); e.stopPropagation();
+      var pop = document.getElementById(btn.getAttribute('aria-controls'));
+      if (!pop) return;
+      closeInfoPops(pop);
+      pop.hidden = !pop.hidden;
+      btn.setAttribute('aria-expanded', pop.hidden ? 'false' : 'true');
+      return;
+    }
+    if (!(e.target.closest && e.target.closest('.info-pop'))) closeInfoPops();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeInfoPops(); });
+
+  var noTabAnimOnce = false; // trueの間だけ、タブ切り替えのクロスフェードを付けない（使い方ガイドを直接ホームで始めるとき）
   function showScreen(name) {
     closeMyPageSheets();
+    closeInfoPops();
     var leaving = $('.screen.active');
     var leavingName = leaving && leaving.dataset.screen;
     if (leaving && leavingName !== name) screenScroll[leavingName] = window.scrollY;
     // タブバーの4画面同士を行き来するとき（例：マイログ→旅先一覧）だけクロスフェードを付ける。
     // 旅の詳細を開く／閉じる等、タブ以外に出入りする遷移では今までどおり一瞬で切り替える
     // （地図の再描画などが多い画面でアニメーションと被って重く見えないように）。
-    var isTabSwitch = !!TABBAR_SCREENS[name] && !!leavingName && !!TABBAR_SCREENS[leavingName] && leavingName !== name;
+    var isTabSwitch = !noTabAnimOnce && !!TABBAR_SCREENS[name] && !!leavingName && !!TABBAR_SCREENS[leavingName] && leavingName !== name;
     $all('.screen').forEach(function (s) {
       var entering = s.dataset.screen === name;
       s.classList.toggle('active', entering);
@@ -5942,6 +5969,7 @@
       renderTripDetail();
       loadSocial();
       loadTripZones();
+      maybeAutoTripTutorial();
       if (onScreenReady) onScreenReady();
     }).catch(function () {
       forgetTrip(id);
@@ -6669,7 +6697,7 @@
     $('#postText').value = text;
     $('#postSheetNote').textContent = user
       ? tr('あなたが★をつけた記録から作りました（★3.0未満は入りません）。文章はここで直してからコピーできます。')
-      : tr('ログインして記録に★とレビューをつけると、ホテログ・飯ログなどが入ります。');
+      : tr('ログインして記録に★とレビューをつけると、ほてログ・飯ログなどが入ります。');
     $('#postStatus').textContent = '';
     $('#btnSharePost').hidden = !navigator.share;
     $('#postSheet').hidden = false;
@@ -8504,14 +8532,14 @@
       if (resetBtn) resetBtn.addEventListener('click', function () { resetManualOrder(dayDate); });
     }
     var addBtn = document.createElement('button');
-    addBtn.className = 'block-add';
+    addBtn.className = 'block-add block-add-plan';
     addBtn.innerHTML = plusIcon() + '<span>' + tr('予定を追加') + '</span>';
     addBtn.addEventListener('click', function () { openBlockForm(null); });
     el.appendChild(addBtn);
     appendBranchAddArea(el);
 
     var voiceBtn = document.createElement('button');
-    voiceBtn.className = 'block-add';
+    voiceBtn.className = 'block-add block-add-voice';
     voiceBtn.innerHTML = MIC_ICON + '<span>' + tr('音声・メモでまとめて記録する') + '</span>';
     // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
     // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
@@ -10542,11 +10570,26 @@
     return trips[0] || null;
   }
 
+  // プロフィールカードの「ほてログ／飯ログ／アクティビティーログ」のチップ。押すと、そのカテゴリを選んだマイログへ
+  function renderProfileLogChips(loggedIn) {
+    var el = $('#profileLogChips');
+    if (!el) return;
+    el.hidden = !loggedIn;
+    if (!loggedIn) { el.innerHTML = ''; return; }
+    var items = state.myLogItems || [];
+    var html = ['lodging', 'food', 'sightseeing'].map(function (key) {
+      var n = items.filter(function (it) { return myLogCategoryOf(it) === key; }).length;
+      return '<button type="button" class="mp-log-chip" data-cat="' + key + '">' + escapeHtml(MYLOG_LABELS[key]) + (n ? ' ' + n : '') + '</button>';
+    }).join('');
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+
   function renderProfileStats() {
     var user = loadCurrentUser();
     var statsEl = $('#profileStats');
     var recent = mypageRecentTrip();
     $('#mpVideo').hidden = !recent;
+    renderProfileLogChips(!!loadCurrentUser());
     if (!user) { statsEl.innerHTML = ''; return; }
     var details = visitedDetails();
     var visibleCount = function (list) { return (list || []).filter(function (x) { return x.status === 'visible'; }).length; };
@@ -10577,8 +10620,24 @@
   function tutorialSeen() { try { return localStorage.getItem(TUTORIAL_DONE_KEY) === '1'; } catch (e) { return false; } }
   function markTutorialDone() { try { localStorage.setItem(TUTORIAL_DONE_KEY, '1'); } catch (e) { /* 書けなくても続行 */ } }
   var tutorialCleanup = null;
-  function startTutorial(steps, onClose) {
+  var TUTORIAL_TRIP_KEY = 'tabilog.tutorialTripDone';
+  function tripTutorialSeen() { try { return localStorage.getItem(TUTORIAL_TRIP_KEY) === '1'; } catch (e) { return false; } }
+  function markTripTutorialDone() { try { localStorage.setItem(TUTORIAL_TRIP_KEY, '1'); } catch (e) { /* 書けなくても続行 */ } }
+  // 対象の要素が見つからない（予定がまだ無いなど）ステップは、空の枠を出さないよう飛ばす。targetの無いステップは残す
+  function usableTutorialSteps(steps) {
+    return steps.filter(function (s) {
+      if (!s.target) return true;
+      var el = document.querySelector(s.target);
+      if (!el || el.hidden) return false;
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+  }
+  // doneKind：'trip'なら旅の詳細の案内として、終えた印を別のキーに付ける（省略時は最初の案内）
+  function startTutorial(steps, onClose, doneKind) {
     if (tutorialCleanup) tutorialCleanup();
+    steps = usableTutorialSteps(steps);
+    if (!steps.length) return;
     var idx = 0;
     var root = document.createElement('div');
     root.className = 'tut-root';
@@ -10604,7 +10663,7 @@
     }
     function close() {
       detach();
-      markTutorialDone();
+      if (doneKind === 'trip') markTripTutorialDone(); else markTutorialDone();
       if (onClose) onClose();
     }
     function targetEl() {
@@ -10651,7 +10710,8 @@
       var el = targetEl();
       if (el) { try { el.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch (e) { el.scrollIntoView(); } }
       place();
-      requestAnimationFrame(place);
+      requestAnimationFrame(function () { place(); requestAnimationFrame(place); });
+      setTimeout(place, 150);
       try { btnMain.focus({ preventScroll: true }); } catch (e) { /* フォーカスできなくても続行 */ }
     }
     function onKey(e) {
@@ -10669,17 +10729,43 @@
   }
   function tutorialSteps() {
     return [
-      { target: '#btnNewTrip', title: 'まずは旅行を1つ作ろう', body: '旅行の名前と日にちを入れるだけ。行く前の予定づくりにも、行ったあとの思い出の整理にも使えます。' },
-      { target: '.screen.active[data-screen="tripDetail"] #btnShareTrip', title: 'リンクを送って、みんなで書こう', body: 'LINEなどでリンクを送るだけで、一緒に行った人も写真や感想を書き足せます。相手はアプリを入れなくても大丈夫です。' },
-      { title: 'しゃべるだけでも記録できる', body: 'その日のことを話したり、メモやスクショを貼ったりすると、予定と記録に分けて入れてくれます。旅行を開いたら「地図でふりかえる」で旅を再生してみよう。' }
+      { target: '#btnNewTrip', title: 'まずは旅行を1つ作ろう', body: '名前と日にちだけでOK。行く前の予定づくりにも、行ったあとの思い出の整理にも使えます。' },
+      { target: '#tabbar .tabbar-btn[data-tab="mylog"]', title: 'マイログに評価がたまっていく', body: '評価をつけたお店・宿・スポットが、旅をまたいでここにたまります。' },
+      { target: '#tabbar .tabbar-btn[data-tab="visited"]', title: '行った場所が地図に塗られていく', body: '行った都道府県や国が、旅の記録から自動で地図に塗られていきます。' },
+      { target: '#tabbar .tabbar-btn[data-tab="profile"]', title: 'マイページで設定と使い方', body: '言語の切り替えや、この使い方の見直しはここからできます。' },
+      { title: 'さっそく旅行を作ってみよう', body: '旅行を作ると、続きの使い方を案内します。' }
     ];
   }
+  // 旅の詳細の案内（旅行をはじめて開いたときに1回だけ自動で出す。「使い方」ボタンからいつでも見直せる）
+  function tripTutorialSteps() {
+    var d = '.screen.active[data-screen="tripDetail"] ';
+    return [
+      { target: d + '#btnInvite', title: 'リンクを送って、みんなで書こう', body: 'リンクを送ると、一緒に行った人もアプリ無しで見たり書き足したりできます。' },
+      { target: d + '#dayTabs', title: '日ごとに並びます', body: '日ごとに予定と記録が並びます。タブで日を切り替えられます。' },
+      { target: d + '.block-add-plan', title: '予定を足して、記録を足す', body: '予定（いつ・どこ）を足して、その中に写真・感想・費用の記録を足していきます。' },
+      { target: d + '.block-add-voice', title: '話す・貼るだけでも入れられる', body: '話したり、メモやスクショを貼ると、予定と記録に分けて入れてくれます。' },
+      { target: d + '#btnOpenReplay', title: '地図でふりかえる', body: '旅を地図の上で再生して、動画にしてシェアもできます。' },
+      { target: d + '#btnOpenSettlement', title: '精算もおまかせ', body: '立て替えを入れると、誰が誰にいくら払うか自動で計算します。' }
+    ];
+  }
+  function runTripTutorial() { startTutorial(tripTutorialSteps(), null, 'trip'); }
+  // 旅行を開いたとき、まだ見ていなければ1回だけ出す（最初の案内の最中は出さない）
+  function maybeAutoTripTutorial() {
+    if (tripTutorialSeen() || tutorialCleanup) return;
+    setTimeout(function () {
+      var cur = document.querySelector('.screen.active');
+      if (tripTutorialSeen() || tutorialCleanup || !cur || cur.dataset.screen !== 'tripDetail') return;
+      if (document.body.classList.contains('sheet-open')) return;
+      runTripTutorial();
+    }, 900);
+  }
+  // マイページの「使い方」：画面の切り替えアニメーションを付けずに直接ホームへ移り、案内の幕を先に出す
   function runTutorialOnHome() {
     history.pushState(null, '', location.pathname);
-    showScreen('home');
-    renderHome();
+    noTabAnimOnce = true;
+    try { showScreen('home'); renderHome(); } finally { noTabAnimOnce = false; }
     window.scrollTo(0, 0);
-    setTimeout(function () { startTutorial(tutorialSteps()); }, 250);
+    startTutorial(tutorialSteps());
   }
   // 初回だけ自動で出す。共有リンクで開いた人（ゲスト）には出さない（enterAppのホーム分岐でだけ呼ぶ）
   function maybeAutoTutorial() {
@@ -10757,6 +10843,12 @@
     $('#btnProfileAccount').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
     $('#mpAccountRow').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
     $('#mpMylog').addEventListener('click', function () { openTabScreen('mylog'); });
+    $('#profileLogChips').addEventListener('click', function (e) {
+      var b = e.target.closest && e.target.closest('.mp-log-chip');
+      if (!b) return;
+      state.myLogCategory = b.dataset.cat;
+      openTabScreen('mylog');
+    });
     $('#mpVisited').addEventListener('click', function () { openTabScreen('visited'); });
     $('#mpHistory').addEventListener('click', function () {
       if (!loadMyTrips().length) { showToast(tr('この端末の履歴に旅行がありません')); return; }
@@ -10768,6 +10860,7 @@
       fetchAccountStatus(renderPlanStatus).then(renderPlanStatus);
     }));
     $('#mpTutorial').addEventListener('click', openTutorial);
+    $('#btnTripTutorial').addEventListener('click', runTripTutorial);
     $('#mpAiUsage').addEventListener('click', function () {
       openMyPageSheet('#aiUsageSheet');
       loadAiUsage();
