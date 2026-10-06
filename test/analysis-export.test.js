@@ -98,7 +98,8 @@ const READ = {
   });
 
   await check('書き出す形が、画面の「分析用にコピー」と同じ項目を持つ', () => {
-    const snap = ex.ownSnapshot(READ, { name: 'G' }, '2026-10-12');
+    const snap = ex.ownSnapshot(READ, { label: 'G' }, '2026-10-12');
+    assert.strictEqual(snap.group, 'G', '運用アカウントの名前は label 列');
     assert.deepStrictEqual(snap.accounts, [
       { network: 'tiktok', label: 'ひろや', followers: 120 },
       { network: 'x', label: 'x1', followers: null },
@@ -118,7 +119,7 @@ const READ = {
 
   await check('運用アカウントごとに own_<日付>_<名前>.json を置き、連携の無い束は飛ばす', async () => {
     const g = fakeGoogle();
-    const db = fakeDb([{ id: 'g1', name: 'ひろや｜AI初心者30日30アプリ' }, { id: 'g2', name: '転職のホンネまとめ' }, { id: 'g3', name: '空' }],
+    const db = fakeDb([{ id: 'g1', label: 'ひろや｜AI初心者30日30アプリ' }, { id: 'g2', label: '転職のホンネまとめ' }, { id: 'g3', label: '空' }],
       Object.assign({}, CONNECTED));
     const read = async (id) => (id === 'g3' ? { accounts: [] } : READ);
     const out = await ex.exportOwn({ db, read, now: new Date('2026-10-11T23:00:00Z') });
@@ -133,7 +134,7 @@ const READ = {
 
   await check('同じ週に2回書き出しても、ファイルは増えずに上書きされる', async () => {
     const g = fakeGoogle();
-    const db = fakeDb([{ id: 'g1', name: '転職のホンネまとめ' }], Object.assign({}, CONNECTED));
+    const db = fakeDb([{ id: 'g1', label: '転職のホンネまとめ' }], Object.assign({}, CONNECTED));
     const now = new Date('2026-10-11T23:00:00Z');
     await ex.exportOwn({ db, read: async () => READ, now });
     const second = await ex.exportOwn({ db, read: async () => READ, now });
@@ -144,7 +145,7 @@ const READ = {
 
   await check('ドライブとつながっていなければ、直し方つきで止まる', async () => {
     fakeGoogle();
-    const db = fakeDb([{ id: 'g1', name: '転職' }], null);
+    const db = fakeDb([{ id: 'g1', label: '転職' }], null);
     await assert.rejects(() => ex.exportOwn({ db, read: async () => READ }), (e) => /つながっていません/.test(e.message) && /連携設定/.test(e.hint));
   });
 
