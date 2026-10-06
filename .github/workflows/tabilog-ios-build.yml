@@ -87,6 +87,8 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleDevelopmentRegion ja" Info.plist || /usr/libexec/PlistBuddy -c "Add :CFBundleDevelopmentRegion string ja" Info.plist
           /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations array" Info.plist
           /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations:0 string ja" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations:1 string zh-Hant" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations:2 string en" Info.plist
           /usr/libexec/PlistBuddy -c "Add :CFBundleAllowMixedLocalizations bool true" Info.plist
 
       - name: ユニバーサルリンク（Associated Domains）の設定を追加する
