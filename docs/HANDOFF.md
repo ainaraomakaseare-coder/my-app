@@ -78,6 +78,10 @@
 - **穴埋め動画**（`public/reel.js`・`public/mp4-mux.js`）：転職アカウント用の縦型動画をブラウザの中で組み立てる（WebCodecs、サーバーに ffmpeg は無い）。9/29 に冒頭を直した（0秒目に赤の太字の「つかみ」、1本目の答えは0.4秒目から）
 - 下書きの点検の改善（`lib/draft-generate.js`・`lib/draft-rules.js`）：仕込みで7本止まった件の修正（TikTok 本文の【PR】の書き落とし、問いの句点、指示の並び）
 
+### 動画の置き場の掃除（2026-10-07〜）
+- Supabase の無料枠（1GB）を超えた（10/7 通知、1.11GB）。原因は投稿済みの動画が消えずに残っていたこと
+- 毎日 4:00 JST（Vercel cron `0 19 * * *`）に `GET /api/insights?cleanup=media` が、**全部の投稿先が済み（success・skipped・handed）で3日たった動画**だけを消し、`posts.media_path` を空にする（`lib/media-cleanup.js`）。同じ動画を使う別の投稿が終わっていなければ消さない。`&dry=1` で消さずに一覧だけ見られる
+
 ### 未完了
 - TikTok：Direct Post の有効化 → Vercel に `TIKTOK_DIRECT_POST=1` → 再連携 → 審査申請（デモ動画と申請文を用意する約束をしている）
 - YouTube：API の監査申請（申請文の下書きを申し出たまま）
