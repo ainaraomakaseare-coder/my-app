@@ -809,7 +809,15 @@
   .quizOption { min-height: 48px; padding: 10px 14px; border: 1px solid var(--card-edge); border-radius: 14px; background: var(--card); color: var(--ink); font: inherit; font-weight: 650; text-align: left; cursor: pointer; }
   .quizOption.correct { border-color: #5aa18e; background: var(--teal-soft); color: var(--teal); }
   .quizOption.incorrect { border-color: #d77a80; background: rgba(215,122,128,.12); color: var(--danger); }
-  .quizFeedback { min-height: 26px; padding: 9px 2px 2px; color: var(--ink-soft); font-size: 13px; font-weight: 650; }
+  .quizFeedback { margin: 16px 0; padding: 20px; border: 2px solid var(--teal); border-radius: 18px; background: var(--card); color: var(--ink); }
+  .quizVerdict { margin: 0 0 12px; font-size: 18px; font-weight: 800; color: var(--teal); }
+  .quizVerdict.missed { color: var(--danger); }
+  .quizAnswerLabel { margin: 0 0 4px; color: var(--ink-soft); font-size: 13px; }
+  .quizAnswerName { display: block; font-size: 28px; line-height: 1.4; overflow-wrap: anywhere; }
+  .quizAnswerName.longAnswer { font-size: 19px; }
+  .quizAnswerPhoto { display: block; width: 100px; height: 100px; object-fit: cover; border-radius: 16px; margin: 0 0 12px; }
+  .quizYourAnswer, .quizAnswerNote { margin: 12px 0 0; font-size: 14px; line-height: 1.6; }
+  #quizFeedback { scroll-margin-top: calc(16px + env(safe-area-inset-top, 0px)); }
   .quizNext { width: 100%; margin-top: 8px; }
   .quizResult { padding: 18px 8px; text-align: center; }
   .quizResult strong { display: block; margin: 5px 0; color: var(--rose); font-size: 38px; line-height: 1.2; }
@@ -2959,15 +2967,22 @@
     }
     container.innerHTML = '<p class="rankingNote">出題範囲：' + esc(session.scopeLabel) + '</p><div class="quizSessionTop"><span>問題 ' + (session.index + 1) + ' / ' + session.questions.length + '</span><strong>今回の正解 ' + session.correct + '</strong></div>' +
       '<p class="quizPrompt">' + prompt + '</p>' + clueHtml +
+      '<div class="quizFeedback" id="quizFeedback" aria-live="polite" hidden></div>' +
+      '<button type="button" class="primaryBtn quizNext" id="nextQuizBtn" hidden>次の問題へ</button>' +
+      '<button type="button" class="ghostBtn quizNext" id="quizReviewChoicesBtn" hidden>選択肢を振り返る</button>' +
       (session.level === "advanced" && ["photo", "feature", "episode"].indexOf(question.type) !== -1 ? '<input type="search" class="quizNameSearch" id="quizNameSearch" aria-label="回答する名前を絞り込む" placeholder="名前で絞り込む" /><p id="quizNameEmpty" hidden>一致する名前がありません</p>' : '') +
       '<div class="quizOptions">' + question.choices.map(function (choice, index) {
         return '<button type="button" class="quizOption' + (choice.id === NONE_ANSWER ? ' noneChoice' : '') + '" data-choice="' + index + '">' + esc(choice.label) + '</button>';
-      }).join("") + '</div><div class="quizFeedback" id="quizFeedback" aria-live="polite"></div>' +
-      '<button type="button" class="primaryBtn quizNext" id="nextQuizBtn" hidden>次の問題へ</button>';
+      }).join("") + '</div>';
     Array.prototype.forEach.call(container.querySelectorAll("[data-choice]"), function (button) {
       button.addEventListener("click", function () { answerQuiz(Number(button.getAttribute("data-choice"))); });
     });
-    document.getElementById("nextQuizBtn").addEventListener("click", function () { session.index += 1; session.locked = false; renderQuizQuestion(); });
+    document.getElementById("nextQuizBtn").addEventListener("click", function () { session.index += 1; session.locked = false; renderQuizQuestion(); container.scrollIntoView({ behavior: "smooth", block: "start" }); });
+    document.getElementById("quizReviewChoicesBtn").addEventListener("click", function (event) {
+      var options = container.querySelector(".quizOptions");
+      options.hidden = !options.hidden;
+      event.target.textContent = options.hidden ? "選択肢を振り返る" : "選択肢を閉じる";
+    });
     var nameSearch = document.getElementById("quizNameSearch");
     if (nameSearch) nameSearch.addEventListener("input", function () {
       var query = normalizedEpisode(nameSearch.value);
@@ -3003,7 +3018,7 @@
     var newlyKnown = !session.practice && correct && question.personId !== null && state.knownPeople.indexOf(question.personId) === -1;
     var buttons = Array.prototype.slice.call(document.querySelectorAll(".quizOption"));
     var nameSearch = document.getElementById("quizNameSearch");
-    if (nameSearch) { nameSearch.disabled = true; document.getElementById("quizNameEmpty").hidden = true; }
+    if (nameSearch) { nameSearch.disabled = true; nameSearch.hidden = true; document.getElementById("quizNameEmpty").hidden = true; }
     buttons.forEach(function (button, index) {
       button.hidden = false;
       button.disabled = true;
@@ -3019,10 +3034,19 @@
       }
     }
     var feedback = document.getElementById("quizFeedback");
-    feedback.textContent = (correct ? "正解！" : "正解は「" + question.answer + "」です。") +
-      (question.explanation || (newlyKnown ? "新しく覚えた友達に追加しました。" : correct ? "この友達はもう覚えています。" : "次の問題で覚えよう。"));
+    var answerPerson = state.people.find(function (person) { return String(person.id) === question.personId; });
+    var answerPhoto = answerPerson && visibilityFor(answerPerson).photo && (answerPerson.photoUrls || [])[0];
+    feedback.innerHTML = '<p class="quizVerdict' + (correct ? '' : ' missed') + '">' + (correct ? '正解！' : 'おしい！') + '</p>' +
+      (answerPhoto ? '<img class="quizAnswerPhoto" src="' + esc(photoSrc(answerPhoto)) + '" alt="' + esc(displayName(answerPerson)) + 'の写真" />' : '') +
+      '<p class="quizAnswerLabel">正解は</p><strong class="quizAnswerName' + (question.type === 'person-episode' ? ' longAnswer' : '') + '">' + esc(question.answer) + '</strong>' +
+      (!correct && choice ? '<p class="quizYourAnswer">あなたの回答：' + esc(choice.label) + '</p>' : '') +
+      '<p class="quizAnswerNote">' + esc(question.explanation || (newlyKnown ? "新しく覚えた友達に追加しました。" : correct ? "この友達はもう覚えています。" : "次の問題で覚えよう。")) + '</p>';
+    feedback.hidden = false;
+    document.querySelector("#quizSession .quizOptions").hidden = true;
+    document.getElementById("quizReviewChoicesBtn").hidden = false;
     document.getElementById("nextQuizBtn").hidden = false;
     document.getElementById("nextQuizBtn").textContent = session.index + 1 < session.questions.length ? "次の問題へ" : "結果を見る";
+    feedback.scrollIntoView({ behavior: "smooth", block: "start" });
     renderKnownSummary();
     if (!session.practice) { writeLocalQuizScore(); saveQuizScore(); }
   }
