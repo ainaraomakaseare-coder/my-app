@@ -5665,6 +5665,64 @@ function tallyAi(env, provider, n) {
   } catch { /* 数えられなくても本体の処理は続ける */ }
 }
 
+// ---------- 使用量の急増アラート（メール） ----------
+// サービスごと・1日ごとの通知ライン。環境変数ALERT_LIMIT_*（数字の文字列）で上書きでき、不正な値は既定値に戻す。
+const AI_ALERT_DEFAULTS = {
+  openai: 150, openai_whisper: 100, workers_ai: 300,
+  google_vision_images: 200, google_places: 1000, google_routes: 1000,
+};
+function aiAlertLimits(env) {
+  const out = {};
+  for (const p of Object.keys(AI_ALERT_DEFAULTS)) {
+    const n = Number(env && env["ALERT_LIMIT_" + p.toUpperCase()]);
+    out[p] = Number.isInteger(n) && n > 0 ? n : AI_ALERT_DEFAULTS[p];
+  }
+  return out;
+}
+
+// 書き込み直後に、今回増えたサービスの今日の合計を1回だけ読み、通知ラインをこの増加で初めて越えたらメールする。
+// 通知ライン（limit）と3倍（2回目の警告）を越えたときだけ送るので、1日にサービスごと最大2通。
+// ADMIN_EMAILS / RESEND_API_KEYが無ければ何もしない（D1も読まない）。失敗しても例外は出さない。
+async function checkAiUsageAlert(env, day, increments) {
+  try {
+    if (!env.ADMIN_EMAILS || !env.RESEND_API_KEY) return;
+    const limits = aiAlertLimits(env);
+    const providers = Object.keys(increments).filter((p) => limits[p]);
+    if (!providers.length) return;
+    const r = await env.DB.prepare(
+      "SELECT provider, SUM(calls) AS total FROM ai_usage_daily WHERE day = ? AND provider IN (" + providers.map(() => "?").join(",") + ") GROUP BY provider"
+    ).bind(day, ...providers).all();
+    const totals = {};
+    for (const row of (r.results || [])) totals[row.provider] = Number(row.total) || 0;
+    const to = String(env.ADMIN_EMAILS).split(",").map((x) => x.trim()).filter(Boolean);
+    if (!to.length) return;
+    for (const p of providers) {
+      const now = totals[p];
+      if (!(now >= 0)) continue;
+      const prev = now - increments[p];
+      const limit = limits[p];
+      const crossed = (prev < limit && limit <= now) || (prev < limit * 3 && limit * 3 <= now);
+      if (!crossed) continue;
+      const jst = new Date(Date.now() + 9 * HOUR_MS).toISOString().replace("T", " ").slice(0, 16) + "（日本時間）";
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+        body: JSON.stringify({
+          from: env.RESEND_FROM || "旅の足跡 <onboarding@resend.dev>",
+          to,
+          subject: "【旅の足跡】AIの使用が急に増えています（" + p + "：今日" + now + "回）",
+          text: "AIの使用が、1日の通知ラインを超えました。\n\n"
+            + "サービス：" + p + "\n今日の合計：" + now + "回\n通知ライン：" + limit + "回（" + (now >= limit * 3 ? "3倍を超えました" : "1回目の通知") + "）\n時刻：" + jst + "\n\n"
+            + "機能ごとの内訳は、アプリの マイページ → AIの使用状況 で確認できます。\n心当たりがなければ、各サービスのキーの停止も検討してください。",
+        }),
+      });
+      if (!res.ok) throw new Error("resend_" + res.status);
+    }
+  } catch (e) {
+    console.error(JSON.stringify({ event: "ai_usage_alert_error", message: String((e && e.message) || e).slice(0, 200) }));
+  }
+}
+
 function flushAiUsage(env, ctx) {
   try {
     const t = env && env.__aiTally;
@@ -5672,8 +5730,10 @@ function flushAiUsage(env, ctx) {
     const day = nowIso().slice(0, 10);
     const binds = [];
     const marks = [];
+    const increments = {};
     for (const [key, calls] of t) {
       const i = key.indexOf("|");
+      increments[key.slice(i + 1)] = (increments[key.slice(i + 1)] || 0) + calls;
       marks.push("(?,?,?,?)");
       binds.push(day, key.slice(0, i), key.slice(i + 1), calls);
     }
@@ -5683,6 +5743,7 @@ function flushAiUsage(env, ctx) {
         "INSERT INTO ai_usage_daily (day, feature, provider, calls) VALUES " + marks.join(",") +
         " ON CONFLICT(day, feature, provider) DO UPDATE SET calls = ai_usage_daily.calls + excluded.calls"
       ).bind(...binds).run())
+      .then(() => checkAiUsageAlert(env, day, increments))
       .catch((e) => { console.error(JSON.stringify({ event: "ai_usage_error", message: String((e && e.message) || e).slice(0, 200) })); });
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
     return job;
@@ -5745,6 +5806,7 @@ async function getAiUsage(request, env, headers) {
     monthTotals: { byProvider, byFeature },
     accounts,
     // アプリ側にVisionの1日の上限は無い（同じ接続元から1分10回のAI_RATE_LIMITERだけ）。Google側の無料枠は月1,000枚。
+    alertLimits: aiAlertLimits(env),
     vision: { callsToday: visionCallsToday, imagesToday: visionImagesToday, dailyCap: null, rateLimitPerMinutePerIp: 10 },
   }, 200, headers);
 }

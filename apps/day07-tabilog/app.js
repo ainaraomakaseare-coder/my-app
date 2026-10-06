@@ -10718,6 +10718,10 @@
     var html = '';
     if (d.tableMissing) html += '<p class="hint">' + escapeHtml(tr('記録用のテーブルがまだありません（migrationが未実行です）。')) + '</p>';
     html += '<div class="aiu-h">' + escapeHtml(tr('今月の合計（サービス別）')) + '</div>' + aiUsageCards(d.monthTotals && d.monthTotals.byProvider, aiUsageProviderLabel);
+    if (d.alertLimits) {
+      var al = Object.keys(d.alertLimits).map(function (k) { return tr('{label} {n}回', { label: aiUsageProviderLabel(k), n: d.alertLimits[k] }); }).join('・');
+      html += '<p class="hint">' + escapeHtml(tr('1日の通知ライン：{list}', { list: al })) + '</p>';
+    }
     html += '<div class="aiu-h">' + escapeHtml(tr('今月の合計（機能別）')) + '</div>' + aiUsageCards(d.monthTotals && d.monthTotals.byFeature, aiUsageFeatureLabel);
     html += '<div class="aiu-h">' + escapeHtml(tr('今日のVision')) + '</div><p>' +
       escapeHtml(tr('画像 {n} 枚', { n: v.imagesToday || 0 })) + ' / ' + escapeHtml(tr('アプリ側の1日の上限はありません（同じ接続元から1分{n}回まで）。', { n: v.rateLimitPerMinutePerIp || 0 })) + '</p>';
@@ -10735,9 +10739,10 @@
         return '<tr><td>' + escapeHtml(r.day) + '</td><td>' + escapeHtml(aiUsageFeatureLabel(r.feature)) + '</td><td>' + escapeHtml(aiUsageProviderLabel(r.provider)) + '</td><td>' + escapeHtml(String(r.calls)) + '</td></tr>';
       }).join('') + '</tbody></table>';
     html += '<div class="aiu-h">' + escapeHtml(tr('残高・請求額は、各サービスの画面で確認してください')) + '</div><p class="aiu-links">' +
-      '<a href="https://platform.openai.com/usage" target="_blank" rel="noopener">OpenAI usage</a><br>' +
+      '<a href="https://platform.openai.com/settings/organization/usage" target="_blank" rel="noopener">OpenAI usage</a>' +
+      '（<a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noopener">billing</a>）<br>' +
       '<a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">Google Cloud billing</a><br>' +
-      '<a href="https://dash.cloudflare.com/" target="_blank" rel="noopener">Cloudflare Workers AI</a></p>';
+      '<a href="https://dash.cloudflare.com/?to=/:account/ai/workers-ai" target="_blank" rel="noopener">Cloudflare Workers AI</a></p>';
     el.innerHTML = html;
   }
   function loadAiUsage() {

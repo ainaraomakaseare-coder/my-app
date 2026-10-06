@@ -156,6 +156,8 @@ I18N.addLang('en', {
   "機能": "Feature",
   "サービス": "Service",
   "回数": "Calls",
+  "1日の通知ライン：{list}": "Daily alert thresholds: {list}",
+  "{label} {n}回": "{label} {n}",
   "残高・請求額は、各サービスの画面で確認してください": "Check balances and charges on each service's own page",
   "読み込んでいます…": "Loading…",
   "読み込めませんでした": "Couldn't load",
