@@ -5127,7 +5127,8 @@
     var user = loadCurrentUser();
     if (!loginEnabled()) { row.hidden = true; promptRow.hidden = true; return; }
     if (user) {
-      row.hidden = false;
+      // ログイン中の名前はマイページに出しているので、ホームには出さない（2026-10-06）
+      row.hidden = true;
       promptRow.hidden = true;
       $('#accountName').textContent = user.name || user.email || '';
     } else {

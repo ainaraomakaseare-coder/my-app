@@ -1664,12 +1664,12 @@ body.viewer-open { overflow: hidden; }
 .hd-title-row { display: flex; align-items: center; gap: 2px; }
 .info-btn {
   position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; margin: 0 0 0 6px; padding: 0; box-sizing: border-box; vertical-align: middle;
-  border: 1.5px solid var(--ink-soft); border-radius: 50%; background: none; color: var(--ink-muted);
-  font: inherit; font-size: var(--fs-xs); font-weight: 700; line-height: 1; cursor: pointer;
+  width: 16px; height: 16px; margin: 0 0 0 6px; padding: 0; box-sizing: border-box; vertical-align: middle;
+  border: 1.2px solid var(--ink-soft); border-radius: 50%; background: none; color: var(--ink-muted);
+  font: inherit; font-size: 10px; font-weight: 700; line-height: 1; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.info-btn::before { content: ""; position: absolute; inset: -12px; } /* タップできる範囲を44px以上に */
+.info-btn::before { content: ""; position: absolute; inset: -14px; } /* タップできる範囲を44px以上に */
 .info-btn[aria-expanded="true"] { color: var(--ink); border-color: var(--ink-muted); }
 .info-pop {
   position: absolute; left: 0; top: 100%; z-index: 60; box-sizing: border-box; width: max-content; max-width: min(300px, 100%);
