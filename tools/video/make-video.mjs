@@ -159,6 +159,11 @@ for (const s of segs) {
   if (s.tel) events.push(`Dialogue: 1,${t(at)},${t(at + d)},Hook,,0,0,0,,${esc(s.tel)}`);
   at += d;
 }
+// ★ 字幕の高さ（画面の下からの余白、1920 の画素）。
+//   TikTok・Instagram・YouTubeショートは下の約 4 分の 1 にアカウント名と投稿文が重なるので、
+//   字幕の下端を下から 480（25%）より上に置く。大テロップはその上（字幕と重ならない高さ）。
+//   設定ファイルの subMargin / hookMargin で日ごとに変えられる。
+const SUB_MARGIN = spec.subMargin ?? 480, HOOK_MARGIN = spec.hookMargin ?? 720;
 writeFileSync('subs.ass', `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -167,8 +172,8 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Sub,Meiryo,80,&H00FFFFFF,&H00FFFFFF,&H00201815,&H00000000,-1,0,0,0,100,100,0,0,1,6,1,2,50,50,150,1
-Style: Hook,Meiryo,118,&H002A2AE8,&H002A2AE8,&H00FFFFFF,&H00000000,-1,0,0,0,100,100,0,0,1,8,0,2,40,40,560,1
+Style: Sub,Meiryo,80,&H00FFFFFF,&H00FFFFFF,&H00201815,&H00000000,-1,0,0,0,100,100,0,0,1,6,1,2,50,50,${SUB_MARGIN},1
+Style: Hook,Meiryo,118,&H002A2AE8,&H002A2AE8,&H00FFFFFF,&H00000000,-1,0,0,0,100,100,0,0,1,8,0,2,40,40,${HOOK_MARGIN},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
