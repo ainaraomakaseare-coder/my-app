@@ -2824,12 +2824,23 @@
     people.forEach(function (person) {
       var visibility = visibilityFor(person);
       if (visibility.photo && (person.photoUrls || []).length) addClue(person, "photo", "", person.photoUrls[0]);
-      if (visibility.tags) (person.tags || []).forEach(function (tag) { addClue(person, "feature", "所属: " + tag); });
-      if (visibility.hobbies) (person.hobbies || []).forEach(function (hobby) { addClue(person, "feature", "趣味・特徴: " + hobby); });
+      var features = [];
+      if (visibility.tags) (person.tags || []).forEach(function (tag) { features.push("所属: " + tag); });
+      if (visibility.hobbies) (person.hobbies || []).forEach(function (hobby) { features.push("趣味・特徴: " + hobby); });
       if (visibility.history) (person.history || []).forEach(function (item) {
         var historyText = [item.year, item.text].filter(Boolean).join(" ");
-        addClue(person, "feature", "経歴: " + historyText);
+        if (historyText.trim()) features.push("経歴: " + historyText);
       });
+      features = Array.from(new Set(features)).sort();
+      features.forEach(function (feature) { addClue(person, "feature", feature); });
+      // Shared affiliations can still identify someone when combined.
+      var combinedFeatures = features.slice(0, 10);
+      combinedFeatures.forEach(function (feature, index) {
+        combinedFeatures.slice(index + 1).forEach(function (other) {
+          addClue(person, "feature", feature + "\n" + other);
+        });
+      });
+      if (features.length > 2) addClue(person, "feature", features.join("\n"));
       if (visibility.episodes) (person.episodes || []).forEach(function (episode) { addClue(person, "episode", episode.text); });
     });
 
@@ -2877,16 +2888,25 @@
     return combineRealAndFiction(realQuestions, fictionalQuestions);
   }
 
+  var quizStartRequest = 0;
   async function startQuiz(mode) {
+    var request = ++quizStartRequest;
+    var sessionElement = document.getElementById("quizSession");
+    sessionElement.hidden = false;
+    sessionElement.innerHTML = '<div class="quizResult" role="status"><p>クイズを準備しています…</p></div>';
+    sessionElement.scrollIntoView({ behavior: "smooth", block: "start" });
+    try {
     if (state.quizLevel === "beginner" && mode !== "photo" && mode !== "mixed" && mode !== "sample-truefalse") mode = "photo";
     if (!await checkAccess()) return;
+    if (request !== quizStartRequest) return;
     var epoch = accessEpoch;
     if (mode === "episode" || mode === "mixed" || mode === "truefalse") await loadFictionalEpisodes();
-    if (epoch !== accessEpoch) return;
+    if (epoch !== accessEpoch || request !== quizStartRequest) return;
     var questions = buildQuestionPool(mode);
     if (!questions.length) {
       var needed = mode === "person-episode" ? "選んだ区分に、異なる名前とエピソードを共有する人が4人以上必要です。他の人と同じ話や、名前が答えを示す話は使いません。" : mode === "truefalse" ? "選んだ区分に共有エピソードか、出題用の架空の話を追加してください。○×は1件から遊べます。" : quizPeople().length < 2
         ? "選んだ区分に、異なる名前を共有しているメンバーが2人以上必要です。覚える区分を追加してください。"
+        : mode === "feature" ? "この区分には、1人に絞れる特徴がまだありません。プロフィールに趣味・特徴や経歴を追加するか、覚える区分を広げてください。共通の所属だけでは正解を1人に決められません。"
         : "選んだ区分には、この種類の問題を作れる共有写真・特徴・エピソードがまだありません。";
       document.querySelector(".quizModeGrid").hidden = false;
       document.getElementById("quizSession").hidden = false;
@@ -2901,6 +2921,15 @@
     document.querySelector(".quizModeGrid").hidden = true;
     document.getElementById("quizSession").hidden = false;
     renderQuizQuestion();
+    sessionElement.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+      if (request !== quizStartRequest) return;
+      state.quizSession = null;
+      document.querySelector(".quizModeGrid").hidden = false;
+      sessionElement.hidden = false;
+      sessionElement.innerHTML = '<div class="quizResult" role="alert"><p>クイズを開始できませんでした。通信状態を確認して、もう一度問題を選んでください。</p></div>';
+      sessionElement.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
 
   function renderQuizQuestion() {
