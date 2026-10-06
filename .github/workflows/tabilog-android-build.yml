@@ -34,8 +34,8 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Android SDKを準備
-        uses: android-actions/setup-android@v3
+      # Android SDKはubuntu-latestのランナーに最初から入っている（ANDROID_HOME）。足りないSDKはGradleが自動で取る。
+      # android-actions/setup-android@v3 は、もう無いパッケージ「tools」を入れようとして失敗するので使わない。
 
       - name: Capacitorの依存パッケージをインストール
         run: npm install
