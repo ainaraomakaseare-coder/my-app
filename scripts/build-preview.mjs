@@ -13,6 +13,7 @@ const bootstrap = function () {
   const colors = ['#b49bda', '#e2a9ae', '#83bdb4', '#e5bf82', '#8bade0', '#acbd88', '#c4a8d3', '#e6ad85'];
   const fresh = () => ({
     invitesEnabled: true,
+    binder_rooms: [{ id: room, name: '放送研究会（デモ）' }],
     people: names.map((name, i) => ({ id: 'demo-person-' + i, room_id: room, name, nickname: '',
       tags: [i < 4 ? '放送研究会' : 'バイト先', '大学'], hobbies: [i % 2 ? '映画' : '音楽'],
       photo_urls: ['https://preview.invalid/storage/v1/object/public/photos/avatar-' + i],
@@ -26,6 +27,7 @@ const bootstrap = function () {
   });
   let data;
   try { data = JSON.parse(localStorage.getItem(key)) || fresh(); } catch { data = fresh(); }
+  data.binder_rooms ||= [{ id: room, name: '放送研究会（デモ）' }];
   const persist = () => { try { localStorage.setItem(key, JSON.stringify(data)); } catch {} };
   window.previewStorage = {
     getItem(k) { try { return localStorage.getItem('omoide_preview:' + k); } catch { return null; } },
