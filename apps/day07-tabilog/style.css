@@ -919,6 +919,17 @@ a:hover { text-decoration: underline; }
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
   background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 12px;
 }
+/* マイログの1〜3位のメダル（写真の左上に重ねる） */
+/* 1〜3位の行は背景そのものを金・銀・銅の淡いグラデーションにする（参考：ランキング画面） */
+.mylog-row.mylog-rank-gold { background: linear-gradient(100deg, #FFF1C2 0%, #FFFAE8 100%); }
+.mylog-row.mylog-rank-silver { background: linear-gradient(100deg, #E8EBF0 0%, #F7F8FA 100%); }
+.mylog-row.mylog-rank-bronze { background: linear-gradient(100deg, #F6DCC8 0%, #FDF3EC 100%); }
+.mylog-photo-wrap { position: relative; flex-shrink: 0; }
+.mylog-medal { position: absolute; top: -6px; left: -6px; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-xs); font-weight: 700; color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25), inset 0 0 0 1.5px rgba(255,255,255,.7); text-shadow: 0 1px 1px rgba(0,0,0,.25); }
+.mylog-medal-gold { background: linear-gradient(135deg, #F7D774, #D4A017); }
+.mylog-medal-silver { background: linear-gradient(135deg, #E3E6EA, #A7AEB7); }
+.mylog-medal-bronze { background: linear-gradient(135deg, #E2A675, #B06A35); }
 .mylog-photo { width: 48px; height: 48px; border-radius: var(--radius-control); background-color: var(--border-soft); background-size: cover; background-position: center; flex-shrink: 0; }
 .mylog-info { flex: 1; min-width: 0; }
 .mylog-label { font-size: var(--fs-sm); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

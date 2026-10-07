@@ -196,4 +196,5 @@ I18N.addLang('en', {
   "回数券が追加されました": "Tickets added",
   "購入は完了しました。回数の反映に少し時間がかかっています。しばらくしてからマイページの「AIの残り回数」で確認してください。": "Your purchase is complete, but adding the uses is taking a little longer. Please check \"AI uses left\" on My Page in a moment.",
   "購入できませんでした。時間をおいてもう一度お試しください。": "The purchase didn't go through. Please try again later.",
+  "{n}位": "No. {n}",
 });
