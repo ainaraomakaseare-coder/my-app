@@ -880,3 +880,35 @@ App Reviewの Guideline 3.1.1 で却下されたため、有料プランと回�
 - Stripeのシークレット（`STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET`）は設定したままでよいが、使われない。消したくなったら `npx wrangler secret delete` で消してよい（アカウント削除時の「契約中のStripe定期購入の解約」だけは、`stripe_subscription_id` がある人が居れば動くので、その間は`STRIPE_SECRET_KEY`があると安心）。
 - **復活させるとき**：Appleのアプリ内課金（RevenueCat）に切り替える想定。`effectivePlan` を課金状態（RevenueCatのWebhookで`plan`列を更新）から返す形に戻し、`BILLING_ENABLED`とStripe系の経路を見直す。詳しくは docs/adr/0004。
 - ローカルの確認：`node worker/test/billing-disabled.test.mjs`（node:sqliteの上で、plan列がpremium_plusでも上限が無料のままであること・購入の入口が410であること・Webhookが何も変えないことを確かめる）
+
+## 回数券のアプリ内課金（RevenueCat。2026-09-30 追加、docs/adr/0004）
+
+iOSアプリで買われた回数券（消耗型のアプリ内課金）を、RevenueCatのWebhookで受け取って`accounts.ticket_credits`に足す。プランの販売は引き続き止めたまま（`effectivePlan`は常に`'free'`）。
+
+- `POST /billing/revenuecat-webhook`：`Authorization`ヘッダーを`REVENUECAT_WEBHOOK_AUTH`と一定時間で比べる（違えば401。**シークレットが未設定なら404**で、経路が無いのと同じ）。`NON_RENEWING_PURCHASE`だけを処理し、他のイベントは200で何もしない。
+- 商品と回数の対応は`worker/src/index.js`の`IAP_TICKET_PRODUCTS`（`com.hiroyaapps.tabilog.ticket10`＝10回、`...ticket30`＝30回）。足す回数はサーバーが決め、クライアントの申告は使わない。
+- 二重に足さない：処理した`transaction_id`を`iap_transactions`に記録し（主キー）、取引の記録と回数の加算を1つのbatchで行う。
+- 未知の商品・未知の`app_user_id`は、ログを出して200を返す（再送しても直らないので、RevenueCatに再送させない）。ログ（`revenuecat_unknown_product`・`revenuecat_unknown_user`）に取引IDが残るので、必要なら手で回数を足す。
+- `SANDBOX`（TestFlight・開発中の購入）は、変数`REVENUECAT_ACCEPT_SANDBOX`が`"true"`のときだけ反映する。
+
+### 設定手順
+
+1. RevenueCatでプロジェクトを作り、iOSアプリ（Bundle ID `com.hiroyaapps.tabilog`）を追加してApp Store Connectと連携する。
+2. App Store Connectで消耗型の課金アイテム`com.hiroyaapps.tabilog.ticket10`（500円）・`com.hiroyaapps.tabilog.ticket30`（1,200円）を作る（審査に出す）。RevenueCatにも同じ商品を登録し、Offering（`current`）のPackageに2つとも入れる。
+3. RevenueCat > Integrations > Webhooks に、URL `https://tabilog-api.hiroya-apps.workers.dev/billing/revenuecat-webhook` と、Authorization headerの値（推測されにくい長い文字列。例：`Bearer <ランダム文字列>`）を設定する。
+4. 同じ値をWorkerのシークレットに登録する：
+
+   ```sh
+   cd apps/day07-tabilog/worker
+   npx wrangler secret put REVENUECAT_WEBHOOK_AUTH   # 3.のAuthorization headerの値をそのまま（Bearerも含めて）
+   ```
+
+5. D1に処理済み取引の表を作る（先にやっておく。表が無いと購入通知が500になり、RevenueCatが再送する）：
+
+   ```sh
+   npx wrangler d1 execute tabilog-db --remote --file=migrations/0033_iap_transactions.sql
+   ```
+
+6. TestFlightの購入（SANDBOX）でも回数を足して試すときだけ、`wrangler.jsonc`の`vars`に`"REVENUECAT_ACCEPT_SANDBOX": "true"`を足して`npx wrangler deploy`する。**本番公開の前に外す**（外さないと、テスト購入で本番の回数が増える）。
+7. RevenueCatの**公開**iOS SDKキー（`appl_`で始まる）を`apps/day07-tabilog/app.js`の`REVENUECAT_IOS_API_KEY`に入れる（空のままだと、アプリ内の購入画面は出ない）。
+8. ローカルの確認：`node worker/test/revenuecat-webhook.test.mjs`

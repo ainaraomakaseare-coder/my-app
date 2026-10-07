@@ -245,4 +245,5 @@ I18N.addLang('en', {
   "同じメールで登録し直しても、音声入力の利用回数は戻りません": "Re-registering with the same email won't restore your voice input uses",
   "削除する": "Delete",
   "年表": "Timeline",
+  "残っている回数券も消え、払い戻しはできません": "Any remaining usage tickets are also lost and can't be refunded",
 });

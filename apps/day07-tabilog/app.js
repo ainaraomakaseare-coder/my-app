@@ -5093,7 +5093,7 @@
     try { return JSON.parse(localStorage.getItem(CURRENT_USER_KEY) || 'null'); } catch (e) { return null; }
   }
   function saveCurrentUser(u) { localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(u)); }
-  function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); clearMyLogCache(); clearAccountStatusCache(); }
+  function clearCurrentUser() { localStorage.removeItem(CURRENT_USER_KEY); clearMyLogCache(); clearAccountStatusCache(); iapLogOut(); }
 
   // ---------- /mylogの前回結果（メモリ＋端末）。マイログ・行ったことある旅先・プロフィール・ホームの同期で共有する ----------
   // 同時に何本も/mylogを取らない（飛行中のPromiseを共有）。評価・場所の外す戻す・参加などの書き込み（api）の
@@ -6932,6 +6932,10 @@
     $('#importPreview').innerHTML = '';
     $('#btnImportJson').disabled = false;
     $('#voicePremiumRequired').hidden = true;
+    $('#voiceTicketShop').hidden = true;
+    $('#voiceTicketShop').innerHTML = '';
+    $('#memoTicketShop').hidden = true;
+    $('#memoTicketShop').innerHTML = '';
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
     if (!user) {
@@ -6940,17 +6944,28 @@
     }
     $('#memoAiInfo').textContent = '';
     fetchAccountStatus(null, true).then(function (account) {
-      if (!account) return;
-      var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
-      $('#memoAiInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
-      var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
-      if (!voiceOk) {
-        // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
-        $('#voicePremiumRequired').hidden = false;
-        $('#voicePremiumMessage').textContent = tr('今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。');
-        $('#btnVoiceRecord').disabled = true;
-      }
+      if (account) applyAiQuotaUi(account);
     });
+  }
+
+  // 音声・メモの画面に、残り回数と、使い切ったときの案内（iOSアプリなら回数券を買う入口も）を反映する
+  function applyAiQuotaUi(account) {
+    var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+    $('#memoAiInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
+    var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
+    if (!voiceOk) {
+      // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
+      $('#voicePremiumRequired').hidden = false;
+      $('#voicePremiumMessage').textContent = tr('今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。');
+      $('#btnVoiceRecord').disabled = true;
+      renderTicketShop($('#voiceTicketShop'));
+    } else {
+      $('#voicePremiumRequired').hidden = true;
+      $('#btnVoiceRecord').disabled = false;
+    }
+    var memoOk = account.memoRemainingThisPeriod > 0 || account.ticketCredits > 0;
+    if (memoOk) { $('#memoTicketShop').hidden = true; $('#memoTicketShop').innerHTML = ''; }
+    else renderTicketShop($('#memoTicketShop'));
   }
 
   // 音声・AIを使う前の確認。ログインしていなければログインへ（書きかけのメモは残す）
@@ -7117,6 +7132,7 @@
       $('#btnOrganizeMemoAi').disabled = false;
       if (msg === 'premium_required' || msg === 'quota_exceeded') {
         $('#textEntryStatus').textContent = tr('今月の回数を使い切りました。来月1日にまた使えます。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。');
+        fetchAccountStatus(null, true).then(function () { renderTicketShop($('#memoTicketShop')); });
       } else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = importScanErrorMessage(msg);
     });
@@ -7300,12 +7316,15 @@
     $('#ssResult').innerHTML = '';
     $('#ssStatus').textContent = '';
     $('#ssInfo').textContent = '';
+    $('#ssTicketShop').hidden = true;
+    $('#ssTicketShop').innerHTML = '';
     renderSsThumbs();
     showScreen('screenshotImport');
     fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
       var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
       $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
+      if (account.memoRemainingThisPeriod <= 0 && !account.ticketCredits) renderTicketShop($('#ssTicketShop'));
     });
   }
 
@@ -7403,6 +7422,7 @@
         var msg = (e && e.message) || '';
         if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
           $('#ssStatus').textContent = msg === 'login_required' ? tr('ログインし直してください。') : tr('今月の回数を使い切りました。来月1日にまた使えます。');
+          if (msg !== 'login_required') fetchAccountStatus(null, true).then(function () { renderTicketShop($('#ssTicketShop')); });
           return;
         }
         $('#ssStatus').textContent = ssErrorMessage(msg);
@@ -10592,6 +10612,127 @@
     try { if (key && account) localStorage.setItem(key + '#account', JSON.stringify(account)); } catch (e) {}
   }
 
+  // ---------- 回数券のアプリ内課金（iOSアプリだけ。docs/adr/0004の2026-09-30の節） ----------
+  // 買った回数を足すのはサーバー（RevenueCatのWebhook）で、ここは購入の入口と、購入後の再取得だけ。
+  // Web版には購入の画面も案内も出さない（App Reviewの3.1.1：アプリ外の決済で買ったものをアプリで使わせない）。
+  // RevenueCatの公開SDKキー（appl_で始まる。公開してよい値）。空のあいだは購入の画面ごと隠す。
+  var REVENUECAT_IOS_API_KEY = 'appl_UbwtgjLAuQKcRAZPxFtXLkanGmS';
+  var iap = { configurePromise: null, userId: '', ready: null, packages: null, busy: false };
+
+  function iapPlugin() {
+    return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases) || null;
+  }
+  function iapAvailable() {
+    return isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios' &&
+      !!REVENUECAT_IOS_API_KEY && !!iapPlugin() && !!loadCurrentUser();
+  }
+  // RevenueCatの利用者IDには、サーバーが採番したaccountId（6桁）を使う。
+  // メールアドレスや名前は渡さない。ログインするたび・ログインし直すたびに呼んでよい（同じ人なら何もしない）。
+  function iapLogIn(accountId) {
+    if (!iapAvailable() || !accountId) return Promise.resolve(false);
+    if (iap.userId === accountId && iap.ready) return iap.ready;
+    var P = iapPlugin();
+    iap.userId = accountId;
+    iap.packages = null;
+    if (!iap.configurePromise) iap.configurePromise = P.configure({ apiKey: REVENUECAT_IOS_API_KEY });
+    iap.ready = iap.configurePromise.then(function () {
+      return P.logIn({ appUserID: accountId });
+    }).then(function () { return true; }).catch(function () {
+      iap.userId = ''; iap.ready = null; iap.configurePromise = null;
+      return false;
+    });
+    return iap.ready;
+  }
+  function iapLogOut() {
+    var wasIn = !!iap.userId;
+    iap.userId = ''; iap.ready = null; iap.packages = null;
+    var P = iapPlugin();
+    if (wasIn && P) P.logOut().catch(function () {});
+  }
+  function iapLoadPackages() {
+    if (iap.packages) return Promise.resolve(iap.packages);
+    return iapPlugin().getOfferings().then(function (o) {
+      var list = (o && o.current && o.current.availablePackages) || [];
+      iap.packages = list.slice().sort(function (a, b) { return (a.product.price || 0) - (b.product.price || 0); });
+      return iap.packages;
+    });
+  }
+
+  // 回数券の買えるところ（el）に「回数券を買う」を描く。値段はStoreKitが返す表示用の文字列をそのまま出す。
+  // 買えない状態（Web・キー未設定・未ログイン・商品が取れない）なら、何も出さない。
+  function renderTicketShop(el) {
+    if (!el) return;
+    el.hidden = true;
+    el.innerHTML = '';
+    if (!iapAvailable() || !state.account) return;
+    iapLogIn(state.account.accountId).then(function (ok) {
+      return ok ? iapLoadPackages() : [];
+    }).then(function (list) {
+      if (!list.length || !iapAvailable()) return;
+      el.innerHTML = '<div class="ticket-shop-title">' + escapeHtml(tr('回数券を買う')) + '</div>' +
+        '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
+        list.map(function (pkg, i) {
+          return '<button type="button" class="btn ticket-buy" data-ticket-index="' + i + '">' +
+            escapeHtml(pkg.product.title || pkg.identifier) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
+        }).join('') + '<p class="hint ticket-shop-status" role="status"></p>';
+      el.hidden = false;
+      $all('.ticket-buy', el).forEach(function (btn) {
+        btn.addEventListener('click', function () { buyTicket(list[Number(btn.getAttribute('data-ticket-index'))], el); });
+      });
+    }).catch(function () { /* 商品が取れなければ、買う画面を出さないだけ */ });
+  }
+
+  function buyTicket(pkg, el) {
+    if (!pkg || iap.busy) return;
+    var statusEl = $('.ticket-shop-status', el);
+    var setStatus = function (t) { if (statusEl) statusEl.textContent = t; };
+    var before = state.account ? (state.account.ticketCredits || 0) : 0;
+    iap.busy = true;
+    $all('.ticket-buy', el).forEach(function (b) { b.disabled = true; });
+    setStatus(tr('購入の手続き中です…'));
+    iapPlugin().purchasePackage({ aPackage: pkg }).then(function () {
+      setStatus(tr('購入ありがとうございます。回数を反映しています…'));
+      // 回数を足すのはRevenueCatからサーバーへの通知（非同期）なので、増えるまで少し待って取り直す
+      var tries = 0;
+      var poll = function () {
+        return fetchAccountStatus(null, true).then(function (account) {
+          if (account && (account.ticketCredits || 0) > before) return account;
+          if (++tries >= 8) return null;
+          return new Promise(function (r) { setTimeout(r, 1500); }).then(poll);
+        });
+      };
+      return poll();
+    }).then(function (account) {
+      if (account) {
+        showToast(tr('回数券が追加されました'));
+        refreshTicketViews();
+      } else {
+        setStatus(tr('購入は完了しました。回数の反映に少し時間がかかっています。しばらくしてからマイページの「AIの残り回数」で確認してください。'));
+      }
+    }).catch(function (e) {
+      // 購入画面を自分で閉じた場合は、何も言わない
+      if (e && (e.userCancelled || e.code === 'PURCHASE_CANCELLED' || e.code === '1')) { setStatus(''); return; }
+      setStatus(tr('購入できませんでした。時間をおいてもう一度お試しください。'));
+    }).then(function () {
+      iap.busy = false;
+      $all('.ticket-buy', el).forEach(function (b) { b.disabled = false; });
+    });
+  }
+
+  // 購入で回数が変わったあと、いま開いている画面の残り回数と買う場所を描き直す
+  function refreshTicketViews() {
+    renderPlanStatus();
+    var active = $('.screen.active');
+    var name = active && active.dataset.screen;
+    if (name === 'voiceEntryForm' && state.account) applyAiQuotaUi(state.account);
+    else if (name === 'screenshotImport' && state.account) {
+      var bonus = state.account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: state.account.ticketCredits }) : '';
+      $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: state.account.memoRemainingThisPeriod, max: state.account.memoMonthlyLimit }) + bonus;
+      $('#ssTicketShop').hidden = true;
+      $('#ssTicketShop').innerHTML = '';
+    }
+  }
+
   // 残り回数の表示だけ（有料プラン・購入の画面は無い。2026-09-30〜、docs/adr/0004）。
   function renderPlanStatus() {
     var statusEl = $('#planStatus');
@@ -10605,6 +10746,7 @@
     if (!account) {
       statusEl.innerHTML = '';
       msgEl.textContent = '';
+      renderTicketShop($('#profileTicketShop'));
       return;
     }
     var lines = ['<div class="plan-usage">' + tr('今月の音声入力：あと{n}回（月{limit}回まで）', { n: account.voiceRemainingThisPeriod, limit: account.voiceMonthlyLimit }) + '</div>'];
@@ -10620,6 +10762,7 @@
 
     // マイログの見出しにあった「音声入力 あと◯回」のバッジは、マイページの「AIの残り回数」と重複するため外した（2026-10-06）
     msgEl.textContent = '';
+    renderTicketShop($('#profileTicketShop'));
   }
 
   // iOSアプリ内ではlocation.originがcapacitor://localhostになってしまい、
@@ -13906,6 +14049,7 @@
     renderAccountRow();
     api('/accounts/ensure', 'POST', { email: user.email, name: user.name || '' }).then(function (account) {
       saveCurrentUser(Object.assign({}, loadCurrentUser(), { accountId: account.accountId }));
+      iapLogIn(account.accountId); // 回数券の購入者をRevenueCat側でもこのアカウントにする（iOSアプリだけ）
     }).catch(function () {
       // アカウントIDが取れなくてもログインは成立させる
     }).then(function () {

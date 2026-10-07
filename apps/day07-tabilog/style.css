@@ -821,6 +821,10 @@ a:hover { text-decoration: underline; }
 }
 .plan-status .plan-name { font-size: var(--fs-base); font-weight: 700; }
 .plan-status .plan-usage { font-size: var(--fs-sm); color: var(--ink-muted); margin-top: 4px; }
+/* 回数券を買う（iOSアプリだけ） */
+.ticket-shop { margin-top: 12px; }
+.ticket-shop-title { font-size: var(--fs-base); font-weight: 700; }
+.ticket-shop .ticket-buy { display: block; width: 100%; margin-top: 8px; }
 
 /* ---------- マイログ ---------- */
 

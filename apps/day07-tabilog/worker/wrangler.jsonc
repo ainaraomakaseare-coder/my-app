@@ -15,7 +15,10 @@
     "APPLE_SERVICES_ID": "com.hiroyaapps.tabilog.web",
     "APPLE_TEAM_ID": "594N82AW44",
     "APPLE_KEY_ID": "X22A8BN456",
-    "LINE_CHANNEL_ID": "2011796453"
+    "LINE_CHANNEL_ID": "2011796453",
+    // 回数券のアプリ内課金（docs/adr/0004）：TestFlightのテスト購入（SANDBOX）でも回数を足す。
+    // ★ 1.3.0を公開する前に、この行を消してからデプロイする（本番でテスト購入が回数を増やさないように）。
+    "REVENUECAT_ACCEPT_SANDBOX": "true"
     // ソーシャルログイン（Apple・Google・LINE。docs/adr/0019）の設定。各社のコンソールで登録して
     // IDが分かってから、ここに書き足す（設定した方式だけログイン画面にボタンが出る。手順はREADME.md）。
     // 秘密のもの（GOOGLE_CLIENT_SECRET・APPLE_PRIVATE_KEY・LINE_CHANNEL_SECRET）はここに書かず
