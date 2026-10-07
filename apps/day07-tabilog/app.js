@@ -7689,7 +7689,7 @@
 
   // 音声・メモの画面に、残り回数と、使い切ったときの案内（iOSアプリなら回数券を買う入口も）を反映する
   function applyAiQuotaUi(account) {
-    var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+    var bonus = account.ticketCredits ? tr('（回数券の残り：{n}回）', { n: account.ticketCredits }) : '';
     $('#memoAiInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
     var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
     if (!voiceOk) {
@@ -8063,7 +8063,7 @@
     showScreen('screenshotImport');
     fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
-      var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+      var bonus = account.ticketCredits ? tr('（回数券の残り：{n}回）', { n: account.ticketCredits }) : '';
       $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
       if (account.memoRemainingThisPeriod <= 0 && !account.ticketCredits) renderTicketShop($('#ssTicketShop'));
     });
@@ -11440,22 +11440,14 @@
     if (!el) return;
     el.hidden = true;
     el.innerHTML = '';
-    // 調査用：iOSアプリでは、開いた瞬間から「どこまで進んだか」を小さく出す（買えるようになったら外す）
-    var onIos = isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios';
-    var trace = function (t) {
-      if (!onIos) return;
-      el.innerHTML = '<p class="hint ticket-shop-problem">' + escapeHtml(tr('回数券を確認中')) + '（' + escapeHtml(t) + '）</p>';
-      el.hidden = false;
-    };
+    // 途中で例外が出ても黙って隠さず、iOSアプリでは理由を出す（2026-10-07：例外で購入欄が出ないことがあった）
     try {
-      var plugins = Object.keys((window.Capacitor && window.Capacitor.Plugins) || {});
-      trace('start / plugins: ' + (plugins.filter(function (k) { return /purchase/i.test(k); }).join(',') || 'none'));
-      renderTicketShopInner(el, trace);
+      renderTicketShopInner(el);
     } catch (e) {
-      if (onIos) showTicketShopProblem(el, 'exception: ' + iapErrorText(e));
+      if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios') showTicketShopProblem(el, 'exception: ' + iapErrorText(e));
     }
   }
-  function renderTicketShopInner(el, trace) {
+  function renderTicketShopInner(el) {
     if (!iapAvailable() || !state.account) {
       // iOSアプリなのに買えないときだけ、どの条件で止まったかを出す（Web版には何も出さない）
       if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios') {
@@ -11471,20 +11463,18 @@
       })]);
     };
     var stage = 'login';
-    trace('login');
     withTimeout(iapLogIn(state.account.accountId), 'login').then(function (ok) {
       if (!ok) throw { message: iap.lastError || 'login failed' };
       stage = 'offerings';
-      trace('offerings');
       return withTimeout(iapLoadPackages(), 'offerings');
     }).then(function (list) {
-      if (!iapAvailable()) { trace('unavailable after offerings'); return; }
+      if (!iapAvailable()) return;
       if (!list.length) { iap.packages = null; showTicketShopProblem(el, 'offerings: 0 packages'); return; }
       el.innerHTML = '<div class="ticket-shop-title">' + escapeHtml(tr('回数券を買う')) + '</div>' +
         '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
         list.map(function (pkg, i) {
           return '<button type="button" class="btn ticket-buy" data-ticket-index="' + i + '">' +
-            escapeHtml(pkg.product.title || pkg.identifier) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
+            escapeHtml(ticketLabel(pkg)) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
         }).join('') + '<p class="hint ticket-shop-status" role="status"></p>';
       el.hidden = false;
       $all('.ticket-buy', el).forEach(function (btn) {
@@ -11497,6 +11487,12 @@
     });
   }
 
+  // ボタンの名前はアプリ側で決める（StoreKitが返す名前は、テスト環境だと英語のまま残ることがあった）
+  function ticketLabel(pkg) {
+    var id = (pkg.product && pkg.product.identifier) || pkg.identifier || '';
+    var m = id.match(/ticket(\d+)/);
+    return m ? tr('回数券 {n}回', { n: m[1] }) : (pkg.product.title || id);
+  }
   function buyTicket(pkg, el) {
     if (!pkg || iap.busy) return;
     var statusEl = $('.ticket-shop-status', el);
@@ -11541,7 +11537,7 @@
     var name = active && active.dataset.screen;
     if (name === 'voiceEntryForm' && state.account) applyAiQuotaUi(state.account);
     else if (name === 'screenshotImport' && state.account) {
-      var bonus = state.account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: state.account.ticketCredits }) : '';
+      var bonus = state.account.ticketCredits ? tr('（回数券の残り：{n}回）', { n: state.account.ticketCredits }) : '';
       $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: state.account.memoRemainingThisPeriod, max: state.account.memoMonthlyLimit }) + bonus;
       $('#ssTicketShop').hidden = true;
       $('#ssTicketShop').innerHTML = '';
@@ -11557,7 +11553,8 @@
     var subEl = $('#mpQuotaSub');
     var aiRow = $('#mpAiUsage');
     if (aiRow) aiRow.hidden = !(account && account.isAdmin === true); // 運営者だけ（サーバーが判定して返す）
-    if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: account.voiceRemainingThisPeriod }) : '';
+    // 買った回数券も使えるので、マイページの「あと◯回」には足して出す（2026-10-07 ひろやさんの指摘）
+    if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: (account.voiceRemainingThisPeriod || 0) + (account.ticketCredits || 0) }) : '';
     if (!account) {
       statusEl.innerHTML = '';
       msgEl.textContent = '';
@@ -11568,7 +11565,7 @@
     if (typeof account.memoRemainingThisPeriod === 'number') {
       lines.push('<div class="plan-usage">' + tr('メモ・スクショのAI整理：あと{n}回（月{limit}回まで）', { n: account.memoRemainingThisPeriod, limit: account.memoMonthlyLimit }) + '</div>');
     }
-    if (account.ticketCredits) lines.push('<div class="plan-usage">' + tr('おまけの回数：{n}回', { n: account.ticketCredits }) + '</div>');
+    if (account.ticketCredits) lines.push('<div class="plan-usage">' + tr('回数券の残り：{n}回', { n: account.ticketCredits }) + '</div>');
     var linesHtml = lines.join('');
     if (statusEl.innerHTML !== linesHtml) {
       statusEl.innerHTML = linesHtml;
