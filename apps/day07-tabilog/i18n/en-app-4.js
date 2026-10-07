@@ -208,4 +208,5 @@ I18N.addLang('en', {
   "AIの取り込みは電波があるときに使えます": "AI import works when you have a connection",
   "旅行をつくるには電波が必要です": "You need a connection to create a trip",
   "オフラインのため旅行を開けませんでした。電波があるときに一度開くと、次からオフラインでも見られます。": "You're offline, so this trip couldn't be opened. Open it once while online and you can view it offline next time.",
+  "値段は次に出るAppleの画面で確認してから買えます": "You'll see the price on Apple's screen before you pay",
 });

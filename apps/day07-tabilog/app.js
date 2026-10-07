@@ -11474,8 +11474,9 @@
         '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
         list.map(function (pkg, i) {
           return '<button type="button" class="btn ticket-buy" data-ticket-index="' + i + '">' +
-            escapeHtml(ticketLabel(pkg)) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
-        }).join('') + '<p class="hint ticket-shop-status" role="status"></p>';
+            escapeHtml(ticketLabel(pkg)) + '</button>';
+        }).join('') + '<p class="hint">' + escapeHtml(tr('値段は次に出るAppleの画面で確認してから買えます')) + '</p>' +
+        '<p class="hint ticket-shop-status" role="status"></p>';
       el.hidden = false;
       $all('.ticket-buy', el).forEach(function (btn) {
         btn.addEventListener('click', function () { buyTicket(list[Number(btn.getAttribute('data-ticket-index'))], el); });
