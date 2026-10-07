@@ -475,6 +475,10 @@ a:hover { text-decoration: underline; }
     width .45s cubic-bezier(.2, .9, .25, 1), height .45s cubic-bezier(.2, .9, .25, 1),
     border-radius .45s cubic-bezier(.2, .9, .25, 1), opacity .45s cubic-bezier(.2, .9, .25, 1);
 }
+.trip-open-clone-thumb {
+  position: absolute; background-color: var(--border-soft); background-size: cover; background-position: center;
+  transition: opacity .45s cubic-bezier(.2, .9, .25, 1);
+}
 .trip-open-clone-photo {
   background-color: var(--border-soft); background-size: cover; background-position: center;
 }
@@ -864,12 +868,8 @@ a:hover { text-decoration: underline; }
    行間は詰めすぎない程度に2px空ける。2026-09-29〜 */
 /* 場所の行の下の「旅行名（年）＋外す／戻す」チップ。淡い色のピル＋小さな文字ボタン。外した旅行は薄く・打ち消し線 */
 .visited-trip-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-.visited-trip-chip { display: inline-flex; align-items: center; max-width: 100%; padding: 0 2px 0 10px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: var(--fs-sm); }
+.visited-trip-chip { display: inline-flex; align-items: center; max-width: 100%; padding: 0 10px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); font-size: var(--fs-sm); }
 .visited-trip-chip .visited-trip-link { padding: 6px 0; overflow-wrap: anywhere; color: inherit; font-weight: 700; }
-.visited-trip-toggle { padding: 6px 8px; margin-left: 2px; border: none; background: none; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; flex-shrink: 0; cursor: pointer; }
-.visited-trip-toggle:disabled { opacity: .4; }
-.visited-trip-chip.is-excluded { opacity: .4; }
-.visited-trip-chip.is-excluded .visited-trip-link { text-decoration: line-through; font-weight: 400; }
 .visited-row.is-excluded .visited-row-name { color: var(--ink-muted); }
 .visited-row.flash { animation: visitedFlash 1.6s ease-out; }
 /* マイログから開いた記録を少し光らせる（app.jsのfocusTripRecord） */
@@ -1708,6 +1708,7 @@ body.viewer-open { overflow: hidden; }
 .tl-chip.is-excluded .tl-chip-name { text-decoration: line-through; }
 .tl-chip-toggle { flex: none; border: 0; background: none; padding: 0 0 0 2px; font: inherit; font-size: var(--fs-xs); color: var(--accent); cursor: pointer; }
 .tl-chip-toggle:disabled { opacity: .5; }
+.tl-places { margin-top: 4px; font-size: var(--fs-xs); line-height: 1.5; color: var(--ink-muted); overflow-wrap: anywhere; }
 /* 旅行の画面の「行った場所」（年表のチップと同じ見た目。app.jsのrenderTripPlaces） */
 .trip-places { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
 .trip-places-label { font-size: var(--fs-sm); color: var(--ink-muted); }

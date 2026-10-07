@@ -4565,6 +4565,23 @@
     if (img.complete) fin();
   }
 
+  // 年表・マイログのような小さいサムネイル（thumb）は、写真だけを単独で飛ばさず、白い枠の中に置いた
+  // 「サムネイルのコピー」を枠といっしょに動かしながらクロスフェードで消す（閉じるときは逆に現れる）。
+  // カバー写真は白い枠と同じ位置から、ホームのカードと同じく枠の上へ広がる（2026-10-07）。
+  function addThumbGhost(cloneBody, visual) {
+    if (!visual.thumb || !visual.photoRect) return null;
+    var g = document.createElement('div');
+    g.className = 'trip-open-clone-thumb';
+    g.style.left = (visual.photoRect.left - visual.bodyRect.left) + 'px';
+    g.style.top = (visual.photoRect.top - visual.bodyRect.top) + 'px';
+    g.style.width = visual.photoRect.width + 'px';
+    g.style.height = visual.photoRect.height + 'px';
+    g.style.borderRadius = visual.photoRadius;
+    g.style.backgroundImage = visual.photoUrl;
+    cloneBody.appendChild(g);
+    return g;
+  }
+
   // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
   // 読み込みを待たずにそのまま進める（読み込みが遅くても、演出は毎回同じ長さで終わる）。
   function openTripFromCard(cardEl, tripId, returnTo, source) {
@@ -4605,20 +4622,18 @@
     // 旅行にカバー写真があれば、白い枠と同じ位置から透明→不透明にしながら広げる（以前は文字だけが広がり、
     // 詳細画面に切り替わった瞬間に写真がいきなり出ていた。2026-10-07）
     var clonePhoto = null, photoFadesIn = false;
-    if (visual.hasPhoto) {
+    if (visual.hasPhoto && !visual.thumb) {
       clonePhoto = document.createElement('div');
       clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
       setCloneRect(clonePhoto, visual.photoRect);
       clonePhoto.style.borderRadius = visual.photoRadius;
       clonePhoto.style.backgroundImage = visual.photoUrl;
-      // 小さいサムネイルは白い枠の内側にあるので、広がり始めは枠より手前に置き、途中で奥へ回す
-      if (visual.thumb) clonePhoto.style.zIndex = '502';
-    } else if (coverUrl) {
+    } else if (coverUrl || visual.thumb) {
       clonePhoto = document.createElement('div');
       clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
       setCloneRect(clonePhoto, visual.bodyRect);
       clonePhoto.style.borderRadius = visual.bodyRadius;
-      clonePhoto.style.backgroundImage = "url('" + coverUrl + "')";
+      clonePhoto.style.backgroundImage = coverUrl ? "url('" + coverUrl + "')" : visual.photoUrl;
       clonePhoto.style.opacity = '0';
       photoFadesIn = true;
     }
@@ -4627,6 +4642,7 @@
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, visual.bodyRect);
     cloneBody.style.borderRadius = visual.bodyRadius;
+    var thumbGhost = addThumbGhost(cloneBody, visual);
     var titleText = (source && source.title) || (visual.titleEl ? visual.titleEl.textContent : '') || srcText.title;
     var dateText = (source && source.dates !== undefined) ? source.dates : (visual.dateEl ? visual.dateEl.textContent : srcText.dates);
     var textParts = addCloneText(visual.bodyRect, titleText, dateText, target.sheetRect.width);
@@ -4708,9 +4724,9 @@
       setCloneRect(cloneBody, target.sheetRect);
       setCloneRect(textParts.layer, target.sheetRect);
       cloneBody.style.borderRadius = '20px 20px 0 0';
+      if (thumbGhost) thumbGhost.style.opacity = '0';
       textParts.titleEl.style.transition = textParts.datesEl.style.transition = '';
       clearCloneTextFit(textParts);
-      if (clonePhoto && visual.thumb) setTimeout(function () { clonePhoto.style.zIndex = ''; }, TRIP_OPEN_ANIM_MS * 0.35);
     });
 
     setTimeout(function () { minDone = true; finishIfReady(); }, TRIP_OPEN_ANIM_MS);
@@ -4768,6 +4784,8 @@
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, start.sheetRect);
     cloneBody.style.borderRadius = '20px 20px 0 0';
+    var thumbGhost = cardVisual.thumb ? addThumbGhost(cloneBody, cardVisual) : null;
+    if (thumbGhost) thumbGhost.style.opacity = '0';
     var textParts = addCloneText(start.sheetRect, titleText, datesText, start.sheetRect.width);
 
     document.body.appendChild(backdrop);
@@ -4786,10 +4804,9 @@
       void cloneBody.offsetHeight;
       backdrop.classList.remove('show');
       if (clonePhoto) {
-        if (cardVisual.hasPhoto) {
+        if (cardVisual.hasPhoto && !cardVisual.thumb) {
           setCloneRect(clonePhoto, cardVisual.photoRect);
           clonePhoto.style.borderRadius = cardVisual.photoRadius;
-          if (cardVisual.thumb) setTimeout(function () { clonePhoto.style.zIndex = '502'; }, TRIP_OPEN_ANIM_MS * 0.35);
         } else {
           // 戻り先に写真が無いときは、開くときの逆に、白い枠の位置へ縮めながら消す
           setCloneRect(clonePhoto, cardVisual.bodyRect);
@@ -4800,6 +4817,7 @@
       setCloneRect(cloneBody, cardVisual.bodyRect);
       setCloneRect(textParts.layer, cardVisual.bodyRect);
       cloneBody.style.borderRadius = cardVisual.bodyRadius;
+      if (thumbGhost) thumbGhost.style.opacity = '1';
       fitCloneText(textParts, cardVisual.bodyRect, cardVisual.titleEl, cardVisual.dateEl);
     });
 
@@ -11448,24 +11466,16 @@
   // 「旅の年表」：アカウント参加者として参加した旅行を、年ごと（新しい年が先）・旅行は開始日が新しい順に並べる。
   // どの端末からログインしても同じ内容が見える。年の見出しには、その年の旅行回数と訪れた都道府県・国の数
   // （/mylogのplaces.tripPlacesから集計。外した場所は数えない）を添える。
-  // 年表の行にも場所のチップがあり、「外す」「戻す」は「行った場所」タブと同じ関数（setMyLogTripPlaceMode）で行う。
+  // 年表の行には行った場所を灰色の文字で添える（外す・戻すは旅行の画面だけ）。
   function tripActivePlaces(tp) {
     var keep = function (a) { return (a || []).filter(function (x) { return !x.excluded; }).map(function (x) { return x.name; }); };
     return { prefs: keep(tp && tp.prefectures), countries: keep(tp && tp.countries) };
   }
-  // 年表の行に出す、国・都道府県の小さなチップ（外す／戻す付き。外したものは薄く打ち消し線）
-  function tlPlaceChips(tripId, tp) {
-    var out = [];
-    var add = function (arr, kind) {
-      (arr || []).forEach(function (x) {
-        out.push('<span class="tl-chip' + (x.excluded ? ' is-excluded' : '') + '"><span class="tl-chip-name">' + escapeHtml(x.name) + '</span>' +
-          '<button type="button" class="tl-chip-toggle" data-trip="' + escapeHtml(tripId) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
-          '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? tr('戻す') : tr('外す')) + '</button></span>');
-      });
-    };
-    add(tp && tp.prefectures, 'prefecture');
-    add(tp && tp.countries, 'country');
-    return out.join('');
+  // 年表の行に出す、行った場所（国・都道府県）の灰色の1行。外した場所は出さない（外す・戻すは旅行の画面で行う）
+  function tlPlaceText(tp) {
+    var p = tripActivePlaces(tp);
+    var names = p.prefs.map(function (n) { return visitedPlaceLabel('prefecture', n); }).concat(p.countries.map(function (n) { return visitedPlaceLabel('country', n); }));
+    return names.join('・');
   }
   function tlDateRange(t) {
     var md = function (d) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? (+m[2]) + '/' + (+m[3]) : ''; };
@@ -11514,7 +11524,7 @@
       trips.forEach(function (t) {
         var tp = placesByTrip[t.id];
         var places = tripActivePlaces(tp);
-        var chips = tlPlaceChips(t.id, tp);
+        var placeText = tlPlaceText(tp);
         var row = document.createElement('div');
         row.className = 'tl-row';
         row.dataset.tripId = t.id;
@@ -11523,16 +11533,9 @@
         row.innerHTML = '<div class="tl-date">' + escapeHtml(tlDateRange(t)) + '</div><div class="tl-axis"></div>' +
           '<div class="tl-card"><div class="tl-main"><div class="tl-text"><div class="tl-title">' + escapeHtml(t.title) + '</div>' +
           ((t.companions || []).length ? '<div class="tl-sub">' + escapeHtml(tr('{names} と一緒', { names: t.companions.join('・') })) + '</div>' : '') +
-          (chips ? '<div class="tl-chips">' + chips + '</div>' : '') + '</div>' +
+          (placeText ? '<div class="tl-places">' + escapeHtml(placeText) + '</div>' : '') + '</div>' +
           (t.coverPhotoId ? '<div class="tl-thumb" style="background-image:url(\'' + escapeHtml(photoUrl(t.coverPhotoId)) + '\')"></div>' : '') + '</div></div>';
         var go = function () { openTripFromCard(row, t.id, 'timeline', timelineRowSource(t)); };
-        $all('.tl-chip-toggle', row).forEach(function (btn) {
-          btn.addEventListener('click', function (e) {
-            e.stopPropagation();
-            btn.disabled = true;
-            setMyLogTripPlaceMode(btn.dataset.trip, btn.dataset.kind, btn.dataset.name, btn.dataset.mode);
-          });
-        });
         row.addEventListener('click', function (e) {
           go();
         });
@@ -11825,13 +11828,13 @@
     return a2 ? Core.flagEmojiForAlpha2(a2) : '';
   }
 
-  // 場所の行の下に出す、旅行ごとのチップ「旅行名（年）＋外す／戻す」。
+  // 場所の行の下に出す、旅行ごとのリンク「旅行名（年）」。
   // 旅行名をタップするとその旅行を開く（行の選択とは別扱いにするためクリック側でstopPropagationする）。
-  // 外した旅行は薄く・打ち消し線にして残し、「戻す」で元に戻せる。新しい旅行が先、年が分からない旅行は最後。
+  // 外した旅行は出さない。新しい旅行が先、年が分からない旅行は最後。
   function visitedTripChipsHtml(kind, x) {
     var seen = {}, list = [];
     (x.sources || []).forEach(function (s, i) {
-      if (s.transit) return;
+      if (s.transit || s.excluded) return; // 外した旅行は出さない（外す・戻すは旅行の画面から）
       var id = s.tripId || '';
       if (seen[id]) return;
       seen[id] = 1;
@@ -11840,16 +11843,14 @@
         var y = String(d || '').slice(0, 4);
         if (/^\d{4}$/.test(y) && !ys[y]) { ys[y] = 1; years.push(y); }
       });
-      list.push({ i: i, id: id, excluded: !!s.excluded, y: years.length ? Math.max.apply(null, years.map(Number)) : -1,
+      list.push({ i: i, id: id, y: years.length ? Math.max.apply(null, years.map(Number)) : -1,
         label: Core.visitedTripLabel({ tripTitle: s.tripTitle || tr('（無題の旅）'), years: years }) });
     });
     if (!list.length) return tr('記録が見つかりませんでした');
     list.sort(function (a, b) { return a.y !== b.y ? b.y - a.y : a.i - b.i; });
     return '<div class="visited-trip-chips">' + list.map(function (t) {
-      return '<span class="visited-trip-chip' + (t.excluded ? ' is-excluded' : '') + '">' +
-        '<a href="#" class="visited-trip-link" data-trip-id="' + escapeHtml(t.id) + '">' + escapeHtml(t.label) + '</a>' +
-        '<button type="button" class="visited-trip-toggle" data-trip="' + escapeHtml(t.id) + '" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
-        '" data-mode="' + (t.excluded ? 'include' : 'exclude') + '">' + (t.excluded ? tr('戻す') : tr('外す')) + '</button></span>';
+      return '<span class="visited-trip-chip">' +
+        '<a href="#" class="visited-trip-link" data-trip-id="' + escapeHtml(t.id) + '">' + escapeHtml(t.label) + '</a></span>';
     }).join('') + '</div>';
   }
 
@@ -11860,13 +11861,6 @@
         e.stopPropagation();
         var id = a.dataset.tripId;
         if (id) openTripFromCard(a.closest('.visited-trip-chip') || a, id, 'visited', visitedChipSource(id, a.textContent));
-      });
-    });
-    $all('.visited-trip-toggle', root2).forEach(function (btn) {
-      btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        btn.disabled = true;
-        setMyLogTripPlaceMode(btn.dataset.trip, btn.dataset.kind, btn.dataset.name, btn.dataset.mode);
       });
     });
   }
