@@ -11374,7 +11374,13 @@
     var P = iapPlugin();
     iap.userId = accountId;
     iap.packages = null;
-    if (!iap.configurePromise) iap.configurePromise = P.configure({ apiKey: REVENUECAT_IOS_API_KEY });
+    // configureはPromiseを返さない（undefined）ことがあるので、必ずPromiseに包む。
+    // 包まずに.thenを呼んで例外になり、回数券の欄が何も出なかった（TestFlight 1.3.0、2026-10-07）
+    if (!iap.configurePromise) {
+      iap.configurePromise = Promise.resolve().then(function () {
+        return P.configure({ apiKey: REVENUECAT_IOS_API_KEY });
+      });
+    }
     iap.ready = iap.configurePromise.then(function () {
       return P.logIn({ appUserID: accountId });
     }).then(function () { iap.lastError = ''; return true; }).catch(function (e) {
