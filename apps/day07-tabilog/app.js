@@ -6455,7 +6455,7 @@
 
   // ---------- 状態 ----------
   var state = {
-    account: null,            // ログイン中アカウントの残り回数（{voiceRemainingThisPeriod, ticketCredits（おまけの回数）, ...}）
+    account: null,            // ログイン中アカウントの残り回数（{voiceRemainingThisPeriod, ticketCredits（回数券の残り）, ...}）
     trip: null,
     offlineView: false,       // 電波がなくて、前回開いたときの覚えを出しているとき（DAY31〜）
     blocks: [],               // みんなの予定（別行動の中の予定は含まない）
@@ -7630,7 +7630,7 @@
     return ok;
   }
 
-  // 音声入力は月の回数（と、おまけの回数）まで使える（docs/adr/0004。有料プランの販売は停止中）。
+  // 音声入力は月の回数（と、回数券の残り）まで使える（docs/adr/0004。有料プランの販売は停止中）。
   // 使い切ったときは、録音の代わりに案内だけを出す（購入への導線は出さない）。
   // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
   // 旅行の日程全体に対してAIが各予定の日も判定する（state.voiceEntryMultiDayで保持し、
@@ -7689,7 +7689,7 @@
 
   // 音声・メモの画面に、残り回数と、使い切ったときの案内（iOSアプリなら回数券を買う入口も）を反映する
   function applyAiQuotaUi(account) {
-    var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+    var bonus = account.ticketCredits ? tr('（回数券：あと{n}回）', { n: account.ticketCredits }) : '';
     $('#memoAiInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
     var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
     if (!voiceOk) {
@@ -8063,7 +8063,7 @@
     showScreen('screenshotImport');
     fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
-      var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+      var bonus = account.ticketCredits ? tr('（回数券：あと{n}回）', { n: account.ticketCredits }) : '';
       $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
       if (account.memoRemainingThisPeriod <= 0 && !account.ticketCredits) renderTicketShop($('#ssTicketShop'));
     });
@@ -11388,9 +11388,9 @@
     var P = iapPlugin();
     iap.userId = accountId;
     iap.packages = null;
-    if (!iap.configurePromise) iap.configurePromise = P.configure({ apiKey: REVENUECAT_IOS_API_KEY });
+    if (!iap.configurePromise) iap.configurePromise = iapCall('configure', { apiKey: REVENUECAT_IOS_API_KEY });
     iap.ready = iap.configurePromise.then(function () {
-      return P.logIn({ appUserID: accountId });
+      return iapCall('logIn', { appUserID: accountId });
     }).then(function () { iap.lastError = ''; return true; }).catch(function (e) {
       iap.lastError = 'login: ' + iapErrorText(e);
       iap.userId = ''; iap.ready = null; iap.configurePromise = null;
@@ -11402,7 +11402,7 @@
     var wasIn = !!iap.userId;
     iap.userId = ''; iap.ready = null; iap.packages = null;
     var P = iapPlugin();
-    if (wasIn && P) P.logOut().catch(function () {});
+    if (wasIn && P) iapCall('logOut').catch(function () {});
   }
   // 購入画面を出せなかった理由（TestFlightで原因を調べるため、画面に小さく出す）
   function iapErrorText(e) {
@@ -11418,9 +11418,16 @@
       '（' + escapeHtml(reason) + '）</p>';
     el.hidden = false;
   }
+  // RevenueCatの部品の呼び出し。configureのようにPromiseを返さない（返事を待たない）ものもあるので、
+  // 戻り値が何であっても必ずPromiseにそろえる（2026-10-07：configure().then が無くて購入欄が出なかった）
+  function iapCall(name, args) {
+    return new Promise(function (resolve, reject) {
+      try { resolve(iapPlugin()[name](args)); } catch (e) { reject(e); }
+    });
+  }
   function iapLoadPackages() {
     if (iap.packages) return Promise.resolve(iap.packages);
-    return iapPlugin().getOfferings().then(function (o) {
+    return iapCall('getOfferings').then(function (o) {
       var list = (o && o.current && o.current.availablePackages) || [];
       iap.packages = list.slice().sort(function (a, b) { return (a.product.price || 0) - (b.product.price || 0); });
       return iap.packages;
@@ -11433,6 +11440,14 @@
     if (!el) return;
     el.hidden = true;
     el.innerHTML = '';
+    // 途中で例外が出ても黙って隠さず、iOSアプリでは理由を出す（2026-10-07：例外で購入欄が出ないことがあった）
+    try {
+      renderTicketShopInner(el);
+    } catch (e) {
+      if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios') showTicketShopProblem(el, 'exception: ' + iapErrorText(e));
+    }
+  }
+  function renderTicketShopInner(el) {
     if (!iapAvailable() || !state.account) {
       // iOSアプリなのに買えないときだけ、どの条件で止まったかを出す（Web版には何も出さない）
       if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios') {
@@ -11459,20 +11474,25 @@
         '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
         list.map(function (pkg, i) {
           return '<button type="button" class="btn ticket-buy" data-ticket-index="' + i + '">' +
-            escapeHtml(pkg.product.title || pkg.identifier) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
+            escapeHtml(ticketLabel(pkg)) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
         }).join('') + '<p class="hint ticket-shop-status" role="status"></p>';
       el.hidden = false;
       $all('.ticket-buy', el).forEach(function (btn) {
         btn.addEventListener('click', function () { buyTicket(list[Number(btn.getAttribute('data-ticket-index'))], el); });
       });
     }).catch(function (e) {
-      // 商品が取れなければ、買うボタンは出さずに理由だけ小さく出す
-      if (!iapAvailable()) return;
+      // 商品が取れなければ、買うボタンは出さずに理由だけ小さく出す（ここに来るのはiOSアプリだけ）
       var text = iapErrorText(e);
       showTicketShopProblem(el, text.indexOf(stage + ':') === 0 ? text : stage + ': ' + text);
     });
   }
 
+  // ボタンの名前はアプリ側で決める（StoreKitが返す名前は、テスト環境だと英語のまま残ることがあった）
+  function ticketLabel(pkg) {
+    var id = (pkg.product && pkg.product.identifier) || pkg.identifier || '';
+    var m = id.match(/ticket(\d+)/);
+    return m ? tr('回数券 {n}回', { n: m[1] }) : (pkg.product.title || id);
+  }
   function buyTicket(pkg, el) {
     if (!pkg || iap.busy) return;
     var statusEl = $('.ticket-shop-status', el);
@@ -11481,7 +11501,7 @@
     iap.busy = true;
     $all('.ticket-buy', el).forEach(function (b) { b.disabled = true; });
     setStatus(tr('購入の手続き中です…'));
-    iapPlugin().purchasePackage({ aPackage: pkg }).then(function () {
+    iapCall('purchasePackage', { aPackage: pkg }).then(function () {
       setStatus(tr('購入ありがとうございます。回数を反映しています…'));
       // 回数を足すのはRevenueCatからサーバーへの通知（非同期）なので、増えるまで少し待って取り直す
       var tries = 0;
@@ -11517,7 +11537,7 @@
     var name = active && active.dataset.screen;
     if (name === 'voiceEntryForm' && state.account) applyAiQuotaUi(state.account);
     else if (name === 'screenshotImport' && state.account) {
-      var bonus = state.account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: state.account.ticketCredits }) : '';
+      var bonus = state.account.ticketCredits ? tr('（回数券：あと{n}回）', { n: state.account.ticketCredits }) : '';
       $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: state.account.memoRemainingThisPeriod, max: state.account.memoMonthlyLimit }) + bonus;
       $('#ssTicketShop').hidden = true;
       $('#ssTicketShop').innerHTML = '';
@@ -11533,7 +11553,8 @@
     var subEl = $('#mpQuotaSub');
     var aiRow = $('#mpAiUsage');
     if (aiRow) aiRow.hidden = !(account && account.isAdmin === true); // 運営者だけ（サーバーが判定して返す）
-    if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: account.voiceRemainingThisPeriod }) : '';
+    // 買った回数券も使えるので、マイページの「あと◯回」には足して出す（2026-10-07 ひろやさんの指摘）
+    if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: (account.voiceRemainingThisPeriod || 0) + (account.ticketCredits || 0) }) : '';
     if (!account) {
       statusEl.innerHTML = '';
       msgEl.textContent = '';
@@ -11544,7 +11565,7 @@
     if (typeof account.memoRemainingThisPeriod === 'number') {
       lines.push('<div class="plan-usage">' + tr('メモ・スクショのAI整理：あと{n}回（月{limit}回まで）', { n: account.memoRemainingThisPeriod, limit: account.memoMonthlyLimit }) + '</div>');
     }
-    if (account.ticketCredits) lines.push('<div class="plan-usage">' + tr('おまけの回数：{n}回', { n: account.ticketCredits }) + '</div>');
+    if (account.ticketCredits) lines.push('<div class="plan-usage">' + tr('回数券の残り：{n}回', { n: account.ticketCredits }) + '</div>');
     var linesHtml = lines.join('');
     if (statusEl.innerHTML !== linesHtml) {
       statusEl.innerHTML = linesHtml;
@@ -11945,7 +11966,7 @@
       [tr('アカウント数'), a.count],
       [tr('今月の音声入力の使用回数（合計）'), a.voiceUsesThisPeriod],
       [tr('今月のメモ・スクショの使用回数（合計）'), a.memoUsesThisPeriod],
-      [tr('おまけの回数の合計'), a.ticketCredits],
+      [tr('回数券の残りの合計'), a.ticketCredits],
       [tr('今月AIを使ったアカウント'), a.usedAiThisMonth]
     ].map(function (r) { return '<tr><td>' + escapeHtml(r[0]) + '</td><td>' + escapeHtml(String(r[1] || 0)) + '</td></tr>'; }).join('') + '</tbody></table>';
     html += '<div class="aiu-h">' + escapeHtml(tr('日別（直近31日）')) + '</div>';
@@ -12014,7 +12035,7 @@
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
-  // アカウント本体（名前・おまけの回数・参加した旅行への紐付け）だけを消す。
+  // アカウント本体（名前・回数券の残り・参加した旅行への紐付け）だけを消す。
   // メールアドレスは、削除→再登録を繰り返した無料枠の不正な繰り返し取得を防ぐため残す（worker側の実装を参照）。
   // この端末に残しているデータ（旅行一覧・非表示にした旅行・AI送信の同意など、tabilog:で始まるキー）も
   // 一緒に消す。消さないと削除後のホームに同じ旅行が並んだままになり、「削除できていない」ように見える

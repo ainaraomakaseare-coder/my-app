@@ -240,7 +240,7 @@ I18N.addLang('en', {
   "選ぶ": "Choose",
   "年ごとに旅が並びます。場所は旅の記録から入ります": "Trips are listed by year. Places come from your trip records",
   "アカウントを削除しますか？": "Delete your account?",
-  "名前・おまけの回数など、アカウントの情報が消えます": "Your name, bonus credits and other account info will be deleted",
+  "名前・回数券の残りなど、アカウントの情報が消えます": "Your name, ticket balance and other account info will be deleted",
   "この端末の旅行一覧も消えます": "The trip list on this device will also be deleted",
   "一緒に行った人と共有している旅行の記録は残ります": "Trip records shared with your companions will remain",
   "同じメールで登録し直しても、音声入力の利用回数は戻りません": "Re-registering with the same email won't restore your voice input uses",
