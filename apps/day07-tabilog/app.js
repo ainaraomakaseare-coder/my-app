@@ -11620,13 +11620,20 @@
       return;
     }
     el.innerHTML = '';
+    // 評価の高い順で1〜3位に金・銀・銅のメダルを付ける（並び順に関係なく点数で決める。同点は同じ順位。2026-10-07）
+    var scores = items.map(function (x) { return Number(x.score) || 0; });
+    function rankOf(score) { var n = 1; scores.forEach(function (v) { if (v > score) n++; }); return n; }
+    var MEDALS = { 1: 'gold', 2: 'silver', 3: 'bronze' };
     items.forEach(function (it) {
       var row = document.createElement('button');
       row.className = 'mylog-row';
       row._tripId = it.tripId;
+      var rank = (Number(it.score) || 0) > 0 ? rankOf(Number(it.score) || 0) : 0;
+      if (MEDALS[rank]) row.className += ' mylog-rank-' + MEDALS[rank];
+      var medal = MEDALS[rank] ? '<span class="mylog-medal mylog-medal-' + MEDALS[rank] + '" aria-label="' + escapeHtml(tr('{n}位', { n: rank })) + '">' + rank + '</span>' : '';
       var photoHtml = it.photoId ? '<div class="mylog-photo" style="background-image:url(\'' + escapeHtml(photoUrl(it.photoId)) + '\')"></div>' : '<div class="mylog-photo empty"></div>';
       row.innerHTML =
-        photoHtml +
+        '<div class="mylog-photo-wrap">' + photoHtml + medal + '</div>' +
         '<div class="mylog-info">' +
         '<div class="mylog-label">' + escapeHtml(it.label || Core.categoryLabel(it.category)) + '</div>' +
         '<div class="mylog-trip">' + escapeHtml(it.tripTitle) + (it.date ? '・' + escapeHtml(Core.formatDateJp(it.date)) : '') + '</div>' +
