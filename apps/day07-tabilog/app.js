@@ -11419,6 +11419,22 @@
     if (!el) return;
     el.hidden = true;
     el.innerHTML = '';
+    // 調査用：iOSアプリでは、開いた瞬間から「どこまで進んだか」を小さく出す（買えるようになったら外す）
+    var onIos = isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios';
+    var trace = function (t) {
+      if (!onIos) return;
+      el.innerHTML = '<p class="hint ticket-shop-problem">' + escapeHtml(tr('回数券を確認中')) + '（' + escapeHtml(t) + '）</p>';
+      el.hidden = false;
+    };
+    try {
+      var plugins = Object.keys((window.Capacitor && window.Capacitor.Plugins) || {});
+      trace('start / plugins: ' + (plugins.filter(function (k) { return /purchase/i.test(k); }).join(',') || 'none'));
+      renderTicketShopInner(el, trace);
+    } catch (e) {
+      if (onIos) showTicketShopProblem(el, 'exception: ' + iapErrorText(e));
+    }
+  }
+  function renderTicketShopInner(el, trace) {
     if (!iapAvailable() || !state.account) {
       // iOSアプリなのに買えないときだけ、どの条件で止まったかを出す（Web版には何も出さない）
       if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios') {
@@ -11434,12 +11450,14 @@
       })]);
     };
     var stage = 'login';
+    trace('login');
     withTimeout(iapLogIn(state.account.accountId), 'login').then(function (ok) {
       if (!ok) throw { message: iap.lastError || 'login failed' };
       stage = 'offerings';
+      trace('offerings');
       return withTimeout(iapLoadPackages(), 'offerings');
     }).then(function (list) {
-      if (!iapAvailable()) return;
+      if (!iapAvailable()) { trace('unavailable after offerings'); return; }
       if (!list.length) { iap.packages = null; showTicketShopProblem(el, 'offerings: 0 packages'); return; }
       el.innerHTML = '<div class="ticket-shop-title">' + escapeHtml(tr('回数券を買う')) + '</div>' +
         '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
@@ -11452,8 +11470,7 @@
         btn.addEventListener('click', function () { buyTicket(list[Number(btn.getAttribute('data-ticket-index'))], el); });
       });
     }).catch(function (e) {
-      // 商品が取れなければ、買うボタンは出さずに理由だけ小さく出す
-      if (!iapAvailable()) return;
+      // 商品が取れなければ、買うボタンは出さずに理由だけ小さく出す（ここに来るのはiOSアプリだけ）
       var text = iapErrorText(e);
       showTicketShopProblem(el, text.indexOf(stage + ':') === 0 ? text : stage + ': ' + text);
     });
