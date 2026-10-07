@@ -11472,6 +11472,7 @@
       if (!list.length) { iap.packages = null; showTicketShopProblem(el, 'offerings: 0 packages'); return; }
       el.innerHTML = '<div class="ticket-shop-title">' + escapeHtml(tr('回数券を買う')) + '</div>' +
         '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
+        '<p class="hint ticket-prices">' + list.map(function (pkg) { return escapeHtml(ticketPriceLine(pkg)); }).join('<br>') + '</p>' +
         list.map(function (pkg, i) {
           return '<button type="button" class="btn ticket-buy" data-ticket-index="' + i + '">' +
             escapeHtml(ticketLabel(pkg)) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
@@ -11492,6 +11493,20 @@
     var id = (pkg.product && pkg.product.identifier) || pkg.identifier || '';
     var m = id.match(/ticket(\d+)/);
     return m ? tr('回数券 {n}回', { n: m[1] }) : (pkg.product.title || id);
+  }
+  // 買う前に値段が分かるよう「回数券 10回：¥500（1回あたり¥50）」の行を作る。
+  // 値段はStoreKitが返すものだけを使う（国ごとの通貨で出る。アプリで「500円」と決め打ちしない）
+  function ticketPriceLine(pkg) {
+    var p = pkg.product || {};
+    var line = tr('{label}：{price}', { label: ticketLabel(pkg), price: p.priceString || '' });
+    var m = ((p.identifier || pkg.identifier || '').match(/ticket(\d+)/));
+    if (m && typeof p.price === 'number' && p.currencyCode) {
+      try {
+        var per = new Intl.NumberFormat(undefined, { style: 'currency', currency: p.currencyCode }).format(p.price / Number(m[1]));
+        line += tr('（1回あたり{price}）', { price: per });
+      } catch (e) { /* 通貨の書式が作れなければ、1回あたりは出さない */ }
+    }
+    return line;
   }
   function buyTicket(pkg, el) {
     if (!pkg || iap.busy) return;
