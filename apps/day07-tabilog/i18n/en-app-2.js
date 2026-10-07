@@ -120,7 +120,7 @@ I18N.addLang('en', {
   "複数日ぶんを話したりメモを貼ると、予定の候補を作ります（保存前に直せます）": "Speak or paste notes for several days to get plan suggestions (editable before saving)",
   "{target}します（{range}）。日付・時刻は別行動の時間帯の中だけ使えます。": "{target} ({range}). Dates and times can only be within the period of the separate plans.",
   "AIでの整理と音声入力は、ログインすると使えます（それぞれ月3回まで無料）。": "Log in to use AI organizing and voice input (3 free uses a month each).",
-  "（おまけの回数：{n}回）": "(Bonus uses: {n})",
+  "（回数券：あと{n}回）": "(Tickets: {n} left)",
   "メモ・スクショのAI整理：あと{n}回（月{max}回まで）": "AI note/screenshot organizing: {n} left (up to {max} a month)",
   "今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。": "You've used up this month's uses. You can use it again on the 1st of next month. Note import still works as is.",
   "ログインすると、音声入力やAIでの整理が使えます": "Log in to use voice input and AI organizing",
