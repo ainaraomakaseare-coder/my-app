@@ -1704,6 +1704,10 @@ body.viewer-open { overflow: hidden; }
 .tl-chip.is-excluded .tl-chip-name { text-decoration: line-through; }
 .tl-chip-toggle { flex: none; border: 0; background: none; padding: 0 0 0 2px; font: inherit; font-size: var(--fs-xs); color: var(--accent); cursor: pointer; }
 .tl-chip-toggle:disabled { opacity: .5; }
+/* 旅行の画面の「行った場所」（年表のチップと同じ見た目。app.jsのrenderTripPlaces） */
+.trip-places { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.trip-places-label { font-size: var(--fs-sm); color: var(--ink-muted); }
+.trip-places .tl-chips { margin-top: 2px; }
 .tl-thumb { flex: none; width: 52px; height: 52px; border-radius: 12px; background-color: var(--border-soft); background-size: cover; background-position: center; }
 
 /* 言語を選ぶシート：大きく押しやすい行＋現在の言語にチェック */

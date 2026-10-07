@@ -6107,6 +6107,7 @@
       renderTripDetail();
       loadSocial();
       loadTripZones();
+      loadTripPlacesForDetail();
       maybeAutoTripTutorial();
       if (focus) focusTripRecord(focus);
       if (onScreenReady) onScreenReady();
@@ -11233,7 +11234,52 @@
   function refreshTripPlaceViews() {
     var active = $('.screen.active');
     if (active && active.dataset.screen === 'visited') renderVisitedKeepScroll();
+    else if (active && active.dataset.screen === 'tripDetail') renderTripPlaces();
     else renderMyLogTrips(true);
+  }
+
+  // 旅行の画面の「行った場所」：この旅行で行った国・都道府県を、外す／戻す付きのチップで並べる
+  // （行った場所・年表と同じsetMyLogTripPlaceModeを使う。2026-10-07〜）。集計は/mylogのplaces.tripPlacesで、
+  // 自分が参加した旅行の分しか無いため、参加していない旅行・ログインしていないときは出さない。
+  function renderTripPlaces() {
+    var el = $('#tripPlaces');
+    if (!el) return;
+    var trip = state.trip;
+    var tp = null;
+    if (trip && loadCurrentUser()) {
+      ((state.myLogPlaces && state.myLogPlaces.tripPlaces) || []).some(function (t) { if (t.tripId === trip.id) { tp = t; return true; } return false; });
+    }
+    var chips = [];
+    var add = function (arr, kind) {
+      (arr || []).forEach(function (x) {
+        var flag = kind === 'country' ? visitedFlagForName(x.name) : '';
+        chips.push('<span class="tl-chip' + (x.excluded ? ' is-excluded' : '') + '"><span class="tl-chip-name">' +
+          (flag ? flag + ' ' : '') + escapeHtml(visitedPlaceLabel(kind, x.name)) + '</span>' +
+          '<button type="button" class="tl-chip-toggle" data-kind="' + kind + '" data-name="' + escapeHtml(x.name) +
+          '" data-mode="' + (x.excluded ? 'include' : 'exclude') + '">' + (x.excluded ? tr('戻す') : tr('外す')) + '</button></span>');
+      });
+    };
+    if (tp) { add(tp.prefectures, 'prefecture'); add(tp.countries, 'country'); }
+    el.hidden = !chips.length;
+    el.innerHTML = chips.length ? '<span class="trip-places-label">' + escapeHtml(tr('行った場所')) + '</span><div class="tl-chips">' + chips.join('') + '</div>' : '';
+    $all('.tl-chip-toggle', el).forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        btn.disabled = true;
+        setMyLogTripPlaceMode(trip.id, btn.dataset.kind, btn.dataset.name, btn.dataset.mode);
+      });
+    });
+  }
+  // 旅行を開いたとき、覚えている集計ですぐ出し、裏で/mylogを取り直して出し直す（参加しているときだけ）
+  function loadTripPlacesForDetail() {
+    renderTripPlaces();
+    var user = loadCurrentUser();
+    var tripId = state.trip && state.trip.id;
+    if (!user || !user.accountId || !(state.members || []).some(function (m) { return m.accountId === user.accountId; })) return;
+    fetchMyLog(user).then(function (r) {
+      if (r.discarded) return;
+      applyMyLogData(r.data);
+      if (state.trip && state.trip.id === tripId) renderTripPlaces();
+    }).catch(function () {});
   }
   function setMyLogTripPlaceMode(tripId, kind, name, mode) {
     var user = loadCurrentUser();
