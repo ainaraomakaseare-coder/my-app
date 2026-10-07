@@ -4539,7 +4539,7 @@
   function sigOf(x) { try { return JSON.stringify(x); } catch (e) { return String(Math.random()); } }
 
   function revealCardsOnScroll(cards) {
-    if (!cards || !cards.length) return;
+    if (!cards || !cards.length || suppressCardReveal) return;
     if (prefersReducedMotion() || typeof IntersectionObserver !== 'function') return;
     cards.forEach(function (c) { c.classList.add('reveal-init'); });
     var io = new IntersectionObserver(function (entries) {
@@ -4634,6 +4634,10 @@
         frameEl: photoEl ? root.querySelector('.trip-card-info') : root,
         titleEl: root.querySelector('.trip-card-title'), dateEl: root.querySelector('.trip-card-date')
       };
+    },
+    // 戻るまでの間に一覧が作り直されたとき（旅行を開いて参加者などが変わったとき）は、同じ旅行のカードを探し直す
+    refind: function (tripId) {
+      return $all('#tripList .trip-card').filter(function (c) { return c.dataset.tripId === tripId; })[0] || null;
     }
   };
   // 角丸を、その矩形の短い辺の半分までに抑える（行った場所のチップのような999pxの丸い端のまま広げると、
@@ -4958,6 +4962,7 @@
   // 古いカードは画面から外れる（document.body.containsが false になる）ので、そのときは
   // 素直に今までどおりの切り替えにする。doNavigateは実際の画面遷移（pushState・showScreen等）そのもの。
   var swipeBackInProgress = false;
+  var suppressCardReveal = false;
   function maybeAnimateTripCardClose(doNavigate) {
     var info = pendingCardOpenAnim;
     pendingCardOpenAnim = null;
@@ -4978,11 +4983,13 @@
     var titleText = detailTitleEl ? detailTitleEl.textContent : '';
     var datesText = detailDatesEl ? detailDatesEl.textContent : '';
     var leavingScreen = $('.screen.active'); // 旅の詳細（このあとdoNavigate()でホーム等に切り替わる）
-    var leavingScrollY = window.scrollY;
-    doNavigate(); // 実際の画面切り替え（pushState・showScreen・renderHome等）
+    // 戻る演出の間に一覧が作り直されても、カードを「下からふわっと出す」演出で一度消さない
+    // （消えていると、戻ってくるカード1枚だけが見えてほかのカードが無い瞬間ができる。2026-10-07）
+    suppressCardReveal = true;
+    try { doNavigate(); } finally { suppressCardReveal = false; } // 実際の画面切り替え（pushState・showScreen・renderHome等）
     // 戻り先の元の要素は、戻り先の画面が表示されてからでないと位置を測れない（それまでdisplay:none）。
     // 一覧が作り直されて元の要素が無くなっていたら、同じ旅行の要素を探し直す。
-    var srcEl = document.body.contains(info.cardEl) ? info.cardEl : (info.source && info.source.refind ? info.source.refind() : null);
+    var srcEl = document.body.contains(info.cardEl) ? info.cardEl : (info.source && info.source.refind ? info.source.refind(info.tripId) : null);
     var cardVisual = srcEl ? readTripCardVisual(srcEl, info.source) : null;
     if (!cardVisual || !cardVisual.bodyRect.width || !cardVisual.bodyRect.height) return;
 
@@ -5015,8 +5022,11 @@
     document.body.appendChild(cloneBody);
     document.body.appendChild(textParts.layer);
 
-    var enteringScreen = hideEnteringScreen($('.screen.active'));
-    freezeLeavingScreen(leavingScreen, leavingScrollY);
+    // 戻り先（ホーム／一覧）は最初から本物を見せておき、ベタ塗り・暗幕が消えるにつれて一覧全体が
+    // 見えてくるようにする。前は演出が終わるまで一覧を隠していたため、「←」で戻るとカード1枚だけが
+    // 浮かんで見え、ほかのカードが見えないまま戻る違和感があった（2026-10-07）。抜ける詳細画面は
+    // doNavigate()で非表示になっていて、最初の絵はベタ塗り＋クローンが受け持つので、固定表示は不要。
+    var enteringScreen = null;
     // 戻り先のカードは、クローンが降り立つまで隠しておく（先に本物が見えていると二重に見える）
     var srcVisibility = srcEl.style.visibility;
     srcEl.style.visibility = 'hidden';
@@ -5024,6 +5034,9 @@
     requestAnimationFrame(function () {
       void cloneBody.offsetHeight;
       backdrop.classList.remove('show');
+      // ベタ塗りは前半で消して、ぼかした一覧をすぐ見せる（開くときの逆）
+      bgFade.style.transition = 'opacity .225s ease';
+      bgFade.classList.remove('show');
       if (clonePhoto) {
         if (cardVisual.hasPhoto && !cardVisual.thumb) {
           setCloneRect(clonePhoto, cardVisual.photoRect);
@@ -6616,6 +6629,7 @@
         var parts = tripCardParts(t);
         card.className = parts.className;
         card.innerHTML = parts.html;
+        card.dataset.tripId = t.id;
         card.addEventListener('click', function () { openTripFromCard(card, t.id, undefined, HOME_CARD_SOURCE); });
         el.appendChild(card);
         revealCards.push(card);
