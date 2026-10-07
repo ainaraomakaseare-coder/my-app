@@ -4401,7 +4401,7 @@
   // カードの現在の見た目（写真の有無・角丸・写真のURL、写真部分と白い本体部分それぞれの矩形）を
   // 読み取る。ホーム画面の大きい写真カード（.trip-card.has-photo）だけ「写真」を持ち、マイログの
   // 小さいサムネイル一覧カードは常に「写真なし」扱い（白いカードが広がるだけの演出になる）。
-  // どの入口（ホームのカード・年表の行・行った場所のチップ・マイログの行）から開いても同じ演出にするため、
+  // どの入口（ホームのカード・年表の行・行った場所のチップ）から開いても同じ演出にするため、
   // 「元の要素のどこが写真・白い枠・タイトル・日程か」をsource.pick(root)で教えてもらう。
   // 省略時はホームの大きい写真カード（.trip-card.has-photo）。サムネイル（thumb:true）は小さい写真が
   // 枠の中にあるタイプ（年表・マイログ）で、写真クローンはそのサムネイルから広がる。
@@ -4415,6 +4415,15 @@
       };
     }
   };
+  // 角丸を、その矩形の短い辺の半分までに抑える（行った場所のチップのような999pxの丸い端のまま広げると、
+  // 途中の写真・白い枠が丸い塊のように見えた。2026-10-07）
+  function clampRadius(radius, rect) {
+    var max = rect ? Math.min(rect.width, rect.height) / 2 : 0;
+    return String(radius || '0').split(/\s+/).map(function (v) {
+      var n = parseFloat(v);
+      return isNaN(n) ? v : Math.min(n, max) + 'px';
+    }).join(' ');
+  }
   function readTripCardVisual(cardEl, source) {
     var p = (source || HOME_CARD_SOURCE).pick(cardEl) || {};
     var photoEl = p.photoEl || null;
@@ -4426,8 +4435,8 @@
       photoRadius = cardRadius + 'px ' + cardRadius + 'px 0 0';
       bodyRadius = '0 0 ' + cardRadius + 'px ' + cardRadius + 'px';
     } else {
-      if (photoEl) photoRadius = window.getComputedStyle(photoEl).borderRadius || '0';
-      bodyRadius = window.getComputedStyle(frameEl).borderRadius || (cardRadius + 'px');
+      if (photoEl) photoRadius = clampRadius(window.getComputedStyle(photoEl).borderRadius || '0', photoEl.getBoundingClientRect());
+      bodyRadius = clampRadius(window.getComputedStyle(frameEl).borderRadius || (cardRadius + 'px'), frameEl.getBoundingClientRect());
     }
     return {
       hasPhoto: !!photoEl,
@@ -4487,11 +4496,16 @@
     screenEl.style.transition = '';
   }
 
-  // 白本体クローンの中に、タイトル・日程を重ねる。文字は常に「詳細画面の最終サイズ・最終位置」で
+  // 白本体クローンに重ねる、タイトル・日程だけの透明な層（白い枠と同じ矩形・同じ時間・同じイージングで
+  // 動かすので、枠と文字は1つの塊として動く）。写真クローンより手前に置くため、白い枠とは別の要素にする
+  // （年表のサムネイルのように、広がり始めは写真が白い枠より手前にあると、枠の中の文字が写真に隠れて
+  // 途中で急に出てきたように見えた。2026-10-07）。文字は常に「詳細画面の最終サイズ・最終位置」で
   // 組んでおき（折り返しが途中で変わらない）、元の要素の位置・大きさへはtransform（移動＋拡大縮小）で
-  // 合わせる。白い枠と同じ要素の中で同じ時間・同じイージングで動くので、枠と文字は1つの塊として
-  // 動く（別々にフェードしない）。textWidthは最終のシートの幅。
-  function addCloneText(bodyClone, titleText, dateText, textWidth) {
+  // 合わせる。textWidthは最終のシートの幅。
+  function addCloneText(rect, titleText, dateText, textWidth) {
+    var layer = document.createElement('div');
+    layer.className = 'trip-open-clone trip-open-clone-textlayer';
+    setCloneRect(layer, rect);
     var textEl = document.createElement('div');
     textEl.className = 'trip-open-clone-text';
     if (textWidth) textEl.style.width = textWidth + 'px';
@@ -4503,8 +4517,8 @@
     datesEl.textContent = dateText || '';
     textEl.appendChild(titleEl);
     textEl.appendChild(datesEl);
-    bodyClone.appendChild(textEl);
-    return { titleEl: titleEl, datesEl: datesEl };
+    layer.appendChild(textEl);
+    return { layer: layer, titleEl: titleEl, datesEl: datesEl };
   }
   // 文字クローンを、元の要素（カードのタイトル・日程）の位置・大きさに合わせるtransformを付ける
   // （bodyRect＝白い枠クローンがその時点で置かれている矩形）。元の要素が無ければ、タイトルの位置を借りて
@@ -4536,7 +4550,19 @@
   function tripTextById(id) {
     var found = null;
     homeAllTrips().concat(state.myLogTrips || []).some(function (t) { if (t.id === id) { found = t; return true; } return false; });
-    return found ? { title: found.title || '', dates: tripDateText(found) } : { title: '', dates: '' };
+    return found ? { title: found.title || '', dates: tripDateText(found), coverPhotoId: found.coverPhotoId || '' } : { title: '', dates: '', coverPhotoId: '' };
+  }
+  // 詳細画面のカバー写真を先に読み込んでおく（読み終わる前に詳細画面を見せると、文字だけが先に出て、
+  // あとから写真がぱっと出たように見えた。2026-10-07）。読み終わったら（失敗しても）doneを呼ぶ。
+  function preloadImage(url, done) {
+    if (!url) { done(); return; }
+    var img = new Image();
+    var called = false;
+    function fin() { if (called) return; called = true; done(); }
+    img.onload = fin;
+    img.onerror = fin;
+    img.src = url;
+    if (img.complete) fin();
   }
 
   // カードをタップした瞬間：カードの位置からアニメーションを始め、実際のopenTrip自体はデータの
@@ -4573,8 +4599,12 @@
     var bgFade = document.createElement('div');
     bgFade.className = 'trip-open-bg-fade';
 
-    // 写真クローン：カードに写真があるときだけ作る（無ければ白本体クローンだけが広がる演出になる）
-    var clonePhoto = null;
+    var srcText = tripTextById(tripId);
+    var coverUrl = srcText.coverPhotoId ? photoUrl(srcText.coverPhotoId) : '';
+    // 写真クローン：カードに写真があればその写真から広がる。カードに写真が無くても（行った場所のチップなど）
+    // 旅行にカバー写真があれば、白い枠と同じ位置から透明→不透明にしながら広げる（以前は文字だけが広がり、
+    // 詳細画面に切り替わった瞬間に写真がいきなり出ていた。2026-10-07）
+    var clonePhoto = null, photoFadesIn = false;
     if (visual.hasPhoto) {
       clonePhoto = document.createElement('div');
       clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
@@ -4583,32 +4613,48 @@
       clonePhoto.style.backgroundImage = visual.photoUrl;
       // 小さいサムネイルは白い枠の内側にあるので、広がり始めは枠より手前に置き、途中で奥へ回す
       if (visual.thumb) clonePhoto.style.zIndex = '502';
+    } else if (coverUrl) {
+      clonePhoto = document.createElement('div');
+      clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
+      setCloneRect(clonePhoto, visual.bodyRect);
+      clonePhoto.style.borderRadius = visual.bodyRadius;
+      clonePhoto.style.backgroundImage = "url('" + coverUrl + "')";
+      clonePhoto.style.opacity = '0';
+      photoFadesIn = true;
     }
     // 白本体クローン：カードの白い部分（写真ありなら.trip-card-info、無ければカード自体）
     var cloneBody = document.createElement('div');
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, visual.bodyRect);
     cloneBody.style.borderRadius = visual.bodyRadius;
-    var srcText = tripTextById(tripId);
     var titleText = (source && source.title) || (visual.titleEl ? visual.titleEl.textContent : '') || srcText.title;
     var dateText = (source && source.dates !== undefined) ? source.dates : (visual.dateEl ? visual.dateEl.textContent : srcText.dates);
-    var textParts = addCloneText(cloneBody, titleText, dateText, target.sheetRect.width);
-    // 文字は枠と同じ要素の中で、元の位置・大きさから最終の位置・大きさへ同じ時間・同じ動きで移る
+    var textParts = addCloneText(visual.bodyRect, titleText, dateText, target.sheetRect.width);
     textParts.titleEl.style.transition = textParts.datesEl.style.transition = 'none';
-    fitCloneText(textParts, visual.bodyRect, visual.titleEl, visual.dateEl);
 
     document.body.appendChild(backdrop);
     document.body.appendChild(bgFade);
     if (clonePhoto) document.body.appendChild(clonePhoto);
     document.body.appendChild(cloneBody);
+    document.body.appendChild(textParts.layer);
+    // 元のカードは、クローンが離れたあとに抜け殻として残って見えないよう、演出のあいだ隠す
+    var cardVisibility = cardEl.style.visibility;
+    cardEl.style.visibility = 'hidden';
+    // 文字は、元の位置・大きさから最終の位置・大きさへ、枠と同じ時間・同じ動きで移る。文字の大きさと
+    // 位置の測り直しは、画面に置いてからでないとできない（置く前に測ると文字の大きさが取れず、最初から
+    // 詳細画面の大きさ・ずれた位置で出ていた。2026-10-07）
+    fitCloneText(textParts, visual.bodyRect, visual.titleEl, visual.dateEl);
 
     // クローンの見た目の動き（カード位置→詳細ヘッダーいっぱい）は、通信の完了を待たずにすぐ始める。
     // 一方、本物の詳細画面への切り替え（showScreen）はopenTrip内部のAPI応答を待つ非同期処理のため、
     // 「見た目のアニメーションが最短450ms経過」と「実際に画面が切り替わった」の両方が揃うまで待ってから、
     // 抜ける画面の固定表示（freeze）を解いて、詳細画面を即座に見せる（minDone/screenReady）。
-    var minDone = false, screenReady = false, finished = false, enteringScreen = null;
+    var minDone = false, screenReady = false, coverReady = false, finished = false, enteringScreen = null;
+    preloadImage(coverUrl, function () { coverReady = true; finishIfReady(); });
+    // 写真の読み込みが遅いときは待ちすぎない（そのときは本物の画面で写真があとから出る）
+    setTimeout(function () { coverReady = true; finishIfReady(); }, TRIP_OPEN_ANIM_MS + 1500);
     function finishIfReady() {
-      if (finished || !minDone || !screenReady) return;
+      if (finished || !minDone || !screenReady || !coverReady) return;
       finished = true;
       clearTimeout(safetyTimer);
       // 順番が重要：本物の詳細画面をフェード無しで即座に見せてから、同じフレームで暗幕・
@@ -4618,10 +4664,12 @@
       // （本物と同じ絵の上に重なっていただけ）なので、フェードさせずに即除去してよい。
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
+      cardEl.style.visibility = cardVisibility;
       backdrop.remove();
       bgFade.remove();
       if (clonePhoto) clonePhoto.remove();
       cloneBody.remove();
+      textParts.layer.remove();
     }
     // 安全策：旅行が見つからない等でopenTripが失敗すると（catch側でalert→goHomeへ）、screenReadyが
     // 一生falseのままになり得るため、一定時間で強制的に後片付けする（暗幕・クローンが残り続けて
@@ -4630,10 +4678,12 @@
       if (finished) return;
       finished = true;
       unfreezeScreen(leavingScreen);
+      cardEl.style.visibility = cardVisibility;
       backdrop.remove();
       bgFade.remove();
       if (clonePhoto) clonePhoto.remove();
       cloneBody.remove();
+      textParts.layer.remove();
     }, 10000);
 
     openTrip(tripId, returnTo, function () {
@@ -4653,8 +4703,10 @@
       if (clonePhoto) {
         setCloneRect(clonePhoto, target.photoRect);
         clonePhoto.style.borderRadius = '0';
+        if (photoFadesIn) clonePhoto.style.opacity = '1';
       }
       setCloneRect(cloneBody, target.sheetRect);
+      setCloneRect(textParts.layer, target.sheetRect);
       cloneBody.style.borderRadius = '20px 20px 0 0';
       textParts.titleEl.style.transition = textParts.datesEl.style.transition = '';
       clearCloneTextFit(textParts);
@@ -4716,15 +4768,19 @@
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, start.sheetRect);
     cloneBody.style.borderRadius = '20px 20px 0 0';
-    var textParts = addCloneText(cloneBody, titleText, datesText, start.sheetRect.width);
+    var textParts = addCloneText(start.sheetRect, titleText, datesText, start.sheetRect.width);
 
     document.body.appendChild(backdrop);
     document.body.appendChild(bgFade);
     if (clonePhoto) document.body.appendChild(clonePhoto);
     document.body.appendChild(cloneBody);
+    document.body.appendChild(textParts.layer);
 
     var enteringScreen = hideEnteringScreen($('.screen.active'));
     freezeLeavingScreen(leavingScreen, leavingScrollY);
+    // 戻り先のカードは、クローンが降り立つまで隠しておく（先に本物が見えていると二重に見える）
+    var srcVisibility = srcEl.style.visibility;
+    srcEl.style.visibility = 'hidden';
 
     requestAnimationFrame(function () {
       void cloneBody.offsetHeight;
@@ -4735,15 +4791,14 @@
           clonePhoto.style.borderRadius = cardVisual.photoRadius;
           if (cardVisual.thumb) setTimeout(function () { clonePhoto.style.zIndex = '502'; }, TRIP_OPEN_ANIM_MS * 0.35);
         } else {
-          // 戻り先に写真が無いときは、写真クローンの高さを0に潰してカードの上端に吸い込ませる
-          setCloneRect(clonePhoto, {
-            top: cardVisual.bodyRect.top, left: cardVisual.bodyRect.left,
-            width: cardVisual.bodyRect.width, height: 0
-          });
-          clonePhoto.style.borderRadius = '0';
+          // 戻り先に写真が無いときは、開くときの逆に、白い枠の位置へ縮めながら消す
+          setCloneRect(clonePhoto, cardVisual.bodyRect);
+          clonePhoto.style.borderRadius = cardVisual.bodyRadius;
+          clonePhoto.style.opacity = '0';
         }
       }
       setCloneRect(cloneBody, cardVisual.bodyRect);
+      setCloneRect(textParts.layer, cardVisual.bodyRect);
       cloneBody.style.borderRadius = cardVisual.bodyRadius;
       fitCloneText(textParts, cardVisual.bodyRect, cardVisual.titleEl, cardVisual.dateEl);
     });
@@ -4752,10 +4807,12 @@
       // 本物（ホーム／一覧）を即座に見せるのと同じフレームで暗幕・ベタ塗り・クローンを消す
       unfreezeScreen(leavingScreen);
       revealEnteringScreen(enteringScreen);
+      srcEl.style.visibility = srcVisibility;
       backdrop.remove();
       bgFade.remove();
       if (clonePhoto) clonePhoto.remove();
       cloneBody.remove();
+      textParts.layer.remove();
     }, TRIP_OPEN_ANIM_MS);
   }
 
@@ -6027,13 +6084,16 @@
   // 直後に同期で呼ばれる。openTripFromCard（カードが浮かび上がって広がる演出）が、通信の完了を
   // 待たずに始めたアニメーションと、実際の画面切り替え（通信待ちで遅れる）のタイミングを
   // 合わせるために使う。それ以外の呼び出し元は今までどおり省略でよい。
-  function openTrip(id, returnTo, onScreenReady) {
+  // focus：省略可。{ date, blockId, entryId }を渡すと、その日を選び、その記録（無ければ予定）の位置まで
+  // スクロールして少し光らせる（マイログの記録から開いたとき。2026-10-07〜）。
+  function openTrip(id, returnTo, onScreenReady, focus) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
     api('/trips/' + encodeURIComponent(id)).then(function (data) {
       applyTripData(data, false);
       state.social = emptySocial();
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
       state.selectedDate = dates[0] !== undefined ? dates[0] : '';
+      if (focus && focus.date && dates.indexOf(focus.date) >= 0) state.selectedDate = focus.date;
       // 端末が初めて開く旅行（共有リンクから来た人）は、旅行を作った人ではないので、案内から「リンクを送って」を外す
       var wasKnownTrip = loadMyTrips().some(function (t) { return (t.tripId || t.id) === state.trip.id; });
       var asMember = (function () { var u = loadCurrentUser(); return !!(u && u.accountId && (state.members || []).some(function (m) { return m.accountId === u.accountId; })); })();
@@ -6048,12 +6108,41 @@
       loadSocial();
       loadTripZones();
       maybeAutoTripTutorial();
+      if (focus) focusTripRecord(focus);
       if (onScreenReady) onScreenReady();
     }).catch(function () {
       forgetTrip(id);
       alert(tr('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。'));
       goHome();
     });
+  }
+
+  // 旅行の画面で、ある記録（無ければその予定）までスクロールして少し光らせる。時差の調べ直しなどで
+  // 並びが描き直されることがあるので、少し後にもう一度合わせる。
+  function focusTripRecord(focus) {
+    function find() {
+      var tl = $('#timeline');
+      if (!tl) return null;
+      return (focus.entryId && tl.querySelector('.entry-card[data-entry-id="' + String(focus.entryId).replace(/"/g, '') + '"]')) ||
+        (focus.blockId && tl.querySelector('.block[data-block-id="' + String(focus.blockId).replace(/"/g, '') + '"]')) || null;
+    }
+    function go(flash) {
+      var el = find();
+      if (!el) return;
+      var r = el.getBoundingClientRect();
+      // 画面の真ん中に。画面より背の高い記録は、上端が少し下に来るように
+      var offset = r.height > window.innerHeight - 160 ? 96 : (window.innerHeight - r.height) / 2;
+      window.scrollTo(0, Math.max(0, window.scrollY + r.top - offset));
+      if (flash) {
+        el.classList.remove('focus-flash');
+        void el.offsetWidth;
+        el.classList.add('focus-flash');
+        setTimeout(function () { el.classList.remove('focus-flash'); }, 1800);
+      }
+    }
+    go(true);
+    setTimeout(function () { go(false); }, 0);
+    setTimeout(function () { if ($('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail' && find() && !find().classList.contains('focus-flash')) go(true); }, 400);
   }
 
   // 旅の詳細（tripDetail）の「← 戻る」／edge-swipe-backの共通の戻り先判定（openTripのreturnTo、
@@ -11270,7 +11359,7 @@
     if (!quiet) revealCardsOnScroll(reveal);
   }
 
-  // 年表の行・マイログの行・行った場所のチップを、ホームのカードと同じ開く演出に載せるための「元の要素の読み方」
+  // 年表の行・行った場所のチップを、ホームのカードと同じ開く演出に載せるための「元の要素の読み方」
   function timelineRowSource(t) {
     var sel = '.tl-row[data-trip-id="' + String(t.id).replace(/"/g, '') + '"]';
     return {
@@ -11280,21 +11369,6 @@
         return { photoEl: th, thumb: true, frameEl: row.querySelector('.tl-card') || row, titleEl: row.querySelector('.tl-title'), dateEl: null };
       },
       refind: function () { return document.querySelector(sel); }
-    };
-  }
-  function mylogRowSource(it) {
-    var tx = tripTextById(it.tripId);
-    return {
-      title: it.tripTitle || tx.title, dates: tx.dates,
-      pick: function (row) {
-        var ph = row.querySelector('.mylog-photo:not(.empty)');
-        return { photoEl: ph, thumb: true, frameEl: row, titleEl: row.querySelector('.mylog-trip'), dateEl: null };
-      },
-      refind: function () {
-        var rows = document.querySelectorAll('#mylogList .mylog-row');
-        for (var i = 0; i < rows.length; i++) if (rows[i]._tripId === it.tripId && rows[i].getBoundingClientRect().width) return rows[i];
-        return null;
-      }
     };
   }
   function visitedChipSource(id, label) {
@@ -11366,7 +11440,13 @@
         '<div class="mylog-trip">' + escapeHtml(it.tripTitle) + (it.date ? '・' + escapeHtml(Core.formatDateJp(it.date)) : '') + '</div>' +
         '</div>' +
         '<div class="mylog-score">★' + it.score + '</div>';
-      row.addEventListener('click', function () { openTripFromCard(row, it.tripId, 'mylog', mylogRowSource(it)); });
+      // 旅行のいちばん上ではなく、その日・その記録の位置で開く（2026-10-07〜）。記録の位置へ飛ぶので、
+      // カードが旅行のヘッダーへ広がる演出は使わない（行の写真は記録の写真で、旅行のカバー写真とは別物のため、
+      // 広がった写真が途中で別の写真に入れ替わって見えていた）
+      row.addEventListener('click', function () {
+        pendingCardOpenAnim = null;
+        openTrip(it.tripId, 'mylog', null, { date: it.date, blockId: it.blockId, entryId: it.entryId });
+      });
       el.appendChild(row);
     });
   }

@@ -473,7 +473,7 @@ a:hover { text-decoration: underline; }
   position: fixed; z-index: 500; overflow: hidden; pointer-events: none;
   transition: top .45s cubic-bezier(.2, .9, .25, 1), left .45s cubic-bezier(.2, .9, .25, 1),
     width .45s cubic-bezier(.2, .9, .25, 1), height .45s cubic-bezier(.2, .9, .25, 1),
-    border-radius .45s cubic-bezier(.2, .9, .25, 1);
+    border-radius .45s cubic-bezier(.2, .9, .25, 1), opacity .45s cubic-bezier(.2, .9, .25, 1);
 }
 .trip-open-clone-photo {
   background-color: var(--border-soft); background-size: cover; background-position: center;
@@ -486,6 +486,8 @@ a:hover { text-decoration: underline; }
    opacity:0のままなので、これが無いとシートが遷移中ずっと空白に見える）。本物が見えた瞬間
    （revealEnteringScreen）にクローンごと消えるので、フェードは不要（クローンの文字→本物の文字が
    同じ位置に一瞬で入れ替わるだけ）。 */
+/* タイトル・日程だけの透明な層。白い枠と同じ矩形で動き、写真クローン（広がり始めは502）より手前に置く */
+.trip-open-clone-textlayer { z-index: 503; overflow: visible; background: none; }
 .trip-open-clone-text {
   position: absolute; left: 0; top: 0; box-sizing: border-box; padding: 18px 16px 4px; pointer-events: none;
 }
@@ -866,6 +868,9 @@ a:hover { text-decoration: underline; }
 .visited-trip-chip.is-excluded .visited-trip-link { text-decoration: line-through; font-weight: 400; }
 .visited-row.is-excluded .visited-row-name { color: var(--ink-muted); }
 .visited-row.flash { animation: visitedFlash 1.6s ease-out; }
+/* マイログから開いた記録を少し光らせる（app.jsのfocusTripRecord） */
+.focus-flash { animation: focusFlash 1.8s ease-out; }
+@keyframes focusFlash { 0%, 45% { box-shadow: 0 0 0 3px var(--accent), var(--card-shadow); } 100% { box-shadow: var(--card-shadow); } }
 @keyframes visitedFlash { 0%, 40% { background: var(--accent-soft-bg); } 100% { background: transparent; } }
 
 /* 地方・大陸ごとの見出し付き一覧：太字の見出し＋右に件数、下に区切り線（参考にしたアプリと同じ構成）。
@@ -878,9 +883,12 @@ a:hover { text-decoration: underline; }
 }
 .visited-group-title { font-size: var(--fs-md); font-weight: 700; color: var(--ink); }
 .visited-group-count { font-size: var(--fs-sm); font-weight: 400; color: var(--ink-muted); }
-.visited-list { display: flex; flex-direction: column; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 4px 16px; overflow: hidden; }
+/* 上下の余白は一覧の枠ではなく先頭・末尾の行に持たせる（枠に持たせると、選んだ行の緑が枠の上下4pxに届かず、
+   1か国だけのグループ（シンガポールなど）で緑と白い枠がずれて見えた。2026-10-07） */
+.visited-list { display: flex; flex-direction: column; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 0 16px; overflow: hidden; }
 .visited-row { display: flex; flex-direction: column; gap: 3px; padding: 12px 0; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
-.visited-group:last-child .visited-row:last-child { border-bottom: none; }
+.visited-row:first-child { padding-top: 16px; }
+.visited-row:last-child { padding-bottom: 16px; border-bottom: none; }
 .visited-row.on { background: var(--accent-soft-bg); margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
 .visited-row-name { font-size: var(--fs-base); font-weight: 700; color: var(--ink); }
 .visited-row-flag { margin-right: 4px; }
