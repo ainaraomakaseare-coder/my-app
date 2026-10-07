@@ -10788,17 +10788,24 @@
     el.hidden = true;
     el.innerHTML = '';
     if (!iapAvailable() || !state.account) {
-      // iOSアプリなのに購入の部品が無いときだけ、理由を出す（Web版には何も出さない）
-      if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios' && state.account && !iapPlugin()) {
-        showTicketShopProblem(el, 'plugin missing');
+      // iOSアプリなのに買えないときだけ、どの条件で止まったかを出す（Web版には何も出さない）
+      if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios') {
+        var why = !iapPlugin() ? 'plugin missing' : !loadCurrentUser() ? 'no user' : !state.account ? 'no account' : 'unavailable';
+        showTicketShopProblem(el, why);
       }
       return;
     }
+    // 返事が来ないまま止まる場合も分かるよう、各段階に時間切れを付ける
+    var withTimeout = function (p, label) {
+      return Promise.race([p, new Promise(function (_, reject) {
+        setTimeout(function () { reject({ message: label + ': timeout' }); }, 15000);
+      })]);
+    };
     var stage = 'login';
-    iapLogIn(state.account.accountId).then(function (ok) {
+    withTimeout(iapLogIn(state.account.accountId), 'login').then(function (ok) {
       if (!ok) throw { message: iap.lastError || 'login failed' };
       stage = 'offerings';
-      return iapLoadPackages();
+      return withTimeout(iapLoadPackages(), 'offerings');
     }).then(function (list) {
       if (!iapAvailable()) return;
       if (!list.length) { iap.packages = null; showTicketShopProblem(el, 'offerings: 0 packages'); return; }
