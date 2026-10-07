@@ -11415,18 +11415,31 @@
 
   // 回数券の買えるところ（el）に「回数券を買う」を描く。値段はStoreKitが返す表示用の文字列をそのまま出す。
   // 買えない状態（Web・キー未設定・未ログイン・商品が取れない）なら、何も出さない。
+  // 何も出ないまま止まる原因を調べるため、途中で投げられた例外も画面に出す（アプリの中だけ）
   function renderTicketShop(el) {
     if (!el) return;
+    try {
+      renderTicketShopInner(el);
+    } catch (e) {
+      if (window.Capacitor) showTicketShopProblem(el, 'error: ' + iapErrorText(e));
+    }
+  }
+  function renderTicketShopInner(el) {
     el.hidden = true;
     el.innerHTML = '';
     if (!iapAvailable() || !state.account) {
-      // iOSアプリなのに買えないときだけ、どの条件で止まったかを出す（Web版には何も出さない）
-      if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios') {
-        var why = !iapPlugin() ? 'plugin missing' : !loadCurrentUser() ? 'no user' : !state.account ? 'no account' : 'unavailable';
+      // アプリの中なのに買えないときだけ、どの条件で止まったかを出す（Web版には何も出さない）
+      if (window.Capacitor) {
+        var platform = window.Capacitor.getPlatform ? window.Capacitor.getPlatform() : '?';
+        var why = !isNativeApp() ? 'not native (' + platform + ')' : platform !== 'ios' ? 'platform ' + platform :
+          !iapPlugin() ? 'plugin missing' : !loadCurrentUser() ? 'no user' : !state.account ? 'no account' : 'unavailable';
         showTicketShopProblem(el, why);
       }
       return;
     }
+    // 調べている最中も、今どの段階かを小さく出す（結果が出たら置き換わる）
+    el.innerHTML = '<p class="hint ticket-shop-problem">' + escapeHtml(tr('回数券を確認しています…')) + '</p>';
+    el.hidden = false;
     // 返事が来ないまま止まる場合も分かるよう、各段階に時間切れを付ける
     var withTimeout = function (p, label) {
       return Promise.race([p, new Promise(function (_, reject) {
