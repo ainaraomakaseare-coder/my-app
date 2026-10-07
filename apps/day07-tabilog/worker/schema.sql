@@ -356,3 +356,6 @@ CREATE TABLE IF NOT EXISTS ai_usage_daily (day TEXT NOT NULL, feature TEXT NOT N
 -- v33（2026-09-30）：回数券のアプリ内課金（RevenueCat）。詳しい説明は migrations/0033_iap_transactions.sql
 CREATE TABLE IF NOT EXISTS iap_transactions (transaction_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, product_id TEXT NOT NULL, credits INTEGER NOT NULL, environment TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_iap_transactions_account ON iap_transactions(account_id);
+
+-- v37（2026-10-07）：冪等性キー（オフライン対応の二重作成防止）。詳しい説明は migrations/0037_idempotency_keys.sql
+CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, response TEXT, created_at TEXT);

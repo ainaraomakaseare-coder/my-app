@@ -2969,5 +2969,94 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('json proposal: 引き継ぐ', [p2[0].arriveTime, p2[0].moveMinutes, p2[0].transport], ['09:00', 60, 'train']);
 })();
 
+/* ---- オフライン：送信待ち（outbox）の純粋な部分 ---- */
+(function () {
+  // 通信エラーの見分け
+  eq('isNetworkError: TypeError', T.isNetworkError(new TypeError('Failed to fetch'), true), true);
+  eq('isNetworkError: オフライン中の無名エラー', T.isNetworkError(new Error('x'), false), true);
+  var e404 = new Error('not_found'); e404.status = 404;
+  eq('isNetworkError: サーバーが返した404は違う', T.isNetworkError(e404, true), false);
+  eq('isNetworkError: ネイティブの接続エラー文', T.isNetworkError(new Error('The Internet connection appears to be offline.'), true), true);
+  eq('classify: 404は捨てる', T.outboxClassify(e404, true, 0), 'drop');
+  var e500 = new Error('http_500'); e500.status = 500;
+  eq('classify: 500はやり直す', T.outboxClassify(e500, true, 0), 'retry');
+  eq('classify: 500が続いたら捨てる', T.outboxClassify(e500, true, T.OUTBOX_MAX_SERVER_RETRIES), 'drop');
+  var e429 = new Error('rate_limited'); e429.status = 429;
+  eq('classify: 429はやり直す', T.outboxClassify(e429, true, 0), 'retry');
+  eq('classify: 通信失敗', T.outboxClassify(new TypeError('x'), true, 0), 'network');
+
+  // 経路の判定
+  eq('route: 予定の作成', T.outboxRoute({ method: 'POST', path: '/trips/t1/blocks' }), { kind: 'createBlock', id: 't1' });
+  eq('route: 評価の削除', T.outboxRoute({ method: 'DELETE', path: '/entries/e1/rating' }), { kind: 'deleteRating', id: 'e1' });
+  eq('route: 対象外（並べ替え）', T.outboxSupports('PATCH', '/trips/t1/days/2026-10-01/blocks/reorder'), false);
+  eq('isCreate', [T.outboxIsCreate({ method: 'POST', path: '/blocks/b/entries' }), T.outboxIsCreate({ method: 'PATCH', path: '/blocks/b' })], [true, false]);
+
+  // 置き換え
+  eq('replaceId: パスと本文の両方', T.outboxReplaceId({ path: '/blocks/tmp_a/entries', body: { photoIds: ['pend:k1', 'photo_x'], blockId: 'tmp_a' } }, 'tmp_a', 'blk_1'),
+    { path: '/blocks/blk_1/entries', body: { photoIds: ['pend:k1', 'photo_x'], blockId: 'blk_1' } });
+  eq('replaceId: 仮の写真id', T.outboxReplaceId({ photoIds: ['pend:k1'] }, 'pend:k1', 'photo_9.jpg'), { photoIds: ['photo_9.jpg'] });
+
+  var base = {
+    trip: { id: 'trip1' },
+    blocks: [{ id: 'blk_1', tripId: 'trip1', date: '2026-10-01', time: '', label: '朝食', category: 'food', entries: [
+      { id: 'ent_1', blockId: 'blk_1', episode: 'a', photoIds: [], videoIds: [], costItems: [], mapUrl: '', ratings: [{ id: 'r1', raterEmail: 'me@x', score: 3, review: {} }] }
+    ] }]
+  };
+  var baseCopy = JSON.stringify(base);
+  var t0 = '2026-10-07T00:00:00.000Z';
+
+  // 予定の作成・更新・削除
+  var cb = T.outboxApplyOp(base, { method: 'POST', path: '/trips/trip1/blocks', tripId: 'trip1', tmpId: 'tmp_b1', createdAt: t0, body: { date: '2026-10-01', time: '10:00', label: '美術館', category: 'sightseeing' } });
+  eq('apply createBlock: 追加される', cb.data.blocks.map(function (b) { return b.id; }), ['blk_1', 'tmp_b1']);
+  eq('apply createBlock: 返す値', [cb.result.id, cb.result.date, cb.result.entries], ['tmp_b1', '2026-10-01', []]);
+  eq('apply: 元のデータは変えない', JSON.stringify(base), baseCopy);
+  var ub = T.outboxApplyOp(cb.data, { method: 'PATCH', path: '/blocks/tmp_b1', tripId: 'trip1', createdAt: t0, body: { label: '美術館（改）' } });
+  eq('apply updateBlock', ub.data.blocks[1].label, '美術館（改）');
+  var db1 = T.outboxApplyOp(ub.data, { method: 'DELETE', path: '/blocks/blk_1', tripId: 'trip1', createdAt: t0 });
+  eq('apply deleteBlock', db1.data.blocks.map(function (b) { return b.id; }), ['tmp_b1']);
+
+  // 記録：作成・更新・削除・評価
+  var ce = T.outboxApplyOp(base, { method: 'POST', path: '/blocks/blk_1/entries', tripId: 'trip1', tmpId: 'tmp_e1', createdAt: t0, body: { episode: '美味しい', photoIds: ['pend:k1'], costItems: [{ label: 'パン', amount: 300 }] } });
+  eq('apply createEntry', [ce.data.blocks[0].entries.length, ce.result.id, ce.result.photoIds, ce.result.blockId], [2, 'tmp_e1', ['pend:k1'], 'blk_1']);
+  var ue = T.outboxApplyOp(ce.data, { method: 'PATCH', path: '/entries/ent_1', tripId: 'trip1', createdAt: t0, body: { mapUrl: 'https://maps/x' } });
+  eq('apply updateEntry', ue.data.blocks[0].entries[0].mapUrl, 'https://maps/x');
+  var rt = T.outboxApplyOp(ue.data, { method: 'PUT', path: '/entries/ent_1/rating', tripId: 'trip1', createdAt: t0, body: { raterEmail: 'me@x', raterName: 'me', score: 5 } });
+  eq('apply setRating: 自分の評価を更新', rt.data.blocks[0].entries[0].ratings.map(function (r) { return [r.raterEmail, r.score]; }), [['me@x', 5]]);
+  var rt2 = T.outboxApplyOp(rt.data, { method: 'PUT', path: '/entries/tmp_e1/rating', tripId: 'trip1', createdAt: t0, body: { raterEmail: 'me@x', score: 4 } });
+  eq('apply setRating: 仮の記録にも付く', rt2.data.blocks[0].entries[1].ratings.length, 1);
+  var rd = T.outboxApplyOp(rt2.data, { method: 'DELETE', path: '/entries/ent_1/rating', tripId: 'trip1', createdAt: t0, body: { raterEmail: 'me@x' } });
+  eq('apply deleteRating', rd.data.blocks[0].entries[0].ratings, []);
+  var de = T.outboxApplyOp(rd.data, { method: 'DELETE', path: '/entries/ent_1', tripId: 'trip1', createdAt: t0 });
+  eq('apply deleteEntry', de.data.blocks[0].entries.map(function (e) { return e.id; }), ['tmp_e1']);
+  eq('apply: 無い対象は何もしない', T.outboxApplyOp(base, { method: 'PATCH', path: '/entries/none', tripId: 'trip1', createdAt: t0, body: { episode: 'z' } }).data, base);
+
+  // 順番に重ねる（別の旅行の操作は無視）
+  var ops = [
+    { method: 'POST', path: '/trips/trip1/blocks', tripId: 'trip1', tmpId: 'tmp_b2', createdAt: t0, body: { label: '宿', category: 'lodging', date: '2026-10-01' } },
+    { method: 'POST', path: '/blocks/tmp_b2/entries', tripId: 'trip1', tmpId: 'tmp_e2', createdAt: t0, body: { episode: 'チェックイン' } },
+    { method: 'PUT', path: '/entries/tmp_e2/rating', tripId: 'trip1', createdAt: t0, body: { raterEmail: 'me@x', score: 4 } },
+    { method: 'PATCH', path: '/blocks/other', tripId: 'tripX', createdAt: t0, body: { label: 'ほか' } }
+  ];
+  var all = T.outboxApplyAll(base, ops);
+  eq('applyAll: 予定→記録→評価の順で反映', [all.blocks.length, all.blocks[1].entries[0].episode, all.blocks[1].entries[0].ratings[0].score], [2, 'チェックイン', 4]);
+  eq('pendingIds: 仮idと更新した対象', Object.keys(T.outboxPendingIds(ops, 'trip1')).sort(), ['tmp_b2', 'tmp_e2']);
+  eq('pendingIds: 更新は元のid', Object.keys(T.outboxPendingIds([{ method: 'PATCH', path: '/entries/ent_1', tripId: 'trip1' }], 'trip1')), ['ent_1']);
+
+  // 仮idの置き換え（作成が通って本物のidが分かったあと）
+  var remapped = T.outboxRemapOps(ops, 'tmp_b2', 'blk_77');
+  eq('remapOps: 後続の操作のパスが本物のidになる', [remapped[1].path, remapped[2].path], ['/blocks/blk_77/entries', '/entries/tmp_e2/rating']);
+  remapped = T.outboxRemapOps(remapped, 'tmp_e2', 'ent_88');
+  eq('remapOps: 記録の仮idも', remapped[2].path, '/entries/ent_88/rating');
+
+  // まだ送っていない作りかけを消す：作る操作も、それに続く操作も、子も取り除く
+  var cancel = T.outboxCancelTmp(ops, 'tmp_b2');
+  eq('cancelTmp: 予定ごと取り除く（子の記録・評価も）', [cancel.removed.length, cancel.ops.length, cancel.ops[0].tripId], [3, 1, 'tripX']);
+  var cancel2 = T.outboxCancelTmp(ops, 'tmp_e2');
+  eq('cancelTmp: 記録だけなら予定は残る', [cancel2.removed.length, cancel2.ops.length], [2, 2]);
+  eq('outboxCount', T.outboxCount(ops), 4);
+  eq('仮の写真id', [T.isPendingPhotoId(T.pendingPhotoId('abc')), T.isPendingPhotoId('photo_1.jpg'), T.isTmpId(T.outboxTmpId()), T.isTmpId('blk_1')], [true, false, true, false]);
+  eq('uuidは毎回違う', T.outboxUuid() !== T.outboxUuid(), true);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

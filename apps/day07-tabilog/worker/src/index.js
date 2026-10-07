@@ -32,6 +32,7 @@ import {
   dateToNpmVersion, fallbackUrl, parseFallbackResponse, cacheKeyUrl, cacheTtlSeconds,
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
+import { withIdempotency } from "./idempotency.js";
 import { validateBranchInput, validateBranchBlockPlacement, dateToDays, branchEndDateOf, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
 import {
   PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, randomHex,
@@ -6166,7 +6167,11 @@ export default {
   async fetch(request, env0, ctx) {
     const env = withAiTally(env0, request);
     try {
-      return await mainHandler.fetch(request, env, ctx);
+      // Idempotency-Keyが付いた作成（予定・記録・写真）は、同じキーなら二重に作らず前回の返事を返す（src/idempotency.js）。
+      // 許可されていないOriginには使わせない（その場合は本来の処理が403を返す）
+      const origin = request.headers.get("origin") || "";
+      if (!isAllowedOrigin(origin, env.ALLOWED_ORIGIN)) return await mainHandler.fetch(request, env, ctx);
+      return await withIdempotency(request, env, cors(origin, env.ALLOWED_ORIGIN), ctx, () => mainHandler.fetch(request, env, ctx));
     } finally {
       flushAiUsage(env, ctx);
     }

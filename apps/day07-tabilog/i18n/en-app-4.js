@@ -198,4 +198,13 @@ I18N.addLang('en', {
   "購入は完了しました。回数の反映に少し時間がかかっています。しばらくしてからマイページの「AIの残り回数」で確認してください。": "Your purchase is complete, but adding the uses is taking a little longer. Please check \"AI uses left\" on My Page in a moment.",
   "購入できませんでした。時間をおいてもう一度お試しください。": "The purchase didn't go through. Please try again later.",
   "{n}位": "No. {n}",
+  "オフラインです。前回開いたときの内容を表示しています": "You're offline. Showing what was saved the last time you opened this trip",
+  "オフラインです": "You're offline",
+  "送信中…（未送信 {n}件）": "Sending… ({n} not sent yet)",
+  "未送信 {n}件（電波が戻ったら送ります）": "{n} not sent yet (will send when you're back online)",
+  "未送信": "Not sent",
+  "一部の変更は送れませんでした（ほかの人が消した可能性があります）": "Some changes couldn't be sent (someone else may have deleted them)",
+  "AIの取り込みは電波があるときに使えます": "AI import works when you have a connection",
+  "旅行をつくるには電波が必要です": "You need a connection to create a trip",
+  "オフラインのため旅行を開けませんでした。電波があるときに一度開くと、次からオフラインでも見られます。": "You're offline, so this trip couldn't be opened. Open it once while online and you can view it offline next time.",
 });

@@ -29,6 +29,7 @@ I18N.addLang('en', {
   "＋ 新しい旅を記録する": "+ Record a new trip",
   "招待リンクのIDを直接開く": "Open an invite link ID directly",
   "開く": "Open",
+  "電波がないときも、予定・記録の追加や直しはできます。端末に残して、電波が戻ったら順に送ります（同じ項目を同時に直したときは、あとから届いた内容が残ります）": "You can still add and edit plans and records without a connection. They're kept on your device and sent in order once you're back online (if the same item is edited at the same time, the one that arrives last wins)",
   "共有リンクを知っている人は、見たり書き足したりできます": "Anyone with the share link can view and add to it",
   "新しい旅を記録する": "Record a new trip",
   "旅のタイトル": "Trip title",
