@@ -190,6 +190,8 @@ I18N.addLang('en', {
   "年ごとに旅がまとまります": "Your trips, organized by year",
   "参加した旅行が、年ごとの年表に並びます。": "Trips you joined are lined up by year in the timeline.",
   "回数券 {n}回": "{n} AI uses",
+  "{label}：{price}": "{label}: {price}",
+  "（1回あたり{price}）": " ({price} per use)",
   "回数券を買う": "Buy usage tickets",
   "回数券の購入画面を出せませんでした": "Couldn’t show the ticket purchase screen",
   "買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。": "Purchased uses are used one at a time after this month's free uses run out. They never expire. If you delete your account, any remaining tickets are lost and can't be refunded.",
