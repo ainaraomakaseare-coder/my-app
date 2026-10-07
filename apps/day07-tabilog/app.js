@@ -11374,9 +11374,9 @@
     var P = iapPlugin();
     iap.userId = accountId;
     iap.packages = null;
-    if (!iap.configurePromise) iap.configurePromise = P.configure({ apiKey: REVENUECAT_IOS_API_KEY });
+    if (!iap.configurePromise) iap.configurePromise = iapCall('configure', { apiKey: REVENUECAT_IOS_API_KEY });
     iap.ready = iap.configurePromise.then(function () {
-      return P.logIn({ appUserID: accountId });
+      return iapCall('logIn', { appUserID: accountId });
     }).then(function () { iap.lastError = ''; return true; }).catch(function (e) {
       iap.lastError = 'login: ' + iapErrorText(e);
       iap.userId = ''; iap.ready = null; iap.configurePromise = null;
@@ -11388,7 +11388,7 @@
     var wasIn = !!iap.userId;
     iap.userId = ''; iap.ready = null; iap.packages = null;
     var P = iapPlugin();
-    if (wasIn && P) P.logOut().catch(function () {});
+    if (wasIn && P) iapCall('logOut').catch(function () {});
   }
   // 購入画面を出せなかった理由（TestFlightで原因を調べるため、画面に小さく出す）
   function iapErrorText(e) {
@@ -11404,9 +11404,16 @@
       '（' + escapeHtml(reason) + '）</p>';
     el.hidden = false;
   }
+  // RevenueCatの部品の呼び出し。configureのようにPromiseを返さない（返事を待たない）ものもあるので、
+  // 戻り値が何であっても必ずPromiseにそろえる（2026-10-07：configure().then が無くて購入欄が出なかった）
+  function iapCall(name, args) {
+    return new Promise(function (resolve, reject) {
+      try { resolve(iapPlugin()[name](args)); } catch (e) { reject(e); }
+    });
+  }
   function iapLoadPackages() {
     if (iap.packages) return Promise.resolve(iap.packages);
-    return iapPlugin().getOfferings().then(function (o) {
+    return iapCall('getOfferings').then(function (o) {
       var list = (o && o.current && o.current.availablePackages) || [];
       iap.packages = list.slice().sort(function (a, b) { return (a.product.price || 0) - (b.product.price || 0); });
       return iap.packages;
@@ -11484,7 +11491,7 @@
     iap.busy = true;
     $all('.ticket-buy', el).forEach(function (b) { b.disabled = true; });
     setStatus(tr('購入の手続き中です…'));
-    iapPlugin().purchasePackage({ aPackage: pkg }).then(function () {
+    iapCall('purchasePackage', { aPackage: pkg }).then(function () {
       setStatus(tr('購入ありがとうございます。回数を反映しています…'));
       // 回数を足すのはRevenueCatからサーバーへの通知（非同期）なので、増えるまで少し待って取り直す
       var tries = 0;
