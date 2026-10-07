@@ -1,0 +1,21 @@
+{
+  "appId": "com.hiroyaapps.tabilog",
+  "appName": "旅の足跡",
+  "webDir": "../day07-tabilog",
+  "backgroundColor": "#F5F6F8",
+  "android": {
+    "backgroundColor": "#F5F6F8"
+  },
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": [
+      "ainaraomakaseare-coder.github.io",
+      "tabinoashiato.pages.dev"
+    ]
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
