@@ -4036,7 +4036,228 @@
     return mine[0] || null;
   }
 
+  // ---------- 電波がないときの書き込み（送信待ち＝outbox。DAY31〜） ----------
+  // 予定（block）・記録（entry）・評価の作成／更新／削除を、電波がなくても受け付けるための純粋な部分。
+  // 通信に失敗したら、操作を1件ずつ「送信待ち」に積み、画面には先に反映しておく（楽観的な更新）。
+  // 作ったばかりで、まだサーバーのidが無いものには「tmp_…」の仮idを付け、送れたら本物のidに置き換える。
+  // まだアップロードしていない写真・動画は「pend:<キー>」という仮のidで記録に入れておき、
+  // 送るときに先にアップロードして本物のidに置き換える。
+  // 競合（同じ項目を別の人が同時に直したとき）は「あとから届いたほうが勝つ」。合併の画面は作らない。
+  var OUTBOX_TMP_PREFIX = 'tmp_';
+  var OUTBOX_PEND_PREFIX = 'pend:';
+  var OUTBOX_MAX_SERVER_RETRIES = 6; // サーバーの一時的な不調（5xx）で、同じ操作を諦めるまでの試行回数
+
+  function outboxUuid() {
+    var c = typeof crypto !== 'undefined' ? crypto : null;
+    if (c && typeof c.randomUUID === 'function') return c.randomUUID().replace(/-/g, '');
+    var s = '';
+    for (var i = 0; i < 4; i++) s += ('00000000' + Math.floor(Math.random() * 0x100000000).toString(16)).slice(-8);
+    return s;
+  }
+  function outboxTmpId() { return OUTBOX_TMP_PREFIX + outboxUuid().slice(0, 20); }
+  function isTmpId(id) { return typeof id === 'string' && id.indexOf(OUTBOX_TMP_PREFIX) === 0; }
+  function isPendingPhotoId(id) { return typeof id === 'string' && id.indexOf(OUTBOX_PEND_PREFIX) === 0; }
+  function pendingPhotoId(key) { return OUTBOX_PEND_PREFIX + key; }
+
+  // 通信そのものに失敗したか（電波がない・サーバーに届かない）。サーバーが返事をした（statusがある）ものは違う。
+  function isNetworkError(err, online) {
+    if (!err) return false;
+    if (typeof err.status === 'number' && err.status > 0) return false;
+    if (err.name === 'TypeError') return true;
+    if (online === false) return true;
+    return /network|internet|offline|failed to fetch|load failed|timed? ?out|could not connect|connection|unreachable|unknown ?host/i.test(String(err.message || err));
+  }
+
+  // 送れなかった操作をどうするか。'network'：止めてあとでやり直す／'retry'：サーバーの一時的な不調なので
+  // 止めてあとでやり直す（attemptsが上限なら諦める）／'drop'：もう送れない（相手が消えた・入力が不正など）ので捨てる
+  function outboxClassify(err, online, attempts) {
+    if (isNetworkError(err, online)) return 'network';
+    var s = err && err.status;
+    if (s === 408 || s === 429 || s >= 500) return (attempts || 0) + 1 >= OUTBOX_MAX_SERVER_RETRIES ? 'drop' : 'retry';
+    return 'drop';
+  }
+
+  var OUTBOX_ROUTES = [
+    ['POST', /^\/trips\/([^/]+)\/blocks$/, 'createBlock'],
+    ['PATCH', /^\/blocks\/([^/]+)$/, 'updateBlock'],
+    ['DELETE', /^\/blocks\/([^/]+)$/, 'deleteBlock'],
+    ['POST', /^\/blocks\/([^/]+)\/entries$/, 'createEntry'],
+    ['PATCH', /^\/entries\/([^/]+)$/, 'updateEntry'],
+    ['DELETE', /^\/entries\/([^/]+)$/, 'deleteEntry'],
+    ['PUT', /^\/entries\/([^/]+)\/rating$/, 'setRating'],
+    ['DELETE', /^\/entries\/([^/]+)\/rating$/, 'deleteRating']
+  ];
+  // op：{method, path, ...}。送信待ちにできる操作なら { kind, id（パスの中のid） }、そうでなければnull
+  function outboxRoute(op) {
+    if (!op) return null;
+    for (var i = 0; i < OUTBOX_ROUTES.length; i++) {
+      var r = OUTBOX_ROUTES[i];
+      if (r[0] !== op.method) continue;
+      var m = r[1].exec(op.path || '');
+      if (m) return { kind: r[2], id: decodeURIComponent(m[1]) };
+    }
+    return null;
+  }
+  function outboxSupports(method, path) { return !!outboxRoute({ method: method, path: path }); }
+  function outboxIsCreate(op) { var r = outboxRoute(op); return !!r && (r.kind === 'createBlock' || r.kind === 'createEntry'); }
+
+  function outboxClone(v) { return v === undefined ? v : JSON.parse(JSON.stringify(v)); }
+
+  // 文字列fromを、オブジェクトの中のすべての文字列（パスの一部も含む）でtoに置き換えた複製を返す。
+  // 仮id（tmp_…）や仮の写真id（pend:…）を、送れたあとの本物のidにするのに使う。idは長いランダム文字列なので、
+  // 別のidの一部と取り違えない。
+  function outboxReplaceId(value, from, to) {
+    if (!from || value === undefined) return value;
+    var s = JSON.stringify(value);
+    return JSON.parse(s.split(JSON.stringify(from).slice(1, -1)).join(JSON.stringify(to).slice(1, -1)));
+  }
+  function outboxRemapOps(ops, from, to) {
+    return (ops || []).map(function (op) { return outboxReplaceId(op, from, to); });
+  }
+
+  function outboxFindBlock(data, id) {
+    var bs = data.blocks || [];
+    for (var i = 0; i < bs.length; i++) if (bs[i].id === id) return bs[i];
+    return null;
+  }
+  function outboxFindEntry(data, id) {
+    var bs = data.blocks || [];
+    for (var i = 0; i < bs.length; i++) {
+      var es = bs[i].entries || [];
+      for (var j = 0; j < es.length; j++) if (es[j].id === id) return { block: bs[i], entry: es[j], index: j };
+    }
+    return null;
+  }
+  function outboxMerge(target, body) {
+    Object.keys(body || {}).forEach(function (k) { target[k] = outboxClone(body[k]); });
+  }
+
+  // 旅行のデータ（GET /trips/:id と同じ形）にopを反映する。{ data（新しいデータ）, result（サーバーが返すはずの値の代わり） }
+  function outboxApplyOp(data0, op) {
+    var data = outboxClone(data0) || {};
+    data.blocks = data.blocks || [];
+    var route = outboxRoute(op);
+    var body = op.body || {};
+    var now = op.createdAt || '';
+    var result = null;
+    if (!route) return { data: data, result: null };
+    var b, found, i;
+    if (route.kind === 'createBlock') {
+      b = {
+        id: op.tmpId, tripId: op.tripId || route.id, date: body.date || '', time: body.time || '', label: body.label || '',
+        category: body.category || 'other', transport: body.transport || '', moveMinutes: body.moveMinutes || 0,
+        manualOrder: null, tzOverride: '', branchId: body.branchId || '', videoExclude: !!body.videoExclude,
+        createdAt: now, updatedAt: now, entries: []
+      };
+      data.blocks.push(b);
+      result = outboxClone(b);
+    } else if (route.kind === 'updateBlock') {
+      b = outboxFindBlock(data, route.id);
+      if (b) { outboxMerge(b, body); b.updatedAt = now; result = outboxClone(b); }
+    } else if (route.kind === 'deleteBlock') {
+      data.blocks = data.blocks.filter(function (x) { return x.id !== route.id; });
+    } else if (route.kind === 'createEntry') {
+      b = outboxFindBlock(data, route.id);
+      var en = {
+        id: op.tmpId, blockId: route.id, episode: body.episode || '', comment: body.comment || '', detail: body.detail || '',
+        photoIds: (body.photoIds || []).slice(), videoIds: (body.videoIds || []).slice(), costItems: outboxClone(body.costItems || []),
+        waitTime: body.waitTime || '', time: body.time || '', mapUrl: body.mapUrl || '', shopUrl: body.shopUrl || '',
+        otherUrl: body.otherUrl || '', author: body.author || '', travel: outboxClone(body.travel || {}),
+        createdAt: now, updatedAt: now, ratings: []
+      };
+      if (body.mapPlaceName) en.mapPlaceName = body.mapPlaceName;
+      if (b) { b.entries = b.entries || []; b.entries.push(en); }
+      result = outboxClone(en);
+    } else if (route.kind === 'updateEntry') {
+      found = outboxFindEntry(data, route.id);
+      if (found) {
+        var mapChanged = body.mapUrl !== undefined && body.mapUrl !== found.entry.mapUrl;
+        outboxMerge(found.entry, body);
+        if (mapChanged) { // 地図のリンクが変わったら、古い座標は使わない（サーバーと同じ）
+          delete found.entry.mapLat; delete found.entry.mapLng;
+          if (!body.mapPlaceName) delete found.entry.mapPlaceName;
+        }
+        found.entry.updatedAt = now;
+        result = outboxClone(found.entry);
+      }
+    } else if (route.kind === 'deleteEntry') {
+      found = outboxFindEntry(data, route.id);
+      if (found) found.block.entries.splice(found.index, 1);
+    } else if (route.kind === 'setRating') {
+      found = outboxFindEntry(data, route.id);
+      if (found) {
+        var rs = found.entry.ratings = found.entry.ratings || [];
+        var mine = null;
+        for (i = 0; i < rs.length; i++) if (rs[i].raterEmail === body.raterEmail) mine = rs[i];
+        if (!mine) {
+          mine = { id: OUTBOX_TMP_PREFIX + 'rating', entryId: route.id, raterEmail: body.raterEmail || '', raterName: '', score: 0, review: {}, updatedAt: now };
+          rs.push(mine);
+        }
+        mine.score = body.score; mine.raterName = body.raterName || mine.raterName; mine.updatedAt = now;
+        if (body.review !== undefined) mine.review = outboxClone(body.review);
+        result = { ratings: outboxClone(rs) };
+      }
+    } else if (route.kind === 'deleteRating') {
+      found = outboxFindEntry(data, route.id);
+      if (found) {
+        found.entry.ratings = (found.entry.ratings || []).filter(function (r) { return r.raterEmail !== body.raterEmail; });
+        result = { ratings: outboxClone(found.entry.ratings) };
+      }
+    }
+    return { data: data, result: result };
+  }
+
+  // 旅行のデータ（サーバーから取り直したものなど）に、まだ送っていない操作を順に重ねる
+  function outboxApplyAll(data, ops) {
+    var tripId = data && data.trip && data.trip.id;
+    var out = data;
+    (ops || []).forEach(function (op) { if (!op.tripId || op.tripId === tripId) out = outboxApplyOp(out, op).data; });
+    return out;
+  }
+
+  // まだ送っていない操作が触れているid（カードに「未送信」を付ける対象）
+  function outboxPendingIds(ops, tripId) {
+    var ids = {};
+    (ops || []).forEach(function (op) {
+      if (tripId && op.tripId && op.tripId !== tripId) return;
+      var r = outboxRoute(op);
+      if (!r) return;
+      if (r.kind === 'createBlock' || r.kind === 'createEntry') { if (op.tmpId) ids[op.tmpId] = true; }
+      else if (r.kind !== 'deleteBlock' && r.kind !== 'deleteEntry') ids[r.id] = true;
+    });
+    return ids;
+  }
+
+  // 仮idのもの（まだ送っていない作りかけ）を消すときは、それを作る操作もそれに続く操作も、送らずに取り除く。
+  // 親（予定）の仮idを消すなら、その中に作りかけの記録の操作もまとめて取り除く。
+  // 戻り値：{ ops（残り）, removed（取り除いた操作） }
+  function outboxCancelTmp(ops, tmpId) {
+    var gone = {}; gone[tmpId] = true;
+    var removed = [], rest = (ops || []).slice();
+    var changed = true;
+    while (changed) {
+      changed = false;
+      var next = [];
+      rest.forEach(function (op) {
+        var hit = !!(op.tmpId && gone[op.tmpId]);
+        if (!hit) Object.keys(gone).forEach(function (g) { if ((op.path || '').indexOf('/' + g) >= 0) hit = true; });
+        if (hit) { removed.push(op); if (op.tmpId && !gone[op.tmpId]) { gone[op.tmpId] = true; } changed = true; }
+        else next.push(op);
+      });
+      rest = next;
+    }
+    return { ops: rest, removed: removed };
+  }
+
+  // 「未送信 N件」の表示用。操作のうち、旅行のデータを直接変えるものの数
+  function outboxCount(ops) { return (ops || []).length; }
+
   var Core = {
+    outboxUuid: outboxUuid, outboxTmpId: outboxTmpId, isTmpId: isTmpId, isPendingPhotoId: isPendingPhotoId, pendingPhotoId: pendingPhotoId,
+    isNetworkError: isNetworkError, outboxClassify: outboxClassify, outboxRoute: outboxRoute, outboxSupports: outboxSupports,
+    outboxIsCreate: outboxIsCreate, outboxReplaceId: outboxReplaceId, outboxRemapOps: outboxRemapOps, outboxApplyOp: outboxApplyOp,
+    outboxApplyAll: outboxApplyAll, outboxPendingIds: outboxPendingIds, outboxCancelTmp: outboxCancelTmp, outboxCount: outboxCount,
+    OUTBOX_MAX_SERVER_RETRIES: OUTBOX_MAX_SERVER_RETRIES,
     parseCostsFromLine: parseCostsFromLine,
     memoBlocksToProposals: memoBlocksToProposals,
     parseTransportLabel: parseTransportLabel,
@@ -5367,6 +5588,7 @@
 
   function photoUrl(id) {
     if (!id) return '';
+    if (Core.isPendingPhotoId(id)) return outbox.blobUrls[id] || ''; // まだ送っていない写真・動画：端末の中身を出す
     return API_BASE + '/photos/' + id;
   }
 
@@ -5677,33 +5899,41 @@
     return user && user.token ? { authorization: 'Bearer ' + user.token } : {};
   }
 
-  function nativeApi(path, method, body) {
+  // サーバーが返事をしたエラーには status を付ける（付いていないものは通信そのものの失敗。電波がないときの送信待ちが見分けに使う）
+  function httpError(status, code) {
+    var err = new Error(code || ('http_' + status));
+    err.status = status;
+    return err;
+  }
+
+  // httpHeaders：本物のHTTPヘッダーに足すもの（Idempotency-Keyなど）
+  function nativeApi(path, method, body, httpHeaders) {
     return window.Capacitor.Plugins.CapacitorHttp.request({
       url: API_BASE + path,
       method: method || 'GET',
-      headers: Object.assign(body !== undefined ? { 'content-type': 'application/json' } : {}, authHeaders()),
+      headers: Object.assign(body !== undefined ? { 'content-type': 'application/json' } : {}, authHeaders(), httpHeaders || {}),
       data: body
     }).then(function (res) {
       if (res.status < 200 || res.status >= 300) {
         var e = (res.data && typeof res.data === 'object' && res.data.error) || ('http_' + res.status);
-        throw new Error(e);
+        throw httpError(res.status, e);
       }
       return res.status === 204 ? null : res.data;
     });
   }
 
-  function api(path, method, body) {
+  function api(path, method, body, httpHeaders) {
     // 書き込み（評価・場所の外す戻す・参加・取り込みなど）のあとは、/mylogの前回結果を「古い」扱いにする
     if (method && method !== 'GET' && path.indexOf('/accounts/ensure') !== 0) markMyLogDirty();
     if (method && method !== 'GET') accountStatusAt = 0; // 音声・AI整理などで残り回数が変わるので、次に見るとき裏で取り直す
-    if (isNativeApp()) return nativeApi(path, method, body);
+    if (isNativeApp()) return nativeApi(path, method, body, httpHeaders);
     return fetch(API_BASE + path, {
       method: method || 'GET',
-      headers: Object.assign(body !== undefined ? { 'content-type': 'application/json' } : {}, authHeaders()),
+      headers: Object.assign(body !== undefined ? { 'content-type': 'application/json' } : {}, authHeaders(), httpHeaders || {}),
       body: body !== undefined ? JSON.stringify(body) : undefined
     }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
-        throw new Error(e.error || ('http_' + res.status));
+        throw httpError(res.status, e.error);
       });
       return res.status === 204 ? null : res.json();
     });
@@ -5725,20 +5955,21 @@
   // 写真・音声など、生のバイナリをPOSTする共通の窓口（fetch＋エラー処理をここに集約する）。
   // iOSアプリ内ではWKWebViewのfetchでバイナリボディを直接送るとクロスオリジンPOSTが
   // 失敗するため、その場合はbase64化してJSON({dataBase64, contentType, headers})で送る。
-  function postBinary(path, blob, extraHeaders) {
+  // httpHeaders：本物のHTTPヘッダーに足すもの（Idempotency-Key）。extraHeadersはネイティブではJSONの中に入れて送る別物
+  function postBinary(path, blob, extraHeaders, httpHeaders) {
     if (isNativeApp()) {
       return blobToBase64(blob).then(function (dataBase64) {
         return nativeApi(path, 'POST', {
           dataBase64: dataBase64,
           contentType: blob.type || 'application/octet-stream',
           headers: extraHeaders || {}
-        });
+        }, httpHeaders);
       });
     }
-    var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {}, authHeaders());
+    var headers = Object.assign({ 'content-type': blob.type || 'application/octet-stream' }, extraHeaders || {}, authHeaders(), httpHeaders || {});
     return fetch(API_BASE + path, { method: 'POST', headers: headers, body: blob }).then(function (res) {
       if (!res.ok) return res.json().catch(function () { return {}; }).then(function (e) {
-        throw new Error(e.error || ('http_' + res.status));
+        throw httpError(res.status, e.error);
       });
       return res.json();
     });
@@ -5747,6 +5978,351 @@
   function uploadPhotoBlob(blob) {
     return postBinary('/photos', blob);
   }
+
+  // ---------- 電波がないときの読み書き（DAY31〜） ----------
+  // 読む：旅行を開けたら中身まるごと端末（IndexedDB。使えなければlocalStorage）に覚えておき、
+  //       開くときに通信に失敗したら、その覚えを出す（前回見たときの内容。写真はブラウザ・WebViewが覚えている分だけ出る）。
+  // 書く：予定・記録・評価の作成／更新／削除と、記録への写真・動画の追加は、通信に失敗したら端末の
+  //       「送信待ち」に順番に積む（写真・動画の中身はBlobのままIndexedDBへ）。画面には先に反映し、カードに
+  //       「未送信」を付ける。電波が戻った・アプリに戻った・30秒ごと（送信待ちがあるとき）に、1件ずつ順に送る。
+  // 競合は「あとから届いたほうが勝つ」（サーバーは届いた順に反映する。合併の画面は作らない）。
+  // 作成（POST）には Idempotency-Key（送信待ちの操作のid）を付ける。返事だけ失われてもサーバーが二重に作らない。
+  var OFFLINE_DB_NAME = 'tabilog-offline';
+  var OFFLINE_LS_PREFIX = 'tabilog:offline:';
+  var offlineDbPromise = null;
+
+  function offlineDb() {
+    if (offlineDbPromise) return offlineDbPromise;
+    offlineDbPromise = new Promise(function (resolve) {
+      try {
+        if (!window.indexedDB) { resolve(null); return; }
+        var req = window.indexedDB.open(OFFLINE_DB_NAME, 1);
+        req.onupgradeneeded = function () {
+          var db = req.result;
+          ['trips', 'kv', 'blobs'].forEach(function (n) { if (!db.objectStoreNames.contains(n)) db.createObjectStore(n); });
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { resolve(null); };
+        req.onblocked = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+    return offlineDbPromise;
+  }
+  function idbRun(store, mode, fn) {
+    return offlineDb().then(function (db) {
+      if (!db) throw new Error('no_idb');
+      return new Promise(function (resolve, reject) {
+        var tx, req;
+        try { tx = db.transaction(store, mode); req = fn(tx.objectStore(store)); } catch (e) { reject(e); return; }
+        tx.oncomplete = function () { resolve(req ? req.result : undefined); };
+        tx.onerror = tx.onabort = function () { reject(tx.error || new Error('idb_failed')); };
+      });
+    });
+  }
+  // 読めなければnull。書けなければfalse（例外は出さない）。blobsはlocalStorageに置けないのでIndexedDBだけ
+  function offlineGet(store, key) {
+    return offlineDb().then(function (db) {
+      if (!db) {
+        if (store === 'blobs') return null;
+        var raw = localStorage.getItem(OFFLINE_LS_PREFIX + store + ':' + key);
+        return raw ? JSON.parse(raw) : null;
+      }
+      return idbRun(store, 'readonly', function (s) { return s.get(key); }).then(function (v) { return v === undefined ? null : v; });
+    }).catch(function () { return null; });
+  }
+  function offlinePut(store, key, value) {
+    return offlineDb().then(function (db) {
+      if (!db) {
+        if (store === 'blobs') return false;
+        localStorage.setItem(OFFLINE_LS_PREFIX + store + ':' + key, JSON.stringify(value));
+        return true;
+      }
+      return idbRun(store, 'readwrite', function (s) { return s.put(value, key); }).then(function () { return true; });
+    }).catch(function () { return false; });
+  }
+  function offlineDel(store, key) {
+    return offlineDb().then(function (db) {
+      if (!db) { try { localStorage.removeItem(OFFLINE_LS_PREFIX + store + ':' + key); } catch (e) {} return true; }
+      return idbRun(store, 'readwrite', function (s) { return s.delete(key); }).then(function () { return true; });
+    }).catch(function () { return false; });
+  }
+  // ログアウト・アカウント削除のとき、端末に覚えた旅行と送信待ちを消す
+  function clearOfflineData() {
+    outbox.ops = []; outbox.loaded = null;
+    return offlineDb().then(function (db) {
+      if (db) { ['trips', 'kv', 'blobs'].forEach(function (s) { idbRun(s, 'readwrite', function (st) { return st.clear(); }).catch(function () {}); }); }
+      try {
+        Object.keys(localStorage).forEach(function (k) { if (k.indexOf(OFFLINE_LS_PREFIX) === 0) localStorage.removeItem(k); });
+      } catch (e) {}
+    }).catch(function () {});
+  }
+
+  var outbox = { ops: [], loaded: null, running: false, blobUrls: {} };
+
+  function outboxLoad() {
+    if (!outbox.loaded) {
+      outbox.loaded = offlineGet('kv', 'queue').then(function (q) {
+        outbox.ops = Array.isArray(q) ? q : [];
+        // 送信待ちの写真・動画を、再起動のあとでも画面に出せるようにする
+        var jobs = [];
+        outbox.ops.forEach(function (op) {
+          (op.uploads || []).forEach(function (u) {
+            jobs.push(offlineGet('blobs', u.key).then(function (blob) {
+              if (blob) outbox.blobUrls[Core.pendingPhotoId(u.key)] = URL.createObjectURL(blob);
+            }));
+          });
+        });
+        return Promise.all(jobs);
+      }).then(function () { renderSyncPill(); }, function () {});
+    }
+    return outbox.loaded;
+  }
+  function outboxSave() { return offlinePut('kv', 'queue', outbox.ops); }
+  function dropBlobsOf(ops) {
+    (ops || []).forEach(function (op) {
+      (op.uploads || []).forEach(function (u) { offlineDel('blobs', u.key); });
+    });
+  }
+
+  function currentTripData() {
+    return { trip: state.trip, blocks: (state.blocks || []).concat(state.branchBlocks || []), days: state.days, members: state.members, branches: state.branches };
+  }
+  function cacheTripData(tripId, data) {
+    if (!tripId || !data) return Promise.resolve(false);
+    return offlinePut('trips', tripId, { savedAt: new Date().toISOString(), data: data });
+  }
+  function loadCachedTrip(tripId) {
+    return offlineGet('trips', tripId).then(function (c) { return c && c.data && c.data.trip ? c.data : null; });
+  }
+  function pendingOpsFor(tripId) {
+    return outbox.ops.filter(function (op) { return !op.tripId || op.tripId === tripId; });
+  }
+
+  // 送信待ちにした操作を、いま見ている旅行（と覚えているコピー）に先に反映する。サーバーが返すはずの値の代わりを返す
+  function applyLocally(op) {
+    if (state.trip && state.trip.id === op.tripId) {
+      var r = Core.outboxApplyOp(currentTripData(), op);
+      applyTripData(r.data, true);
+      cacheTripData(op.tripId, r.data);
+      return r.result;
+    }
+    loadCachedTrip(op.tripId).then(function (d) { if (d) cacheTripData(op.tripId, Core.outboxApplyOp(d, op).data); });
+    return null;
+  }
+
+  // 送信待ちの操作の仮id・仮の写真idを、送れたあとの本物のidに置き換える（残りの操作・画面・覚えているコピー）
+  function remapEverywhere(from, to, tripId) {
+    outbox.ops = Core.outboxRemapOps(outbox.ops, from, to);
+    ['entryBlockId', 'editingBlockId', 'editingEntryId'].forEach(function (k) { if (state[k] === from) state[k] = to; });
+    if (state.trip && state.trip.id === tripId) {
+      var d = Core.outboxReplaceId(currentTripData(), from, to);
+      applyTripData(d, true);
+      return cacheTripData(tripId, d);
+    }
+    return loadCachedTrip(tripId).then(function (d) { return d ? cacheTripData(tripId, Core.outboxReplaceId(d, from, to)) : false; });
+  }
+
+  // 予定・記録・評価の書き込みの入り口。spec：{ tripId, method, path, body, uploads:[{key, blob}] }
+  // 送信待ちが無く電波もあるなら、そのまま送る（写真・動画があれば先にアップロードして仮idを本物にする）。
+  // 通信に失敗したら送信待ちに積んで、画面には先に反映する（返す値は、サーバーが返すはずの値の代わり）。
+  // サーバーが断ったとき（4xx/5xx）は、これまでどおりエラーのまま（積まない）。
+  function writeData(spec) {
+    var op = { id: Core.outboxUuid(), tripId: spec.tripId, method: spec.method, path: spec.path, body: spec.body, createdAt: new Date().toISOString(), attempts: 0 };
+    var uploads = (spec.uploads || []).slice();
+    var idem = Core.outboxIsCreate(op) ? { 'Idempotency-Key': op.id } : undefined;
+
+    function sendNow() {
+      return Promise.all(uploads.map(function (u) {
+        return postBinary('/photos', u.blob, null, { 'Idempotency-Key': 'up-' + u.key }).then(
+          function (r) { return { u: u, id: r.id }; },
+          function (e) { return { u: u, err: e }; });
+      })).then(function (rs) {
+        var firstErr = null, left = [];
+        rs.forEach(function (x) {
+          if (x.err) { left.push(x.u); firstErr = firstErr || x.err; }
+          else op.body = Core.outboxReplaceId(op.body, Core.pendingPhotoId(x.u.key), x.id);
+        });
+        uploads = left;
+        if (firstErr) throw firstErr;
+        return api(op.path, op.method, op.body, idem);
+      });
+    }
+
+    function enqueue() {
+      var route = Core.outboxRoute(op);
+      if (!route) return Promise.reject(new Error('not_queueable'));
+      return Promise.all(uploads.map(function (u) { return offlinePut('blobs', u.key, u.blob); })).then(function (oks) {
+        if (oks.indexOf(false) >= 0) throw new Error('offline_store_failed');
+        op.uploads = uploads.map(function (u) { return { key: u.key, type: u.blob.type || '' }; });
+        uploads.forEach(function (u) { outbox.blobUrls[Core.pendingPhotoId(u.key)] = URL.createObjectURL(u.blob); });
+        if (Core.outboxIsCreate(op)) op.tmpId = Core.outboxTmpId();
+        var result = applyLocally(op);
+        if ((route.kind === 'deleteBlock' || route.kind === 'deleteEntry') && Core.isTmpId(route.id)) {
+          // まだ送っていない作りかけを消す：作る操作ごと取り除く（サーバーには何も送らない）
+          var c = Core.outboxCancelTmp(outbox.ops, route.id);
+          outbox.ops = c.ops;
+          dropBlobsOf(c.removed);
+        } else {
+          outbox.ops.push(op);
+        }
+        return outboxSave().then(function () { renderSyncPill(); return result; });
+      });
+    }
+
+    return outboxLoad().then(function () {
+      if (outbox.ops.length || navigator.onLine === false) return enqueue();
+      return sendNow().then(null, function (err) {
+        if (Core.isNetworkError(err, navigator.onLine)) return enqueue();
+        throw err;
+      });
+    });
+  }
+
+  function sendQueuedOp() {
+    function uploadNext() {
+      var op = outbox.ops[0];
+      var u = op && (op.uploads || [])[0];
+      if (!u) return Promise.resolve();
+      return offlineGet('blobs', u.key).then(function (blob) {
+        if (!blob) { var e = new Error('blob_missing'); e.status = 400; throw e; }
+        return postBinary('/photos', blob, null, { 'Idempotency-Key': 'up-' + u.key });
+      }).then(function (r) {
+        return remapEverywhere(Core.pendingPhotoId(u.key), r.id, op.tripId);
+      }).then(function () {
+        var cur = outbox.ops[0];
+        cur.uploads = (cur.uploads || []).slice(1);
+        offlineDel('blobs', u.key);
+        return outboxSave();
+      }).then(uploadNext);
+    }
+    return uploadNext().then(function () {
+      var op = outbox.ops[0];
+      return api(op.path, op.method, op.body, Core.outboxIsCreate(op) ? { 'Idempotency-Key': op.id } : undefined);
+    });
+  }
+
+  function replayOutbox() {
+    if (outbox.running || !outbox.ops.length || navigator.onLine === false) return Promise.resolve();
+    outbox.running = true;
+    renderSyncPill();
+    var sent = 0, dropped = 0, tripIds = {};
+
+    function step() {
+      var first = outbox.ops[0];
+      if (!first) return Promise.resolve();
+      tripIds[first.tripId] = true;
+      return sendQueuedOp().then(function (result) {
+        sent++;
+        var done = outbox.ops.shift();
+        var jobs = Promise.resolve();
+        if (done.tmpId && result && result.id) jobs = remapEverywhere(done.tmpId, result.id, done.tripId);
+        return jobs.then(outboxSave).then(step);
+      }, function (err) {
+        var cur = outbox.ops[0];
+        var kind = Core.outboxClassify(err, navigator.onLine, cur.attempts);
+        if (kind === 'drop') {
+          // もう送れない操作（相手が消えた・入力が合わないなど）は捨てて、続きを送る
+          var removed = [cur];
+          if (cur.tmpId) { var c = Core.outboxCancelTmp(outbox.ops, cur.tmpId); outbox.ops = c.ops; removed = c.removed; }
+          else outbox.ops.shift();
+          dropBlobsOf(removed);
+          dropped++;
+          return outboxSave().then(step);
+        }
+        if (kind === 'retry') cur.attempts = (cur.attempts || 0) + 1;
+        return outboxSave(); // 通信できない・サーバーの一時的な不調：ここで止めて、あとでやり直す
+      });
+    }
+
+    return step().catch(function () {}).then(function () {
+      outbox.running = false;
+      renderSyncPill();
+      if (dropped) showToast(tr('一部の変更は送れませんでした（ほかの人が消した可能性があります）'));
+      if (!outbox.ops.length && (sent || dropped)) return refreshAfterDrain(tripIds);
+    });
+  }
+
+  // 送信待ちを送り終えたら、いま見ている旅行をサーバーの内容に読み直す
+  function refreshAfterDrain(tripIds) {
+    if (!state.trip || !tripIds[state.trip.id]) return Promise.resolve();
+    return refreshTrip().then(function () {
+      var active = $('.screen.active');
+      if (active && active.dataset.screen === 'tripDetail') renderTripDetail();
+    }).catch(function () {});
+  }
+
+  function onBackOnline() {
+    renderSyncPill();
+    outboxLoad().then(replayOutbox).then(function () {
+      // 前回の覚えを見せていたなら、電波が戻ったので最新に読み直す
+      if (state.offlineView && state.trip && !outbox.ops.length) {
+        return refreshTrip().then(function () {
+          var active = $('.screen.active');
+          if (active && active.dataset.screen === 'tripDetail') renderTripDetail();
+        });
+      }
+    }).catch(function () {});
+  }
+
+  function initOffline() {
+    outboxLoad().then(replayOutbox);
+    window.addEventListener('online', onBackOnline);
+    window.addEventListener('offline', renderSyncPill);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) onBackOnline(); });
+    var AppPlugin = isNativeApp() && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if (AppPlugin && AppPlugin.addListener) {
+      try { AppPlugin.addListener('resume', onBackOnline); } catch (e) {}
+    }
+    setInterval(function () { if (outbox.ops.length && navigator.onLine !== false) replayOutbox(); }, 30000);
+  }
+
+  // 旅行の画面の上に出す小さな状態表示（オフライン・未送信の件数）
+  function renderSyncPill() {
+    var el = $('#syncPill');
+    if (!el) return;
+    var parts = [];
+    var offline = navigator.onLine === false;
+    if (state.offlineView) parts.push(tr('オフラインです。前回開いたときの内容を表示しています'));
+    else if (offline) parts.push(tr('オフラインです'));
+    var n = Core.outboxCount(outbox.ops);
+    if (n) parts.push(outbox.running ? tr('送信中…（未送信 {n}件）', { n: n }) : tr('未送信 {n}件（電波が戻ったら送ります）', { n: n }));
+    el.hidden = !parts.length;
+    el.textContent = parts.join('\n');
+    markPendingCards($('#timeline'));
+  }
+
+  // 送信待ちの操作が触れているカードに「未送信」を付ける
+  function markPendingCards(root) {
+    if (!root || !state.trip) return;
+    $all('.pending-badge', root).forEach(function (b) { b.remove(); });
+    $all('.pending-sync', root).forEach(function (c) { c.classList.remove('pending-sync'); });
+    var ids = Core.outboxPendingIds(outbox.ops, state.trip.id);
+    if (!Object.keys(ids).length) return;
+    function badge() { var s = document.createElement('span'); s.className = 'pending-badge'; s.textContent = tr('未送信'); return s; }
+    $all('.block[data-block-id]', root).forEach(function (card) {
+      if (!ids[card.dataset.blockId]) return;
+      card.classList.add('pending-sync');
+      var head = card.querySelector('.block-head');
+      if (head) head.appendChild(badge());
+    });
+    $all('.entry-card[data-entry-id]', root).forEach(function (card) {
+      if (!ids[card.dataset.entryId]) return;
+      card.classList.add('pending-sync');
+      var row = document.createElement('div');
+      row.className = 'pending-row';
+      row.appendChild(badge());
+      card.insertBefore(row, card.firstChild);
+    });
+  }
+
+  // AIの取り込み（音声・メモ・スクショ・レシート）は電波が要る。オフラインのときはその旨を出して、trueを返す
+  function aiOfflineBlocked(statusEl) {
+    if (navigator.onLine !== false) return false;
+    if (statusEl) statusEl.textContent = tr('AIの取り込みは電波があるときに使えます');
+    else showToast(tr('AIの取り込みは電波があるときに使えます'));
+    return true;
+  }
+
 
   // 音声（録音）を文字にして、予定の候補にしてもらう（保存はしない。確認画面のあと import-blocks で保存する。
   // docs/adr/0022 2026-09-30追記）。meta（notes・email・date・branchId）はUTF-8を含みうるので、ヘッダーに載せる前に
@@ -5868,6 +6444,7 @@
   var state = {
     account: null,            // ログイン中アカウントの残り回数（{voiceRemainingThisPeriod, ticketCredits（おまけの回数）, ...}）
     trip: null,
+    offlineView: false,       // 電波がなくて、前回開いたときの覚えを出しているとき（DAY31〜）
     blocks: [],               // みんなの予定（別行動の中の予定は含まない）
     branchBlocks: [],         // 別行動（自分だけの道）の中の予定（block.branchIdが空でないもの）
     branches: [],             // 別行動（{id, accountId, name, date, startTime, endTime, title}）。docs/adr/0021
@@ -6106,7 +6683,9 @@
   // スクロールして少し光らせる（マイログの記録から開いたとき。2026-10-07〜）。
   function openTrip(id, returnTo, onScreenReady, focus) {
     if (!API_BASE) { apiNoticeCheck(); showScreen('home'); return; }
-    api('/trips/' + encodeURIComponent(id)).then(function (data) {
+    fetchTripForOpen(id).then(function (res) {
+      var data = res.data;
+      state.offlineView = res.offline;
       applyTripData(data, false);
       state.social = emptySocial();
       var dates = Core.allDatesForTrip(state.trip, state.blocks);
@@ -6129,10 +6708,35 @@
       maybeAutoTripTutorial();
       if (focus) focusTripRecord(focus);
       if (onScreenReady) onScreenReady();
-    }).catch(function () {
+      if (!res.offline && outbox.ops.length) replayOutbox();
+    }).catch(function (err) {
+      // 通信できなかっただけ（覚えも無い）なら、旅行を一覧から消さない。消すのはサーバーが「無い」と答えたときだけ
+      if (!err || err.status !== 404) {
+        alert(tr('オフラインのため旅行を開けませんでした。電波があるときに一度開くと、次からオフラインでも見られます。'));
+        goHome();
+        return;
+      }
       forgetTrip(id);
       alert(tr('旅行が見つかりませんでした（削除された可能性があります）。一覧からも消しました。'));
       goHome();
+    });
+  }
+
+  // 旅行を開くためのデータ。サーバーから取れたら（送信待ちの操作を重ねて）覚えておき、通信に失敗したら
+  // 前回の覚えを使う（{data, offline}）。覚えも無ければ、元のエラーのまま失敗する
+  function fetchTripForOpen(id) {
+    return outboxLoad().then(function () {
+      return api('/trips/' + encodeURIComponent(id));
+    }).then(function (data) {
+      var merged = Core.outboxApplyAll(data, pendingOpsFor(id));
+      cacheTripData(id, merged);
+      return { data: merged, offline: false };
+    }, function (err) {
+      if (!Core.isNetworkError(err, navigator.onLine)) throw err;
+      return loadCachedTrip(id).then(function (cached) {
+        if (!cached) throw err;
+        return { data: cached, offline: true };
+      });
     });
   }
 
@@ -6184,12 +6788,23 @@
   }
 
   function refreshTrip() {
-    return api('/trips/' + encodeURIComponent(state.trip.id)).then(function (data) {
+    // 送信待ちがあるうちは、サーバーの内容で上書きしない（送り終えたあとに読み直す）
+    if (pendingOpsFor(state.trip.id).length) return Promise.resolve();
+    var tripId = state.trip.id;
+    return api('/trips/' + encodeURIComponent(tripId)).then(function (data) {
+      state.offlineView = false;
+      // 返事を待つあいだに送信待ちが増えていたら、それも重ねる
+      data = Core.outboxApplyAll(data, pendingOpsFor(tripId));
+      cacheTripData(tripId, data);
       applyTripData(data, true);
       // 地図を足した・日程を変えたあとも時差を調べ直す。以前は旅行を開いたときにしか調べず、あとから入れた
       // 地図（ニューヨークの「英語表現の疑問」）が前の時差（ブラジル）のままだった（2026-09-27）。
       // 調べ終わったら並びと区切りを描き直す（loadTripZones）。調べた結果は端末に覚えているので通信は少ない
       loadTripZones();
+    }).catch(function (err) {
+      // 書き込みは通っていて、読み直しだけ電波が無いとき：エラーにしない（いまの画面のまま）
+      if (Core.isNetworkError(err, navigator.onLine)) return;
+      throw err;
     });
   }
 
@@ -6212,6 +6827,7 @@
     var status = $('#newTripStatus');
     if (!API_BASE) { status.textContent = tr('サーバーが未設定のため作成できません。'); return; }
     if (!title) { status.textContent = tr('タイトルを入力してください。'); return; }
+    if (navigator.onLine === false) { status.textContent = tr('旅行をつくるには電波が必要です'); return; }
     status.textContent = tr('作成中…');
     resolveCoverPhotoId().then(function (coverPhotoId) {
       return api('/trips', 'POST', {
@@ -6578,6 +7194,7 @@
 
     renderDayTabs();
     renderDaySection();
+    renderSyncPill();
   }
 
   // ---------- アカウント参加者（参加する） ----------
@@ -7167,6 +7784,7 @@
     if (!voiceBlob) { $('#voiceEntryStatus').textContent = tr('先に録音してください。'); return; }
     var user = loadCurrentUser();
     var branch = state.voiceBranch || null;
+    if (aiOfflineBlocked($('#voiceEntryStatus'))) return;
     var date = state.voiceEntryMultiDay ? '' : state.selectedDate;
     var meta = { notes: $('#voiceNotes').value.trim(), author: (user && user.name) || '', email: (user && user.email) || '', date: date, branchId: branch ? branch.id : '' };
     $('#btnCreateVoiceEntries').disabled = true;
@@ -7221,6 +7839,7 @@
     if (!requireAiReady()) return;
     var user = loadCurrentUser();
     var branch = state.voiceBranch || null;
+    if (aiOfflineBlocked($('#textEntryStatus'))) return;
     var date = state.voiceEntryMultiDay ? '' : state.selectedDate;
     var meta = { text: text, notes: $('#voiceNotes').value.trim(), email: (user && user.email) || '', date: date, branchId: branch ? branch.id : '' };
     $('#btnCreateTextEntries').disabled = true;
@@ -7508,6 +8127,7 @@
     if (!s.files.length || !state.trip) return;
     var user = loadCurrentUser();
     if (!user) { openScreenshotImport(); return; }
+    if (aiOfflineBlocked($('#ssStatus'))) return;
     if (!confirmScreenshotSharing()) return;
     $('#btnSsScan').disabled = true;
     $('#ssStatus').textContent = tr('画像を読み取っています…（数十秒かかることがあります）');
@@ -8780,6 +9400,7 @@
       diagBtn.addEventListener('click', function () { showZoneDiagnostics(blocks[0].date); });
       el.appendChild(diagBtn);
     }
+    markPendingCards(el);
   }
 
   function zoneDiagnosticsText(date) {
@@ -9485,9 +10106,10 @@
     };
     if (!state.editingBlockId && state.editingBranchId) payload.branchId = state.editingBranchId;
     var req = state.editingBlockId
-      ? api('/blocks/' + encodeURIComponent(state.editingBlockId), 'PATCH', payload)
-      : api('/trips/' + encodeURIComponent(state.trip.id) + '/blocks', 'POST', payload);
+      ? writeData({ tripId: state.trip.id, method: 'PATCH', path: '/blocks/' + encodeURIComponent(state.editingBlockId), body: payload })
+      : writeData({ tripId: state.trip.id, method: 'POST', path: '/trips/' + encodeURIComponent(state.trip.id) + '/blocks', body: payload });
     req.then(function (block) {
+      block = block || {};
       return refreshTrip().then(function () {
         state.selectedDate = block.date || '';
         renderDayTabs();
@@ -9510,7 +10132,7 @@
   function deleteBlock() {
     if (!state.editingBlockId) return;
     if (!confirm(tr('この予定と、ぶら下がる記録をすべて削除しますか？'))) return;
-    api('/blocks/' + encodeURIComponent(state.editingBlockId), 'DELETE').then(function () {
+    writeData({ tripId: state.trip.id, method: 'DELETE', path: '/blocks/' + encodeURIComponent(state.editingBlockId) }).then(function () {
       return refreshTrip();
     }).then(function () {
       showScreen('tripDetail');
@@ -9838,7 +10460,7 @@
     if (!(score > 0)) return;
     var status = $('#reviewStatus');
     status.textContent = tr('保存中…');
-    api('/entries/' + encodeURIComponent(entry.id) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: score, review: readReviewFields() })
+    writeData({ tripId: state.trip.id, method: 'PUT', path: '/entries/' + encodeURIComponent(entry.id) + '/rating', body: { raterEmail: user.email, raterName: user.name || '', score: score, review: readReviewFields() } })
       .then(function () { return refreshTrip(); })
       .then(function () {
         state.editingEntry = findEntryById(entry.id);
@@ -9858,9 +10480,10 @@
     }
     var status = $('#entRatingSummary');
     status.textContent = tr('保存中…');
+    var ratingPath = '/entries/' + encodeURIComponent(state.editingEntryId) + '/rating';
     var req = score > 0
-      ? api('/entries/' + encodeURIComponent(state.editingEntryId) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: score })
-      : api('/entries/' + encodeURIComponent(state.editingEntryId) + '/rating', 'DELETE', { raterEmail: user.email });
+      ? writeData({ tripId: state.trip.id, method: 'PUT', path: ratingPath, body: { raterEmail: user.email, raterName: user.name || '', score: score } })
+      : writeData({ tripId: state.trip.id, method: 'DELETE', path: ratingPath, body: { raterEmail: user.email } });
     req.then(function () {
       return refreshTrip();
     }).then(function () {
@@ -10311,6 +10934,7 @@
       return;
     }
     var status = $('#receiptScanStatus');
+    if (aiOfflineBlocked(status)) return;
     status.textContent = tr('読み取り中…（数十秒かかることがあります）');
     $('#btnScanReceipt').disabled = true;
     fileToCompressedBlob(file, 1600, 0.85).then(function (blob) {
@@ -10605,25 +11229,33 @@
     // 書き換えたり消したりしたら selectedPlaceNameUrl と一致しなくなるので送らない。2026-09-29）
     if (selectedPlaceName && payload.mapUrl === selectedPlaceNameUrl) payload.mapPlaceName = selectedPlaceName;
 
-    Promise.all([
-      // 並べた順のまま、新しい写真だけアップロードしてidにする
-      Promise.all(state.formPhotos.map(function (p) { return p.id ? Promise.resolve({ id: p.id }) : uploadPhotoBlob(p.blob); })),
-      Promise.all(state.pendingVideos.map(function (v) { return uploadPhotoBlob(v.blob); }))
-    ])
-      .then(function (results) {
-        var uploaded = results[0], uploadedVideos = results[1];
-        payload.photoIds = uploaded.map(function (u) { return u.id; });
-        payload.videoIds = state.formVideoIds.concat(uploadedVideos.map(function (u) { return u.id; }));
+    // 新しい写真・動画は「pend:<キー>」という仮のidで並べる。writeDataが、先にアップロードして本物のidにする
+    // （電波がなければ、中身ごと送信待ちに積む）。キーは写真ごとに固定なので、やり直しても二重にアップロードしない
+    var uploads = [];
+    payload.photoIds = state.formPhotos.map(function (p) {
+      if (p.id) return p.id;
+      p.uploadKey = p.uploadKey || Core.outboxUuid();
+      uploads.push({ key: p.uploadKey, blob: p.blob });
+      return Core.pendingPhotoId(p.uploadKey);
+    });
+    payload.videoIds = state.formVideoIds.concat(state.pendingVideos.map(function (v) {
+      v.uploadKey = v.uploadKey || Core.outboxUuid();
+      uploads.push({ key: v.uploadKey, blob: v.blob });
+      return Core.pendingPhotoId(v.uploadKey);
+    }));
+    var tripId = state.trip.id;
+    Promise.resolve()
+      .then(function () {
         var req = state.editingEntryId
-          ? api('/entries/' + encodeURIComponent(state.editingEntryId), 'PATCH', payload)
-          : api('/blocks/' + encodeURIComponent(state.entryBlockId) + '/entries', 'POST', payload);
+          ? writeData({ tripId: tripId, method: 'PATCH', path: '/entries/' + encodeURIComponent(state.editingEntryId), body: payload, uploads: uploads })
+          : writeData({ tripId: tripId, method: 'POST', path: '/blocks/' + encodeURIComponent(state.entryBlockId) + '/entries', body: payload, uploads: uploads });
         var user = loadCurrentUser();
         var draft = state.editingEntryId ? 0 : (state.draftRating || 0);
         if (!(draft > 0) || !user) return req;
         // 新しい記録に付けておいた評価は、記録ができたあとに送る（失敗しても記録は残る）
         return req.then(function (created) {
           if (!created || !created.id) return created;
-          return api('/entries/' + encodeURIComponent(created.id) + '/rating', 'PUT', { raterEmail: user.email, raterName: user.name || '', score: draft }).catch(function () {});
+          return writeData({ tripId: tripId, method: 'PUT', path: '/entries/' + encodeURIComponent(created.id) + '/rating', body: { raterEmail: user.email, raterName: user.name || '', score: draft } }).catch(function () {});
         });
       })
       .then(function () {
@@ -10638,7 +11270,7 @@
   function deleteEntry() {
     if (!state.editingEntryId) return;
     if (!confirm(tr('この記録を削除しますか？'))) return;
-    api('/entries/' + encodeURIComponent(state.editingEntryId), 'DELETE').then(function () {
+    writeData({ tripId: state.trip.id, method: 'DELETE', path: '/entries/' + encodeURIComponent(state.editingEntryId) }).then(function () {
       return refreshTrip();
     }).then(function () {
       showScreen('tripDetail');
@@ -11387,6 +12019,7 @@
       Object.keys(localStorage).forEach(function (k) {
         if (k.indexOf('tabilog:') === 0) localStorage.removeItem(k);
       });
+      clearOfflineData();
       state.homeFilters = { companion: '', year: '', tripType: '', sort: '' };
       state.mylogFilters = { companion: '', year: '', sort: '' };
       renderAccountRow();
@@ -13848,6 +14481,7 @@
 
   function init() {
     initClearButtons();
+    initOffline();
     $('#btnCloseLightbox').addEventListener('click', closeMediaViewer);
     $('#lightboxPrev').addEventListener('click', function (e) { e.stopPropagation(); goToMedia(viewer.index - 1, true); });
     $('#lightboxNext').addEventListener('click', function (e) { e.stopPropagation(); goToMedia(viewer.index + 1, true); });

@@ -110,7 +110,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
     <div class="wrap">
       <header class="hd">
         <div class="hd-title-row"><h1>旅の足跡</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="homeInfo">？</button></div>
-        <p class="info-pop" id="homeInfo" hidden>共有リンクを知っている人は、見たり書き足したりできます</p>
+        <p class="info-pop" id="homeInfo" hidden>共有リンクを知っている人は、見たり書き足したりできます<br>電波がないときも、予定・記録の追加や直しはできます。端末に残して、電波が戻ったら順に送ります（同じ項目を同時に直したときは、あとから届いた内容が残ります）</p>
       </header>
 
       <div class="account-row" id="accountRow" hidden>
@@ -359,6 +359,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
   <!-- ============ 旅の詳細（日ごとのきろく） ============ -->
   <section class="screen" data-screen="tripDetail">
     <div class="wrap">
+      <!-- オフライン・未送信の状態表示（DAY31〜。app.jsのrenderSyncPill） -->
+      <div class="sync-pill" id="syncPill" role="status" hidden></div>
       <header class="trip-cover" id="tripCover">
         <div class="trip-cover-photo" id="tripCoverPhoto" hidden></div>
         <button class="icon-btn back-btn" data-back="home" aria-label="戻る">
