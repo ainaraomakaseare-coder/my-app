@@ -10745,7 +10745,8 @@
     if (!iap.configurePromise) iap.configurePromise = P.configure({ apiKey: REVENUECAT_IOS_API_KEY });
     iap.ready = iap.configurePromise.then(function () {
       return P.logIn({ appUserID: accountId });
-    }).then(function () { return true; }).catch(function () {
+    }).then(function () { iap.lastError = ''; return true; }).catch(function (e) {
+      iap.lastError = 'login: ' + iapErrorText(e);
       iap.userId = ''; iap.ready = null; iap.configurePromise = null;
       return false;
     });
@@ -10756,6 +10757,20 @@
     iap.userId = ''; iap.ready = null; iap.packages = null;
     var P = iapPlugin();
     if (wasIn && P) P.logOut().catch(function () {});
+  }
+  // 購入画面を出せなかった理由（TestFlightで原因を調べるため、画面に小さく出す）
+  function iapErrorText(e) {
+    if (!e) return 'unknown';
+    var parts = [];
+    if (e.code !== undefined && e.code !== null && e.code !== '') parts.push(String(e.code));
+    if (e.message) parts.push(String(e.message));
+    if (e.underlyingErrorMessage) parts.push(String(e.underlyingErrorMessage));
+    return parts.length ? parts.join(' / ').slice(0, 300) : String(e).slice(0, 300);
+  }
+  function showTicketShopProblem(el, reason) {
+    el.innerHTML = '<p class="hint ticket-shop-problem">' + escapeHtml(tr('回数券の購入画面を出せませんでした')) +
+      '（' + escapeHtml(reason) + '）</p>';
+    el.hidden = false;
   }
   function iapLoadPackages() {
     if (iap.packages) return Promise.resolve(iap.packages);
@@ -10772,11 +10787,21 @@
     if (!el) return;
     el.hidden = true;
     el.innerHTML = '';
-    if (!iapAvailable() || !state.account) return;
+    if (!iapAvailable() || !state.account) {
+      // iOSアプリなのに購入の部品が無いときだけ、理由を出す（Web版には何も出さない）
+      if (isNativeApp() && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'ios' && state.account && !iapPlugin()) {
+        showTicketShopProblem(el, 'plugin missing');
+      }
+      return;
+    }
+    var stage = 'login';
     iapLogIn(state.account.accountId).then(function (ok) {
-      return ok ? iapLoadPackages() : [];
+      if (!ok) throw { message: iap.lastError || 'login failed' };
+      stage = 'offerings';
+      return iapLoadPackages();
     }).then(function (list) {
-      if (!list.length || !iapAvailable()) return;
+      if (!iapAvailable()) return;
+      if (!list.length) { iap.packages = null; showTicketShopProblem(el, 'offerings: 0 packages'); return; }
       el.innerHTML = '<div class="ticket-shop-title">' + escapeHtml(tr('回数券を買う')) + '</div>' +
         '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
         list.map(function (pkg, i) {
@@ -10787,7 +10812,12 @@
       $all('.ticket-buy', el).forEach(function (btn) {
         btn.addEventListener('click', function () { buyTicket(list[Number(btn.getAttribute('data-ticket-index'))], el); });
       });
-    }).catch(function () { /* 商品が取れなければ、買う画面を出さないだけ */ });
+    }).catch(function (e) {
+      // 商品が取れなければ、買うボタンは出さずに理由だけ小さく出す
+      if (!iapAvailable()) return;
+      var text = iapErrorText(e);
+      showTicketShopProblem(el, text.indexOf(stage + ':') === 0 ? text : stage + ': ' + text);
+    });
   }
 
   function buyTicket(pkg, el) {
