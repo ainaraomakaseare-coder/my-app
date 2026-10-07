@@ -7047,7 +7047,7 @@
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
     if (!user) {
-      $('#memoAiInfo').textContent = tr('AIでの整理と音声入力は、ログインすると使えます（メモのAI整理は月10回まで）。');
+      $('#memoAiInfo').textContent = tr('AIでの整理と音声入力は、ログインすると使えます（それぞれ月3回まで無料）。');
       return;
     }
     $('#memoAiInfo').textContent = '';
