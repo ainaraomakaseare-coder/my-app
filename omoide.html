@@ -804,6 +804,11 @@
   .quizClue { margin: 14px 0; padding: 16px; border-radius: 16px; background: var(--board); color: var(--ink); font-size: 15px; font-weight: 650; text-align: center; }
   .quizClueImage { display: block; width: min(100%,290px); aspect-ratio: 1 / .9; margin: 4px auto 14px; border-radius: 18px; object-fit: cover; }
   .quizOptions { display: grid; gap: 8px; }
+  .quizOptions.nameChoices { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .nameChoices .quizOption { overflow-wrap:anywhere; }
+  .quizChoicePager { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }
+  .quizChoicePager button { min-height:44px; }
+  .quizChoicePager span { text-align:center; font-size:12px; color:var(--ink-soft); }
   .quizOption[hidden] { display: none; }
   .quizModeCard[hidden] { display: none; }
   .quizNameSearch { width: 100%; box-sizing: border-box; margin-bottom: 12px; padding: 12px; border: 1px solid var(--card-edge); border-radius: 12px; font: inherit; }
@@ -3152,14 +3157,16 @@
     if (question.type === "person-episode" && question.photoUrl) {
       clueHtml = '<img class="quizClueImage" src="' + esc(photoSrc(question.photoUrl)) + '" alt="' + esc(question.clue) + 'の写真" />' + clueHtml;
     }
+    var pagedNames = session.level === "advanced" && ["photo", "feature", "episode"].indexOf(question.type) !== -1;
+    session.refreshNameChoices = null;
     container.innerHTML = quizBackButtonHtml + '<p class="rankingNote">出題範囲：' + esc(session.scopeLabel) + '</p><div class="quizSessionTop"><span>問題 ' + (session.index + 1) + ' / ' + session.questions.length + '</span><strong>今回の正解 ' + session.correct + '</strong></div>' +
       '<p class="quizPrompt">' + prompt + '</p>' + clueHtml +
       '<button type="button" class="primaryBtn quizNext" id="nextQuizTopBtn" hidden>次の問題へ</button>' +
       '<div class="quizFeedback" id="quizFeedback" aria-live="polite" hidden></div>' +
       '<button type="button" class="primaryBtn quizNext" id="nextQuizBtn" hidden>次の問題へ</button>' +
       '<button type="button" class="ghostBtn quizNext" id="quizReviewChoicesBtn" hidden>選択肢を振り返る</button>' +
-      (session.level === "advanced" && ["photo", "feature", "episode"].indexOf(question.type) !== -1 ? '<input type="search" class="quizNameSearch" id="quizNameSearch" aria-label="回答する名前を絞り込む" placeholder="名前で絞り込む" /><p id="quizNameEmpty" hidden>一致する名前がありません</p>' : '') +
-      '<div class="quizOptions">' + question.choices.map(function (choice, index) {
+      (pagedNames ? '<label for="quizNameSearch">名前で検索（全員から探せます）</label><input type="search" class="quizNameSearch" id="quizNameSearch" aria-label="回答する名前を絞り込む" placeholder="名前を入力して探す" /><p id="quizNameEmpty" hidden>一致する名前がありません</p><div class="quizChoicePager" id="quizChoicePager"><button type="button" class="ghostBtn" id="quizNamesPrev">前の名前</button><span id="quizNamesPage" role="status"></span><button type="button" class="ghostBtn" id="quizNamesNext">次の名前</button></div>' : '') +
+      '<div class="quizOptions' + (pagedNames ? ' nameChoices' : '') + '">' + question.choices.map(function (choice, index) {
         return '<button type="button" class="quizOption' + (choice.id === NONE_ANSWER ? ' noneChoice' : '') + '" data-choice="' + index + '">' + esc(choice.label) + '</button>';
       }).join("") + '</div>';
     Array.prototype.forEach.call(container.querySelectorAll("[data-choice]"), function (button) {
@@ -3175,20 +3182,38 @@
     document.getElementById("quizReviewChoicesBtn").addEventListener("click", function (event) {
       var options = container.querySelector(".quizOptions");
       options.hidden = !options.hidden;
+      if (pagedNames) document.getElementById("quizChoicePager").hidden = options.hidden;
       event.target.textContent = options.hidden ? "選択肢を振り返る" : "選択肢を閉じる";
     });
     var nameSearch = document.getElementById("quizNameSearch");
-    if (nameSearch) nameSearch.addEventListener("input", function () {
-      var query = normalizedEpisode(nameSearch.value);
-      var found = 0;
-      Array.prototype.forEach.call(container.querySelectorAll("[data-choice]"), function (button) {
-        var choice = question.choices[Number(button.getAttribute("data-choice"))];
-        var matches = normalizedEpisode(choice.label).indexOf(query) !== -1;
-        button.hidden = choice.id !== NONE_ANSWER && !matches;
-        if (choice.id !== NONE_ANSWER && matches) found += 1;
-      });
-      document.getElementById("quizNameEmpty").hidden = found > 0;
-    });
+    if (nameSearch) {
+      var namePage = 0, pageSize = 12;
+      function refreshNameChoices(showCorrect) {
+        var query = session.locked ? "" : normalizedEpisode(nameSearch.value);
+        var matches = question.choices.map(function (choice, index) { return { choice: choice, index: index }; })
+          .filter(function (item) { return item.choice.id !== NONE_ANSWER && normalizedEpisode(item.choice.label).indexOf(query) !== -1; });
+        var pages = Math.max(1, Math.ceil(matches.length / pageSize));
+        if (showCorrect) {
+          var correctIndex = matches.findIndex(function (item) { return item.choice.id === question.answerId; });
+          namePage = correctIndex >= 0 ? Math.floor(correctIndex / pageSize) : 0;
+        }
+        namePage = Math.max(0, Math.min(namePage, pages - 1));
+        var visible = matches.slice(namePage * pageSize, (namePage + 1) * pageSize).map(function (item) { return item.index; });
+        Array.prototype.forEach.call(container.querySelectorAll("[data-choice]"), function (button) {
+          var index = Number(button.getAttribute("data-choice"));
+          button.hidden = question.choices[index].id !== NONE_ANSWER && visible.indexOf(index) === -1;
+        });
+        document.getElementById("quizNameEmpty").hidden = session.locked || matches.length > 0;
+        document.getElementById("quizNamesPage").textContent = matches.length ? (namePage * pageSize + 1) + "〜" + Math.min((namePage + 1) * pageSize, matches.length) + " / " + matches.length + "人" : "0人";
+        document.getElementById("quizNamesPrev").disabled = namePage === 0;
+        document.getElementById("quizNamesNext").disabled = namePage >= pages - 1;
+      }
+      session.refreshNameChoices = refreshNameChoices;
+      nameSearch.addEventListener("input", function () { namePage = 0; refreshNameChoices(); });
+      document.getElementById("quizNamesPrev").addEventListener("click", function () { namePage -= 1; refreshNameChoices(); });
+      document.getElementById("quizNamesNext").addEventListener("click", function () { namePage += 1; refreshNameChoices(); });
+      refreshNameChoices();
+    }
   }
 
   function answerQuiz(choiceIndex) {
@@ -3212,13 +3237,17 @@
     var newlyKnown = !session.practice && correct && question.personId !== null && state.knownPeople.indexOf(question.personId) === -1;
     var buttons = Array.prototype.slice.call(document.querySelectorAll(".quizOption"));
     var nameSearch = document.getElementById("quizNameSearch");
-    if (nameSearch) { nameSearch.disabled = true; nameSearch.hidden = true; document.getElementById("quizNameEmpty").hidden = true; }
+    if (nameSearch) { nameSearch.disabled = true; nameSearch.hidden = true; document.querySelector('label[for="quizNameSearch"]').hidden = true; document.getElementById("quizNameEmpty").hidden = true; }
     buttons.forEach(function (button, index) {
       button.hidden = false;
       button.disabled = true;
       if (question.choices[index].id === question.answerId) button.classList.add("correct");
       else if (index === choiceIndex && !correct) button.classList.add("incorrect");
     });
+    if (session.refreshNameChoices) {
+      session.refreshNameChoices(true);
+      document.getElementById("quizChoicePager").hidden = true;
+    }
     if (correct) {
       session.correct += 1;
       if (!session.practice) state.correctCount += 1;
