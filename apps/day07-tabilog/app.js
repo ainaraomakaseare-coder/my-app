@@ -6455,7 +6455,7 @@
 
   // ---------- 状態 ----------
   var state = {
-    account: null,            // ログイン中アカウントの残り回数（{voiceRemainingThisPeriod, ticketCredits（おまけの回数）, ...}）
+    account: null,            // ログイン中アカウントの残り回数（{voiceRemainingThisPeriod, ticketCredits（回数券の残り）, ...}）
     trip: null,
     offlineView: false,       // 電波がなくて、前回開いたときの覚えを出しているとき（DAY31〜）
     blocks: [],               // みんなの予定（別行動の中の予定は含まない）
@@ -7630,7 +7630,7 @@
     return ok;
   }
 
-  // 音声入力は月の回数（と、おまけの回数）まで使える（docs/adr/0004。有料プランの販売は停止中）。
+  // 音声入力は月の回数（と、回数券の残り）まで使える（docs/adr/0004。有料プランの販売は停止中）。
   // 使い切ったときは、録音の代わりに案内だけを出す（購入への導線は出さない）。
   // multiDay=trueで開くと「複数日をまとめて記録する」（DAY30〜）：特定の日タブを選ばず、
   // 旅行の日程全体に対してAIが各予定の日も判定する（state.voiceEntryMultiDayで保持し、
@@ -7689,7 +7689,7 @@
 
   // 音声・メモの画面に、残り回数と、使い切ったときの案内（iOSアプリなら回数券を買う入口も）を反映する
   function applyAiQuotaUi(account) {
-    var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+    var bonus = account.ticketCredits ? tr('（回数券：あと{n}回）', { n: account.ticketCredits }) : '';
     $('#memoAiInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
     var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
     if (!voiceOk) {
@@ -8063,7 +8063,7 @@
     showScreen('screenshotImport');
     fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
-      var bonus = account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: account.ticketCredits }) : '';
+      var bonus = account.ticketCredits ? tr('（回数券：あと{n}回）', { n: account.ticketCredits }) : '';
       $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
       if (account.memoRemainingThisPeriod <= 0 && !account.ticketCredits) renderTicketShop($('#ssTicketShop'));
     });
@@ -11427,6 +11427,13 @@
     });
   }
 
+  // ボタンの表示名。商品ID（…ticket10 など）から回数を取って「回数券 10回」にする。取れなければストアの商品名を使う。
+  function ticketCountLabel(pkg) {
+    var m = /ticket(\d+)$/.exec((pkg.product && pkg.product.identifier) || '');
+    if (m) return tr('回数券 {n}回', { n: Number(m[1]) });
+    return pkg.product.title || pkg.identifier;
+  }
+
   // 回数券の買えるところ（el）に「回数券を買う」を描く。値段はStoreKitが返す表示用の文字列をそのまま出す。
   // 買えない状態（Web・キー未設定・未ログイン・商品が取れない）なら、何も出さない。
   function renderTicketShop(el) {
@@ -11459,7 +11466,7 @@
         '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
         list.map(function (pkg, i) {
           return '<button type="button" class="btn ticket-buy" data-ticket-index="' + i + '">' +
-            escapeHtml(pkg.product.title || pkg.identifier) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
+            escapeHtml(ticketCountLabel(pkg)) + '　' + escapeHtml(pkg.product.priceString || '') + '</button>';
         }).join('') + '<p class="hint ticket-shop-status" role="status"></p>';
       el.hidden = false;
       $all('.ticket-buy', el).forEach(function (btn) {
@@ -11517,7 +11524,7 @@
     var name = active && active.dataset.screen;
     if (name === 'voiceEntryForm' && state.account) applyAiQuotaUi(state.account);
     else if (name === 'screenshotImport' && state.account) {
-      var bonus = state.account.ticketCredits ? tr('（おまけの回数：{n}回）', { n: state.account.ticketCredits }) : '';
+      var bonus = state.account.ticketCredits ? tr('（回数券：あと{n}回）', { n: state.account.ticketCredits }) : '';
       $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: state.account.memoRemainingThisPeriod, max: state.account.memoMonthlyLimit }) + bonus;
       $('#ssTicketShop').hidden = true;
       $('#ssTicketShop').innerHTML = '';
@@ -11533,7 +11540,7 @@
     var subEl = $('#mpQuotaSub');
     var aiRow = $('#mpAiUsage');
     if (aiRow) aiRow.hidden = !(account && account.isAdmin === true); // 運営者だけ（サーバーが判定して返す）
-    if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: account.voiceRemainingThisPeriod }) : '';
+    if (subEl) subEl.textContent = account ? tr('あと{n}回', { n: (account.voiceRemainingThisPeriod || 0) + (account.ticketCredits || 0) }) : '';
     if (!account) {
       statusEl.innerHTML = '';
       msgEl.textContent = '';
@@ -11544,7 +11551,7 @@
     if (typeof account.memoRemainingThisPeriod === 'number') {
       lines.push('<div class="plan-usage">' + tr('メモ・スクショのAI整理：あと{n}回（月{limit}回まで）', { n: account.memoRemainingThisPeriod, limit: account.memoMonthlyLimit }) + '</div>');
     }
-    if (account.ticketCredits) lines.push('<div class="plan-usage">' + tr('おまけの回数：{n}回', { n: account.ticketCredits }) + '</div>');
+    if (account.ticketCredits) lines.push('<div class="plan-usage">' + tr('回数券の残り：{n}回', { n: account.ticketCredits }) + '</div>');
     var linesHtml = lines.join('');
     if (statusEl.innerHTML !== linesHtml) {
       statusEl.innerHTML = linesHtml;
@@ -11945,7 +11952,7 @@
       [tr('アカウント数'), a.count],
       [tr('今月の音声入力の使用回数（合計）'), a.voiceUsesThisPeriod],
       [tr('今月のメモ・スクショの使用回数（合計）'), a.memoUsesThisPeriod],
-      [tr('おまけの回数の合計'), a.ticketCredits],
+      [tr('回数券の残りの合計'), a.ticketCredits],
       [tr('今月AIを使ったアカウント'), a.usedAiThisMonth]
     ].map(function (r) { return '<tr><td>' + escapeHtml(r[0]) + '</td><td>' + escapeHtml(String(r[1] || 0)) + '</td></tr>'; }).join('') + '</tbody></table>';
     html += '<div class="aiu-h">' + escapeHtml(tr('日別（直近31日）')) + '</div>';
@@ -12014,7 +12021,7 @@
   }
 
   // アカウント削除。旅行の記録自体は家族と共有しているものなので消さず、
-  // アカウント本体（名前・おまけの回数・参加した旅行への紐付け）だけを消す。
+  // アカウント本体（名前・回数券の残り・参加した旅行への紐付け）だけを消す。
   // メールアドレスは、削除→再登録を繰り返した無料枠の不正な繰り返し取得を防ぐため残す（worker側の実装を参照）。
   // この端末に残しているデータ（旅行一覧・非表示にした旅行・AI送信の同意など、tabilog:で始まるキー）も
   // 一緒に消す。消さないと削除後のホームに同じ旅行が並んだままになり、「削除できていない」ように見える
