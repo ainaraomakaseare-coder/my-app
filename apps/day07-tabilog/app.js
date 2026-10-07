@@ -11208,8 +11208,8 @@
     return [
       { target: '#btnNewTrip', title: 'まずは旅行を1つ作ろう', body: '名前と日にちだけでOK。行く前の予定づくりにも、行ったあとの思い出の整理にも使えます。' },
       { target: '#tabbar .tabbar-btn[data-tab="timeline"]', title: '年ごとに旅がまとまります', body: '参加した旅行が、年ごとの年表に並びます。' },
-      { target: '#tabbar .tabbar-btn[data-tab="mylog"]', title: 'マイログに評価がたまっていく', body: '評価をつけたお店・宿・スポットが、旅をまたいでここにたまります。' },
       { target: '#tabbar .tabbar-btn[data-tab="visited"]', title: '行った場所が地図に塗られていく', body: '行った都道府県や国が、旅の記録から自動で地図に塗られていきます。' },
+      { target: '#tabbar .tabbar-btn[data-tab="mylog"]', title: 'マイログに評価がたまっていく', body: '評価をつけたお店・宿・スポットが、旅をまたいでここにたまります。' },
       { target: '#tabbar .tabbar-btn[data-tab="profile"]', title: 'マイページで設定と使い方', body: '言語の切り替えや、この使い方の見直しはここからできます。' },
       { title: 'さっそく旅行を作ってみよう', body: '旅行を作ると、続きの使い方を案内します。' }
     ];
