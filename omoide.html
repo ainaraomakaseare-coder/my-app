@@ -844,6 +844,14 @@
   .gate label { display:block; text-align:left; margin-top:16px; font-size:13px; }
   .gate input { width:100%; box-sizing:border-box; margin-top:6px; }
   .gateActions { display:flex; flex-wrap:wrap; justify-content:center; gap:10px; margin-top:18px; }
+  .joinedCommunities { text-align:left; margin:20px 0; }
+  .joinedCommunities h3 { font-size:16px; margin:0 0 8px; }
+  .joinedCommunityList { display:grid; gap:10px; }
+  .joinedCommunity { width:100%; text-align:left; padding:14px; min-height:60px; border:1px solid var(--card-edge); border-radius:14px; background:var(--card); color:var(--ink); cursor:pointer; }
+  .joinedCommunity strong, .joinedCommunity small { display:block; overflow-wrap:anywhere; }
+  .joinedCommunity small { margin-top:5px; color:var(--ink-soft); font-size:12px; }
+  .joinedCommunityEntry .ghostBtn { margin-top:4px; font-size:12px; min-height:44px; }
+  .joinedCommunityEntry label { margin-top:4px; }
   .memberAdmin { background:var(--card); border-radius:20px; padding:20px; margin:18px 0; }
   .memberAdmin h2 { margin-top:0; }
   .memberList { padding:0; list-style:none; }
@@ -883,7 +891,12 @@
     <label>招待コード<input type="text" id="gateInput" class="gateInput" placeholder="招待コードを貼り付け" autocomplete="off" autocapitalize="none" spellcheck="false" /></label>
     <div class="gateActions"><button class="primaryBtn" id="gateSubmit">参加する</button><button class="ghostBtn" id="gateCreate">新しく作る</button></div>
     <p class="gateError" id="gateError" role="status"></p>
-    <button class="ghostBtn" id="gateResume" hidden>参加済みコミュニティに戻る</button>
+    <section class="joinedCommunities" aria-labelledby="joinedCommunitiesTitle">
+      <h3 id="joinedCommunitiesTitle">参加済みのコミュニティ</h3>
+      <p id="joinedCommunitiesStatus" role="status">参加先を確認しています…</p>
+      <div class="joinedCommunityList" id="joinedCommunityList"></div>
+      <button type="button" class="ghostBtn" id="refreshJoinedCommunities">一覧を更新</button>
+    </section>
     <details><summary>管理者に伝える参加者ID</summary><p id="gateAccountId"></p></details>
   </div>
 </div>
@@ -1065,8 +1078,92 @@
 
   function setGateBusy(busy) {
     gateBusy = busy;
-    ["gateSubmit", "gateCreate", "gateResume"].forEach(function (id) { document.getElementById(id).disabled = busy; });
+    ["gateSubmit", "gateCreate", "refreshJoinedCommunities"].forEach(function (id) { document.getElementById(id).disabled = busy; });
+    Array.prototype.forEach.call(document.querySelectorAll(".joinedCommunity"), function (button) { button.disabled = busy; });
   }
+
+  var joinedCommunitiesRequest = 0;
+  async function loadJoinedCommunities() {
+    if (!state.userId) return [];
+    var request = ++joinedCommunitiesRequest;
+    var epoch = accessEpoch;
+    var status = document.getElementById("joinedCommunitiesStatus");
+    var list = document.getElementById("joinedCommunityList");
+    list.innerHTML = "";
+    status.textContent = "参加済みのコミュニティを読み込んでいます…";
+    try {
+      var rooms = [];
+      for (var offset = 0; ; offset += 200) {
+        var result = await supabaseClient.from("binder_members")
+          .select("room_id,role,display_name,joined_at,binder_rooms(name)")
+          .eq("user_id", state.userId).eq("status", "active")
+          .order("joined_at", { ascending: false }).order("room_id").range(offset, offset + 199);
+        if (request !== joinedCommunitiesRequest || epoch !== accessEpoch) return [];
+        if (result.error) throw result.error;
+        rooms = rooms.concat(result.data || []);
+        if (!result.data || result.data.length < 200) break;
+      }
+      rooms.sort(function (a, b) { return Number(b.room_id === lastRoomId) - Number(a.room_id === lastRoomId); });
+      var aliasKey = "omoide_room_labels_v1:" + state.userId;
+      var aliases = {};
+      try { aliases = JSON.parse(localStorage.getItem(aliasKey)) || {}; } catch (e) {}
+      rooms.forEach(function (room) {
+        var entry = document.createElement("div");
+        entry.className = "joinedCommunityEntry";
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "joinedCommunity";
+        button.disabled = gateBusy;
+        var name = document.createElement("strong");
+        var roomName = room.binder_rooms && room.binder_rooms.name || "コミュニティ";
+        name.textContent = aliases[room.room_id] || roomName;
+        var detail = document.createElement("small");
+        detail.textContent = (room.room_id === lastRoomId ? "前回開いたコミュニティ · " : "") +
+          (room.role === "admin" ? "管理者" : "メンバー") + " · " + room.display_name + " · ID末尾 " + room.room_id.slice(-8);
+        button.append(name, detail);
+        button.addEventListener("click", async function () {
+          if (gateBusy) return;
+          setGateBusy(true);
+          try { await passGate(room.room_id); }
+          catch (e) { showGate(membershipMessage(e)); }
+          finally { setGateBusy(false); }
+        });
+        entry.appendChild(button);
+        var rename = document.createElement("button");
+        rename.type = "button"; rename.className = "ghostBtn";
+        rename.textContent = "自分用の表示名を付ける";
+        var editor = document.createElement("div"); editor.hidden = true;
+        var label = document.createElement("label"); label.textContent = "この端末での表示名";
+        var input = document.createElement("input"); input.maxLength = 60;
+        input.value = aliases[room.room_id] || roomName;
+        var save = document.createElement("button"); save.type = "button";
+        save.className = "ghostBtn"; save.textContent = "表示名を保存";
+        label.appendChild(input); editor.append(label, save);
+        rename.addEventListener("click", function () { editor.hidden = !editor.hidden; if (!editor.hidden) input.focus(); });
+        save.addEventListener("click", function () {
+          var value = input.value.trim(); if (!value) { input.focus(); return; }
+          aliases[room.room_id] = value;
+          try { localStorage.setItem(aliasKey, JSON.stringify(aliases)); }
+          catch (e) { showToast("表示名を端末に保存できませんでした"); return; }
+          name.textContent = value; editor.hidden = true;
+        });
+        entry.append(rename, editor); list.appendChild(entry);
+      });
+      status.textContent = rooms.length ? "戻りたいコミュニティを選んでください。招待コードは不要です。" : "参加済みのコミュニティはありません。招待コードで参加できます。";
+      return rooms;
+    } catch (e) {
+      if (request !== joinedCommunitiesRequest || epoch !== accessEpoch) return [];
+      status.textContent = "参加先を読み込めませんでした。通信状態を確認して「一覧を更新」を押してください。";
+      return [];
+    }
+  }
+  document.getElementById("refreshJoinedCommunities").addEventListener("click", async function () {
+    if (gateBusy) return;
+    setGateBusy(true);
+    try { await ensureIdentity(); await loadJoinedCommunities(); }
+    catch (e) { gateError.textContent = membershipMessage(e); }
+    finally { setGateBusy(false); }
+  });
 
   async function readMembership(roomId) {
     var result = await supabaseClient.from("binder_members").select("role,status,display_name")
@@ -1149,10 +1246,11 @@
     document.getElementById("inviteCodeValue").value = "";
     invitesEnabled = null;
     document.getElementById("app").hidden = true;
-    document.getElementById("gateResume").hidden = !lastRoomId;
+    document.getElementById("joinedCommunityList").innerHTML = "";
     gateInput.value = "";
     gateError.textContent = message || "";
     gateOverlay.hidden = false;
+    if (state.userId) loadJoinedCommunities();
     setTimeout(function () { gateInput.focus(); }, 50);
   }
 
@@ -1171,13 +1269,6 @@
       await passGate(result.data.room_id);
       if (state.memberRole === "admin") { await openMemberAdmin(); showInviteCode(result.data.invite_code); }
     } catch (e) { showGate(membershipMessage(e)); }
-    finally { setGateBusy(false); }
-  });
-  document.getElementById("gateResume").addEventListener("click", async function () {
-    if (gateBusy || !lastRoomId) return;
-    setGateBusy(true);
-    try { await ensureIdentity(); await passGate(lastRoomId); }
-    catch (e) { showGate(membershipMessage(e)); }
     finally { setGateBusy(false); }
   });
 
@@ -3305,13 +3396,9 @@
     setGateBusy(true);
     try {
       await ensureIdentity();
-      if (!lastRoomId) {
-        var existing = await supabaseClient.from("binder_members").select("room_id")
-          .eq("user_id", state.userId).eq("status", "active").order("joined_at", { ascending: false }).limit(1).maybeSingle();
-        if (existing.error) throw existing.error;
-        if (existing.data) lastRoomId = existing.data.room_id;
-      }
-      if (lastRoomId) await passGate(lastRoomId);
+      var joinedRooms = await loadJoinedCommunities();
+      if (lastRoomId && joinedRooms.some(function (room) { return room.room_id === lastRoomId; })) await passGate(lastRoomId);
+      else if (joinedRooms.length === 1) await passGate(joinedRooms[0].room_id);
     } catch (e) { showGate(membershipMessage(e)); }
     finally { setGateBusy(false); }
   })();

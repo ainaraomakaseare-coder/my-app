@@ -19,7 +19,7 @@ const bootstrap = function () {
       episodes: [{ id: 'episode-' + i, text: stories[i], createdAt: '2026-10-01T00:00:00Z' }], history: [],
       created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z'
     })),
-    binder_members: [{ room_id: room, user_id: me, display_name: 'あなた（デモ管理者）', role: 'admin', status: 'active', joined_at: '2026-10-01' },
+    binder_members: [{ room_id: room, user_id: me, display_name: 'あなた（デモ管理者）', role: 'admin', status: 'active', joined_at: '2026-10-01', binder_rooms: { name: '放送研究会（デモ）' } },
       { room_id: room, user_id: 'demo-member', display_name: '参加者サンプル', role: 'member', status: 'active', joined_at: '2026-10-02' }],
     quiz_scores: [], tag_notes: [],
     binder_fictional_episodes: [{ id: 'fiction-demo', room_id: room, text: '文化祭の本番中、突然ペンギンがスタジオに現れた', tags: ['放送研究会'], created_by: me, created_at: '2026-10-01' }]
