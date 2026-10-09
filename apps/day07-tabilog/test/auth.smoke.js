@@ -259,6 +259,7 @@ async function installFakeApi(page, shared) {
 
   // メールの確認コードでログインする（フェイクAPIのコードは常に123456）
   await page.fill('#loginName', 'テスト太郎');
+  if (await page.isVisible('#btnShowEmailLogin')) await page.click('#btnShowEmailLogin');
   await page.fill('#loginEmail', 'test-taro@example.com');
   await page.click('#btnSendOtp');
   await page.waitForSelector('#emailOtpForm:not([hidden])');
@@ -322,6 +323,7 @@ async function installFakeApi(page, shared) {
   await otherDevicePage.click('#btnOpenLogin');
   await otherDevicePage.waitForSelector('.screen[data-screen="login"].active');
   await otherDevicePage.fill('#loginName', 'テスト太郎');
+  if (await otherDevicePage.isVisible('#btnShowEmailLogin')) await otherDevicePage.click('#btnShowEmailLogin');
   await otherDevicePage.fill('#loginEmail', 'test-taro@example.com');
   await otherDevicePage.click('#btnSendOtp');
   await otherDevicePage.waitForSelector('#emailOtpForm:not([hidden])');
@@ -395,6 +397,7 @@ async function installFakeApi(page, shared) {
   check('メール確認が必要なときは説明が出る', (await socialPage.textContent('#loginLinkNote')).includes('メールアドレスを受け取れなかった'));
   check('メール確認中はソーシャルボタンを出さない', await socialPage.isHidden('#socialLogin'));
   check('プロバイダーの表示名が名前欄に入る', (await socialPage.inputValue('#loginName')) === 'ライン太郎');
+  if (await socialPage.isVisible('#btnShowEmailLogin')) await socialPage.click('#btnShowEmailLogin');
   await socialPage.fill('#loginEmail', 'line-taro@example.com');
   await socialPage.click('#btnSendOtp');
   await socialPage.waitForSelector('#emailOtpForm:not([hidden])');
@@ -430,6 +433,7 @@ async function installFakeApi(page, shared) {
   check('メールでのログインフォームは常に表示される', await emailPage.isVisible('#emailLoginForm'));
 
   await emailPage.fill('#loginName', 'メール花子');
+  if (await emailPage.isVisible('#btnShowEmailLogin')) await emailPage.click('#btnShowEmailLogin');
   await emailPage.fill('#loginEmail', 'hanako-email@example.com');
   await emailPage.click('#btnSendOtp');
   await emailPage.waitForSelector('#emailOtpForm:not([hidden])');

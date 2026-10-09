@@ -11660,6 +11660,9 @@
     }
     $('#profileName').textContent = user ? (user.name || user.email || '') : tr('ログインしていません');
     $('#mpAccountRow .mp-row-label').textContent = user ? tr('アカウント') : tr('ログインする');
+    $('#profileLogin').hidden = !!user;
+    // ログインしていないときは「ログインしていません」の表示ごと押せるようにする（思わず押す人が多いので、そのままログインへ）
+    $('#profileCard').classList.toggle('is-guest', !user);
   }
 
   // ---------- プロフィール写真（マイページのアバター） ----------
@@ -12018,6 +12021,8 @@
     });
     $('#mpLangRow').addEventListener('click', function () { openMyPageSheet('#langSheet'); });
     $('#mpAccountRow').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
+    $('#btnProfileLogin').addEventListener('click', function () { openLogin('profile'); });
+    $('#profileCard .profile-info').addEventListener('click', function () { if (!loadCurrentUser()) openLogin('profile'); });
     $('#mpHistory').addEventListener('click', function () {
       if (!loadMyTrips().length) { showToast(tr('この端末の履歴に旅行がありません')); return; }
       openTripHistorySheet();
@@ -14759,13 +14764,18 @@
     });
     $('#btnOpenLogin').addEventListener('click', function () { openLogin('home'); });
     $('#btnLoginBack').addEventListener('click', closeLogin);
-    $all('.login-provider-btn').forEach(function (btn) {
+    $all('.login-provider-btn[data-provider]').forEach(function (btn) {
       btn.addEventListener('click', function () { startSocialLogin(btn.dataset.provider); });
     });
     $('#btnSocialCancel').addEventListener('click', cancelSocialWaiting);
+    $('#btnShowEmailLogin').addEventListener('click', function () {
+      setEmailLoginOpen(true);
+      $('#loginEmail').focus();
+    });
     $('#btnSendOtp').addEventListener('click', handleSendOtp);
     $('#btnVerifyOtp').addEventListener('click', handleVerifyOtp);
     $('#btnResendOtp').addEventListener('click', handleSendOtp);
+    $('#btnChangeEmail').addEventListener('click', backToEmailInput);
     $('#visitedTabs').addEventListener('click', function (e) {
       var btn = e.target.closest('.visited-tab');
       if (!btn) return;
@@ -14829,18 +14839,45 @@
     $('#socialLogin').hidden = false;
     $('#loginLinkNote').hidden = true;
     $('#emailLoginDivider').hidden = true;
-    applyAuthProviders([]);
-    api('/auth/providers').then(function (res) {
-      applyAuthProviders((res && res.providers) || []);
-    }).catch(function () {
-      // 取れなくてもメールログインは使える
-    });
     var existing = loadCurrentUser() || state.staleLoginUser;
-    $('#loginName').value = (existing && existing.provider === 'email') ? existing.name : '';
-    $('#loginEmail').value = (existing && existing.provider === 'email') ? existing.email : '';
+    var lastWasEmail = !!(existing && existing.provider === 'email');
+    // メールの入力欄は、前回メールでログインした人にだけ最初から開いておく（他の人はボタン1つにたたむ）
+    setEmailLoginOpen(lastWasEmail);
+    // 前回取れた一覧があれば先に並べ、取り直しを待つ間にボタンが後から出てくるのを防ぐ
+    applyAuthProviders(state.authProviders || []);
+    api('/auth/providers').then(function (res) {
+      state.authProviders = (res && res.providers) || [];
+      applyAuthProviders(state.authProviders);
+    }).catch(function () {
+      // 取れなくてもメールログインは使える（ボタンが1つも無いので、メールの入力欄を開いておく）
+      if (!(state.authProviders || []).length) setEmailLoginOpen(true);
+    });
+    $('#loginName').value = lastWasEmail ? existing.name : '';
+    $('#loginEmail').value = lastWasEmail ? existing.email : '';
     $('#loginOtpCode').value = '';
     $('#emailLoginForm').hidden = false;
     $('#emailOtpForm').hidden = true;
+  }
+
+  // メールでのログインの入力欄を開く／たたむ。たたんでいる間は「メールアドレスでログイン」ボタンだけ出す
+  function setEmailLoginOpen(open) {
+    $('#emailLoginFields').hidden = !open;
+    $('#btnShowEmailLogin').hidden = !!open;
+  }
+
+  // 確認コードの入力から、メールアドレスの入力へ戻る（打ち間違いに気づいたとき）
+  function backToEmailInput() {
+    $('#emailOtpForm').hidden = true;
+    $('#emailLoginForm').hidden = false;
+    setEmailLoginOpen(true);
+    $('#loginOtpCode').value = '';
+    $('#loginStatus').textContent = '';
+    if (!state.linkCode) {
+      $('#socialLogin').hidden = false;
+      $('#loginFirstNote').hidden = false;
+      applyAuthProviders(state.authProviders || []);
+    }
+    $('#loginEmail').focus();
   }
 
   // メールでのログイン（OTP）。実際にメールで6桁のコードを送り、入力してもらうことで
@@ -14856,8 +14893,12 @@
     $('#loginStatus').textContent = tr('送信中…');
     api('/auth/email/send', 'POST', { name: name, email: email }).then(function () {
       $('#loginStatus').textContent = '';
-      $('#emailOtpSentTo').textContent = tr('{email} に確認コードを送りました。', { email: email });
+      $('#emailOtpSentTo').textContent = tr('{email} に6桁の確認コードを送りました。メールを開いて、コードを入力してください。', { email: email });
       $('#emailLoginForm').hidden = true;
+      // コードの入力に集中できるよう、他のログイン方法はいったん隠す（「メールアドレスを変える」で戻る）
+      $('#socialLogin').hidden = true;
+      $('#emailLoginDivider').hidden = true;
+      $('#loginFirstNote').hidden = true;
       $('#emailOtpForm').hidden = false;
       $('#emailOtpForm').dataset.name = name;
       $('#emailOtpForm').dataset.email = email;
@@ -14946,10 +14987,11 @@
 
   function applyAuthProviders(list) {
     if (state.linkCode) return; // メール確認待ちの間はソーシャルボタンを出さない
-    $all('.login-provider-btn').forEach(function (btn) {
+    $all('.login-provider-btn[data-provider]').forEach(function (btn) {
       btn.hidden = list.indexOf(btn.dataset.provider) === -1;
     });
     $('#emailLoginDivider').hidden = list.length === 0;
+    $('#loginFirstNote').hidden = false;
   }
 
   function startSocialLogin(provider) {
@@ -15023,6 +15065,7 @@
   function showSocialWaiting(provider) {
     $('#socialLogin').hidden = true;
     $('#emailLoginDivider').hidden = true;
+    $('#loginFirstNote').hidden = true;
     $('#emailLoginForm').hidden = true;
     $('#emailOtpForm').hidden = true;
     $('#socialWaiting').hidden = false;
@@ -15081,9 +15124,11 @@
     $('#emailLoginDivider').hidden = true;
     $('#loginLinkNote').textContent = tr('{name}からメールアドレスを受け取れなかったので、一度だけメールで確認します。確認できたら、次回からは{name2}だけでログインできます。', { name: SOCIAL_NAMES[info.provider] || tr('ログイン元'), name2: SOCIAL_NAMES[info.provider] || tr('そのログイン') });
     $('#loginLinkNote').hidden = false;
+    $('#loginFirstNote').hidden = true;
     $('#loginName').value = info.name || '';
     $('#loginEmail').value = '';
     $('#emailLoginForm').hidden = false;
+    setEmailLoginOpen(true);
     $('#emailOtpForm').hidden = true;
     $('#loginStatus').textContent = '';
   }

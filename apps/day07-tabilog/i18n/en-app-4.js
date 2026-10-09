@@ -48,7 +48,7 @@ I18N.addLang('en', {
   "200MBを超える動画は追加できませんでした：{names}": "Videos over 200 MB couldn't be added: {names}",
   "ログインすると、評価をつけたりマイログを見たりできます": "Log in to add ratings and see My Log",
   "メールアドレスを入力してください。": "Please enter your email address.",
-  "{email} に確認コードを送りました。": "We sent a verification code to {email}.",
+  "{email} に6桁の確認コードを送りました。メールを開いて、コードを入力してください。": "We sent a 6-digit code to {email}. Open the email and enter the code.",
   "コードを送ったばかりです。少し時間をおいてから再度お試しください。": "A code was just sent. Please wait a moment and try again.",
   "メールログインがまだ設定されていません。他のログイン方法をお試しください。": "Email login isn't set up yet. Please try another login method.",
   "コードの送信に失敗しました。メールアドレスを確認してもう一度お試しください。": "Couldn't send the code. Check the email address and try again.",
