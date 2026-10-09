@@ -7687,10 +7687,24 @@
     });
   }
 
+  // メモ・スクショの残り回数と回数券の残りを1行に並べる。画面が狭いときは、項目の途中ではなく
+  // 項目の切れ目で折り返す（以前は文字列をつなげていたので「回数券：あと」の途中で改行されていた）
+  function renderAiQuotaInfo(el, account) {
+    el.textContent = '';
+    var parts = [tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit })];
+    if (account.ticketCredits) parts.push(tr('回数券：あと{n}回', { n: account.ticketCredits }));
+    parts.forEach(function (text, i) {
+      if (i) el.appendChild(document.createTextNode(' '));
+      var span = document.createElement('span');
+      span.className = 'quota-part';
+      span.textContent = text;
+      el.appendChild(span);
+    });
+  }
+
   // 音声・メモの画面に、残り回数と、使い切ったときの案内（iOSアプリなら回数券を買う入口も）を反映する
   function applyAiQuotaUi(account) {
-    var bonus = account.ticketCredits ? tr('（回数券：あと{n}回）', { n: account.ticketCredits }) : '';
-    $('#memoAiInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
+    renderAiQuotaInfo($('#memoAiInfo'), account);
     var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
     if (!voiceOk) {
       // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
@@ -8063,8 +8077,7 @@
     showScreen('screenshotImport');
     fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
-      var bonus = account.ticketCredits ? tr('（回数券：あと{n}回）', { n: account.ticketCredits }) : '';
-      $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
+      renderAiQuotaInfo($('#ssInfo'), account);
       if (account.memoRemainingThisPeriod <= 0 && !account.ticketCredits) renderTicketShop($('#ssTicketShop'));
     });
   }
@@ -11552,8 +11565,7 @@
     var name = active && active.dataset.screen;
     if (name === 'voiceEntryForm' && state.account) applyAiQuotaUi(state.account);
     else if (name === 'screenshotImport' && state.account) {
-      var bonus = state.account.ticketCredits ? tr('（回数券：あと{n}回）', { n: state.account.ticketCredits }) : '';
-      $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: state.account.memoRemainingThisPeriod, max: state.account.memoMonthlyLimit }) + bonus;
+      renderAiQuotaInfo($('#ssInfo'), state.account);
       $('#ssTicketShop').hidden = true;
       $('#ssTicketShop').innerHTML = '';
     }
