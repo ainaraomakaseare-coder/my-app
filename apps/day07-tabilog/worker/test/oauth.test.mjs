@@ -9,7 +9,7 @@ import { webcrypto } from "node:crypto";
 import {
   configuredProviders, parseReturnTarget, buildAuthorizeUrl, checkIdTokenClaims, extractProfile,
   decideIdentity, decodeJwtPayload, toBase64Url, fromBase64Url, pkceChallenge, buildAppleClientSecret,
-  nativeResultPage, nativeAuthUrl, authMessagePage, PROVIDER_ENDPOINTS,
+  nativeResultPage, nativeAuthUrl, nativeAuthUrlAndroid, authMessagePage, PROVIDER_ENDPOINTS,
   APPLE_REVOKE_URL, buildAppleRevokeBody, selectAppleRevocations, revokeAppleTokens,
 } from "../src/oauth.js";
 
@@ -45,6 +45,8 @@ check("Appleは4つそろわないと出さない", configuredProviders({ APPLE_
 
 /* ---------- parseReturnTarget：戻り先の検証 ---------- */
 check("app", parseReturnTarget("app", ALLOWED), { kind: "app" });
+check("android", parseReturnTarget("android", ALLOWED), { kind: "android" });
+check("大文字のAndroidは不可", parseReturnTarget("Android", ALLOWED), null);
 check("許可Origin（パス付き）", parseReturnTarget("https://tabinoashiato.pages.dev/", ALLOWED), { kind: "web", url: "https://tabinoashiato.pages.dev/" });
 check(
   "GitHub Pagesのサブパスとクエリは残す・ハッシュは落とす",
@@ -188,6 +190,19 @@ check(
   check("linkページ", nativeResultPage("link", code).includes("tabilog://auth?link=" + code), true);
   const err = nativeResultPage("error", "cancelled");
   check("エラーページ", [err.includes("tabilog://auth?error=cancelled"), err.includes("キャンセル")], [true, true]);
+
+  // Android：検証済みhttpsのApp Linkで戻る（iOSのページは上のとおり変わらない）
+  const AB = "https://tabinoashiato.pages.dev/app-auth?";
+  check("android session URL", nativeAuthUrlAndroid("session", code), AB + "code=" + code);
+  check("android link URL", nativeAuthUrlAndroid("link", code), AB + "link=" + code);
+  check("android error URL", nativeAuthUrlAndroid("error", "cancelled"), AB + "error=cancelled");
+  check("android error URLは空なら failed", nativeAuthUrlAndroid("error", ""), AB + "error=failed");
+  check("android 値はURLエンコードされる", nativeAuthUrlAndroid("error", "a&b=c#d"), AB + "error=a%26b%3Dc%23d");
+  const aok = nativeResultPage("session", code, true);
+  check("androidページ：自動では移動しない（ボタンを押してApp Linkで開く）", aok.includes("location.href="), false);
+  check("androidページ：戻るボタン", aok.includes('class="b" href="' + AB + 'code=' + code + '">旅の足跡アプリに戻る</a>'), true);
+  check("androidページ：tabilog://を含まない", aok.includes("tabilog://"), false);
+  check("iOSページはandroid引数なしと同一", nativeResultPage("session", code, false), ok);
 
   // 想定外の値でもHTML/スクリプトを壊せない
   const evil = nativeResultPage("error", '"></a><script>alert(1)</script>');

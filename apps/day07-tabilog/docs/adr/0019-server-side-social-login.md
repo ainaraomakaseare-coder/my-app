@@ -74,3 +74,7 @@ cd apps/day07-tabilog/worker
 npx wrangler d1 execute tabilog-db --remote --command "ALTER TABLE auth_identities ADD COLUMN refresh_token TEXT NOT NULL DEFAULT '';"
 npx wrangler deploy
 ```
+
+## 追記：Androidはhttpsのアプリリンクで戻る
+
+Androidアプリは `?return=android` で始め、ログイン後は `tabilog://auth?…` ではなく検証済みのhttpsアプリリンク `https://tabinoashiato.pages.dev/app-auth?…`（クエリは同じ）でアプリに戻る。ChromebookのChrome（デスクトップ版）は `tabilog://` をAndroidアプリに渡さず、ログインが待ち画面のまま止まるため。検証には `.well-known/assetlinks.json`（Play署名鍵とアップロード鍵のSHA-256）を使い、アプリが開かなかったときは `app-auth.html` が `tabilog://auth` へのボタンを出す。iOSは従来どおり `?return=app`。

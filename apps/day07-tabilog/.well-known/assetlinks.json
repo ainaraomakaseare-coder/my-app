@@ -1,0 +1,11 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.hiroyaapps.tabilog",
+    "sha256_cert_fingerprints": [
+      "9C:12:85:AD:24:49:06:E9:71:D7:9C:BE:C1:7F:8D:90:13:E1:C1:49:49:56:EF:7A:24:74:BA:88:97:02:23:96",
+      "BF:33:F9:9B:48:1A:EA:28:21:70:BA:E6:AF:4A:18:9E:49:E3:10:07:5B:62:03:60:6B:21:47:61:EE:B1:51:A2"
+    ]
+  }
+}]

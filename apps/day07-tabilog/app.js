@@ -14963,7 +14963,9 @@
       // （listenForAppLinks→handleAuthAppUrl）、そこでこの画面を閉じる。
       // ポーリングはしない：待ち合わせIDで結果を取りに行く方式は、IDを知る第三者にコードを盗まれる（docs/adr/0019）。
       showSocialWaiting(provider);
-      openAuthBrowser(base + '?return=app');
+      // Androidはtabilog://が届かない端末（Chromebookなど）があるので、検証済みhttpsのApp Link（/app-auth）で戻る。
+      var isAndroid = window.Capacitor && window.Capacitor.getPlatform && window.Capacitor.getPlatform() === 'android';
+      openAuthBrowser(base + (isAndroid ? '?return=android' : '?return=app'));
       return;
     }
     // Web：このページごとプロバイダーへ移動し、終わると #auth=... を付けてこのページに戻ってくる
@@ -15180,10 +15182,14 @@
   // ログインの結果を運んでくるカスタムURL（tabilog://auth?code=… / ?link=… / ?error=…）。
   // Webの#auth=… / #auth_link=… / #auth_error=…と同じhandleSocialResultで処理する。
   // 戻り値：ログインの結果として処理したか
+  // Androidでは同じ中身を https://tabinoashiato.pages.dev/app-auth?… （App Link）でも受け取る。
   function handleAuthAppUrl(url) {
     var u;
     try { u = new URL(url); } catch (e) { return false; }
-    if (u.protocol !== 'tabilog:' || u.hostname !== 'auth') return false;
+    var isScheme = u.protocol === 'tabilog:' && u.hostname === 'auth';
+    var isAppLink = u.protocol === 'https:' && u.hostname === 'tabinoashiato.pages.dev' &&
+      (u.pathname === '/app-auth' || u.pathname === '/app-auth/');
+    if (!isScheme && !isAppLink) return false;
     closeAuthBrowser(); // アプリの中で開いていたログインの画面を閉じる
     var p = u.searchParams;
     state.loginReturnTo = state.loginReturnTo || 'home';

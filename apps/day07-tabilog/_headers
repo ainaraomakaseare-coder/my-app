@@ -4,3 +4,5 @@
 # 取得できないとユニバーサルリンクの設定を認識しないため、明示しておく。
 /.well-known/apple-app-site-association
   Content-Type: application/json
+/.well-known/assetlinks.json
+  Content-Type: application/json

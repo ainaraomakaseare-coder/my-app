@@ -5,6 +5,7 @@ iOSでCIがInfo.plistに足しているもの（.github/workflows/tabilog-ios-bu
 
 - マイク・カメラの権限（音声でまとめて記録・その場で撮った写真）
 - カスタムURLスキーム tabilog://（ログイン後にアプリへ戻る tabilog://auth?… と、Web版の「アプリで開く」tabilog://open?…）
+- App Link（https://tabinoashiato.pages.dev/app-auth。Androidのログイン後の戻り先。assetlinks.jsonで検証）
 - バージョン（versionName は package.json、versionCode は引数）
 - リリース署名（環境変数 ANDROID_KEYSTORE_PATH などがあるときだけ。無ければ署名なしのまま）
 
@@ -46,6 +47,19 @@ def patch_manifest():
         marker = "        </activity>"
         assert marker in s, "MainActivityの終わりが見つからない"
         s = s.replace(marker, scheme + "\n" + marker, 1)
+    # ログイン後にhttps（検証済みApp Link）で戻る。ChromebookのChromeはtabilog://をアプリに渡さないため
+    applink = (
+        '            <intent-filter android:autoVerify="true">\n'
+        '                <action android:name="android.intent.action.VIEW" />\n'
+        '                <category android:name="android.intent.category.DEFAULT" />\n'
+        '                <category android:name="android.intent.category.BROWSABLE" />\n'
+        '                <data android:scheme="https" android:host="tabinoashiato.pages.dev" android:pathPrefix="/app-auth" />\n'
+        "            </intent-filter>\n"
+    )
+    if 'android:pathPrefix="/app-auth"' not in s:
+        marker = "        </activity>"
+        assert marker in s, "MainActivityの終わりが見つからない"
+        s = s.replace(marker, applink + "\n" + marker, 1)
     with open(MANIFEST, "w", encoding="utf-8") as f:
         f.write(s)
 

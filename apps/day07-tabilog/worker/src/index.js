@@ -3310,7 +3310,7 @@ async function authStart(provider, url, env) {
   await env.DB.prepare(
     "INSERT INTO auth_states (state, provider, return_to, nonce, code_verifier, expires_at, created_at) VALUES (?,?,?,?,?,?,?)"
   )
-    .bind(state, provider, target.kind === "app" ? "app" : target.url, nonce, verifier, minutesFromNowIso(AUTH_STATE_MINUTES), now)
+    .bind(state, provider, target.kind === "app" || target.kind === "android" ? target.kind : target.url, nonce, verifier, minutesFromNowIso(AUTH_STATE_MINUTES), now)
     .run();
 
   const location = buildAuthorizeUrl(provider, env, {
@@ -3334,12 +3334,12 @@ async function createAuthCode(env, fields) {
 }
 
 // プロバイダーでの操作が終わったあと、結果をWebなら戻り先へのリダイレクト、
-// iOSアプリなら「アプリに戻ってください」ページ（カスタムURLスキームtabilog://auth?…で
-// アプリを起動する）で返す。使い捨てコードは、ログインを終えた端末のブラウザにだけ渡る
+// アプリなら「アプリに戻ってください」ページ（iOSはカスタムURLスキームtabilog://auth?…、
+// AndroidはApp Link https://…/app-auth?… でアプリを起動する）で返す。使い捨てコードは、ログインを終えた端末のブラウザにだけ渡る
 // （アプリが待ち合わせIDで取りに来る方式は、IDを知る第三者にコードを盗まれるので使わない。docs/adr/0019）。
 async function finishAuth(env, stateRow, res) {
-  if (stateRow.return_to === "app") {
-    return new Response(nativeResultPage(res.kind, res.kind === "error" ? res.error : res.code), {
+  if (stateRow.return_to === "app" || stateRow.return_to === "android") {
+    return new Response(nativeResultPage(res.kind, res.kind === "error" ? res.error : res.code, stateRow.return_to === "android"), {
       status: 200,
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" },
     });
