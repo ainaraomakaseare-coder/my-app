@@ -348,21 +348,29 @@
   // そこから決めた時差が落ち着いてしまって、出発の時刻をホノルルの時間として読んでいた（2026-10-09）。
   // ここで置く時差は並べ直しのきっかけで、最終的な時差はwalkZonesが決める
   // local：現地時間のままの並び。返すのは { 予定のid: 最初の並びで使う時差（分） }
-  function seedArrivalPinFlights(local, byBlock) {
+  // 地図の無い飛行機の予定で、到着地のタイムゾーンが分かっている（移動の情報に到着地の地図がある）ときも同じ
+  // （成田23:30発→LA同日19:36着のホテル、のように並ぶと、出発の時刻をLAの時間で読んでいた）。
+  function seedArrivalPinFlights(local, byBlock, byArrive) {
     var pinOf = function (b) { var e = (b.entries || [])[0]; return e && typeof e.mapLat === 'number' && typeof e.mapLng === 'number' ? { lat: e.mapLat, lng: e.mapLng } : null; };
     var seeds = {};
     local.forEach(function (b, i) {
-      var own = byBlock[b.id], pin = pinOf(b);
-      if (!isPlaneMove(b) || b.category !== 'transport' || !own || !pin || b.tzOverride || travelArrival(b) || !b.time) return;
-      var twin = local.some(function (o) {
-        var p = o !== b && pinOf(o);
-        return p && o.date >= b.date && byBlock[o.id] === own && distanceKm(p, pin) < ARRIVAL_PIN_SAME_PLACE_KM;
-      });
-      if (!twin) return;
+      if (!isPlaneMove(b) || b.category !== 'transport' || b.tzOverride || !b.time) return;
+      var own = byBlock[b.id], pin = pinOf(b), arr = travelArrival(b);
+      if (!own && arr && byArrive && byArrive[b.id]) {
+        own = byArrive[b.id];
+        pin = typeof arr.lat === 'number' && typeof arr.lng === 'number' ? { lat: arr.lat, lng: arr.lng } : null;
+      } else {
+        if (!own || !pin || arr) return;
+        var twin = local.some(function (o) {
+          var p = o !== b && pinOf(o);
+          return p && o.date >= b.date && byBlock[o.id] === own && distanceKm(p, pin) < ARRIVAL_PIN_SAME_PLACE_KM;
+        });
+        if (!twin) return;
+      }
       for (var j = i - 1; j >= 0; j--) {
         var o = local[j], z = byBlock[o.id], p = pinOf(o);
         if (!p || !z || z === own) continue;
-        if (dateDiffDays(o.date, b.date) > 1 || distanceKm(p, pin) < OUTLIER_NEAR_KM) return;
+        if (dateDiffDays(o.date, b.date) > 1 || (pin && distanceKm(p, pin) < OUTLIER_NEAR_KM)) return;
         var off = tzOffsetMinutes(z, b.date, b.time);
         if (typeof off === 'number') seeds[b.id] = off;
         return;
@@ -381,7 +389,7 @@
     // 無いのと同じに扱う。地図が無い予定と同じく前の予定の時差を引き継ぎ、「ここから現地時間」の
     // 区切りを出さない。地図そのもの（吹き出し・警告表示）はそのまま残す（docs/adr/0009、2026-09-29）
     var order = sortBlocks(copies);
-    var seeds = seedArrivalPinFlights(order, byBlock);
+    var seeds = seedArrivalPinFlights(order, byBlock, byArrive);
     var zones = {};
     var settle = function (outlierIds) {
       for (var round = 0; round < 3; round++) {
@@ -13278,7 +13286,9 @@
       startReplay(res[0], tl);
       // 場所が1か所だけだと動かないので、理由を一言。移動手段が未設定の区間は仮定で描いていることを伝える
       if (tl.stops.filter(function (s) { return s.located; }).length < 2) showReplayNote(tr('地図は場所を設定した記録をたどります'));
-      else if (tl.legs.some(function (l) { return l.assumed; })) showReplayNote(tr('移動手段が未設定の区間は、距離から車・飛行機などと仮定して点線で描いています（予定の編集で変えられます）'));
+      // 移動手段が未設定の区間は街なかの移動にもたくさんあり、ほぼ全部の旅で出ていたので、距離から飛行機と
+      // 決め打ちした区間（間違っていると目立つもの）があるときだけ知らせる（2026-10-09 オーナー）
+      else if (tl.legs.some(function (l) { return l.assumed && l.transport === 'plane'; })) showReplayNote(tr('移動手段が未設定の区間は、距離から車・飛行機などと仮定して点線で描いています（予定の編集で変えられます）'));
       replay.routesDone = fetchReplayRoutes(tl, function (l) {
         if (replayToken !== token || !replay || replay.tl !== tl) return;
         var set = replay.lines[tl.legs.indexOf(l)];

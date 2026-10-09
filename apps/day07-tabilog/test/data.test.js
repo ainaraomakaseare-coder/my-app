@@ -3136,6 +3136,14 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('成田→LA同日着：再生の並びは東京の朝→空港→フライト→LAX→ホテル', tlL.stops.map(function (st) { return st.label; }), ['東京の朝', '空港へ', '成田→LA', 'LAX到着', 'ホテル']);
   ok('成田→LA同日着：着いた瞬間に時差が切り替わる', switchesAtArrival(tlL, 540, -420));
 
+  // 7b. 移動の予定に地図が無く到着地だけ入れた：成田23:30発→LA同日19:36着のホテル。出発の時刻をLAの時間で読まない
+  var nd = [b('2026-11-12', '12:45', '東京観光', 'tokyo'),
+    flight('2026-11-13', '23:30', '成田→LA', null, { entries: [{ id: 'nd', travel: { depart: '23:30', arrive: '17:36', arriveMapUrl: pin('lax').mapUrl, arriveLat: P.lax[0], arriveLng: P.lax[1], to: 'LAX' } }] }),
+    b('2026-11-13', '19:36', 'LAのホテル', 'la')];
+  var tlND = play(nd, (function () { var o = {}; o[nd[1].id] = 'lax'; return o; })());
+  eq('地図の無い飛行機の予定：出発の時刻は東京の時間で読む', nd[1]._tz, 'Asia/Tokyo');
+  ok('地図の無い飛行機の予定：着いた瞬間に時差が切り替わる', switchesAtArrival(tlND, 540, -480));
+
   // 8. 到着地の地図はあるが到着時刻が無い：出発＋60分の仮の値で前の日に着かない（何日目が戻らない）
   var nt = [b('2026-11-18', '06:15', '空港へ', 'hnd'),
     flight('2026-11-18', '08:15', '羽田→LA', 'hnd', { entries: [Object.assign(pin('hnd'), { travel: { depart: '08:15', arrive: '', arriveMapUrl: pin('lax').mapUrl, arriveLat: P.lax[0], arriveLng: P.lax[1], to: 'LAX' } })] }),
