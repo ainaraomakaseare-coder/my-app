@@ -1,0 +1,30 @@
+name: おもいでバインダー App Store申請情報
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: inspect=確認 / repair=連絡先・配信権・無料価格 / support=公開済みサポートURL
+        required: true
+        default: inspect
+        type: choice
+        options: [inspect, repair, support]
+permissions:
+  contents: read
+concurrency:
+  group: omoide-store-metadata
+  cancel-in-progress: false
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 対象アプリの申請情報を処理
+        env:
+          METADATA_MODE: ${{ inputs.mode }}
+          ASC_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+        run: node scripts/omoide-store-metadata.mjs
