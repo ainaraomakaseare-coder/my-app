@@ -3663,29 +3663,26 @@
       var km = distanceKm(a, b);
       return {
         path: videoThinPath(path, VIDEO_PATH_MAX_POINTS), transport: leg ? leg.transport : 'car',
-        moveWeight: km < REPLAY_STAY_KM ? 0 : 1 + Math.min(2, Math.log(1 + km) / Math.LN10)
+        // 移動の重さは、地図でふりかえるの移動の秒数（leg.moveSec）そのもの。動画でも移動どうしの速さの比率を
+        // 地図でふりかえると同じにし、全体を縮めて速くする（2026-10-09、オーナー「元の地図で振り返るの比率に合わせて速く」）
+        moveWeight: km < REPLAY_STAY_KM ? 0 : (leg && leg.moveSec > 0 ? leg.moveSec : legMoveSeconds(km))
       };
     });
-    // 時間割は日ごとの窓（daySec）の中で組む。2日目以降の窓は、前日の最後の地点を出るところ（移動の始まり）から
-    // 始まり、前日からの移動→その日の地点、の順。前日の最後の地点は、その日の窓が始まるまで留まる
+    // 時間割は旅全体で1つに組む。以前は1日ごとに同じ秒数の窓を割り当てていたため、飛行機の移動しか無い日は
+    // その1区間が1日分の窓いっぱいに引き伸ばされ、ほかの移動よりずっと遅く見えていた（5日目の飛行機、2026-10-09）
     var introSec = VIDEO_INTRO_SEC;
     // 遠い移動のあと寄せ直す地点は、カメラが落ち着いてから吹き出しを出すので、その分だけ止まる時間を足す
     var planPre = videoPlanCamera(segs, idx.map(function (si) { var s = stops[si]; return { lat: s.lat, lng: s.lng, hidden: !!s.videoExclude }; }), { maxZoom: maxZoom, timed: false });
     var settleSec = REPLAY_ARRIVAL_ZOOM_DELAY_SEC + REPLAY_CAMERA_FLIGHT_SEC;
-    var arrive = [], leave = [], capEnd = [], dayStart = [];
+    var items = idx.map(function (si, k) {
+      return { dwell: capByK[k] ? capByK[k].dwell + (planPre.arrivals[k] ? settleSec : 0) : 0, moveWeight: k < segs.length ? segs[k].moveWeight : 0 };
+    });
+    var sc = videoSchedule(items, plan.routeSec);
+    var arrive = sc.arrive, leave = sc.leave, capEnd = leave.slice(), dayStart = [];
+    // 「何日目」の表示は、その日の最初の地点へ向けて前日の最後の地点を出たところで切り替える
     groups.forEach(function (g, gi) {
-      var anchor = gi > 0;
-      var items = [];
-      if (anchor) items.push({ dwell: 0, moveWeight: segs[g.ks[0] - 1].moveWeight });
-      g.ks.forEach(function (k) {
-        items.push({ dwell: capByK[k] ? capByK[k].dwell + (planPre.arrivals[k] ? settleSec : 0) : 0, moveWeight: k < segs.length ? segs[k].moveWeight : 0 });
-      });
-      var sc = videoSchedule(items, daySec), off = gi * daySec, sh = anchor ? 1 : 0;
-      if (anchor) leave[g.ks[0] - 1] = off + sc.leave[0];
-      g.ks.forEach(function (k, j) {
-        arrive[k] = off + sc.arrive[j + sh]; leave[k] = off + sc.leave[j + sh];
-        capEnd[k] = leave[k]; dayStart[k] = off;
-      });
+      var start = gi > 0 ? leave[g.ks[0] - 1] : 0;
+      g.ks.forEach(function (k) { dayStart[k] = start; });
     });
     var wps = idx.map(function (si, k) {
       var s = stops[si], cap = capByK[k];
