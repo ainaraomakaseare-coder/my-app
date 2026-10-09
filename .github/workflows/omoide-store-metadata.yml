@@ -7,7 +7,11 @@ on:
         required: true
         default: inspect
         type: choice
-        options: [inspect, repair, support]
+        options: [inspect, repair, support, select-build]
+      build_number:
+        description: select-build時に選択するビルド番号
+        required: false
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -24,6 +28,7 @@ jobs:
       - name: 対象アプリの申請情報を処理
         env:
           METADATA_MODE: ${{ inputs.mode }}
+          ASC_BUILD_NUMBER: ${{ inputs.build_number }}
           ASC_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
           ASC_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
