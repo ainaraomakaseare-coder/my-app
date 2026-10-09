@@ -12,19 +12,32 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#F5F6F8;
 h1{font-size:19px;margin:0 0 10px}p{font-size:14px;line-height:1.7;margin:0 0 20px;color:#555}
 a.b{display:block;background:#00BF8F;color:#fff;text-decoration:none;border-radius:14px;padding:18px 24px;font-size:18px;font-weight:700}
 .s{font-size:12px;color:#888;margin:16px 0 0}
+.cros-hint{position:fixed;top:8px;right:16px;display:flex;align-items:flex-start;gap:8px;color:#00865F;font-weight:700;font-size:16px;text-align:right}
+.cros-hint .arrow{font-size:40px;line-height:1}
+.cros-hint b{background:#E6F8F2;border-radius:8px;padding:2px 8px}
+[hidden]{display:none!important}
 </style>
 </head>
 <body>
+<div class="cros-hint" id="crosHint" hidden><span>右上の<b>「アプリで開く」</b>を<br>押してください</span><span class="arrow">↗</span></div>
 <div class="c">
 <h1>ログインの手続きが終わりました</h1>
-<p>旅の足跡アプリに戻ってください。</p>
+<p id="msg">旅の足跡アプリに戻ってください。</p>
 <a class="b" id="back" href="tabilog://auth">旅の足跡アプリに戻る</a>
-<p class="s">Chromebookでは、画面上のアドレスバーの右に出る「アプリで開く」（または「旅の足跡」）を押すと、アプリに戻れます。それでも開かないときは、アプリを開いてもう一度ログインをお試しください。</p>
+<p class="s" id="note">ボタンを押してもアプリが開かないときは、アプリを開いてもう一度ログインをお試しください。</p>
 </div>
 <script>
 // App Linkでアプリが開けなかったときの予備。同じクエリ（code / link / error）をtabilog://authに引き継ぐ。
 // hrefへの代入はURLとして扱われ、HTMLとしては解釈されないので、そのまま安全に渡せる。
 document.getElementById('back').href = 'tabilog://auth' + location.search;
+// Chromebook：ページの中のボタン（tabilog://）ではAndroidアプリに戻れない。アドレスバー右の「アプリで開く」が
+// 唯一の戻り方なので、ボタンを隠して、そこを指す案内を大きく出す（2026-10-09、実機で確認）
+if (/\bCrOS\b/.test(navigator.userAgent)) {
+  document.getElementById('back').hidden = true;
+  document.getElementById('crosHint').hidden = false;
+  document.getElementById('msg').textContent = '画面右上のアドレスバーにある「アプリで開く」（旅の足跡のアイコン）を押すと、アプリに戻ってログインが完了します。';
+  document.getElementById('note').textContent = '「アプリで開く」が見当たらないときは、アプリを開いてもう一度ログインをお試しください。';
+}
 </script>
 </body>
 </html>
