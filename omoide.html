@@ -845,6 +845,17 @@
   @media (max-width: 390px) { #app { width: min(100% - 24px,760px); } .communityHero { grid-template-columns: 1fr 116px; gap: 10px; padding: 17px; } .heroProgress { padding: 11px 8px; } .heroProgressNumber strong { font-size: 31px; } .controls { grid-template-columns: 1fr; } .sortToggle { width: max-content; } }
 </style>
 <style>
+.safetyActions {display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}
+.safetyDialog {position:fixed;inset:0;z-index:5000;background:#29243899;display:grid;place-items:center;padding:16px}
+.safetyDialog[hidden] {display:none}
+.safetyDialogInner {background:var(--card,#fff);border-radius:24px;padding:24px;width:min(100%,560px);max-height:85vh;max-height:85dvh;overflow:auto;box-sizing:border-box}
+.safetyDialogInner h2 {margin-top:0}.safetyDialogInner p {line-height:1.7}
+.safetyDialogInner textarea,.safetyDialogInner input[type=text] {width:100%;box-sizing:border-box;padding:12px;border:1px solid #ddd;border-radius:12px;margin:8px 0;font:inherit}
+.safetyDialogInner textarea {min-height:100px}.safetyDialogInner li {margin:12px 0;overflow-wrap:anywhere}
+.safetyLinks {display:flex;gap:16px;flex-wrap:wrap;margin:14px 0}.safetyLinks a {color:#594bb6}
+.footerActions {flex-wrap:wrap;gap:10px}.safetyStatus {min-height:1.5em}
+</style>
+<style>
   .gate .overlayInner { max-width:420px; text-align:center; padding-top:10vh; }
   .gate label { display:block; text-align:left; margin-top:16px; font-size:13px; }
   .gate input { width:100%; box-sizing:border-box; margin-top:6px; }
@@ -907,6 +918,7 @@
       <button type="button" class="ghostBtn" id="refreshJoinedCommunities">一覧を更新</button>
     </section>
     <details><summary>管理者に伝える参加者ID</summary><p id="gateAccountId"></p></details>
+    <button type="button" class="ghostBtn" id="gateSafetyBtn">設定・サポート／アカウント削除</button>
   </div>
 </div>
 
@@ -931,6 +943,7 @@
       <button type="button" class="ghostBtn" id="bulkTagToggleBtn">所属をまとめて付ける</button>
       <button type="button" class="ghostBtn" id="manageMembersBtn" hidden>参加者を管理</button>
       <button type="button" class="ghostBtn" id="switchRoomBtn">コミュニティを切り替える</button>
+      <button type="button" class="ghostBtn" id="safetyBtn">設定・サポート</button>
     </div>
   </header>
 
@@ -963,6 +976,8 @@
     <p id="inviteDisplayStatus" role="status"></p>
     <p id="memberAdminStatus" role="status"></p>
     <ul class="memberList" id="memberList"></ul>
+    <h3>コンテンツの通報</h3><p>内容を確認し、不適切な投稿の削除や参加者の退出で対応してください。</p>
+    <div id="reportQueue" role="status"></div>
     <button type="button" class="ghostBtn" id="closeMemberAdminBtn">閉じる</button>
   </section>
 
@@ -1040,6 +1055,15 @@
 </div>
 
 <div class="toast" id="toast" hidden></div>
+<div class="safetyDialog" id="safetyDialog" hidden role="dialog" aria-modal="true" aria-labelledby="safetyTitle">
+  <div class="safetyDialogInner"><button type="button" class="ghostBtn" id="closeSafetyBtn">閉じる</button><h2 id="safetyTitle">設定・サポート</h2>
+    <div class="safetyLinks"><a href="https://ainaraomakaseare-coder.github.io/my-app/omoide-binder-terms.html" target="_blank" rel="noopener">利用規約</a><a href="https://ainaraomakaseare-coder.github.io/my-app/omoide-binder-privacy.html" target="_blank" rel="noopener">プライバシー</a><a href="https://ainaraomakaseare-coder.github.io/my-app/omoide-binder-support.html" target="_blank" rel="noopener">お問い合わせ</a></div>
+    <section id="termsSection"><h3>投稿する前に</h3><p>本人の許可がある写真・情報だけを登録してください。嫌がらせ、差別、脅迫、性的な内容、無断の個人情報公開は禁止です。架空の話は「架空の問題」に登録してください。</p><label><input type="checkbox" id="termsConsent" /> 利用規約とプライバシーポリシーを読み、同意します</label><div class="safetyActions"><button type="button" class="primaryBtn" id="acceptTermsBtn">同意を保存</button></div><p id="termsStatus" class="safetyStatus" role="status"></p></section>
+    <section><h3>通報・非表示</h3><p>通報は現在のコミュニティの管理者に届きます。運営への相談はお問い合わせページからできます。</p><button type="button" class="ghostBtn" id="generalReportBtn">コンテンツを通報</button><h4>ブロックした投稿者</h4><ul id="blockedList"></ul><h4>非表示にしたプロフィール</h4><ul id="hiddenProfileList"></ul></section>
+    <section><h3>アカウント削除</h3><p>参加情報・クイズ記録・通報・ブロック設定と、このアカウントに投稿者情報が記録されている投稿やアップロード写真を削除します。他の参加者が登録した情報は残ります。旧版で投稿者が記録されていない情報の削除はお問い合わせください。</p><p>あなたが唯一の管理者の場合、参加受付を停止し、残るコミュニティは閲覧のみになります。削除後は元に戻せず、同じ端末でも招待から参加し直す必要があります。</p><label for="deleteAccountConfirm">削除する場合は DELETE と入力</label><input type="text" id="deleteAccountConfirm" autocomplete="off" autocapitalize="characters" /><button type="button" class="dangerBtn" id="deleteAccountBtn">アカウントを完全に削除</button><p id="deleteAccountStatus" class="safetyStatus" role="status"></p></section>
+  </div>
+</div>
+<div class="safetyDialog" id="reportDialog" hidden role="dialog" aria-modal="true" aria-labelledby="reportTitle"><div class="safetyDialogInner"><h2 id="reportTitle">コンテンツを通報</h2><p id="reportContext"></p><label for="reportReason">問題のある内容と理由</label><textarea id="reportReason" maxlength="1000" placeholder="写真・エピソードなど、管理者が確認できるよう具体的に書いてください"></textarea><div class="safetyActions"><button type="button" class="primaryBtn" id="sendReportBtn">管理者に通報する</button><button type="button" class="ghostBtn" id="cancelReportBtn">キャンセル</button></div><p id="reportStatus" role="status"></p></div></div>
 
 <script>
 (function () {
@@ -1242,6 +1266,7 @@
 
   async function trySubmitGate() {
     if (gateBusy) return;
+    if (!requirePostingConsent()) return;
     var val = gateInput.value.trim();
     var name = document.getElementById("gateDisplayName").value.trim();
     if (!val || !name) { gateError.textContent = "参加者の名前と招待コードを入力してください"; return; }
@@ -1259,6 +1284,7 @@
   gateInput.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.isComposing) trySubmitGate(); });
 
   function showGate(message, deferList) {
+    document.getElementById("reportDialog").hidden = true;
     roomSwitchRequest += 1;
     pendingRoomSwitch = false;
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -1307,6 +1333,7 @@
 
   document.getElementById("gateCreate").addEventListener("click", async function () {
     if (gateBusy) return;
+    if (!requirePostingConsent()) return;
     var displayName = document.getElementById("gateDisplayName").value.trim();
     if (!displayName) { gateError.textContent = "参加者の名前を入力してください"; return; }
     var name = prompt("新しいコミュニティの名前を入力してください（60文字以内）");
@@ -1326,6 +1353,9 @@
   // ============ アプリ本体 ============
 
   var state = {
+    blockedUsers: new Set(),
+    hiddenProfiles: {},
+    termsAccepted: false,
     db: null,
     roomId: null,
     people: [],
@@ -1420,6 +1450,7 @@
   }
 
   async function uploadPhoto(file) {
+    if (!requirePostingConsent()) throw new Error("terms_required");
     var epoch = accessEpoch;
     if (!await checkAccess()) throw new Error("membership_required");
     var safeName = (file.name || "photo").replace(/[^\w.\-]/g, "_");
@@ -1568,6 +1599,8 @@
   function rowToPerson(row) {
     return {
       id: row.id,
+      createdBy: row.created_by,
+      updatedBy: row.updated_by,
       name: row.name,
       nickname: row.nickname || "",
       tags: row.tags || [],
@@ -1583,6 +1616,8 @@
 
   async function init() {
     var epoch = accessEpoch;
+    if (!await loadSafetyPreferences()) return false;
+    if (epoch !== accessEpoch) return false;
     if (!await loadPeople()) return false;
     if (epoch !== accessEpoch) return false;
     await loadQuizScore();
@@ -1635,9 +1670,10 @@
       showToast("読み込みでエラーが起きました: " + res.error.message);
       return false;
     }
-    await loadPrivatePhotos(res.data || [], epoch);
+    var visibleRows = (res.data || []).filter(function (row) { return !state.hiddenProfiles[row.id] && !blockedContent(row); });
+    await loadPrivatePhotos(visibleRows, epoch);
     if (epoch !== accessEpoch || room !== state.roomId || request !== peopleLoadRequest) return false;
-    state.people = (res.data || []).map(rowToPerson);
+    state.people = visibleRows.map(rowToPerson);
     render();
     return true;
   }
@@ -1805,6 +1841,7 @@
   // ---------- 追加フロー ----------
 
   els.addFab.addEventListener("click", async function () {
+    if (!requirePostingConsent()) return;
     if (!state.db) { showToast("保存機能が使えません"); return; }
     els.addFab.disabled = true;
     try {
@@ -1948,9 +1985,27 @@
       '<button class="ghostBtn" id="addEpisodeBtn">追加</button>' +
       "</div>" +
       '<div id="episodeList">' + episodesHtml + "</div></div>" +
-      '<div class="footerActions"><button class="dangerBtn" id="deletePersonBtn">この人を削除する</button></div>';
+      '<div class="footerActions"><button class="ghostBtn" id="reportPersonBtn">この内容を通報</button><button class="ghostBtn" id="hidePersonBtn">自分には非表示</button>' +
+      ([p.createdBy,p.updatedBy].some(function (id) { return id && id !== state.userId; }) ? '<button class="ghostBtn" id="blockPersonBtn">投稿者をブロック</button>' : '') +
+      '<button class="dangerBtn" id="deletePersonBtn">この人を削除する</button></div>';
 
     document.getElementById("detailBack").addEventListener("click", closeDetail);
+    document.getElementById("reportPersonBtn").addEventListener("click", function () { openReport(p); });
+    document.getElementById("hidePersonBtn").addEventListener("click", async function () {
+      state.hiddenProfiles[p.id] = p.name || "名前未設定";
+      resetQuizAfterSafetyChange();
+      localStorage.setItem("omoide_hidden_profiles_v1:" + state.userId, JSON.stringify(state.hiddenProfiles));
+      closeDetail(); await loadPeople(); showToast("この端末の一覧とクイズから非表示にしました");
+    });
+    var blockPersonBtn = document.getElementById("blockPersonBtn");
+    if (blockPersonBtn) blockPersonBtn.addEventListener("click", async function () {
+      if (!confirm("このプロフィールの登録者・最終更新者をブロックし、その投稿を自分の一覧とクイズから非表示にしますか？")) return;
+      var targets = Array.from(new Set([p.createdBy,p.updatedBy].filter(function (id) { return id && id !== state.userId; })));
+      var result = await state.db.from("binder_blocks").upsert(targets.map(function (id) { return {user_id:state.userId,blocked_user_id:id}; }), {onConflict:"user_id,blocked_user_id",ignoreDuplicates:true});
+      if (result.error) { showToast("ブロックを保存できませんでした"); return; }
+      resetQuizAfterSafetyChange();
+      closeDetail(); await loadSafetyPreferences(); await loadPeople(); await loadFictionalEpisodes(); showToast("投稿者をブロックしました");
+    });
 
     Array.prototype.forEach.call(document.querySelectorAll("[data-visibility-key]"), function (input) {
       input.addEventListener("change", async function () {
@@ -2124,10 +2179,12 @@
     });
 
     document.getElementById("deletePersonBtn").addEventListener("click", async function () {
+      if (!requirePostingConsent()) return;
       if (!confirm(p.name + " さんを削除します。元に戻せません。よろしいですか？")) return;
       try {
-        var res = await state.db.from("people").delete().eq("id", p.id).eq("room_id", state.roomId);
+        var res = await state.db.from("people").delete().eq("id", p.id).eq("room_id", state.roomId).select("id");
         if (res.error) throw res.error;
+        if (!res.data || !res.data.length) throw new Error("deletion_not_permitted");
         (p.photoUrls || []).forEach(function (url) { deletePhotoByUrl(url); });
         closeDetail();
         await loadPeople();
@@ -2153,6 +2210,7 @@
   }
 
   async function updatePerson(id, patch, successMsg) {
+    if (!requirePostingConsent()) { await loadPeople(); renderDetail(); return; }
     var epoch = accessEpoch;
     try {
       var res = await state.db.from("people").update(personPatchToRow(patch)).eq("id", id).eq("room_id", state.roomId);
@@ -2162,7 +2220,7 @@
       if (epoch !== accessEpoch) return;
       showToast(successMsg || "保存しました");
     } catch (e) {
-      showToast("保存に失敗しました: " + (e && e.message ? e.message : ""));
+      showToast(contentError(e));
     }
   }
 
@@ -2181,6 +2239,7 @@
       var res = await state.db.from("tag_notes").select("*").eq("tag_name", tagName).eq("room_id", state.roomId).maybeSingle();
       if (epoch !== accessEpoch || tagPanelState.tagName !== tagName) return;
       if (res.error) throw res.error;
+      if (res.data && blockedContent(res.data)) { closeTagDetail(); showToast("ブロックした投稿者の内容は非表示です"); return; }
       tagPanelState.notes = (res.data && res.data.episodes) || [];
     } catch (e) {
       showToast("読み込みでエラーが起きました: " + (e && e.message ? e.message : ""));
@@ -2194,6 +2253,7 @@
   }
 
   async function saveTagNotes() {
+    if (!requirePostingConsent()) { await openTagDetail(tagPanelState.tagName); return; }
     try {
       var res = await state.db.from("tag_notes").upsert({
         room_id: state.roomId,
@@ -2307,7 +2367,7 @@
     if (!await checkAccess() || state.memberRole !== "admin") return;
     document.getElementById("memberAdmin").hidden = false;
     document.getElementById("memberAdmin").scrollIntoView({ behavior: "smooth", block: "start" });
-    await Promise.all([loadMembers(), loadInviteStatus()]);
+    await Promise.all([loadMembers(), loadInviteStatus(), loadReportQueue()]);
   }
 
   function renderInviteStatus() {
@@ -2530,6 +2590,7 @@
   els.bulkCancelBtn.addEventListener("click", exitBulkMode);
 
   els.bulkApplyBtn.addEventListener("click", async function () {
+    if (!requirePostingConsent()) return;
     var tagVal = els.bulkTagInput.value.trim();
     if (!tagVal) { showToast("所属の名前を入力してください"); els.bulkTagInput.focus(); return; }
     if (state.bulkSelected.size === 0) { showToast("人を選んでください"); return; }
@@ -2795,13 +2856,14 @@
     try {
       var rows = [];
       for (var offset = 0; ; offset += 200) {
-        var result = await state.db.from("binder_fictional_episodes").select("id,text,tags,created_by")
+        var result = await state.db.from("binder_fictional_episodes").select("id,text,tags,created_by,updated_by")
           .eq("room_id", state.roomId).order("created_at").order("id").range(offset, offset + 199);
         if (epoch !== accessEpoch) return;
         if (result.error) throw result.error;
         rows = rows.concat(result.data || []);
         if (!result.data || result.data.length < 200) break;
       }
+      rows = rows.filter(function (row) { return !blockedContent(row); });
       state.fictionalEpisodes = rows;
       document.getElementById("fictionStatus").textContent = "架空の問題 " + rows.length + "件。選んだ区分のクイズに混ぜて出題します。";
     } catch (e) {
@@ -2822,6 +2884,7 @@
         button.textContent = "この架空の問題を削除";
         button.type = "button";
         button.addEventListener("click", async function () {
+          if (!requirePostingConsent()) return;
           if (!confirm("この架空の問題を出題から外しますか？")) return;
           if (!await checkAccess()) return;
           var requestEpoch = accessEpoch;
@@ -2846,6 +2909,7 @@
   document.getElementById("fictionExampleOne").addEventListener("click", function () { document.getElementById("fictionText").value = FICTION_EXAMPLES[0]; });
   document.getElementById("fictionExampleTwo").addEventListener("click", function () { document.getElementById("fictionText").value = FICTION_EXAMPLES[1]; });
   document.getElementById("saveFictionBtn").addEventListener("click", async function () {
+    if (!requirePostingConsent()) return;
     var text = document.getElementById("fictionText").value.trim();
     if (text.length < 2 || text.length > 2000) { showToast("架空の話を2〜2000文字で入力してください"); return; }
     if (!confirm("この話を「架空」としてクイズに追加します。正解は「そんな人いない／×」になります。よろしいですか？")) return;
@@ -3278,6 +3342,7 @@
   }
 
   async function saveQuizScore() {
+    if (!state.termsAccepted) { document.getElementById("rankingNote").textContent = "成績はこの端末に保存されています。設定で規約への同意を保存すると、次の回答からランキングにも保存します。"; return; }
     var epoch = accessEpoch;
     writeLocalQuizScore();
     if (!state.db || !state.userId || !state.roomId) return;
@@ -3316,7 +3381,7 @@
         .eq("room_id", state.roomId);
       if (epoch !== accessEpoch) return;
       if (result.error) throw result.error;
-      var scores = (result.data || []).map(function (row) {
+      var scores = (result.data || []).filter(function (row) { return !state.blockedUsers.has(row.user_id); }).map(function (row) {
         var score = getLevelScore(row.level_scores, level);
         return { userId: row.user_id, name: row.display_name || "メンバー", known: score.knownPeople.length, correct: score.correctCount, answered: score.answerCount };
       }).filter(function (score) { return score.answered > 0; }).sort(function (a, b) { return b.known - a.known || b.correct - a.correct || a.name.localeCompare(b.name, "ja"); });
@@ -3364,6 +3429,7 @@
     button.addEventListener("click", function () { startQuiz(button.getAttribute("data-quiz-mode")); });
   });
   document.getElementById("savePlayerNameBtn").addEventListener("click", async function () {
+    if (!requirePostingConsent()) return;
     var input = document.getElementById("playerNameInput");
     var name = input.value.trim().slice(0, 24);
     if (!name) { showToast("ランキングに表示する名前を入力してください"); input.focus(); return; }
@@ -3450,6 +3516,7 @@
   }
 
   document.getElementById("bulkImportFile").addEventListener("change", async function (event) {
+    if (!requirePostingConsent()) { event.target.value = ""; return; }
     var file = event.target.files && event.target.files[0];
     event.target.value = "";
     if (!file) return;
@@ -3469,6 +3536,154 @@
       showToast("名簿を読み込めませんでした: " + (e && e.message ? e.message : "内容を確認してください"));
     }
   });
+  // ---------- 投稿の保護・設定 ----------
+  function blockedContent(row) {
+    return [row.created_by,row.updated_by].concat(Object.values(row.content_authors || {}))
+      .concat((row.episodes || []).flatMap(function (ep) { return [ep.createdBy,ep.updatedBy]; }))
+      .some(function (id) { return id && state.blockedUsers.has(id); });
+  }
+  function resetQuizAfterSafetyChange() {
+    state.quizSession = null;
+    document.getElementById("quizSession").hidden = true;
+    document.getElementById("quizModeGrid").hidden = false;
+  }
+  async function loadSafetyPreferences() {
+    var epoch = accessEpoch, user = state.userId;
+    var results = await Promise.all([
+      supabaseClient.from("binder_blocks").select("blocked_user_id").eq("user_id",user),
+      supabaseClient.from("binder_terms").select("version").eq("user_id",user).maybeSingle()
+    ]);
+    if (epoch !== accessEpoch || user !== state.userId) return false;
+    if (results.some(function (r) { return r.error; })) { showToast("保護設定を読み込めません。通信状態を確認して再読み込みしてください"); return false; }
+    state.blockedUsers = new Set((results[0].data || []).map(function (r) { return r.blocked_user_id; }));
+    state.termsAccepted = !!results[1].data && results[1].data.version === "2026-10-07";
+    try { state.hiddenProfiles = JSON.parse(localStorage.getItem("omoide_hidden_profiles_v1:" + user)) || {}; } catch(e) { state.hiddenProfiles = {}; }
+    return true;
+  }
+  function contentError(e) {
+    var message = String(e && e.message || "");
+    if (message.includes("content_not_allowed")) return "不適切な表現が含まれるため保存できません。内容を見直してください。";
+    if (message.includes("community_read_only")) return "管理者がいないため閲覧のみです。お問い合わせからご相談ください。";
+    if (message.includes("terms_required")) return "設定・サポートで利用規約への同意を保存してください。";
+    return "保存できませんでした。通信状態を確認してもう一度お試しください。";
+  }
+  function requirePostingConsent() {
+    if (state.termsAccepted) return true;
+    openSafety();
+    document.getElementById("termsStatus").textContent = "投稿・参加前に、規約を確認して同意してください。";
+    return false;
+  }
+  function openSafety() {
+    document.getElementById("safetyDialog").hidden = false;
+    document.getElementById("termsSection").hidden = state.termsAccepted;
+    document.getElementById("generalReportBtn").disabled = !state.roomId;
+    document.getElementById("deleteAccountConfirm").value = "";
+    document.getElementById("deleteAccountStatus").textContent = "";
+    var list = document.getElementById("blockedList"); list.innerHTML = "";
+    state.blockedUsers.forEach(function (id) {
+      var item = document.createElement("li"), button = document.createElement("button");
+      item.textContent = "投稿者ID末尾 " + id.slice(-8) + " "; button.className = "ghostBtn"; button.textContent = "ブロック解除";
+      button.addEventListener("click", async function () {
+        button.disabled = true;
+        var result = await supabaseClient.from("binder_blocks").delete().eq("user_id",state.userId).eq("blocked_user_id",id);
+        if (result.error) { showToast("解除できませんでした"); button.disabled = false; return; }
+        resetQuizAfterSafetyChange();
+        await loadSafetyPreferences(); if(state.roomId) { await loadPeople(); await loadFictionalEpisodes(); } openSafety();
+      }); item.append(button); list.append(item);
+    });
+    if (!list.children.length) list.textContent = "ブロックはありません。旧版の投稿者不明のプロフィールは、プロフィールの「自分には非表示」を使えます。";
+    var hidden = document.getElementById("hiddenProfileList"); hidden.innerHTML = "";
+    Object.keys(state.hiddenProfiles).forEach(function (id) {
+      var item = document.createElement("li"), button = document.createElement("button");
+      item.textContent = state.hiddenProfiles[id] + " "; button.className = "ghostBtn"; button.textContent = "表示を戻す";
+      button.addEventListener("click", async function () {
+        delete state.hiddenProfiles[id]; localStorage.setItem("omoide_hidden_profiles_v1:" + state.userId, JSON.stringify(state.hiddenProfiles));
+        resetQuizAfterSafetyChange();
+        if(state.roomId) await loadPeople(); openSafety();
+      }); item.append(button); hidden.append(item);
+    });
+    if (!hidden.children.length) hidden.textContent = "非表示のプロフィールはありません。";
+  }
+  document.getElementById("safetyBtn").addEventListener("click", openSafety);
+  document.getElementById("gateSafetyBtn").addEventListener("click", openSafety);
+  document.getElementById("closeSafetyBtn").addEventListener("click", function () { document.getElementById("safetyDialog").hidden = true; });
+  document.getElementById("acceptTermsBtn").addEventListener("click", async function () {
+    if (!document.getElementById("termsConsent").checked) { document.getElementById("termsStatus").textContent = "規約を読み、同意のチェックを入れてください。"; return; }
+    var button = document.getElementById("acceptTermsBtn"); button.disabled = true;
+    try {
+      if (!state.userId) await ensureIdentity();
+      var result = await supabaseClient.from("binder_terms").insert({user_id:state.userId,version:"2026-10-07"});
+      if (result.error && result.error.code !== "23505") throw result.error;
+      state.termsAccepted = true; document.getElementById("termsSection").hidden = true; showToast("同意を保存しました。操作を続けられます。");
+    } catch(e) { document.getElementById("termsStatus").textContent = "同意を保存できませんでした。通信状態を確認してください。"; }
+    finally { button.disabled = false; }
+  });
+  var reportingPerson = null, reportingRoom = null;
+  function openReport(person) {
+    if (!state.roomId) return;
+    reportingPerson = person || null; reportingRoom = state.roomId;
+    document.getElementById("reportContext").textContent = person ? "対象: " + (person.name || "名前未設定") : "現在のコミュニティのプロフィール・所属の思い出・クイズの内容などを通報できます。";
+    document.getElementById("reportReason").value = ""; document.getElementById("reportStatus").textContent = "";
+    document.getElementById("safetyDialog").hidden = true; document.getElementById("reportDialog").hidden = false;
+  }
+  document.getElementById("generalReportBtn").addEventListener("click", function () { openReport(null); });
+  document.getElementById("cancelReportBtn").addEventListener("click", function () { document.getElementById("reportDialog").hidden = true; });
+  document.getElementById("sendReportBtn").addEventListener("click", async function () {
+    var reason = document.getElementById("reportReason").value.trim(), epoch = accessEpoch;
+    if (!reason) { document.getElementById("reportStatus").textContent = "理由を入力してください。"; return; }
+    if (!reportingRoom || reportingRoom !== state.roomId) { document.getElementById("reportStatus").textContent = "コミュニティが変わりました。対象を確認して開き直してください。"; return; }
+    var button = document.getElementById("sendReportBtn"); button.disabled = true;
+    try {
+      var result = await supabaseClient.from("binder_reports").insert({room_id:reportingRoom,reporter_id:state.userId,person_id:reportingPerson && reportingPerson.id,target_user_id:reportingPerson && (reportingPerson.updatedBy || reportingPerson.createdBy),reason:reason});
+      if (epoch !== accessEpoch) return;
+      if (result.error) throw result.error;
+      document.getElementById("reportDialog").hidden = true; showToast("管理者に通報しました。対応がない場合は運営にもご相談ください。");
+    } catch(e) { document.getElementById("reportStatus").textContent = "通報を送信できませんでした。通信状態を確認してください。"; }
+    finally { button.disabled = false; }
+  });
+  async function loadReportQueue() {
+    var epoch = accessEpoch, room = state.roomId, queue = document.getElementById("reportQueue");
+    if (state.memberRole !== "admin") return;
+    queue.textContent = "通報を確認しています…";
+    var result = await supabaseClient.from("binder_reports").select("id,reason,person_id,created_at").eq("room_id",room).eq("status","open").order("created_at");
+    if (epoch !== accessEpoch || room !== state.roomId || state.memberRole !== "admin") return;
+    queue.innerHTML = "";
+    if (result.error) { queue.textContent = "通報を読み込めませんでした。管理画面を開き直してください。"; return; }
+    (result.data || []).forEach(function (report) {
+      var article = document.createElement("article"), text = document.createElement("p"), actions = document.createElement("div");
+      text.textContent = formatDate(report.created_at) + "：" + report.reason; actions.className = "safetyActions";
+      if (report.person_id) {
+        var view = document.createElement("button"); view.className = "ghostBtn"; view.textContent = "プロフィールを確認";
+        view.addEventListener("click", function () { if (state.people.some(function (p) { return p.id === report.person_id; })) openDetail(report.person_id); else showToast("プロフィールは削除済みか、ブロック・非表示の対象です"); }); actions.append(view);
+      }
+      var resolve = document.createElement("button"); resolve.className = "ghostBtn"; resolve.textContent = "対応済みにする";
+      resolve.addEventListener("click", async function () {
+        if (epoch !== accessEpoch || room !== state.roomId) return;
+        resolve.disabled = true; var saved = await supabaseClient.from("binder_reports").update({status:"resolved"}).eq("id",report.id).eq("room_id",room);
+        if (saved.error) { showToast("更新できませんでした"); resolve.disabled = false; return; } await loadReportQueue();
+      }); actions.append(resolve); article.append(text,actions); queue.append(article);
+    });
+    if (!queue.children.length) queue.textContent = "未対応の通報はありません。";
+  }
+  document.getElementById("deleteAccountBtn").addEventListener("click", async function () {
+    var status = document.getElementById("deleteAccountStatus"), button = document.getElementById("deleteAccountBtn"), user = state.userId;
+    if (!user) { status.textContent = "接続を確認してから再度お試しください。"; return; }
+    if (document.getElementById("deleteAccountConfirm").value !== "DELETE") { status.textContent = "DELETE と入力してください。"; return; }
+    if (!confirm("アカウントと関連するデータを完全に削除します。元に戻せません。削除しますか？")) return;
+    button.disabled = true; status.textContent = "削除しています。この画面を閉じないでください。";
+    document.getElementById("closeSafetyBtn").disabled = true;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    try {
+      var result = await supabaseClient.functions.invoke("binder-account-delete", {body:{confirm:"DELETE"}});
+      if (result.error || !result.data || result.data.message !== "account_deleted") throw new Error("deletion_incomplete");
+      await supabaseClient.auth.signOut({scope:"local"});
+      Object.keys(localStorage).filter(function (key) { return key.startsWith("omoide_") && (key.includes(user) || key === "omoide_room_id_v1"); }).forEach(function (key) { localStorage.removeItem(key); });
+      state.userId = null; state.termsAccepted = false; state.blockedUsers = new Set(); state.hiddenProfiles = {}; lastRoomId = null;
+      document.getElementById("safetyDialog").hidden = true; showGate("アカウントを削除しました。参加する場合は、設定で規約に同意して招待から参加し直してください。",true);
+      document.getElementById("gateAccountId").textContent = "アカウント削除済み"; document.getElementById("joinedCommunitiesStatus").textContent = "参加履歴は削除されました。";
+    } catch(e) { showGate("アカウント削除の結果を確認できません。設定・サポートで削除を再試行してください。",true); status.textContent = "削除を完了できませんでした。通信状態を確認して同じ削除ボタンで再試行してください。開始済みの場合、完了までコミュニティの利用を停止しています。解決しない場合はお問い合わせください。"; }
+    finally { button.disabled = false; document.getElementById("closeSafetyBtn").disabled = false; }
+  });
   // All state and event handlers must exist before restoring a saved community.
   document.addEventListener("visibilitychange", function () { if (!document.hidden) checkAccess(); });
   window.addEventListener("focus", function () { checkAccess(); });
@@ -3478,6 +3693,7 @@
     setGateBusy(true);
     try {
       await ensureIdentity();
+      await loadSafetyPreferences();
       var joinedRooms = await loadJoinedCommunities();
       if (lastRoomId && joinedRooms.some(function (room) { return room.room_id === lastRoomId; })) await passGate(lastRoomId);
       else if (joinedRooms.length === 1) await passGate(joinedRooms[0].room_id);

@@ -1,0 +1,4 @@
+# ES256 user JWTs are verified inside the function through Auth.getUser.
+# No request can delete an account without a verified user and DELETE confirmation.
+[functions.binder-account-delete]
+verify_jwt = false

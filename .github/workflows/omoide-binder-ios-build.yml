@@ -93,11 +93,11 @@ jobs:
         # アクセスを許可しない。ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
         working-directory: omoide-binder-ios/ios/App/App
         run: |
-          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'インタビューの質問に、声で答えるために使用します'" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'プロフィールやエピソードを声で入力するために使用します'" Info.plist
           # 声で答えた内容を文字にする（音声認識）ときも、iOSは利用目的の説明文が無いと許可を求められずに止まる
-          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string '話した言葉を文字にして、インタビューの回答として記録するために使用します'" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string '話した言葉を文字にして、プロフィールやエピソードとして記録するために使用します'" Info.plist
           # 写真を添えるとき「写真を撮る」を選ぶとカメラを使う。説明文が無いと即座にアプリが落ちる（旅の足跡で発生）
-          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'エピソードや回答に、その場で撮った写真を添えるために使用します'" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'コミュニティのプロフィールに、その場で撮った写真を添えるために使用します'" Info.plist
           # 独自の暗号化は使っておらず標準的なHTTPS通信のみのため、輸出コンプライアンスの
           # 質問（TestFlight配信のたびに毎回聞かれるやつ）が出ないようここで申告しておく。
           # ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
