@@ -16,7 +16,8 @@ const EXT = {
 };
 
 module.exports = async function handler(req, res) {
-  if (!auth.guard(req, res)) return;
+  // ★ 予約コマンドの合鍵でも通す（画像・動画を置くのに要るため）
+  if (!auth.guard(req, res, { allowToken: true })) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
 
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
