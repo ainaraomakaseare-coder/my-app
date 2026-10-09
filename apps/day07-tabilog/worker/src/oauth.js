@@ -55,12 +55,13 @@ function allowedOrigins(allowed) {
   return (allowed || "").split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-// return は「ログイン後に戻るWebページのURL」か、リテラルの "app"（iOSアプリ）。
+// return は「ログイン後に戻るWebページのURL」か、リテラルの "app"（iOSアプリ）／"android"（Androidアプリ）。
 // 許可リスト（ALLOWED_ORIGIN）にあるOriginだけを受け付ける（オープンリダイレクト対策）。
 // 手元の開発用にhttp://localhostだけは通す。返り値：
-//   {kind:"app"} / {kind:"web", url:"https://…/path?query"（ハッシュ抜き）} / null（不正）
+//   {kind:"app"} / {kind:"android"} / {kind:"web", url:"https://…/path?query"（ハッシュ抜き）} / null（不正）
 export function parseReturnTarget(value, allowed) {
   if (value === "app") return { kind: "app" };
+  if (value === "android") return { kind: "android" };
   if (typeof value !== "string" || value.length === 0 || value.length > 500) return null;
   let u;
   try {
@@ -256,6 +257,14 @@ export function nativeAuthUrl(kind, value) {
   return "tabilog://auth?" + key + "=" + encodeURIComponent(value || (kind === "error" ? "failed" : ""));
 }
 
+// Androidアプリ用：検証済みのhttpsのApp Link（assetlinks.json）で戻る。ChromebookのChromeなどは
+// カスタムスキーム（tabilog://）をAndroidアプリに渡さないため。クエリはnativeAuthUrlと同じ
+// （アプリが開かなかったときは、Pagesの/app-authページがtabilog://auth?…のボタンを出す）。
+export const ANDROID_APP_LINK_BASE = "https://tabinoashiato.pages.dev/app-auth";
+export function nativeAuthUrlAndroid(kind, value) {
+  return ANDROID_APP_LINK_BASE + nativeAuthUrl(kind, value).slice("tabilog://auth".length);
+}
+
 // 結果を知らせるHTML。backUrlの「旅の足跡アプリに戻る」ボタンを出し、autoOpenなら開いた瞬間に
 // そのURLへ移動してアプリを起動しようとする（起動できなかったときのためにボタンも残す）。
 export function authMessagePage(ok, message, backUrl, autoOpen) {
@@ -289,8 +298,9 @@ export function authMessagePage(ok, message, backUrl, autoOpen) {
   );
 }
 
-// iOSアプリ用：ログインの結果をカスタムURLスキームでアプリに渡すページ。
-export function nativeResultPage(kind, value) {
+// アプリ用：ログインの結果をアプリに渡すページ。iOSはカスタムURLスキーム、
+// Android（android=true）はApp Link（https）で戻る。
+export function nativeResultPage(kind, value, android) {
   const message =
     kind === "session"
       ? "ログインできました。旅の足跡アプリに戻ってください。"
@@ -299,7 +309,10 @@ export function nativeResultPage(kind, value) {
         : value === "cancelled"
           ? "ログインをキャンセルしました。"
           : "ログインに失敗しました。もう一度お試しください。";
-  return authMessagePage(kind !== "error", message, nativeAuthUrl(kind, value), true);
+  // Androidは自動で移動しない：ボタンを押したとき（ユーザーの操作）でないと、ChromeがApp Linkをアプリに渡さないことがある
+  return android
+    ? authMessagePage(kind !== "error", message, nativeAuthUrlAndroid(kind, value), false)
+    : authMessagePage(kind !== "error", message, nativeAuthUrl(kind, value), true);
 }
 
 /* ---------- アカウント削除時のSign in with Appleトークンの取り消し ---------- */
