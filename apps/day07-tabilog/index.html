@@ -63,7 +63,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <button class="btn text back" id="btnLoginBack">← 戻る</button>
       </header>
       <div class="hd" style="text-align:center">
-        <h1>旅の足跡</h1>
+        <h1>ログイン・新規登録</h1>
         <p class="lead" id="loginLead">ログインしてください</p>
       </div>
       <div class="social-login" id="socialLogin">
@@ -86,19 +86,33 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <button class="btn ghost small" id="btnSocialCancel">キャンセル</button>
       </div>
 
+      <!-- はじめての人は「新規登録」が別にあると思って探してしまうので、同じボタンで始められることを書いておく -->
+      <p class="hint login-first-note" id="loginFirstNote">はじめての方も、同じボタンでそのまま始められます</p>
       <div class="login-divider" id="emailLoginDivider"><span>または</span></div>
       <p class="hint login-link-note" id="loginLinkNote" hidden>LINEからメールアドレスを受け取れなかったので、一度だけメールで確認します。確認できたら、次回からはLINEだけでログインできます。</p>
+      <!-- メールは、Apple・Google・LINEのボタンがあるときは1つのボタンにたたんでおき、押したら入力欄を開く
+           （入力欄と緑の大きなボタンが最初から並ぶと、それが本命の手順に見えて迷うため）。setEmailLoginOpen -->
       <div class="email-login-form" id="emailLoginForm">
-        <input type="text" id="loginName" placeholder="お名前（例：わたし）">
-        <input type="email" id="loginEmail" placeholder="メールアドレス">
-        <button class="btn primary wide" id="btnSendOtp">確認コードを送る</button>
-        <p class="hint email-login-note">入力したメールアドレスに確認コードを送ります。メールの持ち主であることを確認する、いちばん確実なログイン方法です。</p>
+        <button class="login-provider-btn login-provider-email" id="btnShowEmailLogin" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+          <span>メールアドレスでログイン</span>
+        </button>
+        <div class="email-login-fields" id="emailLoginFields">
+          <input type="email" id="loginEmail" placeholder="メールアドレス" autocomplete="email">
+          <input type="text" id="loginName" placeholder="お名前（任意・例：わたし）" autocomplete="nickname">
+          <button class="btn primary wide" id="btnSendOtp">確認コードを送る</button>
+          <p class="hint email-login-note">メールに届く6桁のコードを入れるだけでログインできます。パスワードはいりません。</p>
+        </div>
       </div>
       <div class="email-login-form" id="emailOtpForm" hidden>
-        <p class="hint" id="emailOtpSentTo"></p>
-        <input type="text" id="loginOtpCode" inputmode="numeric" maxlength="6" placeholder="6桁の確認コード">
+        <p class="email-otp-sent" id="emailOtpSentTo"></p>
+        <input type="text" id="loginOtpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6桁の確認コード">
         <button class="btn primary wide" id="btnVerifyOtp">確認してログイン</button>
-        <button class="btn ghost small" id="btnResendOtp">コードを再送信する</button>
+        <p class="hint email-login-note">メールが届かないときは、迷惑メールのフォルダも見てみてください。</p>
+        <div class="email-otp-actions">
+          <button class="btn ghost small" id="btnResendOtp">コードを再送信する</button>
+          <button class="btn ghost small" id="btnChangeEmail">メールアドレスを変える</button>
+        </div>
       </div>
 
       <p class="hint" id="loginStatus"></p>
@@ -862,6 +876,11 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
             <div class="profile-name" id="profileName"></div>
             <div class="profile-stats" id="profileStats"></div>
           </div>
+        </div>
+        <!-- ログインしていないときだけ：一覧の中の「ログインする」の行は見落とされやすいので、カードにも大きなボタンを出す -->
+        <div class="profile-login" id="profileLogin" hidden>
+          <p class="hint">ログインすると、マイログやAIでの整理が使えます。</p>
+          <button class="btn primary wide" id="btnProfileLogin" type="button">ログイン・新規登録</button>
         </div>
       </div>
 

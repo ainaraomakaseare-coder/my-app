@@ -1761,3 +1761,18 @@ body.viewer-open { overflow: hidden; }
 /* 削除の確認：箇条書き */
 .confirm-list { margin: 4px 0 0; padding-left: 20px; font-size: var(--fs-sm); line-height: 1.7; color: var(--ink); }
 .confirm-list li { margin: 0 0 6px; }
+
+/* ログイン画面の分かりやすさ（2026-10-09〜）：メールはボタン1つにたたみ、はじめての人向けの一言を添える */
+.login-provider-email { background: var(--card); color: var(--ink); box-shadow: var(--card-shadow); }
+.login-first-note { width: 280px; margin: 12px 0 0; font-size: var(--fs-xs); }
+.email-login-fields { display: flex; flex-direction: column; gap: 10px; }
+.email-login-form .btn.wide { text-align: center; }
+.email-otp-sent { margin: 18px 0 0; text-align: center; color: var(--ink); font-size: var(--fs-sm); line-height: 1.6; word-break: break-word; }
+.email-otp-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; }
+/* 画面の上下中央に置くと、メールの入力欄を開いたり確認コードの画面に進んだりするたびに
+   「← 戻る」やボタンの位置が上下に動くので、上から並べる */
+.login-wrap { justify-content: flex-start; padding-top: 4dvh; }
+/* マイページ：ログインしていないときだけカードの下に出す案内とボタン */
+.profile-login { margin-top: 14px; }
+.profile-login .hint { margin: 0 0 10px; }
+.profile-login .btn.wide { text-align: center; }
