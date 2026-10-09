@@ -3,7 +3,7 @@ import { createPrivateKey, sign } from 'node:crypto';
 // Only this app is eligible for changes; never log credentials or contact values.
 const APP = '6819331432';
 const mode = process.env.METADATA_MODE || 'inspect';
-if (!['inspect', 'repair', 'support'].includes(mode)) throw new Error('unsupported_mode');
+if (!['inspect', 'repair', 'support', 'select-build'].includes(mode)) throw new Error('unsupported_mode');
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
 const now = Math.floor(Date.now() / 1000);
 const unsigned = `${encode({ alg: 'ES256', kid: process.env.ASC_KEY_ID, typ: 'JWT' })}.${encode({ iss: process.env.ASC_ISSUER_ID, iat: now, exp: now + 900, aud: 'appstoreconnect-v1' })}`;
@@ -28,6 +28,19 @@ const versions = await api(`/v1/apps/${APP}/appStoreVersions?filter[platform]=IO
 if (versions.data.length !== 1) throw new Error('expected_one_ios_version');
 const version = versions.data[0];
 if (!['PREPARE_FOR_SUBMISSION', 'REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED'].includes(version.attributes.appStoreState) && mode !== 'inspect') throw new Error('version_not_editable');
+if (mode === 'select-build') {
+  const number = process.env.ASC_BUILD_NUMBER || '';
+  if (!/^\d+$/.test(number)) throw new Error('invalid_build_number');
+  const builds = await api(`/v1/builds?filter[app]=${APP}&filter[version]=${number}&filter[preReleaseVersion.version]=1.0.0&filter[preReleaseVersion.platform]=IOS&limit=10`);
+  if (builds.data.length !== 1) throw new Error('expected_one_matching_build');
+  const build = builds.data[0];
+  if (build.attributes.processingState !== 'VALID' || build.attributes.expired) throw new Error('build_not_ready');
+  if (build.attributes.usesNonExemptEncryption !== false) throw new Error('encryption_declaration_required');
+  await api(`/v1/appStoreVersions/${version.id}/relationships/build`, 'PATCH', { data: { type: 'builds', id: build.id } });
+  report.changed.push('selected_general_release_build');
+}
+const selectedBuild = await api(`/v1/appStoreVersions/${version.id}/build`, 'GET', undefined, true);
+report.build = selectedBuild.data ? { number: selectedBuild.data.attributes.version, state: selectedBuild.data.attributes.processingState } : null;
 const beta = await api(`/v1/apps/${APP}/betaAppReviewDetail`, 'GET', undefined, true);
 let review = await api(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`, 'GET', undefined, true);
 const contactFields = ['contactFirstName', 'contactLastName', 'contactPhone', 'contactEmail'];
@@ -84,4 +97,9 @@ report.contact.complete = contactFields.every(key => !!checkedReview.data?.attri
 report.contact.missing = contactFields.filter(key => !checkedReview.data?.attributes[key]?.trim());
 report.contentRights = checkedApp.data.attributes.contentRightsDeclaration;
 report.supportUrl = checkedLocale.data.attributes.supportUrl || null;
+report.reviewAccess = {
+  notesPresent: !!checkedReview.data?.attributes.notes?.trim(),
+  demoAccountRequired: checkedReview.data?.attributes.demoAccountRequired ?? null,
+  demoCredentialsComplete: ['demoAccountName', 'demoAccountPassword'].every(key => !!checkedReview.data?.attributes[key]?.trim())
+};
 console.log(JSON.stringify(report));
