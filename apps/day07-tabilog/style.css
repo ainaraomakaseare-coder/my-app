@@ -1295,6 +1295,7 @@ body.viewer-open { overflow: hidden; }
 .memo-help { margin-top: 6px; line-height: 1.6; }
 .memo-ai-btn { display: block; margin: 8px auto 0; font-size: var(--fs-sm); }
 #memoAiInfo { text-align: center; margin-top: 2px; }
+.quota-part { display: inline-block; margin: 0 .3em; }
 
 /* 記録のエピソードの改行をそのまま出す（メモの取り込みでは、予定の下の1行ずつを改行でつないでいる） */
 .entry-episode { white-space: pre-wrap; word-break: break-word; }

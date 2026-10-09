@@ -81,11 +81,11 @@ const tickets = (email) => sqlite.prepare("SELECT ticket_credits t FROM accounts
   const r = await call("POST", "/accounts/ensure", { email: "legacy@example.com", name: "テスト" });
   check("ensure: 200", r.status, 200);
   check("ensure: planは常にfree", r.data.plan, "free");
-  check("ensure: 音声の上限は3（50ではない）", [r.data.voiceMonthlyLimit, r.data.voiceRemainingThisPeriod], [3, 0]);
-  check("ensure: メモ・スクショの上限は3（100ではない）", [r.data.memoMonthlyLimit, r.data.memoRemainingThisPeriod], [3, 0]);
+  check("ensure: 音声の上限は5（50ではない）", [r.data.voiceMonthlyLimit, r.data.voiceRemainingThisPeriod], [5, 0]);
+  check("ensure: メモ・スクショの上限は5（100ではない）", [r.data.memoMonthlyLimit, r.data.memoRemainingThisPeriod], [5, 0]);
   check("ensure: 古いアプリ用のフィールド名は残る", ["accountId", "email", "name", "plan", "voiceUsesThisPeriod", "voiceMonthlyLimit", "voiceRemainingThisPeriod", "memoMonthlyLimit", "memoRemainingThisPeriod", "ticketCredits"].every((k) => k in r.data), true);
   const b = await call("POST", "/accounts/ensure", { email: "basic@example.com", name: "テスト" });
-  check("ensure: basicも音声3・メモ3", [b.data.plan, b.data.voiceMonthlyLimit, b.data.memoMonthlyLimit], ["free", 3, 3]);
+  check("ensure: basicも音声5・メモ5", [b.data.plan, b.data.voiceMonthlyLimit, b.data.memoMonthlyLimit], ["free", 5, 5]);
   const n = await call("POST", "/accounts/ensure", { email: "new@example.com", name: "新規" });
   check("ensure: 新規はfree・おまけ3回", [n.data.plan, n.data.ticketCredits], ["free", 3]);
 }
