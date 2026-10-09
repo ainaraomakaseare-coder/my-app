@@ -11661,6 +11661,8 @@
     $('#profileName').textContent = user ? (user.name || user.email || '') : tr('ログインしていません');
     $('#mpAccountRow .mp-row-label').textContent = user ? tr('アカウント') : tr('ログインする');
     $('#profileLogin').hidden = !!user;
+    // ログインしていないときは「ログインしていません」の表示ごと押せるようにする（思わず押す人が多いので、そのままログインへ）
+    $('#profileCard').classList.toggle('is-guest', !user);
   }
 
   // ---------- プロフィール写真（マイページのアバター） ----------
@@ -12020,6 +12022,7 @@
     $('#mpLangRow').addEventListener('click', function () { openMyPageSheet('#langSheet'); });
     $('#mpAccountRow').addEventListener('click', needLogin(function () { openMyPageSheet('#accountSheet'); }));
     $('#btnProfileLogin').addEventListener('click', function () { openLogin('profile'); });
+    $('#profileCard .profile-info').addEventListener('click', function () { if (!loadCurrentUser()) openLogin('profile'); });
     $('#mpHistory').addEventListener('click', function () {
       if (!loadMyTrips().length) { showToast(tr('この端末の履歴に旅行がありません')); return; }
       openTripHistorySheet();

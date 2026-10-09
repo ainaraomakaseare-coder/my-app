@@ -1776,3 +1776,11 @@ body.viewer-open { overflow: hidden; }
 .profile-login { margin-top: 14px; }
 .profile-login .hint { margin: 0 0 10px; }
 .profile-login .btn.wide { text-align: center; }
+.profile-card.is-guest .profile-info { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.profile-card.is-guest .profile-name { display: flex; align-items: center; gap: 4px; }
+.profile-card.is-guest .profile-name::after {
+  content: ''; flex: none; width: 8px; height: 8px; margin-left: 4px;
+  border-top: 2.6px solid var(--accent); border-right: 2.6px solid var(--accent); transform: rotate(45deg);
+}
+/* ログイン前は写真を変えられないので、カメラの目印は出さない（押すとログインへ進む） */
+.profile-card.is-guest .profile-avatar-badge { display: none; }
