@@ -13776,6 +13776,7 @@
       var s = tl.stops[st.captionIndex];
       $('#replayCaptionTime').textContent = s.estimated ? '' : minuteToHHMM(s.minute);
       $('#replayCaptionTitle').textContent = s.label;
+      $('#replayCaptionLink').textContent = tr('記録を見る ›');
       $('#replayCaptionLines').innerHTML = s.captions.map(function (c) { return '<div>' + escapeHtml(c) + '</div>'; }).join('');
       showReplayCaptionPhotos(s.photos || []);
       preloadNextReplayPhotos(st.captionIndex);
@@ -13927,6 +13928,20 @@
     // （再生中の状態＝replayはnullにするだけでは、Leafletの地図に足した線・マーカー自体は残ってしまい、
     // 次に開いたときに一瞬前の旅行の地図に見えていた。2026-09-26）
     if (replayLayer) replayLayer.clearLayers();
+  }
+
+  // 吹き出し（その地点の出来事）をタップしたら、再生を閉じて旅行の画面のその記録へ飛ぶ（マイログの記録から
+  // 開いたときと同じく、その日を選んでスクロールし、少し光らせる。2026-10-09 オーナー）
+  function openReplayCaptionRecord() {
+    if (!replay || !replay.tl || replay.captionIndex < 0) return;
+    var s = replay.tl.stops[replay.captionIndex];
+    if (!s || s.arrival || !s.blockId) return;
+    var b = allBlocks().filter(function (x) { return x.id === s.blockId; })[0];
+    if (!b) return;
+    setReplayPlaying(false);
+    if (b.date) state.selectedDate = b.date;
+    closeReplay();
+    focusTripRecord({ date: b.date, blockId: b.id });
   }
 
   function closeReplay() {
@@ -14746,6 +14761,7 @@
     $('#btnForgetTrip').addEventListener('click', hideTripFromHistory);
     $('#btnOpenReplay').addEventListener('click', openReplay);
     $('#btnCloseReplay').addEventListener('click', closeReplay);
+    $('#replayCaption').addEventListener('click', openReplayCaptionRecord);
     $('#btnReplayVideo').addEventListener('click', openReplayVideoSheet);
     $('#btnCloseRsv').addEventListener('click', closeReplayVideoSheet);
     $('#rsvSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeReplayVideoSheet(); });

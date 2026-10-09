@@ -1012,6 +1012,9 @@ a:hover { text-decoration: underline; }
 .replay-caption-head { display: flex; gap: 8px; align-items: baseline; }
 .replay-caption-time { font-size: var(--fs-sm); font-weight: 700; color: var(--accent-deep); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .replay-caption-title { font-size: var(--fs-md); font-weight: 700; }
+/* 吹き出しはタップで旅行の画面のその記録へ飛ぶ */
+.replay-caption { cursor: pointer; }
+.replay-caption-link { margin-left: auto; flex-shrink: 0; font-size: var(--fs-xs, 12px); font-weight: 700; color: var(--accent-deep); white-space: nowrap; }
 .replay-caption-lines div { font-size: var(--fs-sm); color: var(--ink-muted); margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
 /* 全文を出すようにしたので、長いときは地図を隠しすぎないよう高さに上限を付け、中でスクロールさせる */
 .replay-caption { max-height: 38vh; overflow-y: auto; -webkit-overflow-scrolling: touch; transition: opacity 0.2s ease; }
