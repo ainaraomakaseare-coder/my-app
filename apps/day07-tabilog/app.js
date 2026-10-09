@@ -272,6 +272,23 @@
   //   'inherit' … 直前の予定と同じにする（区切りを消す）。IANA名 … その場所の時間として読む。
   // 前後から遠く離れたピン（findFarMapOutlierBlockIds、ピンが違うかもしれない）は、地図が無いのと
   // 同じに扱う（地図そのもの・吹き出しはそのまま残す）。
+  // idxより後で、最初に地図（座標）を持つ予定。間に地図の無い予定（「機内食」など）があっても飛ばす（2026-10-09）
+  function nextPinned(order, idx) {
+    for (var j = idx + 1; j < order.length; j++) {
+      var e = (order[j].entries || [])[0];
+      if (e && typeof e.mapLat === 'number' && typeof e.mapLng === 'number') return order[j];
+    }
+    return null;
+  }
+
+  var ARRIVAL_NEIGHBOR_KM = 100;
+  function arrivalNeighborZone(b, pinNext, ownZone) {
+    var arr = travelArrival(b), e = pinNext && (pinNext.entries || [])[0];
+    if (!arr || typeof arr.lat !== 'number' || typeof arr.lng !== 'number' || !e) return '';
+    if (distanceKm({ lat: e.mapLat, lng: e.mapLng }, arr) > ARRIVAL_NEIGHBOR_KM) return '';
+    return ownZone(pinNext);
+  }
+
   function walkZones(order, byBlock, outlierIds, fallback, byArrive) {
     byBlock = byBlock || {};
     byArrive = byArrive || {};
@@ -292,9 +309,12 @@
       // しかも次の予定が同じ場所のピンを持つ（isArrivalOnlyPin）ときは、そのピンは到着地と
       // みなす：この予定は今いる場所（直前のタイムゾーン）の時間で読み、新しいタイムゾーンは次の予定から
       // 使う（docs/adr/0009、2026-09-30）
+      // 間に地図の無い予定（「機内食」など）があっても、その次の地図のある予定と比べる（2026-10-09）
+      var pinNext = nextPinned(order, idx);
+      var pinIsArrival = b.category === 'transport' && !!own && !byArrive[b.id] && !travelArrival(b) &&
+        !b.tzOverride && isArrivalOnlyPin(b, pinNext);
       var arrivalOnlyPin = '';
-      if (b.category === 'transport' && own && carry && own !== carry && !byArrive[b.id] &&
-          !b.tzOverride && isArrivalOnlyPin(b, order[idx + 1])) {
+      if (pinIsArrival && carry && own !== carry) {
         arrivalOnlyPin = own;
         auto = carry;
       }
@@ -303,13 +323,52 @@
       else if (b.tzOverride) zone = b.tzOverride;
       else zone = auto;
       zones[b.id] = zone;
+      // 地図でふりかえるでは、ピンが到着地の移動の予定を出発の地点にしない（replayStops。到着地へは次の予定の
+      // 時刻に着き、時差もそこで切り替わる。同じタイムゾーンの国内線〈羽田→那覇〉でも同じ。2026-10-09）
+      if (pinIsArrival) zones[b.id + '#pinIsArrival'] = true;
       // 次の予定へ引き継ぐ「いまいる場所」：移動の予定に到着地の地図があれば、そちらを優先する
       // （到着地が分かっているのに出発地のままだと、あとの地図の無い予定が出発地に巻き戻ってしまう）。
       // それ以外は、いま決めたタイムゾーン（手で直したものも含む。取り消せば直前へ戻る＝そのまま連鎖する）。
-      carry = (b.category === 'transport' && byArrive[b.id]) ? byArrive[b.id] : zone;
-      if (arrivalOnlyPin) carry = arrivalOnlyPin;
+      // 到着地の地図はあるのにタイムゾーンが分からない（到着地の座標からタイムゾーンを調べられなかった等）ときは、
+      // 到着地の近く（ARRIVAL_NEIGHBOR_KM以内）にピンのある次の予定のタイムゾーンを到着地のものとして使う。
+      // 以前は出発地のままで、地図でふりかえるでは着いたあと次の予定に着くまで時差が切り替わらなかった（2026-10-09）
+      var arriveZone = b.category === 'transport' ? (byArrive[b.id] || arrivalNeighborZone(b, pinNext, ownZone)) : '';
+      if (arriveZone && !byArrive[b.id]) zones[b.id + '#arrive'] = arriveZone;
+      carry = arriveZone || zone;
+      // ピンが到着地のときは、到着地の時差は到着の予定から。間に地図の無い予定（機内での出来事）があれば、
+      // それはまだ出発地の時間のまま読む
+      if (arrivalOnlyPin && pinNext === order[idx + 1]) carry = arrivalOnlyPin;
     });
     return zones;
+  }
+
+  // 飛行機の予定のピンが到着地（同じ場所のピンを持つ予定が同じ日以降にある）なら、最初の並びだけ、その予定を
+  // 直前にいた別のタイムゾーン（出発地）の時間で置いておく。成田21:50発→ホノルル同日11:10着のように、
+  // 到着の予定が現地時間では出発より前の時刻になる日は、現地時間のままの並びだと到着の予定が出発より前に並び、
+  // そこから決めた時差が落ち着いてしまって、出発の時刻をホノルルの時間として読んでいた（2026-10-09）。
+  // ここで置く時差は並べ直しのきっかけで、最終的な時差はwalkZonesが決める
+  // local：現地時間のままの並び。返すのは { 予定のid: 最初の並びで使う時差（分） }
+  function seedArrivalPinFlights(local, byBlock) {
+    var pinOf = function (b) { var e = (b.entries || [])[0]; return e && typeof e.mapLat === 'number' && typeof e.mapLng === 'number' ? { lat: e.mapLat, lng: e.mapLng } : null; };
+    var seeds = {};
+    local.forEach(function (b, i) {
+      var own = byBlock[b.id], pin = pinOf(b);
+      if (!isPlaneMove(b) || b.category !== 'transport' || !own || !pin || b.tzOverride || travelArrival(b) || !b.time) return;
+      var twin = local.some(function (o) {
+        var p = o !== b && pinOf(o);
+        return p && o.date >= b.date && byBlock[o.id] === own && distanceKm(p, pin) < ARRIVAL_PIN_SAME_PLACE_KM;
+      });
+      if (!twin) return;
+      for (var j = i - 1; j >= 0; j--) {
+        var o = local[j], z = byBlock[o.id], p = pinOf(o);
+        if (!p || !z || z === own) continue;
+        if (dateDiffDays(o.date, b.date) > 1 || distanceKm(p, pin) < OUTLIER_NEAR_KM) return;
+        var off = tzOffsetMinutes(z, b.date, b.time);
+        if (typeof off === 'number') seeds[b.id] = off;
+        return;
+      }
+    });
+    return seeds;
   }
 
   // 予定ごとのタイムゾーンを決める（walkZonesを、時差を考えた並び順が落ち着くまで数回繰り返す）。
@@ -321,17 +380,40 @@
     // 前後の予定から遠く離れた地図（ピン違い、isFarMapOutlier）は、時差の手がかりにしない＝地図が
     // 無いのと同じに扱う。地図が無い予定と同じく前の予定の時差を引き継ぎ、「ここから現地時間」の
     // 区切りを出さない。地図そのもの（吹き出し・警告表示）はそのまま残す（docs/adr/0009、2026-09-29）
-    var outlierIds = findFarMapOutlierBlockIds(copies);
     var order = sortBlocks(copies);
+    var seeds = seedArrivalPinFlights(order, byBlock);
     var zones = {};
-    for (var round = 0; round < 3; round++) {
-      zones = walkZones(order, byBlock, outlierIds, fallback, byArrive);
-      applyBlockZones(order, zones);
-      var next = sortBlocks(order);
-      var same = next.every(function (b, i) { return b === order[i]; });
-      order = next;
-      if (same) break;
+    var settle = function (outlierIds) {
+      for (var round = 0; round < 3; round++) {
+        zones = walkZones(order, byBlock, outlierIds, fallback, byArrive);
+        applyBlockZones(order, zones);
+        if (round === 0) order.forEach(function (b) { if (typeof seeds[b.id] === 'number') b._offset = seeds[b.id]; });
+        var next = sortBlocks(order);
+        var same = next.every(function (b, i) { return b === order[i]; });
+        order = next;
+        if (same) break;
+      }
+    };
+    // 外れたピンは現地時間のままの並びで探すが、成田13:30発→ロサンゼルス同日7:30着のような日は
+    // 「LA到着→東京の朝→LAのホテル」と並ぶので、東京の朝のピンが外れ値とみなされて時差がLAになり、
+    // 並びも再生も崩れていた（2026-10-09）。
+    // そこで、現地時間の並びで外れ値とみなしたピンでも、外れ値として扱わずに時差を決めた並びで、前後どちらかの
+    // ピンが近く（OUTLIER_FAR_KM以内）にあるなら、外れ値にしない。本当にピン違い（ヒューストンの予定の間に
+    // ロサンゼルス空港）なら、その並びでも近くにピンが無いので、今までどおり外れ値として無視する。
+    var outlierIds = findFarMapOutlierBlockIds(order);
+    if (Object.keys(outlierIds).length) {
+      var savedOrder = order;
+      settle({});
+      var pinned = order.filter(function (b) { var e = (b.entries || [])[0]; return e && typeof e.mapLat === 'number' && typeof e.mapLng === 'number'; });
+      var pinOf = function (b) { var e = b.entries[0]; return { lat: e.mapLat, lng: e.mapLng }; };
+      pinned.forEach(function (b, i) {
+        if (!outlierIds[b.id]) return;
+        var near = [pinned[i - 1], pinned[i + 1]].some(function (n) { return n && distanceKm(pinOf(n), pinOf(b)) <= OUTLIER_FAR_KM; });
+        if (near) delete outlierIds[b.id];
+      });
+      order = savedOrder;
     }
+    settle(outlierIds);
     // 到着地の地図がある移動の予定は、到着地のタイムゾーンも「<id>#arrive」で返す（地図でふりかえるの到着地点用）
     Object.keys(byArrive).forEach(function (id) { if (byArrive[id]) zones[id + '#arrive'] = byArrive[id]; });
     return zones;
@@ -350,6 +432,7 @@
       var aoff = atz ? tzOffsetMinutes(atz, b.date, (arr && arr.time) || b.time) : null;
       if (typeof aoff === 'number') { b._arriveTz = atz; b._arriveOffset = aoff; }
       else { delete b._arriveTz; delete b._arriveOffset; }
+      if (zones && zones[b.id + '#pinIsArrival']) b._pinIsArrival = true; else delete b._pinIsArrival;
     });
     return blocks;
   }
@@ -1446,7 +1529,10 @@
           }
         }
       }
-      var placeEntry = replayPlaceEntry(b);
+      // 移動の予定の唯一のピンが到着地（次の予定と同じ場所。walkZonesのisArrivalOnlyPin）なら、出発の時刻に
+      // 到着地へ着いてしまわないよう、この予定は地点にせず出来事にする。飛行機は次の予定（到着地）へ向かい、
+      // 時差もそこで切り替わる（2026-10-09、成田→香港で「着いてから時差が変わる」）
+      var placeEntry = b._pinIsArrival ? null : replayPlaceEntry(b);
       // 移動の予定（category==='transport'）自身の transport は「次の場所への移動」を表す値なので、
       // その予定自身が地図上の地点になるとき（＝移動の予定に、たどり着いた先の地図が入っているとき）の
       // 「ここまでの移動手段」には使わない。代わりに、直前までに引き継いだpendingTransportを使う
@@ -1508,7 +1594,10 @@
           knownLat: typeof arr.lat === 'number' ? arr.lat : null,
           knownLng: typeof arr.lng === 'number' ? arr.lng : null,
           offset: typeof b._arriveOffset === 'number' ? b._arriveOffset : lastOffset,
-          arrival: true, videoExclude: !!b.videoExclude
+          arrival: true, videoExclude: !!b.videoExclude,
+          // 到着時刻も移動時間も無ければ、出発の60分後は仮の値。座標が分かってから飛行機の所要時間で見積もり直す
+          // （buildReplayTimeline。羽田8:15発→LAの到着が前日の16:15になり、何日目が戻っていた。2026-10-09）
+          estimateSource: aEst ? (b.moveMinutes ? 'move' : 'default') : ''
         });
         // 到着でその移動は終わり。次の場所へは、移動手段を引き継がない（飛行機の続きで飛ばない）
         pendingTransport = ''; pendingMove = 0;
@@ -1772,6 +1861,16 @@
           var absArrival = prevSt.t + flightMin;
           var nextSt = s[i + 1];
           if (nextSt && absArrival > nextSt.t) absArrival = nextSt.t;
+          if (absArrival < prevSt.t) absArrival = prevSt.t;
+          if (st.arrival) {
+            // 移動の到着の仮地点は、日付も見積もりに合わせる（予定の日付ではなく、出発＋所要時間で決まる値のため）
+            var localAbs = Math.round(absArrival + offsetHere - baseOffset);
+            var newDay = Math.floor(localAbs / 1440);
+            if (newDay !== st.dayIndex) {
+              st.date = prevSt.date ? addDaysToDate(prevSt.date, newDay - prevSt.dayIndex) : st.date;
+              st.dayIndex = newDay; st.dayNumber = newDay + 1;
+            }
+          }
           var localMinute = Math.max(0, Math.min(23 * 60 + 59, Math.round(absArrival - st.dayIndex * 1440 + offsetHere - baseOffset)));
           st.minute = localMinute;
           st.t = st.dayIndex * 1440 + localMinute - (offsetHere - baseOffset);

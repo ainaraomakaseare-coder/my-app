@@ -3058,5 +3058,92 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('uuidは毎回違う', T.outboxUuid() !== T.outboxUuid(), true);
 })();
 
+/* ---- 時差と地図でふりかえる：飛行機の入れ方ごとの試験（2026-10-09） ---- */
+(function () {
+  var P = {
+    tokyo: [35.68, 139.76, 'Asia/Tokyo'], nrt: [35.772, 140.393, 'Asia/Tokyo'],
+    hkg: [22.308, 113.918, 'Asia/Hong_Kong'], hk: [22.296, 114.172, 'Asia/Hong_Kong'],
+    lax: [33.942, -118.408, 'America/Los_Angeles'], la: [34.05, -118.25, 'America/Los_Angeles'],
+    hnl: [21.318, -157.92, 'Pacific/Honolulu'], waikiki: [21.279, -157.83, 'Pacific/Honolulu'],
+    hnd: [35.549, 139.78, 'Asia/Tokyo'], oka: [26.206, 127.646, 'Asia/Tokyo'], naha: [26.212, 127.681, 'Asia/Tokyo']
+  };
+  var n = 0;
+  function pin(k) { return { id: 'e' + (++n), mapUrl: 'https://www.google.com/maps/search/?api=1&query=' + P[k][0] + ',' + P[k][1], mapLat: P[k][0], mapLng: P[k][1] }; }
+  function b(date, time, label, k, extra) {
+    return Object.assign({ id: 'b' + (++n), date: date, time: time, label: label, category: 'sightseeing', createdAt: String(n).padStart(4, '0'), entries: k ? [pin(k)] : [{ id: 'e' + (++n), episode: label }], _k: k }, extra || {});
+  }
+  function flight(date, time, label, k, extra) { return b(date, time, label, k, Object.assign({ category: 'transport', transport: 'plane' }, extra || {})); }
+  // 予定→時差→再生の時間割（画面と同じ順に呼ぶ）。arrive：{ 予定のid: 到着地 }（到着地のタイムゾーンが分かっているもの）
+  function play(blocks, arrive) {
+    var byBlock = {}, byArrive = {};
+    blocks.forEach(function (x) { if (x._k) byBlock[x.id] = P[x._k][2]; });
+    Object.keys(arrive || {}).forEach(function (id) { byArrive[id] = P[arrive[id]][2]; });
+    T.applyBlockZones(blocks, T.assignBlockZones(blocks, byBlock, 'Asia/Tokyo', byArrive));
+    var dates = blocks.map(function (x) { return x.date; }).sort();
+    var stops = T.replayStops({ startDate: dates[0], endDate: dates[dates.length - 1] }, blocks);
+    var coords = {};
+    stops.forEach(function (st) { if (st.knownLat != null) coords[st.query] = { lat: st.knownLat, lng: st.knownLng }; });
+    return T.buildReplayTimeline(stops, coords);
+  }
+  // 時計の時差（分）が、飛行機の区間の到着の瞬間に切り替わるか：区間の間は出発地、着いた瞬間から到着地
+  function switchesAtArrival(tl, fromOff, toOff) {
+    var leg = tl.legs.filter(function (l) { return l.transport === 'plane'; })[0];
+    if (!leg) return false;
+    var at = function (r) { var st = T.replayStateAt(tl, r); return tl.baseOffset + st.offsetDiff; };
+    return at((leg.r0 + leg.r1) / 2) === fromOff && at(leg.r1 - 0.01) === fromOff && at(leg.r1 + 0.01) === toOff;
+  }
+
+  // 1. 移動の予定に到着地（地図・時刻）を入れたパターン
+  var a = [b('2026-06-10', '18:00', '空港へ', 'nrt'),
+    flight('2026-06-10', '20:00', '成田→香港', 'nrt', { entries: [Object.assign(pin('nrt'), { travel: { depart: '20:00', arrive: '23:30', arriveMapUrl: pin('hkg').mapUrl, arriveLat: P.hkg[0], arriveLng: P.hkg[1], to: '香港' } })] }),
+    b('2026-06-11', '10:00', 'ホテル', 'hk')];
+  var tlA = play(a, (function () { var o = {}; o[a[1].id] = 'hkg'; return o; })());
+  ok('到着を移動の予定に入れた：香港に着いた瞬間に時差が切り替わる', switchesAtArrival(tlA, 540, 480));
+
+  // 2. 到着地のタイムゾーンが分からない（座標からタイムゾーンを調べられなかった）ときも、近くのホテルの時差で着いた瞬間に切り替わる
+  var a2 = a.map(function (x) { return Object.assign({}, x); });
+  ok('到着地のタイムゾーンが分からなくても、近くの次の予定の時差で着いた瞬間に切り替わる', switchesAtArrival(play(a2, {}), 540, 480));
+
+  // 3. 到着を別の記録で入れたパターン
+  var bb = [b('2026-06-10', '18:00', '空港へ', 'nrt'), flight('2026-06-10', '20:00', '成田→香港', 'nrt'), b('2026-06-10', '23:30', '香港空港', 'hkg'), b('2026-06-11', '10:00', 'ホテル', 'hk')];
+  ok('到着を別の記録で入れた：着いた瞬間に時差が切り替わる', switchesAtArrival(play(bb), 540, 480));
+
+  // 4. 移動の予定のピンが到着地（次の記録と同じ場所）のパターン：出発の時刻に香港へ着かず、到着の記録で着く
+  var c = [b('2026-06-10', '18:00', '空港へ', 'nrt'), flight('2026-06-10', '20:00', '成田→香港', 'hkg'), b('2026-06-10', '', '機内食', null), b('2026-06-10', '23:30', '香港空港', 'hkg'), b('2026-06-11', '10:00', 'ホテル', 'hk')];
+  var tlC = play(c);
+  var cFlight = tlC.stops.filter(function (st) { return st.label === '成田→香港'; })[0];
+  ok('ピンが到着地の移動の予定は地点にしない（出発の時刻に到着地へ着かない）', cFlight && !cFlight.located);
+  ok('ピンが到着地：飛行機は到着の記録へ向かう', tlC.legs.some(function (l) { return l.transport === 'plane' && tlC.stops[l.to].label === '香港空港'; }));
+  ok('ピンが到着地：機内の出来事のあいだは出発地の時間で、着いた瞬間に時差が切り替わる', switchesAtArrival(tlC, 540, 480));
+
+  // 5. 同じタイムゾーンの国内線でも、ピンが到着地なら出発の時刻に着かない（羽田→那覇）
+  var dom = [b('2026-06-10', '08:00', '羽田空港', 'hnd'), flight('2026-06-10', '09:00', '羽田→那覇', 'oka'), b('2026-06-10', '11:45', '那覇空港', 'oka'), b('2026-06-10', '13:00', '国際通り', 'naha')];
+  var tlD = play(dom);
+  ok('国内線でピンが到着地：飛行機は羽田→那覇空港で、11:45に着く', tlD.legs.some(function (l) { return l.transport === 'plane' && tlD.stops[l.to].label === '那覇空港'; }));
+
+  // 6. 成田21:50発→ホノルル同日11:10着（現地時間では到着が出発より前）で、移動の予定のピンが到着地
+  var h = [b('2026-06-10', '09:00', '東京観光', 'tokyo'), b('2026-06-10', '19:50', '空港へ', 'nrt'), flight('2026-06-10', '21:50', '成田→ホノルル', 'hnl'),
+    b('2026-06-10', '11:10', 'ホノルル空港', 'hnl'), b('2026-06-10', '12:40', 'ホテル', 'waikiki')];
+  var tlH = play(h);
+  eq('成田→ホノルル（ピンが到着地）：出発の時刻は東京の時間で読む', h[2]._tz, 'Asia/Tokyo');
+  ok('成田→ホノルル（ピンが到着地）：着いた瞬間に時差が切り替わる', switchesAtArrival(tlH, 540, -600));
+
+  // 7. 成田13:30発→ロサンゼルス同日7:30着（到着を別の記録）：現地時間の並びで東京の朝のピンを外れ値とみなさない
+  var l = [b('2026-06-10', '09:00', '東京の朝', 'tokyo'), b('2026-06-10', '11:30', '空港へ', 'nrt'), flight('2026-06-10', '13:30', '成田→LA', 'nrt'),
+    b('2026-06-10', '07:30', 'LAX到着', 'lax'), b('2026-06-10', '09:30', 'ホテル', 'la')];
+  var tlL = play(l);
+  eq('成田→LA同日着：東京の朝は東京の時間のまま', l[0]._tz, 'Asia/Tokyo');
+  eq('成田→LA同日着：再生の並びは東京の朝→空港→フライト→LAX→ホテル', tlL.stops.map(function (st) { return st.label; }), ['東京の朝', '空港へ', '成田→LA', 'LAX到着', 'ホテル']);
+  ok('成田→LA同日着：着いた瞬間に時差が切り替わる', switchesAtArrival(tlL, 540, -420));
+
+  // 8. 到着地の地図はあるが到着時刻が無い：出発＋60分の仮の値で前の日に着かない（何日目が戻らない）
+  var nt = [b('2026-11-18', '06:15', '空港へ', 'hnd'),
+    flight('2026-11-18', '08:15', '羽田→LA', 'hnd', { entries: [Object.assign(pin('hnd'), { travel: { depart: '08:15', arrive: '', arriveMapUrl: pin('lax').mapUrl, arriveLat: P.lax[0], arriveLng: P.lax[1], to: 'LAX' } })] }),
+    b('2026-11-18', '05:00', 'ホテル', 'la')];
+  var tlN = play(nt, (function () { var o = {}; o[nt[1].id] = 'lax'; return o; })());
+  var arrN = tlN.stops.filter(function (st) { return st.arrival; })[0];
+  ok('到着時刻なし：到着の仮地点は出発の日より前の日にならない', arrN && arrN.dayNumber >= tlN.stops.filter(function (st) { return st.label === '羽田→LA'; })[0].dayNumber);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
