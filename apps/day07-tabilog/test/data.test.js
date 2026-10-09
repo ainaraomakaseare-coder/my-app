@@ -2077,7 +2077,7 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   var bigPer = stBig.routeSec / 6;
   eq('buildVideoStory: 1日約6.9秒に収まる数（0.9秒×4=3.6秒≦6.9秒×55%）まで、1日4つ×6日=24', capCount, 24);
   ok('buildVideoStory: 60地点でも最後の地点を出る時刻が道のりの秒数に収まる', stBig.wps[59].leave <= stBig.routeSec + 1e-9);
-  ok('buildVideoStory: 各日の窓の中に、その日の地点への到着が収まる', stBig.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * bigPer - 1e-9 && w.arrive <= (d + 1) * bigPer + 1e-9; }));
+  ok('buildVideoStory: 日の順に到着する（前の日の地点より後）', stBig.wps.every(function (w, i) { return i === 0 || (w.dayNumber >= stBig.wps[i - 1].dayNumber && w.arrive >= stBig.wps[i - 1].leave - 1e-9); }));
   ok('buildVideoStory: 各地名を0.85秒以上は見せる', stBig.wps.every(function (w) { return !w.caption || w.leave - w.arrive >= 0.85; }));
   ok('buildVideoStory: カメラの動きは時刻順で、重ならない', stBig.cameraMoves.every(function (m, i) { return m.dur > 0 && (i === 0 || m.t >= stBig.cameraMoves[i - 1].t + stBig.cameraMoves[i - 1].dur - 1e-9); }));
   ok('buildVideoStory: 1区間の線の点は間引かれる', (function () {
@@ -2215,10 +2215,30 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   eq('buildVideoStory: 8:00〜20:00（12時間）の日は6つのはずが3地点しか無いので3つ×8日', s8.wps.filter(function (w) { return w.caption; }).length, 24);
   ok('buildVideoStory: 各日の到着は、その日の窓の中', s8.wps.every(function (w) { var d = w.dayNumber - 1; return w.arrive >= d * per8 - 1e-9 && w.arrive <= (d + 1) * per8 + 1e-9; }));
   ok('buildVideoStory: 何日目かは1日ぶんの秒数ごとに変わる', [0, 1, 2, 5, 7].every(function (d) { return T.videoFrameAt(s8, s8.introSec + d * per8 + 0.5).day === d + 1; }));
-  ok('buildVideoStory: 日をまたぐ移動は次の日の窓のはじめに始まって窓の中で終わる', (function () {
+  ok('buildVideoStory: 日をまたぐ移動が始まったところで「何日目」が次の日に変わる', (function () {
     var seg = s8.segs[2]; // 1日目の夜→2日目の朝
-    return near(seg.moveStart, per8 + 0.3, 1e-6) && seg.moveEnd > per8 + 0.3 && seg.moveEnd < per8 * 2;
+    return near(s8.wps[3].dayStart, seg.moveStart, 1e-9) && T.videoFrameAt(s8, s8.introSec + seg.moveStart - 0.05).day === 1 &&
+      T.videoFrameAt(s8, s8.introSec + seg.moveStart + 0.05).day === 2;
   })());
+  // 飛行機しか無い日があっても、その飛行機だけが引き伸ばされない。移動どうしの速さの比率は地図でふりかえる
+  // （leg.moveSec：車2秒・飛行機1.8秒）と同じ（2026-10-09、5日目の飛行機がとても遅く見えた）
+  (function () {
+    var ps = [];
+    for (var dd = 1; dd <= 4; dd++) { ps.push(stop('朝' + dd, dd, 8 * 60)); ps.push(stop('昼' + dd, dd, 12 * 60)); ps.push(stop('夜' + dd, dd, 20 * 60)); }
+    var tlp = tlOf(ps);
+    // 4日目の夜→5日目（飛行機で着いた先だけの日）→6日目
+    tlp.stops.push(Object.assign({}, tlp.stops[0], { label: '成田', lat: 35.77, lng: 140.39, dayNumber: 5, minute: 9 * 60 }));
+    tlp.stops.push(Object.assign({}, tlp.stops[0], { label: '東京駅', lat: 35.68, lng: 139.76, dayNumber: 6, minute: 10 * 60 }));
+    var n = tlp.stops.length;
+    tlp.legs.push({ from: n - 3, to: n - 2, transport: 'plane', moveSec: 1.8, path: [[tlp.stops[n - 3].lat, tlp.stops[n - 3].lng], [35.77, 140.39]] });
+    tlp.legs.push({ from: n - 2, to: n - 1, transport: 'car', moveSec: 2, path: [[35.77, 140.39], [35.68, 139.76]] });
+    tlp.legs.forEach(function (l) { if (!l.moveSec) l.moveSec = 2; });
+    var sp = T.buildVideoStory(tlp, {});
+    var dur = function (sg) { return sg.moveEnd - sg.moveStart; };
+    var plane = sp.segs[n - 3], car = sp.segs[n - 2];
+    ok('buildVideoStory: 飛行機の区間は、ほかの移動と同じ比率（1.8秒：2秒）で速く進む', plane.transport === 'plane' && near(dur(plane) / dur(car), 0.9, 1e-6));
+    ok('buildVideoStory: 飛行機しか無い日でも、その区間が1日分の秒数に引き伸ばされない', dur(plane) < sp.routeSec / sp.days / 2);
+  })();
   ok('buildVideoStory: 前の日の最後の地点が延びても、地名の表示は延びない（capEnd）', s8.wps.every(function (w) { return !w.caption || w.capEnd <= w.leave + 1e-9; }));
   // 20泊（21日）：全体45秒
   var long21 = [];
