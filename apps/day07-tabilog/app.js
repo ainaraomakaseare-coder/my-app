@@ -13288,7 +13288,7 @@
       if (tl.stops.filter(function (s) { return s.located; }).length < 2) showReplayNote(tr('地図は場所を設定した記録をたどります'));
       // 移動手段が未設定の区間は街なかの移動にもたくさんあり、ほぼ全部の旅で出ていたので、距離から飛行機と
       // 決め打ちした区間（間違っていると目立つもの）があるときだけ知らせる（2026-10-09 オーナー）
-      else if (tl.legs.some(function (l) { return l.assumed && l.transport === 'plane'; })) showReplayNote(tr('移動手段が未設定の区間は、距離から車・飛行機などと仮定して点線で描いています（予定の編集で変えられます）'));
+      else if (tl.legs.some(function (l) { return l.assumed && l.transport === 'plane'; })) showReplayNote(tr('移動手段が未設定の遠い区間は、距離から飛行機と仮定しています（予定の編集で変えられます）'));
       replay.routesDone = fetchReplayRoutes(tl, function (l) {
         if (replayToken !== token || !replay || replay.tl !== tl) return;
         var set = replay.lines[tl.legs.indexOf(l)];
@@ -13354,10 +13354,11 @@
         // 切り落とす（clip）。全体の線と途中までの線とで間引き方・切り落とし方が変わると、点線の位置がずれて
         // 「薄い青の上に少しずれて濃い青が乗る」ように見えていた（56で間隔をそろえても残った。2026-09-27）。
         // 飛行機の線は点が少ない（弧の32点ほど）ので、間引きも切り落としもしない。
-        // 移動手段が未設定で仮定した区間（assumed）は、車・徒歩も点線にして「仮の線」と分かるようにする
-        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : (l.assumed ? '2 10' : null), smoothFactor: plane ? 0 : 1, noClip: plane }),
-        casing: (plane || l.assumed) ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
-        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : (l.assumed ? '2 10' : null), smoothFactor: plane ? 0 : 1, noClip: plane }),
+        // 移動手段が未設定で仮定した区間（assumed）も、ふつうの実線で描く（以前は点線にしていたが、ほとんどの旅で
+        // 街なかの移動が点線だらけになっていた。2026-10-09 オーナー「点線じゃなくて普通の実線でいい」）
+        plan: L.polyline(full || [], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.45, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
+        casing: plane ? null : L.polyline([], { color: '#FFFFFF', weight: 9, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round' }),
+        line: L.polyline([], { color: ROUTE_BLUE, weight: plane ? 4 : 6, opacity: 0.95, interactive: false, lineCap: 'round', lineJoin: 'round', dashArray: plane ? REPLAY_PLANE_DASH : null, smoothFactor: plane ? 0 : 1, noClip: plane }),
         planeLine: plane, lastF: null
       };
     });
