@@ -12,7 +12,7 @@ I18N.addLang('en', {
   "初めて開くときは、場所を調べて覚えるので少し時間がかかります。次からはすぐに始まります。": "The first time you open this, it looks up and remembers the places, so it takes a little while. After that it starts right away.",
   "地図に出せる場所が見つかりませんでした。記録の「地図」にGoogleマップの共有リンクを入れた予定が、地図の上で移動する目的地になります。": "Couldn't find any places to show on the map. An activity whose record has a Google Maps share link in its \"Map\" field becomes a destination that moves across the map.",
   "地図は場所を設定した記録をたどります": "The map follows records that have a place set",
-  "移動手段が未設定の区間は、距離から車・飛行機などと仮定して点線で描いています（予定の編集で変えられます）": "Segments without a transport type are drawn as dotted lines, assuming car, plane and so on from the distance (you can change this by editing the activity)",
+  "移動手段が未設定の遠い区間は、距離から飛行機と仮定しています（予定の編集で変えられます）": "Long segments without a transport type are assumed to be flights based on the distance (you can change this by editing the activity)",
   "地図を読み込めませんでした。通信環境を確認してください。": "Couldn't load the map. Please check your connection.",
   "時差 {diff}": "Time diff {diff}",
   "ここから現地時間": "Local time from here",
@@ -210,4 +210,5 @@ I18N.addLang('en', {
   "AIの取り込みは電波があるときに使えます": "AI import works when you have a connection",
   "旅行をつくるには電波が必要です": "You need a connection to create a trip",
   "オフラインのため旅行を開けませんでした。電波があるときに一度開くと、次からオフラインでも見られます。": "You're offline, so this trip couldn't be opened. Open it once while online and you can view it offline next time.",
+  "記録を見る ›": "View record ›",
 });
