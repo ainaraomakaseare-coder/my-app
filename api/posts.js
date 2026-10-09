@@ -27,16 +27,21 @@ const LIMITS = { ig_caption: 2200, yt_title: 100, yt_description: 5000, x_text: 
 const THREADS_MAX = 500;
 
 module.exports = async function handler(req, res) {
-  if (!auth.guard(req, res)) return;
+  const action = req.query && req.query.action;
+  // ★ 予約コマンドの合鍵が通すのは「一覧(GET)」と「新規作成(action 無しの POST)」だけ。
+  //   更新・削除・再実行・今すぐ投稿・受け渡しは、ログインした本人の操作に限る。
+  const allowToken = req.method === 'GET' || (req.method === 'POST' && !action);
+  if (!auth.guard(req, res, { allowToken })) return;
+  // 合鍵で入ってきたか（Cookie でログインしていれば本人なので制限しない）
+  const viaToken = !auth.isLoggedIn(req);
 
   try {
     const id = req.query && req.query.id;
-    const action = req.query && req.query.action;
 
     if (req.method === 'GET')    return res.status(200).json(await list());
     if (req.method === 'POST' && action)
       return res.status(200).json(await act(id, action, req.query && req.query.account));
-    if (req.method === 'POST')   return res.status(200).json(await save(req, null));
+    if (req.method === 'POST')   return res.status(200).json(await save(req, null, { viaToken }));
     if (req.method === 'PATCH')  return res.status(200).json(await save(req, id));
     if (req.method === 'DELETE') return res.status(200).json(await remove(id));
     return res.status(405).json({ error: 'method not allowed' });
@@ -90,8 +95,13 @@ function mergeWaiting(recent, waiting) {
   return posts.concat(extra);
 }
 
-async function save(req, id) {
+async function save(req, id, opts) {
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+
+  // ★ 合鍵で作れるのは予約だけ。下書きの量産や、意図しない状態の投稿を作らせない。
+  if (opts && opts.viaToken && body.status !== 'scheduled') {
+    throw bad('コマンドからは「予約」の投稿しか作れません。status は scheduled にしてください。');
+  }
 
   // 実在する連携アカウントだけを投稿先として受け付ける
   const accounts = await db.listAccounts();
