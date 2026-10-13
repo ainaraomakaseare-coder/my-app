@@ -3153,5 +3153,35 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   ok('到着時刻なし：到着の仮地点は出発の日より前の日にならない', arrN && arrN.dayNumber >= tlN.stops.filter(function (st) { return st.label === '羽田→LA'; })[0].dayNumber);
 })();
 
+/* ---- 地図でふりかえる：宿や観光地からは、次の予定の時刻に間に合うように出る（2026-10-13） ---- */
+(function () {
+  var Q = { qt: [-45.031, 168.662], ms: [-44.641, 167.897] };
+  function stop(id, date, time, k, extra) {
+    return Object.assign({ id: id, date: date, time: time, label: id, category: 'sightseeing', createdAt: id,
+      entries: [{ id: 'e' + id, mapUrl: 'https://www.google.com/maps/search/?api=1&query=' + Q[k][0] + ',' + Q[k][1], mapLat: Q[k][0], mapLng: Q[k][1] }] }, extra || {});
+  }
+  function tlOf(blocks) {
+    var stops = T.replayStops({ startDate: '2026-02-01', endDate: '2026-02-02' }, blocks);
+    var coords = {};
+    stops.forEach(function (st) { if (st.knownLat != null) coords[st.query] = { lat: st.knownLat, lng: st.knownLng }; });
+    return T.buildReplayTimeline(stops, coords);
+  }
+  function clockAtLegStart(tl) { return T.replayStateAt(tl, tl.legs[0].r0 + 0.001).t; }
+
+  eq('移動の見積もり：車で80kmは2時間10分', T.replayTravelMinutes('car', 80), 130);
+  eq('移動の見積もり：手段が分からなければ車', T.replayTravelMinutes('', 80), 130);
+  eq('移動の見積もり：徒歩1kmは15分', T.replayTravelMinutes('walk', 1), 15);
+
+  // 夜19:00にホテル、翌朝7:00にミルフォードサウンド：夜通し走らず、朝になってから出る
+  var tl1 = tlOf([stop('hotel', '2026-02-01', '19:00', 'qt', { category: 'lodging' }), stop('milford', '2026-02-02', '07:00', 'ms')]);
+  var leave1 = clockAtLegStart(tl1);
+  ok('宿からは、次の予定の時刻から移動の見積もりを引いた時刻まで待って出る（夜通し移動しない）', leave1 >= 1440 + 7 * 60 - 180 && leave1 < 1440 + 7 * 60);
+  ok('宿で待つあいだも吹き出しの長さは変わらない（待ち時間は一気に進める）', tl1.legs[0].r0 - tl1.stops[0].r < 6);
+
+  // 移動の予定（7:00発のツアーバス）からは、出発の時刻にすぐ出る
+  var tl2 = tlOf([stop('bus', '2026-02-02', '07:00', 'qt', { category: 'transport', transport: 'bus' }), stop('milford', '2026-02-02', '12:00', 'ms')]);
+  ok('移動の予定からは、出発の時刻にすぐ出る', clockAtLegStart(tl2) <= 1440 + 7 * 60 + 10);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
