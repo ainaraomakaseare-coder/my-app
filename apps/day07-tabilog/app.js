@@ -13309,11 +13309,9 @@
       // 道のりは裏で調べ、届いた区間から直線を道路に沿った青い線に切り替える
       status.textContent = '';
       startReplay(res[0], tl);
-      // 場所が1か所だけだと動かないので、理由を一言。移動手段が未設定の区間は仮定で描いていることを伝える
+      // 場所が1か所だけだと動かないので、理由を一言。移動手段が未設定の区間のお知らせは出さない
+      // （いらないという声より。2026-10-13 オーナー）
       if (tl.stops.filter(function (s) { return s.located; }).length < 2) showReplayNote(tr('地図は場所を設定した記録をたどります'));
-      // 移動手段が未設定の区間は街なかの移動にもたくさんあり、ほぼ全部の旅で出ていたので、距離から飛行機と
-      // 決め打ちした区間（間違っていると目立つもの）があるときだけ知らせる（2026-10-09 オーナー）
-      else if (tl.legs.some(function (l) { return l.assumed && l.transport === 'plane'; })) showReplayNote(tr('移動手段が未設定の遠い区間は、距離から飛行機と仮定しています（予定の編集で変えられます）'));
       replay.routesDone = fetchReplayRoutes(tl, function (l) {
         if (replayToken !== token || !replay || replay.tl !== tl) return;
         var set = replay.lines[tl.legs.indexOf(l)];
