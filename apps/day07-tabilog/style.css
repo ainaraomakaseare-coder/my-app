@@ -486,6 +486,17 @@ a:hover { text-decoration: underline; }
 .trip-open-clone-body {
   background: var(--card); box-shadow: var(--card-shadow); z-index: 501;
 }
+/* カバー写真の無い旅行：本物の詳細画面には白いシートが無く、タイトルは地の色の上にある。白い枠は
+   動きながら地の色に溶かし、文字の余白も本物（.trip-cover-text、タイトルの上10px）に合わせる（2026-10-13） */
+.trip-open-clone-body {
+  transition: top .45s cubic-bezier(.2, .9, .25, 1), left .45s cubic-bezier(.2, .9, .25, 1),
+    width .45s cubic-bezier(.2, .9, .25, 1), height .45s cubic-bezier(.2, .9, .25, 1),
+    border-radius .45s cubic-bezier(.2, .9, .25, 1), opacity .45s cubic-bezier(.2, .9, .25, 1),
+    background-color .45s ease, box-shadow .45s ease;
+}
+.trip-open-clone-body.plain { background-color: transparent; box-shadow: none; }
+.trip-open-clone-textlayer.no-cover .trip-open-clone-text { padding: 0; }
+.trip-open-clone-textlayer.no-cover .trip-open-clone-text .trip-title { margin-top: 10px; }
 /* 白本体クローンの中に、カードのタイトル・日程をそのまま重ねておく（本物のタイトルは演出が終わるまで
    opacity:0のままなので、これが無いとシートが遷移中ずっと空白に見える）。本物が見えた瞬間
    （revealEnteringScreen）にクローンごと消えるので、フェードは不要（クローンの文字→本物の文字が
