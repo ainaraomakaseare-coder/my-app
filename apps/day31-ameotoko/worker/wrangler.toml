@@ -5,4 +5,4 @@ compatibility_date = "2026-01-01"
 # 先に `npx wrangler kv namespace create STATE` を実行し、出てきた id を下に貼る
 [[kv_namespaces]]
 binding = "STATE"
-id = "REPLACE_WITH_KV_ID"
+id = "be1ac9150ae24290bedc4806ba4c16c3"

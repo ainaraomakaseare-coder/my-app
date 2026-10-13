@@ -36,3 +36,8 @@
 - 結果は参加者以外の1人が「承認」して初めてランキングに反映。
 - 共有：Cloudflare Worker＋KV（`apps/day31-ameotoko/worker/`）。**未デプロイ**（権限がないためユーザー側で `wrangler deploy` が必要。手順は README）。ローカルでは端末内モードで検証済み。Worker自体は未実行。
 - 誰でも編集できる設計のため、名前は自己申告でなりすまし可能（公平性優先で許容）。
+
+## 共有サーバーのデプロイ（2026-10-14）
+
+- Worker `ameotoko-api` をデプロイし、KV `STATE` を作成。GET・POST・CORSの疎通を確認済み。
+- つまずき：`git switch main` が、別アプリが開いているフォルダの削除に失敗して途中で止まった／コマンドの入力が前の行と混ざった／wranglerが `Authentication error [10000]`（`wrangler login` し直して解決）／デプロイ直後の数十秒は 1042・1104 エラー（反映待ち）。
