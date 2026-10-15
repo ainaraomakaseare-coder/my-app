@@ -301,6 +301,11 @@ a:hover { text-decoration: underline; }
 .map-search-row { display: flex; gap: 8px; margin-top: 6px; }
 .map-search-row input { flex: 1; min-width: 0; height: 40px; border: none; border-radius: var(--radius-control); padding: 8px 11px; background: var(--input-bg); color: var(--ink); }
 .map-search-row button { flex-shrink: 0; }
+/* 時刻の欄の横の「今」ボタン（2026-10-15） */
+.time-now-row { display: flex; gap: 8px; align-items: center; }
+.time-now-row input { flex: 1; min-width: 0; }
+.time-now-row button { flex-shrink: 0; }
+.current-loc-btn { margin-top: 6px; }
 .map-preview { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .map-preview iframe { width: 100%; height: 240px; border: none; border-radius: var(--radius-control); }
 .map-preview button { align-self: flex-start; }
@@ -784,7 +789,7 @@ a:hover { text-decoration: underline; }
 /* 中身が空のヒント・合計の欄が余白だけを作って、費用の明細の下に大きな空きができていた */
 .field .hint:empty, .cost-total:empty { display: none; }
 /* 「明細を追加」「レシートを読み取る」「地図を検索」が、ただの文字に見えないよう、ほかの二次ボタンと同じ色の面と枠をつける */
-.cost-item-actions .btn.ghost, .map-search-row .btn.ghost { background: var(--input-bg); border: 1px solid #D5D9E0; border-color: color-mix(in srgb, var(--ink) 18%, transparent); color: var(--ink); }
+.cost-item-actions .btn.ghost, .map-search-row .btn.ghost, .time-now-row .btn.ghost, .current-loc-btn.btn.ghost { background: var(--input-bg); border: 1px solid #D5D9E0; border-color: color-mix(in srgb, var(--ink) 18%, transparent); color: var(--ink); }
 
 /* ---------- 精算（割り勘） ---------- */
 .settle-unit-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }

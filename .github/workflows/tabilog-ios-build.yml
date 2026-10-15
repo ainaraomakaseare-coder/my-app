@@ -70,6 +70,9 @@ jobs:
           # NSCameraUsageDescriptionが無いと（許可を求める前に）即座にアプリがクラッシュする。
           # 「写真ライブラリから選ぶ」はカメラを使わないため、この説明文が無くても正常に動いていた。
           /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string '旅の記録にその場で撮った写真を追加するために使用します'" Info.plist
+          # 記録の「現在地を入れる」は端末の位置情報を使う。説明文が無いとWebView内で
+          # 位置情報の許可を求められず、現在地を取得できない（2026-10-15）
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string '旅の記録に今いる場所の地図を入れるために使用します'" Info.plist
           # 独自の暗号化は使っておらず標準的なHTTPS通信のみのため、輸出コンプライアンスの
           # 質問（TestFlight配信のたびに毎回聞かれるやつ）が出ないようここで申告しておく。
           # ios/フォルダは毎回作り直しなので、CI側で毎回追加する。

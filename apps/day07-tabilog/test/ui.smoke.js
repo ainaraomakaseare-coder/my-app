@@ -52,7 +52,7 @@ const TINY_PNG = Buffer.from(
   const { server, port } = await startServer();
   const BASE = `http://127.0.0.1:${port}/`;
   const browser = await launch();
-  const ctx = await browser.newContext({ viewport: { width: 420, height: 2400 } });
+  const ctx = await browser.newContext({ viewport: { width: 420, height: 2400 }, permissions: ['geolocation'], geolocation: { latitude: 26.217, longitude: 127.7195 } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -261,6 +261,9 @@ const TINY_PNG = Buffer.from(
   // ---- 予定（大項目）を追加 ----
   await page.click('.block-add');
   await page.waitForSelector('.screen[data-screen="blockForm"].active');
+  // ---- 「今」ボタンで時刻の欄に今の時刻が入る（2026-10-15） ----
+  await page.click('#btnBlkTimeNow');
+  check('予定の「今」で時刻がHH:MMで入る', /^\d{2}:\d{2}$/.test(await page.inputValue('#blkTime')));
   await page.fill('#blkTime', '15:00');
   await page.fill('#blkLabel', '首里城公園に到着');
   await page.click('.cat-chip[data-cat="sightseeing"]');
@@ -268,6 +271,17 @@ const TINY_PNG = Buffer.from(
   // 予定を保存すると、続けて最初の記録（小項目）フォームが開く
   await page.waitForSelector('.screen[data-screen="entryForm"].active');
   check('記録追加フォームのタイトルになる', (await page.textContent('#entFormTitle')) === '記録を追加');
+
+  await page.click('#btnEntTimeNow');
+  check('記録の「今」で時刻がHH:MMで入る', /^\d{2}:\d{2}$/.test(await page.inputValue('#entTime')));
+  await page.fill('#entTime', '');
+
+  // ---- 「現在地を入れる」で端末の位置の座標URLが地図欄に入り、ピンの地図が出る（2026-10-15） ----
+  await page.click('#btnCurrentLocation');
+  await page.waitForFunction(() => /query=26\.217%2C127\.7195/.test(document.querySelector('#entMapUrl').value));
+  check('現在地の地図が表示される', !(await page.$eval('#entPlaceMap', (el) => el.hidden)));
+  check('現在地の案内が出る', (await page.textContent('#entPlaceStatus')).includes('現在地を地図に入れました'));
+  await page.fill('#entMapUrl', '');
 
   await page.fill('#entEpisode', '守礼門の前で写真。暑いけど景色は最高。');
   await page.fill('#entComment', '最高だった');
