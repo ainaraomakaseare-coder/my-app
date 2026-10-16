@@ -527,7 +527,10 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           </div>
           <div class="field">
             <label for="blkTime">時間</label>
-            <input type="time" id="blkTime">
+            <div class="time-now-row">
+              <input type="time" id="blkTime">
+              <button type="button" class="btn ghost small" id="btnBlkTimeNow">今</button>
+            </div>
           </div>
         </div>
         <p class="hint branch-block-note" id="blkBranchNote" hidden></p>
@@ -659,7 +662,11 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 
         <div class="field">
           <label for="entTime">時間（任意）</label>
-          <input type="time" id="entTime">
+          <!-- 「今」を押すと、端末の今の時刻を入れる（その場で記録するとき用。2026-10-15） -->
+          <div class="time-now-row">
+            <input type="time" id="entTime">
+            <button type="button" class="btn ghost small" id="btnEntTimeNow">今</button>
+          </div>
         </div>
 
         <div class="field">
@@ -693,6 +700,8 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
               <input type="text" id="entPlaceSearch" placeholder="場所名で検索">
               <button type="button" class="btn ghost small" id="btnPlaceSearch">地図を検索</button>
             </div>
+            <!-- 端末の位置情報から今いる場所を地図に入れる（app.jsのuseCurrentLocation。2026-10-15） -->
+            <button type="button" class="btn ghost small current-loc-btn" id="btnCurrentLocation">📍 現在地を入れる</button>
             <!-- 検索の候補（番号つきのカード。先頭が違う場所だったときに選び直せるように。app.jsのshowPlaceMapPreview） -->
             <div class="place-list" id="entPlaceCandidates" hidden></div>
             <p class="hint" id="entPlaceStatus"></p>

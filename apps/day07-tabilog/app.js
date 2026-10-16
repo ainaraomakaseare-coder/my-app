@@ -11241,6 +11241,43 @@
     selectedPlaceNameUrl = url;
   }
 
+  // 「現在地を入れる」：端末の位置情報から今いる場所を、候補を選んだときと同じ形（座標の地図URL＋
+  // ピンを動かせる地図）で入れる。名前は持たないので、検索欄は空にして場所の名前は保存しない
+  // （検索欄に残っていた別の場所の名前が付いてしまわないように）。2026-10-15
+  function useCurrentLocation() {
+    var status = $('#entPlaceStatus');
+    if (!navigator.geolocation) { status.textContent = tr('この端末では現在地を取得できません。'); return; }
+    var btn = $('#btnCurrentLocation');
+    btn.disabled = true;
+    status.textContent = tr('現在地を取得しています…');
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      btn.disabled = false;
+      var lat = Math.round(pos.coords.latitude * 1e6) / 1e6;
+      var lng = Math.round(pos.coords.longitude * 1e6) / 1e6;
+      if (!isFinite(lat) || !isFinite(lng)) { status.textContent = tr('現在地を取得できませんでした。'); return; }
+      $('#entPlaceSearch').value = '';
+      placeCandidates = [{ name: '', lat: lat, lng: lng }];
+      placeChoice = '0';
+      $('#entPlaceCandidates').hidden = true;
+      previewSelectedPlace();
+      applySelectedPlaceToMapUrl();
+      status.textContent = tr('現在地を地図に入れました。ずれていたらピンを動かして直せます。');
+    }, function (err) {
+      btn.disabled = false;
+      status.textContent = err && err.code === 1
+        ? tr('位置情報の利用が許可されていません。端末の設定で許可してください。')
+        : tr('現在地を取得できませんでした。');
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  }
+
+  // 「今」：時刻の欄に端末の今の時刻（HH:MM）を入れる（2026-10-15）
+  function setTimeNow(input) {
+    var d = new Date();
+    input.value = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   // 外貨の行で、まだレートが（自動取得も手入力も）入っていないもの。保存を止める対象（2026-09-27）
   function costItemsMissingRate() {
     return state.formCostItems.map(function (it, idx) { return { it: it, idx: idx }; })
@@ -14622,6 +14659,9 @@
     $('#tripHistoryList').addEventListener('change', updateTripHistorySelection);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
+    $('#btnCurrentLocation').addEventListener('click', useCurrentLocation);
+    $('#btnEntTimeNow').addEventListener('click', function () { setTimeNow($('#entTime')); });
+    $('#btnBlkTimeNow').addEventListener('click', function () { setTimeNow($('#blkTime')); });
     $('#btnArriveSearch').addEventListener('click', searchArrivePlace);
     $('#entArriveSearch').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); searchArrivePlace(); } });
     $('#entArriveCandidates').addEventListener('click', function (e) {
