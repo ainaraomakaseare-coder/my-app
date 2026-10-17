@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>雨男決定戦</title>
+<style>
+:root{--bg:#eef3f8;--card:#fff;--ink:#1d2b3a;--sub:#6b7a8a;--accent:#2b6cb0;--bad:#c0392b;--good:#2f855a;--line:#dbe4ee}
+@media (prefers-color-scheme:dark){:root{--bg:#10171f;--card:#1a2430;--ink:#e6edf5;--sub:#93a3b5;--accent:#63b3ed;--bad:#fc8181;--good:#68d391;--line:#2a3846}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;line-height:1.6}
+main{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:8px 0 16px}
+h2{font-size:16px;margin:0 0 10px}
+.card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+input,select,button{font:inherit;font-size:16px}
+input[type=text],input[type=date],select{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+button{border:0;border-radius:10px;padding:10px 14px;background:var(--accent);color:#fff;cursor:pointer}
+button.ghost{background:transparent;color:var(--sub);padding:4px 8px}
+.row{display:flex;gap:8px;align-items:center}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+.chips label{border:1px solid var(--line);border-radius:999px;padding:6px 12px;cursor:pointer}
+.chips label:has(input:checked){background:var(--accent);color:#fff;border-color:var(--accent)}
+.chips input{display:none}
+.field{margin-bottom:12px}
+.field>span{display:block;font-size:13px;color:var(--sub);margin-bottom:4px}
+.err{color:var(--bad);font-size:14px;min-height:20px}
+.big{font-size:56px;font-weight:800;line-height:1.1}
+.who{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+.who:first-child{border-top:0}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:4px}
+.bar>i{display:block;height:100%;background:var(--accent)}
+.pos{color:var(--good)}.neg{color:var(--bad)}
+.sub{color:var(--sub);font-size:13px}
+.hide{display:none}
+details summary{cursor:pointer;color:var(--sub)}
+</style>
+</head>
+<body>
+<main>
+<h1>☔ 雨男決定戦</h1><p class="sub">あなたの雨男率は？</p>
+
+<section class="card" id="ranking"></section>
+
+<section class="card">
+  <h2>あなたは誰？</h2>
+  <select id="me"></select>
+  <p class="sub" id="shareNote"></p>
+</section>
+
+<section class="card">
+  <h2>メンバー</h2>
+  <div class="row"><input type="text" id="newName" placeholder="名前を追加" maxlength="12"><button id="addMember">追加</button></div>
+  <div class="chips" id="members"></div>
+</section>
+
+
+<section class="card">
+  <h2>① イベントを申請する</h2>
+  <p class="sub">晴れポイントを狙うには、当日の10日前までに申請が必要です。</p>
+  <div class="field"><span>日付・名前</span>
+    <div class="row"><input type="date" id="date"><input type="text" id="title" placeholder="例：東京ドーム観戦" maxlength="30"></div></div>
+  <div class="field"><span>種類</span>
+    <select id="type"><option value="outdoor">野外イベント（野球観戦・モルック・フェスなど）</option><option value="big">大きなイベント（旅行など）</option></select></div>
+  <div class="field"><span>参加する放研人（2名以上で判定対象）</span><div class="chips" id="participants"></div></div>
+  <div class="field"><label><input type="checkbox" id="unapplied"> 急な予定で申請なし（10日以内でも登録可。晴れポイントは付きません）</label></div>
+  <div class="err" id="err"></div>
+  <button id="addEvent">申請する</button>
+</section>
+
+<section class="card">
+  <h2>② 当日の天気を見て結果を入れる</h2>
+  <div id="pending"></div>
+</section>
+
+<section class="card">
+  <h2>記録一覧（承認されると順位に反映）</h2>
+  <div id="events"></div>
+</section>
+
+<section class="card">
+  <details><summary>レギュレーション（得点表）</summary>
+  <p class="sub">野外イベント：晴れ +1 ／ 雨 −2 ／ 潰れた −4<br>
+  旅行など大きなイベント：晴れ +3 ／ 雨 −5 ／ 潰れた −7 ／ 海外便欠航 −10<br>
+  他者に指摘された雨天は減点2倍。晴れポイントは事前申請（10日前まで）＋当日に2名以上と天気が分かる写真を送り、運営が確認して付与。屋内で遂行できた雨は変動なし。放研人2名以上が参加したイベントのみ対象。<br>
+  雨男率 ＝ 濡れた回数 ÷ 判定対象イベント数（屋内遂行は除く）。3回以上で判定。</p></details>
+</section>
+</main>
+<script src="logic.js"></script>
+<script src="config.js"></script>
+<script>
+const KEY = 'ameotoko-v1';
+let state = { members: [], events: [] };
+try { state = Object.assign(state, JSON.parse(localStorage.getItem(KEY)) || {}); } catch (e) {}
+const $ = (id) => document.getElementById(id);
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} };
+const API = window.AMEOTOKO_API || '';
+let me = ''; try { me = localStorage.getItem('ameotoko-me') || ''; } catch (e) {}
+
+// 操作を実行。共有モードならWorkerへ送り、端末内モードならその場で適用する。戻り値はエラー文（なければ空）
+async function dispatch(action) {
+  action.by = me || undefined;
+  if (!API) {
+    const r = applyAction(state, action, today());
+    if (r.error) return r.error;
+    state = r.state; save(); render(); return '';
+  }
+  try {
+    const res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(action) });
+    const j = await res.json();
+    if (j.state) { state = j.state; save(); render(); }
+    return j.error || '';
+  } catch (e) { return '通信に失敗しました。もう一度試してください'; }
+}
+async function refresh() {
+  if (!API || document.activeElement?.closest?.('.res')) return;
+  try {
+    const j = await (await fetch(API)).json();
+    if (j.state && JSON.stringify(j.state) !== JSON.stringify(state)) { state = j.state; save(); render(); }
+  } catch (e) {}
+}
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sign = (n) => (n > 0 ? '+' + n : String(n));
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const names = { sunny: '晴れ', rain: '雨', cancel: '雨で中止', flight: '欠航', indoor: '雨・屋内で遂行' };
+
+function chips(el, name, checkedList, list) {
+  el.innerHTML = list.map((m) =>
+    `<label><input type="checkbox" name="${name}" value="${esc(m)}" ${checkedList.includes(m) ? 'checked' : ''}>${esc(m)}</label>`).join('') ||
+    '<span class="sub">先にメンバーを追加してください</span>';
+}
+const checked = (scope, name) => [...scope.querySelectorAll(`input[name=${name}]:checked`)].map((i) => i.value);
+
+function pendingHtml(ev) {
+  const left = daysUntil(ev.date, today());
+  const head = `<b>${esc(ev.title || '(無題)')}</b> <span class="sub">${esc(ev.date)}${ev.unapplied ? '（申請なし）' : '（申請済み）'}／${ev.participants.map(esc).join('・')}</span>`;
+  const del = `<button class="ghost" data-rm="${ev.id}">取消</button>`;
+  if (left > 0) return `<div class="who"><div>${head}<div class="sub">あと${left}日。当日に結果を入れられます</div></div>${del}</div>`;
+  const big = ev.type === 'big';
+  return `<div class="who res" data-ev="${ev.id}" style="display:block">
+    <div class="row" style="justify-content:space-between"><div>${head}</div>${del}</div>
+    <div class="field"><span>天気の結果</span><select data-f="result">
+      <option value="sunny">晴れ</option><option value="rain">雨に濡れた</option><option value="cancel">雨で予定が潰れた</option>
+      ${big ? '<option value="flight">海外旅行で便が欠航</option>' : ''}<option value="indoor">雨だが屋内で問題なく遂行（変動なし）</option></select></div>
+    <div class="field" data-box="wet"><span>濡れた人（雨と判定された人）</span><div class="chips">${ev.participants.map((n) => `<label><input type="checkbox" name="w" value="${esc(n)}">${esc(n)}</label>`).join('')}</div>
+      <label><input type="checkbox" data-f="pointed"> 他者に指摘された（減点2倍）</label></div>
+    <div class="field" data-box="sun"><label><input type="checkbox" data-f="sunOk"> 当日の写真（2名以上＋天気）を送り、運営が確認した${ev.unapplied ? '（申請なしなので加点なし）' : ''}</label></div>
+    <div class="err" data-f="err"></div>
+    <button data-save="${ev.id}">結果を確定する</button></div>`;
+}
+
+function syncResultBoxes(box) {
+  const r = box.querySelector('[data-f=result]').value;
+  box.querySelector('[data-box=wet]').classList.toggle('hide', !['rain', 'cancel', 'flight'].includes(r));
+  box.querySelector('[data-box=sun]').classList.toggle('hide', r !== 'sunny');
+}
+
+function render() {
+  const p = checked(document, 'p');
+  $('members').innerHTML = state.members.map((m) =>
+    `<label>${esc(m)} <button class="ghost" data-del="${esc(m)}" aria-label="${esc(m)}を削除">×</button></label>`).join('') ||
+    '<span class="sub">メンバーを追加してください</span>';
+  chips($('participants'), 'p', p, state.members);
+  if (me && !state.members.includes(me)) me = '';
+  $('me').innerHTML = '<option value="">選んでください</option>' + state.members.map((m) => `<option ${m === me ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  $('shareNote').textContent = API ? 'このリンクを知っている人は誰でも見て・変更できます。名前は自己申告です。' : '共有サーバー未設定：この端末の中だけに保存されます。';
+
+  const stats = summarize(state.events).sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || a.score - b.score);
+  $('ranking').innerHTML = '<h2>雨男ランキング</h2>' + (stats.length ? stats.map((s, i) => {
+    const k = rank(s.rate, s.total);
+    return `<div class="who"><div><b>${i + 1}. ${esc(s.name)}</b> <span class="sub">${k.title}</span><div class="sub">${k.note}</div>
+      <div class="sub">濡れた ${s.rain} / ${s.total}回　得点 <b class="${s.score < 0 ? 'neg' : 'pos'}">${sign(s.score)}</b></div>
+      <div class="bar"><i style="width:${s.rate ?? 0}%"></i></div></div>
+      <div class="big">${s.rate === null ? '-' : s.rate}<small>%</small></div></div>`;
+  }).join('') : '<p class="sub">まだ結果がありません。イベントを申請し、当日に結果を入れましょう。</p>');
+
+  const pend = state.events.filter((ev) => !ev.result).sort((a, b) => a.date.localeCompare(b.date));
+  $('pending').innerHTML = pend.length ? pend.map(pendingHtml).join('') : '<p class="sub">結果待ちのイベントはありません</p>';
+  document.querySelectorAll('.res').forEach(syncResultBoxes);
+
+  const done = state.events.filter((ev) => ev.result).sort((a, b) => b.date.localeCompare(a.date));
+  $('events').innerHTML = done.length ? done.map((ev) => {
+    const j = judge(ev);
+    const d = j.valid ? Object.entries(j.deltas).filter(([, v]) => v).map(([n, v]) => `${esc(n)} ${sign(v)}`).join('、') : '';
+    return `<div class="who"><div><b>${esc(ev.title || '(無題)')}</b> <span class="sub">${esc(ev.date)}</span>
+      <div class="sub">${names[ev.result]}${ev.pointedOut ? '（指摘×2）' : ''}／${ev.participants.map(esc).join('・')}</div>
+      <div class="sub">${d || '得点変動なし'}</div>
+      <div class="sub">${ev.approvedBy ? `✅ ${esc(ev.approvedBy)}さんが承認（入力：${esc(ev.enteredBy || '?')}）` : `⏳ 参加者以外の承認待ち（入力：${esc(ev.enteredBy || '?')}）`}</div></div>
+      <div>${!ev.approvedBy && me && me !== ev.enteredBy && !ev.participants.includes(me) ? `<button data-ok="${ev.id}">承認</button> ` : ''}<button class="ghost" data-rm="${ev.id}">削除</button></div></div>`;
+  }).join('') : '<p class="sub">なし</p>';
+}
+
+$('addMember').onclick = async () => {
+  const err = await dispatch({ type: 'addMember', name: $('newName').value });
+  if (err) alert(err); else $('newName').value = '';
+};
+$('newName').onkeydown = (e) => { if (e.key === 'Enter') $('addMember').click(); };
+$('me').onchange = () => { me = $('me').value; try { localStorage.setItem('ameotoko-me', me); } catch (e) {} render(); };
+document.addEventListener('click', async (e) => {
+  const d = e.target.dataset;
+  if (d.del) { const err = await dispatch({ type: 'removeMember', name: d.del }); if (err) alert(err); }
+  if (d.rm && confirm('このイベントを削除しますか？')) { const err = await dispatch({ type: 'remove', id: d.rm }); if (err) alert(err); }
+  if (d.ok) { const err = await dispatch({ type: 'approve', id: d.ok }); if (err) alert(err); }
+  if (d.save) {
+    const box = document.querySelector(`.res[data-ev="${d.save}"]`);
+    const f = (k) => box.querySelector(`[data-f=${k}]`);
+    const err = await dispatch({ type: 'setResult', id: d.save, result: f('result').value, wet: checked(box, 'w'),
+      pointedOut: f('pointed').checked, sunApproved: f('sunOk').checked });
+    if (err) f('err').textContent = err;
+  }
+});
+document.addEventListener('change', (e) => {
+  const box = e.target.closest && e.target.closest('.res');
+  if (box) syncResultBoxes(box);
+});
+$('addEvent').onclick = async () => {
+  const ev = { date: $('date').value, title: $('title').value.trim(), type: $('type').value,
+    participants: checked(document, 'p'), unapplied: $('unapplied').checked };
+  const err = await dispatch({ type: 'addEvent', event: ev });
+  $('err').textContent = err;
+  if (!err) { $('title').value = ''; $('unapplied').checked = false; }
+};
+$('date').value = today();
+render();
+if (API) { refresh(); setInterval(refresh, 15000); }
+</script>
+</body>
+</html>

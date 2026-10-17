@@ -301,6 +301,11 @@ a:hover { text-decoration: underline; }
 .map-search-row { display: flex; gap: 8px; margin-top: 6px; }
 .map-search-row input { flex: 1; min-width: 0; height: 40px; border: none; border-radius: var(--radius-control); padding: 8px 11px; background: var(--input-bg); color: var(--ink); }
 .map-search-row button { flex-shrink: 0; }
+/* 時刻の欄の横の「今」ボタン（2026-10-15） */
+.time-now-row { display: flex; gap: 8px; align-items: center; }
+.time-now-row input { flex: 1; min-width: 0; }
+.time-now-row button { flex-shrink: 0; }
+.current-loc-btn { margin-top: 6px; }
 .map-preview { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .map-preview iframe { width: 100%; height: 240px; border: none; border-radius: var(--radius-control); }
 .map-preview button { align-self: flex-start; }
@@ -486,6 +491,17 @@ a:hover { text-decoration: underline; }
 .trip-open-clone-body {
   background: var(--card); box-shadow: var(--card-shadow); z-index: 501;
 }
+/* カバー写真の無い旅行：本物の詳細画面には白いシートが無く、タイトルは地の色の上にある。白い枠は
+   動きながら地の色に溶かし、文字の余白も本物（.trip-cover-text、タイトルの上10px）に合わせる（2026-10-13） */
+.trip-open-clone-body {
+  transition: top .45s cubic-bezier(.2, .9, .25, 1), left .45s cubic-bezier(.2, .9, .25, 1),
+    width .45s cubic-bezier(.2, .9, .25, 1), height .45s cubic-bezier(.2, .9, .25, 1),
+    border-radius .45s cubic-bezier(.2, .9, .25, 1), opacity .45s cubic-bezier(.2, .9, .25, 1),
+    background-color .45s ease, box-shadow .45s ease;
+}
+.trip-open-clone-body.plain { background-color: transparent; box-shadow: none; }
+.trip-open-clone-textlayer.no-cover .trip-open-clone-text { padding: 0; }
+.trip-open-clone-textlayer.no-cover .trip-open-clone-text .trip-title { margin-top: 10px; }
 /* 白本体クローンの中に、カードのタイトル・日程をそのまま重ねておく（本物のタイトルは演出が終わるまで
    opacity:0のままなので、これが無いとシートが遷移中ずっと空白に見える）。本物が見えた瞬間
    （revealEnteringScreen）にクローンごと消えるので、フェードは不要（クローンの文字→本物の文字が
@@ -773,7 +789,7 @@ a:hover { text-decoration: underline; }
 /* 中身が空のヒント・合計の欄が余白だけを作って、費用の明細の下に大きな空きができていた */
 .field .hint:empty, .cost-total:empty { display: none; }
 /* 「明細を追加」「レシートを読み取る」「地図を検索」が、ただの文字に見えないよう、ほかの二次ボタンと同じ色の面と枠をつける */
-.cost-item-actions .btn.ghost, .map-search-row .btn.ghost { background: var(--input-bg); border: 1px solid #D5D9E0; border-color: color-mix(in srgb, var(--ink) 18%, transparent); color: var(--ink); }
+.cost-item-actions .btn.ghost, .map-search-row .btn.ghost, .time-now-row .btn.ghost, .current-loc-btn.btn.ghost { background: var(--input-bg); border: 1px solid #D5D9E0; border-color: color-mix(in srgb, var(--ink) 18%, transparent); color: var(--ink); }
 
 /* ---------- 精算（割り勘） ---------- */
 .settle-unit-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
@@ -1298,6 +1314,7 @@ body.viewer-open { overflow: hidden; }
 .memo-help { margin-top: 6px; line-height: 1.6; }
 .memo-ai-btn { display: block; margin: 8px auto 0; font-size: var(--fs-sm); }
 #memoAiInfo { text-align: center; margin-top: 2px; }
+.quota-part { display: inline-block; margin: 0 .3em; }
 
 /* 記録のエピソードの改行をそのまま出す（メモの取り込みでは、予定の下の1行ずつを改行でつないでいる） */
 .entry-episode { white-space: pre-wrap; word-break: break-word; }

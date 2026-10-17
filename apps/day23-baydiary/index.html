@@ -227,6 +227,11 @@ button,input,select,textarea{font:inherit}button,.btn,.tab,select{min-height:44p
 }
 @media(max-width:600px) and (prefers-color-scheme:dark){.competition-cards{background:#1c1e24}}
 
+/* メモ一括登録：確認結果の要約と、足りない項目をその場で入れる欄 */
+.memo-review-status{font-weight:700;color:var(--ink)}
+.memo-fix{display:flex;flex-direction:column;gap:4px;font-size:.82rem;margin:8px 0;color:#b4232c}
+.memo-fix input{min-height:44px}
+
 /* 試合記録カード：何度かのデザイン変更で重なった枠線（四角い囲み）を外し、1枚のカードとして整える */
 .game-card{gap:12px;padding:18px 18px 14px;box-shadow:inset 5px 0 0 #c9d3df,0 2px 12px #15294205}
 .game-card[data-result=win]{box-shadow:inset 5px 0 0 #0969da,0 2px 12px #15294205}
@@ -278,7 +283,7 @@ button,input,select,textarea{font:inherit}button,.btn,.tab,select{min-height:44p
  <details><summary>別のAIで変換したJSONを使う</summary><p class="settings-help">変換用プロンプトをコピーしてAIに渡し、返ってきたJSONを次の欄に貼り付けられます。</p><button class="btn btn-sm" id="memo-copy-prompt">変換用プロンプトをコピー</button><textarea id="memo-prompt" rows="4" readonly hidden aria-label="変換用プロンプト"></textarea></details>
  </div>
  <div class="card memo-step"><h3>2. JSONを確認・修正する</h3><p class="settings-help">AIの読み取り結果はここに表示されます。JSONファイルも読み込めます。修正したら「取込内容を確認」を押してください。</p><input id="memo-json-file" type="file" accept=".json,application/json" aria-label="試合JSONファイル"><label for="memo-json" class="input-label">試合データ（JSON）</label><textarea id="memo-json" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off" placeholder='{"games":[...]}'></textarea><div class="feature-actions"><button class="btn" id="memo-preview">取込内容を確認</button><button class="btn" id="memo-download">JSONを保存</button></div></div>
- <div class="card memo-step"><h3>3. 確認して、まとめて登録</h3><p class="settings-help">既存の記録・写真はそのまま残ります。重複候補は初期選択しません。日付などが足りない行はJSONを修正して再確認してください。</p><div id="memo-review"></div><p id="memo-review-status" role="status" class="settings-help"></p><button class="btn btn-main" id="memo-import" disabled>選択した記録を追加</button></div>
+ <div class="card memo-step"><h3>3. 確認して、まとめて登録</h3><p class="settings-help">既存の記録・写真はそのまま残ります。重複候補は初期選択しません。日付などが足りない行はJSONを修正して再確認してください。</p><p id="memo-review-status" role="status" class="settings-help memo-review-status"></p><div id="memo-review"></div><button class="btn btn-main" id="memo-import" disabled>選択した記録を追加</button></div>
 </section>
 <dialog id="share-dialog" aria-labelledby="share-title">
  <div class="section-heading"><div><p class="kicker">MY GAME DAY RECORD</p><h2 id="share-title">観戦の楽しさを、シェア。</h2></div><button class="btn btn-sm" id="share-close" aria-label="共有画面を閉じる">閉じる</button></div>
@@ -639,10 +644,46 @@ function opponentKey(name){
   return team?team.id:s;
 }
 function memoDuplicateKey(g){return [g.date,g.myTeam||"baystars",opponentKey(g.opponent)].join("|");}
-function validateMemoGames(rows,existing){
+// 別のAI（ChatGPTなど）が返すJSONは、指示どおりの形からよく少しずれる（「2025/4/12」「DeNA」「勝ち」「"5"」など）。
+// 意味が一つに決まるものだけをここで読み替え、読み替えたことは警告として見せる。決められないものは読み替えない。
+function memoTeamId(value){
+  if(typeof value!=="string"||!value.trim())return null;
+  var k=opponentKey(value);if(TEAMS.some(function(t){return t.id===k;}))return k;
+  var s=value.normalize("NFKC").replace(/\s/g,"").toLowerCase();
+  var t=TEAMS.find(function(t){return t.id===s||t.en.toLowerCase()===s||s.indexOf(t.short.toLowerCase())>=0;});
+  return t?t.id:null;
+}
+function normalizeMemoRow(raw,opts){
+  opts=opts||{};
+  var r=raw&&typeof raw==="object"&&!Array.isArray(raw)?Object.assign({},raw):{},notes=[];
+  function pad(n){return String(n).padStart(2,"0");}
+  function toNumber(v){if(typeof v!=="string")return v;var s=v.normalize("NFKC").replace(/[,円¥℃度\s]/g,"");return /^-?\d+(\.\d+)?$/.test(s)?Number(s):v;}
+  if(typeof r.date==="string"){
+    var d=r.date.normalize("NFKC").trim(),m;
+    if((m=d.match(/^(\d{4})\s*[\/\-.年]\s*(\d{1,2})\s*[\/\-.月]\s*(\d{1,2})\s*日?(\s*\(.\))?$/)))r.date=m[1]+"-"+pad(m[2])+"-"+pad(m[3]);
+    else if((m=d.match(/^(\d{1,2})\s*[\/\-.月]\s*(\d{1,2})\s*日?(\s*\(.\))?$/))&&opts.defaultYear){r.date=opts.defaultYear+"-"+pad(m[1])+"-"+pad(m[2]);notes.push("年が書かれていないため"+opts.defaultYear+"年として補いました。");}
+  }
+  if(r.myTeam==null||r.myTeam===""){if(opts.defaultTeam){r.myTeam=opts.defaultTeam;notes.push("応援球団の記載がないため「"+teamInfo(opts.defaultTeam).short+"」として扱います。");}}
+  else{var team=memoTeamId(r.myTeam);if(team)r.myTeam=team;}
+  if(typeof r.score==="string"){var sm=r.score.normalize("NFKC").match(/(\d+)\s*[-‐－–ー:対]\s*(\d+)/);if(sm){r.score={bay:Number(sm[1]),opp:Number(sm[2])};notes.push("得点「"+raw.score+"」を応援球団−相手の順として読みました。逆なら修正してください。");}}
+  if(r.score&&typeof r.score==="object")r.score={bay:toNumber(r.score.bay),opp:toNumber(r.score.opp)};
+  var RESULTS={"勝ち":"win","勝":"win","○":"win","win":"win","負け":"lose","負":"lose","●":"lose","lose":"lose","loss":"lose","引き分け":"draw","引分":"draw","分":"draw","△":"draw","draw":"draw","tie":"draw"};
+  if(typeof r.result==="string"){var rk=r.result.normalize("NFKC").trim().toLowerCase();if(RESULTS[rk])r.result=RESULTS[rk];}
+  if(typeof r.competition==="string"){var c=r.competition.normalize("NFKC").trim().toLowerCase();
+    if(/日本シリーズ|japan/.test(c))r.competition="japan_series";else if(/^cs$|クライマックス|climax/.test(c))r.competition="cs";else if(/交流戦|inter/.test(c))r.competition="interleague";else if(/公式戦|ペナント|レギュラー|regular/.test(c))r.competition="regular";}
+  if(typeof r.weather==="string"&&r.weather){var w=r.weather.normalize("NFKC");
+    if(!["sunny","cloudy","rainy","snowy","dome","other"].includes(w))r.weather=/ドーム|屋内/.test(w)?"dome":/雪/.test(w)?"snowy":/雨/.test(w)?"rainy":/曇|くもり/.test(w)?"cloudy":/晴/.test(w)?"sunny":"other";}
+  if(r.weather==null)r.weather="";
+  r.ticketPrice=toNumber(r.ticketPrice);r.temp=toNumber(r.temp);
+  if(typeof r.companions==="string")r.companions=r.companions.split(/[、,，・\/\s]+/).map(function(v){return v.trim();}).filter(Boolean);
+  if(Array.isArray(r.notablePlayers))r.notablePlayers=r.notablePlayers.map(function(p){return typeof p==="string"?{name:p,note:""}:p&&typeof p==="object"&&p.note==null?Object.assign({},p,{note:""}):p;});
+  return {row:r,notes:notes};
+}
+function validateMemoGames(rows,existing,opts){
   var seen=new Set((existing||[]).map(memoDuplicateKey));
   return rows.map(function(raw,index){
-    var errors=[],warnings=[];var r=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw:{};
+    var normalized=normalizeMemoRow(raw,opts);
+    var errors=[],warnings=normalized.notes.slice();var r=normalized.row;
     function str(key,max){var value=r[key];if(value==null)return "";if(typeof value!=="string"||value.length>max){errors.push(key+"は"+max+"文字以内の文字列にしてください");return "";}return value.trim();}
     function num(value,label,max,integer){if(value==null||value==="")return null;if(typeof value!=="number"||!Number.isFinite(value)||value<0||value>max||(integer&&!Number.isInteger(value))){errors.push(label+"の数値が不正です");return null;}return value;}
     var date=str("date",10),myTeam=str("myTeam",30),opponent=str("opponent",100),venue=str("venue",200);
@@ -1480,7 +1521,7 @@ $('analysis-team').onchange=function(){ui.analysisTeam=this.value;renderAnalysis
 $('analysis-year').onchange=function(){ui.analysisYear=Number(this.value);renderAnalysis();};
 $('actual-form').onsubmit=function(ev){ev.preventDefault();var actual={win:Number($('actual-win').value),lose:Number($('actual-lose').value),draw:Number($('actual-draw').value)};if(!validActual(actual))return;var records=state.settings.actualRecords||(state.settings.actualRecords={});if(!records[ui.analysisTeam])records[ui.analysisTeam]={};records[ui.analysisTeam][ui.analysisYear]=actual;saveState();renderAnalysis();};
 
-var shareFile=null,shareVersion=0,memoReview=[],memoReviewedText='',memoController=null;
+var shareFile=null,shareVersion=0,memoReview=[],memoRaw=[],memoReviewedText='',memoController=null;
 function downloadBlob(blob,name){if(window.BayDiaryNative)return window.BayDiaryNative.shareFile(blob,name).catch(function(){alert('保存・共有を完了できませんでした。もう一度お試しください。');});var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 async function copyFeatureText(text,field,status){try{await navigator.clipboard.writeText(text);$(status).textContent='コピーしました。';}catch(e){$(field).hidden=false;$(field).value=text;$(field).focus();$(field).select();$(status).textContent='コピーできないため、表示した文章を選択してコピーしてください。';}}
 function publicShareURL(){var el=document.querySelector('meta[name="baydiary-public-url"]');try{var u=new URL(el?el.content:'');return u.protocol==='https:'&&!u.username&&!u.password&&!/^(localhost|127\.|\[::1\])/.test(u.hostname)?u.href:'';}catch(e){return '';}}
@@ -1524,14 +1565,41 @@ $('share-copy').onclick=()=>copyFeatureText($('share-caption').value,'share-capt
 $('share-download').onclick=()=>{if(shareFile)downloadBlob(shareFile,shareFile.name);};
 $('share-native').onclick=async function(){if(!shareFile)return;try{if(window.BayDiaryNative){await window.BayDiaryNative.shareFile(shareFile,shareFile.name,$('share-caption').value);$('share-status').textContent='共有メニューを閉じました。';}else if(navigator.canShare&&navigator.canShare({files:[shareFile]})){await navigator.share({files:[shareFile],title:'ベイ日記｜観戦成績',text:$('share-caption').value});$('share-status').textContent='共有メニューを閉じました。';}else{downloadBlob(shareFile,shareFile.name);$('share-status').textContent='このブラウザでは画像を保存します。投稿文もコピーしてお使いください。';}}catch(e){$('share-status').textContent=e.name==='AbortError'?'共有をキャンセルしました。':'共有できませんでした。「画像を保存」をお試しください。';}};
 function openMemo(){if(!$('memo-team').options.length)fillTeamSelect($('memo-team'),selectedTeam());setView('memo');}
-function invalidateMemo(){memoReview=[];memoReviewedText='';$('memo-review').innerHTML='';$('memo-review-status').textContent='JSONを確認して「取込内容を確認」を押してください。';$('memo-import').disabled=true;}
+function invalidateMemo(){memoReview=[];memoRaw=[];memoReviewedText='';$('memo-review').innerHTML='';$('memo-review-status').textContent='JSONを確認して「取込内容を確認」を押してください。';$('memo-import').disabled=true;}
+function memoOptions(){var y=Number($('memo-year').value);return {defaultTeam:$('memo-team').value||selectedTeam(),defaultYear:/^\d{4}$/.test($('memo-year').value)&&y>=1900?y:null};}
 function previewMemo(){
- invalidateMemo();try{memoReview=validateMemoGames(parseMemoJSON($('memo-json').value),state.games);memoReviewedText=$('memo-json').value;
- $('memo-review').innerHTML=memoReview.map((row,i)=>'<article class="memo-row"><label><input type="checkbox" data-memo-row="'+i+'" '+(row.errors.length?'disabled':row.duplicate?'':'checked')+'>'+esc(row.game.date||'日付未設定')+' · '+esc(row.game.opponent||'相手未設定')+'</label><p>'+esc(teamInfo(row.game.myTeam).short)+' / '+esc(competitionLabel(row.game.competition))+' / '+esc(row.game.venue||'球場未設定')+' / '+esc(RESULT_LABEL[row.game.result]||'結果未設定')+' / '+esc(row.game.score.bay==null?'—':row.game.score.bay)+' − '+esc(row.game.score.opp==null?'—':row.game.score.opp)+'</p>'+row.errors.map(v=>'<p class="memo-error">'+esc(v)+'</p>').join('')+row.warnings.map(v=>'<p class="memo-warning">'+esc(v)+'</p>').join('')+'<p><strong>感想・思い出</strong></p><div class="memo-highlight memo-source">'+esc(row.game.highlight||'（感想なし）')+'</div><details><summary>取り込んだ元メモ</summary><div class="memo-source">'+esc(row.game.sourceMemo||'原文なし')+'</div></details></article>').join('');
- document.querySelectorAll('[data-memo-row]').forEach(el=>el.onchange=updateMemoSelection);updateMemoSelection();
- }catch(e){$('memo-review-status').textContent=e.message;}
+ invalidateMemo();try{memoRaw=parseMemoJSON($('memo-json').value);memoReviewedText=$('memo-json').value;renderMemoReview();}
+ catch(e){$('memo-review-status').textContent=e.message;}
+ // 結果は画面の下のほうに出るので、押したあとに見える位置まで動かす
+ var card=$('memo-review-status').closest('.memo-step');if(card&&card.scrollIntoView)card.scrollIntoView({behavior:'smooth',block:'start'});
 }
-function updateMemoSelection(){var n=document.querySelectorAll('[data-memo-row]:checked').length;$('memo-import').disabled=!n;$('memo-import').textContent=n+'件の記録を追加';$('memo-review-status').textContent=memoReview.length+'件を確認 · '+n+'件選択 · 要修正 '+memoReview.filter(r=>r.errors.length).length+'件 · 重複候補 '+memoReview.filter(r=>r.duplicate).length+'件';}
+// 日付や対戦相手が足りない行は、その場で入力すると選べるようになる（JSONを直さなくてよい）
+function memoFixInputs(row,i){
+ var html='';
+ if(row.errors.some(v=>v.indexOf('日付')>=0))html+='<label class="memo-fix">試合日を入れる<input type="date" data-memo-fix="date" data-memo-index="'+i+'"></label>';
+ if(row.errors.some(v=>v.indexOf('対戦相手を補って')>=0))html+='<label class="memo-fix">対戦相手を入れる<input data-memo-fix="opponent" data-memo-index="'+i+'" placeholder="例: 阪神"></label>';
+ return html;
+}
+function renderMemoReview(){
+ memoReview=validateMemoGames(memoRaw,state.games,memoOptions());
+ $('memo-review').innerHTML=memoReview.map((row,i)=>'<article class="memo-row"><label><input type="checkbox" data-memo-row="'+i+'" '+(row.errors.length?'disabled':row.duplicate?'':'checked')+'>'+esc(row.game.date||'日付未設定')+' · '+esc(row.game.opponent||'相手未設定')+'</label>'+memoFixInputs(row,i)+'<p>'+esc(teamInfo(row.game.myTeam).short)+' / '+esc(competitionLabel(row.game.competition))+' / '+esc(row.game.venue||'球場未設定')+' / '+esc(RESULT_LABEL[row.game.result]||'結果未設定')+' / '+esc(row.game.score.bay==null?'—':row.game.score.bay)+' − '+esc(row.game.score.opp==null?'—':row.game.score.opp)+'</p>'+row.errors.map(v=>'<p class="memo-error">'+esc(v)+'</p>').join('')+row.warnings.map(v=>'<p class="memo-warning">'+esc(v)+'</p>').join('')+'<p><strong>感想・思い出</strong></p><div class="memo-highlight memo-source">'+esc(row.game.highlight||'（感想なし）')+'</div><details><summary>取り込んだ元メモ</summary><div class="memo-source">'+esc(row.game.sourceMemo||'原文なし')+'</div></details></article>').join('');
+ document.querySelectorAll('[data-memo-row]').forEach(el=>el.onchange=updateMemoSelection);
+ document.querySelectorAll('[data-memo-fix]').forEach(el=>el.onchange=function(){
+  var i=Number(this.dataset.memoIndex);if(!this.value.trim())return;
+  var row=memoRaw[i]&&typeof memoRaw[i]==='object'&&!Array.isArray(memoRaw[i])?memoRaw[i]:{};
+  memoRaw[i]=Object.assign({},row,{[this.dataset.memoFix]:this.value.trim()});renderMemoReview();
+ });
+ updateMemoSelection();
+}
+function updateMemoSelection(){
+ var n=document.querySelectorAll('[data-memo-row]:checked').length,bad=memoReview.filter(r=>r.errors.length).length,dup=memoReview.filter(r=>r.duplicate).length;
+ $('memo-import').disabled=!n;$('memo-import').textContent=n?n+'件の記録を追加':'選択した記録を追加';
+ var msg=memoReview.length+'件を確認 · '+n+'件選択 · 要修正 '+bad+'件 · 重複候補 '+dup+'件';
+ if(!memoReview.length)msg='JSONの中に試合が見つかりませんでした（"games" が空です）。';
+ else if(!n&&bad)msg+='。赤字の行は、そのままでは追加できません。試合日などを下の欄で入れると選べるようになります。';
+ else if(!n&&dup)msg+='。すでに同じ試合が記録されているため、初期状態では選んでいません。別の試合ならチェックを入れてください。';
+ $('memo-review-status').textContent=msg;
+}
 $('memo-preview').onclick=previewMemo;$('memo-json').oninput=invalidateMemo;
 $('memo-import').onclick=function(){
  if(memoReviewedText!==$('memo-json').value){invalidateMemo();return;}
