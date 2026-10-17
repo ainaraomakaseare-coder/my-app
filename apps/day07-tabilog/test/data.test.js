@@ -2957,6 +2957,15 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('moveMinutes: 翌日', T.moveMinutesBetween('23:00', '06:30'), { minutes: 450, nextDay: true });
   eq('moveMinutes: 12時間以上戻るなら出さない', T.moveMinutesBetween('20:00', '03:00').minutes, 420);
   eq('moveMinutes: 出せない', T.moveMinutesBetween('20:00', '09:00').minutes, 0);
+  // 取り込んだ移動の所要時間（時差つき。2026-10-17）
+  eq('travelMinutes: 時差なし・同じ日', T.travelMinutes('2026-10-03', '09:00', '', '11:30', 540, 540, 'plane'), 150);
+  eq('travelMinutes: 成田21:00→ホノルル同じ日9:00（時差あり）', T.travelMinutes('2026-10-03', '21:00', '', '09:00', 540, -600, 'plane'), 420);
+  eq('travelMinutes: 羽田10:00→ホノルル前日22:30', T.travelMinutes('2026-10-03', '10:00', '', '22:30', 540, -600, 'plane'), 450);
+  eq('travelMinutes: NY10:00→東京翌日13:00（着く日あり）', T.travelMinutes('2026-10-03', '10:00', '2026-10-04', '13:00', -240, 540, 'plane'), 840);
+  eq('travelMinutes: 時差が分からない飛行機は出さない', T.travelMinutes('2026-10-03', '09:00', '', '11:30', null, null, 'plane'), 0);
+  eq('travelMinutes: 時差が分からない電車は同じ時差とみなす', T.travelMinutes('2026-10-03', '17:03', '', '19:34', null, null, 'shinkansen'), 151);
+  eq('travelMinutes: 夜行バスの翌朝着', T.travelMinutes('2026-10-03', '23:00', '', '06:30', null, null, 'bus'), 450);
+  eq('travelMinutes: 到着時刻なし', T.travelMinutes('2026-10-03', '09:00', '', '', 540, 540, 'plane'), 0);
   var memo = T.parseMemo('8:00 東京から新大阪へ 新幹線\n・到着：10:30\n10:30 ユニバ', ['2026-10-01'], '2026-10-01');
   var props = T.memoBlocksToProposals(memo.blocks);
   eq('proposal: 手段', props[0].transport, 'shinkansen');
