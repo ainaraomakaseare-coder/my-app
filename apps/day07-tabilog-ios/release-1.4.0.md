@@ -11,6 +11,7 @@
 ・マイログの評価の高い1〜3位に、金・銀・銅のメダルが付くようにしました
 ・年表から旅行を開くときの動きを、なめらかにしました
 ・「←」で戻ったとき、ホームの旅行一覧がすぐ見えるようにしました
+・「地図でふりかえる」で、時差のある飛行機の到着や、宿から翌日の予定への動きが自然になりました
 ・そのほか細かな不具合を直しました
 ```
 
@@ -21,6 +22,7 @@
 - Your top 3 rated places in My Log now get gold, silver and bronze medals
 - Opening a trip from the timeline is now smoother
 - Going back with "←" now shows your trip list on the home screen right away
+- "Replay on map" now moves more naturally for flights across time zones and from your hotel to the next day
 - Other small bug fixes
 ```
 
@@ -31,6 +33,7 @@
 ・我的足跡中評分最高的前三名，會掛上金・銀・銅牌
 ・從年表開啟旅行時的動作更流暢了
 ・用「←」返回時，會馬上看到首頁的旅行列表
+・「在地圖上回顧」中，跨時區的航班抵達和從住宿到隔天行程的移動更自然了
 ・修正了其他小問題
 ```
 
