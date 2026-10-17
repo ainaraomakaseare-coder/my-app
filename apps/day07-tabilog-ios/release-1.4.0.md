@@ -1,0 +1,41 @@
+# 1.4.0 申請の準備メモ（2026-10-17）
+
+1.3.0（ビルド121、回数券つき）からの変更をまとめた版。
+
+## このバージョンの新機能
+
+### 日本語
+```
+・記録の時刻に「今」ボタンを付けました。押すと今の時刻が入ります
+・地図の欄に「現在地を入れる」ボタンを付けました。今いる場所の地図をそのまま記録に入れられます
+・マイログの評価の高い1〜3位に、金・銀・銅のメダルが付くようにしました
+・年表から旅行を開くとき、選んだ記録の位置で開くようにしました
+・「←」で戻ったとき、ホームの旅行一覧がすぐ見えるようにしました
+・そのほか細かな不具合を直しました
+```
+
+### English
+```
+- Added a "Now" button to the record time. Tap it to fill in the current time
+- Added "Use current location" to the map field, so you can add a map of where you are right now
+- Your top 3 rated places in My Log now get gold, silver and bronze medals
+- Opening a trip from the timeline now takes you to the record you picked
+- Going back with "←" now shows your trip list on the home screen right away
+- Other small bug fixes
+```
+
+### 繁體中文
+```
+・紀錄的時間新增「現在」按鈕，按下即可填入現在的時間
+・地圖欄新增「填入目前位置」按鈕，可以直接把所在地的地圖加進紀錄
+・我的足跡中評分最高的前三名，會掛上金・銀・銅牌
+・從年表開啟旅行時，會直接開在選擇的紀錄位置
+・用「←」返回時，會馬上看到首頁的旅行列表
+・修正了其他小問題
+```
+
+## 申請前に直すところ（App Store Connect）
+
+- **Appのプライバシー**：「現在地を入れる」で緯度経度を記録に保存するので、「位置情報 → 正確な位置情報」を追加する
+  （用途：アプリの機能／本人と結びつく：はい／トラッキング：いいえ）。1.3.0までは「位置情報：しない」だった
+- AIの無料回数（月5回、#148）はWorker側の設定なので、Workerのデプロイが済んでいれば新機能に書いてよい。済んでいなければ書かない
