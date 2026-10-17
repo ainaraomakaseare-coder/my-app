@@ -1502,10 +1502,14 @@
           //    無視して「直前+30分」にしてしまっていたのを直す。2026-09-29）。
           //    日をまたいで探すのは、飛行機で着いた先（日付が変わることがある）だけに限る。
           var found = null;
+          // 直前の移動の予定に到着（地図・時刻）が入っていて、もう着いている（out の最後が到着の地点）なら、
+          // この予定は着いたあとの同じ日の予定。「到着」の記録が別にあると移動手段（飛行機）を持つので、
+          // 翌日の予定の30分前と見積もられ、日が先へ飛んでいた（音声取り込みの「移動」＋「到着」、2026-10-17）
+          var justLanded = out.length > 0 && !!out[out.length - 1].arrival;
           for (var k = bi + 1; k < sorted.length; k++) {
             var nb = sorted[k];
             if (nb.date !== b.date) {
-              if (arrivingGuess !== 'plane') break;
+              if (arrivingGuess !== 'plane' || justLanded) break;
               var nbDayIdx = dates.indexOf(nb.date);
               if (nbDayIdx === -1 || nbDayIdx !== dayIdxCur + 1) break;
             }
@@ -1533,6 +1537,9 @@
           } else {
             // 4. 見積もりの手がかりが無ければ、従来どおり直前の30分後（その日に時刻ありが無ければ9時から1時間おき）
             minute = prev === undefined ? REPLAY_UNTIMED_START_MIN : Math.min(prev + (hasTimed[b.date] ? 30 : 60), 23 * 60 + 59);
+            // 時刻の無い宿（スクショ・音声の取り込みの2泊目以降など）は、その日の最後の予定のあとの夜に帰るとみなす。
+            // 直前の30分後にすると、昼のランチの30分後にホテルへ戻り、そのまま翌朝まで止まって見えていた（2026-10-17）
+            if (b.category === 'lodging') minute = Math.max(minute, REPLAY_UNTIMED_LODGING_MIN);
             estimateSource = 'default';
           }
         }
@@ -1569,6 +1576,9 @@
         // 「動画でシェアに出さない」予定（block.videoExclude、migrations/0031〜）。動画では地名・写真・ピンを出さない
         videoExclude: !!b.videoExclude,
         transport: arriving, query: placeEntry ? placeEntry.url : '',
+        // 移動の予定（種類が「移動」）の時刻は出発の時刻。そこからはすぐ動き出す（buildReplayTimelineが、
+        // 宿や観光地のように次の予定の直前まで待たせない）
+        departs: b.category === 'transport',
         // 記録のid・サーバーがすでに求めてある座標（Part A）。geocodeQueriesがこれを見て、
         // 分かっていれば/geocodeを呼ばずに使い、無ければ&entry=を付けて呼ぶ
         entryId: placeEntry ? placeEntry.entryId : '',
@@ -1646,8 +1656,22 @@
   var REPLAY_STAY_KM = 0.3; // これ未満の距離は「同じ場所にとどまっている」とみなし、移動（leg）を作らない（2026-09-29）
   // 時刻の無い到着（見積もりの手がかり（moveMinutes・後の予定）が無いとき）を、飛行機の所要時間から見積もる
   // ときの速さと、離着陸・待ち時間ぶんの余裕（分）。docs/adr/0008参照（2026-09-29）
+  var REPLAY_UNTIMED_LODGING_MIN = 19 * 60; // 時刻の無い宿に帰る時刻の目安（その日の予定がもっと遅ければそのあと）
   var REPLAY_FLIGHT_KMH = 850;
   var REPLAY_FLIGHT_BUFFER_MIN = 60;
+  // 移動にかかる時間の見積もり（分）。直線距離で割る速さ（km/h、道の曲がりを含めて遅め）と、乗り降りなどの余裕（分）。
+  // 宿や観光地から次の予定へ移るとき、時計は「次の予定の時刻 − この見積もり」まで今の場所にとどまってから動き出す。
+  // 以前は着いて8分後には動き出していたので、夜にホテルへ着いて翌朝7:00に次の場所、という旅では、
+  // 夜通し移動しているように見えていた（ミルフォードサウンドの旅、2026-10-13）
+  var REPLAY_TRAVEL_SPEED = {
+    plane: [REPLAY_FLIGHT_KMH, REPLAY_FLIGHT_BUFFER_MIN], shinkansen: [180, 10], train: [60, 10],
+    bus: [40, 10], car: [40, 10], taxi: [40, 5], bicycle: [12, 0], walk: [4, 0]
+  };
+  function replayTravelMinutes(transport, km) {
+    var sp = REPLAY_TRAVEL_SPEED[transport] || REPLAY_TRAVEL_SPEED.car;
+    var m = (km > 0 ? km : 0) / sp[0] * 60 + sp[1];
+    return Math.max(5, Math.ceil(m / 5) * 5);
+  }
 
   // 2地点の距離（km）
   function distanceKm(a, b) {
@@ -1739,7 +1763,13 @@
       }
     });
     var out = {};
+    var byId = {};
+    sorted.forEach(function (b) { byId[b.id] = b; });
     for (var i = 1; i < located.length - 1; i++) {
+      // 到着地の地図まで入った移動の予定（スクショ・音声の取り込みの飛行機など）は、出発地のピンを本人が
+      // 入れたものなので外れ値にしない。成田21:50発の便と、着いた日のホノルル15:00のホテルが、現地時間の
+      // 並びで「ホテル→成田→ホテル」となり、成田が外れ値扱いされて時差・並びが崩れていた（2026-10-17）
+      if (travelArrival(byId[located[i].id])) continue;
       if (isFarMapOutlier(located[i - 1], located[i], located[i + 1])) out[located[i].id] = true;
     }
     return out;
@@ -1990,6 +2020,18 @@
       // 2026-09-29）
       if (st.arrival) {
         st.rCaptionStart = r;
+        // 着いた空港などから次の予定へは、宿・観光地と同じく、次の予定の時刻に間に合うときまで待ってから動き出す
+        // （10:10にホノルル空港へ着いて15:00にホテル、で5時間かけて車で走って見えていた。2026-10-17）
+        if (next && moving) {
+          var waitArr = gap - replayTravelMinutes(legArrivingAt[i + 1].transport, distanceKm(s[legArrivingAt[i + 1].from], next));
+          if (waitArr > 0) {
+            // 着いた時刻（時差の切り替わり）が一瞬で消えないよう、少しだけ見せてから進める
+            r += REPLAY_ARRIVAL_PAUSE_SEC;
+            kf.push({ t: st.t, r: r });
+            r += REPLAY_JUMP_EPS;
+            kf.push({ t: st.t + waitArr, r: r });
+          }
+        }
         st.rDwellEnd = r;
         if (!next) return;
         r += moving ? legArrivingAt[i + 1].moveSec : Math.min(gap * REPLAY_SEC_PER_MIN, REPLAY_IDLE_CAP_SEC);
@@ -2016,6 +2058,14 @@
       if (moving) captionSec += REPLAY_CAPTION_HIDE_LEAD_SEC;
       r += captionSec;
       kf.push({ t: st.t, r: r });
+      // 宿・観光地など（移動の予定でない地点）から次の場所へ移るときは、次の予定の時刻から移動にかかる時間
+      // （replayTravelMinutes）を引いた時刻まで、ここにとどまる。時計はその時刻まで一気に進めてから動き出す
+      // （夜にホテルへ着いて翌朝出るのに、夜通し移動して見えていた。2026-10-13）
+      if (moving && !st.departs) {
+        var legNext = legArrivingAt[i + 1];
+        var travelMin = replayTravelMinutes(legNext.transport, distanceKm(s[legNext.from], next));
+        dwell = Math.min(gap, Math.max(dwell, gap - travelMin));
+      }
       // 吹き出しが消えた直後に、旅の時計をdwell分だけ一気に進める。同じrに2つの時刻（止まっていたst.tと、
       // 進んだst.t+dwell）を置くと、ちょうどそのrを指したときにどちらを返すか決まらない（最後の予定など、
       // このrで再生が止まるとき）ため、ごくわずかな実時間（見た目には分からない）だけ後ろにずらす
@@ -4499,6 +4549,7 @@
     minutesText: minutesText,
     replayDayStarts: replayDayStarts,
     replayNeighborStop: replayNeighborStop,
+    replayTravelMinutes: replayTravelMinutes,
     tzOffsetMinutes: tzOffsetMinutes,
     assignBlockZones: assignBlockZones,
     needsFreshLogin: needsFreshLogin,
@@ -13379,11 +13430,9 @@
       // 道のりは裏で調べ、届いた区間から直線を道路に沿った青い線に切り替える
       status.textContent = '';
       startReplay(res[0], tl);
-      // 場所が1か所だけだと動かないので、理由を一言。移動手段が未設定の区間は仮定で描いていることを伝える
+      // 場所が1か所だけだと動かないので、理由を一言。移動手段が未設定の区間のお知らせは出さない
+      // （いらないという声より。2026-10-13 オーナー）
       if (tl.stops.filter(function (s) { return s.located; }).length < 2) showReplayNote(tr('地図は場所を設定した記録をたどります'));
-      // 移動手段が未設定の区間は街なかの移動にもたくさんあり、ほぼ全部の旅で出ていたので、距離から飛行機と
-      // 決め打ちした区間（間違っていると目立つもの）があるときだけ知らせる（2026-10-09 オーナー）
-      else if (tl.legs.some(function (l) { return l.assumed && l.transport === 'plane'; })) showReplayNote(tr('移動手段が未設定の遠い区間は、距離から飛行機と仮定しています（予定の編集で変えられます）'));
       replay.routesDone = fetchReplayRoutes(tl, function (l) {
         if (replayToken !== token || !replay || replay.tl !== tl) return;
         var set = replay.lines[tl.legs.indexOf(l)];
@@ -13937,7 +13986,16 @@
     replay.lastDay = 0;
     var st = Core.replayStateAt(replay.tl, replay.r);
     try {
-      if (st.here) replayCenterOn(st.here.lat, st.here.lng, keepZoom);
+      var seekLeg = st.icon ? replay.tl.legs[st.icon.legIndex] : null;
+      if (seekLeg) {
+        // 区間の途中（次へ・前へは、着く少し前に飛ぶ）なら、出発地と到着地が両方入るように引く。
+        // 乗り物の位置に今の縮尺のまま寄せると、街を見ていた縮尺で山の中の道だけが映り、
+        // どこにいるのか分からない（地図が出ていないように見える）ことがあった（2026-10-13）
+        var lf = replay.tl.stops[seekLeg.from], lt = replay.tl.stops[seekLeg.to];
+        var fitOpts = replayViewPadding();
+        fitOpts.maxZoom = Core.REPLAY_LEG_MAX_ZOOM; fitOpts.animate = false;
+        replayMap.fitBounds(seekLeg.path && seekLeg.path.length > 1 ? seekLeg.path : [[lf.lat, lf.lng], [lt.lat, lt.lng]], fitOpts);
+      } else if (st.here) replayCenterOn(st.here.lat, st.here.lng, keepZoom);
     } finally { replay.seeking = false; }
     // カメラの判定（Core.cameraMoveDecision）は、いつも地図の今の中心・縮尺と比べるので、シーク先で
     // 合わせ直した見え方がそのまま基準になる（以前は別に持った「目的地」を更新し忘れると誤判定していた）。

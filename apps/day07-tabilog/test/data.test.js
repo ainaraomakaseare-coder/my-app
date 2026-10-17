@@ -3173,5 +3173,78 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   ok('到着時刻なし：到着の仮地点は出発の日より前の日にならない', arrN && arrN.dayNumber >= tlN.stops.filter(function (st) { return st.label === '羽田→LA'; })[0].dayNumber);
 })();
 
+/* ---- 地図でふりかえる：宿や観光地からは、次の予定の時刻に間に合うように出る（2026-10-13） ---- */
+(function () {
+  var Q = { qt: [-45.031, 168.662], ms: [-44.641, 167.897] };
+  function stop(id, date, time, k, extra) {
+    return Object.assign({ id: id, date: date, time: time, label: id, category: 'sightseeing', createdAt: id,
+      entries: [{ id: 'e' + id, mapUrl: 'https://www.google.com/maps/search/?api=1&query=' + Q[k][0] + ',' + Q[k][1], mapLat: Q[k][0], mapLng: Q[k][1] }] }, extra || {});
+  }
+  function tlOf(blocks) {
+    var stops = T.replayStops({ startDate: '2026-02-01', endDate: '2026-02-02' }, blocks);
+    var coords = {};
+    stops.forEach(function (st) { if (st.knownLat != null) coords[st.query] = { lat: st.knownLat, lng: st.knownLng }; });
+    return T.buildReplayTimeline(stops, coords);
+  }
+  function clockAtLegStart(tl) { return T.replayStateAt(tl, tl.legs[0].r0 + 0.001).t; }
+
+  eq('移動の見積もり：車で80kmは2時間10分', T.replayTravelMinutes('car', 80), 130);
+  eq('移動の見積もり：手段が分からなければ車', T.replayTravelMinutes('', 80), 130);
+  eq('移動の見積もり：徒歩1kmは15分', T.replayTravelMinutes('walk', 1), 15);
+
+  // 夜19:00にホテル、翌朝7:00にミルフォードサウンド：夜通し走らず、朝になってから出る
+  var tl1 = tlOf([stop('hotel', '2026-02-01', '19:00', 'qt', { category: 'lodging' }), stop('milford', '2026-02-02', '07:00', 'ms')]);
+  var leave1 = clockAtLegStart(tl1);
+  ok('宿からは、次の予定の時刻から移動の見積もりを引いた時刻まで待って出る（夜通し移動しない）', leave1 >= 1440 + 7 * 60 - 180 && leave1 < 1440 + 7 * 60);
+  ok('宿で待つあいだも吹き出しの長さは変わらない（待ち時間は一気に進める）', tl1.legs[0].r0 - tl1.stops[0].r < 6);
+
+  // 移動の予定（7:00発のツアーバス）からは、出発の時刻にすぐ出る
+  var tl2 = tlOf([stop('bus', '2026-02-02', '07:00', 'qt', { category: 'transport', transport: 'bus' }), stop('milford', '2026-02-02', '12:00', 'ms')]);
+  ok('移動の予定からは、出発の時刻にすぐ出る', clockAtLegStart(tl2) <= 1440 + 7 * 60 + 10);
+})();
+
+/* ---- 地図でふりかえる：スクショ・音声の取り込みの形の旅（2026-10-17） ---- */
+(function () {
+  var P = { nrt: [35.772, 140.393, 'Asia/Tokyo'], hnl: [21.318, -157.92, 'Pacific/Honolulu'], wk: [21.279, -157.83, 'Pacific/Honolulu'],
+    dh: [21.262, -157.806, 'Pacific/Honolulu'], ala: [21.291, -157.843, 'Pacific/Honolulu'] };
+  var n = 0;
+  function url(k) { return 'https://www.google.com/maps/search/?api=1&query=' + P[k][0] + ',' + P[k][1]; }
+  function blk(date, time, label, category, k, extra) {
+    n++;
+    var e = { id: 'x' + n, mapUrl: url(k), mapLat: P[k][0], mapLng: P[k][1] };
+    if (extra && extra.ak) e.travel = { depart: time, arrive: extra.arrive, arriveMapUrl: url(extra.ak), arriveLat: P[extra.ak][0], arriveLng: P[extra.ak][1] };
+    return { id: 'x' + n, date: date, time: time, label: label, category: category, transport: (extra && extra.transport) || '', createdAt: String(n).padStart(4, '0'), entries: [e], _k: k, _ak: extra && extra.ak };
+  }
+  function play(blocks) {
+    var byBlock = {}, byArrive = {};
+    blocks.forEach(function (b) { byBlock[b.id] = P[b._k][2]; if (b._ak) byArrive[b.id] = P[b._ak][2]; });
+    T.applyBlockZones(blocks, T.assignBlockZones(blocks, byBlock, 'Asia/Tokyo', byArrive));
+    var stops = T.replayStops({ startDate: '2026-06-10', endDate: '2026-06-11' }, blocks);
+    var coords = {};
+    stops.forEach(function (st) { if (st.knownLat != null) coords[st.query] = { lat: st.knownLat, lng: st.knownLng }; });
+    return T.buildReplayTimeline(stops, coords);
+  }
+  function labels(tl) { return tl.stops.map(function (st) { return st.label + (st.arrival ? '#' : ''); }).join('>'); }
+  var flight = function () { return blk('2026-06-10', '21:50', '成田→ホノルル', 'transport', 'nrt', { transport: 'plane', ak: 'hnl', arrive: '10:10' }); };
+
+  // 成田21:50発の便と、着いた日（現地の日付は同じ6/10）のホノルル15:00のホテル
+  var tl1 = play([flight(), blk('2026-06-10', '15:00', 'ホテル', 'lodging', 'wk'), blk('2026-06-11', '09:00', 'ダイヤモンドヘッド', 'sightseeing', 'dh')]);
+  eq('到着地の地図がある便の出発地は外れ値にせず、便→到着→ホテルの順', labels(tl1), '成田→ホノルル>到着#>ホテル>ダイヤモンドヘッド');
+  var arr1 = tl1.stops[1], toHotel = tl1.legs.filter(function (l) { return l.from === 1; })[0];
+  ok('空港に着いたら、ホテルの時刻に間に合うときまで待ってから車で動く（5時間かけて走らない）',
+    toHotel && T.replayStateAt(tl1, toHotel.r0 + 0.001).t >= tl1.stops[2].t - 60);
+  ok('着いた時刻（時差の切り替わり）は少しのあいだ見える', T.replayStateAt(tl1, arr1.r + 0.2).t === arr1.t);
+
+  // 時刻の無い宿は、その日の最後の予定のあとの夜（19:00）に帰る
+  var tl2 = play([blk('2026-06-10', '12:00', 'ランチ', 'food', 'ala'), blk('2026-06-10', '', 'ホテル', 'lodging', 'wk'), blk('2026-06-11', '09:00', 'ダイヤモンドヘッド', 'sightseeing', 'dh')]);
+  eq('時刻の無い宿は19:00に帰るとみなす', tl2.stops[1].minute, 19 * 60);
+
+  // 「移動」と、時刻の無い「到着」の記録が別にある（音声取り込み）：到着の記録は着いた日のまま
+  var tl3 = play([flight(), blk('2026-06-10', '', 'ホノルル空港に到着', 'arrival', 'hnl', { transport: 'plane' }), blk('2026-06-10', '', 'ホテル', 'lodging', 'wk'), blk('2026-06-11', '09:00', 'ダイヤモンドヘッド', 'sightseeing', 'dh')]);
+  var arrRec = tl3.stops.filter(function (st) { return st.label === 'ホノルル空港に到着'; })[0];
+  eq('時刻の無い到着の記録は、翌日の予定の前ではなく着いた日に置く', arrRec && arrRec.dayNumber, 1);
+  eq('その後のホテルも着いた日のまま', labels(tl3), '成田→ホノルル>到着#>ホノルル空港に到着>ホテル>ダイヤモンドヘッド');
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
