@@ -464,6 +464,8 @@ export function normalizeProposalItems(rawItems, ctx, parsed) {
     }
   }
 
+  mergeArrivalsIntoTransport(items);
+  for (const it of items) if (it.category === "transport" && !it.transport) it.transport = inferTransportMode(it);
   if (ctx.checkInDefaults !== false) applyCheckInDefaults(items);
   if (ctx.branch) applyBranchPlacement(items, ctx.branch);
 
@@ -481,6 +483,60 @@ export function normalizeProposalItems(rawItems, ctx, parsed) {
   if (items.length > maxItems) { dropped += items.length - maxItems; kept = items.slice(0, maxItems); }
   kept.forEach((it, i) => { it.id = "p" + (i + 1); });
   return { items: kept, unreadable, dropped };
+}
+
+// 移動のすぐあとに、その移動の着いた先の「到着」（arrival）が別の候補で来たとき、移動の1件にまとめる
+// （AIが「羽田発→那覇着」を移動と到着の2件に分けることがある。地図でふりかえるでは、移動の到着地・
+// 到着時刻があるほうがきれいに動くので、取り込みでは移動1件にそろえる。2026-10-17）。
+// まとめる条件：到着の日が移動の着く日（arriveDate、無ければ出発日）と同じで、場所・時刻・手段が食い違わないこと
+export function mergeArrivalsIntoTransport(items) {
+  for (let i = items.length - 1; i >= 1; i--) {
+    const prev = items[i - 1], cur = items[i];
+    if (prev.category !== "transport" || cur.category !== "arrival") continue;
+    if (cur.date !== (prev.arriveDate || prev.date)) continue;
+    if (prev.toPlace && cur.place && !samePlaceName(prev.toPlace, cur.place)) continue;
+    if (prev.arriveTime && cur.time && prev.arriveTime !== cur.time) continue;
+    if (prev.transport && cur.transport && prev.transport !== cur.transport) continue;
+    prev.toPlace = prev.toPlace || cur.place;
+    prev.arriveTime = prev.arriveTime || cur.time;
+    prev.transport = prev.transport || cur.transport;
+    prev.costItems = prev.costItems.concat(cur.costItems);
+    if (cur.note && cur.note !== prev.note) prev.note = prev.note ? prev.note + " " + cur.note : cur.note;
+    for (const w of cur.warnings) if (!prev.warnings.includes(w)) prev.warnings.push(w);
+    if (cur.mapUrl && !prev.arriveMapUrl) prev.arriveMapUrl = cur.mapUrl;
+    if (cur.shopUrl && !prev.shopUrl) prev.shopUrl = cur.shopUrl;
+    items.splice(i, 1);
+  }
+  return items;
+}
+
+// 「那覇空港」と「那覇空港 国内線ターミナル」のように、片方がもう片方を含めば同じ場所とみなす
+function samePlaceName(a, b) {
+  const x = placeKey(a), y = placeKey(b);
+  return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+}
+
+// 移動手段が空の移動に、便名・空港・駅・見出しから手段を入れる（空のままだと地図で点線の仮の道になる）。
+// 分からなければ空文字のまま
+export function inferTransportMode(it) {
+  const route = String(it.routeNumber || "").normalize("NFKC").toUpperCase().trim();
+  // 手段を表す言葉は見出し・便名・会社名から見る（「空港までタクシー」の空港で飛行機にしない）
+  const words = [it.label, it.routeNumber, it.company].join(" ").normalize("NFKC");
+  const from = String(it.fromPlace || "").normalize("NFKC"), to = String(it.toPlace || "").normalize("NFKC");
+  const AIRPORT = /空港|機場|airport/i, STATION = /駅|車站|station/i;
+  if (/タクシー|計程車|taxi/i.test(words)) return "taxi";
+  if (/レンタカー|車で|運転|ドライブ|租車|開車|自駕|\bcar\b|drive/i.test(words)) return "car";
+  if (/徒歩|歩いて|步行|\bwalk/i.test(words)) return "walk";
+  if (/自転車|サイクリング|腳踏車|自行車|bicycle|\bbike\b/i.test(words)) return "bicycle";
+  if (/バス|巴士|客運|\bbus\b/i.test(words)) return "bus";
+  if (/新幹線|高鐵|shinkansen|(のぞみ|ひかり|こだま|はやぶさ|はやて|やまびこ|なすの|つばさ|こまち|とき|たにがわ|かがやき|はくたか|つるぎ|あさま|みずほ|さくら|つばめ)\s?\d+号/i.test(words)) return "shinkansen";
+  if (/^[A-Z0-9]{2}\s?\d{1,4}$/.test(route) && /[A-Z]/.test(route)) return "plane"; // 便名（JAL903はJL903の書き方もある）
+  if (/^[A-Z]{3}\s?\d{1,4}$/.test(route)) return "plane";
+  if (/フライト|飛行機|航空|flight|班機/i.test(words)) return "plane";
+  if (AIRPORT.test(from) && AIRPORT.test(to)) return "plane";
+  if (/電車|列車|特急|快速|鐵路|台鐵|捷運|地下鉄|\b(train|metro|subway)\b/i.test(words)) return "train";
+  if (STATION.test(from) && STATION.test(to)) return "train";
+  return "";
 }
 
 // 別行動（自分だけの道）に入れる候補の日付・時刻が、その別行動の時間帯に収まっているか確かめ、
@@ -524,18 +580,18 @@ function placeKey(q) { return String(q || "").normalize("NFKC").toLowerCase().re
 export { placeKey };
 
 // 場所を探す名前を、優先順に並べてmax件まで選ぶ（同じ名前は1件にまとめる）。
-// 優先順：①宿・会場・店（移動以外）②移動の出発地③移動の到着地。溢れたぶんはskippedに数える
+// 優先順：①移動の出発地・到着地（地図でふりかえるの道筋になるので先に探す。2026-10-17）②宿・会場・店。溢れたぶんはskippedに数える
 // （地図なしで確認画面に出て、利用者があとから場所を探せる）
 export function collectPlaceQueries(items, max) {
   const cap = max === undefined ? SCREENSHOT_MAX_PLACE_LOOKUPS : max;
   const ranked = [];
   for (const it of items) {
-    if (it.mapUrl) continue; // 話した／書いたURLの地図があるものは探さない
+    // 話した／書いたURLの地図があるところは探さない（移動は出発地＝mapUrl、到着地＝arriveMapUrl）
     if (it.category === "transport") {
-      if (it.fromPlace) ranked.push({ rank: 1, q: it.fromPlace });
-      if (it.toPlace) ranked.push({ rank: 2, q: it.toPlace });
-    } else if (it.place) {
-      ranked.push({ rank: 0, q: it.place });
+      if (it.fromPlace && !it.mapUrl) ranked.push({ rank: 0, q: it.fromPlace });
+      if (it.toPlace && !it.arriveMapUrl) ranked.push({ rank: 0, q: it.toPlace });
+    } else if (it.place && !it.mapUrl) {
+      ranked.push({ rank: 1, q: it.place });
     }
   }
   ranked.sort((a, b) => a.rank - b.rank);
@@ -590,7 +646,7 @@ export function attachPlaces(items, results) {
       it.mapLat = main.lat; it.mapLng = main.lng;
     }
     if (it.category === "transport") {
-      const arr = find(it.toPlace);
+      const arr = it.arriveMapUrl ? null : find(it.toPlace);
       if (arr) {
         it.arriveMapUrl = coordMapUrl(arr.lat, arr.lng);
         it.arrivePlaceName = arr.name;

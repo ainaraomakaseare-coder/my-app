@@ -2860,6 +2860,29 @@
     return { minutes: 0, nextDay: false };
   }
 
+  // 取り込んだ移動の所要分を、出発・到着の現地時刻と、出発地・到着地の時差（分。分からなければnull）から出す
+  // （時差が分かれば、成田21:00→ホノルル9:00のような時差のある便も正しく出す。2026-10-17）。
+  // 着く日arriveDateが出発日より後ならその日で数え、無ければ出発の前日〜2日後のうち、出発より後になる最初の日にする。
+  // 時差が分からないときは同じ時差とみなす（翌日着は12時間未満のときだけ。moveMinutesBetweenと同じ）が、
+  // 飛行機は時差をまたぐことが多いので出さない。出せなければ0
+  function travelMinutes(date, depart, arriveDate, arrive, depOff, arrOff, mode) {
+    var dm = hhmmToMinute(depart), am = hhmmToMinute(arrive);
+    if (dm === null || am === null || !parseDate(date)) return 0;
+    var known = typeof depOff === 'number' && typeof arrOff === 'number';
+    if (!known && mode === 'plane') return 0;
+    var dOff = known ? depOff : 0, aOff = known ? arrOff : 0;
+    var days = [];
+    if (parseDate(arriveDate) && arriveDate > date) days = [dateDiffDays(date, arriveDate)];
+    else days = known ? [-1, 0, 1, 2] : [0, 1];
+    for (var i = 0; i < days.length; i++) {
+      var m = (days[i] * 1440 + am - aOff) - (dm - dOff);
+      if (m <= 0) continue;
+      if (days.length > 1 && !known && days[i] === 1 && m >= 720) return 0;
+      return m <= 14400 ? m : 0;
+    }
+    return 0;
+  }
+
   function guessMemoCategory(label) {
     var s = String(label || '').normalize('NFKC');
     var tl = parseTransportLabel(s);
@@ -3861,6 +3884,8 @@
         p.from = it.fromPlace || ''; p.to = it.toPlace || '';
         p.company = [it.company, it.routeNumber].filter(Boolean).join(' ');
         p.depart = time; p.arrive = it.arriveTime || '';
+        // 着く日（サーバーは保存しない。保存後に所要時間を出すのに使う）
+        if (parseDate(it.arriveDate) && it.arriveDate > it.date) p.arriveDate = it.arriveDate;
         if (it.moveMinutes > 0) p.moveMinutes = Math.round(it.moveMinutes); // サーバーは受け取らないので、保存後にクライアントが予定へ書き足す
         if (it.arriveMapUrl) { p.arriveMapUrl = it.arriveMapUrl; p.arriveLat = it.arriveLat; p.arriveLng = it.arriveLng; }
       }
@@ -4260,6 +4285,7 @@
     parseTransportLabel: parseTransportLabel,
     guessTransportMode: guessTransportMode,
     moveMinutesBetween: moveMinutesBetween,
+    travelMinutes: travelMinutes,
     guessMemoCategory: guessMemoCategory,
     importTargetBranch: importTargetBranch,
     proposalDateStatus: proposalDateStatus,
@@ -8535,6 +8561,30 @@
     return map[msg] || tr('追加に失敗しました。もう一度お試しください。');
   }
 
+  // 取り込んだ移動に、出発・到着の時刻があれば所要時間（moveMinutes）を入れる。出発地・到着地の座標があれば
+  // その場所の時差で数える（地図でふりかえるで、到着時刻の無いところも移動の長さで動くように。2026-10-17）。
+  // 時差が調べられなくても保存は止めない（同じ時差とみなせるものだけ入れる）
+  function ssFillMoveMinutes(items) {
+    var tzCache;
+    try { tzCache = JSON.parse(localStorage.getItem(TZ_CACHE_KEY) || '{}'); } catch (e) { tzCache = {}; }
+    var num = function (v) { return typeof v === 'number' && isFinite(v); };
+    var jobs = items.filter(function (p) { return p.category === 'transport' && p.depart && p.arrive; }).map(function (p) {
+      var hasPts = num(p.mapLat) && num(p.mapLng) && num(p.arriveLat) && num(p.arriveLng);
+      var zones = hasPts && API_BASE
+        ? Promise.all([timezoneAt(p.mapLat, p.mapLng, tzCache), timezoneAt(p.arriveLat, p.arriveLng, tzCache)])
+        : Promise.resolve(['', '']);
+      return zones.then(function (z) {
+        var arriveDate = p.arriveDate || p.date;
+        var m = Core.travelMinutes(p.date, p.depart, p.arriveDate || '', p.arrive,
+          Core.tzOffsetMinutes(z[0], p.date, p.depart), Core.tzOffsetMinutes(z[1], arriveDate, p.arrive), p.transport);
+        if (m > 0) p.moveMinutes = m;
+      }).catch(function () {});
+    });
+    return Promise.all(jobs).then(function () {
+      try { localStorage.setItem(TZ_CACHE_KEY, JSON.stringify(tzCache)); } catch (e) { /* 端末に残せなくてもよい */ }
+    });
+  }
+
   // 保存した予定（サーバーの返したblocks）に、候補のmoveMinutesを書き足す。
   // 日付・時刻・見出しが同じ候補を探して合わせる（同じものが複数あれば先頭から順に）
   function ssSaveMoveMinutes(blocks, items) {
@@ -8577,7 +8627,9 @@
         .then(function (res) {
           // 取り込みのAPIは移動時間（moveMinutes）を保存しないので、移動の予定には保存後に書き足す。
           // 失敗しても予定の追加は成功のまま（所要時間は予定の編集で入れられる）
-          return ssSaveMoveMinutes(res.blocks || [], payload.items).catch(function () {}).then(function () { return res; });
+          return ssFillMoveMinutes(payload.items)
+            .then(function () { return ssSaveMoveMinutes(res.blocks || [], payload.items); })
+            .catch(function () {}).then(function () { return res; });
         })
         .then(function (res) { return refreshTrip().then(function () { return { res: res, failed: failedCurrencies }; }); });
     }).then(function (r) {
