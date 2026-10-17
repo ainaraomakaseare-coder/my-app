@@ -12,10 +12,24 @@ test('AI replies with prose, iPhone smart quotes and trailing commas still parse
   assert.throws(()=>box.parseMemoJSON('  '),/空です/);
   assert.throws(()=>box.parseMemoJSON('2025/4/12 横浜スタジアム、阪神戦。DeNAが5-3で勝ち！'),/JSONが見つかりません/);
 });
+test('common AI output variations are read as intended and reported as warnings',()=>{
+  const opts={defaultTeam:'baystars',defaultYear:2025};
+  const r=box.validateMemoGames([{date:'2025/4/12',myTeam:'DeNA',opponent:'阪神',score:{bay:'5',opp:'3'},result:'勝ち',competition:'交流戦',weather:'晴れ',ticketPrice:'4,500円',companions:'友人A、友人B',notablePlayers:['牧'],highlight:'最高'}],[],opts)[0];
+  assert.equal(JSON.stringify(r.errors),'[]');
+  assert.equal(r.game.date,'2025-04-12');assert.equal(r.game.myTeam,'baystars');assert.equal(JSON.stringify(r.game.score),'{"bay":5,"opp":3}');assert.equal(r.game.result,'win');
+  assert.equal(r.game.competition,'interleague');assert.equal(r.game.weather,'sunny');assert.equal(r.game.ticketPrice,4500);
+  assert.equal(JSON.stringify(r.game.companions),'["友人A","友人B"]');assert.equal(r.game.notablePlayers[0].name,'牧');
+  const noYear=box.validateMemoGames([{...good,date:'4月12日'}],[],opts)[0];
+  assert.equal(noYear.game.date,'2025-04-12');assert.ok(noYear.warnings.some(w=>w.includes('2025年')));
+  assert.ok(box.validateMemoGames([{...good,date:'4/12'}],[],{defaultTeam:'baystars'})[0].errors.length,'year is not invented without defaultYear');
+  const team=box.validateMemoGames([{...good,myTeam:null}],[],opts)[0];assert.equal(team.errors.length,0);assert.ok(team.warnings.some(w=>w.includes('応援球団')));
+  const str=box.validateMemoGames([{...good,score:'5-3',result:null}],[],opts)[0];assert.equal(JSON.stringify(str.game.score),'{"bay":5,"opp":3}');assert.equal(str.game.result,'win');
+  assert.equal(box.validateMemoGames([{...good,competition:'クライマックスシリーズ'}],[],opts)[0].game.competition,'cs');
+});
 test('real dates, leap years, and absent dates',()=>{assert.equal(box.validMemoDate('2024-02-29'),true);assert.equal(box.validMemoDate('2025-02-29'),false);assert.equal(box.validMemoDate('2025-13-01'),false);assert.equal(validate({...good,date:null}).errors.length>0,true);});
-test('score/result contradictions and non-numeric values rejected',()=>{assert.ok(validate({...good,result:'lose'}).errors.length);assert.ok(validate({...good,score:{bay:'5',opp:3}}).errors.length);assert.ok(validate({...good,score:{bay:-1,opp:3}}).errors.length);assert.ok(validate({...good,score:{bay:1.5,opp:3}}).errors.length);});
+test('score/result contradictions and non-numeric values rejected',()=>{assert.ok(validate({...good,result:'lose'}).errors.length);assert.ok(validate({...good,score:{bay:'五',opp:3}}).errors.length);assert.ok(validate({...good,score:{bay:-1,opp:3}}).errors.length);assert.ok(validate({...good,score:{bay:1.5,opp:3}}).errors.length);});
 test('missing team or opponent not silently guessed',()=>{assert.ok(validate({...good,myTeam:null}).errors.length);assert.ok(validate({...good,opponent:''}).errors.length);assert.ok(validate({...good,opponent:'横浜'}).errors.length);});
-test('metadata type validation and original memo preservation',()=>{assert.equal(validate(good).game.sourceMemo,'原文');assert.ok(validate({...good,companions:'友人'}).errors.length);assert.ok(validate({...good,ticketPrice:-1}).errors.length);assert.ok(validate({...good,notablePlayers:[{name:'牧'}]}).errors.length);assert.ok(validate({...good,temp:Infinity}).errors.length);});
+test('metadata type validation and original memo preservation',()=>{assert.equal(validate(good).game.sourceMemo,'原文');assert.ok(validate({...good,companions:5}).errors.length);assert.ok(validate({...good,ticketPrice:-1}).errors.length);assert.ok(validate({...good,notablePlayers:[{name:5}]}).errors.length);assert.ok(validate({...good,temp:Infinity}).errors.length);});
 test('unknown result remains unknown, no invented scores',()=>{const r=validate({...good,result:null,score:{bay:null,opp:null}});assert.equal(r.errors.length,0);assert.equal(r.game.result,null);assert.ok(r.warnings.length);});
 test('same-day duplicate aliases and in-batch duplicates',()=>{assert.equal(box.validateMemoGames([good,good],[{...good,opponent:'阪神タイガース'}]).filter(r=>r.duplicate).length,2);assert.equal(box.validateMemoGames([good,good],[])[1].duplicate,true);});
 test('share summaries isolate team/year/venue and empty rates',()=>{const games=[good,{...good,myTeam:'tigers'},{...good,date:'2024-04-12'},{...good,venue:'東京ドーム'}];assert.equal(box.shareSummary(games,{team:'baystars',mode:'season',year:2025},'2025-12-31').stats.played,2);assert.equal(box.shareSummary(games,{team:'baystars',mode:'venue',year:2025,venue:'横浜スタジアム'},'2025-12-31').stats.played,1);assert.equal(box.shareSummary([],{team:'baystars',mode:'all'},'2025-12-31').stats.winRate,null);});

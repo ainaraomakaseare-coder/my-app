@@ -29,6 +29,9 @@ def patch_manifest():
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.CAMERA",
+        # 記録の「現在地を入れる」（WebViewのnavigator.geolocation）。Capacitorが実行時に許可を求める
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
     ]
     for p in perms:
         tag = '<uses-permission android:name="%s" />' % p

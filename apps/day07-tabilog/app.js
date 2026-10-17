@@ -4706,6 +4706,40 @@
     };
   }
 
+  // カバー写真の無い旅行の詳細ヘッダー（タイトル・日程）の位置を、タップした瞬間に実測する。写真が無いと
+  // タイトルは画面の上（戻る／編集ボタンの下）に来るのに、以前は写真がある前提の見積もり（画面の4割ほど下）
+  // へ広げていたため、真ん中あたりに出た旅行が本物に切り替わった瞬間に上へ飛んで見えていた（2026-10-13）。
+  // 詳細画面は非表示なので、見えないまま一瞬だけ並べて測り、すぐ元に戻す。測れなければnull。
+  function measureTripDetailNoCoverSheet(titleText, dateText) {
+    var screenEl = $('.screen[data-screen="tripDetail"]');
+    var coverEl = $('#tripCoverPhoto');
+    var sheetEl = $('.trip-cover-text');
+    var titleEl = $('#tripTitle');
+    var datesEl = $('#tripDates');
+    if (!screenEl || !coverEl || !sheetEl || !titleEl || !datesEl) return null;
+    var saved = { style: screenEl.getAttribute('style'), hidden: coverEl.hidden, title: titleEl.textContent, dates: datesEl.textContent };
+    try {
+      // 本物の画面はいちばん上までスクロールした状態で出るので、.app（上の安全領域ぶんのpadding込み）の
+      // いちばん上に置いた位置で測る
+      var appEl = $('#app') || document.body;
+      var appRect = appEl.getBoundingClientRect();
+      var top = appRect.top + window.scrollY + (parseFloat(window.getComputedStyle(appEl).paddingTop) || 0);
+      screenEl.style.cssText += ';display:block;visibility:hidden;position:fixed;top:' + top + 'px;left:' + appRect.left + 'px;width:' + appRect.width + 'px;';
+      coverEl.hidden = true;
+      titleEl.textContent = titleText || ' ';
+      datesEl.textContent = dateText || ' ';
+      var r = sheetEl.getBoundingClientRect();
+      return r.width && r.height ? { top: r.top, left: r.left, width: r.width, height: r.height } : null;
+    } catch (e) {
+      return null;
+    } finally {
+      if (saved.style === null) screenEl.removeAttribute('style'); else screenEl.setAttribute('style', saved.style);
+      coverEl.hidden = saved.hidden;
+      titleEl.textContent = saved.title;
+      datesEl.textContent = saved.dates;
+    }
+  }
+
   // 詳細画面が実際にactiveになった後（＝本物のカバー写真・シートがDOMに描画された後）に、
   // 実測のヘッダー位置を読み取る。これが取れる場面（screenReady後）ではこちらを正として使う。
   function readTripDetailHeaderTarget() {
@@ -4882,7 +4916,7 @@
   function tripTextById(id) {
     var found = null;
     homeAllTrips().concat(state.myLogTrips || []).some(function (t) { if (t.id === id) { found = t; return true; } return false; });
-    return found ? { title: found.title || '', dates: tripDateText(found), coverPhotoId: found.coverPhotoId || '' } : { title: '', dates: '', coverPhotoId: '' };
+    return found ? { found: true, title: found.title || '', dates: tripDateText(found), coverPhotoId: found.coverPhotoId || '' } : { found: false, title: '', dates: '', coverPhotoId: '' };
   }
   // 詳細画面のカバー写真を先に読み込んでおく（読み終わる前に詳細画面を見せると、文字だけが先に出て、
   // あとから写真がぱっと出たように見えた。2026-10-07）。読み終わったら（失敗しても）doneを呼ぶ。
@@ -4927,18 +4961,30 @@
     var leavingScreen = $('.screen.active');
     var leavingScrollY = window.scrollY;
     var target = computeTripDetailHeaderTarget(); // 実測はまだできないので見積もり
+    var srcText = tripTextById(tripId);
+    var titleText = (source && source.title) || (visual.titleEl ? visual.titleEl.textContent : '') || srcText.title;
+    var dateText = (source && source.dates !== undefined) ? source.dates : (visual.dateEl ? visual.dateEl.textContent : srcText.dates);
+    // カバー写真の無い旅行は、写真の場所へは広げず、本物と同じ「画面の上のタイトル」の位置へ動かす。
+    // 白い枠も、本物に白いシートが無いので、動きながら地の色に溶かす（noCover）。
+    var noCover = srcText.found && !srcText.coverPhotoId && !(visual.hasPhoto && !visual.thumb);
+    var noCoverSheet = noCover ? measureTripDetailNoCoverSheet(titleText, dateText) : null;
+    if (noCover && !noCoverSheet) noCover = false;
     // 「広がるだけ・縮まない」を保証するため、見積もりがカードの現在の大きさより小さければ
     // カード側の大きさで底上げする（カードの内容が長くて見積もりより大きい、といったケースの保険）。
     // ただしsheetRect（白本体クローンの最終サイズ）は「タイトル・日程のシート」だけであるべきで、
     // 詳細画面の残り全部（写真の下〜画面の下まで）ではない。カードの本体（.trip-card-info等）が
     // シートの見積もりより多少大きくても、ここで底上げするのはあくまでシート1枚分の高さまで
     // （行き過ぎて画面下まで覆う大きさにはならない＝2026-09-29、白い板がでかすぎる不具合の修正）。
-    if (!visual.thumb) {
+    if (noCover) {
+      target = { photoRect: null, sheetRect: noCoverSheet };
+    } else if (!visual.thumb) {
       target.photoRect.width = Math.max(target.photoRect.width, visual.photoRect ? visual.photoRect.width : 0);
       target.photoRect.height = Math.max(target.photoRect.height, visual.photoRect ? visual.photoRect.height : 0);
     }
-    target.sheetRect.width = Math.max(target.sheetRect.width, visual.bodyRect.width);
-    target.sheetRect.height = Math.max(target.sheetRect.height, Math.min(visual.bodyRect.height, target.sheetRect.height * 1.6));
+    if (!noCover) {
+      target.sheetRect.width = Math.max(target.sheetRect.width, visual.bodyRect.width);
+      target.sheetRect.height = Math.max(target.sheetRect.height, Math.min(visual.bodyRect.height, target.sheetRect.height * 1.6));
+    }
 
     var backdrop = document.createElement('div');
     backdrop.className = 'trip-open-backdrop';
@@ -4948,7 +4994,6 @@
     var bgFade = document.createElement('div');
     bgFade.className = 'trip-open-bg-fade';
 
-    var srcText = tripTextById(tripId);
     var coverUrl = srcText.coverPhotoId ? photoUrl(srcText.coverPhotoId) : '';
     // 写真クローン：カードに写真があればその写真から広がる。カードに写真が無くても（行った場所のチップなど）
     // 旅行にカバー写真があれば、白い枠と同じ位置から透明→不透明にしながら広げる（以前は文字だけが広がり、
@@ -4960,7 +5005,7 @@
       setCloneRect(clonePhoto, visual.photoRect);
       clonePhoto.style.borderRadius = visual.photoRadius;
       clonePhoto.style.backgroundImage = visual.photoUrl;
-    } else if (coverUrl || visual.thumb) {
+    } else if (coverUrl || (visual.thumb && !noCover)) {
       clonePhoto = document.createElement('div');
       clonePhoto.className = 'trip-open-clone trip-open-clone-photo';
       setCloneRect(clonePhoto, visual.bodyRect);
@@ -4975,9 +5020,8 @@
     setCloneRect(cloneBody, visual.bodyRect);
     cloneBody.style.borderRadius = visual.bodyRadius;
     var thumbGhost = addThumbGhost(cloneBody, visual);
-    var titleText = (source && source.title) || (visual.titleEl ? visual.titleEl.textContent : '') || srcText.title;
-    var dateText = (source && source.dates !== undefined) ? source.dates : (visual.dateEl ? visual.dateEl.textContent : srcText.dates);
     var textParts = addCloneText(visual.bodyRect, titleText, dateText, target.sheetRect.width);
+    if (noCover) textParts.layer.classList.add('no-cover');
     textParts.titleEl.style.transition = textParts.datesEl.style.transition = 'none';
 
     document.body.appendChild(backdrop);
@@ -5055,7 +5099,8 @@
       }
       setCloneRect(cloneBody, target.sheetRect);
       setCloneRect(textParts.layer, target.sheetRect);
-      cloneBody.style.borderRadius = '20px 20px 0 0';
+      cloneBody.style.borderRadius = noCover ? '0' : '20px 20px 0 0';
+      if (noCover) cloneBody.classList.add('plain');
       if (thumbGhost) thumbGhost.style.opacity = '0';
       textParts.titleEl.style.transition = textParts.datesEl.style.transition = '';
       clearCloneTextFit(textParts);
@@ -5118,10 +5163,13 @@
     var cloneBody = document.createElement('div');
     cloneBody.className = 'trip-open-clone trip-open-clone-body';
     setCloneRect(cloneBody, start.sheetRect);
-    cloneBody.style.borderRadius = '20px 20px 0 0';
+    cloneBody.style.borderRadius = start.hasPhoto ? '20px 20px 0 0' : '0';
+    // カバー写真の無い旅行は、本物に白いシートが無いので、地の色から白い枠へ戻していく
+    if (!start.hasPhoto) cloneBody.classList.add('plain');
     var thumbGhost = cardVisual.thumb ? addThumbGhost(cloneBody, cardVisual) : null;
     if (thumbGhost) thumbGhost.style.opacity = '0';
     var textParts = addCloneText(start.sheetRect, titleText, datesText, start.sheetRect.width);
+    if (!start.hasPhoto) textParts.layer.classList.add('no-cover');
 
     document.body.appendChild(backdrop);
     document.body.appendChild(bgFade);
@@ -5158,6 +5206,7 @@
       setCloneRect(cloneBody, cardVisual.bodyRect);
       setCloneRect(textParts.layer, cardVisual.bodyRect);
       cloneBody.style.borderRadius = cardVisual.bodyRadius;
+      cloneBody.classList.remove('plain');
       if (thumbGhost) thumbGhost.style.opacity = '1';
       fitCloneText(textParts, cardVisual.bodyRect, cardVisual.titleEl, cardVisual.dateEl);
     });
@@ -7785,7 +7834,7 @@
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
     if (!user) {
-      $('#memoAiInfo').textContent = tr('AIでの整理と音声入力は、ログインすると使えます（それぞれ月3回まで無料）。');
+      $('#memoAiInfo').textContent = tr('AIでの整理と音声入力は、ログインすると使えます（それぞれ月5回まで無料）。');
       return;
     }
     $('#memoAiInfo').textContent = '';
@@ -7794,10 +7843,24 @@
     });
   }
 
+  // メモ・スクショの残り回数と回数券の残りを1行に並べる。画面が狭いときは、項目の途中ではなく
+  // 項目の切れ目で折り返す（以前は文字列をつなげていたので「回数券：あと」の途中で改行されていた）
+  function renderAiQuotaInfo(el, account) {
+    el.textContent = '';
+    var parts = [tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit })];
+    if (account.ticketCredits) parts.push(tr('回数券：あと{n}回', { n: account.ticketCredits }));
+    parts.forEach(function (text, i) {
+      if (i) el.appendChild(document.createTextNode(' '));
+      var span = document.createElement('span');
+      span.className = 'quota-part';
+      span.textContent = text;
+      el.appendChild(span);
+    });
+  }
+
   // 音声・メモの画面に、残り回数と、使い切ったときの案内（iOSアプリなら回数券を買う入口も）を反映する
   function applyAiQuotaUi(account) {
-    var bonus = account.ticketCredits ? tr('（回数券：あと{n}回）', { n: account.ticketCredits }) : '';
-    $('#memoAiInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
+    renderAiQuotaInfo($('#memoAiInfo'), account);
     var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
     if (!voiceOk) {
       // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
@@ -8170,8 +8233,7 @@
     showScreen('screenshotImport');
     fetchAccountStatus(null, true).then(function (account) {
       if (!account) return;
-      var bonus = account.ticketCredits ? tr('（回数券：あと{n}回）', { n: account.ticketCredits }) : '';
-      $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit }) + bonus;
+      renderAiQuotaInfo($('#ssInfo'), account);
       if (account.memoRemainingThisPeriod <= 0 && !account.ticketCredits) renderTicketShop($('#ssTicketShop'));
     });
   }
@@ -11286,6 +11348,43 @@
     selectedPlaceNameUrl = url;
   }
 
+  // 「現在地を入れる」：端末の位置情報から今いる場所を、候補を選んだときと同じ形（座標の地図URL＋
+  // ピンを動かせる地図）で入れる。名前は持たないので、検索欄は空にして場所の名前は保存しない
+  // （検索欄に残っていた別の場所の名前が付いてしまわないように）。2026-10-15
+  function useCurrentLocation() {
+    var status = $('#entPlaceStatus');
+    if (!navigator.geolocation) { status.textContent = tr('この端末では現在地を取得できません。'); return; }
+    var btn = $('#btnCurrentLocation');
+    btn.disabled = true;
+    status.textContent = tr('現在地を取得しています…');
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      btn.disabled = false;
+      var lat = Math.round(pos.coords.latitude * 1e6) / 1e6;
+      var lng = Math.round(pos.coords.longitude * 1e6) / 1e6;
+      if (!isFinite(lat) || !isFinite(lng)) { status.textContent = tr('現在地を取得できませんでした。'); return; }
+      $('#entPlaceSearch').value = '';
+      placeCandidates = [{ name: '', lat: lat, lng: lng }];
+      placeChoice = '0';
+      $('#entPlaceCandidates').hidden = true;
+      previewSelectedPlace();
+      applySelectedPlaceToMapUrl();
+      status.textContent = tr('現在地を地図に入れました。ずれていたらピンを動かして直せます。');
+    }, function (err) {
+      btn.disabled = false;
+      status.textContent = err && err.code === 1
+        ? tr('位置情報の利用が許可されていません。端末の設定で許可してください。')
+        : tr('現在地を取得できませんでした。');
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  }
+
+  // 「今」：時刻の欄に端末の今の時刻（HH:MM）を入れる（2026-10-15）
+  function setTimeNow(input) {
+    var d = new Date();
+    input.value = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   // 外貨の行で、まだレートが（自動取得も手入力も）入っていないもの。保存を止める対象（2026-09-27）
   function costItemsMissingRate() {
     return state.formCostItems.map(function (it, idx) { return { it: it, idx: idx }; })
@@ -11659,8 +11758,7 @@
     var name = active && active.dataset.screen;
     if (name === 'voiceEntryForm' && state.account) applyAiQuotaUi(state.account);
     else if (name === 'screenshotImport' && state.account) {
-      var bonus = state.account.ticketCredits ? tr('（回数券：あと{n}回）', { n: state.account.ticketCredits }) : '';
-      $('#ssInfo').textContent = tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: state.account.memoRemainingThisPeriod, max: state.account.memoMonthlyLimit }) + bonus;
+      renderAiQuotaInfo($('#ssInfo'), state.account);
       $('#ssTicketShop').hidden = true;
       $('#ssTicketShop').innerHTML = '';
     }
@@ -14686,6 +14784,9 @@
     $('#tripHistoryList').addEventListener('change', updateTripHistorySelection);
     $('#btnScanReceipt').addEventListener('click', function () { if (!confirmAiDataSharing()) return; $('#receiptFileInput').click(); });
     $('#btnPlaceSearch').addEventListener('click', showPlaceMapPreview);
+    $('#btnCurrentLocation').addEventListener('click', useCurrentLocation);
+    $('#btnEntTimeNow').addEventListener('click', function () { setTimeNow($('#entTime')); });
+    $('#btnBlkTimeNow').addEventListener('click', function () { setTimeNow($('#blkTime')); });
     $('#btnArriveSearch').addEventListener('click', searchArrivePlace);
     $('#entArriveSearch').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); searchArrivePlace(); } });
     $('#entArriveCandidates').addEventListener('click', function (e) {
