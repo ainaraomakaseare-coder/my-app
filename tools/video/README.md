@@ -27,6 +27,7 @@
 | `source` / `out` | 顔の録画 / 書き出し先 |
 | `crop` | `{w,h,x,y}` 録画から縦 9:16 に切り抜く位置 |
 | `padHead` / `padTail` | 切れ目の余白（既定 0.2 / 0.4 秒。本人の指摘で広めにした） |
+| `subMargin` / `hookMargin` | 字幕 / 大テロップの、画面の下からの高さ（既定 480 / 720。SNSの下の投稿文に重ならない高さ） |
 | `header` | カードの見出し |
 | `cards` | `shot`（画像・`box`）/ `list`（一覧）/ `clip`（画面録画・`from` `to` `speed` `blur`） |
 | `segments` | `{from, to, lines: [[秒, 字幕], …], show, tel, joined}` |
