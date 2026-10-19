@@ -73,6 +73,9 @@ jobs:
           # 記録の「現在地を入れる」は端末の位置情報を使う。説明文が無いとWebView内で
           # 位置情報の許可を求められず、現在地を取得できない（2026-10-15）
           /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string '旅の記録に今いる場所の地図を入れるために使用します'" Info.plist
+          # 記録に写真を追加するとき、写真ライブラリから直接選んで撮影場所（位置情報）を読む（@capacitor/camera）。
+          # ファイルとして選ぶとiOSが位置情報を消すため。説明文が無いと許可を求めた瞬間にクラッシュする（2026-10-19）
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string '旅の記録に写真を追加し、撮影した場所を地図に入れるために使用します'" Info.plist
           # 独自の暗号化は使っておらず標準的なHTTPS通信のみのため、輸出コンプライアンスの
           # 質問（TestFlight配信のたびに毎回聞かれるやつ）が出ないようここで申告しておく。
           # ios/フォルダは毎回作り直しなので、CI側で毎回追加する。
