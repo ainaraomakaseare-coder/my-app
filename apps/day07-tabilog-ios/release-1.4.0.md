@@ -12,6 +12,7 @@
 ・年表から旅行を開くときの動きを、なめらかにしました
 ・「←」で戻ったとき、ホームの旅行一覧がすぐ見えるようにしました
 ・「地図でふりかえる」で、時差のある飛行機の到着や、宿から翌日の予定への動きが自然になりました
+・音声・メモで入れた飛行機や電車の移動が1件にまとまり、所要時間も入るようにしました
 ・そのほか細かな不具合を直しました
 ```
 
@@ -23,6 +24,7 @@
 - Opening a trip from the timeline is now smoother
 - Going back with "←" now shows your trip list on the home screen right away
 - "Replay on map" now moves more naturally for flights across time zones and from your hotel to the next day
+- Flights and trains added by voice or memo now become a single trip with the travel time filled in
 - Other small bug fixes
 ```
 
@@ -34,6 +36,7 @@
 ・從年表開啟旅行時的動作更流暢了
 ・用「←」返回時，會馬上看到首頁的旅行列表
 ・「在地圖上回顧」中，跨時區的航班抵達和從住宿到隔天行程的移動更自然了
+・用語音或備忘錄加入的航班和火車移動會整合成一筆，並自動填入所需時間
 ・修正了其他小問題
 ```
 
