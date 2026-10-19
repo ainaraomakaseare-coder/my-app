@@ -428,6 +428,11 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>
         <span>行った場所をGoogleマップで</span>
       </button>
+      <!-- 時系列ムービー（docs/adr/0024）。時刻と場所を出しながら、写真と動画を時間の順に流す縦動画 -->
+      <button class="replay-entry-btn post-entry-btn" id="btnOpenTlm" type="button" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>
+        <span>時系列ムービーを作る</span>
+      </button>
 
       <!-- 自分だけの道（別行動）の切り替え：みんな／人ごと。分岐がある旅行だけ、app.jsのrenderBranchSwitcherが出す（docs/adr/0021） -->
       <div class="branch-switch" id="branchSwitcher" hidden></div>
@@ -1023,6 +1028,42 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <button class="btn ghost" id="btnRsvAgain" type="button">作り直す</button>
       </div>
       <button class="btn ghost wide" id="btnRsvOther" type="button" hidden>もう一方の動画を見る</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 時系列ムービー（写真と動画を時間の順に流す縦動画。docs/adr/0024） ============ -->
+<div class="sheet-backdrop rsv-backdrop" id="tlmSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="tlmSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="tlmSheetTitle">時系列ムービー</div>
+      <button class="sheet-close" id="btnCloseTlm" type="button" aria-label="閉じる">×</button>
+    </div>
+    <div class="rsv-panel" id="tlmOptions">
+      <p class="hint">「9:30 首里城」のように時刻と場所を出しながら、記録の写真と動画を時間の順に流す縦の動画を作ります（最長60秒）。費用・日記の文章・一緒に行った人の名前は入りません。</p>
+      <p class="hint" id="tlmLength"></p>
+      <label class="post-option"><input type="checkbox" id="tlmVideos" checked> 記録の動画も入れる（音は入りません）</label>
+      <p class="hint">同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。</p>
+      <div class="post-actions">
+        <button class="btn primary wide" id="btnTlmStart" type="button">動画を作る</button>
+      </div>
+      <p class="hint comment-status" id="tlmStatus"></p>
+    </div>
+    <div class="rsv-panel" id="tlmProgress" hidden>
+      <p class="rsv-percent" id="tlmPercent">0%</p>
+      <p class="rsv-progress-text" id="tlmProgressText">動画を作っています…</p>
+      <div class="rsv-bar"><div class="rsv-bar-fill" id="tlmBarFill"></div></div>
+      <p class="hint">動画は実際の時間をかけて作るので、動画の長さと同じだけ時間がかかります。この画面を開いたままお待ちください。</p>
+      <button class="btn ghost wide" id="btnTlmCancel" type="button">キャンセル</button>
+    </div>
+    <div class="rsv-panel" id="tlmResult" hidden>
+      <video class="rsv-video" id="tlmVideo" playsinline muted loop controls></video>
+      <p class="hint" id="tlmResultNote"></p>
+      <div class="post-actions">
+        <button class="btn primary" id="btnTlmShare" type="button">共有する</button>
+        <button class="btn ghost" id="btnTlmSave" type="button" hidden>動画を保存</button>
+        <button class="btn ghost" id="btnTlmAgain" type="button">作り直す</button>
+      </div>
     </div>
   </div>
 </div>
