@@ -1426,6 +1426,77 @@
     if (!q) return '';
     return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
+
+  // ---------- 行った場所をGoogleマップで（docs/adr/0023） ----------
+  // 地図（記録の地図のURLか座標）がある予定を、日付・時刻の順に「場所」の一覧にする。
+  // 同じ場所（連泊の宿など、名前と座標が同じ）は最初の1つだけ。費用・エピソード・人の名前は持たない
+  // （おすすめとして人に送る文章とKMLに使うため）。
+  function tripPlaces(trip, blocks) {
+    var out = [], seen = {};
+    sortBlocks(blocks || []).forEach(function (b) {
+      var e = (b.entries || [])[0] || {};
+      var url = /^https?:\/\//i.test((e.mapUrl || '').trim()) ? e.mapUrl.trim() : '';
+      var hasPin = typeof e.mapLat === 'number' && typeof e.mapLng === 'number' && isFinite(e.mapLat) && isFinite(e.mapLng);
+      if (!url && !hasPin) return;
+      var name = (e.mapPlaceName || '').trim() || (b.label || '').trim();
+      var key = name + '|' + (hasPin ? e.mapLat.toFixed(5) + ',' + e.mapLng.toFixed(5) : url);
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push({
+        blockId: b.id, date: b.date || '', time: b.time || '', dayLabel: dayLabel(trip, b.date),
+        category: b.category || 'other', name: name,
+        lat: hasPin ? e.mapLat : null, lng: hasPin ? e.mapLng : null, mapUrl: url
+      });
+    });
+    return out;
+  }
+
+  // 1つの場所を開くGoogleマップのURL。
+  // ①本人が貼ったGoogleマップなどのリンク（このアプリが座標から作った検索URL以外）が一番正確なのでそのまま
+  // ②名前と座標があれば「その座標の近くで名前を検索」（座標だけだと名前の無いピンになり、おすすめとして伝わらない）
+  // ③どちらかだけなら、保存してあるURLか座標で開く
+  function googleMapsPlaceUrl(p) {
+    if (!p) return '';
+    var hasPin = typeof p.lat === 'number' && typeof p.lng === 'number' && isFinite(p.lat) && isFinite(p.lng);
+    var own = p.mapUrl && !/google\.[a-z.]+\/maps\/search\/\?api=1/i.test(p.mapUrl) ? p.mapUrl : '';
+    if (own) return own;
+    if (p.name && hasPin) return 'https://www.google.com/maps/search/' + encodeURIComponent(p.name) + '/@' + p.lat + ',' + p.lng + ',17z';
+    if (p.mapUrl) return p.mapUrl;
+    return hasPin ? placeMapUrl({ lat: p.lat, lng: p.lng }) : '';
+  }
+
+  // LINEなどに貼る「行った場所」のリスト。日ごとに、名前（種類）と開くリンクを並べる。
+  function buildPlaceListText(trip, places) {
+    var lines = [tr('【{title}】で行った場所（{n}か所）', { title: (trip && trip.title) || '', n: places.length })];
+    var lastDay = null;
+    places.forEach(function (p) {
+      if (p.dayLabel !== lastDay) {
+        lastDay = p.dayLabel;
+        lines.push('', '■' + p.dayLabel + (p.date && p.dayLabel !== formatDateJp(p.date) ? ' ' + formatDateJp(p.date) : ''));
+      }
+      lines.push('・' + p.name + '（' + categoryLabel(p.category) + '）');
+      var url = googleMapsPlaceUrl(p);
+      if (url) lines.push(url);
+    });
+    lines.push('', tr('旅の足跡で記録しました') + ' ' + PUBLIC_WEB_BASE);
+    return lines.join('\n');
+  }
+
+  function xmlEscape(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  // Googleマイマップの「インポート」で読み込めるKML。座標のある場所だけをピンにする。
+  function buildPlacesKml(trip, places) {
+    var marks = places.filter(function (p) { return typeof p.lat === 'number' && typeof p.lng === 'number'; }).map(function (p) {
+      var desc = p.dayLabel + (p.time ? ' ' + p.time : '') + '・' + categoryLabel(p.category);
+      var url = googleMapsPlaceUrl(p);
+      return '<Placemark><name>' + xmlEscape(p.name) + '</name>' +
+        '<description>' + xmlEscape(desc + (url ? '\n' + url : '')) + '</description>' +
+        '<Point><coordinates>' + p.lng + ',' + p.lat + '</coordinates></Point></Placemark>';
+    });
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">' +
+      '<Document><name>' + xmlEscape((trip && trip.title) || tr('旅の足跡')) + '</name>\n' + marks.join('\n') + '\n</Document></kml>\n';
+  }
   // 候補（place。「地図のURL」欄の座標検索で選んだもの）または検索した文字列（searchText。
   // 「Googleマップで検索」を選んだときなど、座標のない検索）から、記録と一緒に保存する
   // 「場所の名前」を決める。候補があればその名前（例：Googleの候補のname）。無ければ検索文字列を
@@ -4593,6 +4664,10 @@
     replayPlaceEntry: replayPlaceEntry,
     hasBrokenMapQuery: hasBrokenMapQuery,
     placeMapUrl: placeMapUrl,
+    tripPlaces: tripPlaces,
+    googleMapsPlaceUrl: googleMapsPlaceUrl,
+    buildPlaceListText: buildPlaceListText,
+    buildPlacesKml: buildPlacesKml,
     placeSelectionName: placeSelectionName,
     travelArrival: travelArrival,
     replayStops: replayStops,
@@ -7455,6 +7530,7 @@
     $('#btnOpenReplay').hidden = !(state.blocks || []).some(function (b) { return b.date; });
     // 「紹介文を作る」の入り口は一時的に隠す（FEATURES.post、2026-09-26〜。サーバー機能は残す）
     $('#btnOpenPost').hidden = !FEATURES.post;
+    $('#btnOpenPlaces').hidden = !Core.tripPlaces(trip, activeBlocks()).length;
     renderTripJoin();
     renderTripSocialBar();
 
@@ -7828,6 +7904,93 @@
     } else {
       $('#postText').select(); document.execCommand('copy'); done();
     }
+  }
+
+  // ---------- 行った場所をGoogleマップで（docs/adr/0023） ----------
+  // 地図のある予定を日ごとに並べ、タップでGoogleマップを開く。リストのコピー・共有（LINEなどに貼る）と、
+  // Googleマイマップに読み込めるKMLの保存ができる。移動・到着は「おすすめ」には要らないことが多いので最初は外す。
+  var PLACES_FILTER_KEYS = ['sightseeing', 'food', 'lodging', 'other', 'transport', 'arrival'];
+  var placesFilterOn = { sightseeing: true, food: true, lodging: true, other: true, transport: false, arrival: false };
+  function placesAll() { return Core.tripPlaces(state.trip, activeBlocks()); }
+  function placesPicked() { return placesAll().filter(function (p) { return placesFilterOn[p.category] !== false; }); }
+  function renderPlacesSheet() {
+    var all = placesAll();
+    var present = {};
+    all.forEach(function (p) { present[p.category] = true; });
+    $('#placesFilter').innerHTML = PLACES_FILTER_KEYS.filter(function (k) { return present[k]; }).map(function (k) {
+      var on = placesFilterOn[k] !== false;
+      return '<button type="button" class="cat-chip' + (on ? ' on' : '') + '" data-places-cat="' + k + '" aria-pressed="' + on + '">' + escapeHtml(Core.categoryLabel(k)) + '</button>';
+    }).join('');
+    var picked = placesPicked();
+    var html = '', lastDay = null;
+    picked.forEach(function (p) {
+      if (p.dayLabel !== lastDay) { lastDay = p.dayLabel; html += '<li class="places-day">' + escapeHtml(p.dayLabel) + '</li>'; }
+      var url = Core.googleMapsPlaceUrl(p);
+      html += '<li class="places-item"><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' +
+        '<span class="places-name">' + escapeHtml(p.name || tr('（名前なし）')) + '</span>' +
+        '<span class="places-cat">' + escapeHtml(Core.categoryLabel(p.category)) + '</span>' +
+        '<span class="places-open">' + tr('開く') + '</span></a></li>';
+    });
+    $('#placesList').innerHTML = html || '<li class="places-empty">' + tr('選んだ種類の場所はありません') + '</li>';
+    var noPin = picked.filter(function (p) { return typeof p.lat !== 'number'; }).length;
+    $('#btnCopyPlaces').disabled = !picked.length;
+    $('#btnSharePlaces').disabled = !picked.length;
+    $('#btnSavePlacesKml').disabled = picked.length === noPin;
+    $('#placesStatus').textContent = noPin && picked.length > noPin ? tr('座標の分からない{n}か所は、KMLファイルには入りません', { n: noPin }) : '';
+  }
+  function openPlacesSheet() {
+    if (!state.trip) return;
+    renderPlacesSheet();
+    $('#btnSharePlaces').hidden = !navigator.share;
+    $('#placesSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+  function closePlacesSheet() {
+    $('#placesSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+  }
+  function copyPlacesText() {
+    var text = Core.buildPlaceListText(state.trip, placesPicked());
+    var done = function () { $('#placesStatus').textContent = tr('コピーしました。LINEやメッセージに貼り付けて送れます。'); };
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { /* コピーできない環境 */ }
+      ta.remove();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(fallback);
+    else fallback();
+  }
+  function savePlacesKml() {
+    var kml = Core.buildPlacesKml(state.trip, placesPicked());
+    var name = ((state.trip.title || 'tabinoashiato').replace(/[\\/:*?"<>|]/g, '').trim() || 'tabinoashiato') + '.kml';
+    var blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+    var file = new File([blob], name, { type: blob.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).catch(function (e) {
+        if (e && e.name === 'AbortError') return;
+        downloadBlob(blob, name);
+      });
+      return;
+    }
+    downloadBlob(blob, name);
+  }
+  function initPlacesSheet() {
+    $('#btnOpenPlaces').addEventListener('click', openPlacesSheet);
+    $('#btnClosePlacesSheet').addEventListener('click', closePlacesSheet);
+    $('#placesSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closePlacesSheet(); });
+    $('#placesFilter').addEventListener('click', function (e) {
+      var chip = e.target.closest('[data-places-cat]');
+      if (!chip) return;
+      var k = chip.dataset.placesCat;
+      placesFilterOn[k] = placesFilterOn[k] === false;
+      renderPlacesSheet();
+    });
+    $('#btnCopyPlaces').addEventListener('click', copyPlacesText);
+    $('#btnSharePlaces').addEventListener('click', function () {
+      navigator.share({ text: Core.buildPlaceListText(state.trip, placesPicked()) }).catch(function () {});
+    });
+    $('#btnSavePlacesKml').addEventListener('click', savePlacesKml);
   }
 
   function initSocial() {
@@ -15390,6 +15553,7 @@
     $('#btnDeleteAccount').addEventListener('click', deleteMyAccount);
     wireMyPage();
     initSocial();
+    initPlacesSheet();
     $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
     $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });
     // 自分だけの道（別行動）の追加・編集シート（docs/adr/0021）

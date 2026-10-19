@@ -3276,5 +3276,46 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('その後のホテルも着いた日のまま', labels(tl3), '成田→ホノルル>到着#>ホノルル空港に到着>ホテル>ダイヤモンドヘッド');
 })();
 
+/* ---- 行った場所をGoogleマップで（tripPlaces / googleMapsPlaceUrl / buildPlaceListText / buildPlacesKml。docs/adr/0023） ---- */
+(function () {
+  var trip = { title: '沖縄旅', startDate: '2026-05-01', endDate: '2026-05-02' };
+  function b(id, date, time, label, category, entry) { return { id: id, date: date, time: time, label: label, category: category, entries: entry ? [entry] : [] }; }
+  var blocks = [
+    b('b2', '2026-05-01', '12:00', 'ランチ', 'food', { mapUrl: 'https://www.google.com/maps/search/?api=1&query=26.2%2C127.6', mapPlaceName: '首里そば', mapLat: 26.2, mapLng: 127.6 }),
+    b('b1', '2026-05-01', '09:00', '那覇空港に到着', 'arrival', { mapUrl: 'https://www.google.com/maps/search/?api=1&query=26.19%2C127.64', mapPlaceName: '那覇空港', mapLat: 26.19, mapLng: 127.64 }),
+    b('b3', '2026-05-01', '15:00', '首里城', 'sightseeing', { mapUrl: 'https://maps.app.goo.gl/abc123' }),
+    b('b4', '2026-05-01', '', 'ホテルに帰宅', 'lodging', { mapUrl: 'https://www.google.com/maps/search/?api=1&query=26.21%2C127.68', mapPlaceName: 'ホテル<海>&風', mapLat: 26.21, mapLng: 127.68 }),
+    b('b5', '2026-05-02', '', 'ホテルに帰宅', 'lodging', { mapUrl: 'https://www.google.com/maps/search/?api=1&query=26.21%2C127.68', mapPlaceName: 'ホテル<海>&風', mapLat: 26.21, mapLng: 127.68 }),
+    b('b6', '2026-05-02', '10:00', 'お土産を買う', 'other', { episode: '地図なし' }),
+    b('b7', '2026-05-02', '11:00', '那覇→羽田', 'transport', { mapUrl: 'https://www.google.com/maps/search/?api=1&query=26.19%2C127.64', mapLat: 26.19, mapLng: 127.64 })
+  ];
+  var places = T.tripPlaces(trip, blocks);
+  eq('tripPlaces: 地図のある予定だけ・日付と時刻の順', places.map(function (p) { return p.blockId; }), ['b1', 'b2', 'b3', 'b4', 'b7']);
+  eq('tripPlaces: 同じ場所（連泊の宿）は最初の1つだけ', places.filter(function (p) { return p.category === 'lodging'; }).length, 1);
+  eq('tripPlaces: 名前は地図の場所の名前を優先', places[1].name, '首里そば');
+  eq('tripPlaces: 地図の名前が無ければ見出し', places[2].name, '首里城');
+  eq('tripPlaces: 日の表示', places[0].dayLabel, '1日目');
+  eq('tripPlaces: 移動は2日目', places[4].dayLabel, '2日目');
+
+  eq('googleMapsPlaceUrl: 貼り付けたGoogleマップのリンクはそのまま', T.googleMapsPlaceUrl(places[2]), 'https://maps.app.goo.gl/abc123');
+  eq('googleMapsPlaceUrl: 名前と座標があれば、その近くで名前を検索', T.googleMapsPlaceUrl(places[1]), 'https://www.google.com/maps/search/' + encodeURIComponent('首里そば') + '/@26.2,127.6,17z');
+  eq('googleMapsPlaceUrl: 座標だけなら座標で開く', T.googleMapsPlaceUrl({ name: '', lat: 35.1, lng: 139.2, mapUrl: '' }), 'https://www.google.com/maps/search/?api=1&query=35.1%2C139.2');
+  eq('googleMapsPlaceUrl: 何も無ければ空', T.googleMapsPlaceUrl({ name: 'x' }), '');
+
+  var picked = places.filter(function (p) { return p.category !== 'transport' && p.category !== 'arrival'; });
+  var text = T.buildPlaceListText(trip, picked);
+  ok('buildPlaceListText: 見出しに旅行名と件数', text.indexOf('【沖縄旅】で行った場所（3か所）') === 0);
+  ok('buildPlaceListText: 日ごとに分ける', text.indexOf('■1日目') !== -1 && text.indexOf('■2日目') === -1);
+  ok('buildPlaceListText: 名前と種類とリンク', text.indexOf('・首里そば（食事）\n' + T.googleMapsPlaceUrl(places[1])) !== -1);
+  ok('buildPlaceListText: エピソードや費用は入れない', text.indexOf('地図なし') === -1);
+
+  var kml = T.buildPlacesKml(trip, picked);
+  ok('buildPlacesKml: KMLの形', kml.indexOf('<?xml') === 0 && kml.indexOf('<kml xmlns="http://www.opengis.net/kml/2.2">') !== -1);
+  eq('buildPlacesKml: 座標のある場所だけピンにする', (kml.match(/<Placemark>/g) || []).length, 2);
+  ok('buildPlacesKml: 経度,緯度の順', kml.indexOf('<coordinates>127.6,26.2</coordinates>') !== -1);
+  ok('buildPlacesKml: 名前はエスケープする', kml.indexOf('<name>ホテル&lt;海&gt;&amp;風</name>') !== -1);
+  ok('buildPlacesKml: 文書名は旅行名', kml.indexOf('<Document><name>沖縄旅</name>') !== -1);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

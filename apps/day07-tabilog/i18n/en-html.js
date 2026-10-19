@@ -253,5 +253,10 @@ I18N.addLang('en', {
   "現在地を取得しています…": "Getting your current location…",
   "現在地を取得できませんでした。": "Couldn't get your current location.",
   "現在地を地図に入れました。ずれていたらピンを動かして直せます。": "Added your current location to the map. If it's off, drag the pin to fix it.",
-  "位置情報の利用が許可されていません。端末の設定で許可してください。": "Location access isn't allowed. Please allow it in your device settings."
+  "位置情報の利用が許可されていません。端末の設定で許可してください。": "Location access isn't allowed. Please allow it in your device settings.",
+  "行った場所をGoogleマップで": "Places you went, in Google Maps",
+  "場所をタップするとGoogleマップで開きます。おすすめを聞かれたら、リストをそのまま送れます。": "Tap a place to open it in Google Maps. When someone asks for recommendations, just send them the list.",
+  "リストをコピー": "Copy list",
+  "1枚の地図にまとめる（KMLファイル）": "Put them all on one map (KML file)",
+  "保存したファイルを、パソコンのGoogleマイマップ（mymaps.google.com）で「新しい地図を作成」→「インポート」から読み込むと、全部の場所が1枚の地図にピンで並びます。その地図を共有すれば、ほかの人も同じ地図を見られます。": "On a computer, open Google My Maps (mymaps.google.com), choose \"Create a new map\" → \"Import\" and load the saved file. Every place appears as a pin on one map, and you can share that map with others.",
 });

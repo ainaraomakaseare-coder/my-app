@@ -423,6 +423,11 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4"/></svg>
         <span>紹介文を作る</span>
       </button>
+      <!-- 行った場所をGoogleマップで（docs/adr/0023）。地図のある予定を一覧にして、開く・リストを送る・KMLでマイマップへ -->
+      <button class="replay-entry-btn post-entry-btn" id="btnOpenPlaces" type="button" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></svg>
+        <span>行った場所をGoogleマップで</span>
+      </button>
 
       <!-- 自分だけの道（別行動）の切り替え：みんな／人ごと。分岐がある旅行だけ、app.jsのrenderBranchSwitcherが出す（docs/adr/0021） -->
       <div class="branch-switch" id="branchSwitcher" hidden></div>
@@ -957,6 +962,28 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="btn ghost" id="btnSharePost" type="button" hidden>共有する</button>
     </div>
     <p class="hint comment-status" id="postStatus"></p>
+  </div>
+</div>
+
+<!-- ============ 行った場所をGoogleマップで（docs/adr/0023） ============ -->
+<div class="sheet-backdrop" id="placesSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="placesSheetTitle">
+    <div class="sheet-head">
+      <div class="sheet-title" id="placesSheetTitle">行った場所をGoogleマップで</div>
+      <button class="sheet-close" id="btnClosePlacesSheet" type="button" aria-label="閉じる">×</button>
+    </div>
+    <p class="hint">場所をタップするとGoogleマップで開きます。おすすめを聞かれたら、リストをそのまま送れます。</p>
+    <div class="places-filter" id="placesFilter"></div>
+    <ol class="places-list" id="placesList"></ol>
+    <div class="post-actions">
+      <button class="btn primary" id="btnCopyPlaces" type="button">リストをコピー</button>
+      <button class="btn ghost" id="btnSharePlaces" type="button" hidden>共有する</button>
+    </div>
+    <div class="places-kml">
+      <button class="btn ghost" id="btnSavePlacesKml" type="button">1枚の地図にまとめる（KMLファイル）</button>
+      <p class="hint">保存したファイルを、パソコンのGoogleマイマップ（mymaps.google.com）で「新しい地図を作成」→「インポート」から読み込むと、全部の場所が1枚の地図にピンで並びます。その地図を共有すれば、ほかの人も同じ地図を見られます。</p>
+    </div>
+    <p class="hint comment-status" id="placesStatus"></p>
   </div>
 </div>
 

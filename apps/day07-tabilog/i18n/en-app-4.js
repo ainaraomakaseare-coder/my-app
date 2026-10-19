@@ -216,4 +216,10 @@ I18N.addLang('en', {
   "写真を読み込んでいます…": "Loading photos…",
   "この都道府県の写真はまだありません": "No photos from this prefecture yet",
   "都道府県をタップすると、その旅の写真が流れます": "Tap a prefecture to play the photos from your trips there",
+  "【{title}】で行った場所（{n}か所）": "Places I went on \"{title}\" ({n})",
+  "旅の足跡で記録しました": "Recorded with Tabi no Ashiato",
+  "（名前なし）": "(No name)",
+  "選んだ種類の場所はありません": "No places of the selected types",
+  "座標の分からない{n}か所は、KMLファイルには入りません": "{n} places without coordinates won't be included in the KML file",
+  "コピーしました。LINEやメッセージに貼り付けて送れます。": "Copied. Paste it into a message to send it.",
 });
