@@ -1563,6 +1563,7 @@
       return gpsDms(parts);
     }
     return gpsFromExif({ Latitude: dms(2), LatitudeRef: ref(1), Longitude: dms(4), LongitudeRef: ref(3) });
+  }
 
   // ---------- 時系列ムービー（docs/adr/0024） ----------
   // 「9:30 首里城」のように時刻と場所を出しながら、記録の写真と動画を時間の順に流す縦動画の絵コンテ。
