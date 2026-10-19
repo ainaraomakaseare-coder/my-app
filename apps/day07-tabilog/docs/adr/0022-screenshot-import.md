@@ -173,3 +173,12 @@
 
 - 検証した：`test/data.test.js`（`parseImportedBlocksJson`が外の日付を残す・読めない日付はエラー・`outOfRange`、`proposalDateStatus`・`planTripRangeFit`（置き換え／広げる／予定があれば広げる／日程なし）・`planProposalShift`・`shiftProposalDates`（月またぎ・うるう日・年またぎ・負の日数）、お願い文の日付のルール）、`worker/test/import-proposals.test.mjs`（プロンプトの日付の指示、日程の外の日付を残す、月日だけの日付は日程の年で補う、別行動は従来どおり）。
 - **していない**：確認画面の案内のブラウザでの実際の操作（画面の見た目・ボタン）、本物のOpenAIの答えでの確認、`PATCH /trips/:id`の実機呼び出し（サーバー側は既存のまま、日付だけを送る）。デプロイが必要なのはWorkerの変更（プロンプトと`allowedDates`）のみ。
+
+## 2026-10-19追記：場所検索は候補3件から、旅行のほかの場所に近いものを選ぶ
+
+- 困りごと：Text Searchの先頭1件だけを使うと、同名の遠い場所（例：国内の店名で海外の同名店）が選ばれ、「地図でふりかえる」の道筋が崩れた。
+- 変えたこと：`pageSize` を1→3にして候補を最大3件取る（単価は件数で変わらない）。`pickPlaceCandidate(candidates, anchors)` で選ぶ。
+- 目印（anchors）：①その旅行の記録の座標（`entries.map_lat/map_lng`、D1は1リクエストに1回・最大200件）②同じ取り込みで候補が1件に決まった場所。目印が取れない経路・失敗時は目印なし＝従来どおり先頭。
+- 選ぶ規則：目印なし／候補1件なら先頭。先頭の「いちばん近い目印」までの距離が300kmを超え、かつ別の候補がその3分の1以下の距離なら、その候補に入れ替える。それ以外は先頭のまま（Googleの並びを基本に、明らかに遠いときだけ直す）。旅行は国をまたぐので、中心ではなく最も近い目印で比べる。
+- 出力の形（mapUrl・mapPlaceName・mapLat・mapLng、移動は到着地も）は変えていない。D1が1回増えるが、`SCREENSHOT_D1_QUERY_ESTIMATE` の見積もりの範囲内。
+

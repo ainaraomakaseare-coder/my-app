@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import {
   SCREENSHOT_MAX_PLACE_LOOKUPS, estimateSubrequests, buildVisionBatchBody, parseVisionBatchResponse,
   receiptHintFor, buildOcrSection, buildScreenshotPrompt, screenshotSchema, normalizeTime, resolveDate,
-  normalizeScreenshotResult, collectPlaceQueries, parseTextSearchResponse, buildTextSearchRequest,
+  normalizeScreenshotResult, collectPlaceQueries, parseTextSearchResponse, parseTextSearchCandidates, pickPlaceCandidate, buildTextSearchRequest,
   attachPlaces, placeKey, validateSaveItems, validateImagesInput, dateInTrip, addDays,
 } from "../src/screenshot-import.js";
 
@@ -269,9 +269,28 @@ const norm = normalizeScreenshotResult(JSON.parse(JSON.stringify(AI)), { trip: T
     { category: "transport", fromPlace: "那覇空港", toPlace: "新石垣空港", arriveMapUrl: "https://www.google.com/maps/search/?api=1&query=24.3,124.2" },
   ]);
   check("場所検索: 出発地の地図があっても到着地は探す／到着地の地図があれば探さない", urlMove.queries, ["那覇空港"]);
-  check("場所検索のリクエスト: 1回で座標まで（FieldMask）", [buildTextSearchRequest("羽田空港").fieldMask, buildTextSearchRequest("羽田空港").body.pageSize], ["places.displayName,places.formattedAddress,places.location", 1]);
+  check("場所検索のリクエスト: 1回で座標まで（FieldMask）", [buildTextSearchRequest("羽田空港").fieldMask, buildTextSearchRequest("羽田空港").body.pageSize], ["places.displayName,places.formattedAddress,places.location", 3]);
   check("場所検索の応答: 先頭1件", parseTextSearchResponse({ places: [{ displayName: { text: "羽田空港" }, formattedAddress: "東京都大田区", location: { latitude: 35.5494, longitude: 139.7798 } }] }), { name: "羽田空港", address: "東京都大田区", lat: 35.5494, lng: 139.7798 });
   check("場所検索の応答: 0件はnull", parseTextSearchResponse({}), null);
+  // 候補を3件取り、旅行のほかの場所に近いものを選ぶ（2026-10-19）
+  {
+    const pl = (n, lat, lng) => ({ displayName: { text: n }, formattedAddress: n, location: { latitude: lat, longitude: lng } });
+    const multi = parseTextSearchCandidates({ places: [pl("A", 35, 139), pl("B", 34, 135), pl("C", 43, 141), pl("D", 1, 1)] });
+    check("場所検索の応答: 候補は最大3件", multi.map((c) => c.name), ["A", "B", "C"]);
+    check("場所検索の応答: 壊れた座標の候補は飛ばす", parseTextSearchCandidates({ places: [{ location: { latitude: 999, longitude: 0 } }, pl("B", 34, 135)] }).map((c) => c.name), ["B"]);
+    check("場所検索の応答: 0件は空配列", parseTextSearchCandidates({}), []);
+    const tokyo = { name: "東京の店", lat: 35.68, lng: 139.76 }, hawaii = { name: "ハワイの店", lat: 21.3, lng: -157.86 }, osaka = { name: "大阪の店", lat: 34.69, lng: 135.5 };
+    check("選び方: 候補なしはnull", pickPlaceCandidate([], [tokyo]), null);
+    check("選び方: 目印なしは先頭", pickPlaceCandidate([hawaii, tokyo], []), hawaii);
+    check("選び方: 目印がnullでも先頭", pickPlaceCandidate([hawaii, tokyo], null), hawaii);
+    check("選び方: 候補1件はそのまま", pickPlaceCandidate([hawaii], [tokyo]), hawaii);
+    check("選び方: 先頭が目印の近く（300km以内）なら先頭", pickPlaceCandidate([osaka, tokyo], [{ lat: 35.0, lng: 135.7 }]), osaka);
+    check("選び方: 先頭が遠く別の候補が近ければ入れ替える", pickPlaceCandidate([hawaii, tokyo], [{ lat: 35.0, lng: 139.0 }]), tokyo);
+    check("選び方: 国をまたぐ旅は最も近い目印で比べる（ハワイにも目印あり）", pickPlaceCandidate([hawaii, tokyo], [{ lat: 35.0, lng: 139.0 }, { lat: 21.0, lng: -157.0 }]), hawaii);
+    // 先頭も遠いが、ほかの候補が3倍近くない場合は先頭のまま
+    check("選び方: 3倍近くなければ先頭", pickPlaceCandidate([{ lat: 0, lng: 10 }, { lat: 0, lng: 8 }], [{ lat: 0, lng: 0 }]).lng, 10);
+    check("選び方: 同じ距離（タイ）は先頭", pickPlaceCandidate([{ lat: 0, lng: 10 }, { lat: 0, lng: -10 }], [{ lat: 0, lng: 0 }]).lng, 10);
+  }
   check("場所検索の応答: 座標が壊れていればnull", parseTextSearchResponse({ places: [{ location: { latitude: 999, longitude: 0 } }] }), null);
 }
 

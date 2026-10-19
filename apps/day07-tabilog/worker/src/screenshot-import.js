@@ -15,6 +15,7 @@
 import { parseReceiptText } from "./receipt-parse.js";
 import { langDirective } from "./lang.js";
 import { validateBranchBlockPlacement } from "./branches.js";
+import { distanceKm } from "./geo-decode.js";
 
 /* ---------- 上限（Workers Freeのサブリクエスト50回以内に収めるための数字） ---------- */
 
@@ -613,20 +614,54 @@ export function buildTextSearchRequest(q) {
     // 位置情報（location）を含めて1回で座標まで取る。フィールドは名前・住所・座標だけにする
     // （評価・営業時間などを足すとより高い単価になるため）
     fieldMask: "places.displayName,places.formattedAddress,places.location",
-    body: { textQuery: q, languageCode: "ja", pageSize: 1 },
+    // 候補は3件まで取り、旅行のほかの場所に近いものを選ぶ（pickPlaceCandidate。2026-10-19）。単価は件数で変わらない
+    body: { textQuery: q, languageCode: "ja", pageSize: PLACE_CANDIDATES },
   };
 }
 
+export const PLACE_CANDIDATES = 3;
+
+// 応答の候補を全部（最大PLACE_CANDIDATES件）、座標が正しいものだけ返す。Googleの並び順のまま
+export function parseTextSearchCandidates(data) {
+  const list = data && Array.isArray(data.places) ? data.places.slice(0, PLACE_CANDIDATES) : [];
+  const out = [];
+  for (const p of list) {
+    if (!p || !p.location) continue;
+    const lat = Number(p.location.latitude), lng = Number(p.location.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    out.push({
+      name: (p.displayName && typeof p.displayName.text === "string" ? p.displayName.text : "").slice(0, 200),
+      address: typeof p.formattedAddress === "string" ? p.formattedAddress.slice(0, 200) : "",
+      lat, lng,
+    });
+  }
+  return out;
+}
+
+// 先頭1件だけ（従来の形）。0件・壊れていればnull
 export function parseTextSearchResponse(data) {
-  const p = data && Array.isArray(data.places) ? data.places[0] : null;
-  if (!p || !p.location) return null;
-  const lat = Number(p.location.latitude), lng = Number(p.location.longitude);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
-  return {
-    name: (p.displayName && typeof p.displayName.text === "string" ? p.displayName.text : "").slice(0, 200),
-    address: typeof p.formattedAddress === "string" ? p.formattedAddress.slice(0, 200) : "",
-    lat, lng,
-  };
+  return parseTextSearchCandidates(data)[0] || null;
+}
+
+// 同名の別の場所（遠くの同名施設）を選ばないための選び方。anchors＝この旅行で分かっている座標（[{lat,lng}]）。
+// 基本はGoogleの先頭の候補。先頭がどのanchorからも300kmより遠く、かつほかの候補が3倍以上近いときだけ入れ替える
+// （旅行は国をまたぐので、中心ではなく「いちばん近いanchor」までの距離で比べる）。
+export const PLACE_PICK_FAR_KM = 300;
+export const PLACE_PICK_RATIO = 3;
+export function pickPlaceCandidate(candidates, anchors) {
+  const list = Array.isArray(candidates) ? candidates.filter((c) => c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) : [];
+  if (!list.length) return null;
+  const pts = Array.isArray(anchors) ? anchors.filter((a) => a && Number.isFinite(a.lat) && Number.isFinite(a.lng)) : [];
+  if (list.length === 1 || !pts.length) return list[0];
+  const nearest = (c) => pts.reduce((m, a) => Math.min(m, distanceKm(a, c)), Infinity);
+  const firstKm = nearest(list[0]);
+  if (firstKm <= PLACE_PICK_FAR_KM) return list[0];
+  let best = list[0], bestKm = firstKm;
+  for (const c of list.slice(1)) {
+    const d = nearest(c);
+    if (d < bestKm) { best = c; bestKm = d; }
+  }
+  return best !== list[0] && bestKm * PLACE_PICK_RATIO <= firstKm ? best : list[0];
 }
 
 // クライアント側のCore.placeMapUrlと同じ形（座標の検索URL）
