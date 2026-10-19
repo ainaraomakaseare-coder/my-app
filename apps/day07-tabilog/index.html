@@ -703,7 +703,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
               <button type="button" class="btn ghost small" id="btnPlaceSearch">地図を検索</button>
             </div>
             <!-- 端末の位置情報から今いる場所を地図に入れる（app.jsのuseCurrentLocation。2026-10-15） -->
-            <button type="button" class="btn ghost small current-loc-btn" id="btnCurrentLocation">📍 現在地を入れる</button>
+            <button type="button" class="btn ghost small current-loc-btn" id="btnCurrentLocation"><svg class="current-loc-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>現在地を入れる</button>
             <!-- 検索の候補（番号つきのカード。先頭が違う場所だったときに選び直せるように。app.jsのshowPlaceMapPreview） -->
             <div class="place-list" id="entPlaceCandidates" hidden></div>
             <p class="hint" id="entPlaceStatus"></p>

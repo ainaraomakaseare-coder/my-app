@@ -248,7 +248,7 @@ I18N.addLang('en', {
   "年表": "Timeline",
   "残っている回数券も消え、払い戻しはできません": "Any remaining usage tickets are also lost and can't be refunded",
   "今": "Now",
-  "📍 現在地を入れる": "📍 Use current location",
+  "現在地を入れる": "Use current location",
   "この端末では現在地を取得できません。": "Current location isn't available on this device.",
   "現在地を取得しています…": "Getting your current location…",
   "現在地を取得できませんでした。": "Couldn't get your current location.",
