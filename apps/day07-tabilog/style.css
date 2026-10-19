@@ -1230,6 +1230,17 @@ body.sheet-open .tabbar, body:has(.sheet-backdrop:not([hidden])) .tabbar { visib
 .post-actions { display: flex; gap: 8px; margin-top: 10px; }
 .post-actions .btn { flex: 1; }
 #rsvResult .post-actions { flex-wrap: wrap; }
+
+/* ---------- 行った場所をGoogleマップで（docs/adr/0023） ---------- */
+.places-filter { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 8px; }
+.places-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.places-day { font-size: var(--fs-sm); font-weight: 700; color: var(--ink-muted); padding: 10px 0 2px; }
+.places-item a { display: flex; align-items: baseline; gap: 8px; padding: 9px 0; color: var(--ink); text-decoration: none; }
+.places-item .places-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.places-item .places-cat { font-size: var(--fs-xs, 12px); color: var(--ink-muted); white-space: nowrap; }
+.places-item .places-open { font-size: var(--fs-sm); color: var(--accent-deep); white-space: nowrap; }
+.places-empty { color: var(--ink-muted); font-size: var(--fs-sm); padding: 12px 0; }
+.places-kml { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; }
 .rating-widget { flex-wrap: wrap; column-gap: 12px; }
 .rating-level { flex-basis: 100%; margin-top: 6px; font-size: var(--fs-sm); font-weight: 700; color: var(--accent-deep); }
 .rating-level.private { color: var(--ink-muted); font-weight: 400; }
