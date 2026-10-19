@@ -1600,6 +1600,27 @@ eq('categoryLabel：到着', T.categoryLabel('arrival'), '到着');
   eq('visitedTripLabel: 年があれば（）で付ける', T.visitedTripLabel({ tripTitle: '大阪旅行', years: ['2026'] }), '大阪旅行（2026）');
   eq('visitedTripLabel: 複数年は・でつなぐ', T.visitedTripLabel({ tripTitle: '年またぎ旅行', years: ['2026', '2027'] }), '年またぎ旅行（2026・2027）');
   eq('visitedTripLabel: 年が無ければ省く', T.visitedTripLabel({ tripTitle: '旧データの旅行', years: [] }), '旧データの旅行');
+
+  /* ---- visitedTripCount / visitedShadeLevel / visitedPlacePhotos（行った回数の濃さ・都道府県の写真） ---- */
+  var vx = { name: '大阪府', sources: [
+    { tripId: 't1', dates: ['2025-03-01'] }, { tripId: 't1', dates: ['2025-03-02'] },
+    { tripId: 't2', dates: ['2026-05-03', '2026-05-04'] },
+    { tripId: 't3', dates: ['2026-08-01'], excluded: true }, { tripId: 't4', dates: ['2026-09-01'], transit: true }] };
+  eq('visitedTripCount: 同じ旅行は1回・外した旅行と乗り継ぎは数えない', T.visitedTripCount(vx), 2);
+  eq('visitedTripCount: sources無しは0', T.visitedTripCount({}), 0);
+  eq('visitedShadeLevel: 0は塗らない', T.visitedShadeLevel(0), 0);
+  eq('visitedShadeLevel: 3回は3', T.visitedShadeLevel(3), 3);
+  eq('visitedShadeLevel: 4回以上は4', T.visitedShadeLevel(9), 4);
+  var vTrips = {
+    t1: { blocks: [{ date: '2025-03-02', entries: [{ photoIds: ['p3'] }] }, { date: '2025-03-01', entries: [{ photoIds: ['p1', 'p2'] }] }, { date: '2025-03-05', entries: [{ photoIds: ['pOther'] }] }] },
+    t2: { blocks: [{ date: '2026-05-04', entries: [{ photoIds: ['q2'] }, { photoIds: ['q3'] }] }, { date: '2026-05-03', entries: [{ photoIds: ['q1', 'p1'] }] }] },
+    t3: { blocks: [{ date: '2026-08-01', entries: [{ photoIds: ['x1'] }] }] }
+  };
+  eq('visitedPlacePhotos: 新しい旅行が先・日付順・その場所にいた日だけ・重複なし',
+    T.visitedPlacePhotos(vx, vTrips).map(function (p) { return p.id; }), ['q1', 'p1', 'q2', 'q3', 'p2', 'p3']);
+  eq('visitedPlacePhotos: どの旅行の写真か', T.visitedPlacePhotos(vx, vTrips)[4], { id: 'p2', tripId: 't1' });
+  eq('visitedPlacePhotos: maxで打ち切る', T.visitedPlacePhotos(vx, vTrips, 2).length, 2);
+  eq('visitedPlacePhotos: 旅行データが無ければ空', T.visitedPlacePhotos(vx, {}), []);
 })();
 
 /* ---- 行ったことある旅先（地方・大陸のグループ分け／国旗絵文字／達成率、2026-09-28〜） ---- */
