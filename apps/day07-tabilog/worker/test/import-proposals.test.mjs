@@ -186,5 +186,44 @@ const it = (o) => ({ ...empty, ...o });
   check("候補は60件まで・超えた分は捨てた数に入る", [big.items.length, big.dropped], [60, 20]);
 }
 
+/* ---- 飛行機・電車・バスの移動は1件にまとめる（2026-10-17） ---- */
+{
+  const p = buildProposalPrompt({ kind: "voice", text: "9時羽田発、11時半那覇着", notes: "", dates: ["2026-10-03"] });
+  ok("プロンプト: 移動して着いたことは移動1件・到着を別に作らない", p.includes("移動（transport）の1件だけで表す") && p.includes("到着（arrival）を別に作らない"));
+  const ctx = { trip: TRIP, dates: ["2026-10-03", "2026-10-04"], today: "2026-09-30" };
+  const n = normalizeProposalResult({ items: [
+    it({ category: "transport", transport: "", date: "2026-10-03", label: "羽田→那覇 JAL903", routeNumber: "JAL903", fromPlace: "羽田空港", departTime: "09:00", costItems: [{ label: "航空券", amount: 18700, currency: "" }] }),
+    it({ category: "arrival", transport: "plane", date: "2026-10-03", time: "11:30", label: "那覇空港に到着", place: "那覇空港", note: "暑かった。" }),
+    it({ category: "food", date: "2026-10-03", time: "12:30", label: "沖縄そば", place: "首里そば" }),
+  ] }, ctx);
+  check("移動と到着: 1件にまとまる", n.items.map((x) => x.category), ["transport", "food"]);
+  const mv = n.items[0];
+  check("移動と到着: 到着地・到着時刻・手段が移動に入る", [mv.toPlace, mv.arriveTime, mv.transport, mv.time], ["那覇空港", "11:30", "plane", "09:00"]);
+  check("移動と到着: 費用とひとことは残す", [mv.costItems.length, mv.note], [1, "暑かった。"]);
+  check("移動と到着: まとめたぶんは捨てた数に入れない", n.dropped, 0);
+
+  const other = normalizeProposalResult({ items: [
+    it({ category: "transport", transport: "plane", date: "2026-10-03", label: "羽田→那覇", fromPlace: "羽田空港", toPlace: "那覇空港", departTime: "09:00" }),
+    it({ category: "arrival", date: "2026-10-03", time: "15:00", label: "ホテルに到着", place: "ホテル日航那覇グランドキャッスル" }),
+  ] }, ctx);
+  check("移動と到着: 着いた先が違う到着はまとめない", other.items.map((x) => x.category), ["transport", "arrival"]);
+  const late = normalizeProposalResult({ items: [
+    it({ category: "transport", transport: "plane", date: "2026-10-03", label: "成田→ホノルル", fromPlace: "成田空港", departTime: "21:00", arriveDate: "2026-10-04" }),
+    it({ category: "arrival", date: "2026-10-03", time: "09:00", label: "到着", place: "ダニエル・K・イノウエ国際空港" }),
+    it({ category: "transport", transport: "plane", date: "2026-10-04", label: "ホノルル→コナ", fromPlace: "ダニエル・K・イノウエ国際空港", departTime: "13:00" }),
+    it({ category: "arrival", date: "2026-10-04", time: "13:50", label: "コナに到着", place: "エリソン・オニヅカ・コナ国際空港" }),
+  ] }, ctx);
+  check("移動と到着: 着く日と違う日の到着はまとめない／同じ日ならまとめる", late.items.map((x) => x.category), ["transport", "arrival", "transport"]);
+  check("移動と到着: まとめた移動の到着地", late.items[2].toPlace, "エリソン・オニヅカ・コナ国際空港");
+
+  const modes = normalizeProposalResult({ items: [
+    it({ category: "transport", date: "2026-10-03", label: "東京→新大阪", routeNumber: "のぞみ25号", fromPlace: "東京駅", toPlace: "新大阪駅" }),
+    it({ category: "transport", date: "2026-10-03", label: "空港までタクシー", toPlace: "伊丹空港" }),
+    it({ category: "transport", date: "2026-10-03", label: "伊丹→羽田", routeNumber: "ANA 24", fromPlace: "伊丹空港", toPlace: "羽田空港" }),
+    it({ category: "transport", date: "2026-10-03", label: "移動", fromPlace: "どこか", toPlace: "どこか2" }),
+  ] }, ctx);
+  check("移動手段が空なら便名・駅・見出しから入れる（分からなければ空）", modes.items.map((x) => x.transport), ["shinkansen", "taxi", "plane", ""]);
+}
+
 console.log("\n" + pass + " passed, " + fail + " failed");
 process.exit(fail ? 1 : 0);
