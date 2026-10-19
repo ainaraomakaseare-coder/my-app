@@ -9,7 +9,7 @@ import {
   SCREENSHOT_MAX_PLACE_LOOKUPS, estimateSubrequests, buildVisionBatchBody, parseVisionBatchResponse,
   receiptHintFor, buildOcrSection, buildScreenshotPrompt, screenshotSchema, normalizeTime, resolveDate,
   normalizeScreenshotResult, collectPlaceQueries, parseTextSearchResponse, buildTextSearchRequest,
-  attachPlaces, placeKey, validateSaveItems, validateImagesInput, dateInTrip, addDays,
+  attachPlaces, placeKey, validateSaveItems, parseTextSearchCandidates, choosePlaceCandidates, distanceKm, validateImagesInput, dateInTrip, addDays,
 } from "../src/screenshot-import.js";
 
 let pass = 0, fail = 0;
@@ -269,7 +269,7 @@ const norm = normalizeScreenshotResult(JSON.parse(JSON.stringify(AI)), { trip: T
     { category: "transport", fromPlace: "那覇空港", toPlace: "新石垣空港", arriveMapUrl: "https://www.google.com/maps/search/?api=1&query=24.3,124.2" },
   ]);
   check("場所検索: 出発地の地図があっても到着地は探す／到着地の地図があれば探さない", urlMove.queries, ["那覇空港"]);
-  check("場所検索のリクエスト: 1回で座標まで（FieldMask）", [buildTextSearchRequest("羽田空港").fieldMask, buildTextSearchRequest("羽田空港").body.pageSize], ["places.displayName,places.formattedAddress,places.location", 1]);
+  check("場所検索のリクエスト: 1回で座標まで（FieldMask）", [buildTextSearchRequest("羽田空港").fieldMask, buildTextSearchRequest("羽田空港").body.pageSize], ["places.displayName,places.formattedAddress,places.location", 3]);
   check("場所検索の応答: 先頭1件", parseTextSearchResponse({ places: [{ displayName: { text: "羽田空港" }, formattedAddress: "東京都大田区", location: { latitude: 35.5494, longitude: 139.7798 } }] }), { name: "羽田空港", address: "東京都大田区", lat: 35.5494, lng: 139.7798 });
   check("場所検索の応答: 0件はnull", parseTextSearchResponse({}), null);
   check("場所検索の応答: 座標が壊れていればnull", parseTextSearchResponse({ places: [{ location: { latitude: 999, longitude: 0 } }] }), null);
@@ -332,6 +332,26 @@ const norm = normalizeScreenshotResult(JSON.parse(JSON.stringify(AI)), { trip: T
   check("画像: 1枚が大きすぎ", validateImagesInput([{ data: "A".repeat(1500001) }]).error, "invalid_size");
   check("画像: 合計が大きすぎ", validateImagesInput(Array.from({ length: 7 }, () => ({ data: "A".repeat(1400000) }))).error, "invalid_size");
   check("画像: 中身が無い", validateImagesInput([{ data: "" }]).error, "invalid_input");
+}
+
+/* ---- 候補から旅行の近くを選ぶ（D。2026-10-19） ---- */
+{
+  const loc = (name, lat, lng) => ({ displayName: { text: name }, formattedAddress: "", location: { latitude: lat, longitude: lng } });
+  check("候補: 3件まで・壊れたものは除く", parseTextSearchCandidates({ places: [loc("a", 1, 1), { location: { latitude: 999, longitude: 0 } }, loc("b", 2, 2), loc("c", 3, 3), loc("d", 4, 4)] }).map((c) => c.name), ["a", "b", "c"]);
+  ok("距離: 羽田→那覇はおよそ1500〜1600km", (() => { const d = distanceKm({ lat: 35.5494, lng: 139.7798 }, { lat: 26.2065, lng: 127.6459 }); return d > 1500 && d < 1600; })());
+  const fuchuTokyo = { name: "府中駅（東京）", address: "", lat: 35.672, lng: 139.477 };
+  const fuchuHiroshima = { name: "府中駅（広島）", address: "", lat: 34.568, lng: 133.236 };
+  const hiroshimaAnchor = [{ lat: 34.397, lng: 132.475 }];
+  check("近くを選ぶ: 旅行の場所（広島）に近い候補にする",
+    choosePlaceCandidates({ [placeKey("府中駅")]: [fuchuTokyo, fuchuHiroshima] }, hiroshimaAnchor)[placeKey("府中駅")].name, "府中駅（広島）");
+  check("近くを選ぶ: 手がかりが無ければGoogleの1番目",
+    choosePlaceCandidates({ [placeKey("府中駅")]: [fuchuTokyo, fuchuHiroshima] }, [])[placeKey("府中駅")].name, "府中駅（東京）");
+  check("近くを選ぶ: 今回のほかの場所も手がかりにする",
+    choosePlaceCandidates({ [placeKey("府中駅")]: [fuchuTokyo, fuchuHiroshima], [placeKey("広島駅")]: [{ name: "広島駅", address: "", lat: 34.397, lng: 132.475 }] }, [])[placeKey("府中駅")].name, "府中駅（広島）");
+  const near1 = { name: "A店", address: "", lat: 35.0, lng: 135.0 }, near2 = { name: "B店", address: "", lat: 35.1, lng: 135.0 };
+  check("近くを選ぶ: 差が小さい（50km未満）ならGoogleの1番目のまま",
+    choosePlaceCandidates({ k: [near1, near2] }, [{ lat: 35.15, lng: 135.0 }]).k.name, "A店");
+  check("近くを選ぶ: 0件はnull", choosePlaceCandidates({ k: [] }, hiroshimaAnchor).k, null);
 }
 
 console.log("\n" + pass + " passed, " + fail + " failed");

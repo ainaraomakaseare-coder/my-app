@@ -613,12 +613,14 @@ export function buildTextSearchRequest(q) {
     // 位置情報（location）を含めて1回で座標まで取る。フィールドは名前・住所・座標だけにする
     // （評価・営業時間などを足すとより高い単価になるため）
     fieldMask: "places.displayName,places.formattedAddress,places.location",
-    body: { textQuery: q, languageCode: "ja", pageSize: 1 },
+    // 候補を3件まで取る（同じ名前の別の場所から、旅行のほかの場所に近いものを選ぶため。料金は1回ぶんのまま）
+    body: { textQuery: q, languageCode: "ja", pageSize: PLACE_CANDIDATES },
   };
 }
 
-export function parseTextSearchResponse(data) {
-  const p = data && Array.isArray(data.places) ? data.places[0] : null;
+export const PLACE_CANDIDATES = 3;
+
+function parsePlace(p) {
   if (!p || !p.location) return null;
   const lat = Number(p.location.latitude), lng = Number(p.location.longitude);
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
@@ -627,6 +629,49 @@ export function parseTextSearchResponse(data) {
     address: typeof p.formattedAddress === "string" ? p.formattedAddress.slice(0, 200) : "",
     lat, lng,
   };
+}
+
+// 検索結果の候補（Googleのおすすめ順、最大PLACE_CANDIDATES件）。0件は空配列
+export function parseTextSearchCandidates(data) {
+  const list = data && Array.isArray(data.places) ? data.places : [];
+  return list.map(parsePlace).filter(Boolean).slice(0, PLACE_CANDIDATES);
+}
+
+export function parseTextSearchResponse(data) {
+  return parseTextSearchCandidates(data)[0] || null;
+}
+
+// 2点間の距離（km、球面の大圏距離）
+export function distanceKm(a, b) {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+// 名前ごとの候補（placeKey→候補の配列）から、1件ずつ選ぶ（D：外れた場所に当たりにくくする。2026-10-19）。
+// 手がかり＝その旅行ですでに位置が分かっている場所（anchors）と、今回探したほかの名前の1番目の候補。
+// いちばん近い手がかりまでの距離が、Googleの1番目より半分未満、かつ50km以上近い候補があれば、そちらにする
+// （「〇〇駅」が別の県にもある、など）。手がかりが無いとき・差が小さいときはGoogleの1番目のまま。
+// 戻り値：placeKey→{name,address,lat,lng}|null（attachPlacesにそのまま渡せる形）
+export function choosePlaceCandidates(candidates, anchors) {
+  const base = (Array.isArray(anchors) ? anchors : []).filter((a) => a && Number.isFinite(a.lat) && Number.isFinite(a.lng));
+  const firsts = {};
+  for (const k of Object.keys(candidates)) firsts[k] = (candidates[k] || [])[0] || null;
+  const out = {};
+  for (const k of Object.keys(candidates)) {
+    const list = candidates[k] || [];
+    out[k] = list[0] || null;
+    if (list.length < 2) continue;
+    const near = base.concat(Object.keys(firsts).filter((o) => o !== k && firsts[o]).map((o) => firsts[o]));
+    if (!near.length) continue;
+    const gap = (c) => Math.min(...near.map((a) => distanceKm(a, c)));
+    const d0 = gap(list[0]);
+    let best = list[0], bestD = d0;
+    for (const c of list.slice(1)) { const d = gap(c); if (d < bestD) { best = c; bestD = d; } }
+    if (best !== list[0] && bestD < d0 / 2 && d0 - bestD >= 50) out[k] = best;
+  }
+  return out;
 }
 
 // クライアント側のCore.placeMapUrlと同じ形（座標の検索URL）

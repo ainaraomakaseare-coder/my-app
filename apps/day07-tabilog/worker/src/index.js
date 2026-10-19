@@ -18,7 +18,7 @@ import { isUsableTranscript } from "./transcribe-provider.js";
 import {
   IMPORT_MAX_ITEMS, UNREADABLE_REASONS, estimateSubrequests, buildVisionBatchBody, parseVisionBatchResponse,
   buildScreenshotPrompt, screenshotSchema, normalizeScreenshotResult, collectPlaceQueries, buildTextSearchRequest,
-  parseTextSearchResponse, attachPlaces, placeKey, validateSaveItems, validateImagesInput,
+  parseTextSearchCandidates, choosePlaceCandidates, attachPlaces, placeKey, validateSaveItems, validateImagesInput,
 } from "./screenshot-import.js";
 import { buildProposalPrompt, proposalSchema, normalizeProposalResult, estimateProposalSubrequests, branchDateList } from "./import-proposals.js";
 import {
@@ -4844,8 +4844,8 @@ async function organizeScreenshotsWithOpenAi(env, prompt, opts) {
   return first;
 }
 
-// Google Text Searchで場所を1件だけ探す（名前・住所・座標を1回の呼び出しで）。失敗・0件はnull
-async function googleTextSearchOne(q, env) {
+// Google Text Searchで場所の候補を探す（名前・住所・座標を1回の呼び出しで、最大3件）。失敗・0件は空配列
+async function googleTextSearch(q, env) {
   try {
     const req = buildTextSearchRequest(q);
     tallyAi(env, "google_places");
@@ -4854,11 +4854,31 @@ async function googleTextSearchOne(q, env) {
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": req.fieldMask, "content-type": "application/json" },
       body: JSON.stringify(req.body),
     });
-    if (!res.ok) return null;
-    return parseTextSearchResponse(await res.json());
+    if (!res.ok) return [];
+    return parseTextSearchCandidates(await res.json());
   } catch {
-    return null;
+    return [];
   }
+}
+
+// 名前ごとに場所を探し（並べて同時に呼ぶ）、その旅行ですでに位置が分かっている場所に近い候補を選ぶ。
+// 戻り値：placeKey→場所|null（attachPlacesに渡す形）
+async function lookupPlacesNearTrip(env, tripId, queries) {
+  const candidates = {};
+  await Promise.all(queries.map(async (q) => { candidates[placeKey(q)] = await googleTextSearch(q, env); }));
+  let anchors = [];
+  if (queries.length) {
+    try {
+      const rows = await env.DB.prepare(
+        "SELECT e.map_lat AS lat, e.map_lng AS lng FROM entries e JOIN blocks b ON b.id = e.block_id " +
+        "WHERE b.trip_id = ? AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL LIMIT 200"
+      ).bind(tripId).all();
+      anchors = (rows.results || []).map((r) => ({ lat: Number(r.lat), lng: Number(r.lng) }));
+    } catch {
+      anchors = []; // 手がかりが読めなくても、Googleの1番目で続ける
+    }
+  }
+  return choosePlaceCandidates(candidates, anchors);
 }
 
 async function scanScreenshots(tripId, request, env, headers) {
@@ -4934,9 +4954,7 @@ async function scanScreenshots(tripId, request, env, headers) {
 
   // 3) 場所検索：名前ごとに1回（最大12回、並べて同時に呼ぶ）
   const { queries, skipped } = collectPlaceQueries(norm.items);
-  const found = {};
-  await Promise.all(queries.map(async (q) => { found[placeKey(q)] = await googleTextSearchOne(q, env); }));
-  attachPlaces(norm.items, found);
+  attachPlaces(norm.items, await lookupPlacesNearTrip(env, tripId, queries));
 
   // 使える情報が何も無かった画像も「読み取れなかった画像」に含める（画像ごとの理由をそろえる）
   const used = new Set(norm.items.map((it) => it.sourceImage).filter((n) => n !== null));
@@ -4992,7 +5010,7 @@ async function resolveProposalTarget(env, request, headers, tripId, { date, bran
     if (dates.length < 2) return { error: json({ error: "trip_dates_required" }, 400, headers) };
   }
   if (!dates.length) return { error: json({ error: "invalid_date" }, 400, headers) };
-  return { trip, branch, dates };
+  return { trip, branch, dates, tripId };
 }
 
 // 文字（文字起こし・メモ）→ 候補（場所検索つき）。AIの失敗は { error }
@@ -5011,9 +5029,7 @@ async function buildProposalsFromText(env, kind, text, notes, target, lang) {
   if (env.GOOGLE_API_KEY) {
     const c = collectPlaceQueries(norm.items);
     queries = c.queries; skipped = c.skipped;
-    const found = {};
-    await Promise.all(queries.map(async (q) => { found[placeKey(q)] = await googleTextSearchOne(q, env); }));
-    attachPlaces(norm.items, found);
+    attachPlaces(norm.items, await lookupPlacesNearTrip(env, target.tripId, queries));
   }
   return { items: norm.items, dropped: norm.dropped, queries, skipped, kind, branch: !!target.branch };
 }
