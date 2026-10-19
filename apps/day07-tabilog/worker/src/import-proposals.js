@@ -69,7 +69,8 @@ export function buildProposalPrompt({ kind, text, notes, dates, branch, lang }) 
     lines.push("- dateは常に" + ((dates && dates[0]) || "対象の日") + "にすること");
   }
   lines.push(
-    "- categoryは transport（移動・出発）/ arrival（到着：空港・駅・ホテルなどに着いたこと）/ lodging（宿泊）/ food（食事）/ sightseeing（観光・イベント）/ other のいずれか。transportには移動手段（plane, shinkansen, train, bus, car, taxi, walk, bicycle のいずれか。移動・到着以外は空文字）を入れること",
+    "- categoryは transport（移動・出発）/ arrival（到着：空港・駅・ホテルなどに着いたこと）/ lodging（宿泊）/ food（食事）/ sightseeing（観光・イベント）/ other のいずれか。transportには移動手段（plane, shinkansen, train, bus, car, taxi, walk, bicycle のいずれか。移動・到着以外は空文字）を入れること。便名・空港・駅・路線などから手段が分かるときは必ず入れること（例：JAL903や「〜空港」なら plane、のぞみ・新幹線なら shinkansen）",
+    "- 飛行機・新幹線・電車・バスで移動して着いたことは、移動（transport）の1件だけで表すこと。着いた場所はtoPlace、着いた時刻はarriveTime、翌日以降に着くならarriveDateに入れ、同じ移動について到着（arrival）を別に作らないこと（例：「9:00羽田発、11:30那覇着」は移動1件）。到着（arrival）は、移動の話が無く「ホテルに着いた」のように着いたことだけが話された／書かれたときに使うこと",
     "- labelは短い見出し。体言止め（名詞で終える）にすること（例：「浅草寺」「天丼でランチ」「羽田→那覇 JAL903」）。「〜する」「〜した」のような文にしないこと。宿泊（lodging）は宿の名前だけにすること",
     "- timeは、「10時に」「18時ごろ」のように具体的な時刻が話された／書かれたときだけ、24時間表記のHH:MM（例：10:00）で入れること。話されていなければ空文字。時刻を推測で作らないこと（「昼」「夕方」のようなあいまいな言葉は空文字）",
     "- costItemsは、「ランチ1500円」「入場料800円」「タクシー$12」のように金額が話された／書かれたときだけ、品目名と金額を1件以上で入れること。amountは数字、currencyは日本円なら空文字、外貨ならISO 4217の3文字（USD、EURなど）。「一人5000円で3人」のように計算が必要なときは合計を入れ、品目名は「合計」などにしてよい。金額が無ければ空配列。金額を推測で作らないこと",

@@ -246,9 +246,9 @@ const norm = normalizeScreenshotResult(JSON.parse(JSON.stringify(AI)), { trip: T
 {
   const { queries, skipped } = collectPlaceQueries(norm.items);
   // 優先順：宿・会場・店 → 出発地 → 到着地。同じ名前（宿の2泊）は1件
-  check("場所検索: 優先順（宿・会場・店→出発地→到着地）", queries, [
+  check("場所検索: 優先順（移動の出発地・到着地→宿・会場・店）", queries, [
+    "羽田空港", "那覇空港", "東京駅", "新大阪駅", "町田駅", "新宿駅",
     "ホテル日航那覇グランドキャッスル 那覇市おもろまち", "横浜スタジアム", "なんばグランド花月", "ローソン 那覇おもろまち店",
-    "羽田空港", "東京駅", "町田駅", "那覇空港", "新大阪駅", "新宿駅",
   ]);
   check("場所検索: 溢れは0", skipped, 0);
 
@@ -262,8 +262,13 @@ const norm = normalizeScreenshotResult(JSON.parse(JSON.stringify(AI)), { trip: T
     { category: "transport", fromPlace: "出発駅", toPlace: "到着駅" },
     { category: "lodging", place: "宿A" },
   ], 2);
-  check("場所検索: 上限のときは宿が出発地より先", pri.queries, ["宿A", "出発駅"]);
-  check("場所検索: 上限で溢れた到着地", pri.skipped, 1);
+  check("場所検索: 上限のときは移動の出発地・到着地が宿より先", pri.queries, ["出発駅", "到着駅"]);
+  check("場所検索: 上限で溢れた宿", pri.skipped, 1);
+  const urlMove = collectPlaceQueries([
+    { category: "transport", fromPlace: "羽田空港", toPlace: "那覇空港", mapUrl: "https://www.google.com/maps/search/?api=1&query=35.5,139.7" },
+    { category: "transport", fromPlace: "那覇空港", toPlace: "新石垣空港", arriveMapUrl: "https://www.google.com/maps/search/?api=1&query=24.3,124.2" },
+  ]);
+  check("場所検索: 出発地の地図があっても到着地は探す／到着地の地図があれば探さない", urlMove.queries, ["那覇空港"]);
   check("場所検索のリクエスト: 1回で座標まで（FieldMask）", [buildTextSearchRequest("羽田空港").fieldMask, buildTextSearchRequest("羽田空港").body.pageSize], ["places.displayName,places.formattedAddress,places.location", 1]);
   check("場所検索の応答: 先頭1件", parseTextSearchResponse({ places: [{ displayName: { text: "羽田空港" }, formattedAddress: "東京都大田区", location: { latitude: 35.5494, longitude: 139.7798 } }] }), { name: "羽田空港", address: "東京都大田区", lat: 35.5494, lng: 139.7798 });
   check("場所検索の応答: 0件はnull", parseTextSearchResponse({}), null);
