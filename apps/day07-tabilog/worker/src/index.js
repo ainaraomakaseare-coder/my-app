@@ -18,7 +18,7 @@ import { isUsableTranscript } from "./transcribe-provider.js";
 import {
   IMPORT_MAX_ITEMS, UNREADABLE_REASONS, estimateSubrequests, buildVisionBatchBody, parseVisionBatchResponse,
   buildScreenshotPrompt, screenshotSchema, normalizeScreenshotResult, collectPlaceQueries, buildTextSearchRequest,
-  parseTextSearchResponse, attachPlaces, placeKey, validateSaveItems, validateImagesInput,
+  parseTextSearchCandidates, pickPlaceCandidate, attachPlaces, placeKey, validateSaveItems, validateImagesInput,
 } from "./screenshot-import.js";
 import { buildProposalPrompt, proposalSchema, normalizeProposalResult, estimateProposalSubrequests, branchDateList } from "./import-proposals.js";
 import {
@@ -4844,8 +4844,8 @@ async function organizeScreenshotsWithOpenAi(env, prompt, opts) {
   return first;
 }
 
-// Google Text Searchで場所を1件だけ探す（名前・住所・座標を1回の呼び出しで）。失敗・0件はnull
-async function googleTextSearchOne(q, env) {
+// Google Text Searchで場所の候補を最大3件探す（名前・住所・座標を1回の呼び出しで）。失敗・0件は[]
+async function googleTextSearchCandidates(q, env) {
   try {
     const req = buildTextSearchRequest(q);
     tallyAi(env, "google_places");
@@ -4854,11 +4854,38 @@ async function googleTextSearchOne(q, env) {
       headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": req.fieldMask, "content-type": "application/json" },
       body: JSON.stringify(req.body),
     });
-    if (!res.ok) return null;
-    return parseTextSearchResponse(await res.json());
+    if (!res.ok) return [];
+    return parseTextSearchCandidates(await res.json());
   } catch {
-    return null;
+    return [];
   }
+}
+
+// この旅行で分かっている座標（記録の地図）。同名の遠い場所を避ける目印（pickPlaceCandidate）。D1は1回だけ・失敗は目印なし
+async function loadTripPlaceAnchors(env, tripId) {
+  if (!tripId) return [];
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT e.map_lat AS lat, e.map_lng AS lng FROM entries e JOIN blocks b ON b.id = e.block_id WHERE b.trip_id = ? AND e.map_lat IS NOT NULL AND e.map_lng IS NOT NULL LIMIT 200"
+    ).bind(tripId).all();
+    return (results || []).filter((r) => typeof r.lat === "number" && typeof r.lng === "number");
+  } catch {
+    return [];
+  }
+}
+
+// 名前ごとに探して {placeKey: 選んだ1件|null}。候補が1件だけの結果も目印に足してから、複数候補のものを選ぶ
+async function lookupPlaces(queries, env, tripId) {
+  if (!queries.length) return {};
+  const [anchors, lists] = await Promise.all([
+    loadTripPlaceAnchors(env, tripId),
+    Promise.all(queries.map((q) => googleTextSearchCandidates(q, env))),
+  ]);
+  const all = anchors.slice();
+  for (const l of lists) if (l.length === 1) all.push(l[0]);
+  const found = {};
+  queries.forEach((q, i) => { found[placeKey(q)] = pickPlaceCandidate(lists[i], all); });
+  return found;
 }
 
 async function scanScreenshots(tripId, request, env, headers) {
@@ -4934,8 +4961,7 @@ async function scanScreenshots(tripId, request, env, headers) {
 
   // 3) 場所検索：名前ごとに1回（最大12回、並べて同時に呼ぶ）
   const { queries, skipped } = collectPlaceQueries(norm.items);
-  const found = {};
-  await Promise.all(queries.map(async (q) => { found[placeKey(q)] = await googleTextSearchOne(q, env); }));
+  const found = await lookupPlaces(queries, env, tripId);
   attachPlaces(norm.items, found);
 
   // 使える情報が何も無かった画像も「読み取れなかった画像」に含める（画像ごとの理由をそろえる）
@@ -4992,7 +5018,7 @@ async function resolveProposalTarget(env, request, headers, tripId, { date, bran
     if (dates.length < 2) return { error: json({ error: "trip_dates_required" }, 400, headers) };
   }
   if (!dates.length) return { error: json({ error: "invalid_date" }, 400, headers) };
-  return { trip, branch, dates };
+  return { trip, tripId, branch, dates };
 }
 
 // 文字（文字起こし・メモ）→ 候補（場所検索つき）。AIの失敗は { error }
@@ -5011,8 +5037,7 @@ async function buildProposalsFromText(env, kind, text, notes, target, lang) {
   if (env.GOOGLE_API_KEY) {
     const c = collectPlaceQueries(norm.items);
     queries = c.queries; skipped = c.skipped;
-    const found = {};
-    await Promise.all(queries.map(async (q) => { found[placeKey(q)] = await googleTextSearchOne(q, env); }));
+    const found = await lookupPlaces(queries, env, target.tripId);
     attachPlaces(norm.items, found);
   }
   return { items: norm.items, dropped: norm.dropped, queries, skipped, kind, branch: !!target.branch };
