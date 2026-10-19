@@ -1563,6 +1563,63 @@
       return gpsDms(parts);
     }
     return gpsFromExif({ Latitude: dms(2), LatitudeRef: ref(1), Longitude: dms(4), LongitudeRef: ref(3) });
+
+  // ---------- 時系列ムービー（docs/adr/0024） ----------
+  // 「9:30 首里城」のように時刻と場所を出しながら、記録の写真と動画を時間の順に流す縦動画の絵コンテ。
+  // 表紙 → 日の区切り → 予定ごとの写真（2枚まで）と動画（1本まで） → 終わり。60秒を超えるときは、
+  // まず予定ごとの写真を1枚にし、それでも長ければ予定を均等に間引く（最初と最後の予定は残す）。
+  // opts.videos=falseで動画を入れない。opts.available（ID→true）を渡すと、読み込めたものだけを使う。
+  var TLM_W = 720, TLM_H = 1280, TLM_FPS = 30;
+  var TLM_INTRO = 2.2, TLM_DAY = 1.4, TLM_PHOTO = 1.8, TLM_VIDEO = 4, TLM_OUTRO = 2.4, TLM_MAX = 60;
+  function buildTimelineStory(trip, blocks, opts) {
+    opts = opts || {};
+    var useVideos = opts.videos !== false, avail = opts.available || null;
+    var usable = function (id) { return !avail || avail[id] === true; };
+    var moments = sortBlocks(blocks || []).filter(function (b) { return b.date && !b.videoExclude; }).map(function (b) {
+      var photos = [], videos = [];
+      (b.entries || []).forEach(function (e) {
+        (e.photoIds || []).forEach(function (id) { if (usable(id)) photos.push(id); });
+        if (useVideos) (e.videoIds || []).forEach(function (id) { if (usable(id)) videos.push(id); });
+      });
+      return { block: b, photos: photos, videos: videos.slice(0, 1) };
+    }).filter(function (m) { return m.photos.length || m.videos.length; });
+    if (!moments.length) return null;
+
+    function build(list, photoCap) {
+      var scenes = [], t = 0, lastDate = null;
+      var push = function (s) { s.start = t; scenes.push(s); t += s.dur; };
+      push({ kind: 'intro', dur: TLM_INTRO, title: (trip && trip.title) || '', dateText: videoDateRange(trip && trip.startDate, trip && trip.endDate) });
+      list.forEach(function (m) {
+        var b = m.block, dl = dayLabel(trip, b.date);
+        if (b.date !== lastDate) { lastDate = b.date; push({ kind: 'day', dur: TLM_DAY, dayLabel: dl, dateText: formatDateJp(b.date) }); }
+        var base = { kind: 'media', blockId: b.id, time: b.time || '', label: b.label || categoryLabel(b.category), dayLabel: dl };
+        m.photos.slice(0, photoCap).forEach(function (id) { push(Object.assign({ type: 'photo', id: id, dur: TLM_PHOTO }, base)); });
+        m.videos.forEach(function (id) { push(Object.assign({ type: 'video', id: id, dur: TLM_VIDEO }, base)); });
+      });
+      push({ kind: 'outro', dur: TLM_OUTRO });
+      return { w: TLM_W, h: TLM_H, fps: TLM_FPS, total: t, scenes: scenes };
+    }
+    var story = build(moments, 2);
+    if (story.total <= TLM_MAX) return story;
+    story = build(moments, 1);
+    for (var n = moments.length - 1; story.total > TLM_MAX && n >= 2; n--) {
+      var picked = [];
+      for (var i = 0; i < n; i++) {
+        var m = moments[Math.round(i * (moments.length - 1) / (n - 1))];
+        if (picked.indexOf(m) === -1) picked.push(m);
+      }
+      story = build(picked, 1);
+    }
+    return story;
+  }
+  // 時刻t（秒）に映す場面と、その場面の中での経過（local）・割合（frac）
+  function timelineSceneAt(story, t) {
+    var list = story.scenes, s = list[list.length - 1];
+    for (var i = 0; i < list.length; i++) {
+      if (t < list[i].start + list[i].dur) { s = list[i]; break; }
+    }
+    var local = Math.max(0, Math.min(s.dur, t - s.start));
+    return { scene: s, local: local, frac: s.dur ? local / s.dur : 1 };
   }
   // 候補（place。「地図のURL」欄の座標検索で選んだもの）または検索した文字列（searchText。
   // 「Googleマップで検索」を選んだときなど、座標のない検索）から、記録と一緒に保存する
@@ -4737,6 +4794,8 @@
     buildPlacesKml: buildPlacesKml,
     gpsFromExif: gpsFromExif,
     jpegGpsFromBuffer: jpegGpsFromBuffer,
+    buildTimelineStory: buildTimelineStory,
+    timelineSceneAt: timelineSceneAt,
     placeSelectionName: placeSelectionName,
     travelArrival: travelArrival,
     replayStops: replayStops,
@@ -7600,6 +7659,7 @@
     // 「紹介文を作る」の入り口は一時的に隠す（FEATURES.post、2026-09-26〜。サーバー機能は残す）
     $('#btnOpenPost').hidden = !FEATURES.post;
     $('#btnOpenPlaces').hidden = !Core.tripPlaces(trip, activeBlocks()).length;
+    updateTlmButton();
     renderTripJoin();
     renderTripSocialBar();
 
@@ -8044,6 +8104,280 @@
     }
     downloadBlob(blob, name);
   }
+  // ---------- 時系列ムービー（docs/adr/0024） ----------
+  // 絵コンテはCore.buildTimelineStoryが決める。ここは写真・動画を先に読み込み、自前のcanvasに描いて
+  // canvas.captureStream() + MediaRecorderで録画する（地図でふりかえるの「動画でシェア」と同じ録り方。
+  // 画像の読み込み・並列処理・画面に戻るまで待つ処理は、そちらの関数をそのまま使う）。
+  // 動画の音は入れない（複数の動画の音を混ぜる仕組みが要り、同行者の声が入ることもあるため）。
+  var tlm = { tripId: '', busy: false, token: null, recorder: null, blob: null, file: null, objectUrl: '' };
+  var TLM_BITRATE = 4000000;
+
+  function tlmShowPanel(name) {
+    ['Options', 'Progress', 'Result'].forEach(function (p) { $('#tlm' + p).hidden = p.toLowerCase() !== name; });
+  }
+  function tlmSetProgress(frac, text) {
+    var pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
+    $('#tlmPercent').textContent = pct + '%';
+    $('#tlmBarFill').style.width = pct + '%';
+    if (text) $('#tlmProgressText').textContent = text;
+  }
+  function tlmRelease() {
+    var v = $('#tlmVideo');
+    if (v) { try { v.pause(); } catch (e) { /* 何もしない */ } v.removeAttribute('src'); v.load(); }
+    if (tlm.objectUrl) URL.revokeObjectURL(tlm.objectUrl);
+    tlm.objectUrl = ''; tlm.blob = null; tlm.file = null;
+  }
+  function tlmBlocks() { return activeBlocks(); }
+  function updateTlmButton() {
+    $('#btnOpenTlm').hidden = !Core.buildTimelineStory(state.trip, tlmBlocks(), {});
+  }
+  function openTlmSheet() {
+    if (!state.trip || tlm.busy) return;
+    if (tlm.tripId !== state.trip.id) { tlmRelease(); tlm.tripId = state.trip.id; }
+    var story = Core.buildTimelineStory(state.trip, tlmBlocks(), { videos: $('#tlmVideos').checked });
+    $('#tlmLength').textContent = story ? tr('できる動画の長さ：約{d}', { d: videoDurationText(story.total) }) : '';
+    $('#tlmStatus').textContent = '';
+    if (!tlm.blob) tlmShowPanel('options');
+    $('#tlmSheet').hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+  function closeTlmSheet() {
+    if (tlm.busy && tlm.token) { tlm.token.cancelled = true; if (tlm.recorder && tlm.recorder.state !== 'inactive') tlm.recorder.stop(); }
+    $('#tlmSheet').hidden = true;
+    document.body.classList.remove('sheet-open');
+  }
+
+  // 動画1本を読み込む（CORSつき・音なし・インライン再生）。最初のコマが描けるようになったら返す。取れなければnull
+  function tlmLoadVideo(url, timeoutMs) {
+    return new Promise(function (resolve) {
+      var v = document.createElement('video'), done = false, timer = null;
+      function fin(ok) {
+        if (done) return;
+        done = true; clearTimeout(timer); v.onloadeddata = v.onerror = null;
+        resolve(ok ? v : null);
+      }
+      timer = setTimeout(function () { fin(false); }, timeoutMs || 20000);
+      v.crossOrigin = 'anonymous';
+      v.muted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+      v.onloadeddata = function () { fin(true); };
+      v.onerror = function () { fin(false); };
+      v.src = url;
+      try { v.load(); } catch (e) { fin(false); }
+    });
+  }
+
+  // 画像（または動画のコマ）を、枠いっぱいに切り抜いて描く。zoomは1以上（ゆっくり寄る演出）
+  function tlmDrawCover(ctx, src, sw, sh, W, H, zoom) {
+    if (!sw || !sh) return;
+    var scale = Math.max(W / sw, H / sh) * (zoom || 1);
+    var dw = sw * scale, dh = sh * scale;
+    ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  }
+  function tlmFitText(ctx, text, maxW) {
+    if (ctx.measureText(text).width <= maxW) return text;
+    var t = text;
+    while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+    return t + '…';
+  }
+
+  function drawTimelineFrame(ctx, story, t, media) {
+    var W = story.w, H = story.h, at = Core.timelineSceneAt(story, t), s = at.scene;
+    ctx.save();
+    ctx.fillStyle = '#111316';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic';
+    if (s.kind === 'media') {
+      var m = media[s.id];
+      if (s.type === 'photo' && m) tlmDrawCover(ctx, m, m.naturalWidth, m.naturalHeight, W, H, 1 + 0.08 * at.frac);
+      if (s.type === 'video' && m) tlmDrawCover(ctx, m, m.videoWidth, m.videoHeight, W, H, 1);
+      var g = ctx.createLinearGradient(0, H - 460, 0, H);
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.72)');
+      ctx.fillStyle = g; ctx.fillRect(0, H - 460, W, 460);
+      ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'left';
+      ctx.font = '600 30px ' + VIDEO_FONT;
+      ctx.fillText(s.dayLabel, 48, H - 250);
+      if (s.time) { ctx.font = '700 104px ' + VIDEO_FONT; ctx.fillText(s.time, 44, H - 140); }
+      ctx.font = '700 46px ' + VIDEO_FONT;
+      ctx.fillText(tlmFitText(ctx, s.label, W - 96), 48, s.time ? H - 72 : H - 140);
+    } else if (s.kind === 'day') {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = VIDEO_ACCENT; ctx.font = '800 92px ' + VIDEO_FONT;
+      ctx.fillText(s.dayLabel, W / 2, H / 2 - 10);
+      ctx.fillStyle = '#FFFFFF'; ctx.font = '500 36px ' + VIDEO_FONT;
+      ctx.fillText(s.dateText || '', W / 2, H / 2 + 60);
+    } else if (s.kind === 'intro') {
+      ctx.textAlign = 'center'; ctx.fillStyle = '#FFFFFF';
+      ctx.font = '800 64px ' + VIDEO_FONT;
+      ctx.fillText(tlmFitText(ctx, s.title || tr('旅の記録'), W - 96), W / 2, H / 2 - 20);
+      ctx.font = '500 34px ' + VIDEO_FONT; ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillText(s.dateText || '', W / 2, H / 2 + 44);
+    } else {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = VIDEO_ACCENT; ctx.font = '800 64px ' + VIDEO_FONT;
+      ctx.fillText(tr('旅の足跡'), W / 2, H / 2 - 10);
+      ctx.fillStyle = '#FFFFFF'; ctx.font = '500 30px ' + VIDEO_FONT;
+      ctx.fillText(videoAppHost(), W / 2, H / 2 + 50);
+    }
+    // 場面の変わり目は黒から0.25秒でふわっと出す
+    var fade = Math.min(1, at.local / 0.25);
+    if (fade < 1) { ctx.fillStyle = 'rgba(0,0,0,' + (1 - fade) + ')'; ctx.fillRect(0, 0, W, H); }
+    ctx.restore();
+  }
+
+  function tlmRecord(canvas, ctx, story, media, mime, token, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var stream = canvas.captureStream(story.fps);
+      var recorder;
+      try { recorder = new MediaRecorder(stream, { mimeType: mime.mime, videoBitsPerSecond: TLM_BITRATE }); }
+      catch (e) { recorder = new MediaRecorder(stream); }
+      tlm.recorder = recorder;
+      var chunks = [], playing = null;
+      var stopPlaying = function () { if (playing) { try { playing.pause(); } catch (e) { /* 何もしない */ } playing = null; } };
+      recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      recorder.onerror = function (e) { stopPlaying(); stream.getTracks().forEach(function (tk) { tk.stop(); }); reject(e && e.error ? e.error : new Error('recorder_error')); };
+      recorder.onstop = function () {
+        stopPlaying();
+        stream.getTracks().forEach(function (tk) { tk.stop(); });
+        resolve(token.cancelled ? null : new Blob(chunks, { type: mime.type }));
+      };
+      drawTimelineFrame(ctx, story, 0, media);
+      recorder.start(1000);
+      var t0 = null;
+      function tick(now) {
+        if (token.cancelled) return;
+        if (t0 === null) t0 = now;
+        var t = (now - t0) / 1000;
+        var s = Core.timelineSceneAt(story, Math.min(t, story.total)).scene;
+        // 動画の場面に入ったら頭から再生し、出たら止める
+        var want = s.kind === 'media' && s.type === 'video' ? media[s.id] : null;
+        if (want !== playing) {
+          stopPlaying();
+          if (want) { playing = want; try { want.currentTime = 0; } catch (e) { /* 何もしない */ } var pp = want.play(); if (pp && pp.catch) pp.catch(function () {}); }
+        }
+        if (t >= story.total) {
+          drawTimelineFrame(ctx, story, story.total, media);
+          onProgress(1);
+          setTimeout(function () { if (recorder.state !== 'inactive') recorder.stop(); }, 300);
+          return;
+        }
+        drawTimelineFrame(ctx, story, t, media);
+        onProgress(t / story.total);
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+  }
+
+  function startTimelineMovie() {
+    if (tlm.busy || !state.trip) return;
+    var status = $('#tlmStatus');
+    status.textContent = '';
+    var canvas = document.createElement('canvas');
+    if (typeof MediaRecorder === 'undefined' || !canvas.captureStream) { status.textContent = tr('この端末（ブラウザ）は動画の作成に対応していません。'); return; }
+    var mime = Core.pickVideoMimeType(function (m) { return MediaRecorder.isTypeSupported(m); });
+    if (!mime) { status.textContent = tr('この端末（ブラウザ）は動画の作成に対応していません。'); return; }
+    var trip = state.trip, blocks = tlmBlocks(), useVideos = $('#tlmVideos').checked;
+    var draft = Core.buildTimelineStory(trip, blocks, { videos: useVideos });
+    if (!draft) { status.textContent = tr('写真か動画のある記録がまだありません。'); return; }
+    var token = { cancelled: false };
+    tlm.token = token; tlm.busy = true;
+    tlmRelease();
+    tlmShowPanel('progress');
+    tlmSetProgress(0, tr('写真と動画を読み込んでいます…'));
+    canvas.width = draft.w; canvas.height = draft.h;
+    var ctx = canvas.getContext('2d');
+    // 間引く前の候補を全部読むと重いので、まず仮の絵コンテに出るものだけ読む。読めなかったものを外して作り直す
+    var jobs = draft.scenes.filter(function (s) { return s.kind === 'media'; });
+    var media = {}, available = {};
+    videoRunPool(jobs, 4, function (s) {
+      var url = photoUrl(s.id);
+      if (s.type === 'photo') return videoLoadImage(url, 15000).then(function (im) { if (im) { media[s.id] = im; available[s.id] = true; } });
+      return tlmLoadVideo(url, 20000).then(function (v) {
+        if (!v) return;
+        // CORSが通らない動画を描くとcanvasが汚れて録画できないので、ここで1コマ描いて確かめる
+        var probe = document.createElement('canvas');
+        probe.width = probe.height = 2;
+        try { var pc = probe.getContext('2d'); pc.drawImage(v, 0, 0, 2, 2); pc.getImageData(0, 0, 1, 1); media[s.id] = v; available[s.id] = true; }
+        catch (e) { /* 使わない */ }
+      });
+    }, function (done, total) { tlmSetProgress(0.3 * done / total); }, token).then(function () {
+      if (token.cancelled) return null;
+      var story = Core.buildTimelineStory(trip, blocks, { videos: useVideos, available: available });
+      if (!story) throw new Error('no_media');
+      drawTimelineFrame(ctx, story, story.total / 2, media);
+      try { ctx.getImageData(0, 0, 1, 1); } catch (e) { throw new Error('tainted'); }
+      return videoWaitUntilVisible(token).then(function (ok) {
+        if (!ok || token.cancelled) return null;
+        tlmSetProgress(0.3, videoRecordingText(story, 0));
+        return tlmRecord(canvas, ctx, story, media, mime, token, function (f) { tlmSetProgress(0.3 + f * 0.7, videoRecordingText(story, f)); });
+      });
+    }).then(function (blob) {
+      tlm.busy = false;
+      if (token.cancelled || !blob) { tlmShowPanel('options'); return; }
+      if (!blob.size) throw new Error('empty');
+      tlmShowResult(blob, mime);
+    }).catch(function (err) {
+      tlm.busy = false;
+      tlmShowPanel('options');
+      status.textContent = err && err.message === 'no_media'
+        ? tr('写真や動画を読み込めませんでした。通信環境を確認して、もう一度お試しください。')
+        : err && err.message === 'tainted'
+          ? tr('写真や動画を取り込めませんでした。「記録の動画も入れる」を外してもう一度お試しください。')
+          : tr('動画を作れませんでした。通信環境を確認して、もう一度お試しください。');
+    });
+  }
+
+  function tlmShowResult(blob, mime) {
+    tlm.blob = blob;
+    tlm.file = new File([blob], 'tabinoashiato-timeline.' + mime.ext, { type: mime.type });
+    tlm.objectUrl = URL.createObjectURL(blob);
+    var v = $('#tlmVideo');
+    v.src = tlm.objectUrl;
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+    var canFile = !!(navigator.canShare && navigator.canShare({ files: [tlm.file] }));
+    $('#btnTlmShare').textContent = canFile ? tr('共有する') : tr('動画を保存する');
+    $('#btnTlmSave').hidden = !(canFile && !isNativeApp());
+    $('#tlmResultNote').textContent = mime.isMp4 ? '' : tr('この端末ではWebM形式で作られました。XやInstagramなど、WebMを受け付けないSNSがあります。');
+    tlmShowPanel('result');
+  }
+  function saveTimelineMovie() {
+    if (!tlm.blob) return;
+    if (isNativeApp()) { showToast(tr('この環境では動画を共有できませんでした。')); return; }
+    downloadBlob(tlm.blob, tlm.file.name);
+    showToast(tr('動画を保存しました'));
+  }
+  function shareTimelineMovie() {
+    var file = tlm.file;
+    if (!file) return;
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], text: videoShareText() }).catch(function (e) {
+        if (e && e.name === 'AbortError') return;
+        saveTimelineMovie();
+      });
+      return;
+    }
+    saveTimelineMovie();
+  }
+  function initTimelineMovie() {
+    $('#btnOpenTlm').addEventListener('click', openTlmSheet);
+    $('#btnCloseTlm').addEventListener('click', closeTlmSheet);
+    $('#tlmSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget && !tlm.busy) closeTlmSheet(); });
+    $('#tlmVideos').addEventListener('change', function () {
+      var story = Core.buildTimelineStory(state.trip, tlmBlocks(), { videos: $('#tlmVideos').checked });
+      $('#tlmLength').textContent = story ? tr('できる動画の長さ：約{d}', { d: videoDurationText(story.total) }) : '';
+    });
+    $('#btnTlmStart').addEventListener('click', startTimelineMovie);
+    $('#btnTlmCancel').addEventListener('click', function () {
+      if (tlm.token) tlm.token.cancelled = true;
+      if (tlm.recorder && tlm.recorder.state !== 'inactive') tlm.recorder.stop();
+      tlm.busy = false;
+      tlmShowPanel('options');
+    });
+    $('#btnTlmShare').addEventListener('click', shareTimelineMovie);
+    $('#btnTlmSave').addEventListener('click', saveTimelineMovie);
+    $('#btnTlmAgain').addEventListener('click', function () { tlmRelease(); tlmShowPanel('options'); });
+  }
+
   function initPlacesSheet() {
     $('#btnOpenPlaces').addEventListener('click', openPlacesSheet);
     $('#btnClosePlacesSheet').addEventListener('click', closePlacesSheet);
@@ -15700,6 +16034,7 @@
     wireMyPage();
     initSocial();
     initPlacesSheet();
+    initTimelineMovie();
     $('#btnCloseTzOverrideSheet').addEventListener('click', closeTzOverrideSheet);
     $('#tzOverrideSheet').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeTzOverrideSheet(); });
     // 自分だけの道（別行動）の追加・編集シート（docs/adr/0021）

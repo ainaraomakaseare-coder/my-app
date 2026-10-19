@@ -226,4 +226,9 @@ I18N.addLang('en', {
   "写真の撮影場所を地図に入れました": "Added where the photo was taken to the map",
   "写真へのアクセスが許可されていないため、撮影場所は読めません。もう一度押すと、場所なしで写真を選べます。": "Photo access isn't allowed, so the location can't be read. Tap again to choose photos without the location.",
   "写真を読み込めませんでした。": "Couldn't load the photos.",
+  "できる動画の長さ：約{d}": "Video length: about {d}",
+  "写真か動画のある記録がまだありません。": "No records with photos or videos yet.",
+  "写真と動画を読み込んでいます…": "Loading photos and videos…",
+  "写真や動画を読み込めませんでした。通信環境を確認して、もう一度お試しください。": "Couldn't load the photos or videos. Check your connection and try again.",
+  "写真や動画を取り込めませんでした。「記録の動画も入れる」を外してもう一度お試しください。": "Couldn't use the photos or videos. Turn off \"Include videos\" and try again.",
 });
