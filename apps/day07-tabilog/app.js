@@ -2854,6 +2854,64 @@
     return trip.tripTitle + years;
   }
 
+  // 行った回数で地図の色を濃くする（2026-10-19〜）。その場所に行った旅行の数
+  // （外した旅行・乗り継ぎだけの旅行は数えない。同じ旅行で何日いても1回）
+  function visitedTripCount(x) {
+    var seen = {}, n = 0;
+    ((x && x.sources) || []).forEach(function (s) {
+      if (s.transit || s.excluded) return;
+      var id = s.tripId || '';
+      if (seen[id]) return;
+      seen[id] = 1;
+      n++;
+    });
+    return n;
+  }
+  // 色の段階：1回=1・2回=2・3回=3・4回以上=4（0は塗らない）
+  function visitedShadeLevel(count) {
+    count = Number(count) || 0;
+    return count <= 0 ? 0 : Math.min(4, Math.floor(count));
+  }
+
+  // 都道府県をタップしたときのスライドショーに出す写真（2026-10-19〜）。
+  // その場所にいた日（sources[].dates）の記録の写真を、旅行ごとに集める。新しい旅行が先、
+  // 旅行の中は日付順（同じ日は予定の並びのまま）。日単位なので、移動日は隣の県の写真が混ざることがある。
+  // tripsById: { [tripId]: { blocks: [{ date, entries: [{ photoIds }] }] } }
+  // 返り値: [{ id, tripId }]（同じ写真は1回だけ。maxで打ち切る）
+  function visitedPlacePhotos(x, tripsById, max) {
+    max = max || 40;
+    var trips = [], seen = {};
+    ((x && x.sources) || []).forEach(function (s, i) {
+      if (s.transit || s.excluded || !s.tripId) return;
+      if (!seen[s.tripId]) {
+        seen[s.tripId] = { tripId: s.tripId, dates: {}, last: '', i: i };
+        trips.push(seen[s.tripId]);
+      }
+      (s.dates || []).forEach(function (d) {
+        seen[s.tripId].dates[d] = 1;
+        if (d > seen[s.tripId].last) seen[s.tripId].last = d;
+      });
+    });
+    trips.sort(function (a, b) { return a.last !== b.last ? (a.last < b.last ? 1 : -1) : a.i - b.i; });
+    var out = [], used = {};
+    trips.forEach(function (t) {
+      var data = tripsById && tripsById[t.tripId];
+      var blocks = ((data && data.blocks) || []).map(function (b, k) { return { b: b, k: k }; })
+        .filter(function (o) { return t.dates[o.b.date]; });
+      blocks.sort(function (a, c) { return a.b.date !== c.b.date ? (a.b.date < c.b.date ? -1 : 1) : a.k - c.k; });
+      blocks.forEach(function (o) {
+        (o.b.entries || []).forEach(function (e) {
+          (e.photoIds || []).forEach(function (id) {
+            if (!id || used[id] || out.length >= max) return;
+            used[id] = 1;
+            out.push({ id: id, tripId: t.tripId });
+          });
+        });
+      });
+    });
+    return out;
+  }
+
   // 旅行の行き先（天気のために入れた「日ごとの場所」の国・都道府県）。海外があれば国、国内だけなら都道府県。
   function tripPlaceNames(days) {
     var countries = [], prefs = [];
@@ -4613,6 +4671,9 @@
     visitedPlaceTrips: visitedPlaceTrips,
     visitedYearsFromDates: visitedYearsFromDates,
     visitedTripLabel: visitedTripLabel,
+    visitedTripCount: visitedTripCount,
+    visitedShadeLevel: visitedShadeLevel,
+    visitedPlacePhotos: visitedPlacePhotos,
     VISITED_REGION_ORDER: VISITED_REGION_ORDER,
     VISITED_PREFECTURE_REGIONS: VISITED_PREFECTURE_REGIONS,
     regionForPrefecture: regionForPrefecture,
@@ -12706,6 +12767,7 @@
   }
   var visitedJapanTopoCache = null, visitedWorldTopoCache = null, visitedIsoAlpha2Cache = null;
   var visitedFeatureCache = {};
+  var visitedJapanFeatures = {}; // 都道府県名→地物（タップで拡大するスライドショー用。日本地図を描くたびに入れ直す）
   function visitedFeatureOnce(name, topo, objName) {
     var c = visitedFeatureCache[name];
     if (c && c.topo === topo) return c.fc;
@@ -12985,6 +13047,17 @@
   // 数えたい、という要望が来たら、ここを195に変えれば表示も一緒に変わる。
   var VISITED_COUNTRY_TOTAL = 193;
 
+  // 地図の下の凡例：何回行ったかで色が濃くなる（1・2・3・4回以上）
+  function visitedLegendHtml(hint) {
+    return '<div class="visited-legend">' +
+      '<span class="visited-legend-label">' + escapeHtml(tr('行った回数')) + '</span>' +
+      [1, 2, 3, 4].map(function (n) {
+        return '<span class="visited-legend-item"><span class="visited-legend-swatch shade-' + n + '"></span>' + (n === 4 ? '4+' : n) + '</span>';
+      }).join('') +
+      (hint ? '<span class="visited-legend-hint">' + escapeHtml(hint) + '</span>' : '') +
+      '</div>';
+  }
+
   function renderVisitedDomestic(panel, visited, excludedPlaces) {
     var pct = Core.visitedPercentage(visited.length, VISITED_PREFECTURE_TOTAL);
     var frac = '<strong>' + visited.length + '</strong> / ' + VISITED_PREFECTURE_TOTAL + ' <span class="visited-totals-unit">' + tr('都道府県') + '</span>';
@@ -12992,6 +13065,7 @@
     panel.innerHTML =
       visitedTotalsCardHtml(frac, '', pct) +
       '<div class="visited-map" id="visitedMapDomestic"><div class="visited-map-ph" style="aspect-ratio:' + VISITED_JAPAN_MAP_ASPECT + '"></div></div>' +
+      visitedLegendHtml(tr('都道府県をタップすると、その旅の写真が流れます')) +
       visitedGroupedListHtml('prefecture', groups, false) +
       '<p class="hint visited-credit">' + tr('地図データ: simplify-japan-geojson（ricewin、CC BY 4.0）') + '</p>';
     wireVisitedListRows(panel);
@@ -13004,6 +13078,7 @@
     panel.innerHTML =
       visitedTotalsCardHtml(frac, tr('国連加盟{n}か国中', { n: VISITED_COUNTRY_TOTAL }), pct) +
       '<div class="visited-map" id="visitedMapOverseas"><div class="visited-map-ph" style="aspect-ratio:320 / 190"></div></div>' +
+      visitedLegendHtml('') +
       '<div class="visited-list-wrap" id="visitedListOverseas"></div>';
     drawVisitedWorldMap(visited, excludedPlaces);
   }
@@ -13014,13 +13089,15 @@
   // 小さく出す（日本地図でよくある配置）。
   function drawVisitedJapanMap(visited) {
     var visitedNames = {};
-    visited.forEach(function (x) { visitedNames[x.name] = true; });
+    visited.forEach(function (x) { visitedNames[x.name] = Math.max(1, Core.visitedShadeLevel(Core.visitedTripCount(x))); });
     var fade = !visitedGeoReady('japan');
     Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/japan-prefectures.topojson', 'japan')]).then(function (r) {
       var container = $('#visitedMapDomestic');
       if (!container) return; // 読み込み中にタブが切り替わっていた
       var topo = r[1];
       var fc = visitedFeatureOnce('japan', topo, 'japan'); // 変換結果は覚えておき、タブを切り替えるたびに作り直さない
+      visitedJapanFeatures = {};
+      fc.features.forEach(function (f) { visitedJapanFeatures[f.properties.nam_ja] = f; });
       var okinawaFeature = fc.features.filter(function (f) { return f.properties.nam_ja === '沖縄県'; })[0];
       var mainFeatures = fc.features.filter(function (f) { return f.properties.nam_ja !== '沖縄県'; });
       var mainFC = { type: 'FeatureCollection', features: mainFeatures };
@@ -13044,7 +13121,7 @@
         if (!d) return '';
         var isVisited = !!visitedNames[name];
         var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
-        return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+        return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited shade-' + visitedNames[name] : '') + (on ? ' on' : '') + '"' +
           (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(visitedPlaceLabel('prefecture', name)) + '</title></path>';
       }).join('');
 
@@ -13069,7 +13146,7 @@
         insetSvg = '<g class="visited-inset">' +
           '<rect x="' + insetX + '" y="' + insetY + '" width="' + insetW + '" height="' + insetH + '" class="visited-inset-box" rx="4"/>' +
           '<text x="' + (insetX + 5) + '" y="' + (insetY + 11) + '" class="visited-inset-label">' + tr('沖縄') + '</text>' +
-          (d ? '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+          (d ? '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited shade-' + visitedNames[name] : '') + (on ? ' on' : '') + '"' +
             (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(visitedPlaceLabel('prefecture', name)) + '</title></path>' : '') +
           '</g>';
       }
@@ -13093,7 +13170,7 @@
   // 別で描く（逆も同様）。実際の例外はconsole.errorに出す（原因調査用）。
   function drawVisitedWorldMap(visited, excludedPlaces) {
     var visitedNames = {};
-    visited.forEach(function (x) { visitedNames[x.name] = true; });
+    visited.forEach(function (x) { visitedNames[x.name] = Math.max(1, Core.visitedShadeLevel(Core.visitedTripCount(x))); });
     var fade = !visitedGeoReady('world');
     Promise.all([loadVisitedGeoLibs(), loadVisitedJson('vendor/geo/countries-110m.json', 'world'), loadVisitedJson('vendor/geo/iso-numeric-alpha2.json', 'iso')]).then(function (r) {
       var container = $('#visitedMapOverseas');
@@ -13134,7 +13211,7 @@
                 if (!d) return '';
                 var isVisited = !!(name && visitedNames[name]);
                 var on = isVisited && sel && sel.kind === 'country' && sel.name === name;
-                return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited' : '') + (on ? ' on' : '') + '"' +
+                return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited shade-' + visitedNames[name] : '') + (on ? ' on' : '') + '"' +
                   (isVisited ? ' data-kind="country" data-name="' + escapeHtml(name) + '"' : '') +
                   '>' + (name ? '<title>' + escapeHtml(visitedPlaceLabel('country', name)) + '</title>' : '') + '</path>';
               } catch (eFeature) {
@@ -13185,10 +13262,211 @@
         // 国内⇄海外の横スワイプは地図の上から始めても効くようにした（initTabSwipe）ため、
         // スワイプがコミットした直後の一瞬だけ来る合成clickで領域タップが誤発火しないよう無視する。
         if (Date.now() < tabSwipeClickGuardUntil) { e.preventDefault(); e.stopPropagation(); return; }
+        if (el.dataset.kind === 'prefecture' && openVisitedShow(el)) return;
         setVisitedSelection(el.dataset.kind, el.dataset.name, true);
       });
     });
   }
+
+  // ---------- 都道府県をタップしたときの写真スライドショー（2026-10-19〜） ----------
+  // ユーザーの改善意見：「都道府県を押したらすーっと拡大されて、その都道府県の枠の中で旅行で撮った
+  // 写真がショーで流れる」。地図上の県の位置から画面いっぱいへ大きくし（FLIP）、県の形でくり抜いた中で
+  // 写真を重ねて切り替える（ゆっくり寄っていく動き付き）。写真はその県にいた日の記録の写真
+  // （Core.visitedPlacePhotos）。旅行のデータは開くときと同じfetchTripForOpenで取る（オフラインでも
+  // 一度開いた旅行は出る）。写真をタップすると、いつもの写真ビューアで大きく見られる。
+  var visitedShow = null;
+  var visitedShowTripCache = {};
+  var VISITED_SHOW_INTERVAL = 3600;
+
+  // 地図の県の形から、本体の島だけを取り出す（東京都の小笠原・鹿児島県の奄美などまで入れると、
+  // 枠が海ばかりの小さな形になってしまうため）。いちばん大きい島と、その近くの島だけ残す。
+  function visitedShowMainShape(feature) {
+    var g = feature && feature.geometry;
+    if (!g || g.type !== 'MultiPolygon') return feature;
+    var polys = g.coordinates.map(function (c) {
+      var f = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: c } };
+      return { c: c, area: d3.geoArea(f), b: d3.geoBounds(f) };
+    });
+    var main = polys.reduce(function (a, b) { return b.area > a.area ? b : a; });
+    var mx = Math.max(main.b[1][0] - main.b[0][0], main.b[1][1] - main.b[0][1]) * 0.5;
+    var keep = polys.filter(function (p) {
+      var cx = (p.b[0][0] + p.b[1][0]) / 2, cy = (p.b[0][1] + p.b[1][1]) / 2;
+      return cx >= main.b[0][0] - mx && cx <= main.b[1][0] + mx && cy >= main.b[0][1] - mx && cy <= main.b[1][1] + mx;
+    });
+    return { type: 'Feature', properties: feature.properties, geometry: { type: 'MultiPolygon', coordinates: keep.map(function (p) { return p.c; }) } };
+  }
+
+  function visitedShowFetchTrip(id) {
+    if (!visitedShowTripCache[id]) {
+      visitedShowTripCache[id] = fetchTripForOpen(id).then(function (r) { return r.data; }, function () {
+        delete visitedShowTripCache[id]; // 失敗は覚えない（次に開いたときにもう一度取りに行く）
+        return null;
+      });
+    }
+    return visitedShowTripCache[id];
+  }
+
+  // 開けたらtrue（地図データがまだ無いなど、開けないときはfalseで、これまでどおり一覧の行を選ぶ）
+  function openVisitedShow(srcEl) {
+    var name = srcEl.dataset.name;
+    var feature = visitedJapanFeatures[name];
+    var x = (visitedDetails().prefectures || []).filter(function (p) { return p.name === name; })[0];
+    if (!feature || !x || !window.d3) return false;
+    closeVisitedShow(true);
+    var shape = visitedShowMainShape(feature);
+    var W = 320, H = 320, pad = 10;
+    var proj = d3.geoMercator().fitExtent([[pad, pad], [W - pad, H - pad]], shape);
+    var path = d3.geoPath(proj);
+    var d = path(shape);
+    var bb = path.bounds(shape);
+    var count = Core.visitedTripCount(x);
+    var level = Math.max(1, Core.visitedShadeLevel(count));
+    var imgAttrs = ' x="' + bb[0][0].toFixed(1) + '" y="' + bb[0][1].toFixed(1) + '" width="' + (bb[1][0] - bb[0][0]).toFixed(1) +
+      '" height="' + (bb[1][1] - bb[0][1]).toFixed(1) + '" preserveAspectRatio="xMidYMid slice"';
+    var root = document.createElement('div');
+    root.className = 'vshow';
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    root.setAttribute('aria-label', visitedPlaceLabel('prefecture', name));
+    root.innerHTML =
+      '<div class="vshow-head">' +
+      '<div class="vshow-head-text"><div class="vshow-title">' + escapeHtml(visitedPlaceLabel('prefecture', name)) + '</div>' +
+      '<div class="vshow-sub">' + escapeHtml(tr('旅行{n}回', { n: count })) + '</div></div>' +
+      '<button type="button" class="vshow-close" aria-label="' + escapeHtml(tr('閉じる')) + '">' +
+      '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg></button>' +
+      '</div>' +
+      '<div class="vshow-stage">' +
+      '<svg class="vshow-svg" viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">' +
+      '<defs><clipPath id="vshowClip"><path d="' + d + '"/></clipPath></defs>' +
+      '<path class="vshow-fill shade-' + level + '" d="' + d + '"/>' +
+      '<g clip-path="url(#vshowClip)"><image class="vshow-img"' + imgAttrs + '/><image class="vshow-img"' + imgAttrs + '/></g>' +
+      '<path class="vshow-outline" d="' + d + '"/>' +
+      '</svg></div>' +
+      '<div class="vshow-caption">' + escapeHtml(tr('写真を読み込んでいます…')) + '</div>' +
+      '<div class="vshow-trips">' + visitedTripChipsHtml('prefecture', x) + '</div>';
+    document.body.appendChild(root);
+    document.body.classList.add('vshow-open');
+    visitedShow = { root: root, srcEl: srcEl, name: name, photos: [], index: -1, front: 0, timer: null, labels: {} };
+    var show = visitedShow;
+
+    root.querySelector('.vshow-close').addEventListener('click', function () { closeVisitedShow(); });
+    root.addEventListener('click', function (e) { if (e.target === root) closeVisitedShow(); });
+    // 旅行名をタップしたら、スライドショーをすぐ閉じてから旅行を開く（開く処理はwireVisitedTripLinksのまま）
+    root.addEventListener('click', function (e) {
+      if (e.target.closest && e.target.closest('.visited-trip-link')) closeVisitedShow(true);
+    }, true);
+    wireVisitedTripLinks(root);
+    root.querySelector('.vshow-svg').addEventListener('click', function () {
+      if (!show.photos.length || show.index < 0) return;
+      openMediaViewer(show.photos.map(function (p) { return { type: 'photo', id: p.id }; }), show.index);
+    });
+    (x.sources || []).forEach(function (s) {
+      if (s.tripId && !show.labels[s.tripId]) show.labels[s.tripId] = Core.visitedTripLabel({ tripTitle: s.tripTitle || tr('（無題の旅）'), years: Core.visitedYearsFromDates(s.dates) });
+    });
+
+    visitedShowZoom(show, true);
+
+    var ids = (x.sources || []).filter(function (s) { return !s.transit && !s.excluded && s.tripId; })
+      .map(function (s) { return s.tripId; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).slice(0, 12);
+    Promise.all(ids.map(visitedShowFetchTrip)).then(function (list) {
+      if (visitedShow !== show) return;
+      var byId = {};
+      ids.forEach(function (id, i) { if (list[i]) byId[id] = list[i]; });
+      show.photos = Core.visitedPlacePhotos(x, byId, 40);
+      root.querySelector('.vshow-sub').textContent = tr('旅行{n}回・写真{m}枚', { n: count, m: show.photos.length });
+      if (!show.photos.length) {
+        root.querySelector('.vshow-caption').textContent = tr('この都道府県の写真はまだありません');
+        return;
+      }
+      visitedShowNext(show);
+    });
+    return true;
+  }
+
+  // 地図の県の位置・大きさから、画面の中の大きな形へ（開くとき）／その逆へ（閉じるとき）動かす
+  function visitedShowZoom(show, opening, done) {
+    var svg = show.root.querySelector('.vshow-svg');
+    var outline = show.root.querySelector('.vshow-outline');
+    var src = show.srcEl && show.srcEl.isConnected ? show.srcEl.getBoundingClientRect() : null;
+    if (prefersReducedMotion() || !src || !src.width) {
+      if (opening) show.root.classList.add('in');
+      else show.root.classList.remove('in');
+      if (done) setTimeout(done, opening ? 0 : 250);
+      return;
+    }
+    svg.style.transition = 'none';
+    svg.style.transform = '';
+    var box = svg.getBoundingClientRect();
+    var fin = outline.getBoundingClientRect();
+    var k = Math.min(src.width / fin.width, src.height / fin.height);
+    var tx = (src.left + src.width / 2) - box.left - k * ((fin.left + fin.width / 2) - box.left);
+    var ty = (src.top + src.height / 2) - box.top - k * ((fin.top + fin.height / 2) - box.top);
+    var small = 'translate(' + tx.toFixed(1) + 'px,' + ty.toFixed(1) + 'px) scale(' + k.toFixed(4) + ')';
+    if (opening) {
+      svg.style.transform = small;
+      void svg.getBoundingClientRect();
+      svg.style.transition = '';
+      show.root.classList.add('in');
+      svg.style.transform = '';
+    } else {
+      svg.style.transition = '';
+      show.root.classList.remove('in');
+      svg.style.transform = small;
+      setTimeout(done, 450);
+    }
+  }
+
+  function visitedShowNext(show) {
+    if (visitedShow !== show || !show.photos.length) return;
+    var i = (show.index + 1) % show.photos.length;
+    var photo = show.photos[i];
+    var img = new Image();
+    img.onload = function () {
+      if (visitedShow !== show) return;
+      var imgs = show.root.querySelectorAll('.vshow-img');
+      var back = imgs[1 - show.front], front = imgs[show.front];
+      back.setAttribute('href', photoUrl(photo.id));
+      back.classList.remove('on');
+      void back.getBoundingClientRect(); // ゆっくり寄る動きを最初からやり直す
+      back.classList.add('on');
+      if (show.index >= 0) front.classList.remove('on');
+      show.front = 1 - show.front;
+      show.index = i;
+      show.root.classList.add('has-photo');
+      show.root.querySelector('.vshow-caption').textContent = show.labels[photo.tripId] || '';
+      if (show.photos.length > 1) show.timer = setTimeout(function () { visitedShowNext(show); }, VISITED_SHOW_INTERVAL);
+    };
+    img.onerror = function () {
+      // 読めない写真は飛ばす（全部読めなければ、色の付いた形だけのまま）
+      if (visitedShow !== show) return;
+      show.photos.splice(i, 1);
+      if (show.index >= i) show.index--;
+      if (show.photos.length) visitedShowNext(show);
+      else show.root.querySelector('.vshow-caption').textContent = tr('この都道府県の写真はまだありません');
+    };
+    img.src = photoUrl(photo.id);
+  }
+
+  // instant：旅行を開く・別の画面へ移るときなど、動きを付けずにすぐ消す
+  function closeVisitedShow(instant) {
+    var show = visitedShow;
+    if (!show) return;
+    visitedShow = null;
+    clearTimeout(show.timer);
+    var remove = function () {
+      if (show.root.parentNode) show.root.parentNode.removeChild(show.root);
+      if (!visitedShow) document.body.classList.remove('vshow-open');
+    };
+    if (instant) { remove(); return; }
+    // 閉じたあとも、一覧ではその県の行を選んだ状態にしておく（以前の「地図をタップ」と同じ結果）
+    state.visitedSel = { kind: 'prefecture', name: show.name };
+    updateVisitedHighlight();
+    visitedShowZoom(show, false, remove);
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && visitedShow && $('#photoLightbox').hidden) closeVisitedShow();
+  });
+  window.addEventListener('popstate', function () { closeVisitedShow(true); });
 
   // ---------- 地図でふりかえる（replay） ----------
   // 地図はLeaflet（vendor/leaflet、BSD-2）＋OpenStreetMapのタイル（無料・APIキー不要。帰属表示が必須で、

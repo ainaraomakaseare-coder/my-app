@@ -210,4 +210,10 @@ I18N.addLang('en', {
   "旅行をつくるには電波が必要です": "You need a connection to create a trip",
   "オフラインのため旅行を開けませんでした。電波があるときに一度開くと、次からオフラインでも見られます。": "You're offline, so this trip couldn't be opened. Open it once while online and you can view it offline next time.",
   "記録を見る ›": "View record ›",
+  "行った回数": "Times visited",
+  "旅行{n}回": "{n} trips",
+  "旅行{n}回・写真{m}枚": "{n} trips · {m} photos",
+  "写真を読み込んでいます…": "Loading photos…",
+  "この都道府県の写真はまだありません": "No photos from this prefecture yet",
+  "都道府県をタップすると、その旅の写真が流れます": "Tap a prefecture to play the photos from your trips there",
 });
