@@ -3331,6 +3331,55 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   ok('buildPlacesKml: 文書名は旅行名', kml.indexOf('<Document><name>沖縄旅</name>') !== -1);
 })();
 
+/* ---- 時系列ムービー（buildTimelineStory / timelineSceneAt。docs/adr/0024） ---- */
+(function () {
+  var trip = { title: '沖縄旅', startDate: '2026-05-01', endDate: '2026-05-02' };
+  function b(id, date, time, label, photos, videos, extra) {
+    return Object.assign({ id: id, date: date, time: time, label: label, category: 'sightseeing', entries: [{ photoIds: photos || [], videoIds: videos || [] }] }, extra || {});
+  }
+  var blocks = [
+    b('b2', '2026-05-01', '12:00', '首里そば', ['p2']),
+    b('b1', '2026-05-01', '09:30', '首里城', ['p1a', 'p1b', 'p1c', 'p1d'], ['v1']),
+    b('b3', '2026-05-01', '15:00', '写真なし', []),
+    b('b4', '2026-05-02', '10:00', '美ら海水族館', ['p4'], ['v4']),
+    b('b5', '2026-05-02', '', '動画に出さない', ['p5'], [], { videoExclude: true }),
+    b('b6', '', '', '日付なし', ['p6'])
+  ];
+  var st = T.buildTimelineStory(trip, blocks, {});
+  var kinds = st.scenes.map(function (s) { return s.kind === 'media' ? s.type + ':' + s.id : s.kind; });
+  eq('buildTimelineStory: 表紙→日→時刻順の写真・動画→終わり', kinds,
+    ['intro', 'day', 'photo:p1a', 'photo:p1b', 'video:v1', 'photo:p2', 'day', 'photo:p4', 'video:v4', 'outro']);
+  eq('buildTimelineStory: 1つの予定は写真2枚＋動画1本まで', st.scenes.filter(function (s) { return s.blockId === 'b1'; }).length, 3);
+  var v1 = st.scenes.filter(function (s) { return s.id === 'v1'; })[0];
+  eq('buildTimelineStory: 時刻と場所と日を持つ', [v1.time, v1.label, v1.dayLabel], ['09:30', '首里城', '1日目']);
+  ok('buildTimelineStory: 動画は写真より長く見せる', v1.dur > st.scenes[2].dur);
+  var last = st.scenes[st.scenes.length - 1];
+  ok('buildTimelineStory: 場面はすき間なくつながる', st.scenes.every(function (s, i) { return i === 0 ? s.start === 0 : Math.abs(s.start - (st.scenes[i - 1].start + st.scenes[i - 1].dur)) < 1e-9; }));
+  ok('buildTimelineStory: 全体の長さ', Math.abs(st.total - (last.start + last.dur)) < 1e-9);
+  eq('buildTimelineStory: 縦の動画', [st.w, st.h], [720, 1280]);
+
+  var noVid = T.buildTimelineStory(trip, blocks, { videos: false });
+  ok('buildTimelineStory: 動画を入れない設定', noVid.scenes.every(function (s) { return s.type !== 'video'; }));
+  var only = T.buildTimelineStory(trip, blocks, { available: { p2: true, v4: true } });
+  eq('buildTimelineStory: 読み込めたものだけ使う', only.scenes.filter(function (s) { return s.kind === 'media'; }).map(function (s) { return s.id; }), ['p2', 'v4']);
+  eq('buildTimelineStory: 写真も動画も無ければnull', T.buildTimelineStory(trip, [b('x', '2026-05-01', '', 'a', [])], {}), null);
+
+  var many = [];
+  for (var i = 0; i < 60; i++) many.push(b('m' + i, '2026-05-01', (i < 10 ? '0' : '') + Math.floor(i / 6) + ':' + (i % 6) + '0', 'p' + i, ['a' + i, 'b' + i], ['v' + i]));
+  var long = T.buildTimelineStory(trip, many, {});
+  ok('buildTimelineStory: 長くなりすぎない（60秒以内）', long.total <= 60.001);
+  ok('buildTimelineStory: 間引いても最初と最後の予定は残る', long.scenes.some(function (s) { return s.blockId === 'm0'; }) && long.scenes.some(function (s) { return s.blockId === 'm59'; }));
+
+  var at = T.timelineSceneAt(st, v1.start + 0.5);
+  eq('timelineSceneAt: その時刻の場面', at.scene.id, 'v1');
+  ok('timelineSceneAt: 場面の中の経過', Math.abs(at.local - 0.5) < 1e-9);
+  eq('timelineSceneAt: 終わりを過ぎたら最後の場面', T.timelineSceneAt(st, 999).scene.kind, 'outro');
+  var vb = [b('m1', '2026-05-01', '09:00', '海', [], ['va']), b('m2', '2026-05-01', '10:00', '山', [], ['vb']), b('m3', '2026-05-01', '11:00', '川', [], ['vc'])];
+  var vs = T.buildTimelineStory(trip, vb, { durations: { va: 12, vb: 2.5, vc: 0.4 } });
+  eq('buildTimelineStory: 動画は5秒まで・短い動画は最後まで・ごく短い動画は1.5秒', vs.scenes.filter(function (x) { return x.type === 'video'; }).map(function (x) { return x.dur; }), [5, 2.5, 1.5]);
+  eq('buildTimelineStory: 長さが分からない動画は4秒', T.buildTimelineStory(trip, vb, {}).scenes.filter(function (x) { return x.type === 'video'; })[0].dur, 4);
+})();
+
 /* ---- 写真の撮影場所（gpsFromExif / jpegGpsFromBuffer。docs/adr/0025） ---- */
 (function () {
   eq('gpsFromExif: iPhoneの度の値と向き', T.gpsFromExif({ Latitude: 35.681236, LatitudeRef: 'N', Longitude: 139.767125, LongitudeRef: 'E' }), { lat: 35.681236, lng: 139.767125 });

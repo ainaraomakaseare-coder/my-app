@@ -259,5 +259,10 @@ I18N.addLang('en', {
   "リストをコピー": "Copy list",
   "1枚の地図にまとめる（KMLファイル）": "Put them all on one map (KML file)",
   "保存したファイルを、パソコンのGoogleマイマップ（mymaps.google.com）で「新しい地図を作成」→「インポート」から読み込むと、全部の場所が1枚の地図にピンで並びます。その地図を共有すれば、ほかの人も同じ地図を見られます。": "On a computer, open Google My Maps (mymaps.google.com), choose \"Create a new map\" → \"Import\" and load the saved file. Every place appears as a pin on one map, and you can share that map with others.",
+  "時系列ムービーを作る": "Make a timeline movie",
+  "時系列ムービー": "Timeline movie",
+  "「9:30 首里城」のように時刻と場所を出しながら、記録の写真と動画を時間の順に流す縦の動画を作ります（最長60秒）。費用・日記の文章・一緒に行った人の名前は入りません。": "Makes a vertical video that plays your photos and videos in time order, showing the time and place like \"9:30 Shuri Castle\" (up to 60 seconds). Costs, diary text and companions' names are not included.",
+  "記録の動画も入れる（音は入りません）": "Include videos from your records (no sound)",
+  "同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。": "Companions' faces may appear. You can watch the video before posting it.",
   "カメラで撮る・ファイルから選ぶ": "Take a photo or choose a file",
 });
