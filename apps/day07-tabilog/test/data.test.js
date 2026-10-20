@@ -3306,7 +3306,21 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   var text = T.buildPlaceListText(trip, picked);
   ok('buildPlaceListText: 見出しに旅行名と件数', text.indexOf('【沖縄旅】で行った場所（3か所）') === 0);
   ok('buildPlaceListText: 日ごとに分ける', text.indexOf('■1日目') !== -1 && text.indexOf('■2日目') === -1);
-  ok('buildPlaceListText: 名前と種類とリンク', text.indexOf('・首里そば（食事）\n' + T.googleMapsPlaceUrl(places[1])) !== -1);
+  ok('buildPlaceListText: 名前と種類と短いリンク', text.indexOf('・首里そば（食事）\nhttps://maps.google.com/?q=26.2,127.6') !== -1);
+  ok('buildPlaceListText: 名前入りの長い検索URLは入れない', text.indexOf('/maps/search/') === -1);
+  eq('shortMapsPlaceUrl: 座標は小数5桁', T.shortMapsPlaceUrl({ name: 'マリーナベイ・サンズ', lat: 1.2837574999999999, lng: 103.8591065 }), 'https://maps.google.com/?q=1.28376,103.85911');
+  eq('shortMapsPlaceUrl: 本人が貼った短いリンクはそのまま', T.shortMapsPlaceUrl({ name: 'x', lat: 1, lng: 2, mapUrl: 'https://maps.app.goo.gl/abc123' }), 'https://maps.app.goo.gl/abc123');
+  eq('shortMapsPlaceUrl: 長いリンクは座標の短いリンクにする', T.shortMapsPlaceUrl({ name: 'x', lat: 1, lng: 2, mapUrl: 'https://www.google.com/maps/place/' + 'a'.repeat(80) }), 'https://maps.google.com/?q=1,2');
+  eq('shortMapsPlaceUrl: 座標が無ければ保存してあるURL', T.shortMapsPlaceUrl({ name: 'x', mapUrl: 'https://example.com/m' }), 'https://example.com/m');
+  eq('googleMapsPlaceUrl: 座標の細かい誤差は丸める', T.googleMapsPlaceUrl({ name: 'A', lat: 1.2837574999999999, lng: 103.79302299999999 }), 'https://www.google.com/maps/search/A/@1.283757,103.793023,17z');
+  eq('decodeHtmlEntities: 文字参照を元の文字に', T.decodeHtmlEntities('Wolfgang&#39;s &amp; Co &quot;A&quot; &#x2502;'), 'Wolfgang\'s & Co "A" │');
+  var rp = T.tripPlaces(trip, [{ id: 'r', date: '2026-05-01', label: '店', category: 'food', entries: [{ mapLat: 1, mapLng: 2, comment: 'また行きたい', ratings: [{ score: 4 }, { score: 4.5 }] }] }]);
+  eq('tripPlaces: 評価の平均とひとこと', [rp[0].rating, rp[0].comment], [4.3, 'また行きたい']);
+  var rt = T.buildPlaceListText(trip, rp);
+  ok('buildPlaceListText: 評価とひとことを添える', rt.indexOf('・店（食事） ★4.3\n「また行きたい」\nhttps://maps.google.com/?q=1,2') !== -1);
+  ok('buildPlaceListText: 評価もひとことも無ければ付けない', text.indexOf('★') === -1 && text.indexOf('「') === -1);
+  ok('buildPlacesKml: 評価とひとことも入れる', T.buildPlacesKml(trip, rp).indexOf('★4.3\n「また行きたい」') !== -1);
+  eq('tripPlaces: 名前の文字参照を戻す', T.tripPlaces(trip, [{ id: 'w', date: '2026-05-01', label: 'x', entries: [{ mapPlaceName: 'Wolfgang&#39;s', mapLat: 1, mapLng: 2 }] }])[0].name, "Wolfgang's");
   ok('buildPlaceListText: エピソードや費用は入れない', text.indexOf('地図なし') === -1);
 
   var kml = T.buildPlacesKml(trip, picked);
@@ -3364,6 +3378,44 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   var vs = T.buildTimelineStory(trip, vb, { durations: { va: 12, vb: 2.5, vc: 0.4 } });
   eq('buildTimelineStory: 動画は5秒まで・短い動画は最後まで・ごく短い動画は1.5秒', vs.scenes.filter(function (x) { return x.type === 'video'; }).map(function (x) { return x.dur; }), [5, 2.5, 1.5]);
   eq('buildTimelineStory: 長さが分からない動画は4秒', T.buildTimelineStory(trip, vb, {}).scenes.filter(function (x) { return x.type === 'video'; })[0].dur, 4);
+})();
+
+/* ---- 写真の撮影場所（gpsFromExif / jpegGpsFromBuffer。docs/adr/0025） ---- */
+(function () {
+  eq('gpsFromExif: iPhoneの度の値と向き', T.gpsFromExif({ Latitude: 35.681236, LatitudeRef: 'N', Longitude: 139.767125, LongitudeRef: 'E' }), { lat: 35.681236, lng: 139.767125 });
+  eq('gpsFromExif: 南・西はマイナス', T.gpsFromExif({ Latitude: 33.8688, LatitudeRef: 'S', Longitude: 70.6693, LongitudeRef: 'W' }), { lat: -33.8688, lng: -70.6693 });
+  eq('gpsFromExif: 度・分・秒の配列も読む', T.gpsFromExif({ Latitude: [35, 40, 51.6], LatitudeRef: 'N', Longitude: [139, 46, 1.2], LongitudeRef: 'E' }), { lat: 35.681, lng: 139.767 });
+  eq('gpsFromExif: GPSなしはnull', T.gpsFromExif(undefined), null);
+  eq('gpsFromExif: 0,0は場所として使わない', T.gpsFromExif({ Latitude: 0, LatitudeRef: 'N', Longitude: 0, LongitudeRef: 'E' }), null);
+  eq('gpsFromExif: 範囲外はnull', T.gpsFromExif({ Latitude: 135, LatitudeRef: 'N', Longitude: 35, LongitudeRef: 'E' }), null);
+
+  // Exif（GPS情報だけ）を入れた最小のJPEGを作る
+  function jpegWithGps(le, latRef, lat, lngRef, lng) {
+    var tiff = new DataView(new ArrayBuffer(128));
+    function w16(o, x) { tiff.setUint16(o, x, le); }
+    function w32(o, x) { tiff.setUint32(o, x, le); }
+    w16(0, le ? 0x4949 : 0x4D4D); w16(2, 42); w32(4, 8);
+    w16(8, 1); w16(10, 0x8825); w16(12, 4); w32(14, 1); w32(18, 26); w32(22, 0);
+    w16(26, 4);
+    function ascii(o, tag, ch) { w16(o, tag); w16(o + 2, 2); w32(o + 4, 2); tiff.setUint8(o + 8, ch.charCodeAt(0)); }
+    function rat(o, tag, at, vals) {
+      w16(o, tag); w16(o + 2, 5); w32(o + 4, 3); w32(o + 8, at);
+      vals.forEach(function (v, i) { w32(at + i * 8, v[0]); w32(at + i * 8 + 4, v[1]); });
+    }
+    ascii(28, 1, latRef); rat(40, 2, 80, lat); ascii(52, 3, lngRef); rat(64, 4, 104, lng);
+    var out = new Uint8Array(4 + 2 + 6 + 128 + 2);
+    out.set([0xFF, 0xD8, 0xFF, 0xE1, 0, 2 + 6 + 128, 0x45, 0x78, 0x69, 0x66, 0, 0], 0);
+    out.set(new Uint8Array(tiff.buffer), 12);
+    out.set([0xFF, 0xD9], 140);
+    return out.buffer;
+  }
+  eq('jpegGpsFromBuffer: ビッグエンディアン（北緯・東経）',
+    T.jpegGpsFromBuffer(jpegWithGps(false, 'N', [[35, 1], [40, 1], [516, 10]], 'E', [[139, 1], [46, 1], [12, 10]])), { lat: 35.681, lng: 139.767 });
+  eq('jpegGpsFromBuffer: リトルエンディアン（南緯・西経）',
+    T.jpegGpsFromBuffer(jpegWithGps(true, 'S', [[33, 1], [52, 1], [0, 1]], 'W', [[151, 1], [12, 1], [36, 1]])), { lat: -33.866667, lng: -151.21 });
+  eq('jpegGpsFromBuffer: JPEGでなければnull', T.jpegGpsFromBuffer(new Uint8Array([1, 2, 3, 4]).buffer), null);
+  eq('jpegGpsFromBuffer: Exifなしはnull', T.jpegGpsFromBuffer(new Uint8Array([0xFF, 0xD8, 0xFF, 0xD9]).buffer), null);
+  eq('jpegGpsFromBuffer: 途中で切れたファイルはnull', T.jpegGpsFromBuffer(jpegWithGps(false, 'N', [[35, 1], [40, 1], [0, 1]], 'E', [[139, 1], [0, 1], [0, 1]]).slice(0, 60)), null);
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

@@ -264,4 +264,5 @@ I18N.addLang('en', {
   "「9:30 首里城」のように時刻と場所を出しながら、記録の写真と動画を時間の順に流す縦の動画を作ります（最長60秒）。費用・日記の文章・一緒に行った人の名前は入りません。": "Makes a vertical video that plays your photos and videos in time order, showing the time and place like \"9:30 Shuri Castle\" (up to 60 seconds). Costs, diary text and companions' names are not included.",
   "記録の動画も入れる（音は入りません）": "Include videos from your records (no sound)",
   "同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。": "Companions' faces may appear. You can watch the video before posting it.",
+  "カメラで撮る・ファイルから選ぶ": "Take a photo or choose a file",
 });

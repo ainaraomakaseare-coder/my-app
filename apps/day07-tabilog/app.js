@@ -1438,17 +1438,45 @@
       var url = /^https?:\/\//i.test((e.mapUrl || '').trim()) ? e.mapUrl.trim() : '';
       var hasPin = typeof e.mapLat === 'number' && typeof e.mapLng === 'number' && isFinite(e.mapLat) && isFinite(e.mapLng);
       if (!url && !hasPin) return;
-      var name = (e.mapPlaceName || '').trim() || (b.label || '').trim();
+      var name = decodeHtmlEntities((e.mapPlaceName || '').trim() || (b.label || '').trim());
       var key = name + '|' + (hasPin ? e.mapLat.toFixed(5) + ',' + e.mapLng.toFixed(5) : url);
       if (seen[key]) return;
       seen[key] = true;
       out.push({
         blockId: b.id, date: b.date || '', time: b.time || '', dayLabel: dayLabel(trip, b.date),
         category: b.category || 'other', name: name,
-        lat: hasPin ? e.mapLat : null, lng: hasPin ? e.mapLng : null, mapUrl: url
+        lat: hasPin ? e.mapLat : null, lng: hasPin ? e.mapLng : null, mapUrl: url,
+        // 送るリストに添える評価（★の平均、小数1桁。無ければ0）とひとこと（2026-10-20）
+        rating: (function (r) { return r.count ? Math.round(r.avg * 10) / 10 : 0; })(ratingSummary(e.ratings)),
+        comment: decodeHtmlEntities((e.comment || '').trim())
       });
     });
     return out;
+  }
+
+  // 場所の名前に「&#39;」「&amp;」のような文字参照がそのまま入っていることがある（地図の候補の名前など）。
+  // 人に送るリストでは崩れて見えるので、元の文字に戻す（2026-10-20）
+  function decodeHtmlEntities(text) {
+    return String(text || '').replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, function (all, code) {
+      var c = code.toLowerCase();
+      if (c[0] === '#') {
+        var n = c[1] === 'x' ? parseInt(c.slice(2), 16) : parseInt(c.slice(1), 10);
+        return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : all;
+      }
+      return { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }[c];
+    });
+  }
+
+  // 人に送るリスト用の短いリンク。名前入りの検索URLは日本語が長い記号の列になって読みにくい
+  // （オーナーの声、2026-10-20）ので、座標があれば「maps.google.com/?q=緯度,経度」にする（座標は小数5桁＝約1m）。
+  // 名前はリストの行に書いてある。本人が貼った短いリンク（maps.app.goo.glなど）はそのまま
+  function shortMapsPlaceUrl(p) {
+    if (!p) return '';
+    var hasPin = typeof p.lat === 'number' && typeof p.lng === 'number' && isFinite(p.lat) && isFinite(p.lng);
+    var own = p.mapUrl && !/google\.[a-z.]+\/maps\/search\/\?api=1/i.test(p.mapUrl) ? p.mapUrl : '';
+    if (own && own.length <= 60) return own;
+    if (hasPin) return 'https://maps.google.com/?q=' + Number(p.lat.toFixed(5)) + ',' + Number(p.lng.toFixed(5));
+    return own || p.mapUrl || '';
   }
 
   // 1つの場所を開くGoogleマップのURL。
@@ -1460,7 +1488,7 @@
     var hasPin = typeof p.lat === 'number' && typeof p.lng === 'number' && isFinite(p.lat) && isFinite(p.lng);
     var own = p.mapUrl && !/google\.[a-z.]+\/maps\/search\/\?api=1/i.test(p.mapUrl) ? p.mapUrl : '';
     if (own) return own;
-    if (p.name && hasPin) return 'https://www.google.com/maps/search/' + encodeURIComponent(p.name) + '/@' + p.lat + ',' + p.lng + ',17z';
+    if (p.name && hasPin) return 'https://www.google.com/maps/search/' + encodeURIComponent(p.name) + '/@' + Number(p.lat.toFixed(6)) + ',' + Number(p.lng.toFixed(6)) + ',17z';
     if (p.mapUrl) return p.mapUrl;
     return hasPin ? placeMapUrl({ lat: p.lat, lng: p.lng }) : '';
   }
@@ -1474,8 +1502,9 @@
         lastDay = p.dayLabel;
         lines.push('', '■' + p.dayLabel + (p.date && p.dayLabel !== formatDateJp(p.date) ? ' ' + formatDateJp(p.date) : ''));
       }
-      lines.push('・' + p.name + '（' + categoryLabel(p.category) + '）');
-      var url = googleMapsPlaceUrl(p);
+      lines.push('・' + p.name + '（' + categoryLabel(p.category) + '）' + (p.rating ? ' ★' + p.rating.toFixed(1) : ''));
+      if (p.comment) lines.push('「' + p.comment + '」');
+      var url = shortMapsPlaceUrl(p);
       if (url) lines.push(url);
     });
     lines.push('', tr('旅の足跡で記録しました') + ' ' + PUBLIC_WEB_BASE);
@@ -1488,7 +1517,8 @@
   // Googleマイマップの「インポート」で読み込めるKML。座標のある場所だけをピンにする。
   function buildPlacesKml(trip, places) {
     var marks = places.filter(function (p) { return typeof p.lat === 'number' && typeof p.lng === 'number'; }).map(function (p) {
-      var desc = p.dayLabel + (p.time ? ' ' + p.time : '') + '・' + categoryLabel(p.category);
+      var desc = p.dayLabel + (p.time ? ' ' + p.time : '') + '・' + categoryLabel(p.category) +
+        (p.rating ? ' ★' + p.rating.toFixed(1) : '') + (p.comment ? '\n「' + p.comment + '」' : '');
       var url = googleMapsPlaceUrl(p);
       return '<Placemark><name>' + xmlEscape(p.name) + '</name>' +
         '<description>' + xmlEscape(desc + (url ? '\n' + url : '')) + '</description>' +
@@ -1559,6 +1589,74 @@
     }
     var local = Math.max(0, Math.min(s.dur, t - s.start));
     return { scene: s, local: local, frac: s.dur ? local / s.dur : 1 };
+  }
+
+  // 写真の撮影場所（docs/adr/0025）。緯度・経度として使える数か確かめて、小数6桁に丸める。
+  // 0,0（アフリカ沖）はGPSが取れていない写真によくある値なので場所として使わない
+  function photoGpsPoint(lat, lng) {
+    if (typeof lat !== 'number' || typeof lng !== 'number' || !isFinite(lat) || !isFinite(lng)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) return null;
+    return { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 };
+  }
+  function gpsDms(v) {
+    if (typeof v === 'number') return v;
+    if (!v || v.length !== 3) return NaN;
+    return Number(v[0]) + Number(v[1]) / 60 + Number(v[2]) / 3600;
+  }
+  // iPhoneアプリで写真を選んだとき（@capacitor/cameraのpickImages）に返るexif.GPSから緯度・経度を取る。
+  // iOSは度の値（35.68など）と向き（N/S・E/W）を別々に返す
+  function gpsFromExif(gps) {
+    if (!gps) return null;
+    var lat = gpsDms(gps.Latitude), lng = gpsDms(gps.Longitude);
+    if (/^s/i.test(gps.LatitudeRef || '')) lat = -lat;
+    if (/^w/i.test(gps.LongitudeRef || '')) lng = -lng;
+    return photoGpsPoint(lat, lng);
+  }
+  // JPEGファイルの中身（ArrayBuffer）から、Exifに入っている撮影場所を読む。
+  // パソコンのブラウザで選んだ写真用（iPhoneのブラウザ・アプリ内のWebViewは、ファイルとして渡すときに
+  // 位置情報を消してしまうので、そちらはgpsFromExifを使う）。読めなければnull
+  function jpegGpsFromBuffer(buf) {
+    try {
+      var v = new DataView(buf);
+      if (v.byteLength < 4 || v.getUint16(0) !== 0xFFD8) return null;
+      var pos = 2;
+      while (pos + 4 <= v.byteLength) {
+        if (v.getUint8(pos) !== 0xFF) return null;
+        var marker = v.getUint8(pos + 1), size = v.getUint16(pos + 2);
+        if (marker === 0xDA || marker === 0xD9) return null; // 画像データの始まりより後ろにExifは無い
+        if (marker === 0xE1 && v.getUint32(pos + 4) === 0x45786966) return tiffGps(v, pos + 10); // "Exif"
+        pos += 2 + size;
+      }
+    } catch (e) { /* 壊れたファイルは場所なしとして扱う */ }
+    return null;
+  }
+  function tiffGps(v, start) {
+    var le = v.getUint16(start) === 0x4949; // "II"ならリトルエンディアン
+    function u16(o) { return v.getUint16(start + o, le); }
+    function u32(o) { return v.getUint32(start + o, le); }
+    function findTag(ifd, tag) {
+      var n = u16(ifd);
+      for (var i = 0; i < n; i++) if (u16(ifd + 2 + i * 12) === tag) return ifd + 2 + i * 12;
+      return -1;
+    }
+    var ptr = findTag(u32(4), 0x8825); // GPS情報の場所
+    if (ptr < 0) return null;
+    var gpsIfd = u32(ptr + 8);
+    function ref(tag) {
+      var e = findTag(gpsIfd, tag);
+      return e < 0 ? '' : String.fromCharCode(v.getUint8(start + e + 8));
+    }
+    function dms(tag) {
+      var e = findTag(gpsIfd, tag);
+      if (e < 0 || u16(e + 2) !== 5 || u32(e + 4) !== 3) return NaN; // 有理数（分子/分母）が3つ＝度・分・秒
+      var o = u32(e + 8), parts = [];
+      for (var i = 0; i < 3; i++) {
+        var den = u32(o + i * 8 + 4);
+        parts.push(den ? u32(o + i * 8) / den : 0);
+      }
+      return gpsDms(parts);
+    }
+    return gpsFromExif({ Latitude: dms(2), LatitudeRef: ref(1), Longitude: dms(4), LongitudeRef: ref(3) });
   }
   // 候補（place。「地図のURL」欄の座標検索で選んだもの）または検索した文字列（searchText。
   // 「Googleマップで検索」を選んだときなど、座標のない検索）から、記録と一緒に保存する
@@ -4729,10 +4827,14 @@
     placeMapUrl: placeMapUrl,
     tripPlaces: tripPlaces,
     googleMapsPlaceUrl: googleMapsPlaceUrl,
+    shortMapsPlaceUrl: shortMapsPlaceUrl,
+    decodeHtmlEntities: decodeHtmlEntities,
     buildPlaceListText: buildPlaceListText,
     buildPlacesKml: buildPlacesKml,
     buildTimelineStory: buildTimelineStory,
     timelineSceneAt: timelineSceneAt,
+    gpsFromExif: gpsFromExif,
+    jpegGpsFromBuffer: jpegGpsFromBuffer,
     placeSelectionName: placeSelectionName,
     travelArrival: travelArrival,
     replayStops: replayStops,
@@ -7994,7 +8096,7 @@
       var url = Core.googleMapsPlaceUrl(p);
       html += '<li class="places-item"><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' +
         '<span class="places-name">' + escapeHtml(p.name || tr('（名前なし）')) + '</span>' +
-        '<span class="places-cat">' + escapeHtml(Core.categoryLabel(p.category)) + '</span>' +
+        '<span class="places-cat">' + escapeHtml(Core.categoryLabel(p.category)) + (p.rating ? ' ★' + p.rating.toFixed(1) : '') + '</span>' +
         '<span class="places-open">' + tr('開く') + '</span></a></li>';
     });
     $('#placesList').innerHTML = html || '<li class="places-empty">' + tr('選んだ種類の場所はありません') + '</li>';
@@ -12056,6 +12158,68 @@
     }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
   }
 
+  // ---- 写真の撮影場所を、記録の地図欄に入れる（docs/adr/0025） ----
+  // 写真を追加したとき、地図欄がまだ空なら、最初に位置情報のある写真の撮影場所を「現在地を入れる」と
+  // 同じ形（座標の地図URL＋ピンを動かせる地図）で入れる。地図でふりかえるの道のりもこの場所を通る
+  var photoLibPerm = ''; // iPhoneアプリの写真ライブラリへの許可（granted / limited / denied / prompt）
+
+  // 写真の撮影場所を読めるネイティブの写真選び（iPhoneアプリで、プラグイン入りのビルドのときだけ）
+  function nativePhotoPicker() {
+    if (!isNativeApp() || !window.Capacitor.getPlatform || window.Capacitor.getPlatform() !== 'ios') return null;
+    return (window.Capacitor.Plugins && window.Capacitor.Plugins.Camera) || null;
+  }
+
+  function applyPhotoLocation(point) {
+    // 自分で場所を選んだ・入力した記録は上書きしない（編集中の記録も地図欄が埋まっているので変わらない）
+    if (!point || $('#entMapUrl').value.trim() || selectedPlace() || $('#entPlaceSearch').value.trim()) return;
+    placeCandidates = [{ name: '', lat: point.lat, lng: point.lng }];
+    placeChoice = '0';
+    $('#entPlaceCandidates').hidden = true;
+    previewSelectedPlace();
+    applySelectedPlaceToMapUrl();
+    $('#entPlaceStatus').textContent = tr('写真の撮影場所を地図に入れました。ずれていたらピンを動かして直せます。');
+    showToast(tr('写真の撮影場所を地図に入れました'));
+  }
+
+  function photoGpsFromFiles(files) {
+    var jpegs = files.filter(function (f) { return /jpe?g$/i.test(f.type || f.name || ''); });
+    return jpegs.reduce(function (prev, f) {
+      return prev.then(function (found) {
+        if (found || !f.slice(0, 1).arrayBuffer) return found;
+        return f.slice(0, 256 * 1024).arrayBuffer().then(Core.jpegGpsFromBuffer).catch(function () { return null; });
+      });
+    }, Promise.resolve(null));
+  }
+
+  function pickPhotosNative(plugin) {
+    plugin.pickImages({ quality: 90, limit: 0 }).then(function (res) {
+      var photos = (res && res.photos) || [];
+      var point = null;
+      photos.forEach(function (p) { if (!point) point = Core.gpsFromExif(p.exif && p.exif.GPS); });
+      if (photoLibPerm !== 'granted' && photoLibPerm !== 'limited') photoLibPerm = 'granted'; // 選べた＝許可された
+      // 大きい写真を一度に何枚も読むとメモリが足りなくなるので、1枚ずつ縮めて追加する
+      return photos.reduce(function (prev, p) {
+        return prev.then(function () {
+          return fetch(p.webPath).then(function (r) { return r.blob(); })
+            .then(function (b) { return fileToCompressedBlob(b, 1280, 0.72); })
+            .then(function (blob) {
+              state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) });
+              renderPhotoPreview();
+            });
+        });
+      }, Promise.resolve()).then(function () { applyPhotoLocation(point); });
+    }).catch(function (err) {
+      var msg = String((err && err.message) || err || '');
+      if (/cancel/i.test(msg)) return;
+      if (/denied/i.test(msg)) {
+        photoLibPerm = 'denied';
+        showToast(tr('写真へのアクセスが許可されていないため、撮影場所は読めません。もう一度押すと、場所なしで写真を選べます。'));
+        return;
+      }
+      showToast(tr('写真を読み込めませんでした。'));
+    });
+  }
+
   // 「今」：時刻の欄に端末の今の時刻（HH:MM）を入れる（2026-10-15）
   function setTimeNow(input) {
     var d = new Date();
@@ -15840,7 +16004,20 @@
       renderCostItems();
     });
 
-    $('#entPhotoPicker').addEventListener('click', function () { $('#entPhoto').click(); });
+    // iPhoneアプリでは写真ライブラリから直接選び、撮影場所も読む（ファイルとして渡すと位置情報が消えるため。
+    // docs/adr/0025）。カメラで撮る・ファイルから選ぶは、下の小さいボタンからこれまでどおりの選び方で
+    var photoPlugin = nativePhotoPicker();
+    $('#entPhotoCamera').hidden = !photoPlugin;
+    if (photoPlugin && photoPlugin.checkPermissions) {
+      photoPlugin.checkPermissions().then(function (p) { photoLibPerm = (p && p.photos) || ''; }).catch(function () {});
+    }
+    $('#entPhotoPicker').addEventListener('click', function () {
+      // 写真へのアクセスを断られているときは、これまでどおりの選び方（場所は読めない）にする。
+      // 許可の状態は先に調べてあるので、ここは待たずに開ける（待つとiOSがファイル選択を開かせない）
+      if (photoPlugin && photoLibPerm !== 'denied') pickPhotosNative(photoPlugin);
+      else $('#entPhoto').click();
+    });
+    $('#entPhotoCamera').addEventListener('click', function () { $('#entPhoto').click(); });
     initPhotoReorder();
     $('#entPhoto').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
@@ -15848,6 +16025,8 @@
         blobs.forEach(function (blob) { state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
         renderPhotoPreview();
       });
+      // パソコンなど、ファイルに位置情報が残っている環境では、そこから撮影場所を読む
+      photoGpsFromFiles(files).then(applyPhotoLocation);
       e.target.value = '';
     });
 
