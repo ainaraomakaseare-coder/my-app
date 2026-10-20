@@ -1438,17 +1438,45 @@
       var url = /^https?:\/\//i.test((e.mapUrl || '').trim()) ? e.mapUrl.trim() : '';
       var hasPin = typeof e.mapLat === 'number' && typeof e.mapLng === 'number' && isFinite(e.mapLat) && isFinite(e.mapLng);
       if (!url && !hasPin) return;
-      var name = (e.mapPlaceName || '').trim() || (b.label || '').trim();
+      var name = decodeHtmlEntities((e.mapPlaceName || '').trim() || (b.label || '').trim());
       var key = name + '|' + (hasPin ? e.mapLat.toFixed(5) + ',' + e.mapLng.toFixed(5) : url);
       if (seen[key]) return;
       seen[key] = true;
       out.push({
         blockId: b.id, date: b.date || '', time: b.time || '', dayLabel: dayLabel(trip, b.date),
         category: b.category || 'other', name: name,
-        lat: hasPin ? e.mapLat : null, lng: hasPin ? e.mapLng : null, mapUrl: url
+        lat: hasPin ? e.mapLat : null, lng: hasPin ? e.mapLng : null, mapUrl: url,
+        // 送るリストに添える評価（★の平均、小数1桁。無ければ0）とひとこと（2026-10-20）
+        rating: (function (r) { return r.count ? Math.round(r.avg * 10) / 10 : 0; })(ratingSummary(e.ratings)),
+        comment: decodeHtmlEntities((e.comment || '').trim())
       });
     });
     return out;
+  }
+
+  // 場所の名前に「&#39;」「&amp;」のような文字参照がそのまま入っていることがある（地図の候補の名前など）。
+  // 人に送るリストでは崩れて見えるので、元の文字に戻す（2026-10-20）
+  function decodeHtmlEntities(text) {
+    return String(text || '').replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, function (all, code) {
+      var c = code.toLowerCase();
+      if (c[0] === '#') {
+        var n = c[1] === 'x' ? parseInt(c.slice(2), 16) : parseInt(c.slice(1), 10);
+        return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : all;
+      }
+      return { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }[c];
+    });
+  }
+
+  // 人に送るリスト用の短いリンク。名前入りの検索URLは日本語が長い記号の列になって読みにくい
+  // （オーナーの声、2026-10-20）ので、座標があれば「maps.google.com/?q=緯度,経度」にする（座標は小数5桁＝約1m）。
+  // 名前はリストの行に書いてある。本人が貼った短いリンク（maps.app.goo.glなど）はそのまま
+  function shortMapsPlaceUrl(p) {
+    if (!p) return '';
+    var hasPin = typeof p.lat === 'number' && typeof p.lng === 'number' && isFinite(p.lat) && isFinite(p.lng);
+    var own = p.mapUrl && !/google\.[a-z.]+\/maps\/search\/\?api=1/i.test(p.mapUrl) ? p.mapUrl : '';
+    if (own && own.length <= 60) return own;
+    if (hasPin) return 'https://maps.google.com/?q=' + Number(p.lat.toFixed(5)) + ',' + Number(p.lng.toFixed(5));
+    return own || p.mapUrl || '';
   }
 
   // 1つの場所を開くGoogleマップのURL。
@@ -1460,7 +1488,7 @@
     var hasPin = typeof p.lat === 'number' && typeof p.lng === 'number' && isFinite(p.lat) && isFinite(p.lng);
     var own = p.mapUrl && !/google\.[a-z.]+\/maps\/search\/\?api=1/i.test(p.mapUrl) ? p.mapUrl : '';
     if (own) return own;
-    if (p.name && hasPin) return 'https://www.google.com/maps/search/' + encodeURIComponent(p.name) + '/@' + p.lat + ',' + p.lng + ',17z';
+    if (p.name && hasPin) return 'https://www.google.com/maps/search/' + encodeURIComponent(p.name) + '/@' + Number(p.lat.toFixed(6)) + ',' + Number(p.lng.toFixed(6)) + ',17z';
     if (p.mapUrl) return p.mapUrl;
     return hasPin ? placeMapUrl({ lat: p.lat, lng: p.lng }) : '';
   }
@@ -1474,8 +1502,9 @@
         lastDay = p.dayLabel;
         lines.push('', '■' + p.dayLabel + (p.date && p.dayLabel !== formatDateJp(p.date) ? ' ' + formatDateJp(p.date) : ''));
       }
-      lines.push('・' + p.name + '（' + categoryLabel(p.category) + '）');
-      var url = googleMapsPlaceUrl(p);
+      lines.push('・' + p.name + '（' + categoryLabel(p.category) + '）' + (p.rating ? ' ★' + p.rating.toFixed(1) : ''));
+      if (p.comment) lines.push('「' + p.comment + '」');
+      var url = shortMapsPlaceUrl(p);
       if (url) lines.push(url);
     });
     lines.push('', tr('旅の足跡で記録しました') + ' ' + PUBLIC_WEB_BASE);
@@ -1488,7 +1517,8 @@
   // Googleマイマップの「インポート」で読み込めるKML。座標のある場所だけをピンにする。
   function buildPlacesKml(trip, places) {
     var marks = places.filter(function (p) { return typeof p.lat === 'number' && typeof p.lng === 'number'; }).map(function (p) {
-      var desc = p.dayLabel + (p.time ? ' ' + p.time : '') + '・' + categoryLabel(p.category);
+      var desc = p.dayLabel + (p.time ? ' ' + p.time : '') + '・' + categoryLabel(p.category) +
+        (p.rating ? ' ★' + p.rating.toFixed(1) : '') + (p.comment ? '\n「' + p.comment + '」' : '');
       var url = googleMapsPlaceUrl(p);
       return '<Placemark><name>' + xmlEscape(p.name) + '</name>' +
         '<description>' + xmlEscape(desc + (url ? '\n' + url : '')) + '</description>' +
@@ -4666,6 +4696,8 @@
     placeMapUrl: placeMapUrl,
     tripPlaces: tripPlaces,
     googleMapsPlaceUrl: googleMapsPlaceUrl,
+    shortMapsPlaceUrl: shortMapsPlaceUrl,
+    decodeHtmlEntities: decodeHtmlEntities,
     buildPlaceListText: buildPlaceListText,
     buildPlacesKml: buildPlacesKml,
     placeSelectionName: placeSelectionName,
@@ -7928,7 +7960,7 @@
       var url = Core.googleMapsPlaceUrl(p);
       html += '<li class="places-item"><a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' +
         '<span class="places-name">' + escapeHtml(p.name || tr('（名前なし）')) + '</span>' +
-        '<span class="places-cat">' + escapeHtml(Core.categoryLabel(p.category)) + '</span>' +
+        '<span class="places-cat">' + escapeHtml(Core.categoryLabel(p.category)) + (p.rating ? ' ★' + p.rating.toFixed(1) : '') + '</span>' +
         '<span class="places-open">' + tr('開く') + '</span></a></li>';
     });
     $('#placesList').innerHTML = html || '<li class="places-empty">' + tr('選んだ種類の場所はありません') + '</li>';
