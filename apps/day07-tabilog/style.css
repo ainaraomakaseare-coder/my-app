@@ -887,11 +887,11 @@ a:hover { text-decoration: underline; }
 .visited-region.is-visited.shade-2, .visited-legend-swatch.shade-2, .vshow-fill.shade-2 { fill: var(--visited-shade-2); background: var(--visited-shade-2); }
 .visited-region.is-visited.shade-3, .visited-legend-swatch.shade-3, .vshow-fill.shade-3 { fill: var(--visited-shade-3); background: var(--visited-shade-3); }
 .visited-region.is-visited.shade-4, .visited-legend-swatch.shade-4, .vshow-fill.shade-4 { fill: var(--visited-shade-4); background: var(--visited-shade-4); }
-.visited-region.is-visited.on { fill: var(--accent-deep); stroke: var(--ink); stroke-width: .6; }
-#visitedMapOverseas .visited-region.is-visited.on { stroke-width: 1; }
+.visited-region.is-visited.on { fill: var(--accent-deep); stroke: var(--ink); stroke-width: 1; }
 .visited-dot { stroke: #FFFFFF; stroke-width: 1; }
-#visitedMapOverseas .visited-region { vector-effect: non-scaling-stroke; } /* ズームしても境界線の太さは変えない */
+.visited-svg .visited-region, .visited-inset-box { vector-effect: non-scaling-stroke; } /* ズームしても境界線の太さは変えない（国内・海外とも） */
 .visited-dot.on { stroke: var(--ink); stroke-width: 1; }
+.visited-map.is-zoomed { touch-action: none; cursor: grab; } /* ズーム中は地図を指で動かす（ページはスクロールしない） */
 .visited-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 8px 4px 0; font-size: 12px; color: var(--ink-muted); }
 .visited-legend-item { display: inline-flex; align-items: center; gap: 4px; }
 .visited-legend-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }

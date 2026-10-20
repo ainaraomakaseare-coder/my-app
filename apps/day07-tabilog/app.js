@@ -5813,6 +5813,8 @@
         return;
       }
       if (startsOnHorizontalScroller(e.target)) { tabSwipeState = null; return; }
+      // ズーム中の地図は指で動かすので、国内⇄海外の切り替えにしない
+      if (e.target.closest && e.target.closest('.visited-map.is-zoomed')) { tabSwipeState = null; return; }
       tabSwipeState = { startX: t.clientX, startY: t.clientY, startT: e.timeStamp, decided: false, horizontal: false, target: e.target };
     }, { passive: true });
 
@@ -13659,18 +13661,16 @@
     var same = sel && sel.kind === kind && sel.name === name;
     state.visitedSel = same ? null : { kind: kind, name: name };
     updateVisitedHighlight();
-    if (kind === 'country') {
-      // 一覧の下のほうで国を押したときは地図が画面の外にあるので、地図まで戻してからズームを見せる
-      // （オーナーの声、2026-10-20。地図をタップしたとき＝scrollToRowのときは一覧へ行くので動かさない）
-      var map = $('#visitedMapOverseas');
-      if (state.visitedSel && !scrollToRow && map) {
-        var r = map.getBoundingClientRect();
-        if (r.top < 0 || r.bottom > window.innerHeight) {
-          try { map.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' }); } catch (e) { map.scrollIntoView(); }
-        }
+    // 一覧の下のほうで押したときは地図が画面の外にあるので、地図まで戻してからズームを見せる
+    // （オーナーの声、2026-10-20。国内も海外と揃える。地図をタップしたとき＝scrollToRowのときは一覧へ行くので動かさない）
+    var map = $(VISITED_ZOOM_MAPS[kind].selector);
+    if (state.visitedSel && !scrollToRow && map) {
+      var r = map.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > window.innerHeight) {
+        try { map.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' }); } catch (e) { map.scrollIntoView(); }
       }
-      zoomVisitedWorldMap(state.visitedSel ? name : null);
     }
+    zoomVisitedMap(kind, state.visitedSel ? name : null);
     if (scrollToRow && state.visitedSel) scrollVisitedRowIntoView(kind, name);
   }
   // 地図をタップしたら、一覧の同じ場所の行までスクロールして、少しのあいだ光らせる
@@ -13775,11 +13775,15 @@
       path = d3.geoPath(proj);
 
       var sel = state.visitedSel;
+      var japanZoom = VISITED_ZOOM_MAPS.prefecture;
+      japanZoom.W = w; japanZoom.H = h; japanZoom.bounds = {};
       var mainSvg = mainFeatures.map(function (f) {
         var name = f.properties.nam_ja;
         var d = path(f);
         if (!d) return '';
         var isVisited = !!visitedNames[name];
+        if (isVisited) japanZoom.bounds[name] = visitedShowMainBounds(path, f);
+        // 沖縄は左上の枠にもう大きく出しているので範囲を入れない（選んでも全体のまま。枠に寄せても島は小さく余白ばかりになった）
         var on = isVisited && sel && sel.kind === 'prefecture' && sel.name === name;
         return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited shade-' + visitedNames[name] : '') + (on ? ' on' : '') + '"' +
           (isVisited ? ' data-kind="prefecture" data-name="' + escapeHtml(name) + '"' : '') + '><title>' + escapeHtml(visitedPlaceLabel('prefecture', name)) + '</title></path>';
@@ -13814,6 +13818,8 @@
       container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="' + tr('訪れた都道府県の地図') + '">' +
         mainSvg + insetSvg + '</svg>';
       wireVisitedMapRegions(container);
+      wireVisitedMapPan(container, 'prefecture');
+      if (sel && sel.kind === 'prefecture') zoomVisitedMap('prefecture', sel.name, true);
     }).catch(function (e) {
       console.error('drawVisitedJapanMap failed', e);
       var container = $('#visitedMapDomestic');
@@ -13830,40 +13836,106 @@
   // 別で描く（逆も同様）。実際の例外はconsole.errorに出す（原因調査用）。
   var VISITED_SMALL_COUNTRY_PX = 7; // 世界地図（幅320）でこれより小さい国には丸を重ねる
   var VISITED_WORLD_W = 320, VISITED_WORLD_H = 190;
-  var visitedWorldBounds = {}; // 国名→世界地図の上での範囲（一覧で国を選んだときにそこへズームする）
-  var visitedWorldZoomAnim = 0;
+  // 地図データ（110m）に形が無い小さな国・地域の位置（[経度, 緯度]、だいたい首都）。行ったことがあれば
+  // 地図に丸を出して、押せる・ズームできる・写真が流れるようにする（シンガポールが地図に無かった。オーナーの声、2026-10-20）
+  var VISITED_POINT_COUNTRIES = {
+    SG: [103.82, 1.35], HK: [114.17, 22.32], MO: [113.54, 22.2], BH: [50.56, 26.07], MV: [73.51, 4.17], MT: [14.51, 35.9],
+    MU: [57.5, -20.16], SC: [55.45, -4.62], RE: [55.45, -20.88], KM: [43.26, -11.7], YT: [45.23, -12.78], CV: [-23.51, 14.93],
+    ST: [6.73, 0.34], SH: [-5.72, -15.93], IO: [72.42, -7.31], AD: [1.52, 42.51], MC: [7.42, 43.74], LI: [9.52, 47.14],
+    SM: [12.45, 43.94], VA: [12.45, 41.9], GI: [-5.35, 36.14], GG: [-2.54, 49.45], JE: [-2.11, 49.21], IM: [-4.48, 54.15],
+    FO: [-6.77, 62.01], AX: [19.94, 60.1], SJ: [15.63, 78.22], XK: [21.17, 42.66], GU: [144.79, 13.44], MP: [145.75, 15.19],
+    PW: [134.48, 7.34], FM: [158.16, 6.92], MH: [171.38, 7.09], NR: [166.93, -0.55], KI: [173.03, 1.45], TV: [179.2, -8.52],
+    WS: [-171.77, -13.83], AS: [-170.7, -14.28], TO: [-175.2, -21.14], NU: [-169.87, -19.05], CK: [-159.78, -21.21],
+    PF: [-149.57, -17.54], WF: [-176.2, -13.28], TK: [-171.85, -9.2], NF: [167.95, -29.04], PN: [-130.1, -25.07],
+    CX: [105.69, -10.45], CC: [96.83, -12.19], BM: [-64.75, 32.3], KY: [-81.38, 19.31], TC: [-71.8, 21.69], VG: [-64.62, 18.43],
+    VI: [-64.93, 18.34], AI: [-63.07, 18.22], MF: [-63.08, 18.07], SX: [-63.05, 18.03], BL: [-62.85, 17.9], KN: [-62.72, 17.3],
+    AG: [-61.85, 17.12], MS: [-62.19, 16.74], GP: [-61.55, 16.25], DM: [-61.37, 15.3], MQ: [-61.02, 14.64], LC: [-60.98, 14.01],
+    VC: [-61.22, 13.16], BB: [-59.55, 13.19], GD: [-61.75, 12.06], AW: [-70.03, 12.52], CW: [-68.93, 12.17], BQ: [-68.27, 12.15],
+    PM: [-56.18, 46.78], GF: [-52.33, 4.94]
+  };
+  // 一覧で選んだ場所へ地図をズームするための、地図ごとの大きさと各地の範囲（地図を描くたびに入れ直す）。
+  // minWは寄りすぎないための最小の表示幅（日本地図は県が隣と見比べられるくらいで止める）
+  var VISITED_ZOOM_MAPS = {
+    country: { selector: '#visitedMapOverseas', W: VISITED_WORLD_W, H: VISITED_WORLD_H, minW: 56, bounds: {} },
+    prefecture: { selector: '#visitedMapDomestic', W: 320, H: 442, minW: 96, bounds: {} }
+  };
+  var visitedZoomAnim = 0;
   // 国の範囲。遠くの島（アメリカのアラスカ・ハワイなど）まで入れると広がりすぎるので本体の島だけで測る
   function visitedShowMainBounds(path, f) {
     try { return path.bounds(visitedShowMainShape(f)); } catch (e) { return path.bounds(f); }
   }
-  // 一覧で国を選んだら、世界地図をその国までズームする（地図では小さすぎて見えない国のため。
-  // オーナーの声、2026-10-20）。nameがnullなら全体に戻す。viewBoxを少しずつ動かして寄せる
-  function zoomVisitedWorldMap(name, instant) {
-    var svg = document.querySelector('#visitedMapOverseas svg');
+  // 一覧で国・都道府県を選んだら、地図をそこまでズームする（地図では小さすぎて見えない国のため。
+  // オーナーの声、2026-10-20。国内も同じ動きに揃えた）。nameがnullなら全体に戻す。viewBoxを少しずつ動かして寄せる
+  function setVisitedMapViewBox(svg, W, v) {
+    svg.setAttribute('viewBox', v.map(function (n) { return n.toFixed(2); }).join(' '));
+    var map = svg.parentNode;
+    if (map && map.classList) map.classList.toggle('is-zoomed', v[2] < W - 0.5);
+    // 丸は寄っても大きくなりすぎないよう、画面上でほぼ同じ大きさに保つ。形のある国の丸は、
+    // 十分寄ったら国の形そのものが見えるので消す（丸で国が隠れないように）。形の無い国の丸は残す
+    $all('.visited-dot', svg).forEach(function (c) {
+      c.setAttribute('r', (4 * v[2] / W).toFixed(2));
+      c.style.display = v[2] < W * 0.4 && !c.classList.contains('visited-point') ? 'none' : '';
+    });
+  }
+  // ズームしているあいだは、地図を指（マウス）でつかんで上下左右に動かせる（オーナーの声、2026-10-20
+  // 「ズームしたら固定されているけど、マップのように右に行ったり左に行ったりしたい」）。
+  // 動かした直後のclickは、県・国のタップ（写真のスライドショー）にしない
+  function wireVisitedMapPan(container, kind) {
+    if (!container || container._panWired) return;
+    container._panWired = true;
+    var drag = null, suppressClickUntil = 0;
+    container.addEventListener('pointerdown', function (e) {
+      var svg = container.querySelector('svg');
+      if (!svg || !container.classList.contains('is-zoomed') || e.button > 0) return;
+      ++visitedZoomAnim; // ズームの途中なら止める
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, vb: svg.getAttribute('viewBox').split(/\s+/).map(Number), moved: false, svg: svg };
+    });
+    container.addEventListener('pointermove', function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.moved) {
+        if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+        drag.moved = true;
+        try { container.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても動かせる */ }
+      }
+      var m = VISITED_ZOOM_MAPS[kind], v = drag.vb, r = drag.svg.getBoundingClientRect();
+      var k = v[2] / (r.width || 1);
+      setVisitedMapViewBox(drag.svg, m.W, [
+        Math.max(0, Math.min(m.W - v[2], v[0] - dx * k)),
+        Math.max(0, Math.min(m.H - v[3], v[1] - dy * k)),
+        v[2], v[3]
+      ]);
+    });
+    var end = function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (drag.moved) suppressClickUntil = Date.now() + 350;
+      drag = null;
+    };
+    container.addEventListener('pointerup', end);
+    container.addEventListener('pointercancel', end);
+    container.addEventListener('click', function (e) {
+      if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+  }
+  function zoomVisitedMap(kind, name, instant) {
+    var m = VISITED_ZOOM_MAPS[kind];
+    var svg = m && document.querySelector(m.selector + ' svg');
     if (!svg) return;
-    var W = VISITED_WORLD_W, H = VISITED_WORLD_H, to = [0, 0, W, H];
-    var b = name && visitedWorldBounds[name];
+    var W = m.W, H = m.H, to = [0, 0, W, H];
+    var b = name && m.bounds[name];
     if (b) {
       var bw = b[1][0] - b[0][0], bh = b[1][1] - b[0][1];
-      var w = Math.min(W, Math.max(56, bw * 2.4, bh * 2.4 * W / H)), h = w * H / W;
+      var w = Math.min(W, Math.max(m.minW, bw * 2.4, bh * 2.4 * W / H)), h = w * H / W;
       var cx = (b[0][0] + b[1][0]) / 2, cy = (b[0][1] + b[1][1]) / 2;
       to = [Math.max(0, Math.min(W - w, cx - w / 2)), Math.max(0, Math.min(H - h, cy - h / 2)), w, h];
     }
     var from = (svg.getAttribute('viewBox') || '0 0 ' + W + ' ' + H).split(/\s+/).map(Number);
-    var apply = function (v) {
-      svg.setAttribute('viewBox', v.map(function (n) { return n.toFixed(2); }).join(' '));
-      // 丸は寄っても大きくなりすぎないよう、画面上でほぼ同じ大きさに保つ
-      // 十分寄ったら国の形そのものが見えるので丸は消す（丸で国が隠れないように）
-      $all('.visited-dot', svg).forEach(function (c) {
-        c.setAttribute('r', (4 * v[2] / W).toFixed(2));
-        c.style.display = v[2] < W * 0.4 ? 'none' : '';
-      });
-    };
-    var anim = ++visitedWorldZoomAnim;
+    var apply = function (v) { setVisitedMapViewBox(svg, W, v); };
+    var anim = ++visitedZoomAnim;
     if (instant || prefersReducedMotion()) { apply(to); return; }
     var t0 = null, dur = 450;
     var step = function (ts) {
-      if (anim !== visitedWorldZoomAnim || !svg.isConnected) return;
+      if (anim !== visitedZoomAnim || !svg.isConnected) return;
       if (t0 === null) t0 = ts;
       var k = Math.min(1, (ts - t0) / dur), e = 1 - Math.pow(1 - k, 3);
       apply(from.map(function (f, i) { return f + (to[i] - f) * e; }));
@@ -13891,7 +13963,7 @@
         fc = null;
       }
       visitedWorldFeatures = {};
-      visitedWorldBounds = {};
+      var worldBounds = VISITED_ZOOM_MAPS.country.bounds = {};
       if (fc) fc.features.forEach(function (f) { var n = idx.idToName[f.id]; if (n) visitedWorldFeatures[n] = f; });
       visitedCountryAlpha2ByName = {};
       Object.keys(idx.nameToId).forEach(function (name) {
@@ -13923,7 +13995,7 @@
                 var title = name ? '<title>' + escapeHtml(visitedPlaceLabel('country', name)) + '</title>' : '';
                 if (isVisited) {
                   var bb = path.bounds(f), c = path.centroid(f);
-                  visitedWorldBounds[name] = visitedShowMainBounds(path, f);
+                  worldBounds[name] = visitedShowMainBounds(path, f);
                   if (Math.max(bb[1][0] - bb[0][0], bb[1][1] - bb[0][1]) < VISITED_SMALL_COUNTRY_PX && isFinite(c[0]) && isFinite(c[1])) {
                     dots.push('<circle cx="' + c[0].toFixed(1) + '" cy="' + c[1].toFixed(1) + '" r="4" ' + attrs.replace('visited-region', 'visited-region visited-dot') + '>' + title + '</circle>');
                   }
@@ -13934,9 +14006,23 @@
                 return ''; // 1つの地物がおかしくても地図全体は描く
               }
             }).join('');
+            // 地図データに形の無い国（シンガポールなど）は、位置の表から丸を出す。スライドショー用に
+            // その位置の小さな円を形の代わりに入れる
+            Object.keys(visitedNames).forEach(function (name) {
+              if (visitedWorldFeatures[name]) return;
+              var pt = VISITED_POINT_COUNTRIES[visitedCountryAlpha2ByName[name] || Core.alpha2ForCountryName(name)];
+              var c = pt && proj(pt);
+              if (!c || !isFinite(c[0]) || !isFinite(c[1])) return;
+              var on = sel && sel.kind === 'country' && sel.name === name;
+              visitedWorldFeatures[name] = { type: 'Feature', properties: {}, geometry: d3.geoCircle().center(pt).radius(0.35)() };
+              worldBounds[name] = [[c[0] - 1, c[1] - 1], [c[0] + 1, c[1] + 1]];
+              dots.push('<circle cx="' + c[0].toFixed(1) + '" cy="' + c[1].toFixed(1) + '" r="4" class="visited-region visited-dot visited-point is-visited shade-' + visitedNames[name] + (on ? ' on' : '') +
+                '" data-kind="country" data-name="' + escapeHtml(name) + '"><title>' + escapeHtml(visitedPlaceLabel('country', name)) + '</title></circle>');
+            });
             container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="' + tr('訪れた国の地図') + '">' + paths + dots.join('') + '</svg>';
             wireVisitedMapRegions(container);
-            if (sel && sel.kind === 'country') zoomVisitedWorldMap(sel.name, true);
+            wireVisitedMapPan(container, 'country');
+            if (sel && sel.kind === 'country') zoomVisitedMap('country', sel.name, true);
           } catch (eMap) {
             console.error('drawVisitedWorldMap: map render failed', eMap);
             container.innerHTML = '<div class="empty">' + tr('地図の読み込みに失敗しました。') + '</div>';
