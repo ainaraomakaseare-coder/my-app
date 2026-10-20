@@ -13450,6 +13450,7 @@
   var visitedJapanTopoCache = null, visitedWorldTopoCache = null, visitedIsoAlpha2Cache = null;
   var visitedFeatureCache = {};
   var visitedJapanFeatures = {}; // 都道府県名→地物（タップで拡大するスライドショー用。日本地図を描くたびに入れ直す）
+  var visitedWorldFeatures = {}; // 国名→地物（同じスライドショーを国でも出す。世界地図を描くたびに入れ直す。2026-10-20）
   function visitedFeatureOnce(name, topo, objName) {
     var c = visitedFeatureCache[name];
     if (c && c.topo === topo) return c.fc;
@@ -13693,6 +13694,18 @@
     var same = sel && sel.kind === kind && sel.name === name;
     state.visitedSel = same ? null : { kind: kind, name: name };
     updateVisitedHighlight();
+    if (kind === 'country') {
+      // 一覧の下のほうで国を押したときは地図が画面の外にあるので、地図まで戻してからズームを見せる
+      // （オーナーの声、2026-10-20。地図をタップしたとき＝scrollToRowのときは一覧へ行くので動かさない）
+      var map = $('#visitedMapOverseas');
+      if (state.visitedSel && !scrollToRow && map) {
+        var r = map.getBoundingClientRect();
+        if (r.top < 0 || r.bottom > window.innerHeight) {
+          try { map.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' }); } catch (e) { map.scrollIntoView(); }
+        }
+      }
+      zoomVisitedWorldMap(state.visitedSel ? name : null);
+    }
     if (scrollToRow && state.visitedSel) scrollVisitedRowIntoView(kind, name);
   }
   // 地図をタップしたら、一覧の同じ場所の行までスクロールして、少しのあいだ光らせる
@@ -13760,7 +13773,7 @@
     panel.innerHTML =
       visitedTotalsCardHtml(frac, tr('国連加盟{n}か国中', { n: VISITED_COUNTRY_TOTAL }), pct) +
       '<div class="visited-map" id="visitedMapOverseas"><div class="visited-map-ph" style="aspect-ratio:320 / 190"></div></div>' +
-      visitedLegendHtml('') +
+      visitedLegendHtml(tr('国をタップすると、その旅の写真が流れます')) +
       '<div class="visited-list-wrap" id="visitedListOverseas"></div>';
     drawVisitedWorldMap(visited, excludedPlaces);
   }
@@ -13850,6 +13863,49 @@
   // 国（香港など）が混ざっており、1つの地物の描画で例外が起きるとPromiseチェイン全体がcatchに落ちて
   // 地図・一覧の両方が失敗表示になっていた。1地物ごとのtry/catchで読み飛ばし、地図が失敗しても一覧は
   // 別で描く（逆も同様）。実際の例外はconsole.errorに出す（原因調査用）。
+  var VISITED_SMALL_COUNTRY_PX = 7; // 世界地図（幅320）でこれより小さい国には丸を重ねる
+  var VISITED_WORLD_W = 320, VISITED_WORLD_H = 190;
+  var visitedWorldBounds = {}; // 国名→世界地図の上での範囲（一覧で国を選んだときにそこへズームする）
+  var visitedWorldZoomAnim = 0;
+  // 国の範囲。遠くの島（アメリカのアラスカ・ハワイなど）まで入れると広がりすぎるので本体の島だけで測る
+  function visitedShowMainBounds(path, f) {
+    try { return path.bounds(visitedShowMainShape(f)); } catch (e) { return path.bounds(f); }
+  }
+  // 一覧で国を選んだら、世界地図をその国までズームする（地図では小さすぎて見えない国のため。
+  // オーナーの声、2026-10-20）。nameがnullなら全体に戻す。viewBoxを少しずつ動かして寄せる
+  function zoomVisitedWorldMap(name, instant) {
+    var svg = document.querySelector('#visitedMapOverseas svg');
+    if (!svg) return;
+    var W = VISITED_WORLD_W, H = VISITED_WORLD_H, to = [0, 0, W, H];
+    var b = name && visitedWorldBounds[name];
+    if (b) {
+      var bw = b[1][0] - b[0][0], bh = b[1][1] - b[0][1];
+      var w = Math.min(W, Math.max(56, bw * 2.4, bh * 2.4 * W / H)), h = w * H / W;
+      var cx = (b[0][0] + b[1][0]) / 2, cy = (b[0][1] + b[1][1]) / 2;
+      to = [Math.max(0, Math.min(W - w, cx - w / 2)), Math.max(0, Math.min(H - h, cy - h / 2)), w, h];
+    }
+    var from = (svg.getAttribute('viewBox') || '0 0 ' + W + ' ' + H).split(/\s+/).map(Number);
+    var apply = function (v) {
+      svg.setAttribute('viewBox', v.map(function (n) { return n.toFixed(2); }).join(' '));
+      // 丸は寄っても大きくなりすぎないよう、画面上でほぼ同じ大きさに保つ
+      // 十分寄ったら国の形そのものが見えるので丸は消す（丸で国が隠れないように）
+      $all('.visited-dot', svg).forEach(function (c) {
+        c.setAttribute('r', (4 * v[2] / W).toFixed(2));
+        c.style.display = v[2] < W * 0.4 ? 'none' : '';
+      });
+    };
+    var anim = ++visitedWorldZoomAnim;
+    if (instant || prefersReducedMotion()) { apply(to); return; }
+    var t0 = null, dur = 450;
+    var step = function (ts) {
+      if (anim !== visitedWorldZoomAnim || !svg.isConnected) return;
+      if (t0 === null) t0 = ts;
+      var k = Math.min(1, (ts - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      apply(from.map(function (f, i) { return f + (to[i] - f) * e; }));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
   function drawVisitedWorldMap(visited, excludedPlaces) {
     var visitedNames = {};
     visited.forEach(function (x) { visitedNames[x.name] = Math.max(1, Core.visitedShadeLevel(Core.visitedTripCount(x))); });
@@ -13869,6 +13925,9 @@
         console.error('drawVisitedWorldMap: topojson decode failed', e);
         fc = null;
       }
+      visitedWorldFeatures = {};
+      visitedWorldBounds = {};
+      if (fc) fc.features.forEach(function (f) { var n = idx.idToName[f.id]; if (n) visitedWorldFeatures[n] = f; });
       visitedCountryAlpha2ByName = {};
       Object.keys(idx.nameToId).forEach(function (name) {
         visitedCountryAlpha2ByName[name] = alpha2Table[idx.nameToId[name]];
@@ -13886,6 +13945,7 @@
             var proj = d3.geoNaturalEarth1().fitSize([w, h], fc);
             var path = d3.geoPath(proj);
             var sel = state.visitedSel;
+            var dots = []; // 地図では点ほどの大きさしかない国（カタールなど）は、上に丸を重ねて見える・押せるようにする
             var paths = fc.features.map(function (f) {
               try {
                 var name = idx.idToName[f.id] || '';
@@ -13893,16 +13953,25 @@
                 if (!d) return '';
                 var isVisited = !!(name && visitedNames[name]);
                 var on = isVisited && sel && sel.kind === 'country' && sel.name === name;
-                return '<path d="' + d + '" class="visited-region' + (isVisited ? ' is-visited shade-' + visitedNames[name] : '') + (on ? ' on' : '') + '"' +
-                  (isVisited ? ' data-kind="country" data-name="' + escapeHtml(name) + '"' : '') +
-                  '>' + (name ? '<title>' + escapeHtml(visitedPlaceLabel('country', name)) + '</title>' : '') + '</path>';
+                var attrs = 'class="visited-region' + (isVisited ? ' is-visited shade-' + visitedNames[name] : '') + (on ? ' on' : '') + '"' +
+                  (isVisited ? ' data-kind="country" data-name="' + escapeHtml(name) + '"' : '');
+                var title = name ? '<title>' + escapeHtml(visitedPlaceLabel('country', name)) + '</title>' : '';
+                if (isVisited) {
+                  var bb = path.bounds(f), c = path.centroid(f);
+                  visitedWorldBounds[name] = visitedShowMainBounds(path, f);
+                  if (Math.max(bb[1][0] - bb[0][0], bb[1][1] - bb[0][1]) < VISITED_SMALL_COUNTRY_PX && isFinite(c[0]) && isFinite(c[1])) {
+                    dots.push('<circle cx="' + c[0].toFixed(1) + '" cy="' + c[1].toFixed(1) + '" r="4" ' + attrs.replace('visited-region', 'visited-region visited-dot') + '>' + title + '</circle>');
+                  }
+                }
+                return '<path d="' + d + '" ' + attrs + '>' + title + '</path>';
               } catch (eFeature) {
                 console.error('drawVisitedWorldMap: skipped a feature', f && f.id, eFeature);
                 return ''; // 1つの地物がおかしくても地図全体は描く
               }
             }).join('');
-            container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="' + tr('訪れた国の地図') + '">' + paths + '</svg>';
+            container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="' + tr('訪れた国の地図') + '">' + paths + dots.join('') + '</svg>';
             wireVisitedMapRegions(container);
+            if (sel && sel.kind === 'country') zoomVisitedWorldMap(sel.name, true);
           } catch (eMap) {
             console.error('drawVisitedWorldMap: map render failed', eMap);
             container.innerHTML = '<div class="empty">' + tr('地図の読み込みに失敗しました。') + '</div>';
@@ -13944,7 +14013,7 @@
         // 国内⇄海外の横スワイプは地図の上から始めても効くようにした（initTabSwipe）ため、
         // スワイプがコミットした直後の一瞬だけ来る合成clickで領域タップが誤発火しないよう無視する。
         if (Date.now() < tabSwipeClickGuardUntil) { e.preventDefault(); e.stopPropagation(); return; }
-        if (el.dataset.kind === 'prefecture' && openVisitedShow(el)) return;
+        if (openVisitedShow(el)) return;
         setVisitedSelection(el.dataset.kind, el.dataset.name, true);
       });
     });
@@ -13990,9 +14059,9 @@
 
   // 開けたらtrue（地図データがまだ無いなど、開けないときはfalseで、これまでどおり一覧の行を選ぶ）
   function openVisitedShow(srcEl) {
-    var name = srcEl.dataset.name;
-    var feature = visitedJapanFeatures[name];
-    var x = (visitedDetails().prefectures || []).filter(function (p) { return p.name === name; })[0];
+    var name = srcEl.dataset.name, kind = srcEl.dataset.kind === 'country' ? 'country' : 'prefecture';
+    var feature = kind === 'country' ? visitedWorldFeatures[name] : visitedJapanFeatures[name];
+    var x = (visitedDetails()[kind === 'country' ? 'countries' : 'prefectures'] || []).filter(function (p) { return p.name === name; })[0];
     if (!feature || !x || !window.d3) return false;
     closeVisitedShow(true);
     var shape = visitedShowMainShape(feature);
@@ -14009,10 +14078,10 @@
     root.className = 'vshow';
     root.setAttribute('role', 'dialog');
     root.setAttribute('aria-modal', 'true');
-    root.setAttribute('aria-label', visitedPlaceLabel('prefecture', name));
+    root.setAttribute('aria-label', visitedPlaceLabel(kind, name));
     root.innerHTML =
       '<div class="vshow-head">' +
-      '<div class="vshow-head-text"><div class="vshow-title">' + escapeHtml(visitedPlaceLabel('prefecture', name)) + '</div>' +
+      '<div class="vshow-head-text"><div class="vshow-title">' + escapeHtml(visitedPlaceLabel(kind, name)) + '</div>' +
       '<div class="vshow-sub">' + escapeHtml(tr('旅行{n}回', { n: count })) + '</div></div>' +
       '<button type="button" class="vshow-close" aria-label="' + escapeHtml(tr('閉じる')) + '">' +
       '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg></button>' +
@@ -14025,10 +14094,10 @@
       '<path class="vshow-outline" d="' + d + '"/>' +
       '</svg></div>' +
       '<div class="vshow-caption">' + escapeHtml(tr('写真を読み込んでいます…')) + '</div>' +
-      '<div class="vshow-trips">' + visitedTripChipsHtml('prefecture', x) + '</div>';
+      '<div class="vshow-trips">' + visitedTripChipsHtml(kind, x) + '</div>';
     document.body.appendChild(root);
     document.body.classList.add('vshow-open');
-    visitedShow = { root: root, srcEl: srcEl, name: name, photos: [], index: -1, front: 0, timer: null, labels: {} };
+    visitedShow = { root: root, srcEl: srcEl, kind: kind, name: name, photos: [], index: -1, front: 0, timer: null, labels: {} };
     var show = visitedShow;
 
     root.querySelector('.vshow-close').addEventListener('click', function () { closeVisitedShow(); });
@@ -14057,7 +14126,7 @@
       show.photos = Core.visitedPlacePhotos(x, byId, 40);
       root.querySelector('.vshow-sub').textContent = tr('旅行{n}回・写真{m}枚', { n: count, m: show.photos.length });
       if (!show.photos.length) {
-        root.querySelector('.vshow-caption').textContent = tr('この都道府県の写真はまだありません');
+        root.querySelector('.vshow-caption').textContent = visitedShowNoPhotoText(show);
         return;
       }
       visitedShowNext(show);
@@ -14124,9 +14193,13 @@
       show.photos.splice(i, 1);
       if (show.index >= i) show.index--;
       if (show.photos.length) visitedShowNext(show);
-      else show.root.querySelector('.vshow-caption').textContent = tr('この都道府県の写真はまだありません');
+      else show.root.querySelector('.vshow-caption').textContent = visitedShowNoPhotoText(show);
     };
     img.src = photoUrl(photo.id);
+  }
+
+  function visitedShowNoPhotoText(show) {
+    return show.kind === 'country' ? tr('この国の写真はまだありません') : tr('この都道府県の写真はまだありません');
   }
 
   // instant：旅行を開く・別の画面へ移るときなど、動きを付けずにすぐ消す
@@ -14141,7 +14214,7 @@
     };
     if (instant) { remove(); return; }
     // 閉じたあとも、一覧ではその県の行を選んだ状態にしておく（以前の「地図をタップ」と同じ結果）
-    state.visitedSel = { kind: 'prefecture', name: show.name };
+    state.visitedSel = { kind: show.kind, name: show.name };
     updateVisitedHighlight();
     visitedShowZoom(show, false, remove);
   }

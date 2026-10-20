@@ -231,4 +231,6 @@ I18N.addLang('en', {
   "写真の撮影場所を地図に入れました": "Added where the photo was taken to the map",
   "写真へのアクセスが許可されていないため、撮影場所は読めません。もう一度押すと、場所なしで写真を選べます。": "Photo access isn't allowed, so the location can't be read. Tap again to choose photos without the location.",
   "写真を読み込めませんでした。": "Couldn't load the photos.",
+  "この国の写真はまだありません": "No photos from this country yet",
+  "国をタップすると、その旅の写真が流れます": "Tap a country to play the photos from your trips there",
 });
