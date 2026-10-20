@@ -259,4 +259,5 @@ I18N.addLang('en', {
   "リストをコピー": "Copy list",
   "1枚の地図にまとめる（KMLファイル）": "Put them all on one map (KML file)",
   "保存したファイルを、パソコンのGoogleマイマップ（mymaps.google.com）で「新しい地図を作成」→「インポート」から読み込むと、全部の場所が1枚の地図にピンで並びます。その地図を共有すれば、ほかの人も同じ地図を見られます。": "On a computer, open Google My Maps (mymaps.google.com), choose \"Create a new map\" → \"Import\" and load the saved file. Every place appears as a pin on one map, and you can share that map with others.",
+  "カメラで撮る・ファイルから選ぶ": "Take a photo or choose a file",
 });

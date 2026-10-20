@@ -3331,5 +3331,43 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   ok('buildPlacesKml: 文書名は旅行名', kml.indexOf('<Document><name>沖縄旅</name>') !== -1);
 })();
 
+/* ---- 写真の撮影場所（gpsFromExif / jpegGpsFromBuffer。docs/adr/0025） ---- */
+(function () {
+  eq('gpsFromExif: iPhoneの度の値と向き', T.gpsFromExif({ Latitude: 35.681236, LatitudeRef: 'N', Longitude: 139.767125, LongitudeRef: 'E' }), { lat: 35.681236, lng: 139.767125 });
+  eq('gpsFromExif: 南・西はマイナス', T.gpsFromExif({ Latitude: 33.8688, LatitudeRef: 'S', Longitude: 70.6693, LongitudeRef: 'W' }), { lat: -33.8688, lng: -70.6693 });
+  eq('gpsFromExif: 度・分・秒の配列も読む', T.gpsFromExif({ Latitude: [35, 40, 51.6], LatitudeRef: 'N', Longitude: [139, 46, 1.2], LongitudeRef: 'E' }), { lat: 35.681, lng: 139.767 });
+  eq('gpsFromExif: GPSなしはnull', T.gpsFromExif(undefined), null);
+  eq('gpsFromExif: 0,0は場所として使わない', T.gpsFromExif({ Latitude: 0, LatitudeRef: 'N', Longitude: 0, LongitudeRef: 'E' }), null);
+  eq('gpsFromExif: 範囲外はnull', T.gpsFromExif({ Latitude: 135, LatitudeRef: 'N', Longitude: 35, LongitudeRef: 'E' }), null);
+
+  // Exif（GPS情報だけ）を入れた最小のJPEGを作る
+  function jpegWithGps(le, latRef, lat, lngRef, lng) {
+    var tiff = new DataView(new ArrayBuffer(128));
+    function w16(o, x) { tiff.setUint16(o, x, le); }
+    function w32(o, x) { tiff.setUint32(o, x, le); }
+    w16(0, le ? 0x4949 : 0x4D4D); w16(2, 42); w32(4, 8);
+    w16(8, 1); w16(10, 0x8825); w16(12, 4); w32(14, 1); w32(18, 26); w32(22, 0);
+    w16(26, 4);
+    function ascii(o, tag, ch) { w16(o, tag); w16(o + 2, 2); w32(o + 4, 2); tiff.setUint8(o + 8, ch.charCodeAt(0)); }
+    function rat(o, tag, at, vals) {
+      w16(o, tag); w16(o + 2, 5); w32(o + 4, 3); w32(o + 8, at);
+      vals.forEach(function (v, i) { w32(at + i * 8, v[0]); w32(at + i * 8 + 4, v[1]); });
+    }
+    ascii(28, 1, latRef); rat(40, 2, 80, lat); ascii(52, 3, lngRef); rat(64, 4, 104, lng);
+    var out = new Uint8Array(4 + 2 + 6 + 128 + 2);
+    out.set([0xFF, 0xD8, 0xFF, 0xE1, 0, 2 + 6 + 128, 0x45, 0x78, 0x69, 0x66, 0, 0], 0);
+    out.set(new Uint8Array(tiff.buffer), 12);
+    out.set([0xFF, 0xD9], 140);
+    return out.buffer;
+  }
+  eq('jpegGpsFromBuffer: ビッグエンディアン（北緯・東経）',
+    T.jpegGpsFromBuffer(jpegWithGps(false, 'N', [[35, 1], [40, 1], [516, 10]], 'E', [[139, 1], [46, 1], [12, 10]])), { lat: 35.681, lng: 139.767 });
+  eq('jpegGpsFromBuffer: リトルエンディアン（南緯・西経）',
+    T.jpegGpsFromBuffer(jpegWithGps(true, 'S', [[33, 1], [52, 1], [0, 1]], 'W', [[151, 1], [12, 1], [36, 1]])), { lat: -33.866667, lng: -151.21 });
+  eq('jpegGpsFromBuffer: JPEGでなければnull', T.jpegGpsFromBuffer(new Uint8Array([1, 2, 3, 4]).buffer), null);
+  eq('jpegGpsFromBuffer: Exifなしはnull', T.jpegGpsFromBuffer(new Uint8Array([0xFF, 0xD8, 0xFF, 0xD9]).buffer), null);
+  eq('jpegGpsFromBuffer: 途中で切れたファイルはnull', T.jpegGpsFromBuffer(jpegWithGps(false, 'N', [[35, 1], [40, 1], [0, 1]], 'E', [[139, 1], [0, 1], [0, 1]]).slice(0, 60)), null);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

@@ -1527,6 +1527,73 @@
     return '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">' +
       '<Document><name>' + xmlEscape((trip && trip.title) || tr('旅の足跡')) + '</name>\n' + marks.join('\n') + '\n</Document></kml>\n';
   }
+  // 写真の撮影場所（docs/adr/0025）。緯度・経度として使える数か確かめて、小数6桁に丸める。
+  // 0,0（アフリカ沖）はGPSが取れていない写真によくある値なので場所として使わない
+  function photoGpsPoint(lat, lng) {
+    if (typeof lat !== 'number' || typeof lng !== 'number' || !isFinite(lat) || !isFinite(lng)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) return null;
+    return { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 };
+  }
+  function gpsDms(v) {
+    if (typeof v === 'number') return v;
+    if (!v || v.length !== 3) return NaN;
+    return Number(v[0]) + Number(v[1]) / 60 + Number(v[2]) / 3600;
+  }
+  // iPhoneアプリで写真を選んだとき（@capacitor/cameraのpickImages）に返るexif.GPSから緯度・経度を取る。
+  // iOSは度の値（35.68など）と向き（N/S・E/W）を別々に返す
+  function gpsFromExif(gps) {
+    if (!gps) return null;
+    var lat = gpsDms(gps.Latitude), lng = gpsDms(gps.Longitude);
+    if (/^s/i.test(gps.LatitudeRef || '')) lat = -lat;
+    if (/^w/i.test(gps.LongitudeRef || '')) lng = -lng;
+    return photoGpsPoint(lat, lng);
+  }
+  // JPEGファイルの中身（ArrayBuffer）から、Exifに入っている撮影場所を読む。
+  // パソコンのブラウザで選んだ写真用（iPhoneのブラウザ・アプリ内のWebViewは、ファイルとして渡すときに
+  // 位置情報を消してしまうので、そちらはgpsFromExifを使う）。読めなければnull
+  function jpegGpsFromBuffer(buf) {
+    try {
+      var v = new DataView(buf);
+      if (v.byteLength < 4 || v.getUint16(0) !== 0xFFD8) return null;
+      var pos = 2;
+      while (pos + 4 <= v.byteLength) {
+        if (v.getUint8(pos) !== 0xFF) return null;
+        var marker = v.getUint8(pos + 1), size = v.getUint16(pos + 2);
+        if (marker === 0xDA || marker === 0xD9) return null; // 画像データの始まりより後ろにExifは無い
+        if (marker === 0xE1 && v.getUint32(pos + 4) === 0x45786966) return tiffGps(v, pos + 10); // "Exif"
+        pos += 2 + size;
+      }
+    } catch (e) { /* 壊れたファイルは場所なしとして扱う */ }
+    return null;
+  }
+  function tiffGps(v, start) {
+    var le = v.getUint16(start) === 0x4949; // "II"ならリトルエンディアン
+    function u16(o) { return v.getUint16(start + o, le); }
+    function u32(o) { return v.getUint32(start + o, le); }
+    function findTag(ifd, tag) {
+      var n = u16(ifd);
+      for (var i = 0; i < n; i++) if (u16(ifd + 2 + i * 12) === tag) return ifd + 2 + i * 12;
+      return -1;
+    }
+    var ptr = findTag(u32(4), 0x8825); // GPS情報の場所
+    if (ptr < 0) return null;
+    var gpsIfd = u32(ptr + 8);
+    function ref(tag) {
+      var e = findTag(gpsIfd, tag);
+      return e < 0 ? '' : String.fromCharCode(v.getUint8(start + e + 8));
+    }
+    function dms(tag) {
+      var e = findTag(gpsIfd, tag);
+      if (e < 0 || u16(e + 2) !== 5 || u32(e + 4) !== 3) return NaN; // 有理数（分子/分母）が3つ＝度・分・秒
+      var o = u32(e + 8), parts = [];
+      for (var i = 0; i < 3; i++) {
+        var den = u32(o + i * 8 + 4);
+        parts.push(den ? u32(o + i * 8) / den : 0);
+      }
+      return gpsDms(parts);
+    }
+    return gpsFromExif({ Latitude: dms(2), LatitudeRef: ref(1), Longitude: dms(4), LongitudeRef: ref(3) });
+  }
   // 候補（place。「地図のURL」欄の座標検索で選んだもの）または検索した文字列（searchText。
   // 「Googleマップで検索」を選んだときなど、座標のない検索）から、記録と一緒に保存する
   // 「場所の名前」を決める。候補があればその名前（例：Googleの候補のname）。無ければ検索文字列を
@@ -4700,6 +4767,8 @@
     decodeHtmlEntities: decodeHtmlEntities,
     buildPlaceListText: buildPlaceListText,
     buildPlacesKml: buildPlacesKml,
+    gpsFromExif: gpsFromExif,
+    jpegGpsFromBuffer: jpegGpsFromBuffer,
     placeSelectionName: placeSelectionName,
     travelArrival: travelArrival,
     replayStops: replayStops,
@@ -11733,6 +11802,68 @@
     }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
   }
 
+  // ---- 写真の撮影場所を、記録の地図欄に入れる（docs/adr/0025） ----
+  // 写真を追加したとき、地図欄がまだ空なら、最初に位置情報のある写真の撮影場所を「現在地を入れる」と
+  // 同じ形（座標の地図URL＋ピンを動かせる地図）で入れる。地図でふりかえるの道のりもこの場所を通る
+  var photoLibPerm = ''; // iPhoneアプリの写真ライブラリへの許可（granted / limited / denied / prompt）
+
+  // 写真の撮影場所を読めるネイティブの写真選び（iPhoneアプリで、プラグイン入りのビルドのときだけ）
+  function nativePhotoPicker() {
+    if (!isNativeApp() || !window.Capacitor.getPlatform || window.Capacitor.getPlatform() !== 'ios') return null;
+    return (window.Capacitor.Plugins && window.Capacitor.Plugins.Camera) || null;
+  }
+
+  function applyPhotoLocation(point) {
+    // 自分で場所を選んだ・入力した記録は上書きしない（編集中の記録も地図欄が埋まっているので変わらない）
+    if (!point || $('#entMapUrl').value.trim() || selectedPlace() || $('#entPlaceSearch').value.trim()) return;
+    placeCandidates = [{ name: '', lat: point.lat, lng: point.lng }];
+    placeChoice = '0';
+    $('#entPlaceCandidates').hidden = true;
+    previewSelectedPlace();
+    applySelectedPlaceToMapUrl();
+    $('#entPlaceStatus').textContent = tr('写真の撮影場所を地図に入れました。ずれていたらピンを動かして直せます。');
+    showToast(tr('写真の撮影場所を地図に入れました'));
+  }
+
+  function photoGpsFromFiles(files) {
+    var jpegs = files.filter(function (f) { return /jpe?g$/i.test(f.type || f.name || ''); });
+    return jpegs.reduce(function (prev, f) {
+      return prev.then(function (found) {
+        if (found || !f.slice(0, 1).arrayBuffer) return found;
+        return f.slice(0, 256 * 1024).arrayBuffer().then(Core.jpegGpsFromBuffer).catch(function () { return null; });
+      });
+    }, Promise.resolve(null));
+  }
+
+  function pickPhotosNative(plugin) {
+    plugin.pickImages({ quality: 90, limit: 0 }).then(function (res) {
+      var photos = (res && res.photos) || [];
+      var point = null;
+      photos.forEach(function (p) { if (!point) point = Core.gpsFromExif(p.exif && p.exif.GPS); });
+      if (photoLibPerm !== 'granted' && photoLibPerm !== 'limited') photoLibPerm = 'granted'; // 選べた＝許可された
+      // 大きい写真を一度に何枚も読むとメモリが足りなくなるので、1枚ずつ縮めて追加する
+      return photos.reduce(function (prev, p) {
+        return prev.then(function () {
+          return fetch(p.webPath).then(function (r) { return r.blob(); })
+            .then(function (b) { return fileToCompressedBlob(b, 1280, 0.72); })
+            .then(function (blob) {
+              state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) });
+              renderPhotoPreview();
+            });
+        });
+      }, Promise.resolve()).then(function () { applyPhotoLocation(point); });
+    }).catch(function (err) {
+      var msg = String((err && err.message) || err || '');
+      if (/cancel/i.test(msg)) return;
+      if (/denied/i.test(msg)) {
+        photoLibPerm = 'denied';
+        showToast(tr('写真へのアクセスが許可されていないため、撮影場所は読めません。もう一度押すと、場所なしで写真を選べます。'));
+        return;
+      }
+      showToast(tr('写真を読み込めませんでした。'));
+    });
+  }
+
   // 「今」：時刻の欄に端末の今の時刻（HH:MM）を入れる（2026-10-15）
   function setTimeNow(input) {
     var d = new Date();
@@ -15517,7 +15648,20 @@
       renderCostItems();
     });
 
-    $('#entPhotoPicker').addEventListener('click', function () { $('#entPhoto').click(); });
+    // iPhoneアプリでは写真ライブラリから直接選び、撮影場所も読む（ファイルとして渡すと位置情報が消えるため。
+    // docs/adr/0025）。カメラで撮る・ファイルから選ぶは、下の小さいボタンからこれまでどおりの選び方で
+    var photoPlugin = nativePhotoPicker();
+    $('#entPhotoCamera').hidden = !photoPlugin;
+    if (photoPlugin && photoPlugin.checkPermissions) {
+      photoPlugin.checkPermissions().then(function (p) { photoLibPerm = (p && p.photos) || ''; }).catch(function () {});
+    }
+    $('#entPhotoPicker').addEventListener('click', function () {
+      // 写真へのアクセスを断られているときは、これまでどおりの選び方（場所は読めない）にする。
+      // 許可の状態は先に調べてあるので、ここは待たずに開ける（待つとiOSがファイル選択を開かせない）
+      if (photoPlugin && photoLibPerm !== 'denied') pickPhotosNative(photoPlugin);
+      else $('#entPhoto').click();
+    });
+    $('#entPhotoCamera').addEventListener('click', function () { $('#entPhoto').click(); });
     initPhotoReorder();
     $('#entPhoto').addEventListener('change', function (e) {
       var files = Array.prototype.slice.call(e.target.files || []);
@@ -15525,6 +15669,8 @@
         blobs.forEach(function (blob) { state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
         renderPhotoPreview();
       });
+      // パソコンなど、ファイルに位置情報が残っている環境では、そこから撮影場所を読む
+      photoGpsFromFiles(files).then(applyPhotoLocation);
       e.target.value = '';
     });
 

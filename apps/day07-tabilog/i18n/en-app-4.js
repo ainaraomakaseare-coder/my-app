@@ -222,4 +222,8 @@ I18N.addLang('en', {
   "選んだ種類の場所はありません": "No places of the selected types",
   "座標の分からない{n}か所は、KMLファイルには入りません": "{n} places without coordinates won't be included in the KML file",
   "コピーしました。LINEやメッセージに貼り付けて送れます。": "Copied. Paste it into a message to send it.",
+  "写真の撮影場所を地図に入れました。ずれていたらピンを動かして直せます。": "Added where the photo was taken to the map. If it's off, drag the pin to fix it.",
+  "写真の撮影場所を地図に入れました": "Added where the photo was taken to the map",
+  "写真へのアクセスが許可されていないため、撮影場所は読めません。もう一度押すと、場所なしで写真を選べます。": "Photo access isn't allowed, so the location can't be read. Tap again to choose photos without the location.",
+  "写真を読み込めませんでした。": "Couldn't load the photos.",
 });
