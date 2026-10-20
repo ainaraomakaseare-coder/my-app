@@ -3306,7 +3306,21 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   var text = T.buildPlaceListText(trip, picked);
   ok('buildPlaceListText: 見出しに旅行名と件数', text.indexOf('【沖縄旅】で行った場所（3か所）') === 0);
   ok('buildPlaceListText: 日ごとに分ける', text.indexOf('■1日目') !== -1 && text.indexOf('■2日目') === -1);
-  ok('buildPlaceListText: 名前と種類とリンク', text.indexOf('・首里そば（食事）\n' + T.googleMapsPlaceUrl(places[1])) !== -1);
+  ok('buildPlaceListText: 名前と種類と短いリンク', text.indexOf('・首里そば（食事）\nhttps://maps.google.com/?q=26.2,127.6') !== -1);
+  ok('buildPlaceListText: 名前入りの長い検索URLは入れない', text.indexOf('/maps/search/') === -1);
+  eq('shortMapsPlaceUrl: 座標は小数5桁', T.shortMapsPlaceUrl({ name: 'マリーナベイ・サンズ', lat: 1.2837574999999999, lng: 103.8591065 }), 'https://maps.google.com/?q=1.28376,103.85911');
+  eq('shortMapsPlaceUrl: 本人が貼った短いリンクはそのまま', T.shortMapsPlaceUrl({ name: 'x', lat: 1, lng: 2, mapUrl: 'https://maps.app.goo.gl/abc123' }), 'https://maps.app.goo.gl/abc123');
+  eq('shortMapsPlaceUrl: 長いリンクは座標の短いリンクにする', T.shortMapsPlaceUrl({ name: 'x', lat: 1, lng: 2, mapUrl: 'https://www.google.com/maps/place/' + 'a'.repeat(80) }), 'https://maps.google.com/?q=1,2');
+  eq('shortMapsPlaceUrl: 座標が無ければ保存してあるURL', T.shortMapsPlaceUrl({ name: 'x', mapUrl: 'https://example.com/m' }), 'https://example.com/m');
+  eq('googleMapsPlaceUrl: 座標の細かい誤差は丸める', T.googleMapsPlaceUrl({ name: 'A', lat: 1.2837574999999999, lng: 103.79302299999999 }), 'https://www.google.com/maps/search/A/@1.283757,103.793023,17z');
+  eq('decodeHtmlEntities: 文字参照を元の文字に', T.decodeHtmlEntities('Wolfgang&#39;s &amp; Co &quot;A&quot; &#x2502;'), 'Wolfgang\'s & Co "A" │');
+  var rp = T.tripPlaces(trip, [{ id: 'r', date: '2026-05-01', label: '店', category: 'food', entries: [{ mapLat: 1, mapLng: 2, comment: 'また行きたい', ratings: [{ score: 4 }, { score: 4.5 }] }] }]);
+  eq('tripPlaces: 評価の平均とひとこと', [rp[0].rating, rp[0].comment], [4.3, 'また行きたい']);
+  var rt = T.buildPlaceListText(trip, rp);
+  ok('buildPlaceListText: 評価とひとことを添える', rt.indexOf('・店（食事） ★4.3\n「また行きたい」\nhttps://maps.google.com/?q=1,2') !== -1);
+  ok('buildPlaceListText: 評価もひとことも無ければ付けない', text.indexOf('★') === -1 && text.indexOf('「') === -1);
+  ok('buildPlacesKml: 評価とひとことも入れる', T.buildPlacesKml(trip, rp).indexOf('★4.3\n「また行きたい」') !== -1);
+  eq('tripPlaces: 名前の文字参照を戻す', T.tripPlaces(trip, [{ id: 'w', date: '2026-05-01', label: 'x', entries: [{ mapPlaceName: 'Wolfgang&#39;s', mapLat: 1, mapLng: 2 }] }])[0].name, "Wolfgang's");
   ok('buildPlaceListText: エピソードや費用は入れない', text.indexOf('地図なし') === -1);
 
   var kml = T.buildPlacesKml(trip, picked);
