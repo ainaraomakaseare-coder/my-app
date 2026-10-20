@@ -1044,6 +1044,7 @@
 
 <datalist id="tagOptions"></datalist>
 <datalist id="hobbyOptions"></datalist>
+<input type="file" id="detailPhotoInput" accept="image/*" hidden />
 <input type="file" id="bulkImportFile" accept=".tsv,.txt,text/tab-separated-values" hidden />
 
 <div class="overlay detail" id="detailPanel" hidden>
@@ -1244,6 +1245,7 @@
       state.memberName = membership.display_name;
       state.quizScope = readQuizScope();
       document.getElementById("manageMembersBtn").hidden = membership.role !== "admin";
+      viewScroll = {};
       setView("people");
       if (!await init()) throw new Error("community_load_failed");
       if (request !== roomSwitchRequest || epoch !== accessEpoch) return;
@@ -1962,7 +1964,6 @@
       '<input type="text" id="detailHobbyInput" list="hobbyOptions" placeholder="例: ギター → Enter" />' +
       "</div>" +
       '<div class="gallery" id="galleryArea"' + (visibility.photo ? '' : ' hidden') + '>' + galleryHtml + "</div>" +
-      '<input type="file" id="detailPhotoInput" accept="image/*" style="display:none" />' +
       '<div' + (visibility.history ? '' : ' hidden') + '>' +
       '<div class="sectionLabel hand">経歴</div>' +
       '<p class="sectionHint">例: 2014年 早稲田大学法学部卒業 のように、任意でいくつでも追加できます。</p>' +
@@ -2087,21 +2088,11 @@
     hobbyInputEl.addEventListener("blur", addDetailHobbies);
 
     document.getElementById("addPhotoTile").addEventListener("click", function () {
-      document.getElementById("detailPhotoInput").click();
-    });
-    document.getElementById("detailPhotoInput").addEventListener("change", async function (e) {
-      var f = e.target.files && e.target.files[0];
-      if (!f) return;
-      showToast("写真をアップロード中…");
-      try {
-        var url = await uploadPhoto(f);
-        var next = (p.photoUrls || []).concat([url]);
-        p.photoUrls = next;
-        renderDetail();
-        await updatePerson(p.id, { photoUrls: next }, "写真を追加しました");
-      } catch (err) {
-        showToast("写真の追加に失敗しました: " + (err && err.message ? err.message : ""));
-      }
+      // 名前入力の直後は、保存で詳細画面が描き直される。入力口は描き直しの外に置き、誰の写真かはここで覚えておく
+      photoTargetId = p.id;
+      var input = document.getElementById("detailPhotoInput");
+      input.value = "";
+      input.click();
     });
 
     Array.prototype.forEach.call(document.querySelectorAll("[data-remove-photo]"), function (btn) {
@@ -2208,6 +2199,26 @@
     row.updated_at = new Date().toISOString();
     return row;
   }
+
+  // 写真の追加（入力口は詳細画面の描き直しの外にある）
+  var photoTargetId = null;
+  document.getElementById("detailPhotoInput").addEventListener("change", async function (e) {
+    var f = e.target.files && e.target.files[0];
+    var targetId = photoTargetId;
+    if (!f || !targetId) return;
+    showToast("写真をアップロード中…");
+    try {
+      var url = await uploadPhoto(f);
+      var person = findPerson(targetId);
+      if (!person) throw new Error("person_not_found");
+      var next = (person.photoUrls || []).concat([url]);
+      person.photoUrls = next;
+      if (state.selectedId === targetId) renderDetail();
+      await updatePerson(targetId, { photoUrls: next }, "写真を追加しました");
+    } catch (err) {
+      showToast("写真の追加に失敗しました: " + (err && err.message ? err.message : ""));
+    }
+  });
 
   async function updatePerson(id, patch, successMsg) {
     if (!requirePostingConsent()) { await loadPeople(); renderDetail(); return; }
@@ -2806,7 +2817,10 @@
   document.getElementById("quizScopeAll").addEventListener("click", function () { changeQuizScope({ all: true, tags: [], untagged: false }); });
   document.getElementById("quizScopeNone").addEventListener("click", function () { changeQuizScope({ all: false, tags: [], untagged: false }); });
 
+  // タブごとのスクロール位置。切り替えても元の位置に戻れるよう覚えておく。コミュニティを切り替えたときは空にする
+  var viewScroll = {};
   function setView(view) {
+    if (state.activeView) viewScroll[state.activeView] = window.pageYOffset || 0;
     state.activeView = view;
     var peopleView = view === "people";
     document.querySelector(".communityHero").hidden = !peopleView;
@@ -2818,7 +2832,7 @@
       button.classList.toggle("active", button.getAttribute("data-view") === view);
     });
     if (view === "ranking") loadLeaderboard();
-    window.scrollTo(0, 0);
+    window.scrollTo(0, viewScroll[view] || 0);
   }
 
   function shuffle(items) {
@@ -2948,7 +2962,8 @@
   function combineRealAndFiction(real, fiction) {
     if (!real.length) return shuffle(fiction).slice(0, 10);
     if (!fiction.length) return shuffle(real).slice(0, 10);
-    var count = Math.min(5, real.length, fiction.length);
+    // 「そんな人いない」が正解の架空問題は、10問中2問までにとどめる（多いと毎回それが答えに見えてしまう）
+    var count = Math.min(2, real.length, fiction.length);
     return shuffle(shuffle(real).slice(0, 10 - count).concat(shuffle(fiction).slice(0, count)));
   }
 
