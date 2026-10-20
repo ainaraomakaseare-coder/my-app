@@ -3360,6 +3360,10 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('timelineSceneAt: その時刻の場面', at.scene.id, 'v1');
   ok('timelineSceneAt: 場面の中の経過', Math.abs(at.local - 0.5) < 1e-9);
   eq('timelineSceneAt: 終わりを過ぎたら最後の場面', T.timelineSceneAt(st, 999).scene.kind, 'outro');
+  var vb = [b('m1', '2026-05-01', '09:00', '海', [], ['va']), b('m2', '2026-05-01', '10:00', '山', [], ['vb']), b('m3', '2026-05-01', '11:00', '川', [], ['vc'])];
+  var vs = T.buildTimelineStory(trip, vb, { durations: { va: 12, vb: 2.5, vc: 0.4 } });
+  eq('buildTimelineStory: 動画は5秒まで・短い動画は最後まで・ごく短い動画は1.5秒', vs.scenes.filter(function (x) { return x.type === 'video'; }).map(function (x) { return x.dur; }), [5, 2.5, 1.5]);
+  eq('buildTimelineStory: 長さが分からない動画は4秒', T.buildTimelineStory(trip, vb, {}).scenes.filter(function (x) { return x.type === 'video'; })[0].dur, 4);
 })();
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
