@@ -1570,11 +1570,16 @@
   // 表紙 → 日の区切り → 予定ごとの写真（2枚まで）と動画（1本まで） → 終わり。60秒を超えるときは、
   // まず予定ごとの写真を1枚にし、それでも長ければ予定を均等に間引く（最初と最後の予定は残す）。
   // opts.videos=falseで動画を入れない。opts.available（ID→true）を渡すと、読み込めたものだけを使う。
+  // 動画は1本あたり最大5秒（TLM_VIDEO_MAX）。opts.durations（ID→秒）で長さが分かれば、それより短い動画は最後まで流す。
   var TLM_W = 720, TLM_H = 1280, TLM_FPS = 30;
-  var TLM_INTRO = 2.2, TLM_DAY = 1.4, TLM_PHOTO = 1.8, TLM_VIDEO = 4, TLM_OUTRO = 2.4, TLM_MAX = 60;
+  var TLM_INTRO = 2.2, TLM_DAY = 1.4, TLM_PHOTO = 1.8, TLM_VIDEO = 4, TLM_VIDEO_MAX = 5, TLM_VIDEO_MIN = 1.5, TLM_OUTRO = 2.4, TLM_MAX = 60;
   function buildTimelineStory(trip, blocks, opts) {
     opts = opts || {};
-    var useVideos = opts.videos !== false, avail = opts.available || null;
+    var useVideos = opts.videos !== false, avail = opts.available || null, durs = opts.durations || {};
+    var videoDur = function (id) {
+      var d = durs[id];
+      return typeof d === 'number' && isFinite(d) && d > 0 ? Math.max(TLM_VIDEO_MIN, Math.min(TLM_VIDEO_MAX, d)) : TLM_VIDEO;
+    };
     var usable = function (id) { return !avail || avail[id] === true; };
     var moments = sortBlocks(blocks || []).filter(function (b) { return b.date && !b.videoExclude; }).map(function (b) {
       var photos = [], videos = [];
@@ -1595,7 +1600,7 @@
         if (b.date !== lastDate) { lastDate = b.date; push({ kind: 'day', dur: TLM_DAY, dayLabel: dl, dateText: formatDateJp(b.date) }); }
         var base = { kind: 'media', blockId: b.id, time: b.time || '', label: b.label || categoryLabel(b.category), dayLabel: dl };
         m.photos.slice(0, photoCap).forEach(function (id) { push(Object.assign({ type: 'photo', id: id, dur: TLM_PHOTO }, base)); });
-        m.videos.forEach(function (id) { push(Object.assign({ type: 'video', id: id, dur: TLM_VIDEO }, base)); });
+        m.videos.forEach(function (id) { push(Object.assign({ type: 'video', id: id, dur: videoDur(id) }, base)); });
       });
       push({ kind: 'outro', dur: TLM_OUTRO });
       return { w: TLM_W, h: TLM_H, fps: TLM_FPS, total: t, scenes: scenes };
@@ -8174,6 +8179,21 @@
     var dw = sw * scale, dh = sh * scale;
     ctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
   }
+  // 縦長の写真・動画は枠いっぱいに、横長・正方形のものは切らずに全体を描く（オーナーの要望で2026-10-20）。
+  // 全体を描くときは、上下の余白に同じ写真をぼかして暗くしたものを敷く。文字の帯と重ならないよう少し上に置く
+  function tlmDrawMedia(ctx, src, sw, sh, W, H, zoom) {
+    if (!sw || !sh) return;
+    if (sw / sh < 0.8) { tlmDrawCover(ctx, src, sw, sh, W, H, zoom); return; }
+    ctx.save();
+    ctx.filter = 'blur(28px)'; // 対応していない端末ではぼけないが、暗くするので見た目は崩れない
+    tlmDrawCover(ctx, src, sw, sh, W, H, 1.15);
+    ctx.restore();
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, W, H);
+    var scale = Math.min(W / sw, H / sh) * (zoom || 1);
+    var dw = sw * scale, dh = sh * scale;
+    ctx.drawImage(src, (W - dw) / 2, Math.max(0, H * 0.43 - dh / 2), dw, dh);
+  }
   function tlmFitText(ctx, text, maxW) {
     if (ctx.measureText(text).width <= maxW) return text;
     var t = text;
@@ -8189,8 +8209,8 @@
     ctx.textBaseline = 'alphabetic';
     if (s.kind === 'media') {
       var m = media[s.id];
-      if (s.type === 'photo' && m) tlmDrawCover(ctx, m, m.naturalWidth, m.naturalHeight, W, H, 1 + 0.08 * at.frac);
-      if (s.type === 'video' && m) tlmDrawCover(ctx, m, m.videoWidth, m.videoHeight, W, H, 1);
+      if (s.type === 'photo' && m) tlmDrawMedia(ctx, m, m.naturalWidth, m.naturalHeight, W, H, 1 + 0.04 * at.frac);
+      if (s.type === 'video' && m) tlmDrawMedia(ctx, m, m.videoWidth, m.videoHeight, W, H, 1);
       var g = ctx.createLinearGradient(0, H - 460, 0, H);
       g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.72)');
       ctx.fillStyle = g; ctx.fillRect(0, H - 460, W, 460);
@@ -8289,7 +8309,7 @@
     var ctx = canvas.getContext('2d');
     // 間引く前の候補を全部読むと重いので、まず仮の絵コンテに出るものだけ読む。読めなかったものを外して作り直す
     var jobs = draft.scenes.filter(function (s) { return s.kind === 'media'; });
-    var media = {}, available = {};
+    var media = {}, available = {}, durations = {};
     videoRunPool(jobs, 4, function (s) {
       var url = photoUrl(s.id);
       if (s.type === 'photo') return videoLoadImage(url, 15000).then(function (im) { if (im) { media[s.id] = im; available[s.id] = true; } });
@@ -8298,12 +8318,12 @@
         // CORSが通らない動画を描くとcanvasが汚れて録画できないので、ここで1コマ描いて確かめる
         var probe = document.createElement('canvas');
         probe.width = probe.height = 2;
-        try { var pc = probe.getContext('2d'); pc.drawImage(v, 0, 0, 2, 2); pc.getImageData(0, 0, 1, 1); media[s.id] = v; available[s.id] = true; }
+        try { var pc = probe.getContext('2d'); pc.drawImage(v, 0, 0, 2, 2); pc.getImageData(0, 0, 1, 1); media[s.id] = v; available[s.id] = true; durations[s.id] = v.duration; }
         catch (e) { /* 使わない */ }
       });
     }, function (done, total) { tlmSetProgress(0.3 * done / total); }, token).then(function () {
       if (token.cancelled) return null;
-      var story = Core.buildTimelineStory(trip, blocks, { videos: useVideos, available: available });
+      var story = Core.buildTimelineStory(trip, blocks, { videos: useVideos, available: available, durations: durations });
       if (!story) throw new Error('no_media');
       drawTimelineFrame(ctx, story, story.total / 2, media);
       try { ctx.getImageData(0, 0, 1, 1); } catch (e) { throw new Error('tainted'); }
