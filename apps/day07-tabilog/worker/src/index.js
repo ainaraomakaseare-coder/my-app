@@ -259,6 +259,21 @@ async function selectWhereIn(env, sqlBeforeIn, ids, sqlAfterIn) {
   return all;
 }
 
+// 共有リンクの紹介カード（OGP）用に、旅行の名前・日程・カバー写真だけを返す（2026-10-22〜）。
+// Cloudflare Pagesの関数（functions/_middleware.js）が、?trip=付きのURLをLINE・Xなどが読みに来たときに使う。
+// 旅行のURL（trip.id）を知っている人なら旅行全体を読めるので、ここで返す範囲はそれより狭い。
+// 費用・参加者の名前・記録の中身は返さない（貼った先のグループやSNSの人に見えるため）。
+async function getTripPreview(id, env, headers) {
+  const row = await env.DB.prepare("SELECT title, start_date, end_date, cover_photo_id FROM trips WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "not_found" }, 404, headers);
+  return json({
+    title: row.title || "",
+    startDate: row.start_date || "",
+    endDate: row.end_date || "",
+    coverPhotoId: row.cover_photo_id || "",
+  }, 200, headers);
+}
+
 async function getTrip(id, env, headers) {
   const tripRow = await env.DB.prepare("SELECT * FROM trips WHERE id = ?").bind(id).first();
   if (!tripRow) return json({ error: "not_found" }, 404, headers);
@@ -6127,6 +6142,7 @@ const mainHandler = {
     let m;
     if (method === "POST" && path === "/trips") return createTrip(request, env, headers);
     if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)$/))) return getTrip(m[1], env, headers);
+    if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)\/preview$/))) return getTripPreview(m[1], env, headers);
     if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)$/))) return updateTrip(m[1], request, env, headers, ctx);
     if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)$/))) return deleteTrip(m[1], env, headers);
 
