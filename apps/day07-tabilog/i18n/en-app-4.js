@@ -252,4 +252,8 @@ I18N.addLang('en', {
   "一部の写真を記録に入れられませんでした。記録を開いて写真を追加してください。": "Some photos couldn't be added to the records. Open the record and add them.",
   "写真を記録に入れています（{n}/{total}枚）。枚数が多いと1〜2分かかります": "Adding photos to the records ({n}/{total}). This can take 1–2 minutes for many photos.",
   "写真から旅程を作っています": "Making your itinerary from photos",
+  "まとめて作る": "Add in bulk",
+  "音声・メモ": "Voice / memo",
+  "スクショから": "From screenshots",
+  "写真から": "From photos",
 });

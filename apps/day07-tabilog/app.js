@@ -8628,6 +8628,8 @@
     if (voiceRecorder && voiceRecorder.state === 'recording') voiceRecorder.stop();
   }
 
+  var CALENDAR_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8.5h14M7 2.5v4M13 2.5v4"/></svg>';
+  var SCREENSHOT_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="2" width="9" height="16" rx="2"/><path d="M8.5 15h3"/></svg>';
   var MIC_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0"/><path d="M10 15v2.5M7 17.5h6"/></svg>';
   var STOP_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="5" width="10" height="10" rx="2"/></svg>';
 
@@ -10713,35 +10715,33 @@
     el.appendChild(addBtn);
     appendBranchAddArea(el);
 
-    var voiceBtn = document.createElement('button');
-    voiceBtn.className = 'block-add block-add-voice';
-    voiceBtn.innerHTML = MIC_ICON + '<span>' + tr('音声・メモでまとめて記録する') + '</span>';
+    // まとめて作る入口（音声・メモ／複数日／スクショ／写真）は、1つずつ横長のボタンを縦に並べると長いので、
+    // 「まとめて作る」の見出しの下に2列の小さいボタンで並べる（2026-10-22、オーナーの要望）。
+    // ボタンの文字は短くし、元の名前はaria-labelに残す
+    var more = document.createElement('div');
+    more.className = 'add-more';
+    more.innerHTML = '<p class="add-more-label">' + tr('まとめて作る') + '</p><div class="add-more-grid"></div>';
+    var grid = more.querySelector('.add-more-grid');
+    function addMore(cls, icon, label, full, onClick) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'block-add block-add-mini' + (cls ? ' ' + cls : '');
+      b.setAttribute('aria-label', full);
+      b.innerHTML = icon + '<span>' + label + '</span>';
+      b.addEventListener('click', onClick);
+      grid.appendChild(b);
+    }
     // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
     // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
     // なるバグの元）。必ずラップして呼ぶ。
-    voiceBtn.addEventListener('click', function () { openVoiceEntryForm(false); });
-    el.appendChild(voiceBtn);
-
+    addMore('block-add-voice', MIC_ICON, tr('音声・メモ'), tr('音声・メモでまとめて記録する'), function () { openVoiceEntryForm(false); });
     // 「複数日をまとめて記録する」（DAY30〜）：日タブを選ばず旅行全体に対して話す・貼り付ける
-    var multiDayBtn = document.createElement('button');
-    multiDayBtn.className = 'block-add';
-    multiDayBtn.innerHTML = MIC_ICON + '<span>' + tr('複数日をまとめて記録する') + '</span>';
-    multiDayBtn.addEventListener('click', function () { openVoiceEntryForm(true); });
-    el.appendChild(multiDayBtn);
-
+    addMore('block-add-multiday', CALENDAR_ICON, tr('複数日まとめて'), tr('複数日をまとめて記録する'), function () { openVoiceEntryForm(true); });
     // スクショから予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
-    var screenshotBtn = document.createElement('button');
-    screenshotBtn.className = 'block-add';
-    screenshotBtn.innerHTML = IMAGE_ICON + '<span>' + tr('スクショから予定を作る') + '</span>';
-    screenshotBtn.addEventListener('click', function () { openScreenshotImport(); });
-    el.appendChild(screenshotBtn);
-
+    addMore('block-add-screenshot', SCREENSHOT_ICON, tr('スクショから'), tr('スクショから予定を作る'), function () { openScreenshotImport(); });
     // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）
-    var photoItinBtn = document.createElement('button');
-    photoItinBtn.className = 'block-add';
-    photoItinBtn.innerHTML = IMAGE_ICON + '<span>' + tr('写真から旅程を作る') + '</span>';
-    photoItinBtn.addEventListener('click', function () { openPhotoItinerary(); });
-    el.appendChild(photoItinBtn);
+    addMore('block-add-photos', IMAGE_ICON, tr('写真から'), tr('写真から旅程を作る'), function () { openPhotoItinerary(); });
+    el.appendChild(more);
 
     // 時差の並びを調べるボタン。URLに ?zonedebug を付けたときだけ出す（実データで並びがおかしいときの調査用。2026-09-27）
     if (blocks.length && /[?&]zonedebug\b/.test(location.search || '')) {
