@@ -1,0 +1,12 @@
+# Cloudflare Pages（tabinoashiato）の設定。Workerの設定は worker/wrangler.jsonc で、こちらとは別物。
+# 共有リンクの紹介カード（functions/_middleware.js）が、Worker（tabilog-api）へ
+# サービスバインディングで問い合わせるために置いている（同じアカウントのworkers.devへ
+# 普通にfetchするとエラー1042で失敗するため。2026-10-22）。
+# このファイルがあると、Pagesの「バインディング・互換性日付」の設定はダッシュボードではなくここが正になる。
+name = "tabinoashiato"
+pages_build_output_dir = "."
+compatibility_date = "2026-10-01"
+
+[[services]]
+binding = "API"
+service = "tabilog-api"

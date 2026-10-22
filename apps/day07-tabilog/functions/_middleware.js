@@ -46,17 +46,22 @@ export function buildTripPreview(trip) {
   };
 }
 
-async function fetchTrip(tripId) {
+// Workerへの問い合わせ。同じCloudflareアカウントのworkers.devへ普通のfetchで行くと、Cloudflareの制限
+// （エラー1042：同じアカウントのWorker同士は直接fetchできない）で失敗するため、wrangler.tomlの
+// サービスバインディング（env.API）があればそれを使う。無ければ公開URLへのfetchを試す。
+// 戻り値は { trip, status, error }（?og_debug=1 で中身を確認できるようにしてある）。
+async function fetchTrip(env, tripId) {
+  var path = '/trips/' + encodeURIComponent(tripId) + '/preview';
+  var via = env && env.API && typeof env.API.fetch === 'function' ? 'binding' : 'public';
   try {
-    var res = await fetch(API_BASE + '/trips/' + encodeURIComponent(tripId) + '/preview', {
-      headers: { Origin: SITE_ORIGIN },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      cf: { cacheTtl: 300, cacheEverything: true },
-    });
-    if (!res.ok) return null;
-    return await res.json();
+    var init = { headers: { Origin: SITE_ORIGIN }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) };
+    var res = via === 'binding'
+      ? await env.API.fetch(new Request(API_BASE + path, init))
+      : await fetch(API_BASE + path, init);
+    if (!res.ok) return { trip: null, via: via, status: res.status, error: (await res.text()).slice(0, 200) };
+    return { trip: await res.json(), via: via, status: res.status, error: '' };
   } catch (e) {
-    return null;
+    return { trip: null, via: via, status: 0, error: String(e).slice(0, 200) };
   }
 }
 
@@ -70,9 +75,16 @@ export async function onRequest(context) {
   var tripId = url.searchParams.get('trip') || '';
   if (request.method !== 'GET' || !TRIP_ID_RE.test(tripId)) return context.next();
 
-  var results = await Promise.all([context.next(), fetchTrip(tripId)]);
+  if (url.searchParams.get('og_debug') === '1') {
+    var dbg = await fetchTrip(context.env, tripId);
+    return new Response(JSON.stringify({ via: dbg.via, status: dbg.status, error: dbg.error, found: !!dbg.trip }), {
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  }
+
+  var results = await Promise.all([context.next(), fetchTrip(context.env, tripId)]);
   var res = results[0];
-  var trip = results[1];
+  var trip = results[1].trip;
   if (!trip || !res.ok || (res.headers.get('content-type') || '').indexOf('text/html') === -1) return res;
 
   var p = buildTripPreview(trip);
