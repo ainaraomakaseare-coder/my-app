@@ -9608,8 +9608,9 @@
           if (s.source !== 'photos') return res;
           status.textContent = tr('写真を記録に入れています…');
           var usedItems = s.items.filter(function (it) { return it && it.use !== false; });
-          return photoItinAttach(res.blocks || [], payload.items, usedItems, s.photos || [])
-            .then(function () { return res; }, function () { res.photoFailed = true; return res; });
+          return photoItinAttach(res.blocks || [], payload.items, usedItems, s.photos || [], function (n, total) {
+            status.textContent = tr('写真を記録に入れています（{n}/{total}枚）。枚数が多いと1〜2分かかります', { n: n, total: total });
+          }).then(function (failed) { if (failed) res.photoFailed = true; return res; }, function () { res.photoFailed = true; return res; });
         })
         .then(function (res) { return refreshTrip().then(function () { return { res: res, failed: failedCurrencies }; }); });
     }).then(function (r) {
@@ -9635,9 +9636,30 @@
   // （Core.photosToStops）→ 立ち寄り先ごとに近くの場所の名前を調べる（GET /places/nearby。AIは使わない）
   // → スクショ・メモと同じ確認画面で直す → 「この内容で追加」で予定を作り、その予定の記録に写真を付ける。
   // iPhoneアプリはファイルとして選ぶと場所が消えるので、写真ライブラリから直接選ぶ（pickPhotosNativeと同じ）
-  var PHOTO_ITIN_NAME_LOOKUPS = 12; // 名前を調べる立ち寄り先の数（これより多い分は「写真の場所」のまま）
   var photoItinInput = null;
   var photoItinBusy = false;
+
+  // Workerは書き込みを1つのIPから1分30回まで（WRITE_RATE_LIMITER）、/places/nearbyも別枠で1分30回までに
+  // 制限している。写真30枚＋予定ごとの更新を一度に送ると後半が断られ、写真が入らなかった（2026-10-22、四国の
+  // 旅行で4日目の写真が消えた）。そこで、送る前に「直近1分の回数」が上限より少し下になるまで待ち、それでも
+  // 断られた（429）ときは少し待って送り直す。limit：1分あたりに送る回数
+  function photoItinPacer(limit) {
+    var times = [];
+    function wait(ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }
+    function slot() {
+      var now = Date.now();
+      times = times.filter(function (t) { return now - t < 60000; });
+      if (times.length < limit) { times.push(now); return Promise.resolve(); }
+      return wait(60000 - (now - times[0]) + 200).then(slot);
+    }
+    return function run(fn, tries) {
+      tries = tries || 0;
+      return slot().then(fn).catch(function (e) {
+        if (e && e.status === 429 && tries < 3) return wait(20000).then(function () { return run(fn, tries + 1); });
+        throw e;
+      });
+    };
+  }
 
   function photoItinRevoke() {
     var s = state.ss;
@@ -9726,14 +9748,17 @@
     var places = [];
     loadAll.then(function () {
       var lang = (window.I18N && I18N.lang) || 'ja';
-      var targets = grouped.stops.filter(function (s) { return typeof s.lat === 'number'; }).slice(0, PHOTO_ITIN_NAME_LOOKUPS);
+      // 場所の分かる立ち寄り先は全部調べる（写真は30枚までなので、多くても30か所）。以前は12か所までにしていて、
+      // 長い旅行の後半が「写真の場所」のままになっていた（2026-10-22）
+      var targets = grouped.stops.filter(function (s) { return typeof s.lat === 'number'; });
+      var pace = photoItinPacer(25);
       var n = 0;
       // 1か所ずつ順に聞く（予備のOpenStreetMapは1秒1回までのため、まとめて投げない）
       return targets.reduce(function (prev, s) {
         return prev.then(function () {
           n++;
           showToast(tr('場所の名前を調べています（{n}/{total}）', { n: n, total: targets.length }));
-          return api('/places/nearby?lat=' + s.lat + '&lng=' + s.lng + '&lang=' + encodeURIComponent(lang))
+          return pace(function () { return api('/places/nearby?lat=' + s.lat + '&lng=' + s.lng + '&lang=' + encodeURIComponent(lang)); })
             .then(function (r) { places[grouped.stops.indexOf(s)] = r && r.found ? { name: r.name || '', types: r.types || [] } : null; })
             .catch(function () { /* 古いWorker・通信の失敗：名前は「写真の場所」のまま */ });
         });
@@ -9763,39 +9788,47 @@
 
   // 保存した予定（サーバーの返したblocks）の記録に、候補の写真を付ける。payloadItemsは保存した候補（usedItemsと同じ並び）。
   // 日付・時刻・見出しが同じ予定を探して合わせる（ssSaveMoveMinutesと同じ）。記録が無い予定（地図も中身も無い）には記録を作る。
-  // 写真の送信は記録の保存と同じwriteData（電波が無ければ送信待ちに積む）。1か所ずつ順に送る
-  function photoItinAttach(blocks, payloadItems, usedItems, photos) {
+  // 写真は1枚ずつ送り、Workerの回数制限（1分30回）に収まるようphotoItinPacerで間をあける。1か所で失敗しても
+  // 次の場所は続ける。onProgress(n, total)：送った写真の枚数。戻り値：写真を入れられなかった場所の数
+  function photoItinAttach(blocks, payloadItems, usedItems, photos, onProgress) {
     var left = blocks.slice();
-    var tripId = state.trip.id;
     var author = ((loadCurrentUser() || {}).name) || '';
-    return payloadItems.reduce(function (prev, p, k) {
-      return prev.then(function () {
-        var refs = ((usedItems[k] || {}).photoRefs || []).filter(function (i) { return photos[i]; });
-        if (!refs.length) return;
-        var at = -1;
-        for (var j = 0; j < left.length; j++) {
-          if (left[j].date === p.date && (left[j].time || '') === (p.time || '') && left[j].label === p.label) { at = j; break; }
+    var pace = photoItinPacer(25); // 取り込みの保存（import-blocks）など、直前の書き込みの分を少し残す
+    var jobs = [];
+    payloadItems.forEach(function (p, k) {
+      var refs = ((usedItems[k] || {}).photoRefs || []).filter(function (i) { return photos[i]; });
+      if (!refs.length) return;
+      for (var j = 0; j < left.length; j++) {
+        if (left[j].date === p.date && (left[j].time || '') === (p.time || '') && left[j].label === p.label) {
+          var b = left.splice(j, 1)[0];
+          var entry = (b.entries || [])[0];
+          // 1つの記録に付けられる写真は20枚まで（サーバーのvalidEntryInput）
+          var room = 20 - ((entry && entry.photoIds) || []).length;
+          refs = refs.slice(0, Math.max(0, room));
+          if (refs.length) jobs.push({ block: b, entry: entry, refs: refs });
+          return;
         }
-        if (at < 0) return;
-        var b = left.splice(at, 1)[0];
-        var uploads = [];
-        var ids = refs.map(function (i) {
-          var key = Core.outboxUuid();
-          uploads.push({ key: key, blob: photos[i].blob });
-          return Core.pendingPhotoId(key);
-        });
-        var entry = (b.entries || [])[0];
-        // 1つの記録に付けられる写真は20枚まで（サーバーのvalidEntryInput）
-        var room = 20 - ((entry && entry.photoIds) || []).length;
-        uploads = uploads.slice(0, Math.max(0, room));
-        ids = ids.slice(0, uploads.length);
-        if (!ids.length) return;
-        var req = entry
-          ? writeData({ tripId: tripId, method: 'PATCH', path: '/entries/' + encodeURIComponent(entry.id), body: { photoIds: (entry.photoIds || []).concat(ids) }, uploads: uploads })
-          : writeData({ tripId: tripId, method: 'POST', path: '/blocks/' + encodeURIComponent(b.id) + '/entries', body: { photoIds: ids, author: author }, uploads: uploads });
-        return req.catch(function () { return Promise.reject(new Error('photo_attach_failed')); });
+      }
+    });
+    var total = jobs.reduce(function (n, j) { return n + j.refs.length; }, 0), sent = 0, failed = 0;
+    return jobs.reduce(function (prev, job) {
+      return prev.then(function () {
+        var ids = [];
+        return job.refs.reduce(function (p2, i) {
+          return p2.then(function () {
+            var key = Core.outboxUuid();
+            return pace(function () { return postBinary('/photos', photos[i].blob, null, { 'Idempotency-Key': 'up-' + key }); })
+              .then(function (r) { ids.push(r.id); sent++; if (onProgress) onProgress(sent, total); });
+          });
+        }, Promise.resolve()).then(function () {
+          return pace(function () {
+            return job.entry
+              ? api('/entries/' + encodeURIComponent(job.entry.id), 'PATCH', { photoIds: (job.entry.photoIds || []).concat(ids) })
+              : api('/blocks/' + encodeURIComponent(job.block.id) + '/entries', 'POST', { photoIds: ids, author: author });
+          });
+        }).catch(function () { failed++; });
       });
-    }, Promise.resolve());
+    }, Promise.resolve()).then(function () { return failed; });
   }
 
   function setupScreenshotImport() {

@@ -250,4 +250,5 @@ I18N.addLang('en', {
   "{n}件は撮影場所が読めませんでした。「場所を探す」で入れられます（iPhoneのブラウザでは写真の場所が消えてしまいます。iPhoneアプリから選ぶと読めます）。": "The location couldn't be read for {n} items. You can add it with \"Find place\" (the iPhone browser removes photo locations; choose photos in the iPhone app to read them).",
   "写真を記録に入れています…": "Adding photos to the records…",
   "一部の写真を記録に入れられませんでした。記録を開いて写真を追加してください。": "Some photos couldn't be added to the records. Open the record and add them.",
+  "写真を記録に入れています（{n}/{total}枚）。枚数が多いと1〜2分かかります": "Adding photos to the records ({n}/{total}). This can take 1–2 minutes for many photos.",
 });
