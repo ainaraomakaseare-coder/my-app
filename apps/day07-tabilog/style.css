@@ -1754,7 +1754,6 @@ body.viewer-open { overflow: hidden; }
 .block.branch-block { padding: 10px 12px; border-radius: var(--radius-control); background: var(--accent-soft-bg); }
 .block-head.readonly { cursor: default; }
 .branch-add { margin-top: -4px; }
-.branch-hint { margin: 0; font-size: var(--fs-sm); color: var(--ink-muted); text-align: center; }
 .branch-date-text { padding: 10px 12px; border-radius: var(--radius-control); background: var(--input-bg); font-size: var(--fs-base); }
 .branch-block-note { color: var(--accent-deep); font-weight: 700; }
 .replay-viewer { margin-top: 2px; font-size: var(--fs-xs); font-weight: 400; color: var(--ink-muted); }
@@ -1884,6 +1883,6 @@ body.viewer-open { overflow: hidden; }
 .confirm-list { margin: 4px 0 0; padding-left: 20px; font-size: var(--fs-sm); line-height: 1.7; color: var(--ink); }
 .confirm-list li { margin: 0 0 6px; }
 /* 「まとめて予定を作る」ボタン（押すと下からシートで5つの作り方を選ぶ。2026-10-22） */
-.block-add-bulk { flex-wrap: wrap; margin-top: 8px; }
+.block-add-bulk { flex-wrap: wrap; }
 .block-add-bulk .block-add-sub { flex-basis: 100%; text-align: center; margin-top: -2px; font-size: var(--fs-xs); color: var(--ink-muted); }
 #bulkAddSheet .add-more { margin-top: 0; }

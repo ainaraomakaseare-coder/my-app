@@ -7958,6 +7958,7 @@
           saveCurrentUser(Object.assign({}, user, { accountId: res.accountId }));
         }
         renderTripJoin();
+        renderDaySection(); // 参加すると別行動を足せるようになるので、日の画面も描き直す
       })
       .catch(function () {
         $('#tripDetailStatus').textContent = tr('参加に失敗しました。もう一度お試しください。');
@@ -10097,18 +10098,24 @@
     if (!state.selectedDate) return;
     var user = loadCurrentUser();
     if (!Core.canUseBranches(user)) return; // 条件つきの機能にするときは canUseBranches を変える
-    var note = function (text) {
-      var p = document.createElement('p');
-      p.className = 'branch-hint';
-      p.textContent = text;
-      el.appendChild(p);
-    };
-    if (!user || !user.token) { note(tr('ログインすると自分の別行動を追加できます')); return; }
-    if (!amTripMember()) { note(tr('この旅行に「参加する」と、自分の別行動を追加できます')); return; }
+    // ログインしていない・参加していないときも、ボタンの間に案内文だけが浮いて見えないよう同じボタンを出し、
+    // 押したときにログイン・参加へ案内する（2026-10-22、オーナーの要望）
     var btn = document.createElement('button');
     btn.className = 'block-add branch-add';
     btn.innerHTML = BRANCH_ICON + '<span>' + tr('ここから別行動') + '</span>';
-    btn.addEventListener('click', function () { openBranchSheet(null); });
+    btn.addEventListener('click', function () {
+      var u = loadCurrentUser();
+      if (!u || !u.token) {
+        openLogin('tripDetail');
+        $('#loginLead').textContent = tr('ログインすると、自分の別行動を追加できます');
+        return;
+      }
+      if (!amTripMember()) {
+        if (confirm(tr('別行動を追加するには、この旅行に「参加する」が必要です。参加しますか？'))) handleJoinTrip();
+        return;
+      }
+      openBranchSheet(null);
+    });
     el.appendChild(btn);
   }
 
