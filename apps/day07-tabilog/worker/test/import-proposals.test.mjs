@@ -156,6 +156,10 @@ const it = (o) => ({ ...empty, ...o });
   check("保存前の検証（別行動）: 外れた理由", v.errors, [{ index: 0, reason: "time_out_of_branch" }, { index: 2, reason: "date_out_of_branch" }]);
   const vdb = validateSaveItems([{ date: "2026-10-04", time: "10:00", label: "外", category: "food" }], TRIP, { branch: { date: "2026-10-04", end_date: "", start_time: "13:00", end_time: "18:00" } });
   check("保存前の検証: DB行（snake_case）の分岐でも同じ", vdb.errors, [{ index: 0, reason: "time_out_of_branch" }]);
+  // 延泊（旅行の日程の外）の別行動：「旅行の日程の外」の警告は付けず、別行動の日々で確かめる（2026-10-22〜）
+  const extra = { title: "延泊", date: "2026-10-06", endDate: "2026-10-07", startTime: "10:00", endTime: "18:00" };
+  const ne = normalizeProposalResult({ items: [it({ label: "延泊の朝", date: "2026-10-07", time: "11:00" })] }, { trip: TRIP, dates: branchDateList(extra), branch: extra, today: "2026-09-30" });
+  check("別行動（日程の外）: 日付はそのまま・警告なし", [ne.items[0].date, ne.items[0].warnings], ["2026-10-07", []]);
 }
 
 /* ---- 話したURL ---- */

@@ -2628,7 +2628,28 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
     eq('validateBranch: 日またぎの終了ちょうどから始めるのはOK', vb({ date: '2026-06-28', startTime: '12:00', endTime: '13:00' }, [br]), '');
     eq('validateBranch: 日またぎ自身は除く', vb({ date: '2026-06-27', endDate: '2026-06-28', startTime: '13:00', endTime: '12:00' }, [br], 'bm'), '');
     eq('validateBranch: 別の人の日またぎとは重なってよい', T.validateBranch({ date: '2026-06-28', startTime: '01:00', endTime: '02:00' }, [br], A), '');
-    eq('validateBranch: 旅行の日程の外（終わりの日）', vb({ date: '2026-06-27', endDate: '2026-06-29', startTime: '14:00', endTime: '12:00' }, [], undefined, { startDate: '2026-06-27', endDate: '2026-06-28' }), 'date_out_of_range');
+    // 前乗り・途中合流・延泊：旅行の日程の外も、前後14日までは選べる（2026-10-22〜、サーバーと同じ）
+    var tr2 = { startDate: '2026-06-27', endDate: '2026-06-28' };
+    eq('validateBranch: 延泊（終わりの日が日程の翌日）', vb({ date: '2026-06-27', endDate: '2026-06-29', startTime: '14:00', endTime: '12:00' }, [], undefined, tr2), '');
+    eq('validateBranch: 前乗り（始まりの日が日程の前日）', vb({ date: '2026-06-26', endDate: '2026-06-27', startTime: '14:00', endTime: '12:00' }, [], undefined, tr2), '');
+    eq('validateBranch: 日程の14日後まで・15日後は範囲外', [vb({ date: '2026-07-12', startTime: '09:00', endTime: '10:00' }, [], undefined, tr2), vb({ date: '2026-07-12', endDate: '2026-07-13', startTime: '09:00', endTime: '10:00' }, [], undefined, tr2)], ['', 'date_out_of_range']);
+    eq('validateBranch: 日程の14日前まで・15日前は範囲外', [vb({ date: '2026-06-13', startTime: '09:00', endTime: '10:00' }, [], undefined, tr2), vb({ date: '2026-06-12', startTime: '09:00', endTime: '10:00' }, [], undefined, tr2)], ['', 'date_out_of_range']);
+    var choices = T.branchSheetDateChoices(tr2, [], null);
+    eq('branchSheetDateChoices: 日程の前後14日（2+28日）', [choices.length, choices[0], choices[choices.length - 1]], [30, '2026-06-13', '2026-07-12']);
+    eq('branchSheetDateChoices: 日程の無い旅行は予定のある日だけ', T.branchSheetDateChoices({}, [{ date: '2026-06-27' }, { date: '' }], null), ['2026-06-27']);
+    eq('branchSheetDateChoices: 編集中の別行動の日は範囲外でも足す', T.branchSheetDateChoices({}, [], { date: '2026-08-01', endDate: '2026-08-02' }), ['2026-08-01', '2026-08-02']);
+    var extraBranches = [{ id: 'x1', date: '2026-06-25', endDate: '2026-06-27', startTime: '10:00', endTime: '09:00' }, { id: 'x2', date: '2026-06-28', endDate: '2026-06-30', startTime: '18:00', endTime: '12:00' }];
+    eq('tripDayTabDates: 前乗り・延泊の別行動の日を日タブに足す', T.tripDayTabDates(tr2, [], extraBranches), ['2026-06-25', '2026-06-26', '2026-06-27', '2026-06-28', '2026-06-29', '2026-06-30']);
+    eq('tripDayTabDates: 別行動が無ければ従来どおり・日付なしは最後', T.tripDayTabDates(tr2, [{ date: '' }], []), ['2026-06-27', '2026-06-28', '']);
+    eq('replayDates: 別行動の予定の日だけ足す（みんなの予定の日程外は足さない）', T.replayDates(tr2, [{ date: '2026-06-29', branchId: 'x2' }, { date: '2026-07-05' }]), ['2026-06-27', '2026-06-28', '2026-06-29']);
+    eq('dayLabel: 日程の後ろ・前の日は日付で出す', [T.dayLabel(tr2, '2026-06-28'), T.dayLabel(tr2, '2026-06-29'), T.dayLabel(tr2, '2026-06-26')], ['2日目', '2026.6.29（月）', '2026.6.26（金）']);
+    var stopsExtra = T.replayStops(tr2, [
+      { id: 'a', date: '2026-06-28', time: '10:00', label: 'みんな' },
+      { id: 'b', date: '2026-06-29', time: '10:00', label: '延泊', branchId: 'x2' }
+    ]);
+    eq('replayStops: 延泊の別行動の予定もふりかえりに入る（3日目）', stopsExtra.map(function (s) { return [s.label, s.dayNumber]; }), [['みんな', 2], ['延泊', 3]]);
+    var saveExtra = T.screenshotItemsToSavePayload([{ use: true, label: '延泊', date: '2026-06-29', time: '10:00', category: 'food' }], tr2, { date: '2026-06-28', endDate: '2026-06-30', startTime: '18:00', endTime: '12:00' });
+    eq('screenshotItemsToSavePayload: 別行動なら日程の外の日も送る', [saveExtra.items.length, saveExtra.errors.length], [1, 0]);
     eq('validateBranch: 旅行の日程の中', vb({ date: '2026-06-27', endDate: '2026-06-28', startTime: '14:00', endTime: '12:00' }, [], undefined, { startDate: '2026-06-27', endDate: '2026-06-28' }), '');
     eq('validateBranch: 日程が空の旅行は範囲を見ない', vb({ date: '2026-06-27', endDate: '2026-06-29', startTime: '14:00', endTime: '12:00' }, [], undefined, { startDate: '', endDate: '' }), '');
     eq('branchErrorText: 日またぎ関連の案内', ['date_out_of_range', 'date_out_of_branch', 'time_out_of_branch', 'branch_multiday_not_ready'].every(function (k) { return T.branchErrorText(k).indexOf('保存に失敗') < 0; }), true);
