@@ -1660,6 +1660,16 @@ body.viewer-open { overflow: hidden; }
 .ss-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-control); background: var(--input-bg); display: block; }
 .ss-thumb-small { width: 44px; height: 44px; border-radius: 8px; flex: none; }
 .ss-photo-strip { display: flex; align-items: center; gap: 4px; }
+.photo-itin-busy { position: fixed; inset: 0; z-index: 2000; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.photo-itin-busy[hidden] { display: none; }
+.photo-itin-busy-card { background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 24px 20px; width: 100%; max-width: 320px; text-align: center; }
+.photo-itin-spinner { width: 36px; height: 36px; margin: 0 auto 12px; border-radius: 50%; border: 3px solid var(--accent-soft-bg); border-top-color: var(--accent); animation: photo-itin-spin 0.9s linear infinite; }
+@keyframes photo-itin-spin { to { transform: rotate(360deg); } }
+.photo-itin-busy-title { font-weight: 700; margin: 0 0 6px; }
+.photo-itin-busy-text { font-size: var(--fs-sm); color: var(--ink-muted); margin: 0 0 12px; }
+.photo-itin-bar { height: 6px; border-radius: 3px; background: var(--input-bg); overflow: hidden; }
+.photo-itin-bar[hidden] { display: none; }
+.photo-itin-bar-fill { height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
 .ss-photo-more { font-size: var(--fs-sm); color: var(--ink-muted); padding-left: 2px; }
 .ss-thumb-x { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); color: #fff; font-size: var(--fs-base); line-height: 22px; text-align: center; }
 .ss-day { font-size: var(--fs-base); margin: 20px 0 8px; color: var(--ink-muted); }

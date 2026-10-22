@@ -9608,9 +9608,12 @@
           if (s.source !== 'photos') return res;
           status.textContent = tr('写真を記録に入れています…');
           var usedItems = s.items.filter(function (it) { return it && it.use !== false; });
+          photoItinShowBusy(tr('写真を記録に入れています…'));
           return photoItinAttach(res.blocks || [], payload.items, usedItems, s.photos || [], function (n, total) {
-            status.textContent = tr('写真を記録に入れています（{n}/{total}枚）。枚数が多いと1〜2分かかります', { n: n, total: total });
-          }).then(function (failed) { if (failed) res.photoFailed = true; return res; }, function () { res.photoFailed = true; return res; });
+            var text = tr('写真を記録に入れています（{n}/{total}枚）。枚数が多いと1〜2分かかります', { n: n, total: total });
+            status.textContent = text;
+            photoItinShowBusy(text, n, total);
+          }).then(function (failed) { photoItinHideBusy(); if (failed) res.photoFailed = true; return res; }, function () { photoItinHideBusy(); res.photoFailed = true; return res; });
         })
         .then(function (res) { return refreshTrip().then(function () { return { res: res, failed: failedCurrencies }; }); });
     }).then(function (r) {
@@ -9668,10 +9671,38 @@
     s.photos = [];
   }
 
+  // 写真を選んだあと、確認画面が出るまで（読み込み・場所の名前を調べる間）に出す「作っています」の画面。
+  // 以前はトーストだけで、元の画面に戻って止まって見えた（2026-10-22）。iPhoneアプリでは写真を選ぶ画面を
+  // 開く前に出しておく（選び終えてからpickImagesが返るまでにも数秒かかるため）。キャンセルしたら消す
+  function photoItinShowBusy(text, n, total) {
+    var el = $('#photoItinBusy');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'photoItinBusy';
+      el.className = 'photo-itin-busy';
+      el.setAttribute('role', 'status');
+      el.setAttribute('aria-live', 'polite');
+      el.innerHTML = '<div class="photo-itin-busy-card"><div class="photo-itin-spinner" aria-hidden="true"></div>' +
+        '<p class="photo-itin-busy-title">' + tr('写真から旅程を作っています') + '</p>' +
+        '<p class="photo-itin-busy-text"></p><div class="photo-itin-bar"><div class="photo-itin-bar-fill"></div></div></div>';
+      document.body.appendChild(el);
+    }
+    $('.photo-itin-busy-text', el).textContent = text;
+    var bar = $('.photo-itin-bar', el);
+    bar.hidden = !(total > 0);
+    if (total > 0) $('.photo-itin-bar-fill', el).style.width = Math.round(n / total * 100) + '%';
+    el.hidden = false;
+  }
+  function photoItinHideBusy() {
+    var el = $('#photoItinBusy');
+    if (el) el.hidden = true;
+  }
+
   function openPhotoItinerary() {
     if (!state.trip || photoItinBusy) return;
     var plugin = nativePhotoPicker();
     if (plugin && photoLibPerm !== 'denied') {
+      photoItinShowBusy(tr('写真を読み込んでいます…'));
       plugin.pickImages({ quality: 90, limit: Core.PHOTO_ITINERARY_MAX }).then(function (res) {
         if (photoLibPerm !== 'granted' && photoLibPerm !== 'limited') photoLibPerm = 'granted';
         var photos = ((res && res.photos) || []).slice(0, Core.PHOTO_ITINERARY_MAX);
@@ -9684,6 +9715,7 @@
           };
         }), photos.length);
       }).catch(function (err) {
+        photoItinHideBusy();
         var msg = String((err && err.message) || err || '');
         if (/cancel/i.test(msg)) return;
         if (/denied/i.test(msg)) {
@@ -9707,6 +9739,7 @@
         e.target.value = '';
         if (!files.length) return;
         var picked = files.length;
+        photoItinShowBusy(tr('写真を読み込んでいます…'));
         files = files.slice(0, Core.PHOTO_ITINERARY_MAX);
         Promise.all(files.map(function (f) {
           var head = /jpe?g$/i.test(f.type || f.name || '') && f.slice(0, 1).arrayBuffer
@@ -9721,13 +9754,14 @@
 
   // list：[{ load（写真のBlobを返す関数）, gps, takenAt }]。picked：選ばれた枚数（上限を超えた分を伝える）
   function buildPhotoItinerary(list, picked) {
-    if (!list.length) return;
+    if (!list.length) { photoItinHideBusy(); return; }
     photoItinBusy = true;
     var grouped = Core.photosToStops(list.map(function (x) {
       return { lat: x.gps ? x.gps.lat : null, lng: x.gps ? x.gps.lng : null, takenAt: x.takenAt };
     }));
     if (!grouped.stops.length) {
       photoItinBusy = false;
+      photoItinHideBusy();
       alert(tr('写真から撮影時刻も撮影場所も読み取れませんでした。') + (isNativeApp() ? '' : '\n' + tr('iPhoneのブラウザでは写真の情報が消えてしまうことがあります。iPhoneアプリから選ぶと読み取れます。')));
       return;
     }
@@ -9742,7 +9776,7 @@
         return x.load().then(function (b) { return fileToCompressedBlob(b, 1280, 0.72); })
           .then(function (blob) { photos[i] = { blob: blob, url: URL.createObjectURL(blob) }; })
           .catch(function () { photos[i] = null; })
-          .then(function () { done++; showToast(tr('写真を読み込んでいます（{n}/{total}）', { n: done, total: total })); });
+          .then(function () { done++; photoItinShowBusy(tr('写真を読み込んでいます（{n}/{total}）', { n: done, total: total }), done, total); });
       });
     }, Promise.resolve());
     var places = [];
@@ -9757,7 +9791,7 @@
       return targets.reduce(function (prev, s) {
         return prev.then(function () {
           n++;
-          showToast(tr('場所の名前を調べています（{n}/{total}）', { n: n, total: targets.length }));
+          photoItinShowBusy(tr('場所の名前を調べています（{n}/{total}）', { n: n, total: targets.length }), n - 1, targets.length);
           return pace(function () { return api('/places/nearby?lat=' + s.lat + '&lng=' + s.lng + '&lang=' + encodeURIComponent(lang)); })
             .then(function (r) { places[grouped.stops.indexOf(s)] = r && r.found ? { name: r.name || '', types: r.types || [] } : null; })
             .catch(function () { /* 古いWorker・通信の失敗：名前は「写真の場所」のまま */ });
@@ -9779,8 +9813,10 @@
       state.ss = ssNewState();
       state.ss.photos = photos;
       openImportConfirm({ source: 'photos', ai: false, items: items, branch: currentImportBranch(), notes: notes, back: 'tripDetail' });
+      photoItinHideBusy();
     }).catch(function () {
       photoItinBusy = false;
+      photoItinHideBusy();
       photos.forEach(function (p) { if (p) { try { URL.revokeObjectURL(p.url); } catch (e) {} } });
       showToast(tr('写真を読み込めませんでした。'));
     });
