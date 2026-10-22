@@ -275,4 +275,5 @@ I18N.addLang('en', {
   "ChatGPTなど他のAIに頼む": "Ask another AI like ChatGPT",
   "例：お願い文をコピーしてChatGPTに旅のメモと一緒に送り、返ってきた答えを貼り付けます": "e.g. Copy the request text, send it to ChatGPT with your trip notes, and paste back the answer",
   "「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。": "\"AI\" features are free 5 times a month each (voice and memo/images are counted separately). \"No AI\" and \"Your own AI\" don't use this app's count and have no limit.",
+  "場所は、写真に残っている撮影場所（位置情報）から入れます。カメラの位置情報をオフにして撮った写真や、LINEなどで送られてきた写真には撮影場所が残っていないため、場所は入りません。": "Places come from the location saved in each photo. Photos taken with camera location turned off, or photos sent to you via LINE and similar apps, have no location, so no place is added for them.",
 });

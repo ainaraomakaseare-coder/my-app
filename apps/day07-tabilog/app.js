@@ -9861,6 +9861,8 @@
       // 読み込めなかった写真は付けない
       items.forEach(function (it) { it.photoRefs = it.photoRefs.filter(function (i) { return photos[i]; }); });
       var notes = [tr('写真{n}枚を、撮影した時刻と場所で{m}か所にまとめました。同じ場所で続けて撮った写真は1つの予定になります。追加すると、写真はその予定の記録に入ります。', { n: total, m: items.length })];
+      // 位置情報のない写真では場所が入らないことを、毎回はっきり書いておく（2026-10-22、オーナーの要望）
+      notes.push(tr('場所は、写真に残っている撮影場所（位置情報）から入れます。カメラの位置情報をオフにして撮った写真や、LINEなどで送られてきた写真には撮影場所が残っていないため、場所は入りません。'));
       if (picked > list.length) notes.push(tr('写真は{max}枚までです。超えた分は使っていません。', { max: Core.PHOTO_ITINERARY_MAX }));
       if (grouped.dropped) notes.push(tr('{n}枚は撮影時刻も撮影場所も読めなかったため、使っていません。', { n: grouped.dropped }));
       var noPlace = items.filter(function (it) { return !it.mapUrl; }).length;
