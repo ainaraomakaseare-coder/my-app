@@ -289,6 +289,14 @@ a:hover { text-decoration: underline; }
   height: 46px;
 }
 .field textarea { resize: vertical; }
+/* Chromeは min/max で年・月が1つに決まる日付欄（例：旅行が10/20〜10/21）を、変えられない部分として
+   年・月だけ薄い灰色で描くため、日だけ濃く見えて不自然だった。どの部分もふつうの文字色にそろえる（2026-10-22） */
+input[type="date"]::-webkit-datetime-edit-year-field, input[type="date"]::-webkit-datetime-edit-month-field,
+input[type="date"]::-webkit-datetime-edit-day-field, input[type="date"]::-webkit-datetime-edit-text,
+input[type="time"]::-webkit-datetime-edit-hour-field, input[type="time"]::-webkit-datetime-edit-minute-field,
+input[type="time"]::-webkit-datetime-edit-ampm-field, input[type="time"]::-webkit-datetime-edit-text {
+  color: inherit;
+}
 /* フォームの中の選択欄（別行動の日付など）。OS標準の見た目だと、枠線つきの小さな箱になって
    まわりの入力欄から浮いていたため、テキストの入力欄と同じ塗り・角丸・高さにそろえ、
    右端に自前の下向き矢印を描く（2026-09-30） */
