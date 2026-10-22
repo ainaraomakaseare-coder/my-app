@@ -8681,6 +8681,8 @@
     if (voiceRecorder && voiceRecorder.state === 'recording') voiceRecorder.stop();
   }
 
+  // ChatGPTなど自分のAIに頼む入口の吹き出しアイコン
+  var SPARKLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 14h-6l-4 3v-3H4a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 4 4z"/><path d="M7 8h6M7 11h4"/></svg>';
   var CALENDAR_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8.5h14M7 2.5v4M13 2.5v4"/></svg>';
   var SCREENSHOT_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="2" width="9" height="16" rx="2"/><path d="M8.5 15h3"/></svg>';
   var MIC_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0"/><path d="M10 15v2.5M7 17.5h6"/></svg>';
@@ -10791,7 +10793,7 @@
       appendBranchAddArea(el);
     }
 
-    // まとめて予定を作る入口（音声・メモ／複数日／予約・チケットの画像／写真）。
+    // まとめて予定を作る入口（音声・メモ／複数日／予約・チケットの画像／写真／自分のAI）。
     // 何をすればどう登録されるかが分かるよう、見出し＋説明文の下に、名前・AIを使うかどうか・例を書いたボタンを並べる
     // （2026-10-22、オーナーの要望。「スクショ」という言い方はやめて「予約・チケットの画像」と書く）。
     var more = document.createElement('div');
@@ -10799,15 +10801,16 @@
     more.innerHTML = '<p class="add-more-title">' + tr('まとめて予定を作る') + '</p>' +
       '<p class="add-more-lead">' + escapeHtml(tr('1つずつ入力しなくても、話した内容や画像・写真から予定をまとめて作れます。保存する前に確認画面で直せます。')) + '</p>' +
       '<div class="add-more-list"></div>' +
-      '<p class="add-more-note">' + escapeHtml(tr('「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」は回数の制限がありません。')) + '</p>';
+      '<p class="add-more-note">' + escapeHtml(tr('「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。')) + '</p>';
     var list = more.querySelector('.add-more-list');
+    // ai: true＝このアプリのAI（無料枠を使う）、false＝AIなし、'own'＝ChatGPTなど自分のAI（枠を使わない）
     function addMore(cls, icon, label, ai, example, onClick) {
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'block-add add-more-item' + (cls ? ' ' + cls : '');
       b.innerHTML = '<span class="add-more-icon">' + icon + '</span>' +
         '<span class="add-more-body"><span class="add-more-name">' + escapeHtml(label) +
-        '<span class="add-more-badge' + (ai ? ' is-ai' : '') + '">' + (ai ? tr('AI') : tr('AIなし')) + '</span></span>' +
+        '<span class="add-more-badge' + (ai === 'own' ? ' is-own' : ai ? ' is-ai' : '') + '">' + (ai === 'own' ? tr('自分のAI') : ai ? tr('AI') : tr('AIなし')) + '</span></span>' +
         '<span class="add-more-example">' + escapeHtml(example) + '</span></span>';
       b.addEventListener('click', onClick);
       list.appendChild(b);
@@ -10831,6 +10834,14 @@
     if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('撮った写真から'), false,
       tr('例：旅先で撮った写真を選ぶと、撮った時刻と場所から立ち寄った順に予定を作ります'),
       function () { openPhotoItinerary(); });
+    // ChatGPTなど自分のAIに頼む（docs/adr/0015）：入口は音声・メモの画面の下のほうにあるので、開いてその場所までスクロールする
+    addMore('block-add-other-ai', SPARKLE_ICON, tr('ChatGPTなど他のAIに頼む'), 'own',
+      tr('例：お願い文をコピーしてChatGPTに旅のメモと一緒に送り、返ってきた答えを貼り付けます'),
+      function () {
+        openVoiceEntryForm(false);
+        var target = $('#btnCopyAiPrompt');
+        if (state.selectedDate && target) setTimeout(function () { target.closest('.field').scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50);
+      });
     el.appendChild(more);
 
     // 時差の並びを調べるボタン。URLに ?zonedebug を付けたときだけ出す（実データで並びがおかしいときの調査用。2026-09-27）

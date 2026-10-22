@@ -62,7 +62,7 @@ I18N.addLang('en', {
   "お願い文を貼り付け": "paste the prompt",
   "、そのすぐ下に": ", then right below it,",
   "旅のメモ": "your trip notes",
-  "（予定・行った場所・金額など）を貼るか書いて送ります。予約画面やチケットのスクショを一緒に送ってもかまいません。": "(activities, places visited, amounts, etc.) paste or type them and send. You may also send screenshots of reservations or tickets.",
+  "（予定・行った場所・金額など）を貼るか書いて送ります。予約画面やチケットの画像を一緒に送ってもかまいません。": "(activities, places visited, amounts, etc.) paste or type them and send. You may also send screenshots of reservations or tickets.",
   "AIが返した": "Copy the entire answer",
   "「{」で始まる答え": "the AI returns, which starts with \"{\"",
   "をまるごとコピーして、下の欄に貼り付け、「取り込む」を押します。": ", paste it into the box below, and press \"Import\".",
