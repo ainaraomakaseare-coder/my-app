@@ -151,8 +151,8 @@ async function launch() {
   await page.click('#btnCreateTrip');
   await page.waitForSelector('.screen[data-screen="tripDetail"].active');
 
-  check('日タイムラインに「音声でまとめて記録する」ボタンが出る', await page.isVisible('.block-add >> text=音声・メモ'));
-  await page.click('.block-add >> text=音声・メモ');
+  check('日タイムラインに「音声でまとめて記録する」ボタンが出る', await page.isVisible('.block-add >> text=話す・メモを貼る'));
+  await page.click('.block-add >> text=話す・メモを貼る');
   await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
 
   check('録音していないうちは「この内容で予定を作る」が押せない', await page.isHidden('#btnCreateVoiceEntries'));
@@ -198,7 +198,7 @@ async function launch() {
   check('ログイン中のメールアドレスもx-voice-metaヘッダー経由でサーバーに届く', receivedMeta && receivedMeta.email === TEST_USER.email);
 
   // ---- 同じ日にもう一度録音して送れる（1回目の成功後に「この内容で予定を作る」が無効のまま残らないか） ----
-  await page.click('.block-add >> text=音声・メモ');
+  await page.click('.block-add >> text=話す・メモを貼る');
   await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
   check('2回目もボタンが押せる状態で開く', !(await page.isDisabled('#btnCreateVoiceEntries')));
   await page.click('#btnVoiceRecord');
@@ -219,7 +219,7 @@ async function launch() {
   check('2回目の送信もタイムラインに積み増される（3件→6件）', (await page.$$('.block')).length === 6);
 
   // ---- 1回の録音は3分まで（1回3分までの上限を、時間そのものをアプリ側で強制する） ----
-  await page.click('.block-add >> text=音声・メモ');
+  await page.click('.block-add >> text=話す・メモを貼る');
   await page.waitForSelector('.screen[data-screen="voiceEntryForm"].active');
   await page.clock.install();
   await page.click('#btnVoiceRecord');

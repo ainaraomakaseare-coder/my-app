@@ -9085,7 +9085,7 @@
   // （docs/adr/0022 2026-09-30追記）。state.ssが確認画面の状態：source・ai（AIを使ったか）・items（候補）・
   // branch（自分だけの道に入れるときの別行動）・transcript（文字起こし）・back（やめたとき戻る画面）
   var IMPORT_SOURCES = {
-    screenshot: { title: tr('スクショから予定を作る'), label: tr('スクショ') },
+    screenshot: { title: tr('予約・チケットの画像から予定を作る'), label: tr('予約・チケットの画像') },
     voice: { title: tr('音声から予定を作る'), label: tr('音声') },
     memo: { title: tr('メモから予定を作る'), label: tr('メモ') },
     json: { title: tr('自分のAIの答えから予定を作る'), label: tr('自分のAIの答え') },
@@ -9150,7 +9150,7 @@
     if (!state.trip) return;
     if (!loadCurrentUser()) {
       openLogin('screenshotImport');
-      $('#loginLead').textContent = tr('ログインすると、スクショから予定を作る機能が使えます');
+      $('#loginLead').textContent = tr('ログインすると、予約・チケットの画像から予定を作る機能が使えます');
       return;
     }
     ssRevokeFiles();
@@ -10791,33 +10791,46 @@
       appendBranchAddArea(el);
     }
 
-    // まとめて作る入口（音声・メモ／複数日／スクショ／写真）は、1つずつ横長のボタンを縦に並べると長いので、
-    // 「まとめて作る」の見出しの下に2列の小さいボタンで並べる（2026-10-22、オーナーの要望）。
-    // ボタンの文字は短くし、元の名前はaria-labelに残す
+    // まとめて予定を作る入口（音声・メモ／複数日／予約・チケットの画像／写真）。
+    // 何をすればどう登録されるかが分かるよう、見出し＋説明文の下に、名前・AIを使うかどうか・例を書いたボタンを並べる
+    // （2026-10-22、オーナーの要望。「スクショ」という言い方はやめて「予約・チケットの画像」と書く）。
     var more = document.createElement('div');
     more.className = 'add-more';
-    more.innerHTML = '<p class="add-more-label">' + tr('まとめて作る') + '</p><div class="add-more-grid"></div>';
-    var grid = more.querySelector('.add-more-grid');
-    function addMore(cls, icon, label, full, onClick) {
+    more.innerHTML = '<p class="add-more-title">' + tr('まとめて予定を作る') + '</p>' +
+      '<p class="add-more-lead">' + escapeHtml(tr('1つずつ入力しなくても、話した内容や画像・写真から予定をまとめて作れます。保存する前に確認画面で直せます。')) + '</p>' +
+      '<div class="add-more-list"></div>' +
+      '<p class="add-more-note">' + escapeHtml(tr('「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」は回数の制限がありません。')) + '</p>';
+    var list = more.querySelector('.add-more-list');
+    function addMore(cls, icon, label, ai, example, onClick) {
       var b = document.createElement('button');
       b.type = 'button';
-      b.className = 'block-add block-add-mini' + (cls ? ' ' + cls : '');
-      b.setAttribute('aria-label', full);
-      b.innerHTML = icon + '<span>' + label + '</span>';
+      b.className = 'block-add add-more-item' + (cls ? ' ' + cls : '');
+      b.innerHTML = '<span class="add-more-icon">' + icon + '</span>' +
+        '<span class="add-more-body"><span class="add-more-name">' + escapeHtml(label) +
+        '<span class="add-more-badge' + (ai ? ' is-ai' : '') + '">' + (ai ? tr('AI') : tr('AIなし')) + '</span></span>' +
+        '<span class="add-more-example">' + escapeHtml(example) + '</span></span>';
       b.addEventListener('click', onClick);
-      grid.appendChild(b);
+      list.appendChild(b);
     }
     // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
     // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
     // なるバグの元）。必ずラップして呼ぶ。
-    addMore('block-add-voice', MIC_ICON, tr('音声・メモ'), tr('音声・メモでまとめて記録する'), function () { openVoiceEntryForm(false); });
+    addMore('block-add-voice', MIC_ICON, tr('話す・メモを貼る'), true,
+      tr('例：「10時に金閣寺、お昼はうどんで900円」と話すと、予定・記録・お金に分けて入ります'),
+      function () { openVoiceEntryForm(false); });
     // 「複数日をまとめて記録する」（DAY30〜）：日タブを選ばず旅行全体に対して話す・貼り付ける
-    addMore('block-add-multiday', CALENDAR_ICON, tr('複数日まとめて'), tr('複数日をまとめて記録する'), function () { openVoiceEntryForm(true); });
-    // スクショから予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
-    addMore('block-add-screenshot', SCREENSHOT_ICON, tr('スクショから'), tr('スクショから予定を作る'), function () { openScreenshotImport(); });
+    addMore('block-add-multiday', CALENDAR_ICON, tr('何日分かをまとめて'), true,
+      tr('例：「1日目は高松でうどん、2日目は道後温泉」と話すと、日ごとに分けて入ります'),
+      function () { openVoiceEntryForm(true); });
+    // 予約・チケットの画像から予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
+    addMore('block-add-screenshot', SCREENSHOT_ICON, tr('予約・チケットの画像から'), true,
+      tr('例：航空券やホテル予約の画面を保存した画像から、日時と場所を読み取ります'),
+      function () { openScreenshotImport(); });
     // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）
     // （みんなの予定に作るので、旅行の日程の外の日には出さない）
-    if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('写真から'), tr('写真から旅程を作る'), function () { openPhotoItinerary(); });
+    if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('撮った写真から'), false,
+      tr('例：旅先で撮った写真を選ぶと、撮った時刻と場所から立ち寄った順に予定を作ります'),
+      function () { openPhotoItinerary(); });
     el.appendChild(more);
 
     // 時差の並びを調べるボタン。URLに ?zonedebug を付けたときだけ出す（実データで並びがおかしいときの調査用。2026-09-27）
