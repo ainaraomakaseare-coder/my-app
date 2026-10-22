@@ -2290,6 +2290,56 @@ async function placeDetails(id, session, env, headers) {
   }
 }
 
+// 写真から旅程を作る（docs/adr/0026）：写真の撮影場所の近く（半径150m）で、いちばん知られている場所の名前を返す
+// （GET /places/nearby?lat=&lng=&lang=）。GOOGLE_API_KEYがあればPlaces API (New)のNearby Search
+// （displayNameを聞くのでNearby Search Proの料金。月5,000回まで無料枠）。キーが無い・失敗・0件のときは
+// Nominatimの逆ジオコーディング（施設の名前、無ければ地区・町の名前）。結果は保存もキャッシュもしない。
+// 戻り値 { found, name, types（Googleの場所の種類。予定の種類を決めるのに使う） }
+const NEARBY_RADIUS_M = 150;
+async function nearbyPlace(url, env, request, headers) {
+  const at = validLatLng(url.searchParams.get("lat"), url.searchParams.get("lng"));
+  if (!at || (at.lat === 0 && at.lng === 0)) return json({ error: "invalid_input" }, 400, headers);
+  if (env.WRITE_RATE_LIMITER) {
+    const actor = request.headers.get("cf-connecting-ip") || "anonymous";
+    const limited = await env.WRITE_RATE_LIMITER.limit({ key: "nearby:" + actor });
+    if (!limited.success) return json({ error: "rate_limited" }, 429, headers);
+  }
+  const lang = detectLang(request, { lang: url.searchParams.get("lang") });
+  const languageCode = lang === "zh-Hant" ? "zh-TW" : lang;
+  if (env.GOOGLE_API_KEY) {
+    try {
+      tallyAi(env, "google_places");
+      const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
+        method: "POST",
+        headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "places.displayName,places.types", "content-type": "application/json" },
+        body: JSON.stringify({
+          languageCode, maxResultCount: 5, rankPreference: "POPULARITY",
+          locationRestriction: { circle: { center: { latitude: at.lat, longitude: at.lng }, radius: NEARBY_RADIUS_M } },
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const places = Array.isArray(data.places) ? data.places : [];
+        const p = places.find((x) => x && x.displayName && x.displayName.text);
+        if (p) return json({ found: true, name: String(p.displayName.text).slice(0, 100), types: Array.isArray(p.types) ? p.types.slice(0, 10) : [] }, 200, headers);
+      }
+    } catch { /* 下のNominatimで探す */ }
+  }
+  try {
+    const res = await fetch(
+      "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&accept-language=" + (lang === "zh-Hant" ? "zh-TW" : lang) + "&lat=" + at.lat + "&lon=" + at.lng,
+      { headers: { "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ")" } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const a = (data && data.address) || {};
+      const name = (data && data.name) || a.tourism || a.amenity || a.leisure || a.historic || a.attraction || a.suburb || a.neighbourhood || a.quarter || a.city || a.town || a.village || "";
+      if (name) return json({ found: true, name: String(name).slice(0, 100), types: data.category === "amenity" && /restaurant|cafe|bar|pub|fast_food|food_court/.test(data.type || "") ? ["restaurant"] : (data.category === "tourism" && /hotel|hostel|guest_house|motel/.test(data.type || "") ? ["lodging"] : []) }, 200, headers);
+    }
+  } catch { /* 名前なし */ }
+  return json({ found: false }, 200, headers);
+}
+
 // q：記録の地図のURL（今のアプリ）か、地名（見出しから推測していた以前のアプリ。審査中・配布済みの
 // iOSアプリのために残す）。
 // 記録フォームの「場所名で検索」用に、候補を複数返す（先頭が違う場所だったときに選び直せるように）。
@@ -6114,6 +6164,7 @@ const mainHandler = {
     if (method === "GET" && path === "/places/search") {
       return searchPlaces(url.searchParams.get("q"), headers, ctx, env, url.searchParams.get("session"));
     }
+    if (method === "GET" && path === "/places/nearby") return nearbyPlace(url, env, request, headers);
     if (method === "GET" && path === "/places/details") {
       return placeDetails(url.searchParams.get("id"), url.searchParams.get("session"), env, headers);
     }

@@ -1658,6 +1658,157 @@
     }
     return gpsFromExif({ Latitude: dms(2), LatitudeRef: ref(1), Longitude: dms(4), LongitudeRef: ref(3) });
   }
+
+  // ---------- 写真から旅程を作る（docs/adr/0026） ----------
+  // 選んだ写真の撮影時刻と撮影場所から、「同じ場所・続けて撮った写真」を1つの立ち寄り先にまとめ、
+  // 立ち寄り先ごとに予定の候補（スクショ・メモと同じ確認画面の形）を作る。AIは使わない。
+  var PHOTO_STOP_KM = 0.5;        // 最初の写真からこれより離れたら、別の場所
+  var PHOTO_STOP_GAP_MIN = 120;   // 前の写真からこれより空いたら、同じ場所でも別の予定（昼と夜にまた来た、など）
+  var PHOTO_ITINERARY_MAX = 30;   // 一度に選べる写真の枚数
+
+  // Exifの日時（"2026:10:20 14:23:11"）を 'YYYY-MM-DDTHH:MM' にする。撮影した土地の時刻のまま（時差は直さない）。
+  // 読めない・0000年などは''
+  function exifDateTime(s) {
+    var m = /^(\d{4})[:\-](\d{2})[:\-](\d{2})[ T](\d{2}):(\d{2})/.exec(String(s || '').trim());
+    if (!m || Number(m[4]) > 23 || Number(m[5]) > 59) return '';
+    var date = m[1] + '-' + m[2] + '-' + m[3];
+    if (!parseDate(date) || m[1] < '1990') return '';
+    return date + 'T' + m[4] + ':' + m[5];
+  }
+
+  // JPEGのExifから、撮影場所（gps）と撮影日時（takenAt）を読む（パソコンのブラウザで選んだ写真用）。
+  // 戻り値 { gps（{lat,lng}かnull）, takenAt（'YYYY-MM-DDTHH:MM'か''） }
+  function jpegExifFromBuffer(buf) {
+    var out = { gps: null, takenAt: '' };
+    try {
+      var v = new DataView(buf);
+      if (v.byteLength < 4 || v.getUint16(0) !== 0xFFD8) return out;
+      var pos = 2;
+      while (pos + 4 <= v.byteLength) {
+        if (v.getUint8(pos) !== 0xFF) return out;
+        var marker = v.getUint8(pos + 1), size = v.getUint16(pos + 2);
+        if (marker === 0xDA || marker === 0xD9) return out;
+        if (marker === 0xE1 && v.getUint32(pos + 4) === 0x45786966) {
+          try { out.gps = tiffGps(v, pos + 10); } catch (e) { /* 場所だけ読めない */ }
+          try { out.takenAt = tiffTakenAt(v, pos + 10); } catch (e) { /* 時刻だけ読めない */ }
+          return out;
+        }
+        pos += 2 + size;
+      }
+    } catch (e) { /* 壊れたファイルは、場所も時刻もなしとして扱う */ }
+    return out;
+  }
+  function tiffTakenAt(v, start) {
+    var le = v.getUint16(start) === 0x4949;
+    function u16(o) { return v.getUint16(start + o, le); }
+    function u32(o) { return v.getUint32(start + o, le); }
+    function findTag(ifd, tag) {
+      var n = u16(ifd);
+      for (var i = 0; i < n; i++) if (u16(ifd + 2 + i * 12) === tag) return ifd + 2 + i * 12;
+      return -1;
+    }
+    function ascii(e) {
+      var len = u32(e + 4), o = len > 4 ? u32(e + 8) : e + 8, s = '';
+      for (var i = 0; i < len && i < 32; i++) { var c = v.getUint8(start + o + i); if (!c) break; s += String.fromCharCode(c); }
+      return s;
+    }
+    var ifd0 = u32(4);
+    var exifPtr = findTag(ifd0, 0x8769);
+    if (exifPtr >= 0) {
+      var exifIfd = u32(exifPtr + 8);
+      var orig = findTag(exifIfd, 0x9003); // DateTimeOriginal（撮影した日時）
+      if (orig >= 0) { var t = exifDateTime(ascii(orig)); if (t) return t; }
+    }
+    var dt = findTag(ifd0, 0x0132); // DateTime（最後に保存した日時。撮影日時が無いときだけ）
+    return dt >= 0 ? exifDateTime(ascii(dt)) : '';
+  }
+
+  function takenMinutes(at) {
+    return Date.UTC(Number(at.slice(0, 4)), Number(at.slice(5, 7)) - 1, Number(at.slice(8, 10)), Number(at.slice(11, 13)), Number(at.slice(14, 16))) / 60000;
+  }
+
+  // 写真を立ち寄り先にまとめる。photos：[{ lat, lng（無ければnull）, takenAt（'YYYY-MM-DDTHH:MM'。無ければ''） }]
+  // - 時刻のある写真を時刻順に並べ、その場所の最初の写真から0.5km以上離れた・前の写真から2時間以上空いたら次の場所
+  // - 場所が分からない写真（時刻だけ）は、時間が続いていれば今の場所に入れる
+  // - 時刻が分からない写真（場所だけ）は、0.5km以内のいちばん近い場所に入れる（無ければ日付なしの場所にする）
+  // - 時刻も場所も分からない写真は使わない（dropped）
+  // 戻り値 { stops: [{ date, time, endTime, lat, lng（無ければnull）, photos:[photosの位置…] }], dropped }
+  function photosToStops(photos) {
+    var timed = [], untimed = [], dropped = 0;
+    (photos || []).forEach(function (p, i) {
+      var pt = p ? photoGpsPoint(p.lat, p.lng) : null;
+      var at = p && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(p.takenAt || '') ? p.takenAt : '';
+      var x = { i: i, pt: pt, at: at };
+      if (at) timed.push(x); else if (pt) untimed.push(x); else dropped++;
+    });
+    timed.sort(function (a, b) { return a.at < b.at ? -1 : a.at > b.at ? 1 : a.i - b.i; });
+    var stops = [], cur = null;
+    timed.forEach(function (x) {
+      var m = takenMinutes(x.at);
+      var far = cur && cur.pt && x.pt && distanceKm(cur.pt, x.pt) >= PHOTO_STOP_KM;
+      if (!cur || far || m - cur.lastMin >= PHOTO_STOP_GAP_MIN) {
+        cur = { first: x.at, last: x.at, lastMin: m, pt: null, photos: [] };
+        stops.push(cur);
+      }
+      if (!cur.pt && x.pt) cur.pt = x.pt;
+      cur.photos.push(x.i);
+      cur.last = x.at;
+      cur.lastMin = m;
+    });
+    untimed.forEach(function (x) {
+      var best = null, bestKm = PHOTO_STOP_KM;
+      stops.forEach(function (s) {
+        if (!s.pt) return;
+        var km = distanceKm(s.pt, x.pt);
+        if (km < bestKm) { best = s; bestKm = km; }
+      });
+      if (best) best.photos.push(x.i);
+      else stops.push({ first: '', last: '', pt: x.pt, photos: [x.i] });
+    });
+    return {
+      stops: stops.map(function (s) {
+        return {
+          date: s.first.slice(0, 10), time: s.first.slice(11, 16), endTime: s.last.slice(11, 16),
+          lat: s.pt ? s.pt.lat : null, lng: s.pt ? s.pt.lng : null, photos: s.photos
+        };
+      }),
+      dropped: dropped
+    };
+  }
+
+  // Googleの場所の種類（types）から、予定の種類を決める。食べる・飲むところ→食事、宿→宿泊、それ以外→観光
+  function categoryForPlaceTypes(types) {
+    var t = (types || []).join(' ');
+    if (/\b(lodging|hotel|motel|hostel|inn|resort_hotel|bed_and_breakfast|guest_house|japanese_inn|campground)\b/.test(t)) return 'lodging';
+    if (/(restaurant|\bcafe\b|coffee_shop|bakery|\bbar\b|\bpub\b|food_court|meal_takeaway|meal_delivery|ice_cream_shop|dessert_shop|tea_house|confectionery|izakaya)/.test(t)) return 'food';
+    return 'sightseeing';
+  }
+
+  // 立ち寄り先を、確認画面の候補にする。places：立ち寄り先と同じ並びの { name, types }（分からなければnull）。
+  // 地図は写真の撮影場所（座標の地図URL。名前が分かればその名前を付ける）。photoRefsは写真の位置（保存のあと記録に付ける）
+  function photoStopsToProposals(stops, places) {
+    return (stops || []).map(function (s, i) {
+      var pl = (places && places[i]) || null;
+      var name = pl && pl.name ? String(pl.name).trim().slice(0, 100) : '';
+      var item = {
+        id: 'p' + (i + 1), sourceImage: null,
+        category: pl ? categoryForPlaceTypes(pl.types) : 'sightseeing', transport: '',
+        date: s.date || '', time: s.time || '', label: name || tr('写真の場所'),
+        place: name, placeGuessed: false, fromPlace: '', toPlace: '', company: '', routeNumber: '',
+        departTime: '', arriveTime: '', arriveDate: s.date || '',
+        costItems: [], note: '', warnings: [], timeEstimated: false, nightIndex: 0,
+        photoRefs: (s.photos || []).slice()
+      };
+      if (!s.date) item.warnings.push(tr('撮影日時が読めなかった写真です。日付と時刻を入れてください'));
+      if (typeof s.lat === 'number' && typeof s.lng === 'number') {
+        item.mapLat = Math.round(s.lat * 1e6) / 1e6;
+        item.mapLng = Math.round(s.lng * 1e6) / 1e6;
+        item.mapUrl = placeMapUrl({ lat: item.mapLat, lng: item.mapLng }, '');
+        item.mapPlaceName = name;
+      }
+      return item;
+    });
+  }
   // 候補（place。「地図のURL」欄の座標検索で選んだもの）または検索した文字列（searchText。
   // 「Googleマップで検索」を選んだときなど、座標のない検索）から、記録と一緒に保存する
   // 「場所の名前」を決める。候補があればその名前（例：Googleの候補のname）。無ければ検索文字列を
@@ -4835,6 +4986,12 @@
     timelineSceneAt: timelineSceneAt,
     gpsFromExif: gpsFromExif,
     jpegGpsFromBuffer: jpegGpsFromBuffer,
+    exifDateTime: exifDateTime,
+    jpegExifFromBuffer: jpegExifFromBuffer,
+    photosToStops: photosToStops,
+    categoryForPlaceTypes: categoryForPlaceTypes,
+    photoStopsToProposals: photoStopsToProposals,
+    PHOTO_ITINERARY_MAX: PHOTO_ITINERARY_MAX,
     placeSelectionName: placeSelectionName,
     travelArrival: travelArrival,
     replayStops: replayStops,
@@ -8876,7 +9033,8 @@
     screenshot: { title: tr('スクショから予定を作る'), label: tr('スクショ') },
     voice: { title: tr('音声から予定を作る'), label: tr('音声') },
     memo: { title: tr('メモから予定を作る'), label: tr('メモ') },
-    json: { title: tr('自分のAIの答えから予定を作る'), label: tr('自分のAIの答え') }
+    json: { title: tr('自分のAIの答えから予定を作る'), label: tr('自分のAIの答え') },
+    photos: { title: tr('写真から旅程を作る'), label: tr('写真') }
   };
 
   function ssNewState() {
@@ -8926,6 +9084,7 @@
   function cancelImportConfirm() {
     var s = ssState();
     if (s.ai && s.items && s.items.length && !confirm(tr('保存せずに戻ります。AIによる整理はすでに行ったため、今月の利用回数は戻りません。よろしいですか？'))) return;
+    if (s.source === 'photos') { photoItinRevoke(); state.ss = null; }
     if (s.back === 'screenshotImport') { $('#ssStatus').textContent = ''; showScreen('screenshotImport'); }
     else if (s.back === 'voiceEntryForm') showScreen('voiceEntryForm');
     else { showScreen('tripDetail'); renderTripDetail(); }
@@ -9063,6 +9222,13 @@
   }
 
   function ssThumbFor(item) {
+    if (item.photoRefs) {
+      var ps = ssState().photos || [];
+      var refs = item.photoRefs.filter(function (i) { return ps[i]; });
+      return '<span class="ss-photo-strip">' + refs.slice(0, 3).map(function (i) {
+        return '<img class="ss-thumb ss-thumb-small" src="' + ps[i].url + '" alt="' + tr('写真') + '">';
+      }).join('') + (refs.length > 3 ? '<span class="ss-photo-more">+' + (refs.length - 3) + '</span>' : '') + '</span>';
+    }
     var f = item.sourceImage !== null && item.sourceImage !== undefined ? ssState().files[item.sourceImage] : null;
     return f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="' + tr('元の画像') + '">' : '';
   }
@@ -9082,7 +9248,7 @@
     var hasMap = isArrive ? !!item.arriveMapUrl : !!item.mapUrl;
     if (isArrive && !name && !given && !query) return '';
     var shown = name ? '<strong>' + escapeHtml(name) + '</strong>'
-      : (hasMap ? '<span>' + tr('メモのURLの地図') + '</span>'
+      : (hasMap ? '<span>' + (item.photoRefs && !isArrive ? tr('写真の撮影場所') : tr('メモのURLの地図')) + '</span>'
         : '<span class="ss-nomap">' + (given ? tr('{place}（地図なし）', { place: escapeHtml(given) }) : tr('地図なし')) + '</span>');
     return '<div class="ss-place"><span class="ss-place-label">' + label + '</span> ' + shown +
       ' <button type="button" class="btn text small" data-ss-place="' + which + '">' + (name || hasMap ? tr('変える') : tr('場所を探す')) + '</button>' +
@@ -9437,21 +9603,199 @@
             .then(function () { return ssSaveMoveMinutes(res.blocks || [], payload.items); })
             .catch(function () {}).then(function () { return res; });
         })
+        .then(function (res) {
+          // 写真から作った予定は、その記録に写真を付ける。失敗しても予定の追加は成功のまま（記録から写真を足せる）
+          if (s.source !== 'photos') return res;
+          status.textContent = tr('写真を記録に入れています…');
+          var usedItems = s.items.filter(function (it) { return it && it.use !== false; });
+          return photoItinAttach(res.blocks || [], payload.items, usedItems, s.photos || [])
+            .then(function () { return res; }, function () { res.photoFailed = true; return res; });
+        })
         .then(function (res) { return refreshTrip().then(function () { return { res: res, failed: failedCurrencies }; }); });
     }).then(function (r) {
       var first = payload.items.map(function (p) { return p.date; }).sort()[0];
       if (first) state.selectedDate = first;
       ssRevokeFiles();
+      photoItinRevoke();
       state.ss = null;
       showScreen('tripDetail');
       renderTripDetail();
       showToast(tr('{n}件の予定を追加しました', { n: (r.res.blocks || []).length }));
+      if (r.res.photoFailed) alert(tr('一部の写真を記録に入れられませんでした。記録を開いて写真を追加してください。'));
       if (r.res.errors && r.res.errors.length) alert(tr('{n}件は、日付・時刻が合わず追加できませんでした。', { n: r.res.errors.length }));
       if (r.failed.length) alert(tr('{names}のレートを取得できませんでした。記録を開いてレートを入れてください。', { names: r.failed.join('・') }));
     }).catch(function (e) {
       $('#btnSsSave').disabled = false;
       status.textContent = ssSaveErrorMessage((e && e.message) || '');
     });
+  }
+
+  // ---------- 写真から旅程を作る（docs/adr/0026） ----------
+  // 写真（最大30枚）を選ぶ → 撮影時刻と撮影場所を読み、同じ場所で続けて撮った写真を1つの立ち寄り先にまとめる
+  // （Core.photosToStops）→ 立ち寄り先ごとに近くの場所の名前を調べる（GET /places/nearby。AIは使わない）
+  // → スクショ・メモと同じ確認画面で直す → 「この内容で追加」で予定を作り、その予定の記録に写真を付ける。
+  // iPhoneアプリはファイルとして選ぶと場所が消えるので、写真ライブラリから直接選ぶ（pickPhotosNativeと同じ）
+  var PHOTO_ITIN_NAME_LOOKUPS = 12; // 名前を調べる立ち寄り先の数（これより多い分は「写真の場所」のまま）
+  var photoItinInput = null;
+  var photoItinBusy = false;
+
+  function photoItinRevoke() {
+    var s = state.ss;
+    if (!s || !s.photos) return;
+    s.photos.forEach(function (p) { try { URL.revokeObjectURL(p.url); } catch (e) {} });
+    s.photos = [];
+  }
+
+  function openPhotoItinerary() {
+    if (!state.trip || photoItinBusy) return;
+    var plugin = nativePhotoPicker();
+    if (plugin && photoLibPerm !== 'denied') {
+      plugin.pickImages({ quality: 90, limit: Core.PHOTO_ITINERARY_MAX }).then(function (res) {
+        if (photoLibPerm !== 'granted' && photoLibPerm !== 'limited') photoLibPerm = 'granted';
+        var photos = ((res && res.photos) || []).slice(0, Core.PHOTO_ITINERARY_MAX);
+        buildPhotoItinerary(photos.map(function (p) {
+          var exif = p.exif || {};
+          return {
+            load: function () { return fetch(p.webPath).then(function (r) { return r.blob(); }); },
+            gps: Core.gpsFromExif(exif.GPS),
+            takenAt: Core.exifDateTime(exif.DateTimeOriginal || exif.DateTimeDigitized || '')
+          };
+        }), photos.length);
+      }).catch(function (err) {
+        var msg = String((err && err.message) || err || '');
+        if (/cancel/i.test(msg)) return;
+        if (/denied/i.test(msg)) {
+          photoLibPerm = 'denied';
+          showToast(tr('写真へのアクセスが許可されていないため、撮影場所と時刻を読めません。設定アプリの「旅の足跡」から写真へのアクセスを許可してください。'));
+          return;
+        }
+        showToast(tr('写真を読み込めませんでした。'));
+      });
+      return;
+    }
+    if (!photoItinInput) {
+      photoItinInput = document.createElement('input');
+      photoItinInput.type = 'file';
+      photoItinInput.accept = 'image/*';
+      photoItinInput.multiple = true;
+      photoItinInput.hidden = true;
+      document.body.appendChild(photoItinInput);
+      photoItinInput.addEventListener('change', function (e) {
+        var files = Array.prototype.slice.call(e.target.files || []);
+        e.target.value = '';
+        if (!files.length) return;
+        var picked = files.length;
+        files = files.slice(0, Core.PHOTO_ITINERARY_MAX);
+        Promise.all(files.map(function (f) {
+          var head = /jpe?g$/i.test(f.type || f.name || '') && f.slice(0, 1).arrayBuffer
+            ? f.slice(0, 256 * 1024).arrayBuffer().then(Core.jpegExifFromBuffer).catch(function () { return { gps: null, takenAt: '' }; })
+            : Promise.resolve({ gps: null, takenAt: '' });
+          return head.then(function (x) { return { load: function () { return Promise.resolve(f); }, gps: x.gps, takenAt: x.takenAt }; });
+        })).then(function (list) { buildPhotoItinerary(list, picked); });
+      });
+    }
+    photoItinInput.click();
+  }
+
+  // list：[{ load（写真のBlobを返す関数）, gps, takenAt }]。picked：選ばれた枚数（上限を超えた分を伝える）
+  function buildPhotoItinerary(list, picked) {
+    if (!list.length) return;
+    photoItinBusy = true;
+    var grouped = Core.photosToStops(list.map(function (x) {
+      return { lat: x.gps ? x.gps.lat : null, lng: x.gps ? x.gps.lng : null, takenAt: x.takenAt };
+    }));
+    if (!grouped.stops.length) {
+      photoItinBusy = false;
+      alert(tr('写真から撮影時刻も撮影場所も読み取れませんでした。') + (isNativeApp() ? '' : '\n' + tr('iPhoneのブラウザでは写真の情報が消えてしまうことがあります。iPhoneアプリから選ぶと読み取れます。')));
+      return;
+    }
+    var used = {};
+    grouped.stops.forEach(function (s) { s.photos.forEach(function (i) { used[i] = true; }); });
+    var photos = [];
+    var done = 0, total = Object.keys(used).length;
+    // 大きい写真を一度に何枚も読むとメモリが足りなくなるので、1枚ずつ縮める（記録フォームと同じ大きさ）
+    var loadAll = list.reduce(function (prev, x, i) {
+      return prev.then(function () {
+        if (!used[i]) return;
+        return x.load().then(function (b) { return fileToCompressedBlob(b, 1280, 0.72); })
+          .then(function (blob) { photos[i] = { blob: blob, url: URL.createObjectURL(blob) }; })
+          .catch(function () { photos[i] = null; })
+          .then(function () { done++; showToast(tr('写真を読み込んでいます（{n}/{total}）', { n: done, total: total })); });
+      });
+    }, Promise.resolve());
+    var places = [];
+    loadAll.then(function () {
+      var lang = (window.I18N && I18N.lang) || 'ja';
+      var targets = grouped.stops.filter(function (s) { return typeof s.lat === 'number'; }).slice(0, PHOTO_ITIN_NAME_LOOKUPS);
+      var n = 0;
+      // 1か所ずつ順に聞く（予備のOpenStreetMapは1秒1回までのため、まとめて投げない）
+      return targets.reduce(function (prev, s) {
+        return prev.then(function () {
+          n++;
+          showToast(tr('場所の名前を調べています（{n}/{total}）', { n: n, total: targets.length }));
+          return api('/places/nearby?lat=' + s.lat + '&lng=' + s.lng + '&lang=' + encodeURIComponent(lang))
+            .then(function (r) { places[grouped.stops.indexOf(s)] = r && r.found ? { name: r.name || '', types: r.types || [] } : null; })
+            .catch(function () { /* 古いWorker・通信の失敗：名前は「写真の場所」のまま */ });
+        });
+      }, Promise.resolve());
+    }).then(function () {
+      photoItinBusy = false;
+      var items = Core.photoStopsToProposals(grouped.stops, places);
+      // 読み込めなかった写真は付けない
+      items.forEach(function (it) { it.photoRefs = it.photoRefs.filter(function (i) { return photos[i]; }); });
+      var notes = [tr('写真{n}枚を、撮影した時刻と場所で{m}か所にまとめました。同じ場所で続けて撮った写真は1つの予定になります。追加すると、写真はその予定の記録に入ります。', { n: total, m: items.length })];
+      if (picked > list.length) notes.push(tr('写真は{max}枚までです。超えた分は使っていません。', { max: Core.PHOTO_ITINERARY_MAX }));
+      if (grouped.dropped) notes.push(tr('{n}枚は撮影時刻も撮影場所も読めなかったため、使っていません。', { n: grouped.dropped }));
+      var noPlace = items.filter(function (it) { return !it.mapUrl; }).length;
+      if (noPlace) notes.push(isNativeApp() ? tr('{n}件は撮影場所が読めませんでした。「場所を探す」で入れられます。', { n: noPlace })
+        : tr('{n}件は撮影場所が読めませんでした。「場所を探す」で入れられます（iPhoneのブラウザでは写真の場所が消えてしまいます。iPhoneアプリから選ぶと読めます）。', { n: noPlace }));
+      photoItinRevoke();
+      ssRevokeFiles();
+      state.ss = ssNewState();
+      state.ss.photos = photos;
+      openImportConfirm({ source: 'photos', ai: false, items: items, branch: currentImportBranch(), notes: notes, back: 'tripDetail' });
+    }).catch(function () {
+      photoItinBusy = false;
+      photos.forEach(function (p) { if (p) { try { URL.revokeObjectURL(p.url); } catch (e) {} } });
+      showToast(tr('写真を読み込めませんでした。'));
+    });
+  }
+
+  // 保存した予定（サーバーの返したblocks）の記録に、候補の写真を付ける。payloadItemsは保存した候補（usedItemsと同じ並び）。
+  // 日付・時刻・見出しが同じ予定を探して合わせる（ssSaveMoveMinutesと同じ）。記録が無い予定（地図も中身も無い）には記録を作る。
+  // 写真の送信は記録の保存と同じwriteData（電波が無ければ送信待ちに積む）。1か所ずつ順に送る
+  function photoItinAttach(blocks, payloadItems, usedItems, photos) {
+    var left = blocks.slice();
+    var tripId = state.trip.id;
+    var author = ((loadCurrentUser() || {}).name) || '';
+    return payloadItems.reduce(function (prev, p, k) {
+      return prev.then(function () {
+        var refs = ((usedItems[k] || {}).photoRefs || []).filter(function (i) { return photos[i]; });
+        if (!refs.length) return;
+        var at = -1;
+        for (var j = 0; j < left.length; j++) {
+          if (left[j].date === p.date && (left[j].time || '') === (p.time || '') && left[j].label === p.label) { at = j; break; }
+        }
+        if (at < 0) return;
+        var b = left.splice(at, 1)[0];
+        var uploads = [];
+        var ids = refs.map(function (i) {
+          var key = Core.outboxUuid();
+          uploads.push({ key: key, blob: photos[i].blob });
+          return Core.pendingPhotoId(key);
+        });
+        var entry = (b.entries || [])[0];
+        // 1つの記録に付けられる写真は20枚まで（サーバーのvalidEntryInput）
+        var room = 20 - ((entry && entry.photoIds) || []).length;
+        uploads = uploads.slice(0, Math.max(0, room));
+        ids = ids.slice(0, uploads.length);
+        if (!ids.length) return;
+        var req = entry
+          ? writeData({ tripId: tripId, method: 'PATCH', path: '/entries/' + encodeURIComponent(entry.id), body: { photoIds: (entry.photoIds || []).concat(ids) }, uploads: uploads })
+          : writeData({ tripId: tripId, method: 'POST', path: '/blocks/' + encodeURIComponent(b.id) + '/entries', body: { photoIds: ids, author: author }, uploads: uploads });
+        return req.catch(function () { return Promise.reject(new Error('photo_attach_failed')); });
+      });
+    }, Promise.resolve());
   }
 
   function setupScreenshotImport() {
@@ -10322,6 +10666,13 @@
     screenshotBtn.innerHTML = IMAGE_ICON + '<span>' + tr('スクショから予定を作る') + '</span>';
     screenshotBtn.addEventListener('click', function () { openScreenshotImport(); });
     el.appendChild(screenshotBtn);
+
+    // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）
+    var photoItinBtn = document.createElement('button');
+    photoItinBtn.className = 'block-add';
+    photoItinBtn.innerHTML = IMAGE_ICON + '<span>' + tr('写真から旅程を作る') + '</span>';
+    photoItinBtn.addEventListener('click', function () { openPhotoItinerary(); });
+    el.appendChild(photoItinBtn);
 
     // 時差の並びを調べるボタン。URLに ?zonedebug を付けたときだけ出す（実データで並びがおかしいときの調査用。2026-09-27）
     if (blocks.length && /[?&]zonedebug\b/.test(location.search || '')) {
