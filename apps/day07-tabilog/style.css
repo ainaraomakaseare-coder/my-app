@@ -654,6 +654,10 @@ a:hover { text-decoration: underline; }
   border: 1.5px dashed var(--border); border-radius: var(--radius-card); color: var(--accent-deep); background: none;
   font-size: var(--fs-sm); font-weight: 400;
 }
+.add-more { margin-top: 4px; }
+.add-more-label { margin: 0 0 6px; font-size: var(--fs-xs); color: var(--ink-muted); }
+.add-more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.block-add-mini { padding: 11px 6px; font-size: var(--fs-sm); }
 .entry-add {
   display: flex; align-items: center; gap: 6px; padding: 8px 2px; border: none; background: none;
   color: var(--accent-deep); font-size: var(--fs-xs); font-weight: 400; align-self: flex-start;
