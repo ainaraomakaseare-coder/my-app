@@ -262,15 +262,27 @@ async function selectWhereIn(env, sqlBeforeIn, ids, sqlAfterIn) {
 // 共有リンクの紹介カード（OGP）用に、旅行の名前・日程・カバー写真だけを返す（2026-10-22〜）。
 // Cloudflare Pagesの関数（functions/_middleware.js）が、?trip=付きのURLをLINE・Xなどが読みに来たときに使う。
 // 旅行のURL（trip.id）を知っている人なら旅行全体を読めるので、ここで返す範囲はそれより狭い。
-// 費用・参加者の名前・記録の中身は返さない（貼った先のグループやSNSの人に見えるため）。
+// 費用・参加者の名前・記録の文章は返さない（貼った先のグループやSNSの人に見えるため）。
 async function getTripPreview(id, env, headers) {
   const row = await env.DB.prepare("SELECT title, start_date, end_date, cover_photo_id FROM trips WHERE id = ?").bind(id).first();
   if (!row) return json({ error: "not_found" }, 404, headers);
+  // カバー写真が無い旅行は、旅行の中でいちばん早い日時の記録の1枚目の写真を代わりに使う（2026-10-22、ユーザーの要望）
+  let firstPhotoId = "";
+  if (!row.cover_photo_id) {
+    const first = await env.DB.prepare(
+      "SELECT e.photo_ids AS p FROM entries e JOIN blocks b ON e.block_id = b.id WHERE b.trip_id = ? AND e.photo_ids NOT IN ('', '[]') ORDER BY b.date ASC, b.time ASC, e.created_at ASC LIMIT 1"
+    ).bind(id).first();
+    try {
+      const ids = JSON.parse((first && first.p) || "[]");
+      if (Array.isArray(ids) && typeof ids[0] === "string") firstPhotoId = ids[0];
+    } catch (e) { /* 壊れた値は無視して写真なし */ }
+  }
   return json({
     title: row.title || "",
     startDate: row.start_date || "",
     endDate: row.end_date || "",
     coverPhotoId: row.cover_photo_id || "",
+    firstPhotoId,
   }, 200, headers);
 }
 

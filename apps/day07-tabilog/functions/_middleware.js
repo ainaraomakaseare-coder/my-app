@@ -39,11 +39,12 @@ export function buildTripPreview(trip) {
     var days = dayCount(start, end);
     if (days > 1) range += '（' + days + '日間）';
   }
-  var coverId = String(trip.coverPhotoId || '');
+  // カバー写真が無ければ、Workerが選んだ旅行の最初の写真。写真のIDは photo_xxx.jpg のように拡張子付き
+  var coverId = String(trip.coverPhotoId || trip.firstPhotoId || '');
   return {
     title: title ? '「' + title + '」の旅行が共有されました' : '旅行が共有されました',
     description: (range ? range + 'の旅の記録です。' : '旅の記録です。') + 'タップすると旅の足跡で見られます。',
-    image: /^[A-Za-z0-9_-]{1,100}$/.test(coverId) ? API_BASE + '/photos/' + encodeURIComponent(coverId) : '',
+    image: /^[A-Za-z0-9_-]{1,100}(\.[a-z0-9]{2,5})?$/.test(coverId) ? API_BASE + '/photos/' + encodeURIComponent(coverId) : '',
   };
 }
 

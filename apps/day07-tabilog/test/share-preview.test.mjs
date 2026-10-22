@@ -3,10 +3,10 @@
 import assert from 'node:assert/strict';
 import { buildTripPreview } from '../functions/_middleware.js';
 
-const p1 = buildTripPreview({ title: '沖縄家族旅行', startDate: '2026-06-27', endDate: '2026-06-29', coverPhotoId: 'photo_abc123' });
+const p1 = buildTripPreview({ title: '沖縄家族旅行', startDate: '2026-06-27', endDate: '2026-06-29', coverPhotoId: 'photo_abc123.jpg' });
 assert.equal(p1.title, '「沖縄家族旅行」の旅行が共有されました');
 assert.equal(p1.description, '2026/6/27〜6/29（3日間）の旅の記録です。タップすると旅の足跡で見られます。');
-assert.equal(p1.image, 'https://tabilog-api.hiroya-apps.workers.dev/photos/photo_abc123');
+assert.equal(p1.image, 'https://tabilog-api.hiroya-apps.workers.dev/photos/photo_abc123.jpg');
 
 // 日帰り・カバー写真なし
 const p2 = buildTripPreview({ title: '鎌倉', startDate: '2026-05-03', endDate: '2026-05-03', coverPhotoId: '' });
@@ -22,5 +22,9 @@ const p4 = buildTripPreview({ title: '  ', startDate: '', endDate: '', coverPhot
 assert.equal(p4.title, '旅行が共有されました');
 assert.equal(p4.description, '旅の記録です。タップすると旅の足跡で見られます。');
 assert.equal(p4.image, '');
+
+// カバー写真が無いときは旅行の最初の写真
+const p5 = buildTripPreview({ title: '京都', startDate: '2026-04-01', endDate: '2026-04-02', coverPhotoId: '', firstPhotoId: 'photo_def456.webp' });
+assert.equal(p5.image, 'https://tabilog-api.hiroya-apps.workers.dev/photos/photo_def456.webp');
 
 console.log('share-preview: all passed');
