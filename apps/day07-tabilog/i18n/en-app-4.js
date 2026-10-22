@@ -258,7 +258,6 @@ I18N.addLang('en', {
   "写真から": "From photos",
   "まとめて予定を作る": "Create plans in bulk",
   "1つずつ入力しなくても、話した内容や画像・写真から予定をまとめて作れます。保存する前に確認画面で直せます。": "Instead of entering plans one by one, create them all at once from what you say, images, or photos. You can fix them on the review screen before saving.",
-  "「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」は回数の制限がありません。": "\"AI\" features are free 5 times a month each (voice and memo/images are counted separately). \"No AI\" has no limit.",
   "AI": "AI",
   "AIなし": "No AI",
   "話す・メモを貼る": "Speak or paste a memo",
@@ -272,4 +271,8 @@ I18N.addLang('en', {
   "予約・チケットの画像から予定を作る": "Create plans from booking or ticket images",
   "予約・チケットの画像": "booking or ticket images",
   "ログインすると、予約・チケットの画像から予定を作る機能が使えます": "Log in to create plans from booking or ticket images",
+  "自分のAI": "Your own AI",
+  "ChatGPTなど他のAIに頼む": "Ask another AI like ChatGPT",
+  "例：お願い文をコピーしてChatGPTに旅のメモと一緒に送り、返ってきた答えを貼り付けます": "e.g. Copy the request text, send it to ChatGPT with your trip notes, and paste back the answer",
+  "「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。": "\"AI\" features are free 5 times a month each (voice and memo/images are counted separately). \"No AI\" and \"Your own AI\" don't use this app's count and have no limit.",
 });
