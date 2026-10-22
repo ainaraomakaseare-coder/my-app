@@ -1659,6 +1659,8 @@ body.viewer-open { overflow: hidden; }
 .ss-thumb-wrap { position: relative; }
 .ss-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-control); background: var(--input-bg); display: block; }
 .ss-thumb-small { width: 44px; height: 44px; border-radius: 8px; flex: none; }
+.ss-photo-strip { display: flex; align-items: center; gap: 4px; }
+.ss-photo-more { font-size: var(--fs-sm); color: var(--ink-muted); padding-left: 2px; }
 .ss-thumb-x { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; background: var(--ink); color: #fff; font-size: var(--fs-base); line-height: 22px; text-align: center; }
 .ss-day { font-size: var(--fs-base); margin: 20px 0 8px; color: var(--ink-muted); }
 .ss-card { background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 12px 14px 4px; margin-bottom: 12px; }

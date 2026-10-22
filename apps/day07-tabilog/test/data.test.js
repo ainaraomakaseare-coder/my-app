@@ -3418,5 +3418,69 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('jpegGpsFromBuffer: 途中で切れたファイルはnull', T.jpegGpsFromBuffer(jpegWithGps(false, 'N', [[35, 1], [40, 1], [0, 1]], 'E', [[139, 1], [0, 1], [0, 1]]).slice(0, 60)), null);
 })();
 
+/* ---- 写真から旅程を作る（docs/adr/0026） ---- */
+(function () {
+  eq('exifDateTime: Exifの日時', T.exifDateTime('2026:10:20 14:23:11'), '2026-10-20T14:23');
+  eq('exifDateTime: ハイフン区切りも読む', T.exifDateTime('2026-10-20T09:05:00'), '2026-10-20T09:05');
+  eq('exifDateTime: 0000年は使わない', T.exifDateTime('0000:00:00 00:00:00'), '');
+  eq('exifDateTime: 壊れた日付', T.exifDateTime('2026:02:30 10:00:00'), '');
+  eq('exifDateTime: 空', T.exifDateTime(undefined), '');
+
+  // IFD0 → Exif IFD → DateTimeOriginal だけを入れた最小のJPEG
+  function jpegWithDate(le, text) {
+    var tiff = new DataView(new ArrayBuffer(64));
+    function w16(o, x) { tiff.setUint16(o, x, le); }
+    function w32(o, x) { tiff.setUint32(o, x, le); }
+    w16(0, le ? 0x4949 : 0x4D4D); w16(2, 42); w32(4, 8);
+    w16(8, 1); w16(10, 0x8769); w16(12, 4); w32(14, 1); w32(18, 26); w32(22, 0);
+    w16(26, 1); w16(28, 0x9003); w16(30, 2); w32(32, 20); w32(36, 44); w32(40, 0);
+    for (var i = 0; i < text.length; i++) tiff.setUint8(44 + i, text.charCodeAt(i));
+    var out = new Uint8Array(12 + 64 + 2);
+    out.set([0xFF, 0xD8, 0xFF, 0xE1, 0, 2 + 6 + 64, 0x45, 0x78, 0x69, 0x66, 0, 0], 0);
+    out.set(new Uint8Array(tiff.buffer), 12);
+    out.set([0xFF, 0xD9], 76);
+    return out.buffer;
+  }
+  eq('jpegExifFromBuffer: 撮影日時（ビッグエンディアン）', T.jpegExifFromBuffer(jpegWithDate(false, '2026:10:20 14:23:11')), { gps: null, takenAt: '2026-10-20T14:23' });
+  eq('jpegExifFromBuffer: 撮影日時（リトルエンディアン）', T.jpegExifFromBuffer(jpegWithDate(true, '2025:12:31 23:59:00')), { gps: null, takenAt: '2025-12-31T23:59' });
+  eq('jpegExifFromBuffer: JPEGでなければ空', T.jpegExifFromBuffer(new Uint8Array([1, 2, 3, 4]).buffer), { gps: null, takenAt: '' });
+
+  var kiyomizu = { lat: 34.994856, lng: 135.785046 }, kiyomizu2 = { lat: 34.9955, lng: 135.7843 }; // 約100m
+  var fushimi = { lat: 34.967146, lng: 135.772695 };
+  function ph(pt, at) { return { lat: pt ? pt.lat : null, lng: pt ? pt.lng : null, takenAt: at || '' }; }
+  var r = T.photosToStops([
+    ph(fushimi, '2026-10-20T13:30'), ph(kiyomizu, '2026-10-20T09:10'), ph(kiyomizu2, '2026-10-20T09:40'),
+    ph(null, '2026-10-20T10:00'), ph(fushimi, '2026-10-20T14:10'), ph(null, ''), ph(kiyomizu2, '')
+  ]);
+  eq('photosToStops: 時刻順に、近い場所の写真をまとめる', r.stops.map(function (s) { return [s.date, s.time, s.endTime, s.photos]; }),
+    [['2026-10-20', '09:10', '10:00', [1, 2, 3, 6]], ['2026-10-20', '13:30', '14:10', [0, 4]]]);
+  eq('photosToStops: 場所は最初の写真の場所', [r.stops[0].lat, r.stops[1].lng], [kiyomizu.lat, fushimi.lng]);
+  eq('photosToStops: 時刻も場所も無い写真は使わない', r.dropped, 1);
+  r = T.photosToStops([ph(kiyomizu, '2026-10-20T09:00'), ph(kiyomizu, '2026-10-20T11:00'), ph(kiyomizu, '2026-10-21T09:00')]);
+  eq('photosToStops: 同じ場所でも2時間空いたら別の予定・日をまたぐ', r.stops.map(function (s) { return s.date + ' ' + s.time; }), ['2026-10-20 09:00', '2026-10-20 11:00', '2026-10-21 09:00']);
+  r = T.photosToStops([ph(null, '2026-10-20T09:00'), ph(fushimi, '2026-10-20T09:30')]);
+  eq('photosToStops: 場所の無い写真から始まっても、あとの写真の場所を使う', [r.stops.length, r.stops[0].lat], [1, fushimi.lat]);
+  r = T.photosToStops([ph(fushimi, '')]);
+  eq('photosToStops: 時刻の無い写真だけ→日付なしの場所', r.stops, [{ date: '', time: '', endTime: '', lat: fushimi.lat, lng: fushimi.lng, photos: [0] }]);
+
+  eq('categoryForPlaceTypes: 食事', T.categoryForPlaceTypes(['ramen_restaurant', 'restaurant']), 'food');
+  eq('categoryForPlaceTypes: カフェ', T.categoryForPlaceTypes(['cafe']), 'food');
+  eq('categoryForPlaceTypes: 宿', T.categoryForPlaceTypes(['hotel', 'lodging']), 'lodging');
+  eq('categoryForPlaceTypes: 観光', T.categoryForPlaceTypes(['buddhist_temple', 'tourist_attraction']), 'sightseeing');
+  eq('categoryForPlaceTypes: barbecue_areaは食事にしない', T.categoryForPlaceTypes(['park', 'barbecue_area']), 'sightseeing');
+
+  var items = T.photoStopsToProposals([
+    { date: '2026-10-20', time: '09:10', endTime: '10:00', lat: 34.9948561, lng: 135.785046, photos: [1, 2] },
+    { date: '2026-10-20', time: '12:00', endTime: '12:30', lat: null, lng: null, photos: [3] },
+    { date: '', time: '', endTime: '', lat: 34.96, lng: 135.77, photos: [4] }
+  ], [{ name: '清水寺', types: ['buddhist_temple'] }, null, { name: '', types: ['cafe'] }]);
+  eq('photoStopsToProposals: 名前・時刻・地図・写真', [items[0].label, items[0].category, items[0].date, items[0].time, items[0].mapUrl, items[0].mapLat, items[0].mapPlaceName, items[0].photoRefs],
+    ['清水寺', 'sightseeing', '2026-10-20', '09:10', 'https://www.google.com/maps/search/?api=1&query=34.994856%2C135.785046', 34.994856, '清水寺', [1, 2]]);
+  eq('photoStopsToProposals: 場所が無ければ地図なし・名前は「写真の場所」', [items[1].label, items[1].mapUrl, items[1].warnings.length], ['写真の場所', undefined, 0]);
+  eq('photoStopsToProposals: 日付が無ければ警告・種類はtypesから', [items[2].warnings.length, items[2].category, items[2].label], [1, 'food', '写真の場所']);
+  var saved = T.screenshotItemsToSavePayload([items[0]], { startDate: '2026-10-19', endDate: '2026-10-21' });
+  eq('photoStopsToProposals: そのまま保存の形にできる', [saved.errors.length, saved.items[0].mapUrl, saved.items[0].mapLat, saved.items[0].label], [0, items[0].mapUrl, 34.994856, '清水寺']);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
