@@ -233,6 +233,8 @@ I18N.addLang('en', {
   "写真を読み込めませんでした。": "Couldn't load the photos.",
   "この国の写真はまだありません": "No photos from this country yet",
   "国をタップすると、その旅の写真が流れます": "Tap a country to play the photos from your trips there",
+  "拡大": "Zoom in",
+  "縮小": "Zoom out",
   "写真から旅程を作る": "Make an itinerary from photos",
   "写真": "Photos",
   "写真の場所": "Photo spot",

@@ -14342,6 +14342,7 @@
         mainSvg + insetSvg + '</svg>';
       wireVisitedMapRegions(container);
       wireVisitedMapPan(container, 'prefecture');
+      addVisitedZoomButtons(container, 'prefecture');
       if (sel && sel.kind === 'prefecture') zoomVisitedMap('prefecture', sel.name, true);
     }).catch(function (e) {
       console.error('drawVisitedJapanMap failed', e);
@@ -14387,12 +14388,15 @@
   function visitedShowMainBounds(path, f) {
     try { return path.bounds(visitedShowMainShape(f)); } catch (e) { return path.bounds(f); }
   }
-  // 一覧で国・都道府県を選んだら、地図をそこまでズームする（地図では小さすぎて見えない国のため。
-  // オーナーの声、2026-10-20。国内も同じ動きに揃えた）。nameがnullなら全体に戻す。viewBoxを少しずつ動かして寄せる
   function setVisitedMapViewBox(svg, W, v) {
     svg.setAttribute('viewBox', v.map(function (n) { return n.toFixed(2); }).join(' '));
     var map = svg.parentNode;
-    if (map && map.classList) map.classList.toggle('is-zoomed', v[2] < W - 0.5);
+    var zoomed = v[2] < W - 0.5;
+    if (map && map.classList) {
+      map.classList.toggle('is-zoomed', zoomed);
+      var out = map.querySelector('.visited-zoom-out');
+      if (out) out.disabled = !zoomed;
+    }
     // 丸は寄っても大きくなりすぎないよう、画面上でほぼ同じ大きさに保つ。形のある国の丸は、
     // 十分寄ったら国の形そのものが見えるので消す（丸で国が隠れないように）。形の無い国の丸は残す
     $all('.visited-dot', svg).forEach(function (c) {
@@ -14400,60 +14404,22 @@
       c.style.display = v[2] < W * 0.4 && !c.classList.contains('visited-point') ? 'none' : '';
     });
   }
-  // ズームしているあいだは、地図を指（マウス）でつかんで上下左右に動かせる（オーナーの声、2026-10-20
-  // 「ズームしたら固定されているけど、マップのように右に行ったり左に行ったりしたい」）。
-  // 動かした直後のclickは、県・国のタップ（写真のスライドショー）にしない
-  function wireVisitedMapPan(container, kind) {
-    if (!container || container._panWired) return;
-    container._panWired = true;
-    var drag = null, suppressClickUntil = 0;
-    container.addEventListener('pointerdown', function (e) {
-      var svg = container.querySelector('svg');
-      if (!svg || !container.classList.contains('is-zoomed') || e.button > 0) return;
-      ++visitedZoomAnim; // ズームの途中なら止める
-      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, vb: svg.getAttribute('viewBox').split(/\s+/).map(Number), moved: false, svg: svg };
-    });
-    container.addEventListener('pointermove', function (e) {
-      if (!drag || e.pointerId !== drag.id) return;
-      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-      if (!drag.moved) {
-        if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
-        drag.moved = true;
-        try { container.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても動かせる */ }
-      }
-      var m = VISITED_ZOOM_MAPS[kind], v = drag.vb, r = drag.svg.getBoundingClientRect();
-      var k = v[2] / (r.width || 1);
-      setVisitedMapViewBox(drag.svg, m.W, [
-        Math.max(0, Math.min(m.W - v[2], v[0] - dx * k)),
-        Math.max(0, Math.min(m.H - v[3], v[1] - dy * k)),
-        v[2], v[3]
-      ]);
-    });
-    var end = function (e) {
-      if (!drag || e.pointerId !== drag.id) return;
-      if (drag.moved) suppressClickUntil = Date.now() + 350;
-      drag = null;
-    };
-    container.addEventListener('pointerup', end);
-    container.addEventListener('pointercancel', end);
-    container.addEventListener('click', function (e) {
-      if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); }
-    }, true);
+  function visitedMapViewBox(svg, m) {
+    return (svg.getAttribute('viewBox') || '0 0 ' + m.W + ' ' + m.H).split(/\s+/).map(Number);
   }
-  function zoomVisitedMap(kind, name, instant) {
+  // 中心(cx, cy)・幅wの表示範囲を、地図の外にはみ出さないように作る。幅は寄りすぎ（minWの半分）から全体までにおさえる
+  function visitedMapClampedViewBox(m, cx, cy, w) {
+    w = Math.max(m.minW / 2, Math.min(m.W, w));
+    var h = w * m.H / m.W;
+    return [Math.max(0, Math.min(m.W - w, cx - w / 2)), Math.max(0, Math.min(m.H - h, cy - h / 2)), w, h];
+  }
+  // 表示範囲を少しずつ動かす（ズームイン・アウトのアニメーション）
+  function animateVisitedMap(kind, to, instant) {
     var m = VISITED_ZOOM_MAPS[kind];
     var svg = m && document.querySelector(m.selector + ' svg');
     if (!svg) return;
-    var W = m.W, H = m.H, to = [0, 0, W, H];
-    var b = name && m.bounds[name];
-    if (b) {
-      var bw = b[1][0] - b[0][0], bh = b[1][1] - b[0][1];
-      var w = Math.min(W, Math.max(m.minW, bw * 2.4, bh * 2.4 * W / H)), h = w * H / W;
-      var cx = (b[0][0] + b[1][0]) / 2, cy = (b[0][1] + b[1][1]) / 2;
-      to = [Math.max(0, Math.min(W - w, cx - w / 2)), Math.max(0, Math.min(H - h, cy - h / 2)), w, h];
-    }
-    var from = (svg.getAttribute('viewBox') || '0 0 ' + W + ' ' + H).split(/\s+/).map(Number);
-    var apply = function (v) { setVisitedMapViewBox(svg, W, v); };
+    var from = visitedMapViewBox(svg, m);
+    var apply = function (v) { setVisitedMapViewBox(svg, m.W, v); };
     var anim = ++visitedZoomAnim;
     if (instant || prefersReducedMotion()) { apply(to); return; }
     var t0 = null, dur = 450;
@@ -14465,6 +14431,129 @@
       if (k < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
+  }
+  // 一覧で国・都道府県を選んだら、地図をそこまでズームする（地図では小さすぎて見えない国のため。
+  // オーナーの声、2026-10-20。国内も同じ動きに揃えた）。nameがnullなら全体に戻す
+  function zoomVisitedMap(kind, name, instant) {
+    var m = VISITED_ZOOM_MAPS[kind];
+    if (!m) return;
+    var to = [0, 0, m.W, m.H];
+    var b = name && m.bounds[name];
+    if (b) {
+      var bw = b[1][0] - b[0][0], bh = b[1][1] - b[0][1];
+      to = visitedMapClampedViewBox(m, (b[0][0] + b[1][0]) / 2, (b[0][1] + b[1][1]) / 2, Math.max(m.minW, bw * 2.4, bh * 2.4 * m.W / m.H));
+    }
+    animateVisitedMap(kind, to, instant);
+  }
+  // 地図の右下の＋・－ボタン。今の表示の真ん中を中心に寄る・引く（オーナーの声、2026-10-22
+  // 「ズームはできるけどズームアウトができない」）。－は全体が見えているときは押せない
+  var VISITED_ZOOM_STEP = 1.8;
+  function addVisitedZoomButtons(container, kind) {
+    var svg = container && container.querySelector('svg');
+    if (!svg) return;
+    var box = document.createElement('div');
+    box.className = 'visited-zoom-btns';
+    box.innerHTML =
+      '<button type="button" class="visited-zoom-in" aria-label="' + escapeHtml(tr('拡大')) + '">＋</button>' +
+      '<button type="button" class="visited-zoom-out" aria-label="' + escapeHtml(tr('縮小')) + '">－</button>';
+    container.appendChild(box);
+    var m = VISITED_ZOOM_MAPS[kind];
+    var zoomBy = function (factor) {
+      var v = visitedMapViewBox(svg, m);
+      var w = v[2] * factor;
+      if (w > m.W * 0.92) w = m.W; // 全体の近くまで引いたら、ぴったり全体に戻す
+      animateVisitedMap(kind, visitedMapClampedViewBox(m, v[0] + v[2] / 2, v[1] + v[3] / 2, w));
+    };
+    box.querySelector('.visited-zoom-in').addEventListener('click', function () { zoomBy(1 / VISITED_ZOOM_STEP); });
+    box.querySelector('.visited-zoom-out').addEventListener('click', function () { zoomBy(VISITED_ZOOM_STEP); });
+    setVisitedMapViewBox(svg, m.W, visitedMapViewBox(svg, m)); // －ボタンの押せる・押せないを今の表示に合わせる
+  }
+  // ズームしているあいだは、地図を指（マウス）でつかんで上下左右に動かせる（オーナーの声、2026-10-20
+  // 「ズームしたら固定されているけど、マップのように右に行ったり左に行ったりしたい」）。
+  // 2本指でつまむ・広げると縮小・拡大する（2026-10-22）。動かした直後のclickは、県・国のタップ
+  // （写真のスライドショー）にしない
+  function wireVisitedMapPan(container, kind) {
+    if (!container || container._panWired) return;
+    container._panWired = true;
+    var pts = {}, drag = null, pinch = null, suppressClickUntil = 0;
+    var count = function () { return Object.keys(pts).length; };
+    var startPinch = function (svg) {
+      var ids = Object.keys(pts), a = pts[ids[0]], b = pts[ids[1]];
+      var m = VISITED_ZOOM_MAPS[kind], v = visitedMapViewBox(svg, m), r = svg.getBoundingClientRect();
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      pinch = {
+        svg: svg, d0: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), w0: v[2],
+        // 指の間の点が地図のどこか（つまんでいるあいだ、その地点が指の間に来るように保つ）
+        px: v[0] + (mx - r.left) / (r.width || 1) * v[2],
+        py: v[1] + (my - r.top) / (r.height || 1) * v[3]
+      };
+      drag = null;
+      suppressClickUntil = Date.now() + 350;
+    };
+    container.addEventListener('pointerdown', function (e) {
+      var svg = container.querySelector('svg');
+      if (!svg || e.button > 0 || (e.target.closest && e.target.closest('.visited-zoom-btns'))) return;
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      ++visitedZoomAnim; // ズームの途中なら止める
+      if (count() === 2) { startPinch(svg); return; }
+      if (count() > 2 || !container.classList.contains('is-zoomed')) return;
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, vb: visitedMapViewBox(svg, VISITED_ZOOM_MAPS[kind]), moved: false, svg: svg };
+    });
+    container.addEventListener('pointermove', function (e) {
+      if (!pts[e.pointerId]) return;
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var m = VISITED_ZOOM_MAPS[kind];
+      if (pinch && count() === 2) {
+        var ids = Object.keys(pts), a = pts[ids[0]], b = pts[ids[1]];
+        var w = Math.max(m.minW / 2, Math.min(m.W, pinch.w0 * pinch.d0 / Math.max(10, Math.hypot(a.x - b.x, a.y - b.y))));
+        var h = w * m.H / m.W, r = pinch.svg.getBoundingClientRect();
+        var fx = ((a.x + b.x) / 2 - r.left) / (r.width || 1), fy = ((a.y + b.y) / 2 - r.top) / (r.height || 1);
+        // 指の間の点（px, py）が画面上の同じ割合の位置に来るよう左上を決め、地図の外へははみ出さない
+        setVisitedMapViewBox(pinch.svg, m.W, [
+          Math.max(0, Math.min(m.W - w, pinch.px - fx * w)),
+          Math.max(0, Math.min(m.H - h, pinch.py - fy * h)),
+          w, h
+        ]);
+        return;
+      }
+      if (!drag || e.pointerId !== drag.id) return;
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.moved) {
+        if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+        drag.moved = true;
+        try { container.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても動かせる */ }
+      }
+      var v = drag.vb, rr = drag.svg.getBoundingClientRect();
+      var k = v[2] / (rr.width || 1);
+      setVisitedMapViewBox(drag.svg, m.W, [
+        Math.max(0, Math.min(m.W - v[2], v[0] - dx * k)),
+        Math.max(0, Math.min(m.H - v[3], v[1] - dy * k)),
+        v[2], v[3]
+      ]);
+    });
+    var end = function (e) {
+      if (!pts[e.pointerId]) return;
+      delete pts[e.pointerId];
+      if (pinch) {
+        if (count() < 2) {
+          // 全体の近くまで引いたら、ぴったり全体に戻す
+          var m = VISITED_ZOOM_MAPS[kind], svg = pinch.svg, v = visitedMapViewBox(svg, m);
+          if (v[2] > m.W * 0.92) animateVisitedMap(kind, [0, 0, m.W, m.H]);
+          pinch = null;
+          suppressClickUntil = Date.now() + 350;
+        }
+        return;
+      }
+      if (drag && e.pointerId === drag.id) {
+        if (drag.moved) suppressClickUntil = Date.now() + 350;
+        drag = null;
+      }
+    };
+    container.addEventListener('pointerup', end);
+    container.addEventListener('pointercancel', end);
+    container.addEventListener('click', function (e) {
+      if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
   }
   function drawVisitedWorldMap(visited, excludedPlaces) {
     var visitedNames = {};
@@ -14545,6 +14634,7 @@
             container.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" class="visited-svg' + (fade ? ' visited-fade' : '') + '" role="img" aria-label="' + tr('訪れた国の地図') + '">' + paths + dots.join('') + '</svg>';
             wireVisitedMapRegions(container);
             wireVisitedMapPan(container, 'country');
+            addVisitedZoomButtons(container, 'country');
             if (sel && sel.kind === 'country') zoomVisitedMap('country', sel.name, true);
           } catch (eMap) {
             console.error('drawVisitedWorldMap: map render failed', eMap);
