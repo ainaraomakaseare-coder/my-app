@@ -4,6 +4,7 @@
 // Cloudflare Pagesの関数がWorkerから旅行の名前・日程・カバー写真を取ってきてmetaタグを書き換える。
 // 取れなかったとき（旅行が無い・Workerが遅い・古いWorkerで/previewが無い）は、何もせず元のページを返す。
 // 関数が動くのは_routes.jsonで指定したトップページだけ（写真・JSなどの静的ファイルには使わない）。
+// Pagesはリポジトリのルートの functions/ だけを見るため、そこ（/functions/_middleware.js）からこのファイルを読み込んでいる。
 
 var API_BASE = 'https://tabilog-api.hiroya-apps.workers.dev';
 var SITE_ORIGIN = 'https://tabinoashiato.pages.dev';
@@ -46,17 +47,21 @@ export function buildTripPreview(trip) {
   };
 }
 
-async function fetchTrip(tripId) {
+// Workerへの問い合わせ。公開URLへ普通にfetchする（2026-10-22にプレビューで届くことを確認済み）。
+// env.API（サービスバインディング）がPagesの設定にあれば、そちらを優先して使う。
+// 戻り値は { trip, via, status, error }（/og-debug/<旅行ID> で中身を確認できるようにしてある）。
+async function fetchTrip(env, tripId) {
+  var path = '/trips/' + encodeURIComponent(tripId) + '/preview';
+  var via = env && env.API && typeof env.API.fetch === 'function' ? 'binding' : 'public';
   try {
-    var res = await fetch(API_BASE + '/trips/' + encodeURIComponent(tripId) + '/preview', {
-      headers: { Origin: SITE_ORIGIN },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      cf: { cacheTtl: 300, cacheEverything: true },
-    });
-    if (!res.ok) return null;
-    return await res.json();
+    var init = { headers: { Origin: SITE_ORIGIN }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) };
+    var res = via === 'binding'
+      ? await env.API.fetch(new Request(API_BASE + path, init))
+      : await fetch(API_BASE + path, init);
+    if (!res.ok) return { trip: null, via: via, status: res.status, error: (await res.text()).slice(0, 200) };
+    return { trip: await res.json(), via: via, status: res.status, error: '' };
   } catch (e) {
-    return null;
+    return { trip: null, via: via, status: 0, error: String(e).slice(0, 200) };
   }
 }
 
@@ -67,12 +72,21 @@ function setContent(value) {
 export async function onRequest(context) {
   var request = context.request;
   var url = new URL(request.url);
+  // 動作確認用：/og-debug/<旅行ID> で、Workerへの問い合わせ結果（経路・ステータス・エラー）だけをJSONで返す
+  var dm = /^\/og-debug\/([^/]+)$/.exec(url.pathname);
+  if (dm) {
+    var dbg = TRIP_ID_RE.test(dm[1]) ? await fetchTrip(context.env, dm[1]) : { via: '', status: 0, error: 'bad_id', trip: null };
+    return new Response(JSON.stringify({ via: dbg.via, status: dbg.status, error: dbg.error, found: !!dbg.trip }), {
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  }
+
   var tripId = url.searchParams.get('trip') || '';
   if (request.method !== 'GET' || !TRIP_ID_RE.test(tripId)) return context.next();
 
-  var results = await Promise.all([context.next(), fetchTrip(tripId)]);
+  var results = await Promise.all([context.next(), fetchTrip(context.env, tripId)]);
   var res = results[0];
-  var trip = results[1];
+  var trip = results[1].trip;
   if (!trip || !res.ok || (res.headers.get('content-type') || '').indexOf('text/html') === -1) return res;
 
   var p = buildTripPreview(trip);
