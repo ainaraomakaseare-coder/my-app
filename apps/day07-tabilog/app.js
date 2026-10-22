@@ -147,7 +147,9 @@
   function dayLabel(trip, dateStr) {
     if (!dateStr) return tr('日付未設定');
     var diff = trip && trip.startDate ? dateDiffDays(trip.startDate, dateStr) : null;
-    if (diff !== null && diff >= 0) return tr('{n}日目', { n: diff + 1 });
+    // 日程の後ろの日（延泊の別行動だけの日）は「○日目」と数えず日付で出す（日程の前の日も日付）
+    var afterEnd = trip && trip.endDate && parseDate(trip.endDate) && dateStr > trip.endDate;
+    if (diff !== null && diff >= 0 && !afterEnd) return tr('{n}日目', { n: diff + 1 });
     return formatDateJp(dateStr) || dateStr;
   }
 
@@ -529,6 +531,49 @@
     return out;
   }
 
+  // 別行動は旅行の日程の前後この日数まで（前乗り・途中合流・延泊。サーバーの worker/src/branches.js と同じ）
+  var BRANCH_DATE_MARGIN_DAYS = 14;
+
+  // 別行動に選べる日の範囲 { first, last }。旅行に日程が無ければ null（範囲を決めない）。
+  function branchDateRange(trip) {
+    var start = trip && parseDate(trip.startDate) ? trip.startDate : '';
+    var end = trip && parseDate(trip.endDate) && trip.endDate >= start ? trip.endDate : start;
+    if (!start) return null;
+    return { first: addDaysToDate(start, -BRANCH_DATE_MARGIN_DAYS), last: addDaysToDate(end, BRANCH_DATE_MARGIN_DAYS) };
+  }
+
+  // 別行動のシートで選べる日。旅行の日々（日程が無ければ予定のある日）に、日程の前後BRANCH_DATE_MARGIN_DAYS日と、
+  // 編集中の別行動の日々を足して並べる（日付の無い''は除く）
+  function branchSheetDateChoices(trip, blocks, branch) {
+    var seen = {};
+    allDatesForTrip(trip, blocks).forEach(function (d) { if (d) seen[d] = true; });
+    var range = branchDateRange(trip);
+    if (range) branchDates({ date: range.first, endDate: range.last }).forEach(function (d) { seen[d] = true; });
+    if (branch) branchDates(branch).forEach(function (d) { seen[d] = true; });
+    return Object.keys(seen).sort();
+  }
+
+  // 旅行の日タブに並べる日：旅行の日々に、別行動がかかっている日程の外の日（前乗り・延泊）を足す。
+  // 日付の無い''（日付未設定の予定）は従来どおり最後
+  function tripDayTabDates(trip, blocks, branches) {
+    var dates = allDatesForTrip(trip, blocks);
+    var undated = dates.indexOf('') !== -1;
+    var seen = {};
+    dates.forEach(function (d) { if (d) seen[d] = true; });
+    (branches || []).forEach(function (br) { branchDates(br).forEach(function (d) { seen[d] = true; }); });
+    var out = Object.keys(seen).sort();
+    return undated ? out.concat(['']) : out;
+  }
+
+  // 地図でふりかえる・動画の日の並び：旅行の日々に、渡された予定のうち別行動の中の予定（branchId付き）の日を足す
+  // （延泊・前乗りの別行動の予定は旅行の日程の外にあるため。みんなの予定は従来どおり日程の中だけ）
+  function replayDates(trip, blocks) {
+    var seen = {};
+    allDatesForTrip(trip, blocks).forEach(function (d) { if (d) seen[d] = true; });
+    (blocks || []).forEach(function (b) { if (b.branchId && b.date && parseDate(b.date)) seen[b.date] = true; });
+    return Object.keys(seen).sort();
+  }
+
   // その日、分岐がかかっている時間帯を [開始分, 終了分) で返す。かかっていない日は null。
   // 始まりの日は始まりの時刻から、途中の日は1日中（0〜1440）、終わりの日は終わりの時刻まで。
   function branchWindowOn(branch, date) {
@@ -727,7 +772,7 @@
   // 分岐の入力を確かめる（サーバーと同じ規則）。問題なければ空文字、あれば理由。
   // input: { date, endDate（空なら開始日と同じ）, startTime, endTime }
   // others：ほかの分岐（同じ人の分だけ見る）。excludeId：更新のときの自分自身。
-  // trip：旅行に日程があれば、始まりの日・終わりの日がその中か確かめる（省略可）。
+  // trip：旅行に日程があれば、始まりの日・終わりの日が日程の前後BRANCH_DATE_MARGIN_DAYS日の中か確かめる（省略可）。
   function validateBranch(input, others, accountId, excludeId, trip) {
     var s = hhmmToMinute(input.startTime), e = hhmmToMinute(input.endTime);
     if (!input.date || !parseDate(input.date)) return 'invalid_date';
@@ -736,8 +781,9 @@
     if (s === null || e === null) return 'invalid_time';
     var mineStart = branchAbsMinutes(input.date, input.startTime), mineEnd = branchAbsMinutes(endDate, input.endTime);
     if (mineEnd <= mineStart) return 'end_before_start';
-    if (trip && trip.startDate && (input.date < trip.startDate || endDate < trip.startDate)) return 'date_out_of_range';
-    if (trip && trip.endDate && (input.date > trip.endDate || endDate > trip.endDate)) return 'date_out_of_range';
+    // 前乗り・途中合流・延泊のため、旅行の日程の外も前後BRANCH_DATE_MARGIN_DAYS日までは選べる（2026-10-22〜）
+    var range = branchDateRange(trip);
+    if (range && (input.date < range.first || endDate > range.last)) return 'date_out_of_range';
     var clash = (others || []).some(function (o) {
       if (o.id === excludeId || o.accountId !== accountId) return false;
       var os = branchAbsMinutes(o.date, o.startTime), oe = branchAbsMinutes(branchEndDate(o), o.endTime);
@@ -752,7 +798,7 @@
       invalid_time: tr('始まりと終わりの時刻を入れてください。'),
       end_before_start: tr('終わりは、始まりより後にしてください。'),
       overlap: tr('ほかの自分の別行動と時間が重なっています。'),
-      date_out_of_range: tr('別行動の日付は、旅行の日程の中で選んでください。'),
+      date_out_of_range: tr('別行動の日付は、旅行の日程の前後2週間までで選んでください。'),
       date_out_of_branch: tr('日付は、別行動の日（始まりの日〜終わりの日）の中で選んでください。'),
       time_out_of_branch: tr('時刻は、別行動の時間帯の中で入れてください。'),
       branch_multiday_not_ready: tr('サーバーの準備がまだ終わっていないため、日をまたぐ別行動はまだ作れません。1日ずつに分けるか、少し待ってからお試しください。'),
@@ -1856,7 +1902,7 @@
   // 時刻なしの予定は、その日の直前の予定の30分後（その日に時刻ありが1つも無ければ9時から1時間おき）と推定する。
   // 各地点の記録（エピソード・ひとこと）は、到着したときに出す吹き出しの中身にする。
   function replayStops(trip, blocks) {
-    var dates = allDatesForTrip(trip, blocks).filter(function (d) { return d; });
+    var dates = replayDates(trip, blocks);
     var lastMinute = {}, hasTimed = {}, lastOffset = null;
     (blocks || []).forEach(function (b) { if (b.date && hhmmToMinute(b.time) !== null) hasTimed[b.date] = true; });
     // 移動の予定（種類が「移動」）の移動手段・移動時間は、その予定から次の場所への移動として、次の地点に渡す。
@@ -4460,7 +4506,8 @@
       var label = String(it.label || '').trim();
       if (!label) { errors.push({ index: index, label: label, reason: tr('見出しが空です') }); return; }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(it.date || '')) { errors.push({ index: index, label: label, reason: tr('日付を入れてください') }); return; }
-      if (dates.length && dates.indexOf(it.date) === -1) { errors.push({ index: index, label: label, reason: tr('日付が旅行の日程の外です') }); return; }
+      // 別行動に入れるときは別行動の日々で確かめる（下のvalidateBranchBlock。別行動は旅行の日程の外にもなれる）
+      if (!branch && dates.length && dates.indexOf(it.date) === -1) { errors.push({ index: index, label: label, reason: tr('日付が旅行の日程の外です') }); return; }
       var time = /^([01]\d|2[0-3]):[0-5]\d$/.test(it.time || '') ? it.time : '';
       if (branch) {
         var why = validateBranchBlock(branch, it.date, time);
@@ -4905,6 +4952,10 @@
     dayLabel: dayLabel,
     tripNights: tripNights,
     allDatesForTrip: allDatesForTrip,
+    tripDayTabDates: tripDayTabDates,
+    replayDates: replayDates,
+    branchDateRange: branchDateRange,
+    branchSheetDateChoices: branchSheetDateChoices,
     groupScreenshotItemsByDay: groupScreenshotItemsByDay,
     screenshotItemsToSavePayload: screenshotItemsToSavePayload,
     sortBlocks: sortBlocks,
@@ -7359,8 +7410,10 @@
       state.offlineView = res.offline;
       applyTripData(data, false);
       state.social = emptySocial();
-      var dates = Core.allDatesForTrip(state.trip, state.blocks);
-      state.selectedDate = dates[0] !== undefined ? dates[0] : '';
+      var dates = dayTabDates();
+      // 前乗りの別行動の日があっても、開いたときは旅行の1日目から
+      var firstTripDay = Core.allDatesForTrip(state.trip, state.blocks)[0];
+      state.selectedDate = firstTripDay !== undefined ? firstTripDay : (dates[0] !== undefined ? dates[0] : '');
       if (focus && focus.date && dates.indexOf(focus.date) >= 0) state.selectedDate = focus.date;
       // 端末が初めて開く旅行（共有リンクから来た人）は、旅行を作った人ではないので、案内から「リンクを送って」を外す
       var wasKnownTrip = loadMyTrips().some(function (t) { return (t.tripId || t.id) === state.trip.id; });
@@ -7570,7 +7623,7 @@
       // 予定・日ごとの情報の日付が変わったので、旅行ごと読み直す
       return shifted ? refreshTrip() : null;
     }).then(function () {
-      var dates = Core.allDatesForTrip(state.trip, state.blocks);
+      var dates = dayTabDates();
       if (dates.indexOf(state.selectedDate) === -1) state.selectedDate = dates[0] !== undefined ? dates[0] : '';
       showScreen('tripDetail');
       renderTripDetail();
@@ -9273,7 +9326,8 @@
     // 「旅行の日程の外」も、日程を合わせた・日付をずらしたあとに古くならないよう数え直す
     var warns = (item.warnings || []).filter(function (w) { return w.indexOf('別行動の') !== 0 && w.indexOf('旅行の日程の外') !== 0; });
     var tripDays = Core.allDatesForTrip(state.trip, []).filter(function (d) { return d; });
-    if (tripDays.length && item.date && tripDays.indexOf(item.date) === -1) warns.push(tr('旅行の日程の外の日付です。日付を直すか、上の案内から日程・日付を合わせないと追加できません'));
+    // 別行動に入れるときは、下の別行動の日々で確かめる（別行動は旅行の日程の外にもなれる）
+    if (!s.branch && tripDays.length && item.date && tripDays.indexOf(item.date) === -1) warns.push(tr('旅行の日程の外の日付です。日付を直すか、上の案内から日程・日付を合わせないと追加できません'));
     if (s.branch) {
       var why = Core.validateBranchBlock(s.branch, item.date, item.time || '');
       if (why === 'date_out_of_branch') warns.push(tr('別行動の日程の外の日付です。日付を直さないと追加できません'));
@@ -9886,13 +9940,23 @@
     $('#ssResult').addEventListener('change', handleSsResultChange);
   }
 
+  // 日タブに並べる日（延泊・前乗りの別行動の日も入る）
+  function dayTabDates() {
+    return Core.tripDayTabDates(state.trip, state.blocks, state.branches);
+  }
+
   function renderDayTabs() {
-    var dates = Core.allDatesForTrip(state.trip, state.blocks);
+    var dates = dayTabDates();
     var el = $('#dayTabs');
     if (!dates.length) { el.innerHTML = ''; return; }
+    // 別行動を消した・縮めたなどで、選んでいた日程の外の日が無くなったら最初の日に戻す
+    if (dates.indexOf(state.selectedDate) === -1) state.selectedDate = dates[0];
+    var tripDays = state.trip && state.trip.startDate ? Core.allDatesForTrip(state.trip, []) : [];
     el.innerHTML = dates.map(function (d) {
       var on = d === state.selectedDate;
-      return '<button class="day-tab' + (on ? ' on' : '') + '" data-date="' + escapeHtml(d) + '">' + escapeHtml(Core.dayLabel(state.trip, d)) + '</button>';
+      // 旅行の日程の外の日（前乗り・延泊の別行動の日）は、年を省いた短い日付（10.4（日））にする
+      var label = tripDays.length && d && tripDays.indexOf(d) === -1 ? Core.formatDateJp(d).replace(/^\d{4}\./, '') : Core.dayLabel(state.trip, d);
+      return '<button class="day-tab' + (on ? ' on' : '') + '" data-date="' + escapeHtml(d) + '">' + escapeHtml(label) + '</button>';
     }).join('');
     $all('.day-tab', el).forEach(function (b) {
       b.addEventListener('click', function () {
@@ -10055,11 +10119,9 @@
     return { start: '', end: '' };
   }
 
-  // 別行動の日付の選択肢：旅行の日々（日程があればその範囲）。編集中の別行動の日付が範囲外でも選べるように足す。
+  // 別行動の日付の選択肢：旅行の日々と、その前後2週間（前乗り・途中合流・延泊）。編集中の別行動の日々も足す。
   function branchDateChoices(branch) {
-    var dates = Core.allDatesForTrip(state.trip, allBlocks()).slice();
-    if (branch) Core.branchDates(branch).forEach(function (d) { if (dates.indexOf(d) < 0) dates.push(d); });
-    return dates.sort();
+    return Core.branchSheetDateChoices(state.trip, allBlocks(), branch);
   }
 
   function dateOptionsHtml(dates, selected) {
@@ -10124,6 +10186,8 @@
       : api('/trips/' + encodeURIComponent(state.trip.id) + '/branches', 'POST', input);
     req.then(function () { return refreshTrip(); }).then(function () {
       closeBranchSheet();
+      // 作ったあとは、その始まりの日を開く（旅行の日程の外の日に作ったときも、その日のタブが出る）
+      if (!target.id) state.selectedDate = input.date;
       // 作った・直したあとは、自分の道に切り替えて、その結果が見えるようにする
       state.viewAccountId = Core.resolveViewAccountId(me, state.branches);
       saveBranchView(state.trip.id, state.viewAccountId);
@@ -10257,7 +10321,7 @@
   }
 
   function goToAdjacentDay(delta) {
-    var dates = Core.allDatesForTrip(state.trip, state.blocks);
+    var dates = dayTabDates();
     var idx = dates.indexOf(state.selectedDate);
     if (idx === -1) return;
     var nextIdx = idx + delta;
@@ -10708,12 +10772,24 @@
       var resetBtn = manualNote.querySelector('#btnResetManualOrder');
       if (resetBtn) resetBtn.addEventListener('click', function () { resetManualOrder(dayDate); });
     }
-    var addBtn = document.createElement('button');
-    addBtn.className = 'block-add block-add-plan';
-    addBtn.innerHTML = plusIcon() + '<span>' + tr('予定を追加') + '</span>';
-    addBtn.addEventListener('click', function () { openBlockForm(null); });
-    el.appendChild(addBtn);
-    appendBranchAddArea(el);
+    // 旅行の日程の外の日（前乗り・延泊の別行動だけの日）には、みんなの予定を足さない。
+    // 別行動の予定は帯の「予定を追加」から、まとめての取り込みは自分の道を見ているとき（別行動に入る）だけ出す
+    var outsideTrip = !!(state.selectedDate && state.trip && state.trip.startDate && Core.allDatesForTrip(state.trip, []).indexOf(state.selectedDate) === -1);
+    if (outsideTrip) {
+      var outsideNote = document.createElement('div');
+      outsideNote.className = 'manual-order-note';
+      outsideNote.textContent = tr('旅行の日程の外の日です。この日は別行動の予定だけを入れられます。');
+      el.appendChild(outsideNote);
+      appendBranchAddArea(el);
+      if (!currentImportBranch()) { markPendingCards(el); return; }
+    } else {
+      var addBtn = document.createElement('button');
+      addBtn.className = 'block-add block-add-plan';
+      addBtn.innerHTML = plusIcon() + '<span>' + tr('予定を追加') + '</span>';
+      addBtn.addEventListener('click', function () { openBlockForm(null); });
+      el.appendChild(addBtn);
+      appendBranchAddArea(el);
+    }
 
     // まとめて作る入口（音声・メモ／複数日／スクショ／写真）は、1つずつ横長のボタンを縦に並べると長いので、
     // 「まとめて作る」の見出しの下に2列の小さいボタンで並べる（2026-10-22、オーナーの要望）。
@@ -10740,7 +10816,8 @@
     // スクショから予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
     addMore('block-add-screenshot', SCREENSHOT_ICON, tr('スクショから'), tr('スクショから予定を作る'), function () { openScreenshotImport(); });
     // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）
-    addMore('block-add-photos', IMAGE_ICON, tr('写真から'), tr('写真から旅程を作る'), function () { openPhotoItinerary(); });
+    // （みんなの予定に作るので、旅行の日程の外の日には出さない）
+    if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('写真から'), tr('写真から旅程を作る'), function () { openPhotoItinerary(); });
     el.appendChild(more);
 
     // 時差の並びを調べるボタン。URLに ?zonedebug を付けたときだけ出す（実データで並びがおかしいときの調査用。2026-09-27）
@@ -15028,7 +15105,8 @@
       L: L, tl: tl, r: 0, playing: false, lastTs: null, raf: null,
       dots: {}, lines: [], vehicle: null, vehicleTransport: '',
       lastDay: 0, lastLeg: -1, lastStop: -2, captionIndex: -2,
-      dates: Core.allDatesForTrip(state.trip, state.blocks).filter(function (d) { return d; })
+      // 地点の日（replayStopsのdayNumber）と同じ並び。延泊・前乗りの別行動の日も入る
+      dates: Core.replayDates(state.trip, activeBlocks())
     };
     tl.stops.forEach(function (s, i) {
       if (!s.located) return;
@@ -16150,7 +16228,11 @@
     var story, ctx;
     routesReady.then(function () {
       if (token.cancelled) return null;
-      var dateText = Core.videoDateRange(trip.startDate || replay.dates[0], trip.endDate || replay.dates[replay.dates.length - 1]);
+      // 延泊・前乗りの別行動の日（replay.datesにだけある日程の外の日）も、日付の範囲に含める
+      var vFirst = replay.dates[0], vLast = replay.dates[replay.dates.length - 1];
+      var vStart = trip.startDate && (!vFirst || trip.startDate < vFirst) ? trip.startDate : (vFirst || trip.startDate);
+      var vEnd = trip.endDate && (!vLast || trip.endDate > vLast) ? trip.endDate : (vLast || trip.endDate);
+      var dateText = Core.videoDateRange(vStart, vEnd);
       var maxZoom = Core.VIDEO_MAX_ZOOM, tiles;
       // 寄りすぎるとタイルが増える。OSMに負担をかけないよう、上限を超えるときは、まず寄る上限（区間・着いた地点の縮尺）を
       // 1段ずつ下げる（全体を引いたりはしない。2026-09-30）

@@ -418,7 +418,8 @@ export function normalizeProposalItems(rawItems, ctx, parsed) {
         warnings.push("年が書かれていないため、旅行の日程から" + date.slice(0, 4) + "年としました");
       }
     }
-    if (date && !dateInTrip(date, trip)) warnings.push("旅行の日程の外の日付です。日付を直さないと追加できません");
+    // 別行動に入れるときは、別行動の日々で確かめる（applyBranchPlacement）。別行動は旅行の日程の外にもなれるため
+    if (date && !ctx.branch && !dateInTrip(date, trip)) warnings.push("旅行の日程の外の日付です。日付を直さないと追加できません");
 
     let arriveDate = "";
     if (category === "transport") {
@@ -454,7 +455,7 @@ export function normalizeProposalItems(rawItems, ctx, parsed) {
       for (let k = 0; k < nights; k++) {
         const nightDate = k === 0 ? date : addDays(date, k);
         const w = warnings.slice();
-        if (nightDate !== date && !dateInTrip(nightDate, trip)) w.push("旅行の日程の外の日付です。日付を直さないと追加できません");
+        if (nightDate !== date && !ctx.branch && !dateInTrip(nightDate, trip)) w.push("旅行の日程の外の日付です。日付を直さないと追加できません");
         items.push({
           ...item, date: nightDate, time: k === 0 ? time : "", nightIndex: k,
           costItems: k === 0 ? costItems : [], note: k === 0 ? note : "", warnings: w,
@@ -720,7 +721,8 @@ export function validateSaveItems(rawItems, trip, opts) {
     if (!label) { errors.push({ index, reason: "empty_label" }); return; }
     const date = typeof r.date === "string" && DATE_RE.test(r.date) && isRealDate(...r.date.split("-").map(Number)) ? r.date : "";
     if (!date) { errors.push({ index, reason: "invalid_date" }); return; }
-    if (!dateInTrip(date, trip)) { errors.push({ index, reason: "date_out_of_range" }); return; }
+    // 別行動の中なら、日付は下の別行動の日々で確かめる（別行動は旅行の日程の外にもなれる）
+    if (!branch && !dateInTrip(date, trip)) { errors.push({ index, reason: "date_out_of_range" }); return; }
     const category = PROPOSAL_CATEGORIES.includes(r.category) ? r.category : "other";
     const transport = (category === "transport" || category === "arrival") && SCREENSHOT_TRANSPORTS.includes(r.transport) ? r.transport : "";
     const time = typeof r.time === "string" && TIME_RE.test(r.time) ? r.time : "";

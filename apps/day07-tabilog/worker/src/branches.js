@@ -7,6 +7,9 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+// 別行動は旅行の日程の前後この日数まで（前乗り・途中合流・延泊。画面の日付の選択肢 BRANCH_DATE_MARGIN_DAYS と同じ）
+export const BRANCH_DATE_MARGIN_DAYS = 14;
+
 // "HH:MM" を、その日の0時からの分に直す。形式が違えば null。
 export function hhmmToMinutes(hhmm) {
   if (typeof hhmm !== "string" || !TIME_RE.test(hhmm)) return null;
@@ -49,7 +52,7 @@ function branchSpan(b) {
  * input: { date, endDate?, startTime, endTime, title }（endDateが空・省略なら開始日と同じ）
  * others: 同じ人・同じ旅行の、ほかの分岐（DB行 { id, date, end_date, start_time, end_time } または camelCase）。
  *         更新のときは自分自身を除いて渡す（excludeIdでも除ける）。
- * opts.tripStart / opts.tripEnd: 旅行の日程（空・省略なら範囲チェックをしない）。
+ * opts.tripStart / opts.tripEnd: 旅行の日程（空・省略なら範囲チェックをしない）。日程の前後14日までは許す。
  */
 export function validateBranchInput(input, others, excludeId, opts) {
   if (!input || typeof input !== "object") return "invalid_input";
@@ -60,11 +63,13 @@ export function validateBranchInput(input, others, excludeId, opts) {
   // 終わり（終わりの日＋時刻）は始まりより後
   const mine = branchSpan(input);
   if (!mine || mine.end <= mine.start) return "end_before_start";
-  // 旅行に日程があるときは、始まりの日も終わりの日もその中
+  // 旅行の日程の外（前乗り・途中合流・延泊）も選べる。ただし日程の前後 BRANCH_DATE_MARGIN_DAYS 日まで
+  // （年の打ち間違いなどで、旅行の日タブが遠い日まで並ばないように。2026-10-22〜、以前は日程の中だけ）
   const o = opts || {};
   const endDate = branchEndDateOf(input);
-  if (o.tripStart && (input.date < o.tripStart || endDate < o.tripStart)) return "date_out_of_range";
-  if (o.tripEnd && (input.date > o.tripEnd || endDate > o.tripEnd)) return "date_out_of_range";
+  const sd = dateToDays(o.tripStart || ""), ed = dateToDays(o.tripEnd || "") ?? sd;
+  if (sd !== null && dateToDays(input.date) < sd - BRANCH_DATE_MARGIN_DAYS) return "date_out_of_range";
+  if (ed !== null && dateToDays(endDate) > ed + BRANCH_DATE_MARGIN_DAYS) return "date_out_of_range";
   if (input.title !== undefined && input.title !== null && (typeof input.title !== "string" || input.title.length > 100)) {
     return "invalid_title";
   }

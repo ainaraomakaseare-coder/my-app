@@ -329,6 +329,10 @@ const norm = normalizeScreenshotResult(JSON.parse(JSON.stringify(AI)), { trip: T
   ], TRIP);
   check("再検証: 通るのは正しい2件", r.items.map((i) => i.label), ["羽田→那覇 JAL903", "邪悪なURL"]);
   check("再検証: エラーの理由", r.errors, [{ index: 1, reason: "date_out_of_range" }, { index: 2, reason: "empty_label" }, { index: 3, reason: "invalid_date" }, { index: 4, reason: "invalid_item" }]);
+  // 別行動（前乗り・延泊）は旅行の日程の外にもなれる：別行動の日々の中なら保存する（2026-10-22〜）
+  const late = { date: "2026-10-09", end_date: "2026-10-09", start_time: "10:00", end_time: "18:00" };
+  const rb = validateSaveItems([{ ...good, date: "2026-10-09", time: "11:00" }, { ...good, date: "2026-10-04", time: "11:00" }], TRIP, { branch: late });
+  check("再検証: 別行動の日なら日程の外でも保存、別行動の外は別行動の理由", [rb.items.length, rb.errors], [1, [{ index: 1, reason: "date_out_of_branch" }]]);
   const a = r.items[0];
   check("再検証: 移動の到着地・時刻・会社", a.travel, { from: "羽田空港", to: "那覇空港", company: "日本航空 JAL903", depart: "09:30", arrive: "12:05", arriveMapUrl: good.arriveMapUrl, arriveLat: 26.2065, arriveLng: 127.6459 });
   check("再検証: 費用のレートは正しいものだけ通る", a.costItems, [{ label: "運賃", amount: 18700 }, { label: "USD", amount: 10, currency: "USD", rate: 150 }, { label: "レート不正", amount: 1, currency: "EUR" }]);

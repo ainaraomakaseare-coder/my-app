@@ -64,8 +64,14 @@ check("実在しない日付", validateBranchInput({ ...multi, date: "2026-02-30
 check("同じ日で終わり=始まりはNG", validateBranchInput({ ...multi, endDate: "2026-06-27", endTime: "14:00" }, []), "end_before_start");
 const tripRange = { tripStart: "2026-06-27", tripEnd: "2026-06-28" };
 check("旅行の日程の中", validateBranchInput(multi, [], undefined, tripRange), "");
-check("終わりの日が日程の外", validateBranchInput({ ...multi, endDate: "2026-06-29" }, [], undefined, tripRange), "date_out_of_range");
-check("始まりの日が日程の外", validateBranchInput({ ...multi, date: "2026-06-26" }, [], undefined, tripRange), "date_out_of_range");
+// 前乗り・途中合流・延泊：旅行の日程の外も、前後14日までは選べる（2026-10-22〜）
+check("終わりの日が日程の外（翌日）でも作れる", validateBranchInput({ ...multi, endDate: "2026-06-29" }, [], undefined, tripRange), "");
+check("始まりの日が日程の外（前日）でも作れる", validateBranchInput({ ...multi, date: "2026-06-26" }, [], undefined, tripRange), "");
+check("日程の14日後まではよい", validateBranchInput({ ...multi, date: "2026-07-12", endDate: "2026-07-12", startTime: "10:00", endTime: "12:00" }, [], undefined, tripRange), "");
+check("日程の15日後は範囲外", validateBranchInput({ ...multi, date: "2026-07-12", endDate: "2026-07-13" }, [], undefined, tripRange), "date_out_of_range");
+check("日程の14日前まではよい", validateBranchInput({ ...multi, date: "2026-06-13", endDate: "2026-06-13", startTime: "10:00", endTime: "12:00" }, [], undefined, tripRange), "");
+check("日程の15日前は範囲外", validateBranchInput({ ...multi, date: "2026-06-12" }, [], undefined, tripRange), "date_out_of_range");
+check("終わりの日が空の旅行は、始まりの日を基準にする", validateBranchInput({ ...multi, date: "2026-07-11", endDate: "2026-07-12" }, [], undefined, { tripStart: "2026-06-27", tripEnd: "" }), "date_out_of_range");
 check("日程が空なら範囲は見ない", validateBranchInput({ ...multi, endDate: "2030-01-01" }, [], undefined, { tripStart: "", tripEnd: "" }), "");
 const mineMulti = [{ id: "br_m", date: "2026-06-27", end_date: "2026-06-28", start_time: "14:00", end_time: "12:00" }];
 check("日またぎと重なる（途中の日）", validateBranchInput({ date: "2026-06-28", startTime: "01:00", endTime: "02:00" }, mineMulti), "overlap");

@@ -289,10 +289,18 @@ check("他人は日をまたぐ別行動を直せない", [r.status, r.data.erro
 // 旅行に日程があるとき：始まり・終わりの日が旅行の中
 sqlite.prepare("INSERT INTO trips (id, title, start_date, end_date, created_at, updated_at) VALUES ('t2','日程つき','2026-10-01','2026-10-03',?,?)").run(now, now);
 sqlite.prepare("INSERT INTO trip_members (id, trip_id, account_id, name, joined_at) VALUES ('m2_alice','t2','111111','アリス',?)").run(now);
-r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-10-03", endDate: "2026-10-04", startTime: "14:00", endTime: "12:00" });
-check("終わりの日が旅行の日程の外は400", [r.status, r.data.error], [400, "date_out_of_range"]);
-r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-09-30", endDate: "2026-10-01", startTime: "14:00", endTime: "12:00" });
-check("始まりの日が旅行の日程の外は400", [r.status, r.data.error], [400, "date_out_of_range"]);
+// 日程の外（前乗り・延泊）は前後14日まで作れる（2026-10-22〜）。それより遠いと400
+r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-10-17", endDate: "2026-10-18", startTime: "14:00", endTime: "12:00" });
+check("終わりの日が旅行の日程の15日後は400", [r.status, r.data.error], [400, "date_out_of_range"]);
+r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-09-16", endDate: "2026-09-17", startTime: "14:00", endTime: "12:00" });
+check("始まりの日が旅行の日程の15日前は400", [r.status, r.data.error], [400, "date_out_of_range"]);
+r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-09-29", endDate: "2026-10-01", startTime: "10:00", endTime: "09:00" });
+check("前乗り（日程の2日前から初日の朝まで）は作れる", [r.status, r.data.date, r.data.endDate], [201, "2026-09-29", "2026-10-01"]);
+const earlyBranchId = r.data.id;
+r = await call("POST", "/trips/t2/blocks", "alice", { date: "2026-09-29", time: "12:00", label: "前乗りの昼", branchId: earlyBranchId });
+check("日程の外の日にも別行動の予定を作れる", [r.status, r.data.date], [201, "2026-09-29"]);
+r = await call("DELETE", "/branches/" + earlyBranchId, "alice");
+check("前乗りの別行動を消せる", r.status, 200);
 r = await call("POST", "/trips/t2/branches", "alice", { date: "2026-10-02", endDate: "2026-10-03", startTime: "14:00", endTime: "12:00" });
 check("旅行の日程の中なら作れる", [r.status, r.data.endDate], [201, "2026-10-03"]);
 const t2BranchId = r.data.id;
