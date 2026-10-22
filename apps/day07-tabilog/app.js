@@ -10815,6 +10815,11 @@
       b.addEventListener('click', onClick);
       list.appendChild(b);
     }
+    // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）。一番よく使ってほしいので一番上に置く（2026-10-22、オーナーの要望）
+    // （みんなの予定に作るので、旅行の日程の外の日には出さない）
+    if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('撮った写真から'), false,
+      tr('例：旅先で撮った写真を選ぶと、撮った時刻と場所から立ち寄った順に予定を作ります'),
+      function () { openPhotoItinerary(); });
     // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
     // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
     // なるバグの元）。必ずラップして呼ぶ。
@@ -10829,11 +10834,6 @@
     addMore('block-add-screenshot', SCREENSHOT_ICON, tr('予約・チケットの画像から'), true,
       tr('例：航空券やホテル予約の画面を保存した画像から、日時と場所を読み取ります'),
       function () { openScreenshotImport(); });
-    // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）
-    // （みんなの予定に作るので、旅行の日程の外の日には出さない）
-    if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('撮った写真から'), false,
-      tr('例：旅先で撮った写真を選ぶと、撮った時刻と場所から立ち寄った順に予定を作ります'),
-      function () { openPhotoItinerary(); });
     // ChatGPTなど自分のAIに頼む（docs/adr/0015）：入口は音声・メモの画面の下のほうにあるので、開いてその場所までスクロールする
     addMore('block-add-other-ai', SPARKLE_ICON, tr('ChatGPTなど他のAIに頼む'), 'own',
       tr('例：お願い文をコピーしてChatGPTに旅のメモと一緒に送り、返ってきた答えを貼り付けます'),
