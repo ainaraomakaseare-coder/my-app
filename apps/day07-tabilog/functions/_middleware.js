@@ -72,15 +72,17 @@ function setContent(value) {
 export async function onRequest(context) {
   var request = context.request;
   var url = new URL(request.url);
-  var tripId = url.searchParams.get('trip') || '';
-  if (request.method !== 'GET' || !TRIP_ID_RE.test(tripId)) return context.next();
-
-  if (url.searchParams.get('og_debug') === '1') {
-    var dbg = await fetchTrip(context.env, tripId);
+  // 動作確認用：/og-debug/<旅行ID> で、Workerへの問い合わせ結果（経路・ステータス・エラー）だけをJSONで返す
+  var dm = /^\/og-debug\/([^/]+)$/.exec(url.pathname);
+  if (dm) {
+    var dbg = TRIP_ID_RE.test(dm[1]) ? await fetchTrip(context.env, dm[1]) : { via: '', status: 0, error: 'bad_id', trip: null };
     return new Response(JSON.stringify({ via: dbg.via, status: dbg.status, error: dbg.error, found: !!dbg.trip }), {
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
     });
   }
+
+  var tripId = url.searchParams.get('trip') || '';
+  if (request.method !== 'GET' || !TRIP_ID_RE.test(tripId)) return context.next();
 
   var results = await Promise.all([context.next(), fetchTrip(context.env, tripId)]);
   var res = results[0];
