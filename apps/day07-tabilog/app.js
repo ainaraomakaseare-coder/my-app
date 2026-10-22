@@ -8683,6 +8683,8 @@
 
   // ChatGPTなど自分のAIに頼む入口の吹き出しアイコン
   var SPARKLE_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 16 14h-6l-4 3v-3H4a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 4 4z"/><path d="M7 8h6M7 11h4"/></svg>';
+  // 「まとめて予定を作る」ボタンの重なったカードのアイコン
+  var LAYERS_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5l7.5 4-7.5 4-7.5-4z"/><path d="M2.5 10l7.5 4 7.5-4"/><path d="M2.5 13.5l7.5 4 7.5-4"/></svg>';
   var CALENDAR_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="14" height="12.5" rx="2"/><path d="M3 8.5h14M7 2.5v4M13 2.5v4"/></svg>';
   var SCREENSHOT_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="2" width="9" height="16" rx="2"/><path d="M8.5 15h3"/></svg>';
   var MIC_ICON = '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0"/><path d="M10 15v2.5M7 17.5h6"/></svg>';
@@ -10337,6 +10339,84 @@
     if (activeTab) activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }
 
+  // 「まとめて予定を作る」のシート。何をすればどう登録されるかが分かるよう、説明文の下に、
+  // 名前・AIを使うかどうか・例を書いたボタンを並べる（2026-10-22、オーナーの要望。「スクショ」という言い方はやめて「予約・チケットの画像」と書く）
+  function bulkAddSheetEl() {
+    var sheet = $('#bulkAddSheet');
+    if (sheet) return sheet;
+    sheet = document.createElement('div');
+    sheet.className = 'sheet-backdrop';
+    sheet.id = 'bulkAddSheet';
+    sheet.hidden = true;
+    sheet.innerHTML = '<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="bulkAddSheetTitle">' +
+      '<div class="sheet-head"><div class="sheet-title" id="bulkAddSheetTitle"></div>' +
+      '<button class="sheet-close" type="button" aria-label="' + escapeHtml(tr('閉じる')) + '">×</button></div>' +
+      '<div class="bulk-add-body"></div></div>';
+    sheet.addEventListener('click', function (e) { if (e.target === e.currentTarget) closeBulkAddSheet(); });
+    sheet.querySelector('.sheet-close').addEventListener('click', closeBulkAddSheet);
+    document.body.appendChild(sheet);
+    return sheet;
+  }
+  function closeBulkAddSheet() {
+    var sheet = $('#bulkAddSheet');
+    if (sheet) sheet.hidden = true;
+    document.body.classList.remove('sheet-open');
+  }
+  function openBulkAddSheet(outsideTrip) {
+    var sheet = bulkAddSheetEl();
+    sheet.querySelector('#bulkAddSheetTitle').textContent = tr('まとめて予定を作る');
+    var more = document.createElement('div');
+    more.className = 'add-more';
+    more.innerHTML = '<p class="add-more-lead">' + escapeHtml(tr('1つずつ入力しなくても、話した内容や画像・写真から予定をまとめて作れます。保存する前に確認画面で直せます。')) + '</p>' +
+      '<div class="add-more-list"></div>' +
+      '<p class="add-more-note">' + escapeHtml(tr('「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。')) + '</p>';
+    var list = more.querySelector('.add-more-list');
+    // ai: true＝このアプリのAI（無料枠を使う）、false＝AIなし、'own'＝ChatGPTなど自分のAI（枠を使わない）
+    function addMore(cls, icon, label, ai, example, onClick) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'block-add add-more-item' + (cls ? ' ' + cls : '');
+      b.innerHTML = '<span class="add-more-icon">' + icon + '</span>' +
+        '<span class="add-more-body"><span class="add-more-name">' + escapeHtml(label) +
+        '<span class="add-more-badge' + (ai === 'own' ? ' is-own' : ai ? ' is-ai' : '') + '">' + (ai === 'own' ? tr('自分のAI') : ai ? tr('AI') : tr('AIなし')) + '</span></span>' +
+        '<span class="add-more-example">' + escapeHtml(example) + '</span></span>';
+      b.addEventListener('click', function () { closeBulkAddSheet(); onClick(); });
+      list.appendChild(b);
+    }
+    // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）。一番よく使ってほしいので一番上に置く（2026-10-22、オーナーの要望）
+    // （みんなの予定に作るので、旅行の日程の外の日には出さない）
+    if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('撮った写真から'), false,
+      tr('例：旅先で撮った写真を選ぶと、撮った時刻と場所から立ち寄った順に予定を作ります'),
+      function () { openPhotoItinerary(); });
+    // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
+    // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
+    // なるバグの元）。必ずラップして呼ぶ。
+    addMore('block-add-voice', MIC_ICON, tr('話す・メモを貼る'), true,
+      tr('例：「10時に金閣寺、お昼はうどんで900円」と話すと、予定・記録・お金に分けて入ります'),
+      function () { openVoiceEntryForm(false); });
+    // 「複数日をまとめて記録する」（DAY30〜）：日タブを選ばず旅行全体に対して話す・貼り付ける
+    addMore('block-add-multiday', CALENDAR_ICON, tr('何日分かをまとめて'), true,
+      tr('例：「1日目は高松でうどん、2日目は道後温泉」と話すと、日ごとに分けて入ります'),
+      function () { openVoiceEntryForm(true); });
+    // 予約・チケットの画像から予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
+    addMore('block-add-screenshot', SCREENSHOT_ICON, tr('予約・チケットの画像から'), true,
+      tr('例：航空券やホテル予約の画面を保存した画像から、日時と場所を読み取ります'),
+      function () { openScreenshotImport(); });
+    // ChatGPTなど自分のAIに頼む（docs/adr/0015）：入口は音声・メモの画面の下のほうにあるので、開いてその場所までスクロールする
+    addMore('block-add-other-ai', SPARKLE_ICON, tr('ChatGPTなど他のAIに頼む'), 'own',
+      tr('例：お願い文をコピーしてChatGPTに旅のメモと一緒に送り、返ってきた答えを貼り付けます'),
+      function () {
+        openVoiceEntryForm(false);
+        var target = $('#btnCopyAiPrompt');
+        if (state.selectedDate && target) setTimeout(function () { target.closest('.field').scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50);
+      });
+    var body = sheet.querySelector('.bulk-add-body');
+    body.innerHTML = '';
+    body.appendChild(more);
+    sheet.hidden = false;
+    document.body.classList.add('sheet-open');
+  }
+
   function renderDaySection() {
     applyTripZones();
     $('#dayTitle').textContent = tr('{day}のきろく', { day: Core.dayLabel(state.trip, state.selectedDate) });
@@ -10795,56 +10875,14 @@
       appendBranchAddArea(el);
     }
 
-    // まとめて予定を作る入口（音声・メモ／複数日／予約・チケットの画像／写真／自分のAI）。
-    // 何をすればどう登録されるかが分かるよう、見出し＋説明文の下に、名前・AIを使うかどうか・例を書いたボタンを並べる
-    // （2026-10-22、オーナーの要望。「スクショ」という言い方はやめて「予約・チケットの画像」と書く）。
-    var more = document.createElement('div');
-    more.className = 'add-more';
-    more.innerHTML = '<p class="add-more-title">' + tr('まとめて予定を作る') + '</p>' +
-      '<p class="add-more-lead">' + escapeHtml(tr('1つずつ入力しなくても、話した内容や画像・写真から予定をまとめて作れます。保存する前に確認画面で直せます。')) + '</p>' +
-      '<div class="add-more-list"></div>' +
-      '<p class="add-more-note">' + escapeHtml(tr('「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。')) + '</p>';
-    var list = more.querySelector('.add-more-list');
-    // ai: true＝このアプリのAI（無料枠を使う）、false＝AIなし、'own'＝ChatGPTなど自分のAI（枠を使わない）
-    function addMore(cls, icon, label, ai, example, onClick) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'block-add add-more-item' + (cls ? ' ' + cls : '');
-      b.innerHTML = '<span class="add-more-icon">' + icon + '</span>' +
-        '<span class="add-more-body"><span class="add-more-name">' + escapeHtml(label) +
-        '<span class="add-more-badge' + (ai === 'own' ? ' is-own' : ai ? ' is-ai' : '') + '">' + (ai === 'own' ? tr('自分のAI') : ai ? tr('AI') : tr('AIなし')) + '</span></span>' +
-        '<span class="add-more-example">' + escapeHtml(example) + '</span></span>';
-      b.addEventListener('click', onClick);
-      list.appendChild(b);
-    }
-    // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）。一番よく使ってほしいので一番上に置く（2026-10-22、オーナーの要望）
-    // （みんなの予定に作るので、旅行の日程の外の日には出さない）
-    if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('撮った写真から'), false,
-      tr('例：旅先で撮った写真を選ぶと、撮った時刻と場所から立ち寄った順に予定を作ります'),
-      function () { openPhotoItinerary(); });
-    // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
-    // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
-    // なるバグの元）。必ずラップして呼ぶ。
-    addMore('block-add-voice', MIC_ICON, tr('話す・メモを貼る'), true,
-      tr('例：「10時に金閣寺、お昼はうどんで900円」と話すと、予定・記録・お金に分けて入ります'),
-      function () { openVoiceEntryForm(false); });
-    // 「複数日をまとめて記録する」（DAY30〜）：日タブを選ばず旅行全体に対して話す・貼り付ける
-    addMore('block-add-multiday', CALENDAR_ICON, tr('何日分かをまとめて'), true,
-      tr('例：「1日目は高松でうどん、2日目は道後温泉」と話すと、日ごとに分けて入ります'),
-      function () { openVoiceEntryForm(true); });
-    // 予約・チケットの画像から予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
-    addMore('block-add-screenshot', SCREENSHOT_ICON, tr('予約・チケットの画像から'), true,
-      tr('例：航空券やホテル予約の画面を保存した画像から、日時と場所を読み取ります'),
-      function () { openScreenshotImport(); });
-    // ChatGPTなど自分のAIに頼む（docs/adr/0015）：入口は音声・メモの画面の下のほうにあるので、開いてその場所までスクロールする
-    addMore('block-add-other-ai', SPARKLE_ICON, tr('ChatGPTなど他のAIに頼む'), 'own',
-      tr('例：お願い文をコピーしてChatGPTに旅のメモと一緒に送り、返ってきた答えを貼り付けます'),
-      function () {
-        openVoiceEntryForm(false);
-        var target = $('#btnCopyAiPrompt');
-        if (state.selectedDate && target) setTimeout(function () { target.closest('.field').scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50);
-      });
-    el.appendChild(more);
+    // まとめて予定を作る入口（写真／音声・メモ／複数日／予約・チケットの画像／自分のAI）。
+    // 5つを日の画面に並べるとごちゃつくので、ボタン1つにして、押すと下から出るシートで選ぶ（2026-10-22、オーナーの要望）
+    var bulkBtn = document.createElement('button');
+    bulkBtn.type = 'button';
+    bulkBtn.className = 'block-add block-add-bulk';
+    bulkBtn.innerHTML = LAYERS_ICON + '<span>' + tr('まとめて予定を作る') + '</span><span class="block-add-sub">' + tr('写真・音声・画像などから') + '</span>';
+    bulkBtn.addEventListener('click', function () { openBulkAddSheet(outsideTrip); });
+    el.appendChild(bulkBtn);
 
     // 時差の並びを調べるボタン。URLに ?zonedebug を付けたときだけ出す（実データで並びがおかしいときの調査用。2026-09-27）
     if (blocks.length && /[?&]zonedebug\b/.test(location.search || '')) {
@@ -13449,7 +13487,7 @@
       { target: d + '#btnInvite', title: 'リンクを送って、みんなで書こう', body: 'リンクを送ると、一緒に行った人もアプリ無しで見たり書き足したりできます。' },
       { target: d + '#dayTabs', title: '日ごとに並びます', body: '日ごとに予定と記録が並びます。タブで日を切り替えられます。' },
       { target: d + '.block-add-plan', title: '予定を足して、記録を足す', body: '予定（いつ・どこ）を足して、その中に写真・感想・費用の記録を足していきます。' },
-      { target: d + '.block-add-voice', title: '話す・貼るだけでも入れられる', body: '話したり、メモやスクショを貼ると、予定と記録に分けて入れてくれます。' },
+      { target: d + '.block-add-bulk', title: 'まとめて予定を作れる', body: '撮った写真や、話した内容・メモ・予約画面の画像から、予定をまとめて作れます。' },
       { target: d + '#btnOpenReplay', title: '地図でふりかえる', body: '旅を地図の上で再生して、動画にしてシェアもできます。' },
       { target: d + '#btnOpenSettlement', title: '精算もおまかせ', body: '立て替えを入れると、誰が誰にいくら払うか自動で計算します。' }
     ];
