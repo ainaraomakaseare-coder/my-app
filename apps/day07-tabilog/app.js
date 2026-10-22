@@ -9728,8 +9728,8 @@
   }
 
   // 写真を選んだあと、確認画面が出るまで（読み込み・場所の名前を調べる間）に出す「作っています」の画面。
-  // 以前はトーストだけで、元の画面に戻って止まって見えた（2026-10-22）。iPhoneアプリでは写真を選ぶ画面を
-  // 開く前に出しておく（選び終えてからpickImagesが返るまでにも数秒かかるため）。キャンセルしたら消す
+  // 以前はトーストだけで、元の画面に戻って止まって見えた（2026-10-22）。写真を選ぶ画面を開く前には出さない
+  // （すぐアルバムが開くので、一瞬だけ見えて邪魔だった。オーナーの要望）。選び終えて写真が届いてから出す
   function photoItinShowBusy(text, n, total) {
     var el = $('#photoItinBusy');
     if (!el) {
@@ -9758,8 +9758,8 @@
     if (!state.trip || photoItinBusy) return;
     var plugin = nativePhotoPicker();
     if (plugin && photoLibPerm !== 'denied') {
-      photoItinShowBusy(tr('写真を読み込んでいます…'));
       plugin.pickImages({ quality: 90, limit: Core.PHOTO_ITINERARY_MAX }).then(function (res) {
+        if ((res && res.photos || []).length) photoItinShowBusy(tr('写真を読み込んでいます…'));
         if (photoLibPerm !== 'granted' && photoLibPerm !== 'limited') photoLibPerm = 'granted';
         var photos = ((res && res.photos) || []).slice(0, Core.PHOTO_ITINERARY_MAX);
         buildPhotoItinerary(photos.map(function (p) {
