@@ -281,4 +281,6 @@ I18N.addLang('en', {
   "写真・音声・画像などから": "From photos, voice, images and more",
   "まとめて予定を作れる": "Create plans in bulk",
   "撮った写真や、話した内容・メモ・予約画面の画像から、予定をまとめて作れます。": "Create plans all at once from photos you took, what you say, memos, or booking screen images.",
+  "ログインすると、自分の別行動を追加できます": "Log in to add your own separate plans",
+  "別行動を追加するには、この旅行に「参加する」が必要です。参加しますか？": "To add separate plans, you need to join this trip. Join now?",
 });
