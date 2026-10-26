@@ -6318,14 +6318,14 @@
   // 下（上）へスワイプで閉じる、タップでボタンを出し入れする。開いているあいだは後ろのページが
   // 動かないようにする（以前は写真を開いたまま上下に動かすと、後ろのスケジュールがスクロールしていた）。
   // 以前は写真と動画が別々の拡大表示で、写真から動画へスワイプで移れなかった。
-  // items：[{ type: 'photo' | 'video', id }]
+  // items：[{ type: 'photo' | 'video', id }]。まだ保存していない端末の画像（取り込みの確認画面など）は { type: 'photo', url, local: true }
   var viewer = { items: [], index: 0 };
 
   function openMediaViewer(items, index) {
     viewer.items = items || [];
     viewer.index = Math.max(0, Math.min(index || 0, viewer.items.length - 1));
     $('#mvTrack').innerHTML = viewer.items.map(function (it, i) {
-      var url = escapeHtml(photoUrl(it.id));
+      var url = escapeHtml(it.url || photoUrl(it.id));
       return '<div class="mv-slide" data-i="' + i + '">' + (it.type === 'video'
         ? '<video data-src="' + url + '" controls playsinline preload="none"></video>'
         : '<img data-src="' + url + '" alt="" draggable="false">') + '</div>';
@@ -6333,6 +6333,8 @@
     var el = $('#photoLightbox');
     el.classList.remove('mv-chrome-hidden');
     el.style.backgroundColor = '';
+    // 端末から選んだばかりの画像は手元にあるので、「保存」は出さない
+    $('#btnSaveLightboxPhoto').hidden = viewer.items.some(function (it) { return it.local; });
     el.hidden = false;
     document.body.classList.add('viewer-open');
     goToMedia(viewer.index, false);
@@ -9182,7 +9184,7 @@
   function renderSsThumbs() {
     var s = ssState();
     $('#ssThumbs').innerHTML = s.files.map(function (f, i) {
-      return '<div class="ss-thumb-wrap"><img class="ss-thumb" src="' + f.url + '" alt="' + tr('選んだ画像{n}', { n: i + 1 }) + '">' +
+      return '<div class="ss-thumb-wrap"><img class="ss-thumb ss-zoomable" data-ss-zoom-file="' + i + '" src="' + f.url + '" alt="' + tr('選んだ画像{n}', { n: i + 1 }) + '">' +
         '<button type="button" class="ss-thumb-x" data-ss-remove="' + i + '" aria-label="' + tr('この画像を外す') + '">×</button></div>';
     }).join('');
     $('#btnSsPick').textContent = s.files.length ? tr('画像を追加する（{n}/{max}枚）', { n: s.files.length, max: SS_MAX_IMAGES }) : tr('画像を選ぶ（最大{max}枚）', { max: SS_MAX_IMAGES });
@@ -9285,12 +9287,12 @@
     if (item.photoRefs) {
       var ps = ssState().photos || [];
       var refs = item.photoRefs.filter(function (i) { return ps[i]; });
-      return '<span class="ss-photo-strip">' + refs.slice(0, 3).map(function (i) {
-        return '<img class="ss-thumb ss-thumb-small" src="' + ps[i].url + '" alt="' + tr('写真') + '">';
-      }).join('') + (refs.length > 3 ? '<span class="ss-photo-more">+' + (refs.length - 3) + '</span>' : '') + '</span>';
+      return '<span class="ss-photo-strip ss-zoomable" data-ss-zoom-photos="' + refs.join(',') + '">' + refs.slice(0, 3).map(function (i, k) {
+        return '<img class="ss-thumb ss-thumb-small" data-ss-zoom-at="' + k + '" src="' + ps[i].url + '" alt="' + tr('写真') + '">';
+      }).join('') + (refs.length > 3 ? '<span class="ss-photo-more" data-ss-zoom-at="3">+' + (refs.length - 3) + '</span>' : '') + '</span>';
     }
     var f = item.sourceImage !== null && item.sourceImage !== undefined ? ssState().files[item.sourceImage] : null;
-    return f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="' + tr('元の画像') + '">' : '';
+    return f ? '<img class="ss-thumb ss-thumb-small ss-zoomable" data-ss-zoom-file="' + item.sourceImage + '" src="' + f.url + '" alt="' + tr('元の画像') + '">' : '';
   }
 
   // 場所の行。地図が付いていれば名前、無ければ「地図なし」＋「場所を探す」（記録フォームの「場所名で検索」と同じ
@@ -9458,7 +9460,7 @@
     if (s.unreadable.length) {
       html += '<h2 class="ss-day">' + tr('読み取れなかった画像') + '</h2><div class="ss-unreadable">' + s.unreadable.map(function (u) {
         var f = s.files[u.image];
-        return '<div class="ss-unreadable-row">' + (f ? '<img class="ss-thumb ss-thumb-small" src="' + f.url + '" alt="">' : '') +
+        return '<div class="ss-unreadable-row">' + (f ? '<img class="ss-thumb ss-thumb-small ss-zoomable" data-ss-zoom-file="' + u.image + '" src="' + f.url + '" alt="">' : '') +
           '<span>' + tr('画像{n}：{msg}', { n: u.image + 1, msg: escapeHtml(u.message || tr('読み取れませんでした')) }) + '</span></div>';
       }).join('') + '</div>';
     }
@@ -9468,6 +9470,27 @@
       '<p class="hint">' + (s.ai ? tr('やめると、この候補は保存されません。AIによる整理はすでに行ったため、今月の利用回数は戻りません。') : tr('やめると、この候補は保存されません（AIは使っていないので、利用回数は減っていません）。')) + '</p>';
     el.innerHTML = html;
     el.hidden = false;
+  }
+
+  // 取り込みの小さい画像をタップしたら、大きく表示する（左右スワイプで同じ取り込みの他の画像へ）。
+  // data-ss-zoom-file：選んだ予約・チケットの画像の何枚目か。data-ss-zoom-photos：写真から旅程の、その予定の写真の並び
+  function openSsZoom(target) {
+    var el = target.closest ? target.closest('[data-ss-zoom-file], [data-ss-zoom-photos]') : null;
+    if (!el) return false;
+    var s = ssState();
+    if (el.hasAttribute('data-ss-zoom-photos')) {
+      var ps = s.photos || [];
+      var refs = el.getAttribute('data-ss-zoom-photos').split(',').map(Number).filter(function (i) { return ps[i]; });
+      if (!refs.length) return false;
+      var at = target.closest('[data-ss-zoom-at]');
+      openMediaViewer(refs.map(function (i) { return { type: 'photo', url: ps[i].url, local: true }; }), at ? Number(at.getAttribute('data-ss-zoom-at')) : 0);
+      return true;
+    }
+    var files = s.files || [];
+    var n = Number(el.getAttribute('data-ss-zoom-file'));
+    if (!files[n]) return false;
+    openMediaViewer(files.map(function (f) { return { type: 'photo', url: f.url, local: true }; }), n);
+    return true;
   }
 
   function ssItemOf(target) {
@@ -9532,6 +9555,7 @@
     var item = ssItemOf(t);
     if (t.id === 'btnSsCancel') { cancelImportConfirm(); return; }
     if (t.id === 'btnSsSave') { handleSsSave(); return; }
+    if (openSsZoom(t)) return;
     var fitBtn = t.closest ? t.closest('[data-ss-fit]') : null;
     if (fitBtn) { handleSsFit(fitBtn.getAttribute('data-ss-fit')); return; }
     if (!item) return;
@@ -9935,7 +9959,7 @@
     $('#ssFileInput').addEventListener('change', function (e) { handleSsFilesChosen(e.target.files); e.target.value = ''; });
     $('#ssThumbs').addEventListener('click', function (e) {
       var x = e.target.closest ? e.target.closest('[data-ss-remove]') : null;
-      if (!x) return;
+      if (!x) { openSsZoom(e.target); return; }
       var s = ssState();
       var f = s.files.splice(Number(x.getAttribute('data-ss-remove')), 1)[0];
       if (f) { try { URL.revokeObjectURL(f.url); } catch (err) {} }
