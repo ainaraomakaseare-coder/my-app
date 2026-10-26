@@ -43,6 +43,8 @@ I18N.addLang('en', {
   "旅行を編集": "Edit trip",
   "保存する": "Save",
   "この旅行を履歴から消す": "Remove this trip from history",
+  "この旅行を削除する": "Delete this trip",
+  "「履歴から消す」は自分の一覧から外すだけです。「削除する」は旅行そのものを消し、元に戻せません（アカウント参加者が自分ひとりのときだけ）。": "\"Remove from history\" only takes it off your own list. \"Delete\" erases the trip itself and can't be undone (only when you are the only account participant).",
   "音声・メモでまとめて記録する": "Record by voice or notes",
   "話したりメモを貼ると、予定の候補を作ります（保存前に直せます）": "Speak or paste notes to get plan suggestions (editable before saving)",
   "URLやお店の名前など（任意・雑多でOK）": "URLs, shop names, etc. (optional, messy is fine)",

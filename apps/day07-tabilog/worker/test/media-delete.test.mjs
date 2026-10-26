@@ -141,13 +141,32 @@ addEntry("e8", "b4", [D, A]);
   check("別行動の削除は成功し、別の記録が使うDは残ってAだけ消える", [r.status, lastDeleted()], [200, [A]]);
 }
 
-// 旅行を消す：表紙と中の全部の記録の写真が消える
+// 旅行を消す：ログインしていて、アカウント参加者が自分ひとりのときだけ消せる
 addTrip("t2", B);
 addBlock("b5", "t2");
 addEntry("e10", "b5", [X]);
-r2.calls.length = 0;
-r = await call("DELETE", "/trips/t2");
-check("旅行の削除で表紙と記録の写真が消える", [r.status, lastDeleted()], [200, sorted([B, X])]);
+{
+  const aliceToken = "a".repeat(64), bobToken = "b".repeat(64);
+  sqlite.prepare("INSERT INTO accounts (email, account_id, name, created_at, updated_at) VALUES ('bob@example.com','222222','ボブ',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO sessions (token_hash,email,created_at,expires_at) VALUES (?,?,?,?)").run(createHash("sha256").update(bobToken).digest("hex"), "bob@example.com", now, new Date(Date.now() + 86400000).toISOString());
+  const tripExists = () => !!sqlite.prepare("SELECT id FROM trips WHERE id = 't2'").get();
+  r2.calls.length = 0;
+  r = await call("DELETE", "/trips/t2");
+  check("ログインしていないと消せない", [r.status, r.data.error, tripExists(), r2.calls.length], [401, "login_required", true, 0]);
+  r = await call("DELETE", "/trips/t2", undefined, aliceToken);
+  check("参加していない人は消せない", [r.status, r.data.error, tripExists()], [403, "not_member", true]);
+  sqlite.prepare("INSERT INTO trip_members (id,trip_id,account_id,joined_at) VALUES ('m1','t2','111111',?), ('m2','t2','222222',?)").run(now, now);
+  r = await call("DELETE", "/trips/t2", undefined, aliceToken);
+  check("ほかのアカウント参加者がいると消せない", [r.status, r.data.error, r.data.others, tripExists()], [409, "other_members", 1, true]);
+  r = await call("DELETE", "/trips/nope", undefined, aliceToken);
+  check("無い旅行は404", r.status, 404);
+  sqlite.prepare("DELETE FROM trip_members WHERE id = 'm2'").run();
+  r = await call("DELETE", "/trips/t2", undefined, bobToken);
+  check("抜けた人は消せない", [r.status, tripExists()], [403, true]);
+  r = await call("DELETE", "/trips/t2", undefined, aliceToken);
+  check("旅行の削除で表紙と記録の写真が消える", [r.status, lastDeleted(), tripExists()], [200, sorted([B, X]), false]);
+  check("参加者の行も消える", sqlite.prepare("SELECT COUNT(*) AS n FROM trip_members WHERE trip_id = 't2'").get().n, 0);
+}
 
 console.log(`media-delete: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

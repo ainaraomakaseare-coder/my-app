@@ -6258,6 +6258,57 @@
     removeTripsFromHistory([state.trip.id]);
     goHome();
   }
+  // 旅行そのものをサーバーから消す（予定・記録・写真・動画・費用・コメントまで全部）。
+  // サーバー側と同じ条件（ログイン中で、アカウント参加者が自分ひとり）を先に確かめ、分かりやすく案内する。
+  // 元に戻せないので、送信待ちの列には入れず、通信できるときだけ送る。
+  function deleteTripFromServer() {
+    if (!state.trip) return;
+    var user = loadCurrentUser();
+    if (!user) {
+      alert(tr('旅行を削除するには、ログインしてください。'));
+      openLogin('tripDetail');
+      return;
+    }
+    var members = state.members || [];
+    var joined = user.accountId && members.some(function (m) { return m.accountId === user.accountId; });
+    if (!joined) {
+      alert(tr('旅行を削除できるのは、この旅行に「参加する」を押した人だけです。旅行の画面で「参加する」を押してから、もう一度お試しください。'));
+      return;
+    }
+    if (members.length > 1) {
+      alert(tr('ほかに{n}人がアカウントで参加しているため、削除できません。ほかの人に「参加済み」を押して参加をやめてもらうか、「この旅行を履歴から消す」で自分の一覧から外してください。', { n: members.length - 1 }));
+      return;
+    }
+    if (navigator.onLine === false) {
+      alert(tr('通信できないため、削除できません。電波のよいところで、もう一度お試しください。'));
+      return;
+    }
+    if (!confirm(tr('「{title}」を削除しますか？\n\n予定・記録・写真・動画・費用などがすべて消え、元に戻せません。共有URLを開いても見られなくなります。', { title: state.trip.title || tr('（無題の旅行）') }))) return;
+    var tripId = state.trip.id;
+    var btn = $('#btnDeleteTrip');
+    btn.disabled = true;
+    api('/trips/' + encodeURIComponent(tripId), 'DELETE').then(function () {
+      if (!outbox.running) {
+        var mine = outbox.ops.filter(function (op) { return op.tripId === tripId; });
+        if (mine.length) {
+          outbox.ops = outbox.ops.filter(function (op) { return op.tripId !== tripId; });
+          dropBlobsOf(mine);
+          outboxSave();
+        }
+      }
+      offlineDel('trips', tripId);
+      removeTripsFromHistory([tripId]);
+      saveHiddenTripIds(loadHiddenTripIds().filter(function (h) { return h !== tripId; }));
+      goHome();
+      showToast(tr('旅行を削除しました'));
+    }).catch(function (err) {
+      var msg = tr('削除に失敗しました。もう一度お試しください。');
+      if (err && err.message === 'other_members') msg = tr('ほかの人がアカウントで参加しているため、削除できません。');
+      else if (err && err.message === 'not_member') msg = tr('旅行を削除できるのは、この旅行に「参加する」を押した人だけです。旅行の画面で「参加する」を押してから、もう一度お試しください。');
+      else if (err && err.status === 401) msg = tr('旅行を削除するには、ログインしてください。');
+      alert(msg);
+    }).then(function () { btn.disabled = false; });
+  }
   // 「旅行の履歴を整理」（旧「この端末の旅行の履歴を削除」）。tabilog:my-tripsはログイン状態と無関係の
   // 端末ローカルな索引（ログアウトしても消えない）なので、別アカウントに切り替えて試すときなどに
   // 前の旅行が残り続けて紛らわしい、という声を受けて追加した手動クリア機能。サーバー上の旅行
@@ -16714,6 +16765,7 @@
     $('#btnEditTrip').addEventListener('click', openTripEditForm);
     $('#btnSaveTripEdit').addEventListener('click', saveTripEdit);
     $('#btnForgetTrip').addEventListener('click', hideTripFromHistory);
+    $('#btnDeleteTrip').addEventListener('click', deleteTripFromServer);
     $('#btnOpenReplay').addEventListener('click', openReplay);
     $('#btnCloseReplay').addEventListener('click', closeReplay);
     $('#replayCaption').addEventListener('click', openReplayCaptionRecord);
