@@ -1685,6 +1685,7 @@ body.viewer-open { overflow: hidden; }
 .ss-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-control); background: var(--input-bg); display: block; }
 .ss-thumb-small { width: 44px; height: 44px; border-radius: 8px; flex: none; }
 .ss-photo-strip { display: flex; align-items: center; gap: 4px; }
+.ss-zoomable { cursor: zoom-in; }
 .photo-itin-busy { position: fixed; inset: 0; z-index: 2000; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .photo-itin-busy[hidden] { display: none; }
 .photo-itin-busy-card { background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 24px 20px; width: 100%; max-width: 320px; text-align: center; }
