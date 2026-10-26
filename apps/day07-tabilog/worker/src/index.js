@@ -488,7 +488,18 @@ async function deleteUnreferencedMedia(env, keys) {
   }
 }
 
-async function deleteTrip(id, env, headers) {
+// 旅行を丸ごと消せるのは、ログインしていて、その旅行のアカウント参加者が自分ひとりだけのとき。
+// 以前は確認が無く、旅行のIDさえ分かれば誰でも消せた。ほかのアカウント参加者がいる旅行は、
+// その人たちの記録も消えてしまうので、先に抜けてもらう（409 other_members）。
+async function deleteTrip(id, request, env, headers) {
+  const email = await sessionEmail(request, env);
+  if (!email) return json({ error: "login_required" }, 401, headers);
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(id).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  const account = await env.DB.prepare("SELECT account_id FROM accounts WHERE email = ?").bind(email).first();
+  const { results: memberRows } = await env.DB.prepare("SELECT account_id FROM trip_members WHERE trip_id = ?").bind(id).all();
+  if (!account || !memberRows.some((m) => m.account_id === account.account_id)) return json({ error: "not_member" }, 403, headers);
+  if (memberRows.length > 1) return json({ error: "other_members", others: memberRows.length - 1 }, 409, headers);
   let mediaKeys = [];
   try {
     const { results: mediaRows } = await env.DB.prepare(
@@ -6156,7 +6167,7 @@ const mainHandler = {
     if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)$/))) return getTrip(m[1], env, headers);
     if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)\/preview$/))) return getTripPreview(m[1], env, headers);
     if (method === "PATCH" && (m = path.match(/^\/trips\/([^/]+)$/))) return updateTrip(m[1], request, env, headers, ctx);
-    if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)$/))) return deleteTrip(m[1], env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/trips\/([^/]+)$/))) return deleteTrip(m[1], request, env, headers);
 
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/blocks$/))) return createBlock(m[1], request, env, headers);
     if (method === "PATCH" && (m = path.match(/^\/blocks\/([^/]+)$/))) return updateBlock(m[1], request, env, headers);

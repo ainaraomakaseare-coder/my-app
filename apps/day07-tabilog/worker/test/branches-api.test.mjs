@@ -316,7 +316,7 @@ check("日程をずらすと、別行動の始まりと終わりの日がいっ�
 sqlite.prepare("INSERT INTO branches (id, trip_id, account_id, date, start_time, end_time, title, created_at, updated_at) VALUES ('br_single','t2','111111','2026-10-05','09:00','10:00','',?,?)").run(now, now);
 r = await call("PATCH", "/trips/t2", null, { startDate: "2026-10-02", endDate: "2026-10-04", shiftDays: -1 });
 check("1日の別行動（end_dateが空）は、ずらしても空のまま", JSON.stringify(sqlite.prepare("SELECT date AS d, end_date AS e FROM branches WHERE id = 'br_single'").get()), JSON.stringify({ d: "2026-10-04", e: "" }));
-r = await call("DELETE", "/trips/t2");
+r = await call("DELETE", "/trips/t2", "alice"); // 消せるのはアカウント参加者が自分ひとりのとき
 check("日程つきの旅行を消すと、日をまたぐ別行動もまとめて消える", [r.status, sqlite.prepare("SELECT COUNT(*) AS n FROM branches WHERE trip_id = 't2'").get().n], [200, 0]);
 
 // 日をまたぐ別行動の削除で、日をまたいだ中身がすべて消える。あとの確認に影響しないよう、ここで片づける
@@ -357,7 +357,7 @@ check("アカウント削除で、その人の分岐と中身も消える", [
 
 r = await call("POST", "/trips/t1/branches", "alice", { date: "2026-10-03", startTime: "09:00", endTime: "10:00" });
 check("旅行削除の準備：分岐を作る", r.status, 201);
-r = await call("DELETE", "/trips/t1");
+r = await call("DELETE", "/trips/t1", "alice"); // ボブはアカウント削除で抜けたので、アリスひとり
 check("旅行を消すと分岐も消える", [r.status, sqlite.prepare("SELECT COUNT(*) AS n FROM branches").get().n], [200, 0]);
 
 console.log(`branches-api: ${pass} passed, ${fail} failed`);

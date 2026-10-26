@@ -283,4 +283,12 @@ I18N.addLang('en', {
   "撮った写真や、話した内容・メモ・予約画面の画像から、予定をまとめて作れます。": "Create plans all at once from photos you took, what you say, memos, or booking screen images.",
   "ログインすると、自分の別行動を追加できます": "Log in to add your own separate plans",
   "別行動を追加するには、この旅行に「参加する」が必要です。参加しますか？": "To add separate plans, you need to join this trip. Join now?",
+  "旅行を削除するには、ログインしてください。": "Please log in to delete a trip.",
+  "旅行を削除できるのは、この旅行に「参加する」を押した人だけです。旅行の画面で「参加する」を押してから、もう一度お試しください。": "Only people who pressed \"Join\" on this trip can delete it. Press \"Join\" on the trip screen, then try again.",
+  "ほかに{n}人がアカウントで参加しているため、削除できません。ほかの人に「参加済み」を押して参加をやめてもらうか、「この旅行を履歴から消す」で自分の一覧から外してください。": "{n} other people have joined with an account, so this trip can't be deleted. Ask them to leave (press \"Joined\"), or use \"Remove this trip from history\" to take it off your own list.",
+  "通信できないため、削除できません。電波のよいところで、もう一度お試しください。": "You're offline, so the trip can't be deleted. Please try again where you have a connection.",
+  "「{title}」を削除しますか？\n\n予定・記録・写真・動画・費用などがすべて消え、元に戻せません。共有URLを開いても見られなくなります。": "Delete \"{title}\"?\n\nAll plans, records, photos, videos and expenses will be deleted and can't be restored. The shared URL will no longer open it.",
+  "旅行を削除しました": "Trip deleted",
+  "削除に失敗しました。もう一度お試しください。": "Couldn't delete. Please try again.",
+  "ほかの人がアカウントで参加しているため、削除できません。": "Other people have joined with an account, so this trip can't be deleted.",
 });
