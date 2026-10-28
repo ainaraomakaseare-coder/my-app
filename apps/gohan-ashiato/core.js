@@ -268,10 +268,7 @@
       for (var i = 0; i < 3; i++) { var den = t.u32(o + i * 8 + 4); parts.push(den ? t.u32(o + i * 8) / den : 0); }
       return gpsDms(parts);
     }
-    var lat = dms(2), lng = dms(4);
-    if (/^s/i.test(ref(1))) lat = -lat;
-    if (/^w/i.test(ref(3))) lng = -lng;
-    return geoPoint(lat, lng);
+    return exifGps({ Latitude: dms(2), LatitudeRef: ref(1), Longitude: dms(4), LongitudeRef: ref(3) });
   }
   function tiffTakenAt(v, start) {
     var t = tiffReader(v, start);
@@ -287,6 +284,15 @@
     }
     var dt = t.findTag(ifd0, 0x0132);
     return dt >= 0 ? exifDateTime(ascii(dt)) : '';
+  }
+  // iPhoneアプリで写真を選んだとき（@capacitor/cameraのpickImages）に返るexif.GPSから緯度・経度。
+  // iOSは度の値（35.68など）と向き（N/S・E/W）を別々に返す
+  function exifGps(gps) {
+    if (!gps) return null;
+    var lat = gpsDms(gps.Latitude), lng = gpsDms(gps.Longitude);
+    if (/^s/i.test(gps.LatitudeRef || '')) lat = -lat;
+    if (/^w/i.test(gps.LongitudeRef || '')) lng = -lng;
+    return geoPoint(lat, lng);
   }
   // JPEGの中身（ArrayBuffer）から { gps（{lat,lng}かnull）, takenAt（'YYYY-MM-DDTHH:MM'か''） }
   // ※iPhoneのブラウザは写真を渡すときに位置情報を消すことが多い（日時は残る）
@@ -317,6 +323,6 @@
     normalizeRecord: normalizeRecord, validateRecord: validateRecord, sortRecords: sortRecords,
     filterRecords: filterRecords, summarize: summarize, groupByMonth: groupByMonth, monthLabel: monthLabel,
     placeKey: placeKey, placeStats: placeStats, mapsUrl: mapsUrl, formatDateJa: formatDateJa, parseBackup: parseBackup,
-    mergeRecords: mergeRecords, exifDateTime: exifDateTime, jpegExif: jpegExif
+    mergeRecords: mergeRecords, exifDateTime: exifDateTime, exifGps: exifGps, jpegExif: jpegExif
   };
 });

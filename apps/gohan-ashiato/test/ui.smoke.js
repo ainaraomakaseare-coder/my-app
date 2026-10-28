@@ -31,6 +31,13 @@ function check(label, cond, extra) {
 
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, locale: 'ja-JP', acceptDownloads: true });
+  // 近くのお店（旅の足跡のWorker）は本物を呼ばずに決まった答えを返す
+  const nearbyCalls = [];
+  await ctx.route('https://tabilog-api.hiroya-apps.workers.dev/**', route => {
+    nearbyCalls.push(route.request().url());
+    route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ found: true, places: [{ name: 'ココイチ 渋谷店', types: ['restaurant'] }, { name: '一蘭 渋谷店', types: ['ramen_restaurant'] }] }) });
+  });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -49,8 +56,15 @@ function check(label, cond, extra) {
   check('写真の撮影時刻が入る', await page.inputValue('#f-time') === '19:05');
   check('時刻から「夜」', await page.textContent('#f-meal .chip.on') === '夜');
   check('写真の撮影場所', (await page.textContent('#f-loc-state')).includes('写真の撮影場所'));
+  check('ブラウザでは「撮る」は出さない', await page.isHidden('#photo-camera'));
+  await page.waitForSelector('#f-shops [data-shop]');
+  check('近くのお店を位置で探す', /kind=food/.test(nearbyCalls[0] || '') && /lat=35\.658333&lng=139\.7/.test(nearbyCalls[0] || ''), nearbyCalls[0]);
+  check('お店の候補', (await page.$$eval('#f-shops [data-shop]', b => b.map(x => x.textContent))).join('/') === 'ココイチ 渋谷店/一蘭 渋谷店');
+  await page.click('#f-shops [data-shop="ココイチ 渋谷店"]');
+  check('候補をタップで店名', await page.inputValue('#f-place') === 'ココイチ 渋谷店');
+  check('選んだ候補に印', await page.getAttribute('#f-shops [data-shop="ココイチ 渋谷店"]', 'class') === 'chip on');
+  await shot('shops');
   await page.fill('#f-name', 'カツカレー');
-  await page.fill('#f-place', 'ココイチ 渋谷店');
   await page.fill('#f-price', '1,200');
   await page.click('#f-rating [data-star="4"]');
   await page.fill('#f-memo', 'ロースカツ、辛さ3');
@@ -167,6 +181,45 @@ function check(label, cond, extra) {
   await page.waitForSelector('#screen-list:not([hidden])');
   await page.waitForTimeout(200);
   check('やめたら写真を消す', await photoCount() === 1);
+
+
+  // ---- iPhoneアプリ（Capacitor）：Cameraプラグインのexifから日時と位置、書き出しは共有メニュー ----
+  const nctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ja-JP' });
+  await nctx.route('https://tabilog-api.hiroya-apps.workers.dev/**', route => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"found":true,"places":[{"name":"松屋","types":["restaurant"]}]}' }));
+  await nctx.addInitScript(() => {
+    window.__shared = [];
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: {
+        Camera: {
+          pickImages: async () => ({ photos: [{ webPath: '/test/fixtures/curry.jpg', exif: { DateTimeOriginal: '2026:10:01 12:15:00', GPS: { Latitude: 34.7, LatitudeRef: 'N', Longitude: 135.5, LongitudeRef: 'E' } } }] }),
+          getPhoto: async () => { throw new Error('User cancelled photos app'); }
+        },
+        Filesystem: { writeFile: async o => { window.__written = o; return { uri: 'file:///cache/' + o.path }; } },
+        Share: { share: async o => { window.__shared.push(o); return {}; } }
+      }
+    };
+  });
+  const np = await nctx.newPage();
+  np.on('pageerror', e => errors.push('native: ' + e.message));
+  await np.goto(URL + '#/new');
+  await np.waitForSelector('#screen-edit:not([hidden])');
+  check('アプリでは「撮る」を出す', await np.isVisible('#photo-camera'));
+  await np.click('#photo-pick');
+  await np.waitForSelector('.photo-item img[src^="blob:"]');
+  check('アプリ: exifの撮影日時', await np.inputValue('#f-date') === '2026-10-01' && await np.inputValue('#f-time') === '12:15');
+  check('アプリ: exifの位置', (await np.textContent('#f-loc-state')).includes('写真の撮影場所'));
+  await np.waitForSelector('#f-shops [data-shop]');
+  await np.click('#f-shops [data-shop]');
+  await np.click('#save-btn');
+  await np.waitForSelector('#screen-list:not([hidden])');
+  check('アプリ: 保存', (await np.textContent('#records')).includes('松屋'));
+  await np.goto(URL + '#/settings');
+  await np.click('#export-btn');
+  await np.waitForFunction(() => window.__shared.length === 1);
+  const written = await np.evaluate(() => window.__written);
+  check('アプリ: 書き出しはファイル→共有', written.directory === 'CACHE' && JSON.parse(written.data).records.length === 1 && (await np.evaluate(() => window.__shared[0].files[0])).endsWith('.json'));
+  await nctx.close();
 
   check('JSのエラーなし', errors.length === 0, errors.join('\n'));
   await browser.close();

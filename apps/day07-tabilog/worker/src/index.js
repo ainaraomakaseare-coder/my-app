@@ -2334,6 +2334,11 @@ async function placeDetails(id, session, env, headers) {
 // Nominatimの逆ジオコーディング（施設の名前、無ければ地区・町の名前）。結果は保存もキャッシュもしない。
 // 戻り値 { found, name, types（Googleの場所の種類。予定の種類を決めるのに使う） }
 const NEARBY_RADIUS_M = 150;
+// kind=food（ごはんの足跡 apps/gohan-ashiato から）：近い順に飲食店の候補を最大10件
+// { found, places: [{ name, types }] }。Googleが使えないときはNominatimの1件（飲食店のときだけ）
+const NEARBY_FOOD_RADIUS_M = 200;
+const NEARBY_FOOD_TYPES = ["restaurant", "cafe", "bakery", "bar", "meal_takeaway", "food_court"];
+const NEARBY_FOOD_OSM = /restaurant|cafe|bar|pub|fast_food|food_court|ice_cream|biergarten|bakery|confectionery|deli/;
 async function nearbyPlace(url, env, request, headers) {
   const at = validLatLng(url.searchParams.get("lat"), url.searchParams.get("lng"));
   if (!at || (at.lat === 0 && at.lng === 0)) return json({ error: "invalid_input" }, 400, headers);
@@ -2344,6 +2349,7 @@ async function nearbyPlace(url, env, request, headers) {
   }
   const lang = detectLang(request, { lang: url.searchParams.get("lang") });
   const languageCode = lang === "zh-Hant" ? "zh-TW" : lang;
+  if (url.searchParams.get("kind") === "food") return nearbyFood(at, env, languageCode, headers);
   if (env.GOOGLE_API_KEY) {
     try {
       tallyAi(env, "google_places");
@@ -2376,6 +2382,42 @@ async function nearbyPlace(url, env, request, headers) {
     }
   } catch { /* 名前なし */ }
   return json({ found: false }, 200, headers);
+}
+
+async function nearbyFood(at, env, languageCode, headers) {
+  if (env.GOOGLE_API_KEY) {
+    try {
+      tallyAi(env, "google_places");
+      const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
+        method: "POST",
+        headers: { "X-Goog-Api-Key": env.GOOGLE_API_KEY, "X-Goog-FieldMask": "places.displayName,places.types", "content-type": "application/json" },
+        body: JSON.stringify({
+          languageCode, maxResultCount: 10, rankPreference: "DISTANCE", includedTypes: NEARBY_FOOD_TYPES,
+          locationRestriction: { circle: { center: { latitude: at.lat, longitude: at.lng }, radius: NEARBY_FOOD_RADIUS_M } },
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const places = (Array.isArray(data.places) ? data.places : [])
+          .filter((x) => x && x.displayName && x.displayName.text)
+          .map((x) => ({ name: String(x.displayName.text).slice(0, 100), types: Array.isArray(x.types) ? x.types.slice(0, 10) : [] }));
+        if (places.length) return json({ found: true, places }, 200, headers);
+      }
+    } catch { /* 下のNominatimで探す */ }
+  }
+  try {
+    const res = await fetch(
+      "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&accept-language=" + languageCode + "&lat=" + at.lat + "&lon=" + at.lng,
+      { headers: { "user-agent": "tabilog/1.0 (+" + PUBLIC_WEB_BASE_URL + ")" } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.name && (data.category === "amenity" || data.category === "shop") && NEARBY_FOOD_OSM.test(data.type || "")) {
+        return json({ found: true, places: [{ name: String(data.name).slice(0, 100), types: ["restaurant"] }] }, 200, headers);
+      }
+    }
+  } catch { /* 候補なし */ }
+  return json({ found: false, places: [] }, 200, headers);
 }
 
 // q：記録の地図のURL（今のアプリ）か、地名（見出しから推測していた以前のアプリ。審査中・配布済みの

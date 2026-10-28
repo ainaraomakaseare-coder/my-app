@@ -1,0 +1,9 @@
+{
+  "appId": "com.hiroyaapps.gohanashiato",
+  "appName": "ごはんの足跡",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#F5F6F8"
+  }
+}

@@ -98,6 +98,10 @@ eq('まぜる: 新しいほうを残す', merged.records.map(r => r.v || 1), [2,
 eq('Exif日時', C.exifDateTime('2026:10:20 14:23:11'), '2026-10-20T14:23');
 eq('Exif日時: 0000', C.exifDateTime('0000:00:00 00:00:00'), '');
 
+eq('iPhoneアプリのexif.GPS', C.exifGps({ Latitude: 35.68, LatitudeRef: 'N', Longitude: 139.76, LongitudeRef: 'E' }), { lat: 35.68, lng: 139.76 });
+eq('iPhoneアプリのexif.GPS: 南・西', C.exifGps({ Latitude: 33.9, LatitudeRef: 'S', Longitude: 151.2, LongitudeRef: 'W' }), { lat: -33.9, lng: -151.2 });
+eq('iPhoneアプリのexif.GPS: なし', C.exifGps(undefined), null);
+
 // 撮影日時とGPS（北緯35.5度・東経139.75度）入りの小さなJPEGを組み立てる
 function makeExifJpeg() {
   const entries0 = 2, exifEntries = 1, gpsEntries = 4;
