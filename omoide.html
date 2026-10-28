@@ -727,6 +727,8 @@
   .heroCopy > p:not(.heroEyebrow) { margin: 6px 0 14px; color: rgba(255,255,255,.84); font-size: 12px; }
   .heroCta { min-height: 42px; padding: 0 14px; border: 0; border-radius: 12px; background: #fff; color: #5145ae; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; box-shadow: 0 3px 10px rgba(31,24,95,.16); }
   .heroCta span { padding-left: 7px; font-size: 17px; }
+  .heroActions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .heroCta.heroInvite { background: rgba(255,255,255,.18); color: #fff; box-shadow: none; border: 1px solid rgba(255,255,255,.55); }
   .heroProgress { padding: 14px; border-radius: 18px; background: rgba(255,255,255,.14); text-align: center; }
   .heroProgressNumber { display: flex; align-items: baseline; justify-content: center; gap: 3px; white-space: nowrap; }
   .heroProgressNumber strong { font-size: 36px; line-height: 1.15; letter-spacing: -.05em; }
@@ -952,7 +954,10 @@
       <p class="heroEyebrow">COMMUNITY MEMORY</p>
       <h2 id="heroTitle">会うたび、もっと仲良く。</h2>
       <p>みんなの顔とエピソードを、クイズで覚えてみよう。</p>
-      <button type="button" class="heroCta" id="startQuizBtn">覚えているかクイズ <span aria-hidden="true">→</span></button>
+      <div class="heroActions">
+        <button type="button" class="heroCta" id="startQuizBtn">覚えているかクイズ <span aria-hidden="true">→</span></button>
+        <button type="button" class="heroCta heroInvite" id="inviteShareBtn">友達を招待</button>
+      </div>
     </div>
     <div class="heroProgress" aria-label="覚えた友達の人数">
       <div class="heroProgressNumber"><strong id="knownPeopleCount">0</strong><span>/ 100人</span></div>
@@ -2502,6 +2507,33 @@
       if (epoch === accessEpoch) document.getElementById("memberAdminStatus").textContent = "退出処理を完了できませんでした。参加者一覧を開き直して状態を確認してください。";
     } finally { setMemberAdminBusy(false); }
   }
+
+  // ---------- 招待ボタン（参加中のメンバー全員が使える） ----------
+  document.getElementById("inviteShareBtn").addEventListener("click", async function () {
+    var button = this;
+    var room = state.roomId;
+    if (!room || !supabaseClient) return;
+    button.disabled = true;
+    try {
+      var result = await supabaseClient.rpc("binder_get_current_invite", { p_room: room });
+      if (room !== state.roomId) return;
+      if (result.error || !result.data || typeof result.data.enabled !== "boolean") throw new Error("invite_unavailable");
+      if (!result.data.enabled) { showToast("いま参加受付は停止中です。管理者に確認してください"); return; }
+      if (!result.data.invite_code) { showToast("招待コードを表示できません。管理者に確認してください"); return; }
+      var name = document.getElementById("currentCommunityName").textContent || "コミュニティ";
+      var text = "「おもいでバインダー」の「" + name + "」に招待します。\nアプリを開いて、招待コードを入力して参加してください。\n\n招待コード：" + result.data.invite_code;
+      if (navigator.share) {
+        try { await navigator.share({ text: text }); return; }
+        catch (e) { if (e && e.name === "AbortError") return; }
+      }
+      await navigator.clipboard.writeText(text);
+      showToast("招待の文章をコピーしました。LINEなどに貼り付けて送ってください");
+    } catch (e) {
+      showToast("招待コードを取得できませんでした。通信状態を確認してください");
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   document.getElementById("manageMembersBtn").addEventListener("click", openMemberAdmin);
   document.getElementById("closeMemberAdminBtn").addEventListener("click", function () { document.getElementById("memberAdmin").hidden = true; });
