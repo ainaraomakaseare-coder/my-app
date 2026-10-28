@@ -281,6 +281,7 @@
     $('edit-cancel').href = isNew ? '#/' : '#/r/' + encodeURIComponent(r.id);
     fillDatalists();
     renderDraftPhotos(); renderMeal(); renderRating(); renderLoc();
+    shopsSeq++; $('f-shops').hidden = true; $('f-shops').innerHTML = '';
   }
 
   function fillDatalists() {
@@ -294,7 +295,7 @@
   }
 
   function renderDraftPhotos() {
-    var row = $('photo-row'), add = row.querySelector('.photo-add');
+    var row = $('photo-row'), add = $('photo-pick');
     Array.prototype.forEach.call(row.querySelectorAll('.photo-item'), function (n) { n.remove(); });
     draft.photoIds.forEach(function (id) {
       var d = document.createElement('div');
@@ -302,7 +303,9 @@
       d.innerHTML = '<img data-photo="' + esc(id) + '" alt=""><button type="button" data-remove="' + esc(id) + '" aria-label="写真を外す">' + icon('x') + '</button>';
       row.insertBefore(d, add);
     });
-    add.hidden = draft.photoIds.length >= MAX_PHOTOS;
+    var full = draft.photoIds.length >= MAX_PHOTOS;
+    add.hidden = full;
+    $('photo-camera').hidden = full || !plugin('Camera');
     fillPhotos(row);
   }
   function renderMeal() {
@@ -330,31 +333,29 @@
     else draft.removed.push(id);
     renderDraftPhotos();
   });
-  $('photo-input').addEventListener('change', function () {
-    var files = Array.prototype.slice.call(this.files || [], 0, MAX_PHOTOS - draft.photoIds.length);
-    this.value = '';
-    if (!files.length) return;
+  // 写真を足す。sources：[{ blob(): Promise<Blob>, exif(): Promise<{gps, takenAt}> }]
+  // iPhoneでメモリが足りなくならないよう、1枚ずつ縮めて保存する
+  function addPhotos(sources, opts) {
+    sources = sources.slice(0, MAX_PHOTOS - draft.photoIds.length);
+    if (!sources.length) return;
     var d = draft;
     d.busy++; $('save-btn').disabled = true;
-    var firstPhoto = !d.photoIds.length;
-    var jobs = files.map(function (file) {
-      var exifP = file.type === 'image/jpeg' || /\.jpe?g$/i.test(file.name) ? file.arrayBuffer().then(C.jpegExif).catch(function () { return { gps: null, takenAt: '' }; }) : Promise.resolve({ gps: null, takenAt: '' });
-      return Promise.all([compressImage(file), exifP]).then(function (res) {
-        var id = newPhotoId();
-        return putPhoto(id, res[0]).then(function () { return { id: id, exif: res[1] }; });
-      }).catch(function (err) { toast(err && err.message ? err.message : '写真を読み込めませんでした'); return null; });
-    });
-    Promise.all(jobs).then(function (items) {
+    var firstPhoto = !d.photoIds.length, items = [];
+    sources.reduce(function (prev, src) {
+      return prev.then(function () {
+        return Promise.all([src.blob().then(compressImage), src.exif().catch(function () { return { gps: null, takenAt: '' }; })]).then(function (res) {
+          var id = newPhotoId();
+          return putPhoto(id, res[0]).then(function () { items.push({ id: id, exif: res[1] }); });
+        }).catch(function (err) { toast(err && err.message ? err.message : '写真を読み込めませんでした'); });
+      });
+    }, Promise.resolve()).then(function () {
       d.busy--;
-      if (d !== draft) { deletePhotos(items.filter(Boolean).map(function (x) { return x.id; })); return; }
+      if (d !== draft) { deletePhotos(items.map(function (x) { return x.id; })); return; }
       if (!d.busy) $('save-btn').disabled = false;
       var hint = [];
-      items.forEach(function (it) {
-        if (!it) return;
-        d.photoIds.push(it.id); d.added.push(it.id);
-      });
+      items.forEach(function (it) { d.photoIds.push(it.id); d.added.push(it.id); });
       // 最初の写真の撮影日時・撮影場所で、まだ触っていない日付・時刻・位置を埋める
-      var first = items.filter(Boolean)[0];
+      var first = items[0];
       if (first && firstPhoto) {
         if (first.exif.takenAt && !d.touchedWhen) {
           $('f-date').value = first.exif.takenAt.slice(0, 10);
@@ -363,14 +364,70 @@
           hint.push('日時を写真の撮影日時にしました');
         }
         if (first.exif.gps && d.lat === null) {
-          d.lat = first.exif.gps.lat; d.lng = first.exif.gps.lng; d.locFrom = 'photo'; renderLoc();
+          setLocation(first.exif.gps, 'photo');
           hint.push('写真の撮影場所を記録しました');
+        } else if (opts && opts.camera && d.lat === null) {
+          locateNow(); // いま撮った写真は、いまいる場所
         }
       }
       $('photo-hint').textContent = hint.join('・'); $('photo-hint').hidden = !hint.length;
       renderDraftPhotos();
     });
+  }
+  var NO_EXIF = { gps: null, takenAt: '' };
+  $('photo-input').addEventListener('change', function () {
+    var files = Array.prototype.slice.call(this.files || []);
+    this.value = '';
+    addPhotos(files.map(function (file) {
+      var jpeg = file.type === 'image/jpeg' || /\.jpe?g$/i.test(file.name);
+      return {
+        blob: function () { return Promise.resolve(file); },
+        exif: function () { return jpeg ? file.arrayBuffer().then(C.jpegExif) : Promise.resolve(NO_EXIF); }
+      };
+    }));
   });
+
+  // ---------- iPhoneアプリ（Capacitor）のとき ----------
+  // iPhoneのWebViewはファイルとして渡す写真から位置情報を消すので、写真はCameraプラグインで選び、
+  // プラグインが返すexif（撮影日時・GPS）を使う（旅の足跡と同じ。docs/adr/0025）
+  // プラグインは apps/gohan-ashiato-ios の native.js が window.GohanNative に入れる（無ければ Capacitor.Plugins）
+  var cap = window.Capacitor;
+  var NATIVE = !!(cap && cap.isNativePlatform && cap.isNativePlatform());
+  function plugin(name) {
+    if (!NATIVE) return null;
+    var p = (window.GohanNative && window.GohanNative[name]) || (cap.Plugins && cap.Plugins[name]);
+    return p || null;
+  }
+  function nativeSource(p) {
+    var exif = p.exif || {};
+    return {
+      blob: function () { return fetch(p.webPath).then(function (r) { return r.blob(); }); },
+      exif: function () { return Promise.resolve({ gps: C.exifGps(exif.GPS), takenAt: C.exifDateTime(exif.DateTimeOriginal || exif.DateTimeDigitized || '') }); }
+    };
+  }
+  function nativePhotoError(err) {
+    var msg = String((err && err.message) || err || '');
+    if (/cancel/i.test(msg)) return;
+    if (/denied|access/i.test(msg)) toast('写真へのアクセスが許可されていません。設定アプリの「ごはんの足跡」から許可してください');
+    else toast('写真を読み込めませんでした');
+  }
+  if (plugin('Camera')) {
+    document.documentElement.classList.add('native-app');
+    $('photo-pick').addEventListener('click', function (e) {
+      e.preventDefault();
+      if (!draft) return;
+      plugin('Camera').pickImages({ quality: 90, limit: MAX_PHOTOS - draft.photoIds.length }).then(function (res) {
+        addPhotos(((res && res.photos) || []).map(nativeSource));
+      }).catch(nativePhotoError);
+    });
+    $('photo-camera').addEventListener('click', function () {
+      if (!draft) return;
+      plugin('Camera').getPhoto({ source: 'CAMERA', resultType: 'uri', quality: 90, saveToGallery: true, correctOrientation: true }).then(function (p) {
+        addPhotos([nativeSource(p)], { camera: true });
+      }).catch(nativePhotoError);
+    });
+  }
+
   ['f-date', 'f-time'].forEach(function (id) { $(id).addEventListener('input', function () { draft.touchedWhen = true; }); });
   $('f-time').addEventListener('change', function () { var m = C.guessMeal(this.value); if (m) { draft.meal = m; renderMeal(); } });
   $('f-meal').addEventListener('click', function (e) {
@@ -382,24 +439,65 @@
     var n = Number(b.dataset.star);
     draft.rating = draft.rating === n ? 0 : n; renderRating();
   });
-  $('f-locate').addEventListener('click', function () {
+  function setLocation(pt, from) {
+    draft.lat = pt.lat; draft.lng = pt.lng; draft.locFrom = from; renderLoc();
+    loadShops();
+  }
+  function locateNow() {
     if (!navigator.geolocation) { toast('この端末では現在地を使えません'); return; }
-    var btn = this, d = draft;
+    var btn = $('f-locate'), d = draft;
     btn.disabled = true;
     navigator.geolocation.getCurrentPosition(function (pos) {
       btn.disabled = false;
       var pt = C.geoPoint(pos.coords.latitude, pos.coords.longitude);
       if (!pt || d !== draft) return;
-      d.lat = pt.lat; d.lng = pt.lng; d.locFrom = 'gps'; renderLoc();
+      setLocation(pt, 'gps');
     }, function () {
       btn.disabled = false;
       toast('現在地を取得できませんでした（位置情報の許可を確認してください）');
     }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
-  });
+  }
+  $('f-locate').addEventListener('click', locateNow);
   $('f-loc-state').addEventListener('click', function (e) {
     if (!e.target.closest('#f-loc-clear')) return;
     draft.lat = null; draft.lng = null; draft.locFrom = ''; renderLoc();
+    $('f-shops').hidden = true;
   });
+
+  // 位置の近くの飲食店の候補（旅の足跡のWorkerの GET /places/nearby?kind=food。Google Places、
+  // 使えなければOpenStreetMap）。タップでお店の名前に入れる。位置と言語以外は送らない
+  var NEARBY_API = 'https://tabilog-api.hiroya-apps.workers.dev/places/nearby';
+  var shopsSeq = 0;
+  function loadShops() {
+    var d = draft, seq = ++shopsSeq, box = $('f-shops');
+    if (!d || d.lat === null) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = '<span class="shops-label">近くのお店を探しています…</span>';
+    fetch(NEARBY_API + '?kind=food&lang=ja&lat=' + d.lat + '&lng=' + d.lng).then(function (r) {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    }).then(function (data) {
+      if (seq !== shopsSeq || d !== draft) return;
+      var places = (data && data.places) || [];
+      if (!places.length) { box.innerHTML = '<span class="shops-label">近くにお店の候補が見つかりませんでした</span>'; return; }
+      box.innerHTML = '<span class="shops-label">近くのお店（タップで入れる）</span><div class="chips">' + places.map(function (p) {
+        return '<button type="button" class="chip" data-shop="' + esc(p.name) + '">' + esc(p.name) + '</button>';
+      }).join('') + '</div>';
+      markShop();
+    }).catch(function () {
+      if (seq !== shopsSeq) return;
+      box.innerHTML = '<span class="shops-label">お店の候補を読み込めませんでした</span>';
+    });
+  }
+  function markShop() {
+    var v = $('f-place').value.trim();
+    Array.prototype.forEach.call($('f-shops').querySelectorAll('[data-shop]'), function (b) { b.classList.toggle('on', b.getAttribute('data-shop') === v); });
+  }
+  $('f-shops').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-shop]'); if (!b) return;
+    $('f-place').value = b.getAttribute('data-shop'); markShop();
+  });
+  $('f-place').addEventListener('input', markShop);
 
   $('edit-form').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -471,13 +569,24 @@
       return getPhoto(id).then(function (b) { return b ? blobToDataUrl(b).then(function (u) { photos[id] = u; }) : null; }).catch(function () {});
     })).then(function () {
       var data = { app: 'gohan-ashiato', version: 1, exportedAt: new Date().toISOString(), records: records, photos: photos };
-      var blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+      var name = 'gohan-ashiato-' + C.localDate(new Date()) + '.json';
+      var text = JSON.stringify(data);
+      var done = '書き出しました（記録' + records.length + '件・写真' + Object.keys(photos).length + '枚）';
+      // iPhoneアプリではダウンロードができないので、ファイルにしてから共有メニューで保存先を選んでもらう
+      if (plugin('Filesystem') && plugin('Share')) {
+        return plugin('Filesystem').writeFile({ path: name, data: text, directory: 'CACHE', encoding: 'utf8' }).then(function (res) {
+          return plugin('Share').share({ title: name, files: [res.uri], dialogTitle: '書き出したファイルを保存' });
+        }).then(function () { $('backup-status').textContent = done; }).catch(function (err) {
+          $('backup-status').textContent = /cancel/i.test(String((err && err.message) || err)) ? '' : '書き出せませんでした';
+        });
+      }
+      var blob = new Blob([text], { type: 'application/json' });
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'gohan-ashiato-' + C.localDate(new Date()) + '.json';
+      a.download = name;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
-      $('backup-status').textContent = '書き出しました（記録' + records.length + '件・写真' + Object.keys(photos).length + '枚）';
+      $('backup-status').textContent = done;
     }).finally(function () { btn.disabled = false; });
   });
   $('import-input').addEventListener('change', function () {

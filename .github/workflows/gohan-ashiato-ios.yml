@@ -1,0 +1,89 @@
+name: ごはんの足跡 iOS
+on:
+  push:
+    branches: [main]
+    paths: ["apps/gohan-ashiato/**", "apps/gohan-ashiato-ios/**", ".github/workflows/gohan-ashiato-ios.yml"]
+  pull_request:
+    paths: ["apps/gohan-ashiato/**", "apps/gohan-ashiato-ios/**", ".github/workflows/gohan-ashiato-ios.yml"]
+  workflow_dispatch:
+    inputs:
+      destination:
+        description: "simulator: 署名なしでビルドして起動確認 / setup: Bundle IDを登録 / testflight: TestFlightへアップロード"
+        type: choice
+        options: [simulator, setup, testflight]
+        default: simulator
+permissions:
+  contents: read
+concurrency:
+  group: gohan-ashiato-ios-${{ github.ref }}-${{ inputs.destination || 'simulator' }}
+  cancel-in-progress: false
+jobs:
+  # Bundle IDの登録とApp Store Connectのアプリの有無の確認（Macは要らない）
+  setup:
+    if: github.event_name == 'workflow_dispatch' && inputs.destination == 'setup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: apps/gohan-ashiato-ios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Register Bundle ID
+        env:
+          API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+          API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+        run: node scripts/asc.mjs bundle
+  build:
+    if: github.event_name != 'workflow_dispatch' || inputs.destination != 'setup'
+    runs-on: macos-26
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/gohan-ashiato-ios
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/gohan-ashiato-ios/package-lock.json
+      - name: Require Xcode 26 or newer
+        run: |
+          XCODE_PATH=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)
+          test -n "$XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+      - run: npm ci
+      - run: npm test
+      - run: npx cap add ios && node scripts/configure-ios.mjs
+      - name: Build for simulator
+        if: inputs.destination != 'testflight'
+        run: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO build
+      - name: Launch iPhone simulator and capture screen
+        if: inputs.destination != 'testflight'
+        run: bash scripts/simulator-smoke.sh
+      - name: Sign and upload to TestFlight
+        if: inputs.destination == 'testflight'
+        env:
+          DIST_CERT_BASE64: ${{ secrets.IOS_DIST_CERTIFICATE_P12_BASE64 }}
+          DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+          API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+        run: bash scripts/testflight.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gohan-ashiato-ios-${{ github.run_number }}
+          path: |
+            apps/gohan-ashiato-ios/build/GohanAshiato-simulator.tar.gz
+            apps/gohan-ashiato-ios/build/export/*.ipa
+            apps/gohan-ashiato-ios/build/qa/
+          retention-days: 5
+          if-no-files-found: error

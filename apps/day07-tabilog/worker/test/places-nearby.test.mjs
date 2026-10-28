@@ -76,5 +76,21 @@ check("0,0は使わない", r.status, 400);
 r = await get("/places/nearby?lat=35&lng=135", { DB, WRITE_RATE_LIMITER: { async limit() { return { success: false }; } } });
 check("呼びすぎ", r.status, 429);
 
+
+// kind=food（ごはんの足跡）：飲食店だけ・近い順・最大10件の候補
+googleAnswer = { places: [{ displayName: { text: "一蘭 渋谷店" }, types: ["ramen_restaurant", "restaurant"] }, { displayName: { text: "スタバ" }, types: ["cafe"] }, { types: ["cafe"] }] };
+calls.length = 0;
+r = await get("/places/nearby?lat=35.66&lng=139.70&lang=ja&kind=food", { DB, GOOGLE_API_KEY: "k" });
+check("food: 候補の一覧（名前のないものは除く）", r.body, { found: true, places: [{ name: "一蘭 渋谷店", types: ["ramen_restaurant", "restaurant"] }, { name: "スタバ", types: ["cafe"] }] });
+check("food: 飲食店の種類・近い順・10件・200m", calls[0] && { t: calls[0].body.includedTypes, rank: calls[0].body.rankPreference, n: calls[0].body.maxResultCount, r: calls[0].body.locationRestriction.circle.radius },
+  { t: ["restaurant", "cafe", "bakery", "bar", "meal_takeaway", "food_court"], rank: "DISTANCE", n: 10, r: 200 });
+googleAnswer = { places: [] };
+nominatimAnswer = { name: "松屋", category: "amenity", type: "fast_food", address: {} };
+r = await get("/places/nearby?lat=35.66&lng=139.70&kind=food", { DB, GOOGLE_API_KEY: "k" });
+check("food: Googleが0件→Nominatimの飲食店", r.body, { found: true, places: [{ name: "松屋", types: ["restaurant"] }] });
+nominatimAnswer = { name: "渋谷駅", category: "railway", type: "station", address: {} };
+r = await get("/places/nearby?lat=35.66&lng=139.70&kind=food", { DB });
+check("food: 飲食店でなければ候補なし", r.body, { found: false, places: [] });
+
 console.log(pass + " passed, " + fail + " failed");
 if (fail) process.exit(1);
