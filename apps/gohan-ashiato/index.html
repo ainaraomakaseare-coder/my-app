@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ごはんの足跡</title>
+<meta name="description" content="食べたものを写真・日付・お店・値段・評価で残す、ごはんの記録アプリ">
+<meta name="theme-color" content="#F5F6F8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ごはんの足跡">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" fill="none"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" stroke="currentColor" stroke-width="1.6" fill="none"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/><circle cx="12" cy="13.5" r="3.5" stroke="currentColor" stroke-width="2" fill="none"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></symbol>
+  <symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.2l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 17l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z" fill="currentColor"/></symbol>
+  <symbol id="i-bowl" viewBox="0 0 24 24"><path d="M3 11h18a9 9 0 0 1-18 0z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="M8 7c0-1.5 1-1.5 1-3M12 7c0-1.5 1-1.5 1-3M16 7c0-1.5 1-1.5 1-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" fill="none"/><rect x="13" y="4" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" fill="none"/><rect x="4" y="13" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" fill="none"/><rect x="13" y="13" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" fill="none"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="2" fill="none"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="app">
+  <!-- 一覧 -->
+  <section class="screen" id="screen-list">
+    <header class="topbar">
+      <h1 class="app-title"><svg class="ic"><use href="#i-bowl"/></svg>ごはんの足跡</h1>
+      <a class="icon-btn" href="#/settings" aria-label="設定"><svg class="ic"><use href="#i-gear"/></svg></a>
+    </header>
+
+    <div class="summary-card" id="summary"></div>
+
+    <div class="seg" role="tablist">
+      <button class="seg-btn active" data-tab="records" role="tab">記録</button>
+      <button class="seg-btn" data-tab="places" role="tab">お店</button>
+    </div>
+
+    <div id="tab-records">
+      <div class="toolbar">
+        <label class="search"><svg class="ic"><use href="#i-search"/></svg><input id="q" type="search" placeholder="料理・お店・メモで探す" autocomplete="off"></label>
+        <button class="icon-btn" id="view-toggle" aria-label="写真で並べる"><svg class="ic"><use href="#i-grid"/></svg></button>
+      </div>
+      <div class="chips" id="filter-chips"></div>
+      <div class="sort-row">
+        <select id="sort" aria-label="並べ替え">
+          <option value="new">新しい順</option>
+          <option value="old">古い順</option>
+          <option value="rating">評価が高い順</option>
+          <option value="priceHigh">値段が高い順</option>
+          <option value="priceLow">値段が安い順</option>
+        </select>
+        <span class="result-count" id="result-count"></span>
+      </div>
+      <div id="records"></div>
+    </div>
+
+    <div id="tab-places" hidden>
+      <div id="places"></div>
+    </div>
+
+    <a class="fab" href="#/new" aria-label="記録する"><svg class="ic"><use href="#i-plus"/></svg><span>記録する</span></a>
+  </section>
+
+  <!-- 詳細 -->
+  <section class="screen" id="screen-detail" hidden>
+    <header class="topbar">
+      <a class="icon-btn" href="#/" aria-label="戻る"><svg class="ic"><use href="#i-back"/></svg></a>
+      <span class="topbar-title"></span>
+      <a class="text-btn" id="detail-edit" href="#">編集</a>
+    </header>
+    <div id="detail"></div>
+  </section>
+
+  <!-- 登録・編集 -->
+  <section class="screen" id="screen-edit" hidden>
+    <header class="topbar">
+      <a class="icon-btn" id="edit-cancel" href="#/" aria-label="やめる"><svg class="ic"><use href="#i-x"/></svg></a>
+      <span class="topbar-title" id="edit-title">記録する</span>
+      <span class="topbar-spacer"></span>
+    </header>
+    <form id="edit-form" novalidate>
+      <div class="photo-row" id="photo-row">
+        <label class="photo-add">
+          <svg class="ic"><use href="#i-camera"/></svg><span>写真</span>
+          <input type="file" id="photo-input" accept="image/*" multiple hidden>
+        </label>
+      </div>
+      <p class="hint" id="photo-hint" hidden></p>
+
+      <div class="card form-card">
+        <label class="field"><span>料理・食べたもの</span><input id="f-name" list="dl-name" maxlength="80" placeholder="例：味噌ラーメン" autocomplete="off"></label>
+        <div class="field-row">
+          <label class="field"><span>日付</span><input id="f-date" type="date" required></label>
+          <label class="field"><span>時刻</span><input id="f-time" type="time"></label>
+        </div>
+        <div class="field"><span>いつのごはん</span><div class="chips" id="f-meal"></div></div>
+      </div>
+
+      <div class="card form-card">
+        <label class="field"><span>お店・場所</span><input id="f-place" list="dl-place" maxlength="80" placeholder="例：一蘭 渋谷店／自宅" autocomplete="off"></label>
+        <div class="loc-row">
+          <button type="button" class="pill-btn" id="f-locate"><svg class="ic"><use href="#i-locate"/></svg>現在地を記録</button>
+          <span class="loc-state" id="f-loc-state"></span>
+        </div>
+        <label class="field"><span>値段（円）</span><input id="f-price" inputmode="numeric" maxlength="12" placeholder="例：980" autocomplete="off"></label>
+      </div>
+
+      <div class="card form-card">
+        <div class="field"><span>評価</span><div class="stars-input" id="f-rating"></div></div>
+        <label class="field"><span>メモ</span><textarea id="f-memo" rows="3" maxlength="1000" placeholder="味の感想・また頼みたいもの など"></textarea></label>
+      </div>
+
+      <p class="form-error" id="form-error" role="alert"></p>
+      <button type="submit" class="primary-btn" id="save-btn">保存する</button>
+      <button type="button" class="danger-link" id="delete-btn" hidden>この記録を削除する</button>
+    </form>
+    <datalist id="dl-name"></datalist>
+    <datalist id="dl-place"></datalist>
+  </section>
+
+  <!-- 設定 -->
+  <section class="screen" id="screen-settings" hidden>
+    <header class="topbar">
+      <a class="icon-btn" href="#/" aria-label="戻る"><svg class="ic"><use href="#i-back"/></svg></a>
+      <span class="topbar-title">設定</span>
+      <span class="topbar-spacer"></span>
+    </header>
+    <div class="card settings-card">
+      <h2>データの保存場所</h2>
+      <p>記録と写真は、この端末のブラウザの中だけに保存されます。ほかの人には見えません。</p>
+      <p class="warn-text">iPhoneのSafariでは、ホーム画面に追加して使うのがおすすめです（しばらく開かないとデータが消されることがあるため）。機種変更や念のための控えに、ときどき書き出しておいてください。</p>
+    </div>
+    <div class="card settings-card">
+      <h2>書き出し・読み込み</h2>
+      <p id="storage-info"></p>
+      <button class="primary-btn" id="export-btn">写真ごと書き出す</button>
+      <label class="secondary-btn">ファイルから読み込む<input type="file" id="import-input" accept="application/json,.json" hidden></label>
+      <p class="hint" id="backup-status" role="status"></p>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<div class="viewer" id="viewer" hidden><img alt=""><button class="icon-btn viewer-close" aria-label="閉じる"><svg class="ic"><use href="#i-x"/></svg></button></div>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
