@@ -1,0 +1,15 @@
+{
+  "name": "ごはんの足跡",
+  "short_name": "ごはんの足跡",
+  "description": "食べたものを写真・日付・お店・値段・評価で残す、ごはんの記録アプリ",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F5F6F8",
+  "theme_color": "#F5F6F8",
+  "lang": "ja",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
