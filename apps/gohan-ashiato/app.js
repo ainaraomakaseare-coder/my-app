@@ -594,14 +594,31 @@
       });
     }, Promise.resolve());
   }
+  // iPhoneアプリは、公開しているWeb版（GitHub Pages）のリストを先に読む。店を足すたびにアプリを出し直さずに済むように。
+  // 読めなければ前回読めたもの（端末に保存）、それも無ければアプリに同梱したもの。Web版は同じ場所のファイルが最新
+  var TV_LIST_REMOTE = 'https://ainaraomakaseare-coder.github.io/my-app/apps/gohan-ashiato/tv-shops.json';
+  var TV_CACHE_KEY = 'gohan-ashiato.tvshops.v1';
+  function fetchJson(url) {
+    return fetch(url, { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(String(r.status))); });
+  }
+  function useTvShops(data) {
+    tvShops = C.parseTvShops(data);
+    tvShops.forEach(applyGeo);
+    tvState = 'ok';
+    refreshSpots();
+    geocodeMissing();
+  }
   function loadTvShops() {
-    fetch('tv-shops.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : Promise.reject(); }).then(function (data) {
-      tvShops = C.parseTvShops(data);
-      tvShops.forEach(applyGeo);
-      tvState = 'ok';
-      refreshSpots();
-      geocodeMissing();
-    }).catch(function () { tvState = 'error'; refreshSpots(); });
+    var bundled = function () { return fetchJson('tv-shops.json'); };
+    var p = NATIVE ? fetchJson(TV_LIST_REMOTE).then(function (data) {
+      if (!C.parseTvShops(data).length) throw new Error('empty');
+      try { localStorage.setItem(TV_CACHE_KEY, JSON.stringify(data)); } catch (e) { /* 入りきらなければ次回も読みに行く */ }
+      return data;
+    }).catch(function () {
+      var cached = loadJson(TV_CACHE_KEY, null);
+      return cached && C.parseTvShops(cached).length ? cached : bundled();
+    }) : bundled();
+    p.then(useTvShops).catch(function () { tvState = 'error'; refreshSpots(); });
   }
   // 一覧・詳細を開いているときだけ描き直す
   function refreshSpots() {

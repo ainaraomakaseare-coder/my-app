@@ -301,6 +301,9 @@ function check(label, cond, extra) {
   await nctx.route('https://tabilog-api.hiroya-apps.workers.dev/**', route => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"found":true,"places":[{"name":"松屋","types":["restaurant"]}]}' }));
   // 住所から位置を調べる（国土地理院）も本物を呼ばない
   await nctx.route('https://msearch.gsi.go.jp/**', route => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '[]' }));
+  // アプリはWeb版（GitHub Pages）のテレビの店のリストを先に読む
+  await nctx.route('https://ainaraomakaseare-coder.github.io/**', route => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+    body: JSON.stringify({ shops: [{ id: 'remote-1', name: 'ネットから来た店', address: '東京都千代田区丸の内1-9-1', lat: 35.68, lng: 139.76, appearances: [{ program: '新しい番組', aired: '2026-11-01' }] }] }) }));
   await nctx.addInitScript(() => {
     window.__shared = [];
     window.Capacitor = {
@@ -329,6 +332,10 @@ function check(label, cond, extra) {
   await np.click('#save-btn');
   await np.waitForSelector('#screen-list:not([hidden])');
   check('アプリ: 保存', (await np.textContent('#records')).includes('松屋'));
+  await np.click('.seg-btn[data-tab="tv"]');
+  await np.waitForSelector('#tv .spot');
+  check('アプリ: テレビの店はネットのリストを読む', (await np.textContent('#tv')).includes('ネットから来た店') && !(await np.textContent('#tv')).includes('らぁめん千寿'));
+  check('アプリ: 読めたリストを端末に覚える', await np.evaluate(() => !!localStorage.getItem('gohan-ashiato.tvshops.v1')));
   await np.goto(URL + '#/settings');
   await np.click('#export-btn');
   await np.waitForFunction(() => window.__shared.length === 1);
