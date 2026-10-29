@@ -1,0 +1,36 @@
+name: ごはんの足跡 App Store スクリーンショットを入れる
+# App Store Connect の「1.0 提出準備中」（日本語・6.1/6.3インチ）に
+# apps/gohan-ashiato-ios/store-screenshots/gohan-ashiato-1〜5.png をアップロードする。
+# mainに画像が入ると自動で動く。すでに画像が入っていたら何も変えない。「審査へ提出」はしない。
+on:
+  push:
+    branches: [main]
+    paths: ["apps/gohan-ashiato-ios/store-screenshots/*.png", ".github/workflows/gohan-ashiato-screenshots.yml"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'apply＝アップロード / check＝確認だけ'
+        type: choice
+        options: [apply, check]
+        default: apply
+permissions:
+  contents: read
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/gohan-ashiato-ios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: スクリーンショットをアップロード
+        env:
+          API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+          API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+          MODE: ${{ inputs.mode || 'apply' }}
+        run: node scripts/upload-screenshots.mjs "$MODE"
