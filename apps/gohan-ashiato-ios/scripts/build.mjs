@@ -2,10 +2,13 @@
 import fs from 'node:fs/promises';
 import { build } from 'esbuild';
 const SRC = '../gohan-ashiato/';
-const FILES = ['core.js', 'app.js', 'style.css', 'icon-180.png', 'icon-512.png', 'privacy.html'];
+const FILES = ['core.js', 'app.js', 'style.css', 'icon-180.png', 'icon-512.png', 'privacy.html', 'tv-shops.json'];
+// 地図（Leaflet）は地図を開いたときに読み込むので、フォルダごと同梱する
+const DIRS = ['vendor/leaflet'];
 await fs.rm('www', { recursive: true, force: true });
 await fs.mkdir('www', { recursive: true });
 for (const f of FILES) await fs.copyFile(SRC + f, 'www/' + f);
+for (const d of DIRS) await fs.cp(SRC + d, 'www/' + d, { recursive: true });
 let html = await fs.readFile(SRC + 'index.html', 'utf8');
 // ホーム画面に追加する設定（manifest）はアプリでは要らない。橋渡しは core.js より前に読む
 html = html.replace(/<link rel="manifest"[^>]*>\n?/, '');

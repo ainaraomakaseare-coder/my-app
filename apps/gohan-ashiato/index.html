@@ -28,6 +28,12 @@
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" fill="none"/><rect x="13" y="4" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" fill="none"/><rect x="4" y="13" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" fill="none"/><rect x="13" y="13" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2" fill="none"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-tv" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5" stroke="currentColor" stroke-width="2" fill="none"/><path d="M8.5 2.5L12 6l3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+  <symbol id="i-flag-on" viewBox="0 0 24 24"><path d="M5 21V4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 4h11l-2 4 2 4H5z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4L3 6.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5z M9 4v13.5 M15 6.5V20" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" fill="none"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="2" fill="none"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
 </svg>
 
@@ -44,6 +50,8 @@
     <div class="seg" role="tablist">
       <button class="seg-btn active" data-tab="records" role="tab">記録</button>
       <button class="seg-btn" data-tab="places" role="tab">お店</button>
+      <button class="seg-btn" data-tab="wants" role="tab">行きたい</button>
+      <button class="seg-btn" data-tab="tv" role="tab">テレビ</button>
     </div>
 
     <div id="tab-records">
@@ -69,6 +77,31 @@
       <div id="places"></div>
     </div>
 
+    <div id="tab-wants" hidden>
+      <div class="toolbar">
+        <a class="pill-btn add-btn" href="#/w/new"><svg class="ic"><use href="#i-plus"/></svg>行きたい場所を足す</a>
+        <span class="toolbar-gap"></span>
+        <button class="pill-btn near-btn" data-near><svg class="ic"><use href="#i-locate"/></svg>近い順</button>
+        <button class="icon-btn" data-mapview="wants" aria-label="地図で見る"><svg class="ic"><use href="#i-map"/></svg></button>
+      </div>
+      <div class="chips" id="wants-chips"></div>
+      <div class="map-box" id="wants-map" hidden></div>
+      <div id="wants"></div>
+    </div>
+
+    <div id="tab-tv" hidden>
+      <div class="toolbar">
+        <span class="toolbar-note">テレビで紹介されたお店</span>
+        <span class="toolbar-gap"></span>
+        <button class="pill-btn near-btn" data-near><svg class="ic"><use href="#i-locate"/></svg>近い順</button>
+        <button class="icon-btn" data-mapview="tv" aria-label="地図で見る"><svg class="ic"><use href="#i-map"/></svg></button>
+      </div>
+      <div class="chips" id="tv-chips"></div>
+      <div class="map-box" id="tv-map" hidden></div>
+      <div id="tv"></div>
+      <p class="hint tv-note">放送されたときの情報です。閉店・移転していることがあるので、行く前にお店の公式情報を確かめてください。番組の映像・画像は使っていません。</p>
+    </div>
+
     <a class="fab" href="#/new" aria-label="記録する"><svg class="ic"><use href="#i-plus"/></svg><span>記録する</span></a>
   </section>
 
@@ -80,6 +113,50 @@
       <a class="text-btn" id="detail-edit" href="#">編集</a>
     </header>
     <div id="detail"></div>
+  </section>
+
+  <!-- 行きたい場所・テレビの店の詳細 -->
+  <section class="screen" id="screen-spot" hidden>
+    <header class="topbar">
+      <a class="icon-btn" id="spot-back" href="#/" aria-label="戻る"><svg class="ic"><use href="#i-back"/></svg></a>
+      <span class="topbar-title" id="spot-title"></span>
+      <a class="text-btn" id="spot-edit" href="#">編集</a>
+    </header>
+    <div id="spot"></div>
+  </section>
+
+  <!-- 行きたい場所を足す・直す -->
+  <section class="screen" id="screen-want-edit" hidden>
+    <header class="topbar">
+      <a class="icon-btn" id="want-cancel" href="#/" aria-label="やめる"><svg class="ic"><use href="#i-x"/></svg></a>
+      <span class="topbar-title" id="want-edit-title">行きたい場所を足す</span>
+      <span class="topbar-spacer"></span>
+    </header>
+    <form id="want-form" novalidate>
+      <div class="card form-card">
+        <div class="field"><span>お店・場所を探す</span>
+          <div class="search-row"><input id="w-search" type="search" maxlength="100" placeholder="例：らぁめん千寿 御徒町" autocomplete="off"><button type="button" class="pill-btn" id="w-search-btn"><svg class="ic"><use href="#i-search"/></svg>探す</button></div>
+        </div>
+        <div class="shops" id="w-candidates" hidden></div>
+        <label class="field"><span>名前</span><input id="w-name" maxlength="80" placeholder="例：らぁめん千寿 御徒町店" autocomplete="off"></label>
+        <label class="field"><span>住所・場所のメモ</span><input id="w-address" maxlength="120" placeholder="例：御徒町駅の近く" autocomplete="off"></label>
+        <div class="loc-row">
+          <button type="button" class="pill-btn" id="w-locate"><svg class="ic"><use href="#i-locate"/></svg>いまいる場所にする</button>
+          <span class="loc-state" id="w-loc-state"></span>
+        </div>
+        <p class="hint">位置があると地図に出て、近い順に並びます。</p>
+      </div>
+      <div class="card form-card">
+        <div class="field-row">
+          <label class="field"><span>テレビで見た番組（任意）</span><input id="w-program" maxlength="60" placeholder="例：かまいまち" autocomplete="off"></label>
+          <label class="field"><span>放送日</span><input id="w-aired" type="date"></label>
+        </div>
+        <label class="field"><span>メモ</span><textarea id="w-memo" rows="2" maxlength="500" placeholder="食べたいもの・誰と行きたいか など"></textarea></label>
+      </div>
+      <p class="form-error" id="want-error" role="alert"></p>
+      <button type="submit" class="primary-btn">保存する</button>
+      <button type="button" class="danger-link" id="want-delete" hidden>行きたい場所から外す</button>
+    </form>
   </section>
 
   <!-- 登録・編集 -->

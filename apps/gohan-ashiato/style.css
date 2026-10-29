@@ -195,3 +195,44 @@ a { color: inherit; text-decoration: none; }
 .viewer { position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 40; display: flex; align-items: center; justify-content: center; }
 .viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .viewer-close { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 10px; color: #fff; }
+
+/* 行きたい場所・テレビの店 */
+.seg-btn { font-size: 14px; white-space: nowrap; }
+.toolbar-gap { flex: 1; }
+.toolbar-note { font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.add-btn { background: var(--accent-soft-bg); color: var(--accent-deep); font-weight: 700; }
+.pill-btn.on, .icon-btn.on { background: var(--accent); color: #fff; }
+.pill-btn.on .ic { color: #fff; }
+.map-box { height: 300px; margin: 10px 0 12px; border-radius: var(--radius-card); overflow: hidden; box-shadow: var(--card-shadow); background: var(--input-bg); position: relative; z-index: 0; }
+.map-pop { color: var(--accent-deep); font-weight: 700; }
+.spot { display: flex; gap: 12px; align-items: center; padding: 12px; margin-bottom: 10px; background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); }
+.spot-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: var(--accent-soft-bg); color: var(--accent); }
+.spot-icon.is-tv { background: #E8F0FC; color: #3B7BE0; }
+.spot-icon.is-went { background: var(--input-bg); color: var(--ink-soft); }
+.spot-body { flex: 1; min-width: 0; }
+.spot-name { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spot-sub { font-size: 12px; color: var(--ink-muted); display: flex; align-items: center; gap: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spot-sub .ic { width: 13px; height: 13px; flex-shrink: 0; }
+.spot-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.badge { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; border-radius: 999px; padding: 1px 8px 1px 6px; background: var(--input-bg); color: var(--ink-muted); }
+.badge .ic { width: 12px; height: 12px; }
+.badge.went { background: #E7F6EC; color: #1F8A4C; }
+.badge.want { background: var(--accent-soft-bg); color: var(--accent-deep); }
+.badge.nopos { padding-left: 8px; }
+.spot-dist { font-weight: 700; font-size: 14px; white-space: nowrap; }
+.tv-note { margin-top: 14px; }
+.card-h { font-size: 14px; margin: 0 0 6px; color: var(--ink-muted); }
+.appear { padding: 8px 0; box-shadow: 0 -1px 0 var(--input-bg); }
+.appear:first-of-type { box-shadow: none; }
+.appear-prog { font-weight: 700; display: flex; align-items: center; gap: 4px; }
+.appear-prog .ic { width: 16px; height: 16px; color: #3B7BE0; }
+.appear-prog small { font-weight: 400; color: var(--ink-muted); margin-left: 4px; }
+.appear-meta { font-size: 12px; color: var(--ink-muted); margin: 2px 0 4px; }
+.spot-actions { margin-top: 14px; }
+.spot-actions .primary-btn, .spot-actions .secondary-btn { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; }
+.spot-actions .ic { width: 18px; height: 18px; }
+.search-row { display: flex; gap: 8px; align-items: center; }
+.search-row input { flex: 1; min-width: 0; }
+.cand { display: block; width: 100%; text-align: left; border: 0; background: var(--input-bg); border-radius: var(--radius-control); padding: 8px 12px; margin-bottom: 6px; }
+.cand small { display: block; color: var(--ink-muted); font-size: 12px; }
+.cand.on { box-shadow: 0 0 0 2px var(--accent); background: var(--accent-soft-bg); }
