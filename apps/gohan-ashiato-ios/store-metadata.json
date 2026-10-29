@@ -1,0 +1,61 @@
+{
+  "bundleId": "com.hiroyaapps.gohanashiato",
+  "locale": "ja",
+  "versionString": "1.0.0",
+  "minBuildNumber": 6,
+  "primaryCategory": "FOOD_AND_DRINK",
+  "secondaryCategory": "LIFESTYLE",
+  "contentRightsDeclaration": "USES_THIRD_PARTY_CONTENT",
+  "baseTerritory": "JPN",
+  "territories": ["JPN"],
+  "name": "ごはんの足跡",
+  "subtitle": "写真で残す、ごはんの記録",
+  "privacyPolicyUrl": "https://ainaraomakaseare-coder.github.io/my-app/apps/gohan-ashiato/privacy.html",
+  "supportUrl": "https://github.com/ainaraomakaseare-coder/my-app/issues",
+  "marketingUrl": "https://ainaraomakaseare-coder.github.io/my-app/apps/gohan-ashiato/",
+  "promotionalText": "食べたものを写真で記録。撮影日時と場所が自動で入り、近くのお店の候補からお店も選べます。記録は端末の中だけに保存します。",
+  "keywords": "ごはん,食事,記録,日記,グルメ,外食,ランチ,ディナー,カフェ,写真,お店,飲食店,食べ歩き,メモ,レビュー",
+  "description": [
+    "食べたものを、写真と一緒に残すごはんの記録アプリです。",
+    "",
+    "・写真を選ぶだけで、撮影日時と撮影場所を自動で入力",
+    "・近くの飲食店の候補から、タップでお店を選べる",
+    "・料理名、時間帯（朝・昼・夜・おやつ・飲み）、値段、★1〜5の評価、メモを記録",
+    "・毎日の記録は1本の一覧に。月ごとの件数・合計金額・平均評価もひと目で",
+    "・写真だけで並べる表示、★4以上や時間帯での絞り込み、検索、並べ替え",
+    "・お店ごとに、行った回数・平均評価・合計金額・最後に行った日を集計",
+    "・詳細画面で写真を大きく表示し、Googleマップでお店の場所を開ける",
+    "・記録と写真をまとめて書き出し、別の端末へ移せる",
+    "",
+    "アカウント登録は不要です。記録と写真は、お使いの端末の中だけに保存されます。",
+    "近くのお店の候補を出すときだけ、緯度・経度を送信します（送信した位置は保存しません）。"
+  ],
+  "reviewNotes": [
+    "Thank you for reviewing Gohan no Ashiato (a food diary).",
+    "",
+    "- No account or login is required. All records and photos are stored only on the device.",
+    "- How to try it: tap \"＋ 記録する\" (bottom right), tap \"写真\" to pick a photo or \"撮る\" to take one. The date, time and location are filled in from the photo (or the current location). Enter a dish name (料理), price (値段) and rating (評価), then tap \"保存する\". The record appears in the list, and the \"お店\" tab shows totals per restaurant.",
+    "- Location: used only when the user picks a photo that has a location, takes a photo, or taps \"現在地を記録\". To suggest nearby restaurants, only the latitude and longitude are sent to the developer's server (Cloudflare Workers), which asks the Google Places API and returns restaurant names. The location is not stored on the server. Photos, dish names and notes are never sent.",
+    "- The app does not show ads and does not use analytics or tracking.",
+    "- The app is in Japanese only.",
+    "",
+    "（日本語訳）",
+    "・アカウント・ログインは不要です。記録と写真はすべて端末内にのみ保存されます。",
+    "・試し方：右下の「＋ 記録する」→「写真」で写真を選ぶか「撮る」で撮影すると、日時と場所が写真（または現在地）から入ります。料理・値段・評価を入れて「保存する」を押すと一覧に出て、「お店」タブにお店ごとの集計が出ます。",
+    "・位置情報：位置のある写真を選んだとき・撮影したとき・「現在地を記録」を押したときだけ使います。近くのお店の候補を出すため、緯度・経度だけを開発者のサーバー（Cloudflare Workers）に送り、サーバーがGoogle Places APIに問い合わせて店名を返します。位置はサーバーに保存しません。写真・料理名・メモは送信しません。",
+    "・広告・分析ツール・トラッキングは使っていません。",
+    "・アプリは日本語のみです。"
+  ],
+  "screenshotSets": [
+    {
+      "displayType": "APP_IPHONE_65",
+      "screenshots": [
+        "store-screenshots/gohan-iphone-01-list.png",
+        "store-screenshots/gohan-iphone-02-add.png",
+        "store-screenshots/gohan-iphone-03-grid.png",
+        "store-screenshots/gohan-iphone-04-places.png",
+        "store-screenshots/gohan-iphone-05-detail.png"
+      ]
+    }
+  ]
+}
