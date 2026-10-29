@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 
 test('Web版の決まったファイルと橋渡しだけを同梱する', async () => {
-  assert.deepEqual((await fs.readdir('www')).sort(), ['app.js', 'core.js', 'icon-180.png', 'icon-512.png', 'index.html', 'native.js', 'style.css']);
+  assert.deepEqual((await fs.readdir('www')).sort(), ['app.js', 'core.js', 'icon-180.png', 'icon-512.png', 'index.html', 'native.js', 'privacy.html', 'style.css']);
   const html = await fs.readFile('www/index.html', 'utf8');
   assert.ok(html.indexOf('src="native.js"') < html.indexOf('src="core.js"'), 'native.js は core.js より前');
   assert.ok(html.indexOf('src="core.js"') < html.indexOf('src="app.js"'));

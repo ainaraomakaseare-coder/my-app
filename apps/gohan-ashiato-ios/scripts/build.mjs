@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises';
 import { build } from 'esbuild';
 const SRC = '../gohan-ashiato/';
-const FILES = ['core.js', 'app.js', 'style.css', 'icon-180.png', 'icon-512.png'];
+const FILES = ['core.js', 'app.js', 'style.css', 'icon-180.png', 'icon-512.png', 'privacy.html'];
 await fs.rm('www', { recursive: true, force: true });
 await fs.mkdir('www', { recursive: true });
 for (const f of FILES) await fs.copyFile(SRC + f, 'www/' + f);
