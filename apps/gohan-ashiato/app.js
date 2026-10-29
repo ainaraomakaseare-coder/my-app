@@ -761,7 +761,8 @@
         L.circleMarker([v.lat, v.lng], { radius: 9, weight: 2, color: '#fff', fillColor: went ? PIN_COLORS.went : PIN_COLORS[v.kind], fillOpacity: 1 })
           .bindPopup('<a class="map-pop" href="' + spotHref(v) + '">' + esc(v.name) + '</a>' + (went ? '<br><small>行った</small>' : ''))
           .addTo(m.layer);
-        pts.push([v.lat, v.lng]);
+        // 近い順のときは、近い15か所が入るように地図を合わせる（全国が一度に入ると近所が見えないため）
+        if (!nearOn || pts.length < 15) pts.push([v.lat, v.lng]);
       });
       if (nearOn && here) {
         L.circleMarker([here.lat, here.lng], { radius: 6, weight: 3, color: '#fff', fillColor: '#1C1E21', fillOpacity: 1 }).addTo(m.layer);

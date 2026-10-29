@@ -207,6 +207,8 @@ function check(label, cond, extra) {
   });
   const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
   await sctx.route('https://tile.openstreetmap.org/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: PNG }));
+  // テレビの店は、本物のリスト（数百店）ではなく1店だけのリストで確かめる
+  await sctx.route(URL + 'tv-shops.json', route => route.fulfill({ status: 200, contentType: 'application/json', body: fs.readFileSync(path.join(__dirname, 'fixtures', 'tv-shops.json')) }));
   const sp = await sctx.newPage();
   sp.on('pageerror', e => errors.push('spots: ' + e.message));
   sp.on('dialog', d => d.accept());
