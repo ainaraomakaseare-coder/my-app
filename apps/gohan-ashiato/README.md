@@ -43,6 +43,8 @@ iPhoneアプリ版は `apps/gohan-ashiato-ios`（同じコードを同梱）。
 - 新しい回を足すとき：`node scripts/collect-tv-shops.mjs [--dry-run]`。4番組の公式ページから、リストにある最新の放送日より新しい回だけを読んで足し（robots.txtに従い1秒に1回）、追加件数・確認待ち（ぶらりで飲食店か分からない店）・読めなかったページをMarkdownで出す。解析のテストは `node test/collect.test.js`
 - 集めた元は番組の公式ページだけ（BS-TBSの各店ページ、日本テレビのぶらりの放送後記事）。テレビ東京（`anthropic-ai` を robots.txt で全面禁止）とNHK（同）は使っていない。じゅん散歩（テレビ朝日）は公式に過去回の店リストが無い
 
+毎週月曜の朝（日本時間6時）に GitHub Actions（`.github/workflows/gohan-ashiato-tv-shops.yml`）が上のスクリプトを動かし、店が増えていればPRを作る。PRの本文に「確認待ち」（飲食店か自信のないもの）が並ぶので、要るものは手で足してからマージする（確認待ちは次の週には出てこない）。PRを作るには、リポジトリの Settings → Actions → General の「Allow GitHub Actions to create and approve pull requests」をオンにしておく。
+
 ## データの保存場所
 
 記録は`localStorage`（`gohan-ashiato.records.v1`）、行きたい場所は`gohan-ashiato.wants.v1`、写真はIndexedDB（`gohan-ashiato-photos`）。この端末のブラウザの中だけに保存し、サーバーには送らない。iPhoneのSafariはしばらく開かないサイトのデータを消すことがあるため、ホーム画面に追加して使うこと・ときどき書き出すことを設定画面で案内している。
