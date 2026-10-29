@@ -86,6 +86,9 @@ function check(label, cond, extra) {
   // ---- 2件目・3件目 ----
   await page.fill('#f-price', '900');
   await page.fill('#f-date', '2026-10-20');
+  // 時刻の初期値は今の時刻なので、時間帯が実行する時間で変わらないよう決めておく
+  await page.fill('#f-time', '18:30');
+  await page.dispatchEvent('#f-time', 'change');
   await page.fill('#f-place', 'ココイチ  渋谷店 ');
   await page.click('#f-rating [data-star="2"]');
   await page.click('#save-btn');
