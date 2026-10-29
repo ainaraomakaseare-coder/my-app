@@ -10,6 +10,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 concurrency:
   group: gohan-ashiato-tv-shops
   cancel-in-progress: false
@@ -37,10 +38,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if git diff --quiet -- apps/gohan-ashiato/tv-shops.json; then
-            echo "新しい店はありませんでした"
+            # 足した店は無くても確認待ちがあれば、見落とさないようにissueにする
+            if grep -q '確認待ち [1-9][0-9]*件' "$RUNNER_TEMP/report.md"; then
+              gh issue create --title "ごはんの足跡: テレビの店の確認待ち（$(date -u +%Y-%m-%d)）" \
+                --body-file "$RUNNER_TEMP/report.md" --assignee ainaraomakaseare-coder
+            else
+              echo "新しい店はありませんでした"
+            fi
             exit 0
           fi
-          branch="tv-shops/$(date -u +%Y%m%d)"
+          branch="tv-shops/$(date -u +%Y%m%d)-${{ github.run_id }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
