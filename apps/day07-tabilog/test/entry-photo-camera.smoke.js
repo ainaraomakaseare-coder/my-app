@@ -1,11 +1,10 @@
 /*
- * 【必須テスト】記録を追加の写真欄で「カメラで撮る」を選べることを確かめる（2026-10-31）。
- * 以前、iPhoneアプリで「写真を追加する」を押すとアルバムへ直接行き、カメラを選べなかった。
- * リリース前に必ず通すこと（docs/release-checklist.md）。
- *   - スマホのブラウザ：「カメラで撮る」と「アルバムから選ぶ」が並び、カメラ側はcapture付きの入力を開く
- *   - iPhoneアプリ（Capacitorをまねる）：アルバムはネイティブの写真選び、カメラはcapture付きの入力
- *   - Androidアプリ（Capacitorをまねる）：カメラが出る
- *   - パソコン：カメラは出さず、これまでどおり「写真を追加する」
+ * 【必須テスト】記録を追加の「写真を追加する」で、カメラ・アルバム・ファイルのどれでも選べることを確かめる（2026-10-31）。
+ * 以前、iPhoneアプリでは写真ライブラリ（アルバム）へ直接行き、カメラで撮れなかった。
+ * 「動画を追加する」と同じく、ふつうのファイル選択（capture無し・ネイティブの写真選びを使わない）を開けば、
+ * iPhoneでは「写真ライブラリ／写真を撮る／ファイルを選択」が出る。
+ * リリース前に必ず通すこと（docs/release-checklist.md）。実機での確認もそちらに書いてある。
+ *   - スマホのブラウザ／iPhoneアプリ（Capacitorをまねる）／Androidアプリ（同）／パソコン の4通り
  * 実行: node test/entry-photo-camera.smoke.js   （要 playwright）
  */
 const path = require('path');
@@ -132,55 +131,32 @@ async function chooserOf(page, selector) {
   const browser = await launch();
   const fx = path.join(__dirname, 'fixtures', 'photo-gps-1.jpg');
 
-  // ---- スマホのブラウザ ----
-  {
-    const { ctx, page, errors } = await openEntryForm(browser, BASE, { touch: true });
-    check('[スマホ] 「カメラで撮る」が出る', await page.isVisible('#entPhotoShotPicker'));
-    check('[スマホ] もう一方は「アルバムから選ぶ」', (await page.textContent('#entPhotoPickerLabel')) === 'アルバムから選ぶ');
-    check('[スマホ] カメラ用の入力はcapture付き', (await page.getAttribute('#entPhotoShot', 'capture')) === 'environment');
-    const shot = await chooserOf(page, '#entPhotoShotPicker');
-    check('[スマホ] 「カメラで撮る」でカメラ用の入力が開く', !!shot && (await shot.element().evaluate((el) => el.id)) === 'entPhotoShot');
-    if (shot) await shot.setFiles(fx);
+  const cases = [
+    { name: 'スマホ', touch: true },
+    { name: 'iPhoneアプリ', touch: true, platform: 'ios' },
+    { name: 'Androidアプリ', touch: true, platform: 'android' },
+    { name: 'パソコン', touch: false }
+  ];
+  for (const c of cases) {
+    const { ctx, page, errors } = await openEntryForm(browser, BASE, c);
+    const T = (s) => `[${c.name}] ${s}`;
+    check(T('写真のボタンは「写真を追加する」ひとつだけ'), (await page.locator('#entryForm, .screen[data-screen="entryForm"]').locator('.photo-picker:visible').count()) === 2 && (await page.textContent('#entPhotoPicker')).trim() === '写真を追加する');
+    // 写真の入力は、動画の入力と同じ作り（capture無し＝カメラに固定しない、複数選べる）
+    const attrs = await page.evaluate(() => ['entPhoto', 'entVideo'].map((id) => {
+      const el = document.getElementById(id);
+      return { capture: el.hasAttribute('capture'), multiple: el.multiple, accept: el.accept };
+    }));
+    check(T('写真の入力はcapture無し（カメラ・アルバム・ファイルを選べる）'), !attrs[0].capture && attrs[0].accept === 'image/*', JSON.stringify(attrs[0]));
+    check(T('写真の入力は動画の入力と同じく複数選べる'), attrs[0].multiple && attrs[1].multiple && !attrs[1].capture);
+    const chooser = await chooserOf(page, '#entPhotoPicker');
+    check(T('「写真を追加する」でファイル選択（カメラ・アルバム・ファイルの選択肢）が開く'), !!chooser && chooser.isMultiple() && (await chooser.element().evaluate((el) => el.id)) === 'entPhoto');
+    if (c.platform === 'ios') {
+      check(T('アルバムへ直接行く選び方（ネイティブの写真選び）を使わない'), (await page.evaluate(() => window.__pickImagesCalls)) === 0);
+    }
+    if (chooser) await chooser.setFiles(fx);
     await page.waitForFunction(() => document.querySelectorAll('#entPhotoPreview img').length === 1, null, { timeout: 5000 }).catch(() => {});
-    check('[スマホ] 撮った写真が記録に入る', (await page.$$('#entPhotoPreview img')).length === 1);
-    const album = await chooserOf(page, '#entPhotoPicker');
-    check('[スマホ] 「アルバムから選ぶ」は複数選べる入力', !!album && album.isMultiple() && (await album.element().evaluate((el) => el.id)) === 'entPhoto');
-    check('[スマホ] ページでエラーが出ていない', errors.length === 0, errors.join(' / '));
-    await ctx.close();
-  }
-
-  // ---- iPhoneアプリ ----
-  {
-    const { ctx, page, errors } = await openEntryForm(browser, BASE, { touch: true, platform: 'ios' });
-    check('[iPhoneアプリ] 「カメラで撮る」が出る', await page.isVisible('#entPhotoShotPicker'));
-    check('[iPhoneアプリ] 「ファイルから選ぶ」も出る', await page.isVisible('#entPhotoCamera'));
-    const shot = await chooserOf(page, '#entPhotoShotPicker');
-    check('[iPhoneアプリ] 「カメラで撮る」はアルバムでなくカメラ用の入力を開く', !!shot && (await shot.element().evaluate((el) => el.id)) === 'entPhotoShot' && (await page.evaluate(() => window.__pickImagesCalls)) === 0);
-    await page.click('#entPhotoPicker');
-    await page.waitForTimeout(200);
-    check('[iPhoneアプリ] 「アルバムから選ぶ」は写真ライブラリ（場所が読める選び方）', (await page.evaluate(() => window.__pickImagesCalls)) === 1);
-    check('[iPhoneアプリ] ページでエラーが出ていない', errors.length === 0, errors.join(' / '));
-    await ctx.close();
-  }
-
-  // ---- Androidアプリ ----
-  {
-    const { ctx, page, errors } = await openEntryForm(browser, BASE, { touch: true, platform: 'android' });
-    check('[Androidアプリ] 「カメラで撮る」が出る', await page.isVisible('#entPhotoShotPicker'));
-    const shot = await chooserOf(page, '#entPhotoShotPicker');
-    check('[Androidアプリ] 「カメラで撮る」でカメラ用の入力が開く', !!shot && (await shot.element().evaluate((el) => el.id)) === 'entPhotoShot');
-    check('[Androidアプリ] ページでエラーが出ていない', errors.length === 0, errors.join(' / '));
-    await ctx.close();
-  }
-
-  // ---- パソコン ----
-  {
-    const { ctx, page, errors } = await openEntryForm(browser, BASE, { touch: false });
-    check('[パソコン] 「カメラで撮る」は出さない', await page.isHidden('#entPhotoShotPicker'));
-    check('[パソコン] 「写真を追加する」のまま', (await page.textContent('#entPhotoPickerLabel')) === '写真を追加する');
-    const album = await chooserOf(page, '#entPhotoPicker');
-    check('[パソコン] 「写真を追加する」でファイル選択が開く', !!album && album.isMultiple());
-    check('[パソコン] ページでエラーが出ていない', errors.length === 0, errors.join(' / '));
+    check(T('選んだ（撮った）写真が記録に入る'), (await page.$$('#entPhotoPreview img')).length === 1);
+    check(T('ページでエラーが出ていない'), errors.length === 0, errors.join(' / '));
     await ctx.close();
   }
 

@@ -9774,7 +9774,7 @@
   // 写真（最大30枚）を選ぶ → 撮影時刻と撮影場所を読み、同じ場所で続けて撮った写真を1つの立ち寄り先にまとめる
   // （Core.photosToStops）→ 立ち寄り先ごとに近くの場所の名前を調べる（GET /places/nearby。AIは使わない）
   // → スクショ・メモと同じ確認画面で直す → 「この内容で追加」で予定を作り、その予定の記録に写真を付ける。
-  // iPhoneアプリはファイルとして選ぶと場所が消えるので、写真ライブラリから直接選ぶ（pickPhotosNativeと同じ）
+  // iPhoneアプリはファイルとして選ぶと場所が消えるので、写真ライブラリから直接選ぶ
   var photoItinInput = null;
   var photoItinBusy = false;
 
@@ -12779,13 +12779,6 @@
     return (window.Capacitor.Plugins && window.Capacitor.Plugins.Camera) || null;
   }
 
-  // 記録の写真欄に「カメラで撮る」を出すか（アプリ、またはスマホ・タブレットのブラウザ）。
-  // パソコンではcaptureが効かずファイル選択になるだけなので出さない
-  function entryPhotoCameraAvailable() {
-    if (isNativeApp()) return true;
-    return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-  }
-
   // 選んだ・撮った写真ファイルを記録の写真に加える
   function addEntryPhotoFiles(files) {
     if (!files.length) return;
@@ -12817,35 +12810,6 @@
         return f.slice(0, 256 * 1024).arrayBuffer().then(Core.jpegGpsFromBuffer).catch(function () { return null; });
       });
     }, Promise.resolve(null));
-  }
-
-  function pickPhotosNative(plugin) {
-    plugin.pickImages({ quality: 90, limit: 0 }).then(function (res) {
-      var photos = (res && res.photos) || [];
-      var point = null;
-      photos.forEach(function (p) { if (!point) point = Core.gpsFromExif(p.exif && p.exif.GPS); });
-      if (photoLibPerm !== 'granted' && photoLibPerm !== 'limited') photoLibPerm = 'granted'; // 選べた＝許可された
-      // 大きい写真を一度に何枚も読むとメモリが足りなくなるので、1枚ずつ縮めて追加する
-      return photos.reduce(function (prev, p) {
-        return prev.then(function () {
-          return fetch(p.webPath).then(function (r) { return r.blob(); })
-            .then(function (b) { return fileToCompressedBlob(b, 1280, 0.72); })
-            .then(function (blob) {
-              state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) });
-              renderPhotoPreview();
-            });
-        });
-      }, Promise.resolve()).then(function () { applyPhotoLocation(point); });
-    }).catch(function (err) {
-      var msg = String((err && err.message) || err || '');
-      if (/cancel/i.test(msg)) return;
-      if (/denied/i.test(msg)) {
-        photoLibPerm = 'denied';
-        showToast(tr('写真へのアクセスが許可されていないため、撮影場所は読めません。もう一度押すと、場所なしで写真を選べます。'));
-        return;
-      }
-      showToast(tr('写真を読み込めませんでした。'));
-    });
   }
 
   // 「今」：時刻の欄に端末の今の時刻（HH:MM）を入れる（2026-10-15）
@@ -16885,31 +16849,17 @@
       renderCostItems();
     });
 
-    // iPhoneアプリでは写真ライブラリから直接選び、撮影場所も読む（ファイルとして渡すと位置情報が消えるため。
-    // docs/adr/0025）。ファイルから選ぶは、下の小さいボタンからこれまでどおりの選び方で
-    // 「カメラで撮る」は、スマホ（指で操作する画面）とアプリのときに「アルバムから選ぶ」と並べて出す。
-    // アルバムへ直接行く選び方（iPhoneアプリ・Androidの写真選択）だとカメラを選べないため（2026-10-31）。
+    // 記録の写真は、動画と同じくふつうのファイル選択で選ぶ。iPhoneでは「写真ライブラリ／写真を撮る／
+    // ファイルを選択」が出て、カメラでもアルバムでも選べる（2026-10-31。以前はiPhoneアプリだけ
+    // 写真ライブラリへ直接行き、カメラを選べなかった）。代わりにiPhoneアプリでは撮影場所が写真から
+    // 読めないことがある（docs/adr/0025）。場所は「現在地を入れる」や場所検索で入れる。
     // 必須テスト: test/entry-photo-camera.smoke.js ／ docs/release-checklist.md
-    var showShot = entryPhotoCameraAvailable();
-    $('#entPhotoShotPicker').hidden = !showShot;
-    $('#entPhotoPickerLabel').textContent = tr(showShot ? 'アルバムから選ぶ' : '写真を追加する');
-    $('#entPhotoShotPicker').addEventListener('click', function () { $('#entPhotoShot').click(); });
-    $('#entPhotoShot').addEventListener('change', function (e) {
-      addEntryPhotoFiles(Array.prototype.slice.call(e.target.files || []));
-      e.target.value = '';
-    });
     var photoPlugin = nativePhotoPicker();
-    $('#entPhotoCamera').hidden = !photoPlugin;
     if (photoPlugin && photoPlugin.checkPermissions) {
+      // 写真から旅程を作るときの選び方（ネイティブの写真選び）のために、許可の状態だけ先に調べておく
       photoPlugin.checkPermissions().then(function (p) { photoLibPerm = (p && p.photos) || ''; }).catch(function () {});
     }
-    $('#entPhotoPicker').addEventListener('click', function () {
-      // 写真へのアクセスを断られているときは、これまでどおりの選び方（場所は読めない）にする。
-      // 許可の状態は先に調べてあるので、ここは待たずに開ける（待つとiOSがファイル選択を開かせない）
-      if (photoPlugin && photoLibPerm !== 'denied') pickPhotosNative(photoPlugin);
-      else $('#entPhoto').click();
-    });
-    $('#entPhotoCamera').addEventListener('click', function () { $('#entPhoto').click(); });
+    $('#entPhotoPicker').addEventListener('click', function () { $('#entPhoto').click(); });
     initPhotoReorder();
     $('#entPhoto').addEventListener('change', function (e) {
       addEntryPhotoFiles(Array.prototype.slice.call(e.target.files || []));
