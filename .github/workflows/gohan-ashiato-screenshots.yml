@@ -33,4 +33,7 @@ jobs:
           API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
           API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
           MODE: ${{ inputs.mode || 'apply' }}
-        run: node scripts/update-store-listing.mjs "$MODE"
+        # 実行ログを開けない環境でも理由が分かるように、失敗したら最後の行をエラーの注釈に出す
+        run: |
+          set -o pipefail
+          node scripts/update-store-listing.mjs "$MODE" 2>&1 | tee listing.log || { echo "::error title=掲載内容を入れられませんでした::$(tail -n 6 listing.log | tr '\n' ' ')"; exit 1; }
