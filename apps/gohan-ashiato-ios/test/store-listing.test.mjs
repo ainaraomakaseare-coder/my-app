@@ -11,6 +11,8 @@ test('文字数の上限に収まる', () => {
   assert.ok(chars(listing.description.join('\n')) <= 4000, '説明文は4000文字まで');
   assert.ok(chars(listing.keywords) <= 100, 'キーワードは100文字まで');
   assert.doesNotMatch(listing.keywords, /\s/, 'キーワードはカンマ区切りで空白なし');
+  // Appleが受け付けない記号（2026-10-31、★で 409 INVALID_CHARACTERS）
+  for (const t of [listing.description.join('\n'), listing.promotionalText, listing.keywords]) assert.doesNotMatch(t, /[★☆]/);
   assert.match(listing.versionString, /^\d+\.\d+(\.\d+)?$/);
 });
 
