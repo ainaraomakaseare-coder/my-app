@@ -694,7 +694,6 @@ input[type="time"]::-webkit-datetime-edit-ampm-field, input[type="time"]::-webki
   display: flex; align-items: center; gap: 10px; border: 1.5px dashed var(--border); border-radius: var(--radius-card);
   padding: 14px; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; background: none;
 }
-.photo-camera-btn { margin-top: 6px; }
 .photo-pick-row { display: flex; gap: 8px; }
 .photo-pick-row .photo-picker { flex: 1; min-width: 0; cursor: pointer; }
 .photo-pick-row .photo-picker[hidden] { display: none; }

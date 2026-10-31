@@ -153,7 +153,7 @@ async function chooserOf(page, selector) {
   {
     const { ctx, page, errors } = await openEntryForm(browser, BASE, { touch: true, platform: 'ios' });
     check('[iPhoneアプリ] 「カメラで撮る」が出る', await page.isVisible('#entPhotoShotPicker'));
-    check('[iPhoneアプリ] 「ファイルから選ぶ」も出る', await page.isVisible('#entPhotoCamera'));
+    check('[iPhoneアプリ] 写真のボタンは「カメラで撮る」「アルバムから選ぶ」の2つだけ（「ファイルから選ぶ」の小さいボタンは出さない）', (await page.locator('.screen[data-screen="entryForm"] .field:has(#entPhoto) button:visible, .screen[data-screen="entryForm"] .field:has(#entPhoto) .photo-picker:visible').count()) === 2);
     const shot = await chooserOf(page, '#entPhotoShotPicker');
     check('[iPhoneアプリ] 「カメラで撮る」はアルバムでなくカメラ用の入力を開く', !!shot && (await shot.element().evaluate((el) => el.id)) === 'entPhotoShot' && (await page.evaluate(() => window.__pickImagesCalls)) === 0);
     await page.click('#entPhotoPicker');

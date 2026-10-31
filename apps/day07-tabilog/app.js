@@ -16886,7 +16886,8 @@
     });
 
     // iPhoneアプリでは写真ライブラリから直接選び、撮影場所も読む（ファイルとして渡すと位置情報が消えるため。
-    // docs/adr/0025）。ファイルから選ぶは、下の小さいボタンからこれまでどおりの選び方で
+    // docs/adr/0025）。写真へのアクセスを断られているときだけ、ふつうのファイル選択になる。
+    // 「ファイルから選ぶ」の小さいボタンは、見た目がちぐはぐなので外した（2026-10-31）
     // 「カメラで撮る」は、スマホ（指で操作する画面）とアプリのときに「アルバムから選ぶ」と並べて出す。
     // アルバムへ直接行く選び方（iPhoneアプリ・Androidの写真選択）だとカメラを選べないため（2026-10-31）。
     // 必須テスト: test/entry-photo-camera.smoke.js ／ docs/release-checklist.md
@@ -16899,7 +16900,6 @@
       e.target.value = '';
     });
     var photoPlugin = nativePhotoPicker();
-    $('#entPhotoCamera').hidden = !photoPlugin;
     if (photoPlugin && photoPlugin.checkPermissions) {
       photoPlugin.checkPermissions().then(function (p) { photoLibPerm = (p && p.photos) || ''; }).catch(function () {});
     }
@@ -16909,7 +16909,6 @@
       if (photoPlugin && photoLibPerm !== 'denied') pickPhotosNative(photoPlugin);
       else $('#entPhoto').click();
     });
-    $('#entPhotoCamera').addEventListener('click', function () { $('#entPhoto').click(); });
     initPhotoReorder();
     $('#entPhoto').addEventListener('change', function (e) {
       addEntryPhotoFiles(Array.prototype.slice.call(e.target.files || []));
