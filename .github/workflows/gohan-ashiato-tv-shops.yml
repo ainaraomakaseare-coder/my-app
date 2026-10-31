@@ -1,0 +1,60 @@
+name: ごはんの足跡 テレビの店を集める
+# 毎週月曜の朝（日本時間6時）に、番組の公式ページから新しい回の店を集め、増えていればPRを作る。
+# 集めたものはPRで人が確かめてからマージする（確認待ちの店はPRの本文に並ぶ）。
+# PRを作るには、リポジトリの Settings → Actions → General の
+# 「Allow GitHub Actions to create and approve pull requests」をオンにしておく必要がある。
+on:
+  schedule:
+    - cron: "0 21 * * 0"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+concurrency:
+  group: gohan-ashiato-tv-shops
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 新しい回の店を集める
+        run: |
+          node apps/gohan-ashiato/scripts/collect-tv-shops.mjs > "$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: テスト
+        run: |
+          node apps/gohan-ashiato/test/core.test.js
+          node apps/gohan-ashiato/test/collect.test.js
+      - name: 増えていればPRを作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- apps/gohan-ashiato/tv-shops.json; then
+            # 足した店は無くても確認待ちがあれば、見落とさないようにissueにする
+            if grep -q '確認待ち [1-9][0-9]*件' "$RUNNER_TEMP/report.md"; then
+              gh issue create --title "ごはんの足跡: テレビの店の確認待ち（$(date -u +%Y-%m-%d)）" \
+                --body-file "$RUNNER_TEMP/report.md" --assignee ainaraomakaseare-coder
+            else
+              echo "新しい店はありませんでした"
+            fi
+            exit 0
+          fi
+          branch="tv-shops/$(date -u +%Y%m%d)-${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add apps/gohan-ashiato/tv-shops.json
+          git commit -m "ごはんの足跡: テレビの店を更新（$(date -u +%Y-%m-%d)）"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "ごはんの足跡: テレビの店を更新（$(date -u +%Y-%m-%d)）" \
+            --body-file "$RUNNER_TEMP/report.md" \
+            --assignee ainaraomakaseare-coder

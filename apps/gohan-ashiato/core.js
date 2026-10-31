@@ -202,22 +202,139 @@
     return (d.getUTCMonth() + 1) + '月' + d.getUTCDate() + '日(' + '日月火水木金土'.charAt(d.getUTCDay()) + ')';
   }
 
+  // ---------- 行きたい場所・テレビの店 ----------
+  // 行きたい場所：テレビの店から足したもの（tvShopId）も、自分で探して足したものも同じ形で持つ。
+  // tv：自分でテレビで見て足したときの番組名と放送日（無ければnull）
+  function normalizeWant(input, now) {
+    input = input || {};
+    var nowIso = (now || new Date()).toISOString();
+    var pt = geoPoint(input.lat, input.lng);
+    var tv = input.tv && typeof input.tv === 'object' ? {
+      program: cleanText(input.tv.program, 60),
+      aired: parseDate(input.tv.aired) ? input.tv.aired : ''
+    } : null;
+    if (tv && !tv.program && !tv.aired) tv = null;
+    return {
+      id: cleanText(input.id, 64) || ('w_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)),
+      name: cleanText(input.name, 80),
+      address: cleanText(input.address, 120),
+      lat: pt ? pt.lat : null,
+      lng: pt ? pt.lng : null,
+      memo: cleanText(input.memo, 500),
+      tv: tv,
+      tvShopId: cleanText(input.tvShopId, 64),
+      createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
+      updatedAt: nowIso
+    };
+  }
+  function validateWant(w) { return w.name ? [] : ['お店・場所の名前を入れてください']; }
+
+  // テレビの店のリスト（tv-shops.json）の1件をそろえる。名前か出演が無いものは捨てる（null）
+  function normalizeTvShop(s) {
+    if (!s || typeof s !== 'object') return null;
+    var pt = geoPoint(s.lat, s.lng);
+    var apps = (Array.isArray(s.appearances) ? s.appearances : []).map(function (a) {
+      return {
+        program: cleanText(a && a.program, 60), channel: cleanText(a && a.channel, 30),
+        aired: a && parseDate(a.aired) ? a.aired : '', title: cleanText(a && a.title, 80),
+        url: /^https:\/\//.test((a && a.url) || '') ? a.url : ''
+      };
+    }).filter(function (a) { return a.program; });
+    var name = cleanText(s.name, 80), id = cleanText(s.id, 64);
+    if (!id || !name || !apps.length) return null;
+    apps.sort(function (a, b) { return a.aired < b.aired ? 1 : a.aired > b.aired ? -1 : 0; });
+    return {
+      id: id, name: name, address: cleanText(s.address, 120), station: cleanText(s.station, 30), genre: cleanText(s.genre, 30),
+      lat: pt ? pt.lat : null, lng: pt ? pt.lng : null,
+      links: (Array.isArray(s.links) ? s.links : []).filter(function (l) { return l && /^https:\/\//.test(l.url || ''); })
+        .map(function (l) { return { label: cleanText(l.label, 30) || 'リンク', url: l.url }; }),
+      appearances: apps,
+      lastAired: apps[0].aired
+    };
+  }
+  function parseTvShops(json) {
+    var data = typeof json === 'string' ? JSON.parse(json) : json;
+    var seen = {};
+    return ((data && Array.isArray(data.shops)) ? data.shops : []).map(normalizeTvShop).filter(function (s) {
+      if (!s || seen[s.id]) return false;
+      seen[s.id] = 1; return true;
+    });
+  }
+  // 番組ごとのお店の数（多い順）
+  function tvPrograms(shops) {
+    var map = {}, out = [];
+    shops.forEach(function (s) {
+      var done = {};
+      s.appearances.forEach(function (a) {
+        if (done[a.program]) return;
+        done[a.program] = 1;
+        if (!map[a.program]) { map[a.program] = { program: a.program, count: 0 }; out.push(map[a.program]); }
+        map[a.program].count++;
+      });
+    });
+    return out.sort(function (a, b) { return b.count - a.count; });
+  }
+
+  // 2点のあいだの距離（m）
+  function distanceM(a, b) {
+    if (!a || !b || a.lat === null || b.lat === null || a.lat === undefined || b.lat === undefined) return null;
+    var R = 6371000, toRad = Math.PI / 180;
+    var dLat = (b.lat - a.lat) * toRad, dLng = (b.lng - a.lng) * toRad;
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * toRad) * Math.cos(b.lat * toRad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return Math.round(2 * R * Math.asin(Math.min(1, Math.sqrt(h))));
+  }
+  function formatDistance(m) {
+    if (m === null || m === undefined) return '';
+    return m < 1000 ? m + 'm' : (m < 10000 ? (m / 1000).toFixed(1) : Math.round(m / 1000)) + 'km';
+  }
+  // 近い順（位置の無いものは後ろ、元の順のまま）
+  function sortByDistance(list, here) {
+    return list.map(function (x, i) { return { x: x, i: i, d: distanceM(here, x) }; }).sort(function (a, b) {
+      if (a.d === null && b.d === null) return a.i - b.i;
+      if (a.d === null) return 1;
+      if (b.d === null) return -1;
+      return a.d - b.d || a.i - b.i;
+    }).map(function (o) { return o.x; });
+  }
+
+  // お店の名前を比べる形：全角半角・大文字小文字・空白・記号をそろえ、末尾の「〇〇店」（支店名）は残す
+  function nameKey(s) {
+    var t = String(s || '');
+    if (t.normalize) t = t.normalize('NFKC');
+    return t.toLowerCase().replace(/[\s・･\-‐－'’"”!！?？.。、,()（）「」]/g, '');
+  }
+  var VISIT_NEAR_M = 40;
+  // そのお店（名前と位置）に行った記録。お店の名前がどちらかに含まれていれば行ったことにする
+  // （「らぁめん千寿」と「らぁめん千寿 御徒町店」）。お店の名前を入れていない記録は、40m以内なら行ったことにする
+  function visitsOf(place, records) {
+    var key = nameKey(place.name);
+    return records.filter(function (r) {
+      var rk = nameKey(r.place);
+      if (rk && key && rk.length >= 2 && key.length >= 2) return rk.indexOf(key) >= 0 || key.indexOf(rk) >= 0;
+      if (!rk) { var d = distanceM(place, r); return d !== null && d <= VISIT_NEAR_M; }
+      return false;
+    });
+  }
+
   // 書き出したファイルの中身を確かめて、記録の一覧と写真（id→dataURL）を返す。読めなければ例外
+  // 行きたい場所（wants）は、あとから足したので無いファイルもある
   function parseBackup(json) {
     var data = typeof json === 'string' ? JSON.parse(json) : json;
     if (!data || data.app !== 'gohan-ashiato' || !Array.isArray(data.records)) throw new Error('ごはんの足跡の書き出しファイルではありません');
     var records = data.records.map(function (r) { var n = normalizeRecord(r); n.updatedAt = r.updatedAt || n.updatedAt; return n; })
       .filter(function (r) { return r.date; });
+    var wants = (Array.isArray(data.wants) ? data.wants : []).map(function (w) { var n = normalizeWant(w); n.updatedAt = w.updatedAt || n.updatedAt; return n; })
+      .filter(function (w) { return w.name; });
     var photos = {};
     if (data.photos && typeof data.photos === 'object') {
       Object.keys(data.photos).forEach(function (id) {
         if (/^data:image\/(jpeg|png|webp);base64,/.test(data.photos[id])) photos[id] = data.photos[id];
       });
     }
-    return { records: records, photos: photos };
+    return { records: records, wants: wants, photos: photos };
   }
 
-  // 読み込んだ記録を今の記録にまぜる。同じidは更新日時が新しいほうを残す
+  // 読み込んだ記録（行きたい場所も同じ）を今のものにまぜる。同じidは更新日時が新しいほうを残す
   function mergeRecords(current, incoming) {
     var byId = {}, out = current.slice(), added = 0, updated = 0;
     out.forEach(function (r, i) { byId[r.id] = i; });
@@ -323,6 +440,9 @@
     normalizeRecord: normalizeRecord, validateRecord: validateRecord, sortRecords: sortRecords,
     filterRecords: filterRecords, summarize: summarize, groupByMonth: groupByMonth, monthLabel: monthLabel,
     placeKey: placeKey, placeStats: placeStats, mapsUrl: mapsUrl, formatDateJa: formatDateJa, parseBackup: parseBackup,
-    mergeRecords: mergeRecords, exifDateTime: exifDateTime, exifGps: exifGps, jpegExif: jpegExif
+    mergeRecords: mergeRecords, exifDateTime: exifDateTime, exifGps: exifGps, jpegExif: jpegExif,
+    normalizeWant: normalizeWant, validateWant: validateWant, normalizeTvShop: normalizeTvShop, parseTvShops: parseTvShops,
+    tvPrograms: tvPrograms, distanceM: distanceM, formatDistance: formatDistance, sortByDistance: sortByDistance,
+    nameKey: nameKey, visitsOf: visitsOf
   };
 });

@@ -11,7 +11,7 @@ const http = require('http');
 
 const ROOT = path.resolve(__dirname, '..');
 const SHOTS = process.argv[2] || '';
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.json': 'application/json' };
 
 let pass = 0, fail = 0;
 function check(label, cond, extra) {
@@ -38,6 +38,8 @@ function check(label, cond, extra) {
     route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
       body: JSON.stringify({ found: true, places: [{ name: 'ココイチ 渋谷店', types: ['restaurant'] }, { name: '一蘭 渋谷店', types: ['ramen_restaurant'] }] }) });
   });
+  // 住所から位置を調べる（国土地理院）も本物を呼ばない
+  await ctx.route('https://msearch.gsi.go.jp/**', route => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '[]' }));
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -186,9 +188,124 @@ function check(label, cond, extra) {
   check('やめたら写真を消す', await photoCount() === 1);
 
 
+  // ---- 行きたい場所・テレビの店：一覧と地図、テレビの店から行きたいに足す、行った記録をつける ----
+  const sctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ja-JP', geolocation: { latitude: 35.6812, longitude: 139.7671 }, permissions: ['geolocation'] });
+  const apiCalls = [];
+  await sctx.route('https://tabilog-api.hiroya-apps.workers.dev/**', route => {
+    const u = new globalThis.URL(route.request().url());
+    apiCalls.push(u.pathname + u.search);
+    const body = u.pathname === '/places/search' ? { places: [{ name: '神田まつや', address: '東京都千代田区', placeId: 'ChIJ_test_place_id_1' }] }
+      : u.pathname === '/places/details' ? { found: true, name: '神田まつや', address: '東京都千代田区神田須田町1-13', lat: 35.6957, lng: 139.7703 }
+      : { found: true, places: [{ name: 'らぁめん千寿 御徒町店', types: ['restaurant'] }] };
+    route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
+  });
+  const gsiCalls = [];
+  await sctx.route('https://msearch.gsi.go.jp/**', route => {
+    gsiCalls.push(decodeURIComponent(route.request().url()));
+    route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify([{ geometry: { coordinates: [139.7745, 35.7078], type: 'Point' }, properties: { title: '東京都台東区上野四丁目' } }]) });
+  });
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await sctx.route('https://tile.openstreetmap.org/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: PNG }));
+  // テレビの店は、本物のリスト（数百店）ではなく1店だけのリストで確かめる
+  await sctx.route(URL + 'tv-shops.json', route => route.fulfill({ status: 200, contentType: 'application/json', body: fs.readFileSync(path.join(__dirname, 'fixtures', 'tv-shops.json')) }));
+  const sp = await sctx.newPage();
+  sp.on('pageerror', e => errors.push('spots: ' + e.message));
+  sp.on('dialog', d => d.accept());
+  const sshot = async name => { if (SHOTS) await sp.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: true }); };
+  await sp.goto(URL);
+  await sp.click('.seg-btn[data-tab="wants"]');
+  check('行きたい: はじめは案内', (await sp.textContent('#wants')).includes('行きたいお店や場所'));
+
+  await sp.click('.seg-btn[data-tab="tv"]');
+  await sp.waitForSelector('#tv .spot');
+  check('テレビ: 同梱のお店が出る', (await sp.textContent('#tv')).includes('らぁめん千寿 御徒町店'));
+  check('テレビ: 番組で絞り込むチップ', (await sp.textContent('#tv-chips')).includes('かまいまち'));
+  await sp.waitForFunction(() => !document.querySelector('#tv .badge.nopos'));
+  check('テレビ: 住所から位置を調べる（建物名は外す）', gsiCalls.length === 1 && gsiCalls[0].endsWith('上野4-2-5'), gsiCalls.join(','));
+  await sp.click('#tab-tv [data-near]');
+  await sp.waitForSelector('#tv .spot-dist');
+  check('テレビ: 近い順で距離が出る', /km$/.test(await sp.textContent('#tv .spot-dist')), await sp.textContent('#tv .spot-dist'));
+  await sp.click('[data-mapview="tv"]');
+  await sp.waitForSelector('#tv-map .leaflet-interactive');
+  check('テレビ: 地図にピン（お店＋現在地）', await sp.locator('#tv-map path.leaflet-interactive').count() === 2);
+  await sshot('31-tv-map');
+
+  await sp.click('#tv .spot');
+  await sp.waitForSelector('#screen-spot:not([hidden])');
+  const spotText = await sp.textContent('#spot');
+  check('テレビの店の詳細: 番組・放送日・リンク', spotText.includes('かまいまち') && spotText.includes('10月29日') && spotText.includes('お店の公式サイト'));
+  check('テレビの店の詳細: 編集ボタンは出さない', await sp.isHidden('#spot-edit'));
+  await sp.click('#spot-want');
+  await sp.waitForFunction(() => document.getElementById('spot-want').textContent.includes('入っています'));
+  await sshot('32-tv-detail');
+
+  // 行った記録をつける → お店と位置が入る → 保存すると詳細に戻り「行った」
+  await sp.click('#spot .primary-btn');
+  await sp.waitForSelector('#screen-edit:not([hidden])');
+  check('記録: お店の名前が入る', await sp.inputValue('#f-place') === 'らぁめん千寿 御徒町店');
+  check('記録: 位置も入る', (await sp.textContent('#f-loc-state')).includes('位置を記録済み'));
+  await sp.fill('#f-name', '特製味そらぁめん');
+  await sp.click('#save-btn');
+  await sp.waitForSelector('#screen-spot:not([hidden])');
+  check('記録: 保存したらお店の詳細に戻り、行った記録が出る', (await sp.textContent('#spot')).includes('行った記録（1回）'));
+
+  // 行きたい場所を自分で探して足す
+  await sp.goto(URL + '#/w/new');
+  await sp.waitForSelector('#screen-want-edit:not([hidden])');
+  await sp.click('#want-form button[type=submit]');
+  check('行きたい: 名前は必須', (await sp.textContent('#want-error')).includes('名前'));
+  await sp.fill('#w-search', 'まつや 神田');
+  await sp.click('#w-search-btn');
+  await sp.waitForSelector('#w-candidates [data-cand]');
+  await sp.click('#w-candidates [data-cand]');
+  await sp.waitForFunction(() => document.getElementById('w-loc-state').textContent.includes('探したお店の位置'));
+  check('行きたい: 候補を選ぶと名前・住所・位置', await sp.inputValue('#w-name') === '神田まつや' && (await sp.inputValue('#w-address')).includes('須田町'));
+  check('行きたい: 検索と詳細は同じセッション', apiCalls.some(c => c.startsWith('/places/search?q=')) && apiCalls.some(c => c.startsWith('/places/details?id=ChIJ_test_place_id_1&session=')));
+  await sp.fill('#w-program', 'そばの番組');
+  await sp.fill('#w-memo', '天ぷらそば');
+  await sp.click('#want-form button[type=submit]');
+  await sp.waitForSelector('#screen-list:not([hidden])');
+  check('行きたい: 足したら行きたいタブ', await sp.isVisible('#tab-wants'));
+  const wantsText = await sp.textContent('#wants');
+  check('行きたい: 自分で足した場所とテレビの店が並ぶ', wantsText.includes('神田まつや') && wantsText.includes('らぁめん千寿'));
+  check('行きたい: 行ったお店に印', (await sp.locator('#wants .spot:has-text("らぁめん千寿") .badge.went').count()) === 1);
+  await sp.click('#wants-chips [data-spot-f="notyet"]');
+  check('行きたい: まだ行ってないだけ', (await sp.locator('#wants .spot').count()) === 1 && (await sp.textContent('#wants')).includes('神田まつや'));
+  await sp.click('#wants-chips [data-spot-f="notyet"]');
+  await sp.click('[data-mapview="wants"]');
+  await sp.waitForSelector('#wants-map .leaflet-interactive');
+  check('行きたい: 地図に2か所＋現在地（近い順はタブをまたいで続く）', await sp.locator('#wants-map path.leaflet-interactive').count() === 3);
+  await sshot('33-wants-map');
+
+  // 詳細 → 直す → 外す
+  await sp.click('#wants .spot:has-text("神田まつや")');
+  await sp.waitForSelector('#screen-spot:not([hidden])');
+  check('行きたいの詳細: メモとテレビ', (await sp.textContent('#spot')).includes('天ぷらそば') && (await sp.textContent('#spot')).includes('そばの番組'));
+  await sp.click('#spot-edit');
+  await sp.waitForSelector('#screen-want-edit:not([hidden])');
+  check('直す: 前の内容が入っている', await sp.inputValue('#w-memo') === '天ぷらそば');
+
+  // 書き出しに行きたい場所も入る
+  await sp.goto(URL + '#/settings');
+  const [sdl] = await Promise.all([sp.waitForEvent('download'), sp.click('#export-btn')]);
+  check('書き出しに行きたい場所2件', JSON.parse(fs.readFileSync(await sdl.path(), 'utf8')).wants.length === 2);
+  await sp.goto(URL + '#/w/' + encodeURIComponent((await sp.evaluate(() => JSON.parse(localStorage.getItem('gohan-ashiato.wants.v1')).find(w => w.name === '神田まつや').id))) + '/edit');
+  await sp.waitForSelector('#screen-want-edit:not([hidden])');
+  await sp.click('#want-delete');
+  await sp.waitForSelector('#screen-list:not([hidden])');
+  check('外す', (await sp.evaluate(() => JSON.parse(localStorage.getItem('gohan-ashiato.wants.v1')).length)) === 1);
+  await sctx.close();
+
+
   // ---- iPhoneアプリ（Capacitor）：Cameraプラグインのexifから日時と位置、書き出しは共有メニュー ----
   const nctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ja-JP' });
   await nctx.route('https://tabilog-api.hiroya-apps.workers.dev/**', route => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"found":true,"places":[{"name":"松屋","types":["restaurant"]}]}' }));
+  // 住所から位置を調べる（国土地理院）も本物を呼ばない
+  await nctx.route('https://msearch.gsi.go.jp/**', route => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '[]' }));
+  // アプリはWeb版（GitHub Pages）のテレビの店のリストを先に読む
+  await nctx.route('https://ainaraomakaseare-coder.github.io/**', route => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+    body: JSON.stringify({ shops: [{ id: 'remote-1', name: 'ネットから来た店', address: '東京都千代田区丸の内1-9-1', lat: 35.68, lng: 139.76, appearances: [{ program: '新しい番組', aired: '2026-11-01' }] }] }) }));
   await nctx.addInitScript(() => {
     window.__shared = [];
     window.Capacitor = {
@@ -217,6 +334,10 @@ function check(label, cond, extra) {
   await np.click('#save-btn');
   await np.waitForSelector('#screen-list:not([hidden])');
   check('アプリ: 保存', (await np.textContent('#records')).includes('松屋'));
+  await np.click('.seg-btn[data-tab="tv"]');
+  await np.waitForSelector('#tv .spot');
+  check('アプリ: テレビの店はネットのリストを読む', (await np.textContent('#tv')).includes('ネットから来た店') && !(await np.textContent('#tv')).includes('らぁめん千寿'));
+  check('アプリ: 読めたリストを端末に覚える', await np.evaluate(() => !!localStorage.getItem('gohan-ashiato.tvshops.v1')));
   await np.goto(URL + '#/settings');
   await np.click('#export-btn');
   await np.waitForFunction(() => window.__shared.length === 1);
