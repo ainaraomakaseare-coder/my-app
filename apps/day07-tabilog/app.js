@@ -12779,6 +12779,24 @@
     return (window.Capacitor.Plugins && window.Capacitor.Plugins.Camera) || null;
   }
 
+  // 記録の写真欄に「カメラで撮る」を出すか（アプリ、またはスマホ・タブレットのブラウザ）。
+  // パソコンではcaptureが効かずファイル選択になるだけなので出さない
+  function entryPhotoCameraAvailable() {
+    if (isNativeApp()) return true;
+    return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  }
+
+  // 選んだ・撮った写真ファイルを記録の写真に加える
+  function addEntryPhotoFiles(files) {
+    if (!files.length) return;
+    Promise.all(files.map(function (f) { return fileToCompressedBlob(f, 1280, 0.72); })).then(function (blobs) {
+      blobs.forEach(function (blob) { state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
+      renderPhotoPreview();
+    });
+    // パソコンなど、ファイルに位置情報が残っている環境では、そこから撮影場所を読む
+    photoGpsFromFiles(files).then(applyPhotoLocation);
+  }
+
   function applyPhotoLocation(point) {
     // 自分で場所を選んだ・入力した記録は上書きしない（編集中の記録も地図欄が埋まっているので変わらない）
     if (!point || $('#entMapUrl').value.trim() || selectedPlace() || $('#entPlaceSearch').value.trim()) return;
@@ -16868,7 +16886,18 @@
     });
 
     // iPhoneアプリでは写真ライブラリから直接選び、撮影場所も読む（ファイルとして渡すと位置情報が消えるため。
-    // docs/adr/0025）。カメラで撮る・ファイルから選ぶは、下の小さいボタンからこれまでどおりの選び方で
+    // docs/adr/0025）。ファイルから選ぶは、下の小さいボタンからこれまでどおりの選び方で
+    // 「カメラで撮る」は、スマホ（指で操作する画面）とアプリのときに「アルバムから選ぶ」と並べて出す。
+    // アルバムへ直接行く選び方（iPhoneアプリ・Androidの写真選択）だとカメラを選べないため（2026-10-31）。
+    // 必須テスト: test/entry-photo-camera.smoke.js ／ docs/release-checklist.md
+    var showShot = entryPhotoCameraAvailable();
+    $('#entPhotoShotPicker').hidden = !showShot;
+    $('#entPhotoPickerLabel').textContent = tr(showShot ? 'アルバムから選ぶ' : '写真を追加する');
+    $('#entPhotoShotPicker').addEventListener('click', function () { $('#entPhotoShot').click(); });
+    $('#entPhotoShot').addEventListener('change', function (e) {
+      addEntryPhotoFiles(Array.prototype.slice.call(e.target.files || []));
+      e.target.value = '';
+    });
     var photoPlugin = nativePhotoPicker();
     $('#entPhotoCamera').hidden = !photoPlugin;
     if (photoPlugin && photoPlugin.checkPermissions) {
@@ -16883,13 +16912,7 @@
     $('#entPhotoCamera').addEventListener('click', function () { $('#entPhoto').click(); });
     initPhotoReorder();
     $('#entPhoto').addEventListener('change', function (e) {
-      var files = Array.prototype.slice.call(e.target.files || []);
-      Promise.all(files.map(function (f) { return fileToCompressedBlob(f, 1280, 0.72); })).then(function (blobs) {
-        blobs.forEach(function (blob) { state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) }); });
-        renderPhotoPreview();
-      });
-      // パソコンなど、ファイルに位置情報が残っている環境では、そこから撮影場所を読む
-      photoGpsFromFiles(files).then(applyPhotoLocation);
+      addEntryPhotoFiles(Array.prototype.slice.call(e.target.files || []));
       e.target.value = '';
     });
 
