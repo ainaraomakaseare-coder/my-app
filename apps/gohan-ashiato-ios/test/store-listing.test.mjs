@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 
 const listing = JSON.parse(await fs.readFile(new URL('../store-listing.json', import.meta.url), 'utf8'));
-const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const chars = (s) => [...s].length;
 
 test('文字数の上限に収まる', () => {
@@ -12,7 +11,7 @@ test('文字数の上限に収まる', () => {
   assert.ok(chars(listing.description.join('\n')) <= 4000, '説明文は4000文字まで');
   assert.ok(chars(listing.keywords) <= 100, 'キーワードは100文字まで');
   assert.doesNotMatch(listing.keywords, /\s/, 'キーワードはカンマ区切りで空白なし');
-  assert.equal(listing.versionString, pkg.version);
+  assert.match(listing.versionString, /^\d+\.\d+(\.\d+)?$/);
 });
 
 test('スクリーンショットは 6.1/6.3インチ（1179x2556）のPNG、3〜10枚', async () => {

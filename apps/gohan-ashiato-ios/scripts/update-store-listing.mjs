@@ -13,6 +13,8 @@ import {makeToken} from './asc.mjs';
 const mode = process.argv[2] === 'apply' ? 'apply' : 'check';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const listing = JSON.parse(readFileSync(join(root, 'store-listing.json'), 'utf8'));
+// App Storeのバージョンは store-listing.json の versionString（例 1.0）、ビルドのバージョンは package.json の version（例 1.0.0）
+const buildVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const APP_ID = '6828318944';
 const API = 'https://api.appstoreconnect.apple.com';
 // 文面・画像・ビルドを変えられるバージョンの状態
@@ -116,8 +118,8 @@ else {
 }
 
 // 4. ビルド：TestFlightで処理が終わった（VALID）一番新しいもの
-const builds = (await get(`/v1/builds?filter[app]=${APP_ID}&filter[preReleaseVersion.version]=${listing.versionString}&filter[processingState]=VALID&sort=-uploadedDate&limit=1`)).data;
-if (!builds.length) throw new Error(`${listing.versionString} の使えるビルドがTestFlightにありません`);
+const builds = (await get(`/v1/builds?filter[app]=${APP_ID}&filter[preReleaseVersion.version]=${buildVersion}&filter[processingState]=VALID&sort=-uploadedDate&limit=1`)).data;
+if (!builds.length) throw new Error(`${buildVersion} の使えるビルドがTestFlightにありません`);
 const latest = builds[0];
 const current = (await get(`/v1/appStoreVersions/${version.id}/build`)).data;
 if (current?.id === latest.id) say(`ビルド：${latest.attributes.version}、変更なし`);
