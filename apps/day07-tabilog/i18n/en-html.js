@@ -118,9 +118,6 @@ I18N.addLang('en', {
   "この予定を削除": "Delete this activity",
   "記録を追加": "Add record",
   "写真": "Photos",
-  "カメラで撮る": "Take a photo",
-  "アルバムから選ぶ": "Choose from album",
-  "ファイルから選ぶ": "Choose a file",
   "写真を追加する": "Add photos",
   "写真を長押しして動かすと、順番を入れ替えられます（先頭の写真が代表の写真になります）": "Press and hold a photo to drag and reorder (the first photo is the cover photo)",
   "動画（1本あたり最大200MB）": "Videos (up to 200 MB each)",
@@ -269,7 +266,6 @@ I18N.addLang('en', {
   "「9:30 首里城」のように時刻と場所を出しながら、記録の写真と動画を時間の順に流す縦の動画を作ります（最長60秒）。費用・日記の文章・一緒に行った人の名前は入りません。": "Makes a vertical video that plays your photos and videos in time order, showing the time and place like \"9:30 Shuri Castle\" (up to 60 seconds). Costs, diary text and companions' names are not included.",
   "記録の動画も入れる（音は入りません）": "Include videos from your records (no sound)",
   "同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。": "Companions' faces may appear. You can watch the video before posting it.",
-  "カメラで撮る・ファイルから選ぶ": "Take a photo or choose a file",
   "予約・チケットの画像から予定を作る": "Create plans from booking or ticket images",
   "航空券・ホテル予約・チケット・レシートなどの画面を保存した画像を選ぶと、AIが日時と場所を読み取って予定の候補を作ります（保存前に直せます）": "Pick saved images of flights, hotel bookings, tickets, or receipts and AI reads the dates and places to suggest plans (editable before saving)",
 });
