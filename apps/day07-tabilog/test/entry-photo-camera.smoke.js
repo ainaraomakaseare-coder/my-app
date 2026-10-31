@@ -1,10 +1,11 @@
 /*
- * 【必須テスト】記録を追加の「写真を追加する」で、カメラ・アルバム・ファイルのどれでも選べることを確かめる（2026-10-31）。
- * 以前、iPhoneアプリでは写真ライブラリ（アルバム）へ直接行き、カメラで撮れなかった。
- * 「動画を追加する」と同じく、ふつうのファイル選択（capture無し・ネイティブの写真選びを使わない）を開けば、
- * iPhoneでは「写真ライブラリ／写真を撮る／ファイルを選択」が出る。
+ * 【必須テスト】記録を追加の「写真を追加する」1つのボタンから、カメラで撮る・アルバムから選ぶ・ファイルを選択の
+ * どれでも選べることを確かめる（2026-10-31）。以前、iPhoneアプリでは写真ライブラリへ直接行き、カメラで撮れなかった。
+ *   - スマホのブラウザ／Androidアプリ／パソコン：「動画を追加する」と同じふつうのファイル選択（capture無し）を開く。
+ *     端末がカメラ・アルバム・ファイルの選択肢を出す
+ *   - iPhoneアプリ（Capacitorをまねる）：アプリの中のメニューで3つを出す。アルバムはネイティブの写真選びで、
+ *     撮影場所が記録の地図に入る
  * リリース前に必ず通すこと（docs/release-checklist.md）。実機での確認もそちらに書いてある。
- *   - スマホのブラウザ／iPhoneアプリ（Capacitorをまねる）／Androidアプリ（同）／パソコン の4通り
  * 実行: node test/entry-photo-camera.smoke.js   （要 playwright）
  */
 const path = require('path');
@@ -66,7 +67,10 @@ async function openEntryForm(browser, BASE, opts) {
         getPlatform: () => platform,
         Plugins: platform === 'ios' ? { Camera: {
           checkPermissions: () => Promise.resolve({ photos: 'granted' }),
-          pickImages: () => { window.__pickImagesCalls++; return Promise.reject(new Error('User cancelled photos app')); }
+          pickImages: () => {
+            window.__pickImagesCalls++;
+            return Promise.resolve({ photos: [{ webPath: '/test/fixtures/photo-gps-1.jpg', format: 'jpeg', exif: { GPS: { Latitude: 26.2172, LatitudeRef: 'N', Longitude: 127.7195, LongitudeRef: 'E' } } }] });
+          }
         } } : {}
       };
       // 通信はCapacitorHttpを通るので、ふつうのfetchに渡してフェイクのAPIへ届ける
@@ -140,22 +144,55 @@ async function chooserOf(page, selector) {
   for (const c of cases) {
     const { ctx, page, errors } = await openEntryForm(browser, BASE, c);
     const T = (s) => `[${c.name}] ${s}`;
-    check(T('写真のボタンは「写真を追加する」ひとつだけ'), (await page.locator('#entryForm, .screen[data-screen="entryForm"]').locator('.photo-picker:visible').count()) === 2 && (await page.textContent('#entPhotoPicker')).trim() === '写真を追加する');
+    const photoCount = () => page.$$eval('#entPhotoPreview img', (els) => els.length);
+    const waitPhotos = (n) => page.waitForFunction((n) => document.querySelectorAll('#entPhotoPreview img').length === n, n, { timeout: 5000 }).catch(() => {});
+    check(T('写真のボタンは「写真を追加する」ひとつだけ'), (await page.locator('.screen[data-screen="entryForm"] .photo-picker:visible').count()) === 2 && (await page.textContent('#entPhotoPicker')).trim() === '写真を追加する');
     // 写真の入力は、動画の入力と同じ作り（capture無し＝カメラに固定しない、複数選べる）
     const attrs = await page.evaluate(() => ['entPhoto', 'entVideo'].map((id) => {
       const el = document.getElementById(id);
       return { capture: el.hasAttribute('capture'), multiple: el.multiple, accept: el.accept };
     }));
-    check(T('写真の入力はcapture無し（カメラ・アルバム・ファイルを選べる）'), !attrs[0].capture && attrs[0].accept === 'image/*', JSON.stringify(attrs[0]));
-    check(T('写真の入力は動画の入力と同じく複数選べる'), attrs[0].multiple && attrs[1].multiple && !attrs[1].capture);
-    const chooser = await chooserOf(page, '#entPhotoPicker');
-    check(T('「写真を追加する」でファイル選択（カメラ・アルバム・ファイルの選択肢）が開く'), !!chooser && chooser.isMultiple() && (await chooser.element().evaluate((el) => el.id)) === 'entPhoto');
-    if (c.platform === 'ios') {
-      check(T('アルバムへ直接行く選び方（ネイティブの写真選び）を使わない'), (await page.evaluate(() => window.__pickImagesCalls)) === 0);
+    check(T('写真の入力はcapture無しで複数選べる（動画の入力と同じ）'), !attrs[0].capture && attrs[0].accept === 'image/*' && attrs[0].multiple && attrs[1].multiple && !attrs[1].capture, JSON.stringify(attrs));
+
+    if (c.platform !== 'ios') {
+      const chooser = await chooserOf(page, '#entPhotoPicker');
+      check(T('「写真を追加する」でふつうのファイル選択（端末がカメラ・アルバム・ファイルを出す）が開く'), !!chooser && chooser.isMultiple() && (await chooser.element().evaluate((el) => el.id)) === 'entPhoto');
+      check(T('アプリの中のメニューは出さない'), await page.isHidden('#entPhotoMenu'));
+      if (chooser) await chooser.setFiles(fx);
+      await waitPhotos(1);
+      check(T('選んだ（撮った）写真が記録に入る'), (await photoCount()) === 1);
+    } else {
+      // iPhoneアプリ：アプリの中のメニューで3つを出す
+      await page.click('#entPhotoPicker');
+      const labels = (await page.locator('#entPhotoMenu button:visible').allTextContents()).map((t) => t.trim());
+      check(T('「写真を追加する」でカメラ・アルバム・ファイルのメニューが出る'), ['カメラで撮る', 'アルバムから選ぶ', 'ファイルを選択'].every((l) => labels.includes(l)), labels.join(','));
+      check(T('押しただけではアルバムへ直接行かない'), (await page.evaluate(() => window.__pickImagesCalls)) === 0);
+      // アルバムから選ぶ（ネイティブの写真選び。撮影場所が地図に入る）
+      await page.click('#btnEntPhotoMenuAlbum');
+      await waitPhotos(1);
+      check(T('「アルバムから選ぶ」は写真ライブラリ（ネイティブの写真選び）を開き、写真が入る'), (await page.evaluate(() => window.__pickImagesCalls)) === 1 && (await photoCount()) === 1);
+      await page.waitForFunction(() => document.querySelector('#entMapUrl').value, null, { timeout: 5000 }).catch(() => {});
+      check(T('アルバムの写真の撮影場所が記録の地図に入る'), /26\.21|127\.71/.test(await page.inputValue('#entMapUrl')), await page.inputValue('#entMapUrl'));
+      // カメラで撮る
+      await page.click('#entPhotoPicker');
+      const shot = await chooserOf(page, '#btnEntPhotoMenuCamera');
+      check(T('「カメラで撮る」でカメラ（capture付きの入力）が開く'), !!shot && (await shot.element().evaluate((el) => el.id + ':' + el.getAttribute('capture'))) === 'entPhotoShot:environment');
+      check(T('選んだらメニューは閉じる'), await page.isHidden('#entPhotoMenu'));
+      if (shot) await shot.setFiles(fx);
+      await waitPhotos(2);
+      check(T('撮った写真が記録に入る'), (await photoCount()) === 2);
+      // ファイルを選択
+      await page.click('#entPhotoPicker');
+      const file = await chooserOf(page, '#btnEntPhotoMenuFile');
+      check(T('「ファイルを選択」でふつうのファイル選択が開く'), !!file && file.isMultiple() && (await file.element().evaluate((el) => el.id)) === 'entPhoto');
+      if (file) await file.setFiles(fx);
+      await waitPhotos(3);
+      check(T('選んだファイルが記録に入る'), (await photoCount()) === 3);
+      // キャンセル・外側タップで閉じる
+      await page.click('#entPhotoPicker');
+      await page.click('#btnEntPhotoMenuCancel');
+      check(T('キャンセルで閉じる'), await page.isHidden('#entPhotoMenu'));
     }
-    if (chooser) await chooser.setFiles(fx);
-    await page.waitForFunction(() => document.querySelectorAll('#entPhotoPreview img').length === 1, null, { timeout: 5000 }).catch(() => {});
-    check(T('選んだ（撮った）写真が記録に入る'), (await page.$$('#entPhotoPreview img')).length === 1);
     check(T('ページでエラーが出ていない'), errors.length === 0, errors.join(' / '));
     await ctx.close();
   }

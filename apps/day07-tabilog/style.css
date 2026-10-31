@@ -694,6 +694,8 @@ input[type="time"]::-webkit-datetime-edit-ampm-field, input[type="time"]::-webki
   display: flex; align-items: center; gap: 10px; border: 1.5px dashed var(--border); border-radius: var(--radius-card);
   padding: 14px; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; background: none;
 }
+.photo-menu { display: flex; flex-direction: column; gap: 8px; }
+.photo-menu .btn { width: 100%; }
 .photo-preview { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .photo-preview .ph { position: relative; width: 60px; height: 60px; }
 .photo-preview .ph img { width: 100%; height: 100%; border-radius: var(--radius-control); object-fit: cover; }

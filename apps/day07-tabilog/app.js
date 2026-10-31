@@ -12812,6 +12812,35 @@
     }, Promise.resolve(null));
   }
 
+  function pickPhotosNative(plugin) {
+    plugin.pickImages({ quality: 90, limit: 0 }).then(function (res) {
+      var photos = (res && res.photos) || [];
+      var point = null;
+      photos.forEach(function (p) { if (!point) point = Core.gpsFromExif(p.exif && p.exif.GPS); });
+      if (photoLibPerm !== 'granted' && photoLibPerm !== 'limited') photoLibPerm = 'granted'; // 選べた＝許可された
+      // 大きい写真を一度に何枚も読むとメモリが足りなくなるので、1枚ずつ縮めて追加する
+      return photos.reduce(function (prev, p) {
+        return prev.then(function () {
+          return fetch(p.webPath).then(function (r) { return r.blob(); })
+            .then(function (b) { return fileToCompressedBlob(b, 1280, 0.72); })
+            .then(function (blob) {
+              state.formPhotos.push({ blob: blob, url: URL.createObjectURL(blob) });
+              renderPhotoPreview();
+            });
+        });
+      }, Promise.resolve()).then(function () { applyPhotoLocation(point); });
+    }).catch(function (err) {
+      var msg = String((err && err.message) || err || '');
+      if (/cancel/i.test(msg)) return;
+      if (/denied/i.test(msg)) {
+        photoLibPerm = 'denied';
+        showToast(tr('写真へのアクセスが許可されていないため、撮影場所は読めません。もう一度押すと、場所なしで写真を選べます。'));
+        return;
+      }
+      showToast(tr('写真を読み込めませんでした。'));
+    });
+  }
+
   // 「今」：時刻の欄に端末の今の時刻（HH:MM）を入れる（2026-10-15）
   function setTimeNow(input) {
     var d = new Date();
@@ -16849,17 +16878,36 @@
       renderCostItems();
     });
 
-    // 記録の写真は、動画と同じくふつうのファイル選択で選ぶ。iPhoneでは「写真ライブラリ／写真を撮る／
-    // ファイルを選択」が出て、カメラでもアルバムでも選べる（2026-10-31。以前はiPhoneアプリだけ
-    // 写真ライブラリへ直接行き、カメラを選べなかった）。代わりにiPhoneアプリでは撮影場所が写真から
-    // 読めないことがある（docs/adr/0025）。場所は「現在地を入れる」や場所検索で入れる。
+    // 記録の「写真を追加する」は、動画と同じく1つのボタンから「カメラで撮る／アルバムから選ぶ／ファイルを選択」を
+    // 選べるようにする（2026-10-31。以前はiPhoneアプリだけ写真ライブラリへ直接行き、カメラを選べなかった）。
+    // ブラウザ・Androidはふつうのファイル選択（端末がその3つを出す）。iPhoneアプリはアプリの中のメニュー（下）。
     // 必須テスト: test/entry-photo-camera.smoke.js ／ docs/release-checklist.md
     var photoPlugin = nativePhotoPicker();
     if (photoPlugin && photoPlugin.checkPermissions) {
-      // 写真から旅程を作るときの選び方（ネイティブの写真選び）のために、許可の状態だけ先に調べておく
       photoPlugin.checkPermissions().then(function (p) { photoLibPerm = (p && p.photos) || ''; }).catch(function () {});
     }
-    $('#entPhotoPicker').addEventListener('click', function () { $('#entPhoto').click(); });
+    $('#entPhotoPicker').addEventListener('click', function () {
+      // iPhoneアプリでは、同じ3つ（カメラで撮る／アルバムから選ぶ／ファイルを選択）をアプリの中のメニューで出す。
+      // アルバムはネイティブの写真選びで選び、撮影場所を地図に入れるため（ふつうのファイル選択だと場所が消える）
+      if (photoPlugin) $('#entPhotoMenu').hidden = false;
+      else $('#entPhoto').click();
+    });
+    function closeEntPhotoMenu() { $('#entPhotoMenu').hidden = true; }
+    $('#entPhotoMenu').addEventListener('click', function (e) { if (e.target === e.currentTarget) closeEntPhotoMenu(); });
+    $('#btnEntPhotoMenuCancel').addEventListener('click', closeEntPhotoMenu);
+    $('#btnEntPhotoMenuCamera').addEventListener('click', function () { closeEntPhotoMenu(); $('#entPhotoShot').click(); });
+    $('#btnEntPhotoMenuFile').addEventListener('click', function () { closeEntPhotoMenu(); $('#entPhoto').click(); });
+    $('#btnEntPhotoMenuAlbum').addEventListener('click', function () {
+      closeEntPhotoMenu();
+      // 写真へのアクセスを断られているときは、ふつうの選び方（場所は読めない）にする。
+      // 許可の状態は先に調べてあるので、ここは待たずに開ける（待つとiOSがファイル選択を開かせない）
+      if (photoLibPerm !== 'denied') pickPhotosNative(photoPlugin);
+      else $('#entPhoto').click();
+    });
+    $('#entPhotoShot').addEventListener('change', function (e) {
+      addEntryPhotoFiles(Array.prototype.slice.call(e.target.files || []));
+      e.target.value = '';
+    });
     initPhotoReorder();
     $('#entPhoto').addEventListener('change', function (e) {
       addEntryPhotoFiles(Array.prototype.slice.call(e.target.files || []));

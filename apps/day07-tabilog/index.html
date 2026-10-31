@@ -657,6 +657,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <div class="field">
           <label for="entPhoto">写真</label>
           <input type="file" id="entPhoto" accept="image/*" multiple hidden>
+          <input type="file" id="entPhotoShot" accept="image/*" capture="environment" hidden>
           <div class="photo-picker" id="entPhotoPicker" role="button" tabindex="0">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h1.3l.7-1.2c.2-.3.5-.5.9-.5h4.2c.4 0 .7.2.9.5l.7 1.2H15a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="10" cy="10.5" r="3.2"/></svg>
             <span>写真を追加する</span>
@@ -970,6 +971,16 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       <button class="btn ghost" id="btnSharePost" type="button" hidden>共有する</button>
     </div>
     <p class="hint comment-status" id="postStatus"></p>
+  </div>
+</div>
+
+<!-- ============ 記録の写真の選び方（iPhoneアプリ。カメラ／アルバム（撮影場所を読む）／ファイル） ============ -->
+<div class="sheet-backdrop" id="entPhotoMenu" hidden>
+  <div class="sheet photo-menu" role="dialog" aria-modal="true" aria-label="写真を追加する">
+    <button class="btn ghost" id="btnEntPhotoMenuCamera" type="button">カメラで撮る</button>
+    <button class="btn ghost" id="btnEntPhotoMenuAlbum" type="button">アルバムから選ぶ</button>
+    <button class="btn ghost" id="btnEntPhotoMenuFile" type="button">ファイルを選択</button>
+    <button class="btn" id="btnEntPhotoMenuCancel" type="button">キャンセル</button>
   </div>
 </div>
 
