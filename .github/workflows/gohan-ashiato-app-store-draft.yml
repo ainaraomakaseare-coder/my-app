@@ -1,0 +1,39 @@
+name: ごはんの足跡 App Store 申請の下書きを入力
+# App Store Connect に、説明文・キーワード・スクリーンショット・審査メモ・ビルドなどを入力する。
+# 「審査へ提出」は押さない。入力する中身は apps/gohan-ashiato-ios/store-metadata.json。
+# check：いまの状態を読むだけ（何も書き換えない）／apply：下書きを入力する
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check＝確認だけ / apply＝入力する'
+        type: choice
+        options: [check, apply]
+        default: check
+permissions:
+  contents: read
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: App Store Connect に下書きを入力
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
+          # 公開したくない情報（審査の連絡先・著作権の名前）はSecretsから渡す（おもいでWiki・観戦日記と共通）
+          APP_REVIEW_CONTACT_FIRST_NAME: ${{ secrets.APP_REVIEW_CONTACT_FIRST_NAME }}
+          APP_REVIEW_CONTACT_LAST_NAME: ${{ secrets.APP_REVIEW_CONTACT_LAST_NAME }}
+          APP_REVIEW_CONTACT_PHONE: ${{ secrets.APP_REVIEW_CONTACT_PHONE }}
+          APP_REVIEW_CONTACT_EMAIL: ${{ secrets.APP_REVIEW_CONTACT_EMAIL }}
+          APP_STORE_COPYRIGHT: ${{ secrets.APP_STORE_COPYRIGHT }}
+          MODE: ${{ inputs.mode }}
+        # 失敗したときも、ログを開かずに理由が見えるよう最後の数行を注記に出す
+        run: |
+          set -o pipefail
+          node apps/gohan-ashiato-ios/scripts/prepare-app-store-draft.mjs "$MODE" 2>&1 | tee draft.log || { echo "::error title=下書きの入力に失敗::$(tail -n 8 draft.log | tr '\n' ' ')"; exit 1; }
