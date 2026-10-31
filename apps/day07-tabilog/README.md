@@ -97,3 +97,5 @@ node test/auth.smoke.js   # Apple/Google/LINE（サーバー側フロー）と�
 node worker/test/oauth.test.mjs  # ソーシャルログインの純粋な部分（戻り先の検証・idトークンの確認・AppleのJWT署名など）
 node test/voice.smoke.js # 音声でまとめて記録する機能（フェイクマイク・フェイクAPIで検証。要 playwright）
 ```
+
+リリース（iOS・Androidのビルド、Webの公開）の前には、[docs/release-checklist.md](docs/release-checklist.md) の必須テスト項目を必ず確かめます。
