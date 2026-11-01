@@ -26,6 +26,14 @@ const R = [
   ['karaage', '唐揚げ定食', '2026-09-28', '12:20', 'lunch', '定食屋 ひなた', 35.4580, 139.6310, 850, 4, ''],
   ['pancake', 'ベリーパンケーキ', '2026-09-23', '15:00', 'snack', '喫茶 こもれび', 35.4510, 139.6290, 1250, 5, ''],
 ];
+// 行きたいリスト：テレビの店（tv-shops.json の id）と、自分で足した架空の店
+const WANTS = [
+  { id: 'w_s1', tvShopId: 'sakaba-1309', name: '花葉根', memo: '吉田類さんが飲んでいたお店', createdAt: '2026-10-28T21:00:00+09:00' },
+  { id: 'w_s2', tvShopId: 'machichuka-0334-01', name: '味のラーメン海賊', memo: '週末のお昼に', createdAt: '2026-10-26T20:00:00+09:00' },
+  { id: 'w_s3', name: 'ピッツェリア ソーレ', lat: 35.6590, lng: 139.7000, memo: '友だちのおすすめ', createdAt: '2026-10-12T19:00:00+09:00' },
+  { id: 'w_s4', tvShopId: 'onnasakaba-626', name: '豚の味珍', memo: '', createdAt: '2026-10-08T22:00:00+09:00' },
+  { id: 'w_s5', tvShopId: 'sakaba-1290', name: '信濃屋', memo: '', createdAt: '2026-10-05T22:00:00+09:00' },
+].map(w => ({ address: '', lat: null, lng: null, tvShopId: '', tv: null, ...w, createdAt: new Date(w.createdAt).toISOString() }));
 const SHOPS = ['麺処 こがね', '中華そば 灯', 'らーめん 一福', '定食屋 ひなた', '喫茶 こもれび', 'カレー食堂 ルウ'];
 
 function backup() {
@@ -36,7 +44,7 @@ function backup() {
     const at = new Date(date + 'T' + time + ':00+09:00').toISOString();
     return { id: 'r_sample' + i, date, time, meal, name, place, lat, lng, price, rating, memo, photoIds: [pid], createdAt: at, updatedAt: at };
   });
-  return { app: 'gohan-ashiato', version: 1, exportedAt: NOW.toISOString(), records, photos };
+  return { app: 'gohan-ashiato', version: 1, exportedAt: NOW.toISOString(), records, wants: WANTS, photos };
 }
 
 (async () => {
@@ -50,9 +58,11 @@ function backup() {
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--lang=ja-JP'] });
   const ctx = await browser.newContext({
     viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, locale: 'ja-JP', timezoneId: 'Asia/Tokyo',
-    geolocation: { latitude: 35.4660, longitude: 139.6220 }, permissions: ['geolocation'], isMobile: true, hasTouch: true,
+    geolocation: { latitude: 35.4490, longitude: 139.6300 }, permissions: ['geolocation'], isMobile: true, hasTouch: true,
   });
   await ctx.route('https://tabilog-api.hiroya-apps.workers.dev/**', r => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ places: SHOPS.map(name => ({ name })) }) }));
+  // テレビの店の位置は tv-shops.json に入っている分だけ使う（住所検索には問い合わせない）
+  await ctx.route('https://msearch.gsi.go.jp/**', r => r.abort());
   const page = await ctx.newPage();
   await page.clock.install({ time: NOW });
   const base = `http://127.0.0.1:${port}/`;
@@ -71,6 +81,18 @@ function backup() {
   await page.waitForTimeout(1500);
   await page.reload(); await page.waitForTimeout(800);
   await page.addStyleTag({ content: 'input::-webkit-calendar-picker-indicator{display:none!important}' });
+
+  // テレビの店（近い順）・お店の詳細・行きたいリスト
+  await go('#/'); await page.click('[data-tab="tv"]'); await page.waitForTimeout(800);
+  await page.click('[data-near]:visible'); await page.waitForTimeout(800);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await shot('raw-0-tv');
+  await go('#/tv/sakaba-1309'); await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(600);
+  await shot('raw-0-tv-detail');
+  await go('#/'); await page.click('[data-tab="wants"]'); await page.waitForTimeout(800);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await shot('raw-0-wants');
+  await page.click('[data-tab="records"]'); await page.waitForTimeout(300);
 
   // 1. 一覧
   await go('#/'); await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(600);
