@@ -46,8 +46,8 @@ People in Japan, mainly in their 30s to 60s, who watch TV food and travel progra
 Gohan no Ashiato connects these three steps (discover on TV, save, record the visit) in one app, and shows TV-featured restaurants near the user's current location, which we have not found in other apps.
 
 4. Beta testing
-[ここは実際にあったことだけを書いてください。例：TestFlightで◯人（家族・友人など）に◯日間使ってもらった。もらった感想と、それで直したところ。]
-[例の形：A tester said "..." , so we changed ... in build 22.]
+We did not run a public beta. I installed each build from TestFlight on my own iPhone and used it as an everyday user before submitting.
+During this testing I found that the list of nearby restaurants did not appear when I added a record, so the suggestions could not be used. I fixed the server and the app so that nearby restaurants now appear reliably from the photo's location or the current location. This fix is included in build 22.
 
 5. Standalone product or part of a suite
 It is a standalone product. Our developer account also publishes other apps: Tabi no Ashiato (a travel diary), [Kansen Nikki (a diary for baseball games attended), Omoide Wiki, ...（公開中・審査中のアプリを書いてください）]. The closest one is Tabi no Ashiato, which records trips: the places visited during a trip, grouped by trip and shown on a map. Gohan no Ashiato is about everyday restaurants: finding places from TV programs, keeping a want-to-go list, and recording dishes, prices and ratings. Tabi no Ashiato has no TV restaurant list, no want-to-go list and no per-restaurant statistics, and Gohan no Ashiato has no trips.
