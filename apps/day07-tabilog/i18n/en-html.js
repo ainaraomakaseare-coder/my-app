@@ -118,7 +118,7 @@ I18N.addLang('en', {
   "この予定を削除": "Delete this activity",
   "記録を追加": "Add record",
   "写真": "Photos",
-  "カメラで撮る": "Take a photo",
+  "カメラで撮る": "Use camera",
   "アルバムから選ぶ": "Choose from album",
   "写真を追加する": "Add photos",
   "写真を長押しして動かすと、順番を入れ替えられます（先頭の写真が代表の写真になります）": "Press and hold a photo to drag and reorder (the first photo is the cover photo)",
