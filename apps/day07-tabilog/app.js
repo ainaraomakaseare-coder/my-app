@@ -16916,8 +16916,14 @@
     });
 
     var MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+    // 動画も写真と同じく、スマホ・アプリでは「カメラで撮る」「アルバムから選ぶ」を横に並べる（2026-11-01）
+    $('#entVideoShotPicker').hidden = !showShot;
+    $('#entVideoPickerLabel').textContent = tr(showShot ? 'アルバムから選ぶ' : '動画を追加する');
+    $('#entVideoShotPicker').addEventListener('click', function () { $('#entVideoShot').click(); });
     $('#entVideoPicker').addEventListener('click', function () { $('#entVideo').click(); });
-    $('#entVideo').addEventListener('change', function (e) {
+    $('#entVideoShot').addEventListener('change', addVideoFiles);
+    $('#entVideo').addEventListener('change', addVideoFiles);
+    function addVideoFiles(e) {
       var files = Array.prototype.slice.call(e.target.files || []);
       var tooBig = files.filter(function (f) { return f.size > MAX_VIDEO_BYTES; });
       files.filter(function (f) { return f.size <= MAX_VIDEO_BYTES; }).forEach(function (f) {
@@ -16926,7 +16932,7 @@
       renderVideoPreview();
       if (tooBig.length) alert(tr('200MBを超える動画は追加できませんでした：{names}', { names: tooBig.map(function (f) { return f.name; }).join('、') }));
       e.target.value = '';
-    });
+    }
 
     $all('[data-back]').forEach(function (b) {
       b.addEventListener('click', function () {
