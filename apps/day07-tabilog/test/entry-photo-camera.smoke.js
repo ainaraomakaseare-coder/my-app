@@ -1,5 +1,5 @@
 /*
- * 【必須テスト】記録を追加の写真欄で「カメラで撮る」を選べることを確かめる（2026-10-31）。
+ * 【必須テスト】記録を追加の写真欄・動画欄で「カメラで撮る」を選べることを確かめる（写真 2026-10-31、動画 2026-11-01）。
  * 以前、iPhoneアプリで「写真を追加する」を押すとアルバムへ直接行き、カメラを選べなかった。
  * リリース前に必ず通すこと（docs/release-checklist.md）。
  *   - スマホのブラウザ：「カメラで撮る」と「アルバムから選ぶ」が並び、カメラ側はcapture付きの入力を開く
@@ -126,6 +126,31 @@ async function chooserOf(page, selector) {
   return ev;
 }
 
+// 動画欄も写真と同じ並び（2026-11-01）：mobile=trueなら「カメラで撮る」「アルバムから選ぶ」、パソコンなら「動画を追加する」だけ
+async function checkVideo(page, tag, mobile) {
+  const clip = { name: 'clip.mp4', mimeType: 'video/mp4', buffer: Buffer.from('fake-video') };
+  const count = () => page.$$eval('#entVideoPreview > *', (els) => els.length);
+  if (mobile) {
+    check(`[${tag}] 動画も「カメラで撮る」が出る`, await page.isVisible('#entVideoShotPicker'));
+    check(`[${tag}] 動画のもう一方は「アルバムから選ぶ」`, (await page.textContent('#entVideoPickerLabel')) === 'アルバムから選ぶ');
+    check(`[${tag}] 動画のカメラ用の入力はcapture付き`, (await page.getAttribute('#entVideoShot', 'capture')) === 'environment');
+    const shot = await chooserOf(page, '#entVideoShotPicker');
+    check(`[${tag}] 動画の「カメラで撮る」でカメラ用の入力が開く`, !!shot && (await shot.element().evaluate((el) => el.id)) === 'entVideoShot');
+    if (shot) await shot.setFiles(clip);
+    await page.waitForFunction(() => document.querySelectorAll('#entVideoPreview > *').length === 1, null, { timeout: 5000 }).catch(() => {});
+    check(`[${tag}] 撮った動画が記録に入る`, (await count()) === 1);
+  } else {
+    check(`[${tag}] 動画の「カメラで撮る」は出さない`, await page.isHidden('#entVideoShotPicker'));
+    check(`[${tag}] 動画は「動画を追加する」のまま`, (await page.textContent('#entVideoPickerLabel')) === '動画を追加する');
+  }
+  const before = await count();
+  const album = await chooserOf(page, '#entVideoPicker');
+  check(`[${tag}] 動画の${mobile ? '「アルバムから選ぶ」' : '「動画を追加する」'}は複数選べる入力`, !!album && album.isMultiple() && (await album.element().evaluate((el) => el.id)) === 'entVideo');
+  if (album) await album.setFiles(clip);
+  await page.waitForFunction((n) => document.querySelectorAll('#entVideoPreview > *').length === n, before + 1, { timeout: 5000 }).catch(() => {});
+  check(`[${tag}] 選んだ動画が記録に入る`, (await count()) === before + 1);
+}
+
 (async () => {
   const { server, port } = await startServer();
   const BASE = `http://127.0.0.1:${port}/`;
@@ -145,6 +170,7 @@ async function chooserOf(page, selector) {
     check('[スマホ] 撮った写真が記録に入る', (await page.$$('#entPhotoPreview img')).length === 1);
     const album = await chooserOf(page, '#entPhotoPicker');
     check('[スマホ] 「アルバムから選ぶ」は複数選べる入力', !!album && album.isMultiple() && (await album.element().evaluate((el) => el.id)) === 'entPhoto');
+    await checkVideo(page, 'スマホ', true);
     check('[スマホ] ページでエラーが出ていない', errors.length === 0, errors.join(' / '));
     await ctx.close();
   }
@@ -159,6 +185,7 @@ async function chooserOf(page, selector) {
     await page.click('#entPhotoPicker');
     await page.waitForTimeout(200);
     check('[iPhoneアプリ] 「アルバムから選ぶ」は写真ライブラリ（場所が読める選び方）', (await page.evaluate(() => window.__pickImagesCalls)) === 1);
+    await checkVideo(page, 'iPhoneアプリ', true);
     check('[iPhoneアプリ] ページでエラーが出ていない', errors.length === 0, errors.join(' / '));
     await ctx.close();
   }
@@ -169,6 +196,7 @@ async function chooserOf(page, selector) {
     check('[Androidアプリ] 「カメラで撮る」が出る', await page.isVisible('#entPhotoShotPicker'));
     const shot = await chooserOf(page, '#entPhotoShotPicker');
     check('[Androidアプリ] 「カメラで撮る」でカメラ用の入力が開く', !!shot && (await shot.element().evaluate((el) => el.id)) === 'entPhotoShot');
+    await checkVideo(page, 'Androidアプリ', true);
     check('[Androidアプリ] ページでエラーが出ていない', errors.length === 0, errors.join(' / '));
     await ctx.close();
   }
@@ -180,6 +208,7 @@ async function chooserOf(page, selector) {
     check('[パソコン] 「写真を追加する」のまま', (await page.textContent('#entPhotoPickerLabel')) === '写真を追加する');
     const album = await chooserOf(page, '#entPhotoPicker');
     check('[パソコン] 「写真を追加する」でファイル選択が開く', !!album && album.isMultiple());
+    await checkVideo(page, 'パソコン', false);
     check('[パソコン] ページでエラーが出ていない', errors.length === 0, errors.join(' / '));
     await ctx.close();
   }
