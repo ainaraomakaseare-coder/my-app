@@ -8786,7 +8786,26 @@
   // 音声・メモでまとめて記録する画面。メモの「決まった形」の取り込みはAIを使わず無料なので、ログインや
   // 回数に関係なく誰でも開ける（以前はログインとAIの残り回数が無いと、画面ごと使えなかった）。
   // 音声入力とAIでの整理は、使うときにログイン・AIへの送信の同意・月の回数を確かめる。
-  function openVoiceEntryForm(multiDay) {
+  // 入れ方のタブ（話す／メモを貼る／ChatGPTなど）を切り替える。最後に選んだタブを覚えておき、
+  // 次に開いたときもそのタブから始める（2026-11-01）
+  var VOICE_ENTRY_TABS = ['voice', 'memo', 'ai'];
+  var VOICE_ENTRY_TAB_KEY = 'tabilog.voiceEntryTab';
+  function setVoiceEntryTab(tab, remember) {
+    if (VOICE_ENTRY_TABS.indexOf(tab) < 0) tab = 'voice';
+    var panels = { voice: '#vePanelVoice', memo: '#vePanelMemo', ai: '#vePanelAi' };
+    VOICE_ENTRY_TABS.forEach(function (t) {
+      var btn = document.querySelector('.ve-tab[data-ve-tab="' + t + '"]');
+      if (btn) btn.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+      $(panels[t]).hidden = t !== tab;
+    });
+    if (remember) { try { localStorage.setItem(VOICE_ENTRY_TAB_KEY, tab); } catch (e) { /* 保存できなくても切り替えはできる */ } }
+  }
+  function savedVoiceEntryTab() {
+    try { return localStorage.getItem(VOICE_ENTRY_TAB_KEY) || 'voice'; } catch (e) { return 'voice'; }
+  }
+
+  // tab: 'voice' | 'memo' | 'ai'（省略時は前回のタブ。ログインを挟んで書きかけのメモがあるときはメモ）
+  function openVoiceEntryForm(multiDay, tab) {
     if (!multiDay && !state.selectedDate) { alert(tr('先に日付を選んでから記録を始めてください。')); return; }
     state.voiceEntryMultiDay = !!multiDay;
     $('#voiceEntryTitle').textContent = multiDay ? tr('複数日をまとめて記録する') : tr('音声・メモでまとめて記録する');
@@ -8797,9 +8816,10 @@
     state.voiceBranch = currentImportBranch();
     $('#voiceTargetNote').hidden = !state.voiceBranch;
     if (state.voiceBranch) $('#voiceTargetNote').textContent = tr('{target}します（{range}）。日付・時刻は別行動の時間帯の中だけ使えます。', { target: importTargetText(state.voiceBranch), range: Core.branchRangeText(state.voiceBranch) });
+    setVoiceEntryTab(tab || (state.pendingMemoText ? 'memo' : savedVoiceEntryTab()), !!tab);
     showScreen('voiceEntryForm');
-    voiceBlob = null;    showScreen('voiceEntryForm');
     voiceBlob = null;
+    $('#voiceNotesBox').open = false;
     $('#voiceNotes').value = '';
     setVoiceRecordLabel(MIC_ICON, tr('話しはじめる'));
     $('#btnVoiceRecord').disabled = false;
@@ -8827,9 +8847,11 @@
     var user = loadCurrentUser();
     if (!user) {
       $('#memoAiInfo').textContent = tr('AIでの整理と音声入力は、ログインすると使えます（それぞれ月5回まで無料）。');
+      $('#voiceAiInfo').textContent = $('#memoAiInfo').textContent;
       return;
     }
     $('#memoAiInfo').textContent = '';
+    $('#voiceAiInfo').textContent = '';
     fetchAccountStatus(null, true).then(function (account) {
       if (account) applyAiQuotaUi(account);
     });
@@ -8853,6 +8875,10 @@
   // 音声・メモの画面に、残り回数と、使い切ったときの案内（iOSアプリなら回数券を買う入口も）を反映する
   function applyAiQuotaUi(account) {
     renderAiQuotaInfo($('#memoAiInfo'), account);
+    // 話すタブには音声入力の残り回数を出す（メモのAI整理とは別の回数）
+    var voiceInfo = tr('音声入力：あと{n}回（月{max}回まで無料）', { n: account.voiceRemainingThisPeriod || 0, max: account.voiceMonthlyLimit || 5 });
+    if (account.ticketCredits) voiceInfo += ' ' + tr('回数券：あと{n}回', { n: account.ticketCredits });
+    $('#voiceAiInfo').textContent = voiceInfo;
     var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
     if (!voiceOk) {
       // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
@@ -10487,11 +10513,7 @@
     // ChatGPTなど自分のAIに頼む（docs/adr/0015）：入口は音声・メモの画面の下のほうにあるので、開いてその場所までスクロールする
     addMore('block-add-other-ai', SPARKLE_ICON, tr('ChatGPTなど他のAIに頼む'), 'own',
       tr('例：お願い文をコピーしてChatGPTに旅のメモと一緒に送り、返ってきた答えを貼り付けます'),
-      function () {
-        openVoiceEntryForm(false);
-        var target = $('#btnCopyAiPrompt');
-        if (state.selectedDate && target) setTimeout(function () { target.closest('.field').scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50);
-      });
+      function () { openVoiceEntryForm(false, 'ai'); });
     var body = sheet.querySelector('.bulk-add-body');
     body.innerHTML = '';
     body.appendChild(more);
@@ -16859,6 +16881,9 @@
       });
     });
     $('#btnVoiceRecord').addEventListener('click', handleVoiceRecordToggle);
+    document.querySelectorAll('.ve-tab').forEach(function (btn) {
+      btn.addEventListener('click', function () { setVoiceEntryTab(btn.getAttribute('data-ve-tab'), true); });
+    });
     $('#btnCreateVoiceEntries').addEventListener('click', handleCreateVoiceEntries);
     $('#btnCreateTextEntries').addEventListener('click', handleCreateTextEntries);
     $('#btnOrganizeMemoAi').addEventListener('click', function () { organizeMemoWithAi(); });
