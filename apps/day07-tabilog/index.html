@@ -258,63 +258,77 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         <p class="hint" id="voiceTargetNote" hidden></p>
       </header>
 
-      <div class="notice" id="voicePremiumRequired" hidden>
-        <p id="voicePremiumMessage"></p>
-        <!-- 回数券を買う（iOSアプリだけ。app.jsのrenderTicketShop。Web版では空のまま） -->
-        <div class="ticket-shop" id="voiceTicketShop" hidden></div>
-      </div>
-
+      <!-- 入れ方を3つのタブに分け、選んだ1つだけを出す（2026-11-01、オーナーの「ごちゃごちゃして何をすればいいかわからない」を受けて）。
+           以前は音声・メモ・自分のAIの3つの入れ方と長い説明を1画面に縦に並べていた。タブの切り替えはapp.jsのsetVoiceEntryTab -->
       <div id="voiceRecordArea">
-        <div class="field">
-          <label for="voiceNotes">URLやお店の名前など（任意・雑多でOK）</label>
-          <textarea id="voiceNotes" rows="3" placeholder="例：https://maps.google.com/... ／ ファーマーズマーケット"></textarea>
+        <div class="ve-tabs" role="tablist" aria-label="入れ方を選ぶ">
+          <button type="button" class="ve-tab" role="tab" id="veTabVoice" data-ve-tab="voice" aria-controls="vePanelVoice" aria-selected="true">話す</button>
+          <button type="button" class="ve-tab" role="tab" id="veTabMemo" data-ve-tab="memo" aria-controls="vePanelMemo" aria-selected="false">メモを貼る</button>
+          <button type="button" class="ve-tab" role="tab" id="veTabAi" data-ve-tab="ai" aria-controls="vePanelAi" aria-selected="false">ChatGPTなど</button>
         </div>
 
-        <button class="btn primary wide" id="btnVoiceRecord">話しはじめる</button>
-        <p class="hint" id="voiceRecordStatus"></p>
+        <!-- ① 話す（AIで分ける。月5回まで無料） -->
+        <div class="ve-panel" id="vePanelVoice" role="tabpanel" aria-labelledby="veTabVoice">
+          <p class="ve-lead">旅の予定や思い出を話すと、AIが予定・記録・費用に分けます。</p>
+          <p class="ve-example">例：「10時に金閣寺、お昼はうどんで900円」</p>
 
-        <button class="btn primary wide" id="btnCreateVoiceEntries" hidden>この内容で予定を作る</button>
-        <p class="hint" id="voiceEntryStatus"></p>
+          <div class="notice" id="voicePremiumRequired" hidden>
+            <p id="voicePremiumMessage"></p>
+            <!-- 回数券を買う（iOSアプリだけ。app.jsのrenderTicketShop。Web版では空のまま） -->
+            <div class="ticket-shop" id="voiceTicketShop" hidden></div>
+          </div>
 
-        <div class="or-divider">または</div>
+          <button class="btn primary wide" id="btnVoiceRecord">話しはじめる</button>
+          <p class="hint" id="voiceRecordStatus"></p>
 
-        <div class="field">
-          <label for="textMemoInput">スケジュールやメモをそのまま貼り付ける</label>
-          <textarea id="textMemoInput" rows="8" placeholder="例：&#10;10時 東京駅&#10;新幹線で京都へ&#10;13時 清水寺&#10;抹茶パフェを食べた&#10;18時 旅館にチェックイン"></textarea>
-          <!-- 決まった形ならAIを使わず無料で分ける（app.jsのCore.parseMemo） -->
-          <p class="hint memo-help">「13時 清水寺」のように<strong>時刻で始まる行</strong>が予定、その下の行が記録になります。この形なら<strong>AIを使わず無料・何回でも</strong>取り込めます。「2日目」「4/2」の行で日付を変えられます。「ランチ 1,500円」のように金額（円・¥・$）が書いてあれば費用の候補にします。場所は確認画面の「場所を探す」で選べます。</p>
+          <button class="btn primary wide" id="btnCreateVoiceEntries" hidden>この内容で予定を作る</button>
+          <p class="hint" id="voiceEntryStatus"></p>
+
+          <details class="ve-more" id="voiceNotesBox">
+            <summary>URLやお店の名前を書き添える（任意）</summary>
+            <textarea id="voiceNotes" rows="3" aria-label="URLやお店の名前など" placeholder="例：https://maps.google.com/... ／ ファーマーズマーケット"></textarea>
+          </details>
+          <p class="hint ve-quota" id="voiceAiInfo"></p>
         </div>
-        <button class="btn primary wide" id="btnCreateTextEntries">この内容で予定を作る</button>
-        <button class="btn text memo-ai-btn" id="btnOrganizeMemoAi" type="button">形が崩れていてうまく分かれないときは → AIで整理する</button>
-        <p class="hint" id="memoAiInfo"></p>
-        <p class="hint" id="textEntryStatus"></p>
-        <div class="ticket-shop" id="memoTicketShop" hidden></div>
 
-        <div class="or-divider">または</div>
+        <!-- ② メモを貼る（決まった形ならAIを使わず無料。崩れていればAIで整理） -->
+        <div class="ve-panel" id="vePanelMemo" role="tabpanel" aria-labelledby="veTabMemo" hidden>
+          <p class="ve-lead">旅程表やメモをそのまま貼り付けてください。</p>
+          <textarea id="textMemoInput" rows="8" aria-label="スケジュールやメモ" placeholder="例：&#10;10時 東京駅&#10;新幹線で京都へ&#10;13時 清水寺&#10;抹茶パフェを食べた&#10;18時 旅館にチェックイン"></textarea>
+          <button class="btn primary wide ve-main-btn" id="btnCreateTextEntries">この内容で予定を作る</button>
+          <button class="btn text memo-ai-btn" id="btnOrganizeMemoAi" type="button">うまく分かれないときは → AIで整理する</button>
+          <p class="hint ve-quota" id="memoAiInfo"></p>
+          <p class="hint" id="textEntryStatus"></p>
+          <div class="ticket-shop" id="memoTicketShop" hidden></div>
+          <!-- 決まった形ならAIを使わず無料で分ける（app.jsのCore.parseMemo）。説明は長いので畳んでおく -->
+          <details class="ve-more">
+            <summary>無料で取り込める書き方</summary>
+            <p class="hint memo-help">「13時 清水寺」のように<strong>時刻で始まる行</strong>が予定、その下の行が記録になります。この形なら<strong>AIを使わず無料・何回でも</strong>取り込めます。「2日目」「4/2」の行で日付を変えられます。「ランチ 1,500円」のように金額（円・¥・$）が書いてあれば費用の候補にします。場所は確認画面の「場所を探す」で選べます。</p>
+          </details>
+        </div>
 
-        <!-- 「自分のAIで整理して貼り付ける（無料）」（docs/adr/0015）：ChatGPT・Claude・Geminiなど
-             自分のAIにapp.jsのCore.buildAiImportPromptの文面＋自分のメモを渡し、返ってきたJSONを
-             貼り付ける。ログインも運営側の月10回の枠も使わない（Core.parseImportedBlocksJsonで
-             読み取り、確認画面に渡して保存するだけのため）。 -->
-        <div class="field">
-          <p class="hint">自分のAI（ChatGPT・Claude・Geminiなど）に整理してもらってから貼り付けます。ログイン不要・無料・回数の上限なし。</p>
+        <!-- ③ ChatGPTなど自分のAIに頼む -->
+        <div class="ve-panel" id="vePanelAi" role="tabpanel" aria-labelledby="veTabAi" hidden>
+          <p class="ve-lead">自分のAI（ChatGPT・Claude・Geminiなど）に整理してもらってから貼り付けます。ログイン不要・無料・回数の上限なし。</p>
           <!-- 何をAIに送ればよいか分からない、という声を受けて手順を番号つきで出す（2026-09-30） -->
           <ol class="byo-steps">
             <li><b>下のボタンで「お願い文」をコピー</b>します（この旅行の日程と、答えの形の指定が入っています）。</li>
             <li>ChatGPTなどを開き、<b>お願い文を貼り付け</b>、そのすぐ下に<b>旅のメモ</b>（予定・行った場所・金額など）を貼るか書いて送ります。予約画面やチケットの画像を一緒に送ってもかまいません。</li>
-            <li>AIが返した<b>「{」で始まる答え</b>をまるごとコピーして、下の欄に貼り付け、「取り込む」を押します。</li>
+            <li>AIが返した<b>「{」で始まる答え</b>をまるごとコピーして、下の欄に貼り付け、「確認画面へ」を押します。</li>
           </ol>
           <button class="btn wide" id="btnCopyAiPrompt" type="button">① お願い文をコピー</button>
           <details class="byo-preview" id="byoPromptPreview">
             <summary>お願い文の中身を見る</summary>
             <pre id="byoPromptText"></pre>
           </details>
-          <label for="importJsonInput">③ AIの答え（JSON）を貼り付け</label>
-          <textarea id="importJsonInput" rows="8" placeholder='{"blocks": [...]}'></textarea>
+          <div class="field">
+            <label for="importJsonInput">③ AIの答え（JSON）を貼り付け</label>
+            <textarea id="importJsonInput" rows="6" placeholder='{"blocks": [...]}'></textarea>
+          </div>
+          <button class="btn primary wide" id="btnImportJson" type="button">確認画面へ</button>
+          <p class="hint" id="importJsonStatus"></p>
+          <div id="importPreview" hidden></div>
         </div>
-        <button class="btn primary wide" id="btnImportJson" type="button">確認画面へ</button>
-        <p class="hint" id="importJsonStatus"></p>
-        <div id="importPreview" hidden></div>
       </div>
     </div>
   </section>

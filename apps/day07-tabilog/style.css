@@ -1889,3 +1889,18 @@ body.viewer-open { overflow: hidden; }
 .block-add-bulk { flex-wrap: wrap; }
 .block-add-bulk .block-add-sub { flex-basis: 100%; text-align: center; margin-top: -2px; font-size: var(--fs-xs); color: var(--ink-muted); }
 #bulkAddSheet .add-more { margin-top: 0; }
+
+/* ---------- 音声・メモでまとめて記録する：入れ方のタブ（2026-11-01） ----------
+   3つの入れ方を縦に並べていたのをタブに分け、選んだ1つだけを見せる */
+.ve-tabs { display: flex; gap: 4px; padding: 4px; background: var(--input-bg); border-radius: var(--radius-control); margin: 4px 0 18px; }
+.ve-tab { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; text-align: center; border: none; background: transparent; color: var(--ink-muted); font: inherit; font-size: var(--fs-sm); font-weight: 500; padding: 9px 4px; border-radius: 9px; cursor: pointer; line-height: 1.3; }
+.ve-tab[aria-selected="true"] { background: var(--card); color: var(--accent-deep); box-shadow: 0 1px 3px rgba(20, 20, 30, 0.12); }
+.ve-panel .ve-lead { font-size: var(--fs-base); color: var(--ink); line-height: 1.6; margin: 0 0 6px; }
+.ve-panel .ve-example { font-size: var(--fs-sm); color: var(--ink-muted); margin: 0 0 16px; }
+.ve-panel textarea { width: 100%; box-sizing: border-box; border: none; border-radius: var(--radius-control); padding: 11px 13px; background: var(--input-bg); color: var(--ink); resize: vertical; }
+.ve-panel #textMemoInput { margin: 6px 0 12px; }
+.ve-panel .ve-quota { text-align: center; margin-top: 10px; }
+.ve-more { margin-top: 16px; }
+.ve-more summary { font-size: var(--fs-sm); color: var(--accent-deep); cursor: pointer; }
+.ve-more textarea { margin-top: 8px; }
+.ve-more .memo-help { margin-top: 8px; }

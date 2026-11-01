@@ -159,6 +159,7 @@ async function launch() {
   check('録音していないうちは「この内容で予定を作る」が押せない', await page.isHidden('#btnCreateVoiceEntries'));
   await page.click('#btnCreateVoiceEntries', { force: true }).catch(() => {});
 
+  await page.evaluate(() => { document.querySelector('#voiceNotesBox').open = true; });
   await page.fill('#voiceNotes', 'https://maps.example.com/farmers-market ファーマーズマーケット');
   await page.click('#btnVoiceRecord');
   await page.waitForFunction(() => (document.querySelector('#voiceRecordStatus') || {}).textContent.includes('録音中'));
