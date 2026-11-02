@@ -2,7 +2,7 @@
   "app": "gohan-ashiato",
   "kind": "tv-shops",
   "version": 1,
-  "updatedAt": "2026-10-29",
+  "updatedAt": "2026-11-02",
   "note": "番組の映像・画像は使わず、店名・住所・放送日・出どころのリンクだけを載せる（docs: README「テレビの店」）",
   "shops": [
     {
@@ -14083,6 +14083,29 @@
         "https://www.ntv.co.jp/burari/articles/227r6r1t1baviqv5iar.html"
       ],
       "checkedAt": "2026-10-29"
+    },
+    {
+      "id": "onnasakaba-639",
+      "name": "田舎家 和（なごみ）",
+      "address": "埼玉県ふじみ野市上福岡5-1-10",
+      "station": "上福岡駅",
+      "genre": "酒場",
+      "lat": 35.872196,
+      "lng": 139.512405,
+      "links": [],
+      "appearances": [
+        {
+          "program": "おんな酒場放浪記",
+          "channel": "BS-TBS",
+          "aired": "2026-10-31",
+          "title": "#639 上福岡「田舎家 和（なごみ）」",
+          "url": "https://bs.tbs.co.jp/onnasakaba/shop/639.html"
+        }
+      ],
+      "sources": [
+        "https://bs.tbs.co.jp/onnasakaba/shop/639.html"
+      ],
+      "checkedAt": "2026-11-02"
     }
   ]
 }
