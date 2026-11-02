@@ -1187,8 +1187,32 @@
     return m ? decodeURIComponent(m[1]) : '';
   }
 
-  function buildShareUrl(origin, pathname, tripId) {
-    return origin + pathname + '?trip=' + encodeURIComponent(tripId);
+  // version（shareCardVersionの値）を渡すと &v=… を付ける。LINEなどは一度読んだURLの紹介カード（サムネ）を
+  // しばらく覚えていて、あとでカバー写真や旅行名を変えても同じURLだと古いカードのまま出る（2026-11-01）。
+  // カードの中身が変わればURLも変わるようにして、共有し直したら新しいカードを読ませる。
+  function buildShareUrl(origin, pathname, tripId, version) {
+    return origin + pathname + '?trip=' + encodeURIComponent(tripId) + (version ? '&v=' + encodeURIComponent(version) : '');
+  }
+
+  // 紹介カードに出るもの（旅行名・日程・カバー写真。カバーが無ければ最初の写真）から作る短い印。
+  // Worker（GET /trips/:id/preview）と同じく、カバーが無いときは日時がいちばん早い記録の1枚目を使う。
+  // blocksは旅行の予定（別行動も含む。Workerも旅行の全部の予定から選ぶ）。
+  function shareCardVersion(trip, blocks) {
+    if (!trip) return '';
+    var photo = trip.coverPhotoId || '';
+    if (!photo) {
+      blocks = (blocks || []).slice().sort(function (a, b) {
+        return String(a.date || '').localeCompare(String(b.date || '')) || String(a.time || '').localeCompare(String(b.time || ''));
+      });
+      for (var i = 0; i < blocks.length && !photo; i++) {
+        var entries = blocks[i].entries || [];
+        for (var j = 0; j < entries.length && !photo; j++) photo = (entries[j].photoIds || [])[0] || '';
+      }
+    }
+    var src = [trip.title || '', trip.startDate || '', trip.endDate || '', photo].join('|');
+    var h = 5381;
+    for (var k = 0; k < src.length; k++) h = ((h * 33) ^ src.charCodeAt(k)) >>> 0;
+    return h.toString(36);
   }
 
   // 端末に「開いたことのある旅行」を憶えておくための一覧（サーバーのデータそのものではない、ローカルの索引）
@@ -5004,6 +5028,7 @@
     parseTags: parseTags,
     getTripIdFromSearch: getTripIdFromSearch,
     buildShareUrl: buildShareUrl,
+    shareCardVersion: shareCardVersion,
     upsertTripIndexEntry: upsertTripIndexEntry,
     removeTripIndexEntry: removeTripIndexEntry,
     planHistoryRemoval: planHistoryRemoval,
@@ -17499,9 +17524,11 @@
     // iOSアプリ内ではlocation.hrefがcapacitor://localhost/...になり、
     // 他の人に共有しても開けないリンクになってしまうため、その場合は
     // 実際に公開しているWebサイトのURLを組み立てる。
+    // 紹介カードの中身が変わったらURLも変える（&v=…。LINEが古いサムネを出し続けないように。2026-11-01）
+    var version = Core.shareCardVersion(state.trip, (state.blocks || []).concat(state.branchBlocks || []));
     var url = isNativeApp()
-      ? Core.buildShareUrl(publicPageUrl(), '', state.trip.id)
-      : location.href;
+      ? Core.buildShareUrl(publicPageUrl(), '', state.trip.id, version)
+      : Core.buildShareUrl(location.origin, location.pathname, state.trip.id, version);
     // iOSアプリ・対応ブラウザではネイティブの共有シートを開く。それ以外（未対応ブラウザ）は
     // クリップボードにコピーする。どちらも必ずトースト（showToast）で結果を知らせる
     // （以前は#tripDetailStatusという気づかれにくい場所にだけ出していた。2026-09-26）。

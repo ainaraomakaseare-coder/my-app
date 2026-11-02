@@ -282,6 +282,22 @@ eq('parseTags: 読点区切りで空要素は除く', T.parseTags('父、母、�
 eq('getTripIdFromSearch: ?tripを取り出す', T.getTripIdFromSearch('?trip=trip_abc123'), 'trip_abc123');
 eq('getTripIdFromSearch: 無ければ空文字', T.getTripIdFromSearch(''), '');
 eq('buildShareUrl: 共有URLを組み立てる', T.buildShareUrl('https://example.com', '/index.html', 'trip_abc'), 'https://example.com/index.html?trip=trip_abc');
+eq('buildShareUrl: 版を付けると&v=が付く', T.buildShareUrl('https://example.com', '/', 'trip_abc', 'x1'), 'https://example.com/?trip=trip_abc&v=x1');
+eq('getTripIdFromSearch: &v=付きでも旅行IDを取り出す', T.getTripIdFromSearch('?trip=trip_abc&v=x1'), 'trip_abc');
+(function () {
+  var base = { title: '京都', startDate: '2026-10-01', endDate: '2026-10-02', coverPhotoId: '' };
+  var blocks = [
+    { date: '2026-10-02', time: '09:00', entries: [{ photoIds: ['photo_late.jpg'] }] },
+    { date: '2026-10-01', time: '10:00', entries: [{ photoIds: [] }, { photoIds: ['photo_first.jpg'] }] }
+  ];
+  var v0 = T.shareCardVersion(base, blocks);
+  ok('shareCardVersion: 空でない文字列', typeof v0 === 'string' && v0.length > 0);
+  eq('shareCardVersion: 同じ中身なら同じ', T.shareCardVersion(JSON.parse(JSON.stringify(base)), JSON.parse(JSON.stringify(blocks))), v0);
+  ok('shareCardVersion: カバー写真を設定すると変わる', T.shareCardVersion(Object.assign({}, base, { coverPhotoId: 'photo_cover.jpg' }), blocks) !== v0);
+  ok('shareCardVersion: 旅行名を変えると変わる', T.shareCardVersion(Object.assign({}, base, { title: '大阪' }), blocks) !== v0);
+  ok('shareCardVersion: 最初の写真が変わると変わる', T.shareCardVersion(base, blocks.slice(0, 1)) !== v0);
+  eq('shareCardVersion: 旅行が無ければ空', T.shareCardVersion(null), '');
+})();
 
 /* ---- upsertTripIndexEntry（ローカルの「開いたことのある旅行」索引） ---- */
 var idx = [];
