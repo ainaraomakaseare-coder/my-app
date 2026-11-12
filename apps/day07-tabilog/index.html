@@ -586,6 +586,12 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           </div>
         </div>
 
+        <!-- 新しい予定のときだけ、記録の画面の写真・動画・地図の欄をここへ移して出す（app.jsのmoveMediaFields）。
+             入れたものは、保存のときにこの予定の最初の記録として一緒に保存する（2026-11-12） -->
+        <div class="blk-media" id="blkMediaSlot" hidden>
+          <p class="hint blk-media-hint">写真・動画・場所もここで入れられます（任意）。あとから「記録を追加」で足すこともできます。</p>
+        </div>
+
         <!-- 動画でシェアに、この予定の地名・写真・ピンを出さない（道のりはこの場所を通る）。メンバー全員に共通 -->
         <label class="post-option" id="blkVideoExcludeRow"><input type="checkbox" id="blkVideoExclude"> 動画でシェアに出さない</label>
         <p class="hint">チェックすると、動画にはこの予定の地名・写真・ピンが出ません（地図でふりかえるには出ます）。一緒に旅行しているメンバー全員に反映されます。</p>
@@ -668,7 +674,9 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           </button>
         </div>
 
-        <div class="field">
+        <!-- 写真・動画・地図の3つの欄は、新しい予定を追加するときは予定の画面（#blkMediaSlot）へ移して使う
+             （app.jsのmoveMediaFields。予定だけで写真と場所まで入れられるように。2026-11-12） -->
+        <div class="field" id="entPhotoField">
           <label for="entPhoto">写真</label>
           <input type="file" id="entPhoto" accept="image/*" multiple hidden>
           <!-- カメラで撮る：capture付きの入力で、カメラを直接開く（スマホ・アプリのとき。パソコンでは出さない） -->
@@ -687,7 +695,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <p class="hint" id="entPhotoOrderHint" hidden>写真を長押しして動かすと、順番を入れ替えられます（先頭の写真が代表の写真になります）</p>
         </div>
 
-        <div class="field">
+        <div class="field" id="entVideoField">
           <label for="entVideo">動画（1本あたり最大200MB）</label>
           <input type="file" id="entVideo" accept="video/*" multiple hidden>
           <!-- カメラで撮る：capture付きの入力で、カメラ（動画）を直接開く（写真と同じく、スマホ・アプリのときだけ出す） -->
@@ -705,7 +713,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <div class="video-preview" id="entVideoPreview"></div>
         </div>
 
-        <div class="field">
+        <div class="field" id="entTimeField">
           <label for="entTime">時間（任意）</label>
           <!-- 「今」を押すと、端末の今の時刻を入れる（その場で記録するとき用。2026-10-15） -->
           <div class="time-now-row">
@@ -738,7 +746,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         </div>
 
         <!-- 地図の欄は、候補の地図を広く見せるため横並びにせず、横幅いっぱいに使う -->
-          <div class="field">
+          <div class="field" id="entMapField">
             <label for="entMapUrl" id="entMapLabel">地図のURL（任意）</label>
             <input type="url" id="entMapUrl" placeholder="https://maps.google.com/...">
             <div class="map-search-row">

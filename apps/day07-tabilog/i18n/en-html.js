@@ -279,4 +279,5 @@ I18N.addLang('en', {
   "同行者の顔が写ることがあります。できた動画は、投稿する前に見て確かめられます。": "Companions' faces may appear. You can watch the video before posting it.",
   "予約・チケットの画像から予定を作る": "Create plans from booking or ticket images",
   "航空券・ホテル予約・チケット・レシートなどの画面を保存した画像を選ぶと、AIが日時と場所を読み取って予定の候補を作ります（保存前に直せます）": "Pick saved images of flights, hotel bookings, tickets, or receipts and AI reads the dates and places to suggest plans (editable before saving)",
+  "写真・動画・場所もここで入れられます（任意）。あとから「記録を追加」で足すこともできます。": "You can add photos, videos, and the place here too (optional). You can also add more later with \"Add record\".",
 });
