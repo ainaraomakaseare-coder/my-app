@@ -291,4 +291,12 @@ I18N.addLang('en', {
   "旅行を削除しました": "Trip deleted",
   "削除に失敗しました。もう一度お試しください。": "Couldn't delete. Please try again.",
   "ほかの人がアカウントで参加しているため、削除できません。": "Other people have joined with an account, so this trip can't be deleted.",
+  "最新の内容を読み込み中…": "Loading the latest…",
+  "離すと最新に更新": "Release to refresh",
+  "引っぱって最新に更新": "Pull down to refresh",
+  "電波が無いため更新できません。電波が戻ったら、もう一度引っぱってください": "You're offline, so it can't refresh. Pull down again once you're back online.",
+  "まだ送れていない変更があります。送り終えると最新の内容になります": "Some changes haven't been sent yet. The latest will show once they're sent.",
+  "最新の内容にしました": "Updated to the latest",
+  "この旅行は見つかりませんでした（削除された可能性があります）": "This trip couldn't be found (it may have been deleted)",
+  "更新できませんでした。少し待ってから、もう一度お試しください": "Couldn't refresh. Please wait a moment and try again.",
 });
