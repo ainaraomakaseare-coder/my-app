@@ -3519,5 +3519,18 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('photoStopsToProposals: そのまま保存の形にできる', [saved.errors.length, saved.items[0].mapUrl, saved.items[0].mapLat, saved.items[0].label], [0, items[0].mapUrl, 34.994856, '清水寺']);
 })();
 
+/* ---- offlinePrefetchTargets（一覧の旅行をオフライン用に保存する対象、2026-11-12） ---- */
+(function () {
+  var H = 60 * 60 * 1000, now = 100 * H;
+  var trips = [{ id: 'a' }, { id: 'b' }, { tripId: 'c' }, { id: 'a' }, { id: 'd' }, {}];
+  eq('offlinePrefetchTargets: 保存していない旅行は全部・重複とidなしは除く',
+    T.offlinePrefetchTargets(trips, [], {}, now, 6 * H, 30), ['a', 'b', 'c', 'd']);
+  eq('offlinePrefetchTargets: 最近保存したものは飛ばし、古いものは読み直す',
+    T.offlinePrefetchTargets(trips, [], { a: now - H, b: now - 7 * H }, now, 6 * H, 30), ['b', 'c', 'd']);
+  eq('offlinePrefetchTargets: 履歴から消した旅行は保存しない',
+    T.offlinePrefetchTargets(trips, ['c'], {}, now, 6 * H, 30), ['a', 'b', 'd']);
+  eq('offlinePrefetchTargets: 1回の件数に上限', T.offlinePrefetchTargets(trips, [], {}, now, 6 * H, 2), ['a', 'b']);
+})();
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

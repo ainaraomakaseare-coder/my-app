@@ -4943,7 +4943,24 @@
   // 「未送信 N件」の表示用。操作のうち、旅行のデータを直接変えるものの数
   function outboxCount(ops) { return (ops || []).length; }
 
+  // 保存し直す旅行のid（一覧の順。履歴から消した旅行は除く）。cachedAt：id→保存した時刻（ms）（node testで検証）
+  function offlinePrefetchTargets(trips, hiddenIds, cachedAt, now, fresh, max) {
+    var hidden = {};
+    (hiddenIds || []).forEach(function (id) { hidden[id] = true; });
+    var seen = {}, out = [];
+    (trips || []).forEach(function (t) {
+      var id = t && (t.tripId || t.id);
+      if (!id || hidden[id] || seen[id]) return;
+      seen[id] = true;
+      var at = cachedAt[id];
+      if (at && now - at < fresh) return;
+      out.push(id);
+    });
+    return out.slice(0, max);
+  }
+
   var Core = {
+    offlinePrefetchTargets: offlinePrefetchTargets,
     outboxUuid: outboxUuid, outboxTmpId: outboxTmpId, isTmpId: isTmpId, isPendingPhotoId: isPendingPhotoId, pendingPhotoId: pendingPhotoId,
     isNetworkError: isNetworkError, outboxClassify: outboxClassify, outboxRoute: outboxRoute, outboxSupports: outboxSupports,
     outboxIsCreate: outboxIsCreate, outboxReplaceId: outboxReplaceId, outboxRemapOps: outboxRemapOps, outboxApplyOp: outboxApplyOp,
@@ -6893,6 +6910,49 @@
   function loadCachedTrip(tripId) {
     return offlineGet('trips', tripId).then(function (c) { return c && c.data && c.data.trip ? c.data : null; });
   }
+  // ---------- 一覧の旅行を、電波があるうちに端末へ保存しておく（2026-11-12〜） ----------
+  // これまでオフラインで見られるのは、その端末で一度開いた旅行だけだった（開いたときにcacheTripData）。
+  // ホームを出したときに、一覧にある旅行を裏で1つずつ読んで覚えておき、まだ開いていない旅行もオフラインで
+  // 見られるようにする。通信を増やしすぎないよう、前に保存してからOFFLINE_PREFETCH_FRESH_MS以内の旅行は
+  // 読み直さず、1回に読むのはOFFLINE_PREFETCH_MAX件まで。写真そのものは保存しない（予定・記録の文字だけ）。
+  var OFFLINE_PREFETCH_FRESH_MS = 6 * 60 * 60 * 1000;
+  var OFFLINE_PREFETCH_MAX = 30;
+  var offlinePrefetchRunning = false;
+
+  function prefetchTripsForOffline() {
+    if (offlinePrefetchRunning || !API_BASE || navigator.onLine === false) return Promise.resolve(0);
+    offlinePrefetchRunning = true;
+    var trips = loadMyTrips();
+    var saved = 0;
+    return outboxLoad().then(function () {
+      return Promise.all(trips.map(function (t) {
+        var id = t.tripId || t.id;
+        return offlineGet('trips', id).then(function (c) { return [id, c && c.savedAt ? Date.parse(c.savedAt) || 0 : 0]; });
+      }));
+    }).then(function (pairs) {
+      var cachedAt = {};
+      pairs.forEach(function (p) { cachedAt[p[0]] = p[1]; });
+      var ids = Core.offlinePrefetchTargets(trips, loadHiddenTripIds(), cachedAt, Date.now(), OFFLINE_PREFETCH_FRESH_MS, OFFLINE_PREFETCH_MAX);
+      return ids.reduce(function (p, id) {
+        return p.then(function (stop) {
+          if (stop || navigator.onLine === false) return true;
+          return api('/trips/' + encodeURIComponent(id)).then(function (data) {
+            // いま開いている旅行は、画面のほう（openTrip・refreshTrip）が覚えるので触らない
+            if (state.trip && state.trip.id === id && $('.screen.active') && $('.screen.active').dataset.screen === 'tripDetail') return false;
+            // 端末にまだ送れていない変更があれば、それも重ねて覚える（開いたときと同じ）
+            return cacheTripData(id, Core.outboxApplyAll(data, pendingOpsFor(id))).then(function () { saved++; return false; });
+          }, function (err) {
+            // 通信が切れたらそこでやめる。見つからない（消された）などは飛ばして次へ（一覧からは消さない）
+            return Core.isNetworkError(err, navigator.onLine);
+          });
+        });
+      }, Promise.resolve(false));
+    }).catch(function () {}).then(function () {
+      offlinePrefetchRunning = false;
+      return saved;
+    });
+  }
+
   function pendingOpsFor(tripId) {
     return outbox.ops.filter(function (op) { return !op.tripId || op.tripId === tripId; });
   }
@@ -7295,6 +7355,8 @@
     apiNoticeCheck();
     renderHomeTripList();
     syncAccountTripsIntoHome();
+    // アカウントの旅行が一覧に足されるのを少し待ってから、一覧の旅行をオフライン用に保存する
+    setTimeout(prefetchTripsForOffline, 2500);
   }
 
   function tripThumbHtml(coverPhotoId) {
