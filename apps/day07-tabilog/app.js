@@ -2920,6 +2920,74 @@
     return (h ? tr('{n}時間', { n: h }) : '') + (m ? tr('{n}分', { n: m }) : '');
   }
 
+  // ---------- 空港のタイムゾーン（2026-11-12） ----------
+  // 出発地・到着地の地図がまだ無くても（または旅の最後の移動で「次の予定」が無くても）、空港の名前・
+  // コード（「羽田空港 (HND)」「SIN」）から時差が分かるようにする。地図が無いと時差を知る手がかりが
+  // 次の予定しか無く、シンガポール17:35発→羽田翌1:00着（実際は6時間25分）が、時差なしの7時間25分に
+  // なっていた。よく使う空港だけを持つ（無ければ今までどおり地図・前後の予定から決める）。
+  var AIRPORT_TZ = {
+    'Asia/Tokyo': 'HND NRT KIX ITM NGO CTS FUK OKA KOJ KMJ HIJ OKJ SDJ KMQ TAK MYJ KCZ NGS OIT KMI ISG MMY UKB AOJ AKJ HKD IBR FSZ',
+    'Asia/Seoul': 'ICN GMP PUS CJU TAE', 'Asia/Taipei': 'TPE TSA KHH RMQ', 'Asia/Hong_Kong': 'HKG', 'Asia/Macau': 'MFM',
+    'Asia/Shanghai': 'PVG SHA PEK PKX CAN SZX CTU TFU XIY HGH NKG XMN DLC TAO KMG CKG', 'Asia/Singapore': 'SIN',
+    'Asia/Bangkok': 'BKK DMK HKT CNX USM KBV', 'Asia/Kuala_Lumpur': 'KUL PEN LGK BKI', 'Asia/Jakarta': 'CGK', 'Asia/Makassar': 'DPS',
+    'Asia/Manila': 'MNL CEB CRK', 'Asia/Ho_Chi_Minh': 'SGN HAN DAD CXR PQC', 'Asia/Phnom_Penh': 'PNH', 'Asia/Yangon': 'RGN',
+    'Asia/Kolkata': 'DEL BOM BLR MAA', 'Asia/Dubai': 'DXB AUH', 'Asia/Qatar': 'DOH', 'Europe/Istanbul': 'IST SAW',
+    'Europe/London': 'LHR LGW STN LTN MAN EDI', 'Europe/Paris': 'CDG ORY NCE', 'Europe/Amsterdam': 'AMS', 'Europe/Berlin': 'BER MUC FRA DUS HAM',
+    'Europe/Zurich': 'ZRH GVA', 'Europe/Rome': 'FCO MXP VCE PSA', 'Europe/Madrid': 'MAD BCN', 'Europe/Vienna': 'VIE', 'Europe/Brussels': 'BRU',
+    'Europe/Helsinki': 'HEL', 'Europe/Copenhagen': 'CPH', 'Europe/Prague': 'PRG', 'Europe/Lisbon': 'LIS', 'Europe/Athens': 'ATH',
+    'America/New_York': 'JFK EWR LGA BOS IAD DCA MIA MCO', 'America/Chicago': 'ORD DFW IAH', 'America/Denver': 'DEN',
+    'America/Los_Angeles': 'LAX SFO SEA SAN LAS', 'America/Toronto': 'YYZ', 'America/Vancouver': 'YVR', 'Pacific/Honolulu': 'HNL OGG KOA',
+    'Pacific/Guam': 'GUM', 'Pacific/Saipan': 'SPN', 'Australia/Sydney': 'SYD MEL', 'Australia/Brisbane': 'BNE OOL CNS', 'Australia/Perth': 'PER',
+    'Australia/Darwin': 'DRW', 'Australia/Adelaide': 'ADL', 'Pacific/Auckland': 'AKL CHC ZQN'
+  };
+  var AIRPORT_TZ_BY_CODE = {};
+  Object.keys(AIRPORT_TZ).forEach(function (tz) {
+    AIRPORT_TZ[tz].split(' ').forEach(function (c) { AIRPORT_TZ_BY_CODE[c] = tz; });
+  });
+  var AIRPORT_TZ_BY_NAME = [
+    [/羽田|成田|関西国際|関空|伊丹|中部国際|セントレア|新千歳|福岡空港|那覇空港|Haneda|Narita/i, 'Asia/Tokyo'],
+    [/チャンギ|樟宜|Changi/i, 'Asia/Singapore'], [/仁川|金浦|Incheon|Gimpo/i, 'Asia/Seoul'],
+    [/桃園|Taoyuan/i, 'Asia/Taipei'], [/スワンナプーム|ドンムアン|Suvarnabhumi|Don Mueang/i, 'Asia/Bangkok'],
+    [/香港国際|Hong Kong International/i, 'Asia/Hong_Kong']
+  ];
+
+  // 出発地・到着地の文字（「シンガポール・チャンギ空港 (SIN)」など）から、空港のタイムゾーン。分からなければ''
+  function airportTimeZone(text) {
+    var s = String(text || '').normalize('NFKC');
+    if (!s.trim()) return '';
+    var codes = s.match(/(^|[^A-Za-z])([A-Z]{3})(?=$|[^A-Za-z])/g) || [];
+    for (var i = 0; i < codes.length; i++) {
+      var c = codes[i].replace(/[^A-Z]/g, '');
+      if (AIRPORT_TZ_BY_CODE[c]) return AIRPORT_TZ_BY_CODE[c];
+    }
+    for (var j = 0; j < AIRPORT_TZ_BY_NAME.length; j++) if (AIRPORT_TZ_BY_NAME[j][0].test(s)) return AIRPORT_TZ_BY_NAME[j][1];
+    return '';
+  }
+
+  // 移動の予定の、出発地・到着地の時差（分）。所要時間・「到着は翌日」の計算に使う。
+  // 出発：出発地の空港 → この予定の時差（自分の地図、無ければ前の予定から引き継いだもの）。
+  // 到着：到着地の地図のタイムゾーン（opts.arriveTz、編集中の欄）→ 保存済みの到着地の時差（_arriveOffset）
+  //       → 到着地の空港 → 次の予定の時差。以前は「次の予定」しか見ておらず、旅の最後の便は時差なしになっていた。
+  // opts: { from, to（出発地・到着地の文字。無ければ記録から）, arrive（到着時刻）, arriveTz, next（次の予定） }
+  function moveZoneOffsets(block, opts) {
+    opts = opts || {};
+    var t = (((block && block.entries) || [])[0] || {}).travel || {};
+    var from = opts.from !== undefined ? opts.from : t.from, to = opts.to !== undefined ? opts.to : t.to;
+    var date = (block && block.date) || '', time = (block && block.time) || '';
+    var arrive = opts.arrive !== undefined ? opts.arrive : t.arrive;
+    var dep = null, arr = null;
+    var depTz = airportTimeZone(from);
+    if (depTz && parseDate(date)) dep = tzOffsetMinutes(depTz, date, time);
+    if (typeof dep !== 'number' && block && typeof block._offset === 'number') dep = block._offset;
+    // 到着の時差は、着く時刻のころの値（サマータイムの切り替えはまれなので、日付は出発日で見る）
+    var arrTz = opts.arriveTz || '';
+    if (arrTz && parseDate(date)) arr = tzOffsetMinutes(arrTz, date, arrive || time);
+    if (typeof arr !== 'number' && block && typeof block._arriveOffset === 'number' && !opts.arriveChanged) arr = block._arriveOffset;
+    if (typeof arr !== 'number') { var aTz = airportTimeZone(to); if (aTz && parseDate(date)) arr = tzOffsetMinutes(aTz, date, arrive || time); }
+    if (typeof arr !== 'number' && opts.next && typeof opts.next._offset === 'number') arr = opts.next._offset;
+    return { depart: typeof dep === 'number' ? dep : undefined, arrive: typeof arr === 'number' ? arr : undefined };
+  }
+
   // 分を「14時間」「1時間30分」「45分」にする
   function minutesText(min) {
     var h = Math.floor(min / 60), m = min % 60;
@@ -2995,10 +3063,11 @@
     var lines = [emoji + ' ' + tr('移動') + (mode ? '｜' + mode : ''), route || block.label || ''];
     if (t.company) lines.push(tr('会社：') + t.company);
     if (t.depart || t.arrive) {
-      var info = travelDuration(t.depart, t.arrive, block._offset, arrOffset);
-      var dur = travelDurationText(t.depart, t.arrive, block._offset, arrOffset);
-      var zoneNote = typeof block._offset === 'number' && typeof arrOffset === 'number' && arrOffset !== block._offset
-        ? tr('・時差{diff}', { diff: offsetDiffText(arrOffset - block._offset) }) : '';
+      var depOffset = moveZoneOffsets(block).depart;
+      var info = travelDuration(t.depart, t.arrive, depOffset, arrOffset);
+      var dur = travelDurationText(t.depart, t.arrive, depOffset, arrOffset);
+      var zoneNote = typeof depOffset === 'number' && typeof arrOffset === 'number' && arrOffset !== depOffset
+        ? tr('・時差{diff}', { diff: offsetDiffText(arrOffset - depOffset) }) : '';
       lines.push((t.depart ? tr('{time}発', { time: t.depart }) : '') + (t.depart && t.arrive ? ' → ' : '') +
         (t.arrive ? (info ? dayShiftPrefix(info.dayShift) : '') + tr('{time}着', { time: t.arrive }) : '') + (dur ? '（' + dur + zoneNote + '）' : ''));
     }
@@ -3397,7 +3466,7 @@
       (b.entries || []).forEach(function (e) {
         var text = '';
         var nextBlock = sortedForPost[bi + 1];
-        if (b.category === 'transport') text = travelLogText(b, e, nextBlock ? nextBlock._offset : undefined);
+        if (b.category === 'transport') text = travelLogText(b, e, moveZoneOffsets(b, { next: nextBlock }).arrive);
         else {
           text = reviewLogText(b, e, findMyRating(e.ratings, email));
           var kind = reviewKindForCategory(b.category);
@@ -5126,6 +5195,8 @@
     applyBlockZones: applyBlockZones,
     offsetDiffText: offsetDiffText,
     travelDuration: travelDuration,
+    airportTimeZone: airportTimeZone,
+    moveZoneOffsets: moveZoneOffsets,
     dayShiftPrefix: dayShiftPrefix,
     pathAt: pathAt,
     REVIEW_KINDS: REVIEW_KINDS,
@@ -9728,10 +9799,14 @@
     try { tzCache = JSON.parse(localStorage.getItem(TZ_CACHE_KEY) || '{}'); } catch (e) { tzCache = {}; }
     var num = function (v) { return typeof v === 'number' && isFinite(v); };
     var jobs = items.filter(function (p) { return p.category === 'transport' && p.depart && p.arrive; }).map(function (p) {
-      var hasPts = num(p.mapLat) && num(p.mapLng) && num(p.arriveLat) && num(p.arriveLng);
-      var zones = hasPts && API_BASE
-        ? Promise.all([timezoneAt(p.mapLat, p.mapLng, tzCache), timezoneAt(p.arriveLat, p.arriveLng, tzCache)])
-        : Promise.resolve(['', '']);
+      // 出発地・到着地それぞれ、空港の名前・コード（「羽田空港 (HND)」）で分かればそれ、無ければ地図の位置から調べる
+      // （以前は両方の地図がそろわないと時差を見ず、片方だけでは所要時間を入れなかった。2026-11-12）
+      var zoneOf = function (text, lat, lng) {
+        var tz = Core.airportTimeZone(text);
+        if (tz) return Promise.resolve(tz);
+        return num(lat) && num(lng) && API_BASE ? timezoneAt(lat, lng, tzCache) : Promise.resolve('');
+      };
+      var zones = Promise.all([zoneOf(p.from, p.mapLat, p.mapLng), zoneOf(p.to, p.arriveLat, p.arriveLng)]);
       return zones.then(function (z) {
         var arriveDate = p.arriveDate || p.date;
         var m = Core.travelMinutes(p.date, p.depart, p.arriveDate || '', p.arrive,
@@ -11859,8 +11934,12 @@
       ? (state.branchBlocks || []).filter(function (b) { return b.branchId === block.branchId; })
       : state.blocks);
     var next = block && all.indexOf(block) !== -1 ? all[all.indexOf(block) + 1] : null;
-    var depOff = block ? block._offset : undefined, arrOff = next ? next._offset : undefined;
     var dep = block ? (block.time || '') : '', arr = $('#entTravelArrive').value;
+    var offs = Core.moveZoneOffsets(block, {
+      from: $('#entTravelFrom').value, to: $('#entTravelTo').value, arrive: arr, next: next,
+      arriveTz: formArriveZone(), arriveChanged: formArriveChanged()
+    });
+    var depOff = offs.depart, arrOff = offs.arrive;
     var d = Core.travelDurationText(dep, arr, depOff, arrOff);
     var info = Core.travelDuration(dep, arr, depOff, arrOff);
     var notes = [];
@@ -11896,6 +11975,30 @@
   // 座標つきのURLが入る
   var arrivePlaces = [], arriveSession = '', arrivePending = null;
   var formArrive = { url: '', lat: null, lng: null };
+  // 編集中の到着地（formArrive）のタイムゾーン。端末に覚えていればすぐ、無ければ調べてから所要時間を出し直す
+  var formArriveTz = { key: '', tz: '' };
+  function formArriveZone() {
+    var lat = formArrive.lat, lng = formArrive.lng;
+    if (typeof lat !== 'number' || typeof lng !== 'number' || !isFinite(lat) || !isFinite(lng)) return '';
+    var key = lat.toFixed(2) + ',' + lng.toFixed(2);
+    if (formArriveTz.key === key) return formArriveTz.tz;
+    var cache;
+    try { cache = JSON.parse(localStorage.getItem(TZ_CACHE_KEY) || '{}'); } catch (e) { cache = {}; }
+    formArriveTz = { key: key, tz: cache[key] || '' };
+    if (formArriveTz.tz || !API_BASE) return formArriveTz.tz;
+    timezoneAt(lat, lng, cache).then(function (tz) {
+      if (formArriveTz.key !== key || !tz) return;
+      formArriveTz.tz = tz;
+      try { localStorage.setItem(TZ_CACHE_KEY, JSON.stringify(cache)); } catch (e) { /* 覚えられなくてもよい */ }
+      updateTravelDuration();
+    });
+    return '';
+  }
+  // 到着地を、保存してある値から変えたか（変えたなら保存済みの到着地の時差は使わない）
+  function formArriveChanged() {
+    var t = ((state.editingEntry && state.editingEntry.travel) || {});
+    return (formArrive.url || '') !== (t.arriveMapUrl || '');
+  }
   function searchArrivePlace() {
     var q = $('#entArriveSearch').value.trim();
     if (!q) return;
@@ -11942,6 +12045,7 @@
       $('#entArriveMapUrl').value = url;
       formArrive = { url: url, lat: isFinite(p.lat) ? p.lat : null, lng: isFinite(p.lng) ? p.lng : null };
       status.textContent = tr('到着地に「{name}」を入れました。', { name: p.name });
+      updateTravelDuration();
     });
   }
 
@@ -16927,6 +17031,8 @@
     $('#btnDeleteEntry').addEventListener('click', deleteEntry);
     $('#entTravelDepart').addEventListener('input', updateTravelDuration);
     $('#entTravelArrive').addEventListener('input', updateTravelDuration);
+    $('#entTravelFrom').addEventListener('input', updateTravelDuration);
+    $('#entTravelTo').addEventListener('input', updateTravelDuration);
     $('#btnAddCostItem').addEventListener('click', function () {
       var newItem = { label: '', amount: 0 };
       var lastCur = lastCostCurrencyForTrip();

@@ -670,6 +670,29 @@ eq('assignBlockZones: 移動の予定も自分の地図（出発地）をその�
 eq('travelDuration: 日本20:00発→ロンドン翌01:00着（冬・時差-9時間）は14時間、到着は翌日', T.travelDuration('20:00', '01:00', 540, 0), { minutes: 840, dayShift: 1 });
 eq('travelDuration: 日本20:00発→ハワイ同日10:00着は9時間、到着は同じ日付', T.travelDuration('20:00', '10:00', 540, -600), { minutes: 540, dayShift: 0 });
 eq('travelDuration: 時差が分からなければ今までどおり', T.travelDuration('22:00', '06:15'), { minutes: 495, dayShift: 1 });
+
+/* ---- 空港のタイムゾーン・移動の時差（2026-11-12 シンガポール17:35発→羽田翌1:00着が7時間25分になっていた） ---- */
+eq('airportTimeZone: コード', T.airportTimeZone('羽田空港 (HND)'), 'Asia/Tokyo');
+eq('airportTimeZone: 全角のコード', T.airportTimeZone('チャンギ国際空港（ＳＩＮ）'), 'Asia/Singapore');
+eq('airportTimeZone: 名前だけ', T.airportTimeZone('シンガポール・チャンギ空港'), 'Asia/Singapore');
+eq('airportTimeZone: 空港でなければ空', T.airportTimeZone('東京駅'), '');
+eq('airportTimeZone: 英単語の一部はコードにしない', T.airportTimeZone('SINGAPORE'), '');
+(function () {
+  var flight = { date: '2026-11-12', time: '17:35', category: 'transport', transport: 'plane', _offset: 480,
+    entries: [{ travel: { from: 'シンガポール・チャンギ空港 (SIN)', to: '羽田空港 (HND)', depart: '17:35', arrive: '01:00' } }] };
+  var o = T.moveZoneOffsets(flight, {});
+  eq('moveZoneOffsets: 旅の最後の便でも、到着地の空港から時差が分かる', o, { depart: 480, arrive: 540 });
+  eq('travelDuration: SIN17:35発→HND翌1:00着は6時間25分・翌日', T.travelDuration('17:35', '01:00', o.depart, o.arrive), { minutes: 385, dayShift: 1 });
+  var noAirport = { date: '2026-11-12', time: '17:35', _offset: 480, _arriveOffset: 540, entries: [{ travel: { to: '自宅' } }] };
+  eq('moveZoneOffsets: 保存済みの到着地の時差を使う', T.moveZoneOffsets(noAirport, {}).arrive, 540);
+  eq('moveZoneOffsets: 到着地の欄を変えたら、編集中のタイムゾーンを使う', T.moveZoneOffsets(noAirport, { arriveTz: 'Europe/London', arriveChanged: true }).arrive, 0);
+  eq('moveZoneOffsets: 手がかりが次の予定だけならそれ', T.moveZoneOffsets({ date: '2026-11-12', time: '10:00', entries: [] }, { next: { _offset: -600 } }), { depart: undefined, arrive: -600 });
+  var out = { date: '2026-11-09', time: '03:00', _offset: 540, entries: [{ travel: { from: 'HND', to: 'SIN', depart: '03:00', arrive: '09:25' } }] };
+  var o2 = T.moveZoneOffsets(out, {});
+  eq('travelDuration: HND3:00発→SIN9:25着は7時間25分・同じ日', T.travelDuration('03:00', '09:25', o2.depart, o2.arrive), { minutes: 445, dayShift: 0 });
+  eq('travelMinutes: 空港から時差が分かれば、着く日が出発日のままでも翌日1:00着を6時間25分にする',
+    T.travelMinutes('2026-11-12', '17:35', '', '01:00', 480, 540, 'plane'), 385);
+})();
 eq('travelLogText: 時差と「翌」を出す',
   T.travelLogText({ category: 'transport', transport: 'plane', label: 'ロンドンへ', _offset: 540 }, { costItems: [], travel: { from: '羽田', to: 'ヒースロー', depart: '20:00', arrive: '01:00' } }, 0).split('\n')[2],
   '20:00発 → 翌01:00着（14時間・時差-9時間）');
