@@ -10416,6 +10416,173 @@
     el.addEventListener('touchcancel', function () { daySwipeState = null; });
   }
 
+  // ---------- 旅行の画面を下に引っぱって最新にする（2026-11-12〜） ----------
+  // ほかの人が足した記録は、これまで旅行を開き直さないと見えなかった（オーナーの声「ほかの人が記録したのが
+  // リアルタイムでわからないので、下に引っ張ってアップデートを同じ画面でしたい」）。いちばん上で下に
+  // 引っぱって離すと、サーバーから読み直して同じ画面のまま描き直す（選んでいる日・人はそのまま）。
+  // 端末にまだ送っていない変更（オフラインの送信待ち）があるときは、先にそれを送る。送り切れないうちは
+  // サーバーの内容で上書きしない（refreshTripと同じ決まり。書いたものが消えたように見えないように）。
+  // ページの端のバウンスは止めてある（installEdgeScrollGuard）ので、引っぱりの見た目はここで出す。
+  var PULL_REFRESH_TRIGGER_PX = 64; // 表示上この距離まで引っぱって離すと更新する
+  var PULL_REFRESH_MAX_PX = 96;
+  var pullRefreshState = null;
+  var pullRefreshBusy = false;
+
+  // 指の移動量（px）から、表示上の引っぱり量へ（指の半分だけ動き、最大PULL_REFRESH_MAX_PX）
+  function pullRefreshDistance(dy) { return Math.max(0, Math.min(PULL_REFRESH_MAX_PX, dy * 0.5)); }
+
+  function pullRefreshEl() {
+    var el = $('#pullRefresh');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'pullRefresh';
+    el.className = 'pull-refresh';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.hidden = true;
+    el.innerHTML = '<span class="pull-refresh-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3.5v3.2h-3.2"/></svg></span><span class="pull-refresh-label"></span>';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function showPullRefresh(dist, mode) {
+    var el = pullRefreshEl();
+    el.hidden = false;
+    el.classList.toggle('is-ready', mode === 'ready');
+    el.classList.toggle('is-loading', mode === 'loading');
+    el.style.transform = 'translate(-50%, ' + Math.round(dist - 48) + 'px)';
+    el.style.opacity = mode === 'pull' ? String(Math.min(1, dist / PULL_REFRESH_TRIGGER_PX)) : '1';
+    var icon = el.querySelector('.pull-refresh-icon');
+    if (icon) icon.style.transform = mode === 'loading' ? '' : 'rotate(' + Math.round(dist / PULL_REFRESH_TRIGGER_PX * 270) + 'deg)';
+    el.querySelector('.pull-refresh-label').textContent =
+      mode === 'loading' ? tr('最新の内容を読み込み中…') : mode === 'ready' ? tr('離すと最新に更新') : tr('引っぱって最新に更新');
+  }
+
+  function hidePullRefresh() {
+    var el = $('#pullRefresh');
+    if (!el) return;
+    el.classList.remove('is-ready', 'is-loading');
+    el.style.opacity = '0';
+    el.style.transform = 'translate(-50%, -48px)';
+    setTimeout(function () { if (!pullRefreshBusy && !pullRefreshState) el.hidden = true; }, 220);
+  }
+
+  // 読み直しの本体。結果は 'updated' | 'offline' | 'pending' | 'failed' | 'none'（テストからも呼ぶ）
+  function pullRefreshTrip() {
+    if (!state.trip || !API_BASE) return Promise.resolve('none');
+    var tripId = state.trip.id;
+    function stillHere() {
+      var active = $('.screen.active');
+      return state.trip && state.trip.id === tripId && active && active.dataset.screen === 'tripDetail';
+    }
+    if (navigator.onLine === false) {
+      showToast(tr('電波が無いため更新できません。電波が戻ったら、もう一度引っぱってください'));
+      return Promise.resolve('offline');
+    }
+    return outboxLoad().then(function () {
+      return outbox.ops.length ? replayOutbox() : null;
+    }).then(function () {
+      if (!stillHere()) return 'none';
+      if (pendingOpsFor(tripId).length) {
+        // 送り終えたら、replayOutbox→refreshAfterDrainが自動で読み直す
+        showToast(tr('まだ送れていない変更があります。送り終えると最新の内容になります'));
+        return 'pending';
+      }
+      return api('/trips/' + encodeURIComponent(tripId)).then(function (data) {
+        if (!stillHere()) return 'none';
+        // 返事を待つあいだに書いた変更があれば、それも重ねる（refreshTripと同じ）
+        data = Core.outboxApplyAll(data, pendingOpsFor(tripId));
+        state.offlineView = false;
+        cacheTripData(tripId, data);
+        applyTripData(data, true);
+        // 選んでいた日が無くなった（日程が縮んだなど）ときは、最初の日へ
+        var dates = dayTabDates();
+        if (dates.indexOf(state.selectedDate) < 0) {
+          var first = Core.allDatesForTrip(state.trip, state.blocks)[0];
+          state.selectedDate = first !== undefined ? first : (dates[0] !== undefined ? dates[0] : '');
+        }
+        renderTripDetail();
+        loadTripZones();
+        loadSocial();
+        loadTripPlacesForDetail();
+        showToast(tr('最新の内容にしました'));
+        return 'updated';
+      });
+    }).catch(function (err) {
+      if (err && err.status === 404) { showToast(tr('この旅行は見つかりませんでした（削除された可能性があります）')); return 'failed'; }
+      showToast(Core.isNetworkError(err, navigator.onLine)
+        ? tr('電波が無いため更新できません。電波が戻ったら、もう一度引っぱってください')
+        : tr('更新できませんでした。少し待ってから、もう一度お試しください'));
+      return Core.isNetworkError(err, navigator.onLine) ? 'offline' : 'failed';
+    });
+  }
+
+  function runPullRefresh() {
+    if (pullRefreshBusy) return Promise.resolve('busy');
+    pullRefreshBusy = true;
+    showPullRefresh(PULL_REFRESH_TRIGGER_PX, 'loading');
+    var started = Date.now();
+    return pullRefreshTrip().then(function (result) {
+      // すぐ終わっても、くるくるが一瞬で消えて何が起きたか分からなくならないよう少しだけ見せる
+      var wait = Math.max(0, 400 - (Date.now() - started));
+      return new Promise(function (r) { setTimeout(r, wait); }).then(function () { return result; });
+    }).then(function (result) {
+      pullRefreshBusy = false;
+      hidePullRefresh();
+      return result;
+    });
+  }
+
+  function initPullToRefresh() {
+    var el = document.querySelector('[data-screen="tripDetail"]');
+    if (!el) return;
+    // 縦にスクロールできる中の要素（宿泊先の一覧など）を少しでも下げているときは、その中のスクロールを優先する
+    function innerScrolled(t) {
+      for (; t && t !== el; t = t.parentElement) {
+        if (t.scrollTop > 0) return true;
+      }
+      return false;
+    }
+    el.addEventListener('touchstart', function (e) {
+      pullRefreshState = null;
+      if (pullRefreshBusy || e.touches.length !== 1) return;
+      if (!el.classList.contains('active') || window.scrollY > 0) return;
+      if (blockDragState) return;
+      if (e.target.closest && e.target.closest('.block-drag-handle, .entry-drag-handle, input, textarea, select, video, .leaflet-container, .maplibregl-map')) return;
+      if (innerScrolled(e.target)) return;
+      var t = e.touches[0];
+      if (t.clientX <= EDGE_SWIPE_BACK_PX) return; // 左端からは「戻る」
+      pullRefreshState = { startX: t.clientX, startY: t.clientY, decided: false, vertical: false, dist: 0 };
+    }, { passive: true });
+
+    el.addEventListener('touchmove', function (e) {
+      var ps = pullRefreshState;
+      if (!ps || e.touches.length !== 1) return;
+      var t = e.touches[0];
+      var dx = t.clientX - ps.startX, dy = t.clientY - ps.startY;
+      if (!ps.decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        ps.decided = true;
+        ps.vertical = dy > 0 && dy > Math.abs(dx) * 1.5 && window.scrollY <= 0;
+        if (!ps.vertical) { pullRefreshState = null; return; }
+      }
+      if (!ps.decided) return;
+      if (blockDragState) { pullRefreshState = null; hidePullRefresh(); return; }
+      e.preventDefault();
+      ps.dist = pullRefreshDistance(dy);
+      showPullRefresh(ps.dist, ps.dist >= PULL_REFRESH_TRIGGER_PX ? 'ready' : 'pull');
+    }, { passive: false });
+
+    function end() {
+      var ps = pullRefreshState;
+      pullRefreshState = null;
+      if (!ps || !ps.decided) return;
+      if (ps.dist >= PULL_REFRESH_TRIGGER_PX) runPullRefresh();
+      else hidePullRefresh();
+    }
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', function () { pullRefreshState = null; hidePullRefresh(); });
+  }
+
   // 画面左端からのスワイプで「戻る」操作にする（iOSのエッジスワイプ相当）。マイログ画面・
   // 旅行詳細画面（日タブがどれを選んでいても、そこから直接ホームへ戻れる）の両方で使う共通処理。
   var edgeSwipeBackState = null;
@@ -16816,6 +16983,7 @@
     initBlockDragReorder();
     initEntryDragMove();
     initDaySwipe();
+    initPullToRefresh();
     // マイログ・旅先一覧・プロフィールはボトムタブバーのトップレベル画面になったので、
     // 「← 戻る」／edge-swipe-back（画面端からのスワイプで戻る）はもう無い。タブ同士の行き来は
     // ボトムタブバーのタップだけ（2026-09-29〜。initTabSwipeは各画面の中の横スワイプだけに使う。
