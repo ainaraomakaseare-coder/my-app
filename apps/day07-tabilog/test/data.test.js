@@ -3512,10 +3512,17 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
     ph(fushimi, '2026-10-20T13:30'), ph(kiyomizu, '2026-10-20T09:10'), ph(kiyomizu2, '2026-10-20T09:40'),
     ph(null, '2026-10-20T10:00'), ph(fushimi, '2026-10-20T14:10'), ph(null, ''), ph(kiyomizu2, '')
   ]);
-  eq('photosToStops: 時刻順に、近い場所の写真をまとめる', r.stops.map(function (s) { return [s.date, s.time, s.endTime, s.photos]; }),
+  eq('photosToStops: 時刻順に、近い場所の写真をまとめる', r.stops.slice(0, 2).map(function (s) { return [s.date, s.time, s.endTime, s.photos]; }),
     [['2026-10-20', '09:10', '10:00', [1, 2, 3, 6]], ['2026-10-20', '13:30', '14:10', [0, 4]]]);
   eq('photosToStops: 場所は最初の写真の場所', [r.stops[0].lat, r.stops[1].lng], [kiyomizu.lat, fushimi.lng]);
-  eq('photosToStops: 時刻も場所も無い写真は使わない', r.dropped, 1);
+  eq('photosToStops: 時刻も場所も無い写真も、日付・場所なしの枠にする', [r.bare, r.dropped, r.stops.length, r.stops[2]],
+    [1, 0, 3, { date: '', time: '', endTime: '', lat: null, lng: null, photos: [5] }]);
+  r = T.photosToStops([ph(null, ''), ph(null, '')]);
+  eq('photosToStops: 情報の無い写真だけでも1枚ずつ枠にする', r.stops.map(function (s) { return s.photos; }), [[0], [1]]);
+  var bareItems = T.photoStopsToProposals(r.stops, [], '2026-10-21');
+  eq('photoStopsToProposals: 日時の無い写真は見ている日に時刻なしで入れる', bareItems.map(function (it) { return [it.date, it.time, it.place, !!it.mapUrl, it.photoRefs]; }),
+    [['2026-10-21', '', '', false, [0]], ['2026-10-21', '', '', false, [1]]]);
+  eq('photoStopsToProposals: 日を渡さなければ日付は空のまま', T.photoStopsToProposals(r.stops, [], '')[0].date, '');
   r = T.photosToStops([ph(kiyomizu, '2026-10-20T09:00'), ph(kiyomizu, '2026-10-20T11:00'), ph(kiyomizu, '2026-10-21T09:00')]);
   eq('photosToStops: 同じ場所でも2時間空いたら別の予定・日をまたぐ', r.stops.map(function (s) { return s.date + ' ' + s.time; }), ['2026-10-20 09:00', '2026-10-20 11:00', '2026-10-21 09:00']);
   r = T.photosToStops([ph(null, '2026-10-20T09:00'), ph(fushimi, '2026-10-20T09:30')]);

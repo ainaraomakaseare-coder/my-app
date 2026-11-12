@@ -239,6 +239,8 @@ I18N.addLang('en', {
   "写真": "Photos",
   "写真の場所": "Photo spot",
   "写真の撮影場所": "Where the photo was taken",
+  "撮影日時が読めなかった写真です。{date}に時刻なしで入れます。日付と時刻はあとで直せます": "The date taken couldn't be read from this photo. It will be added to {date} without a time. You can fix the date and time later.",
+  "{n}枚は撮影時刻も撮影場所も読めなかったので、1枚ずつ時刻と場所が空欄の予定にしました。あとで入れられます。": "{n} photos had no readable time or location, so each was added as its own item with the time and place left blank. You can fill them in later.",
   "撮影日時が読めなかった写真です。日付と時刻を入れてください": "The date taken couldn't be read from this photo. Please enter the date and time.",
   "写真へのアクセスが許可されていないため、撮影場所と時刻を読めません。設定アプリの「旅の足跡」から写真へのアクセスを許可してください。": "Photo access isn't allowed, so the location and time can't be read. Allow photo access for Tabi no Ashiato in the Settings app.",
   "写真から撮影時刻も撮影場所も読み取れませんでした。": "Couldn't read the time or location from these photos.",
