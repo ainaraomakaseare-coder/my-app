@@ -11650,9 +11650,91 @@
     $('#blkVideoExclude').checked = !!(block && block.videoExclude);
     $('#blkFormStatus').textContent = '';
     $('#btnDeleteBlock').hidden = !block;
+    // 新しい予定は、写真・動画・場所もこの画面で入れられる（記録の画面の欄を移して使う。2026-11-12）。
+    // 既存の予定の編集では出さない（写真・場所は記録の側にあるので、記録を開いて直す）
+    var withMedia = !block;
+    $('#blkMediaSlot').hidden = !withMedia;
+    if (withMedia) {
+      moveMediaFields('block');
+      resetMediaFields();
+    }
     renderCategoryChips();
     renderTransportChips();
     showScreen('blockForm');
+  }
+
+  // ---------- 予定の画面で写真・動画・場所を入れる（2026-11-12） ----------
+  // 「予定を入れてから記録を入れるのが二度手間」という声から、新しい予定の画面に記録の画面の
+  // 写真・動画・地図の欄をそのまま移して出す（同じ要素・同じ処理を使い回すので、カメラで撮る・
+  // 撮影場所の読み取り・場所の候補・現在地もそのまま使える）。入れたものは、予定を保存したあと
+  // その予定の最初の記録として保存する。記録の画面を開くときは元の位置へ戻す。
+  function moveMediaFields(where) {
+    var photo = $('#entPhotoField'), video = $('#entVideoField'), map = $('#entMapField');
+    if (where === 'block') {
+      var slot = $('#blkMediaSlot');
+      if (photo.parentNode === slot) return;
+      slot.appendChild(photo);
+      slot.appendChild(video);
+      slot.appendChild(map);
+      $('#entMapLabel').textContent = tr('場所（任意）');
+    } else {
+      var timeField = $('#entTimeField');
+      if (photo.parentNode === timeField.parentNode) return;
+      timeField.parentNode.insertBefore(photo, timeField);
+      timeField.parentNode.insertBefore(video, timeField);
+      var arrive = $('#entArriveField');
+      arrive.parentNode.insertBefore(map, arrive);
+    }
+  }
+
+  // 写真・動画・地図の欄を空にする（新しい予定・新しい記録を開いたとき）
+  function resetMediaFields() {
+    (state.formPhotos || []).forEach(function (p) { if (p.url) URL.revokeObjectURL(p.url); });
+    state.formPhotos = [];
+    state.formVideoIds = [];
+    state.pendingVideos = [];
+    $('#entMapUrl').value = '';
+    $('#entPlaceSearch').value = '';
+    $('#entMapPreview').hidden = true;
+    $('#entPlaceCandidates').hidden = true;
+    placeCandidates = []; placeChoice = '';
+    selectedPlaceName = ''; selectedPlaceNameUrl = '';
+    placeCoordsPending = null;
+    $('#entPlaceStatus').textContent = '';
+    renderPhotoPreview();
+    renderVideoPreview();
+  }
+
+  function blockFormHasMedia() {
+    return !$('#blkMediaSlot').hidden && !!(state.formPhotos.length || state.pendingVideos.length ||
+      $('#entMapUrl').value.trim() || selectedPlace());
+  }
+
+  // 予定の画面で入れた写真・動画・場所を、その予定の最初の記録として保存する
+  function saveBlockMediaEntry(blockId) {
+    return (placeCoordsPending || Promise.resolve()).then(function () {
+      if (!$('#entMapUrl').value.trim() && selectedPlace()) applySelectedPlaceToMapUrl();
+      var user = loadCurrentUser();
+      var payload = {
+        episode: '', comment: '', detail: '', costItems: [], waitTime: '', time: '',
+        mapUrl: $('#entMapUrl').value.trim(), shopUrl: '', otherUrl: '',
+        author: user ? (user.name || user.email || '') : ''
+      };
+      if (selectedPlaceName && payload.mapUrl === selectedPlaceNameUrl) payload.mapPlaceName = selectedPlaceName;
+      var uploads = [];
+      payload.photoIds = state.formPhotos.map(function (p) {
+        if (p.id) return p.id;
+        p.uploadKey = p.uploadKey || Core.outboxUuid();
+        uploads.push({ key: p.uploadKey, blob: p.blob });
+        return Core.pendingPhotoId(p.uploadKey);
+      });
+      payload.videoIds = state.formVideoIds.concat(state.pendingVideos.map(function (v) {
+        v.uploadKey = v.uploadKey || Core.outboxUuid();
+        uploads.push({ key: v.uploadKey, blob: v.blob });
+        return Core.pendingPhotoId(v.uploadKey);
+      }));
+      return writeData({ tripId: state.trip.id, method: 'POST', path: '/blocks/' + encodeURIComponent(blockId) + '/entries', body: payload, uploads: uploads });
+    });
   }
 
   function renderCategoryChips() {
@@ -11726,9 +11808,18 @@
       videoExclude: $('#blkVideoExclude').checked
     };
     if (!state.editingBlockId && state.editingBranchId) payload.branchId = state.editingBranchId;
+    var withMedia = !state.editingBlockId && blockFormHasMedia();
+    if (withMedia) status.textContent = (state.pendingVideos || []).length ? tr('保存中…（動画の保存は時間がかかります）') : tr('保存中…');
+    var mediaFailed = false;
     var req = state.editingBlockId
       ? writeData({ tripId: state.trip.id, method: 'PATCH', path: '/blocks/' + encodeURIComponent(state.editingBlockId), body: payload })
       : writeData({ tripId: state.trip.id, method: 'POST', path: '/trips/' + encodeURIComponent(state.trip.id) + '/blocks', body: payload });
+    if (withMedia) {
+      req = req.then(function (block) {
+        if (!block || !block.id) return block;
+        return saveBlockMediaEntry(block.id).then(function () { return block; }, function () { mediaFailed = true; return block; });
+      });
+    }
     req.then(function (block) {
       block = block || {};
       return refreshTrip().then(function () {
@@ -11742,7 +11833,10 @@
           // （以前は記録フォームを自動で開いていたが、予定だけ先に作りたい人が戸惑うため。2026-10-06）
           showScreen('tripDetail');
           renderTripDetail();
-          showToast(tr('予定を保存しました'), { label: tr('記録を追加'), onClick: function () { openEntryForm(block.id, null); } });
+          // 写真・場所も一緒に入れたときは「予定と写真・場所を保存しました」。続きの記録はトーストから足せる
+          var msg = mediaFailed ? tr('予定は保存しましたが、写真・場所の保存に失敗しました。「記録を追加」から入れ直してください。')
+            : withMedia ? tr('予定と写真・場所を保存しました') : tr('予定を保存しました');
+          showToast(msg, { label: tr('記録を追加'), onClick: function () { openEntryForm(block.id, null); } });
         }
       });
     }).catch(function (e) {
@@ -11763,6 +11857,7 @@
 
   // ---------- 小項目（記録）の追加・編集 ----------
   function openEntryForm(blockId, entry) {
+    moveMediaFields('entry');
     state.entryBlockId = blockId;
     state.editingEntryId = entry ? entry.id : null;
     state.editingEntry = entry || null;
@@ -12668,6 +12763,11 @@
 
   function showPlaceMapPreview() {
     var place = $('#entPlaceSearch').value.trim();
+    // 予定の画面で検索欄が空なら、予定の見出しで探す
+    if (!place && !$('#blkMediaSlot').hidden && $('.screen.active') && $('.screen.active').dataset.screen === 'blockForm') {
+      place = $('#blkLabel').value.trim();
+      $('#entPlaceSearch').value = place;
+    }
     if (!place) return;
     var list = $('#entPlaceCandidates');
     var status = $('#entPlaceStatus');

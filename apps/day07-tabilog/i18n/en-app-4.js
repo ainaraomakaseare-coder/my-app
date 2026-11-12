@@ -291,4 +291,7 @@ I18N.addLang('en', {
   "旅行を削除しました": "Trip deleted",
   "削除に失敗しました。もう一度お試しください。": "Couldn't delete. Please try again.",
   "ほかの人がアカウントで参加しているため、削除できません。": "Other people have joined with an account, so this trip can't be deleted.",
+  "場所（任意）": "Place (optional)",
+  "予定と写真・場所を保存しました": "Plan saved with photos and place",
+  "予定は保存しましたが、写真・場所の保存に失敗しました。「記録を追加」から入れ直してください。": "The plan was saved, but the photos and place couldn't be saved. Please add them again from \"Add record\".",
 });
