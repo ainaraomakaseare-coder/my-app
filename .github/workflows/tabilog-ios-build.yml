@@ -146,6 +146,67 @@ jobs:
               f.write(content)
           PYEOF
 
+      - name: 「カメラで撮る」の動画の画質を上げ、動画のときはフラッシュを切っておく
+        # 記録を追加の「カメラで撮る」（<input type="file" accept="video/*" capture>）は、WKWebViewが
+        # iOSのUIImagePickerControllerでカメラを開く。WebKitはここで画質（videoQuality）も
+        # フラッシュ（cameraFlashMode）も指定しないので、iOSの初期値の「中画質（およそ480×360）」と
+        # 「フラッシュ自動（暗いとライトが点く）」のまま録られていた（2026-11-12、オーナー報告）。
+        # HTML側からは変えられないため、カメラ画面が出る直前（viewWillAppear）に差し替えて設定する。
+        # ・画質：1280×720（中画質の約4倍の細かさ。1分でおよそ数十MBで、動画の上限200MBに収まりやすい）
+        # ・フラッシュ：動画だけを撮るカメラのときは「オフ」から始める（写真のカメラは今までどおり自動）。
+        #   撮影画面の稲妻ボタンで、その場でオンにもできる。
+        # ios/ は毎回作り直すので、生成されたAppDelegate.swiftに差し込む。
+        working-directory: apps/day07-tabilog-ios/ios/App/App
+        run: |
+          python3 - << 'PYEOF'
+          path = "AppDelegate.swift"
+          with open(path) as f:
+              content = f.read()
+          marker = "didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {\n"
+          if content.count(marker) != 1:
+              raise SystemExit(f"didFinishLaunchingWithOptions not found as expected (found {content.count(marker)})")
+          content = content.replace(marker, marker + "        UIImagePickerController.tabilogInstallCameraDefaults()\n", 1)
+          content += """
+
+          // 「カメラで撮る」の動画の画質・フラッシュの初期値（CIで差し込み。.github/workflows/tabilog-ios-build.yml）
+          extension UIImagePickerController {
+              private static var tabilogInstalled = false
+
+              static func tabilogInstallCameraDefaults() {
+                  if tabilogInstalled { return }
+                  tabilogInstalled = true
+                  let cls: AnyClass = UIImagePickerController.self
+                  let originalSel = #selector(UIViewController.viewWillAppear(_:))
+                  let swizzledSel = #selector(UIImagePickerController.tabilog_viewWillAppear(_:))
+                  guard let original = class_getInstanceMethod(cls, originalSel),
+                        let swizzled = class_getInstanceMethod(cls, swizzledSel) else { return }
+                  // 親クラス（UIViewController）のviewWillAppearを書き換えないよう、まずこのクラスに足してから入れ替える
+                  if class_addMethod(cls, originalSel, method_getImplementation(swizzled), method_getTypeEncoding(swizzled)) {
+                      class_replaceMethod(cls, swizzledSel, method_getImplementation(original), method_getTypeEncoding(original))
+                  } else {
+                      method_exchangeImplementations(original, swizzled)
+                  }
+              }
+
+              @objc func tabilog_viewWillAppear(_ animated: Bool) {
+                  if sourceType == .camera {
+                      let types = mediaTypes
+                      let moviesOnly = types.contains("public.movie") && !types.contains("public.image")
+                      if types.contains("public.movie") {
+                          videoQuality = .type1280x720
+                      }
+                      if moviesOnly && UIImagePickerController.isFlashAvailable(for: cameraDevice) {
+                          cameraFlashMode = .off
+                      }
+                  }
+                  tabilog_viewWillAppear(animated)
+              }
+          }
+          """
+          with open(path, "w") as f:
+              f.write(content)
+          PYEOF
+
       - name: バージョン番号を設定
         # ios/フォルダは毎回作り直しなので、ビルド番号を前回の実行から引き継げない。
         # このワークフローの実行回数（github.run_number）を使えば、実行するたびに
