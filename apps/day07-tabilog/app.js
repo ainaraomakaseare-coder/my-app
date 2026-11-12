@@ -1801,15 +1801,16 @@
   // - 時刻のある写真を時刻順に並べ、その場所の最初の写真から0.5km以上離れた・前の写真から2時間以上空いたら次の場所
   // - 場所が分からない写真（時刻だけ）は、時間が続いていれば今の場所に入れる
   // - 時刻が分からない写真（場所だけ）は、0.5km以内のいちばん近い場所に入れる（無ければ日付なしの場所にする）
-  // - 時刻も場所も分からない写真は使わない（dropped）
-  // 戻り値 { stops: [{ date, time, endTime, lat, lng（無ければnull）, photos:[photosの位置…] }], dropped }
+  // - 時刻も場所も分からない写真は、1枚ずつ日付も場所もない予定（枠）にする（bare。以前は使わずに捨てていた。
+  //   LINEで届いた写真などが漏れるので、空欄のままでも入れてほしいというオーナーの要望、2026-11-12）
+  // 戻り値 { stops: [{ date, time, endTime, lat, lng（無ければnull）, photos:[photosの位置…] }], bare（枠にした枚数）, dropped（常に0） }
   function photosToStops(photos) {
-    var timed = [], untimed = [], dropped = 0;
+    var timed = [], untimed = [], bare = [];
     (photos || []).forEach(function (p, i) {
       var pt = p ? photoGpsPoint(p.lat, p.lng) : null;
       var at = p && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(p.takenAt || '') ? p.takenAt : '';
       var x = { i: i, pt: pt, at: at };
-      if (at) timed.push(x); else if (pt) untimed.push(x); else dropped++;
+      if (at) timed.push(x); else if (pt) untimed.push(x); else bare.push(x);
     });
     timed.sort(function (a, b) { return a.at < b.at ? -1 : a.at > b.at ? 1 : a.i - b.i; });
     var stops = [], cur = null;
@@ -1835,6 +1836,7 @@
       if (best) best.photos.push(x.i);
       else stops.push({ first: '', last: '', pt: x.pt, photos: [x.i] });
     });
+    bare.forEach(function (x) { stops.push({ first: '', last: '', pt: null, photos: [x.i] }); });
     return {
       stops: stops.map(function (s) {
         return {
@@ -1842,7 +1844,8 @@
           lat: s.pt ? s.pt.lat : null, lng: s.pt ? s.pt.lng : null, photos: s.photos
         };
       }),
-      dropped: dropped
+      bare: bare.length,
+      dropped: 0
     };
   }
 
@@ -1856,20 +1859,23 @@
 
   // 立ち寄り先を、確認画面の候補にする。places：立ち寄り先と同じ並びの { name, types }（分からなければnull）。
   // 地図は写真の撮影場所（座標の地図URL。名前が分かればその名前を付ける）。photoRefsは写真の位置（保存のあと記録に付ける）
-  function photoStopsToProposals(stops, places) {
+  // fallbackDate：撮影日時の分からない写真を入れる日（見ている日タブ）。時刻は空のまま、そのまま追加できるようにする（2026-11-12）
+  function photoStopsToProposals(stops, places, fallbackDate) {
+    var fb = /^\d{4}-\d{2}-\d{2}$/.test(fallbackDate || '') ? fallbackDate : '';
     return (stops || []).map(function (s, i) {
       var pl = (places && places[i]) || null;
       var name = pl && pl.name ? String(pl.name).trim().slice(0, 100) : '';
       var item = {
         id: 'p' + (i + 1), sourceImage: null,
         category: pl ? categoryForPlaceTypes(pl.types) : 'sightseeing', transport: '',
-        date: s.date || '', time: s.time || '', label: name || tr('写真の場所'),
+        date: s.date || fb, time: s.time || '', label: name || tr('写真の場所'),
         place: name, placeGuessed: false, fromPlace: '', toPlace: '', company: '', routeNumber: '',
-        departTime: '', arriveTime: '', arriveDate: s.date || '',
+        departTime: '', arriveTime: '', arriveDate: s.date || fb,
         costItems: [], note: '', warnings: [], timeEstimated: false, nightIndex: 0,
         photoRefs: (s.photos || []).slice()
       };
-      if (!s.date) item.warnings.push(tr('撮影日時が読めなかった写真です。日付と時刻を入れてください'));
+      if (!s.date) item.warnings.push(fb ? tr('撮影日時が読めなかった写真です。{date}に時刻なしで入れます。日付と時刻はあとで直せます', { date: formatDateJp(fb) })
+        : tr('撮影日時が読めなかった写真です。日付と時刻を入れてください'));
       if (typeof s.lat === 'number' && typeof s.lng === 'number') {
         item.mapLat = Math.round(s.lat * 1e6) / 1e6;
         item.mapLng = Math.round(s.lng * 1e6) / 1e6;
@@ -9946,12 +9952,6 @@
     var grouped = Core.photosToStops(list.map(function (x) {
       return { lat: x.gps ? x.gps.lat : null, lng: x.gps ? x.gps.lng : null, takenAt: x.takenAt };
     }));
-    if (!grouped.stops.length) {
-      photoItinBusy = false;
-      photoItinHideBusy();
-      alert(tr('写真から撮影時刻も撮影場所も読み取れませんでした。') + (isNativeApp() ? '' : '\n' + tr('iPhoneのブラウザでは写真の情報が消えてしまうことがあります。iPhoneアプリから選ぶと読み取れます。')));
-      return;
-    }
     var used = {};
     grouped.stops.forEach(function (s) { s.photos.forEach(function (i) { used[i] = true; }); });
     var photos = [];
@@ -9986,15 +9986,19 @@
       }, Promise.resolve());
     }).then(function () {
       photoItinBusy = false;
-      var items = Core.photoStopsToProposals(grouped.stops, places);
+      // 撮影日時の分からない写真は、いま見ている日（無ければ最初の日）に時刻なしで入れる
+      var tabDates = dayTabDates();
+      var fallbackDate = tabDates.indexOf(state.selectedDate) !== -1 ? state.selectedDate : (tabDates[0] || '');
+      var items = Core.photoStopsToProposals(grouped.stops, places, fallbackDate);
       // 読み込めなかった写真は付けない
       items.forEach(function (it) { it.photoRefs = it.photoRefs.filter(function (i) { return photos[i]; }); });
       var notes = [tr('写真{n}枚を、撮影した時刻と場所で{m}か所にまとめました。同じ場所で続けて撮った写真は1つの予定になります。追加すると、写真はその予定の記録に入ります。', { n: total, m: items.length })];
       // 位置情報のない写真では場所が入らないことを、毎回はっきり書いておく（2026-10-22、オーナーの要望）
       notes.push(tr('場所は、写真に残っている撮影場所（位置情報）から入れます。カメラの位置情報をオフにして撮った写真や、LINEなどで送られてきた写真には撮影場所が残っていないため、場所は入りません。'));
       if (picked > list.length) notes.push(tr('写真は{max}枚までです。超えた分は使っていません。', { max: Core.PHOTO_ITINERARY_MAX }));
-      if (grouped.dropped) notes.push(tr('{n}枚は撮影時刻も撮影場所も読めなかったため、使っていません。', { n: grouped.dropped }));
-      var noPlace = items.filter(function (it) { return !it.mapUrl; }).length;
+      if (grouped.bare) notes.push(tr('{n}枚は撮影時刻も撮影場所も読めなかったので、1枚ずつ時刻と場所が空欄の予定にしました。あとで入れられます。', { n: grouped.bare })
+        + (isNativeApp() ? '' : ' ' + tr('iPhoneのブラウザでは写真の情報が消えてしまうことがあります。iPhoneアプリから選ぶと読み取れます。')));
+      var noPlace = items.filter(function (it) { return !it.mapUrl; }).length - (grouped.bare || 0); // 枠にした写真は上のお知らせで伝えた
       if (noPlace) notes.push(isNativeApp() ? tr('{n}件は撮影場所が読めませんでした。「場所を探す」で入れられます。', { n: noPlace })
         : tr('{n}件は撮影場所が読めませんでした。「場所を探す」で入れられます（iPhoneのブラウザでは写真の場所が消えてしまいます。iPhoneアプリから選ぶと読めます）。', { n: noPlace }));
       photoItinRevoke();
