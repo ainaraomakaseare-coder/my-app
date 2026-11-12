@@ -294,4 +294,12 @@ I18N.addLang('en', {
   "場所（任意）": "Place (optional)",
   "予定と写真・場所を保存しました": "Plan saved with photos and place",
   "予定は保存しましたが、写真・場所の保存に失敗しました。「記録を追加」から入れ直してください。": "The plan was saved, but the photos and place couldn't be saved. Please add them again from \"Add record\".",
+  "最新の内容を読み込み中…": "Loading the latest…",
+  "離すと最新に更新": "Release to refresh",
+  "引っぱって最新に更新": "Pull down to refresh",
+  "電波が無いため更新できません。電波が戻ったら、もう一度引っぱってください": "You're offline, so it can't refresh. Pull down again once you're back online.",
+  "まだ送れていない変更があります。送り終えると最新の内容になります": "Some changes haven't been sent yet. The latest will show once they're sent.",
+  "最新の内容にしました": "Updated to the latest",
+  "この旅行は見つかりませんでした（削除された可能性があります）": "This trip couldn't be found (it may have been deleted)",
+  "更新できませんでした。少し待ってから、もう一度お試しください": "Couldn't refresh. Please wait a moment and try again.",
 });
