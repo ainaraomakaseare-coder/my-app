@@ -1,13 +1,14 @@
-// raw-*.png に見出しを付けて、App Storeに出す画像（gohan-ashiato-1〜5.png、1179×2556）を作る
+// raw-*.png に見出しを付けて、App Storeに出す画像（gohan-ashiato-1〜6.png、1179×2556）を作る
 // 使い方: NODE_PATH=<playwrightのnode_modules> node store-frame.cjs
 const path = require('path'), fs = require('fs');
 const { chromium } = require('playwright');
 const WORK = path.join(__dirname, 'work');
 const slides = [
-  ['raw-1-list', '食べたものを、<br>写真でさっと記録', '今月の件数・合計・平均評価もひと目で'],
-  ['raw-2-grid', '写真で並べると、<br>ごはんのアルバムに', '「あの日なに食べたっけ？」がすぐ見つかる'],
-  ['raw-3-detail', 'お店・値段・評価・<br>メモまで残せる', '同じお店のほかの記録もいっしょに'],
-  ['raw-4-edit', '近くのお店を、<br>タップで入力', '写真を選ぶと、撮影日時も自動で入る'],
+  ['raw-0-tv', 'テレビで紹介されたお店を、<br>近い順に探せる', '町中華・酒場・ぶらり旅の500店以上'],
+  ['raw-0-tv-detail', '番組・放送日・公式ページを<br>まとめてチェック', '気になったら「行きたい」に足すだけ'],
+  ['raw-0-wants', '行きたいお店を、<br>ひとつのリストに', '行ったお店には自動で印がつく'],
+  ['raw-4-edit', '行ったら、写真で<br>さっと記録', '撮影日時と近くのお店が自動で入る'],
+  ['raw-1-list', '食べたものが、<br>ごはんの日記になる', '今月の件数・合計・平均評価もひと目で'],
   ['raw-5-places', 'よく行くお店が<br>ひと目でわかる', '回数・平均評価・合計をお店ごとに'],
 ];
 (async () => {

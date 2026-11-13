@@ -37,3 +37,11 @@ PRとmainへのpushで、署名なしのシミュレータービルドと起動�
 ## 実機で確認すること
 
 写真を選んだときに撮影日時と場所が入るか／近くのお店の候補が出るか／「撮る」→ 現在地／アプリを終了・再起動しても記録と写真が残るか／書き出し→ファイルに保存→読み込み。
+
+## App Storeの掲載内容（ワークフロー「ごはんの足跡 App Store 掲載内容を入れる」）
+
+`store-listing.json`（説明文・プロモーション用テキスト・キーワード・スクリーンショットの並び）と `store-screenshots/gohan-ashiato-1〜6.png` がmainに入ると、`scripts/update-store-listing.mjs` が App Store Connect の提出前の 1.0 に入れ、TestFlightの一番新しいビルドを選びます。却下されたあとのバージョンにも入れられます。同じ内容なら何も変えません。「審査へ提出」はしません。
+
+スクリーンショットの作り直し：`store-screenshots/` で `node food-photos.cjs && node store-raw.cjs && node store-frame.cjs`（Playwrightが要る）。テレビの店は `tv-shops.json` の本物、記録と自分で足した行きたい場所は架空です。
+
+2026-10-31：ビルド 1.0.0 (6) が Guideline 4.3（Spam）／4.2.6 で却下。テレビの店・行きたいリストが入ったビルドで出し直すため、説明文とスクリーンショットをテレビの店から始まる形に変えた。
