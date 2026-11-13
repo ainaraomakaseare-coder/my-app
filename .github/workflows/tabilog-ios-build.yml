@@ -193,7 +193,7 @@ jobs:
                       let types = mediaTypes
                       let moviesOnly = types.contains("public.movie") && !types.contains("public.image")
                       if types.contains("public.movie") {
-                          videoQuality = .type1280x720
+                          videoQuality = .typeIFrame1280x720
                       }
                       if moviesOnly && UIImagePickerController.isFlashAvailable(for: cameraDevice) {
                           cameraFlashMode = .off
