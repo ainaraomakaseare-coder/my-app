@@ -1,5 +1,6 @@
 /*
  * 【必須テスト】予定の画面と「まとめて予定を作る」の文字を減らして見やすくしたことを確かめる（2026-11-13）。
+ *   - 「日付・時間は現地時間で」の説明は「時間」横の「？」の中（2026-11-13追加）
  *   - 「動画でシェアに出さない」の長い説明は最初は隠れていて、横の「？」をタップすると出る
  *   - 「？」をタップしてもチェックは切り替わらない
  *   - 「まとめて予定を作る」の全体の説明・AIの回数の説明は「？」の中。各ボタンの例は1行の短い文
@@ -122,6 +123,11 @@ async function openNewBlock(page) {
 
   // ---- 予定の画面：動画でシェアに出さないの説明は「？」の中 ----
   await openNewBlock(page);
+  check('現地時間の説明は最初は隠れている', !(await page.isVisible('#blkTimeInfo')));
+  await page.click('.label-with-info .info-btn');
+  check('時間の横の「？」で現地時間の説明が出る', (await page.isVisible('#blkTimeInfo')) && /現地時間/.test(await page.textContent('#blkTimeInfo')));
+  await page.click('#blkFormTitle');
+  check('ほかをタップすると現地時間の説明が閉じる', !(await page.isVisible('#blkTimeInfo')));
   check('「動画でシェアに出さない」のチェックが出る', await page.isVisible('#blkVideoExclude'));
   check('説明は最初は隠れている', !(await page.isVisible('#blkVideoExcludeInfo')));
   await page.click('#blkVideoExcludeRow .info-btn');

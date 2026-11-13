@@ -553,15 +553,16 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
             <select id="blkBranchDate" class="field-select" hidden></select>
           </div>
           <div class="field">
-            <label for="blkTime">時間</label>
+            <!-- 現地時間の説明は「？」をタップしたときだけ出す（2026-11-13、オーナーの要望）。ボタンはlabelの外 -->
+            <div class="label-with-info"><label for="blkTime">時間</label><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="blkTimeInfo">？</button></div>
             <div class="time-now-row">
               <input type="time" id="blkTime">
               <button type="button" class="btn ghost small" id="btnBlkTimeNow">今</button>
             </div>
           </div>
+          <p class="info-pop" id="blkTimeInfo" hidden>日付・時間は、その場所の現地時間で入れてください（チケットや現地の時計のとおり）。時差や日付変更線をまたぐ移動の順番は、アプリが自動で合わせます。</p>
         </div>
         <p class="hint branch-block-note" id="blkBranchNote" hidden></p>
-        <p class="hint blk-time-hint">日付・時間は、その場所の現地時間で入れてください（チケットや現地の時計のとおり）。時差や日付変更線をまたぐ移動の順番は、アプリが自動で合わせます。</p>
 
         <div class="field">
           <label for="blkLabel">見出し</label>

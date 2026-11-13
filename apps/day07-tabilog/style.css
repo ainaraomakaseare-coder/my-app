@@ -1840,7 +1840,9 @@ body.viewer-open { overflow: hidden; }
 .screen[data-screen="blockForm"] .field { margin-bottom: 22px; }
 .screen[data-screen="blockForm"] .field-row { margin-bottom: 0; }
 .screen[data-screen="blockForm"] .hint { font-size: var(--fs-sm); }
-.screen[data-screen="blockForm"] .blk-time-hint { margin: -12px 0 24px; }
+.screen[data-screen="blockForm"] .field-row { position: relative; }
+.label-with-info { display: flex; align-items: center; min-height: 20px; }
+.screen[data-screen="blockForm"] .field-row .field label { line-height: 20px; }
 .blk-media { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border-soft); }
 .blk-media[hidden] { display: none; }
 .blk-media .blk-media-hint { margin: 0 0 16px; }
