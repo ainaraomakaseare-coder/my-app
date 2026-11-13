@@ -60,7 +60,7 @@ async function launch() {
   }, TEST_USER);
   await page.route(/\/api\/accounts\/ensure$/, (route) => route.fulfill({
     status: 200, contentType: 'application/json',
-    body: JSON.stringify({ accountId: TEST_USER.accountId, email: TEST_USER.email, name: TEST_USER.name, memoRemainingThisPeriod: 4, voiceRemainingThisPeriod: 3, memoMonthlyLimit: 5, voiceMonthlyLimit: 5, ticketCredits: 0 })
+    body: JSON.stringify({ accountId: TEST_USER.accountId, email: TEST_USER.email, name: TEST_USER.name, memoRemainingThisPeriod: 2, voiceRemainingThisPeriod: 3, memoMonthlyLimit: 3, voiceMonthlyLimit: 3, ticketCredits: 0 })
   }));
   await page.route('**/', async (route) => {
     const res = await route.fetch();
@@ -108,13 +108,13 @@ async function launch() {
   check('メモ欄・お願い文のボタンは見えない', (await page.isHidden('#textMemoInput')) && (await page.isHidden('#btnCopyAiPrompt')));
   check('URL・お店の名前の欄は最初は畳まれている', await page.isHidden('#voiceNotes'));
   await page.waitForFunction(() => /あと3回/.test(document.querySelector('#voiceAiInfo').textContent));
-  check('話すタブに音声入力の残り回数（月5回まで無料）が出る', /音声入力：あと3回（月5回まで無料）/.test(await page.textContent('#voiceAiInfo')));
+  check('話すタブに音声入力の残り回数（最初の3回まで無料）が出る', /音声入力：あと3回（最初の3回まで無料）/.test(await page.textContent('#voiceAiInfo')));
 
   // ---- タブを切り替える ----
   await page.click('#veTabMemo');
   s = await shown();
   check('「メモを貼る」を押すとメモだけが出る', !s.voice && s.memo && !s.ai && s.selected.join() === 'memo', JSON.stringify(s));
-  check('メモタブにメモのAI整理の残り回数が出る', /あと4回（月5回まで）/.test(await page.textContent('#memoAiInfo')));
+  check('メモタブにメモのAI整理の残り回数が出る', /あと2回（最初の3回まで無料）/.test(await page.textContent('#memoAiInfo')));
   check('長い書き方の説明は畳まれている', await page.isHidden('.memo-help'));
   await page.click('#veTabAi');
   s = await shown();

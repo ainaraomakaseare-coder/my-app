@@ -267,7 +267,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           <button type="button" class="ve-tab" role="tab" id="veTabAi" data-ve-tab="ai" aria-controls="vePanelAi" aria-selected="false">ChatGPTなど</button>
         </div>
 
-        <!-- ① 話す（AIで分ける。月5回まで無料） -->
+        <!-- ① 話す（AIで分ける。最初の3回まで無料） -->
         <div class="ve-panel" id="vePanelVoice" role="tabpanel" aria-labelledby="veTabVoice">
           <p class="ve-lead">旅の予定や思い出を話すと、AIが予定・記録・費用に分けます。</p>
           <p class="ve-example">例：「10時に金閣寺、お昼はうどんで900円」</p>
@@ -1179,7 +1179,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
 <div class="sheet-backdrop" id="quotaSheet" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="quotaSheetTitle">
     <div class="sheet-head">
-      <div class="sheet-title" id="quotaSheetTitle">今月の残り回数</div>
+      <div class="sheet-title" id="quotaSheetTitle">AIの残り回数</div>
       <button class="sheet-close" id="btnCloseQuotaSheet" type="button" aria-label="閉じる">×</button>
     </div>
     <div class="plan-status" id="planStatus"></div>

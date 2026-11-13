@@ -9010,7 +9010,7 @@
     $('#voiceRecordArea').hidden = false;
     var user = loadCurrentUser();
     if (!user) {
-      $('#memoAiInfo').textContent = tr('AIでの整理と音声入力は、ログインすると使えます（それぞれ月5回まで無料）。');
+      $('#memoAiInfo').textContent = tr('AIでの整理と音声入力は、ログインすると使えます（それぞれ最初の3回まで無料）。');
       $('#voiceAiInfo').textContent = $('#memoAiInfo').textContent;
       return;
     }
@@ -9025,7 +9025,7 @@
   // 項目の切れ目で折り返す（以前は文字列をつなげていたので「回数券：あと」の途中で改行されていた）
   function renderAiQuotaInfo(el, account) {
     el.textContent = '';
-    var parts = [tr('メモ・スクショのAI整理：あと{n}回（月{max}回まで）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit })];
+    var parts = [tr('メモ・スクショのAI整理：あと{n}回（最初の{max}回まで無料）', { n: account.memoRemainingThisPeriod, max: account.memoMonthlyLimit })];
     if (account.ticketCredits) parts.push(tr('回数券：あと{n}回', { n: account.ticketCredits }));
     parts.forEach(function (text, i) {
       if (i) el.appendChild(document.createTextNode(' '));
@@ -9040,14 +9040,14 @@
   function applyAiQuotaUi(account) {
     renderAiQuotaInfo($('#memoAiInfo'), account);
     // 話すタブには音声入力の残り回数を出す（メモのAI整理とは別の回数）
-    var voiceInfo = tr('音声入力：あと{n}回（月{max}回まで無料）', { n: account.voiceRemainingThisPeriod || 0, max: account.voiceMonthlyLimit || 5 });
+    var voiceInfo = tr('音声入力：あと{n}回（最初の{max}回まで無料）', { n: account.voiceRemainingThisPeriod || 0, max: account.voiceMonthlyLimit || 3 });
     if (account.ticketCredits) voiceInfo += ' ' + tr('回数券：あと{n}回', { n: account.ticketCredits });
     $('#voiceAiInfo').textContent = voiceInfo;
     var voiceOk = account.voiceRemainingThisPeriod > 0 || account.ticketCredits > 0;
     if (!voiceOk) {
       // 音声だけ使えない。メモ（決まった形・AIでの整理）はこのまま使える
       $('#voicePremiumRequired').hidden = false;
-      $('#voicePremiumMessage').textContent = tr('今月の回数を使い切りました。来月1日にまた使えます。メモの取り込みはこのまま使えます。');
+      $('#voicePremiumMessage').textContent = tr('無料の回数を使い切りました。メモの取り込みはこのまま使えます。');
       $('#btnVoiceRecord').disabled = true;
       renderTicketShop($('#voiceTicketShop'));
     } else {
@@ -9182,7 +9182,7 @@
     var branch = state.voiceBranch || null;
     var parsed = Core.parseMemo(text, dates, state.voiceEntryMultiDay ? (branch ? branch.date : '') : state.selectedDate);
     if (parsed.ok) { openMemoRuleConfirm(parsed); return; }
-    if (!confirm(tr('決まった形（「10時 新宿」のように時刻で始まる行）になっていないので、AIで整理します（今月のAIの回数を1回使います）。よろしいですか？'))) {
+    if (!confirm(tr('決まった形（「10時 新宿」のように時刻で始まる行）になっていないので、AIで整理します（AIの回数を1回使います）。よろしいですか？'))) {
       $('#textEntryStatus').textContent = tr('時刻で始まる行の形に直すと、AIを使わず無料で取り込めます。');
       return;
     }
@@ -9224,7 +9224,7 @@
       $('#btnCreateTextEntries').disabled = false;
       $('#btnOrganizeMemoAi').disabled = false;
       if (msg === 'premium_required' || msg === 'quota_exceeded') {
-        $('#textEntryStatus').textContent = tr('今月の回数を使い切りました。来月1日にまた使えます。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。');
+        $('#textEntryStatus').textContent = tr('無料の回数を使い切りました。「10時 新宿」のように時刻で始まる行の形にすると、AIを使わず無料で取り込めます。');
         fetchAccountStatus(null, true).then(function () { renderTicketShop($('#memoTicketShop')); });
       } else if (msg === 'login_required') { state.pendingMemoText = text; openLogin('voiceEntryForm'); }
       else $('#textEntryStatus').textContent = importScanErrorMessage(msg);
@@ -9386,7 +9386,7 @@
   // やめる：保存せずに、入力の画面（画像選び・音声・メモ）へ戻る。AIを使っていたら、回数は戻らないことを伝える
   function cancelImportConfirm() {
     var s = ssState();
-    if (s.ai && s.items && s.items.length && !confirm(tr('保存せずに戻ります。AIによる整理はすでに行ったため、今月の利用回数は戻りません。よろしいですか？'))) return;
+    if (s.ai && s.items && s.items.length && !confirm(tr('保存せずに戻ります。AIによる整理はすでに行ったため、使った回数は戻りません。よろしいですか？'))) return;
     if (s.source === 'photos') { photoItinRevoke(); state.ss = null; }
     if (s.back === 'screenshotImport') { $('#ssStatus').textContent = ''; showScreen('screenshotImport'); }
     else if (s.back === 'voiceEntryForm') showScreen('voiceEntryForm');
@@ -9516,7 +9516,7 @@
         $('#btnSsScan').disabled = false;
         var msg = (e && e.message) || '';
         if (msg === 'login_required' || msg === 'premium_required' || msg === 'quota_exceeded') {
-          $('#ssStatus').textContent = msg === 'login_required' ? tr('ログインし直してください。') : tr('今月の回数を使い切りました。来月1日にまた使えます。');
+          $('#ssStatus').textContent = msg === 'login_required' ? tr('ログインし直してください。') : tr('無料の回数を使い切りました。');
           if (msg !== 'login_required') fetchAccountStatus(null, true).then(function () { renderTicketShop($('#ssTicketShop')); });
           return;
         }
@@ -9708,7 +9708,7 @@
     html += '<p class="hint" id="ssSaveStatus"></p>' +
       (s.items.length ? '<button type="button" class="btn primary wide" id="btnSsSave"' + (used ? '' : ' disabled') + '>' + tr(s.branch ? '自分だけの道に追加（{n}件）' : 'この内容で追加（{n}件）', { n: used }) + '</button>' : '') +
       '<button type="button" class="btn ghost wide" id="btnSsCancel">' + tr('やめて入力に戻る（何も保存しません）') + '</button>' +
-      '<p class="hint">' + (s.ai ? tr('やめると、この候補は保存されません。AIによる整理はすでに行ったため、今月の利用回数は戻りません。') : tr('やめると、この候補は保存されません（AIは使っていないので、利用回数は減っていません）。')) + '</p>';
+      '<p class="hint">' + (s.ai ? tr('やめると、この候補は保存されません。AIによる整理はすでに行ったため、使った回数は戻りません。') : tr('やめると、この候補は保存されません（AIは使っていないので、利用回数は減っていません）。')) + '</p>';
     el.innerHTML = html;
     el.hidden = false;
   }
@@ -10812,7 +10812,7 @@
     var more = document.createElement('div');
     more.className = 'add-more';
     sheet.querySelector('#bulkAddInfo').innerHTML = '<p>' + escapeHtml(tr('1つずつ入力しなくても、話した内容や画像・写真から予定をまとめて作れます。保存する前に確認画面で直せます。')) + '</p>' +
-      '<p>' + escapeHtml(tr('「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。')) + '</p>';
+      '<p>' + escapeHtml(tr('「AI」の機能は、最初の3回ずつ無料で使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。')) + '</p>';
     more.innerHTML = '<div class="add-more-list"></div>';
     var list = more.querySelector('.add-more-list');
     // ai: true＝このアプリのAI（無料枠を使う）、false＝AIなし、'own'＝ChatGPTなど自分のAI（枠を使わない）
@@ -13636,7 +13636,7 @@
       if (!iapAvailable()) return;
       if (!list.length) { iap.packages = null; showTicketShopProblem(el, 'offerings: 0 packages'); return; }
       el.innerHTML = '<div class="ticket-shop-title">' + escapeHtml(tr('回数券を買う')) + '</div>' +
-        '<p class="hint">' + escapeHtml(tr('買った回数は、今月の枠を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
+        '<p class="hint">' + escapeHtml(tr('買った回数は、無料の回数を使い切ったあとに1回ずつ使われます。有効期限はありません。アカウントを削除すると残りの回数券は消え、払い戻しもできません。')) + '</p>' +
         '<p class="hint ticket-prices">' + list.map(function (pkg) { return escapeHtml(ticketPriceLine(pkg)); }).join('<br>') + '</p>' +
         list.map(function (pkg, i) {
           return '<button type="button" class="btn ticket-buy" data-ticket-index="' + i + '">' +
@@ -13740,9 +13740,9 @@
       renderTicketShop($('#profileTicketShop'));
       return;
     }
-    var lines = ['<div class="plan-usage">' + tr('今月の音声入力：あと{n}回（月{limit}回まで）', { n: account.voiceRemainingThisPeriod, limit: account.voiceMonthlyLimit }) + '</div>'];
+    var lines = ['<div class="plan-usage">' + tr('音声入力：あと{n}回（最初の{limit}回まで無料）', { n: account.voiceRemainingThisPeriod, limit: account.voiceMonthlyLimit }) + '</div>'];
     if (typeof account.memoRemainingThisPeriod === 'number') {
-      lines.push('<div class="plan-usage">' + tr('メモ・スクショのAI整理：あと{n}回（月{limit}回まで）', { n: account.memoRemainingThisPeriod, limit: account.memoMonthlyLimit }) + '</div>');
+      lines.push('<div class="plan-usage">' + tr('メモ・スクショのAI整理：あと{n}回（最初の{limit}回まで無料）', { n: account.memoRemainingThisPeriod, limit: account.memoMonthlyLimit }) + '</div>');
     }
     if (account.ticketCredits) lines.push('<div class="plan-usage">' + tr('回数券の残り：{n}回', { n: account.ticketCredits }) + '</div>');
     var linesHtml = lines.join('');
@@ -14143,10 +14143,10 @@
       escapeHtml(tr('画像 {n} 枚', { n: v.imagesToday || 0 })) + ' / ' + escapeHtml(tr('アプリ側の1日の上限はありません（同じ接続元から1分{n}回まで）。', { n: v.rateLimitPerMinutePerIp || 0 })) + '</p>';
     html += '<div class="aiu-h">' + escapeHtml(tr('アカウントの集計')) + '</div><table class="aiu-table"><tbody>' + [
       [tr('アカウント数'), a.count],
-      [tr('今月の音声入力の使用回数（合計）'), a.voiceUsesThisPeriod],
-      [tr('今月のメモ・スクショの使用回数（合計）'), a.memoUsesThisPeriod],
+      [tr('これまでの音声入力の使用回数（合計）'), a.voiceUsesThisPeriod],
+      [tr('これまでのメモ・スクショの使用回数（合計）'), a.memoUsesThisPeriod],
       [tr('回数券の残りの合計'), a.ticketCredits],
-      [tr('今月AIを使ったアカウント'), a.usedAiThisMonth]
+      [tr('AIを使ったことのあるアカウント'), a.usedAiThisMonth]
     ].map(function (r) { return '<tr><td>' + escapeHtml(r[0]) + '</td><td>' + escapeHtml(String(r[1] || 0)) + '</td></tr>'; }).join('') + '</tbody></table>';
     html += '<div class="aiu-h">' + escapeHtml(tr('日別（直近31日）')) + '</div>';
     if (!(d.rows || []).length) html += '<p class="hint">' + escapeHtml(tr('まだ記録がありません')) + '</p>';

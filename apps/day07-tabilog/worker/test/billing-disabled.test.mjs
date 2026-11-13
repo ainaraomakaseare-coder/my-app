@@ -73,6 +73,9 @@ addAccount("basic@example.com", "100002", { plan: "basic" });
 addAccount("free@example.com", "100003", { plan: "free", ticket_credits: 0, memo_uses_this_period: 10 });
 addAccount("bonus@example.com", "100004", { plan: "free", ticket_credits: 2, memo_uses_this_period: 10 });
 addAccount("plus@example.com", "100005", { plan: "premium_plus", memo_uses_this_period: 10 });
+// 前の月に2回使った人：月が変わっても回数は戻らない（はじめの3回だけ、2026-11-13）
+addAccount("lastmonth@example.com", "100006", { plan: "free", voice_uses_this_period: 2, memo_uses_this_period: 3 });
+sqlite.prepare("UPDATE accounts SET plan_period_start = '2000-01-01' WHERE email = 'lastmonth@example.com'").run();
 
 const tickets = (email) => sqlite.prepare("SELECT ticket_credits t FROM accounts WHERE email = ?").get(email).t;
 
@@ -81,13 +84,18 @@ const tickets = (email) => sqlite.prepare("SELECT ticket_credits t FROM accounts
   const r = await call("POST", "/accounts/ensure", { email: "legacy@example.com", name: "テスト" });
   check("ensure: 200", r.status, 200);
   check("ensure: planは常にfree", r.data.plan, "free");
-  check("ensure: 音声の上限は5（50ではない）", [r.data.voiceMonthlyLimit, r.data.voiceRemainingThisPeriod], [5, 0]);
-  check("ensure: メモ・スクショの上限は5（100ではない）", [r.data.memoMonthlyLimit, r.data.memoRemainingThisPeriod], [5, 0]);
+  check("ensure: 音声の上限は3（50ではない）", [r.data.voiceMonthlyLimit, r.data.voiceRemainingThisPeriod], [3, 0]);
+  check("ensure: メモ・スクショの上限は3（100ではない）", [r.data.memoMonthlyLimit, r.data.memoRemainingThisPeriod], [3, 0]);
   check("ensure: 古いアプリ用のフィールド名は残る", ["accountId", "email", "name", "plan", "voiceUsesThisPeriod", "voiceMonthlyLimit", "voiceRemainingThisPeriod", "memoMonthlyLimit", "memoRemainingThisPeriod", "ticketCredits"].every((k) => k in r.data), true);
   const b = await call("POST", "/accounts/ensure", { email: "basic@example.com", name: "テスト" });
-  check("ensure: basicも音声5・メモ5", [b.data.plan, b.data.voiceMonthlyLimit, b.data.memoMonthlyLimit], ["free", 5, 5]);
+  check("ensure: basicも音声3・メモ3", [b.data.plan, b.data.voiceMonthlyLimit, b.data.memoMonthlyLimit], ["free", 3, 3]);
   const n = await call("POST", "/accounts/ensure", { email: "new@example.com", name: "新規" });
   check("ensure: 新規はfree・おまけ3回", [n.data.plan, n.data.ticketCredits], ["free", 3]);
+  check("ensure: 新規は音声3回・メモ3回残っている", [n.data.voiceRemainingThisPeriod, n.data.memoRemainingThisPeriod], [3, 3]);
+  const lm = await call("POST", "/accounts/ensure", { email: "lastmonth@example.com", name: "テスト" });
+  check("ensure: 月が変わっても使った回数は戻らない", [lm.data.voiceRemainingThisPeriod, lm.data.memoRemainingThisPeriod], [1, 0]);
+  const lm2 = sqlite.prepare("SELECT voice_uses_this_period v, memo_uses_this_period m FROM accounts WHERE email = 'lastmonth@example.com'").get();
+  check("ensure: DBの回数も0に戻さない", [lm2.v, lm2.m], [2, 3]);
 }
 
 /* ---- 回数の確認：premium_plusでも枠を使い切ったら断る（premium_requiredは返さない） ---- */
