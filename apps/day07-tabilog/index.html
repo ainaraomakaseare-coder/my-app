@@ -561,7 +561,7 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
           </div>
         </div>
         <p class="hint branch-block-note" id="blkBranchNote" hidden></p>
-        <p class="hint">日付・時間は、その場所の現地時間で入れてください（チケットや現地の時計のとおり）。時差や日付変更線をまたぐ移動の順番は、アプリが自動で合わせます。</p>
+        <p class="hint blk-time-hint">日付・時間は、その場所の現地時間で入れてください（チケットや現地の時計のとおり）。時差や日付変更線をまたぐ移動の順番は、アプリが自動で合わせます。</p>
 
         <div class="field">
           <label for="blkLabel">見出し</label>
@@ -593,8 +593,11 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
         </div>
 
         <!-- 動画でシェアに、この予定の地名・写真・ピンを出さない（道のりはこの場所を通る）。メンバー全員に共通 -->
-        <label class="post-option" id="blkVideoExcludeRow"><input type="checkbox" id="blkVideoExclude"> 動画でシェアに出さない</label>
-        <p class="hint">チェックすると、動画にはこの予定の地名・写真・ピンが出ません（地図でふりかえるには出ます）。一緒に旅行しているメンバー全員に反映されます。</p>
+        <!-- 説明は長いので「？」をタップしたときだけ出す（2026-11-13）。ボタンはlabelの外に置き、押してもチェックが切り替わらないようにする -->
+        <div class="post-option-row" id="blkVideoExcludeRow">
+          <label class="post-option"><input type="checkbox" id="blkVideoExclude"> 動画でシェアに出さない</label><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="blkVideoExcludeInfo">？</button>
+          <p class="info-pop" id="blkVideoExcludeInfo" hidden>チェックすると、動画にはこの予定の地名・写真・ピンが出ません（地図でふりかえるには出ます）。一緒に旅行しているメンバー全員に反映されます。</p>
+        </div>
 
         <p class="hint" id="blkFormStatus"></p>
         <div class="sheet-actions">

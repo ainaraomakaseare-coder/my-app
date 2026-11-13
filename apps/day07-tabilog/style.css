@@ -1832,6 +1832,25 @@ body.viewer-open { overflow: hidden; }
   font-size: var(--fs-sm); font-weight: 400; line-height: 1.6; color: var(--ink-muted); text-align: left;
 }
 .info-pop[hidden] { display: none; }
+.info-pop p { margin: 0; }
+.info-pop p + p { margin-top: 8px; }
+
+/* 予定の画面：欄どうしが詰まって見えたので、間隔を広げ、写真・動画・場所（記録として保存する部分）は
+   細い線で区切る。補足の文字も一段小さくする（2026-11-13、オーナーの要望） */
+.screen[data-screen="blockForm"] .field { margin-bottom: 22px; }
+.screen[data-screen="blockForm"] .field-row { margin-bottom: 0; }
+.screen[data-screen="blockForm"] .hint { font-size: var(--fs-sm); }
+.screen[data-screen="blockForm"] .blk-time-hint { margin: -12px 0 24px; }
+.blk-media { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border-soft); }
+.blk-media[hidden] { display: none; }
+.blk-media .blk-media-hint { margin: 0 0 16px; }
+/* 「動画でシェアに出さない」：チェックの横に「？」。説明はタップしたときだけ吹き出しで出す */
+.post-option-row { position: relative; display: flex; align-items: center; margin: 8px 0 20px; }
+.post-option-row .post-option { margin: 0; }
+.post-option-row .info-pop { top: 100%; }
+/* 記録がある予定の「別の記録を追加」は控えめに（あまり使わないので） */
+.entry-add.is-more { color: var(--ink-soft); padding: 4px 2px; }
+.entry-add.is-more svg { width: 11px; height: 11px; }
 
 
 /* マイログの年表（年ごとの見出し＋細い縦線とドットの旅行行） */

@@ -10780,8 +10780,8 @@
     if (activeTab) activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }
 
-  // 「まとめて予定を作る」のシート。何をすればどう登録されるかが分かるよう、説明文の下に、
-  // 名前・AIを使うかどうか・例を書いたボタンを並べる（2026-10-22、オーナーの要望。「スクショ」という言い方はやめて「予約・チケットの画像」と書く）
+  // 「まとめて予定を作る」のシート。名前・AIを使うかどうか・短い例を書いたボタンを並べる。
+  // 例は1行に収まる長さにし、全体の説明は見出し横の「？」に入れた（2026-11-13、文字が多すぎるとの声）（2026-10-22、オーナーの要望。「スクショ」という言い方はやめて「予約・チケットの画像」と書く）
   function bulkAddSheetEl() {
     var sheet = $('#bulkAddSheet');
     if (sheet) return sheet;
@@ -10790,8 +10790,11 @@
     sheet.id = 'bulkAddSheet';
     sheet.hidden = true;
     sheet.innerHTML = '<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="bulkAddSheetTitle">' +
-      '<div class="sheet-head"><div class="sheet-title" id="bulkAddSheetTitle"></div>' +
-      '<button class="sheet-close" type="button" aria-label="' + escapeHtml(tr('閉じる')) + '">×</button></div>' +
+      // 説明文（何ができるか・AIの回数）は長いので、見出し横の「？」をタップしたときだけ出す（2026-11-13、オーナーの要望）
+      '<div class="sheet-head"><div class="sheet-title"><span id="bulkAddSheetTitle"></span>' +
+      '<button type="button" class="info-btn" aria-label="' + escapeHtml(tr('説明を見る')) + '" aria-expanded="false" aria-controls="bulkAddInfo">？</button></div>' +
+      '<button class="sheet-close" type="button" aria-label="' + escapeHtml(tr('閉じる')) + '">×</button>' +
+      '<div class="info-pop" id="bulkAddInfo" hidden></div></div>' +
       '<div class="bulk-add-body"></div></div>';
     sheet.addEventListener('click', function (e) { if (e.target === e.currentTarget) closeBulkAddSheet(); });
     sheet.querySelector('.sheet-close').addEventListener('click', closeBulkAddSheet);
@@ -10808,9 +10811,9 @@
     sheet.querySelector('#bulkAddSheetTitle').textContent = tr('まとめて予定を作る');
     var more = document.createElement('div');
     more.className = 'add-more';
-    more.innerHTML = '<p class="add-more-lead">' + escapeHtml(tr('1つずつ入力しなくても、話した内容や画像・写真から予定をまとめて作れます。保存する前に確認画面で直せます。')) + '</p>' +
-      '<div class="add-more-list"></div>' +
-      '<p class="add-more-note">' + escapeHtml(tr('「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。')) + '</p>';
+    sheet.querySelector('#bulkAddInfo').innerHTML = '<p>' + escapeHtml(tr('1つずつ入力しなくても、話した内容や画像・写真から予定をまとめて作れます。保存する前に確認画面で直せます。')) + '</p>' +
+      '<p>' + escapeHtml(tr('「AI」の機能は無料で月5回ずつ使えます（音声と、メモ・画像で別々に数えます）。「AIなし」と「自分のAI」は、このアプリの回数を使わず何回でも使えます。')) + '</p>';
+    more.innerHTML = '<div class="add-more-list"></div>';
     var list = more.querySelector('.add-more-list');
     // ai: true＝このアプリのAI（無料枠を使う）、false＝AIなし、'own'＝ChatGPTなど自分のAI（枠を使わない）
     function addMore(cls, icon, label, ai, example, onClick) {
@@ -10827,25 +10830,25 @@
     // 写真から旅程を作る（docs/adr/0026）：撮影時刻と撮影場所から、立ち寄った場所ごとの予定を作る（AIは使わない）。一番よく使ってほしいので一番上に置く（2026-10-22、オーナーの要望）
     // （みんなの予定に作るので、旅行の日程の外の日には出さない）
     if (!outsideTrip) addMore('block-add-photos', IMAGE_ICON, tr('撮った写真から'), false,
-      tr('例：旅先で撮った写真を選ぶと、撮った時刻と場所から立ち寄った順に予定を作ります'),
+      tr('撮った時刻と場所から、立ち寄った順に並べます'),
       function () { openPhotoItinerary(); });
     // addEventListenerはハンドラーにクリックのEvent引数を渡すため、openVoiceEntryFormへ
     // そのまま参照を渡すとEventがmultiDay引数に化けてしまう（常にtruthy＝複数日モード扱いに
     // なるバグの元）。必ずラップして呼ぶ。
     addMore('block-add-voice', MIC_ICON, tr('話す・メモを貼る'), true,
-      tr('例：「10時に金閣寺、お昼はうどんで900円」と話すと、予定・記録・お金に分けて入ります'),
+      tr('例：「10時に金閣寺、お昼はうどん900円」'),
       function () { openVoiceEntryForm(false); });
     // 「複数日をまとめて記録する」（DAY30〜）：日タブを選ばず旅行全体に対して話す・貼り付ける
     addMore('block-add-multiday', CALENDAR_ICON, tr('何日分かをまとめて'), true,
-      tr('例：「1日目は高松でうどん、2日目は道後温泉」と話すと、日ごとに分けて入ります'),
+      tr('例：「1日目は高松、2日目は道後温泉」'),
       function () { openVoiceEntryForm(true); });
     // 予約・チケットの画像から予定を作る（docs/adr/0022）：航空券・ホテル予約・チケット・レシートなどの画像から予定の候補を作る
     addMore('block-add-screenshot', SCREENSHOT_ICON, tr('予約・チケットの画像から'), true,
-      tr('例：航空券やホテル予約の画面を保存した画像から、日時と場所を読み取ります'),
+      tr('航空券やホテル予約の画像から読み取ります'),
       function () { openScreenshotImport(); });
     // ChatGPTなど自分のAIに頼む（docs/adr/0015）：入口は音声・メモの画面の下のほうにあるので、開いてその場所までスクロールする
     addMore('block-add-other-ai', SPARKLE_ICON, tr('ChatGPTなど他のAIに頼む'), 'own',
-      tr('例：お願い文をコピーしてChatGPTに旅のメモと一緒に送り、返ってきた答えを貼り付けます'),
+      tr('お願い文をコピーして、答えを貼り付けます'),
       function () { openVoiceEntryForm(false, 'ai'); });
     var body = sheet.querySelector('.bulk-add-body');
     body.innerHTML = '';
@@ -11431,7 +11434,8 @@
 
     if (editable) {
       var addEntryBtn = document.createElement('button');
-      addEntryBtn.className = 'entry-add';
+      // 記録がもうある予定の「別の記録を追加」はあまり使わないので、灰色で控えめに出す（2026-11-13）
+      addEntryBtn.className = 'entry-add' + ((block.entries || []).length ? ' is-more' : '');
       addEntryBtn.innerHTML = plusIcon() + '<span>' + ((block.entries || []).length ? tr('別の記録を追加（別行動など）') : tr('記録を追加')) + '</span>';
       addEntryBtn.addEventListener('click', function (e) { e.stopPropagation(); openEntryForm(block.id, null); });
       wrap.appendChild(addEntryBtn);
