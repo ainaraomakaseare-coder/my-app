@@ -122,7 +122,8 @@ sqlite.exec(readFileSync(new URL("../migrations/0035_ai_usage_daily.sql", import
   check("今月のサービス別・機能別", [r.data.monthTotals.byProvider, r.data.monthTotals.byFeature], [{ google_places: 3 }, { places: 3 }]);
   check("日別の行", r.data.rows.map((x) => [x.feature, x.provider, x.calls]), [["places", "google_places", 3]]);
   // 先月のまま更新されていないアカウント(user)の使用回数は今月の集計に入れない
-  check("アカウント集計", r.data.accounts, { count: 2, voiceUsesThisPeriod: 2, memoUsesThisPeriod: 1, ticketCredits: 6, usedAiThisMonth: 1 });
+  // 無料の回数を月で戻さなくなったので（2026-11-13）、前の月の分も合計に入る
+  check("アカウント集計（これまでの合計）", r.data.accounts, { count: 2, voiceUsesThisPeriod: 11, memoUsesThisPeriod: 10, ticketCredits: 6, usedAiThisMonth: 2 });
   check("Visionの本日分と上限", [r.data.vision.imagesToday, r.data.vision.dailyCap], [0, null]);
 
   // /accounts/ensure：isAdminは運営者にだけ

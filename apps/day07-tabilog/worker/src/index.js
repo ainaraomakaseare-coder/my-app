@@ -3624,11 +3624,13 @@ function generateAccountId() {
 // 有料プランがfreeを下回らないよう、basicも10→20に上げている（premium_plusは50のまま）。
 // 2026-09-30：無料ユーザーが増えたときのOpenAIの実費を抑えるため、freeを月10回→月3回に下げた（メモの枠も同じ）。
 // 2026-10-09：回数券（10回・30回）を出したので、freeを月3回→月5回に上げた（メモの枠も同じ）。
-var PLAN_MONTHLY_LIMIT = { free: 5, basic: 20, premium_plus: 50 };
+// 2026-11-13：freeを「毎月5回」から「はじめの3回だけ（毎月の復活なし）」に変えた（メモの枠も同じ）。
+// 回数は月で戻さず、これまでの合計で数える（resetPeriodIfNeededを廃止）。名前のMONTHLYは古いアプリとの互換のため残す。
+var PLAN_MONTHLY_LIMIT = { free: 3, basic: 20, premium_plus: 50 };
 // メモをAIで整理する回数（音声とは別の枠、2026-09-26〜）。メモは文字起こしが要らないぶん音声より安いので、
 // 無料でも月10回まで使えるようにした（2026-09-30に月3回へ下げ、2026-10-09に月5回へ上げた）。有料プランは、以前（音声と共通の枠）より減らないようにしている。
 // 決まった形（「10:00 新宿」のような行）のメモは、AIを使わずアプリ側で分けるので回数を使わない。
-var MEMO_MONTHLY_LIMIT = { free: 5, basic: 30, premium_plus: 100 };
+var MEMO_MONTHLY_LIMIT = { free: 3, basic: 30, premium_plus: 100 };
 
 // 【有料プランの販売停止中（2026-09-30、docs/adr/0004、App Review 3.1.1）】
 // どのアカウントも、DBに保存されているplan列の値に関係なく無料の上限で扱う。
@@ -3649,15 +3651,10 @@ function currentPeriodStart() {
   return now.getUTCFullYear() + "-" + String(now.getUTCMonth() + 1).padStart(2, "0") + "-01";
 }
 
-// 暦月が変わっていたら利用回数をリセットする（Stripeの実際の請求日とは同期させない簡易な実装）。
-async function resetPeriodIfNeeded(env, row) {
-  var period = currentPeriodStart();
-  if (row.plan_period_start === period) return row;
-  await env.DB.prepare("UPDATE accounts SET plan_period_start=?, voice_uses_this_period=0, memo_uses_this_period=0, updated_at=? WHERE email=?")
-    .bind(period, nowIso(), row.email)
-    .run();
-  return { ...row, plan_period_start: period, voice_uses_this_period: 0, memo_uses_this_period: 0 };
-}
+// 以前は暦月が変わると利用回数を0に戻していた（resetPeriodIfNeeded）。2026-11-13から無料の回数は
+// 「はじめの3回だけ」になったので、月が変わっても戻さない（docs/adr/0004）。
+// voice_uses_this_period・memo_uses_this_periodは、列名はそのままで「これまでの合計」を表す。
+// 切り替えた時点の値（その月に使った回数）が、そのまま合計の出発点になる。
 
 function rowToAccount(row) {
   var plan = effectivePlan(row);
@@ -3705,7 +3702,7 @@ async function getOrCreateAccount(env, email, name) {
     const accountId = generateAccountId();
     try {
       // 新規登録の特典として、回数券(ticket_credits)に3回分のボーナスを付与する
-      // （無料プランの月間上限を使い切った後に消費されるため、登録した最初の月だけ実質5回になる。
+      // （無料の回数（はじめの3回）を使い切った後に消費される。
       // 機能の良さを知ってもらうための特典なので、本物の初回登録だけに限定したい。
       // deleteAccount()はこの行をDELETEせず空にするだけなので、削除→再登録では
       // このINSERT分岐に来ず、特典を再び得ることはできない。docs/adr/0004参照）。
@@ -3742,7 +3739,7 @@ async function ensureAccount(request, env, headers) {
   if (auth.error) return json({ error: auth.error }, auth.status, headers);
   const email = auth.email;
   const name = (data.name || "").trim();
-  const account = await resetPeriodIfNeeded(env, await getOrCreateAccount(env, email, name));
+  const account = await getOrCreateAccount(env, email, name);
   const out = rowToAccount(account);
   if (isAdminEmail(env, email)) out.isAdmin = true;
   return json(out, 200, headers);
@@ -3819,10 +3816,9 @@ async function deleteAccount(request, env, headers) {
     await env.DB.prepare("UPDATE accounts SET avatar_photo_id='', best_photo_ids='[]' WHERE email = ?").bind(email).run();
     if (avatarId) await deleteUnreferencedMedia(env, [avatarId]);
   } catch { /* migration 0036が未適用 */ }
-  // plan_period_start・voice_uses_this_periodはあえて触らない。ここでリセットすると
-  // 「削除→再登録」を繰り返すだけで無料プランの月間上限(月10回)が毎回復活してしまう
-  // （新規登録特典の抜け道と同じ構図）。月が変わったときのリセットはresetPeriodIfNeeded()に
-  // 任せる。
+  // voice_uses_this_period・memo_uses_this_periodはあえて触らない。ここで0に戻すと
+  // 「削除→再登録」を繰り返すだけで無料の回数（はじめの3回）が毎回復活してしまう
+  // （新規登録特典の抜け道と同じ構図）。
   await env.DB.prepare(
     `UPDATE accounts SET name='', plan='free', ticket_credits=0,
      stripe_customer_id='', stripe_subscription_id='', updated_at=? WHERE email=?`
@@ -4493,7 +4489,7 @@ async function checkVoiceQuota(env, email, kind) {
   const normalized = email.trim().toLowerCase();
   const account = await env.DB.prepare("SELECT * FROM accounts WHERE email = ?").bind(normalized).first();
   if (!account) return { ok: false, reason: "login_required" };
-  const reset = await resetPeriodIfNeeded(env, account);
+  const reset = account;
   const memo = kind === "memo";
   const plan = effectivePlan(reset);
   const limit = memo ? MEMO_MONTHLY_LIMIT[plan] : PLAN_MONTHLY_LIMIT[plan];
@@ -6153,12 +6149,13 @@ async function getAiUsage(request, env, headers) {
   try {
     const a = await env.DB.prepare(
       "SELECT COUNT(*) AS n, " +
-      "COALESCE(SUM(CASE WHEN plan_period_start = ?1 THEN voice_uses_this_period ELSE 0 END),0) AS v, " +
-      "COALESCE(SUM(CASE WHEN plan_period_start = ?1 THEN memo_uses_this_period ELSE 0 END),0) AS m, " +
+      // 無料の回数を月で戻さなくなったので（2026-11-13）、これまでの合計を数える
+      "COALESCE(SUM(voice_uses_this_period),0) AS v, " +
+      "COALESCE(SUM(memo_uses_this_period),0) AS m, " +
       "COALESCE(SUM(ticket_credits),0) AS t, " +
-      "COALESCE(SUM(CASE WHEN plan_period_start = ?1 AND voice_uses_this_period + memo_uses_this_period > 0 THEN 1 ELSE 0 END),0) AS used " +
+      "COALESCE(SUM(CASE WHEN COALESCE(voice_uses_this_period,0) + COALESCE(memo_uses_this_period,0) > 0 THEN 1 ELSE 0 END),0) AS used " +
       "FROM accounts"
-    ).bind(period).first();
+    ).first();
     if (a) accounts = { count: a.n || 0, voiceUsesThisPeriod: a.v || 0, memoUsesThisPeriod: a.m || 0, ticketCredits: a.t || 0, usedAiThisMonth: a.used || 0 };
   } catch { /* 集計できなくても残りは返す */ }
   return json({

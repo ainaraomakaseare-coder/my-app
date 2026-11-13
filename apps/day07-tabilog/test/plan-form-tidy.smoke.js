@@ -165,7 +165,7 @@ async function openNewBlock(page) {
   await page.click('#bulkAddSheet .info-btn');
   check('「？」で説明が出る', await page.isVisible('#bulkAddInfo'));
   const info = await page.textContent('#bulkAddInfo');
-  check('説明に確認画面とAIの回数が書いてある', /確認画面で直せます/.test(info) && /月5回/.test(info), info);
+  check('説明に確認画面とAIの回数が書いてある', /確認画面で直せます/.test(info) && /最初の3回/.test(info), info);
   await page.click('#bulkAddSheet .info-btn');
   check('もう一度「？」で閉じる', !(await page.isVisible('#bulkAddInfo')));
   await page.click('#bulkAddSheet .sheet-close');

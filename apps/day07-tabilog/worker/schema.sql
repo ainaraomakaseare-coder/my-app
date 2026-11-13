@@ -162,10 +162,11 @@ CREATE TABLE IF NOT EXISTS email_otps (
 -- 永続的なアカウント記録。account_idは6桁の数字（自動採番）で、参加者一覧などで
 -- 生のメールアドレスを晒さずその人を指し示すために使う。
 -- plan：'free' | 'basic' | 'premium_plus'。音声入力（AI機能）の有料プラン（docs/adr/0004参照）。
--- plan_period_start：利用回数（voice_uses_this_period）を数えている暦月の開始日（YYYY-MM-01）。
--- 月が変わったらリセットする（Stripeの実際の請求日とは同期させない簡易な実装）。
+-- plan_period_start：以前、利用回数（voice_uses_this_period）を数えていた暦月の開始日（YYYY-MM-01）。
+-- 2026-11-13から無料の回数は「はじめの3回だけ」になり、月が変わってもリセットしない
+-- （voice_uses_this_period・memo_uses_this_periodは列名のまま「これまでの合計」を表す）。
 -- ticket_credits：買い切りの回数券の残数。サブスクの月間上限を使い切った後、こちらを消費する。
--- 新規登録時に3回分のボーナスを自動付与する（無料プランの月間上限と合わせ、登録した最初の月だけ実質5回になる）。
+-- 新規登録時に3回分のボーナスを自動付与する（無料の回数（はじめの3回）を使い切った後に使われる）。
 CREATE TABLE IF NOT EXISTS accounts (
   email TEXT PRIMARY KEY,
   account_id TEXT NOT NULL UNIQUE,
