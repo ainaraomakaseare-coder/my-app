@@ -6693,6 +6693,115 @@
     });
   }
 
+  // ---------- 入れたときの元（AIなどで予定を入れたときの元の入力。worker/src/import-sources.js） ----------
+  // 音声の文字起こし・メモ・自分のAIの答え・予約やチケットの画像を、取り込み1回ごとに1枚のカードで見せる。
+  // 予定（block.sourceId）の「入れたときの元を見る」から開くと、そのカードまで送って目立たせる。
+  // アルバムとは別：画像は記録に入っていないので、アルバムには出ない。別行動に入れた元は、その別行動の持ち主にだけ出す
+  var importSourcesCache = null; // { tripId, sources }
+  var IMPORT_SOURCE_LABELS = {
+    voice: tr('音声'), memo: tr('メモ'), json: tr('自分のAIの答え'), screenshot: tr('予約・チケットの画像')
+  };
+
+  function anyImportSource() {
+    return allBlocks().some(function (b) { return b.sourceId; });
+  }
+
+  function visibleImportSources(sources) {
+    var me = myAccountId();
+    return (sources || []).filter(function (src) {
+      if (!src.branchId) return true;
+      var br = (state.branches || []).filter(function (b) { return b.id === src.branchId; })[0];
+      return !br || (me && br.accountId === me);
+    });
+  }
+
+  function openImportSources(focusId) {
+    if (!state.trip) return;
+    showScreen('importSources');
+    var tripId = state.trip.id;
+    if (importSourcesCache && importSourcesCache.tripId === tripId && (!focusId || importSourcesCache.sources.some(function (x) { return x.id === focusId; }))) {
+      renderImportSources(focusId);
+      return;
+    }
+    $('#importSourcesList').innerHTML = '';
+    $('#importSourcesEmpty').hidden = true;
+    $('#importSourcesStatus').textContent = tr('読み込んでいます…');
+    api('/trips/' + encodeURIComponent(tripId) + '/import-sources', 'GET').then(function (res) {
+      importSourcesCache = { tripId: tripId, sources: res.sources || [] };
+      $('#importSourcesStatus').textContent = '';
+      renderImportSources(focusId);
+    }).catch(function () {
+      $('#importSourcesStatus').textContent = tr('読み込めませんでした。通信環境を確認して、もう一度お試しください。');
+    });
+  }
+
+  function importSourceTimeText(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    function p2(n) { return (n < 10 ? '0' : '') + n; }
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+
+  function renderImportSources(focusId) {
+    var list = $('#importSourcesList');
+    var sources = visibleImportSources(importSourcesCache ? importSourcesCache.sources : []);
+    $('#importSourcesEmpty').hidden = sources.length > 0;
+    var blocks = allBlocks();
+    list.innerHTML = sources.map(function (src) {
+      var made = blocks.filter(function (b) { return b.sourceId === src.id; })
+        .sort(function (a, b) { return ((a.date || '') + (a.time || '')).localeCompare((b.date || '') + (b.time || '')); });
+      var head = '<div class="isrc-head"><span class="isrc-kind">' + escapeHtml(IMPORT_SOURCE_LABELS[src.kind] || src.kind) + '</span>' +
+        '<span class="isrc-meta">' + escapeHtml([importSourceTimeText(src.createdAt), src.author].filter(Boolean).join('・')) + '</span></div>';
+      var madeHtml = '<div class="isrc-made"><div class="isrc-sub">' + tr('ここから入れた予定') + '</div>' + (made.length
+        ? made.map(function (b) {
+          return '<button type="button" class="isrc-block" data-date="' + escapeHtml(b.date || '') + '">' +
+            escapeHtml([b.date ? b.date.slice(5).replace('-', '/') : '', b.time || '', b.label || Core.categoryLabel(b.category)].filter(Boolean).join(' ')) + '</button>';
+        }).join('')
+        : '<span class="isrc-none">' + tr('予定はもう残っていません') + '</span>') + '</div>';
+      var imgs = (src.photoIds || []).length ? '<div class="isrc-images">' + src.photoIds.map(function (id, i) {
+        return '<button type="button" class="isrc-img" data-at="' + i + '" style="background-image:url(\'' + escapeHtml(photoUrl(id)) + '\')" aria-label="' + tr('元の画像') + '"></button>';
+      }).join('') + '</div>' : '';
+      var text = src.text ? '<p class="isrc-text">' + escapeHtml(src.text) + '</p>' : '';
+      var notes = src.notes ? '<p class="isrc-notes">' + escapeHtml(tr('補足：{text}', { text: src.notes })) + '</p>' : '';
+      return '<div class="isrc-card' + (src.id === focusId ? ' is-focus' : '') + '" data-id="' + escapeHtml(src.id) + '">' + head + imgs + text + notes + madeHtml +
+        '<button type="button" class="btn text isrc-delete">' + tr('この元を消す') + '</button></div>';
+    }).join('');
+
+    $all('.isrc-card', list).forEach(function (card) {
+      var src = sources.filter(function (x) { return x.id === card.dataset.id; })[0];
+      $all('.isrc-img', card).forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          openMediaViewer(src.photoIds.map(function (id) { return { type: 'photo', id: id }; }), Number(btn.dataset.at));
+        });
+      });
+      $all('.isrc-block', card).forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (btn.dataset.date) state.selectedDate = btn.dataset.date;
+          showScreen('tripDetail');
+          renderTripDetail();
+        });
+      });
+      card.querySelector('.isrc-delete').addEventListener('click', function () { deleteImportSource(src); });
+    });
+    if (focusId) {
+      var el = list.querySelector('.isrc-card.is-focus');
+      if (el) setTimeout(function () { el.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50);
+    }
+  }
+
+  function deleteImportSource(src) {
+    if (!confirm(tr('この元を消しますか？（予定はそのまま残ります。画像も消えます）'))) return;
+    api('/import-sources/' + encodeURIComponent(src.id), 'DELETE').then(function () {
+      if (importSourcesCache) importSourcesCache.sources = importSourcesCache.sources.filter(function (x) { return x.id !== src.id; });
+      allBlocks().forEach(function (b) { if (b.sourceId === src.id) b.sourceId = ''; });
+      renderImportSources();
+      showToast(tr('元を消しました'));
+      refreshTrip().catch(function () {});
+    }).catch(function (e) {
+      alert((e && e.message) === 'forbidden' ? tr('この別行動の元は、持ち主だけが消せます。') : tr('消せませんでした。もう一度お試しください。'));
+    });
+  }
+
   // ---------- 精算（割り勘の貸し借り・精算方法） ----------
   function openSettlement() {
     renderSettlement();
@@ -8092,6 +8201,7 @@
     // 「紹介文を作る」の入り口は一時的に隠す（FEATURES.post、2026-09-26〜。サーバー機能は残す）
     $('#btnOpenPost').hidden = !FEATURES.post;
     $('#btnOpenPlaces').hidden = !Core.tripPlaces(trip, activeBlocks()).length;
+    $('#btnOpenImportSources').hidden = !anyImportSource();
     updateTlmButton();
     renderTripJoin();
     renderTripSocialBar();
@@ -9161,7 +9271,7 @@
       // 文字起こしは、確認して追加したときにその日の欄へ残す（1日だけの取り込みで、別行動でないときだけ。今までどおり）
       openImportConfirm({
         source: 'voice', ai: true, items: res.items || [], dropped: res.dropped || 0, branch: branch,
-        transcript: res.transcript || '', transcriptDate: !branch && date ? date : '', back: 'voiceEntryForm'
+        transcript: res.transcript || '', transcriptDate: !branch && date ? date : '', sourceNotes: meta.notes, back: 'voiceEntryForm'
       });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
@@ -9181,7 +9291,7 @@
     var dates = Core.allDatesForTrip(state.trip, state.blocks).filter(function (d) { return d; });
     var branch = state.voiceBranch || null;
     var parsed = Core.parseMemo(text, dates, state.voiceEntryMultiDay ? (branch ? branch.date : '') : state.selectedDate);
-    if (parsed.ok) { openMemoRuleConfirm(parsed); return; }
+    if (parsed.ok) { openMemoRuleConfirm(parsed, text); return; }
     if (!confirm(tr('決まった形（「10時 新宿」のように時刻で始まる行）になっていないので、AIで整理します（今月のAIの回数を1回使います）。よろしいですか？'))) {
       $('#textEntryStatus').textContent = tr('時刻で始まる行の形に直すと、AIを使わず無料で取り込めます。');
       return;
@@ -9191,11 +9301,11 @@
 
   // 決まった形のメモ：AIも場所検索も使わない（無料）。時刻と、書いてある金額・GoogleマップのURLだけを候補にして
   // 確認画面へ。場所は確認画面の「場所を探す」で本人が探す
-  function openMemoRuleConfirm(parsed) {
+  function openMemoRuleConfirm(parsed, text) {
     $('#textEntryStatus').textContent = '';
     openImportConfirm({
       source: 'memo', ai: false, items: Core.memoBlocksToProposals(parsed.blocks, { extractCosts: true }),
-      branch: state.voiceBranch || null, back: 'voiceEntryForm'
+      sourceText: text || '', branch: state.voiceBranch || null, back: 'voiceEntryForm'
     });
   }
 
@@ -9217,7 +9327,7 @@
       $('#textEntryStatus').textContent = '';
       openImportConfirm({
         source: 'memo', ai: true, items: res.items || [], dropped: res.dropped || 0, branch: branch,
-        transcript: text, transcriptDate: !branch && date ? date : '', back: 'voiceEntryForm'
+        transcript: text, transcriptDate: !branch && date ? date : '', sourceNotes: meta.notes, back: 'voiceEntryForm'
       });
     }).catch(function (e) {
       var msg = (e && e.message) || '';
@@ -9280,7 +9390,7 @@
     var notes = result.warnings.concat(result.errors.map(function (er) { return tr('省いた項目：{item}', { item: er }); }));
     openImportConfirm({
       source: 'json', ai: false, items: Core.memoBlocksToProposals(result.blocks, { extractCosts: false }),
-      branch: state.voiceBranch || null, notes: notes, back: 'voiceEntryForm'
+      sourceText: text, branch: state.voiceBranch || null, notes: notes, back: 'voiceEntryForm'
     });
   }
 
@@ -9341,7 +9451,7 @@
   };
 
   function ssNewState() {
-    return { source: 'screenshot', ai: true, files: [], items: null, unreadable: [], dropped: 0, branch: null, transcript: '', transcriptDate: '', notes: [], back: 'tripDetail' };
+    return { source: 'screenshot', ai: true, files: [], items: null, unreadable: [], dropped: 0, branch: null, transcript: '', transcriptDate: '', sourceText: '', sourceNotes: '', notes: [], back: 'tripDetail' };
   }
 
   function ssState() {
@@ -9377,6 +9487,9 @@
     s.branch = o.branch || null;
     s.transcript = o.transcript || '';
     s.transcriptDate = o.transcriptDate || '';
+    // 取り込みの元として残す文字（音声の文字起こし・メモ・自分のAIの答え）と補足。スクショは画像を残す（ssBuildSource）
+    s.sourceText = o.sourceText !== undefined ? o.sourceText : (o.transcript || '');
+    s.sourceNotes = o.sourceNotes || '';
     s.notes = o.notes || [];
     s.back = o.back || 'tripDetail';
     renderSsResult();
@@ -9905,6 +10018,26 @@
     return Promise.all(jobs);
   }
 
+  // 取り込みの元（あとで「何でこの予定を入れたっけ」を見返すためのもの。worker/src/import-sources.js）。
+  // 音声・メモ・自分のAIの答えは文字を、予約・チケットの画像は画像そのものを残す（記録には入れないのでアルバムには出ない）。
+  // 写真から旅程は、写真が記録に入るので残さない。画像を送れなかったときは、元を残さずに予定だけ追加する
+  function ssBuildSource(s, status) {
+    if (s.source === 'screenshot') {
+      if (!s.files.length) return Promise.resolve(null);
+      status.textContent = tr('元の画像を残しています…');
+      return Promise.all(s.files.map(function (f) {
+        return uploadPhotoBlob(f.blob).then(function (r) { return r && r.id; }, function () { return null; });
+      })).then(function (ids) {
+        ids = ids.filter(Boolean);
+        return ids.length ? { kind: 'screenshot', photoIds: ids } : null;
+      });
+    }
+    if ((s.source === 'voice' || s.source === 'memo' || s.source === 'json') && s.sourceText) {
+      return Promise.resolve({ kind: s.source, text: s.sourceText, notes: s.sourceNotes || '' });
+    }
+    return Promise.resolve(null);
+  }
+
   function handleSsSave() {
     var s = ssState();
     var user = loadCurrentUser();
@@ -9919,10 +10052,15 @@
     status.textContent = tr('外貨のレートを確認しています…');
     // 外貨の費用にはレート（円換算）を付ける。fetchRatesForImportBlocksは{date, entry:{costItems}}の形を読む
     var shaped = payload.items.map(function (p) { return { date: p.date, entry: { costItems: p.costItems } }; });
-    fetchRatesForImportBlocks(shaped, state.trip).then(function (failedCurrencies) {
+    var failedCurrencies = [];
+    fetchRatesForImportBlocks(shaped, state.trip).then(function (failed) {
+      failedCurrencies = failed;
+      return ssBuildSource(s, status);
+    }).then(function (source) {
       status.textContent = tr('追加しています…');
       var body = { items: payload.items, author: (user && user.name) || '' };
       if (s.branch) body.branchId = s.branch.id;
+      if (source) body.source = source;
       // 文字起こし（音声・メモのAI）は、追加したときにその日の欄へ残す（別行動では残さない）
       if (s.transcript && s.transcriptDate && !s.branch) { body.transcript = s.transcript; body.transcriptDate = s.transcriptDate; }
       return api('/trips/' + encodeURIComponent(state.trip.id) + '/import-blocks', 'POST', body)
@@ -9947,6 +10085,7 @@
         })
         .then(function (res) { return refreshTrip().then(function () { return { res: res, failed: failedCurrencies }; }); });
     }).then(function (r) {
+      if (r.res.source) importSourcesCache = null; // 元の一覧は開いたときに読み直す
       var first = payload.items.map(function (p) { return p.date; }).sort()[0];
       if (first) state.selectedDate = first;
       ssRevokeFiles();
@@ -11423,6 +11562,16 @@
       tzNote.textContent = tr('時差を手で直しています');
       tzNote.addEventListener('click', function (e) { e.stopPropagation(); openTzOverrideSheet(block.id); });
       wrap.appendChild(tzNote);
+    }
+
+    // AIなどで入れた予定：入れたときの元（文字起こし・メモ・画像）を見返せる
+    if (block.sourceId) {
+      var srcBtn = document.createElement('button');
+      srcBtn.type = 'button';
+      srcBtn.className = 'block-source-link';
+      srcBtn.textContent = tr('入れたときの元を見る');
+      srcBtn.addEventListener('click', function (e) { e.stopPropagation(); openImportSources(block.sourceId); });
+      wrap.appendChild(srcBtn);
     }
 
     var entriesWrap = document.createElement('div');
@@ -17200,6 +17349,7 @@
     });
     initMediaViewerGestures();
     $('#btnOpenAlbum').addEventListener('click', openAlbum);
+    $('#btnOpenImportSources').addEventListener('click', function () { openImportSources(); });
     $('#btnOpenSettlement').addEventListener('click', openSettlement);
     $('#settleUnitPicker').addEventListener('click', function (e) {
       var b = e.target.closest('.settle-unit-opt');

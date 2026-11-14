@@ -1943,3 +1943,35 @@ body.viewer-open { overflow: hidden; }
 .pull-refresh.is-loading { transition: transform 0.2s ease, opacity 0.2s ease; }
 .pull-refresh.is-loading .pull-refresh-icon { animation: pull-refresh-spin 0.8s linear infinite; }
 @keyframes pull-refresh-spin { to { transform: rotate(360deg); } }
+
+/* ---------- 入れたときの元（AIなどで予定を入れたときの元の入力。2026-11-14〜） ---------- */
+.block-source-link {
+  display: inline-flex; align-items: center; gap: 4px; margin: -2px 0 6px; padding: 2px 2px;
+  border: none; background: none; color: var(--ink-muted); font-size: var(--fs-xs); font-family: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.isrc-list { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.isrc-card {
+  background: var(--card); border-radius: var(--radius-card); box-shadow: var(--card-shadow); padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px; border: 2px solid transparent; scroll-margin-top: 16px;
+}
+.isrc-card.is-focus { border-color: var(--accent); }
+.isrc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.isrc-kind { font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-deep); }
+.isrc-meta { font-size: var(--fs-xs); color: var(--ink-muted); }
+.isrc-text {
+  margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--fs-sm); line-height: 1.65; color: var(--ink);
+  background: var(--input-bg); border-radius: var(--radius-control); padding: 10px 12px; max-height: 320px; overflow-y: auto;
+}
+.isrc-notes { margin: 0; font-size: var(--fs-xs); color: var(--ink-muted); white-space: pre-wrap; }
+.isrc-images { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.isrc-img { aspect-ratio: 3 / 4; border: none; border-radius: 6px; background: var(--input-bg) center / cover no-repeat; cursor: pointer; }
+.isrc-sub { font-size: var(--fs-xs); color: var(--ink-muted); margin-bottom: 4px; }
+.isrc-made { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.isrc-made .isrc-sub { flex-basis: 100%; margin-bottom: 0; }
+.isrc-block {
+  border: 1px solid var(--border); background: var(--card); color: var(--ink); border-radius: 999px;
+  padding: 4px 10px; font-size: var(--fs-xs); font-family: inherit; cursor: pointer;
+}
+.isrc-none { font-size: var(--fs-xs); color: var(--ink-soft); }
+.isrc-delete { align-self: flex-end; color: var(--danger); font-size: var(--fs-xs); }
