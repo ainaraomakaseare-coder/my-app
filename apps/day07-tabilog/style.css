@@ -1943,3 +1943,6 @@ body.viewer-open { overflow: hidden; }
 .pull-refresh.is-loading { transition: transform 0.2s ease, opacity 0.2s ease; }
 .pull-refresh.is-loading .pull-refresh-icon { animation: pull-refresh-spin 0.8s linear infinite; }
 @keyframes pull-refresh-spin { to { transform: rotate(360deg); } }
+/* 記録の地図リンクを場所の名前で出す（2026-11-14）。長い名前は1行で省略して、ほかのリンクを押し出さない */
+.entry-meta a.entry-map-name { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
+.entry-map-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

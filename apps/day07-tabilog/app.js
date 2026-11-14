@@ -1537,6 +1537,37 @@
     });
   }
 
+  // 記録の「地図」リンクに出す場所の名前（2026-11-14、オーナーの要望「地図ではなく場所の名前にしたい。
+  // リンクは付けたまま、名前がよく分からないところは地図のまま」）。
+  // ①候補から選んだときに保存された名前（entry.mapPlaceName）→ ②地図URLそのものに入っている名前
+  // （/maps/place/<名前>/、または座標でない q=／query=<名前>）の順に探す。座標だけのURL・短縮URL
+  // （maps.app.goo.gl/…）・壊れたURLは名前が分からないので空文字を返し、呼び出し側は「地図」のままにする。
+  // 新しくAPIを呼ばない（表示のたびに料金のかかる問い合わせをしないため）。
+  var LATLNG_TEXT_RE = /^-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?$/;
+  function entryMapPlaceName(entry) {
+    if (!entry) return '';
+    var url = (entry.mapUrl || '').trim();
+    if (!/^https?:\/\//i.test(url) || hasBrokenMapQuery(url)) return '';
+    var clean = function (t) {
+      t = decodeHtmlEntities(String(t || '')).replace(/\s+/g, ' ').trim();
+      return t && !LATLNG_TEXT_RE.test(t) && !/^https?:/i.test(t) ? t : '';
+    };
+    var saved = clean(entry.mapPlaceName);
+    if (saved) return saved;
+    try {
+      var u = new URL(url);
+      var m = /\/maps\/place\/([^/]+)/.exec(u.pathname);
+      if (m) {
+        var fromPath = '';
+        try { fromPath = decodeURIComponent(m[1].replace(/\+/g, ' ')); } catch (e) { fromPath = ''; }
+        if (clean(fromPath)) return clean(fromPath);
+      }
+      return clean(u.searchParams.get('query') || u.searchParams.get('q') || '');
+    } catch (e) {
+      return '';
+    }
+  }
+
   // 人に送るリスト用の短いリンク。名前入りの検索URLは日本語が長い記号の列になって読みにくい
   // （オーナーの声、2026-10-20）ので、座標があれば「maps.google.com/?q=緯度,経度」にする（座標は小数5桁＝約1m）。
   // 名前はリストの行に書いてある。本人が貼った短いリンク（maps.app.goo.glなど）はそのまま
@@ -5148,6 +5179,7 @@
     googleMapsPlaceUrl: googleMapsPlaceUrl,
     shortMapsPlaceUrl: shortMapsPlaceUrl,
     decodeHtmlEntities: decodeHtmlEntities,
+    entryMapPlaceName: entryMapPlaceName,
     buildPlaceListText: buildPlaceListText,
     buildPlacesKml: buildPlacesKml,
     buildTimelineStory: buildTimelineStory,
@@ -11720,7 +11752,14 @@
     // 壊れた地図は、地図でふりかえる・時差でも使えない（場所が分からない）ため（2026-09-27）
     var mapUnusable = entry.mapUrl && (!/^https?:\/\//i.test(entry.mapUrl.trim()) || Core.hasBrokenMapQuery(entry.mapUrl.trim()));
     if (mapUnusable) metaBits.push('<span class="map-broken">' + tr('地図の場所が読み取れません・押して直す') + '</span>');
-    else if (entry.mapUrl) metaBits.push('<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + tr('地図') + '</a>');
+    else if (entry.mapUrl) {
+      // 場所の名前が分かれば「📍 名前」のリンクにする（押すと今までどおり地図が開く）。分からなければ「地図」のまま
+      var mapName = Core.entryMapPlaceName(entry);
+      metaBits.push(mapName
+        ? '<a class="entry-map-name" href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="' + escapeHtml(tr('地図で見る')) + '">' +
+            '<span aria-hidden="true">📍</span><span class="entry-map-name-text">' + escapeHtml(mapName) + '</span></a>'
+        : '<a href="' + escapeHtml(entry.mapUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">' + tr('地図') + '</a>');
+    }
     // この記録がその日いちばん最初の記録（＝Blockの代表の地図）で、前後の予定から800km以上離れた
     // ピンを持っている（かつ前後どうしは300km未満）ときは、ピンを間違えている可能性が高い
     // （例：別の都市に泊まっている日に、前の街の家のピンが残っていた）。押して直せるよう、記録の

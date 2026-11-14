@@ -304,4 +304,5 @@ I18N.addLang('en', {
   "最新の内容にしました": "Updated to the latest",
   "この旅行は見つかりませんでした（削除された可能性があります）": "This trip couldn't be found (it may have been deleted)",
   "更新できませんでした。少し待ってから、もう一度お試しください": "Couldn't refresh. Please wait a moment and try again.",
+  "地図で見る": "View on map",
 });
