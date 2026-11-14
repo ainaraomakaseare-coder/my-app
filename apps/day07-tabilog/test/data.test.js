@@ -3562,5 +3562,15 @@ eq('isLoginRequiredError: nullでも落ちない', T.isLoginRequiredError(null),
   eq('offlinePrefetchTargets: 1回の件数に上限', T.offlinePrefetchTargets(trips, [], {}, now, 6 * H, 2), ['a', 'b']);
 })();
 
+/* ---- entryMapPlaceName（記録の地図リンクに出す場所の名前） ---- */
+eq('entryMapPlaceName: 保存された名前を使う', T.entryMapPlaceName({ mapUrl: 'https://maps.google.com/?q=35.1,139.2', mapPlaceName: '浅草寺' }), '浅草寺');
+eq('entryMapPlaceName: 名前の文字参照を戻す', T.entryMapPlaceName({ mapUrl: 'https://maps.google.com/?q=1,2', mapPlaceName: 'Joe&#39;s Cafe' }), "Joe's Cafe");
+eq('entryMapPlaceName: 検索URLの名前', T.entryMapPlaceName({ mapUrl: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('東京タワー') }), '東京タワー');
+eq('entryMapPlaceName: /maps/place/の名前', T.entryMapPlaceName({ mapUrl: 'https://www.google.com/maps/place/Kiyomizu-dera/@34.99,135.78,17z' }), 'Kiyomizu-dera');
+eq('entryMapPlaceName: 座標だけなら空（地図のまま）', T.entryMapPlaceName({ mapUrl: 'https://maps.google.com/?q=35.65858,139.74543' }), '');
+eq('entryMapPlaceName: 短縮URLは空', T.entryMapPlaceName({ mapUrl: 'https://maps.app.goo.gl/abcd1234' }), '');
+eq('entryMapPlaceName: 壊れたURLは空', T.entryMapPlaceName({ mapUrl: 'https://www.google.com/maps/search/?api=1&query=undefined,undefined', mapPlaceName: '浅草寺' }), '');
+eq('entryMapPlaceName: 地図なしは空', T.entryMapPlaceName({ mapUrl: '' }), '');
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
