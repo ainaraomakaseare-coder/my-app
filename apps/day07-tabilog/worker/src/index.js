@@ -33,6 +33,7 @@ import {
 } from "./rates.js";
 import { isAllowedOrigin, cors } from "./cors.js";
 import { withIdempotency } from "./idempotency.js";
+import { normalizeImportSource, rowToImportSource } from "./import-sources.js";
 import { validateBranchInput, validateBranchBlockPlacement, dateToDays, branchEndDateOf, canEditBranchBlock, canMoveEntryBetween } from "./branches.js";
 import {
   PROVIDER_ENDPOINTS, configuredProviders, clientIdOf, parseReturnTarget, randomHex,
@@ -508,6 +509,12 @@ async function deleteTrip(id, request, env, headers) {
     const tripRow = await env.DB.prepare("SELECT cover_photo_id FROM trips WHERE id = ?").bind(id).first();
     mediaKeys = collectMediaKeys(mediaRows, tripRow ? [tripRow.cover_photo_id] : []);
   } catch { /* 掃除の準備に失敗しても削除は続ける */ }
+  // 取り込みの元（スクショ画像を含む。migrations/0038〜）も一緒に消す
+  try {
+    const { results: srcRows } = await env.DB.prepare("SELECT * FROM import_sources WHERE trip_id = ?").bind(id).all();
+    for (const r of srcRows || []) mediaKeys.push(...rowToImportSource(r).photoIds);
+    await env.DB.prepare("DELETE FROM import_sources WHERE trip_id = ?").bind(id).run();
+  } catch { /* import_sourcesテーブルが無い */ }
   const { results: blockRows } = await env.DB.prepare("SELECT id FROM blocks WHERE trip_id = ?").bind(id).all();
   for (const b of blockRows) {
     const { results: entryRows } = await env.DB.prepare("SELECT id FROM entries WHERE block_id = ?").bind(b.id).all();
@@ -571,6 +578,8 @@ function rowToBlock(row) {
     branchId: row.branch_id || "",
     // 「動画でシェアに出さない」（migrations/0031〜）。列がまだ無い環境ではundefinedなのでfalseにそろえる
     videoExclude: !!row.video_exclude,
+    // AIなどで取り込んだ予定なら、その元の入力（import_sources）のid（migrations/0038〜）。手で作った予定・列が無い環境では空文字
+    sourceId: row.source_id || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -5275,11 +5284,20 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
   const checked = validateSaveItems(data.items, { startDate: trip.start_date, endDate: trip.end_date }, { branch });
   if (!checked.items.length) return json({ error: "invalid_input", errors: checked.errors }, 400, headers);
 
+  // 取り込みの元（音声の文字起こし・メモ・自分のAIの答え・スクショ画像。migrations/0038〜）。
+  // 予定と同じバッチで1行だけ作り、作った予定すべての source_id にする。形がおかしいときは残さないだけ（保存は続ける）
+  const src = normalizeImportSource(data.source);
+  const sourceRow = src ? {
+    id: uid("src"), trip_id: tripId, branch_id: branch ? branch.id : "", kind: src.kind, text: src.text, notes: src.notes,
+    photo_ids: JSON.stringify(src.photoIds), author, created_at: nowIso(),
+  } : null;
+
   const baseTime = Date.now();
   const built = checked.items.map((it, i) => {
     const t = new Date(baseTime + i * 10).toISOString(); // 並びが安定するよう少しずつずらす
     const blockRow = { id: uid("blk"), trip_id: tripId, date: it.date, time: it.time, label: it.label, category: it.category, transport: it.transport, created_at: t, updated_at: t };
     if (branch) blockRow.branch_id = branch.id;
+    if (sourceRow) blockRow.source_id = sourceRow.id;
     const hasMap = !!it.mapUrl;
     const entryRow = {
       id: uid("ent"), block_id: blockRow.id, episode: it.episode, comment: "", detail: "",
@@ -5299,14 +5317,19 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
     return { blockRow, entryRow: hasEntryContent ? entryRow : null };
   });
 
-  const statements = (withPlaceName) => built.flatMap(({ blockRow: b, entryRow: e }) => [
-    b.branch_id
-      ? env.DB.prepare(
-        "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, branch_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
-      ).bind(b.id, b.trip_id, b.date, b.time, b.label, b.category, b.transport, b.branch_id, b.created_at, b.updated_at)
-      : env.DB.prepare(
-        "INSERT INTO blocks (id, trip_id, date, time, label, category, transport, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
-      ).bind(b.id, b.trip_id, b.date, b.time, b.label, b.category, b.transport, b.created_at, b.updated_at),
+  // withSource：取り込みの元（import_sources・blocks.source_id）も保存する。migrations/0038の前のDBではfalseで保存し直す
+  const statements = (withPlaceName, withSource) => (withSource && sourceRow ? [env.DB.prepare(
+    "INSERT INTO import_sources (id, trip_id, branch_id, kind, text, notes, photo_ids, author, created_at) VALUES (?,?,?,?,?,?,?,?,?)"
+  ).bind(sourceRow.id, sourceRow.trip_id, sourceRow.branch_id, sourceRow.kind, sourceRow.text, sourceRow.notes, sourceRow.photo_ids, sourceRow.author, sourceRow.created_at)] : []).concat(built.flatMap(({ blockRow: b, entryRow: e }) => {
+    const cols = ["id", "trip_id", "date", "time", "label", "category", "transport"];
+    const vals = [b.id, b.trip_id, b.date, b.time, b.label, b.category, b.transport];
+    if (b.branch_id) { cols.push("branch_id"); vals.push(b.branch_id); }
+    if (withSource && b.source_id) { cols.push("source_id"); vals.push(b.source_id); }
+    cols.push("created_at", "updated_at"); vals.push(b.created_at, b.updated_at);
+    return [
+    env.DB.prepare(
+      "INSERT INTO blocks (" + cols.join(", ") + ") VALUES (" + cols.map(() => "?").join(",") + ")"
+    ).bind(...vals),
     ...(e ? [env.DB.prepare(
       `INSERT INTO entries (id, block_id, episode, comment, detail, photo_ids, video_ids, cost_items, wait_time, time, map_url,${withPlaceName ? " map_place_name," : ""} map_lat, map_lng, map_geocoded_url, map_geocoded_at, shop_url, other_url, author, travel, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,${withPlaceName ? "?," : ""}?,?,?,?,?,?,?,?,?,?)`
@@ -5315,15 +5338,26 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
         .concat(withPlaceName ? [e.map_place_name] : [])
         .concat([e.map_lat, e.map_lng, e.map_geocoded_url, e.map_geocoded_at, e.shop_url, e.other_url, e.author, e.travel, e.created_at, e.updated_at])
     )] : []),
-  ]);
-  // 予定と記録を全部1つのバッチ（D1のトランザクション）にする。途中で失敗して「予定だけ残る」ことを防ぐ
+    ];
+  }));
+  // 予定と記録を全部1つのバッチ（D1のトランザクション）にする。途中で失敗して「予定だけ残る」ことを防ぐ。
+  // 列・テーブルが無い古いDB（migrations/0038の取り込みの元、0026のmap_place_name）では、それを外して保存し直す
+  const missing = (e) => /no such (column|table)|has no column/i.test(String((e && e.message) || ""));
+  let savedSource = !!sourceRow;
   try {
-    await env.DB.batch(statements(true));
+    await env.DB.batch(statements(true, true));
   } catch (e) {
-    // migrations/0026（map_place_name列）を実行する前のDBでは、その列無しで保存する
-    if (!/no such column/i.test(String((e && e.message) || ""))) throw e;
-    await env.DB.batch(statements(false));
+    if (!missing(e)) throw e;
+    try {
+      await env.DB.batch(statements(true, false));
+      savedSource = false;
+    } catch (e2) {
+      if (!missing(e2)) throw e2;
+      await env.DB.batch(statements(false, false));
+      savedSource = false;
+    }
   }
+  if (!savedSource) built.forEach(({ blockRow }) => { delete blockRow.source_id; });
   // 音声・メモ（AI）の文字起こしを、その日の欄に残す（今までは整理した直後に残していた。確認して追加した
   // ときだけ残す。取り消したら何も残さない）。失敗しても予定の保存は成功のまま
   const tDate = typeof data.transcriptDate === "string" ? data.transcriptDate : "";
@@ -5334,7 +5368,38 @@ async function saveScreenshotBlocks(tripId, request, env, headers) {
   await env.DB.prepare("UPDATE trips SET updated_at = ? WHERE id = ?").bind(nowIso(), tripId).run();
 
   const blocks = built.map(({ blockRow, entryRow }) => ({ ...rowToBlock(blockRow), entries: entryRow ? [rowToEntry(entryRow)] : [] }));
-  return json({ blocks, errors: checked.errors }, 200, headers);
+  return json({ blocks, errors: checked.errors, source: savedSource ? rowToImportSource(sourceRow) : null }, 200, headers);
+}
+
+/* ---------- 取り込みの元（AIなどで予定を入れたときの元の入力。migrations/0038、src/import-sources.js） ----------
+ * GET /trips/:id/import-sources：その旅行の元の入力を新しい順に返す（予定と同じく、旅行のURLを知っている人なら読める）。
+ * DELETE /import-sources/:id：元の入力を消す（予定は残し、source_idを空にする。スクショ画像も消す）。
+ * 別行動に入れたときの元は、その別行動の持ち主だけが消せる（予定と同じ branchWriteGuard）。 */
+async function listImportSources(tripId, env, headers) {
+  const trip = await env.DB.prepare("SELECT id FROM trips WHERE id = ?").bind(tripId).first();
+  if (!trip) return json({ error: "trip_not_found" }, 404, headers);
+  let rows = [];
+  try {
+    ({ results: rows } = await env.DB.prepare("SELECT * FROM import_sources WHERE trip_id = ? ORDER BY created_at DESC").bind(tripId).all());
+  } catch { /* migrations/0038の前：まだ何も残っていない */ }
+  return json({ sources: (rows || []).map(rowToImportSource) }, 200, headers);
+}
+
+async function deleteImportSource(id, request, env, headers) {
+  let row = null;
+  try { row = await env.DB.prepare("SELECT * FROM import_sources WHERE id = ?").bind(id).first(); } catch { /* テーブルが無い */ }
+  if (!row) return json({ error: "not_found" }, 404, headers);
+  // 別行動そのものが消されたあとの元は、だれでも消せる（持ち主を確かめる手がかりが無いため）
+  const branchGone = row.branch_id && !(await findBranch(env, row.branch_id));
+  const denied = branchGone ? null : await branchWriteGuard(env, request, headers, row);
+  if (denied) return denied;
+  const keys = rowToImportSource(row).photoIds;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE blocks SET source_id = '' WHERE source_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM import_sources WHERE id = ?").bind(id),
+  ]);
+  await deleteUnreferencedMedia(env, keys);
+  return json({ ok: true }, 200, headers);
 }
 
 /* ---------- OpenAI→Workers AIの切り替え比較（試作、docs/adr/0012） ----------
@@ -6305,6 +6370,8 @@ const mainHandler = {
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/(?:screenshot-blocks|import-blocks)$/))) return saveScreenshotBlocks(m[1], request, env, headers);
     // 音声・メモ（AI）を、スクショと同じ「候補を返すだけ（保存しない）」にしたもの（docs/adr/0022 2026-09-30追記）
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/voice-scan$/))) return scanVoiceProposals(m[1], request, env, headers);
+    if (method === "GET" && (m = path.match(/^\/trips\/([^/]+)\/import-sources$/))) return listImportSources(m[1], env, headers);
+    if (method === "DELETE" && (m = path.match(/^\/import-sources\/([^/]+)$/))) return deleteImportSource(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/text-scan$/))) return scanTextProposals(m[1], request, env, headers);
     if (method === "POST" && (m = path.match(/^\/trips\/([^/]+)\/text-entries$/))) {
       return createBlocksFromTextMultiDay(m[1], request, env, headers);

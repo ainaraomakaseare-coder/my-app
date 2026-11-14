@@ -411,6 +411,11 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
             <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="1.6"/><path d="M2.5 13l4-4 3 3 3.5-3.5L17.5 13"/><circle cx="6.5" cy="7.5" r="1.2"/></svg>
             アルバム
           </button>
+          <!-- AIなどで予定を入れたときの元（文字起こし・メモ・画像）。そういう予定があるときだけ出す（app.jsのopenImportSources） -->
+          <button class="chip-btn" id="btnOpenImportSources" hidden>
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5v11.5H5z"/><path d="M12 2.5V6h3.5M7.5 10h5M7.5 13h5"/></svg>
+            入れたときの元
+          </button>
           <button class="chip-btn" id="btnOpenSettlement">
             <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M10 5.5v9M12.8 7.6c0-1.2-1.3-2.1-2.8-2.1-1.7 0-2.8.9-2.8 2 0 1.2 1 1.6 2.8 2 1.8.4 2.8.9 2.8 2.1 0 1.1-1.1 2-2.8 2-1.5 0-2.8-.8-2.8-2.1"/></svg>
             精算
@@ -498,6 +503,20 @@ if (REDIRECT_TO_PAGES_DEV && location.hostname === 'ainaraomakaseare-coder.githu
       </header>
       <div class="album-grid" id="albumGrid"></div>
       <p class="empty" id="albumEmpty" hidden>まだ写真・動画がありません。</p>
+    </div>
+  </section>
+
+  <!-- ============ 入れたときの元（AIなどで予定を入れたときの元の入力。アルバムとは別） ============ -->
+  <section class="screen" data-screen="importSources">
+    <div class="wrap">
+      <header class="hd">
+        <button class="btn text back" data-back="tripDetail">← 戻る</button>
+        <div class="hd-title-row"><h1>入れたときの元</h1><button type="button" class="info-btn" aria-label="説明を見る" aria-expanded="false" aria-controls="importSourcesInfo">？</button></div>
+        <p class="info-pop" id="importSourcesInfo" hidden>音声・メモ・AIの答え・予約やチケットの画像から予定を入れたときの、元の内容です。「何でこの予定を入れたっけ」を見返せます。この旅行を見られる人みんなが見られます（別行動に入れた分は本人だけに出ます）。画像はアルバムには入りません</p>
+      </header>
+      <p class="hint" id="importSourcesStatus"></p>
+      <div class="isrc-list" id="importSourcesList"></div>
+      <p class="empty" id="importSourcesEmpty" hidden>まだありません。音声・メモ・画像から予定を入れると、ここに残ります。</p>
     </div>
   </section>
 

@@ -32,12 +32,14 @@ CREATE TABLE IF NOT EXISTS blocks (
   -- 「地図でふりかえる」の演出専用（v15）。空文字は未設定＝移動の演出なし。
   transport TEXT NOT NULL DEFAULT '',
   -- 以下は本番では migrations/ のALTERで後から足した列。まっさらなローカルDBでもこのファイル1つで
-  -- 揃うよう、ここにも入れてある（0018・0022・0027・0030・0031）。
+  -- 揃うよう、ここにも入れてある（0018・0022・0027・0030・0031・0038）。
   move_minutes INTEGER NOT NULL DEFAULT 0,
   manual_order INTEGER,
   tz_override TEXT,
   branch_id TEXT NOT NULL DEFAULT '',
   video_exclude INTEGER NOT NULL DEFAULT 0,
+  -- source_id：取り込みの元（import_sources.id）。手で作った予定は空文字（0038）
+  source_id TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -359,3 +361,7 @@ CREATE INDEX IF NOT EXISTS idx_iap_transactions_account ON iap_transactions(acco
 
 -- v37（2026-10-07）：冪等性キー（オフライン対応の二重作成防止）。詳しい説明は migrations/0037_idempotency_keys.sql
 CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, response TEXT, created_at TEXT);
+
+-- v38（2026-11-14）：取り込みの元（AIなどで予定を入れたときの元の入力）。詳しい説明は migrations/0038_import_sources.sql
+CREATE TABLE IF NOT EXISTS import_sources (id TEXT PRIMARY KEY, trip_id TEXT NOT NULL, branch_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', photo_ids TEXT NOT NULL DEFAULT '[]', author TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_import_sources_trip ON import_sources(trip_id);

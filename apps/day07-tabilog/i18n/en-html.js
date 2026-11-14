@@ -280,4 +280,7 @@ I18N.addLang('en', {
   "予約・チケットの画像から予定を作る": "Create plans from booking or ticket images",
   "航空券・ホテル予約・チケット・レシートなどの画面を保存した画像を選ぶと、AIが日時と場所を読み取って予定の候補を作ります（保存前に直せます）": "Pick saved images of flights, hotel bookings, tickets, or receipts and AI reads the dates and places to suggest plans (editable before saving)",
   "写真・動画・場所もここで入れられます（任意）。あとから「記録を追加」で足すこともできます。": "You can add photos, videos, and the place here too (optional). You can also add more later with \"Add record\".",
+  "入れたときの元": "Sources",
+  "音声・メモ・AIの答え・予約やチケットの画像から予定を入れたときの、元の内容です。「何でこの予定を入れたっけ」を見返せます。この旅行を見られる人みんなが見られます（別行動に入れた分は本人だけに出ます）。画像はアルバムには入りません": "The original content you used when adding activities from voice, memos, AI answers, or booking/ticket images. Look back at why you added an activity. Anyone who can see this trip can see these (sources for your separate plans are shown only to you). Images are not added to the album.",
+  "まだありません。音声・メモ・画像から予定を入れると、ここに残ります。": "Nothing yet. When you add activities from voice, memos, or images, the original is kept here.",
 });
