@@ -2,7 +2,7 @@
   "app": "gohan-ashiato",
   "kind": "tv-shops",
   "version": 1,
-  "updatedAt": "2026-10-29",
+  "updatedAt": "2026-11-16",
   "note": "番組の映像・画像は使わず、店名・住所・放送日・出どころのリンクだけを載せる（docs: README「テレビの店」）",
   "shops": [
     {
@@ -7812,13 +7812,21 @@
         {
           "program": "町中華で飲ろうぜ",
           "channel": "BS-TBS",
+          "aired": "2026-11-09",
+          "title": "#432 「旭酒楼」（横浜 石川町編）",
+          "url": "https://bs.tbs.co.jp/machichuka/store/0432-01/"
+        },
+        {
+          "program": "町中華で飲ろうぜ",
+          "channel": "BS-TBS",
           "aired": "2026-07-27",
           "title": "#412 「旭酒楼」（冷やし中華SP）",
           "url": "https://bs.tbs.co.jp/machichuka/store/0412-03/"
         }
       ],
       "sources": [
-        "https://bs.tbs.co.jp/machichuka/store/0412-03/"
+        "https://bs.tbs.co.jp/machichuka/store/0412-03/",
+        "https://bs.tbs.co.jp/machichuka/store/0432-01/"
       ],
       "checkedAt": "2026-10-29"
     },
@@ -14083,6 +14091,167 @@
         "https://www.ntv.co.jp/burari/articles/227r6r1t1baviqv5iar.html"
       ],
       "checkedAt": "2026-10-29"
+    },
+    {
+      "id": "sakaba-1327",
+      "name": "蕾",
+      "address": "東京都文京区根津２－３６－２",
+      "station": "根津駅",
+      "genre": "酒場",
+      "lat": 35.720234,
+      "lng": 139.762985,
+      "links": [],
+      "appearances": [
+        {
+          "program": "吉田類の酒場放浪記",
+          "channel": "BS-TBS",
+          "aired": "2026-11-09",
+          "title": "#1327 根津「蕾」",
+          "url": "https://bs.tbs.co.jp/sakaba/shop/1327.html"
+        }
+      ],
+      "sources": [
+        "https://bs.tbs.co.jp/sakaba/shop/1327.html"
+      ],
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "id": "sakaba-1326",
+      "name": "秋田料理と炙り まるみや",
+      "address": "千葉県市川市南八幡5-3-20",
+      "station": "本八幡駅",
+      "genre": "酒場",
+      "lat": 35.722179,
+      "lng": 139.924057,
+      "links": [],
+      "appearances": [
+        {
+          "program": "吉田類の酒場放浪記",
+          "channel": "BS-TBS",
+          "aired": "2026-11-02",
+          "title": "#1326 本八幡「秋田料理と炙り まるみや」",
+          "url": "https://bs.tbs.co.jp/sakaba/shop/1326.html"
+        }
+      ],
+      "sources": [
+        "https://bs.tbs.co.jp/sakaba/shop/1326.html"
+      ],
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "id": "onnasakaba-640",
+      "name": "縄のれん",
+      "address": "東京都中野区野方3-27-1",
+      "station": "野方駅",
+      "genre": "酒場",
+      "lat": 35.71891,
+      "lng": 139.656586,
+      "links": [],
+      "appearances": [
+        {
+          "program": "おんな酒場放浪記",
+          "channel": "BS-TBS",
+          "aired": "2026-11-07",
+          "title": "#640 野方「縄のれん」",
+          "url": "https://bs.tbs.co.jp/onnasakaba/shop/640.html"
+        }
+      ],
+      "sources": [
+        "https://bs.tbs.co.jp/onnasakaba/shop/640.html"
+      ],
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "id": "onnasakaba-639",
+      "name": "田舎家 和（なごみ）",
+      "address": "埼玉県ふじみ野市上福岡5-1-10",
+      "station": "上福岡駅",
+      "genre": "酒場",
+      "lat": 35.872196,
+      "lng": 139.512405,
+      "links": [],
+      "appearances": [
+        {
+          "program": "おんな酒場放浪記",
+          "channel": "BS-TBS",
+          "aired": "2026-10-31",
+          "title": "#639 上福岡「田舎家 和（なごみ）」",
+          "url": "https://bs.tbs.co.jp/onnasakaba/shop/639.html"
+        }
+      ],
+      "sources": [
+        "https://bs.tbs.co.jp/onnasakaba/shop/639.html"
+      ],
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "id": "machichuka-0431-01",
+      "name": "酔来軒",
+      "address": "神奈川県横浜市南区真金町1-1",
+      "station": "横浜阪東橋駅",
+      "genre": "町中華",
+      "lat": 35.435989,
+      "lng": 139.629761,
+      "links": [],
+      "appearances": [
+        {
+          "program": "町中華で飲ろうぜ",
+          "channel": "BS-TBS",
+          "aired": "2026-11-09",
+          "title": "#431 「酔来軒」（横浜 阪東橋編）",
+          "url": "https://bs.tbs.co.jp/machichuka/store/0431-01/"
+        }
+      ],
+      "sources": [
+        "https://bs.tbs.co.jp/machichuka/store/0431-01/"
+      ],
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "id": "machichuka-0431-02",
+      "name": "平安",
+      "address": "神奈川県横浜市南区宿町1-18 野田ビル 1F",
+      "station": "横浜阪東橋駅",
+      "genre": "町中華",
+      "lat": 35.433128,
+      "lng": 139.612686,
+      "links": [],
+      "appearances": [
+        {
+          "program": "町中華で飲ろうぜ",
+          "channel": "BS-TBS",
+          "aired": "2026-11-09",
+          "title": "#431 「平安」（横浜 阪東橋編）",
+          "url": "https://bs.tbs.co.jp/machichuka/store/0431-02/"
+        }
+      ],
+      "sources": [
+        "https://bs.tbs.co.jp/machichuka/store/0431-02/"
+      ],
+      "checkedAt": "2026-11-16"
+    },
+    {
+      "id": "machichuka-0432-02",
+      "name": "信濃屋",
+      "address": "神奈川県横浜市中区山元町1-15-7",
+      "station": "横浜石川町駅",
+      "genre": "町中華",
+      "lat": 35.431629,
+      "lng": 139.638947,
+      "links": [],
+      "appearances": [
+        {
+          "program": "町中華で飲ろうぜ",
+          "channel": "BS-TBS",
+          "aired": "2026-11-09",
+          "title": "#432 「信濃屋」（横浜 石川町編）",
+          "url": "https://bs.tbs.co.jp/machichuka/store/0432-02/"
+        }
+      ],
+      "sources": [
+        "https://bs.tbs.co.jp/machichuka/store/0432-02/"
+      ],
+      "checkedAt": "2026-11-16"
     }
   ]
 }
